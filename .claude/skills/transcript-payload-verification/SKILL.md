@@ -145,6 +145,24 @@ the consumer, reproducing the full path the bad entry travelled. So before hand-
 input, ask which component produced it in the incident being pinned — if that component is the
 suspect, the fixture must be its real output, not your model of it.
 
+## A plausible mechanism is a claim, not a cause
+
+The same gap one level further over: a root-cause explanation for an external system's
+behavior, written into contract prose because a documented mechanism *could* produce it. Before
+the cause goes into a contract, derive the fingerprint that mechanism would leave in the stored
+payloads and check the payloads for it.
+
+Record #3131 is the instance. Its plan stated as fact that escaped MCP marker comments
+(`&lt;!-- … --&gt;`) were "composed from sanitized reads", since an MCP read that HTML-escapes
+bodies would explain them. A sanitizer would also have escaped the quotes and every other `<`
+in the body. The stored bodies held exactly one `&lt;` and one `&gt;`, both in the marker, with
+raw quotes elsewhere. #1350's escaped mirror also carried a fresh `claimPayload` runId that no
+earlier read could have supplied. The whole-branch review refuted the claim (`8ffe6465f`), and
+`plugin/skills/_shared/github-write-transport.md`'s "Marker comments on the MCP path" now records
+the cause as not yet identified. So for each candidate cause, write down one thing it predicts
+that the alternatives do not, check it against real stored instances (`gh api`, an
+`issue_read` body), and ship "cause not yet identified" when nothing discriminates.
+
 ## When to use
 
 - Implementing a hook handler, integration, or any code that parses a tool's input/output payload

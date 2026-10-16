@@ -3,10 +3,11 @@
 Loaded by `review.md` Step 3.6 — the full locate-parse-record procedure; the gate and the three-outcome summary stay in `review.md`.
 
 This is the one point in the pipeline where a **built artifact** and its **work record** are both in
-hand. Impeccable writes a direction contract into the opening comment of what it builds, before the
-code; the seed key in that contract is the only thing that makes a build's direction reproducible,
-since Impeccable 4.x is deliberately non-deterministic by dice. Nothing recovers it later — by the
-time anyone asks, the artifact exists and the intent behind it is only inferable from the result.
+hand. Impeccable records a direction contract in the relevant surface brief's `## Direction
+contract` section, before the code; the seed key in that contract is the only thing that makes a
+build's direction reproducible, since Impeccable 4.x is deliberately non-deterministic by dice.
+Nothing recovers it later — by the time anyone asks, the artifact exists and the intent behind it
+is only inferable from the result.
 
 Run the locate-and-parse procedure in `../../_shared/design-contract.md` over the **file list Step 2
 already resolved**. Do not discover files again, and do not widen the list — a contract outside the

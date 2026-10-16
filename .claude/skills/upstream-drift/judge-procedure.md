@@ -73,6 +73,8 @@ Two entries against the *same upstream repository* need different prefixes. Neve
 
 **If the basename matches at more than one prefix, that is the normal case, not an anomaly.** Some upstreams vendor one source tree into a directory per agent harness. At `skill-v4.0.4`, `pbakaus/impeccable` carries `skills/impeccable/SKILL.md` under fifteen distinct prefixes — `plugin/`, `.claude/`, `.cursor/`, `.gemini/`, `.agents/`, and ten more. Pick the one prefix whose subtree corresponds to the installed root, by checking that the installed root's *own* top-level directory names appear under it. For `impeccable-plugin` the installed root holds `agents/`, `hooks/`, `skills/`, and upstream `plugin/` holds `agents/`, `hooks/`, `skills/` (plus packaging metadata) — that is the match; `.claude/` holds only `skills/`, and is not.
 
+**When two prefixes both carry the installed root's directory names, break the tie on the packaging-metadata directory.** From `skill-v4.5.0`, upstream `cursor-plugin/` also holds `agents/`, `hooks/`, `skills/`, so the directory-name check alone matches two prefixes. The installed root also carries `.claude-plugin/` (and `.grok-plugin/`), which upstream `plugin/` has and `cursor-plugin/` does not — it carries `.cursor-plugin/` instead. Compare the dot-prefixed packaging directories too, and pick the prefix whose set matches.
+
 **`plugin/` in this section always means a prefix inside the *upstream* repository being diffed.** Since #418 this repo has its own `plugin/` payload subtree as well. The two are unrelated: a `plugin/…` path in a finding's `upstreamPath` is upstream's, one in `localSeam` is ours.
 
 ## 4. Diff the contract root's subtree, at both tags

@@ -465,6 +465,56 @@ test('worktree-required: policy on allows "git push" from inside a linked worktr
   assert.deepStrictEqual(out, {});
 });
 
+// ─── powershell-opaque-command gate (#3061) ────────────────────────────────
+
+test('powershell-opaque gate: a plain `powershell -File <path>` is allowed in a worktree session, and from the main checkout too', () => {
+  const repo = gitRepoWithCommit();
+  withPolicy(repo, 'worktree-always: true\n');
+  const wt = linkedWorktreeOf(repo);
+  const inWorktree = pre.run({
+    input: bashInput('powershell -NoProfile -File C:/x/probe.ps1', wt), runDir: null, runState: null, cwd: wt,
+  });
+  assert.deepStrictEqual(inWorktree, {}, 'allowed inside the isolated worktree');
+  const inMain = pre.run({
+    input: bashInput('powershell -NoProfile -File C:/x/probe.ps1', repo), runDir: null, runState: null, cwd: repo,
+  });
+  assert.deepStrictEqual(inMain, {}, 'a plain -File invocation is not opaque text — this gate never denies it, even from the main checkout');
+});
+
+test('powershell-opaque gate: `-Command "git push"` and `-EncodedCommand ...` are refused from the main checkout', () => {
+  const repo = gitRepoWithCommit();
+  withPolicy(repo, 'worktree-always: true\n');
+  const cmdOut = pre.run({
+    input: bashInput('powershell -Command "git push"', repo), runDir: null, runState: null, cwd: repo,
+  });
+  assert.strictEqual(cmdOut.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(cmdOut.json.hookSpecificOutput.permissionDecisionReason, /powershell|pwsh/);
+  const encOut = pre.run({
+    input: bashInput('powershell -EncodedCommand QQBCAEMA', repo), runDir: null, runState: null, cwd: repo,
+  });
+  assert.strictEqual(encOut.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+test('powershell-opaque gate: `-Command`/`-EncodedCommand` are allowed from inside the isolated worktree', () => {
+  const repo = gitRepoWithCommit();
+  withPolicy(repo, 'worktree-always: true\n');
+  execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml']);
+  execFileSync('git', ['-C', repo, 'commit', '-m', 'policy', '-q']);
+  const wt = linkedWorktreeOf(repo);
+  const out = pre.run({
+    input: bashInput('powershell -Command "git push"', wt), runDir: null, runState: null, cwd: wt,
+  });
+  assert.deepStrictEqual(out, {});
+});
+
+test('powershell-opaque gate: policy off allows `-Command` from the main checkout, same as every other gate here', () => {
+  const repo = gitRepoWithCommit();
+  const out = pre.run({
+    input: bashInput('powershell -Command "git push"', repo), runDir: null, runState: null, cwd: repo,
+  });
+  assert.deepStrictEqual(out, {});
+});
+
 // #2542: the ff-integration-branch push exemption. `cloneWithOrigin` gives the
 // clone a real `origin` remote (and populated `refs/remotes/origin/HEAD` +
 // `refs/remotes/origin/{branch}`), so `resolveIntegrationBranch` succeeds via

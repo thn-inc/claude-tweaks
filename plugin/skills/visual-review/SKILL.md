@@ -37,7 +37,7 @@ This SKILL.md is the **orientation + mode resolution** layer. The mechanical bro
 | **page** | URL or description | Review a single page or flow. Full creative framework + vitals. |
 | **journey** | `journey:{name}` | Walk a documented journey step by step using a single batch invocation. Each step reviewed against its "should feel" / "red flags." Vitals captured per page. |
 | **discover** | `discover [--budget <n>]` | Explore the running app to identify and document undocumented user journeys. Vitals captured per discovered page. `--budget <n>` caps the walkthrough to the top `n` scored candidates instead of walking every candidate found — see `discover-mode.md` Phase 2. |
-| **recommendation** | `--mode=recommendation` (typically passed by `/review` Step 6 code-only) | Detect UI changes via `git diff` and identify affected journeys. Returns a structured recommendation (which journeys to walk, severity) without opening the browser. No agent-browser dependency. |
+| **recommendation** | `--mode=recommendation` (typically passed by `/review` Step 6 code-only) | Detect UI changes via `git diff` and identify affected journeys. Returns a structured recommendation (which journeys to walk, severity) without opening the browser. No `playwright-cli` dependency. |
 
 ### When to use each mode
 
@@ -78,7 +78,7 @@ Example: `/claude-tweaks:visual-review journey:checkout --source wrap-up`
 
 ## Step 0.5: Mode — `recommendation` (short-circuit)
 
-When the resolved mode is `recommendation` (typically invoked as `--mode=recommendation` from `/claude-tweaks:review` Step 6 code-only), skip the browser entirely and produce a structured recommendation instead. This mode has no `agent-browser` dependency and no dev URL requirement.
+When the resolved mode is `recommendation` (typically invoked as `--mode=recommendation` from `/claude-tweaks:review` Step 6 code-only), skip the browser entirely and produce a structured recommendation instead. This mode has no `playwright-cli` dependency and no dev URL requirement.
 
 Procedure:
 
@@ -108,9 +108,9 @@ Recommendation mode is **read-only and browser-free** — it produces a routing 
 
 ## Step 1: Browser Prerequisites
 
-See `_shared/browser-detection.md` for the detect / install / verify procedure (daemon auto-starts on port 4848; recovery via `agent-browser doctor`).
+See `_shared/browser-detection.md` for the detect / install / verify procedure (no persistent background daemon — each `open`/`attach` call starts or reuses a named browser process directly; no `doctor` equivalent — recover a stuck session via `close-all`/`kill-all`, then re-open).
 
-Visual-review-specific behavior when `agent-browser` is unavailable:
+Visual-review-specific behavior when `playwright-cli` is unavailable:
 
 **Auto mode:** in addition to the standard `STAGED` log line from the shared procedure, write `staged/visual-review-skipped.md` describing the skip and the install command. Append to the auto-decision log under `## /visual-review` in `{run-dir}/decisions.md` (per `_shared/auto-decision-log.md`). Surface at Review Console. The review proceeds in code-only mode without further interruption.
 
@@ -215,7 +215,7 @@ This skill is a **component skill** — invoked by `/claude-tweaks:review` (Step
 
 | Pattern | Why It Fails |
 |---------|-------------|
-| Silently skipping when `agent-browser` is unavailable | Report the missing dependency and offer options — never skip silently |
+| Silently skipping when `playwright-cli` is unavailable | Report the missing dependency and offer options — never skip silently |
 | Skipping First Impressions in visual review | Raw reaction must precede structured analysis — don't make it analytical |
 | Starting the dev server without asking **in interactive mode** | Interactive mode offers, it doesn't force. (Auto mode pre-authorizes a tracked ephemeral worktree server on a free port — `dev-url-detection.md`) |
 | Reusing a responding port without checking it serves *this* worktree | In a worktree run, :3000 is usually the main checkout — false confidence on the wrong code. Apply `dev-url-detection.md` Step 2.7 first |
@@ -223,9 +223,9 @@ This skill is a **component skill** — invoked by `/claude-tweaks:review` (Step
 | Running visual review without a running app | The browser can't inspect what isn't served — verify the URL responds first |
 | Describing elements by position instead of an `eN` ref | "The button on the right" is brittle; "e3 (primary CTA)" is precise — always reference the `eN` ref plus a short description captured at finding time (Element-reference convention, `browser-review.md`) |
 | Treating vitals as available | Web Vitals capture has no Playwright CLI equivalent (settled, #2671) — omit the Performance line rather than fabricate LCP/CLS/INP/TTFB/FCP values |
-| Closing the session before saving a trace on failure | Failure reports without a trace path aren't actionable — `trace stop <path>` first, then `close` (and recording must have been started via `trace start` at session open — there is no retroactive capture) |
-| Per-step `agent-browser` invocations during journey walks | Use `batch` — one process, one session lifecycle, fewer tokens and less latency |
-| Batching across sessions | One `agent-browser batch` invocation owns a single session — never mix session names |
+| Closing the session before saving a trace on failure | Failure reports without a trace path aren't actionable — run `tracing-stop` first (auto-writes to `.playwright-cli/traces/`; locate and move it to a fixed location if needed), then `close` (and recording must have been started via `tracing-start` at session open — there is no retroactive capture) |
+| Opening a new session per step during a journey walk | Playwright CLI has no `batch` equivalent — issue each op as a separate command, but reuse one named session (`-s=<name>`) for the whole walk: one process, one session lifecycle, fewer tokens and less latency |
+| Mixing session names mid-walk | One named session owns the whole journey walk — never switch names partway through |
 | Silently auto-applying a Creative Opportunities suggestion without the apply-gate | Recommendations only — the user accepts via the apply-gate (standalone) or takes it away to run manually (parent-invoked); never execute an Impeccable creative command without that accept |
 | Rendering the Creative Opportunities block when the wrapper returned `recommendations: []` or `{skipped}` | An empty result is valid — omit the block. Survey is heuristic, so "no opportunities found" misleads as positive signal |
 | Duplicating browser procedures in SKILL.md | `browser-review.md` is canonical for browser procedures; SKILL.md is mode resolution, auto-mode policy, and orientation |
