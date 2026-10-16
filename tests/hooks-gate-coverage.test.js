@@ -73,6 +73,14 @@ test('policy-schema-coverage.md\'s coverage block lists exactly the Bash write s
     'GATE_COVERAGE.bashWriteShapes and the canonical prose have diverged — update the coverage block in skills/_shared/policy-schema-coverage.md');
 });
 
+// #3080: bashRedirections is the operator-token sibling of bashWriteShapes
+// (which lists command WORDS) — same prose/code pinning shape, different
+// vocabulary.
+test('policy-schema-coverage.md\'s coverage block lists exactly the Bash redirections the gate checks', () => {
+  assert.deepStrictEqual(tokensFor(coverageBlock(), 'Bash redirections'), [...GATE_COVERAGE.bashRedirections],
+    'GATE_COVERAGE.bashRedirections and the canonical prose have diverged — update the coverage block in skills/_shared/policy-schema-coverage.md');
+});
+
 test('policy-schema-coverage.md\'s coverage block lists exactly the gate\'s exemptions', () => {
   // Derived from the constant, never a hand-typed literal (spec #537): a
   // hand-typed expectation would keep passing even after the exemption's
@@ -134,6 +142,22 @@ test('every WRITE_SHAPES entry is a pre-tool-use prefilter word, and the Bash gr
   // The word-set pairing itself is pinned by the differential corpus in tests/hooks-bash-prefilter.test.js (#3092).
   for (const shape of WRITE_SHAPES) {
     assert.strictEqual(runsFull('pre-tool-use', `${shape} a b`), true, shape);
+  }
+});
+
+// #3080: the redirection sibling of the WRITE_SHAPES test above — a redirect
+// operator the parser resolves must also reach the full handler, post-tool-use
+// must stay skipped (fileWriteTargets never runs there — see "What the gate can
+// see at all" in policy-schema-coverage.md), and the common cheap shapes must
+// stay on the skip path in both events.
+test('every GATE_COVERAGE.bashRedirections entry reaches the pre-tool-use full handler, never post-tool-use (#3080)', () => {
+  for (const op of GATE_COVERAGE.bashRedirections) {
+    assert.strictEqual(runsFull('pre-tool-use', `cmd ${op} a.txt`), true, op);
+    assert.strictEqual(runsFull('post-tool-use', `cmd ${op} a.txt`), false,
+      `${op}: post-tool-use never consumes fileWriteTargets, so widening its prefilter for this op would be pure cost`);
+  }
+  for (const command of ['cmd 2>&1', 'cmd > /dev/null', 'cmd 1>/dev/stdout']) {
+    assert.strictEqual(runsFull('pre-tool-use', command), false, `${command} must stay on the skip path`);
   }
 });
 
@@ -302,4 +326,57 @@ test('an unlisted Bash write shape is genuinely not detected', () => {
     'rsync is not in WRITE_SHAPES, so it must resolve no target');
   assert.ok(fileWriteTargets('cp a.txt /tmp/b.txt', '/tmp').length > 0,
     'a listed shape must still resolve — otherwise the guard proves nothing');
+});
+
+// #3080: redirectWriteTargets (via fileWriteTargets) resolves regardless of
+// command word — echo/printf/cat/a bare `> f`, not just a WRITE_SHAPES entry.
+test('#3080: fileWriteTargets resolves bare redirection targets for ANY command word', () => {
+  assert.deepStrictEqual(fileWriteTargets('echo x > tracked-file.js', '/r'), [{ action: 'write', file: '/r/tracked-file.js' }]);
+  assert.deepStrictEqual(fileWriteTargets('printf y >> tracked-file.js', '/r'), [{ action: 'write', file: '/r/tracked-file.js' }]);
+  assert.deepStrictEqual(fileWriteTargets('cat a > tracked-file.js', '/r'), [{ action: 'write', file: '/r/tracked-file.js' }]);
+  assert.deepStrictEqual(fileWriteTargets('echo x >out.js', '/r'), [{ action: 'write', file: '/r/out.js' }],
+    'a glued operator (no space before the target) must resolve the same as a spaced one');
+  assert.deepStrictEqual(fileWriteTargets('cmd &> out.log', '/r'), [{ action: 'write', file: '/r/out.log' }]);
+  assert.deepStrictEqual(fileWriteTargets('cmd &>> out.log', '/r'), [{ action: 'write', file: '/r/out.log' }]);
+  assert.deepStrictEqual(fileWriteTargets('cmd >| noclobber.log', '/r'), [{ action: 'write', file: '/r/noclobber.log' }],
+    'noclobber\'s >| is still a write');
+  assert.deepStrictEqual(fileWriteTargets('cmd 2>> err.log', '/r'), [{ action: 'write', file: '/r/err.log' }],
+    'a fd-prefixed append operator must resolve the same as the unprefixed form');
+});
+
+test('#3080: redirection resolves no target for fd duplication, process substitution, DEVNULL_LIKE, or an unresolvable RHS', () => {
+  for (const command of [
+    'cmd 2>&1', 'cmd >&2', 'echo x > /dev/null', 'cmd > /dev/stdout', 'cmd 1>/dev/stderr',
+    'echo x > "$OUT"', 'echo x > $(mktemp)', 'cmd > ~/f',
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+test('#3080: a `>` inside a quoted string is not mistaken for a redirection', () => {
+  assert.deepStrictEqual(fileWriteTargets('echo "a > b"', '/r'), []);
+});
+
+test('e2e #3080: bare redirection from a worktree-always main checkout is DENIED, matching cp/tee', () => {
+  const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
+  const os = require('os');
+  const { execFileSync } = require('child_process');
+  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3080-main-'));
+  execFileSync('git', ['-C', main, 'init', '-q']);
+  fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
+  const decisionFor = (command) => {
+    const out = preToolUse.run({
+      input: { tool_name: 'Bash', tool_input: { command }, cwd: main },
+      runDir: null, runState: null, ownedRun: {}, cwd: main,
+    });
+    return out.json && out.json.hookSpecificOutput && out.json.hookSpecificOutput.permissionDecision;
+  };
+
+  for (const command of ['echo x > tracked-file.js', 'printf y >> tracked-file.js', 'cat a > tracked-file.js']) {
+    assert.strictEqual(decisionFor(command), 'deny', command);
+  }
+  for (const command of ['echo x > /dev/null', 'cmd 2>&1']) {
+    assert.notStrictEqual(decisionFor(command), 'deny', command);
+  }
 });

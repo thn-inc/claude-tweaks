@@ -47,6 +47,10 @@ function splitSegments(command) {
     }
     if (ch === '&' && str[i + 1] === '&') { segments.push(current); current = ''; i += 1; continue; }
     if (ch === '|' && str[i + 1] === '|') { segments.push(current); current = ''; i += 1; continue; }
+    // `>|` is bash's noclobber-override redirect operator, not a pipe — a
+    // glued `|` immediately after `>` (#3080) must not fabricate a segment
+    // break here, or the operator token never reaches the tokenizer whole.
+    if (ch === '|' && current.endsWith('>')) { current += ch; continue; }
     if (ch === ';' || ch === '|' || ch === '\n') { segments.push(current); current = ''; continue; }
     // Unquoted `#` at the start of a word begins a bash comment that runs to
     // the end of the line — real bash never executes anything after it, so
@@ -490,12 +494,16 @@ function powershellOpaqueCommand(command, cwd) {
 //
 // Still NOT covered, and deliberately (see the coverage block in
 // skills/_shared/policy-schema-coverage.md for the measured rationale):
-//   - bare shell redirection (`>`, `>>`) — no command word for the prefilter to
-//     key on, so catching it means running the full handler on EVERY Bash call.
-//     The measured marginal cost (full path minus skip path) is in
-//     skills/_shared/policy-schema-coverage.md.
 //   - `python -c`, `sh -c`, `awk` program strings — the write target lives
 //     inside an opaque program and is not statically knowable at any cost.
+//
+// Bare shell redirection (`>`, `>>`, `>|`, `&>`, `&>>`, fd-prefixed `N>`/`N>>`)
+// IS covered (#3080): redirectWriteTargets below scans every segment's token
+// list regardless of t[0], since a redirection isn't gated by a command word
+// the way the shapes above are. bash-prefilter.js's hasFileRedirection keeps
+// the common `2>&1`/`> /dev/null` shapes on the skip path (#70's dead-code
+// trap applies here too — a parser branch the prefilter never reaches for
+// real traffic is dead).
 //
 // Ambiguity resolves to "no target" (allow), matching gitTargets' own safety
 // posture: never fabricate a target from a path this can't prove.
@@ -512,6 +520,57 @@ function resolveWriteTarget(effCwd, raw) {
   if (path.isAbsolute(stripped)) return path.resolve(stripped);
   if (effCwd === null) return null; // cwd UNKNOWN and a relative path — not provable
   return path.resolve(effCwd, stripped);
+}
+
+// A redirection's RHS that is a file-descriptor duplication (`>&2`, `2>&1`),
+// never a file target — distinct from resolveWriteTarget's unresolvable set
+// because the shape (a bare `&` followed by digits) is specific to redirection
+// syntax and would otherwise read as a plausible-looking relative path.
+function isFdDupTarget(raw) {
+  return /^&\d+$/.test(raw);
+}
+
+// Matches a write-redirection operator at the START of a token, optionally
+// fd-prefixed (`2>`, `1>>`) or in `&>`/`&>>` combined-stream form, capturing
+// whatever follows the operator in the SAME token (a glued target, or '' for
+// a standalone operator whose target is the next token). `<` (input
+// redirection) and `>&N`/`N>&M` (fd duplication, handled by the caller once it
+// has the full candidate target) are not matched as write operators here.
+const REDIRECT_OP_RE = /^\d*(>>|>\||>)(.*)$/;
+const AMP_REDIRECT_OP_RE = /^&(>>|>)(.*)$/;
+
+function matchRedirectOperator(tok) {
+  const m = REDIRECT_OP_RE.exec(tok) || AMP_REDIRECT_OP_RE.exec(tok);
+  return m ? m[2] : null;
+}
+
+// Redirection-target scan (#3080): unlike fileWriteTargets' other shapes, a
+// redirection carries no command word — `echo`, `printf`, `cat`, or nothing
+// at all can precede it — so this runs over the WHOLE token list regardless
+// of t[0], not gated by WRITE_SHAPES. Same fail-closed posture as the rest of
+// this module: an unresolvable target ($VAR, backtick, `$(...)` process
+// substitution — all caught by resolveWriteTarget's isUnresolvable check)
+// resolves to no target, never a guess. `>(...)` process substitution and fd
+// duplications (`>&2`, `2>&1`) are not file targets either.
+//
+// Known limit: a `>` inside a heredoc body (after `<<EOF`) sits in its own
+// splitSegments segment once the newline breaks it out, and this scan cannot
+// distinguish that from a real redirection — same class of limit as the rest
+// of this parser's text-only, no-real-shell approach.
+function redirectWriteTargets(t, effCwd) {
+  const out = [];
+  for (let i = 0; i < t.length; i += 1) {
+    let rawTarget = matchRedirectOperator(t[i]);
+    if (rawTarget === null) continue;
+    if (rawTarget === '') {
+      i += 1; // consume the target token too — never re-scan it as its own operator
+      rawTarget = t[i];
+    }
+    if (rawTarget === undefined || isFdDupTarget(rawTarget) || rawTarget.startsWith('(')) continue;
+    const file = resolveWriteTarget(effCwd, rawTarget);
+    if (file) out.push(file);
+  }
+  return out;
 }
 
 // Split a shape's argument list into positionals and the flags seen, given the
@@ -618,6 +677,9 @@ function inPlaceEditTargets(rest, valueFlags, scriptFlags) {
 function fileWriteTargets(command, cwd) {
   const targets = [];
   forEachCommandSegment(command, cwd, (t, effCwd) => {
+    // Redirection has no command word, so it runs for every segment
+    // regardless of t[0] — never gated by the WRITE_SHAPES check below (#3080).
+    for (const file of redirectWriteTargets(t, effCwd)) targets.push({ action: 'write', file });
     if (!WRITE_SHAPES.includes(t[0])) return;
     if (t[0] === 'tee') {
       // tee genuinely writes to EVERY non-flag argument, not just the
@@ -767,5 +829,5 @@ function mkdirTargets(command, cwd) {
 }
 
 module.exports = {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets,
 };
