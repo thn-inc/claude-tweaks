@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // plugin/bin/plan-audit.js — mechanized plan audit (#903): Checks A/B/C/D
 // plus a size-headroom check, replacing the hand-run prose procedure that used to
-// live entirely in plugin/skills/build/plan-audit.md. Exit 0 iff every check
-// is ok (a `nearCeiling` headroom flag alone does not fail). `--count-tasks`
+// live entirely in plugin/skills/build/plan-audit.md, and the warn-only Check E
+// (#3099, AC clause coverage — runs only with `--spec`). Exit 0 iff every
+// gating check is ok (a `nearCeiling` headroom flag, or any Check E entry,
+// alone does not fail). `--count-tasks`
 // (#1926) is a read-only verb printing `{tasks, batched}` for /build's
 // single-task fast-lane condition — it never runs the checks.
 'use strict';
@@ -16,7 +18,7 @@ const {
   extractFileEntries, extractScopeKeywords, extractPremiseRefs, extractVerificationChecks, extractUnparseableStep2s, countTasks,
 } = require('./lib/plan-audit/parser');
 const {
-  checkA, checkB, checkC, checkD, headroomCheck, checkPremiseRefs,
+  checkA, checkB, checkC, checkD, checkE, headroomCheck, checkPremiseRefs,
 } = require('./lib/plan-audit/checks');
 
 function resolveRepoRoot(explicit, cwd) {
@@ -50,6 +52,11 @@ function summaryLine(report) {
   // as a call site that legitimately doesn't apply.
   if (report.headroom.composedErrors.length) parts.push(`Composed: ${report.headroom.composedErrors.length} unmeasured`);
   if (!report.premiseRefs.ok) parts.push(`Premise-refs: ${report.premiseRefs.unresolved.length} unresolved`);
+  // #3099: warn-only — named in the summary, never part of the pass verdict.
+  if (!report.checkE.skipped) {
+    if (report.checkE.uncovered.length) parts.push(`Check E: ${report.checkE.uncovered.length} uncovered AC clause(s)`);
+    if (report.checkE.unparsed.length) parts.push(`Check E: ${report.checkE.unparsed.length} unparsed AC item(s)`);
+  }
   if (parts.length === 0) return 'plan-audit: clean — no findings.';
   return `plan-audit: ${parts.join('; ')}.`;
 }
@@ -96,6 +103,19 @@ function main() {
     return;
   }
 
+  // #3099: an unreadable --spec is the same exit-2 file-read error as an
+  // unreadable plan — never a silent fall back to `skipped: 'no-spec'`.
+  let specText = null;
+  if (parsed.spec !== null) {
+    try {
+      specText = fs.readFileSync(parsed.spec, 'utf8');
+    } catch (err) {
+      process.stderr.write(`plan-audit.js: cannot read spec file ${parsed.spec}: ${err.message}\n`);
+      process.exitCode = 2;
+      return;
+    }
+  }
+
   const repoRoot = resolveRepoRoot(parsed.repoRoot, process.cwd());
   // #2000: Check D runs on the raw text before the parser — a byte scan on
   // text already in memory costs nothing.
@@ -113,6 +133,7 @@ function main() {
     checkD: checkDResult,
     headroom: headroomCheck(entries, repoRoot),
     premiseRefs: checkPremiseRefs(premiseRefs, repoRoot),
+    checkE: specText === null ? { ok: true, skipped: 'no-spec' } : checkE(specText, text),
   };
 
   // Compact JSON on its own first line (never pretty-printed — a caller
