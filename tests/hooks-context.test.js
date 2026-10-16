@@ -477,7 +477,10 @@ test('writeRunState serializes concurrent writers under an effectively-unbounded
       });
       let stderr = '';
       p.stderr.on('data', (d) => { stderr += d; });
-      p.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`worker ${i} exited ${code}: ${stderr}`))));
+      // 'close', not 'exit' — 'exit' can fire before stdio streams finish delivering
+      // buffered data (Node docs: only 'close' guarantees that), which can truncate a
+      // failing worker's stderr exactly when it's needed for diagnosis.
+      p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`worker ${i} exited ${code}: ${stderr}`))));
       p.on('error', reject);
     }));
   }
@@ -525,7 +528,10 @@ test('writeRunState under the fail-open path (budget=0) — every worker still e
       });
       let stderr = '';
       p.stderr.on('data', (d) => { stderr += d; });
-      p.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`worker ${i} exited ${code}: ${stderr}`))));
+      // 'close', not 'exit' — 'exit' can fire before stdio streams finish delivering
+      // buffered data (Node docs: only 'close' guarantees that), which can truncate a
+      // failing worker's stderr exactly when it's needed for diagnosis.
+      p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`worker ${i} exited ${code}: ${stderr}`))));
       p.on('error', reject);
     }));
   }
