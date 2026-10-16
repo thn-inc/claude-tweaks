@@ -24,7 +24,7 @@ const claimStore = require('../issues/claim-store');
 const { classifyClaimBlob, claimPayload, releasePayload } = require('../issues/claims');
 const { ensureLabelPayload } = require('../issues/labels');
 const { runClassified, isTimeoutError } = require('../shared-primitives');
-const { appendEntry, formatEntry } = require('../log-decision/append');
+const { appendEntry, formatEntry, resolveTarget } = require('../log-decision/append');
 const { CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText } = require('../log-decision/claim-log');
 const { tombstoneInFlightPr } = claimStore;
 
@@ -94,7 +94,23 @@ function parseTargets(raw) {
 // log-decision.js itself uses. No new line format: `claimLogText` is the
 // single source for the --text shape, `CLAIM_LOG_SECTION`/`CLAIM_LOG_STEP`
 // for the section/step, both from log-decision/claim-log.js (#2775).
+//
+// Gated on the same `resolveTarget` anchoring check `log-decision.js`'s own
+// `run()` performs before it ever calls `appendEntry` — never a parallel
+// check. Called with production defaults (cwd/mainRoot both left to
+// `resolveTarget`'s own computation, exactly as `log-decision.js`'s
+// `realDeps` does), so a worktree-local shadow copy of a run dir is refused
+// here the same way it is there, closing the [IL-127]-class gap a bare
+// `appendEntry` call would otherwise reopen: writing straight past the
+// anchoring check would let an unanchored `--run` silently create a shadow
+// decisions.md the main-checkout bookkeeping-stamps gate never reads. A
+// refusal throws — the caller's existing try/catch (see `run()` below)
+// records it in `claimLogFailures` and never un-claims the target.
 function defaultAppendClaimLog({ runDir, issue, transport }) {
+  const target = resolveTarget({ runDir });
+  if (!target.ok) {
+    throw new Error(`run dir not usable for the claim log (${target.reason})`);
+  }
   appendEntry({
     runDir,
     section: CLAIM_LOG_SECTION,

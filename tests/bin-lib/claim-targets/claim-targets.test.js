@@ -1330,26 +1330,72 @@ test('--run: appendClaimLog is called once per claimed issue with its transport,
   ]);
 });
 
-test('--run round-trip with the real defaultAppendClaimLog: decisions.md ends up claim-log-only, hasClaimLogFor true for both claimed issues', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-'));
+// #2775 controller ruling: defaultAppendClaimLog must gate on resolveTarget's
+// anchoring check ([IL-127]) using PRODUCTION defaults for cwd/mainRoot —
+// i.e. the real process.cwd() at call time, not an injected override. Proving
+// the "ok" branch therefore needs a real child process whose own cwd sits
+// inside a (fake, `.git`-is-a-directory) checkout root — the same technique
+// tests/bin-lib/log-decision/append.test.js's concurrent-writers test uses
+// (`spawn`/`execFileSync` with an explicit `cwd`, never `process.chdir()` on
+// the shared test-runner process, and never a write into the real repo).
+test('defaultAppendClaimLog round-trip: an anchored run dir (real child-process cwd inside a fake checkout) ends up claim-log-only, hasClaimLogFor true for both issues', () => {
+  const { execFileSync } = require('node:child_process');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-anchored-'));
+  fs.mkdirSync(path.join(root, '.git')); // a real checkout root: mainCheckoutRoot(cwd) anchors here
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-2775');
+  fs.mkdirSync(runDir, { recursive: true });
+
+  const modulePath = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'claim-targets', 'claim-targets');
+  const script = [
+    `const { defaultAppendClaimLog } = require(${JSON.stringify(modulePath)});`,
+    `defaultAppendClaimLog({ runDir: ${JSON.stringify(runDir)}, issue: 2775, transport: 'git' });`,
+    `defaultAppendClaimLog({ runDir: ${JSON.stringify(runDir)}, issue: 2733, transport: 'contents-api' });`,
+  ].join('\n');
+  execFileSync(process.execPath, ['-e', script], { cwd: root, encoding: 'utf8' });
+
+  const decisionsText = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.equal(hasClaimLogFor(decisionsText, 2775), true);
+  assert.equal(hasClaimLogFor(decisionsText, 2733), true);
+  assert.equal(classifyDecisions(decisionsText), 'claim-log-only', '/flow Step 3 must still treat this dir as a fresh mint');
+});
+
+// #2775 controller ruling: an unanchored run dir (no `.git` anywhere above it
+// — a worktree-local shadow copy, or just a bare scratch dir) must be refused
+// rather than silently written. Needs no cwd trickery: `resolveTarget`'s
+// `findGitRoot` walk returns null before ever consulting cwd/mainRoot when
+// there is no `.git` anywhere above `runDir`, so this holds under ANY cwd —
+// os.tmpdir()'s own ancestry has no `.git` to find.
+test('defaultAppendClaimLog on an unanchored run dir (no .git anywhere above it): throws, naming the not-anchored reason', () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-unanchored-'));
+
+  assert.throws(
+    () => defaultAppendClaimLog({ runDir, issue: 2775, transport: 'git' }),
+    /not-anchored/,
+  );
+});
+
+// The same unanchored-dir failure, exercised through run()'s --run plumbing
+// with the REAL defaultAppendClaimLog (not a fake): the claim must still
+// stand, and claimLogFailures must name the issue and carry the reason.
+test('--run pointed at an unanchored dir, with the real defaultAppendClaimLog: claim stands, claimLogFailures names the issue and the not-anchored reason', () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-unanchored-run-'));
   const runId = path.basename(runDir);
   const { ghApi } = makeGhApi({
-    reads: { 2775: [readAbsent, confirmRead(runId)], 2733: [readAbsent, confirmRead(runId)] },
-    writes: { 2775: [writeOk], 2733: [writeOk] },
+    reads: { 752: [readAbsent, confirmRead(runId)] },
+    writes: { 752: [writeOk] },
   });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
   deps.appendClaimLog = defaultAppendClaimLog;
 
-  const code = run(['--run-id', runId, '--targets', '2775,2733', '--run', runDir], deps);
+  const code = run(['--run-id', runId, '--targets', '752', '--run', runDir], deps);
 
   assert.equal(code, 0);
   const body = JSON.parse(io.out[0]);
-  assert.deepEqual(body.claimLogFailures, []);
-  const decisionsText = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
-  assert.equal(hasClaimLogFor(decisionsText, 2775), true);
-  assert.equal(hasClaimLogFor(decisionsText, 2733), true);
-  assert.equal(classifyDecisions(decisionsText), 'claim-log-only', '/flow Step 3 must still treat this dir as a fresh mint');
+  assert.deepEqual(body.claimed, [752]);
+  assert.equal(body.claimLogFailures.length, 1);
+  assert.equal(body.claimLogFailures[0].issue, 752);
+  assert.match(body.claimLogFailures[0].error, /not-anchored/);
 });
 
 test('--run whose basename differs from --run-id: exit 2, no gh call', () => {
