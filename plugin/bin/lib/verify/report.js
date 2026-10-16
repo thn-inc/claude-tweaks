@@ -73,7 +73,7 @@ function entryFor(check) {
 
 function composeReport({
   checks, startedAt, durationMs, git, testCountRegression = null, scope = null, flakyEscalation = [],
-  baselineAdjudicated = null,
+  baselineAdjudicated = null, preExistingAdjudicated = null,
 }) {
   const byName = {};
   for (const check of checks) byName[check.name] = entryFor(check);
@@ -96,6 +96,11 @@ function composeReport({
   // ran. `pass` above stays the raw "every check exited 0"; the verdict lives
   // only here.
   if (baselineAdjudicated !== null) report.baselineAdjudicated = baselineAdjudicated;
+  // #3129: the declared-pre-existing-failures adjudication (verify-scope.json's
+  // `preExisting`) — omitted when it never ran or never applied. Mutually
+  // exclusive with baselineAdjudicated in practice (a run adjudicates against
+  // at most one of the two), but composeReport never enforces that itself.
+  if (preExistingAdjudicated !== null) report.preExistingAdjudicated = preExistingAdjudicated;
   return report;
 }
 

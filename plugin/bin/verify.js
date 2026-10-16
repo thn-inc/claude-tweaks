@@ -20,6 +20,7 @@ const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine, extractFailingFiles, stripAnsi,
 } = require('./lib/verify/extract');
 const { planRetry, runRetries, flakyCaveatLines } = require('./lib/verify/flaky');
+const { matchPreExisting } = require('./lib/verify/pre-existing');
 const { gitInfo, gitDir: resolveGitDir, composeReport, writeReportAtomic } = require('./lib/verify/report');
 const {
   readStamp: readCountStamp, detectRegression, caveatLine,
@@ -128,7 +129,11 @@ function stampStatus(parsed) {
   // (verifiedHead) but never a clean full pass — `match` keeps its strict
   // meaning, and the marker is surfaced as `baselineAdjudicated`.
   const baselineAdjudicated = present && stamp.baseline !== null && typeof stamp.baseline === 'object';
-  const match = stampCoversCleanHead && scope === 'full' && !baselineAdjudicated;
+  // #3129: a preExisting-adjudicated pass (declared pre-existing/unrelated
+  // test failures) is, like a baseline-adjudicated one, verified but never a
+  // clean full pass — excluded from `match` the same way.
+  const preExistingAdjudicated = present && stamp.preExisting !== null && typeof stamp.preExisting === 'object';
+  const match = stampCoversCleanHead && scope === 'full' && !baselineAdjudicated && !preExistingAdjudicated;
   // verifiedHead (#1923): "HEAD is verified" for the re-verify sites — a
   // clean HEAD covered either by a full pass (match) or by a passing
   // scoped/none/static-only/tool-scoped run whose fullSha anchor is still an
@@ -149,6 +154,7 @@ function stampStatus(parsed) {
     match,
     verifiedHead,
     baselineAdjudicated,
+    preExistingAdjudicated,
     reportPath: present && typeof stamp.reportPath === 'string' ? stamp.reportPath : null,
     legacy: present ? stamp.legacy === true : false,
   };
@@ -444,6 +450,41 @@ async function main() {
   }
   const adjudicatedPass = Boolean(baselineAdjudicated && baselineAdjudicated.verdict === 'pass');
 
+  // Declared-pre-existing-failures adjudication (#3129): a sibling to the
+  // --baseline path above, but declarative rather than re-run — a project's
+  // verify-scope.json names known-failing test files/patterns (e.g. a
+  // shallow clone's precondition tests) under `preExisting`, and a run whose
+  // ENTIRE failing-file set is covered by that allowlist is adjudicated as
+  // passing without re-running anything. Gated on `decl` (the declaration
+  // this field lives in) and `!adjudicatedPass` — no need to also adjudicate
+  // a run --baseline already passed. Failing files are extracted the same
+  // way retryHook extracts them for flaky.files (extractFailingFiles,
+  // `[]` on no-parse) — fail-closed: a check whose failure names no file at
+  // all (no-parse) makes the whole run ineligible, never "covered".
+  let preExistingAdjudicated = null;
+  if (decl && decl.preExisting && decl.preExisting.length && !rawPass && !adjudicatedPass) {
+    const failingChecks = results.filter((c) => !c.skipped && c.exitCode !== 0);
+    let noParse = false;
+    const allFailingFiles = [];
+    for (const check of failingChecks) {
+      let text;
+      try { text = fs.readFileSync(check.logPath, 'utf8'); } catch { noParse = true; continue; }
+      const plain = stripAnsi(text);
+      const checkFiles = extractFailingFiles(plain, sniffFamily(plain));
+      if (checkFiles.length === 0) { noParse = true; continue; }
+      allFailingFiles.push(...checkFiles);
+    }
+    if (!noParse) {
+      const verdict = matchPreExisting({ failingFiles: allFailingFiles, preExisting: decl.preExisting });
+      preExistingAdjudicated = verdict.eligible
+        ? { declared: decl.preExisting, matched: verdict.matched }
+        : { declared: decl.preExisting, eligible: false, reason: verdict.reason };
+    } else {
+      preExistingAdjudicated = { declared: decl.preExisting, eligible: false, reason: 'no-parse' };
+    }
+  }
+  const preExistingPass = Boolean(preExistingAdjudicated && preExistingAdjudicated.matched);
+
   // Suite-count regression stamp (#881, IL-84): the "tests" check's own
   // parsed count is compared against the previous run's persisted count.
   // --count-stamp is caller-resolved (verification.md Step 2) or defaults
@@ -509,12 +550,12 @@ async function main() {
   const report = composeReport({
     checks: results, startedAt, durationMs: Date.now() - startMs, git, testCountRegression,
     scope: sel ? { mode: sel.mode, suites: scopeSuites, static: sel.static, base: resolvedBase, unmatched: sel.unmatched, changedFiles: files, matched: sel.matched } : null,
-    flakyEscalation, baselineAdjudicated,
+    flakyEscalation, baselineAdjudicated, preExistingAdjudicated,
   });
   writeReportAtomic(report, jsonPath);
   // The exit code and the pass stamp follow the adjudicated verdict; the
   // report's own `pass` stays the raw "every check exited 0".
-  const effectivePass = report.pass || adjudicatedPass;
+  const effectivePass = report.pass || adjudicatedPass || preExistingPass;
 
   // Verify event (#1928): the runner is the mechanical source for the
   // tasks→test phase boundary (bin/lib/timing/derive.js). Written only when
@@ -534,6 +575,7 @@ async function main() {
         durationMs: report.durationMs,
         pass: report.pass,
         baselineAdjudicated: baselineAdjudicated ? baselineAdjudicated.verdict || 'ineligible' : null,
+        preExistingAdjudicated: preExistingAdjudicated ? (preExistingAdjudicated.matched ? 'pass' : 'ineligible') : null,
         sha: git.sha,
         flakyRetried: retriedFiles,
         reportPath: jsonPath,
@@ -586,14 +628,21 @@ async function main() {
           baselineFailing: baselineAdjudicated.baselineFailing, flakyPassed: baselineAdjudicated.flakyPassed,
         }
         : (mode !== 'full' && priorStamp && priorStamp.baseline && priorStamp.fullSha === sel.base ? priorStamp.baseline : null),
+      // #3129: same carry-forward rule as `baseline` immediately above — a
+      // narrowed run anchored on a pre-existing-adjudicated full pass
+      // inherits that pass's marker rather than losing it.
+      preExisting: preExistingPass
+        ? { declared: preExistingAdjudicated.declared, matched: preExistingAdjudicated.matched }
+        : (mode !== 'full' && priorStamp && priorStamp.preExisting && priorStamp.fullSha === sel.base ? priorStamp.preExisting : null),
     });
     // H1 (review): the legacy bare-SHA twin only ever names a real FULL
     // pass — a narrowed run leaves it untouched rather than repointing it
     // at a sha that a scoped/tool-scoped/none run never fully verified. A
-    // baseline-adjudicated pass is not a clean full pass either (#3043), so
-    // it never repoints the twin: an older reader of the bare file must not
-    // read it as one.
-    try { writeStamp(gitDir, stamp, { legacy: mode === 'full' && !adjudicatedPass }); } catch { /* best-effort; next --stamp-status simply reads absent */ }
+    // baseline-adjudicated pass is not a clean full pass either (#3043), and
+    // neither is a pre-existing-adjudicated one (#3129) — neither ever
+    // repoints the twin: an older reader of the bare file must not read it
+    // as one.
+    try { writeStamp(gitDir, stamp, { legacy: mode === 'full' && !adjudicatedPass && !preExistingPass }); } catch { /* best-effort; next --stamp-status simply reads absent */ }
   }
 
   const lines = [];
@@ -669,6 +718,15 @@ async function main() {
       }
     } else {
       lines.push('', `Baseline: not adjudicated — ${baselineAdjudicated.reason}`);
+    }
+  }
+  // #3129: rendered only when the declared preExisting allowlist actually
+  // ran (gated above on decl.preExisting.length && !rawPass && !adjudicatedPass).
+  if (preExistingAdjudicated) {
+    if (preExistingAdjudicated.matched) {
+      lines.push('', `Pre-existing: adjudicated — ${preExistingAdjudicated.matched.length} failing file(s) covered by the declared preExisting allowlist: ${preExistingAdjudicated.matched.join(', ')}`);
+    } else {
+      lines.push('', `Pre-existing: not adjudicated — ${preExistingAdjudicated.reason}`);
     }
   }
   lines.push('', `report: ${jsonPath}`);
