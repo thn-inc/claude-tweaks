@@ -25,7 +25,7 @@ function launchSpec(launcher, args, platform, env = {}) {
 }
 ```
 
-`plugin/bin/lib/reconcile/reap-merged.js`'s `longPathRemovalTarget(real, platform = process.platform)`, `plugin/bin/lib/verify/run.js`'s `platform = process.platform` option and `plugin/bin/lib/hooks/post-tool-use.js`'s `ctx.platform || process.platform` have the same shape. The comment beside `longPathRemovalTarget` gives the reason: `process.platform` is process-global, so a stub leaks into every other test in the same worker. Tests pass `'win32'` and `'linux'` explicitly (`tests/bin-lib/verify/run.test.js`, `tests/hooks-post-tool-use-worktree-staleness.test.js`).
+`plugin/bin/lib/reconcile/reap-merged.js`'s `longPathRemovalTarget(real, platform = process.platform)`, `plugin/bin/lib/verify/run.js`'s `platform = process.platform` option, `plugin/bin/lib/hooks/post-tool-use.js`'s `ctx.platform || process.platform`, `plugin/bin/lib/atomic-write.js`'s `writeFileAtomic(..., { platform = process.platform, ... })` and `plugin/bin/session-tmp-resolve.js`'s `formatPrintedPath(resolved, { platform = process.platform, sep = path.sep } = {})` have the same shape. The comment beside `longPathRemovalTarget` gives the reason: `process.platform` is process-global, so a stub leaks into every other test in the same worker. Tests pass `'win32'` and `'linux'` explicitly (`tests/bin-lib/verify/run.test.js`, `tests/hooks-post-tool-use-worktree-staleness.test.js`).
 
 ### Pin the win32 output with exact strings
 
@@ -104,7 +104,7 @@ node --test tests/bin-lib/impeccable-engine/windows-launch.test.js     # pins ru
 
 ## Reference
 
-- Code: `plugin/bin/lib/impeccable-engine/index.js` (`launchSpec`, `probeFailure`, `isSpawnTimeout`), `plugin/bin/lib/release-preflight/pack.js` (`workflowPublishesRelease`), `plugin/bin/lib/reconcile/reap-merged.js` (`longPathRemovalTarget`), `plugin/bin/lib/verify/run.js`, `plugin/bin/lib/hooks/post-tool-use.js` (`checkWindowsLongpaths`)
-- Tests: `tests/bin-lib/impeccable-engine/windows-launch.test.js`, `tests/bin-lib/impeccable-engine/resolve.test.js`, `tests/bin-lib/release-preflight/pack.test.js`, `tests/design-wrapper-doctor-no-fix.test.js`
+- Code: `plugin/bin/lib/impeccable-engine/index.js` (`launchSpec`, `probeFailure`, `isSpawnTimeout`), `plugin/bin/lib/release-preflight/pack.js` (`workflowPublishesRelease`), `plugin/bin/lib/reconcile/reap-merged.js` (`longPathRemovalTarget`), `plugin/bin/lib/verify/run.js`, `plugin/bin/lib/hooks/post-tool-use.js` (`checkWindowsLongpaths`), `plugin/bin/lib/atomic-write.js` (`writeFileAtomic`), `plugin/bin/session-tmp-resolve.js` (`formatPrintedPath`)
+- Tests: `tests/bin-lib/impeccable-engine/windows-launch.test.js`, `tests/bin-lib/impeccable-engine/resolve.test.js`, `tests/bin-lib/release-preflight/pack.test.js`, `tests/design-wrapper-doctor-no-fix.test.js`, `tests/session-tmp-resolve-cli.test.js`
 - Related skills: `skill-prose-conformance-tests` (CRLF in prose-extraction regexes), `gh-api-module-pattern` (the `execFileSync` seam `launchSpec` feeds)
 - Origin: #3040, which closed the Windows-only gaps left by the v6.137.0 release review
