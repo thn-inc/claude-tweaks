@@ -486,27 +486,27 @@ function countUnmatchedFailures(text, family, { cwd = process.cwd() } = {}) {
 }
 
 // Whether a spec/tap log's failing-file list accounts for the whole
-// failure — the same accounting `baseline.js`'s `accountedFamily`/
-// `adjudicate` already apply before trusting a classification, reused here
-// so the flaky-retry hook (#3066) fails closed on the identical gap: a
-// failure `countUnmatchedFailures` could not attribute to any test file, or
-// (spec only) a failing-entry count that does not add up to `ℹ fail` +
-// `ℹ cancelled` — either means the failing-file list used to plan a retry
-// is an undercount, so retrying and passing those named files would wrongly
-// clear the whole check. TAP has no `ℹ fail`-style summary line to
-// cross-check against, so `countUnmatchedFailures` alone is its guard.
-// Returns 0 (accounted) or a positive count (unattributed); every family
-// other than spec/tap returns 0 — retry eligibility for those is governed
-// elsewhere and this guard never widens it.
+// failure — the same accounting `baseline.js`'s `adjudicate` already
+// applies before trusting a classification, reused here so the flaky-retry
+// hook (#3066) fails closed on the identical gap: a failure
+// `countUnmatchedFailures` could not attribute to any test file, a log
+// whose summary counts don't parse (truncated or unrecognized — spec and
+// tap alike, since TAP's `# fail N` line is exactly as parseable a summary
+// as spec's `ℹ fail`), or a failing-entry count that does not add up to
+// `ℹ fail`/`# fail` + `ℹ cancelled`/`# cancelled` — any of these means the
+// failing-file list used to plan a retry is an undercount, so retrying and
+// passing those named files would wrongly clear the whole check. Returns 0
+// (accounted) or a positive count (unattributed); every family other than
+// spec/tap returns 0 — retry eligibility for those is governed elsewhere
+// and this guard never widens it.
 function unattributedFailureCount(text, family, { cwd = process.cwd() } = {}) {
   if (family !== 'spec' && family !== 'tap') return 0;
   const unmatched = countUnmatchedFailures(text, family, { cwd });
   if (unmatched > 0) return unmatched;
-  if (family !== 'spec') return 0;
   const counts = parseCounts(text, family);
   if (counts === null) return 1;
   const cancelled = cancelledCount(text, family) || 0;
-  const entries = specEntryCount(text);
+  const entries = family === 'spec' ? specEntryCount(text) : tapBlocks(stripAnsi(text).split('\n')).length;
   const expected = counts.fail + cancelled;
   return entries === expected ? 0 : Math.abs(entries - expected);
 }

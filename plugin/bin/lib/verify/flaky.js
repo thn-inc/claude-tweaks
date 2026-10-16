@@ -16,7 +16,7 @@ function planRetry({ failingFiles, flaky, retry, suite, unattributedCount = 0 })
   // the same accounting `baseline.js` already applies) means the file list
   // below is an undercount — retrying and passing only those named files
   // would wrongly clear a check that still has an unaccounted failure.
-  if (unattributedCount > 0) return { retry: false, reason: 'unattributed-failures' };
+  if (unattributedCount > 0) return { retry: false, reason: `unattributed-failures: ${unattributedCount}` };
   const patterns = (flaky && flaky.files) || [];
   const unlisted = failingFiles.filter((f) => !patterns.some((entry) => globToRegExp(entry).test(f)));
   if (unlisted.length) return { retry: false, reason: `unlisted: [${unlisted.join(', ')}]`, unlisted };

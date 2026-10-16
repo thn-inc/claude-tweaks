@@ -43,7 +43,7 @@ test('planRetry: an unattributed failure refuses retry even when every named fai
   const plan = planRetry({
     failingFiles, flaky: { files: ['tests/a.test.js'], maxRetries: 1 }, retry: RETRY, suite: 'tests', unattributedCount,
   });
-  assert.deepStrictEqual(plan, { retry: false, reason: 'unattributed-failures' });
+  assert.deepStrictEqual(plan, { retry: false, reason: 'unattributed-failures: 1' });
 });
 
 test('planRetry: a spec log whose every failure is an allowlisted file still retries and passes as today (#3066 AC2)', () => {
