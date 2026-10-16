@@ -201,6 +201,14 @@ function isPathContained(candidate, root, { orEqual = false } = {}) {
   return candidate.startsWith(root + path.sep);
 }
 
+// A path with every `sep` separator rewritten to `/` — the repo-display form
+// (git output, JSON report IDs, globs). `sep` is a parameter so a test can pin
+// the win32 branch with `path.win32.sep` on any host (#2767). Never apply it to
+// a path that is then opened with fs: that one stays native.
+function toPosix(p, sep = path.sep) {
+  return sep === '/' ? p : p.split(sep).join('/');
+}
+
 // Same three-way check bin/lib/hooks/git-exec.js's own `classify()` uses to
 // recognize a killed subprocess: execFileSync/execFile signal a timeout kill
 // via `killed`/`signal` and, depending on platform and Node version, an
@@ -242,7 +250,7 @@ async function runClassifiedAsync(fn, mapError, { retryOnTimeout = false } = {})
 }
 
 module.exports = {
-  LARGE_MAX_BUFFER_BYTES, escapeRegExp, isPathContained, isTimeoutError, runClassified, runClassifiedAsync,
+  LARGE_MAX_BUFFER_BYTES, escapeRegExp, isPathContained, isTimeoutError, runClassified, runClassifiedAsync, toPosix,
 };
 Object.defineProperty(module.exports, 'GH_TIMEOUT_MS', { enumerable: true, get: getGhTimeoutMs });
 Object.defineProperty(module.exports, 'GIT_TIMEOUT_MS', { enumerable: true, get: getGitTimeoutMs });
