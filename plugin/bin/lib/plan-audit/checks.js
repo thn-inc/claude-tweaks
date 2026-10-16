@@ -555,12 +555,8 @@ function normalizeQuote(text) {
 // word boundary, never as a substring of a longer token.
 const QUOTE_FALLBACK_MIN_WORDS = 3;
 
-function quoteWordCount(quote) {
-  return quote.split(' ').filter(Boolean).length;
-}
-
 function quoteMatchesWholeWord(haystack, quote) {
-  if (quoteWordCount(quote) < QUOTE_FALLBACK_MIN_WORDS) return false;
+  if (quote.split(' ').filter(Boolean).length < QUOTE_FALLBACK_MIN_WORDS) return false;
   const escaped = quote.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`\\b${escaped}\\b`).test(haystack);
 }
@@ -595,14 +591,11 @@ function checkE(specText, planText) {
   // never reported anywhere. Warn-only (ok stays true, same as every other
   // Check E signal): a stale/typo'd waiver id is a plan-authoring mistake to
   // flag, never a build-blocking finding on its own.
+  // `reasons` already holds each waiver id once, first occurrence first.
   const clauseIds = new Set(clauses.map((c) => c.id));
-  const orphanWaivers = [];
-  const seenOrphanIds = new Set();
-  for (const { id, reason } of waivers) {
-    if (clauseIds.has(id) || seenOrphanIds.has(id)) continue;
-    seenOrphanIds.add(id);
-    orphanWaivers.push({ id, reason });
-  }
+  const orphanWaivers = [...reasons]
+    .filter(([id]) => !clauseIds.has(id))
+    .map(([id, reason]) => ({ id, reason }));
   return {
     ok: true, uncovered, waived, unparsed, covered, orphanWaivers,
   };
