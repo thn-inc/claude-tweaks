@@ -156,6 +156,8 @@ The `summary.passed` count includes both PASS and PASS_WITH_CAVEATS stories (sin
 
 **`{RUN_DIR}/report.md`** — human-readable (same format as the report below).
 
+**QA pass stamp (pipeline runs, #3003).** Inside a `/claude-tweaks:flow` pipeline, immediately after `report.json` is written, run `node "${CLAUDE_PLUGIN_ROOT}/bin/qa-stamp.js" --write --report "{RUN_DIR}/report.json" [--stories-dir <dir>]` (pass `--stories-dir` when `STORIES_DIR` is not the default). The CLI writes the stamp only for a clean tree where every story is PASS or PASS_WITH_CAVEATS. Otherwise it prints `{written: false, reason}` and writes nothing; that is expected, not an error. A later `/claude-tweaks:test` call at the same HEAD (a dispatched group's second call) reads the stamp before dispatching stories (`SKILL.md`'s pipeline story selection).
+
 26. Present the aggregated results:
 
 ```
