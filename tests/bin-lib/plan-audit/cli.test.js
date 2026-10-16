@@ -594,3 +594,29 @@ test('#3099: --spec with no value, or beside --bytes or --count-tasks, is a usag
     fs.rmSync(repo, { recursive: true, force: true });
   }
 });
+
+// ── #3099 Task 7 — Check B excludes the audited plan file itself ───────────
+test('#3099: Check B never reports the audited plan file itself as unplanned, but a real unplanned file still is', () => {
+  const repo = makeTmpRepo();
+  fs.writeFileSync(path.join(repo, 'a.js'), '// zebrakeyword\n');
+  try {
+    const plan = writePlan(repo, [
+      'Scope keywords: zebrakeyword',
+      '### Task 1: Do a thing',
+      '**Files:**',
+      '- Modify: `a.js`',
+    ].join('\n'));
+    const first = runCli(plan, repo);
+    const reportFirst = JSON.parse(first.stdout.split('\n')[0]);
+    assert.deepStrictEqual(reportFirst.checkB.unplanned, []);
+    assert.strictEqual(first.exitCode, 0);
+
+    fs.writeFileSync(path.join(repo, 'stray.js'), '// zebrakeyword\n');
+    const second = runCli(plan, repo);
+    const reportSecond = JSON.parse(second.stdout.split('\n')[0]);
+    assert.deepStrictEqual(reportSecond.checkB.unplanned, ['stray.js']);
+    assert.notStrictEqual(second.exitCode, 0);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});

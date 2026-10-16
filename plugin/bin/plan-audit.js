@@ -128,7 +128,10 @@ function main() {
 
   const report = {
     checkA: checkA(entries, repoRoot),
-    checkB: checkB(scopeKeywords, entries.map((e) => e.path), repoRoot),
+    // #3099: the audited plan file necessarily contains its own Scope
+    // keywords line — add it to the planned set so Check B never reports
+    // the plan on itself; a real unplanned file is unaffected.
+    checkB: checkB(scopeKeywords, [...entries.map((e) => e.path), path.relative(repoRoot, path.resolve(parsed.planFile))], repoRoot),
     checkC: checkC(verificationChecks, repoRoot, {}, unparseableStep2s),
     checkD: checkDResult,
     headroom: headroomCheck(entries, repoRoot),
