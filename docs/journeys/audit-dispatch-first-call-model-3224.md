@@ -26,7 +26,7 @@ files:
 - **URL:** `.claude-tweaks/pipelines/{run-id}/decisions.md`
 - **Action:** Find the line `- AUTO {time} — Dispatch group [{issues}]: first-call model resolved to {model} (source: {source}). Reversibility: n/a.`
 - **Should feel:** Like reading a receipt: one line per group, written after the first call returned, with the cause attached.
-- **Should understand:** `source: default` or `source: policy` means the Capable row resolved as configured; `source: ceiling` means the project's `model-ceiling` clamped it (`profiles.js`'s `resolve()`); `degraded:session-failure` means an earlier failure this session blacklisted the model.
+- **Should understand:** `source: default` or `source: policy` means the Capable row resolved as configured; `source: stance` means the project's `model-stance` shifted only the effort, never the model; `source: ceiling` means the project's `model-ceiling` clamped it (`profiles.js`'s `resolve()`); `degraded:session-failure` means an earlier failure this session blacklisted the model.
 - **Red flags:** No such line for a group whose first call ran (the dispatching session skipped the log step); the line appearing *above* the first call's own `/flow` entries in the file, which means it was written before the dispatch and could have pushed `/flow`'s run-directory adoption into recovery (case 3).
 
 ### 3. Reproduce the resolution locally — terminal
