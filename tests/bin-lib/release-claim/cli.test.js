@@ -287,6 +287,42 @@ test('failed PUT (500): exit 1, no comment, FAILED line still logged; missing ru
   assert.equal(fs.existsSync(path.join(shadowRunDir, 'decisions.md')), false);
 });
 
+// #3198: target.ok is resolved before release.releaseClaim's own GitHub
+// round-trips run — if a concurrent archival removes runDir in that window,
+// the stale target.ok must not let the later appendEntry call recreate
+// runDir via its lock's own bootstrap-parent-mkdir path. The claim release
+// and comment (independent of the local run dir) must still go through.
+test('#3198: run dir removed after target resolves but before the decisions.md write — claim still releases, no files recreated at the old path', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ content: live(RUN_DIR_NAME), out, mainRoot: rootOf(runDir) });
+  // `target` (computed early, with runDir still present) must not be trusted
+  // for the LATE decisions.md write — simulate a concurrent archive-run pass
+  // removing runDir in between by deleting it as a side effect of the first
+  // gh call release.releaseClaim makes (the claim-blob GET), mirroring the
+  // real race's timing (GitHub round-trips are what the window is wide
+  // enough for).
+  const originalRunner = d.runner;
+  let removed = false;
+  d.runner = (a) => {
+    const result = originalRunner(a);
+    if (!removed && isGet(a)) {
+      fs.rmSync(runDir, { recursive: true, force: true });
+      removed = true;
+    }
+    return result;
+  };
+  assert.equal(fs.existsSync(runDir), true, 'precondition: run dir exists when target is resolved');
+  const code = run(['999', '--run', runDir, '--reason', 'merged: spec 999'], d);
+  assert.equal(code, 0, 'the claim release itself must still succeed');
+  assert.deepEqual(calls.map(callKind), ['get', 'put', 'comment', 'bot:in-progress']);
+  const env = envelope(out);
+  assert.equal(env.outcome, 'released');
+  assert.equal(env.logged, false, 'the local decisions.md write must be skipped, not recreate the run dir');
+  assert.equal(fs.existsSync(runDir), false, 'nothing must be recreated at the old run-dir path');
+  assert.match(stderrOf(out), /run dir no longer exists/);
+});
+
 // Wiring, not behavior: every test above injects its own deps, so a dropped
 // `gitRunner` in realDeps would leave this whole suite green while the real
 // CLI silently fell back to the contents-API transport #787 moved off.
