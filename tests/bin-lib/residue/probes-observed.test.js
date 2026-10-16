@@ -214,6 +214,17 @@ test('AC2: a tag absent from both local and remote is reported with remedy recor
   assert.strictEqual(untaggedFinding.remedy, 'record', 'missing tag finding should have remedy record');
 });
 
+test('a remote-only tag newer than HEAD\'s CHANGELOG is not reported as a missing heading (#2882)', () => {
+  const run = mockRun({
+    manifestAtBootstrap: '{".": "1.0.0"}',
+    changelog: '# Changelog\n\n## v1.0.0 — old\n',
+    tags: 'v1.0.0\n',
+    remoteTags: 'abc123\trefs/tags/v1.0.0\nabc125\trefs/tags/v1.2.0\n',
+  });
+  const { findings } = probeRelease({ scope: SCOPE, run });
+  assert.deepStrictEqual(findings, [], 'a tag this checkout never fetched cannot demand a CHANGELOG heading it has not merged yet');
+});
+
 test('AC3: when remote read fails, probe runs on local tags with reason naming the fallback', () => {
   const run = mockRun({
     manifestAtBootstrap: '{".": "1.0.0"}',

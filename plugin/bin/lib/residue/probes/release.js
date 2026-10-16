@@ -87,9 +87,12 @@ function probeRelease({ scope, run } = {}) {
   const localTags = tagList.split('\n').map((t) => t.trim()).filter(Boolean)
     .map((t) => t.replace(/^v/, ''));
 
-  // Union remote and local tags, then apply version filter
-  const allTags = [...new Set([...localTags, ...remoteTags])];
-  const tags = allTags.filter((v) => /^\d+\.\d+\.\d+$/.test(v) && versionGte(v, anchor));
+  // The tag → heading check reads local tags only: a remote-only tag newer
+  // than this checkout's CHANGELOG would report a heading HEAD can't have yet.
+  // The remote/local union only clears the heading → tag check below.
+  const inRange = (v) => /^\d+\.\d+\.\d+$/.test(v) && versionGte(v, anchor);
+  const tags = localTags.filter(inRange);
+  const knownTags = [...new Set([...localTags, ...remoteTags])].filter(inRange);
 
   // Both heading grammars a post-bootstrap CHANGELOG can hold, since the very
   // entries this probe checks straddle the boundary: the pre-migration
@@ -105,7 +108,7 @@ function probeRelease({ scope, run } = {}) {
   while ((m = headingRe.exec(changelog))) headings.push(m[1] || m[2] || m[3]);
   const headingsAtOrAfterAnchor = headings.filter((v) => versionGte(v, anchor));
 
-  const tagSet = new Set(tags);
+  const tagSet = new Set(knownTags);
   const headingSet = new Set(headingsAtOrAfterAnchor);
   const findings = [];
 
