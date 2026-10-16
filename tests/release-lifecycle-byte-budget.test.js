@@ -14,10 +14,18 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const byteSize = (...p) => Buffer.byteLength(fs.readFileSync(path.join(ROOT, ...p)));
+// #3113: measure LF bytes, not whatever line ending the checkout happens to carry --
+// a Windows core.autocrlf checkout reads CRLF, which inflates Buffer.byteLength past
+// a ceiling derived from the LF blob CI actually sees. readText() normalizes \r\n -> \n
+// before the byte count, the same fix tests/helpers/read-skill.js already applies for
+// prose-literal assertions (#2763).
+const byteSizeOfPath = (absPath) => Buffer.byteLength(readText(absPath), 'utf8');
+const byteSize = (...p) => byteSizeOfPath(path.join(ROOT, ...p));
 
 // Baselines captured from this build's own before/after measurement (git show
 // HEAD~N or the pre-edit `wc -c`, recorded once here rather than re-derived from
@@ -43,4 +51,26 @@ test('tidy/scan-procedures.md does not grow past its pre-#2257 byte count (AC6)'
     size <= SCAN_PROCEDURES_BASELINE,
     `tidy/scan-procedures.md is ${size} bytes, over its ${SCAN_PROCEDURES_BASELINE}-byte pre-#2257 baseline — this file is already past the 40 KB warning tier (docs/plugin-structure.md), so a later edit must trim elsewhere to stay net-zero-or-shrink, not silently grow it further`,
   );
+});
+
+test('byteSize measures LF bytes even when the on-disk file is CRLF (#3113 AC1)', () => {
+  const fixture = path.join(os.tmpdir(), `crlf-budget-fixture-${process.pid}.md`);
+  const lfText = 'line one\nline two\nline three\n';
+  const crlfText = lfText.replace(/\n/g, '\r\n');
+  fs.writeFileSync(fixture, crlfText);
+  try {
+    const lfBytes = Buffer.byteLength(lfText, 'utf8');
+    const crlfBytes = Buffer.byteLength(crlfText, 'utf8');
+    const measured = byteSizeOfPath(fixture);
+    // Precondition: the two really do differ, or this fixture proves nothing.
+    assert.ok(crlfBytes > lfBytes, 'fixture setup error: CRLF text must be larger than LF text');
+    assert.strictEqual(measured, lfBytes, 'byteSize must count the LF byte length, not the inflated CRLF checkout byte length');
+    // Both directions of the AC: a ceiling at the true LF size passes; a ceiling
+    // one byte below it (the file's LF size genuinely over budget) still fails --
+    // normalization must not make every comparison vacuously pass.
+    assert.ok(measured <= lfBytes, 'a ceiling at the LF size must pass');
+    assert.ok(!(measured <= lfBytes - 1), 'a ceiling below the true LF size must still fail');
+  } finally {
+    fs.unlinkSync(fixture);
+  }
 });

@@ -11,7 +11,7 @@ Input Discipline) — so every `${CLAUDE_PLUGIN_ROOT}`-style env-var reference e
 in a template resolves to nothing inside the dispatched agent's own shell, forcing it to
 rediscover the value from scratch (`--help` probes, `find` searches, trial-and-error against CLI
 argument enums — the exact rediscovery this section eliminates). The dispatching session already
-resolved six of these facts earlier in the same firing (Steps 1-4); it resolves them **once
+resolved seven of these facts earlier in the same firing (Steps 1-4); it resolves them **once
 more here, as literals**, before composing either call — plus one standing instruction (item 7)
 that needs no resolution, only inclusion:
 
@@ -47,7 +47,21 @@ that needs no resolution, only inclusion:
    foreground call with a large explicit timeout, or poll for it synchronously within one tool
    call. If you yourself dispatch nested subagents (via `superpowers:subagent-driven-development`,
    a review-lens fan-out, or any other Task/Agent call), give them this same instruction — the
-   identical trap recurs one level deeper otherwise.
+   identical trap recurs one level deeper otherwise. **Mark every interim reply (#2714):** whenever
+   you end a turn before your genuine final reply — e.g. narrating progress while a nested
+   `Agent`-tool dispatch you launched is still pending, per each template's Foreground execution
+   clause carve-out (#2533) — make that reply's last non-empty line
+   `INTERIM_STATUS: {one-line progress note}`, never `STATUS: {WORD}`, which is reserved for your
+   genuine final reply. An unmarked interim reply is graded by the `SubagentStop` hook as a final
+   reply missing its status line and logged as a false-positive `contract-violation`. Forward
+   this marker rule, with the rest of this item, to any nested dispatch that itself dispatches.
+8. **Selected at** (#3131) — one literal line, `Selected at: {ISO}`: the modification time of
+   this firing's session-scoped `dispatch-groups.json` (`queue-pull-script.md`'s output, resolved
+   via `sessionTmpPath` as `next-ranking.md` does). That pull already dropped every
+   `bot:in-progress` record, so each selected record lacked the label at that moment. A Task call
+   cannot see the dispatcher's files' timing; Settle's contested-claim self-report compares this
+   against the holder's `claimedAt` to tell a missing projection from a claim race. An unreadable
+   file → `Selected at: unknown`; never block the dispatch on it.
 
 Substitute this whole block, filled in with this firing's actual resolved values, as
 `{context-pack}` immediately after each call's opening `Task scope:` paragraph below. This is
@@ -67,6 +81,23 @@ does not pin it the `merge` bundle keeps both integration-model branches, and it
 value is what the agent acts on. These `{plugin-root}` lines are placeholders to the
 composed-bytes scanner, not call sites of their own — the bundles are measured at their skill
 call sites. Compose both before either dispatch anyway: if the compose command is unavailable or exits non-zero, read the named source files directly — which, for the dispatched agent, each template citation's own fallback already says.
+
+**Log each group's resolved first-call model (#3212).** This is a dispatching-session step, not
+part of `{context-pack}`. When resolving the first call's profile
+(`node "{plugin-root}/bin/resolve-profile.js" capable`, the template below), keep the resolved
+`model` and `source`; after the first call returns — never before it is dispatched — write one
+line per group to that group's `{minted-run-dir}/decisions.md` by running
+`node "{plugin-root}/bin/log-decision.js" --run "{minted-run-dir}" --status AUTO --step "Dispatch group {group}" --text "first-call model resolved to {model} (source: {source})" --reversibility n/a`,
+which produces, per `_shared/auto-decision-log.md`'s canonical entry schema:
+`- AUTO {time} — Dispatch group {group}: first-call model resolved to {model} (source: {source}). Reversibility: n/a.`
+where `{model}` and `{source}` are the `model` and `source` fields of the `resolve-profile.js
+capable` JSON, and `{group}` is the group's comma-joined issue list in brackets (e.g. `[42]` or
+`[42,43]`). The timing matters: before the first call, the minted directory's `decisions.md` may
+hold only `/flow` Step 2.8's claim-log lines, and any other line makes `/flow` Step 3 treat the
+directory as a recovery (adoption case 3, `bin/lib/flow/preflight.js` via
+`bin/lib/log-decision/claim-log.js`'s `classifyDecisions`) instead of a fresh mint (case 2). A
+`source` of `ceiling` in the resolver's output means the clamp described under the first-call
+template applied.
 
 ## First call — build,test
 
@@ -163,10 +194,18 @@ Status line (required): on its own trailing line, after everything above -- the 
 non-empty line -- write exactly `STATUS: {WORD}`, where {WORD} is one of: DONE /
 DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
 
-[Use: Standard] -- this dispatch wraps build+test execution, not analysis; the pipeline's own
-steps select their own models as usual. Resolve via `node "{plugin-root}/bin/resolve-profile.js" standard`
-(contract § Model Selection).
+[Use: Capable] -- raised from Standard: bypassed /flow in 6 of 10 firings vs 0 of 3 (#3212); the
+pipeline's own steps still select their own models as usual. Resolve via
+`node "{plugin-root}/bin/resolve-profile.js" capable` (contract § Model Selection).
 ```
+
+**The `model-ceiling` clamp (#3212).** `[Use: Capable]` above does not guarantee Opus. A project
+`model-ceiling: standard` policy value clamps the resolved `capable` profile back to `sonnet` —
+`plugin/bin/lib/model-profiles/profiles.js`'s `resolve()`, the `model-ceiling` clamp at lines
+122-128, which reports `source: 'ceiling'` in `resolve-profile.js`'s JSON. On such a project this
+call runs on Sonnet by configuration, an expected and named outcome; the per-group log line in the
+Context pack section above records it. The same function's later diff-size cap does not apply
+here: it fires only when the caller passes `--diff-facts`, and this invocation never does.
 
 The Foreground execution clause above is backed by a mechanical check, not prose alone (#2429):
 `sequential-execution.md`'s "The loop" section verifies this call's `STATUS:` line against the

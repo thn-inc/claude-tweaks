@@ -9,9 +9,10 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record.js');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(REPO_ROOT, rel));
 
 const GATE = read('plugin/skills/_shared/deferral-gate.md');
 const LEDGER = read('plugin/skills/_shared/ledger-format.md');
@@ -68,6 +69,19 @@ for (const anchor of BAD_REASON_ANCHORS) {
     assert.ok(GATE.includes(anchor));
   });
 }
+
+test('deferral-gate.md\'s Bad reasons list says "pre-existing" alone is not a defer reason for an in-diff file, and names build/SKILL.md as a consumer (#3117)', () => {
+  const start = GATE.indexOf('## Bad reasons to skip a fix');
+  assert.ok(start >= 0, 'Bad reasons heading must exist');
+  const nextHeading = GATE.indexOf('\n## ', start + 1);
+  const section = GATE.slice(start, nextHeading === -1 ? undefined : nextHeading);
+  assert.ok(section.includes('pre-existence alone is never a defer reason'), 'missing the pre-existing bad-reason bullet');
+  assert.ok(section.includes('pre-existing-outside-diff'), 'missing reference to pre-existing-outside-diff');
+  const outOfScopeIdx = section.indexOf('Out of scope of this plan');
+  const preExistingIdx = section.indexOf('pre-existence alone is never a defer reason');
+  assert.ok(outOfScopeIdx > -1 && preExistingIdx > outOfScopeIdx, 'pre-existing bullet must follow the Out of scope bullet');
+  assert.ok(GATE.includes('skills/build/SKILL.md'), 'consumer list must name skills/build/SKILL.md');
+});
 
 test('deferral-gate.md\'s bundling exception cites materiality-floor.md by literal path', () => {
   assert.ok(GATE.includes('_shared/materiality-floor.md'));

@@ -14,8 +14,11 @@ https://www.anthropic.com/engineering/april-23-postmortem
 
 Anthropic lowered the default reasoning effort from `high` to `medium` on March 4, 2026 to cut
 latency, then reversed the change on April 7 after user feedback — "Users told us they'd prefer
-to default to higher intelligence and opt into lower effort for simple tasks." Current defaults
-are `xhigh` for Opus 4.7 and `high` for other models. A skill's own effort-profile assumptions
+to default to higher intelligence and opt into lower effort for simple tasks." As of that
+postmortem's publication (April 2026), defaults were `xhigh` for Opus 4.7 and `high` for other
+models — check the current platform defaults before relying on this, since newer model
+generations have since shipped and reasoning-effort defaults are exactly the kind of thing this
+doc warns can silently change. A skill's own effort-profile assumptions
 (e.g. `_shared/subagent-dispatch-core.md`'s Model Selection table) can silently stop matching
 reality if the platform default moves without that skill being re-checked.
 

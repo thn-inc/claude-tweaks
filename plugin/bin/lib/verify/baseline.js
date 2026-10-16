@@ -10,8 +10,12 @@
 // spawn error, a base run with no numeric exit) is never "fails at base" — a
 // base run counts only when its own log names the file as failing with every
 // test that fails in it at HEAD, and a file is flaky only when its isolated
-// log shows tests ran and passed. git and runOne are injected so the tests
-// never touch a real repo; realGit is the CLI's seam.
+// log shows tests ran and passed. An isolated run that fails a test base does
+// not cover gets one retry (#3111) before being called attributable — when
+// the retry's own failures are covered by base (or it passes cleanly), the
+// extra failure did not reproduce and is reported flaky instead. git and
+// runOne are injected so the tests never touch a real repo; realGit is the
+// CLI's seam.
 'use strict';
 
 const fs = require('fs');
@@ -25,8 +29,11 @@ const {
 
 // `warn` and `rmSync` are injectable so a test can force a failed cleanup.
 function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs.rmSync } = {}) {
-  const git = (args) => String(execFileSync('git', args, {
-    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+  // `input`, when given, is piped to the child's stdin (the two batch-check
+  // / hash-object calls below); every other call site passes none, and stdin
+  // stays closed exactly as it did before `input` existed.
+  const git = (args, input) => String(execFileSync('git', args, {
+    cwd, encoding: 'utf8', stdio: input === undefined ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'], input, windowsHide: true,
   })).trim();
   return {
     repoRoot: () => git(['rev-parse', '--show-toplevel']),
@@ -43,17 +50,37 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
         throw err;
       }
     },
-    fileExistsAt: (sha, file) => {
-      try { git(['cat-file', '-e', `${sha}:${file}`]); return true; } catch { return false; }
-    },
-    // Whether the working-tree file (repo-root-relative path) hashes to the
-    // same blob it has at `sha` — clean filters applied, so a CRLF checkout
-    // of an unchanged LF file still matches. Any git failure → false.
-    sameAtBase: (sha, file) => {
-      try {
-        const root = git(['rev-parse', '--show-toplevel']);
-        return git(['rev-parse', `${sha}:${file}`]) === git(['hash-object', `--path=${file}`, path.join(root, file)]);
-      } catch { return false; }
+    // Existence-at-base and sameness-at-base for every `files` entry (each a
+    // repo-root-relative path) in two spawns total, however many files there
+    // are: one `cat-file --batch-check` for the base blob sha (a missing
+    // object reports `<input> missing`, never a sha), and one
+    // `hash-object --stdin-paths` for the working-tree blob (clean filters
+    // applied per path, same as `--path=<file>` would, so a CRLF checkout of
+    // an unchanged LF file still matches). `root` is passed in rather than
+    // re-resolved — the caller already holds it from its own repoRoot() call.
+    // A file absent from the working tree is never handed to hash-object —
+    // fs.existsSync is not a git spawn, and one missing path would otherwise
+    // fail the whole batch, not just that file.
+    batchBaseInfo: (sha, files, root) => {
+      const result = new Map();
+      if (files.length === 0) return result;
+      const checkOut = git(['cat-file', '--batch-check=%(objectname)'], `${files.map((f) => `${sha}:${f}`).join('\n')}\n`).split('\n');
+      const atBaseSha = files.map((_, i) => {
+        const line = checkOut[i] || '';
+        return /missing$/.test(line) ? null : line.trim();
+      });
+      const onDisk = files.map((f) => fs.existsSync(path.join(root, f)));
+      const hashable = files.filter((f, i) => atBaseSha[i] !== null && onDisk[i]);
+      const hashes = new Map();
+      if (hashable.length > 0) {
+        const hashOut = git(['hash-object', '--stdin-paths'], `${hashable.map((f) => path.join(root, f)).join('\n')}\n`).split('\n');
+        hashable.forEach((f, i) => hashes.set(f, (hashOut[i] || '').trim()));
+      }
+      files.forEach((f, i) => {
+        const exists = atBaseSha[i] !== null;
+        result.set(f, { exists, same: exists && hashes.get(f) === atBaseSha[i] });
+      });
+      return result;
     },
     addWorktree: (sha) => {
       const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-'));
@@ -78,7 +105,24 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
         warn(`verify.js: could not remove the baseline scratch worktree ${dir} — remove it manually: git worktree remove --force ${dir}\n`);
       }
     },
+    // Every worktree `git` currently has registered against this repo, as
+    // absolute paths — read-only, so the caller can name a stale one without
+    // ever sweeping it itself (#3064).
+    listWorktrees: () => {
+      try {
+        return [...git(['worktree', 'list', '--porcelain']).matchAll(/^worktree (.+)$/gm)].map((m) => m[1]);
+      } catch { return []; }
+    },
   };
+}
+
+// A stale `ct-verify-base-*` scratch worktree left behind by an uncatchable
+// kill (Windows TerminateProcess; or, pre-#3064, any POSIX signal) is named
+// by the caller, never swept here — a sibling session's own live scratch
+// worktree looks identical to `git worktree list`, so removing it
+// automatically risks deleting work that is still in flight.
+function findStaleBaselineWorktrees(listWorktrees) {
+  return listWorktrees().filter((dir) => path.basename(path.dirname(dir)).startsWith('ct-verify-base-'));
 }
 
 // The same `/` → `+` log-name slug flaky.js's retryLogName uses, so two
@@ -183,6 +227,23 @@ function readLog(logPath) {
   try { return stripAnsi(fs.readFileSync(logPath, 'utf8')); } catch { return null; }
 }
 
+// #3167: realpath a directory before it is ever compared against a node
+// --test log's own printed paths. On macOS `os.tmpdir()` — and so the
+// `--baseline` scratch worktree created under it — can sit behind a symlink
+// (`/var` -> `/private/var`), while node reports the real path.
+// `extract.js`'s `relativize()` does a plain string-prefix compare, so a
+// symlinked dir never matches and every file under it is misclassified
+// `attributable`. Fails open to the original value — tests pass
+// non-existent paths (`/repo`, `/scratch`) that cannot be resolved.
+function tryRealpath(dir) {
+  try { return fs.realpathSync(dir); } catch { return dir; }
+}
+
+// Conventional process exit codes for an unhandled signal (128 + signal
+// number) — what every shell and CI runner already expects a killed process
+// to report (#3064).
+const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
+
 async function adjudicate({
   checks, baselineCmds, base, baseSha, cwd = null, logDir, runOne, spawnImpl, now = Date.now,
   envOf = () => null, timeoutOf = () => null, git, concurrency = 4, env = process.env,
@@ -190,7 +251,7 @@ async function adjudicate({
   const header = { base, baseSha };
   const ineligible = (reason) => ({ ...header, eligible: false, reason });
   const work = [];
-  const headDir = cwd || process.cwd();
+  const headDir = tryRealpath(cwd || process.cwd());
   for (const c of checks.filter((x) => x.skipped || x.exitCode !== 0)) {
     if (c.skipped) return ineligible(`${c.name} skipped (${c.skipped})`);
     if (c.spawnError !== undefined) return ineligible(`${c.name} could not spawn`);
@@ -247,15 +308,23 @@ async function adjudicate({
   // not sit under git's own toplevel spelling (a junction, a subst drive, an
   // 8.3 name) would put the base-side run outside the scratch worktree —
   // possibly onto HEAD's own tree — so it is never adjudicated.
-  const root = git.repoRoot();
+  // Realpath'd like headDir (#3167), or a symlinked toplevel spelling would
+  // put an ordinary in-repo cwd outside the repository root.
+  const root = tryRealpath(git.repoRoot());
   const sub = path.relative(root, headDir).replace(/\\/g, '/');
   if (sub === '..' || sub.startsWith('../') || path.isAbsolute(sub)) {
     return ineligible(`working directory ${headDir} does not resolve under the repository root ${root}`);
   }
   const repoRel = (file) => (sub ? `${sub}/${file}` : file);
-  const atBase = work.map((w) => git.fileExistsAt(baseSha, repoRel(w.file)));
-  const unchanged = work.map((w, k) => atBase[k] && git.sameAtBase(baseSha, repoRel(w.file)));
+  // One batched call for every failing file's existence-at-base and
+  // sameness-at-base, instead of up to four per-file git spawns (#3070) — the
+  // repo root above is passed straight through rather than resolved again.
+  const baseInfo = git.batchBaseInfo(baseSha, work.map((w) => repoRel(w.file)), root);
+  process.stderr.write(`DEBUG baseInfo ${JSON.stringify([...baseInfo.entries()])} root=${root} sub=${sub}\n`);
+  const atBase = work.map((w) => baseInfo.get(repoRel(w.file)).exists);
+  const unchanged = work.map((w) => baseInfo.get(repoRel(w.file)).same);
   let scratch = null;
+  let signalHandlers = [];
   // #3063: a single-file run bounds at the same timeout as the check's own
   // full-suite --cmd-timeout (a generous bound — one file should finish
   // well inside the budget the whole suite gets) when the caller declared
@@ -266,7 +335,19 @@ async function adjudicate({
   });
   const headResolvesDeps = Boolean(env.NODE_PATH) || hasNodeModulesUpward(headDir);
   try {
-    if (atBase.some(Boolean)) scratch = git.addWorktree(baseSha);
+    if (atBase.some(Boolean)) {
+      // Realpath'd like headDir (#3167): addWorktree may return a symlinked path.
+      scratch = tryRealpath(git.addWorktree(baseSha));
+      // While the scratch worktree exists, a Ctrl-C or kill removes it
+      // before exiting with the signal's conventional code (128 + signal
+      // number) — otherwise the process ends before the `finally` below
+      // ever runs, leaving the worktree and its checkout behind with no
+      // trace (#3064). Deregistered in `finally` either way, so a clean
+      // completion never leaks a listener into the next adjudicate() call
+      // in the same process.
+      signalHandlers = Object.entries(SIGNAL_EXIT_CODES).map(([sig, code]) => [sig, () => { git.removeWorktree(scratch); process.exit(code); }]);
+      for (const [sig, handler] of signalHandlers) process.on(sig, handler);
+    }
     const baseDir = scratch && (sub ? path.join(scratch, ...sub.split('/')) : scratch);
     const baseRuns = await pool(work, concurrency, (w, k) => (atBase[k] ? run(w, 'baseline', baseDir) : null));
     // A numeric non-zero exit alone proves nothing (a typo'd template, a scratch
@@ -360,6 +441,23 @@ async function adjudicate({
       if (!waived.every(passedIn(tree))) return null;
       return { log: r.logPath, waived };
     };
+    // #3111: an isolated HEAD run that fails a test base does not cover would
+    // otherwise be attributable outright — but that extra failure may itself
+    // be a one-off flake rather than a real regression. Re-run the file once
+    // more in isolation before finalizing that verdict; when the retry's own
+    // failing set is covered by base (or the retry passes cleanly), the
+    // extra failure did not reproduce, so report it flaky instead.
+    // Each HEAD verdict is computed once here and reused below — both to
+    // decide `needsRetry` and to classify `work` — rather than re-running the
+    // same check twice per file.
+    const headLoadFail = work.map((w, k) => failsToLoadAtBase(k));
+    const headRanClean = headRuns.map((r, k) => ranCleanly(r, k));
+    const headBaselineIso = headRuns.map((r, k) => baselineInIsolation(r, k));
+    const needsRetry = work.map((w, k) => (
+      Boolean(headRuns[k]) && typeof headRuns[k].exitCode === 'number' && headRuns[k].exitCode !== 0
+      && !headLoadFail[k] && !headRanClean[k] && !headBaselineIso[k]
+    ));
+    const retryRuns = await pool(work, concurrency, (w, k) => (needsRetry[k] ? run(w, 'isolated-retry', cwd) : null));
     const baselineFailing = [];
     const flakyPassed = [];
     const flakyLogs = {};
@@ -374,13 +472,15 @@ async function adjudicate({
     const timedOut = [];
     work.forEach((w, k) => {
       (failingByCheck[w.check] = failingByCheck[w.check] || []).push(w.file);
-      if ((baseRuns[k] && baseRuns[k].timedOut) || (headRuns[k] && headRuns[k].timedOut)) timedOut.push(w.file);
-      if (failsToLoadAtBase(k)) baselineFailing.push(w.file);
-      else if (ranCleanly(headRuns[k], k)) { flakyPassed.push(w.file); flakyLogs[w.file] = headRuns[k].logPath; }
-      else {
-        const iso = baselineInIsolation(headRuns[k], k);
-        if (iso) { baselineFailing.push(w.file); baselineIsolated[w.file] = iso; } else attributable.push(w.file);
+      if ((baseRuns[k] && baseRuns[k].timedOut) || (headRuns[k] && headRuns[k].timedOut)
+        || (retryRuns[k] && retryRuns[k].timedOut)) timedOut.push(w.file);
+      if (headLoadFail[k]) { baselineFailing.push(w.file); return; }
+      if (headRanClean[k]) { flakyPassed.push(w.file); flakyLogs[w.file] = headRuns[k].logPath; return; }
+      if (headBaselineIso[k]) { baselineFailing.push(w.file); baselineIsolated[w.file] = headBaselineIso[k]; return; }
+      if (needsRetry[k] && (ranCleanly(retryRuns[k], k) || baselineInIsolation(retryRuns[k], k))) {
+        flakyPassed.push(w.file); flakyLogs[w.file] = retryRuns[k].logPath; return;
       }
+      attributable.push(w.file);
     });
     return {
       ...header,
@@ -396,8 +496,9 @@ async function adjudicate({
       timedOut,
     };
   } finally {
+    for (const [sig, handler] of signalHandlers) process.removeListener(sig, handler);
     if (scratch) git.removeWorktree(scratch);
   }
 }
 
-module.exports = { adjudicate, realGit };
+module.exports = { adjudicate, realGit, findStaleBaselineWorktrees };

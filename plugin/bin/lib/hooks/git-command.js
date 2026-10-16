@@ -47,6 +47,10 @@ function splitSegments(command) {
     }
     if (ch === '&' && str[i + 1] === '&') { segments.push(current); current = ''; i += 1; continue; }
     if (ch === '|' && str[i + 1] === '|') { segments.push(current); current = ''; i += 1; continue; }
+    // `>|` is bash's noclobber-override redirect operator, not a pipe — a
+    // glued `|` immediately after `>` (#3080) must not fabricate a segment
+    // break here, or the operator token never reaches the tokenizer whole.
+    if (ch === '|' && current.endsWith('>')) { current += ch; continue; }
     if (ch === ';' || ch === '|' || ch === '\n') { segments.push(current); current = ''; continue; }
     // Unquoted `#` at the start of a word begins a bash comment that runs to
     // the end of the line — real bash never executes anything after it, so
@@ -443,6 +447,42 @@ function gitTargets(command, cwd) {
   return gitTargetsFrom(resolvedGitSegments(command, cwd));
 }
 
+// #3061: does this command invoke `powershell`/`pwsh` with `-Command` or
+// `-EncodedCommand`? Both hand the interpreter literal (or base64) script
+// text this module cannot read — the exact class `sh -c`/`python -c` already
+// are, deliberately left unparsed (see fileWriteTargets' header just below).
+// Unlike that class, this is the one PowerShell shape pre-tool-use.js's
+// checkPowershellOpaqueCommand gate treats as a content-agnostic DENY rather
+// than falling through to this module's usual "ambiguity resolves to allow"
+// — so this function only has to answer "is the shape present", never try to
+// read what the text contains. `-File <path>` alone (no -Command, no
+// -EncodedCommand) is a plain script-path invocation — the same
+// not-opaque-text category `bash script.sh` already falls into by never
+// matching any guarded word at all — and this function does not flag it.
+// Case-insensitive (Windows exe lookups and PowerShell's own flag matching
+// both are); abbreviated flag forms (-Com, -EncodedCom, …) are deliberately
+// NOT matched, the same narrow-miss posture every best-effort parser in this
+// module already accepts in exchange for never fabricating a false deny.
+const POWERSHELL_LEADS = new Set(['powershell', 'pwsh']);
+const POWERSHELL_OPAQUE_FLAGS = new Set(['-command', '-encodedcommand']);
+function powershellOpaqueCommand(command, cwd) {
+  let found = false;
+  forEachCommandSegment(command, cwd, (t) => {
+    if (found || !t.length) return;
+    let i = 0;
+    while (i < t.length && SIMPLE_ASSIGNMENT_RE.test(t[i])) i += 1;
+    if (i >= t.length) return;
+    const lead = t[i].toLowerCase().replace(/\.exe$/, '');
+    const cut = Math.max(lead.lastIndexOf('/'), lead.lastIndexOf('\\'));
+    const base = cut >= 0 ? lead.slice(cut + 1) : lead;
+    if (!POWERSHELL_LEADS.has(base)) return;
+    for (let j = i + 1; j < t.length; j++) {
+      if (POWERSHELL_OPAQUE_FLAGS.has(t[j].toLowerCase())) { found = true; return; }
+    }
+  });
+  return found;
+}
+
 // Best-effort detection of non-git, non-Edit/Write direct file-write shapes in
 // a Bash command. Every shape here is a word in GUARDED_PROGRAM_WORDS.write (below),
 // from which bash-prefilter.js derives PRE_TOOL_USE_WORDS — so a shape added there
@@ -454,12 +494,16 @@ function gitTargets(command, cwd) {
 //
 // Still NOT covered, and deliberately (see the coverage block in
 // skills/_shared/policy-schema-coverage.md for the measured rationale):
-//   - bare shell redirection (`>`, `>>`) — no command word for the prefilter to
-//     key on, so catching it means running the full handler on EVERY Bash call.
-//     The measured marginal cost (full path minus skip path) is in
-//     skills/_shared/policy-schema-coverage.md.
 //   - `python -c`, `sh -c`, `awk` program strings — the write target lives
 //     inside an opaque program and is not statically knowable at any cost.
+//
+// Bare shell redirection (`>`, `>>`, `>|`, `&>`, `&>>`, fd-prefixed `N>`/`N>>`)
+// IS covered (#3080): redirectWriteTargets below scans every segment's token
+// list regardless of t[0], since a redirection isn't gated by a command word
+// the way the shapes above are. bash-prefilter.js's hasFileRedirection keeps
+// the common `2>&1`/`> /dev/null` shapes on the skip path (#70's dead-code
+// trap applies here too — a parser branch the prefilter never reaches for
+// real traffic is dead).
 //
 // Ambiguity resolves to "no target" (allow), matching gitTargets' own safety
 // posture: never fabricate a target from a path this can't prove.
@@ -476,6 +520,57 @@ function resolveWriteTarget(effCwd, raw) {
   if (path.isAbsolute(stripped)) return path.resolve(stripped);
   if (effCwd === null) return null; // cwd UNKNOWN and a relative path — not provable
   return path.resolve(effCwd, stripped);
+}
+
+// A redirection's RHS that is a file-descriptor duplication (`>&2`, `2>&1`),
+// never a file target — distinct from resolveWriteTarget's unresolvable set
+// because the shape (a bare `&` followed by digits) is specific to redirection
+// syntax and would otherwise read as a plausible-looking relative path.
+function isFdDupTarget(raw) {
+  return /^&\d+$/.test(raw);
+}
+
+// Matches a write-redirection operator at the START of a token, optionally
+// fd-prefixed (`2>`, `1>>`) or in `&>`/`&>>` combined-stream form, capturing
+// whatever follows the operator in the SAME token (a glued target, or '' for
+// a standalone operator whose target is the next token). `<` (input
+// redirection) and `>&N`/`N>&M` (fd duplication, handled by the caller once it
+// has the full candidate target) are not matched as write operators here.
+const REDIRECT_OP_RE = /^\d*(>>|>\||>)(.*)$/;
+const AMP_REDIRECT_OP_RE = /^&(>>|>)(.*)$/;
+
+function matchRedirectOperator(tok) {
+  const m = REDIRECT_OP_RE.exec(tok) || AMP_REDIRECT_OP_RE.exec(tok);
+  return m ? m[2] : null;
+}
+
+// Redirection-target scan (#3080): unlike fileWriteTargets' other shapes, a
+// redirection carries no command word — `echo`, `printf`, `cat`, or nothing
+// at all can precede it — so this runs over the WHOLE token list regardless
+// of t[0], not gated by WRITE_SHAPES. Same fail-closed posture as the rest of
+// this module: an unresolvable target ($VAR, backtick, `$(...)` process
+// substitution — all caught by resolveWriteTarget's isUnresolvable check)
+// resolves to no target, never a guess. `>(...)` process substitution and fd
+// duplications (`>&2`, `2>&1`) are not file targets either.
+//
+// Known limit: a `>` inside a heredoc body (after `<<EOF`) sits in its own
+// splitSegments segment once the newline breaks it out, and this scan cannot
+// distinguish that from a real redirection — same class of limit as the rest
+// of this parser's text-only, no-real-shell approach.
+function redirectWriteTargets(t, effCwd) {
+  const out = [];
+  for (let i = 0; i < t.length; i += 1) {
+    let rawTarget = matchRedirectOperator(t[i]);
+    if (rawTarget === null) continue;
+    if (rawTarget === '') {
+      i += 1; // consume the target token too — never re-scan it as its own operator
+      rawTarget = t[i];
+    }
+    if (rawTarget === undefined || isFdDupTarget(rawTarget) || rawTarget.startsWith('(')) continue;
+    const file = resolveWriteTarget(effCwd, rawTarget);
+    if (file) out.push(file);
+  }
+  return out;
 }
 
 // Split a shape's argument list into positionals and the flags seen, given the
@@ -535,6 +630,9 @@ const WRITE_SHAPES = Object.freeze(['cp', 'mv', 'tee', 'sed', 'perl', 'install',
 //          resolve also carries `git`, so no test can witness it alone.
 //   mkdir: mkdirTargets' command word
 //   write: fileWriteTargets' shapes
+//   powershell: powershellOpaqueCommand's lead (`powershell`, `pwsh`) — pre-tool-use
+//          only (#3061); post-tool-use's POST_TOOL_USE_WORDS stays scoped to the
+//          git family, since this gate has nothing to check after the fact.
 // tests/hooks-bash-prefilter.test.js's differential corpus runs the real parsers
 // and fails when a targeted command's word is missing here — for the commands it
 // lists, so a parser keyed on a new word also needs a corpus line there.
@@ -542,6 +640,7 @@ const GUARDED_PROGRAM_WORDS = Object.freeze({
   git: Object.freeze(['git', 'env']),
   mkdir: Object.freeze(['mkdir']),
   write: WRITE_SHAPES,
+  powershell: Object.freeze([...POWERSHELL_LEADS]),
 });
 
 // Per-shape value-consuming flags. Wrong entries here shift which token is read
@@ -578,6 +677,9 @@ function inPlaceEditTargets(rest, valueFlags, scriptFlags) {
 function fileWriteTargets(command, cwd) {
   const targets = [];
   forEachCommandSegment(command, cwd, (t, effCwd) => {
+    // Redirection has no command word, so it runs for every segment
+    // regardless of t[0] — never gated by the WRITE_SHAPES check below (#3080).
+    for (const file of redirectWriteTargets(t, effCwd)) targets.push({ action: 'write', file });
     if (!WRITE_SHAPES.includes(t[0])) return;
     if (t[0] === 'tee') {
       // tee genuinely writes to EVERY non-flag argument, not just the
@@ -727,5 +829,5 @@ function mkdirTargets(command, cwd) {
 }
 
 module.exports = {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets,
 };

@@ -137,7 +137,8 @@ When mechanizing a prose heuristic into a deterministic check:
    `plugin/bin/lib/verify/baseline.js`'s `adjudicate` (#3043) may turn a failing test run into a
    pass only when its extracted failing files account for the whole failure, so it checks them
    against counts the log states separately. For spec output, the `test at` entries
-   (`specEntryCount`) must equal the summary's `ℹ fail N`. In spec and TAP output, every failing
+   (`specEntryCount`) must equal the summary's `ℹ fail N` plus `ℹ cancelled N`, since the spec
+   reporter lists a cancelled test that `ℹ fail` leaves out. In spec and TAP output, every failing
    entry or `not ok` block must name a test file (`countUnmatchedFailures` returns 0). An output
    family with no such cross-check is refused outright ("has no failure-accounting guard"). Each
    mismatch returns `{eligible: false, reason}` naming both numbers, never a verdict over the
@@ -161,6 +162,21 @@ When mechanizing a prose heuristic into a deterministic check:
    review round each: its probe first read `$DISPATCH_EXCLUSIONS` from an earlier call
    (`aab721418` made it resolve the session-tmp path itself), and then it had no branch for a
    failed probe (`39129d212` added one that reports "exclusion reason unknown").
+10. **A helper's can't-tell answer is safe only for the caller it was written for.** A new caller
+   that reads the same answer in the opposite direction has to guard the input itself.
+   `plugin/bin/lib/issues/claims.js`'s `isStale` answers `false` whenever it cannot tell. An
+   unparseable `claimedAt` returns `false`, and a non-finite `now` makes
+   `now >= t + ttl * 3600 * 1000` false as well. For claim takeover that is the fail-closed
+   direction: "not stale" means never reclaim. `/specify`'s near-duplicate refusal (#3141) reads
+   the same answer the other way. To it, "not stale" means `live`, and a live claim refuses
+   shaping. So with no real clock, every expired claim would have refused a record.
+   `buildShapingState` in `plugin/bin/lib/issues/near-duplicate.js` now checks
+   `Number.isFinite(now)` before it classifies any claim, and it reads every claim as not live
+   without one. Review caught the gap (`dc802bb9d`). Before you reuse a decide-from-state helper,
+   find out which way its can't-tell answer leans. If that is the unsafe direction for your
+   caller, guard the input at your call site rather than flipping the shared helper's default.
+   Pin each invalid input with its own assertion: `NaN`, `undefined` and `null` all slip past
+   a `>=` comparison.
 
 ## When to use
 

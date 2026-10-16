@@ -28,7 +28,7 @@
 // path). Adding a heavier require here moves cost onto EVERY Bash call.
 'use strict';
 const fs = require('fs');
-const { GUARDED_PROGRAM_WORDS } = require('./git-command');
+const { GUARDED_PROGRAM_WORDS, forEachCommandSegment, redirectWriteTargets } = require('./git-command');
 
 // Both word sets come from git-command.js, where the parsers that key on these
 // words live (#3092): pre-tool-use runs every guard family, post-tool-use only the
@@ -53,6 +53,21 @@ const SEPARATORS = /[\s;&|()<>`{}=]+/;
 // the full handler. A false "run" (`P=/tmp; echo $P`) costs only the module load.
 const ASSIGNMENT = /(^|[\s;&|(`])[A-Za-z_][A-Za-z0-9_]*=/;
 const PARAM_REFERENCE = /\$\{?[A-Za-z_]/;
+
+// #3080: bare shell redirection (`>`, `>>`, ...) has no command word for
+// commandWords() to key on, so it needs its own check. It reuses the parser's
+// own redirectWriteTargets (git-command.js is already loaded) rather than a
+// second scanner, so the prefilter matches exactly what the parser resolves.
+// The '.' cwd is a placeholder: it only anchors relative targets, which this
+// boolean never inspects, and the DEVNULL_LIKE/fd-dup/unresolvable exclusions
+// are cwd-independent — so `2>&1` and `> /dev/null` still take the skip path.
+function hasFileRedirection(command) {
+  let found = false;
+  forEachCommandSegment(command, '.', (t) => {
+    if (!found && redirectWriteTargets(t, '.').length) found = true;
+  });
+  return found;
+}
 
 function commandWords(command) {
   const words = new Set();
@@ -84,6 +99,10 @@ function shouldRunFull(event, input) {
   const command = input.tool_input && input.tool_input.command;
   if (typeof command !== 'string') return true;
   if (ASSIGNMENT.test(command) && PARAM_REFERENCE.test(command)) return true;
+  // pre-tool-use only: fileWriteTargets, the sole consumer of redirection
+  // targets, never runs in post-tool-use's handler, so checking there would be
+  // pure cost.
+  if (event === 'pre-tool-use' && hasFileRedirection(command)) return true;
   const present = commandWords(command);
   return covered.some((word) => present.has(word));
 }
@@ -103,4 +122,4 @@ function earlyGate(event, readRaw = () => fs.readFileSync(0, 'utf8')) {
   return { raw, skip };
 }
 
-module.exports = { PRE_TOOL_USE_WORDS, POST_TOOL_USE_WORDS, commandWords, shouldRunFull, earlyGate };
+module.exports = { PRE_TOOL_USE_WORDS, POST_TOOL_USE_WORDS, commandWords, shouldRunFull, earlyGate, hasFileRedirection };

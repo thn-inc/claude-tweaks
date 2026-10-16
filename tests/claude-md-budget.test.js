@@ -1,8 +1,8 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 // CLAUDE.md is inherited by every dispatched subagent (72-144 per /dispatch run),
 // so bytes here are the most expensive bytes in the repo. #233/#234 landed the file
@@ -20,7 +20,7 @@ const path = require('node:path');
 const BUDGET_BYTES = 24576;
 
 test('CLAUDE.md stays within its context-cost budget', () => {
-  const size = fs.statSync(path.join(__dirname, '..', 'CLAUDE.md')).size;
+  const size = Buffer.byteLength(readText(path.join(__dirname, '..', 'CLAUDE.md')), 'utf8');
   assert.ok(
     size <= BUDGET_BYTES,
     `CLAUDE.md is ${size} B, over its ${BUDGET_BYTES} B budget. Every dispatched agent inherits ` +

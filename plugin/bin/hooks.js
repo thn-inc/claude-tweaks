@@ -12,18 +12,16 @@
 // #3074: Bash prefilter fast path. hooks.json registers ONE unconditional
 // Bash handler per tool-use event, so every Bash call spawns this process —
 // decide whether it is worth anything BEFORE the heavy requires below run.
-// bash-prefilter.js reads stdin once; `EARLY.raw` is handed to main() so the
-// full path never re-reads it. Only this process's own entry (require.main)
-// takes the fast path — a test require()ing this file for USAGE/main never does.
-// Never-break-a-session: the only statement that can throw here is the
-// require(), which runs before any stdin read, so a failed require leaves
-// EARLY = null and main() reads stdin itself. earlyGate never throws and always
-// returns the `raw` it read (`''` on a read failure); main() then uses that
-// `raw` rather than re-reading a drained stdin.
+// Only this process's own entry (require.main) takes the fast path — a test
+// require()ing this file for USAGE/main never does.
+// Never-break-a-session: only the require() can throw, and it runs before any
+// stdin read, so a failure leaves EARLY = null and main() reads stdin itself.
+// earlyGate never throws and always returns the stdin it read as `raw` (`''`
+// on a read failure); main() uses that rather than re-reading a drained stdin.
 // process.exit(0) on the skip path is safe for the same reason this file is
 // allowlisted in tests/bin-lib/exit-code-conformance.test.js: nothing is
-// pending on stdout to truncate. Kept as ONE braced require.main guard — that
-// test reads the file's first such guard as its entry point.
+// pending on stdout to truncate. That test reads a file's LAST require.main
+// guard as its entry point, so this earlier guard is never mistaken for it.
 let EARLY = null;
 if (require.main === module) {
   try {
@@ -106,7 +104,7 @@ const USAGE = {
   'spec-status': 'spec-status --run <parent-dir> --spec <n> --status <pending|running|complete|failed|not-run> --phase <phase>',
   'close-run': 'close-run [--run <dir>]',
   'delete-ledger': 'delete-ledger --run <dir> [--ledger <path>]',
-  'teardown-run': 'teardown-run [--run <dir>] [--merged|--abandoned]',
+  'teardown-run': 'teardown-run [--run <dir>] [--merged|--abandoned] [--remote-ref-only]',
   'archive-run': 'archive-run [--run <dir>]',
   'resolve-console': 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>]',
   'check-resume-freshness': 'check-resume-freshness [--run <dir>]',
@@ -135,7 +133,7 @@ const KNOWN_FLAGS = {
   'record-worktree': ['--run'],
   'record-pr': ['--run'],
   'spec-status': ['--run', '--spec', '--status', '--phase', '--now'],
-  'teardown-run': ['--run', '--merged', '--abandoned'],
+  'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
   'resolve-console': ['--run', '--approve', '--decline'],
 };
 
@@ -945,6 +943,10 @@ async function main(argv) {
       process.stdout.write(`${renderCandidateRefusal('close-run', candidates)}\nRun not closed.\n`);
     } else if (runDir) {
       const r = closeRunState(runDir, { explicit, callerIdentity });
+      if (r.status === 'missing') {
+        process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} no longer exists on disk (already archived or removed) — run not closed\n`);
+        return 0;
+      }
       if (r.status === 'refused-foreign') {
         process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} was recorded by another session — refusing to close it without an explicit --run\n`);
         return 0;
@@ -1036,7 +1038,8 @@ async function main(argv) {
     } else if (candidates) {
       process.stdout.write(`${renderCandidateRefusal('teardown-run', candidates)}\nRun not torn down.\n`);
     } else if (runDir) {
-      const result = teardownRun(runDir, { mode, sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() });
+      const remoteRefOnly = argv.includes('--remote-ref-only');
+      const result = teardownRun(runDir, { mode, sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd(), remoteRefOnly });
       process.stdout.write(`claude-tweaks: teardown-run ${path.basename(runDir)}\n${result.lines.map((l) => `  ${l}`).join('\n')}\n`);
     } else {
       process.stdout.write('claude-tweaks: no pipeline run dir found — run not torn down\n');

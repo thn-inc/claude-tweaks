@@ -47,5 +47,5 @@ files:
 - **URL:** `plugin/skills/dispatch/sequential-execution.md` § Running more than one session
 - **Action:** Read it before adding any coordination of your own.
 - **Should feel:** Short — it names the existing controls (issue claims, the sibling-session check, worktree reap, port leases, the GitHub rate-limit note) and the one prohibition: never two sessions in the same worktree.
-- **Should understand:** CLAUDE.md's Commands note about per-checkout ports is documentation, not a concurrency mechanism; the controls are the mechanism, and the lease token is the last hook-point they lacked.
+- **Should understand:** CLAUDE.md's Commands note about per-checkout ports is documentation, not a concurrency mechanism; the controls are the mechanism, and the lease token is the last hook-point they lacked. `tests/dispatch-sequential-execution-conformance.test.js` pins this section's five named controls and the same-worktree prohibition, plus the `CLAUDE_TWEAKS_LEASE` documentation across `policy-schema.md`, the CLAUDE.md template, and the port-isolation bootstrap step.
 - **Red flags:** Reaching for a lock file or a queue of your own — the section exists so that nothing new gets invented per project.

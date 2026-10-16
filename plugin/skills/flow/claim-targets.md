@@ -141,7 +141,9 @@ run's own `'live'` blob as contested against itself. A self-owned `'tombstone'` 
 tombstone. On a
 successful claim it bootstraps `bot:in-progress` (per `_shared/label-bootstrap.md`) and posts the
 claim comment (`claimPayload`'s `commentBody`) for that target — best-effort: a label or comment
-failure is logged to stderr and never un-claims the target.
+failure is logged to stderr and never un-claims the target. An `alreadyOwned` target gets the same
+`bot:in-progress` re-assert (no second comment) — a resumed claim may never have been labeled, and
+the queue pull's `bot:*` pre-filter and dispatch's second-call state-check both read that label.
 
 **Log the claim (mandatory, #2492).** Immediately after this call exits 0, for every target in
 its `claimed` array (both transports — the CLI's own JSON envelope on the `gh` path, the manual
@@ -187,6 +189,17 @@ This CLI is the `gh` transport only — its `deps.gh`/`deps.ghApi` shell to real
 (`_shared/github-write-transport.md`'s MCP routing), this CLI does not apply: follow
 `_shared/issue-claims.md`'s "The lock" steps 1-6 directly via the MCP contents-API calls, per
 target, exactly as before this CLI existed — read them from the composed `claims` bundle (`node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step claims "${CLAUDE_PLUGIN_ROOT}/skills/_shared/issue-claims.md"`, then `$PIPELINE_RUN_DIR/context/claims.md`; the run directory always exists here, set or minted mkdir-only by "Resolve this run's identity" above, and the composer needs only the directory, not `config.yml`); if the compose command is unavailable or exits non-zero, read the named source files directly.
+
+**Read back the `bot:in-progress` add (MCP, #3131).** On the MCP path nothing reports a failed
+label add the way the CLI's `labelFailures` does, and a hold whose label never landed is invisible
+to `/dispatch`'s label pre-filter (#1350 was re-selected that way). So after each target's claim
+write succeeds, read the labels back (`issue_read`, `get_labels`). A failed read counts as absent.
+When `bot:in-progress` is absent, retry the add once through `mergeLabelNames`'s
+read-then-merge-then-write (`bin/lib/issues/label-write.js`, `add: ['bot:in-progress']` — never a
+bare one-label array, per `_shared/github-write-transport.md`'s Full-replace hazard), then read
+back once more. Still absent: trace it and move on — the claim is never aborted, since the label
+stays best-effort and the claim read stays the authoritative hold check:
+`node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status SKIP --step "Step 2.8 bot:in-progress projection (degraded)" --text "condition: label still absent on #{n} after one mergeLabelNames retry → fallback: claim kept; dispatch's label pre-filter will not see this hold" --reversibility n/a`.
 
 **Confirming the manual MCP path actually landed (#1728).** The hand-run procedure above has no CLI enforcing that every step actually ran, so before this call (or a `build,test`-scoped headless dispatch call) reports `DONE`/`build-test-ok`, run `node "${CLAUDE_PLUGIN_ROOT}/bin/verify-run-bookends.js" --run "$PIPELINE_RUN_DIR" --targets {n}[,{m}…]` — a mechanical, `gh`-independent check (it reads the claim via git, never `gh`) confirming this run's `worktree`/`pr` stamps and a live claim per target, by direct inspection rather than trusting the manual procedure was followed correctly. Exit 0 → proceed. Non-zero → the named bookend(s) in its `missing` array were never confirmed; report `BLOCKED`/`build-test-blocked` instead of a false `DONE`/`build-test-ok`, per this issue's own Acceptance Criteria.
 
@@ -254,7 +267,10 @@ target, exactly as before this CLI existed — read them from the composed `clai
   decision here.
 - **4** — transient `gh` failure, same fail-fast/all-or-abort shape as exit 3: stdout carries
   `{transient: [{issue, error}], released, releaseFailed}`, release already attempted. Render the
-  transient-failure card below.
+  transient-failure card below. Also covers a pre-claim repo-slug resolution timeout (#3065) — a
+  `gh repo view` timeout is retried once, then, if it still fails, reported here with every
+  requested target listed in `transient` and empty `released`/`releaseFailed` (nothing was claimed
+  yet); stderr names the timeout and the `gh-timeout-ms`/`CLAUDE_TWEAKS_GH_TIMEOUT_MS` override.
 - **5** (#2073) — a claim write reported success but the post-write read-back never confirmed it
   (a live claim carrying this run's `runId`) — same fail-fast/all-or-abort shape as exit 3/4: stdout
   carries `{unverified: [{issue}], released, releaseFailed}`. The unverified target itself is never
@@ -271,8 +287,10 @@ target, exactly as before this CLI existed — read them from the composed `clai
   ```
 
   No `AskUserQuestion` — same as the contest and transient cards, nothing to choose between.
-- **2** — malformed invocation or missing dependency (a bad `--run-id`/`--targets` value, or repo
-  resolution failed) — a bug in this call, not a claim outcome. Treat as a hard stop.
+- **2** — malformed invocation or missing dependency (a bad `--run-id`/`--targets` value, `gh`
+  absent, or a non-timeout repo-slug resolution failure — a real auth error or 404, never a
+  timeout, which is exit 4 instead per #3065) — a bug in this call, not a claim outcome. Treat as
+  a hard stop.
 
 **On exit 3, 4, or 5** — release nothing further (the CLI's `released`/`releaseFailed` already covers
 the attempt; a non-empty `releaseFailed` is not this step's problem to retry — the named claim

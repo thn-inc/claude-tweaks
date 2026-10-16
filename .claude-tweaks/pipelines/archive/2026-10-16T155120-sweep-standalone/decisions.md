@@ -1,0 +1,56 @@
+## /tidy
+- AUTO 17:57:51 — Step 7 Fill Release Note: filled the Release Note on #3204 with "Flaky-test retries no longer hide unaccounted failures in summary-style test output."; snapshot snapshots/tidy-release-note-3204.original.md. Reversibility: high.
+- AUTO 17:58:05 — Step 7 Fill Release Note: filled the Release Note on #3160 with "Pipeline runs on records filed by health sweeps now get a ceremony level matched to the work instead of always defaulting to standard."; snapshot snapshots/tidy-release-note-3160.original.md. Reversibility: high.
+- SCANNED 18:03:19 — Step 4.5 reconcile: reconcile --json: mirror dirty (no action), console.ready empty, 136 runs all skipped (90 console-never-rendered, 17 no-branch, 12 no-worktree, 10 pr-open, 5 pr-closed-unmerged, 2 console-unresolved). Reversibility: n/a.
+- STAGED 18:03:22 — Step 6: staged tidy-ledger-1 (delete 2701-2705 ledger + close #3010 #3011), tidy-ledger-2 (delete 2740 ledger + close #3037), tidy-archive-runs-1 (archive 17 clean run dirs); needs:decision markers posted on #3010 #3011 #3037. Stage paths: staged/tidy-ledger-1.md, staged/tidy-ledger-2.md, staged/tidy-archive-runs-1.md. Reversibility: n/a. [lever: tidy-aggressiveness=moderate (default)]
+- AUTO 18:03:44 — Step 7: deleted 20 orphaned plans (related records closed, no citations, re-verified at execution) and orphan ledger docs/plans/2026-10-08-record-3040-ledger.md. Reversibility: med. [lever: tidy-aggressiveness=moderate (default)]
+- AUTO 18:05:44 — Step 7.5: PR #3227 opened and armed --auto (housekeeping-auto-merge: explicit); commits 58df808a9 + audit trail. Reversibility: med. [lever: housekeeping-auto-merge=true (policy)]
+- AUTO 18:32:07 — --approve: human approved all 6 rows: archived 17 clean run dirs (no tracked content, no commit); deleted 2701-2705 and 2740 ledgers + run trail via PR #3227-follow-up #3233 (merged); closed #3010 #3011 #3037 not_planned with comments, needs-decision comments resolved, labels removed. Note: commit-message 'closes' keyword auto-closed #3010 as completed — corrected to not_planned. Reversibility: med.
+## /specify
+- AUTO 18:07:00 — Claim: claimed #3153 (bare drain, --source sweep, budget 5). Reversibility: high.
+- AUTO 18:09:26 — Release: released claim on #3153 (shaped: #3153); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:09:30 — Shape #3153: framing guard open; shaped ready (risk:medium size:medium ceremony:standard type:bug shaped:headless); Surface: infra. Near-duplicate finder returned 24 single-signal body-anchor candidates incl. 5 ready+in-flight (#3031 #3063 #3066 #3113 #3129) — judged false positives (shared generic anchor), refusal NOT applied; Related trimmed to the 6 genuinely related records. Reversibility: high.
+- AUTO 18:11:14 — Release: released claim on #3156 (shaped: #3156); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:11:39 — Shape #3156: framing open; live body already spec-shaped (compose-record --check 0) — added Surface: infra, Related #3189 #3153, Gotchas, Technical Approach+Key Files, Original request; stamped ready risk:medium size:medium ceremony:standard shaped:headless. First write lacked Technical Approach (read-back fail) — corrected in a second body-only edit. Reversibility: high.
+- AUTO 18:12:21 — Release: released claim on #3158 (failed: shaping); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:12:31 — Shape #3158: framing open; refused — proposed Absorb into #3153 (identical scope to #3153 deliverable 2); needs:decision + decision comment posted; released failed: shaping. Deviation: near-dup refusal applied though #3153 is not in-flight, to avoid a duplicate ready record; no headless self-report filed (human-present sweep, decision comment is the trace). Reversibility: high.
+- AUTO 18:13:04 — Release: released claim on #3162 (failed: shaping); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:13:12 — Shape #3162: framing open; refused — proposed Absorb into #3153 (identical scope to #3153 deliverable 2, engine-verify AC1 race); needs:decision + comment posted; released failed: shaping. Reversibility: high.
+- AUTO 18:13:47 — Release: released claim on #3164 (failed: shaping); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 18:13:55 — Close-out: {shaped: 2, routed: 0, failed: 3} shaped #3153 #3156; failed (refused, Absorb into #3153 proposed) #3158 #3162 #3164; budget 5 exhausted; remaining #3171 #3178 #3179 (same cluster: #3178 duplicates ready #3189; #3171/#3179 mix #3153 + #3189 scope). Reversibility: n/a.
+## /backlog
+- AUTO 18:17:14 — apply-refine-labels: #3212: applied +priority:high. Reversibility: high.
+- AUTO 18:17:18 — apply-refine-labels: #3213: applied +priority:high. Reversibility: high.
+- AUTO 18:17:21 — apply-refine-labels: #3224: applied +priority:high. Reversibility: high.
+- AUTO 18:17:24 — apply-refine-labels: #3225: applied +priority:high. Reversibility: high.
+- AUTO 18:17:28 — apply-refine-labels: #3226: applied +priority:high. Reversibility: high.
+- AUTO 18:17:31 — apply-refine-labels: #3153: applied +priority:high. Reversibility: high.
+- AUTO 18:17:35 — apply-refine-labels: #3189: applied +priority:high. Reversibility: high.
+- AUTO 18:17:39 — apply-refine-labels: #3156: applied +priority:medium. Reversibility: high.
+- AUTO 18:17:42 — apply-refine-labels: #3204: applied +priority:medium. Reversibility: high.
+- AUTO 18:17:46 — apply-refine-labels: #3222: applied +priority:medium. Reversibility: high.
+- AUTO 18:17:49 — apply-refine-labels: #3192: applied +priority:medium. Reversibility: high.
+- AUTO 18:17:52 — apply-refine-labels: #3195: applied +priority:medium. Reversibility: high.
+- AUTO 18:17:55 — apply-refine-labels: #3190: applied +priority:medium. Reversibility: high.
+- AUTO 18:17:59 — apply-refine-labels: #3176: applied +priority:medium. Reversibility: high.
+- AUTO 18:18:02 — apply-refine-labels: #3161: applied +priority:medium. Reversibility: high.
+- AUTO 18:18:06 — apply-refine-labels: #3214: applied +priority:low. Reversibility: high.
+- AUTO 18:18:09 — apply-refine-labels: #3215: applied +priority:low. Reversibility: high.
+- AUTO 18:18:13 — apply-refine-labels: #3216: applied +priority:low. Reversibility: high.
+- AUTO 18:18:16 — apply-refine-labels: #3217: applied +priority:low. Reversibility: high.
+- AUTO 18:18:19 — apply-refine-labels: #3218: applied +priority:low. Reversibility: high.
+- AUTO 18:18:23 — apply-refine-labels: #3206: applied +priority:low. Reversibility: high.
+- AUTO 18:18:27 — apply-refine-labels: #3200: applied +priority:low. Reversibility: high.
+- AUTO 18:18:30 — apply-refine-labels: #3193: applied +priority:low. Reversibility: high.
+- AUTO 18:18:34 — apply-refine-labels: #3191: applied +priority:low. Reversibility: high.
+- AUTO 18:18:37 — apply-refine-labels: #3188: applied +priority:low. Reversibility: high.
+- AUTO 18:18:41 — apply-refine-labels: #3187: applied +priority:low. Reversibility: high.
+- AUTO 18:18:44 — apply-refine-labels: #3175: applied +priority:low. Reversibility: high.
+- AUTO 18:18:47 — apply-refine-labels: #3160: applied +priority:low. Reversibility: high.
+- AUTO 18:18:51 — apply-refine-labels: #3171: applied +priority:low. Reversibility: high.
+- AUTO 18:18:54 — apply-refine-labels: #3178: applied +priority:low. Reversibility: high.
+- AUTO 18:18:58 — apply-refine-labels: #3179: applied +priority:low. Reversibility: high.
+- AUTO 18:19:05 — Grant chain: Backlog grant: zero-eligible short-circuit — 16 candidate(s), 0 needing grant-check: needs-label: 9, trust: 7. Breaker clear, watched set empty. Reversibility: n/a.
+- SKIP 18:19:05 — Dependency repair: 3 prose blocked-by matches, none actionable: #3033 already natively blocked by #3035; #3212 and #2826 are parent-issue records whose prose describes leaf-to-leaf edges. Reversibility: n/a.
+## /sweep
+- AUTO 18:19:58 — Close-out: tidy: applied 3 (20 plans + 3040 ledger deleted via PR #3227, Release Notes filled on #3204 #3160), staged 3 proposals (6 rows), yours 33, clean 5 scans; specify: {shaped: 2, routed: 0, failed: 3}, remaining #3171 #3178 #3179; refine: granted 0, re-authorized 0, needs-decision 0, skipped 16 (needs-label 9, trust 7), priority labeled 31; attention: 48 rows. Reversibility: n/a.

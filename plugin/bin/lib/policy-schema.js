@@ -105,6 +105,10 @@ const POLICY_KEYS = [
   { key: 'review-auto-apply-ceiling', type: 'enum', values: ['none', 'low', 'medium'], default: 'low', summary: "Sets the severity cutoff at or below which review findings are applied without asking — anything above it is staged or prompted.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'review-auto-apply-prose-exempt', type: 'boolean', default: true, summary: "Lets a prose-only fix auto-apply one severity tier above the ceiling instead of the plain ceiling — see step3-routing.md.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'specify-auto-continue', type: 'boolean', default: false, summary: "Lets a session invoke /claude-tweaks:specify on an approved brainstorming design doc immediately instead of a manual command.", category: 'pipeline-behavior', tier: 'advanced' },
+  // #3128: gates /specify's decomposition Ceremony tally (record-creation-subissues.md).
+  // Default false — the durable log is a maintainer watch-item aid, so a consumer
+  // project never gets docs/ writes it did not opt into.
+  { key: 'specify-decomposition-log', type: 'boolean', default: false, summary: "When on, /specify logs each decomposition yielding 2+ ceremony:standard sub-issues to a git-tracked file for later confirmation.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'tidy-aggressiveness', type: 'enum', values: ['conservative', 'moderate', 'aggressive'], default: 'moderate', summary: "Sets how boldly cleanup sweeps act on what they find — from keep-unless-certain to delete-unless-doubtful.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'auto-mode', type: 'enum', values: ['default-on', 'default-off'], summary: "Sets whether a standalone build or an unattended cleanup run starts hands-off by default, without being asked each time.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'backlog-fetch-limit', type: 'integer', default: 1000, summary: "Caps how many backlog issues one scan pulls before warning that the list was truncated.", category: 'housekeeping', tier: 'advanced' },
@@ -121,6 +125,17 @@ const POLICY_KEYS = [
   // (an env var, not a policy key) takes precedence over this when both are
   // set — see shared-primitives.js's resolution order.
   { key: 'gh-timeout-ms', type: 'integer', min: 1000, max: 60000, default: 5000, summary: "Bounds how long a single `gh` subprocess call may run before it is killed and retried once.", category: 'housekeeping', tier: 'advanced' },
+  // #3051: the `git` subprocess timeout for claims-git-cas.js's compare-and-
+  // swap reads/writes against the claims-registry branch, routed through
+  // bin/lib/shared-primitives.js's GIT_TIMEOUT_MS export — mirrors
+  // gh-timeout-ms's shape exactly, but with its own default and range: a
+  // claims-branch fetch/push is not retried automatically the way a gh call
+  // is, and was observed taking 8.6s on a loaded machine, so the default is
+  // higher (30s) and the ceiling wider (120s) than gh-timeout-ms's.
+  // CLAUDE_TWEAKS_GIT_TIMEOUT_MS (an env var, not a policy key) takes
+  // precedence over this when both are set — see shared-primitives.js's
+  // resolution order.
+  { key: 'git-timeout-ms', type: 'integer', min: 1000, max: 120000, default: 30000, summary: "Bounds how long a single claims-registry `git` subprocess call may run before it is killed and classified as a transport failure.", category: 'housekeeping', tier: 'advanced' },
   { key: 'depth-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt asking whether recently changed code deserves a deeper architectural pass.", category: 'housekeeping', tier: 'advanced' },
   { key: 'creative-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt suggesting creative or UX improvement ideas for what was just built.", category: 'housekeeping', tier: 'advanced' },
   { key: 'scope-keywords-required', type: 'boolean', default: false, summary: "When on, a build refuses to start over files outside its plan unless the plan names its intended scope; otherwise it is only a warning.", category: 'pipeline-behavior', tier: 'advanced' },

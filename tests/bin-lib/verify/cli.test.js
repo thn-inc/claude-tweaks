@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { execFile, spawnSync, execFileSync } = require('child_process');
+const { execFile, spawn, spawnSync, execFileSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 
@@ -1238,6 +1238,41 @@ test('flaky retry: an unlisted failing file is an ordinary failure — no retry 
   assert.strictEqual('flakyRetried' in report.checks.tests, false);
 });
 
+test('flaky retry: a TAP failure with no attributable file refuses retry even when every named file is allowlisted, through the real CLI wiring (#3066)', async () => {
+  // Exercises the actual verify.js retryHook path (readFileSync → stripAnsi
+  // → sniffFamily → unattributedFailureCount → planRetry), not just the
+  // library functions in isolation — review finding (3f): the unit tests
+  // alone would stay green if the 4-line wiring in verify.js were reverted.
+  const r = tmpGitRepo();
+  const tap = [
+    'not ok 1 - a flaky one', '  ---', '  stack: |-', '    at TestContext.<anonymous> (tests/flaky.test.js:12:5)', '  ...',
+    'not ok 2 - an unattributed one', '  ---', '  stack: |-', '    some non-frame diagnostic text', '  ...',
+    '# tests 2', '# pass 0', '# fail 2',
+  ].join('\n');
+  fs.writeFileSync(path.join(r.repo, 'fail.js'), `process.stdout.write(${JSON.stringify(tap)} + '\\n'); process.exit(1);\n`);
+  fs.writeFileSync(path.join(r.repo, 'retry.js'), "require('fs').writeFileSync('retry.marker', process.argv[2]); process.exit(0);\n");
+  const decl = {
+    checks: { tests: 'node fail.js' },
+    retry: { tests: 'node retry.js {file}' },
+    rules: [{ match: 'src/**', suites: ['tests'], static: true }],
+    flaky: { files: ['tests/flaky.test.js'] },
+  };
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'unattributed fixture');
+  const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  const args = ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch, '--cmd', 'tests=node fail.js'];
+  const { code, stdout } = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(code, 1);
+  assert.match(stdout, /\| tests \| fail \|/);
+  assert.doesNotMatch(stdout, /flaky-retried/);
+  assert.ok(!fs.existsSync(path.join(r.repo, 'retry.marker')), 'no retry command may run while a failure is unattributed');
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.checks.tests.retryDecision, { retry: false, reason: 'unattributed-failures: 1' });
+  assert.strictEqual('flakyRetried' in report.checks.tests, false);
+});
+
 // Shared by the no-parse test below: writes a verify-scope.json declaring
 // `testsCmd` (with a flaky allowlist that never matches this fixture) and
 // commits it, returning the --scope args to run it under.
@@ -1406,6 +1441,76 @@ test('flaky retry: hits accumulate across two runs and a file removed from the a
   assert.strictEqual(second.code, 0, second.stderr);
   assert.match(second.stdout, /^Scope: none/m);
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(countStampPath, 'utf8')).flakyHits, { 'tests/flaky.test.js': 1, 'tests/other.test.js': 2 });
+});
+
+// Sibling fixture to flakyRepo (#3129): a tests check that always fails with
+// a TAP failure naming `failingFile`, and a verify-scope.json declaring
+// `preExisting` instead of `flaky` — no retry template, no retry.js spawned
+// at all; the declared allowlist is checked, never re-run.
+function preExistingRepo({ failingFile = 'tests/known-shallow.test.js', preExisting = ['tests/known-shallow.test.js'], extraDecl = {} } = {}) {
+  const r = tmpGitRepo();
+  const tap = ['not ok 1 - a known pre-existing failure', '  ---', '  stack: |-', `    at TestContext.<anonymous> (${failingFile}:12:5)`, '  ...', '# tests 1', '# pass 0', '# fail 1'].join('\n');
+  fs.writeFileSync(path.join(r.repo, 'fail.js'), `process.stdout.write(${JSON.stringify(tap)} + '\\n'); process.exit(1);\n`);
+  const decl = {
+    checks: { tests: 'node fail.js' },
+    rules: [{ match: 'src/**', suites: ['tests'], static: true }],
+    preExisting,
+    ...extraDecl,
+  };
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'pre-existing fixture');
+  const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  const args = ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch, '--cmd', 'tests=node fail.js'];
+  return { ...r, branch, args };
+}
+
+test('preExisting: a failing file fully covered by the declared allowlist is adjudicated as passing, and the stamp carries the marker with no legacy twin (#3129)', async () => {
+  const r = preExistingRepo();
+  const { code, stdout, stderr } = await runCli(r.args, { cwd: r.repo });
+  assert.strictEqual(code, 0, stderr);
+  assert.match(stdout, /Pre-existing: adjudicated — 1 failing file\(s\) covered by the declared preExisting allowlist: tests\/known-shallow\.test\.js/);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.pass, false, 'report.pass stays raw');
+  assert.strictEqual(report.checks.tests.exitCode, 1, 'the check keeps its real exit code');
+  assert.deepStrictEqual(report.preExistingAdjudicated, { declared: ['tests/known-shallow.test.js'], matched: ['tests/known-shallow.test.js'] });
+  const stamp = stampOf(r.gitDir);
+  assert.deepStrictEqual(stamp.preExisting, { declared: ['tests/known-shallow.test.js'], matched: ['tests/known-shallow.test.js'] });
+  assert.strictEqual(stamp.scope, 'full');
+  // H1 parity (#3043's own rule): an adjudicated-but-not-clean pass never
+  // rewrites the legacy bare-SHA twin.
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass')));
+});
+
+test('preExisting: an uncovered failing file is an ordinary failure — no stamp, the report names the reason (#3129)', async () => {
+  const r = preExistingRepo({ failingFile: 'tests/real.test.js', preExisting: ['tests/known-shallow.test.js'] });
+  const { code, stdout } = await runCli(r.args, { cwd: r.repo });
+  assert.strictEqual(code, 1);
+  assert.match(stdout, /Pre-existing: not adjudicated — unlisted: \[tests\/real\.test\.js\]/);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')));
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.preExistingAdjudicated, { declared: ['tests/known-shallow.test.js'], eligible: false, reason: 'unlisted: [tests/real.test.js]' });
+});
+
+test('preExisting: no preExisting declared at all never adjudicates — report omits the field entirely (#3129)', async () => {
+  const r = flakyRepo({ flaky: { files: [] } });
+  const { code } = await runCli(r.args, { cwd: r.repo });
+  assert.strictEqual(code, 1);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual('preExistingAdjudicated' in report, false);
+  assert.doesNotMatch(await fs.promises.readFile(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'), /preExisting/);
+});
+
+test('preExisting: --stamp-status reads the marker — preExistingAdjudicated:true, match:false, verifiedHead:true (#3129)', async () => {
+  const r = preExistingRepo();
+  const run = await runCli(r.args, { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const status = await runCli(['--stamp-status'], { cwd: r.repo });
+  const parsed = JSON.parse(status.stdout);
+  assert.strictEqual(parsed.preExistingAdjudicated, true);
+  assert.strictEqual(parsed.match, false);
+  assert.strictEqual(parsed.verifiedHead, true);
 });
 
 // #1928 AC1: the runner is the mechanical source of the verify event.
@@ -1712,4 +1817,49 @@ test('--baseline: the scratch worktree is gone after the run (#3043)', async () 
   assert.match(stdout, /Baseline: adjudicated against/, 'a scratch worktree was actually created');
   const list = r.git('worktree', 'list', '--porcelain');
   assert.strictEqual((list.match(/^worktree /gm) || []).length, 1, list);
+});
+
+test('--baseline: a stale ct-verify-base-* scratch worktree from an earlier interrupted run is named on stderr, and left alone (#3064)', async () => {
+  // Detection runs as soon as --baseline resolves to a commit — before any
+  // check executes and before adjudication is even attempted — so a trivial
+  // passing repo is enough; this test does not need a real baseline mismatch.
+  const r = tmpGitRepo();
+  const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
+  const staleWt = path.join(staleParent, 'wt');
+  r.git('worktree', 'add', '--detach', staleWt, 'HEAD');
+  const { stderr } = await runCli(['--cmd', 'tests=node -e "process.exit(0)"', '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}'], { cwd: r.repo });
+  assert.ok(
+    stderr.includes(`verify.js: a stale baseline scratch worktree is registered at ${staleWt} from an earlier interrupted run — remove it manually: git worktree remove --force ${staleWt}`),
+    stderr,
+  );
+  assert.ok(fs.existsSync(staleWt), 'never swept automatically — a sibling session\'s own live scratch would look identical');
+  const list = r.git('worktree', 'list', '--porcelain');
+  // Nothing else ever creates a scratch worktree here (the run passes outright); the stale one is the only extra entry.
+  assert.strictEqual((list.match(/^worktree /gm) || []).length, 2, list);
+});
+
+test('--baseline: a SIGINT mid-run removes the scratch worktree and exits 130, leaving nothing registered behind (#3064 AC1)', { skip: process.platform === 'win32' && 'POSIX signal delivery only' }, async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  // {file} is appended but unused by the sleeping script — just needs to
+  // still be running when SIGINT arrives.
+  const SLOW_PER_FILE = 'tests=node -e "setTimeout(() => {}, 8000)" {file}';
+  const child = spawn(process.execPath, [CLI, '--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', SLOW_PER_FILE], {
+    cwd: r.repo, env: r.opts.env, stdio: ['ignore', 'ignore', 'ignore'],
+  });
+  const deadline = Date.now() + 10000;
+  let worktreeCount = 1;
+  while (Date.now() < deadline) {
+    const list = r.git('worktree', 'list', '--porcelain');
+    worktreeCount = (list.match(/^worktree /gm) || []).length;
+    if (worktreeCount >= 2) break;
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
+  }
+  assert.strictEqual(worktreeCount, 2, 'the scratch worktree must exist before sending SIGINT');
+  child.kill('SIGINT');
+  const [code, signal] = await new Promise((resolve) => { child.on('exit', (c, s) => resolve([c, s])); });
+  assert.strictEqual(signal, null, 'the process exits via process.exit() itself, never killed outright by the signal');
+  assert.strictEqual(code, 130);
+  const list = r.git('worktree', 'list', '--porcelain');
+  assert.strictEqual((list.match(/^worktree /gm) || []).length, 1, 'no registered scratch worktree afterwards');
 });

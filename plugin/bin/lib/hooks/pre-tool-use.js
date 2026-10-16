@@ -25,7 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, powershellOpaqueCommand,
 } = require('./git-command');
 const ctxLib = require('./context');
 const policy = require('../policy');
@@ -130,6 +130,13 @@ const GATE_COVERAGE = Object.freeze({
   // commit/push would, closing the bypass IL-141 documented.
   gitActions: Object.freeze(['commit', 'push', 'mv', 'rm', 'update-ref', 'apply']),
   bashWriteShapes: WRITE_SHAPES,
+  // #3080: bare shell redirection has no command word, so it is not part of
+  // bashWriteShapes — git-command.js's redirectWriteTargets (called from
+  // fileWriteTargets for every segment, not gated by WRITE_SHAPES) and
+  // bash-prefilter.js's hasFileRedirection both recognize these operator
+  // spellings (fd-prefixed forms like `2>`/`1>>` are the same operators with
+  // a leading file-descriptor number, not a separate spelling).
+  bashRedirections: Object.freeze(['>', '>>', '>|', '&>', '&>>']),
   // These have their own prose-binding block — skills/_shared/policy-schema-coverage.md's
   // "Teardown gate coverage" section (tests/hooks-gate-coverage.test.js pins
   // the two) — deliberately separate from the worktree-always block above,
@@ -802,6 +809,50 @@ function checkGitStashWarn(segments, warnings) {
 // rather than an extra return field so this function's return shape stays
 // exactly `{}` | `{exit, json}`, leaving runInner's `if (gate.json) return gate`
 // dispatch untouched.
+// #3061: `checkWorktreeRequired` below only ever denies a target it can
+// resolve from `gitTargets`/`fileWriteTargets` — both fail OPEN on anything
+// they cannot parse (ambiguity resolves to allow, by design). A
+// `powershell -Command "git push"` (or `-EncodedCommand ...`) run from the
+// main checkout evades that entirely: the git call lives inside PowerShell's
+// own literal (or base64) argument text, which git-command.js's parsers
+// never read — the same deliberately-uncovered class as `sh -c`/`python -c`.
+// This is the one narrow, deliberate exception to "ambiguity resolves to
+// allow" in this file: -Command/-EncodedCommand is refused outright,
+// content-agnostic, under the same worktree-always-and-not-isolated
+// condition checkWorktreeRequired itself gates on — there is nothing useful
+// a content-aware check could still allow here, since the whole point of
+// -Command/-EncodedCommand is to hand this guard text it cannot read.
+// `powershell -File <path>` alone (no -Command, no -EncodedCommand) carries
+// no inline text and is not touched by this gate — a plain script-path
+// invocation, the same not-opaque-text category `bash script.sh` already
+// falls into by never matching any guarded word at all.
+function checkPowershellOpaqueCommand(ctx) {
+  if (!ctx.input || ctx.input.tool_name !== 'Bash') return {};
+  const toolInput = ctx.input.tool_input;
+  const command = toolInput && typeof toolInput.command === 'string' ? toolInput.command : null;
+  if (!command) return {};
+  if (!powershellOpaqueCommand(command, ctx.cwd)) return {};
+  const cwd = ctx.cwd;
+  if (!cwd || !wtDetect.findPolicyFile(cwd)) return {};
+  const { repoRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(cwd);
+  // Ambiguity resolves to allow HERE too — this exception is about the
+  // command's own opaque text, not about tolerating an unresolvable repo
+  // status (that would reintroduce exactly the never-break-a-session risk
+  // the rest of this file avoids).
+  if (indeterminate || !repoRoot) return {};
+  if (!policy.isWorktreeAlwaysOn(repoRoot)) return {};
+  if (isLinkedWorktree) return {};
+  return denyResult(
+    `claude-tweaks: this project requires an isolated worktree (policy: worktree-always in ` +
+    `.claude-tweaks/policy.yml), and a \`powershell\`/\`pwsh\` call carrying -Command or ` +
+    `-EncodedCommand hands this guard literal (or base64) script text it cannot read, so it ` +
+    `cannot be shown not to run git from this non-isolated checkout (${repoRoot}). Set one up ` +
+    `first: invoke /superpowers:using-git-worktrees, then follow \`_shared/worktree-setup.md\`'s ` +
+    `post-creation catch-up before any other action, then retry inside the new worktree. A plain ` +
+    `\`powershell -File <path>\` (no -Command, no -EncodedCommand) is not affected by this gate.`,
+  );
+}
+
 function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets = []) {
   const toolName = ctx.input && ctx.input.tool_name;
   const toolInput = ctx.input && ctx.input.tool_input;
@@ -981,8 +1032,9 @@ function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets 
       // the gate can never leave this message describing the old reach
       // — the failure this whole binding exists to prevent (#70, #138).
       `claude-tweaks: this project requires an isolated worktree for ` +
-      `${GATE_COVERAGE.tools.join('/')}, git ${GATE_COVERAGE.gitActions.join('/')}, and Bash ` +
-      `${GATE_COVERAGE.bashWriteShapes.join('/')} writes (not every possible Bash write shape — ` +
+      `${GATE_COVERAGE.tools.join('/')}, git ${GATE_COVERAGE.gitActions.join('/')}, Bash ` +
+      `${GATE_COVERAGE.bashWriteShapes.join('/')} writes, and Bash ` +
+      `${GATE_COVERAGE.bashRedirections.join('/')} redirects (not every possible Bash write shape — ` +
       `see _shared/policy-schema-coverage.md's worktree-always coverage block; exempt: ` +
       `${GATE_COVERAGE.exemptions.paths.join(', ')}, an allowlisted (${GATE_COVERAGE.exemptions.commit}) commit, ` +
       `an allowlisted (${GATE_COVERAGE.exemptions.push}) push, and a write target that is ` +
@@ -1441,6 +1493,10 @@ function hasDistinctOwnedRun(ctx) {
 //      contract.)
 //   2. .claude-tweaks/policy.yml is the file a session edits to CONFIGURE
 //      gating; keeping it writable here matches spec #537's own carve-out.
+//   3. A gitignored scratch target (#2920) cannot land on the branch this
+//      gate's stamps protect, so it is not this gate's business either — the
+//      draft PR body itself is the motivating case: it must be writable
+//      before the PR this gate otherwise demands exists.
 // The target's OWN repo root is resolved per-target rather than assumed to be
 // the worktree: run dirs are anchored to the MAIN checkout
 // (_shared/pipeline-run-dir.md's Anchoring section), so decisions.md normally
@@ -1448,14 +1504,36 @@ function hasDistinctOwnedRun(ctx) {
 // (no target, indeterminate git, non-repo path) is simply not exempt and
 // falls through — the same fail-closed posture isPipelineBookkeeping keeps.
 function isStampsGateExemptTarget(ctx) {
-  const targetPath = fileToolTargetPath(
-    ctx.input && ctx.input.tool_name,
-    ctx.input && ctx.input.tool_input,
-  );
+  const toolName = ctx.input && ctx.input.tool_name;
+  const targetPath = fileToolTargetPath(toolName, ctx.input && ctx.input.tool_input);
   if (!targetPath) return false;
   const { repoRoot, indeterminate } = wtDetect.repoInfo(targetPath);
   if (indeterminate || !repoRoot) return false;
-  return isPipelineBookkeeping(repoRoot, targetPath) || isPolicyFile(repoRoot, targetPath);
+  if (isPipelineBookkeeping(repoRoot, targetPath) || isPolicyFile(repoRoot, targetPath)) return true;
+  // The third exemption (#2920): a target that isUntrackedOrIgnored (#1395,
+  // above) proves gitignored in its own repo cannot land on the branch this
+  // gate's PR stamp protects (no `git add -f` without an explicit commit,
+  // still covered by this gate's own git-write branch) -- mirrors the
+  // sibling worktree-required gate's identical exemption (~line 965) one-for
+  // -one, including its allow breadcrumb's event type and data shape, so a
+  // gitignored scratch write (the draft PR body itself, composed before the
+  // PR exists) is never blocked by the very gate that demands the PR.
+  // `targetPath` here always comes from `fileToolTargetPath`, which already
+  // gates on `GATE_COVERAGE.tools`, so this stays file-tool-only with no
+  // extra scoping needed. Logged against `ctx.runDir`, NOT `ctx.ownedRun` --
+  // unlike the worktree-required gate (which can fire before any run dir is
+  // bound to this checkout at all), this gate already requires `ctx.runDir`
+  // to be resolved before it ever reaches this function (the `if
+  // (!ctx.runDir) return {};` guard above in checkBookkeepingStampsGate), so
+  // the same "#1431 audit" reasoning this gate's own stamp-denial breadcrumbs
+  // already follow applies here too: this is about the run bound to THIS
+  // checkout, not about which run the calling session happens to own.
+  if (isUntrackedOrIgnored(repoRoot, targetPath)) {
+    const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+    ctxLib.appendEvent(ctx.runDir, 'gate-exempt-gitignored', { tool: toolName, path: targetPath, ...testTag });
+    return true;
+  }
+  return false;
 }
 
 // Shared outcome for both stamp checks in checkBookkeepingStampsGate below —
@@ -1875,6 +1953,9 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
 
   const gate = checkWorktreeRequired(ctx, commandGitTargets, indeterminateTargets);
   if (gate.json) return gate;
+
+  const psGate = checkPowershellOpaqueCommand(ctx);
+  if (psGate.json) return psGate;
 
   const stamps = checkBookkeepingStampsGate(ctx, commandGitTargets, deps, warnings);
   if (stamps.json) return stamps;

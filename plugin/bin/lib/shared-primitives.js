@@ -84,12 +84,21 @@ const path = require('path');
 
 const DEFAULT_GH_TIMEOUT_MS = 5000;
 const GH_TIMEOUT_ENV_VAR = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+// #3051: mirrors GH_TIMEOUT_MS's own shape exactly — a separate key because
+// claims-git-cas.js's `git` subprocess calls (fetch/show/push against the
+// claims-registry branch) have a different cost profile than a `gh` call,
+// and a loaded machine's slow-but-healthy remote needs more room than the
+// gh-timeout-ms default gives it (#2567's 5s default killed an observed
+// 8.6s healthy fetch under concurrent dispatch load).
+const DEFAULT_GIT_TIMEOUT_MS = 30000;
+const GIT_TIMEOUT_ENV_VAR = 'CLAUDE_TWEAKS_GIT_TIMEOUT_MS';
 const LARGE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 // Memoized once per process — set on first read, never re-read after (the
 // Gotcha this exists for: re-reading policy.yml on every `gh` invocation
 // would add filesystem I/O to a hot path).
 let resolvedGhTimeoutMs;
+let resolvedGitTimeoutMs;
 
 // A positive-integer env var wins outright; anything else (unset, blank,
 // non-numeric, zero, negative, or outside the `gh-timeout-ms` policy key's
@@ -144,6 +153,45 @@ function getGhTimeoutMs() {
   return resolvedGhTimeoutMs;
 }
 
+// #3051: same shape as ghTimeoutFromEnv, bounded against the `git-timeout-ms`
+// policy key's own [min, max] rather than a second hard-coded pair.
+function gitTimeoutFromEnv() {
+  const raw = process.env[GIT_TIMEOUT_ENV_VAR];
+  if (raw === undefined || raw === '') return undefined;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
+  try {
+    // eslint-disable-next-line global-require
+    const { POLICY_KEYS } = require('./policy-schema');
+    const entry = POLICY_KEYS.find((k) => k.key === 'git-timeout-ms');
+    if (entry && (parsed < entry.min || parsed > entry.max)) return undefined;
+  } catch {
+    // policy-schema unresolvable — fall through with the parsed value
+    // un-clamped rather than losing an otherwise-legitimate override.
+  }
+  return parsed;
+}
+
+// Same call-time-lazy-require rationale as ghTimeoutFromPolicy above.
+function gitTimeoutFromPolicy() {
+  try {
+    // eslint-disable-next-line global-require
+    const { readGitTimeoutMs } = require('./policy');
+    return readGitTimeoutMs(process.cwd());
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveGitTimeoutMs() {
+  return gitTimeoutFromEnv() ?? gitTimeoutFromPolicy() ?? DEFAULT_GIT_TIMEOUT_MS;
+}
+
+function getGitTimeoutMs() {
+  if (resolvedGitTimeoutMs === undefined) resolvedGitTimeoutMs = resolveGitTimeoutMs();
+  return resolvedGitTimeoutMs;
+}
+
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -193,5 +241,8 @@ async function runClassifiedAsync(fn, mapError, { retryOnTimeout = false } = {})
   }
 }
 
-module.exports = { LARGE_MAX_BUFFER_BYTES, escapeRegExp, isPathContained, runClassified, runClassifiedAsync };
+module.exports = {
+  LARGE_MAX_BUFFER_BYTES, escapeRegExp, isPathContained, isTimeoutError, runClassified, runClassifiedAsync,
+};
 Object.defineProperty(module.exports, 'GH_TIMEOUT_MS', { enumerable: true, get: getGhTimeoutMs });
+Object.defineProperty(module.exports, 'GIT_TIMEOUT_MS', { enumerable: true, get: getGitTimeoutMs });

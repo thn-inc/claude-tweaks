@@ -67,6 +67,36 @@ test('appendExclusion: creates the file on first call, appends on subsequent cal
   ]);
 });
 
+// #3110: a corrupt/unreadable file must never be silently treated as [] --
+// appendExclusion used to read through readExclusions (which degrades to [])
+// and then overwrite the file with just the new entry, silently dropping
+// every earlier pass's entries for this firing. It must now throw and leave
+// the file byte-identical instead.
+test('appendExclusion: corrupt JSON throws and leaves the file byte-identical, naming the path (#3110)', () => {
+  const p = tmpFile();
+  fs.writeFileSync(p, 'not json');
+  const before = fs.readFileSync(p, 'utf8');
+  assert.throws(
+    () => appendExclusion(p, { reason: 'blocked', records: [1], detail: null }),
+    (err) => err instanceof Error && err.message.includes(p) && /unreadable/.test(err.message),
+  );
+  assert.equal(fs.readFileSync(p, 'utf8'), before, 'corrupt file must not be rewritten');
+});
+
+test('appendExclusion: non-array JSON content also throws rather than silently rewriting (#3110)', () => {
+  const p = tmpFile();
+  fs.writeFileSync(p, JSON.stringify({ not: 'an array' }));
+  const before = fs.readFileSync(p, 'utf8');
+  assert.throws(() => appendExclusion(p, { reason: 'blocked', records: [1], detail: null }));
+  assert.equal(fs.readFileSync(p, 'utf8'), before, 'non-array file must not be rewritten');
+});
+
+test('appendExclusion: absent file still creates it (unaffected by the #3110 fix)', () => {
+  const p = tmpFile();
+  assert.doesNotThrow(() => appendExclusion(p, { reason: 'blocked', records: [1], detail: null }));
+  assert.deepStrictEqual(readExclusions(p), [{ reason: 'blocked', records: [1], detail: null }]);
+});
+
 test('excludedNumbers: flattens multiple entries of the requested reasons, ignores other reasons', () => {
   const entries = [
     { reason: 'oversized', records: [1, 2], detail: null },
