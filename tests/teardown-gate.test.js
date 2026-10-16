@@ -736,6 +736,8 @@ test('#2282: CT_HOOKS_TEST_MODE tags the own-cwd wd-guard-refusal event, exclude
     cwd: () => wt,
     readEvents: frictionEvents.readEvents,
     findRunsByWorktreePath: () => [],
+    sessionId: () => null,
+    findAdHocRunsBySessionId: () => [],
     stdout: (s) => { captured += s; },
     stderr: () => {},
   });

@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const ctxLib = require('../plugin/bin/lib/hooks/context');
-const { gitRepo } = require('./helpers/git-fixtures');
+const { gitRepo, harnessWorktreeOf } = require('./helpers/git-fixtures');
 
 function adhocDirs(main) {
   try {
@@ -57,4 +57,24 @@ test('stampAdHocRunDirForDenial: a fallback-attributed ownedRun no longer short-
   const stamped = ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 'sess-drd-4' }, cwd: main, ownedRun: { dir: guess, attribution: 'fallback' } });
   assert.notStrictEqual(stamped, guess);
   assert.strictEqual(adhocDirs(main).length, 1);
+});
+
+function seed(main, name, state) {
+  const dir = path.join(main, '.claude-tweaks', 'pipelines', name);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'decisions.md'), '');
+  ctxLib.writeRunState(dir, state);
+  return dir;
+}
+
+test('findAdHocRunsBySessionId: only this session\'s -adhoc-standalone dirs, never another session\'s or a formal run', () => {
+  const main = gitRepo();
+  const wt = harnessWorktreeOf(main);
+  const mine = seed(main, '2026-10-02T000000-adhoc-standalone', { status: 'active', sessionId: 'S1', worktree: '/gone/wt' });
+  seed(main, '2026-10-03T000000-adhoc-standalone', { status: 'active', sessionId: 'S2', worktree: '/gone/wt2' });
+  seed(main, '2026-10-01T000000-spec-7', { status: 'active', sessionId: 'S1', worktree: wt });
+  const hits = ctxLib.findAdHocRunsBySessionId(main, 'S1');
+  assert.deepStrictEqual(hits.map((h) => fs.realpathSync(h.runDir)), [fs.realpathSync(mine)]);
+  assert.deepStrictEqual(ctxLib.findAdHocRunsBySessionId(main, 'S1', mine), []);
+  assert.deepStrictEqual(ctxLib.findAdHocRunsBySessionId(main, ''), []);
 });

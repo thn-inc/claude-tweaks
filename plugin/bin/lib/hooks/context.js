@@ -505,6 +505,31 @@ function findRunsByWorktreePath(cwd, targetPath, excludeDir) {
   return out;
 }
 
+// #2783: the session-keyed sibling of findRunsByWorktreePath, for the Friction
+// Lens's read side. The ordinary ad-hoc sequence ends with ExitWorktree(remove)
+// BEFORE wrap-up, so wrap-up runs from the main checkout and the ad-hoc dir's
+// recorded `worktree` no longer matches anything — but the dir is still
+// non-terminal (reconcile sweeps it only after ADHOC_SUPERSEDED_TTL_MS) and
+// still carries the owning session id. Ad-hoc dirs only: a formal run of the
+// same session is a different run's record, not this session's ad-hoc friction.
+function findAdHocRunsBySessionId(cwd, sessionId, excludeDir) {
+  if (typeof sessionId !== 'string' || !sessionId) return [];
+  let excl = excludeDir ? path.resolve(excludeDir) : null;
+  if (excl) { try { excl = fs.realpathSync(excl); } catch { /* keep as-resolved */ } }
+  const out = [];
+  for (const { dir, state } of iterRunDirsWithState(cwd)) {
+    if (!isAdHocRunDir(dir)) continue;
+    if (!state || state.sessionId !== sessionId) continue;
+    if (excl) {
+      let d = dir;
+      try { d = fs.realpathSync(dir); } catch { /* keep as-listed */ }
+      if (d === excl) continue;
+    }
+    out.push({ runDir: dir, state });
+  }
+  return out;
+}
+
 // True synchronous sleep (no CPU-spinning) for writeRunState's lock retry
 // below — Node has no sync sleep primitive without a native/external dep,
 // but blocking on a zero-length SharedArrayBuffer via Atomics.wait achieves
@@ -743,6 +768,6 @@ function appendEvent(runDir, type, data, attribution) {
 
 module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
-  readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, RUN_ID_RE, findNonCanonicalRunDirs,
+  readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
   rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, isTrustedOwnedRun, isAdHocRunDir, resolveDenialRunDir,
 };
