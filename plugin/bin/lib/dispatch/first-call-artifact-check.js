@@ -22,6 +22,7 @@ const { readClaimBlob, defaultGhApi } = require('../issues/claim-store');
 const { classifyClaimBlob } = require('../issues/claims');
 const { resolvePolicyKeys } = require('../policy-schema');
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
+const { worktreeMirror } = require('../wrap-up/pack');
 
 function defaultReadFile(p) {
   return fs.readFileSync(p, 'utf8');
@@ -57,6 +58,33 @@ function resolveIntegrationModel(configRaw) {
 //      claims-registry branch that classifies 'live' with `runId === basename(runDir)`.
 //   4. Under `integration-model: pr-first` (resolved from config.yml), run-state.json's
 //      `pr.number` is recorded AND `pr.branch` exists on `origin`.
+//   5. Every member of `issueNumbers` has a materialized header (#2775): a readable
+//      `{n}-spec.md` at `work/{n}-spec.md` or `spec-{n}/work/{n}-spec.md`, in the run
+//      dir or its worktree mirror -- the same two shapes and mirror rule
+//      `wrap-up/pack.js`'s resolveRecords ladder reads, so a group that clears this
+//      gate never reaches its second call with records unresolved. A header whose
+//      `record:` line names another number does not count.
+
+// The run dir plus its worktree mirror (pack.js's worktreeMirror), deduplicated.
+function headerBases(runDir, runState) {
+  const bases = [runDir];
+  const mirror = worktreeMirror(runDir, runState && runState.worktree);
+  if (mirror && path.resolve(mirror) !== path.resolve(runDir)) bases.push(mirror);
+  return bases;
+}
+
+function hasMaterializedHeader(readFile, bases, n) {
+  for (const base of bases) {
+    for (const rel of [path.join('work', `${n}-spec.md`), path.join(`spec-${n}`, 'work', `${n}-spec.md`)]) {
+      let text;
+      try { text = readFile(path.join(base, rel)); } catch { continue; }
+      const rec = /^record:\s*(\d+)\s*$/m.exec(text);
+      if (!rec || Number(rec[1]) === n) return true;
+    }
+  }
+  return false;
+}
+
 function checkFirstCallArtifacts({ runDir, issueNumbers, repoSlug }, deps = {}) {
   const {
     readFile = defaultReadFile,
@@ -137,7 +165,16 @@ function checkFirstCallArtifacts({ runDir, issueNumbers, repoSlug }, deps = {}) 
     }
   }
 
+  let parsedRunState = null;
+  try { parsedRunState = JSON.parse(runStateRaw); } catch { parsedRunState = null; }
+  const bases = headerBases(runDir, parsedRunState);
+  for (const issueNumber of issueNumbers) {
+    if (!hasMaterializedHeader(readFile, bases, Number(issueNumber))) {
+      return fail('materialized-header-missing', `no materialized header for issue #${issueNumber} under ${bases.join(' or ')} (work/ or spec-${issueNumber}/work/)`);
+    }
+  }
+
   return { ok: true };
 }
 
-module.exports = { checkFirstCallArtifacts, resolveIntegrationModel };
+module.exports = { checkFirstCallArtifacts, resolveIntegrationModel, headerBases, hasMaterializedHeader, defaultReadFile };
