@@ -75,7 +75,7 @@ forces the full `--prune all-refs` fetch (`shared-fetch.js`) instead of the sing
 `bin/lib/reconcile`'s own term), releases the claim, and archives the run dir. This is convergent
 cleanup, not owed — a failure
 here (network, `gh` blip) is logged and left for the next trigger point, never retried inline and
-never a reason to report anything other than `merged`. **No `git merge`, `git commit`, or
+never a reason to report anything other than `merged`. (`release`'s own join and `archive`'s own `console.json` check both now fall back past a torn-down worktree/branch — a run whose worktree is already gone by the time this call runs converges in this same pass, not merely "eventually"; see `release-merged.js`'s `fallbackBranch`/by-number fallback and `archive-merged.js`'s `decideArchiveCore` staged-item exception, #3249.) **No `git merge`, `git commit`, or
 `git push` runs in the main checkout anywhere in this procedure** — the reconciler's own
 `mirrorFastForward` is a strict `--ff-only`, never a merge that could conflict, so it needs no
 worktree, no branch guard, and no close-run relief.
