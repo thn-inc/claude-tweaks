@@ -27,6 +27,25 @@ function launchSpec(launcher, args, platform, env = {}) {
 
 `plugin/bin/lib/reconcile/reap-merged.js`'s `longPathRemovalTarget(real, platform = process.platform)`, `plugin/bin/lib/verify/run.js`'s `platform = process.platform` option and `plugin/bin/lib/hooks/post-tool-use.js`'s `ctx.platform || process.platform` have the same shape. The comment beside `longPathRemovalTarget` gives the reason: `process.platform` is process-global, so a stub leaks into every other test in the same worker. Tests pass `'win32'` and `'linux'` explicitly (`tests/bin-lib/verify/run.test.js`, `tests/hooks-post-tool-use-worktree-staleness.test.js`).
 
+### Inject the OS-aware stdlib module itself, not a platform string
+
+When the branch you need to pin already lives inside a Node stdlib module — `path.win32` vs `path.posix` differ in `.sep`, `.isAbsolute`, `.parse` — there is nothing left to re-implement with a `platform` string and an internal `if`. Take the module itself as a parameter, defaulting to the platform-native one, and let the two OS-independent namespaces stand in for the real platforms on any host, including ubuntu-only CI:
+
+```js
+// tools/upstream-drift/checks.js
+function splitGlobPattern(pattern, pathFlavor = path) {
+  const baseDir = pathFlavor.isAbsolute(pattern) ? pathFlavor.parse(pattern).root : '.';
+  // ...
+}
+```
+
+```js
+// tools/upstream-drift/tests/checks.test.js
+splitGlobPattern('C:\\slotA\\…', path.win32); // exercises the drive-root branch on Linux CI
+```
+
+This is the same seam as `launchSpec`'s `platform` parameter above, one level down: `path.win32`/`path.posix` are OS-independent by construction, so passing one in reaches the win32-only branch without a real Windows process — no platform string, no internal branch to keep in sync with the module's own (#3069).
+
 ### Pin the win32 output with exact strings
 
 A shape assertion (`startsWith('"')`, `includes('engine-probe')`) stays green when an escaping pass is dropped. Pin the whole output, with one input per rule. `tests/bin-lib/impeccable-engine/windows-launch.test.js` pins `launchSpec`'s `/c` payload for a space, cmd.exe metacharacters, embedded quotes, a trailing backslash and an injection attempt (`a"&echo pwned&"`):
@@ -72,6 +91,7 @@ Node refuses to `execFileSync` a `.cmd`/`.bat` without a shell (CVE-2024-27980 h
 | The platform difference | Pin it with |
 |---|---|
 | Code branches on the OS (`.cmd` launcher, long-path prefix, case-insensitive env keys) | A `platform` parameter defaulting to `process.platform`, plus exact-string assertions for `'win32'` and one other platform |
+| The branch already lives inside a stdlib module (`path.sep`, `path.isAbsolute`) | Inject the module itself (`path.win32`/`path.posix`) as a parameter, defaulting to the platform-native one — no platform string, no internal branch |
 | Code parses text read from a tracked file | An LF case and a CRLF case built from the same string with `.replace(/\n/g, '\r\n')` |
 | A test extracts regions from live skill markdown | A CRLF input proving the extractor still finds the region (`skill-prose-conformance-tests`) |
 | Behavior only a real Windows process shows (cmd.exe parsing, file locking) | A `{ skip: process.platform !== 'win32' && '<reason>' }` real-process test, kept beside the exact-string pins |
@@ -104,7 +124,7 @@ node --test tests/bin-lib/impeccable-engine/windows-launch.test.js     # pins ru
 
 ## Reference
 
-- Code: `plugin/bin/lib/impeccable-engine/index.js` (`launchSpec`, `probeFailure`, `isSpawnTimeout`), `plugin/bin/lib/release-preflight/pack.js` (`workflowPublishesRelease`), `plugin/bin/lib/reconcile/reap-merged.js` (`longPathRemovalTarget`), `plugin/bin/lib/verify/run.js`, `plugin/bin/lib/hooks/post-tool-use.js` (`checkWindowsLongpaths`)
-- Tests: `tests/bin-lib/impeccable-engine/windows-launch.test.js`, `tests/bin-lib/impeccable-engine/resolve.test.js`, `tests/bin-lib/release-preflight/pack.test.js`, `tests/design-wrapper-doctor-no-fix.test.js`
+- Code: `plugin/bin/lib/impeccable-engine/index.js` (`launchSpec`, `probeFailure`, `isSpawnTimeout`), `plugin/bin/lib/release-preflight/pack.js` (`workflowPublishesRelease`), `plugin/bin/lib/reconcile/reap-merged.js` (`longPathRemovalTarget`), `plugin/bin/lib/verify/run.js`, `plugin/bin/lib/hooks/post-tool-use.js` (`checkWindowsLongpaths`), `tools/upstream-drift/checks.js` (`splitGlobPattern`)
+- Tests: `tests/bin-lib/impeccable-engine/windows-launch.test.js`, `tests/bin-lib/impeccable-engine/resolve.test.js`, `tests/bin-lib/release-preflight/pack.test.js`, `tests/design-wrapper-doctor-no-fix.test.js`, `tools/upstream-drift/tests/checks.test.js`
 - Related skills: `skill-prose-conformance-tests` (CRLF in prose-extraction regexes), `gh-api-module-pattern` (the `execFileSync` seam `launchSpec` feeds)
-- Origin: #3040, which closed the Windows-only gaps left by the v6.137.0 release review
+- Origin: #3040, which closed the Windows-only gaps left by the v6.137.0 release review; #3069, which added the module-injection pattern above
