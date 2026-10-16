@@ -14,6 +14,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
 
@@ -53,7 +54,7 @@ test('tidy/scan-procedures.md does not grow past its pre-#2257 byte count (AC6)'
 });
 
 test('byteSize measures LF bytes even when the on-disk file is CRLF (#3113 AC1)', () => {
-  const fixture = path.join(require('node:os').tmpdir(), `crlf-budget-fixture-${process.pid}.md`);
+  const fixture = path.join(os.tmpdir(), `crlf-budget-fixture-${process.pid}.md`);
   const lfText = 'line one\nline two\nline three\n';
   const crlfText = lfText.replace(/\n/g, '\r\n');
   fs.writeFileSync(fixture, crlfText);
