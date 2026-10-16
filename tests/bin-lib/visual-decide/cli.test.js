@@ -116,39 +116,50 @@ test('stop is stale-PID tolerant (dead PID -> already-stopped, exit 0)', async (
   assert.equal(fs.existsSync(path.join(stateDir, 'server-stopped')), true);
 });
 
-test('stop writes server-stopped marker defensively when waitFor times out on a still-signalable PID', async () => {
-  const stateDir = mkTmp('vd-state-');
-  fs.mkdirSync(stateDir, { recursive: true });
+test(
+  'stop writes server-stopped marker defensively when waitFor times out on a still-signalable PID',
+  {
+    // win32: process.kill(pid, 'SIGTERM') unconditionally terminates the
+    // target process there (no handler runs) -- the opposite of the
+    // still-signalable-but-unresponsive shape this test simulates, so the
+    // simulation below does not hold on a Windows checkout
+    // (windows-checkout-test-parity skill).
+    skip: process.platform === 'win32' && 'win32: SIGTERM is unconditional, cannot simulate a still-signalable stuck PID',
+  },
+  async () => {
+    const stateDir = mkTmp('vd-state-');
+    fs.mkdirSync(stateDir, { recursive: true });
 
-  // Simulate a PID that stays signalable (kill(pid, 0) keeps succeeding) but
-  // never exits and never writes the marker itself -- the same shape a
-  // zombie child presents to pidAlive() under a non-reaping init, without
-  // needing an actual zombie (this sandbox's PID 1 reaps normally).
-  const stuck = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'], {
-    stdio: 'ignore',
-  });
-  await new Promise((resolve) => {
-    stuck.once('spawn', resolve);
-  });
+    // Simulate a PID that stays signalable (kill(pid, 0) keeps succeeding) but
+    // never exits and never writes the marker itself -- the same shape a
+    // zombie child presents to pidAlive() under a non-reaping init, without
+    // needing an actual zombie (this sandbox's PID 1 reaps normally).
+    const stuck = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'], {
+      stdio: 'ignore',
+    });
+    await new Promise((resolve) => {
+      stuck.once('spawn', resolve);
+    });
 
-  fs.writeFileSync(
-    path.join(stateDir, 'server-info'),
-    JSON.stringify({ pid: stuck.pid, port: 0, url: 'http://127.0.0.1:0/', key: 'test' }),
-  );
-
-  try {
-    const stopResult = run(['stop', '--state', stateDir]);
-    assert.equal(stopResult.code, 0, stopResult.err);
-    assert.equal(stopResult.out.trim(), 'stopped');
-    assert.equal(
-      fs.existsSync(path.join(stateDir, 'server-stopped')),
-      true,
-      'server-stopped marker must be written even when waitFor times out on a still-signalable PID',
+    fs.writeFileSync(
+      path.join(stateDir, 'server-info'),
+      JSON.stringify({ pid: stuck.pid, port: 0, url: 'http://127.0.0.1:0/', key: 'test' }),
     );
-  } finally {
-    stuck.kill('SIGKILL');
-  }
-});
+
+    try {
+      const stopResult = run(['stop', '--state', stateDir]);
+      assert.equal(stopResult.code, 0, stopResult.err);
+      assert.equal(stopResult.out.trim(), 'stopped');
+      assert.equal(
+        fs.existsSync(path.join(stateDir, 'server-stopped')),
+        true,
+        'server-stopped marker must be written even when waitFor times out on a still-signalable PID',
+      );
+    } finally {
+      stuck.kill('SIGKILL');
+    }
+  },
+);
 
 test('AC6 (CLI path): fractional --idle-minutes self-exits and status reflects stopped', async () => {
   const dir = mkTmp('vd-content-');
