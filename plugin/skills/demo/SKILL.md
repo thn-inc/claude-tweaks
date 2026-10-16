@@ -78,14 +78,18 @@ runs — read only the matching branch in `entry-paths.md` in this skill's direc
 ## Step 2: Per-item walkthrough
 
 **Try it first (#2821).** Before anything else in this step — before the design-contract section
-and before any Prepare/Validate output — render the brief's `### Try it` block (`_shared/try-it.md`;
-a parent brief's `### Try it — end to end`), so `/claude-tweaks:demo #N` opens on the same
-walkthrough the Pipeline Summary and the PR showed. A brief carrying none (posted before this
-shipped) — compose one now per that contract from the record's Acceptance Criteria and Step 1's
-entry point, and never render it empty.
+and before any Prepare/Validate output — render the record's Try it block (`_shared/try-it.md`)
+as Step 1 resolved it: the brief's `### Try it` section (a parent brief's `### Try it — end to
+end`), found on the issue or — under `pr-first` — on the PR its pointer names, or, for a record
+whose walkthrough was posted alone, its closing PR's `try-it` run comment (`entry-paths.md`'s PR
+run-comment lookup). Either way `/claude-tweaks:demo #N` opens on the same walkthrough the
+Pipeline Summary and the PR showed. Step 1 composed a fresh one only when none exists; a
+label-backed brief carrying none (posted before this shipped) — compose one now per that contract
+from the record's Acceptance Criteria and Step 1's entry point, and never render it empty.
 
-Render this record's full Verification Brief (The ask / What shipped / Confirmed / Observation
-plan — evidence the human can judge, not a checklist to complete). Label-backed entries were
+Then render the rest of this record's full Verification Brief (The ask / What shipped / Confirmed /
+Observation plan — evidence the human can judge, not a checklist to complete), with its Try it
+block hoisted to the top — rendered once, above, never a second time in place. Label-backed entries were
 fetched per `verification-brief.md`'s digest template in Step 1's `#N` lookup; closing-commit
 reconstructions and session-recall entries composed their own Observation plan directly, in Step
 1's `#N` and no-arguments paths respectively — all three render identically here, and a
@@ -98,8 +102,8 @@ Compatibility branch below. One carrying neither the section nor a retired headi
 parent brief, whose walkthrough lives in its `### Try it — end to end` section per
 `wrap-up/verification-brief.md`'s Parent-Gate Procedure, or a session-recall entry whose recall
 yielded no confident path list (Step 1's omission rule) — skips Prepare/Validate/Show entirely and
-goes straight to the Verdict question below: the human judges from the brief's own `### Confirmed`
-content.
+goes straight to the Verdict question below: the human judges from the Try it block rendered
+first and the brief's own `### Confirmed` content.
 
 ### The design contract this was built against
 
