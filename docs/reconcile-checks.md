@@ -239,6 +239,19 @@ and closed issue are still the source of truth on GitHub), but it is unbounded, 
 its scheduled Routines exclusively in `gh`-absent sandboxes should periodically reconcile from a
 `gh`-present environment to bound the residue.
 
+## origin/HEAD repair on a fresh clone (#3132)
+
+`worktree-reap.js`'s `resolveIntegrationBranch` falls back to the local `refs/remotes/origin/HEAD`
+when `policy.yml` sets no `integration-branch` — and a fresh clone in a cloud/Routine sandbox can
+lack that symbolic ref even with a working `origin`. When the resolver returns null and an `origin`
+remote is configured, `index.js` runs `git remote set-head origin --auto` once
+(`origin-head.js`, bounded by `classify.js`'s `FETCH_TIMEOUT_MS`), drops any cached null for the
+root, and re-resolves. The outcome is recorded on the result as `originHeadRepair` —
+`{outcome: 'repaired', branch}`, `{outcome: 'failed', reason}` (degrades to the `no-remote` skip,
+never throws), or `{outcome: 'unresolved'}` — and the key is absent when no repair was attempted
+(no `origin` remote, or the branch already resolved). The repair lives in reconcile, never in the
+shared resolver: that resolver runs on the pre/post-tool-use hook paths and stays offline.
+
 ## Referenced by
 
 `CLAUDE.md`'s `### Reconcile` subsection points here for anyone touching

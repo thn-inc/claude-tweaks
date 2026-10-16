@@ -919,6 +919,89 @@ test('reconcile: no network / no remote resolves to no-remote, never crashes (AC
   assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-remote' }]);
 });
 
+// #3132: a fresh clone in a cloud/Routine sandbox has no local
+// refs/remotes/origin/HEAD. A plain `git clone` normally sets it, so the
+// fixture deletes it explicitly — a fixture that merely clones would pass
+// vacuously.
+function freshCloneWithoutOriginHead() {
+  const { originDir, mainDir } = pairedFixture();
+  git(['remote', 'set-head', 'origin', '--delete'], mainDir);
+  fs.mkdirSync(path.join(mainDir, '.claude-tweaks'), { recursive: true });
+  // local-merge + checks:['mirror'] keeps the pass fully offline once the
+  // branch resolves (no gh preflight), while still proving resolution: a
+  // resolved branch reaches the local-merge-model skip, an unresolved one
+  // returns no-remote first.
+  fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: local-merge\n');
+  return { originDir, mainDir };
+}
+
+test('reconcile: fresh clone with no origin/HEAD repairs it and resolves the integration branch (#3132)', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  assert.throws(() => git(['symbolic-ref', 'refs/remotes/origin/HEAD'], mainDir), 'fixture must start without origin/HEAD');
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'] });
+
+  assert.ok(!r.skipped.some((s) => s.reason === 'no-remote'), `expected no no-remote skip, got ${JSON.stringify(r.skipped)}`);
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,console', reason: 'local-merge-model' }]);
+  assert.deepStrictEqual(r.originHeadRepair, { outcome: 'repaired', branch: 'main' });
+  assert.strictEqual(git(['symbolic-ref', 'refs/remotes/origin/HEAD'], mainDir).trim(), 'refs/remotes/origin/main');
+});
+
+test('reconcile: origin/HEAD repair discards a cached null for the root before re-resolving (#3132)', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  const { mainCheckoutRoot } = require('../plugin/bin/lib/hooks/worktree-detect');
+  const cache = { worktreeList: new Map(), integrationBranch: new Map([[mainCheckoutRoot(mainDir), null]]) };
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'], cache });
+
+  assert.deepStrictEqual(r.originHeadRepair, { outcome: 'repaired', branch: 'main' });
+  assert.strictEqual(cache.integrationBranch.get(mainCheckoutRoot(mainDir)), 'main');
+});
+
+test('reconcile: origin configured but unreachable degrades to no-remote with a failed repair, never throws (#3132)', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  git(['remote', 'set-url', 'origin', path.join(os.tmpdir(), 'ct-recon-missing-origin-does-not-exist')], mainDir);
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'] });
+
+  assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-remote' }]);
+  assert.strictEqual(r.originHeadRepair.outcome, 'failed');
+  assert.strictEqual(typeof r.originHeadRepair.reason, 'string');
+});
+
+test('reconcile: no origin remote keeps the no-remote skip unchanged and attempts no repair (#3132)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-noorigin-'));
+  git(['init', '-q'], dir);
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
+
+  const r = await reconcile({ cwd: dir });
+
+  assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-remote' }]);
+  assert.ok(!('originHeadRepair' in r), 'no origin remote must not attempt (or report) a repair');
+});
+
+test('reconcile: a policy-configured integration branch never triggers the origin/HEAD repair (#3132)', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: local-merge\nintegration-branch: main\n');
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'] });
+
+  assert.ok(!('originHeadRepair' in r));
+  assert.throws(() => git(['symbolic-ref', 'refs/remotes/origin/HEAD'], mainDir), 'repair must not run when policy already resolves the branch');
+});
+
+test('resolveIntegrationBranch stays offline: no fetch, ls-remote, or remote set-head in worktree-reap.js (#3132)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'worktree-reap.js'), 'utf8');
+  const start = src.indexOf('function resolveIntegrationBranch(');
+  assert.ok(start >= 0, 'resolveIntegrationBranch not found');
+  const end = src.indexOf('\n}\n', start);
+  const body = src.slice(start, end);
+  for (const verb of ["'fetch'", "'ls-remote'", "'set-head'"]) {
+    assert.ok(!body.includes(verb), `resolveIntegrationBranch must stay offline — found ${verb}`);
+  }
+});
+
 test('reconcile: outside any repo resolves to no-repo, never crashes', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-norepo-'));
   const r = await reconcile({ cwd: dir });
