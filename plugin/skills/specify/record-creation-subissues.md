@@ -12,6 +12,16 @@ session-scoped temp path below resolves per `_shared/session-tmp-root.md` — ci
 
 **Only sub-issues get `ready`** — and only sub-issues carry `risk:*`/`size:*` scoring; a kept parent gets neither. One per work unit from Step 2, in any order — Step 4 does the linking once every number exists, so creation order doesn't matter.
 
+**Fresh manifest for this invocation.** Once, before the per-work-unit loop below processes its first unit, reset the batch manifest that Accumulate this unit (below) appends to. That file is session-scoped, so without this reset a second decomposition in the same session — or a resumed one, whose loop re-accumulates every unit including Idempotency-resolved ones — would carry earlier entries into this batch's cross-reference pass (`crossReferenceKeyFiles`) and Ceremony tally, which both read it:
+
+```bash
+SPECIFY_DECOMP_MANIFEST=$(node -e "
+  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
+  console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-decomp-manifest.json') || require('path').join(require('os').tmpdir(), 'specify-decomp-manifest.json'))
+")
+node -e "require('fs').writeFileSync(process.argv[1], '[]')" "$SPECIFY_DECOMP_MANIFEST"
+```
+
 **Origin-set carve-out (1-unit collapse).** When Step 2.6 returned a 1-unit collapse *and* `$ORIGIN_RECORD_NUM` is set (`SKILL.md`'s `needs:definition` redirect, Resolve-the-input case 1), that unit gets **no fresh create**: compose its body exactly as below, then write it onto the origin record in place — `gh issue edit "$ORIGIN_RECORD_NUM" --body-file` plus the labels the create call would have applied and `--remove-label "needs:definition"` in the same edit; under `local-files`, `writeRecord` with those same facets and `facets.needsDefinition` cleared (the record is now defined — the redirect that routed here must not re-fire) — carrying the `{design-doc-slug}:{unit-slug}` fingerprint into that body so the Idempotency map above resolves it on any resumed run. **This write replaces the origin's own body, so preserve that body as a `## Original request` block in the composed one** — shaping mode's ground-truth rule (`shaping-mode.md`), and the last record of what was originally asked once Step 7 deletes the design doc. Treat `$ORIGIN_RECORD_NUM` as this unit's `$SUB_ISSUE_NUM`/`$SUB_ISSUE_ID` from here on: Step 4's linking, Step 5's red-team and Step 6's self-review all run against it as an ordinary produced record, and Step 9 then only skips its closure. With `$ORIGIN_RECORD_NUM` unset (every other entry path), a 1-unit collapse creates one fresh standalone ready record, exactly as below.
 
 When a sub-issue proposes building a new `bin/` CLI, check for a same-named deliverable already
@@ -158,7 +168,7 @@ Add a `facets.solutionUnjustified: true` key to the object above only when this 
 
 Capture `$SUB_ISSUE_NUM` / `$SUB_ISSUE_ID` for every sub-issue (created or resumed via the Idempotency map) — Step 4's linking pass consumes them.
 
-**Accumulate this unit for the cross-reference pass below.** Append `{title, num_or_id, body}` (`$SUB_ISSUE_TITLE`, `$SUB_ISSUE_NUM`/`$SUB_ISSUE_ID`, `"$SPECIFY_SUB_ISSUE_BODY"`'s contents) to a session-scoped JSON array file, read-existing-then-append (this loop's compose-then-write-once temp files are overwritten each iteration, so this is the only place the whole batch's bodies survive past their own iteration):
+**Accumulate this unit for the cross-reference pass below.** Append `{title, num_or_id, body, ceremony}` (`$SUB_ISSUE_TITLE`, `$SUB_ISSUE_NUM`/`$SUB_ISSUE_ID`, `"$SPECIFY_SUB_ISSUE_BODY"`'s contents, `$SUB_ISSUE_CEREMONY`) to a session-scoped JSON array file, read-existing-then-append (this loop's compose-then-write-once temp files are overwritten each iteration, so this is the only place the whole batch's bodies survive past their own iteration):
 
 ```bash
 SPECIFY_DECOMP_MANIFEST=$(node -e "
@@ -167,10 +177,10 @@ SPECIFY_DECOMP_MANIFEST=$(node -e "
 ")
 node -e "const fs=require('fs');
   const path=process.argv[1];
-  const entry={title:process.argv[2], num:process.argv[3], body:fs.readFileSync(process.argv[4],'utf8')};
+  const entry={title:process.argv[2], num:process.argv[3], body:fs.readFileSync(process.argv[4],'utf8'), ceremony:process.argv[5]};
   const list=fs.existsSync(path)?JSON.parse(fs.readFileSync(path,'utf8')):[];
   list.push(entry);
-  fs.writeFileSync(path, JSON.stringify(list))" "$SPECIFY_DECOMP_MANIFEST" "$SUB_ISSUE_TITLE" "${SUB_ISSUE_NUM:-$SUB_ISSUE_ID}" "$SPECIFY_SUB_ISSUE_BODY"
+  fs.writeFileSync(path, JSON.stringify(list))" "$SPECIFY_DECOMP_MANIFEST" "$SUB_ISSUE_TITLE" "${SUB_ISSUE_NUM:-$SUB_ISSUE_ID}" "$SPECIFY_SUB_ISSUE_BODY" "$SUB_ISSUE_CEREMONY"
 ```
 
 **Write-path resilience.** A `gh` create failure for one sub-issue (any kept parent already exists on GitHub by this point) falls back to `local-store.js` for that sub-issue only — write it locally with `unsynced: true` (fingerprint preserved, so a later sync still dedups correctly) and continue with the rest of the batch rather than aborting the whole decomposition over one failure. `/tidy`'s Sync finding reconciles it onto GitHub on a later pass. The same rule applies to Step 4's linking edits below — a failed link is noted and the pass continues; nothing already created rolls back.
@@ -200,6 +210,64 @@ only after the whole batch, before Step 4 or any later consumer reads the queue 
 ```bash
 node -e "require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js').invalidateSnapshot(process.env.CLAUDE_CODE_SESSION_ID)"
 ```
+
+**Ceremony tally.** Once every sub-issue in this batch has been accumulated into
+`$SPECIFY_DECOMP_MANIFEST` (Accumulate this unit, above) and the snapshot above has been
+invalidated, check whether this batch itself qualifies as the live event a standing watch-item
+record (e.g. #1350) is waiting to observe: 2 or more sub-issues in this batch carrying
+`ceremony:standard`. When it does, append one durable, git-tracked record of that fact to
+`docs/specify-decomposition-log.md` — a plain append-only markdown log, not a run-scoped
+`decisions.md` (that file is cleaned up with its pipeline run; this one is permanent) — so a
+later, unrelated session can confirm the event occurred without needing this session's own
+transcript.
+
+The step is opt-in per project via `specify-decomposition-log` (`_shared/policy-schema.md`),
+which the fence below resolves first:
+- `specify-decomposition-log: false` (the default) — skip the step entirely: no tally, no file,
+  not even a log line. A project that has not opted in sees no behavior change at all.
+- `specify-decomposition-log: true` — run the tally below. A ref renders `#{N}` under
+  `work-backend: github-issues` and as the bare record id under `local-files`.
+
+```bash
+SPECIFY_DECOMP_LOG=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values specify-decomposition-log)
+if [ "$SPECIFY_DECOMP_LOG" = "true" ]; then
+  SPECIFY_DECOMP_MANIFEST=$(node -e "
+    const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
+    console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-decomp-manifest.json') || require('path').join(require('os').tmpdir(), 'specify-decomp-manifest.json'))
+  ")
+  node -e "
+    const fs = require('fs');
+    const os = require('os');
+    const manifestPath = process.argv[1];
+    const logPath = 'docs/specify-decomposition-log.md';
+    const list = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : [];
+    const standard = list.filter((e) => e.ceremony === 'standard');
+    if (standard.length < 2) process.exit(0);
+    const claudeMd = fs.existsSync('CLAUDE.md') ? fs.readFileSync('CLAUDE.md', 'utf8') : '';
+    const wbLine = claudeMd.split('\n').find((l) => l.startsWith('work-backend:')) || '';
+    const prefix = wbLine.replace('work-backend:', '').trim() === 'github-issues' ? '#' : '';
+    const header = '# Specify Decomposition Event Log\n\nAppend-only, git-tracked record of every \`/claude-tweaks:specify\` decomposition run that produced 2 or more \`ceremony:standard\` sub-issues — the durable event a watch-item backlog record (e.g. #1350) can check for instead of needing the observing session\\'s own transcript.\n';
+    const existing = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : header;
+    const entry = '\n### ' + new Date().toISOString() + '\n\n'
+      + '- Sub-issues in this batch: ' + list.length + '\n'
+      + '- \`ceremony:standard\` sub-issues (' + standard.length + '): '
+      + standard.map((e) => prefix + e.num).join(', ') + '\n'
+      + '- Transcript pointer (this session): sessionId ' + (process.env.CLAUDE_CODE_SESSION_ID || '(none)')
+      + ', host ' + os.hostname() + ', cwd ' + process.cwd() + '\n';
+    fs.mkdirSync('docs', { recursive: true });
+    fs.writeFileSync(logPath, existing + entry);
+    console.error('Ceremony tally: ' + standard.length + ' ceremony:standard sub-issues — appended to ' + logPath);
+  " "$SPECIFY_DECOMP_MANIFEST"
+fi
+```
+
+Below the 2+ threshold (the common case — most decompositions produce 0 or 1 `ceremony:standard`
+sub-issues), this is a silent no-op: no log entry, no error. The written entry is picked up by
+Step 9's existing `git add specs/ docs/` commit — no separate commit needed here. It is durable
+only once that commit lands on a branch that reaches `{integration-branch}` (`_shared/integration-branch.md`):
+a scratch worktree or branch later discarded, or a run that aborts before Step 9, can silently
+lose it — so a re-check relying on this log confirms the commit is reachable from the
+integration branch, not merely that the file exists in some branch's history.
 
 ### Rules
 

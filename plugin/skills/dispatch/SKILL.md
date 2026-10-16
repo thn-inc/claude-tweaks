@@ -142,6 +142,8 @@ given before rendering one.
 
 **Blocked-exclusion report (refs #1101).** See `blocked-exclusion-report.md`, this skill's directory (same convention as the Open-PR exclusion report below; not a gate — the exclusion itself already happened inside `queue-pull-script.md`).
 
+**Not-spec-shaped exclusion report (refs #2829).** See `not-spec-shaped-exclusion-report.md`, this skill's directory (same non-gating convention as the reports above; no bypass, unlike Oversized) — runs first, ahead of Open-PR/Shipped-candidate below.
+
 **Open-PR exclusion report (refs #1224).** See `open-pr-exclusion-report.md`, this skill's directory (same convention as the Blocked-exclusion report above; not a gate — the exclusion itself already happened inside `queue-pull-script.md`).
 
 **Shipped-candidate exclusion report (refs #1984).** Read this run's session-scoped
@@ -152,8 +154,6 @@ merged PR #{pr} ({signals}); a Close proposal is staged in this firing's run dir
 same convention as the reports above (weak-tier: see above).
 
 **Oversized-group report (refs #1228).** See `oversized-group-report.md`, this skill's directory (groups over the size guard stay selectable via `#N`/`#N,#M,...`; not a gate).
-
-**Not-spec-shaped exclusion report (refs #2829).** See `not-spec-shaped-exclusion-report.md`, this skill's directory (same non-gating convention as the reports above; no bypass, unlike Oversized).
 
 **Cross-PR root-cause overlap report (refs #1579).** See `cross-pr-overlap-report.md`, this skill's directory (warning only, never a gate).
 

@@ -58,9 +58,13 @@ function stripComments(src) {
 
 // Extracts the text governed by a `require.main === module` guard: either a
 // balanced `{ ... }` block, or (the dominant single-line form in this repo)
-// the bare statement up to its terminating semicolon.
+// the bare statement up to its terminating semicolon. A file may hold more
+// than one guard (hooks.js's #3074 prefilter guard precedes its real entry
+// point); the LAST one is the entry point, since a guard that short-circuits
+// before the entry point must appear before it.
 function extractGuard(src) {
-  const m = src.match(/if\s*\(\s*require\.main\s*===\s*module\s*\)\s*/);
+  const re = /if\s*\(\s*require\.main\s*===\s*module\s*\)\s*/g;
+  const m = [...src.matchAll(re)].at(-1);
   if (!m) return null;
   let i = m.index + m[0].length;
   if (src[i] === '{') {
@@ -136,6 +140,22 @@ test('the allowlist names exactly the two reviewed exceptions, and each still ac
       `${rel} is allowlisted but no longer calls process.exit() directly -- remove it from the allowlist`,
     );
   }
+});
+
+test('extractGuard selects the entry-point (last) require.main guard in hooks.js, not the prefilter (first) one', () => {
+  const content = stripComments(fs.readFileSync(path.join(ROOT, 'plugin', 'bin', 'hooks.js'), 'utf8'));
+  const guard = extractGuard(content);
+  assert.ok(guard !== null, 'hooks.js should still have a detectable require.main guard');
+  // The prefilter guard at the top of the file only ever calls the early-exit
+  // skip path; the real entry-point guard at the bottom drives main(...).
+  assert.ok(
+    /main\s*\(/.test(guard),
+    `extractGuard should select the entry-point guard (the one invoking main(...)), not the prefilter guard -- got: ${guard.slice(0, 120)}`,
+  );
+  assert.ok(
+    findDirectProcessExit(guard).length > 0,
+    'the shipped entry-point guard still calls process.exit() directly -- this assertion documents the pre-fix-staleness baseline',
+  );
 });
 
 // #2053: a narrower, unconditional rule -- no file under
