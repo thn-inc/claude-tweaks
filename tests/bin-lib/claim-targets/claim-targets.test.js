@@ -8,7 +8,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  run, BOT_IN_PROGRESS, ABORT_REASON,
+  run, BOT_IN_PROGRESS, ABORT_REASON, USAGE,
 } = require('../../../plugin/bin/lib/claim-targets/claim-targets');
 // #787 residual finding (progress.md's parked "expectedContent has zero test
 // coverage" item): claim-targets.js requires this same module-level object,
@@ -1206,6 +1206,90 @@ test('abort-release rollback write threads expectedContent = the fresh content r
   assert.equal(writeSpy.mock.calls.length, 2, 'the initial claim write plus the rollback release write');
   const rollbackOpts = writeSpy.mock.calls[1].arguments[3];
   assert.equal(rollbackOpts.expectedContent, 'irrelevant', "rollback write's expectedContent is the fresh read's content, not the original claim read's");
+});
+
+// #3065: repo-slug resolution timeout classification. A fake `gh` whose
+// `repo view` call throws a timeout-shaped error (`spawnSync`'s own
+// ETIMEDOUT shape) a given number of times before succeeding, so each test
+// controls whether the CLI's one retry is enough.
+function makeTimeoutThenSucceedGh({ timeoutCount, repoSlug = REPO } = {}) {
+  let repoViewCalls = 0;
+  const calls = [];
+  function gh(args) {
+    calls.push(args);
+    if (args[0] === 'repo' && args[1] === 'view') {
+      repoViewCalls += 1;
+      if (repoViewCalls <= timeoutCount) {
+        const err = new Error('spawnSync gh ETIMEDOUT');
+        err.code = 'ETIMEDOUT';
+        throw err;
+      }
+      return `${repoSlug}\n`;
+    }
+    throw new Error(`unexpected gh ${args.join(' ')}`);
+  }
+  return { gh, calls };
+}
+
+test('(slug-1) repo-slug timeout that succeeds on retry: claims proceed normally, exit 0', () => {
+  const { gh } = makeTimeoutThenSucceedGh({ timeoutCount: 1 });
+  const { ghApi } = makeGhApi({ reads: { 740: [readAbsent, confirmRead()] }, writes: { 740: [writeOk] } });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '740'], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, [740]);
+});
+
+test('(slug-2) repo-slug timeout on both attempts: exit 4, transient envelope, no USAGE text on stderr', () => {
+  const { gh } = makeTimeoutThenSucceedGh({ timeoutCount: 99 });
+  const ghApi = () => { throw new Error('must not be called — nothing claimed before slug resolution'); };
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '741,742'], deps);
+
+  assert.equal(code, 4);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.transient.map((t) => t.issue), [741, 742]);
+  assert.deepEqual(body.released, []);
+  assert.deepEqual(body.releaseFailed, []);
+  assert.ok(!io.err.join('').includes(USAGE));
+});
+
+test('(slug-3) repo-slug timeout on both attempts under --keep-going: exit 0, every target skipped as transient', () => {
+  const { gh } = makeTimeoutThenSucceedGh({ timeoutCount: 99 });
+  const ghApi = () => { throw new Error('must not be called — nothing claimed before slug resolution'); };
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '743,744', '--keep-going'], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.skipped, [
+    { issue: 743, reason: 'transient' },
+    { issue: 744, reason: 'transient' },
+  ]);
+  assert.deepEqual(body.claimed, []);
+});
+
+test('(slug-4) repo-slug ENOENT (gh absent): still exit 2, no USAGE text on stderr', () => {
+  const gh = (args) => {
+    if (args[0] === 'repo' && args[1] === 'view') {
+      const err = new Error('spawnSync gh ENOENT');
+      err.code = 'ENOENT';
+      throw err;
+    }
+    throw new Error(`unexpected gh ${args.join(' ')}`);
+  };
+  const ghApi = () => { throw new Error('must not be called — nothing claimed before slug resolution'); };
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '745'], deps);
+
+  assert.equal(code, 2);
+  assert.ok(!io.err.join('').includes(USAGE));
 });
 
 test('--help short-circuits before any gh call, exit 0', () => {

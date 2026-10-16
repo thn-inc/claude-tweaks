@@ -267,7 +267,10 @@ stays best-effort and the claim read stays the authoritative hold check:
   decision here.
 - **4** — transient `gh` failure, same fail-fast/all-or-abort shape as exit 3: stdout carries
   `{transient: [{issue, error}], released, releaseFailed}`, release already attempted. Render the
-  transient-failure card below.
+  transient-failure card below. Also covers a pre-claim repo-slug resolution timeout (#3065) — a
+  `gh repo view` timeout is retried once, then, if it still fails, reported here with every
+  requested target listed in `transient` and empty `released`/`releaseFailed` (nothing was claimed
+  yet); stderr names the timeout and the `gh-timeout-ms`/`CLAUDE_TWEAKS_GH_TIMEOUT_MS` override.
 - **5** (#2073) — a claim write reported success but the post-write read-back never confirmed it
   (a live claim carrying this run's `runId`) — same fail-fast/all-or-abort shape as exit 3/4: stdout
   carries `{unverified: [{issue}], released, releaseFailed}`. The unverified target itself is never
@@ -284,8 +287,10 @@ stays best-effort and the claim read stays the authoritative hold check:
   ```
 
   No `AskUserQuestion` — same as the contest and transient cards, nothing to choose between.
-- **2** — malformed invocation or missing dependency (a bad `--run-id`/`--targets` value, or repo
-  resolution failed) — a bug in this call, not a claim outcome. Treat as a hard stop.
+- **2** — malformed invocation or missing dependency (a bad `--run-id`/`--targets` value, `gh`
+  absent, or a non-timeout repo-slug resolution failure — a real auth error or 404, never a
+  timeout, which is exit 4 instead per #3065) — a bug in this call, not a claim outcome. Treat as
+  a hard stop.
 
 **On exit 3, 4, or 5** — release nothing further (the CLI's `released`/`releaseFailed` already covers
 the attempt; a non-empty `releaseFailed` is not this step's problem to retry — the named claim
