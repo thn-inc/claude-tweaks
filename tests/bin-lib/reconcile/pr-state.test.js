@@ -401,14 +401,9 @@ test('resolveIssueStateByNumber: malformed gh output -> network-failure, no thro
 // 'network-failure', and never throw (archive-merged.js's sweep and
 // github-pr-scan.md's forEach both rely on these resolvers never throwing).
 function installArgvSpy(json) {
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-guard-'));
-  const wrapperPath = path.join(wrapperDir, 'gh');
-  const argvLog = path.join(wrapperDir, 'argv.log');
-  fs.writeFileSync(wrapperPath, `#!/bin/sh\necho "$@" >> "${argvLog}"\ncat <<'EOF'\n${JSON.stringify(json)}\nEOF\n`);
-  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
-  return { called: () => fs.existsSync(argvLog), restore: () => { process.env.PATH = originalPath; } };
+  const argvLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-guard-')), 'argv.log');
+  const wrapper = installGhWrapper(`#!/bin/sh\necho "$@" >> "${argvLog}"\ncat <<'EOF'\n${JSON.stringify(json)}\nEOF\n`);
+  return { called: () => fs.existsSync(argvLog), restore: wrapper.restore };
 }
 
 test('by-number resolvers: misordered/object-shaped calls -> invalid-arguments, no gh call, no throw (#3029)', () => {
