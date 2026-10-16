@@ -91,8 +91,7 @@ applies for bare drain, incl. `next`).
 **MCP transport details.** On either MCP route, read `mcp-transport.md` in this skill's directory
 before any GitHub call: it carries check 3's own MCP equivalent (a bounded `list_issues` probe, since
 check 3 stays a hard gate on either transport) and the MCP form of every `gh` call site in this
-file. It also records why check 2 no longer gates on its own, including the reverted first attempt
-at this bridge that shipped the gate change before the read path was finished.
+file. It also records why check 2 no longer gates on its own.
 
 ## Workflow
 
