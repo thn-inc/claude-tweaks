@@ -44,16 +44,17 @@ test('worktree-setup.md: names both values and how each resolves', () => {
   const p = paragraph();
   assert.match(p, /CLAUDE_PLUGIN_ROOT/, 'must name CLAUDE_PLUGIN_ROOT');
   assert.match(p, /CLAUDE_CODE_SESSION_ID/, 'must name CLAUDE_CODE_SESSION_ID');
-  assert.match(p, /Base directory for this skill:/, 'plugin root derives from the Skill tool line');
+  assert.match(p, /Base directory for this skill:/, 'plugin root derives from the invoking claude-tweaks skill line');
   assert.match(p, /skills\/\{name\}/, 'must say to drop the trailing skills/{name} segment');
-  assert.match(p, /grandparent/i, 'must give the no-Skill-invocation fallback (the read file\'s grandparent)');
-  assert.match(p, /printenv CLAUDE_CODE_SESSION_ID/, 'session id resolves via one plain printenv call');
+  assert.match(p, /cut before its `skills\/` segment/i, 'no-Skill fallback must cut the read file\'s path at its skills/ segment (depth-independent)');
+  assert.doesNotMatch(p, /grandparent/i, 'grandparent is off by one for _shared/ and nested sub-files');
+  assert.match(p, /printenv\s+CLAUDE_CODE_SESSION_ID/, 'session id resolves via one plain printenv call');
 });
 
 test('worktree-setup.md: says to substitute literally, everywhere, including subagent prompts', () => {
   const p = paragraph();
   assert.match(p, /literal/i, 'must say literal substitution');
-  assert.match(p, /every later command/i, 'must cover every later command, not just the next one');
+  assert.match(p, /every\s+later\s+command/i, 'must cover every later command, not just the next one');
   assert.match(p, /subagent/i, 'must extend to prompts handed to subagents');
   assert.match(p, /first time a later command needs/i, 'must not read as a step to run before the unconditional fetch');
   assert.match(p, /scratch-worktree\.md/, 'must cite the §7 refusal catalog, not restate it');
