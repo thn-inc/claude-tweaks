@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 
 const BIN = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'visual-decide.js');
 const CLI_LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'visual-decide', 'cli.js');
@@ -114,6 +114,40 @@ test('stop is stale-PID tolerant (dead PID -> already-stopped, exit 0)', async (
   const stopResult = run(['stop', '--state', stateDir]);
   assert.equal(stopResult.code, 0);
   assert.equal(fs.existsSync(path.join(stateDir, 'server-stopped')), true);
+});
+
+test('stop writes server-stopped marker defensively when waitFor times out on a still-signalable PID', async () => {
+  const stateDir = mkTmp('vd-state-');
+  fs.mkdirSync(stateDir, { recursive: true });
+
+  // Simulate a PID that stays signalable (kill(pid, 0) keeps succeeding) but
+  // never exits and never writes the marker itself -- the same shape a
+  // zombie child presents to pidAlive() under a non-reaping init, without
+  // needing an actual zombie (this sandbox's PID 1 reaps normally).
+  const stuck = spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'], {
+    stdio: 'ignore',
+  });
+  await new Promise((resolve) => {
+    stuck.once('spawn', resolve);
+  });
+
+  fs.writeFileSync(
+    path.join(stateDir, 'server-info'),
+    JSON.stringify({ pid: stuck.pid, port: 0, url: 'http://127.0.0.1:0/', key: 'test' }),
+  );
+
+  try {
+    const stopResult = run(['stop', '--state', stateDir]);
+    assert.equal(stopResult.code, 0, stopResult.err);
+    assert.equal(stopResult.out.trim(), 'stopped');
+    assert.equal(
+      fs.existsSync(path.join(stateDir, 'server-stopped')),
+      true,
+      'server-stopped marker must be written even when waitFor times out on a still-signalable PID',
+    );
+  } finally {
+    stuck.kill('SIGKILL');
+  }
 });
 
 test('AC6 (CLI path): fractional --idle-minutes self-exits and status reflects stopped', async () => {

@@ -183,16 +183,20 @@ async function runDaemon(opts) {
   process.on('SIGINT', stop);
 }
 
+function writeStoppedMarker(stateDir) {
+  try {
+    fs.writeFileSync(path.join(stateDir, 'server-stopped'), '');
+  } catch {
+    // best-effort
+  }
+}
+
 async function cmdStop(opts) {
   const stateDir = opts.state;
   if (!stateDir) throw new Error('stop requires --state');
   const info = readInfo(stateDir);
   if (!info || !pidAlive(info.pid)) {
-    try {
-      fs.writeFileSync(path.join(stateDir, 'server-stopped'), '');
-    } catch {
-      // best-effort
-    }
+    writeStoppedMarker(stateDir);
     process.stdout.write('already stopped\n');
     return;
   }
@@ -202,18 +206,23 @@ async function cmdStop(opts) {
     // TOCTOU: the process could have died between the pidAlive check above
     // and this call (its own idle timeout fired, or an independent crash) —
     // that's still "already stopped", not a failure (review finding).
-    try {
-      fs.writeFileSync(path.join(stateDir, 'server-stopped'), '');
-    } catch {
-      // best-effort
-    }
+    writeStoppedMarker(stateDir);
     process.stdout.write('already stopped\n');
     return;
   }
-  await waitFor(
+  const settled = await waitFor(
     () => fs.existsSync(path.join(stateDir, 'server-stopped')) || !pidAlive(info.pid),
     { timeoutMs: 3000, intervalMs: 50 },
   );
+  if (!settled) {
+    // waitFor timed out: on a zombie PID (no reaping init) pidAlive(pid)
+    // keeps answering true via kill(pid, 0) even though the process can no
+    // longer run its own SIGTERM handler to write the marker itself. Write
+    // it defensively here, matching the dead-PID branch's own behavior
+    // above -- stop is a stale-PID-tolerant contract regardless of which
+    // branch gets there.
+    writeStoppedMarker(stateDir);
+  }
   process.stdout.write('stopped\n');
 }
 
