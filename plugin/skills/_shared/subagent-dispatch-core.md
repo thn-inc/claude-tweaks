@@ -93,7 +93,7 @@ lens, debate, refutation, and gap-sweep agents. It never applies to an implement
 dispatch, whose job is to run things. Inline this line verbatim into every such prompt, outside
 any byte-pinned Calibration/Output block:
 
-`READ-ONLY REVIEW: never run the project's test suites, builds, dev servers, or e2e runners — read and report only, since mechanical verification belongs to /claude-tweaks:test (sole exception: one targeted test case, run in the foreground, when lens 3f's Vacuity-evidence diagnostic needs execution evidence).`
+`READ-ONLY REVIEW: never run the project's test suites, builds, dev servers, or e2e runners — read and report only, since mechanical verification belongs to /claude-tweaks:test (a throwaway probe under your SCRATCH: path is fine; sole suite exception: one targeted test case, run in the foreground, when lens 3f's Vacuity-evidence diagnostic needs execution evidence).`
 
 Reading a test file is always fine; running the suite is not. A reviewer that starts the
 project's suite or server races any server the same review started (`/visual-review`'s

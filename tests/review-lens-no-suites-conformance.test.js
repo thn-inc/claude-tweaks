@@ -73,6 +73,18 @@ test('the Foreground note no longer frames running a verification command as an 
   assert.match(d, /> \*\*Foreground Execution Discipline:\*\*[^\n]*Vacuity-evidence diagnostic/);
 });
 
+test('the Foreground note also covers ordinary read-only probes under SCRATCH:, not just the lens 3f test case', () => {
+  const d = read('review', 'step3-lens-dispatch.md');
+  const sec = d.slice(d.indexOf('> **Foreground Execution Discipline:**'), d.indexOf('> **Full diff content is read here'));
+  assert.match(sec, /SCRATCH:/);
+});
+
+test('the compact-form eligibility condition names zero new listeners alongside zero untracked files', () => {
+  const t = read('review', 'review-summary-template.md');
+  const sec = section(t, '## Compact form');
+  assert.match(sec, /zero new listeners/i);
+});
+
 test('the debate, refutation, and gap-sweep prompt templates each carry the READ-ONLY REVIEW placeholder', () => {
   const t = read('review', 'step3-debate-and-refutation.md');
   const hits = t.match(/\[\.\.\. READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section \.\.\.\]/g) || [];
@@ -83,7 +95,7 @@ test('the pre-dispatch listing also snapshots local TCP listeners next to pre-di
   const d = read('review', 'step3-lens-dispatch.md');
   const para = d.slice(d.indexOf('**Pre-dispatch listing (scratch-sweep baseline).**'), d.indexOf('**`Path:Line` must be file-native'));
   assert.match(para, /pre-dispatch-status\.txt/);
-  assert.match(para, /lsof -nP -iTCP -sTCP:LISTEN > \{ctx-dir\}\/pre-dispatch-listeners\.txt/);
+  assert.match(para, /lsof \+c 0 -nP -iTCP -sTCP:LISTEN > \{ctx-dir\}\/pre-dispatch-listeners\.txt/);
   assert.match(para, /lsof.*unavailable[\s\S]*SKIP/);
 });
 
