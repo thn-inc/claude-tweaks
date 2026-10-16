@@ -87,8 +87,20 @@ test('the compact-form eligibility condition names zero new listeners alongside 
 
 test('the debate, refutation, and gap-sweep prompt templates each carry the READ-ONLY REVIEW placeholder', () => {
   const t = read('review', 'step3-debate-and-refutation.md');
-  const hits = t.match(/\[\.\.\. READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section \.\.\.\]/g) || [];
-  assert.equal(hits.length, 3);
+  const PLACEHOLDER = /\[\.\.\. READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section \.\.\.\]/g;
+  // One placeholder per template, sliced by each template's own step boundaries — a global
+  // count of 3 would still pass if every placeholder landed in a single template.
+  const templates = [
+    ['debate', '3. **Dispatch debate', '4. **Resolve.** Apply `resolveDebate`'],
+    ['refutation', '4. **Dispatch one refutation agent', '5. **Resolve.**'],
+    ['gap-sweep', '## Step 3.6: Gap-Sweep', '## Post-fan-out sweep'],
+  ];
+  for (const [name, startAnchor, endAnchor] of templates) {
+    const start = t.indexOf(startAnchor);
+    const end = t.indexOf(endAnchor, start);
+    assert.ok(start !== -1 && end > start, `${name} template anchors not found`);
+    assert.equal((t.slice(start, end).match(PLACEHOLDER) || []).length, 1, `${name} template must carry exactly one READ-ONLY REVIEW placeholder`);
+  }
 });
 
 test('the pre-dispatch listing also snapshots local TCP listeners next to pre-dispatch-status.txt', () => {
