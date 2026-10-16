@@ -331,17 +331,18 @@ test('an unlisted Bash write shape is genuinely not detected', () => {
 // #3080: redirectWriteTargets (via fileWriteTargets) resolves regardless of
 // command word — echo/printf/cat/a bare `> f`, not just a WRITE_SHAPES entry.
 test('#3080: fileWriteTargets resolves bare redirection targets for ANY command word', () => {
-  assert.deepStrictEqual(fileWriteTargets('echo x > tracked-file.js', '/r'), [{ action: 'write', file: '/r/tracked-file.js' }]);
-  assert.deepStrictEqual(fileWriteTargets('printf y >> tracked-file.js', '/r'), [{ action: 'write', file: '/r/tracked-file.js' }]);
-  assert.deepStrictEqual(fileWriteTargets('cat a > tracked-file.js', '/r'), [{ action: 'write', file: '/r/tracked-file.js' }]);
-  assert.deepStrictEqual(fileWriteTargets('echo x >out.js', '/r'), [{ action: 'write', file: '/r/out.js' }],
-    'a glued operator (no space before the target) must resolve the same as a spaced one');
-  assert.deepStrictEqual(fileWriteTargets('cmd &> out.log', '/r'), [{ action: 'write', file: '/r/out.log' }]);
-  assert.deepStrictEqual(fileWriteTargets('cmd &>> out.log', '/r'), [{ action: 'write', file: '/r/out.log' }]);
-  assert.deepStrictEqual(fileWriteTargets('cmd >| noclobber.log', '/r'), [{ action: 'write', file: '/r/noclobber.log' }],
-    'noclobber\'s >| is still a write');
-  assert.deepStrictEqual(fileWriteTargets('cmd 2>> err.log', '/r'), [{ action: 'write', file: '/r/err.log' }],
-    'a fd-prefixed append operator must resolve the same as the unprefixed form');
+  for (const [command, file, why] of [
+    ['echo x > tracked-file.js', '/r/tracked-file.js'],
+    ['printf y >> tracked-file.js', '/r/tracked-file.js'],
+    ['cat a > tracked-file.js', '/r/tracked-file.js'],
+    ['echo x >out.js', '/r/out.js', 'a glued operator (no space before the target) must resolve the same as a spaced one'],
+    ['cmd &> out.log', '/r/out.log'],
+    ['cmd &>> out.log', '/r/out.log'],
+    ['cmd >| noclobber.log', '/r/noclobber.log', 'noclobber\'s >| is still a write'],
+    ['cmd 2>> err.log', '/r/err.log', 'a fd-prefixed append operator must resolve the same as the unprefixed form'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file }], why || command);
+  }
 });
 
 test('#3080: redirection resolves no target for fd duplication, process substitution, DEVNULL_LIKE, or an unresolvable RHS', () => {
