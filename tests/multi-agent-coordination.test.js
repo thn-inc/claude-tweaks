@@ -1160,3 +1160,24 @@ test('review-summary-template.md has a Fan-out leftovers slot, full and compact 
     'the compact-form clean-PASS block must carry a "Fan-out leftovers 0" status fact',
   );
 });
+
+test('prose twins state the two-tier line rule with the code\'s own values (#2955)', () => {
+  const near = `±${c.LINE_TOLERANCE_REPRODUCTION}`;
+  const wide = `±${c.LINE_TOLERANCE_REPRODUCTION_WIDE}`;
+  const floor = String(c.SUBSTANCE_SIMILARITY_WIDE_MIN);
+
+  const ruleLine = PRIMITIVE_DOC.split('\n').find((l) => l.startsWith('2. **Line within'));
+  assert.ok(ruleLine, 'multi-agent-coordination.md comparison rule item 2 must exist');
+  for (const value of [near, wide, floor]) {
+    assert.ok(ruleLine.includes(value), `comparison rule item 2 must state ${value}`);
+  }
+
+  const dispatch = readSkillFile('review', 'step3-lens-dispatch.md');
+  const confirmedBullet = dispatch
+    .split('\n')
+    .find((l) => l.startsWith("> - Findings present in both agents' outputs, same severity bucket"));
+  assert.ok(confirmedBullet, 'step3-lens-dispatch.md confirmed-finding bullet must exist');
+  for (const value of [near, wide, floor]) {
+    assert.ok(confirmedBullet.includes(value), `confirmed-finding bullet must state ${value}`);
+  }
+});
