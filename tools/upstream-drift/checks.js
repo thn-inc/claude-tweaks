@@ -80,18 +80,30 @@ function expandGlobSegments(baseDir, segments, failures) {
   return rest.length === 0 ? [candidate] : expandGlobSegments(candidate, rest, failures);
 }
 
+// Splits an absolute-or-relative glob pattern into its root (`baseDir`) and
+// the path segments under it. Segments are what follows the root — splitting
+// the whole pattern would make a win32 drive (`C:`) its own segment, re-joined
+// under the root it is already part of; and win32 accepts both separators, so
+// split on either there. Posix keeps `/` alone — a backslash is a legal
+// filename character.
+//
+// `pathFlavor` defaults to the platform-native `path`. Tests pass `path.win32`
+// — OS-independent by construction — to reach the drive-root branch on
+// Linux CI, where the default `path` never takes it.
+function splitGlobPattern(pattern, pathFlavor = path) {
+  const baseDir = pathFlavor.isAbsolute(pattern) ? pathFlavor.parse(pattern).root : '.';
+  const rest = baseDir === '.' ? pattern : pattern.slice(baseDir.length);
+  const segments = rest.split(pathFlavor.sep === '\\' ? /[\\/]+/ : '/').filter(Boolean);
+  return { baseDir, segments };
+}
+
 // Returns {paths, failures} — paths that matched the glob, and directories
 // along the way that existed but could not be read (see expandGlobSegments).
 function expandGlob(globPattern) {
   const pattern = globPattern.startsWith('~') ? path.join(os.homedir(), globPattern.slice(1)) : globPattern;
-  const baseDir = path.isAbsolute(pattern) ? path.parse(pattern).root : '.';
-  // Segments are what follows the root. Splitting the whole pattern would make
-  // a win32 drive (`C:`) its own segment, re-joined under the root it is
-  // already part of; and win32 accepts both separators, so split on either
-  // there. Posix keeps `/` alone — a backslash is a legal filename character.
-  const rest = baseDir === '.' ? pattern : pattern.slice(baseDir.length);
+  const { baseDir, segments } = splitGlobPattern(pattern);
   const failures = [];
-  const paths = expandGlobSegments(baseDir, rest.split(path.sep === '\\' ? /[\\/]+/ : '/').filter(Boolean), failures);
+  const paths = expandGlobSegments(baseDir, segments, failures);
   return { paths, failures };
 }
 
@@ -468,4 +480,4 @@ function checkContentPins(entry, options = {}) {
   return { check: 'content-pins', name, commit: pin.commit || null, status, results };
 }
 
-module.exports = { checkVersion, checkAssertions, replayFixtures, checkContentPins, isContentPinned };
+module.exports = { checkVersion, checkAssertions, replayFixtures, checkContentPins, isContentPinned, splitGlobPattern };

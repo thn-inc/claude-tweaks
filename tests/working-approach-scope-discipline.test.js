@@ -98,4 +98,9 @@ test('/build quotes the same three sentences into implementer execution, after t
   assert.ok(paragraph.includes('a blocking one goes to the open-items ledger and a non-blocking one is filed via `/claude-tweaks:capture`, both per Common Step 4 below'));
   const step4 = BUILD_SKILL.indexOf('### Common Step 4');
   assert.ok(step4 > start, 'Common Step 4 must exist after Step 2 for the routing reference to resolve');
+  // Composition rule 3 (#3117): the quoted rule binds the implementer mid-task;
+  // the deferral gate's fix-now test decides the reported follow-up's disposition.
+  const COMPOSITION_SENTENCE = "The quoted rule limits what an implementer changes mid-task, not a reported follow-up's disposition: `_shared/deferral-gate.md`'s fix-now test decides that before the follow-up reaches the ledger or `/claude-tweaks:capture`.";
+  assert.ok(paragraph.includes(COMPOSITION_SENTENCE), 'build paragraph does not carry the deferral-gate composition sentence');
+  assert.ok(paragraph.indexOf(COMPOSITION_SENTENCE) > paragraph.indexOf(EDIT_IN_PLACE_SENTENCE), 'composition sentence must sit after the quoted Working Approach text');
 });
