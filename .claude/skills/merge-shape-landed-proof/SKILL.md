@@ -64,3 +64,11 @@ A branch that was discarded without ever merging (no recorded PR) is a third cas
 When you add a new "is it landed?" check, or review one, run the table first. Also grep
 `plugin/bin/lib/` for `merge-base --is-ancestor` call sites that run under `pr-first` and have
 no squash branch. Each one is a candidate for this same bug.
+
+That grep also returns call sites asking the reverse question: did the integration branch get
+merged *into* this branch? Rule those out by direction before filing. `mergeNarrowing` in
+`plugin/bin/lib/verify/changed-files.js` (#3072) is one. It asks whether a merge commit's
+non-first parent is an ancestor of the integration ref. A branch takes in its integration branch
+with a real merge commit even under `pr-first`, so squash never applies there. Every failed read
+returns `null`, so the fallback over-verifies rather than discarding anything. The bug this
+skill stops lives only in checks whose ancestor argument is the branch's own HEAD or tip.
