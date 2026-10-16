@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/hooks/teardown-run.js
   - plugin/bin/lib/hooks/run-integrity.js
+  - plugin/skills/wrap-up/cleanup-procedures-execution.md
 ---
 
 # Recover a Teardown With No Recorded Worktree
@@ -14,7 +15,7 @@ files:
 ## Steps
 
 ### 1. `teardown-run` reads the run's durable artifacts, not just `run-state.json`
-- **Action:** `teardownRun` derives a branch name via `fallbackBranch(root, runDir, prevState)` — reading `state.pr.branch` (recorded by `record-pr`, independent of `record-worktree`) first, then falling back to the PR-early-lifecycle log lines already mandatory in `decisions.md` (`_shared/pr-early-run-lifecycle.md`'s Steps 2-3). This fallback only ever activates when `run-state.json` carries **no** `worktree` field at all — a run whose worktree WAS recorded but has since been removed (a reap, a manual `git worktree remove`) is deliberately left alone, skipping as "no branch recorded" exactly as it always has.
+- **Action:** `teardownRun` derives a branch name via `fallbackBranch(root, runDir, prevState)` — reading `state.pr.branch` (recorded by `record-pr`, independent of `record-worktree`) first, then falling back to the PR-early-lifecycle log lines already mandatory in `decisions.md` (`_shared/pr-early-run-lifecycle.md`'s Steps 2-3). This fallback only ever activates when `run-state.json` carries **no** `worktree` field at all — a run whose worktree WAS recorded but has since been removed (a reap, a manual `git worktree remove`) is deliberately left alone, skipping as "no branch recorded" exactly as it always has. Each of `fallbackBranch`'s two candidates counts only if it still exists as a local ref. Since #3088, when neither does (the local branch is already gone), `teardownRun` takes `state.pr.branch` as-is as a final tier, under the same no-`worktree`-field gate: the remote-ref delete in Step 3 needs only the branch name, not a local ref.
 - **Should feel:** Automatic — the operator never has to know which of the two artifacts happened to survive.
 - **Should understand:** This is a read-only recovery lookup, not a new stamping path — `EnterWorktree` itself is a harness-native tool this plugin cannot modify to call `record-worktree` inline; the proactive fix stays `build/worktree-setup.md`'s own unconditional Step 4.5 restamp, and this is the backstop for whatever crash or interrupt gets past it.
 - **Red flags:** The fallback firing for a run whose worktree path is still recorded and simply stale — that would widen a previously-safe skip into a destructive delete (the exact regression AC9 in `tests/hooks-teardown-run.test.js` pins).
@@ -29,8 +30,11 @@ files:
 - **Action:** Under `--merged`, `git branch -D {branch}` and the `gh api` refs-delete both key off the same recovered `branch` value Step 1 derived — no separate re-derivation, so the three cleanup actions (worktree, branch, remote ref) can never disagree about which branch they're acting on.
 - **Should feel:** Complete in one call — the operator never has to run a second command to finish what the first one started.
 - **Should understand:** `--abandoned` (or no mode flag) still skips branch/remote-ref deletion even when the branch was recovered — recovery only ever *finds* the target, it never changes the mode-gated decision to delete it.
+- **Should understand (own-worktree path, #3088):** Step 1's final tier is what lets wrap-up's own-worktree teardown (`cleanup-procedures-execution.md` Section C step 5.5) clean up the remote branch. After `ExitWorktree(remove)` has deleted the worktree and its local branch, wrap-up runs `teardown-run --run <run-dir> --merged --remote-ref-only`. The output reads `archive: skipped — --remote-ref-only (archival handled separately by Section B)`, `worktree: skipped — no worktree recorded`, a harmless `branch: skipped — delete failed for {branch}`, and `remote ref: deleted refs/heads/{branch}`. `--remote-ref-only` suppresses only the archival step, so the run dir stays in place for wrap-up's own later archival.
+- **Red flags:** `remote ref: skipped` on that own-worktree call for a run whose `run-state.json` carries `pr.branch`. That would mean the final tier did not fire and the remote branch was left behind.
 
 ## Origin
 - Created during build of #2362 (EnterWorktree bookkeeping backstop)
 - Steps 1-3 built in this session
+- Updated during build of #3088: Step 1 gained the raw `pr.branch` final tier, and Step 3 gained the own-worktree `--remote-ref-only` path that relies on it.
 - Related journeys: `recover-from-a-bookkeeping-stamp-deny.md` (the proactive-stamp side of the same worktree-association problem), `archive-a-stateless-run-dir-that-still-holds-its-spec.md` (a related but distinct run-dir-without-state recovery path)

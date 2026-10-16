@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  readExclusions, appendExclusion, excludedNumbers, groupIsExcluded,
+  readExclusions, readExclusionsStatus, appendExclusion, excludedNumbers, groupIsExcluded,
 } = require('../../../plugin/bin/lib/dispatch/exclusions');
 
 function tmpFile() {
@@ -67,6 +67,36 @@ test('appendExclusion: creates the file on first call, appends on subsequent cal
   ]);
 });
 
+// #3110: a corrupt/unreadable file must never be silently treated as [] --
+// appendExclusion used to read through readExclusions (which degrades to [])
+// and then overwrite the file with just the new entry, silently dropping
+// every earlier pass's entries for this firing. It must now throw and leave
+// the file byte-identical instead.
+test('appendExclusion: corrupt JSON throws and leaves the file byte-identical, naming the path (#3110)', () => {
+  const p = tmpFile();
+  fs.writeFileSync(p, 'not json');
+  const before = fs.readFileSync(p, 'utf8');
+  assert.throws(
+    () => appendExclusion(p, { reason: 'blocked', records: [1], detail: null }),
+    (err) => err instanceof Error && err.message.includes(p) && /unreadable/.test(err.message),
+  );
+  assert.equal(fs.readFileSync(p, 'utf8'), before, 'corrupt file must not be rewritten');
+});
+
+test('appendExclusion: non-array JSON content also throws rather than silently rewriting (#3110)', () => {
+  const p = tmpFile();
+  fs.writeFileSync(p, JSON.stringify({ not: 'an array' }));
+  const before = fs.readFileSync(p, 'utf8');
+  assert.throws(() => appendExclusion(p, { reason: 'blocked', records: [1], detail: null }));
+  assert.equal(fs.readFileSync(p, 'utf8'), before, 'non-array file must not be rewritten');
+});
+
+test('appendExclusion: absent file still creates it (unaffected by the #3110 fix)', () => {
+  const p = tmpFile();
+  assert.doesNotThrow(() => appendExclusion(p, { reason: 'blocked', records: [1], detail: null }));
+  assert.deepStrictEqual(readExclusions(p), [{ reason: 'blocked', records: [1], detail: null }]);
+});
+
 test('excludedNumbers: flattens multiple entries of the requested reasons, ignores other reasons', () => {
   const entries = [
     { reason: 'oversized', records: [1, 2], detail: null },
@@ -103,4 +133,50 @@ test('AC5: an unknown reason round-trips through readExclusions but is only matc
 
   assert.equal(groupIsExcluded([{ number: 42 }], entries, ['oversized', 'firing']), false);
   assert.equal(groupIsExcluded([{ number: 42 }], entries, ['future-reason']), true);
+});
+
+test('readExclusionsStatus: absent file is absent, never unreadable (#3104)', () => {
+  assert.deepStrictEqual(readExclusionsStatus(tmpFile()), { status: 'absent', entries: [], error: null });
+});
+
+test('readExclusionsStatus: corrupt JSON, non-array JSON, and a directory are unreadable with an error (#3104)', () => {
+  const corrupt = tmpFile();
+  fs.writeFileSync(corrupt, 'not json');
+  const nonArray = tmpFile();
+  fs.writeFileSync(nonArray, JSON.stringify({ not: 'an array' }));
+  const dir = tmpFile();
+  fs.mkdirSync(dir);
+  for (const p of [corrupt, nonArray, dir]) {
+    const r = readExclusionsStatus(p);
+    assert.equal(r.status, 'unreadable', `${p} must read as unreadable`);
+    assert.deepStrictEqual(r.entries, []);
+    assert.equal(typeof r.error, 'string');
+    assert.ok(r.error.length > 0);
+  }
+});
+
+test('readExclusionsStatus: a valid array, empty or not, is ok (#3104)', () => {
+  const empty = tmpFile();
+  fs.writeFileSync(empty, '[]');
+  assert.deepStrictEqual(readExclusionsStatus(empty), { status: 'ok', entries: [], error: null });
+  const full = tmpFile();
+  const entry = { reason: 'not-spec-shaped', records: [7], detail: { missing: ['Release Note'] } };
+  fs.writeFileSync(full, JSON.stringify([entry]));
+  assert.deepStrictEqual(readExclusionsStatus(full), { status: 'ok', entries: [entry], error: null });
+});
+
+test('readExclusionsStatus never logs; readExclusions keeps its stderr diagnostics (#3104)', () => {
+  const originalError = console.error;
+  const calls = [];
+  console.error = (...args) => calls.push(args.join(' '));
+  try {
+    const corrupt = tmpFile();
+    fs.writeFileSync(corrupt, 'not json');
+    readExclusionsStatus(corrupt);
+    assert.deepStrictEqual(calls, [], 'readExclusionsStatus must stay silent -- callers render the error themselves');
+    assert.deepStrictEqual(readExclusions(corrupt), []);
+    assert.equal(calls.length, 1);
+  } finally {
+    console.error = originalError;
+  }
 });

@@ -19,13 +19,33 @@ function run(args, env = {}) {
   });
 }
 
+// The CLI prints forward-slash paths on win32 (a backslash path interpolated into a JS string
+// literal inside a skill snippet's `node -e "…"` is read as escape sequences); posix is verbatim.
+const printed = (p) => (process.platform === 'win32' ? p.split(path.sep).join('/') : p);
+
 test('resolves one VAR=filename pair to an eval-ready VAR="path" line', () => {
   const { stdout, status } = run(['ST_FOO=foo.json'], { CLAUDE_CODE_SESSION_ID: 'sess-abc' });
   assert.equal(status, 0);
   assert.equal(
     stdout.trim(),
-    `ST_FOO=${JSON.stringify(path.join(os.tmpdir(), 'ct-session-sess-abc', 'foo.json'))}`,
+    `ST_FOO=${JSON.stringify(printed(path.join(os.tmpdir(), 'ct-session-sess-abc', 'foo.json')))}`,
   );
+});
+
+test('win32: prints forward-slash paths only — no backslash to be read as an escape sequence', { skip: process.platform !== 'win32' }, () => {
+  const { stdout, status } = run(['ST_FOO=foo.json'], { CLAUDE_CODE_SESSION_ID: 'sess-fwd' });
+  assert.equal(status, 0);
+  const value = JSON.parse(stdout.trim().slice('ST_FOO='.length));
+  assert.ok(!value.includes('\\'), `expected no backslash in ${value}`);
+  assert.match(value, /^[A-Za-z]:\/.*\/ct-session-sess-fwd\/foo\.json$/);
+  // Same file, whichever separator spelling: the forward-slash form is a valid fs path.
+  assert.equal(path.normalize(value), path.join(os.tmpdir(), 'ct-session-sess-fwd', 'foo.json'));
+});
+
+test('posix: output is the unchanged native path, byte for byte', { skip: process.platform === 'win32' }, () => {
+  const { stdout, status } = run(['ST_FOO=foo.json'], { CLAUDE_CODE_SESSION_ID: 'sess-posix' });
+  assert.equal(status, 0);
+  assert.equal(stdout.trim(), `ST_FOO="${os.tmpdir()}/ct-session-sess-posix/foo.json"`);
 });
 
 test('resolves multiple pairs in argument order, one line each', () => {
@@ -40,7 +60,7 @@ test('resolves multiple pairs in argument order, one line each', () => {
 test('degrades to the OS tmpdir (no session-scoped subdirectory) when no session id is set', () => {
   const { stdout, status } = run(['X=x.json'], { CLAUDE_CODE_SESSION_ID: '' });
   assert.equal(status, 0);
-  assert.equal(stdout.trim(), `X=${JSON.stringify(path.join(os.tmpdir(), 'x.json'))}`);
+  assert.equal(stdout.trim(), `X=${JSON.stringify(printed(path.join(os.tmpdir(), 'x.json')))}`);
 });
 
 test('exits non-zero with no arguments', () => {
@@ -58,5 +78,5 @@ test('the resolved value is safe to eval directly in bash', () => {
   const script = `eval "${stdout.trim().replace(/"/g, '\\"')}"\necho "$ST_FOO"`;
   const result = require('node:child_process').spawnSync('bash', ['-c', script], { encoding: 'utf8' });
   assert.equal(result.status, 0);
-  assert.equal(result.stdout.trim(), path.join(os.tmpdir(), 'ct-session-sess-eval-test', 'foo.json'));
+  assert.equal(result.stdout.trim(), printed(path.join(os.tmpdir(), 'ct-session-sess-eval-test', 'foo.json')));
 });

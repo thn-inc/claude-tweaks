@@ -40,9 +40,8 @@
 // agent-authored prose into future prompts — that pattern is pervasive, already shipped, and
 // carries a different risk profile (much of it passes through the Review Console before reaching
 // another prompt), so generalizing it needs its own separately-scoped decision, not a bundle-in
-// here. Full reasoning: docs/superpowers/plans/2026-09-18-declined-learning-subject-sanitization.md's
-// "Decision" section (this plan is deleted once #1400 ships and closes, per this repo's specs/
-// close-out convention — this comment is the durable copy).
+// here. This comment is the durable copy of the "Decision" section in
+// docs/superpowers/plans/2026-09-18-declined-learning-subject-sanitization.md (deleted `a3ddd1cb`).
 'use strict';
 
 const fs = require('fs');
@@ -68,8 +67,7 @@ const DEFAULT_PRUNE_MAX_AGE_DAYS = 180;
 // blob any single decline can carry forward into a future rendered prompt (watermark.js's
 // formatOffsetClause, the render-time half of this same fix). Independent of and complementary to
 // that render-time delimiting: this cap bounds volume; the delimiter in watermark.js bounds whether
-// the content can be read as instructions rather than data. See "Decision" in
-// docs/superpowers/plans/2026-09-18-declined-learning-subject-sanitization.md for the full
+// the content can be read as instructions rather than data. This file's header carries the full
 // risk-tolerance decision and why this fix stays scoped to this store.
 const MAX_SUBJECT_LENGTH = 300;
 const TRUNCATION_MARKER = '… [truncated]';

@@ -25,7 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, powershellOpaqueCommand,
 } = require('./git-command');
 const ctxLib = require('./context');
 const policy = require('../policy');
@@ -802,6 +802,50 @@ function checkGitStashWarn(segments, warnings) {
 // rather than an extra return field so this function's return shape stays
 // exactly `{}` | `{exit, json}`, leaving runInner's `if (gate.json) return gate`
 // dispatch untouched.
+// #3061: `checkWorktreeRequired` below only ever denies a target it can
+// resolve from `gitTargets`/`fileWriteTargets` — both fail OPEN on anything
+// they cannot parse (ambiguity resolves to allow, by design). A
+// `powershell -Command "git push"` (or `-EncodedCommand ...`) run from the
+// main checkout evades that entirely: the git call lives inside PowerShell's
+// own literal (or base64) argument text, which git-command.js's parsers
+// never read — the same deliberately-uncovered class as `sh -c`/`python -c`.
+// This is the one narrow, deliberate exception to "ambiguity resolves to
+// allow" in this file: -Command/-EncodedCommand is refused outright,
+// content-agnostic, under the same worktree-always-and-not-isolated
+// condition checkWorktreeRequired itself gates on — there is nothing useful
+// a content-aware check could still allow here, since the whole point of
+// -Command/-EncodedCommand is to hand this guard text it cannot read.
+// `powershell -File <path>` alone (no -Command, no -EncodedCommand) carries
+// no inline text and is not touched by this gate — a plain script-path
+// invocation, the same not-opaque-text category `bash script.sh` already
+// falls into by never matching any guarded word at all.
+function checkPowershellOpaqueCommand(ctx) {
+  if (!ctx.input || ctx.input.tool_name !== 'Bash') return {};
+  const toolInput = ctx.input.tool_input;
+  const command = toolInput && typeof toolInput.command === 'string' ? toolInput.command : null;
+  if (!command) return {};
+  if (!powershellOpaqueCommand(command, ctx.cwd)) return {};
+  const cwd = ctx.cwd;
+  if (!cwd || !wtDetect.findPolicyFile(cwd)) return {};
+  const { repoRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(cwd);
+  // Ambiguity resolves to allow HERE too — this exception is about the
+  // command's own opaque text, not about tolerating an unresolvable repo
+  // status (that would reintroduce exactly the never-break-a-session risk
+  // the rest of this file avoids).
+  if (indeterminate || !repoRoot) return {};
+  if (!policy.isWorktreeAlwaysOn(repoRoot)) return {};
+  if (isLinkedWorktree) return {};
+  return denyResult(
+    `claude-tweaks: this project requires an isolated worktree (policy: worktree-always in ` +
+    `.claude-tweaks/policy.yml), and a \`powershell\`/\`pwsh\` call carrying -Command or ` +
+    `-EncodedCommand hands this guard literal (or base64) script text it cannot read, so it ` +
+    `cannot be shown not to run git from this non-isolated checkout (${repoRoot}). Set one up ` +
+    `first: invoke /superpowers:using-git-worktrees, then follow \`_shared/worktree-setup.md\`'s ` +
+    `post-creation catch-up before any other action, then retry inside the new worktree. A plain ` +
+    `\`powershell -File <path>\` (no -Command, no -EncodedCommand) is not affected by this gate.`,
+  );
+}
+
 function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets = []) {
   const toolName = ctx.input && ctx.input.tool_name;
   const toolInput = ctx.input && ctx.input.tool_input;
@@ -1875,6 +1919,9 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
 
   const gate = checkWorktreeRequired(ctx, commandGitTargets, indeterminateTargets);
   if (gate.json) return gate;
+
+  const psGate = checkPowershellOpaqueCommand(ctx);
+  if (psGate.json) return psGate;
 
   const stamps = checkBookkeepingStampsGate(ctx, commandGitTargets, deps, warnings);
   if (stamps.json) return stamps;

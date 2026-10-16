@@ -22,6 +22,7 @@
 const claimStore = require('../issues/claim-store');
 const { classifyClaimBlob, claimPayload, releasePayload } = require('../issues/claims');
 const { ensureLabelPayload } = require('../issues/labels');
+const { runClassified, isTimeoutError } = require('../shared-primitives');
 const { tombstoneInFlightPr } = claimStore;
 
 const BOT_IN_PROGRESS = 'bot:in-progress';
@@ -206,14 +207,40 @@ function run(argv, deps) {
   const targets = parseTargets(opts.targetsRaw);
   if (!targets) { deps.stderr(USAGE); return 2; }
 
-  let repoSlug;
-  try {
-    repoSlug = repoSlugOf(deps.gh);
-  } catch (e) {
-    deps.stderr(`claim-targets: could not resolve repo slug — ${errText(e)}\n${USAGE}`);
+  // #3065: a `gh` timeout resolving the repo slug is retried once (same
+  // shape as reconcile's release-merged.js/preflight.js/pr-state.js), then
+  // classified as the CLI's existing transient class (exit 4) rather than
+  // falling into the usage-error path below — a slow GitHub response is not
+  // "malformed invocation or missing dependency". A non-timeout failure (gh
+  // absent, auth, a real 404) still falls through to exit 2, but without the
+  // USAGE text, which describes argv and is irrelevant to either cause.
+  const slugResult = runClassified(
+    () => ({ ok: true, slug: repoSlugOf(deps.gh) }),
+    (e) => ({ ok: false, timedOut: isTimeoutError(e), error: errText(e) }),
+    { retryOnTimeout: true },
+  );
+  if (!slugResult.ok) {
+    if (slugResult.timedOut) {
+      deps.stderr(
+        `claim-targets: repo slug resolution timed out — ${slugResult.error}\n`
+        + 'override via the gh-timeout-ms policy key or the CLAUDE_TWEAKS_GH_TIMEOUT_MS env var\n',
+      );
+      const transientTargets = targets.map((issue) => ({ issue, error: slugResult.error }));
+      if (opts.keepGoing) {
+        deps.stdout(JSON.stringify({
+          claimed: [], alreadyOwned: [], skipped: targets.map((issue) => ({ issue, reason: 'transient' })),
+          labelFailures: [], transportByIssue: {},
+        }));
+        return 0;
+      }
+      deps.stdout(JSON.stringify({ transient: transientTargets, released: [], releaseFailed: [] }));
+      return 4;
+    }
+    deps.stderr(`claim-targets: could not resolve repo slug — ${slugResult.error}\n`);
     return 2;
   }
-  if (!repoSlug) { deps.stderr(`claim-targets: could not resolve repo slug (empty)\n${USAGE}`); return 2; }
+  const repoSlug = slugResult.slug;
+  if (!repoSlug) { deps.stderr('claim-targets: could not resolve repo slug (empty)\n'); return 2; }
   // `tombstoneInFlightPr` (#315 review follow-up) validates a tombstone's
   // `link` against this exact owner/repo before ever calling `deps.gh` —
   // split once here rather than re-parsing `repoSlug` per target.
@@ -347,6 +374,15 @@ function run(argv, deps) {
 
     if ((classified.state === 'live' || classified.state === 'stale') && identity && identity.runId === opts.runId) {
       alreadyOwned.push(issue);
+      // A self-owned claim is still held, so its `bot:in-progress` projection
+      // must be too: a prior attempt whose write landed but reported a
+      // transient failure aborted before the label step, and the retry lands
+      // here. Re-assert it (idempotent, best-effort like the claim path below).
+      try {
+        ensureAndAddLabel(deps.gh, issue);
+      } catch (e) {
+        labelFailures.push({ issue, error: errText(e) });
+      }
       continue;
     }
 

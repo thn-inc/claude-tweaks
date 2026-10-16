@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets, powershellOpaqueCommand,
 } = require('../plugin/bin/lib/hooks/git-command');
 
 test('plain commit resolves to cwd', () => {
@@ -546,4 +546,40 @@ test('#2065: resolvedGitSegments reports the same index/dir per segment that res
       `mismatch for ${JSON.stringify(cmd)} in ${cwd}`,
     );
   }
+});
+
+// ─── powershellOpaqueCommand (#3061) ───────────────────────────────────────
+
+test('a plain `powershell -File <path>` is not flagged — no -Command, no -EncodedCommand, no inline text', () => {
+  assert.strictEqual(powershellOpaqueCommand('powershell -NoProfile -File C:/x/probe.ps1', '/repo'), false);
+  assert.strictEqual(powershellOpaqueCommand('pwsh -NoProfile -File /x/probe.ps1', '/repo'), false);
+});
+
+test('`powershell -Command "..."` is flagged, content-agnostic', () => {
+  assert.strictEqual(powershellOpaqueCommand('powershell -Command "git push"', '/repo'), true);
+  assert.strictEqual(powershellOpaqueCommand('powershell -Command "echo hi"', '/repo'), true);
+});
+
+test('`-EncodedCommand ...` is flagged the same way', () => {
+  assert.strictEqual(powershellOpaqueCommand('powershell -EncodedCommand QQBCAEMA', '/repo'), true);
+  assert.strictEqual(powershellOpaqueCommand('pwsh -EncodedCommand QQBCAEMA', '/repo'), true);
+});
+
+test('matching is case-insensitive on both the lead and the flag', () => {
+  assert.strictEqual(powershellOpaqueCommand('PowerShell -COMMAND "git push"', '/repo'), true);
+  assert.strictEqual(powershellOpaqueCommand('PWSH -EncodedCommand QQBCAEMA', '/repo'), true);
+});
+
+test('a `.exe` suffix and a path-qualified lead are both recognized', () => {
+  assert.strictEqual(powershellOpaqueCommand('powershell.exe -Command "git push"', '/repo'), true);
+  assert.strictEqual(powershellOpaqueCommand('C:\\Windows\\System32\\powershell.exe -Command "git push"', '/repo'), true);
+});
+
+test('an unrelated command, and a bare powershell invocation with no opaque flag, are not flagged', () => {
+  assert.strictEqual(powershellOpaqueCommand('bash script.sh', '/repo'), false);
+  assert.strictEqual(powershellOpaqueCommand('powershell -NoProfile -NoLogo', '/repo'), false);
+});
+
+test('an abbreviated flag form (-Com) is a deliberate, documented miss — not matched', () => {
+  assert.strictEqual(powershellOpaqueCommand('powershell -Com "git push"', '/repo'), false);
 });

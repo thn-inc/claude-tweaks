@@ -30,7 +30,7 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --run "$PIPELINE_RUN_DIR" --cmd …` (the canonical snippet in `test/verification.md`)
 - **Action:** Run verification the way the skill already does; the `--run` flag is now part of the one-line canonical command.
 - **Should feel:** Nothing changes in the run's output; one more line lands in `events.jsonl` with `type: "verify"`, the mode, the suites that actually ran, the duration, and the pass flag.
-- **Should understand:** An unset `$PIPELINE_RUN_DIR` arrives as an empty value and writes nothing. A run dir that lives inside a worktree (a shadow copy) is refused on stderr, never written silently, and never fails the verification itself.
+- **Should understand:** An unset `$PIPELINE_RUN_DIR` arrives as an empty value and writes nothing. A run dir that lives inside a worktree (a shadow copy) is refused on stderr, never written silently, and never fails the verification itself. A `--baseline` run's event also carries `baselineAdjudicated` (`pass`, `fail`, or `ineligible`), and `timing.json`'s verify entries keep it beside `pass` — which stays the raw outcome, so an adjudicated pass reads `pass: false` with `baselineAdjudicated: "pass"`.
 - **Red flags:** `verify.js: --run … refused (not-anchored)` on stderr — the path is not under the main checkout's pipelines tree; fix the path, do not suppress the line.
 
 ### 2. Let `spec-status` keep the manifest's phase log

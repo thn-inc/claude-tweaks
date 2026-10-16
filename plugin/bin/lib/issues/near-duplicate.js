@@ -11,11 +11,13 @@
 // worth a human's (or the shaper's own) attention, never grounds for an
 // automatic close on its own. The one exception the caller (shaping-mode.md)
 // applies on top of this module's output is narrow and documented there: a
-// candidate that is itself `ready` with an in-flight build.
+// title-similar candidate that is itself `ready` with an in-flight build —
+// `shapingRefusal` below (#3141).
 'use strict';
 
 const { extractKeyFiles } = require('./grouping');
-const { normalizeLabelNames } = require('./record');
+const { normalizeLabelNames, partitionByOpenLinkedPR } = require('./record');
+const { classifyClaimBlob } = require('./claims');
 
 // Jaccard similarity over lowercased word tokens, at or above this
 // threshold, is the title-similarity signal (#2 below). A screen, not a
@@ -84,11 +86,33 @@ function jaccard(aTokens, bTokens) {
 const CURRENT_STATE_HEADING_RE = /^#{2,4}[ \t]+Current State[ \t]*$/;
 const ANY_HEADING_RE = /^#{1,6}[ \t]/;
 
+// #3141: backticked spans that are generic vocabulary, not identity
+// anchors — widely cited across unrelated records, so a shared one says
+// nothing about two records describing the same work. Three shapes:
+// a flag (`--run-dir`, `-x`, optionally followed by ONE value token such as
+// `<dir>` or `"$VAR"` — a flag followed by prose, like an error phrase,
+// stays an anchor), a skill invocation (`/plugin:skill`, optionally with
+// arguments), and any `family:value` token — label names, but also
+// namespaced agent ids like `superpowers:using-git-worktrees` — whose
+// family has no `.` or `/` and whose value has no `/` or `\`, so a
+// `file.js:42` location or a `c:\path` stays an anchor; or a bare stage
+// label.
+const FLAG_ANCHOR_RE = /^--?[A-Za-z][\w-]*(?:[ =]\S+)?$/;
+const SKILL_ANCHOR_RE = /^\/[\w-]+:[\w-]+(?:\s.*)?$/;
+const LABEL_ANCHOR_RE = /^[a-z][a-z0-9-]*:[^\s/\\]+$/;
+const STAGE_LABELS = new Set(['ready', 'parked']);
+
+function isGenericAnchor(value) {
+  return FLAG_ANCHOR_RE.test(value) || SKILL_ANCHOR_RE.test(value)
+    || LABEL_ANCHOR_RE.test(value) || STAGE_LABELS.has(value);
+}
+
 // Extracts every backticked span (a named symbol or file path, by this
 // record contract's own convention — `spec-template.md`'s `### Key Files`
 // bullets and prose both use backticks for exactly this) found under a
 // body's `## Current State` section, stopping at the next heading of any
 // level. Returns a Set; empty when the body has no such section.
+// Generic vocabulary spans (isGenericAnchor) are skipped (#3141).
 function extractCurrentStateAnchors(body) {
   const lines = (body || '').split('\n');
   const start = lines.findIndex((line) => CURRENT_STATE_HEADING_RE.test(line));
@@ -99,7 +123,7 @@ function extractCurrentStateAnchors(body) {
     const matches = lines[i].match(/`([^`]+)`/g) || [];
     for (const m of matches) {
       const value = m.slice(1, -1).trim();
-      if (value) anchors.add(value);
+      if (value && !isGenericAnchor(value)) anchors.add(value);
     }
   }
   return anchors;
@@ -169,11 +193,61 @@ function findNearDuplicates(subject, records, opts = {}) {
   return results;
 }
 
+// #3141: the refusal decision /specify shaping applies on top of the
+// finder's screen (shaping-mode.md's Near-duplicate candidate check).
+// stateByNumber[n]: { ready, liveClaim, claimRunId, openLinkedPR } — built
+// by buildShapingState below. Returns the first hit (in the given order)
+// whose signals include title-similarity AND whose candidate is ready AND
+// in flight (a live claim or an open linked PR); null otherwise. File and
+// anchor overlap alone never refuse — they are build-collision signals,
+// which /flow and /dispatch already handle. bot:in-progress is not read.
+function shapingRefusal(hits, stateByNumber) {
+  for (const hit of Array.isArray(hits) ? hits : []) {
+    if (!hit || !Array.isArray(hit.signals) || !hit.signals.includes('title-similarity')) continue;
+    const state = stateByNumber && stateByNumber[hit.number];
+    if (!state || state.ready !== true) continue;
+    if (state.liveClaim === true || state.openLinkedPR) return hit;
+  }
+  return null;
+}
+
+// #3141: pure assembly of shapingRefusal's stateByNumber from raw reads —
+// labels (the session snapshot), claim blob content (claims/issue-{n}.json
+// on claims-registry; null/undefined = absent or unread), and the
+// linked-PR GraphQL repository{} object (record.js's buildLinkedPRQuery
+// shape; null = query failed or not run). Every missing or failed input
+// degrades to "not in flight" — the finder is a screen, so a read failure
+// must never cause a refusal.
+function buildShapingState({ numbers, labelsByNumber, claimContentByNumber, linkedPRRepoData, now }) {
+  const list = Array.isArray(numbers) ? numbers : [];
+  const { excludedByOpenPR } = partitionByOpenLinkedPR(list.map((number) => ({ number })), linkedPRRepoData || null);
+  const prByNumber = new Map(excludedByOpenPR.map((e) => [e.number, e.pr]));
+  // A non-finite `now` makes isStale answer false for every claim, which
+  // would read an expired claim as live — so liveness needs a real clock.
+  const clockOk = Number.isFinite(now);
+  const state = {};
+  for (const n of list) {
+    const labels = labelsByNumber && labelsByNumber[n];
+    const ready = normalizeLabelNames(Array.isArray(labels) ? labels : []).includes('ready');
+    const content = claimContentByNumber ? claimContentByNumber[n] : null;
+    const liveClaim = clockOk && classifyClaimBlob(content, now).state === 'live';
+    let claimRunId = null;
+    if (liveClaim) {
+      try { claimRunId = JSON.parse(content).runId || null; } catch { claimRunId = null; }
+    }
+    state[n] = { ready, liveClaim, claimRunId, openLinkedPR: prByNumber.get(n) ?? null };
+  }
+  return state;
+}
+
 module.exports = {
   findNearDuplicates,
   tokenizeTitle,
   jaccard,
   extractCurrentStateAnchors,
   isReconcileResidueTitle,
+  isGenericAnchor,
+  shapingRefusal,
+  buildShapingState,
   DEFAULT_TITLE_SIMILARITY_THRESHOLD,
 };

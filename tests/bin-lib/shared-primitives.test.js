@@ -363,3 +363,114 @@ test('GH_TIMEOUT_MS: an out-of-range env override with no policy set falls throu
     }
   });
 });
+
+// GIT_TIMEOUT_MS resolution (#3051): same shape as GH_TIMEOUT_MS above —
+// env var > `git-timeout-ms` policy key > hard-coded 30000 default.
+function freshGitTimeoutMs() {
+  delete require.cache[MODULE_PATH];
+  // eslint-disable-next-line global-require
+  return require('../../plugin/bin/lib/shared-primitives').GIT_TIMEOUT_MS;
+}
+
+test('GIT_TIMEOUT_MS: no env override and no policy key -> unchanged 30000 default', () => {
+  withTempCwd(() => {
+    const prior = process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS;
+    delete process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS;
+    try {
+      assert.strictEqual(freshGitTimeoutMs(), 30000);
+    } finally {
+      if (prior !== undefined) process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS = prior;
+    }
+  });
+});
+
+test('GIT_TIMEOUT_MS: git-timeout-ms policy key raises the effective timeout', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'git-timeout-ms: 45000\n');
+    const prior = process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS;
+    delete process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS;
+    try {
+      assert.strictEqual(freshGitTimeoutMs(), 45000);
+    } finally {
+      if (prior !== undefined) process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS = prior;
+    }
+  });
+});
+
+test('GIT_TIMEOUT_MS: CLAUDE_TWEAKS_GIT_TIMEOUT_MS env override takes precedence over the policy key', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'git-timeout-ms: 45000\n');
+    const prior = process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS;
+    process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS = '60000';
+    try {
+      assert.strictEqual(freshGitTimeoutMs(), 60000);
+    } finally {
+      if (prior === undefined) delete process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS;
+      else process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS = prior;
+    }
+  });
+});
+
+test('GIT_TIMEOUT_MS: a non-numeric env override falls through to the policy key', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'git-timeout-ms: 40000\n');
+    const prior = process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS;
+    process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS = 'not-a-number';
+    try {
+      assert.strictEqual(freshGitTimeoutMs(), 40000);
+    } finally {
+      if (prior === undefined) delete process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS;
+      else process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS = prior;
+    }
+  });
+});
+
+test('GIT_TIMEOUT_MS: an out-of-range policy value falls back to the 30000 default', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'git-timeout-ms: 999999\n'); // over the schema's 120000 max
+    const prior = process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS;
+    delete process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS;
+    try {
+      assert.strictEqual(freshGitTimeoutMs(), 30000);
+    } finally {
+      if (prior !== undefined) process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS = prior;
+    }
+  });
+});
+
+test('GIT_TIMEOUT_MS: an out-of-range env override falls through to the policy key, not applied unbounded', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'git-timeout-ms: 40000\n');
+    const prior = process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS;
+    process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS = '999999'; // over the schema's 120000 max
+    try {
+      assert.strictEqual(freshGitTimeoutMs(), 40000);
+    } finally {
+      if (prior === undefined) delete process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS;
+      else process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS = prior;
+    }
+  });
+});
+
+test('GIT_TIMEOUT_MS: an out-of-range env override with no policy set falls through to the 30000 default', () => {
+  withTempCwd(() => {
+    const prior = process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS;
+    process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS = '500'; // under the schema's 1000 min
+    try {
+      assert.strictEqual(freshGitTimeoutMs(), 30000);
+    } finally {
+      if (prior === undefined) delete process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS;
+      else process.env.CLAUDE_TWEAKS_GIT_TIMEOUT_MS = prior;
+    }
+  });
+});
+
+// isTimeoutError (#3051): now exported (previously an internal-only helper)
+// so claims-git-cas.js can classify a timeout kill without re-implementing
+// the ETIMEDOUT/killed/SIGTERM check.
+test('isTimeoutError: is exported and recognizes a killed-by-signal error', () => {
+  // eslint-disable-next-line global-require
+  const { isTimeoutError } = require('../../plugin/bin/lib/shared-primitives');
+  assert.equal(isTimeoutError({ killed: true, signal: 'SIGTERM' }), true);
+  assert.equal(isTimeoutError(new Error('plain failure')), false);
+});

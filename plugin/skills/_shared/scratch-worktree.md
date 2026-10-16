@@ -196,6 +196,18 @@ action is `pr-first-merge-post-merge.md`'s `## Step 5: Delete the remote branch 
 section is about whether it's safe to discard the worktree, not about remote branch cleanup,
 which stays canonically stated in `pr-first-merge.md`.
 
+**Why this check doesn't need `cleanup-procedures-execution.md`'s squash-merge correction.**
+This section's ancestry check is reached only by this file's own native callers — `tidy`'s and
+`residue-sweep.md`'s scratch-worktree teardown, and `flow/worktree-merge.md`'s
+conflict-resolution path — and, per "Cross-caller `pr-first` check" above, every one of them
+reaches this point only via their own `local-merge` path (`--no-ff` or fast-forward): under
+`pr-first`, they push a branch and open a marker-stamped PR instead of merging back locally, so
+this ancestry check is never asked to prove a squash merge safe.
+`cleanup-procedures-execution.md`'s Section C is a distinct caller: it tears down the actual
+feature/spec worktree, which does go through `pr-first-merge.md`'s `--squash` merge under the
+default integration model — that's why its own paragraph carries the squash-merge content-diff
+correction instead of relying on this section's ancestry check alone.
+
 The two domains are asymmetric here too. If teardown fails or is skipped, `SessionStart`'s
 reaper (`bin/lib/hooks/worktree-reap.js`) can later collect an abandoned worktree — but
 **only** in the native domain: it enumerates and considers worktrees under

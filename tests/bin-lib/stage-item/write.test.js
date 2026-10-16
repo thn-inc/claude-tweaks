@@ -161,9 +161,18 @@ test('writeStagedItem: two real OS processes racing the same allocate:true numbe
     let stdout = ''; let stderr = '';
     p.stdout.on('data', (d) => { stdout += d; });
     p.stderr.on('data', (d) => { stderr += d; });
-    p.on('exit', (code) => (code === 0 ? resolve(stdout.trim()) : reject(new Error(`worker ${i} exited ${code}: ${stderr}`))));
+    // #3105: 'close', not 'exit' — Node fires 'exit' while the child's stdio pipes may still
+    // hold unread data, so a worker's path could be read as '' and filtered out (a 5 !== 6
+    // flake on loaded Linux CI). 'close' fires only after every stdio stream has ended.
+    p.on('close', (code, signal) => (code === 0 ? resolve(stdout.trim()) : reject(new Error(`worker ${i} exited ${code}${signal ? ` (signal ${signal})` : ''}: ${stderr}`))));
     p.on('error', reject);
   })));
+
+  // Independent of the stdout capture above: the run dir itself must hold one staged file
+  // per worker, so a future failure here means a lost update, not a capture problem.
+  const onDisk = fs.readdirSync(path.join(runDir, 'staged')).filter((f) => f.startsWith('race-deviation-'));
+  assert.equal(onDisk.length, WORKERS, `staged/ must hold one file per worker, found ${JSON.stringify(onDisk)}`);
+  assert.ok(results.every(Boolean), `every worker must print its staged path, got ${JSON.stringify(results)}`);
 
   const files = results.filter(Boolean);
   assert.equal(new Set(files).size, WORKERS, 'every worker must land on a distinct file');

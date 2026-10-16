@@ -8,7 +8,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  run, BOT_IN_PROGRESS, ABORT_REASON,
+  run, BOT_IN_PROGRESS, ABORT_REASON, USAGE,
 } = require('../../../plugin/bin/lib/claim-targets/claim-targets');
 // #787 residual finding (progress.md's parked "expectedContent has zero test
 // coverage" item): claim-targets.js requires this same module-level object,
@@ -711,6 +711,29 @@ test('(g2) self-owned target, stale (past TTL): already-owned, no write attempte
   assert.ok(!calls.some((a) => isWrite(a, '731')), 'self-owned stale target must never be re-claimed');
 });
 
+// (g3) self-owned target: a prior attempt whose write landed but reported a
+// transient failure exits 4 before the label step; the retry reads the blob
+// as self-owned. The held claim must still end up carrying bot:in-progress,
+// and a label failure must be reported (not fatal).
+test('(g3) self-owned target: bot:in-progress is re-asserted; a label failure is reported, not fatal', () => {
+  const { ghApi } = makeGhApi({ reads: { 732: [readOk(liveMarker('r1'), 'sha732')] }, writes: {} });
+  const { gh, calls: ghCalls } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '732'], deps), 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.alreadyOwned, [732]);
+  assert.deepEqual(body.labelFailures, []);
+  assert.ok(ghCalls.some((a) => a[0] === 'issue' && a[1] === 'edit' && a[2] === '732' && a.includes('--add-label')));
+
+  const { ghApi: ghApi2 } = makeGhApi({ reads: { 732: [readOk(liveMarker('r1'), 'sha732')] }, writes: {} });
+  const { gh: failingGh } = makeGh({ fail: { labelAdd: true } });
+  const { deps: deps2, io: io2 } = baseDeps({ ghApi: ghApi2, gh: failingGh });
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '732'], deps2), 0);
+  assert.deepEqual(JSON.parse(io2.out[0]).labelFailures, [{ issue: 732, error: 'label add failed' }]);
+});
+
 // (h) unreadable blob -> contested (fail-closed)
 test('(h) unreadable blob: fails closed to contested, exit 3', () => {
   const { ghApi } = makeGhApi({
@@ -1183,6 +1206,90 @@ test('abort-release rollback write threads expectedContent = the fresh content r
   assert.equal(writeSpy.mock.calls.length, 2, 'the initial claim write plus the rollback release write');
   const rollbackOpts = writeSpy.mock.calls[1].arguments[3];
   assert.equal(rollbackOpts.expectedContent, 'irrelevant', "rollback write's expectedContent is the fresh read's content, not the original claim read's");
+});
+
+// #3065: repo-slug resolution timeout classification. A fake `gh` whose
+// `repo view` call throws a timeout-shaped error (`spawnSync`'s own
+// ETIMEDOUT shape) a given number of times before succeeding, so each test
+// controls whether the CLI's one retry is enough.
+function makeTimeoutThenSucceedGh({ timeoutCount, repoSlug = REPO } = {}) {
+  let repoViewCalls = 0;
+  const calls = [];
+  function gh(args) {
+    calls.push(args);
+    if (args[0] === 'repo' && args[1] === 'view') {
+      repoViewCalls += 1;
+      if (repoViewCalls <= timeoutCount) {
+        const err = new Error('spawnSync gh ETIMEDOUT');
+        err.code = 'ETIMEDOUT';
+        throw err;
+      }
+      return `${repoSlug}\n`;
+    }
+    throw new Error(`unexpected gh ${args.join(' ')}`);
+  }
+  return { gh, calls };
+}
+
+test('(slug-1) repo-slug timeout that succeeds on retry: claims proceed normally, exit 0', () => {
+  const { gh } = makeTimeoutThenSucceedGh({ timeoutCount: 1 });
+  const { ghApi } = makeGhApi({ reads: { 740: [readAbsent, confirmRead()] }, writes: { 740: [writeOk] } });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '740'], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, [740]);
+});
+
+test('(slug-2) repo-slug timeout on both attempts: exit 4, transient envelope, no USAGE text on stderr', () => {
+  const { gh } = makeTimeoutThenSucceedGh({ timeoutCount: 99 });
+  const ghApi = () => { throw new Error('must not be called — nothing claimed before slug resolution'); };
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '741,742'], deps);
+
+  assert.equal(code, 4);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.transient.map((t) => t.issue), [741, 742]);
+  assert.deepEqual(body.released, []);
+  assert.deepEqual(body.releaseFailed, []);
+  assert.ok(!io.err.join('').includes(USAGE));
+});
+
+test('(slug-3) repo-slug timeout on both attempts under --keep-going: exit 0, every target skipped as transient', () => {
+  const { gh } = makeTimeoutThenSucceedGh({ timeoutCount: 99 });
+  const ghApi = () => { throw new Error('must not be called — nothing claimed before slug resolution'); };
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '743,744', '--keep-going'], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.skipped, [
+    { issue: 743, reason: 'transient' },
+    { issue: 744, reason: 'transient' },
+  ]);
+  assert.deepEqual(body.claimed, []);
+});
+
+test('(slug-4) repo-slug ENOENT (gh absent): still exit 2, no USAGE text on stderr', () => {
+  const gh = (args) => {
+    if (args[0] === 'repo' && args[1] === 'view') {
+      const err = new Error('spawnSync gh ENOENT');
+      err.code = 'ENOENT';
+      throw err;
+    }
+    throw new Error(`unexpected gh ${args.join(' ')}`);
+  };
+  const ghApi = () => { throw new Error('must not be called — nothing claimed before slug resolution'); };
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '745'], deps);
+
+  assert.equal(code, 2);
+  assert.ok(!io.err.join('').includes(USAGE));
 });
 
 test('--help short-circuits before any gh call, exit 0', () => {

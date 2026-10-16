@@ -128,8 +128,16 @@ test('POLICY_KEYS entries are unique', () => {
   // (1000-60000) how long a shared-primitives.js `gh` subprocess call may
   // run before it is killed and retried once; env var
   // CLAUDE_TWEAKS_GH_TIMEOUT_MS takes precedence over this when both are set.
-  assert.strictEqual(POLICY_KEYS.length, 71);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 71);
+  // 71 -> 72, #3128 (decomposition event log): specify-decomposition-log —
+  // boolean, default false — opts a project into /specify's Ceremony tally
+  // writing docs/specify-decomposition-log.md; off, the step is a no-op.
+  // 72 -> 73, #3051 (configurable claims-git-cas timeout): git-timeout-ms —
+  // integer (1000-120000), default 30000 — bounds how long a
+  // claims-git-cas.js `git` subprocess call may run before it is killed;
+  // env var CLAUDE_TWEAKS_GIT_TIMEOUT_MS takes precedence over this when
+  // both are set.
+  assert.strictEqual(POLICY_KEYS.length, 73);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 73);
 });
 
 test('dispatch-batch-size is registered alongside its deprecated alias', () => {

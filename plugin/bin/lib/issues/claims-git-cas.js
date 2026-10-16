@@ -42,10 +42,21 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { claimFilePath, CLAIMS_BRANCH } = require('./claims');
+const { GIT_TIMEOUT_MS, isTimeoutError } = require('../shared-primitives');
 
 function errText(err) {
   const parts = [err && err.message, err && err.stderr, err && err.stdout].filter(Boolean).map(String);
   return parts.length ? parts.join(' ') : String(err);
+}
+
+// #3051: a timeout is still a `transport-failure` (the failure vocabulary
+// claim-store.js and every other consumer already branches on is unchanged),
+// but a caller that wants to tell "remote slow" from "remote unreachable"
+// needs the distinction named — spread this into a transport-failure return
+// only when the underlying error was actually a timeout kill; a non-timeout
+// error gets no `timedOut` key at all, never `timedOut: false`.
+function timedOutFlag(err) {
+  return isTimeoutError(err) ? { timedOut: true } : {};
 }
 
 // One classification for every git-CAS failure this module can hit — the
@@ -71,11 +82,10 @@ function classifyGitError(err) {
   return { kind: 'transport-failure' };
 }
 
-const GIT_TIMEOUT_MS = 10000;
-
 function defaultRunner(args, opts = {}) {
   return execFileSync('git', args, {
     encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, ...opts,
+    windowsHide: true,
   });
 }
 
@@ -117,8 +127,8 @@ function readClaimBlobGit({
     try {
       runner(['fetch', '-q', remote, `${branch}:${scratchRef}`]);
       tipSha = runner(['rev-parse', scratchRef]).trim();
-    } catch {
-      return { content: null, tipSha: null, absent: false, failure: 'transport-failure' };
+    } catch (err) {
+      return { content: null, tipSha: null, absent: false, failure: 'transport-failure', ...timedOutFlag(err) };
     } finally {
       try { runner(['update-ref', '-d', scratchRef]); } catch { /* best-effort cleanup — never mask the read's own outcome */ }
     }
@@ -130,7 +140,7 @@ function readClaimBlobGit({
   } catch (err) {
     const { kind } = classifyGitError(err);
     if (kind === 'missing-path') return { content: null, tipSha, absent: true, failure: null };
-    return { content: null, tipSha, absent: false, failure: 'transport-failure' };
+    return { content: null, tipSha, absent: false, failure: 'transport-failure', ...timedOutFlag(err) };
   }
 }
 
@@ -170,7 +180,7 @@ function writeClaimBlobGit({
     const { kind } = classifyGitError(err);
     if (kind === 'contested') return { ok: false, conflict: true, failure: null };
     if (kind === 'secondary-rate-limit') return { ok: false, secondaryRateLimit: true, failure: null };
-    return { ok: false, failure: 'transport-failure' };
+    return { ok: false, failure: 'transport-failure', ...timedOutFlag(err) };
   } finally {
     // Synchronous, to match the rest of this module: an async unlink's
     // callback can be dropped when a short-lived CLI caller exits first,
@@ -238,8 +248,8 @@ function readClaimBlobsGitBatch({ issueNumbers = null, tip, runner = defaultRunn
   let lsTreeOut;
   try {
     lsTreeOut = runner(['ls-tree', '-r', tip, '--', 'claims/']);
-  } catch {
-    return { tipSha: tip, results: null, failure: 'transport-failure' };
+  } catch (err) {
+    return { tipSha: tip, results: null, failure: 'transport-failure', ...timedOutFlag(err) };
   }
   const lsTreeText = Buffer.isBuffer(lsTreeOut) ? lsTreeOut.toString('utf8') : lsTreeOut;
 
@@ -284,11 +294,11 @@ function readClaimBlobsGitBatch({ issueNumbers = null, tip, runner = defaultRunn
     return { tipSha: tip, results, failure: null };
   }
 
-  const markTransportFailure = () => {
+  const markTransportFailure = (err) => {
     for (const sha of orderedShas) {
       for (const issueNumber of shaToIssues.get(sha)) {
         results[issueNumber] = {
-          content: null, tipSha: tip, absent: false, failure: 'transport-failure',
+          content: null, tipSha: tip, absent: false, failure: 'transport-failure', ...timedOutFlag(err),
         };
       }
     }
@@ -300,8 +310,8 @@ function readClaimBlobsGitBatch({ issueNumbers = null, tip, runner = defaultRunn
   let batchRaw;
   try {
     batchRaw = runner(['cat-file', '--batch'], { input: batchInput, encoding: 'buffer' });
-  } catch {
-    markTransportFailure();
+  } catch (err) {
+    markTransportFailure(err);
     return { tipSha: tip, results, failure: null };
   }
 

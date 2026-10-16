@@ -23,7 +23,7 @@ const PREMISE_SELF_CHECK_TIMEOUT_MS = 5000;
 // cwd runs in the process cwd.
 function defaultRunner(command, { cwd, timeoutMs }) {
   try {
-    execFileSync('/bin/sh', ['-c', command], { cwd, stdio: 'ignore', timeout: timeoutMs });
+    execFileSync('/bin/sh', ['-c', command], { cwd, stdio: 'ignore', timeout: timeoutMs, windowsHide: true });
     return 0;
   } catch (err) {
     if (typeof err.status === 'number') return err.status;

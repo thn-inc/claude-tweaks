@@ -75,5 +75,5 @@ Settle these before the plan is written:
 
 ## Evidence
 
-- PR #2850 (record #2693): the whole-branch review fixes and the fixture-HTML false positive, recorded as rows 4 and 5 of that run's ledger, `docs/plans/2026-09-30-flow-spec-2704-2709-ledger.md`.
+- PR #2850 (record #2693): the whole-branch review fixes and the fixture-HTML false positive, recorded as rows 4 and 5 of that run's ledger. The ledger was deleted as an orphan in `5f3482ed5`; read it with `git show 5f3482ed5^:docs/plans/2026-09-30-flow-spec-2704-2709-ledger.md`.
 - Registry: `plugin/bin/lib/code-health/focus-generators.js`. Criteria: `plugin/bin/lib/code-health/criteria.js`. Runtime procedure: `plugin/skills/code-health/focus-mode.md`.
