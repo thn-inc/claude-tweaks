@@ -52,12 +52,7 @@ test('every Impeccable reference file named in pre-build.md Step 3 is pinned in 
   const md = readText(PREBUILD);
   const section = getStep3Section(md);
 
-  const names = new Set();
-  const re = /`([a-z-]+\.md)`/g;
-  let match;
-  while ((match = re.exec(section)) !== null) {
-    names.add(match[1]);
-  }
+  const names = new Set([...section.matchAll(/`([a-z-]+\.md)`/g)].map((match) => match[1]));
 
   assert.ok(
     names.size >= 5,
