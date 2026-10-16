@@ -711,6 +711,29 @@ test('(g2) self-owned target, stale (past TTL): already-owned, no write attempte
   assert.ok(!calls.some((a) => isWrite(a, '731')), 'self-owned stale target must never be re-claimed');
 });
 
+// (g3) self-owned target: a prior attempt whose write landed but reported a
+// transient failure exits 4 before the label step; the retry reads the blob
+// as self-owned. The held claim must still end up carrying bot:in-progress,
+// and a label failure must be reported (not fatal).
+test('(g3) self-owned target: bot:in-progress is re-asserted; a label failure is reported, not fatal', () => {
+  const { ghApi } = makeGhApi({ reads: { 732: [readOk(liveMarker('r1'), 'sha732')] }, writes: {} });
+  const { gh, calls: ghCalls } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '732'], deps), 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.alreadyOwned, [732]);
+  assert.deepEqual(body.labelFailures, []);
+  assert.ok(ghCalls.some((a) => a[0] === 'issue' && a[1] === 'edit' && a[2] === '732' && a.includes('--add-label')));
+
+  const { ghApi: ghApi2 } = makeGhApi({ reads: { 732: [readOk(liveMarker('r1'), 'sha732')] }, writes: {} });
+  const { gh: failingGh } = makeGh({ fail: { labelAdd: true } });
+  const { deps: deps2, io: io2 } = baseDeps({ ghApi: ghApi2, gh: failingGh });
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '732'], deps2), 0);
+  assert.deepEqual(JSON.parse(io2.out[0]).labelFailures, [{ issue: 732, error: 'label add failed' }]);
+});
+
 // (h) unreadable blob -> contested (fail-closed)
 test('(h) unreadable blob: fails closed to contested, exit 3', () => {
   const { ghApi } = makeGhApi({

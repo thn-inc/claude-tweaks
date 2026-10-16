@@ -347,6 +347,15 @@ function run(argv, deps) {
 
     if ((classified.state === 'live' || classified.state === 'stale') && identity && identity.runId === opts.runId) {
       alreadyOwned.push(issue);
+      // A self-owned claim is still held, so its `bot:in-progress` projection
+      // must be too: a prior attempt whose write landed but reported a
+      // transient failure aborted before the label step, and the retry lands
+      // here. Re-assert it (idempotent, best-effort like the claim path below).
+      try {
+        ensureAndAddLabel(deps.gh, issue);
+      } catch (e) {
+        labelFailures.push({ issue, error: errText(e) });
+      }
       continue;
     }
 

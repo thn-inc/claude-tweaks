@@ -141,7 +141,9 @@ run's own `'live'` blob as contested against itself. A self-owned `'tombstone'` 
 tombstone. On a
 successful claim it bootstraps `bot:in-progress` (per `_shared/label-bootstrap.md`) and posts the
 claim comment (`claimPayload`'s `commentBody`) for that target — best-effort: a label or comment
-failure is logged to stderr and never un-claims the target.
+failure is logged to stderr and never un-claims the target. An `alreadyOwned` target gets the same
+`bot:in-progress` re-assert (no second comment) — a resumed claim may never have been labeled, and
+the queue pull's `bot:*` pre-filter and dispatch's second-call state-check both read that label.
 
 **Log the claim (mandatory, #2492).** Immediately after this call exits 0, for every target in
 its `claimed` array (both transports — the CLI's own JSON envelope on the `gh` path, the manual
