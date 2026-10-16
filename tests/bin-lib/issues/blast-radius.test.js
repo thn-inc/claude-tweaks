@@ -73,6 +73,28 @@ test('classifyDiffFiles does not false-positive on a path merely containing "tes
   assert.strictEqual(classifyDiffFiles([{ path: 'src/contest.js', additions: 1, deletions: 0 }], [])[0].isTest, false);
 });
 
+// --- #3034: a YAML file under a stories/ path segment is test surface ---
+
+test('classifyDiffFiles recognizes a story YAML file at the default stories/ path as isTest', () => {
+  assert.strictEqual(classifyDiffFiles([{ path: 'stories/app-customer.yaml', additions: 1, deletions: 0 }], [])[0].isTest, true);
+});
+
+test('classifyDiffFiles recognizes a story YAML file under a nested stories/ segment as isTest', () => {
+  assert.strictEqual(classifyDiffFiles([{ path: 'qa/stories/x.yml', additions: 1, deletions: 0 }], [])[0].isTest, true);
+});
+
+test('classifyDiffFiles does not mark a non-YAML file under stories/ as isTest', () => {
+  assert.strictEqual(classifyDiffFiles([{ path: 'stories/readme.md', additions: 1, deletions: 0 }], [])[0].isTest, false);
+});
+
+test('classifyDiffFiles does not mark a stories.js file (no stories/ directory segment) as isTest', () => {
+  assert.strictEqual(classifyDiffFiles([{ path: 'src/stories.js', additions: 1, deletions: 0 }], [])[0].isTest, false);
+});
+
+test('classifyDiffFiles does not mark a stories.ts file nested under an unrelated directory as isTest', () => {
+  assert.strictEqual(classifyDiffFiles([{ path: 'src/history/stories.ts', additions: 1, deletions: 0 }], [])[0].isTest, false);
+});
+
 // --- #9: '?' in a sensitive-path glob must be a literal character ---
 
 test('a literal "?" in a sensitive-path glob does not act as a regex "optional preceding character" quantifier', () => {
