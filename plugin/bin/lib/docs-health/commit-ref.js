@@ -1,5 +1,7 @@
 'use strict';
+const path = require('path');
 const { execFileSync } = require('child_process');
+const { acquireLock, releaseLock } = require('../file-lock');
 
 // Classifies commit hashes a docs-health finding cites against complete
 // repository history (#2866) — the check #2785's own build had to redo by
@@ -45,6 +47,12 @@ const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 // single-call bound would cut off on any real repository; still bounded so a
 // black-holed remote ends in unverifiable rather than a hang.
 const DEEPEN_TIMEOUT_MS = 120000;
+
+// Basename of the cross-process lock file-lock.js creates under
+// `{root}/.git/` to serialize concurrent --unshallow fetches against the
+// same repo (#2988). Exported so tests construct the exact same path the
+// implementation below uses, rather than duplicating the literal.
+const DEEPEN_LOCK_FILENAME = 'docs-health-verify-commit.lock';
 
 // Probe-style runner: calls here are expected to fail routinely (a missing
 // ref, a non-ancestor), so stderr is captured, not leaked. Throws on a
@@ -150,6 +158,66 @@ function classifyOne(git, root, input, integrationRef) {
   }
 }
 
+// Serializes the --unshallow fetch for `root` across every concurrent
+// caller -- across OS processes via file-lock.js's cross-process mkdir
+// mutex (#2988): under docs-health --budget > 1, concurrent judge agents
+// each run the verify-commit CLI as a separate process against the same
+// shared shallow checkout, so an in-process-only guard would not
+// serialize them.
+//
+// Returns { stillShallow: boolean } on success (the fetch outcome,
+// whichever caller actually performed it, or the already-deepened state
+// found on re-check) or { error: string } on failure.
+function deepenShallowClone(git, root, remote) {
+  const cacheKey = path.resolve(root);
+  const lockPath = path.join(cacheKey, '.git', DEEPEN_LOCK_FILENAME);
+  // file-lock's default wait (500ms) is far too short to block a waiting
+  // caller through another process's own DEEPEN_TIMEOUT_MS-bounded fetch
+  // -- override it just for this acquisition, restoring whatever the
+  // calling process had (or lacked) immediately after, so this module
+  // never leaves a process-wide env mutation behind.
+  const prevWait = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+  process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = String(DEEPEN_TIMEOUT_MS);
+  let held;
+  try {
+    held = acquireLock(lockPath);
+  } finally {
+    if (prevWait === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+    else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prevWait;
+  }
+  try {
+    // Re-check after acquiring (or failing to acquire) the lock: another
+    // caller -- the lock's prior holder -- may have already deepened this
+    // exact repo while this caller waited. Skipping a redundant fetch
+    // here is what turns the loser's old "fetch fails, report
+    // unverifiable" outcome into a correct classification against the
+    // now-complete history instead.
+    let shallowNow;
+    try {
+      shallowNow = isShallow(git, root);
+    } catch (err) {
+      return { error: `could not re-check shallow state: ${errorText(err)}` };
+    }
+    if (!shallowNow) return { stillShallow: false };
+    try {
+      git(['-C', root, 'fetch', '--quiet', '--unshallow', '--no-tags', remote,
+        `+refs/heads/*:refs/remotes/${remote}/*`], {
+        timeout: DEEPEN_TIMEOUT_MS,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      });
+    } catch (err) {
+      return { error: errorText(err) };
+    }
+    try {
+      return { stillShallow: isShallow(git, root) };
+    } catch (err) {
+      return { error: `could not re-check after deepening: ${errorText(err)}` };
+    }
+  } finally {
+    releaseLock(held);
+  }
+}
+
 function verifyCommits({
   root, hashes, integrationBranch = null, remote = 'origin', deepen = true, git = defaultGit,
 } = {}) {
@@ -201,21 +269,12 @@ function verifyCommits({
 
   if (result.shallow.initial) {
     if (!deepen) return allUnverifiable('shallow clone: history is incomplete and deepening was disabled');
-    try {
-      git(['-C', root, 'fetch', '--quiet', '--unshallow', '--no-tags', remote,
-        `+refs/heads/*:refs/remotes/${remote}/*`], {
-        timeout: DEEPEN_TIMEOUT_MS,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-      });
-    } catch (err) {
-      result.shallow.error = errorText(err);
-      return allUnverifiable(`shallow clone: deepening fetch from ${remote} failed (${result.shallow.error})`);
+    const deepenOutcome = deepenShallowClone(git, root, remote);
+    if (deepenOutcome.error) {
+      result.shallow.error = deepenOutcome.error;
+      return allUnverifiable(`shallow clone: deepening fetch from ${remote} failed (${deepenOutcome.error})`);
     }
-    try {
-      if (isShallow(git, root)) return allUnverifiable('shallow clone: still shallow after deepening');
-    } catch (err) {
-      return allUnverifiable(`shallow clone: could not re-check after deepening: ${errorText(err)}`);
-    }
+    if (deepenOutcome.stillShallow) return allUnverifiable('shallow clone: still shallow after deepening');
     result.shallow.deepened = true;
   }
 
@@ -240,4 +299,4 @@ function verifyCommits({
   return result;
 }
 
-module.exports = { verifyCommits, defaultGit, OUTCOMES, DEEPEN_TIMEOUT_MS };
+module.exports = { verifyCommits, defaultGit, OUTCOMES, DEEPEN_TIMEOUT_MS, DEEPEN_LOCK_FILENAME };

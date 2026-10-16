@@ -1,6 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
+const path = require('path');
+const fs = require('fs');
+const { spawn } = require('child_process');
 const { verifyCommits, OUTCOMES } = require('../../../plugin/bin/lib/docs-health/commit-ref');
 const { git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo } = require('./commit-fixtures');
 
@@ -138,4 +141,58 @@ test('verifyCommits throws a clear TypeError on a non-array hashes value', () =>
     () => verifyCommits({ root: origin.dir, hashes: 'abcd', integrationBranch: 'main' }),
     /verifyCommits: hashes must be an array, got string/,
   );
+});
+
+test('two real child processes racing verifyCommits against the same shallow clone: exactly one real fetch, both classify correctly (#2988)', async () => {
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  const counterPath = path.join(tmpDir('counter'), 'fetch-count.txt');
+  fs.writeFileSync(counterPath, '');
+  const commitRefModule = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'docs-health', 'commit-ref.js');
+
+  // Each child sleeps synchronously right before the real fetch it's
+  // about to issue -- widening the real git fetch's own duration so two
+  // children spawned back-to-back reliably overlap instead of depending
+  // on OS scheduling luck. The sleep happens in THIS wrapper, never
+  // inside git itself, so it never interacts with execFileSync's own
+  // DEEPEN_TIMEOUT_MS bound.
+  const raceWorkerScript = (hash) => `
+    const fs = require('fs');
+    const { verifyCommits, defaultGit } = require(${JSON.stringify(commitRefModule)});
+    function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+    const countingGit = (args, opts) => {
+      if (args.includes('fetch')) {
+        fs.appendFileSync(${JSON.stringify(counterPath)}, '1\\n');
+        sleepSync(300);
+      }
+      return defaultGit(args, opts);
+    };
+    const r = verifyCommits({
+      root: ${JSON.stringify(dir)}, hashes: [${JSON.stringify(hash)}],
+      integrationBranch: 'main', git: countingGit,
+    });
+    process.stdout.write(JSON.stringify(r));
+  `;
+
+  function runChild(hash) {
+    return new Promise((resolve, reject) => {
+      const p = spawn(process.execPath, ['-e', raceWorkerScript(hash)]);
+      let stdout = ''; let stderr = '';
+      p.stdout.on('data', (d) => { stdout += d; });
+      p.stderr.on('data', (d) => { stderr += d; });
+      p.on('close', (code) => (code === 0
+        ? resolve(JSON.parse(stdout))
+        : reject(new Error(`child exited ${code}: ${stderr}`))));
+      p.on('error', reject);
+    });
+  }
+
+  const [resultA, resultB] = await Promise.all([runChild(origin.root), runChild(origin.sideOnly)]);
+
+  const fetchCount = fs.readFileSync(counterPath, 'utf8').split('\n').filter(Boolean).length;
+  assert.strictEqual(fetchCount, 1, 'exactly one real git fetch --unshallow must be issued across both racing processes');
+  assert.deepStrictEqual(resultA.commits, [{ input: origin.root, outcome: 'reachable', sha: origin.root }]);
+  assert.deepStrictEqual(resultB.commits, [{ input: origin.sideOnly, outcome: 'exists-unreachable', sha: origin.sideOnly }]);
+  assert.strictEqual(resultA.shallow.deepened, true);
+  assert.strictEqual(resultB.shallow.deepened, true);
 });
