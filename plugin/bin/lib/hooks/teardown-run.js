@@ -282,7 +282,7 @@ function teardownRun(runDir, opts = {}) {
           lines.push(`worktree: skipped — removal failed (${describeGitFailure(rm)}); prune also failed (${describeGitFailure(prune)})`);
         }
       } else {
-        lines.push(`worktree: skipped — removal failed${rm.stderr ? ` (${rm.stderr})` : ''}`);
+        lines.push(`worktree: skipped — removal failed (${describeGitFailure(rm)})`);
       }
     } else {
       lines.push(`worktree: removed ${effectiveWorktreePath}${recoveredWorktreePath ? ' (resolved via branch-name fallback — no worktree recorded in run-state.json)' : ''}`);
