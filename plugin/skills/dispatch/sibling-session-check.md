@@ -59,8 +59,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$GROUP_RUN_DIR"
 the worktree assignment, this session's id, and a permanent `dispatched: true` marker into the
 run's `run-state.json`; from then on `bin/lib/hooks/pre-tool-use.js`'s `checkDispatchConfigGate`
 denies any git write in this worktree until `/claude-tweaks:flow` Step 3's Manifesto has written
-`$GROUP_RUN_DIR/config.yml` — a first call that bypasses `/flow` is stopped at its first commit,
-not after a full build. Expect the `claude-tweaks: worktree recorded for` confirmation line. A
+`$GROUP_RUN_DIR/config.yml` — a first call that bypasses `/claude-tweaks:flow` is stopped at its
+first commit, not after a full build. Expect the `claude-tweaks: worktree recorded for` confirmation line. A
 failed bind never blocks dispatch: log it to this firing's own `decisions.md` and dispatch anyway —
 the run then lacks the early checkpoint, and #2837's first-call artifact check (`two-call-gate.md`)
 still applies.
