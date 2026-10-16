@@ -44,3 +44,34 @@ test('the Try it field lines live in exactly one skill file', () => {
     .map((f) => path.relative(SKILLS, f));
   assert.deepEqual(owners, ['_shared/try-it.md']);
 });
+
+function firstFence(doc) {
+  const m = /```markdown\n([\s\S]*?)\n```/.exec(doc);
+  assert.ok(m, 'no ```markdown template fence');
+  return m[1];
+}
+
+test('single-spec Pipeline Summary carries a mandatory Try it section before Timing', () => {
+  const doc = read('flow/summary-template.md');
+  const fence = firstFence(doc);
+  const tryIt = fence.indexOf('### Try it');
+  assert.ok(tryIt >= 0, 'template fence must contain ### Try it');
+  assert.ok(tryIt < fence.indexOf('### Timing'), 'Try it renders before Timing');
+  assert.ok(doc.includes('_shared/try-it.md'), 'cites the contract');
+  assert.match(doc, /try-it-\{number\}\.md/);
+  assert.match(doc, /never gates this section/);
+  assert.match(doc, /never omit the section/);
+  assert.doesNotMatch(doc, FIELD_LINE);
+});
+
+test('multi-spec summary carries one Try it per spec plus the end-to-end section', () => {
+  const doc = read('flow/multispec-summary.md');
+  const fence = firstFence(doc);
+  const perSpec = fence.indexOf('### Try it\n');
+  const e2e = fence.indexOf('### Try it — end to end');
+  assert.ok(perSpec >= 0 && e2e > perSpec, 'per-spec Try it, then end to end');
+  assert.ok(e2e < fence.indexOf('### Timing'), 'both render before Timing');
+  assert.match(fence, /#### Spec \{N\}: \{title\}/);
+  assert.ok(doc.includes('_shared/try-it.md'), 'cites the contract');
+  assert.doesNotMatch(doc, FIELD_LINE);
+});

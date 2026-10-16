@@ -4,6 +4,8 @@ Loaded by `/claude-tweaks:flow` Step 5 **only on successful completion of all st
 
 **Reconcile residue line (#644).** Immediately before rendering the template below, run `node "{pluginRoot}/bin/hooks.js" reconcile-summary` and capture its one stdout line verbatim for the **Reconcile:** field — never hand-compose this line or re-derive its counts, and never skip the call: this is the only place in the pipeline that surfaces reconcile's stuck/declined residue (`bin/lib/reconcile`'s own convergence checks run silently off the SessionStart hot path and a detached background process; nothing else in `/flow` reads their output). The command always succeeds and always prints exactly one line — a background pass that hasn't completed yet reads as `0 archived`, an unreachable mirror reads as `mirror ff n/a` — so there is no failure mode here to branch on.
 
+**Try it is mandatory (#2821).** Render the `### Try it` section on every successful run, including a record below the oversight floor — the floor gates `demo:pending` and the sign-off ceremony, and never gates this section. Its body is the block `wrap-up/verification-brief.md` composed for this record, per `_shared/try-it.md`, read verbatim from the session-scoped file: `eval "$(node "{pluginRoot}/bin/session-tmp-resolve.js" TRY_IT=try-it-{number}.md)"`, then render `"$TRY_IT"` minus its own heading line. When that file is missing or empty, compose the block now per that contract's Sources — never omit the section and never render a placeholder.
+
 On successful completion of all steps (`wrap-up` in the step list):
 
 ```markdown
@@ -23,6 +25,10 @@ On successful completion of all steps (`wrap-up` in the step list):
 **Release status:** {the one-line human form from `_shared/pr-first-merge-post-merge.md` Step 4.1, verbatim — `already carried by {tag}` | `not yet in a release — bump pending` | `release status unavailable — {reason}` | `n/a — not merged in this run (outcome: {armed | pending-review})`}
 
 **Reconcile:** {one line from `node "{pluginRoot}/bin/hooks.js" reconcile-summary`, run once here and printed verbatim — `reconcile: {archived} archived, {stuck} stuck (oldest {age}), mirror ff {ok | declined — {reason} | anomaly — {state} | skipped — {reason} | failed — {reason} | n/a}`}
+
+### Try it
+
+{spec {number}'s Try it block (`_shared/try-it.md`) — the body of the session-scoped `try-it-{number}.md`, verbatim, minus its own heading line}
 
 ### Timing
 
