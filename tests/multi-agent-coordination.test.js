@@ -481,6 +481,35 @@ test('reproduction (#2907): a different-substance ±2 neighbour is not reserved 
   }
 });
 
+test('reproduction (#2907): when the best pair would strand a finding both agents reported, the pairing re-routes so both confirm', () => {
+  // A1 matches B1 best (a prefix) and B2 too; A2 matches only B1. Taking A1-B1
+  // first would leave A2 unconfirmed beside a B finding it reproduces.
+  const a1 = { path: 'src/token.js', line: 10, severity: 'high', text: 'token cache refresh race lets stale token through to the upstream api call' };
+  const a2 = { path: 'src/token.js', line: 10, severity: 'high', text: 'token cache refresh race stale token' };
+  const b = [
+    { path: 'src/token.js', line: 10, severity: 'high', text: 'token cache refresh race lets stale token through' },
+    { path: 'src/token.js', line: 10, severity: 'high', text: 'stale token through to the upstream api call without retry backoff' },
+  ];
+  for (const a of [[a1, a2], [a2, a1]]) {
+    const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+    assert.strictEqual(confirmed.length, 2);
+    assert.deepStrictEqual(unconfirmed, []);
+    const byText = Object.fromEntries(confirmed.map((f) => [f.text, f]));
+    assert.ok(byText[a1.text] && byText[a2.text], 'both A findings confirmed');
+  }
+});
+
+test('reproduction (#2907): a ±2 score tie pairs with the nearer B finding', () => {
+  const a = [{ path: 'src/run.js', line: 100, severity: 'high', text: WIDE_SAME_A }];
+  const b = [
+    { path: 'src/run.js', line: 102, severity: 'high', text: WIDE_SAME_A },
+    { path: 'src/run.js', line: 100, severity: 'high', text: WIDE_SAME_A },
+  ];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.strictEqual(confirmed.length, 1);
+  assert.deepStrictEqual(unconfirmed.map((f) => `${f.source}:${f.line}`), ['B:102']);
+});
+
 test('reproduction: one-side-only finding → unconfirmed with STAGED entry matching the documented schema', () => {
   const a = [{ path: 'src/auth.ts', line: 42, severity: 'critical', text: 'only-A' }];
   const b = [];

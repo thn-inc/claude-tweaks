@@ -301,14 +301,43 @@ function reconcileSeverity(fa, fb) {
 // reported them in. Ranked by similarity (an unknown/`null` score ranks below
 // every known one), then by the smaller line delta, then by A index, then by
 // B index, so even a tie resolves the same way on every run.
+//
+// Best-first alone can still strand a finding both agents reported: when A1
+// matches B1 best and B2 too, but A2 matches only B1, taking A1-B1 first
+// leaves A2 with nothing. So every A finding left unpaired then tries an
+// augmenting path (re-routing an already-paired A finding to another of its
+// matches), which makes the result a maximum pairing: no pairing of these
+// candidates confirms more findings, and pass 3 below relies on that.
 function assignBestPairs(pairs, aToB, pairedB) {
   const rank = (score) => (score === null ? -1 : score);
   const ordered = [...pairs].sort((x, y) => rank(y.score) - rank(x.score)
     || x.delta - y.delta || x.aIndex - y.aIndex || x.bIndex - y.bIndex);
+  const bToA = new Map();
+  const matchesOf = new Map(); // A index → its B candidates, best first
   for (const pair of ordered) {
+    if (!matchesOf.has(pair.aIndex)) matchesOf.set(pair.aIndex, []);
+    matchesOf.get(pair.aIndex).push(pair.bIndex);
     if (aToB.has(pair.aIndex) || pairedB.has(pair.bIndex)) continue;
     aToB.set(pair.aIndex, pair.bIndex);
+    bToA.set(pair.bIndex, pair.aIndex);
     pairedB.add(pair.bIndex);
+  }
+  const augment = (aIndex, visited) => {
+    for (const bIndex of matchesOf.get(aIndex)) {
+      if (visited.has(bIndex)) continue;
+      visited.add(bIndex);
+      const holder = bToA.get(bIndex);
+      if (holder === undefined || augment(holder, visited)) {
+        aToB.set(aIndex, bIndex);
+        bToA.set(bIndex, aIndex);
+        pairedB.add(bIndex);
+        return true;
+      }
+    }
+    return false;
+  };
+  for (const aIndex of matchesOf.keys()) {
+    if (!aToB.has(aIndex)) augment(aIndex, new Set());
   }
 }
 
@@ -362,7 +391,9 @@ function categoriseReproduction(agentAFindings, agentBFindings) {
   // neighbour nobody paired as a coincidence — do NOT merge. Both sides
   // surface in unconfirmed, each pointing at the other via `nearLocation`,
   // so a reviewer sees the coincidence instead of one finding silently
-  // vanishing.
+  // vanishing. That neighbour always differs in substance: pass 1's pairing
+  // is maximum, so an A finding it left unpaired has no free ±2 match, and
+  // pass 2 only removes B findings.
   const unconfirmed = [];
   const consumedB = new Set();
   normalizedA.forEach((fa, aIndex) => {
