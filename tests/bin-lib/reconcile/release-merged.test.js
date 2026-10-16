@@ -409,6 +409,138 @@ test('releaseMerged: does not invoke the by-number fallback when the live-worktr
   }
 });
 
+// #3249 (whole-branch review): a by-number probe that FAILS (here a real
+// network-failure classification — gh exits non-zero with an unrecognized
+// error) must leave prState null, exactly as before the by-number fallback
+// existed, so the pre-existing issue-closed release path (Phase 2) still
+// runs. Setting prState to the failure string would make needsIssueEvidence
+// false and decideRelease skip on the transport failure instead — a
+// regression for a closed record whose pr.number probe happens to fail.
+test('releaseMerged: a failed by-number probe still lets a CLOSED issue release the claim via issue-closed (#3249)', async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-fail-')));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
+
+  // Worktree reaped, branch deleted — only pr.number survives.
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-bynumber-fail');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'already-reaped'),
+    pr: { number: 3249003, branch: 'already-deleted-branch' },
+  }));
+
+  const liveContent = JSON.stringify({
+    runId: 'run-bynumber-fail', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
+  });
+  let issueReads = 0;
+  const ghApi = (args) => {
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-63.json', sha: 'live-sha' }] }), failure: null, status: null };
+    }
+    if (args[0].includes('/contents/claims/issue-63.json')) {
+      return { stdout: JSON.stringify({ content: liveContent, sha: 'live-sha' }), failure: null, status: null };
+    }
+    if (args[0].includes('/issues/63')) {
+      issueReads += 1;
+      return { stdout: 'CLOSED\n', failure: null, status: null };
+    }
+    if (args.some((a) => a.includes('/labels/'))) {
+      return { stdout: '', failure: null, status: null };
+    }
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-fail-ghwrap-'));
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  fs.writeFileSync(
+    wrapperPath,
+    '#!/bin/sh\n'
+    + 'case "$*" in\n'
+    // classifyGhApiError maps an unrecognized non-zero exit to 'network-failure'.
+    + '  *"pr view 3249003"*) echo "error connecting to api.github.com" >&2; exit 1 ;;\n'
+    + '  *"pr list"*) echo "pr list must never be called when no branch resolved" >&2; exit 1 ;;\n'
+    + '  *"api --method PUT"*) exit 0 ;;\n'
+    + '  *) exit 1 ;;\n'
+    + 'esac\n',
+  );
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+
+  try {
+    const result = await releaseMerged({ cwd: root, ghApi });
+    assert.equal(issueReads, 1, 'the issue-state lookup must still run after a failed by-number probe');
+    assert.equal(result.released.length, 1, `expected an issue-closed release, got ${JSON.stringify(result)}`);
+    assert.equal(result.released[0].issueNumber, 63);
+    assert.equal(result.released[0].prNumber, null, 'released on issue-closed evidence, not a PR');
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
+// #3249 (whole-branch review): a run-state.json with no worktree stamp at
+// all (the #1684 gap) but a still-resolvable pr.branch must use that
+// recovered branch for the ordinary `gh pr list --head` join — mirroring
+// archive-merged.js, which only reports no-worktree when fallbackBranch
+// ALSO fails. No pr.number here, so the by-number fallback can't rescue it.
+test('releaseMerged: an unstamped worktree with a fallbackBranch-recovered branch still joins by branch (#3249)', async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-unstamped-')));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
+  execFileSync('git', ['branch', 'unstamped-branch'], { cwd: root }); // ref still resolves
+
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-unstamped');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active', worktree: null, pr: { branch: 'unstamped-branch' },
+  }));
+
+  const liveContent = JSON.stringify({
+    runId: 'run-unstamped', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
+  });
+  const ghApi = (args) => {
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-64.json', sha: 'live-sha' }] }), failure: null, status: null };
+    }
+    if (args[0].includes('/contents/claims/issue-64.json')) {
+      return { stdout: JSON.stringify({ content: liveContent, sha: 'live-sha' }), failure: null, status: null };
+    }
+    if (args.some((a) => a.includes('/labels/'))) {
+      return { stdout: '', failure: null, status: null };
+    }
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-unstamped-ghwrap-'));
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  fs.writeFileSync(
+    wrapperPath,
+    '#!/bin/sh\n'
+    + 'case "$*" in\n'
+    + '  *"pr list --head unstamped-branch"*) cat <<\'EOF\'\n'
+    + '[{"number":88,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}]\n'
+    + 'EOF\n'
+    + '    ;;\n'
+    + '  *"api --method PUT"*) exit 0 ;;\n'
+    + '  *) exit 1 ;;\n'
+    + 'esac\n',
+  );
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+
+  try {
+    const result = await releaseMerged({ cwd: root, ghApi });
+    assert.equal(result.released.length, 1, `expected the recovered branch to join, got ${JSON.stringify(result)}`);
+    assert.equal(result.released[0].prNumber, 88);
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
 // #1378: a convergent (merged:) release used to leave auto:build/auto:merge live
 // on the now-closed issue — release-merged.js called only removeInProgressLabel.
 // This pins the fix end-to-end: every GRANT_LABELS entry (never a hardcoded

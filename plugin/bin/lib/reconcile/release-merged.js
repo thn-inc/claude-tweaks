@@ -363,10 +363,14 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
     // remote ref) — run-state.json's pr.number, stamped once at
     // PR-early-lifecycle time and never cleared.
     const prNumber = runState && runState.pr && runState.pr.number ? runState.pr.number : null;
-    if (!runState || !runState.worktree) {
-      joinFailure = 'no-run-state'; // archived/gone run dir — issue-closed evidence below may still release
-    } else if (!branch) {
-      joinFailure = 'no-branch';
+    // Gated on `!branch` first: an unstamped worktree whose branch
+    // fallbackBranch still recovered joins normally — mirrors
+    // archive-merged.js, which reports no-worktree only when the fallback
+    // also fails (#1684/#2228). The skip-reason vocabulary is unchanged.
+    if (!branch) {
+      // 'no-run-state': archived/gone run dir (or one never stamped with a
+      // worktree) — issue-closed evidence below may still release.
+      joinFailure = (!runState || !runState.worktree) ? 'no-run-state' : 'no-branch';
     }
     // prState is resolved in Phase 1.5 below (deferred so the per-active-claim
     // `gh pr list` call goes through the pool, not this sync loop) — null here
@@ -426,12 +430,13 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
         // skips an unnecessary issue-state lookup.
         c.prState = byNumber;
         c.joinFailure = null;
-      } else if (byNumber === 'gh-absent' || byNumber === 'network-failure') {
-        c.prState = byNumber;
       }
-      // 'invalid-arguments' (malformed prNumber — shouldn't happen given the
-      // truthy-number gate above, but fails closed) leaves joinFailure and
-      // prState untouched; Phase 2 still tries issue evidence as before.
+      // Any other result — null (no such PR), 'gh-absent'/'network-failure'
+      // (a failed probe, transient or permanent, e.g. a stale pr.number), or
+      // 'invalid-arguments' — leaves joinFailure and prState (null)
+      // untouched, exactly as before this fallback existed: Phase 2 still
+      // tries issue-closed evidence. Recording the failure string as prState
+      // would make needsIssueEvidence false and block that path.
     }
   }
 
