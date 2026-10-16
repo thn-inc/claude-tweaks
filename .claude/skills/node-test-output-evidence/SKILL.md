@@ -1,13 +1,13 @@
 ---
 name: node-test-output-evidence
-description: Use when writing or reviewing code that reads `node --test` spec or TAP reporter output as evidence for a verdict, not just as a summary to display. Covers which test a failure belongs to, which failures are a parent's own, counting a log's failures against its summary, YAML diagnostic blocks, and the runner-level diagnostics Node never counts. The shipped consumer is `plugin/bin/lib/verify/`'s baseline adjudicator. Keywords - node --test, spec reporter, TAP, test identity, suite path, failing tests, ℹ fail, failureType, subtestsFailed, YAML block, ℹ Error, baseline adjudication, testTree.
+description: Use when writing or reviewing code that reads `node --test` spec or TAP reporter output as evidence for a verdict, not just as a summary to display. Covers which test a failure belongs to, which failures are a parent's own, counting a log's failures against its summary, YAML diagnostic blocks, and the runner-level diagnostics Node never counts. The shipped consumers are `plugin/bin/lib/verify/`'s baseline adjudicator and its flaky-retry hook. Keywords - node --test, spec reporter, TAP, test identity, suite path, failing tests, ℹ fail, failureType, subtestsFailed, YAML block, ℹ Error, baseline adjudication, flaky retry, unattributed failures, testTree.
 ---
 
 # Reading `node --test` output as evidence
 
 ## Overview
 
-`plugin/bin/verify.js --baseline <ref>` (#3043) turns a failing test run into a pass when every failure also fails at the base commit. That verdict is only as sound as the parser behind it: `testTree`, `failingTestsByFile`, `specEntryCount`, `cancelledCount` and `countUnmatchedFailures` in `plugin/bin/lib/verify/extract.js`, consumed by `plugin/bin/lib/verify/baseline.js`. Each rule below was a fail-open hole in that parser, reproduced by a reviewer with a real Node v24 log before it was closed. A display-only reader can afford a misread. A reader whose output gates a pass cannot.
+`plugin/bin/verify.js --baseline <ref>` (#3043) turns a failing test run into a pass when every failure also fails at the base commit. That verdict is only as sound as the parser behind it: `testTree`, `failingTestsByFile`, `specEntryCount`, `cancelledCount` and `countUnmatchedFailures` in `plugin/bin/lib/verify/extract.js`, consumed by `plugin/bin/lib/verify/baseline.js`. The flaky-retry hook (#3066) trusts the same failing-file list: `plugin/bin/verify.js` re-runs only the named files, so `unattributedFailureCount` must report 0 before `plugin/bin/lib/verify/flaky.js`'s `planRetry` will retry. Each rule below was a fail-open hole in that parser, reproduced by a reviewer with a real Node v24 log before it was closed. A display-only reader can afford a misread. A reader whose output gates a pass cannot.
 
 The general principle — a parse that cannot be trusted must say so — is `parse-signal-discipline`. This skill holds the Node-specific facts that principle needs.
 
