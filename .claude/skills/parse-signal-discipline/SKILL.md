@@ -184,6 +184,21 @@ When mechanizing a prose heuristic into a deterministic check:
    caller, guard the input at your call site rather than flipping the shared helper's default.
    Pin each invalid input with its own assertion: `NaN`, `undefined` and `null` all slip past
    a `>=` comparison.
+11. **A raw fs read's error code owes the same split as a shell-out's exit code (item 8), one level
+    lower.** `fs.readdirSync` throwing `ENOENT` ("this path doesn't exist") and throwing anything
+    else (`EACCES`, `ENOTDIR`, `EIO`, a transient I/O hiccup) are not the same signal: the first is
+    genuine non-applicability, the second is "couldn't tell." `plugin/bin/lib/reconcile/archive-merged.js`'s
+    `hasStagedItems` (#3249) — the one function the #657/#1130 protection's "don't silently archive
+    a run with pending staged decisions" guarantee rests on — caught every error the same way and
+    returned `false` ("nothing staged") either way, so an unreadable `staged/` directory read
+    identically to a genuinely absent one and unlocked an archive path meant only for the latter.
+    Review caught it (two independently-dispatched lenses, reproduced without seeing each other's
+    output) and the fix branches on `err.code !== 'ENOENT'`, failing closed (`true`, "treat as
+    pending") on anything else — mirroring `readConsoleState`'s own fail-closed catch two functions
+    above it in the same file, which this fix's catch previously disagreed with. Pin the non-ENOENT
+    case with its own fixture (a plain file sitting where a directory is expected, producing
+    `ENOTDIR`), the same way item 6 pins a truncated/tail-carrying input — a fixture that only
+    exercises the absent-directory case cannot discriminate this fix from the pre-fix code.
 
 ## When to use
 
@@ -194,6 +209,9 @@ When mechanizing a prose heuristic into a deterministic check:
   actually merges two different situations.
 - Writing a check that shells out to a tool, or a probe in skill prose the agent runs, where an
   empty result could mean either "nothing found" or "the check did not run" (fix-shape items 8-9).
+- Writing a check that reads the filesystem directly (`fs.readdirSync`/`readFileSync`/`existsSync`
+  and the like) where catching every error the same way conflates "genuinely absent" (`ENOENT`)
+  with "couldn't tell" (`EACCES`, `ENOTDIR`, and other non-ENOENT codes) (fix-shape item 11).
 
 ## When not to use
 
