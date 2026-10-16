@@ -177,10 +177,21 @@ Status line (required): on its own trailing line, after everything above -- the 
 non-empty line -- write exactly `STATUS: {WORD}`, where {WORD} is one of: DONE /
 DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
 
-[Use: Standard] -- this dispatch wraps build+test execution, not analysis; the pipeline's own
-steps select their own models as usual. Resolve via `node "{plugin-root}/bin/resolve-profile.js" standard`
-(contract § Model Selection).
+[Use: Capable] -- raised from Standard because Standard first calls bypassed /flow in 6 of 10 observed firings, Capable in 0 of 3 (#3212);
+the pipeline's own steps still select their own models as usual. Resolve via
+`node "{plugin-root}/bin/resolve-profile.js" capable` (contract § Model Selection).
 ```
+
+**The `model-ceiling` clamp (#3212).** `[Use: Capable]` above does not guarantee Opus. A project
+`model-ceiling: standard` policy value clamps the resolved `capable` profile back to `sonnet` —
+`plugin/bin/lib/model-profiles/profiles.js`'s `resolve()`, the `model-ceiling` clamp at lines
+122-128, which reports `source: 'ceiling'` in `resolve-profile.js`'s JSON. On such a project this
+call runs on Sonnet by configuration, an expected and named outcome; the per-group log line in the
+Context pack section above records it. The same function's later diff-size cap does not apply
+here: it fires only when the caller passes `--diff-facts`, and this invocation never does. The
+6-of-10 versus 0-of-3 evidence is a small, opportunistic sample, not a controlled experiment, and
+the added Opus spend is accepted as the cost of fewer stranded builds — re-measure the first-call
+deviation rate once a further batch of dispatch firings has run on Capable.
 
 The Foreground execution clause above is backed by a mechanical check, not prose alone (#2429):
 `sequential-execution.md`'s "The loop" section verifies this call's `STATUS:` line against the
