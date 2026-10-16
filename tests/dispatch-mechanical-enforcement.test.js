@@ -31,7 +31,11 @@ test('#2429 AC2: settle-and-merge.md logs a passing merge-check verdict (not jus
   // #2484: batched to one read of decisions.md checked against every member in
   // memory, replacing the old per-member `grep -c` subprocess.
   assert.match(t, /one read of the file, checked against\s*\n\s*every group member in memory, not one `grep -c` subprocess per member/);
-  assert.match(t, /marker = 'Auto-merge gate: #' \+ n \+ ' assess-agent-autonomy verdict auto-merge'/);
+  // #2941: the marker and the check moved into one shared module, so the singleton
+  // short-circuit and this bundle path cannot drift apart on the marker text.
+  assert.match(t, /require\('\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/lib\/dispatch\/merge-verdict\.js'\)/);
+  assert.match(t, /confirmFromFile\(process\.argv\[1\], process\.argv\.slice\(2\)\)/);
+  assert.doesNotMatch(t, /marker = 'Auto-merge gate: #' \+ n/);
   assert.doesNotMatch(t, /grep -c "Auto-merge gate: #\{n\} assess-agent-autonomy verdict auto-merge"/);
   // The local-merge dispatching-session path is a separate execution thread from
   // the Task call that logged the verdict -- it must re-verify too, not trust
@@ -40,6 +44,7 @@ test('#2429 AC2: settle-and-merge.md logs a passing merge-check verdict (not jus
   assert.match(localMergeSection, /re-run the Content judgment step's own mechanical check/);
   assert.match(localMergeSection, /not evidence Content judgment ran/);
   assert.match(localMergeSection, /one-read-per-group, checked-in-memory-per-member check above/);
+  assert.match(localMergeSection, /accepts the singleton short-circuit's `Auto-merge short-circuit:` marker too/);
 });
 
 test('#2429 AC3: both mechanical checks are cross-referenced at the call site they gate (task-prompt.md), so a future edit cannot silently regress to prose-only enforcement', () => {
