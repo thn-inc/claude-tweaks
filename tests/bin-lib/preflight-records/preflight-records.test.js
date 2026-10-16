@@ -539,3 +539,30 @@ test('--integration-branch with a trailing bare flag, or an empty value, exits 2
   assert.equal(empty.out.length, 0);
   assert.match(empty.err.join(''), /missing value for --integration-branch/);
 });
+
+test('AC2.1, AC4.1: --waves adds a waves plan; without it the envelope has no waves key (#2677)', () => {
+  const runner = (args) => {
+    if (isIssueView(args, 801)) return JSON.stringify(issue({ number: 801, title: 'A', body: specBody(['a.js']) }));
+    if (isIssueView(args, 802)) return JSON.stringify(issue({ number: 802, title: 'B', body: specBody(['b.js']) }));
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const withFlag = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['801', '802', '--waves'], withFlag.deps), 0);
+  assert.deepEqual(JSON.parse(withFlag.out.join('')).waves, { waves: [[801, 802]], parallel: true });
+
+  const without = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['801', '802'], without.deps), 0);
+  assert.equal('waves' in JSON.parse(without.out.join('')), false);
+});
+
+test('--waves on a dependency cycle exits 2 naming the cycle, no stdout (#2677)', () => {
+  const runner = (args) => {
+    if (isIssueView(args, 811)) return JSON.stringify(issue({ number: 811, title: 'A', body: `Blocked by #812\n\n${specBody(['a.js'])}` }));
+    if (isIssueView(args, 812)) return JSON.stringify(issue({ number: 812, title: 'B', body: `Blocked by #811\n\n${specBody(['b.js'])}` }));
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out, err } = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['811', '812', '--waves'], deps), 2);
+  assert.equal(out.length, 0);
+  assert.match(err.join(''), /dependency cycle through #81[12]/);
+});

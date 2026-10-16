@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // bin/preflight-records.js — record pre-flight JSON in one command.
-//   node bin/preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--integration-branch <name>] [--help]
+//   node bin/preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--help]
 // Fetches every record (`gh issue view`), derives facets/keyFiles/fingerprint
 // (bin/lib/issues/record.js, bin/lib/issues/grouping.js), resolves blockedBy
 // either from the body (work-links: body-text, no extra call) or one batched
@@ -14,6 +14,7 @@
 // (bin/lib/preflight-records/merge-gate.js). --integration-branch <name>
 // (default 'main') is consumed only with --merge-gate, naming the branch the
 // gate's regex looks for.
+// --waves (#2677) adds waves {waves, parallel} — the opt-in multi-spec parallel-wave plan (bin/lib/preflight-records/waves.js).
 // Exit 0 success; 1 any record fetch (or the native dependency GraphQL call)
 // failed — every failing record named, all-at-once; 2 malformed invocation
 // (no numbers, non-positive, unresolvable owner/repo under native mode).
@@ -24,14 +25,15 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const preflight = require('./lib/preflight-records/preflight-records');
 const { planMergeGateSplit } = require('./lib/preflight-records/merge-gate');
+const { planParallelWaves } = require('./lib/preflight-records/waves');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
 const { parseRepo, repoResolutionNote } = require('./lib/repo-resolve');
 
-const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--integration-branch <name>] [--help]\n';
+const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--help]\n';
 
 function parseArgs(argv) {
   const opts = {
-    numbers: [], workLinks: null, repo: null, mergeGate: false, integrationBranch: null, help: false,
+    numbers: [], workLinks: null, repo: null, mergeGate: false, waves: false, integrationBranch: null, help: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -48,6 +50,8 @@ function parseArgs(argv) {
       opts.repo = v;
     } else if (a === '--merge-gate') {
       opts.mergeGate = true;
+    } else if (a === '--waves') {
+      opts.waves = true;
     } else if (a === '--integration-branch') {
       const v = next();
       if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: 'missing value for --integration-branch' };
@@ -157,6 +161,14 @@ function run(argv, deps = realDeps) {
   const overlapGroups = preflight.buildOverlapGroups(records);
   const envelope = { records, overlapGroups, workLinks };
   if (opts.mergeGate) envelope.mergeGate = planMergeGateSplit({ issues, records, numbers, integrationBranch: opts.integrationBranch || 'main' });
+  if (opts.waves) {
+    try {
+      envelope.waves = planParallelWaves({ records, numbers });
+    } catch (err) {
+      deps.stderr(`preflight-records.js: ${err.message}\n`);
+      return 2;
+    }
+  }
   deps.stdout(`${JSON.stringify(envelope, null, 2)}\n`);
   return 0;
 }
