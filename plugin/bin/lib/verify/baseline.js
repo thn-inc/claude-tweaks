@@ -60,7 +60,7 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
     // left absolute, or one with a `..` segment anywhere (a log can name
     // `tests/../../x` verbatim), is never inside it.
     inCheckout: (dir, rel) => !path.posix.isAbsolute(rel) && !/^[A-Za-z]:/.test(rel)
-      && !rel.split('/').includes('..') && fs.existsSync(path.join(dir, ...rel.split('/'))),
+      && !rel.split('/').includes('..') && fs.existsSync(path.join(dir, rel)),
     addWorktree: (sha) => {
       const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-'));
       const dir = path.join(parent, 'wt');
