@@ -20,7 +20,7 @@ files:
 - **URL:** `plugin/skills/test/SKILL.md` Step 2 Report; `plugin/skills/_shared/pr-check-gate.md` "When it runs"
 - **Action:** After the full suite passes, `/test` runs `bin/pr-checks.js --run "$PIPELINE_RUN_DIR"`. It reads `run-state.json`'s `pr.number`, fetches the PR's `statusCheckRollup` and `headRefOid`, and prints one JSON line with a `state`.
 - **Should feel:** Automatic — one extra line in the run, no prompt.
-- **Should understand:** The read only concludes anything when the PR's `headRefOid` is local HEAD; otherwise it is `stale` (the newest commit is not pushed or not yet checked). The classification rules are the merge gate's own (`_shared/pr-first-merge.md` Step 2.5), so this gate and the merge never disagree about what "red" means.
+- **Should understand:** The read only concludes anything when the PR's `headRefOid` is local HEAD; otherwise it is `stale` (the newest commit is not pushed or not yet checked). The classification rules are the merge gate's own (`_shared/pr-first-merge.md` Step 2.5, applied by `bin/lib/pr-checks/classify.js`) with one deliberate divergence: a failed commit-status (StatusContext) entry reads `red` here, while the merge gate's literal rule holds that same entry `pending` — so a red here can show as a pending wait at merge time, and the merge gate's read stays the final authority.
 - **Red flags:** `TEST_PASSED` set before the read ran; a `stale` result treated as green evidence.
 
 ### 2. Red at HEAD stops the run
