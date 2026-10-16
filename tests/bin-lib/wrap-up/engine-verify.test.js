@@ -768,18 +768,21 @@ test('AC1 (live git): a plans-ledger leftover created in a worktree is caught by
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   try {
-    fs.mkdirSync(path.join(wt, 'docs', 'superpowers', 'plans'), { recursive: true });
-    fs.writeFileSync(path.join(wt, 'docs', 'superpowers', 'plans', '2026-09-02-leftover-plan.md'), '# leftover\n');
     const realGit = (args, cwd) => realExecFileSync('git', args, { cwd, encoding: 'utf8' });
+    // #3168: create the run dir before the leftover, with a real mtime margin
+    // -- the plans-ledger check treats an artifact older than the run dir as
+    // not owned ('skip'), and APFS's nanosecond mtimes make the reverse order
+    // fail deterministically on macOS.
     const runDir = makeTmpDir('verify-ac1-livewt-');
+    busyWaitMs(10);
+    const plansDir = path.join(wt, 'docs', 'superpowers', 'plans');
+    fs.mkdirSync(plansDir, { recursive: true });
+    fs.writeFileSync(path.join(plansDir, '2026-09-02-leftover-plan.md'), '# leftover\n');
 
     // Sanity check first: the main checkout's own git status must not see
     // the worktree-local leftover at all -- proving the pre-fix repoRoot-only
     // scan really was structurally blind to it, not just untested.
-    const mainStatus = realExecFileSync(
-      'git', ['status', '--porcelain=v1', '-uall', '--', 'docs/superpowers/plans', 'docs/plans'],
-      { cwd: main, encoding: 'utf8' },
-    );
+    const mainStatus = realGit(['status', '--porcelain=v1', '-uall', '--', 'docs/superpowers/plans', 'docs/plans'], main);
     assert.strictEqual(mainStatus.trim(), '', 'sanity: the main checkout must not see the worktree-local leftover');
 
     const result = runVerify({ runDir, base: 'main', repoRoot: main, cwd: wt, deps: { git: realGit, gh: () => '' } });

@@ -208,10 +208,11 @@ to `next-mode.md` for the next iteration.
 **Near-duplicate candidate check also runs headlessly (#1944).**
 `shaping-mode.md`'s Near-duplicate candidate check is part of the procedure
 this section already reads and follows — no separate invocation here. When
-it stops shaping (a `ready`, in-flight-build candidate found), that is a
-deliberate refusal, not a shaping error: record this record in the `failed`
-bucket the same way the tier-2 refusal above does, with the candidate's
-number and its firing signals named in the close-out log line, then
+it stops shaping (`shapingRefusal` found a title-similar, `ready` candidate
+with a live claim or an open linked PR), that is a deliberate refusal, not
+a shaping error: record this record in the `failed` bucket the same way
+the tier-2 refusal above does, with the candidate's number and its firing
+signals and the in-flight evidence named in the close-out log line, then
 continue to `## Release` exactly as any other shaping-stage failure does.
 
 **The guard's verdict is not reused here.** `## Framing Guard`'s verdict

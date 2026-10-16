@@ -142,17 +142,18 @@ given before rendering one.
 
 **Blocked-exclusion report (refs #1101).** See `blocked-exclusion-report.md`, this skill's directory (same convention as the Open-PR exclusion report below; not a gate — the exclusion itself already happened inside `queue-pull-script.md`).
 
+**Not-spec-shaped exclusion report (refs #2829).** See `not-spec-shaped-exclusion-report.md`, this skill's directory (same non-gating convention as the reports above; no bypass, unlike Oversized) — runs first, ahead of Open-PR/Shipped-candidate below.
+
 **Open-PR exclusion report (refs #1224).** See `open-pr-exclusion-report.md`, this skill's directory (same convention as the Blocked-exclusion report above; not a gate — the exclusion itself already happened inside `queue-pull-script.md`).
 
 **Shipped-candidate exclusion report (refs #1984).** Read this run's session-scoped
-`dispatch-exclusions.json` (`queue-pull-script.md`'s output, `readExclusions`), filtered to
-`reason: 'shipped'` entries (`records: [number], detail: {pr, signals}` each). Non-empty: render
-one line per entry naming the record, the merged PR, and the signals — a Close proposal is
-staged for approval; same convention as the reports above (weak-tier: see above).
+`dispatch-exclusions.json` (`queue-pull-script.md`'s output, `bin/lib/dispatch/exclusions.js`'s
+`readExclusions`), filtered to `reason: 'shipped'` entries (`records: [number], detail: {pr,
+signals}` each). Non-empty: render one line per entry — `#{number} excluded — already shipped by
+merged PR #{pr} ({signals}); a Close proposal is staged in this firing's run dir for approval.` —
+same convention as the reports above (weak-tier: see above).
 
 **Oversized-group report (refs #1228).** See `oversized-group-report.md`, this skill's directory (groups over the size guard stay selectable via `#N`/`#N,#M,...`; not a gate).
-
-**Not-spec-shaped exclusion report (refs #2829).** See `not-spec-shaped-exclusion-report.md`, this skill's directory (same non-gating convention as the reports above; no bypass, unlike Oversized).
 
 **Cross-PR root-cause overlap report (refs #1579).** See `cross-pr-overlap-report.md`, this skill's directory (warning only, never a gate).
 
@@ -161,8 +162,7 @@ staged for approval; same convention as the reports above (weak-tier: see above)
 landing in *different* file-overlap groups, logging one `AUTO — dispatch: near-duplicate
 candidates across groups: #A / #B ({signals})` line per firing pair to stderr. Same-group pairs
 are already co-built together by Step 2's grouping and have nothing new to warn about. Warning
-only, never a gate — no selection change; a same-group pair (already covered by
-`groupByFileOverlap`) never re-fires here.
+only, never a gate — no selection change.
 
 **Bare (drain)** `/dispatch` — headless, no `AskUserQuestion` (skip this and the rest of Step 3 if the zero-groups case above applies). Resolve `{budget}`: `--budget <n|all>` if present (or its deprecated `--batch-size <n>`/`--concurrent <n>` aliases, each with its own notice), else `dispatch-batch-size` (or its deprecated `dispatch-pick-max-concurrent` key, same notice) — CLI arg beats project policy per `_shared/auto-mode-card.md`. `n` = attempt count; `all` drains to empty. `--budget` + `next`/`#N,#M,...`: **rejected with one notice** (bare-drain-only; `next` already means `--budget 1`).
 

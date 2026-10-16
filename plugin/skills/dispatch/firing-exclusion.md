@@ -33,6 +33,13 @@ claim (`bot:in-progress`) or are already resolved, so the ordinary claim/label m
 excludes them from the next queue pull. Appending there would be redundant, not wrong — but the
 point of this file is the two shapes that mechanism misses.
 
+**A failed append stops the firing.** `appendExclusion` throws (message prefixed `appendExclusion:`)
+rather than rewrite a corrupt, non-array or unreadable `dispatch-exclusions.json` from `[]`. When
+the append exits non-zero, report its error line and stop the firing — never continue to the next
+iteration: the next queue pull's truncation step reads the file through `readExclusions`, which
+degrades it to `[]`, so no `firing` entry survives and the stuck group is re-selected. This is the
+same stop every `queue-pull-script.md` append site takes.
+
 `next-ranking.md`'s script reads this same file (absent or unreadable treated as `[]`, per
 `readExclusions`'s own contract) and, via one `groupIsExcluded(g, entries, ['oversized', 'firing'])`
 call, excludes any matching group from the candidate pool — the same derivation that already

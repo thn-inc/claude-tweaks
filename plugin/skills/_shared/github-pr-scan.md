@@ -192,7 +192,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
     #    list and the read) is dropped here, not surfaced — a released or contested
     #    claim is not an unsettled one.
     : > "$PR_SCAN_UNSETTLED_CLAIMS"
-    gh api "repos/{owner}/{repo}/contents/claims?ref=claims-registry" -q '.[].name' 2>/dev/null | while read -r FNAME; do
+    node "${CLAUDE_PLUGIN_ROOT}/bin/list-claims.js" 2>/dev/null | while read -r FNAME; do
       NUM=$(echo "$FNAME" | sed -E 's/^issue-([0-9]+)\.json$/\1/')
       CONTENT=$(gh api "repos/{owner}/{repo}/contents/claims/${FNAME}?ref=claims-registry" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null)
       node -e "
