@@ -545,6 +545,26 @@ function normalizeQuote(text) {
   return text.replace(/`/g, '').replace(/\s+/g, ' ').trim().toLowerCase().replace(/[.;:,]+$/, '');
 }
 
+// Whole-branch review finding on #3099: the quoted-text fallback was a bare
+// substring `includes()` with no word boundary and no minimum length, so a
+// short clause ("Last." -> normalized "last") was falsely "covered" by any
+// test step containing those letters even inside a longer word ("blast"). A
+// clause under this word count is simply ineligible for the fallback at all
+// (it can still be covered by id citation or a waiver — this guard never by
+// itself marks anything uncovered); an eligible clause must then match on a
+// word boundary, never as a substring of a longer token.
+const QUOTE_FALLBACK_MIN_WORDS = 3;
+
+function quoteWordCount(quote) {
+  return quote.split(' ').filter(Boolean).length;
+}
+
+function quoteMatchesWholeWord(haystack, quote) {
+  if (quoteWordCount(quote) < QUOTE_FALLBACK_MIN_WORDS) return false;
+  const escaped = quote.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${escaped}\\b`).test(haystack);
+}
+
 function checkE(specText, planText) {
   const { clauses, unparsed } = extractAcceptanceClauses(specText);
   const { waivers, testSteps, mapRows } = extractCoverageSources(planText);
@@ -566,11 +586,25 @@ function checkE(specText, planText) {
     const quote = normalizeQuote(text);
     if (idRe.test(stepText)) covered.push({ id, via: 'test-step' });
     else if (idRe.test(rowText)) covered.push({ id, via: 'coverage-map' });
-    else if (stepQuote.includes(quote) || rowQuote.includes(quote)) covered.push({ id, via: 'quoted-text' });
-    else uncovered.push({ id, clause: text });
+    else if (quoteMatchesWholeWord(stepQuote, quote) || quoteMatchesWholeWord(rowQuote, quote)) {
+      covered.push({ id, via: 'quoted-text' });
+    } else uncovered.push({ id, clause: text });
+  }
+  // Finding #3099: a `Waived ACx.y:` line whose id matches no clause the spec
+  // parser produced was silently dropped — never covered, never uncovered,
+  // never reported anywhere. Warn-only (ok stays true, same as every other
+  // Check E signal): a stale/typo'd waiver id is a plan-authoring mistake to
+  // flag, never a build-blocking finding on its own.
+  const clauseIds = new Set(clauses.map((c) => c.id));
+  const orphanWaivers = [];
+  const seenOrphanIds = new Set();
+  for (const { id, reason } of waivers) {
+    if (clauseIds.has(id) || seenOrphanIds.has(id)) continue;
+    seenOrphanIds.add(id);
+    orphanWaivers.push({ id, reason });
   }
   return {
-    ok: true, uncovered, waived, unparsed, covered,
+    ok: true, uncovered, waived, unparsed, covered, orphanWaivers,
   };
 }
 

@@ -307,6 +307,32 @@ test('#3099: splitClauses never cuts inside a code span, after e.g., before a lo
   assert.deepStrictEqual(splitClauses('One holds. Two holds!'), ['One holds.', 'Two holds!']);
 });
 
+test('#3099: splitClauses masks HTML entities so a `;` ending one is never a cut (spec #272 AC4 regression)', () => {
+  assert.deepStrictEqual(
+    splitClauses("the judge&#39;s material is the evidence string."),
+    ["the judge&#39;s material is the evidence string."],
+  );
+  assert.deepStrictEqual(
+    splitClauses('Escaped &amp; kept whole; a real clause follows.'),
+    ['Escaped &amp; kept whole', 'a real clause follows.'],
+  );
+  assert.deepStrictEqual(
+    splitClauses('A hex entity &#x27;here&#x27; stays put.'),
+    ['A hex entity &#x27;here&#x27; stays put.'],
+  );
+});
+
+test('#3099: splitClauses does not cut a sentence-end right after an in-item sub-label like "3a." (spec #287 regression)', () => {
+  assert.deepStrictEqual(
+    splitClauses('Not deleted outright. 3a. `grep -c "x" f.md` returns at least 1. 3b. Next thing here.'),
+    [
+      'Not deleted outright.',
+      '3a. `grep -c "x" f.md` returns at least 1.',
+      '3b. Next thing here.',
+    ],
+  );
+});
+
 test('#3099: an odd backtick count makes splitClauses refuse (null), never guess', () => {
   assert.strictEqual(splitClauses('A `broken span; still here.'), null);
 });

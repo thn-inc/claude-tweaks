@@ -862,6 +862,14 @@ test('#3099: a waiver wins even when its line sits inside a test step', () => {
   assert.deepStrictEqual(result.uncovered, []);
 });
 
+test('#3099: a Waived line whose id matches no parsed clause is reported in orphanWaivers, never silently dropped (whole-branch review finding 3)', () => {
+  const plan = ePlan(['AC1.1 AC2.1 AC2.2'], ['Waived AC2.3: counted elsewhere', 'Waived AC9.9: stale id from an old draft', '']);
+  const result = checkE(E_SPEC, plan);
+  assert.deepStrictEqual(result.waived, [{ id: 'AC2.3', reason: 'counted elsewhere' }]);
+  assert.deepStrictEqual(result.orphanWaivers, [{ id: 'AC9.9', reason: 'stale id from an old draft' }]);
+  assert.deepStrictEqual(result.uncovered, []);
+});
+
 test('AC3.1 (#3099): a spec with no ## Acceptance Criteria section yields a non-empty unparsed, not just an empty uncovered', () => {
   const result = checkE('# 1: X\n\n## Deliverables\n\n- Do it.\n', ePlan(['AC1.1']));
   assert.strictEqual(result.unparsed.length, 1);
@@ -897,6 +905,21 @@ test('#3099: the clause text quoted in a test step covers it (backticks, case, s
   const result = checkE(E_SPEC, plan);
   assert.deepStrictEqual(result.uncovered, []);
   assert.deepStrictEqual(result.covered.find((c) => c.id === 'AC2.3'), { id: 'AC2.3', via: 'quoted-text' });
+});
+
+test('#3099: a quoted clause under 3 words is never covered via the quoted-text fallback, even as a substring of a longer word (whole-branch review finding 1)', () => {
+  const spec = '## Acceptance Criteria\n\n1. The process ends. Last.\n';
+  const plan = ePlan(['AC1.1 only — the blast radius is contained']);
+  const result = checkE(spec, plan);
+  assert.deepStrictEqual(result.covered.map((c) => c.id), ['AC1.1']);
+  assert.deepStrictEqual(result.uncovered.map((u) => u.id), ['AC1.2']);
+});
+
+test('#3099: an eligible (>=3-word) quoted clause only matches on a word boundary, never straddling a longer word at either end (whole-branch review finding 1)', () => {
+  const spec = '## Acceptance Criteria\n\n1. Total rows render.\n';
+  const plan = ePlan(['// Subtotal rows rendered correctly']);
+  const result = checkE(spec, plan);
+  assert.deepStrictEqual(result.uncovered.map((u) => u.id), ['AC1.1']);
 });
 
 test('#3099: an item the parser refuses is reported unparsed and never as covered or uncovered', () => {

@@ -254,6 +254,20 @@ const AC_ITEM_RE = /^ {0,3}(?:[-*+]|\d{1,3}[.)])[ \t]+(.*)$/;
 const AC_CHECKBOX_RE = /^\[[ xX]\][ \t]+/;
 const AC_FOOTER_RE = /^(?:_[^_].*_|\*[^*].*\*)$/;
 const AC_ABBREVIATION_RE = /\b(?:e\.g|i\.e|etc|vs|cf)\./gi;
+// An HTML entity's trailing `;` (named `&amp;`, decimal `&#39;`, hex `&#x27;`)
+// is never a clause-cut boundary — masked the same way a code span is, by
+// replacing the whole matched entity (including its `;`) with same-length
+// `x` filler so no `;` remains for the cutter to see. Real corpus regression:
+// spec #272 AC4's "the judge&#39;s material..." mis-split into bogus clauses
+// at every escaped apostrophe.
+const AC_HTML_ENTITY_RE = /&(?:[a-zA-Z]+|#\d+|#x[0-9a-fA-F]+);/g;
+// An in-item sub-label like `3a.`/`2b.` (digits then one lowercase letter,
+// then the period) is never its own clause boundary — real corpus
+// regression: spec #287's "...not deleted outright. 3a. `grep ...`" split
+// `3a.` off as a degenerate clause of its own. Checked against the masked
+// text ending exactly at the candidate cut so it fires before the
+// what-follows lowercase check below, regardless of what follows the label.
+const AC_SUB_LABEL_END_RE = /\b\d+[a-z]\.$/;
 
 function acceptanceSectionLines(specText) {
   const lines = specText.replace(/\r\n?/g, '\n').split('\n');
@@ -278,11 +292,13 @@ function acceptanceSectionLines(specText) {
 // the item cannot be split confidently (odd backtick count — a code span the
 // mask cannot bound). A cut is made after `;`, or after `.`/`!`/`?` followed
 // by whitespace and a character that is not a lowercase letter, and never
-// inside parentheses or brackets.
+// inside parentheses or brackets, nor right after an in-item sub-label
+// (`3a.`, `2b.`).
 function splitClauses(text) {
   if ((text.match(/`/g) || []).length % 2 !== 0) return null;
   const masked = text
     .replace(/`[^`]*`/g, (m) => `\`${'x'.repeat(m.length - 2)}\``)
+    .replace(AC_HTML_ENTITY_RE, (m) => 'x'.repeat(m.length))
     .replace(AC_ABBREVIATION_RE, (m) => m.replace(/\./g, 'x'));
   const cuts = [];
   let depth = 0;
@@ -292,6 +308,7 @@ function splitClauses(text) {
     else if ((ch === ')' || ch === ']') && depth > 0) depth -= 1;
     else if (depth === 0 && ch === ';') cuts.push(i + 1);
     else if (depth === 0 && (ch === '.' || ch === '!' || ch === '?')) {
+      if (ch === '.' && AC_SUB_LABEL_END_RE.test(masked.slice(0, i + 1))) continue;
       const after = masked.slice(i + 1).match(/^\s+(\S)/);
       if (after && !/[a-z]/.test(after[1])) cuts.push(i + 1);
     }
