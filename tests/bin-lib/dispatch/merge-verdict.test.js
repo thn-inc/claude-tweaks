@@ -87,6 +87,26 @@ test('a raw non-entry line (no "- AUTO HH:MM:SS — " prefix) containing the mar
   assert.deepStrictEqual(confirmPassingVerdicts(content, [2941]), { 2941: { confirmed: false, latest: null } });
 });
 
+// A passing verdict is the outcome that relaxes the merge gate, so it must match the writer's whole
+// emitted action, not just its opening (parse-signal-discipline item 6).
+test('a pass line carrying extra text after the verdict does not confirm, and overrides an earlier pass', () => {
+  const tail = `${line(VERDICT_STEPS.shortCircuit, '#2941 assess-agent-autonomy verdict auto-merge — but blast radius exceeded')}\n`;
+  assert.deepStrictEqual(confirmPassingVerdicts(tail, [2941]), { 2941: { confirmed: false, latest: 'unparsed' } });
+  const after = `${line(VERDICT_STEPS.shortCircuit, verdictText(2941))}\n${tail}`;
+  assert.strictEqual(confirmPassingVerdicts(after, [2941])[2941].confirmed, false);
+});
+
+test('a pass line cut off mid-write does not confirm', () => {
+  const full = line(VERDICT_STEPS.shortCircuit, verdictText(2941));
+  const cut = full.slice(0, full.indexOf('Reversibility') + 'Revers'.length);
+  assert.deepStrictEqual(confirmPassingVerdicts(`${cut}\n`, [2941]), { 2941: { confirmed: false, latest: 'unparsed' } });
+});
+
+test('a pass line with a lever suffix still confirms', () => {
+  const content = `${line(VERDICT_STEPS.gate, verdictText(5), { lever: 'auto-merge-max-lines=40 (default)' })}\n`;
+  assert.strictEqual(confirmPassingVerdicts(content, [5])[5].confirmed, true);
+});
+
 test('a --spec location prefix is still recognized', () => {
   const content = `${line(VERDICT_STEPS.shortCircuit, verdictText(2941), { spec: 2941 })}\n`;
   assert.strictEqual(confirmPassingVerdicts(content, [2941])[2941].confirmed, true);
