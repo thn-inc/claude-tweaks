@@ -10,6 +10,7 @@ const { execFileSync } = require('node:child_process');
 const {
   CEILING_BYTES, composedBytesReport, COMPOSED_STEP_EXCEPTIONS,
 } = require('../skill-audit/context-cost');
+const { extractAcceptanceClauses, extractCoverageSources } = require('./parser');
 
 const WALK_EXCLUDES = new Set(['.git', 'node_modules', '.claude', '.claude-tweaks']);
 
@@ -528,7 +529,52 @@ function checkD(text) {
   return result;
 }
 
+// ── Check E — Acceptance-criterion clause coverage (#3099) ─────────────────
+// Warn-only: `ok` is always true, so Check E never changes the exit code —
+// clause splitting is a prose heuristic, and a hard gate on a heuristic would
+// block builds on its false positives. Per clause, in order: a waiver line
+// wins (`waived`); else the clause id cited in a test step (`via:
+// 'test-step'`) or a table row (`via: 'coverage-map'`); else the clause's
+// text quoted there, compared backtick-stripped, whitespace-collapsed,
+// case-folded, trailing punctuation dropped (`via: 'quoted-text'`); else
+// `uncovered`. An id matches only whole — `AC2.1` never matches inside
+// `AC2.10` — and a bare item number (`AC2`) covers nothing. `unparsed` passes
+// through from the spec parser untouched: a clause it could not read is
+// never reported as covered.
+function normalizeQuote(text) {
+  return text.replace(/`/g, '').replace(/\s+/g, ' ').trim().toLowerCase().replace(/[.;:,]+$/, '');
+}
+
+function checkE(specText, planText) {
+  const { clauses, unparsed } = extractAcceptanceClauses(specText);
+  const { waivers, testSteps, mapRows } = extractCoverageSources(planText);
+  const reasons = new Map();
+  for (const { id, reason } of waivers) if (!reasons.has(id)) reasons.set(id, reason);
+  const stepText = testSteps.join('\n');
+  const rowText = mapRows.join('\n');
+  const stepQuote = normalizeQuote(stepText);
+  const rowQuote = normalizeQuote(rowText);
+  const covered = [];
+  const uncovered = [];
+  const waived = [];
+  for (const { id, text } of clauses) {
+    if (reasons.has(id)) {
+      waived.push({ id, reason: reasons.get(id) });
+      continue;
+    }
+    const idRe = new RegExp(`\\b${id.replace('.', '\\.')}(?!\\d)`);
+    const quote = normalizeQuote(text);
+    if (idRe.test(stepText)) covered.push({ id, via: 'test-step' });
+    else if (idRe.test(rowText)) covered.push({ id, via: 'coverage-map' });
+    else if (stepQuote.includes(quote) || rowQuote.includes(quote)) covered.push({ id, via: 'quoted-text' });
+    else uncovered.push({ id, clause: text });
+  }
+  return {
+    ok: true, uncovered, waived, unparsed, covered,
+  };
+}
+
 module.exports = {
-  checkA, checkB, checkC, checkD, headroomCheck, looksPassing, isGovernedMdPath,
+  checkA, checkB, checkC, checkD, checkE, headroomCheck, looksPassing, isGovernedMdPath,
   refusedVcsMutation, commandSegments, checkPremiseRefs,
 };

@@ -814,3 +814,95 @@ test('checkD caps findings at 20 and sets truncated: true beyond that', () => {
   assert.strictEqual(result.findings.length, 20);
   assert.strictEqual(result.truncated, true);
 });
+
+// ── Check E (#3099) ──────────────────────────────────────────────────────────
+const { checkE } = require('../../../plugin/bin/lib/plan-audit/checks');
+
+const E_SPEC = [
+  '## Acceptance Criteria',
+  '',
+  '1. The report renders.',
+  '2. Each recipient gets one row. A recipient with several instances counts once; the total equals the recipient count.',
+  '',
+].join('\n');
+
+function ePlan(testStepLines, extraLines = []) {
+  return [
+    ...extraLines,
+    '### Task 1: Build it',
+    '',
+    '- [ ] **Step 1: Write the failing test**',
+    '',
+    ...testStepLines,
+    '',
+    '- [ ] **Step 3: Write minimal implementation**',
+    '',
+    'Implementation notes.',
+  ].join('\n');
+}
+
+test('AC1.1 (#3099): a plan citing AC2.1 and AC2.2 only reports AC2.3 uncovered, with its clause text', () => {
+  const result = checkE(E_SPEC, ePlan(["test('AC1.1 AC2.1 AC2.2: rows render', () => {});"]));
+  assert.deepStrictEqual(result.uncovered, [{ id: 'AC2.3', clause: 'the total equals the recipient count.' }]);
+  assert.deepStrictEqual(result.covered.map((c) => c.id), ['AC1.1', 'AC2.1', 'AC2.2']);
+  assert.deepStrictEqual(result.waived, []);
+  assert.deepStrictEqual(result.unparsed, []);
+});
+
+test('AC2.1 (#3099): the same plan with a Waived AC2.3 line reports AC2.3 under waived, not uncovered', () => {
+  const plan = ePlan(["test('AC1.1 AC2.1 AC2.2: rows render', () => {});"], ['Waived AC2.3: counted by the existing totals test', '']);
+  const result = checkE(E_SPEC, plan);
+  assert.deepStrictEqual(result.waived, [{ id: 'AC2.3', reason: 'counted by the existing totals test' }]);
+  assert.deepStrictEqual(result.uncovered, []);
+});
+
+test('#3099: a waiver wins even when its line sits inside a test step', () => {
+  const result = checkE(E_SPEC, ePlan(['AC1.1 AC2.1 AC2.2', 'Waived AC2.3: out of scope here']));
+  assert.deepStrictEqual(result.waived, [{ id: 'AC2.3', reason: 'out of scope here' }]);
+  assert.deepStrictEqual(result.uncovered, []);
+});
+
+test('AC3.1 (#3099): a spec with no ## Acceptance Criteria section yields a non-empty unparsed, not just an empty uncovered', () => {
+  const result = checkE('# 1: X\n\n## Deliverables\n\n- Do it.\n', ePlan(['AC1.1']));
+  assert.strictEqual(result.unparsed.length, 1);
+  assert.match(result.unparsed[0].raw, /no "## Acceptance Criteria" section/);
+  assert.deepStrictEqual(result.uncovered, []);
+  assert.deepStrictEqual(result.covered, []);
+});
+
+test('AC5.1 (#3099): Check E never sets ok: false — uncovered and unparsed entries both leave ok true', () => {
+  assert.strictEqual(checkE(E_SPEC, ePlan(['nothing cited'])).ok, true);
+  assert.strictEqual(checkE('no section', ePlan(['nothing cited'])).ok, true);
+});
+
+test('#3099: an id cited only outside a test step does not cover the clause', () => {
+  const plan = ePlan(['AC1.1 AC2.1 AC2.2']).replace('Implementation notes.', 'Implementation covers AC2.3.');
+  assert.deepStrictEqual(checkE(E_SPEC, plan).uncovered.map((u) => u.id), ['AC2.3']);
+});
+
+test('#3099: a bare item number (AC2) covers no clause, and AC2.10 does not cover AC2.1', () => {
+  const result = checkE(E_SPEC, ePlan(['AC1.1 covers AC2 and AC2.10 only']));
+  assert.deepStrictEqual(result.uncovered.map((u) => u.id), ['AC2.1', 'AC2.2', 'AC2.3']);
+});
+
+test('#3099: a coverage-map table row naming the id covers the clause', () => {
+  const plan = ePlan(['AC1.1 AC2.1 AC2.2'], ['| Clause | Task |', '|---|---|', '| AC2.3 | Task 1 |', '']);
+  const result = checkE(E_SPEC, plan);
+  assert.deepStrictEqual(result.uncovered, []);
+  assert.deepStrictEqual(result.covered.find((c) => c.id === 'AC2.3'), { id: 'AC2.3', via: 'coverage-map' });
+});
+
+test('#3099: the clause text quoted in a test step covers it (backticks, case, spacing, end punctuation ignored)', () => {
+  const plan = ePlan(['AC1.1 AC2.1 AC2.2', '// THE TOTAL   equals the recipient count']);
+  const result = checkE(E_SPEC, plan);
+  assert.deepStrictEqual(result.uncovered, []);
+  assert.deepStrictEqual(result.covered.find((c) => c.id === 'AC2.3'), { id: 'AC2.3', via: 'quoted-text' });
+});
+
+test('#3099: an item the parser refuses is reported unparsed and never as covered or uncovered', () => {
+  const spec = '## Acceptance Criteria\n\n- Fine one.\n- A `broken span here.\n';
+  const result = checkE(spec, ePlan(['AC1.1 AC2.1']));
+  assert.deepStrictEqual(result.unparsed, [{ item: 2, raw: 'A `broken span here.' }]);
+  assert.deepStrictEqual(result.covered.map((c) => c.id), ['AC1.1']);
+  assert.deepStrictEqual(result.uncovered, []);
+});
