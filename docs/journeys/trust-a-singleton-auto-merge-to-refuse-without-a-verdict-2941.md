@@ -25,10 +25,10 @@ files:
 
 ### 2. The Verdict backstop re-reads the log before any side effect
 - **URL:** the `node -e` one-read snippet under **Verdict backstop — re-read before any merge (#2941)** in `wrap-up/auto-merge-short-circuit.md` (`confirmFromFile("$PIPELINE_RUN_DIR/decisions.md", [N])`)
-- **Action:** Before acceptance labeling and before the ledger-deletion commit, the run re-reads `decisions.md` and gets `N=1 latest=auto-merge`, or anything else (`N=0`, a missing line, a non-zero exit, an `error=` suffix).
+- **Action:** Only when Layer 2's verdict was `auto-merge` — a `needs-human` verdict skips the backstop and goes straight to "Any layer fails", whose own line is already the record. Before acceptance labeling and before the ledger-deletion commit, the run re-reads `decisions.md` and gets `N=1 latest=auto-merge`, or anything else (`N=0`, a missing line, a non-zero exit, an `error=` suffix).
 - **Should feel:** Mechanical and boring — a check that cannot be talked past by the agent's own narration.
-- **Should understand:** Only `N=1` proceeds. The latest verdict line for this record wins (a later `needs-human` overrides an earlier pass), another record's line never counts (`#29` never satisfies `#2941`), and the post-merge `Fast-lane auto-merge:` line never satisfies the pre-merge check.
-- **Red flags:** `latest=none` with an `error=` suffix — the run dir or `decisions.md` path is wrong, not Layer 2 skipped; fix the path before trusting the refusal's cause.
+- **Should understand:** Only `N=1` proceeds. The latest verdict line for this record wins (a later `needs-human` overrides an earlier pass), another record's line never counts (`#29` never satisfies `#2941`), and the post-merge `Fast-lane auto-merge:` line never satisfies the pre-merge check. Only a real log-decision entry counts: each line is parsed with `log-decision/append.js`'s `parseEntry` and the verdict must open the entry's action, so a `/review` or `/reflect` narrative line that merely quotes the marker never satisfies it. A pass must also match the whole entry the writer emits: a pass line with extra text after the verdict, or one cut short mid-write, prints `latest=unparsed` and does not proceed.
+- **Red flags:** `latest=none` with an `error=` suffix (carried into the refusal line as `, error: …`) — the run dir or `decisions.md` path is wrong, not Layer 2 skipped; fix the path before trusting the refusal's cause. A merge whose only `#N … verdict auto-merge` text sits inside a narrative line rather than an `Auto-merge short-circuit:` entry — the anchoring has regressed.
 
 ### 3a. Confirmed — the merge proceeds, re-checked at the merge call
 - **URL:** the branch openers ("run the Verdict backstop above first") on the `pr-first` branch (before `_shared/pr-first-merge.md`), the `local-merge` branch (before `close-run` and `git merge --no-ff`), and the dispatch-claim `local-merge` relay (before `OUTCOME: ready-to-merge`)
@@ -38,10 +38,10 @@ files:
 - **Red flags:** A singleton relayed as `ready-to-merge` that the dispatching session then refuses with `=0` despite a pass line being present — the two paths have drifted on the marker text.
 
 ### 3b. Not confirmed — the run refuses and falls through to the console
-- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" … --text "#{n} merge-check verdict not confirmed in decisions.md (latest: {latest}) — treated as needs-human, Review Console renders normally"`
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" … --text "#{n} merge-check verdict not confirmed in decisions.md (latest: {latest}{detail}) — treated as needs-human, Review Console renders normally"`
 - **Action:** The run logs the refusal (and does not also write a fabricated `assess-agent-autonomy verdict needs-human` line), skips acceptance labeling, ledger deletion, and the merge, and renders the Review Console normally.
 - **Should feel:** Safe and legible — the record is exactly where a real `needs-human` would have left it, and the refusal line says why.
-- **Should understand:** The refusal line carries both `merge-check` and `needs-human`, so `bin/console-resolve.js`'s `needsHumanVerdict` resolves the merge half to `leave-open` even under `consoleAutoResolve`.
+- **Should understand:** The refusal line carries both `merge-check` and `needs-human`, so `bin/console-resolve.js`'s `needsHumanVerdict` resolves the merge half to `leave-open` even under `consoleAutoResolve`. `{detail}` is `, error: {error}` when `decisions.md` was unreadable, `, snippet exited {code} with no output` when the check crashed, and empty otherwise — so the morning reader can tell a broken path or a crash from a Layer 2 that never ran.
 - **Red flags:** A posted Verification Brief or `demo:pending` label on a record whose run refused — the backstop ran after the pass branch's side effects instead of before them.
 
 ## Origin
