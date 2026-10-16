@@ -70,12 +70,13 @@ decomposed UI feature can therefore reach `demo:pending` on its parent with no b
 having run for some sub-issue, and the parent brief must not imply otherwise.
 
 **So the brief carries the human instead.** Part 2 of **Compose the parent brief** below — the
-end-to-end walkthrough, rendered inline inside `### Confirmed` — is the only walk instruction a
-parent brief carries (it omits the `### Observation plan` section, so `/claude-tweaks:demo` runs no
-Prepare/Validate/Show for a parent — part 2's inline end-to-end walkthrough inside Confirmed is
-what carries the human). For a parent whose assembled sub-issues
-touch UI, that walkthrough must therefore name the pages or journeys to open and what to look
-for, not just the skill invocation — it is standing in for the safety net, not summarizing it.
+end-to-end walkthrough, rendered as the brief's `### Try it — end to end` section
+(`_shared/try-it.md`'s end-to-end variant) — is the only walk instruction a parent brief carries
+(it omits the `### Observation plan` section, so `/claude-tweaks:demo` runs no Prepare/Validate/Show
+for a parent — it renders that Try it section first and goes to the verdict). For a parent whose
+assembled sub-issues touch UI, that walkthrough must therefore name the pages or journeys to open
+and what to look for, not just the skill invocation — it is standing in for the safety net, not
+summarizing it.
 
 ## Resolve the parent
 
@@ -246,7 +247,12 @@ own (`specify/record-creation.md`'s Parent record section), so there is nothing 
 regardless.
 
 - **`exceeds: false`** — the parent closes cleanly: no `demo:pending`, no brief, same as a
-  below-floor sub-issue record on the non-parent path. Stop here; do not compose the parent brief.
+  below-floor sub-issue record on the non-parent path. Do not compose the parent brief. The
+  walkthrough is not gated (#2821): on a sub-issue-side entry, compose the end-to-end variant
+  (`_shared/try-it.md`) across the assembled sub-issues and append it to this run's `"$TRY_IT"`
+  file (`verification-brief.md`'s **Try it block**), so it posts with the sub-issue's own block and
+  reaches the Pipeline Summary. Parent-side entry (`/claude-tweaks:tidy`): stop here — no delivering
+  run exists to carry it.
 - **`exceeds: true`** — proceed to **Compose the parent brief** below, exactly as `due` alone
   used to trigger before this gate existed.
 
@@ -258,24 +264,24 @@ A parent brief consists of:
    to confirm — e.g. `F1: #48 assumed #46 exposes getStatus() — confirm it does.` Rows still
    `open` are included and marked unverified; they **do not** block the gate from opening. The
    register is deliberately not a hard gate anywhere (`skills/review/SKILL.md:173-175`).
-2. One walkthrough of the feature's primary path across the assembled sub-issues. For this repo the
-   runnable unit is a skill invocation, not a deploy — name the invocation and the observable
-   outcome.
+2. One walkthrough of the feature's primary path across the assembled sub-issues — the
+   end-to-end variant of `_shared/try-it.md`, rendered as the brief's `### Try it — end to end`
+   section.
 
 Where no register exists (fewer than 4 sub-issues — the threshold that was the
 `promise-register-min-leaves` policy lever until its retirement in #331; removal trail:
-`_shared/policy-deprecations.md` — or `work-backend: local-files`), part 2 alone is the brief.
+`_shared/policy-deprecations.md` — or `work-backend: local-files`), part 2 alone carries the brief, and `### Confirmed` reads `No cross-spec promise register — walk the end-to-end path in Try it below.` (the section stays: the already-posted check below and `engine-verify.js` both key on it).
 
 Render the same `## Verification Brief` template Step 4 (`verification-brief.md`) renders, with:
 **The ask** — the parent's own design summary (problem, chosen approach — `_shared/work-record.md`'s
 Decomposition rules); **What shipped** — one-paragraph summary of what was delivered across the
-assembled sub-issues; **Confirmed** — parts 1 and 2 above, in place of Step 4's kind-keyed Confirmed
-branches; **`{poster}`** in the template's own footer — substitute the **skill** actually
+assembled sub-issues; **Confirmed** — part 1 above, in place of Step 4's kind-keyed Confirmed
+branches; **Try it** — part 2, in place of Step 4's per-record Try it block; **`{poster}`** in the template's own footer — substitute the **skill** actually
 running *this* composition (see the Routing table in `verification-brief.md`), never hardcode
 `` `/claude-tweaks:wrap-up` ``: `` `/claude-tweaks:wrap-up` `` for either wrap-up entry (Phase 4's
 execution step or the auto-merge short-circuit), `` `/claude-tweaks:dispatch` `` for the group auto-merge gate,
 `` `/claude-tweaks:tidy` `` for the backstop entry. Omit the **Observation plan** section — part 2's
-walkthrough already names the entry point inline within Confirmed. A parent brief carries the `### Branch`
+Try it section already names the entry point. A parent brief carries the `### Branch`
 section on the same condition Step 4 states — the durability record belongs to the run in hand,
 not to the parent, so it is present exactly when that run produced one.
 

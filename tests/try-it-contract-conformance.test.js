@@ -75,3 +75,65 @@ test('multi-spec summary carries one Try it per spec plus the end-to-end section
   assert.ok(doc.includes('_shared/try-it.md'), 'cites the contract');
   assert.doesNotMatch(doc, FIELD_LINE);
 });
+
+test('verification-brief.md composes Try it before any parent or floor branching', () => {
+  const doc = read('wrap-up/verification-brief.md');
+  const compose = doc.indexOf('## Try it block (every record, before either branch)');
+  assert.ok(compose >= 0, 'compose section missing');
+  assert.ok(compose < doc.indexOf('## Parent-Gate Procedure'), 'before the parent branch');
+  assert.ok(compose < doc.indexOf('## Oversight-floor gate'), 'before the floor gate');
+  assert.ok(doc.includes('_shared/try-it.md'));
+  assert.match(doc, /TRY_IT=try-it-\{N\}\.md/);
+  assert.match(doc, /<!-- run-comment: try-it -->/);
+  assert.match(doc, /try-it:\{N\}/);
+  assert.doesNotMatch(doc, FIELD_LINE);
+});
+
+test('below the floor: no demo:pending, but the walkthrough still posts', () => {
+  const doc = read('wrap-up/verification-brief.md');
+  const gate = doc.slice(doc.indexOf('## Oversight-floor gate'), doc.indexOf('## Step 1:'));
+  const below = gate.slice(gate.indexOf('**`exceeds: false`**'), gate.indexOf('**`exceeds: true`**'));
+  assert.match(below, /no `demo:pending`\s+bootstrap/, 'floor still gates the label');
+  assert.match(below, /walkthrough is not skipped/);
+  assert.match(below, /\*\*Posting it alone\*\*/);
+  assert.match(doc, /Record the exemption \(#2383\)/, '#2383 recording unchanged');
+});
+
+test('no-PR runs degrade to the Pipeline Summary, citing the pr-run-comments gate', () => {
+  const doc = read('wrap-up/verification-brief.md');
+  const alone = doc.slice(doc.indexOf('**Posting it alone**'));
+  assert.match(alone, /No `pr` object/);
+  assert.match(alone, /Pipeline Summary carries it/);
+  assert.match(alone, /_shared\/pr-run-comments\.md/);
+});
+
+test('the brief template places Try it between What shipped and Confirmed', () => {
+  const doc = read('wrap-up/verification-brief.md');
+  const t = doc.slice(doc.indexOf('## Verification Brief\n\n### The ask'));
+  const shipped = t.indexOf('### What shipped');
+  const tryIt = t.indexOf('{the Try it block');
+  const confirmed = t.indexOf('### Confirmed');
+  assert.ok(shipped >= 0 && tryIt > shipped && confirmed > tryIt, `${shipped} ${tryIt} ${confirmed}`);
+});
+
+test('parent gate: the end-to-end Try it replaces the inline Confirmed walkthrough, and survives the floor', () => {
+  const doc = read('wrap-up/verification-brief-parent-gate.md');
+  assert.ok(doc.includes('_shared/try-it.md'));
+  assert.ok(doc.includes('### Try it — end to end'));
+  assert.doesNotMatch(doc, /inline inside `### Confirmed`/);
+  assert.doesNotMatch(doc, /inline within Confirmed/);
+  const evalGate = doc.slice(doc.indexOf('## Evaluate the gate'), doc.indexOf('## Compose the parent brief'));
+  const below = evalGate.slice(evalGate.indexOf('**`exceeds: false`**'), evalGate.indexOf('**`exceeds: true`**'));
+  assert.match(below, /no `demo:pending`, no brief/, 'floor still gates the label and brief');
+  assert.match(below, /end-to-end variant/);
+  assert.match(below, /Parent-side entry/);
+  const compose = doc.slice(doc.indexOf('## Compose the parent brief'), doc.indexOf('## Apply the gate'));
+  assert.match(compose, /### Confirmed/, 'Confirmed survives for verify + already-posted checks');
+  assert.doesNotMatch(doc, FIELD_LINE);
+});
+
+test('pr-run-comments.md registers the try-it kind, spec-qualified under multi-spec', () => {
+  const doc = read('_shared/pr-run-comments.md');
+  assert.match(doc, /^\| `try-it` \| `\/claude-tweaks:wrap-up`[^\n]*`<!-- run-comment: try-it -->`[^\n]*`<!-- run-comment: try-it:\{spec\} -->`[^\n]*\|$/m);
+  assert.match(doc, /^\| `\/claude-tweaks:wrap-up` \(`verification-brief\.md`'s Try it block\) \| `try-it` \|/m);
+});
