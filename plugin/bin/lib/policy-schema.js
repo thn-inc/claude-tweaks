@@ -105,6 +105,10 @@ const POLICY_KEYS = [
   { key: 'review-auto-apply-ceiling', type: 'enum', values: ['none', 'low', 'medium'], default: 'low', summary: "Sets the severity cutoff at or below which review findings are applied without asking — anything above it is staged or prompted.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'review-auto-apply-prose-exempt', type: 'boolean', default: true, summary: "Lets a prose-only fix auto-apply one severity tier above the ceiling instead of the plain ceiling — see step3-routing.md.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'specify-auto-continue', type: 'boolean', default: false, summary: "Lets a session invoke /claude-tweaks:specify on an approved brainstorming design doc immediately instead of a manual command.", category: 'pipeline-behavior', tier: 'advanced' },
+  // #3128: gates /specify's decomposition Ceremony tally (record-creation-subissues.md).
+  // Default false — the durable log is a maintainer watch-item aid, so a consumer
+  // project never gets docs/ writes it did not opt into.
+  { key: 'specify-decomposition-log', type: 'boolean', default: false, summary: "When on, /specify logs each decomposition yielding 2+ ceremony:standard sub-issues to a git-tracked file for later confirmation.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'tidy-aggressiveness', type: 'enum', values: ['conservative', 'moderate', 'aggressive'], default: 'moderate', summary: "Sets how boldly cleanup sweeps act on what they find — from keep-unless-certain to delete-unless-doubtful.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'auto-mode', type: 'enum', values: ['default-on', 'default-off'], summary: "Sets whether a standalone build or an unattended cleanup run starts hands-off by default, without being asked each time.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'backlog-fetch-limit', type: 'integer', default: 1000, summary: "Caps how many backlog issues one scan pulls before warning that the list was truncated.", category: 'housekeeping', tier: 'advanced' },

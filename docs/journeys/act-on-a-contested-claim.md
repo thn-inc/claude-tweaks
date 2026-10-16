@@ -21,7 +21,7 @@ files:
 - **Action:** Name the record(s) to build. The claim happens before any policy questions, so nothing has been configured or created yet when it decides.
 - **Should feel:** Instant and quiet on the happy path — claiming is not something the user should have to think about.
 - **Should understand:** Every named target is claimed together or none is — a partial claim is released before the run stops, so a second target is never left locked by a run that never started.
-- **Red flags:** The Config Manifesto rendering before the claim outcome is known; a multi-target run proceeding with one of its targets unclaimed.
+- **Red flags:** The Config Manifesto rendering before the claim outcome is known; a multi-target run proceeding with one of its targets unclaimed; on a `gh`-absent (MCP) run, a claim stopped or released because its `bot:in-progress` label did not land — the label is best-effort, retried once through `mergeLabelNames`, and a second absence is a `SKIP` degrade line in `decisions.md`, never a stop (#3131).
 
 ### 2. Read the overlap note, if one appears — terminal
 - **URL:** the same run output, immediately before the claim
@@ -70,4 +70,5 @@ files:
 - Extended during build of #315 (in-flight claim detection) — a `pr-opened:` tombstone with a still-open PR became a fourth claim-time outcome alongside live / stale / remote, with its own card and next step.
 - Extended during build of #958 (in-flight claim routing) — the in-flight card's next step now routes into a resume confirmation when a human is present, instead of always requiring manual PR resolution.
 - Extended during wrap-up of record #2073 (post-write claim verification in `claim-targets.js`) — added step 3c documenting the new `## Flow: Claim unverified` card, and updated the Success state to name it as a third possible stop alongside the contest and in-flight cards.
+- Extended during wrap-up of record #3131 (MCP `bot:in-progress` read-back in `flow/claim-targets.md`) — added a Step 1 red flag: a label that never lands is traced and retried once, never a reason to stop or release the claim.
 - Related specs: #720, #721, #722, #723, #315, #958, #2073

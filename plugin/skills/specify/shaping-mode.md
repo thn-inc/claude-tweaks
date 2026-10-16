@@ -98,28 +98,84 @@ more, render a three-column table in the shaping output before proceeding —
 line if the record doesn't already carry one). A candidate surfaced here is worth a human's
 attention even when shaping proceeds normally.
 
-Then check each candidate's own current state. When any candidate is **both** `ready` **and**
-either carries `bot:in-progress` or has an open linked PR (the same `closedByPullRequestsReferences`
-connection dispatch's own open-PR exclusion reads — `record.js`'s `buildLinkedPRQuery` /
-`partitionByOpenLinkedPR`), **stop shaping this record here** — do not compose, stamp, or write
-`ready` for it. Instead, add the `needs:decision` label (bootstrap per
-`_shared/label-bootstrap.md` if this repo has never stamped it before) and post
+Then decide refusal with `shapingRefusal` (`bin/lib/issues/near-duplicate.js`, #3141). It refuses
+only on a hit whose signals include `title-similarity` and whose candidate is `ready` **and** in
+flight: a live claim (`classifyClaimBlob` reads its `claims/issue-{n}.json` blob as `live`) or an
+open linked PR (the same `closedByPullRequestsReferences` connection dispatch's open-PR exclusion
+reads — `record.js`'s `buildLinkedPRQuery` / `partitionByOpenLinkedPR`). File and anchor overlap
+alone never refuse, and `bot:in-progress` is not evidence: it is a projection that outlives the
+build. Build the state and decide in one call. First resolve this run's two session-scoped paths
+(`_shared/session-tmp-root.md` — `eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" NEAR_DUP_HITS=specify-near-dup-hits.json NEAR_DUP_SNAPSHOT=specify-near-dup-snapshot.json)"`
+prints them) and write the finder's output and the candidates' snapshot entries there as JSON —
+never as inline shell arguments, since a candidate title with an apostrophe breaks the quoting.
+Then run the call below; its first line re-resolves the same two paths:
+
+```bash
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" NEAR_DUP_HITS=specify-near-dup-hits.json NEAR_DUP_SNAPSHOT=specify-near-dup-snapshot.json)"
+node -e "
+const { shapingRefusal, buildShapingState } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
+const { readClaimBlob, defaultGhApi } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claim-store.js');
+const { defaultRunner } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims-git-cas.js');
+const { buildLinkedPRQuery, normalizeLabelNames } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+const { execFileSync } = require('child_process');
+const fs = require('fs');
+const [hits, snapshot] = [JSON.parse(fs.readFileSync(process.argv[1], 'utf8')), JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))];
+const labelsByNumber = Object.fromEntries(snapshot.map((r) => [r.number, r.labels]));
+const numbers = hits.filter((h) => Number.isInteger(h.number) && h.signals.includes('title-similarity') && normalizeLabelNames(labelsByNumber[h.number] || []).includes('ready')).map((h) => h.number);
+const claimContentByNumber = {};
+let linkedPRRepoData = null;
+if (numbers.length) {
+  let slug = null;
+  try { slug = execFileSync('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], { encoding: 'utf8' }).trim(); } catch {}
+  let tip = null;
+  for (const n of numbers) {
+    const r = readClaimBlob({ gitRunner: defaultRunner, ghApi: defaultGhApi }, slug, n, tip);
+    if (!r.failure && r.via === 'git') tip = r.sha;
+    claimContentByNumber[n] = r.failure || r.absent ? null : r.content;
+  }
+  const [owner, repo] = (slug || '').split('/');
+  if (owner && repo) {
+    let out = null;
+    try { out = execFileSync('gh', ['api', 'graphql', '-f', 'query=' + buildLinkedPRQuery(numbers), '-f', 'owner=' + owner, '-f', 'repo=' + repo], { encoding: 'utf8' }); } catch (e) { out = e.stdout || null; }
+    try { linkedPRRepoData = JSON.parse(out).data.repository; } catch {}
+  }
+}
+const state = buildShapingState({ numbers, labelsByNumber, claimContentByNumber, linkedPRRepoData, now: Date.now() });
+const hit = shapingRefusal(hits, state);
+console.log(JSON.stringify(hit ? { refuse: true, hit, evidence: state[hit.number] } : { refuse: false }));
+" "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"
+```
+
+Only a title-similar `ready` candidate can refuse, so the call reads claims and linked PRs for those
+alone (one `git fetch` in total, chained through the first read's tip) and skips both reads when
+there are none. A failed claim read (the git read falls back to the contents API) or a failed
+linked-PR query leaves that candidate "not in flight" — never a refusal (a GraphQL error on one
+issue still keeps the partial `data` for the others). With no `gh` (MCP
+transport), run the call unchanged: the git claim read still works wherever `git fetch` can read
+the remote, and the GraphQL call falls into its `catch` — the per-item PR-read degrade
+`_shared/github-write-transport.md` documents, since PR reads have no MCP equivalent. The screen
+fails open: a non-zero exit or no JSON line on stdout means do not refuse — quote the stderr in
+the shaping output beside the candidate table so the failure stays visible, and proceed to
+composition. When `refuse: true` comes back, **stop shaping this record here**
+— do not compose, stamp, or write `ready` for it. Instead, add the `needs:decision` label
+(bootstrap per `_shared/label-bootstrap.md` if this repo has never stamped it before) and post
 `_shared/work-record.md`'s canonical decision-comment, `{unit}` = `specify`:
 
 ```
 <!-- needs-decision: specify -->
 ## Decision needed
 **Proposed:** Absorb into #{candidate} — close this record as a duplicate rather than shaping it
-**Why:** near-duplicate finder found {signals} against #{candidate}, which is `ready` with an
-in-flight build (open PR / `bot:in-progress`)
+**Why:** near-duplicate finder found `title-similarity` against #{candidate} (signals: {signals}),
+which is `ready` with an in-flight build: {evidence} — "live claim by run {claimRunId}" or "open PR
+#{openLinkedPR}"
 **Command:** `gh issue close {n} --comment "Absorbed into #{candidate}"`
 ```
 
 Report this record's Actions Performed row as `refused — proposed Absorb into #{candidate}`
 rather than `shaped` — the same per-record failure-isolation posture a write/read-back failure
 already uses on a batch (below): the rest of the batch keeps shaping. This is the one automatic
-refusal the finder's signal authorizes on its own; every other candidate (no `ready` +
-in-flight-build match) is surfaced via the table and `**Related:**` append only, mirroring the
+refusal the finder's signal authorizes on its own; every other candidate (no title-similar, `ready`,
+in-flight match per `shapingRefusal`) is surfaced via the table and `**Related:**` append only, mirroring the
 refusal grounds an earlier sweep applied by hand for the same reason (#1944).
 
 ### Dependency-narration check
