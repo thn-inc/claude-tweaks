@@ -12,12 +12,16 @@ const { loadManifest } = require('../tools/upstream-drift/manifest');
 const ROOT = path.join(__dirname, '..');
 const PREBUILD = path.join(ROOT, 'plugin', 'skills', 'design-wrapper', 'modes', 'pre-build.md');
 
-test('pre-build.md frontend reference-selection rules name Impeccable 4.5 files, not the retired topic files', () => {
-  const md = readText(PREBUILD);
+function getStep3Section(md) {
   const start = md.indexOf('### Step 3: Decide which Impeccable references to load');
   const end = md.indexOf('### Step 4: Load project design context');
   assert.ok(start !== -1 && end !== -1 && end > start, 'could not locate the Step 3 reference-selection section');
-  const section = md.slice(start, end);
+  return md.slice(start, end);
+}
+
+test('pre-build.md frontend reference-selection rules name Impeccable 4.5 files, not the retired topic files', () => {
+  const md = readText(PREBUILD);
+  const section = getStep3Section(md);
 
   const retired = [
     'typography.md',
@@ -46,10 +50,7 @@ test('pre-build.md terminal track always-load set is untouched by this change', 
 
 test('every Impeccable reference file named in pre-build.md Step 3 is pinned in the upstream-drift manifest', () => {
   const md = readText(PREBUILD);
-  const start = md.indexOf('### Step 3: Decide which Impeccable references to load');
-  const end = md.indexOf('### Step 4: Load project design context');
-  assert.ok(start !== -1 && end !== -1 && end > start, 'could not locate the Step 3 reference-selection section');
-  const section = md.slice(start, end);
+  const section = getStep3Section(md);
 
   const names = new Set();
   const re = /`([a-z-]+\.md)`/g;
