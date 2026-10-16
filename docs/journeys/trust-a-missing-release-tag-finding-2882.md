@@ -3,6 +3,7 @@ files:
   - plugin/bin/lib/residue/probes/release.js
   - plugin/bin/residue.js
   - plugin/bin/lib/residue/render.js
+  - plugin/skills/tidy/scan-procedures.md
 ---
 
 # Trust a Missing-Release-Tag Finding
@@ -29,11 +30,11 @@ files:
 - **Red flags:** A missing-tag row with `remedy: auto`. An unattended pass that creates or pushes a `v*` tag.
 
 ### 3. Sweep offline
-- **URL:** the same command plus `--json`, with no network access or in a clone with no `origin`
-- **Action:** Run the sweep where the remote tag read fails, and read the release probe's result object. The rendered table shows `reason` only for probes that did not run (`render.js`), so this fallback note is visible in `--json` only.
+- **URL:** the same command, with no network access or in a clone with no `origin`
+- **Action:** Run the sweep where the remote tag read fails, and read the note below the Outstanding table. `render.js` lists a probe that ran on reduced input under "Probes that ran on reduced input", as a `degraded:` line; `--json` carries the same text on the probe's result object.
 - **Should feel:** Honest. The check still runs, and it says it ran on less.
 - **Should understand:** When `ls-remote` fails, the probe still returns `ran: true` using the local tags only. Its result `reason` names the fallback: `remote tag list unavailable (git ls-remote failed) — checked local tags only`. A finding there may reflect the checkout's lag rather than real history.
-- **Red flags:** The release check reporting `ran: false` (silently skipped) on a failed remote read. A fallback run whose result has no `reason` saying it checked only local tags.
+- **Red flags:** The release check reporting `ran: false` (silently skipped) on a failed remote read. A fallback run with no `degraded:` line in the rendered table, or no `reason` on its result, saying it checked only local tags.
 
 ## Origin
 
