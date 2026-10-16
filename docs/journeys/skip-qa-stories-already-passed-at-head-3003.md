@@ -26,7 +26,7 @@ files:
 - **URL:** `plugin/skills/test/qa-reporting.md` Phase 5; `plugin/bin/qa-stamp.js` header
 - **Action:** When `--write` refuses, the QA report carries one line: `QA pass stamp: not written ({reason})` — e.g. `dirty-tree`, `story-not-passed: login FAIL`, `summary-not-clean`, `story-file-unreadable: app.yaml`.
 - **Should feel:** Diagnosable — the reader can tell "never fires because the tree is always dirty" from "didn't fire because a story failed" without opening code.
-- **Should understand:** A result refusal (a story or summary that didn't pass) also deletes any existing stamp at the same HEAD; the CLI reports `invalidated: true` and the report line gains `, invalidated prior stamp`. The latest run at this commit failed, so an earlier "passed here" claim no longer holds. Environmental refusals (dirty tree, unreadable report, no git dir) leave an existing stamp alone.
+- **Should understand:** A result refusal (a story or summary that didn't pass) also deletes any existing stamp at the same HEAD; the CLI reports `invalidated: true` and the report line gains `, invalidated prior stamp`. The latest run at this commit failed, so an earlier "passed here" claim no longer holds. If that removal itself fails, the CLI reports `invalidateFailed: <code>` and the report line says the stale stamp could not be removed, rather than staying silent. Environmental refusals (dirty tree, unreadable report, no git dir) leave an existing stamp alone.
 - **Red flags:** A refusal with no `QA pass stamp:` line in the report; a stale stamp still present after a failed run at the same HEAD.
 
 ### 3. The second call checks before dispatching stories

@@ -9,7 +9,8 @@
 //   node bin/qa-stamp.js --check --stories <id=file,...> [--stories-dir <dir>]
 //
 // Prints one JSON line: --write → {written: true, path, sha, stories} or
-// {written: false, reason[, invalidated: true]}; --check → {skip, reason, sha}.
+// {written: false, reason[, invalidated: true | invalidateFailed: <code>]};
+// --check → {skip, reason, sha}.
 // Status is data: exit 0 in every state; 2 malformed invocation.
 //
 // Dirty check (Important 3, #3003 final review): cleanliness is this CLI's own
@@ -23,7 +24,9 @@
 // — the run was evaluated and failed) removes an existing stamp at the same
 // HEAD, so a later `--check` can't report a stale pass. `invalidated: true` is
 // present only when a stamp was actually removed; it is omitted (never `false`)
-// otherwise, matching report.js's own omit-when-absent convention. An
+// otherwise, matching report.js's own omit-when-absent convention. When the
+// removal itself fails (e.g. EACCES), `invalidateFailed: <errno code>` says so
+// instead — the stale stamp is still on disk and the caller must surface it. An
 // *environmental* refusal (report-unreadable, no-git-dir, dirty-tree, no-head,
 // story-file-unreadable) never invalidates — the run was never evaluated.
 'use strict';
@@ -85,6 +88,7 @@ const realDeps = {
   gitDir: () => gitDir(),
   dirty: () => computeDirty(),
   now: () => new Date().toISOString(),
+  unlink: (p) => fs.unlinkSync(p),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -114,17 +118,28 @@ function emit(deps, body) {
 // story-file-unreadable) never reaches here: it returns before composeQaStamp
 // runs, or composeQaStamp never evaluated the stories to know they passed.
 const RESULT_REFUSAL_RE = /^(no-stories|summary-not-clean|summary-mismatch|story-not-passed: )/;
-function invalidateStaleStamp(dir, head, reason) {
-  if (!RESULT_REFUSAL_RE.test(reason)) return false;
+// Returns the fields to merge into the refusal line: {} when nothing was
+// removed, {invalidated: true} on removal, {invalidateFailed: code} when the
+// stale stamp could not be removed (ENOENT means it is already gone — {}).
+function invalidateStaleStamp(dir, head, reason, deps) {
+  if (!RESULT_REFUSAL_RE.test(reason)) return {};
   const existing = readQaStamp(dir);
-  if (!existing || existing.sha !== head) return false;
-  try { fs.unlinkSync(path.join(dir, QA_STAMP_NAME)); } catch { return false; }
-  return true;
+  if (!existing || existing.sha !== head) return {};
+  try { deps.unlink(path.join(dir, QA_STAMP_NAME)); } catch (err) {
+    if (err && err.code === 'ENOENT') return {};
+    return { invalidateFailed: (err && err.code) || 'unknown' };
+  }
+  return { invalidated: true };
 }
 
 function write(o, deps) {
   let report;
   try { report = JSON.parse(fs.readFileSync(o.report, 'utf8')); } catch {
+    return emit(deps, { written: false, reason: 'report-unreadable' });
+  }
+  // `null`, a number, or an array parses fine but is no report — refuse it as
+  // unreadable rather than crash on `report.stories_dir` below.
+  if (report === null || typeof report !== 'object' || Array.isArray(report)) {
     return emit(deps, { written: false, reason: 'report-unreadable' });
   }
   const dir = deps.gitDir();
@@ -143,12 +158,7 @@ function write(o, deps) {
   const { stamp, error } = composeQaStamp({
     report, head: sha, dirty, storyHashes, storiesDir, reportPath: path.resolve(o.report), at: deps.now(),
   });
-  if (error) {
-    const invalidated = invalidateStaleStamp(dir, sha, error);
-    return invalidated
-      ? emit(deps, { written: false, reason: error, invalidated: true })
-      : emit(deps, { written: false, reason: error });
-  }
+  if (error) return emit(deps, { written: false, reason: error, ...invalidateStaleStamp(dir, sha, error, deps) });
   const p = writeQaStamp(dir, stamp);
   return emit(deps, { written: true, path: p, sha: stamp.sha, stories: stamp.stories.length });
 }

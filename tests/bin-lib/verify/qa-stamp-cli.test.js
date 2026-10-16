@@ -95,6 +95,8 @@ test('--write refuses a failed run, a missing report, a dirty tree, and no git d
   const cases = [
     () => [['--write', '--report', writeReport(fx, [{ id: 'login', source_file: 'app.yaml', status: 'FAIL' }], { ...CLEAN, passed: 0, failed: 1 })], {}, 'story-not-passed: login FAIL'],
     () => [['--write', '--report', path.join(fx.runDir, 'missing.json')], {}, 'report-unreadable'],
+    () => { const p = path.join(fx.runDir, 'null.json'); fs.writeFileSync(p, 'null'); return [['--write', '--report', p], {}, 'report-unreadable']; },
+    () => { const p = path.join(fx.runDir, 'array.json'); fs.writeFileSync(p, '[]'); return [['--write', '--report', p], {}, 'report-unreadable']; },
     () => [['--write', '--report', writeReport(fx, GREEN, CLEAN)], { dirty: () => true }, 'dirty-tree'],
     () => [['--write', '--report', writeReport(fx, GREEN, CLEAN)], { gitDir: () => null }, 'no-git-dir'],
   ];
@@ -122,6 +124,19 @@ test('--write invalidates a same-HEAD stamp when a later run at that HEAD fails 
   const c = deps(fx);
   run(['--check', '--stories', 'login=app.yaml'], c.d);
   assert.deepEqual(JSON.parse(c.out.join('')), { skip: false, reason: 'no-stamp', sha: null });
+});
+
+test('--write reports invalidateFailed when the stale same-HEAD stamp cannot be removed, instead of hiding it', () => {
+  const fx = fixture();
+  const stampPath = path.join(fx.gitDir, 'claude-tweaks-qa-pass.json');
+  run(['--write', '--report', writeReport(fx, GREEN, CLEAN)], deps(fx).d);
+
+  const FAIL = [{ id: 'login', source_file: 'app.yaml', status: 'FAIL' }];
+  const eacces = () => { const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; };
+  const w2 = deps(fx, { unlink: eacces });
+  run(['--write', '--report', writeReport(fx, FAIL, { ...CLEAN, passed: 0, failed: 1 })], w2.d);
+  assert.deepEqual(JSON.parse(w2.out.join('')), { written: false, reason: 'story-not-passed: login FAIL', invalidateFailed: 'EACCES' });
+  assert.equal(fs.existsSync(stampPath), true, 'the unlink failed, so the stamp is still on disk — which is why it must be reported');
 });
 
 test('--write does not invalidate the stamp on an environmental refusal (dirty tree) at the same HEAD', () => {

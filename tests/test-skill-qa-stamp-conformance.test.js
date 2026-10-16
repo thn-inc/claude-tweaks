@@ -52,7 +52,9 @@ test('the stamp-then-qa-procedures routing covers every story-run path, not just
 
 test('the QA-skip path still passes the #3013 PR-check gate before TEST_PASSED', () => {
   assert.match(SKILL, /\*\*PR-check gate \(#3013\):\*\* before any bullet above sets `TEST_PASSED=true`/, 'PR-check gate bullet must stay below the pipeline bullets');
-  assert.ok(SKILL.indexOf('QA: skipped — stories already passed at') < SKILL.indexOf('**PR-check gate (#3013):**'), 'the QA-stamp skip must sit above the PR-check gate bullet, which applies to it');
+  const skipAt = SKILL.indexOf('QA: skipped — stories already passed at');
+  assert.ok(skipAt >= 0, 'the QA-stamp skip line must be present');
+  assert.ok(skipAt < SKILL.indexOf('**PR-check gate (#3013):**'), 'the QA-stamp skip must sit above the PR-check gate bullet, which applies to it');
 });
 
 test('qa-reporting.md Phase 5 writes the QA pass stamp after report.json in pipeline context', () => {
