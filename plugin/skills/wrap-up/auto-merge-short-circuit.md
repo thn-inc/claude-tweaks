@@ -64,12 +64,15 @@ The Authorization layer below always reads **live** labels (`gh issue view --jso
 
    A `needs-human` verdict logs the existing line under "Any layer fails" below, unchanged.
 
-**Verdict backstop — re-read before any merge (#2941).** Layer 2 having been prescribed is not
-evidence it ran: a dispatched singleton once went straight from Authorization to the merge and
-merged PR #2938 with no `merge-check` at all. Run this one-read check of `decisions.md` once
-here, before acceptance labeling and ledger deletion below, and again at the top of each merging
-branch further down, immediately before its merge call or relay — the same check
-`dispatch/settle-and-merge.md` runs on the group path, backed by the same module:
+**Verdict backstop — re-read before any merge (#2941).** Skip this backstop entirely when Layer
+2's verdict was `needs-human` — go straight to "Any layer fails" below, whose own needs-human log
+line is already the record; the backstop guards only the path that is about to proceed to a
+merge. Layer 2 having been prescribed is not evidence it ran: a dispatched singleton once went
+straight from Authorization to the merge and merged PR #2938 with no `merge-check` at all. Run
+this one-read check of `decisions.md` once here, before acceptance labeling and ledger deletion
+below, and again at the top of each merging branch further down, immediately before its merge
+call or relay — the same check `dispatch/settle-and-merge.md` runs on the group path, backed by
+the same module:
 
 ```bash
 node -e "
@@ -77,6 +80,10 @@ node -e "
   for (const [n, v] of Object.entries(confirmFromFile(process.argv[1], process.argv.slice(2)))) console.log(n + '=' + (v.confirmed ? 1 : 0) + ' latest=' + (v.latest || 'none') + (v.error ? ' error=' + v.error : ''));
 " "$PIPELINE_RUN_DIR/decisions.md" {n}
 ```
+
+`{latest}` is the printed `latest=` value, or `none` when the snippet printed no line for `{n}`;
+`{detail}` is `, error: {error}` when the snippet printed `error=`, `, snippet exited {code} with
+no output` on a non-zero exit with no `{n}=` line, otherwise empty.
 
 Proceed only on `{n}=1` — this record's latest logged `merge-check` verdict is `auto-merge`.
 Anything else — `{n}=0`, no `{n}=` line at all, or a non-zero exit — do not merge: log the
@@ -86,7 +93,7 @@ record's merge to `leave-open`. The refusal line replaces that `needs-human` log
 also write `assess-agent-autonomy verdict needs-human` for a verdict that never ran.
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "Auto-merge short-circuit" --reversibility n/a --text "#{n} merge-check verdict not confirmed in decisions.md (latest: {latest}) — treated as needs-human, Review Console renders normally"
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "Auto-merge short-circuit" --reversibility n/a --text "#{n} merge-check verdict not confirmed in decisions.md (latest: {latest}{detail}) — treated as needs-human, Review Console renders normally"
 ```
 
 **Both layers pass — acceptance labeling runs first, before the merge.** This branch bypasses

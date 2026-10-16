@@ -66,6 +66,27 @@ test('refusal line is not itself a passing verdict', () => {
   assert.strictEqual(confirmPassingVerdicts(content, [2941])[2941].latest, 'auto-merge');
 });
 
+// #2941 review fix: VERDICT_RE used to match the marker as a bare substring anywhere in a line,
+// so free-text narrative that merely QUOTES the marker (a /review or /reflect write-up) counted
+// as a logged verdict. Anchoring on parseEntry + an action-start match closes this.
+test('a narrative line under another step that quotes the marker text does not confirm', () => {
+  const content = `${line('Step 2.8', 'Reviewing decisions.md, noticed the passing marker Auto-merge short-circuit: #2941 assess-agent-autonomy verdict auto-merge was logged for this record')}\n`;
+  assert.deepStrictEqual(confirmPassingVerdicts(content, [2941]), { 2941: { confirmed: false, latest: null } });
+});
+
+test('a genuine needs-human verdict followed by a narrative line quoting the marker stays unconfirmed with latest needs-human', () => {
+  const content = [
+    line(VERDICT_STEPS.shortCircuit, '#2941 assess-agent-autonomy verdict needs-human — Review Console renders normally'),
+    line('Reflect', 'Summary notes that Auto-merge short-circuit: #2941 assess-agent-autonomy verdict auto-merge would have been the ideal outcome'),
+  ].join('\n');
+  assert.deepStrictEqual(confirmPassingVerdicts(content, [2941]), { 2941: { confirmed: false, latest: 'needs-human' } });
+});
+
+test('a raw non-entry line (no "- AUTO HH:MM:SS — " prefix) containing the marker does not confirm', () => {
+  const content = 'Auto-merge short-circuit: #2941 assess-agent-autonomy verdict auto-merge\n';
+  assert.deepStrictEqual(confirmPassingVerdicts(content, [2941]), { 2941: { confirmed: false, latest: null } });
+});
+
 test('a --spec location prefix is still recognized', () => {
   const content = `${line(VERDICT_STEPS.shortCircuit, verdictText(2941), { spec: 2941 })}\n`;
   assert.strictEqual(confirmPassingVerdicts(content, [2941])[2941].confirmed, true);

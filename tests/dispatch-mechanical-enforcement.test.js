@@ -61,6 +61,23 @@ test('#2429 AC3: both mechanical checks are cross-referenced at the call site th
   assert.ok(!fenceBody.includes('#2429'), 'the #2429 cross-reference must stay outside the dispatched template');
 });
 
+test('#2941: the second-call cross-reference also names the singleton path\'s Verdict backstop as the #2429 check\'s equivalent, backed by the same module', () => {
+  const t = read('plugin/skills/dispatch/task-prompt.md');
+  // Frozen pre-#2941 ending of that paragraph -- proves the pattern below can actually go red.
+  const PRE_EDIT = 'run the loop — see that step\'s own "Mechanically verify every member\'s entry" paragraph. Keep\n'
+    + 'both current if either clause\'s wording changes.';
+  const pattern = /wrap-up\/auto-merge-short-circuit\.md`'s Verdict backstop instead \(#2941\)[\s\S]{0,120}?`bin\/lib\/dispatch\/merge-verdict\.js`/;
+  assert.match(t, pattern, 'singleton cross-reference missing from task-prompt.md');
+  assert.doesNotMatch(PRE_EDIT, pattern, 'pattern matches the pre-edit text -- cannot go red');
+  // Still outside the dispatched template, same discipline as the #2429 cross-reference above —
+  // bounded to the one fenced block under "## Second call", not the rest of the file.
+  const secondCallSection = t.slice(t.indexOf('## Second call'));
+  const fenceOpen = secondCallSection.indexOf('```');
+  const fenceClose = secondCallSection.indexOf('```', fenceOpen + 3);
+  const fenceBody = secondCallSection.slice(fenceOpen + 3, fenceClose);
+  assert.ok(!fenceBody.includes('#2941'), 'the #2941 cross-reference must stay outside the dispatched template');
+});
+
 test('#2488: task-prompt.md hardens the missing-claim fallback into a HARD-GATE, non-negotiable regardless of the dispatched call\'s own risk judgment', () => {
   const t = read('plugin/skills/dispatch/task-prompt.md');
   assert.match(t, /<!-- HARD-GATE: dispatch-missing-claim-fallback -->/);

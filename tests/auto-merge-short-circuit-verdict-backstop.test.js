@@ -12,12 +12,19 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { VERDICT_STEPS, verdictText } = require('../plugin/bin/lib/dispatch/merge-verdict');
+const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
 
 const ROOT = path.join(__dirname, '..');
 const collapse = (s) => s.replace(/\s+/g, ' ');
-const FLAT = collapse(fs.readFileSync(path.join(ROOT, 'plugin/skills/wrap-up/auto-merge-short-circuit.md'), 'utf8'));
+const SHORT_CIRCUIT_PATH = path.join(ROOT, 'plugin/skills/wrap-up/auto-merge-short-circuit.md');
+const SETTLE_AND_MERGE_PATH = path.join(ROOT, 'plugin/skills/dispatch/settle-and-merge.md');
+const RAW_SHORT_CIRCUIT = fs.readFileSync(SHORT_CIRCUIT_PATH, 'utf8');
+const FLAT = collapse(RAW_SHORT_CIRCUIT);
+const PLUGIN_DIR = path.join(ROOT, 'plugin').split(path.sep).join('/');
 
 // Frozen pre-change excerpts — Layer 2, the pr-first branch opener, and the local-merge branch
 // opener exactly as they read before #2941.
@@ -93,3 +100,64 @@ test('local-merge: the backstop precedes the merge, and the dispatch-claim relay
   const prFirst = FLAT.indexOf("run `_shared/pr-first-merge.md`'s procedure now");
   assert.ok(backstop > -1 && backstop < merge && backstop < prFirst, 'backstop paragraph must precede both merge calls');
 });
+
+// #2941 review fix (finding 3): the backstop used to be unconditional, so an agent that had just
+// logged a genuine needs-human verdict would run it anyway and log a spurious second refusal line.
+test('the backstop paragraph states it is skipped when Layer 2 already returned needs-human', () => {
+  assertPinned(
+    new RegExp(esc("**Verdict backstop — re-read before any merge (#2941).** Skip this backstop entirely when Layer 2's verdict was `needs-human` — go straight to \"Any layer fails\" below, whose own needs-human log line is already the record; the backstop guards only the path that is about to proceed to a merge.")),
+    'backstop needs-human skip sentence',
+  );
+});
+
+// #2941 review fix (finding 2): the refusal line had no slot for the snippet's own error= output
+// or a crash/non-zero exit, so a read failure read identically to "merge-check never ran."
+test('the refusal template carries a {detail} slot alongside {latest}, with its derivation documented', () => {
+  assertPinned(/latest: \{latest\}\{detail\}\) — treated as needs-human/, 'refusal template detail slot');
+  assertPinned(
+    /`\{detail\}` is `, error: \{error\}` when the snippet printed `error=`, `, snippet exited \{code\} with no output` on a non-zero exit with no `\{n\}=` line, otherwise empty\./,
+    'detail derivation sentence',
+  );
+});
+
+// #2941 review fix (finding 5): extract-and-run (docs/skill-authoring.md, "Executable snippets in
+// skill prose", per tests/backlog-overview-foldin-no-truncation.test.js) -- proves the backstop
+// snippet this file and settle-and-merge.md both ship actually runs and produces the expected
+// output, not just that its text is present.
+function extractConfirmSnippetBody(raw, label) {
+  const anchor = 'confirmFromFile(process.argv[1], process.argv.slice(2))';
+  const anchorIdx = raw.indexOf(anchor);
+  assert.ok(anchorIdx > -1, `${label}: confirmFromFile call not found -- extraction out of sync with the live file`);
+  const openIdx = raw.lastIndexOf('node -e "', anchorIdx);
+  assert.ok(openIdx > -1, `${label}: opening node -e "..." not found`);
+  const bodyStart = openIdx + 'node -e "'.length;
+  const closeMatch = /\n[ \t]*"/.exec(raw.slice(bodyStart));
+  assert.ok(closeMatch, `${label}: closing quote not found`);
+  const body = raw.slice(bodyStart, bodyStart + closeMatch.index);
+  return body.split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_DIR);
+}
+
+function runConfirmSnippet(body, decisionsPath, n) {
+  return execFileSync(process.execPath, ['-e', body, decisionsPath, String(n)], { encoding: 'utf8' });
+}
+
+for (const [label, filePath] of [
+  ['auto-merge-short-circuit.md', SHORT_CIRCUIT_PATH],
+  ['settle-and-merge.md', SETTLE_AND_MERGE_PATH],
+]) {
+  test(`${label}'s backstop snippet, executed verbatim, confirms a passing verdict and refuses an empty log`, (t) => {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const body = extractConfirmSnippetBody(raw, label);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-verdict-snippet-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const decisionsPath = path.join(dir, 'decisions.md');
+
+    fs.writeFileSync(decisionsPath, `${formatEntry({ status: 'AUTO', now: new Date(), step: VERDICT_STEPS.shortCircuit, text: verdictText(2941) })}\n`);
+    const pass = runConfirmSnippet(body, decisionsPath, 2941);
+    assert.match(pass, /^2941=1 latest=auto-merge$/m);
+
+    fs.writeFileSync(decisionsPath, '');
+    const empty = runConfirmSnippet(body, decisionsPath, 2941);
+    assert.match(empty, /^2941=0 latest=none$/m);
+  });
+}

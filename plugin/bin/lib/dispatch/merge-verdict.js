@@ -6,19 +6,27 @@
 //
 // A verdict line is `{step}: #{n} assess-agent-autonomy verdict {verdict}` with {step} one of
 // VERDICT_STEPS — exactly what `bin/log-decision.js --step "{step}" --text "{verdictText}"`
-// writes. The LATEST verdict line per record wins, so a needs-human logged after an auto-merge
-// is never overridden by the earlier pass. Record numbers are matched exactly (`#29` never
-// satisfies `#2941`). The post-merge `Fast-lane auto-merge: issue #{n}, ...` line deliberately
-// does not match.
+// writes. A line only counts when it parses as a real log-decision entry (`log-decision/
+// append.js`'s `parseEntry`, the writer's own anchored inverse) whose `location` is exactly one
+// of VERDICT_STEPS (or ends with ` — {step}` under `--spec`) AND whose `action` STARTS WITH the
+// verdict text — anchored at the start, never a bare substring match anywhere in the line, so a
+// narrative line elsewhere that merely quotes a verdict marker (a /review or /reflect write-up,
+// say) can never be mistaken for a logged verdict (#2941). The LATEST verdict line per record
+// wins, so a needs-human logged after an auto-merge is never overridden by the earlier pass.
+// Record numbers are matched exactly (`#29` never satisfies `#2941`). The post-merge `Fast-lane
+// auto-merge: issue #{n}, ...` line deliberately does not match.
 'use strict';
 
 const fs = require('fs');
+const { parseEntry } = require('../log-decision/append');
 
 const VERDICT_STEPS = Object.freeze({ gate: 'Auto-merge gate', shortCircuit: 'Auto-merge short-circuit' });
 const PASS_VERDICT = 'auto-merge';
 
-const STEP_ALT = Object.values(VERDICT_STEPS).map((s) => s.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')).join('|');
-const VERDICT_RE = new RegExp(`(?:${STEP_ALT}): #(\\d+) assess-agent-autonomy verdict ([a-z][a-z-]*[a-z])`, 'g');
+const STEP_VALUES = Object.values(VERDICT_STEPS);
+// Anchored at the start of the entry's action: the verdict verb must open the action, never
+// appear after other narrative text that merely mentions or quotes one.
+const ACTION_RE = /^#(\d+) assess-agent-autonomy verdict ([a-z][a-z-]*[a-z])/;
 
 function verdictText(n, verdict = PASS_VERDICT) {
   return `#${n} assess-agent-autonomy verdict ${verdict}`;
@@ -28,12 +36,22 @@ function verdictMarker(step, n, verdict = PASS_VERDICT) {
   return `${step}: ${verdictText(n, verdict)}`;
 }
 
+// `location` is formatEntry's `{step}` or `spec #{spec} — {step}` — a VERDICT_STEPS value
+// exactly, or ending with ` — {step}`.
+function isVerdictLocation(location) {
+  return STEP_VALUES.some((step) => location === step || location.endsWith(` — ${step}`));
+}
+
 // "latest" means last in file order; callers write verdict lines without --section, so file
 // order is write order (log-decision.js's --section can splice a line earlier in the file).
 function latestVerdicts(content) {
   const latest = new Map();
   for (const ln of String(content).split(/\r?\n/)) {
-    for (const m of ln.matchAll(VERDICT_RE)) latest.set(Number(m[1]), m[2]);
+    const entry = parseEntry(ln);
+    if (!entry || !isVerdictLocation(entry.location)) continue;
+    const m = ACTION_RE.exec(entry.action);
+    if (!m) continue;
+    latest.set(Number(m[1]), m[2]);
   }
   return latest;
 }
