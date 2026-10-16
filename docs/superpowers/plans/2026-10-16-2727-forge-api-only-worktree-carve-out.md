@@ -21,7 +21,7 @@
   - The four skill notes cite the canonical paragraph by its bold anchor and never restate its test.
 - **`CLAUDE.md` is not modified.** Its Key File premise was reversed at build time: no worktree-always paragraph exists there (logged in `spec-2727/decisions.md`).
 - **Byte budgets:**
-  - `_shared/worktree-setup.md` is 21,363 B, and the composed `worktree-setup` bundle is about 42.7 KB of 51,200 B. Task 1's two additions measure 955 B together (inline self-check: 22,318 B result, bundle about 43.7 KB).
+  - `_shared/worktree-setup.md` is 21,363 B, and the composed `worktree-setup` bundle (`build/SKILL.md:176`) measures 43,778 B against its 46,080 B composed ceiling (`plan-audit.js` Headroom, near-ceiling). Task 1's two additions measure 955 B together (inline self-check: 22,318 B result), so the bundle lands at ~44,733 B — under the ceiling, with ~1.3 KB left; #2776 must not grow this file.
   - `backlog/refine-mode.md` (41,810 B) and `capture/SKILL.md` (40,275 B) must stay under the 46,080 B warn band, so each note there is ~250–450 B.
 - **Don't move #2702's paragraph.** Its anchor `**Resolve plugin-supplied values to literals once.**` must stay put; `tests/worktree-setup-plugin-root-literal.test.js` pins guard < anchor < "Unconditionally, before anything else runs".
 - **Commit messages:**
@@ -30,7 +30,7 @@
 
 ## Authoring checks (build/plan-authoring-checks.md)
 
-- **Byte-pin:** the only file-specific pin is `tests/backlog-refine-resolve-lane.test.js:138-139` (`refine-mode.md` < 51,200 B; post-change 42,147 B, ~9 KB headroom). There is no per-skill ceiling for backlog/capture/tidy in `tests/bin-lib/skill-audit/context-cost.test.js`, and no `compose-context.js` bundle includes the four Task 3 files. Inline self-check sizes: refine-headless 35,577; refine-mode 42,147; capture/SKILL 40,663; scan-execution 6,664 — all under the 46,080 B warn band.
+- **Byte-pin:** the only file-specific pin is `tests/backlog-refine-resolve-lane.test.js:138-139` (`refine-mode.md` < `CEILING_BYTES` 51,200 B; post-change 42,147 B; `plan-audit.js` flags it near the 46,080 B warn band, 3,933 B left after this change). There is no per-skill ceiling for backlog/capture/tidy in `tests/bin-lib/skill-audit/context-cost.test.js`, and no `compose-context.js` bundle includes the four Task 3 files. Inline self-check sizes: refine-headless 35,577; refine-mode 42,147; capture/SKILL 40,663; scan-execution 6,664 — all under the 46,080 B warn band.
 - **Behavioral claims:**
   - "the gate guards repository files": `plugin/skills/_shared/policy-schema-coverage.md`'s gate-coverage block / `pre-tool-use.js` `GATE_COVERAGE` — no `gh` entry.
   - "the `health-state` ref a `bin/` CLI pushes": `plugin/bin/lib/health-core/durable-state.js:327` (`git push origin {sha}:refs/heads/health-state`, run inside a node subprocess, so no Bash `git push` shape reaches the gate).
