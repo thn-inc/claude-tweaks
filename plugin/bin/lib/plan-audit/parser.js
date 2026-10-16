@@ -232,7 +232,231 @@ function countTasks(text) {
   return { tasks: blocks.length, batched };
 }
 
+// ── Check E inputs: the spec's acceptance-criterion clauses (#3099) ────────
+// The spec's `## Acceptance Criteria` section, split into items (one per
+// top-level `-`/`*`/`+`/`1.` list line, a leading `[ ]` checkbox stripped)
+// and each item into clauses on sentence ends and `;`. Ids are
+// `AC{item}.{clause}`, both 1-based, item = position in the section (never
+// the literal list number). A prose-only section (no list lines — about a
+// tenth of real specs) makes each paragraph one item. Code spans and a few
+// abbreviations are masked before splitting so `a; b` inside backticks and
+// "e.g." never cut a clause. Anything the splitter cannot read confidently
+// lands in `unparsed`, never in `clauses` (parse-signal-discipline): a
+// missing or empty section, an item with an odd backtick count, an unbalanced
+// `(`/`[`, or a fence, and — when the section does have list items — any
+// stray prose paragraph beside them, except a one-line italic footer such as
+// `_Filed by review via specShapedBody._`. A sub-bullet indented deeper than
+// its parent item's marker folds into that item rather than becoming a new one.
+const AC_HEADING_RE = /^##[ \t]+Acceptance Criteria[ \t]*$/i;
+const AC_SECTION_END_RE = /^#{1,2}[ \t]/;
+const AC_FENCE_RE = /^[ \t]*(```|~~~)/;
+const AC_ITEM_RE = /^ {0,3}(?:[-*+]|\d{1,3}[.)])[ \t]+(.*)$/;
+const AC_CHECKBOX_RE = /^\[[ xX]\][ \t]+/;
+const AC_FOOTER_RE = /^(?:_[^_].*_|\*[^*].*\*)$/;
+const AC_ABBREVIATION_RE = /\b(?:e\.g|i\.e|etc|vs|cf)\./gi;
+// An HTML entity's trailing `;` (named `&amp;`, decimal `&#39;`, hex `&#x27;`)
+// is never a clause-cut boundary — masked the same way a code span is, by
+// replacing the whole matched entity (including its `;`) with same-length
+// `x` filler so no `;` remains for the cutter to see. Real corpus regression:
+// spec #272 AC4's "the judge&#39;s material..." mis-split into bogus clauses
+// at every escaped apostrophe.
+const AC_HTML_ENTITY_RE = /&(?:[a-zA-Z]+|#\d+|#x[0-9a-fA-F]+);/g;
+// An in-item sub-label like `3a.`/`2b.` (digits then one lowercase letter,
+// then the period) is never its own clause boundary — real corpus
+// regression: spec #287's "...not deleted outright. 3a. `grep ...`" split
+// `3a.` off as a degenerate clause of its own. Checked against the masked
+// text ending exactly at the candidate cut so it fires before the
+// what-follows lowercase check below, regardless of what follows the label.
+const AC_SUB_LABEL_END_RE = /\b\d+[a-z]\.$/;
+
+function acceptanceSectionLines(specText) {
+  const lines = specText.replace(/\r\n?/g, '\n').split('\n');
+  let inFence = false;
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (AC_FENCE_RE.test(lines[i])) { inFence = !inFence; continue; }
+    if (!inFence && AC_HEADING_RE.test(lines[i])) { start = i + 1; break; }
+  }
+  if (start === -1) return null;
+  const section = [];
+  inFence = false;
+  for (let i = start; i < lines.length; i++) {
+    if (AC_FENCE_RE.test(lines[i])) inFence = !inFence;
+    if (!inFence && AC_SECTION_END_RE.test(lines[i])) break;
+    section.push(lines[i]);
+  }
+  return section;
+}
+
+// Returns the item's clauses (trimmed, a trailing `;` dropped), or null when
+// the item cannot be split confidently (odd backtick count — a code span the
+// mask cannot bound). A cut is made after `;`, or after `.`/`!`/`?` followed
+// by whitespace and a character that is not a lowercase letter, and never
+// inside parentheses or brackets, nor right after an in-item sub-label
+// (`3a.`, `2b.`).
+function splitClauses(text) {
+  if ((text.match(/`/g) || []).length % 2 !== 0) return null;
+  const masked = text
+    .replace(/`[^`]*`/g, (m) => `\`${'x'.repeat(m.length - 2)}\``)
+    .replace(AC_HTML_ENTITY_RE, (m) => 'x'.repeat(m.length))
+    .replace(AC_ABBREVIATION_RE, (m) => m.replace(/\./g, 'x'));
+  const cuts = [];
+  let depth = 0;
+  for (let i = 0; i < masked.length; i++) {
+    const ch = masked[i];
+    if (ch === '(' || ch === '[') depth += 1;
+    else if ((ch === ')' || ch === ']') && depth > 0) depth -= 1;
+    else if (depth === 0 && ch === ';') cuts.push(i + 1);
+    else if (depth === 0 && (ch === '.' || ch === '!' || ch === '?')) {
+      if (ch === '.' && AC_SUB_LABEL_END_RE.test(masked.slice(0, i + 1))) continue;
+      const after = masked.slice(i + 1).match(/^\s+(\S)/);
+      if (after && !/[a-z]/.test(after[1])) cuts.push(i + 1);
+    }
+  }
+  // An opener left unclosed (depth != 0) is the same signal as an odd backtick
+  // count: refuse rather than guess where the clause actually ends.
+  if (depth !== 0) return null;
+  const clauses = [];
+  let from = 0;
+  for (const cut of [...cuts, text.length]) {
+    const clause = text.slice(from, cut).trim().replace(/;$/, '').trim();
+    if (/[A-Za-z0-9]/.test(clause)) clauses.push(clause);
+    from = cut;
+  }
+  return clauses.length ? clauses : null;
+}
+
+// Returns { clauses: [{id, item, text}], unparsed: [{item, raw}] }. `item` is
+// null on an unparsed entry that belongs to no single item (no section, an
+// empty section, a stray paragraph).
+function extractAcceptanceClauses(specText) {
+  const section = acceptanceSectionLines(specText);
+  if (section === null) {
+    return { clauses: [], unparsed: [{ item: null, raw: 'no "## Acceptance Criteria" section in the spec' }] };
+  }
+  const items = [];
+  const paragraphs = [];
+  let current = null;
+  let prevBlank = true;
+  let inFence = false;
+  for (const line of section) {
+    if (AC_FENCE_RE.test(line)) {
+      inFence = !inFence;
+      if (!current) {
+        current = { lines: [], fenced: true };
+        paragraphs.push(current);
+      }
+      current.fenced = true;
+      current.lines.push(line.trim());
+      prevBlank = false;
+      continue;
+    }
+    if (inFence) { current.lines.push(line.trim()); continue; }
+    if (line.trim() === '') {
+      prevBlank = true;
+      if (current && !items.includes(current)) current = null;
+      continue;
+    }
+    const itemMatch = line.match(AC_ITEM_RE);
+    if (itemMatch) {
+      const indent = line.match(/^ */)[0].length;
+      // A list line indented deeper than the open item's own marker is a sub-bullet
+      // of that item, not a sibling — fold it in rather than letting it consume a
+      // new item number and renumber everything after it.
+      if (current && items.includes(current) && indent > current.indent) {
+        current.lines.push(itemMatch[1].replace(AC_CHECKBOX_RE, '').trim());
+      } else {
+        current = { lines: [itemMatch[1].replace(AC_CHECKBOX_RE, '')], fenced: false, indent };
+        items.push(current);
+      }
+    } else if (current && (/^\s/.test(line) || !prevBlank)) {
+      current.lines.push(line.trim());
+    } else {
+      current = { lines: [line.trim()], fenced: false };
+      paragraphs.push(current);
+    }
+    prevBlank = false;
+  }
+  const prose = paragraphs.filter((p) => p.fenced || !(p.lines.length === 1 && AC_FOOTER_RE.test(p.lines[0])));
+  const unparsed = [];
+  let units = items;
+  if (items.length === 0) {
+    if (prose.length === 0) {
+      return { clauses: [], unparsed: [{ item: null, raw: 'empty "## Acceptance Criteria" section' }] };
+    }
+    units = prose;
+  } else {
+    for (const p of prose) unparsed.push({ item: null, raw: p.lines.join(' ') });
+  }
+  const clauses = [];
+  units.forEach((unit, idx) => {
+    const item = idx + 1;
+    const raw = unit.lines.join(' ').trim();
+    const split = unit.fenced ? null : splitClauses(raw);
+    if (split === null) {
+      unparsed.push({ item, raw });
+      return;
+    }
+    split.forEach((text, c) => clauses.push({ id: `AC${item}.${c + 1}`, item, text }));
+  });
+  return { clauses, unparsed };
+}
+
+// ── Check E inputs: where a plan may claim coverage (#3099) ────────────────
+// Three sources, read in one pass; a line inside a ``` or ~~~ fence is
+// content of the step it sits in, never a heading, waiver, or table row:
+// - waivers: a line `Waived AC{item}.{clause}: {reason}` (an optional `- `
+//   bullet before it). A waiver line is consumed, so its own id never also
+//   counts as a citation.
+// - testSteps: the text of every `**Step N: {title}**` sub-step inside a
+//   `### Task N:` block whose title names a test or a verification
+//   (/\btests?\b|\bverif/i), from its heading to the next step heading.
+// - mapRows: every markdown table row (a line starting with `|`) — a
+//   spec-coverage map, when an author writes one. The installed upstream
+//   writing-plans template carries no such table (superpowers 6.4.1), so it
+//   is an accepted source, never an expected one.
+const STEP_HEADING_RE = /^[-*]?[ \t]*(?:\[[ xX]?\][ \t]*)?\*\*Step[ \t]+\d+:([^*\n]*)\*\*/;
+const TEST_STEP_TITLE_RE = /\btests?\b|\bverif/i;
+const WAIVER_RE = /^[ \t]*(?:[-*][ \t]+)?Waived[ \t]+(AC\d+\.\d+)[ \t]*:[ \t]*(\S.*?)[ \t]*$/;
+
+function extractCoverageSources(planText) {
+  const waivers = [];
+  const testSteps = [];
+  const mapRows = [];
+  let inTask = false;
+  let inFence = false;
+  let current = null;
+  for (const line of planText.replace(/\r\n?/g, '\n').split('\n')) {
+    const fence = AC_FENCE_RE.test(line);
+    if (fence) inFence = !inFence;
+    if (fence || inFence) {
+      if (current) current.push(line);
+      continue;
+    }
+    const waiver = line.match(WAIVER_RE);
+    if (waiver) {
+      waivers.push({ id: waiver[1], reason: waiver[2] });
+      continue;
+    }
+    if (/^[ \t]*\|/.test(line)) mapRows.push(line);
+    if (/^###[ \t]+Task[ \t]+\d+:/.test(line)) { inTask = true; current = null; continue; }
+    if (/^#{1,3}[ \t]/.test(line)) { inTask = false; current = null; continue; }
+    if (!inTask) continue;
+    const step = line.match(STEP_HEADING_RE);
+    if (step) {
+      current = TEST_STEP_TITLE_RE.test(step[1]) ? [line] : null;
+      if (current) testSteps.push(current);
+      continue;
+    }
+    if (current) current.push(line);
+  }
+  return { waivers, testSteps: testSteps.map((s) => s.join('\n')), mapRows };
+}
+
 module.exports = {
+  extractAcceptanceClauses,
+  splitClauses,
+  extractCoverageSources,
   extractFileEntries,
   extractScopeKeywords,
   extractPremiseRefs,
