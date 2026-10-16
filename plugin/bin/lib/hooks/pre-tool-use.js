@@ -1454,9 +1454,19 @@ function isForeignSessionCall(ctx) {
 // belongs to a live sibling that hasn't stamped ownership yet than to the caller
 // itself. Deliberately NOT folded into isForeignSessionCall — the PR-stamp branch
 // keeps its existing, already-effective guard unchanged (see checkBookkeepingStampsGate).
+//
+// #2783 (final fix wave 2, G1): an ad-hoc `{ts}-adhoc-standalone` twin is a
+// friction placeholder minted for nearly every session now, never "a distinct
+// recorded run" — in every /flow run today ctx.ownedRun IS this session's own
+// ad-hoc twin (minted at EnterWorktree) while ctx.runDir is the formal run
+// (ad-hoc dirs are skipped by the session-agnostic fallback scan since the
+// first fix wave), so `owned !== ctx.runDir` on essentially every covered
+// call. Without this exclusion the IL-131 record-worktree deny would be
+// downgraded to a warn on nearly every /flow run.
 function hasDistinctOwnedRun(ctx) {
   const owned = ctx.ownedRun && typeof ctx.ownedRun.dir === 'string' ? ctx.ownedRun.dir : '';
-  return Boolean(owned && ctx.runDir && owned !== ctx.runDir);
+  if (!owned || ctxLib.isAdHocRunDir(owned)) return false;
+  return Boolean(ctx.runDir && owned !== ctx.runDir);
 }
 
 // Path exemptions for the bookkeeping-stamps gate, reusing the very helpers
