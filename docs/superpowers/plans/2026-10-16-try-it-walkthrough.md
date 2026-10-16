@@ -422,9 +422,9 @@ printf '<!-- run-comment: try-it -->\n\n' | cat - "$TRY_IT" > "$TRY_IT.pr"
 # find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=try-it, against {pr-number}
 ```
 
-No `pr` object (`local-merge`, or a degraded `pr-first` run): post nothing — the Pipeline Summary
-carries it. A below-floor record gets no comment on the issue; the floor still means no ceremony
-there.
+No `pr` object (`local-merge`, or a degraded `pr-first` run): post nothing — the
+Pipeline Summary carries it. A below-floor record gets no comment on the issue; the floor still
+means no ceremony there.
 
 ````
 
