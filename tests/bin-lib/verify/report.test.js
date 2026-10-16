@@ -3,7 +3,9 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 
-const { gitInfo, gitDir, composeReport, writeReportAtomic } = require(path.join(
+const {
+  gitInfo, gitDir, composeReport, writeReportAtomic, dirtyFilePaths,
+} = require(path.join(
   __dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'report.js'));
 
 const PASSING = {
@@ -105,6 +107,26 @@ test('gitInfo derives sha and dirty from the injected exec', () => {
   assert.deepStrictEqual(gitInfo(fake), { sha: 'abc123', dirty: true });
   const clean = (cmd, args) => (args[0] === 'rev-parse' ? 'abc123\n' : '');
   assert.deepStrictEqual(gitInfo(clean), { sha: 'abc123', dirty: false });
+});
+
+test('dirtyFilePaths returns null when git fails (#2987)', () => {
+  const throwing = () => { throw new Error('not a repo'); };
+  assert.strictEqual(dirtyFilePaths(throwing), null);
+});
+
+test('dirtyFilePaths parses -z porcelain output, one record per changed/untracked file (#2987)', () => {
+  const fake = () => ' M a.js\0?? dir/b.js\0';
+  assert.deepStrictEqual(dirtyFilePaths(fake), ['a.js', 'dir/b.js']);
+});
+
+test('dirtyFilePaths resolves a rename/copy record to the NEW path only (#2987)', () => {
+  const fake = () => 'R  new.js\0old.js\0';
+  assert.deepStrictEqual(dirtyFilePaths(fake), ['new.js']);
+});
+
+test('dirtyFilePaths returns [] on a clean tree (#2987)', () => {
+  const fake = () => '';
+  assert.deepStrictEqual(dirtyFilePaths(fake), []);
 });
 
 test('testCountRegression is omitted when null (#881, mirrors counts-never-guessed convention)', () => {

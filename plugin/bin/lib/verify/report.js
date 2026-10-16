@@ -11,6 +11,37 @@ const { execFileSync } = require('child_process');
 const path = require('path');
 const { writeFileAtomic } = require('../atomic-write');
 
+// #2987: the individual dirty paths behind gitInfo's boolean `dirty` —
+// `--untracked-files=all` so an untracked directory expands to its files
+// rather than collapsing to the directory name (`generated` globs name
+// files, not directories). Used only by the pass-stamp's generated-path
+// exemption in bin/verify.js; `gitInfo` above stays the general-purpose
+// sha+boolean-dirty read every other caller already relies on. Fails toward
+// null on a git error, same posture as gitInfo — never a fabricated empty
+// list standing in for "could not check".
+function dirtyFilePaths(execImpl = execFileSync) {
+  let out;
+  try {
+    out = String(execImpl('git', ['status', '--porcelain', '-z', '--untracked-files=all'], { encoding: 'utf8' }));
+  } catch {
+    return null;
+  }
+  const tokens = out.split('\0');
+  const files = [];
+  let i = 0;
+  while (i < tokens.length) {
+    const entry = tokens[i];
+    if (entry === '') { i += 1; continue; }
+    const xy = entry.slice(0, 2);
+    files.push(entry.slice(3));
+    // A rename/copy record is "XY new\0old\0" in -z mode (new path first) —
+    // same shape plugin/bin/lib/verify/changed-files.js's parser already
+    // relies on; skip the extra old-path token.
+    i += (xy.includes('R') || xy.includes('C')) ? 2 : 1;
+  }
+  return files;
+}
+
 function gitInfo(execImpl = execFileSync) {
   let sha = null;
   let dirty = null;
@@ -112,4 +143,4 @@ function writeReportAtomic(report, jsonPath, deps = {}) {
   writeFileAtomic(jsonPath, `${JSON.stringify(report, null, 2)}\n`, deps);
 }
 
-module.exports = { gitInfo, gitDir, composeReport, writeReportAtomic };
+module.exports = { gitInfo, gitDir, composeReport, writeReportAtomic, dirtyFilePaths };
