@@ -43,7 +43,7 @@ function confirmPassingVerdicts(content, members) {
   const out = {};
   for (const raw of members) {
     const n = Number(raw);
-    const v = latest.has(n) ? latest.get(n) : null;
+    const v = latest.get(n) ?? null;
     out[n] = { confirmed: v === PASS_VERDICT, latest: v };
   }
   return out;
