@@ -203,10 +203,20 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    which is common under concurrent sessions.
 
    Read the PR's merge commit — `gh pr view {number} --repo {owner}/{repo} --json mergeCommit -q
-   .mergeCommit.oid`, `{number}` from this run's `run-state.json` `pr.number` field. **No
-   `mergeCommit` (empty/null output — the PR isn't merged yet, e.g. `armed`/`pending-review`)** —
-   stop here; do not proceed to `discard_changes: true` or step 4's removal at all. A PR that
-   hasn't merged has nothing to prove containment against.
+   .mergeCommit.oid`, `{number}` from this run's `run-state.json` `pr.number` field. The same
+   session that performed the merge already ran `pr-first-merge-post-merge.md` Step 4's
+   unconditional `git fetch origin {integration-branch}` on this path, which is what makes
+   `{merge-commit}`'s object locally available below — but teardown can also be reached from a
+   resumed or cross-session context that never ran that fetch, so run
+   `git fetch origin {integration-branch}` here too, same as `scratch-worktree.md` §6's own
+   ancestry check does, before trusting `{merge-commit}` to resolve locally. **A `gh pr view`
+   command failure (non-zero exit, a transient auth/network/rate-limit error) is not the same
+   signal as a clean call returning no `mergeCommit`** — distinguish the two: a failed command
+   means the check couldn't run at all (retry once, then stop and surface the error) and must
+   never be folded into the "not merged yet" branch below. **No `mergeCommit` from a successful
+   call (empty/null output — the PR isn't merged yet, e.g. `armed`/`pending-review`)** — stop
+   here; do not proceed to `discard_changes: true` or step 4's removal at all. A PR that hasn't
+   merged has nothing to prove containment against.
 
    With a merge commit in hand, run `git merge-tree --write-tree {merge-commit} HEAD` and compare
    its output to `git rev-parse {merge-commit}^{tree}`. **Equal** (and `git status --porcelain`
