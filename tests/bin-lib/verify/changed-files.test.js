@@ -327,6 +327,18 @@ test('mergeNarrowing: a failing working-tree status read degrades to null, never
   assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: statusFails }), null);
 });
 
+test('mergeNarrowing: a failing anchor merge-base or pre-anchor diff degrades to null, never a throw (#3072)', () => {
+  const r = mergeRepo();
+  mergeTrunkWith(r, [['ui/a.js', 'a']]);
+  const files = changedSince(r, r.anchor);
+  const fail = () => { const e = new Error('fatal: bad object'); e.status = 128; throw e; };
+  const mergeBaseFails = (cmd, args, opts) => (args[0] === 'merge-base' && !args.includes('--is-ancestor') ? fail() : r.exec(cmd, args, opts));
+  const preAnchorDiffFails = (cmd, args, opts) => (args[0] === 'diff' && args[args.length - 1] === r.anchor ? fail() : r.exec(cmd, args, opts));
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: mergeBaseFails }), null);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: preAnchorDiffFails }), null);
+  assert.ok(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), 'control: the same repo narrows when git succeeds');
+});
+
 test('mergeNarrowing: no anchor or no integration branch returns null without touching git (#3072)', () => {
   const boom = () => { throw new Error('git must not be called'); };
   assert.strictEqual(mergeNarrowing({ anchor: null, integrationBranch: 'trunk', files: ['a'], execImpl: boom }), null);
