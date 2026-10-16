@@ -269,11 +269,12 @@ const TAP_LOCATION_RE = /location:\s*'.*:(\d+:\d+)'/;
 // so a load failure (`1:1`) and a file-scoped hook failure stay distinct.
 // `conclusiveOnly`: an entry whose diagnostics say it timed out or was
 // cancelled is dropped — it did not finish, which proves nothing about
-// whether it fails.
+// whether it fails. A TAP block's diagnostics are its own top-level YAML keys
+// only — an `error:` value can quote a child's timeout (#3153).
 function failingTestsByFile(text, family, { cwd = process.cwd(), located = false, conclusiveOnly = false, exists } = {}) {
   const byFile = new Map();
-  const add = (rel, name, loc, body) => {
-    if (conclusiveOnly && body.some((l) => INCONCLUSIVE_RE.test(l))) return;
+  const add = (rel, name, loc, diagnostics) => {
+    if (conclusiveOnly && diagnostics.some((l) => INCONCLUSIVE_RE.test(l))) return;
     let named = name !== null && relativize(name, cwd) === rel ? rel : name;
     if (located && named !== null) named = loc ? `${named}@${loc}` : null;
     if (!byFile.has(rel)) byFile.set(rel, []);
@@ -293,7 +294,7 @@ function failingTestsByFile(text, family, { cwd = process.cwd(), located = false
       const [, name, directive] = block.line.replace(/\r$/, '').match(TAP_NAME_RE);
       if (directive) continue;
       const locLine = block.frames.map((l) => l.match(TAP_LOCATION_RE)).find(Boolean);
-      tapBlockFiles(block, cwd, exists).forEach((rel) => add(rel, name, locLine ? locLine[1] : null, block.body));
+      tapBlockFiles(block, cwd, exists).forEach((rel) => add(rel, name, locLine ? locLine[1] : null, block.keys));
     }
   }
   return byFile;
@@ -442,7 +443,8 @@ const TAP_FRAME_KEYS = new Set(['location', 'stack']);
 // its suite), in log order: {line: the `not ok` line, body: the lines after
 // it up to the next test point or `# ` line at any indentation, frames: the
 // body lines that can name this point's own file — every line outside its
-// YAML block, and inside it only the `location:`/`stack:` keys}.
+// YAML block, and inside it only the `location:`/`stack:` keys; keys: its own
+// top-level YAML key lines, never their continuation lines}.
 function tapBlocks(lines) {
   const blocks = [];
   let current = null;
@@ -471,6 +473,7 @@ function tapBlocks(lines) {
       if (keyPad !== null && line.startsWith(keyPad) && line.length > keyPad.length && line[keyPad.length] !== ' ') {
         const key = line.slice(keyPad.length).match(/^([A-Za-z_]+):/);
         yamlKey = key ? key[1] : null;
+        if (current && key) current.keys.push(raw);
       }
       if (current && TAP_FRAME_KEYS.has(yamlKey)) current.frames.push(raw);
       continue;
@@ -483,7 +486,7 @@ function tapBlocks(lines) {
       continue;
     }
     const notOk = line.match(/^(\s*)not ok\b/);
-    if (notOk) { current = { line: raw, body: [], frames: [] }; blocks.push(current); pointPad = notOk[1]; continue; }
+    if (notOk) { current = { line: raw, body: [], frames: [], keys: [] }; blocks.push(current); pointPad = notOk[1]; continue; }
     const ok = line.match(/^(\s*)ok \d/);
     if (ok) { current = null; pointPad = ok[1]; continue; }
     if (/^\s*# /.test(line)) { current = null; pointPad = null; continue; }

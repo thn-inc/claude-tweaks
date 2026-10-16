@@ -632,8 +632,18 @@ test('failingTestsByFile: located keys carry the failing site — file-level one
 
 test('failingTestsByFile: conclusiveOnly drops entries that timed out or were cancelled (#3043)', () => {
   assert.deepStrictEqual(failingTestsByFile(LOCATED_SPEC, 'spec', { cwd: '/r', conclusiveOnly: true }).get('tests/a.test.js'), ['works', 'works']);
-  const tap = "not ok 1 - slow\n  ---\n  failureType: 'testTimeoutFailure'\n  at tests/a.test.js:4:1\n  ...\nnot ok 2 - real\n  at tests/a.test.js:5:1\n# fail 2";
+  const tap = "not ok 1 - slow\n  ---\n  location: 'tests/a.test.js:4:1'\n  failureType: 'testTimeoutFailure'\n  ...\nnot ok 2 - real\n  at tests/a.test.js:5:1\n# fail 2";
+  assert.deepStrictEqual(failingTestsByFile(tap, 'tap').get('tests/a.test.js'), ['slow', 'real'], 'the timed-out block names the file');
   assert.deepStrictEqual(failingTestsByFile(tap, 'tap', { conclusiveOnly: true }).get('tests/a.test.js'), ['real']);
+});
+
+test('#3153: conclusiveOnly reads only a TAP block\'s own top-level keys — a quoted child timeout does not make the parent inconclusive', () => {
+  const quoted = NESTED_CHILD_TAP
+    .replace("      failureType: 'testCodeFailure'", "      failureType: 'testTimeoutFailure'")
+    .replace("      error: 'nope'", "      error: 'test timed out after 100ms'");
+  assert.notStrictEqual(quoted, NESTED_CHILD_TAP);
+  assert.deepStrictEqual(failingTestsByFile(quoted, 'tap', { cwd: '/repo', conclusiveOnly: true }).get('tests/meta.test.js'),
+    ['meta: a spawned fixture run must pass']);
 });
 
 test('specEntryCount still counts back-to-back test at lines (#3043)', () => {
