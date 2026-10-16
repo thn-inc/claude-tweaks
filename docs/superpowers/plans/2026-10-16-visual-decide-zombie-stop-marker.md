@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node.js builtins only (`node:fs`, `node:path`, `node:child_process`) — matches the file's existing #1202 AC 8 constraint.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-16T155630-record-3130/work/3130-spec.md` (materialized from GitHub issue #3130)
+**Spec:** `.claude-tweaks/pipelines/archive/2026-10-16T155630-record-3130/work/3130-spec.md` (materialized from GitHub issue #3130)
 
 ## Global Constraints
 

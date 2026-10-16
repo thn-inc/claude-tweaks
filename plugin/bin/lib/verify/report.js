@@ -53,6 +53,10 @@ function entryFor(check) {
     failingRegion: check.failingRegion === undefined ? null : check.failingRegion,
   };
   if (check.spawnError !== undefined) entry.spawnError = check.spawnError;
+  // #3063: a null exitCode already fails/never-stamps (see `pass` below) —
+  // this just names why, so report.json distinguishes a hang from any other
+  // spawn-less failure.
+  if (check.timedOut) entry.timedOut = true;
   if (check.counts !== undefined && check.counts !== null) entry.counts = check.counts;
   if (check.flakyRetried && check.flakyRetried.length) entry.flakyRetried = check.flakyRetried;
   if (check.retryFailed && check.retryFailed.length) entry.retryFailed = check.retryFailed;
