@@ -102,7 +102,7 @@ Resolve cross-lens disagreement deterministically. When two reviewer lenses (sec
 The dispatcher scans findings across lenses. If two findings from different lenses share:
 
 - **Exact path** match, and
-- **Line within ±5** (looser tolerance than reproduction — "same region of code"), and
+- **Line within ±5** (looser than reproduction's ±2, and with no substance gate — "same region of code"), and
 - **Contradicting verdicts** (e.g., one says "issue", one says "no issue", or differing severities across bucket boundaries),
 
 then debate is dispatched on that pair.

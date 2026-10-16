@@ -402,6 +402,43 @@ test('reproduction (#2955): findingsMatch is untouched — identical text 3 line
   assert.strictEqual(c.findingsMatch(a, b), false);
 });
 
+test('reproduction (#2955): a wide-band pair never takes a B finding another A finding reported on the same line', () => {
+  const a = [
+    { path: 'src/run.js', line: 100, severity: 'high', text: WIDE_SAME_A },
+    { path: 'src/run.js', line: 104, severity: 'high', text: WIDE_SAME_A },
+  ];
+  const b = [{ path: 'src/run.js', line: 104, severity: 'high', text: WIDE_SAME_A }];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.deepStrictEqual(confirmed.map((f) => f.line), [104]);
+  assert.deepStrictEqual(unconfirmed.map((f) => `${f.source}:${f.line}`), ['A:100']);
+});
+
+test('reproduction (#2955): wide-band score ties break by the smaller line delta', () => {
+  const a = [{ path: 'src/run.js', line: 100, severity: 'high', text: WIDE_SAME_A }];
+  const b = [
+    { path: 'src/run.js', line: 104, severity: 'high', text: WIDE_SAME_A },
+    { path: 'src/run.js', line: 103, severity: 'high', text: WIDE_SAME_A },
+  ];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.strictEqual(confirmed.length, 1);
+  assert.deepStrictEqual(unconfirmed.map((f) => `${f.source}:${f.line}`), ['B:104']);
+});
+
+test('reproduction (#2955): with no wide twin, a ±2 different-substance neighbour still yields the #1980 coincidence pair', () => {
+  const a = [{ path: 'src/run.js', line: 120, severity: 'high', text: WIDE_SAME_A }];
+  const b = [
+    { path: 'src/run.js', line: 121, severity: 'high', text: WIDE_DIFFERENT },
+    { path: 'src/run.js', line: 124, severity: 'high', text: WIDE_DIFFERENT },
+  ];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.strictEqual(confirmed.length, 0);
+  const fromA = unconfirmed.find((f) => f.source === 'A');
+  assert.deepStrictEqual(fromA.nearLocation, { source: 'B', path: 'src/run.js', line: 121 });
+  const far = unconfirmed.find((f) => f.source === 'B' && f.line === 124);
+  assert.strictEqual(far.nearLocation, undefined);
+  assert.strictEqual(unconfirmed.length, 3);
+});
+
 test('reproduction: one-side-only finding → unconfirmed with STAGED entry matching the documented schema', () => {
   const a = [{ path: 'src/auth.ts', line: 42, severity: 'critical', text: 'only-A' }];
   const b = [];
@@ -1179,5 +1216,21 @@ test('prose twins state the two-tier line rule with the code\'s own values (#295
   assert.ok(confirmedBullet, 'step3-lens-dispatch.md confirmed-finding bullet must exist');
   for (const value of [near, wide, floor]) {
     assert.ok(confirmedBullet.includes(value), `confirmed-finding bullet must state ${value}`);
+  }
+
+  const straddleBullet = dispatch
+    .split('\n')
+    .find((l) => l.startsWith("> - Findings present in both agents' outputs but straddling a severity-bucket boundary"));
+  assert.ok(straddleBullet, 'step3-lens-dispatch.md severity-straddle bullet must exist');
+  for (const value of [near, wide]) {
+    assert.ok(straddleBullet.includes(value), `severity-straddle bullet must state ${value}`);
+  }
+
+  const coincidenceBullet = dispatch
+    .split('\n')
+    .find((l) => l.startsWith('> - Findings at the same location (path exact, line ±2) but from different substance'));
+  assert.ok(coincidenceBullet, 'step3-lens-dispatch.md #1980 coincidence bullet must exist');
+  for (const value of [near, wide, floor]) {
+    assert.ok(coincidenceBullet.includes(value), `#1980 coincidence bullet must state ${value}`);
   }
 });

@@ -302,28 +302,27 @@ function categoriseReproduction(agentAFindings, agentBFindings) {
   const matchedB = new Set(); // B indices that ended up paired into a confirmed entry
   const consumedB = new Set(); // B indices already emitted (near-location case) — never pair, never re-emit
   const normalizedB = agentBFindings.map((rawFb) => normalizeFinding(rawFb));
+  // #2955: A findings with no eligible ±2 partner. They are retried against
+  // the wide band only after every ±2 pairing has claimed its B finding, so a
+  // wide-band pair never takes a B finding another A finding reported on
+  // (nearly) the same line. `coincidence` is the ±2 near-location partner
+  // reserved for the #1980 outcome in case the wide band finds no twin.
+  const deferredA = [];
 
   for (const rawFa of agentAFindings) {
     const fa = normalizeFinding(rawFa);
-    // #1980: gather every same-location B candidate (±2, or the #2955 wide band) not already spoken for,
+    // #1980: gather every same-location B candidate not already spoken for,
     // rather than stopping at the first (location-only) match — location
     // alone is no longer sufficient to pick a pairing.
     const candidates = [];
     normalizedB.forEach((fb, i) => {
       if (matchedB.has(i) || consumedB.has(i)) return;
-      const score = substanceSimilarity(fa, fb);
-      if (!sameLocation(fa, fb, LINE_TOLERANCE_REPRODUCTION)) {
-        // #2955: the wide band. A pair here is a candidate only on known,
-        // strong substance agreement. Anything else is not a candidate at
-        // all, so it never becomes a #1980 nearLocation coincidence below.
-        if (!sameLocation(fa, fb, LINE_TOLERANCE_REPRODUCTION_WIDE)) return;
-        if (score === null || score < SUBSTANCE_SIMILARITY_WIDE_MIN) return;
-      }
-      candidates.push({ index: i, finding: fb, substance: sameSubstance(fa, fb), score });
+      if (!sameLocation(fa, fb, LINE_TOLERANCE_REPRODUCTION)) return;
+      candidates.push({ index: i, finding: fb, substance: sameSubstance(fa, fb), score: substanceSimilarity(fa, fb) });
     });
 
     if (candidates.length === 0) {
-      unconfirmed.push({ ...fa, source: 'A' });
+      deferredA.push({ fa, coincidence: null });
       continue;
     }
 
@@ -350,19 +349,51 @@ function categoriseReproduction(agentAFindings, agentBFindings) {
       // the coincidence #1980 fixes: do NOT merge. Both sides surface in
       // unconfirmed, each pointing at the other via `nearLocation`, so a
       // reviewer sees the coincidence instead of one finding silently
-      // vanishing.
+      // vanishing. #2955: the partner is reserved now, as before, but the
+      // pair is emitted only after the wide band has had its chance to find
+      // A's real twin.
       const chosen = candidates[0];
+      consumedB.add(chosen.index);
+      deferredA.push({ fa, coincidence: chosen });
+    }
+  }
+
+  // #2955: the wide band. A deferred A finding pairs with a B finding 3-5
+  // lines away only on known, strong substance agreement; anything else is
+  // not a candidate at all, so it never becomes a #1980 coincidence. Ties
+  // break by the smaller line delta.
+  for (const { fa, coincidence } of deferredA) {
+    let best = null;
+    normalizedB.forEach((fb, i) => {
+      if (matchedB.has(i) || consumedB.has(i)) return;
+      if (!sameLocation(fa, fb, LINE_TOLERANCE_REPRODUCTION_WIDE)) return;
+      const score = substanceSimilarity(fa, fb);
+      if (score === null || score < SUBSTANCE_SIMILARITY_WIDE_MIN) return;
+      const delta = Math.abs(fa.line - fb.line);
+      if (best === null || score > best.score || (score === best.score && delta < best.delta)) {
+        best = { index: i, finding: fb, score, delta };
+      }
+    });
+
+    if (best !== null) {
+      confirmed.push(reconcileSeverity(fa, best.finding));
+      matchedB.add(best.index);
+      // A found its twin, so the reserved neighbour is not a coincidence
+      // partner: release it to surface as its own plain unconfirmed entry.
+      if (coincidence) consumedB.delete(coincidence.index);
+    } else if (coincidence) {
       unconfirmed.push({
         ...fa,
         source: 'A',
-        nearLocation: { source: 'B', path: chosen.finding.path, line: chosen.finding.line },
+        nearLocation: { source: 'B', path: coincidence.finding.path, line: coincidence.finding.line },
       });
       unconfirmed.push({
-        ...chosen.finding,
+        ...coincidence.finding,
         source: 'B',
         nearLocation: { source: 'A', path: fa.path, line: fa.line },
       });
-      consumedB.add(chosen.index);
+    } else {
+      unconfirmed.push({ ...fa, source: 'A' });
     }
   }
 
