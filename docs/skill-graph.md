@@ -449,6 +449,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `_shared/learning-routing.md` | Lens 3a records a `review/skill` ledger entry without classifying it — `/wrap-up`'s Skills curation row classifies it afterward through this contract, routing a claude-tweaks-skill finding to D5 rather than a project-skill update. |
 | `_shared/materiality-floor.md` | Step 3 Routing's Defer and Capture branches consult this floor before composing a record — a below-floor, non-`tangential` finding routes to the digest container instead. |
 | `_shared/scope-resolution.md` | Input case 7's bare invocation resolves changed files by this deterministic ladder; mode selection (code vs full) stays review's own. |
+| `_shared/subagent-dispatch-core.md` | Step 3's lens, debate, refutation, and gap-sweep dispatches take their Working Directory, Foreground Execution, and Model Selection rules from this file through the composed review-dispatch bundle. Since #3001 they also inline the `READ-ONLY REVIEW:` line from its Read-only Reviewer Discipline section verbatim into every prompt, outside the byte-identical Calibration/Output block. `/review` Step 3 is that section's only consumer: it never applies to an implementer, test, or QA dispatch. The post-fan-out sweep's leftover-listener check (`step3-lens-dispatch.md`) backs the rule up. It reports any new listening `command:port` in the summary's `Fan-out leftovers` section and never kills anything. |
 
 ## routine
 
