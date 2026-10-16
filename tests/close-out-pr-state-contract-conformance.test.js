@@ -10,10 +10,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const CLOSE_OUT = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', 'dispatch', 'close-out.md'), 'utf8');
-const STEP_2 = CLOSE_OUT.slice(CLOSE_OUT.indexOf('2. **Re-check mergeability'), CLOSE_OUT.indexOf('3. **Convert draft to ready'));
+const STEP_2_START = CLOSE_OUT.indexOf('2. **Re-check mergeability');
+const STEP_2_END = CLOSE_OUT.indexOf('3. **Convert draft to ready');
+const STEP_2 = CLOSE_OUT.slice(STEP_2_START, STEP_2_END);
 
 test('close-out step 2 is locatable', () => {
-  assert.ok(STEP_2.length > 0, 'step 2 span not found — the heading text moved');
+  assert.ok(STEP_2_START >= 0, 'step 2 heading not found — the heading text moved');
+  assert.ok(STEP_2_END > STEP_2_START, 'step 3 heading not found after step 2 — the span would be wrong');
 });
 
 test('close-out step 2 names the positional signature', () => {

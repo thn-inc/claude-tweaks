@@ -425,7 +425,7 @@ test('by-number resolvers: misordered/object-shaped calls -> invalid-arguments, 
 test('by-number resolvers: non-numeric, negative, and fractional numbers -> invalid-arguments, no gh call (#3029)', () => {
   const spy = installArgvSpy({ number: 42, state: 'OPEN' });
   try {
-    for (const bad of ['abc', -5, 3.5, '042', '4 2', {}]) {
+    for (const bad of ['abc', -5, 3.5, '042', '4 2', {}, Object.create(null)]) {
       assert.equal(resolvePrStateByNumber('/tmp', bad), 'invalid-arguments', `pr: ${JSON.stringify(bad)}`);
       assert.equal(resolveIssueStateByNumber('/tmp', bad), 'invalid-arguments', `issue: ${JSON.stringify(bad)}`);
     }

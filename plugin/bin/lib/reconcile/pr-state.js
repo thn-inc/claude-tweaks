@@ -122,7 +122,9 @@ function resolvePrState(repoRoot, branch, opts) {
 // JSON-parsed numbers.
 const POSITIVE_INTEGER_RE = /^[1-9]\d*$/;
 function byNumberArgsValid(repoRoot, number) {
-  return typeof repoRoot === 'string' && POSITIVE_INTEGER_RE.test(String(number));
+  return typeof repoRoot === 'string'
+    && (typeof number === 'number' || typeof number === 'string')
+    && POSITIVE_INTEGER_RE.test(String(number));
 }
 
 // #1962: archive-merged.js's main sweep derives a branch name to query by
