@@ -274,3 +274,13 @@ test('claim-targets.md mandates a decisions.md log line on successful claim, and
   assert.match(claimSection, /2026-09-14/);
   assert.match(claimSection, /#2329/);
 });
+
+test('AC1.1, AC2.1: multi-spec Validation cites the merge-state gate sub-file, which records a no-ask auto split (#2733)', () => {
+  assert.match(read('plugin/skills/flow/multi-spec.md'), /multispec-merge-gate\.md/);
+  assert.match(read('plugin/skills/flow/SKILL.md'), /multispec-merge-gate\.md/);
+  const gate = read('plugin/skills/flow/multispec-merge-gate.md');
+  assert.match(gate, /preflight-records\.js[^\n]*--merge-gate/);
+  assert.match(gate, /never calls `AskUserQuestion`/);
+  assert.match(gate, /before Step 2\.8/);
+  assert.match(gate, /must be merged first/);
+});
