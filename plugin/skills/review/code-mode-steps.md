@@ -64,7 +64,7 @@ Verify that `/claude-tweaks:test` has passed before proceeding to analytical rev
 
 ### In `/claude-tweaks:flow` pipeline:
 
-Check for `TEST_PASSED=true` in pipeline context. If present, add one belt-and-braces read of the runner's own artifact (#1921) — `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status` (one plain command; prints `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, reportPath, legacy}`, exit 0 always). `verifiedHead: true` (a clean HEAD covered by a full pass — a baseline-adjudicated one included, `test/verification.md`'s Baseline adjudication — or by a passing scoped run anchored on a still-valid `fullSha` — `match` alone would re-trigger a scoped run forever, #1923) → proceed to Step 2. `verifiedHead: false` with `TEST_PASSED=true` is reported, never silently accepted: "TEST_PASSED set but the runner stamp does not verify HEAD ({stamp-sha}, {scope} vs {head}) — re-running `/claude-tweaks:test`", then re-trigger `/claude-tweaks:test` once and re-check.
+Check for `TEST_PASSED=true` in pipeline context. If present, add one belt-and-braces read of the runner's own artifact (#1921) — `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status` (one plain command; prints `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, reportPath, legacy}`, exit 0 always). `verifiedHead: true` (a clean HEAD covered by a full pass — a baseline-adjudicated one included, `test/verification.md`'s Baseline adjudication — or by a passing scoped run anchored on a still-valid `fullSha` — `match` alone would re-trigger a scoped run forever, #1923) → run `_shared/pr-check-gate.md`'s read (catches a check that went red after `/test` ran), then proceed to Step 2 unless it is `red`. `verifiedHead: false` with `TEST_PASSED=true` is reported, never silently accepted: "TEST_PASSED set but the runner stamp does not verify HEAD ({stamp-sha}, {scope} vs {head}) — re-running `/claude-tweaks:test`", then re-trigger `/claude-tweaks:test` once and re-check.
 
 ### Standalone (outside `/claude-tweaks:flow`):
 
@@ -98,6 +98,7 @@ After confirming `TEST_PASSED`, read the open items ledger (`docs/plans/*-ledger
 | Result | Action |
 |--------|--------|
 | `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: true` | Proceed to Step 2 |
+| `pr-checks.js` reports `red` (`_shared/pr-check-gate.md`) | **STOP** — name each failing check and its URL; fix forward and re-run `/claude-tweaks:test` |
 | `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: false` | Report it (stamp sha/scope vs HEAD), re-trigger `/claude-tweaks:test`, re-check |
 | Runner stamp `verifiedHead: true` (standalone) | Proceed to Step 2 |
 | `/claude-tweaks:test` triggered and passes | Proceed to Step 2 |

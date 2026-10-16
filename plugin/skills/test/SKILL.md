@@ -72,6 +72,7 @@ When running inside a `/claude-tweaks:flow` pipeline, `/test` reads context from
 - No `VERIFICATION_PASSED` + `skip-qa` → run types/lint/tests but skip QA story validation
 - No `VERIFICATION_PASSED` (and no `skip-qa`) + runner stamp verifying `HEAD` (`verify.js --stamp-status` → `verifiedHead: true`, per `verification.md`'s Skip-if-recent artifact branch) → skip verification, report "runner stamp {sha} ({scope}) verifies HEAD", run QA if stories exist (selected per bullet 2's rule), set `TEST_PASSED=true`
 - No `VERIFICATION_PASSED` (default) → run full suite (and QA if stories exist when mode is `all`)
+- **PR-check gate (#3013):** before any bullet above sets `TEST_PASSED=true`, run `_shared/pr-check-gate.md`'s read — a `red` PR check at HEAD fails the gate like a local test failure (`TEST_PASSED` stays unset); `pending`/`stale` pass with a caveat; every other state fails open with a `SKIP` trace.
 
 ## Step 0: PR-Bookkeeping Precondition Check
 

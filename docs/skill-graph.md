@@ -448,6 +448,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `_shared/fast-lane-digest.md` | Condensed cap/skip lookup for `ceremony-profile: fast-lane`, read once instead of opening `code-mode-steps.md`'s Ceremony-Aware Step Selection section in full. Shared with `/wrap-up` (`ceremony-derivation.md`, `skill-curation.md`, `docs-health-integration.md`) — owned here as the alphabetically-first of the two citing skills. |
 | `_shared/learning-routing.md` | Lens 3a records a `review/skill` ledger entry without classifying it — `/wrap-up`'s Skills curation row classifies it afterward through this contract, routing a claude-tweaks-skill finding to D5 rather than a project-skill update. |
 | `_shared/materiality-floor.md` | Step 3 Routing's Defer and Capture branches consult this floor before composing a record — a below-floor, non-`tangential` finding routes to the digest container instead. |
+| `_shared/pr-check-gate.md` | Step 1.5's Test Gate runs this read after the runner stamp verifies HEAD; a `red` run-PR check stops review before Step 2 (#3013). Shared with `/test` (its pipeline gate runs the same read before setting `TEST_PASSED`) — owned here as the alphabetically-first of the two citing skills. Classification is `_shared/pr-first-merge.md` Step 2.5's, via `bin/pr-checks.js` / `bin/lib/pr-checks/classify.js`. |
 | `_shared/scope-resolution.md` | Input case 7's bare invocation resolves changed files by this deterministic ladder; mode selection (code vs full) stays review's own. |
 
 ## routine
