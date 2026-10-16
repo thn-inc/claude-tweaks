@@ -53,6 +53,9 @@ function cachePath(root) {
 //      lastHealthCheckOkAt: number|null, lastOriginHeadRepairFailedAt: number|null }
 // Absent file or corrupt JSON both fail closed to empty defaults — a cache
 // is pure optimization; never let a bad read block or skew reconcile().
+// Only the keys parsed below survive a read, and writers persist
+// `{ ...readCache(root), … }` — a new cache key must be added here too, or
+// the next unrelated write silently drops it (#3132).
 function readCache(root) {
   const empty = {
     lastRunAt: null, claimShas: {}, residueFailures: {}, lastHealthCheckOkAt: null,
