@@ -923,6 +923,10 @@ async function main(argv) {
       process.stdout.write(`${renderCandidateRefusal('close-run', candidates)}\nRun not closed.\n`);
     } else if (runDir) {
       const r = closeRunState(runDir, { explicit, callerIdentity });
+      if (r.status === 'missing') {
+        process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} no longer exists on disk (already archived or removed) — run not closed\n`);
+        return 0;
+      }
       if (r.status === 'refused-foreign') {
         process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} was recorded by another session — refusing to close it without an explicit --run\n`);
         return 0;

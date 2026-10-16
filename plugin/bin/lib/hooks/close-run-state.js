@@ -31,6 +31,9 @@ function hasUnarchivedWork(runDir) {
 }
 
 // Returns one of:
+//   { status: 'missing' }
+//     — `runDir` does not exist on disk (already archived, or removed by
+//       some other means) — nothing was read or written (#3198).
 //   { status: 'refused-foreign' }
 //     — an implicit (`explicit: false`) run resolution landed on a run
 //       recorded by a different, still-active session (or bound to a
@@ -54,6 +57,13 @@ function hasUnarchivedWork(runDir) {
 function closeRunState(runDir, {
   explicit = false, callerIdentity = null, checkLiveWorktree = true,
 } = {}) {
+  // #3198: a run dir can be removed (archived) by a concurrent, unlocked
+  // reconcile pass between whatever resolved `runDir` for this call and
+  // this point. Refuse rather than let a downstream write recreate it —
+  // matching log-decision.js's own "run dir does not exist" refusal.
+  if (!fs.existsSync(runDir)) {
+    return { status: 'missing' };
+  }
   const prev = ctxLib.readRunState(runDir);
   const verdict = ctxLib.classifyOwnership(callerIdentity || {}, prev);
   const foreignOwner = verdict === 'foreign';
