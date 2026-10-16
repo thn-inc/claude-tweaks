@@ -1,7 +1,7 @@
 ---
 name: flow
 description: Use when you want to run an automated build → test → review → polish → wrap-up pipeline on a work record without stopping between steps. Accepts record references (#N) only — design docs must be decomposed via /claude-tweaks:specify first.
-argument-hint: "#N[,#M...] [worktree|current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto|interactive|hybrid|confirm] [keep-going] [cleanup-only] [step1,step2,step3]"
+argument-hint: "#N[,#M...] [worktree|current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto|interactive|hybrid|confirm] [keep-going] [parallel] [cleanup-only] [step1,step2,step3]"
 ---
 
 # Flow — Automated Pipeline
@@ -29,12 +29,12 @@ Run multiple lifecycle steps in sequence without stopping between them. Each ste
 
 ## Input
 
-`$ARGUMENTS` is parsed as `#N[,#M...] [worktree|current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto|interactive|hybrid|confirm] [keep-going] [cleanup-only] [step1,step2,step3]` — see Syntax and Arguments below for what each token resolves to.
+`$ARGUMENTS` is parsed as `#N[,#M...] [worktree|current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto|interactive|hybrid|confirm] [keep-going] [parallel] [cleanup-only] [step1,step2,step3]` — see Syntax and Arguments below for what each token resolves to.
 
 ## Syntax
 
 ```
-/claude-tweaks:flow #N[,#M...] [worktree|current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto|interactive|hybrid|confirm] [keep-going] [cleanup-only] [step1,step2,step3]
+/claude-tweaks:flow #N[,#M...] [worktree|current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto|interactive|hybrid|confirm] [keep-going] [parallel] [cleanup-only] [step1,step2,step3]
 ```
 
 All bracketed tokens are optional and order-independent. `worktree` is the default git strategy when neither `worktree` nor `current-branch` is set. `keep-going` applies to multi-record runs only. Design doc paths are rejected at Step 2.7 — run `/claude-tweaks:specify` first.
@@ -94,6 +94,7 @@ If no UI files changed, or `no-stories` is set, the stories step is skipped.
 /claude-tweaks:flow 42 no-creative                                  → full pipeline, skip the end-of-run creative-opportunities survey
 /claude-tweaks:flow 42,45,48                                        → multi-spec sequential, all specs in one shared worktree
 /claude-tweaks:flow 42,45,48 keep-going                             → multi-spec, continue past HARD-GATE failures (independent specs only)
+/claude-tweaks:flow 42,45,48 parallel                               → multi-spec, independent records build+test concurrently in waves; one PR
 /claude-tweaks:flow meal planning                                   → resolve to spec by name (rejected if only design doc exists)
 /claude-tweaks:flow docs/superpowers/specs/migration-design.md      → REJECTED — run /specify first; flow only accepts record references and specs (auto does not silence this)
 ```

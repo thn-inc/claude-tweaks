@@ -20,6 +20,8 @@ The `{feature}` name matches the execution plan or spec topic. One ledger per pi
 
 — inside this run's own pipeline directory (`.claude-tweaks/pipelines/{run-id}/`), which is already gitignored and commit-exempt (`_shared/auto-mode-contract.md`'s "Pipeline run directory" section) and already this run's own audit-trail home. Never committed, never a `docs/plans/*-ledger.md` glob match. **Resolution rule for a caller reading "the active ledger for this run":** when a run dir resolves (`$PIPELINE_RUN_DIR` or the most-recent-matching run), check `{run-dir}/ledger.md` for existence first — if it exists, that's the active ledger; if not, fall back to the `docs/plans/*-ledger.md` glob. A caller with no run dir at all (no `$PIPELINE_RUN_DIR` resolves, and no run dir can be inferred) always uses `docs/plans/` only, since there is no run-dir-scoped alternative to check.
 
+**Parallel-wave member exception (#2677).** Under `MULTISPEC_PARALLEL_WAVE=1` — a `/claude-tweaks:flow` `parallel` wave member building in its own isolated worktree — the ledger is `{run-dir}/ledger.md` too (`$PIPELINE_RUN_DIR` is that member's `spec-{N}/`), never a `docs/plans/` file, and the orchestrator folds its rows into the run's active ledger at merge-back (`flow/multispec-parallel-waves.md`).
+
 ### Format
 
 ```markdown

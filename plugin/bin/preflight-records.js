@@ -17,7 +17,8 @@
 // --waves (#2677) adds waves {waves, parallel} — the opt-in multi-spec parallel-wave plan (bin/lib/preflight-records/waves.js).
 // Exit 0 success; 1 any record fetch (or the native dependency GraphQL call)
 // failed — every failing record named, all-at-once; 2 malformed invocation
-// (no numbers, non-positive, unresolvable owner/repo under native mode).
+// (no numbers, non-positive, unresolvable owner/repo under native mode), or a
+// --waves dependency cycle among the requested records.
 'use strict';
 
 const fs = require('fs');
@@ -165,6 +166,7 @@ function run(argv, deps = realDeps) {
     try {
       envelope.waves = planParallelWaves({ records, numbers });
     } catch (err) {
+      if (!/^dependency cycle through #/.test(err && err.message)) throw err;
       deps.stderr(`preflight-records.js: ${err.message}\n`);
       return 2;
     }

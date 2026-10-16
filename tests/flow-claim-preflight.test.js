@@ -298,3 +298,22 @@ test('AC1.1, AC6.1: parallel waves — decision sub-file, opt-in token, merge-ba
   assert.match(doc, /spec-\{N\}\/ledger\.md/);
   assert.match(doc, /Rejected — one shared worktree/);
 });
+
+test('parallel waves run on isolated agent worktrees, over the merge-gate kept set, with a consumed member marker (#2677 final review)', () => {
+  const { extractArgumentHint } = require('../plugin/bin/lib/skill-audit/argument-hint');
+  const doc = read('plugin/skills/flow/multispec-parallel-waves.md');
+  assert.match(doc, /isolation: "worktree"/);
+  assert.match(doc, /worktreeBranch/);
+  assert.match(doc, /mergeGate\.kept/);
+  assert.match(doc, /^OUTCOME: built-tested \| hard-gate-failed \| blocked$/m);
+  assert.doesNotMatch(doc, /adopt-or-create naming|\{shared-branch\}-spec-\{N\}/);
+  for (const file of [
+    'plugin/skills/build/worktree-setup.md',
+    'plugin/skills/build/SKILL.md',
+    'plugin/skills/test/SKILL.md',
+    'plugin/skills/_shared/ledger-format.md',
+  ]) {
+    assert.match(read(file), /MULTISPEC_PARALLEL_WAVE/, `${file} must consume MULTISPEC_PARALLEL_WAVE`);
+  }
+  assert.match(extractArgumentHint(read('plugin/skills/flow/SKILL.md')), /\[parallel\]/);
+});
