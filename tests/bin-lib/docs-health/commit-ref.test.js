@@ -196,3 +196,63 @@ test('two real child processes racing verifyCommits against the same shallow clo
   assert.strictEqual(resultA.shallow.deepened, true);
   assert.strictEqual(resultB.shallow.deepened, true);
 });
+
+test('two real child processes racing verifyCommits against a shallow LINKED WORKTREE: exactly one real fetch, both classify correctly (#2988 review finding)', async () => {
+  // A linked worktree's `.git` is a FILE (a `gitdir:` pointer), not a
+  // directory -- this is the shape `path.join(root, '.git', lockFile)`
+  // would silently fail open against (ENOTDIR), and exactly the shape
+  // this project's own pipeline worktree runs use. Shallow state lives in
+  // the shared git-common dir, so a worktree added off a shallow clone is
+  // shallow too, which lets the same race shape as the plain-clone test
+  // above exercise the lock's git-common-dir resolution specifically.
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  const worktreeDir = path.join(tmpDir('worktree'), 'wt');
+  git(dir, ['worktree', 'add', '-q', '--detach', worktreeDir, 'HEAD']);
+  assert.ok(fs.statSync(path.join(worktreeDir, '.git')).isFile(),
+    'sanity check: a linked worktree\'s .git must be a file, not a directory');
+
+  const counterPath = path.join(tmpDir('counter'), 'fetch-count.txt');
+  fs.writeFileSync(counterPath, '');
+  const commitRefModule = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'docs-health', 'commit-ref.js');
+
+  const raceWorkerScript = (hash) => `
+    const fs = require('fs');
+    const { verifyCommits, defaultGit } = require(${JSON.stringify(commitRefModule)});
+    function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+    const countingGit = (args, opts) => {
+      if (args.includes('fetch')) {
+        fs.appendFileSync(${JSON.stringify(counterPath)}, '1\\n');
+        sleepSync(300);
+      }
+      return defaultGit(args, opts);
+    };
+    const r = verifyCommits({
+      root: ${JSON.stringify(worktreeDir)}, hashes: [${JSON.stringify(hash)}],
+      integrationBranch: 'main', git: countingGit,
+    });
+    process.stdout.write(JSON.stringify(r));
+  `;
+
+  function runChild(hash) {
+    return new Promise((resolve, reject) => {
+      const p = spawn(process.execPath, ['-e', raceWorkerScript(hash)]);
+      let stdout = ''; let stderr = '';
+      p.stdout.on('data', (d) => { stdout += d; });
+      p.stderr.on('data', (d) => { stderr += d; });
+      p.on('close', (code) => (code === 0
+        ? resolve(JSON.parse(stdout))
+        : reject(new Error(`child exited ${code}: ${stderr}`))));
+      p.on('error', reject);
+    });
+  }
+
+  const [resultA, resultB] = await Promise.all([runChild(origin.root), runChild(origin.sideOnly)]);
+
+  const fetchCount = fs.readFileSync(counterPath, 'utf8').split('\n').filter(Boolean).length;
+  assert.strictEqual(fetchCount, 1, 'exactly one real git fetch --unshallow must be issued across both racing processes against the linked worktree');
+  assert.deepStrictEqual(resultA.commits, [{ input: origin.root, outcome: 'reachable', sha: origin.root }]);
+  assert.deepStrictEqual(resultB.commits, [{ input: origin.sideOnly, outcome: 'exists-unreachable', sha: origin.sideOnly }]);
+  assert.strictEqual(resultA.shallow.deepened, true);
+  assert.strictEqual(resultB.shallow.deepened, true);
+});

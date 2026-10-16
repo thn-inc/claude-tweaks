@@ -48,10 +48,12 @@ const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 // black-holed remote ends in unverifiable rather than a hang.
 const DEEPEN_TIMEOUT_MS = 120000;
 
-// Basename of the cross-process lock file-lock.js creates under
-// `{root}/.git/` to serialize concurrent --unshallow fetches against the
-// same repo (#2988). Exported so tests construct the exact same path the
-// implementation below uses, rather than duplicating the literal.
+// Basename of the cross-process lock file-lock.js creates inside the
+// repo's real git directory -- resolved via gitCommonDir below, never
+// assumed to be `{root}/.git/` -- to serialize concurrent --unshallow
+// fetches against the same repo (#2988). Exported so tests construct the
+// exact same path the implementation below uses, rather than duplicating
+// the literal.
 const DEEPEN_LOCK_FILENAME = 'docs-health-verify-commit.lock';
 
 // Probe-style runner: calls here are expected to fail routinely (a missing
@@ -158,6 +160,19 @@ function classifyOne(git, root, input, integrationRef) {
   }
 }
 
+// Resolves the absolute path to this repo's real (git-common) directory
+// -- shared by every linked worktree of the same repo, unlike each
+// worktree's own private per-worktree directory -- so a lock keyed off it
+// serializes correctly whether `root` is a normal repo, a linked worktree
+// (where `.git` is a *file* holding a `gitdir:` pointer, not a directory;
+// `path.join(root, '.git', ...)` would hit ENOTDIR there and silently
+// fail open), or a subdirectory of either (review finding, #2988). This
+// is also where git's own `shallow` file and its own internal locks (e.g.
+// `shallow.lock`) actually live.
+function gitCommonDir(git, root) {
+  return git(['-C', root, 'rev-parse', '--path-format=absolute', '--git-common-dir']).trim();
+}
+
 // Serializes the --unshallow fetch for `root` across every concurrent
 // caller -- across OS processes via file-lock.js's cross-process mkdir
 // mutex (#2988): under docs-health --budget > 1, concurrent judge agents
@@ -169,21 +184,34 @@ function classifyOne(git, root, input, integrationRef) {
 // whichever caller actually performed it, or the already-deepened state
 // found on re-check) or { error: string } on failure.
 function deepenShallowClone(git, root, remote) {
-  const cacheKey = path.resolve(root);
-  const lockPath = path.join(cacheKey, '.git', DEEPEN_LOCK_FILENAME);
-  // file-lock's default wait (500ms) is far too short to block a waiting
-  // caller through another process's own DEEPEN_TIMEOUT_MS-bounded fetch
-  // -- override it just for this acquisition, restoring whatever the
-  // calling process had (or lacked) immediately after, so this module
-  // never leaves a process-wide env mutation behind.
-  const prevWait = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
-  process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = String(DEEPEN_TIMEOUT_MS);
-  let held;
+  // By the time this runs, `root` is already a confirmed git repo --
+  // verifyCommits only calls here after its own isShallow(git, root)
+  // succeeded -- so gitCommonDir failing here is unexpected. Still, a
+  // locking-infrastructure problem must never break the underlying
+  // classification: fall back to the unlocked fail-open posture (same
+  // contract as acquireLock's own wait-timeout return) rather than hard-
+  // erroring the whole deepen attempt over it.
+  let lockPath = null;
   try {
-    held = acquireLock(lockPath);
-  } finally {
-    if (prevWait === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
-    else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prevWait;
+    lockPath = path.join(gitCommonDir(git, root), DEEPEN_LOCK_FILENAME);
+  } catch {
+    lockPath = null;
+  }
+  let held = null;
+  if (lockPath) {
+    // file-lock's default wait (500ms) is far too short to block a waiting
+    // caller through another process's own DEEPEN_TIMEOUT_MS-bounded fetch
+    // -- override it just for this acquisition, restoring whatever the
+    // calling process had (or lacked) immediately after, so this module
+    // never leaves a process-wide env mutation behind.
+    const prevWait = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+    process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = String(DEEPEN_TIMEOUT_MS);
+    try {
+      held = acquireLock(lockPath);
+    } finally {
+      if (prevWait === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+      else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prevWait;
+    }
   }
   try {
     // Re-check after acquiring (or failing to acquire) the lock: another
