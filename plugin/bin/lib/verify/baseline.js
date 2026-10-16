@@ -336,17 +336,21 @@ async function adjudicate({
   const headResolvesDeps = Boolean(env.NODE_PATH) || hasNodeModulesUpward(headDir);
   try {
     if (atBase.some(Boolean)) {
-      // Realpath'd like headDir (#3167): addWorktree may return a symlinked path.
-      scratch = tryRealpath(git.addWorktree(baseSha));
       // While the scratch worktree exists, a Ctrl-C or kill removes it
       // before exiting with the signal's conventional code (128 + signal
       // number) — otherwise the process ends before the `finally` below
       // ever runs, leaving the worktree and its checkout behind with no
-      // trace (#3064). Deregistered in `finally` either way, so a clean
-      // completion never leaks a listener into the next adjudicate() call
-      // in the same process.
-      signalHandlers = Object.entries(SIGNAL_EXIT_CODES).map(([sig, code]) => [sig, () => { git.removeWorktree(scratch); process.exit(code); }]);
+      // trace (#3064). Registered before addWorktree, not after: git
+      // registers the worktree before its synchronous call returns, and a
+      // signal landing in that gap would otherwise take the default action.
+      // With a listener installed, Node defers the signal until the sync call
+      // returns, so `scratch` is already set when the handler runs.
+      // Deregistered in `finally` either way, so a clean completion never
+      // leaks a listener into the next adjudicate() call in the same process.
+      signalHandlers = Object.entries(SIGNAL_EXIT_CODES).map(([sig, code]) => [sig, () => { if (scratch) git.removeWorktree(scratch); process.exit(code); }]);
       for (const [sig, handler] of signalHandlers) process.on(sig, handler);
+      // Realpath'd like headDir (#3167): addWorktree may return a symlinked path.
+      scratch = tryRealpath(git.addWorktree(baseSha));
     }
     const baseDir = scratch && (sub ? path.join(scratch, ...sub.split('/')) : scratch);
     const baseRuns = await pool(work, concurrency, (w, k) => (atBase[k] ? run(w, 'baseline', baseDir) : null));
