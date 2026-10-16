@@ -18,7 +18,7 @@ Evidence (2087-record corpus, 2026-10-16): any ref-plus-"merged" line matched 75
 
 1. Run `node "${CLAUDE_PLUGIN_ROOT}/bin/preflight-records.js" {targets in run order} --merge-gate [--repo owner/name]` — the run's targets only, never the claim step's open-queue extras — and read `mergeGate`.
 2. `deferred` empty → no-op, write nothing.
-3. Otherwise, before Step 2.8 claims anything: continue with `kept` as the run's target list (one remaining record → an ordinary single-record run). Once the run directory exists, write one `AUTO` entry per `_shared/auto-decision-log.md`: `AUTO {time} — Step 1: merge-state gate split #{deferred…} out of the run (#{record} requires #{requires} merged to the integration branch). Re-run after the merge: {rerun}. Reversibility: high.`
-4. Print the same re-run command as a Pipeline Preview footer line: `Deferred until #{requires} merges: {rerun}`.
+3. Otherwise, before Step 2.8 claims anything: continue with `kept` as the run's target list (one remaining record → an ordinary single-record run). Once the run directory exists, write one `AUTO` entry per `_shared/auto-decision-log.md`: `AUTO {time} — Step 1: merge-state gate split #{deferred…} out of the run (#{record} requires #{requires…} merged to the integration branch). Re-run after the merge: {rerun}. Reversibility: high.`
+4. Print the same re-run command as a Pipeline Preview footer line: `Deferred until #{requires…} merge: {rerun}`.
 
 A deferred record is never claimed, so nothing needs releasing.
