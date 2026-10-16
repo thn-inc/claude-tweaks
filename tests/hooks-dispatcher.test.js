@@ -72,7 +72,7 @@ function writeWorktreeAlwaysPolicy(project) {
 }
 
 test('invariant: every event exits 0 on garbage stdin, no stdout noise', () => {
-  for (const ev of ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'subagent-stop']) {
+  for (const ev of ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'post-tool-use-failure', 'subagent-stop']) {
     const r = runHook([ev], { input: '%%%not json%%%' });
     assert.strictEqual(r.code, 0, `${ev} must exit 0 on garbage stdin`);
     if (r.stdout.trim()) assert.doesNotThrow(() => JSON.parse(r.stdout), `${ev} stdout must be empty or valid JSON`);
