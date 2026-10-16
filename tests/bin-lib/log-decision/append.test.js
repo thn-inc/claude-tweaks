@@ -204,9 +204,7 @@ test('appendEntry: concurrent `node bin/log-decision.js` processes against the s
     ], { cwd: root, env: { ...process.env, CLAUDE_TWEAKS_LOCK_WAIT_MS: '60000' } });
     let stderr = '';
     p.stderr.on('data', (d) => { stderr += d; });
-    // 'close', not 'exit' — 'exit' can fire before stdio streams finish delivering
-    // buffered data (Node docs: only 'close' guarantees that), which can truncate a
-    // failing worker's stderr exactly when it's needed for diagnosis.
+    // 'close', not 'exit': only 'close' guarantees stdio has flushed, so a failing worker's stderr is complete.
     p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`worker ${i} exited ${code}: ${stderr}`))));
     p.on('error', reject);
   });
