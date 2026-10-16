@@ -225,3 +225,90 @@ test('regression: a second spec\'s verdict post no longer collides with the firs
   assert.match(findByKind(prComments, 'verdict:2589').body, /BLOCKED/);
   assert.match(findByKind(prComments, 'verdict:2592').body, /PASS/, '#2592\'s comment must be untouched by #2589\'s re-post');
 });
+
+// #2970: the same multi-spec overwrite hazard #2592 fixed for `verdict` was still open for
+// `brief` and `timing` — each spec's wrap-up composed the bare, unqualified marker, so spec
+// B's post-or-update silently overwrote spec A's Verification Brief / timing comment on the
+// shared PR. Fixed by spec-qualifying both markers the same way: `brief:{spec}` / `timing:{spec}`.
+
+test('pr-run-comments.md documents the multi-spec brief and timing marker shape and that single-spec is unchanged', () => {
+  assert.match(COMMENTS, /Multi-spec brief and timing comments/);
+  assert.match(COMMENTS, /run-comment: brief:\{spec\}/);
+  assert.match(COMMENTS, /run-comment: timing:\{spec\}/);
+  assert.ok(
+    COMMENTS.includes('<!-- run-comment: brief -->'),
+    'the plain single-spec brief marker must still be documented, unchanged',
+  );
+  assert.ok(
+    COMMENTS.includes('<!-- run-comment: timing -->'),
+    'the plain single-spec timing marker must still be documented, unchanged',
+  );
+  assert.match(
+    COMMENTS,
+    /one\s+`brief`\s+comment\s+per\s+spec/,
+    'the multi-spec section must state the chosen shape for brief (one comment per spec)',
+  );
+  assert.match(
+    COMMENTS,
+    /one\s+`timing`\s+comment\s+per\s+spec/,
+    'the multi-spec section must state the chosen shape for timing (one comment per spec)',
+  );
+});
+
+test("pr-run-comments.md's Comment kinds table shows both the single-spec and multi-spec brief/timing marker forms", () => {
+  assert.match(COMMENTS, /`brief`.*run-comment: brief:\{spec\}/);
+  assert.match(COMMENTS, /`timing`.*run-comment: timing:\{spec\}/);
+});
+
+test('verification-brief.md composes the spec-qualified brief and timing markers under a multi-spec run', () => {
+  assert.match(BRIEF, /MULTISPEC_PARENT_DIR/);
+  assert.match(BRIEF, /run-comment: brief:\{spec\}/);
+  assert.match(BRIEF, /run-comment: timing:\{spec\}/);
+  assert.match(
+    BRIEF,
+    /basename\(\$PIPELINE_RUN_DIR\)/,
+    'the spec identifier must be derived from this spec\'s own run-dir subdirectory, not a separately threaded value',
+  );
+  assert.ok(
+    BRIEF.includes('<!-- run-comment: brief -->'),
+    'the single-spec brief marker must still be composed unchanged when $MULTISPEC_PARENT_DIR is unset',
+  );
+  assert.ok(
+    BRIEF.includes('<!-- run-comment: timing -->'),
+    'the single-spec timing marker must still be composed unchanged when $MULTISPEC_PARENT_DIR is unset',
+  );
+});
+
+test('regression: a second spec\'s brief/timing post no longer collides with the first spec\'s marker (two-spec-same-PR sequence)', () => {
+  const markerFor = (kind) => `<!-- run-comment: ${kind} -->`;
+  const findByKind = (comments, kind) =>
+    comments.find((c) => c.body.startsWith(markerFor(kind)));
+  const postOrUpdate = (comments, kind, body) => {
+    const existing = findByKind(comments, kind);
+    if (existing) {
+      existing.body = `${markerFor(kind)}\n${body}`;
+    } else {
+      comments.push({ body: `${markerFor(kind)}\n${body}` });
+    }
+    return comments;
+  };
+
+  for (const base of ['brief', 'timing']) {
+    const prComments = [];
+    postOrUpdate(prComments, `${base}:2589`, `#2589 ${base} content`);
+    postOrUpdate(prComments, `${base}:2592`, `#2592 ${base} content`);
+
+    assert.strictEqual(prComments.length, 2, `each spec must get its own ${base} comment`);
+    assert.match(findByKind(prComments, `${base}:2589`).body, /#2589/);
+    assert.match(findByKind(prComments, `${base}:2592`).body, /#2592/);
+
+    postOrUpdate(prComments, `${base}:2589`, `#2589 ${base} content (updated)`);
+    assert.strictEqual(prComments.length, 2, `re-posting #2589's ${base} must edit in place, not append a third comment`);
+    assert.match(findByKind(prComments, `${base}:2589`).body, /updated/);
+    assert.match(
+      findByKind(prComments, `${base}:2592`).body,
+      /#2592/,
+      `#2592's ${base} comment must be untouched by #2589's re-post`,
+    );
+  }
+});

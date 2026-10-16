@@ -298,21 +298,29 @@ gh issue edit {issue} --add-label demo:pending
 ```
 
 **`pr` object present:** the full brief moves to the PR; the issue keeps a one-line pointer
-instead of the whole template.
+instead of the whole template. **Multi-spec marker (#2970):** when `$MULTISPEC_PARENT_DIR` is
+set (a multi-spec `/claude-tweaks:flow` run sharing one PR across specs —
+`flow/multi-spec.md`), the marker is spec-qualified, `<!-- run-comment: brief:{spec} -->`, where
+`{spec}` is this spec's record id (the numeric suffix of `basename($PIPELINE_RUN_DIR)`, the same
+derivation `review/code-mode-steps.md`'s verdict comment uses) — per
+`_shared/pr-run-comments.md`'s "Multi-spec brief and timing comments" section. A single-spec run
+keeps the plain `<!-- run-comment: brief -->` marker unchanged.
 
 ```bash
 printf '<!-- run-comment: brief -->\n\n' | cat - /tmp/verification-brief-{issue}.md > /tmp/pr-brief-{issue}.md
-# find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=brief, against {pr-number}
+# $MULTISPEC_PARENT_DIR set: printf '<!-- run-comment: brief:{spec} -->\n\n' instead, {spec} = basename($PIPELINE_RUN_DIR)'s numeric suffix
+# find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=brief (or brief:{spec} under multi-spec), against {pr-number}
 gh issue comment {issue} --body "Verification Brief posted to PR #{pr-number}: {pr-url}"
 gh issue edit {issue} --add-label demo:pending
 ```
 
-Then post the run's Timing table as the `timing` kind, under the same gate (#1928); a `tokens: transcript not found (...)` line, when present, is posted verbatim with the table:
+Then post the run's Timing table as the `timing` kind, under the same gate (#1928); a `tokens: transcript not found (...)` line, when present, is posted verbatim with the table. The same multi-spec marker rule applies: `<!-- run-comment: timing:{spec} -->` when `$MULTISPEC_PARENT_DIR` is set, the plain `<!-- run-comment: timing -->` marker otherwise:
 
 ```bash
 printf '<!-- run-comment: timing -->\n\n' > /tmp/pr-timing-{issue}.md
+# $MULTISPEC_PARENT_DIR set: printf '<!-- run-comment: timing:{spec} -->\n\n' instead, {spec} = basename($PIPELINE_RUN_DIR)'s numeric suffix
 node "${CLAUDE_PLUGIN_ROOT}/bin/phase-timing.js" --run "$PIPELINE_RUN_DIR" --markdown --auto-transcript >> /tmp/pr-timing-{issue}.md
-# find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=timing, against {pr-number}
+# find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=timing (or timing:{spec} under multi-spec), against {pr-number}
 ```
 
 When wrap-up's cleanup item 8 has already archived the run directory (`cleanup-procedures.md`), pass `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` as `--run` instead — the events and manifest travel with the archive.
