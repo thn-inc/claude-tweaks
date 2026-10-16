@@ -79,6 +79,15 @@ function formatRedTipLine(redTip) {
   return `red-tip: ${redTip.message}`;
 }
 
+// #3132: origin-head.js's repair attempt, when one was made (no origin —
+// nothing attempted — still renders nothing here, same as today).
+function formatOriginHeadRepairLine(originHeadRepair) {
+  if (!originHeadRepair) return null;
+  const { outcome, branch, reason } = originHeadRepair;
+  if (outcome === 'repaired') return `origin/HEAD repaired (${branch})`;
+  return `origin/HEAD repair: ${outcome}${reason ? ` (${reason})` : ''}`;
+}
+
 function formatConsoleReadyLine(console_) {
   const ready = console_ && console_.ready;
   if (!Array.isArray(ready) || ready.length === 0) return null;
@@ -170,6 +179,9 @@ function formatSummary(result) {
 
   const redTipLine = formatRedTipLine(result.redTip);
   if (redTipLine) lines.push(redTipLine);
+
+  const originHeadRepairLine = formatOriginHeadRepairLine(result.originHeadRepair);
+  if (originHeadRepairLine) lines.push(originHeadRepairLine);
 
   for (const cat of CATEGORIES) {
     const arr = result[cat.key];

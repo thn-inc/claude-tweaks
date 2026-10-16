@@ -7,7 +7,7 @@ const fs = require('fs');
 const { EventEmitter } = require('events');
 const { PassThrough } = require('stream');
 
-const { runChecks, runOne } = require(path.join(
+const { runChecks, runOne, killTree } = require(path.join(
   __dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'run.js'));
 
 function tmpLogDir() {
@@ -381,4 +381,95 @@ test('runChecks gives each check only its own env; a check without one spawns ex
   assert.deepStrictEqual(optsOf('cmd-bar'), { shell: true, env: { NO_COLOR: '1', FORCE_COLOR: '0', ...process.env } });
   // The env map never leaks into a recorded result (and so never into report.json).
   for (const r of results) assert.ok(!('env' in r));
+});
+
+test('runOne kills a hung child and records {timedOut:true, exitCode:null} on expiry (#3063 AC1)', async () => {
+  const { spawnImpl, children } = makeFakeSpawn({ hang: { manual: true } });
+  const result = await runOne({
+    name: 'tests', command: 'hang', logDir: tmpLogDir(), spawnImpl, now: Date.now, timeout: 20,
+  });
+  assert.strictEqual(result.exitCode, null);
+  assert.strictEqual(result.timedOut, true);
+  assert.strictEqual(typeof result.durationMs, 'number');
+  // killTree's fallback branch (the fake child has no numeric .pid) calls
+  // child.kill('SIGKILL') — the same observable the write-stream-failure
+  // test above already uses to prove a kill actually happened.
+  assert.strictEqual(children.hang.killed, true, 'the hung child must be killed on timeout');
+});
+
+test('runOne never times out a check that finishes before its timeout, and clears the timer (#3063)', async () => {
+  const { spawnImpl } = makeFakeSpawn({ x: { exit: 0 } });
+  const result = await runOne({
+    name: 'tests', command: 'x', logDir: tmpLogDir(), spawnImpl, now: Date.now, timeout: 1000,
+  });
+  assert.strictEqual(result.exitCode, 0);
+  assert.strictEqual(result.timedOut, undefined);
+});
+
+test('runOne without a timeout is unaffected — no detached option, never times out (unchanged from before #3063)', async () => {
+  const { spawnImpl, spawnedOpts } = makeFakeSpawn({ x: { exit: 0 } });
+  const result = await runOne({
+    name: 'tests', command: 'x', logDir: tmpLogDir(), spawnImpl, now: Date.now,
+  });
+  assert.strictEqual(result.timedOut, undefined);
+  assert.ok(!('detached' in spawnedOpts[0]));
+});
+
+test('runOne adds detached:true to spawn opts only when a timeout is set, and never on win32 (#3063)', async () => {
+  const posix = makeFakeSpawn({ x: { exit: 0 } });
+  await runOne({
+    name: 'tests', command: 'x', logDir: tmpLogDir(), spawnImpl: posix.spawnImpl, now: Date.now, timeout: 5000, platform: 'linux',
+  });
+  assert.strictEqual(posix.spawnedOpts[0].detached, true);
+
+  const win = makeFakeSpawn({ x: { exit: 0 } });
+  await runOne({
+    name: 'tests', command: 'x', logDir: tmpLogDir(), spawnImpl: win.spawnImpl, now: Date.now, timeout: 5000, platform: 'win32',
+  });
+  assert.ok(!('detached' in win.spawnedOpts[0]));
+});
+
+test('runChecks forwards a per-check timeout to runOne so a hung check times out (#3063)', async () => {
+  const { spawnImpl } = makeFakeSpawn({ hang: { manual: true }, ok: { exit: 0 } });
+  const results = await runChecks({
+    cmds: [{ name: 'tests', command: 'hang', timeout: 20 }, { name: 'later', command: 'ok' }],
+    logDir: tmpLogDir(), spawnImpl,
+  });
+  const tests = results.find((r) => r.name === 'tests');
+  assert.strictEqual(tests.exitCode, null);
+  assert.strictEqual(tests.timedOut, true);
+  // fail-fast still applies to a timed-out "tests" the same as any other failure.
+  assert.strictEqual(results.find((r) => r.name === 'later').skipped, 'fail-fast');
+});
+
+test('killTree kills the POSIX process group via a negative pid', () => {
+  const calls = [];
+  killTree({ pid: 4242, kill: () => { calls.push('plain-kill'); } }, {
+    platform: 'linux', kill: (pid, sig) => calls.push([pid, sig]),
+  });
+  assert.deepStrictEqual(calls, [[-4242, 'SIGKILL']]);
+});
+
+test('killTree uses taskkill /pid <pid> /T /F on win32', () => {
+  const calls = [];
+  killTree({ pid: 4242, kill: () => { calls.push('plain-kill'); } }, {
+    platform: 'win32', execImpl: (cmd, args) => calls.push([cmd, args]),
+  });
+  assert.deepStrictEqual(calls, [['taskkill', ['/pid', '4242', '/T', '/F']]]);
+});
+
+test('killTree falls back to child.kill("SIGKILL") when the primary kill throws, or the child has no numeric pid', () => {
+  let fellBack = null;
+  killTree({ pid: 4242, kill: (sig) => { fellBack = sig; } }, {
+    platform: 'linux', kill: () => { throw new Error('ESRCH'); },
+  });
+  assert.strictEqual(fellBack, 'SIGKILL');
+
+  fellBack = null;
+  killTree({ pid: undefined, kill: (sig) => { fellBack = sig; } }, { platform: 'linux' });
+  assert.strictEqual(fellBack, 'SIGKILL');
+});
+
+test('killTree is a no-op, never throws, when given no child', () => {
+  assert.doesNotThrow(() => killTree(null, {}));
 });

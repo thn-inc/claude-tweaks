@@ -50,12 +50,16 @@ function cachePath(root) {
 
 // -> { lastRunAt: number|null, claimShas: {[issueNumber]: string},
 //      residueFailures: {[reason:path]: {count, firstFailedAt, lastError, escalated}},
-//      lastHealthCheckOkAt: number|null }
+//      lastHealthCheckOkAt: number|null, lastOriginHeadRepairFailedAt: number|null }
 // Absent file or corrupt JSON both fail closed to empty defaults — a cache
 // is pure optimization; never let a bad read block or skew reconcile().
+// Only the keys parsed below survive a read, and writers persist
+// `{ ...readCache(root), … }` — a new cache key must be added here too, or
+// the next unrelated write silently drops it (#3132).
 function readCache(root) {
   const empty = {
     lastRunAt: null, claimShas: {}, residueFailures: {}, lastHealthCheckOkAt: null,
+    lastOriginHeadRepairFailedAt: null,
   };
   let raw;
   try {
@@ -70,6 +74,7 @@ function readCache(root) {
       claimShas: (parsed.claimShas && typeof parsed.claimShas === 'object') ? parsed.claimShas : {},
       residueFailures: (parsed.residueFailures && typeof parsed.residueFailures === 'object') ? parsed.residueFailures : {},
       lastHealthCheckOkAt: typeof parsed.lastHealthCheckOkAt === 'number' ? parsed.lastHealthCheckOkAt : null,
+      lastOriginHeadRepairFailedAt: typeof parsed.lastOriginHeadRepairFailedAt === 'number' ? parsed.lastOriginHeadRepairFailedAt : null,
     };
   } catch {
     return empty;
