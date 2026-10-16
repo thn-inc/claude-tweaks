@@ -150,15 +150,8 @@ async function cmdStart(opts) {
   );
   child.unref();
 
-  const infoPath = path.join(stateDir, 'server-info');
   const info = await waitFor(async () => {
-    const parsed = (() => {
-      try {
-        return JSON.parse(fs.readFileSync(infoPath, 'utf8'));
-      } catch {
-        return null;
-      }
-    })();
+    const parsed = readInfo(stateDir);
     if (!parsed) return null;
     return (await probePort(parsed.port)) !== null ? parsed : null;
   });
