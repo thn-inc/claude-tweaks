@@ -12,8 +12,8 @@ dimensions of an unattended agent's standing reach against the committed
 `.claude/settings.json` `permissions.deny` list. #2876 closed two of them with deny rules:
 **registry-access** (`npm`/`yarn`/`pnpm` publish, login, adduser, registry config) and
 **credential-scope** (reads of `.env`, `.env.*`, `id_rsa*`, `*.pem` under the session's working
-directory, and `.netrc`, `.aws/`, `.ssh/`, `.npmrc`, `.git-credentials`, and
-`.config/gh/hosts.yml` in both the project and the home directory). Nothing in this repo needs
+directory; `.netrc`, `.aws/`, and `.ssh/` in both the project and the home directory; and
+`.npmrc`, `.git-credentials`, and `.config/gh/hosts.yml` in the home directory). Nothing in this repo needs
 either: `package.json` is `"private": true`, the plugin ships through the marketplace repo rather
 than a package registry, and no workflow reads secret-shaped paths.
 
