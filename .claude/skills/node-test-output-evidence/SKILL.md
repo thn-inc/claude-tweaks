@@ -45,6 +45,11 @@ An extracted list of failures cannot report that it missed one. `adjudicate` ref
 
 The listing and `ℹ fail` do not count the same things. A cancelled test, for example one that timed out, is listed but not counted, so a full run containing one is never adjudicated. That outcome is fail-closed, and a pass is never reached. A diagnostic that says the test timed out or was cancelled (`INCONCLUSIVE_RE`) means the test did not finish, which proves nothing about whether it fails.
 
+The flaky-retry hook applies this accounting too, through `unattributedFailureCount` (#3066). A retry re-runs only the named files, so an undercounted list would let a retried pass clear a failure nothing re-ran. A positive count makes `planRetry` refuse with `unattributed-failures: {N}`. Its checks differ from `adjudicate`'s in two ways:
+
+- TAP gets an entry check as well: `tapBlockCount` must equal `# fail` + `# cancelled`, as spec entries must equal `ℹ fail` + `ℹ cancelled`.
+- Any family other than spec or tap returns 0. A `summary` log keeps the retry eligibility it already had, with no accounting guard.
+
 ### Node's runner-level diagnostics are visible only in the log
 
 An uncaught error from async work that outlived its test is reported as a separate file-level failure only when no test in the file failed. Beside a failing test it appears only as an `ℹ Error:` line, or as text containing `generated asynchronous activity after the test ended`. `baseline.js`'s `RUNNER_ERROR_RE` treats a log carrying either as no evidence. A bare `# Error:` line in TAP output is the test's own console output, not Node's.
@@ -83,11 +88,12 @@ node --test --test-reporter=tap tests/bin-lib/verify/extract.test.js   # capture
 | Scanning every TAP line for `not ok` or `failureType:` | An assertion's expected text inside a YAML block invents test points or flips a parent's own failure to inherited |
 | Treating an extracted failing-file list as complete | A failure whose entry names no file drops out, and the rest classify as a pass over a failure nothing checked |
 | Reading a test's absence from a re-run as a pass | A child killed mid-file, a skip, or a filter produces the same absence |
+| Applying an accounting check to spec output only when a new consumer reuses it | #3066's first TAP branch returned before checking that the summary counts parsed, so a truncated TAP log read as fully accounted. Carry every check over for spec and TAP alike, and test each family's truncated-log case |
 
 ## Reference
 
-- Code: `plugin/bin/lib/verify/extract.js` (`testTree`, `failingTestsByFile`, `specEntryCount`, `cancelledCount`, `countUnmatchedFailures`, `fileLevelFailures`), `plugin/bin/lib/verify/baseline.js` (`adjudicate`, `accountedFamily`, `RUNNER_ERROR_RE`, `normalizeLog`)
-- Tests: `tests/bin-lib/verify/extract.test.js`, `tests/bin-lib/verify/baseline.test.js`, `tests/bin-lib/verify/cli.test.js`
-- Contract: `plugin/skills/test/verification.md`'s Baseline adjudication
+- Code: `plugin/bin/lib/verify/extract.js` (`testTree`, `failingTestsByFile`, `specEntryCount`, `cancelledCount`, `countUnmatchedFailures`, `fileLevelFailures`, `unattributedFailureCount`, `tapBlockCount`), `plugin/bin/lib/verify/baseline.js` (`adjudicate`, `accountedFamily`, `RUNNER_ERROR_RE`, `normalizeLog`), `plugin/bin/lib/verify/flaky.js` (`planRetry`)
+- Tests: `tests/bin-lib/verify/extract.test.js`, `tests/bin-lib/verify/baseline.test.js`, `tests/bin-lib/verify/cli.test.js`, `tests/bin-lib/verify/flaky.test.js`
+- Contract: `plugin/skills/test/verification.md`'s Baseline adjudication and Flake handling
 - Related skills: `parse-signal-discipline` (couldn't parse versus doesn't apply; reconciling a list against an independent count), `windows-checkout-test-parity` (the Windows failure baseline this adjudicator exists for)
-- Origin: #3043
+- Origin: #3043; the flaky-retry consumer: #3066
