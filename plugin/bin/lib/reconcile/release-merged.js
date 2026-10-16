@@ -419,25 +419,26 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
   const prStateByNumberByIssue = new Map(
     needPrByNumber.map((c, i) => [c.issueNumber, prStatesByNumber[i] instanceof Error ? 'network-failure' : prStatesByNumber[i]]),
   );
-  for (const c of candidates) {
-    if (c.joinFailure !== null && c.prNumber) {
-      const byNumber = prStateByNumberByIssue.get(c.issueNumber);
-      if (byNumber && typeof byNumber === 'object') {
-        // Real evidence recovered — this candidate now behaves exactly like
-        // an ordinary branch-joined one for decideRelease's purposes, and
-        // Phase 2 below gates its own issue-evidence fetch on this same
-        // prState, so a resolved MERGED/OPEN/CLOSED result here correctly
-        // skips an unnecessary issue-state lookup.
-        c.prState = byNumber;
-        c.joinFailure = null;
-      }
-      // Any other result — null (no such PR), 'gh-absent'/'network-failure'
-      // (a failed probe, transient or permanent, e.g. a stale pr.number), or
-      // 'invalid-arguments' — leaves joinFailure and prState (null)
-      // untouched, exactly as before this fallback existed: Phase 2 still
-      // tries issue-closed evidence. Recording the failure string as prState
-      // would make needsIssueEvidence false and block that path.
+  // Iterates needPrByNumber (the same candidate objects, by reference) —
+  // not candidates re-filtered by the same predicate — since every entry
+  // worth checking is already in that array.
+  for (const c of needPrByNumber) {
+    const byNumber = prStateByNumberByIssue.get(c.issueNumber);
+    if (byNumber && typeof byNumber === 'object') {
+      // Real evidence recovered — this candidate now behaves exactly like
+      // an ordinary branch-joined one for decideRelease's purposes, and
+      // Phase 2 below gates its own issue-evidence fetch on this same
+      // prState, so a resolved MERGED/OPEN/CLOSED result here correctly
+      // skips an unnecessary issue-state lookup.
+      c.prState = byNumber;
+      c.joinFailure = null;
     }
+    // Any other result — null (no such PR), 'gh-absent'/'network-failure'
+    // (a failed probe, transient or permanent, e.g. a stale pr.number), or
+    // 'invalid-arguments' — leaves joinFailure and prState (null)
+    // untouched, exactly as before this fallback existed: Phase 2 still
+    // tries issue-closed evidence. Recording the failure string as prState
+    // would make needsIssueEvidence false and block that path.
   }
 
   // Phase 2: parallel issue-state fetches, capped, only for candidates that
