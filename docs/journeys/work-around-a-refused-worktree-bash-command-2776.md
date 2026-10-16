@@ -12,23 +12,23 @@ files:
 
 ## Steps
 
-1. **Classify the refusal by its wording** — A Bash call fails before running.
-   - **Action:** Read the refusal text. "This session is isolated in the worktree … too complex to verify" or "runs X with a value computed at runtime" is the harness's worktree guard. "Permission to use Bash with command … has been denied" is a permission rule from settings, not that guard.
-   - **Should feel:** Oriented. Two refusal sources, told apart by their wording.
-   - **Should understand:** Neither one is `plugin/bin/lib/hooks/pre-tool-use.js`. A plugin hook can add denials but can never lift the harness's own.
-   - **Red flags:** The session opens `pre-tool-use.js` to "fix" the guard, or files a plugin defect against it.
+### 1. Classify the refusal by its wording — A Bash call fails before running.
+- **Action:** Read the refusal text. "This session is isolated in the worktree … too complex to verify" or "runs X with a value computed at runtime" is the harness's worktree guard. "Permission to use Bash with command … has been denied" is a permission rule from settings, not that guard.
+- **Should feel:** Oriented. Two refusal sources, told apart by their wording.
+- **Should understand:** Neither one is `plugin/bin/lib/hooks/pre-tool-use.js`. A plugin hook can add denials but can never lift the harness's own.
+- **Red flags:** The session opens `pre-tool-use.js` to "fix" the guard, or files a plugin defect against it.
 
-2. **Find the shape in §7** — The session looks the failed command up.
-   - **Action:** Scan §7's dated addenda, newest first. The 2026-10-16 (#2776) entry covers heredoc + `gh pr comment` (refused only with a runtime path variable), a `.git/` log read (a `Read(**/*.log)` permission rule, plus a path that does not resolve inside a linked worktree), and five shapes that ran unrefused.
-   - **Should feel:** Quick. A match is one scan away, not a series of probes.
-   - **Should understand:** Each entry is "last observed, not a guarantee". A shape listed as not reproducing can still be refused under a different harness build or settings file.
-   - **Red flags:** The `.g*t`/`.g*hub` glob workaround reached for out of habit, though the bare forms pass. A `.git/worktrees/…` path written relative to the worktree.
+### 2. Find the shape in §7 — The session looks the failed command up.
+- **Action:** Scan §7's dated addenda, newest first. The 2026-10-16 (#2776) entry covers heredoc + `gh pr comment` (refused only with a runtime path variable), a `.git/` log read (a `Read(**/*.log)` permission rule, plus a path that does not resolve inside a linked worktree), and five shapes that ran unrefused.
+- **Should feel:** Quick. A match is one scan away, not a series of probes.
+- **Should understand:** Each entry is "last observed, not a guarantee". A shape listed as not reproducing can still be refused under a different harness build or settings file.
+- **Red flags:** The `.g*t`/`.g*hub` glob workaround reached for out of habit, though the bare forms pass. A `.git/worktrees/…` path written relative to the worktree.
 
-3. **Re-run in the passing form** — The session applies the recorded workaround.
-   - **Action:** A literal path in place of `$TMPDIR` (or the `Write` tool for a comment body, then a plain `gh pr comment N --body-file /literal/path`). For the verify log: the absolute git dir from `git rev-parse --git-dir`, or the `Read` tool on that path.
-   - **Should feel:** Uneventful. The retry runs.
-   - **Should understand:** One plain command per Bash call stays the default (§7's practical workaround). The #2776 entry narrows which shapes need special handling. It does not lift that default.
-   - **Red flags:** The same refused shape retried unchanged. A new shape that §7 doesn't cover gets worked around silently, with no addendum or record filed.
+### 3. Re-run in the passing form — The session applies the recorded workaround.
+- **Action:** A literal path in place of `$TMPDIR` (or the `Write` tool for a comment body, then a plain `gh pr comment N --body-file /literal/path`). For the verify log: the path skill prose prescribes, `{git-dir}/claude-tweaks-verify/`, with `{git-dir}` the absolute path from `git rev-parse --git-dir`. Or read `verify.js`'s own summary of the failing region.
+- **Should feel:** Uneventful. The retry runs.
+- **Should understand:** One plain command per Bash call stays the default (§7's practical workaround). The #2776 entry narrows which shapes need special handling. It does not lift that default.
+- **Red flags:** The same refused shape retried unchanged. A path rewritten just to slip past a deny rule someone set on purpose. A new shape that §7 doesn't cover gets worked around silently, with no addendum or record filed.
 
 ## Outcome
 

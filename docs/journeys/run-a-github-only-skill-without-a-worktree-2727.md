@@ -17,29 +17,29 @@ files:
 
 ## Steps
 
-1. **Read the scoped banner** — A session starts in the main checkout with `worktree-always: ON`.
-   - **Action:** The banner reads "requires an isolated worktree for repository edits … Before editing repository files, invoke /superpowers:using-git-worktrees … An invocation whose every write is a forge-API call (gh issue/pr/api) needs no worktree — see that file's Adopt-or-create."
-   - **Should feel:** Told the actual rule, not a blanket one.
-   - **Should understand:** The worktree requirement protects repository files; a `gh`-only invocation is outside it.
-   - **Red flags:** The session creates a worktree before it knows what the skill will write.
+### 1. Read the scoped banner — A session starts in the main checkout with `worktree-always: ON`.
+- **Action:** The banner reads "requires an isolated worktree for repository edits … Before editing repository files, invoke /superpowers:using-git-worktrees … An invocation whose every write is a forge-API call (gh issue/pr/api) needs no worktree — see that file's Adopt-or-create."
+- **Should feel:** Told the actual rule, not a blanket one.
+- **Should understand:** The worktree requirement protects repository files; a `gh`-only invocation is outside it.
+- **Red flags:** The session creates a worktree before it knows what the skill will write.
 
-2. **Check the skill's own note** — The skill is invoked.
-   - **Action:** The skill's **Worktree** / **No worktree** note cites `_shared/worktree-setup.md`'s "Forge-API-only invocations need no worktree" and names its own exceptions — refine: a `facets.unsynced === true` record or the `local-files` driver; capture: the `local-files` driver, the gh-failure fallback, the `brainstorm` route; tidy: Step 7.5's mutations.
-   - **Should feel:** A quick yes/no on this invocation's shape, answered by the skill itself.
-   - **Should understand:** The carve-out covers whole invocations; one local-write branch in the run means it does not apply to that branch.
-   - **Red flags:** Treating "backlog refine needs no worktree" as unconditional while the worklist holds an unsynced local record.
+### 2. Check the skill's own note — The skill is invoked.
+- **Action:** The skill's **Worktree** / **No worktree** note cites `_shared/worktree-setup.md`'s "Forge-API-only invocations need no worktree" and names its own exceptions — refine: a `facets.unsynced === true` record or the `local-files` driver; capture: the `local-files` driver, the gh-failure fallback, the `brainstorm` route; tidy: Step 7.5's mutations.
+- **Should feel:** A quick yes/no on this invocation's shape, answered by the skill itself.
+- **Should understand:** The carve-out covers whole invocations; one local-write branch in the run means it does not apply to that branch.
+- **Red flags:** Treating "backlog refine needs no worktree" as unconditional while the worklist holds an unsynced local record.
 
-3. **Run with no worktree** — The invocation's writes happen.
-   - **Action:** Labels, comments, and body edits go through `gh`; audit lines go to the run directory; breaker state goes to the `health-state` ref — none of it touches the working tree.
-   - **Should feel:** Uneventful; nothing to tear down afterwards.
-   - **Should understand:** The `worktree-always` gate never intercepted `gh` — only the prose did.
-   - **Red flags:** A post-creation catch-up merge commit appearing in a worktree for a skill that wrote nothing local.
+### 3. Run with no worktree — The invocation's writes happen.
+- **Action:** Labels, comments, and body edits go through `gh`; audit lines go to the run directory; breaker state goes to the `health-state` ref — none of it touches the working tree.
+- **Should feel:** Uneventful; nothing to tear down afterwards.
+- **Should understand:** The `worktree-always` gate never intercepted `gh` — only the prose did.
+- **Red flags:** A post-creation catch-up merge commit appearing in a worktree for a skill that wrote nothing local.
 
-4. **Enter a worktree only at the first local write** — The run reaches a write the carve-out does not cover (an unsynced record's `writeRecord`, a design doc, a commit).
-   - **Action:** Adopt-or-create runs at that point, the way `/claude-tweaks:tidy` provisions Step 7.5's scratch worktree only for Step 7's mutations.
-   - **Should feel:** Deliberate — isolation arrives exactly when a repository file is about to change.
-   - **Should understand:** The carve-out ends at the first working-tree write; it defers isolation, it does not waive it.
-   - **Red flags:** A `writeRecord` against `specs/` from the main checkout followed by a gate-denied `git commit`, leaving an uncommitted edit stranded there.
+### 4. Enter a worktree only at the first local write — The run reaches a write the carve-out does not cover (an unsynced record's `writeRecord`, a design doc, a commit).
+- **Action:** Adopt-or-create runs at that point, the way `/claude-tweaks:tidy` provisions Step 7.5's scratch worktree only for Step 7's mutations.
+- **Should feel:** Deliberate — isolation arrives exactly when a repository file is about to change.
+- **Should understand:** The carve-out ends at the first working-tree write; it defers isolation, it does not waive it.
+- **Red flags:** A `writeRecord` against `specs/` from the main checkout followed by a gate-denied `git commit`, leaving an uncommitted edit stranded there.
 
 ## Outcome
 

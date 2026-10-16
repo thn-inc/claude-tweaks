@@ -12,23 +12,23 @@ files:
 
 ## Steps
 
-1. **Read the literal-resolution rule** — The worktree is created and the catch-up section is read.
-   - **Action:** `_shared/worktree-setup.md`'s **Resolve plugin-supplied values to literals once.** paragraph, which sits just after the guard note and before the unconditional `git fetch`/`git merge`.
-   - **Should feel:** Forewarned. The session knows up front that `CLAUDE_PLUGIN_ROOT` is unset in Bash and that the guard refuses both variables as runtime values.
-   - **Should understand:** This is the harness's guard (`_shared/scratch-worktree.md` §7), not a plugin hook. The only fix is to stop passing variables.
-   - **Red flags:** The session treats the rule as a step to run before the catch-up's fetch/merge, or goes looking for a plugin hook to "fix".
+### 1. Read the literal-resolution rule — The worktree is created and the catch-up section is read.
+- **Action:** `_shared/worktree-setup.md`'s **Resolve plugin-supplied values to literals once.** paragraph, which sits just after the guard note and before the unconditional `git fetch`/`git merge`.
+- **Should feel:** Forewarned. The session knows up front that `CLAUDE_PLUGIN_ROOT` is unset in Bash and that the guard refuses both variables as runtime values.
+- **Should understand:** This is the harness's guard (`_shared/scratch-worktree.md` §7), not a plugin hook. The only fix is to stop passing variables.
+- **Red flags:** The session treats the rule as a step to run before the catch-up's fetch/merge, or goes looking for a plugin hook to "fix".
 
-2. **Resolve both values once** — The first later command needs the plugin root or the session id.
-   - **Action:** The plugin root comes from the invoking claude-tweaks skill's `Base directory for this skill:` line minus its trailing `skills/{name}`. With no Skill invocation, it is the read file's own path cut before its `skills/` segment. The session id comes from one plain `printenv CLAUDE_CODE_SESSION_ID` call.
-   - **Should feel:** One small, deliberate step, not a search.
-   - **Should understand:** There is no lookup ladder and no glob over the plugin cache. The value comes from what the session already has.
-   - **Red flags:** A `find ~/.claude/plugins …` probe. A `superpowers:*` skill's base directory used as the plugin root. A `Cannot find module '…/skills/bin/…'` error, which means the path was cut at the wrong level.
+### 2. Resolve both values once — The first later command needs the plugin root or the session id.
+- **Action:** The plugin root comes from the invoking claude-tweaks skill's `Base directory for this skill:` line minus its trailing `skills/{name}`. With no Skill invocation, it is the read file's own path cut before its `skills/` segment. The session id comes from one plain `printenv CLAUDE_CODE_SESSION_ID` call.
+- **Should feel:** One small, deliberate step, not a search.
+- **Should understand:** There is no lookup ladder and no glob over the plugin cache. The value comes from what the session already has.
+- **Red flags:** A `find ~/.claude/plugins …` probe. A `superpowers:*` skill's base directory used as the plugin root. A `Cannot find module '…/skills/bin/…'` error, which means the path was cut at the wrong level.
 
-3. **Run commands with literals** — Every subsequent snippet is executed.
-   - **Action:** The session writes `node "/abs/plugin/root/bin/hooks.js" …` and the literal session id into each command, and into any subagent dispatch prompt it composes.
-   - **Should feel:** Uneventful. Commands run on the first try.
-   - **Should understand:** Skill prose keeps the `${CLAUDE_PLUGIN_ROOT}` spelling on purpose. Substitution is the reader's job, every time.
-   - **Red flags:** A refusal reading "runs node with a value computed at runtime (the variable CLAUDE_PLUGIN_ROOT)". A subagent that fails because its prompt still carried the bare placeholder.
+### 3. Run commands with literals — Every subsequent snippet is executed.
+- **Action:** The session writes `node "/abs/plugin/root/bin/hooks.js" …` and the literal session id into each command, and into any subagent dispatch prompt it composes.
+- **Should feel:** Uneventful. Commands run on the first try.
+- **Should understand:** Skill prose keeps the `${CLAUDE_PLUGIN_ROOT}` spelling on purpose. Substitution is the reader's job, every time.
+- **Red flags:** A refusal reading "runs node with a value computed at runtime (the variable CLAUDE_PLUGIN_ROOT)". A subagent that fails because its prompt still carried the bare placeholder.
 
 ## Outcome
 
