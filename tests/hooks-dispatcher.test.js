@@ -435,6 +435,7 @@ test('close-run --run bare basename from inside a linked worktree resolves to th
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   runHook(['record-worktree', '--run', run, wt], { cwd: project });
   const result = runHook(['close-run', '--run', '2026-07-01T090000-spec-1'], { cwd: wt });
+  assert.strictEqual(result.code, 0, result.stdout);
   assert.doesNotMatch(result.stdout, /--run path rejected/, result.stdout);
   assert.strictEqual(readRunState(run).status, 'clean');
 });
@@ -445,8 +446,19 @@ test('close-run --run basename: a same-named cwd-relative directory wins over th
   runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
   fs.mkdirSync(path.join(project, '2026-07-01T090000-spec-1'));
   const result = runHook(['close-run', '--run', '2026-07-01T090000-spec-1'], { cwd: project });
+  assert.strictEqual(result.code, 1, result.stdout);
   assert.match(result.stdout, /--run path rejected/, 'the cwd-relative dir is judged on its own and is not a run dir');
   assert.strictEqual(readRunState(run).status, 'active', 'the pipelines/ run must not be touched when a cwd-relative dir exists');
+});
+
+test('close-run --run basename containing a path separator never falls through to the pipelines/ lookup', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
+  const result = runHook(['close-run', '--run', './2026-07-01T090000-spec-1'], { cwd: project });
+  assert.strictEqual(result.code, 1, result.stdout);
+  assert.match(result.stdout, /--run path rejected/, result.stdout);
+  assert.strictEqual(readRunState(run).status, 'active', 'a separator-bearing value must never resolve into the pipelines/ run dir');
 });
 
 test('close-run --run with a bare basename naming no run dir is still rejected, non-zero', () => {
