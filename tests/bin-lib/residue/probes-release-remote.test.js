@@ -111,3 +111,28 @@ test('#3023: behind the remote with an unreadable remote CHANGELOG declines with
   assert.strictEqual(r.reason, 'local integration branch is behind its remote — CHANGELOG check skipped');
   assert.deepStrictEqual(r.findings, []);
 });
+
+// #3023 fix-round-1 finding: no local v* tag exists at all (so `newestTag` is
+// null), yet the remote-tracking ref carries a CHANGELOG heading no local
+// tag will ever match. The remote ref must not be trusted when there is no
+// local tag to check its ancestry against — read HEAD instead, same as
+// pre-#3023 behavior, which reports no finding here.
+test('#3023: no local tag at all declines to trust the remote ref and reads HEAD', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rel-notag-')));
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'config', 'user.email', 't@example.com');
+  git(root, 'config', 'user.name', 'T');
+  fs.writeFileSync(path.join(root, '.release-please-manifest.json'), '{".": "1.0.0"}\n');
+  fs.writeFileSync(path.join(root, 'CHANGELOG.md'), '# Changelog\n');
+  git(root, 'add', '.');
+  git(root, 'commit', '-q', '-m', 'bootstrap, no tag');
+  const c1 = git(root, 'rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(root, 'CHANGELOG.md'), '# Changelog\n\n## v1.0.0 — first\n');
+  git(root, 'commit', '-q', '-am', 'remote-only heading, still no tag');
+  const c2 = git(root, 'rev-parse', 'HEAD');
+  git(root, 'update-ref', 'refs/remotes/origin/main', c2);
+  git(root, 'reset', '-q', '--hard', c1);
+  const r = probeRelease({ scope: SCOPE, run: runner(root), integrationBranch: 'main' });
+  assert.strictEqual(r.ran, true);
+  assert.deepStrictEqual(r.findings, [], JSON.stringify(r.findings));
+});

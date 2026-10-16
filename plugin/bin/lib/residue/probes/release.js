@@ -64,10 +64,15 @@ const BEHIND_REASON = 'local integration branch is behind its remote — CHANGEL
 // reading HEAD, today's behavior.
 function changelogRef({ integrationBranch, run, newestTag }) {
   if (!integrationBranch) return { ref: 'HEAD', remote: false };
+  // No local tag qualifies — there is nothing to check the remote ref's
+  // ancestry against, so trusting it unconditionally would read whatever
+  // CHANGELOG content exists upstream and flag its headings as having no
+  // matching local tag. Reading HEAD keeps today's (silent) behavior instead.
+  if (!newestTag) return { ref: 'HEAD', remote: false };
   const remoteRef = resolveRemoteRef(integrationBranch, (args) => run(['git', ...args]));
   const sha = run(['git', 'rev-parse', '--verify', '--quiet', '--end-of-options', `${remoteRef}^{commit}`]);
   if (!sha) return { ref: 'HEAD', remote: false };
-  if (newestTag && run(['git', 'merge-base', '--is-ancestor', `v${newestTag}`, remoteRef]) === null) {
+  if (run(['git', 'merge-base', '--is-ancestor', `v${newestTag}`, remoteRef]) === null) {
     return { ref: 'HEAD', remote: false };
   }
   return { ref: remoteRef, remote: true };
