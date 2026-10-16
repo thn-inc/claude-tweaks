@@ -153,7 +153,7 @@ test('cleanup-procedures-execution.md Section C uses a merge-tree containment pr
   const sectionD = CLEANUP_PROCEDURES_EXECUTION.indexOf('## D. Ephemeral dev server');
   const section = CLEANUP_PROCEDURES_EXECUTION.slice(sectionC, sectionD);
   assert.match(section, /git merge-tree --write-tree \{merge-commit\} HEAD/);
-  assert.match(section, /No\s*\n?\s*`mergeCommit`/);
+  assert.match(section, /No\s*`mergeCommit`/);
   assert.doesNotMatch(section, /\*\*Empty\*\* authorizes `discard_changes: true`/, 'the old empty-diff authorization wording must be gone, not left alongside the new merge-tree check');
 });
 
