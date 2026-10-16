@@ -7,6 +7,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { loadManifest } = require('../tools/upstream-drift/manifest');
 
 const ROOT = path.join(__dirname, '..');
 const PREBUILD = path.join(ROOT, 'plugin', 'skills', 'design-wrapper', 'modes', 'pre-build.md');
@@ -41,4 +42,38 @@ test('pre-build.md frontend reference-selection rules name Impeccable 4.5 files,
 test('pre-build.md terminal track always-load set is untouched by this change', () => {
   const md = readText(PREBUILD);
   assert.match(md, /`_shared\/terminal-ux\.md` plus `_shared\/design-craft\.md` only/);
+});
+
+test('every Impeccable reference file named in pre-build.md Step 3 is pinned in the upstream-drift manifest', () => {
+  const md = readText(PREBUILD);
+  const start = md.indexOf('### Step 3: Decide which Impeccable references to load');
+  const end = md.indexOf('### Step 4: Load project design context');
+  assert.ok(start !== -1 && end !== -1 && end > start, 'could not locate the Step 3 reference-selection section');
+  const section = md.slice(start, end);
+
+  const names = new Set();
+  const re = /`([a-z-]+\.md)`/g;
+  let match;
+  while ((match = re.exec(section)) !== null) {
+    names.add(match[1]);
+  }
+
+  assert.ok(
+    names.size >= 5,
+    `expected at least 5 backticked reference-file names in Step 3, found ${names.size} (${[...names].join(', ')}) — ` +
+      'a parse failure here must not silently pass as zero names, zero checks'
+  );
+
+  const manifest = loadManifest(path.join(ROOT, 'tools', 'upstream-drift', 'manifest.yml'));
+  const entry = manifest.dependencies.find((d) => d.name === 'impeccable-plugin');
+  assert.ok(entry, 'manifest.yml must have an impeccable-plugin dependency entry');
+
+  for (const name of names) {
+    const expected = `skills/impeccable/reference/${name}`;
+    assert.ok(
+      entry['contract-paths'].includes(expected),
+      `pre-build.md Step 3 names \`${name}\` but ${expected} is not pinned in ` +
+        'tools/upstream-drift/manifest.yml\'s impeccable-plugin contract-paths'
+    );
+  }
 });
