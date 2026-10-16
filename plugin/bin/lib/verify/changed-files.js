@@ -158,7 +158,7 @@ function parseNameOnlyZ(raw) {
 // also kept in "own" even when its HEAD content now equals {ref}'s tip — a merge
 // conflict resolved in {ref}'s favour must not silently drop a file the branch's
 // own verified code depends on. Returns null (no narrowing, today's behavior) when
-// there is no such merge, {ref} does not resolve, or either diff above fails: the
+// there is no such merge, {ref} does not resolve, or any read above fails: the
 // fallback over-verifies, never under-verifies. resolveBase's anchor-first
 // contract is untouched — this filters its result, it never moves the base.
 function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileSync }) {
@@ -174,7 +174,9 @@ function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileS
   const differs = tryGit(execImpl, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', ref, 'HEAD']);
   if (differs === null) return null;
   const own = new Set(parseNameOnlyZ(differs));
-  for (const f of parseStatusPorcelainZ(git(execImpl, ['status', '--porcelain', '-z', '--untracked-files=all']))) own.add(f);
+  const status = tryGit(execImpl, ['status', '--porcelain', '-z', '--untracked-files=all']);
+  if (status === null) return null;
+  for (const f of parseStatusPorcelainZ(status)) own.add(f);
   const mb = tryGit(execImpl, ['merge-base', '--end-of-options', anchor, ref]);
   if (mb === null || mb.trim() === '') return null;
   const ownAsOfAnchor = tryGit(execImpl, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', mb.trim(), anchor]);

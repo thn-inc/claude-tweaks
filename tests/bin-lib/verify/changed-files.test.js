@@ -313,6 +313,17 @@ test('mergeNarrowing: an unresolvable integration branch degrades to null, never
   assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'no-such-branch', files, execImpl: r.exec }), null);
 });
 
+test('mergeNarrowing: a failing working-tree status read degrades to null, never a throw (#3072 review)', () => {
+  const r = mergeRepo();
+  mergeTrunkWith(r, [['ui/a.js', 'a']]);
+  const files = changedSince(r, r.anchor);
+  const statusFails = (cmd, args, opts) => {
+    if (args[0] === 'status') { const e = new Error('index.lock: File exists'); e.status = 128; throw e; }
+    return r.exec(cmd, args, opts);
+  };
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: statusFails }), null);
+});
+
 test('mergeNarrowing: no anchor or no integration branch returns null without touching git (#3072)', () => {
   const boom = () => { throw new Error('git must not be called'); };
   assert.strictEqual(mergeNarrowing({ anchor: null, integrationBranch: 'trunk', files: ['a'], execImpl: boom }), null);
