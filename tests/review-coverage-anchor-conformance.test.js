@@ -98,13 +98,13 @@ test('the 3f: Test Quality section contains exactly one bullet restating the cov
   assert.ok(halves.length >= 2, '3f bullet must state both coverage-gap and test-defect halves');
 
   // Coverage-gap half: must name production line and refer to code under test
-  const coverageHalf = ruleBullet.split(/;|when it's a/)[0];
+  const coverageHalf = halves[0];
   assert.match(coverageHalf, /coverage gap|missing test|weak test|insufficient case/i, 'coverage half must describe coverage gaps');
   assert.match(coverageHalf, /production line|code.*under test|anchor.*at/i, 'coverage half must name where to anchor');
   assert.doesNotMatch(coverageHalf, /anchor.*at.*test line/i, 'coverage half must NOT say anchor at test line');
 
   // Test-defect half: must name test line and NOT mention production line
-  const testDefectHalf = ruleBullet.split(/;|when it's a/).slice(-1)[0];
+  const testDefectHalf = halves[halves.length - 1];
   assert.match(testDefectHalf, /test.quality.defect|test.*defect|refactor.coupled|non.discriminating/i, 'test-defect half must describe test defects');
   assert.match(testDefectHalf, /anchor.*at.*test line|test line/i, 'test-defect half must name test line');
   assert.doesNotMatch(testDefectHalf, /production line|code.*under test/i, 'test-defect half must NOT mention production line');
