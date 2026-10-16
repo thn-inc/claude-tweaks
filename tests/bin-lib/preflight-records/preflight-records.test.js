@@ -508,3 +508,34 @@ test('#2733: --merge-gate adds mergeGate to the envelope; without it the envelop
   assert.equal(run(['2670', '2682'], plain.deps), 0);
   assert.deepEqual(Object.keys(JSON.parse(plain.out.join(''))).sort(), ['overlapGroups', 'records', 'workLinks']);
 });
+
+// AC2.1
+test('AC2.1: --merge-gate --integration-branch master defers a record whose Deliverables line says "#2670 is merged into master"', () => {
+  const runner = (args) => {
+    if (isIssueView(args, 2670)) return JSON.stringify(issue({ number: 2670, title: 'P', body: specBody(['a.js']) }));
+    if (isIssueView(args, 2682)) return JSON.stringify(issue({ number: 2682, title: 'D', body: `Blocked by #2670\n\n## Deliverables\n- [ ] confirm \`#2670\` is merged into master\n\n${specBody(['b.js'])}` }));
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner, workLinks: 'body-text' });
+  const code = run(['2670', '2682', '--merge-gate', '--integration-branch', 'master'], deps);
+  assert.equal(code, 0);
+  const env = JSON.parse(out.join(''));
+  assert.deepEqual(env.mergeGate.deferred, [2682]);
+  assert.deepEqual(env.mergeGate.kept, [2670]);
+});
+
+test('--integration-branch with a trailing bare flag, or an empty value, exits 2 with no stdout and no gh call', () => {
+  const runner = () => { throw new Error('must not call gh'); };
+
+  const trailing = cliDeps({ runner });
+  const trailingCode = run(['2670', '--merge-gate', '--integration-branch'], trailing.deps);
+  assert.equal(trailingCode, 2);
+  assert.equal(trailing.out.length, 0);
+  assert.match(trailing.err.join(''), /missing value for --integration-branch/);
+
+  const empty = cliDeps({ runner });
+  const emptyCode = run(['2670', '--merge-gate', '--integration-branch', ''], empty.deps);
+  assert.equal(emptyCode, 2);
+  assert.equal(empty.out.length, 0);
+  assert.match(empty.err.join(''), /missing value for --integration-branch/);
+});

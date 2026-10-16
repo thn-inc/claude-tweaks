@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // bin/preflight-records.js — record pre-flight JSON in one command.
-//   node bin/preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--help]
+//   node bin/preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--integration-branch <name>] [--help]
 // Fetches every record (`gh issue view`), derives facets/keyFiles/fingerprint
 // (bin/lib/issues/record.js, bin/lib/issues/grouping.js), resolves blockedBy
 // either from the body (work-links: body-text, no extra call) or one batched
@@ -11,7 +11,9 @@
 // Prints one JSON envelope: { records, overlapGroups, workLinks }.
 // --merge-gate (#2733) treats the positional numbers as one /flow run's
 // targets and adds mergeGate {gates, deferred, kept, rerun}
-// (bin/lib/preflight-records/merge-gate.js).
+// (bin/lib/preflight-records/merge-gate.js). --integration-branch <name>
+// (default 'main') is consumed only with --merge-gate, naming the branch the
+// gate's regex looks for.
 // Exit 0 success; 1 any record fetch (or the native dependency GraphQL call)
 // failed — every failing record named, all-at-once; 2 malformed invocation
 // (no numbers, non-positive, unresolvable owner/repo under native mode).
@@ -25,10 +27,12 @@ const { planMergeGateSplit } = require('./lib/preflight-records/merge-gate');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
 const { parseRepo, repoResolutionNote } = require('./lib/repo-resolve');
 
-const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--help]\n';
+const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--integration-branch <name>] [--help]\n';
 
 function parseArgs(argv) {
-  const opts = { numbers: [], workLinks: null, repo: null, mergeGate: false, help: false };
+  const opts = {
+    numbers: [], workLinks: null, repo: null, mergeGate: false, integrationBranch: null, help: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i];
@@ -44,6 +48,10 @@ function parseArgs(argv) {
       opts.repo = v;
     } else if (a === '--merge-gate') {
       opts.mergeGate = true;
+    } else if (a === '--integration-branch') {
+      const v = next();
+      if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: 'missing value for --integration-branch' };
+      opts.integrationBranch = v;
     } else if (a.startsWith('--')) {
       return { error: `unknown argument: ${a}` };
     } else {
@@ -148,7 +156,7 @@ function run(argv, deps = realDeps) {
   const records = preflight.buildRecords({ issues, dependencies });
   const overlapGroups = preflight.buildOverlapGroups(records);
   const envelope = { records, overlapGroups, workLinks };
-  if (opts.mergeGate) envelope.mergeGate = planMergeGateSplit({ issues, records, numbers });
+  if (opts.mergeGate) envelope.mergeGate = planMergeGateSplit({ issues, records, numbers, integrationBranch: opts.integrationBranch || 'main' });
   deps.stdout(`${JSON.stringify(envelope, null, 2)}\n`);
   return 0;
 }

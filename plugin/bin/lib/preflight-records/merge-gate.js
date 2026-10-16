@@ -10,20 +10,32 @@
 // evidence: skills/flow/multispec-merge-gate.md.
 'use strict';
 
-const MERGE_STATE_RE = /\bactually\s+merged\b|\bmerge[sd]?\s+(?:in)?to\s+(?:`?(?:origin\/)?main\b`?|the\s+integration\s+branch\b)/i;
+function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// integrationBranch (default 'main') -> the strict merge-state RegExp. A demand
+// that a prerequisite be "actually merged", or merged/landed to/into/on the
+// integration branch — never the content-satisfiable "merged first" forms.
+function buildMergeStateRe(integrationBranch = 'main') {
+  const b = escapeRe(integrationBranch);
+  const target = `(?:the\\s+)?(?:\`?(?:origin\\/)?${b}\\b\`?(?:\\s+branch\\b)?|integration\\s+branch\\b)`;
+  return new RegExp(`\\bactually\\s+merged\\b|\\b(?:merge[sd]?\\s+(?:in)?to|land(?:s|ed)?\\s+(?:on|in|into))\\s+${target}`, 'i');
+}
+const MERGE_STATE_RE = buildMergeStateRe('main');
 const SECTION_RE = /^##\s+(?:Deliverables|Prerequisites)\b/i;
 const H2_RE = /^##\s/;
 const REF_RE = /#(\d+)\b/g;
 
-// body, candidate prerequisite numbers -> [{requires, line}] — one entry per
-// (strict line, candidate ref) pair, in body order, candidates deduped per line.
-function mergeStateDemands(body, candidates) {
+// body, candidate prerequisite numbers, the strict regex to test against
+// (default MERGE_STATE_RE, the 'main' instance) -> [{requires, line}] — one
+// entry per (strict line, candidate ref) pair, in body order, candidates
+// deduped per line.
+function mergeStateDemands(body, candidates, re = MERGE_STATE_RE) {
   const wanted = new Set(candidates);
   const out = [];
   let inSection = false;
   for (const raw of String(body || '').split(/\r?\n/)) {
     if (H2_RE.test(raw)) { inSection = SECTION_RE.test(raw); continue; }
-    if (!inSection || !MERGE_STATE_RE.test(raw)) continue;
+    if (!inSection || !re.test(raw)) continue;
     const seen = new Set();
     for (const m of raw.matchAll(REF_RE)) {
       const n = Number(m[1]);
@@ -34,14 +46,15 @@ function mergeStateDemands(body, candidates) {
 }
 
 // issues: Map<number, {body}>, records: buildRecords output, numbers: the run's
-// targets in run order -> { gates, deferred, kept, rerun }.
-function planMergeGateSplit({ issues, records, numbers }) {
+// targets in run order, integrationBranch (default 'main') -> { gates, deferred, kept, rerun }.
+function planMergeGateSplit({ issues, records, numbers, integrationBranch = 'main' }) {
+  const re = buildMergeStateRe(integrationBranch);
   const inRun = new Set(numbers);
   const blockersOf = (n) => ((records[String(n)] || {}).blockedBy || []).filter((b) => inRun.has(b) && b !== n);
   const gates = [];
   for (const n of numbers) {
     const issue = issues.get(n);
-    const demands = mergeStateDemands(issue ? issue.body : '', blockersOf(n));
+    const demands = mergeStateDemands(issue ? issue.body : '', blockersOf(n), re);
     if (demands.length === 0) continue;
     gates.push({ record: n, requires: [...new Set(demands.map((d) => d.requires))], line: demands[0].line });
   }
@@ -59,4 +72,4 @@ function planMergeGateSplit({ issues, records, numbers }) {
   return { gates, deferred, kept, rerun };
 }
 
-module.exports = { MERGE_STATE_RE, mergeStateDemands, planMergeGateSplit };
+module.exports = { MERGE_STATE_RE, buildMergeStateRe, mergeStateDemands, planMergeGateSplit };
