@@ -315,3 +315,79 @@ test('mergeNarrowing: no anchor or no integration branch returns null without to
   assert.strictEqual(mergeNarrowing({ anchor: null, integrationBranch: 'trunk', files: ['a'], execImpl: boom }), null);
   assert.strictEqual(mergeNarrowing({ anchor: 'abc', integrationBranch: null, files: ['a'], execImpl: boom }), null);
 });
+
+// Whole-branch review Important 1 (#3072): default rename detection on the
+// {ref}..HEAD diff pairs a deletion with an unrelated near-copy addition and
+// --name-only then prints only the destination, hiding the deletion. Branch
+// adds a near-copy of a trunk-only file (bar.js ~ foo.js) BEFORE the anchor,
+// deletes foo.js AFTER the anchor, then merges trunk (which independently
+// gained an unrelated file, so the merge is a real non-fast-forward commit).
+// foo.js is absent at HEAD but present at trunk's tip, and must stay selected
+// — it must never be swallowed by the bar.js rename pairing.
+test('mergeNarrowing: a rename-paired deletion is not swallowed by default similarity detection (#3072 Important 1)', () => {
+  const r = mergeRepo();
+  const foo = Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n') + '\n';
+  r.commit('foo.js', foo);
+  r.git('checkout', '-q', 'trunk');
+  r.git('merge', '-q', '--ff-only', 'feat');
+  r.git('checkout', '-q', 'feat');
+  r.commit('bar.js', `${foo}// bar tweak\n`);
+  const anchor = r.git('rev-parse', 'HEAD');
+  r.git('rm', '-q', 'foo.js');
+  r.git('commit', '-q', '-m', 'drop foo.js');
+  r.git('checkout', '-q', 'trunk');
+  r.commit('trunk-extra.txt', 'trunk moved on\n');
+  r.git('checkout', '-q', 'feat');
+  r.git('merge', '-q', '--no-ff', '--no-edit', 'trunk');
+  const files = changedSince(r, anchor);
+  assert.ok(files.includes('foo.js'), `expected foo.js among changed files, got ${JSON.stringify(files)}`);
+  const n = mergeNarrowing({ anchor, integrationBranch: 'trunk', files, execImpl: r.exec });
+  assert.ok(n, 'expected mergeNarrowing to engage (a real merge of trunk happened)');
+  assert.ok(n.files.includes('foo.js'), `foo.js must stay selected, not paired away by the bar.js rename; files=${JSON.stringify(n.files)}`);
+  assert.ok(!n.excluded.includes('foo.js'), `foo.js must not be excluded; excluded=${JSON.stringify(n.excluded)}`);
+  assert.deepStrictEqual(n.excluded, ['trunk-extra.txt']);
+});
+
+// Whole-branch review Important 2 (#3072): a merge conflict resolved with
+// `git checkout --theirs` makes HEAD's content byte-identical to {ref}'s tip
+// even though the branch itself edited that file before the anchor. The file
+// the branch's own verified code depends on must stay selected — trusting
+// {ref}'s content here would silently verify the branch's code against a
+// different version of a file it itself touched.
+test('mergeNarrowing: a conflict resolved in the integration branch\'s favour keeps the branch\'s own pre-anchor edit selected (#3072 Important 2)', () => {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'merge-narrowing-')));
+  const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  const exec = (cmd, args, opts) => execFileSync(cmd, args, { ...opts, cwd: repo });
+  const write = (rel, content) => {
+    fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+    fs.writeFileSync(path.join(repo, rel), content);
+  };
+  const commit = (rel, content, msg) => { write(rel, content); git('add', rel); git('commit', '-q', '-m', msg); };
+  git('init', '-q', '-b', 'trunk');
+  git('config', 'user.email', 'verify-test@example.invalid');
+  git('config', 'user.name', 'verify test');
+  commit('README.md', 'root', 'add README.md');
+  commit('src/x.py', 'line1\nline2\nline3\n', 'add src/x.py');
+  git('checkout', '-q', '-b', 'feat');
+  commit('src/x.py', 'line1\nBRANCH-EDIT\nline3\n', 'feat edits x.py');
+  const anchor = git('rev-parse', 'HEAD');
+  git('checkout', '-q', 'trunk');
+  commit('src/x.py', 'line1\nTRUNK-EDIT\nline3\n', 'trunk edits x.py');
+  git('checkout', '-q', 'feat');
+  let conflicted = false;
+  try {
+    execFileSync('git', ['merge', '-q', '--no-ff', 'trunk'], { cwd: repo, encoding: 'utf8' });
+  } catch {
+    conflicted = true;
+  }
+  assert.ok(conflicted, 'expected a merge conflict on src/x.py');
+  execFileSync('git', ['checkout', '--theirs', 'src/x.py'], { cwd: repo, encoding: 'utf8' });
+  git('add', 'src/x.py');
+  git('commit', '-q', '--no-edit');
+  const files = changedSince({ exec }, anchor);
+  assert.ok(files.includes('src/x.py'), `expected src/x.py among changed files, got ${JSON.stringify(files)}`);
+  const n = mergeNarrowing({ anchor, integrationBranch: 'trunk', files, execImpl: exec });
+  assert.ok(n, 'expected mergeNarrowing to engage (a real merge of trunk happened)');
+  assert.ok(n.files.includes('src/x.py'), `src/x.py must stay selected even though HEAD now matches trunk; files=${JSON.stringify(n.files)}`);
+  assert.ok(!n.excluded.includes('src/x.py'), `src/x.py must not be excluded; excluded=${JSON.stringify(n.excluded)}`);
+});

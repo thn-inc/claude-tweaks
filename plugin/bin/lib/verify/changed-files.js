@@ -149,11 +149,18 @@ function parseNameOnlyZ(raw) {
 // files touch, though those files are byte-identical to the integration tip that
 // already passed its own CI. When a merge commit in {anchor}..HEAD has a non-first
 // parent that is an ancestor of {ref}, drop every changed path whose HEAD content
-// equals {ref}'s tip — unless the working tree also changes it. Returns null (no
-// narrowing, today's behavior) when there is no such merge or {ref} does not
-// resolve: the fallback over-verifies, never under-verifies. resolveBase's
-// anchor-first contract is untouched — this filters its result, it never moves
-// the base.
+// equals {ref}'s tip — unless the working tree also changes it. Two rules keep the
+// "own" (kept) set honest: (1) the {ref}..HEAD diff runs with --no-renames —
+// --name-only alone prints only a rename's destination, which would silently drop
+// a path the branch itself deleted after the anchor (a near-copy already present
+// upstream, then a delete, would otherwise read as "unchanged"); (2) every path
+// the branch touched as of the anchor (merge-base(anchor, {ref})..{anchor}) is
+// also kept in "own" even when its HEAD content now equals {ref}'s tip — a merge
+// conflict resolved in {ref}'s favour must not silently drop a file the branch's
+// own verified code depends on. Returns null (no narrowing, today's behavior) when
+// there is no such merge, {ref} does not resolve, or either diff above fails: the
+// fallback over-verifies, never under-verifies. resolveBase's anchor-first
+// contract is untouched — this filters its result, it never moves the base.
 function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileSync }) {
   if (!anchor || !integrationBranch) return null;
   const ref = preferOriginRef((args) => git(execImpl, args), integrationBranch);
@@ -164,10 +171,15 @@ function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileS
     return otherParents.some((p) => tryGit(execImpl, ['merge-base', '--is-ancestor', '--end-of-options', p, ref]) !== null);
   });
   if (!mergedRef) return null;
-  const differs = tryGit(execImpl, ['diff', '--name-only', '-z', '--end-of-options', ref, 'HEAD']);
+  const differs = tryGit(execImpl, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', ref, 'HEAD']);
   if (differs === null) return null;
   const own = new Set(parseNameOnlyZ(differs));
   for (const f of parseStatusPorcelainZ(git(execImpl, ['status', '--porcelain', '-z', '--untracked-files=all']))) own.add(f);
+  const mb = tryGit(execImpl, ['merge-base', '--end-of-options', anchor, ref]);
+  if (mb === null || mb.trim() === '') return null;
+  const ownAsOfAnchor = tryGit(execImpl, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', mb.trim(), anchor]);
+  if (ownAsOfAnchor === null) return null;
+  for (const f of parseNameOnlyZ(ownAsOfAnchor)) own.add(f);
   const excluded = files.filter((f) => !own.has(f));
   return { ref, excluded, files: files.filter((f) => own.has(f)) };
 }
