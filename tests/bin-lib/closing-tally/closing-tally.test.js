@@ -81,3 +81,19 @@ test('renderTallyLine: a fully clean run renders every field at 0', () => {
     '0 priority set · 0 Related updated · 0 granted · 0 flagged back · 0 dependency-repair · 0 needs-decision · 0 skipped · 0 failed',
   );
 });
+
+test('#2719 concurrent-grant agreed/DIVERGED skip lines count as skipped, never unclassified', () => {
+  const text = [
+    '## /backlog',
+    '- AUTO 10:00:01 — Backlog refine: set priority:high on #20.',
+    '- AUTO 10:00:02 — Backlog refine: granted auto:build to #21 (risk:low, size:low). Rationale: narrow fix.',
+    '- AUTO 10:00:03 — Backlog refine: skipped #22 — premise changed since confirmation (concurrent grant agreed: live auto:build, this run RECOMMEND_MERGE=false); dropped without writing.',
+    '- AUTO 10:00:04 — Backlog refine: skipped #23 — premise changed since confirmation (concurrent grant DIVERGED: live auto:build + auto:merge, this run discarded RECOMMEND_MERGE=false — touches a shared contract); dropped without writing.',
+    '- AUTO 10:00:05 — Backlog refine: skipped #24 — premise changed since confirmation (lost ready label); dropped without writing.',
+  ].join('\n');
+  const { counts, unclassified } = computeClosingTally(text);
+  assert.strictEqual(counts.skipped, 3);
+  assert.strictEqual(counts.priority, 1);
+  assert.strictEqual(counts.granted, 1);
+  assert.deepStrictEqual(unclassified, []);
+});
