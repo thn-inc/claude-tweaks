@@ -147,8 +147,8 @@ sanctioned-write family, the fourth a single documented exception:
   **before any filesystem write**. `bin/wrap-up-engine.js`, `bin/materialize.js`, and
   `bin/apply-refine-labels.js` do this with exit code 2 (malformed invocation); `bin/hooks.js`'s
   `resolveRunArg` carries the same anchoring check but a different exit-code contract — it prints
-  `--run path rejected: …` and exits 0 for every subcommand except `close-run`, which exits 1
-  (#3025). `resolveRunArg` also carries the one narrow exception to the anchoring rule itself —
+  `--run path rejected: …` and exits 0 for every subcommand except `close-run` (#3025) and
+  `resolve-console` (#2568), which exit 1. `resolveRunArg` also carries the one narrow exception to the anchoring rule itself —
   see **Worktree-local `--run` fallback (#280)** immediately below. A bare run id (no path
   separator) whose cwd-relative reading is not a directory is retried as
   `<main checkout>/.claude-tweaks/pipelines/<value>` (#3025) — the form
