@@ -4,7 +4,9 @@ const assert = require('node:assert');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
-const { verifyCommits, OUTCOMES } = require('../../../plugin/bin/lib/docs-health/commit-ref');
+const {
+  verifyCommits, defaultGit, OUTCOMES, DEEPEN_LOCK_FILENAME,
+} = require('../../../plugin/bin/lib/docs-health/commit-ref');
 const { git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo } = require('./commit-fixtures');
 
 const outcomeOf = (result, input) => result.commits.find((c) => c.input === input).outcome;
@@ -255,4 +257,97 @@ test('two real child processes racing verifyCommits against a shallow LINKED WOR
   assert.deepStrictEqual(resultB.commits, [{ input: origin.sideOnly, outcome: 'exists-unreachable', sha: origin.sideOnly }]);
   assert.strictEqual(resultA.shallow.deepened, true);
   assert.strictEqual(resultB.shallow.deepened, true);
+});
+
+test('a cached deepen-timeout is not retried with a fresh fetch on a second call in the same process (#2988)', () => {
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  let fetchCalls = 0;
+  const timeoutGit = (args, opts) => {
+    if (args.includes('fetch')) {
+      fetchCalls += 1;
+      const err = new Error('git fetch --unshallow timed out');
+      err.signal = 'SIGTERM';
+      throw err;
+    }
+    return defaultGit(args, opts);
+  };
+  const first = verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main', git: timeoutGit });
+  assert.strictEqual(outcomeOf(first, origin.third), 'unverifiable');
+  assert.strictEqual(fetchCalls, 1);
+
+  const second = verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main', git: timeoutGit });
+  assert.strictEqual(outcomeOf(second, origin.third), 'unverifiable');
+  assert.strictEqual(fetchCalls, 1, 'the cached timeout must not trigger a second real fetch attempt');
+});
+
+test('the deepen lock is released even when the fetch throws, leaving the repo lockable immediately after (#2988)', () => {
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  const failingGit = (args, opts) => {
+    if (args.includes('fetch')) { const err = new Error('network unreachable'); err.status = 1; throw err; }
+    return defaultGit(args, opts);
+  };
+  const r = verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main', git: failingGit });
+  assert.strictEqual(outcomeOf(r, origin.third), 'unverifiable');
+
+  const { acquireLock, releaseLock } = require('../../../plugin/bin/lib/file-lock');
+  const lockPath = path.join(dir, '.git', DEEPEN_LOCK_FILENAME);
+  const held = acquireLock(lockPath);
+  assert.notStrictEqual(held, null, 'the lock must be free immediately after an ordinary (non-timeout) fetch failure');
+  releaseLock(held);
+});
+
+test('CLAUDE_TWEAKS_LOCK_WAIT_MS is restored after a deepen attempt, even on failure (#2988)', () => {
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  const failingGit = (args, opts) => {
+    if (args.includes('fetch')) { const err = new Error('network unreachable'); err.status = 1; throw err; }
+    return defaultGit(args, opts);
+  };
+  const prev = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+  process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '42';
+  try {
+    verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main', git: failingGit });
+    assert.strictEqual(process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS, '42');
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+    else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prev;
+  }
+});
+
+test('a non-timeout fetch failure does not poison the cache -- a later call still attempts a fresh fetch (#2988)', () => {
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  let fetchCalls = 0;
+  const flakyGit = (args, opts) => {
+    if (args.includes('fetch')) {
+      fetchCalls += 1;
+      if (fetchCalls === 1) { const err = new Error('network unreachable'); err.status = 1; throw err; }
+    }
+    return defaultGit(args, opts);
+  };
+  const first = verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main', git: flakyGit });
+  assert.strictEqual(outcomeOf(first, origin.third), 'unverifiable');
+  assert.strictEqual(fetchCalls, 1);
+
+  const second = verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main', git: flakyGit });
+  assert.strictEqual(outcomeOf(second, origin.third), 'reachable');
+  assert.strictEqual(fetchCalls, 2, 'a non-timeout failure must not be cached -- the second call retries for real');
+});
+
+test('the deepen-timeout cache is keyed per repo root -- a cached timeout for one repo does not block a different one (#2988)', () => {
+  const originA = makeOriginRepo();
+  const dirA = cloneOf(originA, { depth: 1 });
+  const originB = makeOriginRepo();
+  const dirB = cloneOf(originB, { depth: 1 });
+  const timeoutGit = (args, opts) => {
+    if (args.includes('fetch')) { const err = new Error('timed out'); err.signal = 'SIGTERM'; throw err; }
+    return defaultGit(args, opts);
+  };
+  const a1 = verifyCommits({ root: dirA, hashes: [originA.third], integrationBranch: 'main', git: timeoutGit });
+  assert.strictEqual(outcomeOf(a1, originA.third), 'unverifiable');
+
+  const b1 = verifyCommits({ root: dirB, hashes: [originB.third], integrationBranch: 'main', git: defaultGit });
+  assert.strictEqual(outcomeOf(b1, originB.third), 'reachable', "repo B must still deepen normally -- its own cache entry is independent of repo A's");
 });

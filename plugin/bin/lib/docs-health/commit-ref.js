@@ -173,6 +173,25 @@ function gitCommonDir(git, root) {
   return git(['-C', root, 'rev-parse', '--path-format=absolute', '--git-common-dir']).trim();
 }
 
+// Keyed by the resolved repo root -- a same-process cache only (#2988): a
+// separate CLI invocation is a fresh process with an empty cache, so this
+// only helps a caller that invokes verifyCommits more than once against
+// the same root within one process (a test harness, or a future batched
+// caller). It is not, and must not be read as, a cross-process memory of
+// a prior timeout.
+const deepenTimeoutCache = new Map();
+
+// execFileSync kills the child on a timeout using killSignal (SIGTERM by
+// default), and the resulting error carries that signal with no exit
+// code; an ordinary non-zero-exit git failure carries .status instead,
+// with no .signal. This is how a genuine DEEPEN_TIMEOUT_MS timeout is
+// told apart from a transient fetch failure (bad remote, network error),
+// which must NOT poison the cache -- a transient failure should still be
+// retried on the next call.
+function isTimeoutError(err) {
+  return Boolean(err && err.signal);
+}
+
 // Serializes the --unshallow fetch for `root` across every concurrent
 // caller -- across OS processes via file-lock.js's cross-process mkdir
 // mutex (#2988): under docs-health --budget > 1, concurrent judge agents
@@ -184,6 +203,10 @@ function gitCommonDir(git, root) {
 // whichever caller actually performed it, or the already-deepened state
 // found on re-check) or { error: string } on failure.
 function deepenShallowClone(git, root, remote) {
+  const cacheKey = path.resolve(root);
+  const cached = deepenTimeoutCache.get(cacheKey);
+  if (cached) return { error: cached };
+
   // By the time this runs, `root` is already a confirmed git repo --
   // verifyCommits only calls here after its own isShallow(git, root)
   // succeeded -- so gitCommonDir failing here is unexpected. Still, a
@@ -234,7 +257,9 @@ function deepenShallowClone(git, root, remote) {
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
       });
     } catch (err) {
-      return { error: errorText(err) };
+      const message = errorText(err);
+      if (isTimeoutError(err)) deepenTimeoutCache.set(cacheKey, message);
+      return { error: message };
     }
     try {
       return { stillShallow: isShallow(git, root) };
