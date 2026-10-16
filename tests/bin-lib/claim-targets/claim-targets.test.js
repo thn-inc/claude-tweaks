@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const {
   run, BOT_IN_PROGRESS, ABORT_REASON, USAGE, defaultAppendClaimLog,
 } = require('../../../plugin/bin/lib/claim-targets/claim-targets');
@@ -1339,7 +1340,6 @@ test('--run: appendClaimLog is called once per claimed issue with its transport,
 // (`spawn`/`execFileSync` with an explicit `cwd`, never `process.chdir()` on
 // the shared test-runner process, and never a write into the real repo).
 test('defaultAppendClaimLog round-trip: an anchored run dir (real child-process cwd inside a fake checkout) ends up claim-log-only, hasClaimLogFor true for both issues', () => {
-  const { execFileSync } = require('node:child_process');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-anchored-'));
   fs.mkdirSync(path.join(root, '.git')); // a real checkout root: mainCheckoutRoot(cwd) anchors here
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-2775');

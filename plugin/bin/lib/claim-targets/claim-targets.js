@@ -251,8 +251,9 @@ function run(argv, deps) {
   // The claim identity and the log location must be the same run — a `--run`
   // pointed at a different run dir would log a claim under the wrong run's
   // decisions.md (#2775).
-  if (opts.runDir !== null && path.basename(opts.runDir) !== opts.runId) {
-    deps.stderr(`claim-targets: --run basename (${path.basename(opts.runDir)}) must equal --run-id (${opts.runId})\n`);
+  const runDirBasename = opts.runDir !== null ? path.basename(opts.runDir) : null;
+  if (runDirBasename !== null && runDirBasename !== opts.runId) {
+    deps.stderr(`claim-targets: --run basename (${runDirBasename}) must equal --run-id (${opts.runId})\n`);
     return 2;
   }
 
@@ -570,8 +571,9 @@ function run(argv, deps) {
       try {
         deps.appendClaimLog({ runDir: opts.runDir, issue, transport: transportByIssue[issue] });
       } catch (e) {
-        claimLogFailures.push({ issue, error: errText(e) });
-        deps.stderr(`claim-targets: claim-log write failed for #${issue} (claim stands) — ${errText(e)}\n`);
+        const error = errText(e);
+        claimLogFailures.push({ issue, error });
+        deps.stderr(`claim-targets: claim-log write failed for #${issue} (claim stands) — ${error}\n`);
       }
     }
   }
