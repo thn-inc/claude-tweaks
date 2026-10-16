@@ -38,11 +38,12 @@ Upstream: `github.com/emilkowalski/skills` (MIT), installed via `npx skills@late
 Lookup order, per skill name from the relevance map below:
 
 1. `{project}/.claude/skills/{name}/SKILL.md`
-2. `~/.claude/skills/{name}/SKILL.md`
+2. `{project}/.agents/skills/{name}/SKILL.md`
+3. `~/.claude/skills/{name}/SKILL.md`
 
-Load the `SKILL.md` at the first path that resolves; a name resolving at neither path is absent (see Degradation posture).
+Load the `SKILL.md` at the first path that resolves; a name resolving at none of these paths is absent (see Degradation posture). Path 1 stays first — it is the symlink a normal install creates, and a project that deliberately points `.claude/skills/{name}` somewhere else should still win over the real install directory.
 
-> **Install-layout verification note (2026-08-14, real install).** A throwaway `skills` CLI install (v1.5.18 — the then-latest v1.5.22 required Node ≥ 22.20) placed the actual skill directories at `{project}/.agents/skills/{name}/SKILL.md` (each directory containing `SKILL.md`) and created per-skill **symlinks** for Claude Code at `{project}/.claude/skills/{name}` → `../../.agents/skills/{name}`. Path 1 above therefore resolves through a symlink — read it normally, and do not skip symlinked directories. A user-level install location was not observed in that run; path 2 is retained as the conventional user-level Claude Code skills directory, secondary and unverified.
+> **Install-layout verification note (2026-08-14, real install).** A throwaway `skills` CLI install (v1.5.18 — the then-latest v1.5.22 required Node ≥ 22.20) placed the actual skill directories at `{project}/.agents/skills/{name}/SKILL.md` (each directory containing `SKILL.md`) and created per-skill **symlinks** for Claude Code at `{project}/.claude/skills/{name}` → `../../.agents/skills/{name}`. Path 1 above therefore resolves through a symlink — read it normally, and do not skip symlinked directories. Path 2 is now consulted directly, so a symlink that was never created or was lost no longer hides an otherwise-installed skill. A user-level install location was not observed in that run; path 3 is retained as the conventional user-level Claude Code skills directory, secondary and unverified.
 
 ## Relevance map
 

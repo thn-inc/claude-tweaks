@@ -10,7 +10,7 @@ When **all** of the following hold, render the compact block below instead of th
 - Zero findings in every category (code review, hindsight, visual, design quality, coverage, docs) and zero unresolved QA ledger entries
 - Zero tradeoffs accepted, zero autonomous actions performed (no fixes, no simplifier changes, no ledger resolutions)
 - No manual steps required
-- Zero untracked files reported by the post-fan-out sweep (`step3-lens-dispatch.md`)
+- Zero untracked files and zero new listeners reported by the post-fan-out sweep (`step3-lens-dispatch.md`)
 
 ```markdown
 ## Review: {spec number or description} — PASS (clean)
@@ -69,7 +69,7 @@ Possible QA statuses (the four canonical values from qa-reporting.md's Status de
 > This table lists `confirmed` findings — findings reproduced by both agents in the per-lens reproduction pair, elevated via the reviewer's own direct-verification override (`step3-lens-dispatch.md`), or upgraded to `confirmed` after a cross-lens debate round (Step 3.5). At `review-effort: xhigh`, `unconfirmed` findings (single-source, or debate converged negative) also appear here, labeled `(low-confidence)`. At `max`, `contested` findings (debate inconclusive) also appear here too, labeled `(contested — {verdicts})`. Below `xhigh`, `unconfirmed`/`contested` findings are staged to the Wrap-Up Review Console instead — they are not silently dropped either way. Override or apply each in batch from the Console.
 
 ### Fan-out leftovers
-{None | N untracked file(s) left by the review fan-out, reported (not deleted) by the post-fan-out sweep: {paths}}
+{None | N untracked file(s) left by the review fan-out, reported (not deleted) by the post-fan-out sweep: {paths}; N new local listener(s) since the pre-dispatch snapshot, reported (not killed; ownership unattributed): {command}:{port}, …}
 
 > Findings whose only evidence is one of these paths are downgraded to `unconfirmed` above, per `step3-lens-dispatch.md`'s post-fan-out sweep.
 
