@@ -43,11 +43,27 @@ test('the coverage anchor rule states both halves: coverage gap at production li
   const d = read('review', 'step3-lens-dispatch.md');
   const sec = between(d, '> **Coverage findings anchor at the code under test.**', '> **Scratch path');
 
-  // Check for both halves of the rule
-  assert.match(sec, /coverage gap|missing.*test|weak.*test/i, 'should mention coverage gaps or weak tests');
-  assert.match(sec, /production line|code under test/i, 'should mention the production line');
-  assert.match(sec, /test.*defect|test.*quality|test.*fault|test.*issue/i, 'should mention test defects');
-  assert.match(sec, /test line|test file/i, 'should mention the test line');
+  // Must mention missing test explicitly (not just weak test or missing assertion)
+  assert.match(sec, /missing test/i, 'must name missing test case');
+
+  // Split on period-space to isolate the two halves
+  const sentences = sec.split(/\.\s+/).filter(s => s.trim());
+  assert.ok(sentences.length >= 2, 'rule must have at least two sentences (coverage gap half and test-quality defect half)');
+
+  // Coverage-gap half: must name production line and explicitly say "never at the test"
+  const coverageHalf = sentences.find(s => /coverage gap|missing test|weak test/i.test(s));
+  assert.ok(coverageHalf, 'must have a coverage-gap sentence');
+  assert.match(coverageHalf, /production line|code.*should verify/i, 'coverage-gap sentence must name the production line');
+  assert.match(coverageHalf, /never at the test/i, 'coverage-gap sentence must explicitly say "never at the test"');
+
+  // Test-defect half: must name test line and NOT name production line
+  const testDefectHalf = sentences.find(s => /test.quality.defect|test.*defect|refactor.coupled/i.test(s));
+  assert.ok(testDefectHalf, 'must have a test-quality-defect sentence');
+  assert.match(testDefectHalf, /test line/i, 'test-defect sentence must name the test line');
+  assert.doesNotMatch(testDefectHalf, /production line|code.*should verify/i, 'test-defect sentence must NOT mention production line');
+
+  // Must state the rule goes in the dispatch prompt
+  assert.match(sec, /dispatch prompt|dispatch.*prompt/i, 'must state the rule goes in the dispatch prompt');
 });
 
 test('the Calibration block does not contain the coverage anchor rule text', () => {
@@ -72,10 +88,24 @@ test('the 3f: Test Quality section contains exactly one bullet restating the cov
 
   assert.equal(ruleBullets.length, 1, `3f section should have exactly one bullet with "**Coverage findings anchor at the code under test:**", found ${ruleBullets.length}`);
 
-  // Verify the bullet contains both halves
   const ruleBullet = ruleBullets[0];
-  assert.match(ruleBullet, /coverage gap/i);
-  assert.match(ruleBullet, /production line/i);
-  assert.match(ruleBullet, /test-quality defect|test.*defect/i);
-  assert.match(ruleBullet, /test line/i);
+
+  // Must mention missing test explicitly
+  assert.match(ruleBullet, /missing test/i, '3f bullet must name missing test case');
+
+  // Split on semicolon or conjunction to find the two halves
+  const halves = ruleBullet.split(/;|when it's a/).map(s => s.trim());
+  assert.ok(halves.length >= 2, '3f bullet must state both coverage-gap and test-defect halves');
+
+  // Coverage-gap half: must name production line and refer to code under test
+  const coverageHalf = ruleBullet.split(/;|when it's a/)[0];
+  assert.match(coverageHalf, /coverage gap|missing test|weak test|insufficient case/i, 'coverage half must describe coverage gaps');
+  assert.match(coverageHalf, /production line|code.*under test|anchor.*at/i, 'coverage half must name where to anchor');
+  assert.doesNotMatch(coverageHalf, /anchor.*at.*test line/i, 'coverage half must NOT say anchor at test line');
+
+  // Test-defect half: must name test line and NOT mention production line
+  const testDefectHalf = ruleBullet.split(/;|when it's a/).slice(-1)[0];
+  assert.match(testDefectHalf, /test.quality.defect|test.*defect|refactor.coupled|non.discriminating/i, 'test-defect half must describe test defects');
+  assert.match(testDefectHalf, /anchor.*at.*test line|test line/i, 'test-defect half must name test line');
+  assert.doesNotMatch(testDefectHalf, /production line|code.*under test/i, 'test-defect half must NOT mention production line');
 });
