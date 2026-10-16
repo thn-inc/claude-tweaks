@@ -4,7 +4,7 @@
 
 **Goal:** Fix the Windows path-separator class at its root: one shared separator-normalizing helper used by the producer that emits `\` into repo-display IDs, and expected values built with `path.resolve`/`path.join` (never a per-fixture `.replace`) where production legitimately returns a native filesystem path.
 
-**Architecture:** A static map of the class (this run's investigation, recorded in the materialized spec's Build notes) split it into PRODUCER rows (production writes an OS-native path where its contract is a `/` display ID — `plugin/bin/lib/skill-audit/context-cost.js`) and TEST-ONLY rows (production returns a native path it opens; only the test's expected literal hard-codes `/`). Producers get `toPosix(p, sep = path.sep)` — promoted into `plugin/bin/lib/shared-primitives.js` beside `isPathContained`, taking `sep` as a parameter so a test pins the win32 branch with `path.win32.sep` on any host (`.claude/skills/windows-checkout-test-parity`'s inject-the-stdlib-module pattern). Test-only rows build their expected values the way #3074 already did for the hooks suites.
+**Architecture:** A static map of the class (this run's investigation, recorded in the Class map section below) split it into PRODUCER rows (production writes an OS-native path where its contract is a `/` display ID — `plugin/bin/lib/skill-audit/context-cost.js`) and TEST-ONLY rows (production returns a native path it opens; only the test's expected literal hard-codes `/`). Producers get `toPosix(p, sep = path.sep)` — promoted into `plugin/bin/lib/shared-primitives.js` beside `isPathContained`, taking `sep` as a parameter so a test pins the win32 branch with `path.win32.sep` on any host (`.claude/skills/windows-checkout-test-parity`'s inject-the-stdlib-module pattern). Test-only rows build their expected values the way #3074 already did for the hooks suites.
 
 **Tech Stack:** Node 18+, `node --test`.
 
@@ -16,6 +16,25 @@
 - No fixture-by-fixture `.replace('\\', '/')` patches (record AC). Building an expected value with `path.resolve`/`path.join` is not that — it is the #3074 pattern.
 - Never stub `process.platform` or mutate the `path` module in a committed test (`windows-checkout-test-parity` anti-pattern).
 - Evidence on this macOS host comes from a scratch **win32 path simulation** (`/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks/3400fc5c-0be5-4dd0-a151-79cf0b269c9f/scratchpad/win32sim/preload.js`: swaps Node's public `path` methods for `path.win32`'s outside module loading). It is not a Windows run and is never reported as one; fs-backed tests produce noise under it.
+
+## Class map
+
+The spec names `context-cost`, `hooks-git-command`, `cloud-setup-drift-check`, `verify-scope-starter` and `archive-merged` as members of the class. The static investigation for this plan sorted them, and the other suites it found, as follows:
+
+- **Producer, fixed here:** `plugin/bin/lib/skill-audit/context-cost.js`. Three `path.relative` results are serialized as repo-display IDs (Task 2).
+- **Test-only, fixed here:** these suites expected `/` where production legitimately returns a native fs path (Task 3):
+  - `context-cost` (`parseComposeCallLine` sources)
+  - `hooks-git-command`
+  - `hooks-gate-coverage` (#3080's rows)
+  - `verify-scope-starter` (fake-fs keys)
+  - `ledger-write`
+  - `verify/report`
+- **Not this class, so routed as leftovers:**
+  - `cloud-setup-drift-check` joins `PATH` with `:` where it needs `path.delimiter`, and its fixtures run shell-script stubs. Both are Windows faults, but neither is a separator fault.
+  - `archive-merged` could not be classified statically. It needs a real Windows run.
+  - `code-health/scope.js` (`splitOversized` key) and `residue/probes/worktrees.js` (a domain `includes` check) look like latent producer faults with no failing test.
+  - `timing/transcript.js` (`isProcedurePath` input) also looks like a latent producer fault.
+  - `plan-audit` and `findability` have display inconsistencies.
 
 ## Review Focus
 

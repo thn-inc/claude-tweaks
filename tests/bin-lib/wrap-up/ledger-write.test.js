@@ -61,14 +61,14 @@ test('resolveLedgerPath honors an explicit ledger path inside the worktree', () 
 });
 
 test('resolveLedgerPath rejects an explicit path outside the run dir and worktree', () => {
-  const deps = { existsSync: () => true, realpathSync: (p) => p };
+  const deps = { existsSync: () => true, realpathSync: (p) => path.resolve(p) };
   const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', explicit: '/elsewhere/ledger.md', deps });
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.reason, 'rejected');
 });
 
 test('resolveLedgerPath rejects an explicit path whose symlink resolves outside the run dir and worktree', () => {
-  const deps = { existsSync: () => true, realpathSync: (p) => (p === '/wt/ledger.md' ? '/etc/ledger.md' : p) };
+  const deps = { existsSync: () => true, realpathSync: (p) => path.resolve(p === '/wt/ledger.md' ? '/etc/ledger.md' : p) };
   const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', explicit: '/wt/ledger.md', deps });
   assert.strictEqual(r.reason, 'rejected');
 });
