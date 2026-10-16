@@ -223,8 +223,10 @@ test('usableAnchor guards a dash-prefixed anchor with --end-of-options so it can
 
 // ── #3072: mergeNarrowing, against a real temp git repo ───────────────────
 
-// integration branch `trunk`, feature branch `feat` cut from it; anchor = feat's tip at cut time.
-function mergeRepo() {
+// integration branch `trunk`, feature branch `feat` cut from it; anchor = feat's
+// tip at cut time. preBranchFiles (each [rel, content]) commit to trunk before
+// the cut, so both branches start from them.
+function mergeRepo(preBranchFiles = []) {
   const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'merge-narrowing-')));
   const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   git('init', '-q', '-b', 'trunk');
@@ -234,8 +236,9 @@ function mergeRepo() {
     fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
     fs.writeFileSync(path.join(repo, rel), content);
   };
-  const commit = (rel, content) => { write(rel, content); git('add', rel); git('commit', '-q', '-m', `add ${rel}`); };
+  const commit = (rel, content, msg = `add ${rel}`) => { write(rel, content); git('add', rel); git('commit', '-q', '-m', msg); };
   commit('README.md', 'root');
+  for (const [rel, content] of preBranchFiles) commit(rel, content);
   git('checkout', '-q', '-b', 'feat');
   const anchor = git('rev-parse', 'HEAD');
   const exec = (cmd, args, opts) => execFileSync(cmd, args, { ...opts, cwd: repo });
@@ -355,38 +358,25 @@ test('mergeNarrowing: a rename-paired deletion is not swallowed by default simil
 // {ref}'s content here would silently verify the branch's code against a
 // different version of a file it itself touched.
 test('mergeNarrowing: a conflict resolved in the integration branch\'s favour keeps the branch\'s own pre-anchor edit selected (#3072 Important 2)', () => {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'merge-narrowing-')));
-  const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  const exec = (cmd, args, opts) => execFileSync(cmd, args, { ...opts, cwd: repo });
-  const write = (rel, content) => {
-    fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
-    fs.writeFileSync(path.join(repo, rel), content);
-  };
-  const commit = (rel, content, msg) => { write(rel, content); git('add', rel); git('commit', '-q', '-m', msg); };
-  git('init', '-q', '-b', 'trunk');
-  git('config', 'user.email', 'verify-test@example.invalid');
-  git('config', 'user.name', 'verify test');
-  commit('README.md', 'root', 'add README.md');
-  commit('src/x.py', 'line1\nline2\nline3\n', 'add src/x.py');
-  git('checkout', '-q', '-b', 'feat');
-  commit('src/x.py', 'line1\nBRANCH-EDIT\nline3\n', 'feat edits x.py');
-  const anchor = git('rev-parse', 'HEAD');
-  git('checkout', '-q', 'trunk');
-  commit('src/x.py', 'line1\nTRUNK-EDIT\nline3\n', 'trunk edits x.py');
-  git('checkout', '-q', 'feat');
+  const r = mergeRepo([['src/x.py', 'line1\nline2\nline3\n']]);
+  r.commit('src/x.py', 'line1\nBRANCH-EDIT\nline3\n', 'feat edits x.py');
+  const anchor = r.git('rev-parse', 'HEAD');
+  r.git('checkout', '-q', 'trunk');
+  r.commit('src/x.py', 'line1\nTRUNK-EDIT\nline3\n', 'trunk edits x.py');
+  r.git('checkout', '-q', 'feat');
   let conflicted = false;
   try {
-    execFileSync('git', ['merge', '-q', '--no-ff', 'trunk'], { cwd: repo, encoding: 'utf8' });
+    r.exec('git', ['merge', '-q', '--no-ff', 'trunk'], { encoding: 'utf8' });
   } catch {
     conflicted = true;
   }
   assert.ok(conflicted, 'expected a merge conflict on src/x.py');
-  execFileSync('git', ['checkout', '--theirs', 'src/x.py'], { cwd: repo, encoding: 'utf8' });
-  git('add', 'src/x.py');
-  git('commit', '-q', '--no-edit');
-  const files = changedSince({ exec }, anchor);
+  r.exec('git', ['checkout', '--theirs', 'src/x.py'], { encoding: 'utf8' });
+  r.git('add', 'src/x.py');
+  r.git('commit', '-q', '--no-edit');
+  const files = changedSince(r, anchor);
   assert.ok(files.includes('src/x.py'), `expected src/x.py among changed files, got ${JSON.stringify(files)}`);
-  const n = mergeNarrowing({ anchor, integrationBranch: 'trunk', files, execImpl: exec });
+  const n = mergeNarrowing({ anchor, integrationBranch: 'trunk', files, execImpl: r.exec });
   assert.ok(n, 'expected mergeNarrowing to engage (a real merge of trunk happened)');
   assert.ok(n.files.includes('src/x.py'), `src/x.py must stay selected even though HEAD now matches trunk; files=${JSON.stringify(n.files)}`);
   assert.ok(!n.excluded.includes('src/x.py'), `src/x.py must not be excluded; excluded=${JSON.stringify(n.excluded)}`);

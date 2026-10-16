@@ -166,11 +166,11 @@ function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileS
   const ref = preferOriginRef((args) => git(execImpl, args), integrationBranch);
   const merges = tryGit(execImpl, ['rev-list', '--merges', '--parents', '--end-of-options', `${anchor}..HEAD`]);
   if (merges === null) return null;
-  const mergedRef = merges.split('\n').filter((l) => l.trim() !== '').some((line) => {
+  const hasMergedRef = merges.split('\n').filter((l) => l.trim() !== '').some((line) => {
     const otherParents = line.trim().split(/\s+/).slice(2);
     return otherParents.some((p) => tryGit(execImpl, ['merge-base', '--is-ancestor', '--end-of-options', p, ref]) !== null);
   });
-  if (!mergedRef) return null;
+  if (!hasMergedRef) return null;
   const differs = tryGit(execImpl, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', ref, 'HEAD']);
   if (differs === null) return null;
   const own = new Set(parseNameOnlyZ(differs));
