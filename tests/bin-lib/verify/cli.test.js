@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { execFile, spawnSync, execFileSync } = require('child_process');
+const { execFile, spawn, spawnSync, execFileSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 
@@ -283,6 +283,28 @@ test('a failing run, a fail-fast skip, and --no-stamp write neither stamp file (
     assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')), `json stamp written for ${JSON.stringify(args)}`);
     assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass')), `bare stamp written for ${JSON.stringify(args)}`);
   }
+});
+
+test('#3063 AC1: a check that sleeps past its --cmd-timeout ends the run with exit 1, a timedOut report entry, and no stamp', async () => {
+  const { repo, gitDir } = tmpGitRepo();
+  const { code, stdout } = await runCli([
+    '--cmd', 'tests=node -e "setInterval(() => {}, 1000)"', '--cmd-timeout', 'tests=300',
+  ], { cwd: repo });
+  assert.strictEqual(code, 1);
+  const report = JSON.parse(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.pass, false);
+  assert.strictEqual(report.checks.tests.exitCode, null);
+  assert.strictEqual(report.checks.tests.timedOut, true);
+  assert.match(stdout, /\| tests \| fail \| .* \| timed out after [\d.]+s \|/);
+  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp for a timed-out run');
+  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass')), 'no legacy stamp either');
+});
+
+test('#3063: a check that finishes well inside its --cmd-timeout is unaffected', async () => {
+  const { repo, gitDir } = tmpGitRepo();
+  const { code } = await runCli(['--cmd', 'tests=node -e 0', '--cmd-timeout', 'tests=5000'], { cwd: repo });
+  assert.strictEqual(code, 0);
+  assert.ok(fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')));
 });
 
 // #2341: only one --cmd name ("types") gets the fail-fast-before-tests
@@ -1882,4 +1904,49 @@ test('--scope --integration-branch: a merged-in file the branch then edited stay
   const report = JSON.parse(fs.readFileSync(stampOf(r.gitDir).reportPath, 'utf8'));
   assert.deepStrictEqual(report.scope.changedFiles, ['ui/a.js']);
   assert.deepStrictEqual(report.scope.mergeNarrowing, { ref: r.trunk, excluded: 1, excludedFiles: ['ui/b.js'] });
+});
+
+test('--baseline: a stale ct-verify-base-* scratch worktree from an earlier interrupted run is named on stderr, and left alone (#3064)', async () => {
+  // Detection runs as soon as --baseline resolves to a commit — before any
+  // check executes and before adjudication is even attempted — so a trivial
+  // passing repo is enough; this test does not need a real baseline mismatch.
+  const r = tmpGitRepo();
+  const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
+  const staleWt = path.join(staleParent, 'wt');
+  r.git('worktree', 'add', '--detach', staleWt, 'HEAD');
+  const { stderr } = await runCli(['--cmd', 'tests=node -e "process.exit(0)"', '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}'], { cwd: r.repo });
+  assert.ok(
+    stderr.includes(`verify.js: a stale baseline scratch worktree is registered at ${staleWt} from an earlier interrupted run — remove it manually: git worktree remove --force ${staleWt}`),
+    stderr,
+  );
+  assert.ok(fs.existsSync(staleWt), 'never swept automatically — a sibling session\'s own live scratch would look identical');
+  const list = r.git('worktree', 'list', '--porcelain');
+  // Nothing else ever creates a scratch worktree here (the run passes outright); the stale one is the only extra entry.
+  assert.strictEqual((list.match(/^worktree /gm) || []).length, 2, list);
+});
+
+test('--baseline: a SIGINT mid-run removes the scratch worktree and exits 130, leaving nothing registered behind (#3064 AC1)', { skip: process.platform === 'win32' && 'POSIX signal delivery only' }, async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  // {file} is appended but unused by the sleeping script — just needs to
+  // still be running when SIGINT arrives.
+  const SLOW_PER_FILE = 'tests=node -e "setTimeout(() => {}, 8000)" {file}';
+  const child = spawn(process.execPath, [CLI, '--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', SLOW_PER_FILE], {
+    cwd: r.repo, env: r.opts.env, stdio: ['ignore', 'ignore', 'ignore'],
+  });
+  const deadline = Date.now() + 10000;
+  let worktreeCount = 1;
+  while (Date.now() < deadline) {
+    const list = r.git('worktree', 'list', '--porcelain');
+    worktreeCount = (list.match(/^worktree /gm) || []).length;
+    if (worktreeCount >= 2) break;
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
+  }
+  assert.strictEqual(worktreeCount, 2, 'the scratch worktree must exist before sending SIGINT');
+  child.kill('SIGINT');
+  const [code, signal] = await new Promise((resolve) => { child.on('exit', (c, s) => resolve([c, s])); });
+  assert.strictEqual(signal, null, 'the process exits via process.exit() itself, never killed outright by the signal');
+  assert.strictEqual(code, 130);
+  const list = r.git('worktree', 'list', '--porcelain');
+  assert.strictEqual((list.match(/^worktree /gm) || []).length, 1, 'no registered scratch worktree afterwards');
 });

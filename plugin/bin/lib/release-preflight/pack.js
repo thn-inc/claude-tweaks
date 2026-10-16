@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFile: execFileCb, execFileSync } = require('child_process');
 const { promisify } = require('util');
-const { conventionalHistory } = require('../release-local/commits.js');
+const { conventionalHistory, lastTag } = require('../release-local/commits.js');
 const { bumpPart } = require('../release-local/bump.js');
 const { readConfig, readBumpFlags, resolveTargets, versionAtRef, MANIFEST_FILE } = require('../release-local/manifest.js');
 const { compareVersions, nextVersion } = require('../changelog.js');
@@ -277,7 +277,27 @@ function prepare({ deps, rootArg, runDir }) {
     try { return await fn(); } catch (err) { throw new Error(`${name} unresolved: ${String((err && err.message) || err)}`); }
   };
 
-  const history = memo(() => conventionalHistory(deps.git, tipRef));
+  // #2954: under `pr-first`, release-please (the engine) considers every
+  // commit reachable from the tip, not just the first-parent spine — a
+  // GitHub-default `--no-ff` PR merge otherwise hides its branch's
+  // conventional commits behind one unconventional merge subject, so
+  // `unreleased`/`proposedVersion` disagree with the engine that actually
+  // decides the bump. `local-merge` keeps the first-parent walk, matching
+  // release-local.js's own engine. `needEngine()` throws when the engine is
+  // unresolved; `dependency('history', fn)` below is what turns that into an
+  // `engine unresolved`-naming degradation rather than crashing the probe
+  // outright (ruling: "A field that depends on another field's work names
+  // that dependency in its error").
+  //
+  // `lastTag` alone stays engine-independent: `conventionalHistory`'s own
+  // `lastTag` lookup (`git tag --merged`) never reads `--first-parent` either
+  // way, and AC 6 requires `lastTag` to keep resolving when the engine is
+  // unresolved (an unrelated preamble fact). `tagOnly` recomputes just that
+  // tag lookup, sharing the `dependency('history', …)` error-naming
+  // convention so a `tag --merged` failure still reads identically on every
+  // one of the three fields below, matching the pre-#2954 shape.
+  const tagOnly = memo(() => ({ lastTag: lastTag(deps.git, tipRef) }));
+  const history = memo(() => conventionalHistory(deps.git, tipRef, needEngine() === 'pr-first' ? { firstParent: false } : {}));
   const historyOf = () => dependency('history', history);
   const releasePr = memo(async () => {
     if (needEngine() === 'local-merge') return 'none';
@@ -293,9 +313,9 @@ function prepare({ deps, rootArg, runDir }) {
   const probes = {
     engine: () => { if (!engine) throw new Error('integration-model unresolved'); return engine; },
     lastTag: async () => {
-      const { lastTag } = await historyOf();
-      if (!lastTag) throw new Error(`no v* tag reachable from ${tipRef}`);
-      return { tag: lastTag, version: lastTag.replace(/^v/, ''), tipRef };
+      const { lastTag: tag } = await dependency('history', tagOnly);
+      if (!tag) throw new Error(`no v* tag reachable from ${tipRef}`);
+      return { tag, version: tag.replace(/^v/, ''), tipRef };
     },
     unreleased: async () => {
       const { lastTag, commits } = await historyOf();

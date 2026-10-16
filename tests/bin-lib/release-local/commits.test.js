@@ -107,3 +107,40 @@ test('lastTag/readCommits: the default ref is still HEAD', () => {
   lastTag(git); readCommits(git, 'v1.2.0');
   assert.ok(calls[0].startsWith('tag --merged HEAD ') && calls[1].endsWith(' v1.2.0..HEAD'), calls.join(' | '));
 });
+
+// #2954: the opt-in all-parents mode. readCommits/conventionalHistory still
+// default to --first-parent (every existing caller/test above is unaffected);
+// passing { firstParent: false } drops the flag so a merge's second-parent
+// commits (hidden behind the merge's own composer subject on the default
+// walk) are included too.
+test('readCommits: { firstParent: false } omits --first-parent from the git log argv; the default keeps it', () => {
+  const calls = [];
+  const git = (args) => { calls.push(args); return ''; };
+  readCommits(git, null);
+  assert.ok(calls[0].includes('--first-parent'), calls[0].join(' '));
+  readCommits(git, null, 'HEAD', { firstParent: false });
+  assert.ok(!calls[1].includes('--first-parent'), calls[1].join(' '));
+  // Range and format placement are unaffected by the flag either way.
+  assert.strictEqual(calls[1][calls[1].length - 1], 'HEAD');
+});
+
+test('readCommits: { firstParent: false } includes a second-parent-only commit a first-parent walk would hide behind the merge subject', () => {
+  // Simulates a GitHub-default --no-ff PR merge: `git log --first-parent`
+  // sees only the merge commit itself (an unconventional subject); the same
+  // range without --first-parent also reaches the branch's own feat: commit,
+  // reachable only via the merge's second parent.
+  const mergeOnly = 'm'.repeat(40) + '\x1fMerge pull request #1 from org/feat\x1f\x1e\n';
+  const withSecondParent = mergeOnly + 'f'.repeat(40) + '\x1ffeat(x): y\x1f\x1e\n';
+  const git = (args) => (args.includes('--first-parent') ? mergeOnly : withSecondParent);
+  const firstParentOnly = readCommits(git, 'v0.2.0');
+  assert.deepStrictEqual(firstParentOnly.map((c) => c.unconventional), [true]);
+  const allParents = readCommits(git, 'v0.2.0', 'HEAD', { firstParent: false });
+  assert.deepStrictEqual(allParents.map((c) => [c.type, c.unconventional]), [[null, true], ['feat', false]]);
+});
+
+test('conventionalHistory: passes opts through to readCommits', () => {
+  const calls = [];
+  const git = (args) => { calls.push(args); return args[0] === 'tag' ? 'v1.2.0\n' : ''; };
+  conventionalHistory(git, 'HEAD', { firstParent: false });
+  assert.ok(!calls[1].includes('--first-parent'), calls[1].join(' '));
+});
