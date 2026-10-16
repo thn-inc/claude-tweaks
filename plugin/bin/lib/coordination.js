@@ -7,6 +7,13 @@
 
 const LINE_TOLERANCE_REPRODUCTION = 2;
 const LINE_TOLERANCE_DEBATE = 5;
+// #2955: two reproduction agents can anchor one finding on different lines
+// of the same multi-line statement, landing more than
+// LINE_TOLERANCE_REPRODUCTION apart. A same-path pair within this wider
+// bound still pairs, but only on strong, known substance agreement
+// (SUBSTANCE_SIMILARITY_WIDE_MIN). Same value as LINE_TOLERANCE_DEBATE today,
+// kept as its own name so the two can diverge.
+const LINE_TOLERANCE_REPRODUCTION_WIDE = 5;
 const REPRODUCTION_AGENT_COUNT = 2;
 const DEBATE_AGENT_COUNT = 2;
 
@@ -24,6 +31,13 @@ const DEBATE_AGENT_COUNT = 2;
 // tokenizeSubstance vs. near-duplicate.js's tokenizeTitle for the matching
 // preprocessing difference (path:line stripping vs. #N record-ref stripping).
 const SUBSTANCE_SIMILARITY_MIN = 0.4;
+
+// #2955: the stricter floor the wide band demands, since it has weaker
+// location evidence. Calibrated on finding text: close paraphrases of one
+// issue scored 0.70-0.84 and unrelated issues inside one statement scored
+// 0.00-0.18. A loosely worded same-issue pair (0.47) stays unconfirmed in the
+// wide band; it still pairs within ±2.
+const SUBSTANCE_SIMILARITY_WIDE_MIN = 0.6;
 
 // Minimal stop-word list for sameSubstance's tokenizer — just enough to keep
 // common connective words from diluting the Jaccard score; not a general NLP
@@ -291,14 +305,21 @@ function categoriseReproduction(agentAFindings, agentBFindings) {
 
   for (const rawFa of agentAFindings) {
     const fa = normalizeFinding(rawFa);
-    // #1980: gather every same-location B candidate not already spoken for,
+    // #1980: gather every same-location B candidate (±2, or the #2955 wide band) not already spoken for,
     // rather than stopping at the first (location-only) match — location
     // alone is no longer sufficient to pick a pairing.
     const candidates = [];
     normalizedB.forEach((fb, i) => {
       if (matchedB.has(i) || consumedB.has(i)) return;
-      if (!sameLocation(fa, fb, LINE_TOLERANCE_REPRODUCTION)) return;
-      candidates.push({ index: i, finding: fb, substance: sameSubstance(fa, fb), score: substanceSimilarity(fa, fb) });
+      const score = substanceSimilarity(fa, fb);
+      if (!sameLocation(fa, fb, LINE_TOLERANCE_REPRODUCTION)) {
+        // #2955: the wide band. A pair here is a candidate only on known,
+        // strong substance agreement. Anything else is not a candidate at
+        // all, so it never becomes a #1980 nearLocation coincidence below.
+        if (!sameLocation(fa, fb, LINE_TOLERANCE_REPRODUCTION_WIDE)) return;
+        if (score === null || score < SUBSTANCE_SIMILARITY_WIDE_MIN) return;
+      }
+      candidates.push({ index: i, finding: fb, substance: sameSubstance(fa, fb), score });
     });
 
     if (candidates.length === 0) {
@@ -441,11 +462,13 @@ function buildRedTeamDispatch(specContent, profile = 'Standard') {
 module.exports = {
   // Constants
   LINE_TOLERANCE_REPRODUCTION,
+  LINE_TOLERANCE_REPRODUCTION_WIDE,
   LINE_TOLERANCE_DEBATE,
   REPRODUCTION_AGENT_COUNT,
   DEBATE_AGENT_COUNT,
   RED_TEAM_PERSONAS,
   SUBSTANCE_SIMILARITY_MIN,
+  SUBSTANCE_SIMILARITY_WIDE_MIN,
   // Comparison / aggregation logic
   severityBucket,
   severityRank,
