@@ -9,15 +9,31 @@
 //   node bin/qa-stamp.js --check --stories <id=file,...> [--stories-dir <dir>]
 //
 // Prints one JSON line: --write → {written: true, path, sha, stories} or
-// {written: false, reason}; --check → {skip, reason, sha}. Status is data:
-// exit 0 in every state; 2 malformed invocation.
+// {written: false, reason[, invalidated: true]}; --check → {skip, reason, sha}.
+// Status is data: exit 0 in every state; 2 malformed invocation.
+//
+// Dirty check (Important 3, #3003 final review): cleanliness is this CLI's own
+// `git status --porcelain -- . ':(exclude).claude-tweaks/artifacts'` pathspec,
+// never report.js's shared gitInfo() dirty flag — a pipeline QA run's own
+// screenshots under .claude-tweaks/artifacts/ must not make every run read
+// dirty-tree and never stamp. HEAD still comes from gitInfo()'s `git rev-parse HEAD`.
+//
+// Stamp invalidation (Important 2): a `--write` refusal that is a *result*
+// refusal (no-stories, story-not-passed: …, summary-not-clean, summary-mismatch
+// — the run was evaluated and failed) removes an existing stamp at the same
+// HEAD, so a later `--check` can't report a stale pass. `invalidated: true` is
+// present only when a stamp was actually removed; it is omitted (never `false`)
+// otherwise, matching report.js's own omit-when-absent convention. An
+// *environmental* refusal (report-unreadable, no-git-dir, dirty-tree, no-head,
+// story-file-unreadable) never invalidates — the run was never evaluated.
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { execFileSync } = require('child_process');
 const {
-  composeQaStamp, decideQaSkip, readQaStamp, writeQaStamp,
+  composeQaStamp, decideQaSkip, readQaStamp, writeQaStamp, QA_STAMP_NAME,
 } = require('./lib/verify/qa-stamp');
 const { gitInfo, gitDir } = require('./lib/verify/report');
 
@@ -51,10 +67,23 @@ function parseArgs(argv) {
   return o;
 }
 
+// Important 3: QA's own artifacts never count toward dirty. A git failure
+// means "unknown", which composeQaStamp/decideQaSkip already treat as not
+// clean (dirty !== false blocks the stamp the same as a real dirty tree).
+function computeDirty(execImpl = execFileSync, cwd = process.cwd()) {
+  try {
+    const out = String(execImpl('git', ['status', '--porcelain', '--', '.', ':(exclude).claude-tweaks/artifacts'], { encoding: 'utf8', cwd })).trim();
+    return out !== '';
+  } catch {
+    return null;
+  }
+}
+
 const realDeps = {
   cwd: () => process.cwd(),
   gitInfo: () => gitInfo(),
   gitDir: () => gitDir(),
+  dirty: () => computeDirty(),
   now: () => new Date().toISOString(),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -64,9 +93,33 @@ function hashFile(p) {
   try { return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex'); } catch { return null; }
 }
 
+// Minor 4: a storiesDir given as `./stories/`, `stories/`, or an absolute path
+// must compare equal to its plain `stories` spelling on both --write and
+// --check — normalize to a cwd-relative, forward-slash form before using it
+// anywhere (composing the stamp, comparing it, or resolving story paths).
+function normalizeStoriesDir(dir, cwd) {
+  const rel = path.relative(cwd, path.resolve(cwd, dir));
+  return (rel === '' ? '.' : rel).split(path.sep).join('/');
+}
+
 function emit(deps, body) {
   deps.stdout(`${JSON.stringify(body)}\n`);
   return 0;
+}
+
+// Important 2: a *result* refusal (the run was evaluated and failed) at the
+// same HEAD as an existing stamp means that stamp is stale — remove it so a
+// later --check can't report a pass that no longer holds. An *environmental*
+// refusal (report-unreadable, no-git-dir, dirty-tree, no-head,
+// story-file-unreadable) never reaches here: it returns before composeQaStamp
+// runs, or composeQaStamp never evaluated the stories to know they passed.
+const RESULT_REFUSAL_RE = /^(no-stories|summary-not-clean|summary-mismatch|story-not-passed: )/;
+function invalidateStaleStamp(dir, head, reason) {
+  if (!RESULT_REFUSAL_RE.test(reason)) return false;
+  const existing = readQaStamp(dir);
+  if (!existing || existing.sha !== head) return false;
+  try { fs.unlinkSync(path.join(dir, QA_STAMP_NAME)); } catch { return false; }
+  return true;
 }
 
 function write(o, deps) {
@@ -76,16 +129,26 @@ function write(o, deps) {
   }
   const dir = deps.gitDir();
   if (!dir) return emit(deps, { written: false, reason: 'no-git-dir' });
-  const storiesDir = o.storiesDir || report.stories_dir || 'stories';
-  const storyHashes = {};
+  const storiesDir = normalizeStoriesDir(o.storiesDir || report.stories_dir || 'stories', deps.cwd());
+  // Object.create(null) (Deferred minor 1): a story literally named
+  // `__proto__` must hash like any other file, never silently vanish into the
+  // prototype's own accessor.
+  const storyHashes = Object.create(null);
   for (const s of Array.isArray(report.stories) ? report.stories : []) {
-    storyHashes[s.source_file] = hashFile(path.join(deps.cwd(), storiesDir, String(s.source_file)));
+    if (s === null || typeof s !== 'object') continue; // Minor 5 — composeQaStamp refuses malformed entries itself
+    storyHashes[s.source_file] = hashFile(path.resolve(deps.cwd(), storiesDir, String(s.source_file)));
   }
-  const { sha, dirty } = deps.gitInfo();
+  const { sha } = deps.gitInfo();
+  const dirty = deps.dirty();
   const { stamp, error } = composeQaStamp({
     report, head: sha, dirty, storyHashes, storiesDir, reportPath: path.resolve(o.report), at: deps.now(),
   });
-  if (error) return emit(deps, { written: false, reason: error });
+  if (error) {
+    const invalidated = invalidateStaleStamp(dir, sha, error);
+    return invalidated
+      ? emit(deps, { written: false, reason: error, invalidated: true })
+      : emit(deps, { written: false, reason: error });
+  }
   const p = writeQaStamp(dir, stamp);
   return emit(deps, { written: true, path: p, sha: stamp.sha, stories: stamp.stories.length });
 }
@@ -93,9 +156,10 @@ function write(o, deps) {
 function check(o, deps) {
   const dir = deps.gitDir();
   const stamp = dir ? readQaStamp(dir) : null;
-  const storiesDir = o.storiesDir || 'stories';
-  const selected = o.stories.map((s) => ({ ...s, sha256: hashFile(path.join(deps.cwd(), storiesDir, s.file)) }));
-  const { sha, dirty } = deps.gitInfo();
+  const storiesDir = normalizeStoriesDir(o.storiesDir || 'stories', deps.cwd());
+  const selected = o.stories.map((s) => ({ ...s, sha256: hashFile(path.resolve(deps.cwd(), storiesDir, s.file)) }));
+  const { sha } = deps.gitInfo();
+  const dirty = deps.dirty();
   const verdict = decideQaSkip({
     stamp, head: sha, dirty, storiesDir, selected,
   });
@@ -109,6 +173,8 @@ function run(argv, overrides = {}) {
   return o.write ? write(o, deps) : check(o, deps);
 }
 
-module.exports = { run, parseArgs };
+module.exports = {
+  run, parseArgs, computeDirty,
+};
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
