@@ -129,7 +129,7 @@ test('writeReportAtomic writes a pid-suffixed temp file then renames it over the
   const rename = (from, to) => calls.push(['rename', from, to]);
   writeReportAtomic({ pass: true }, '/out/report.json', { writeFile, rename });
   assert.strictEqual(calls[0][0], 'write');
-  assert.ok(calls[0][1].startsWith(path.join('/out', 'report.json.tmp-')),'tmp path is pid-suffixed, not a fixed name');
+  assert.ok(calls[0][1].startsWith(path.join('/out', 'report.json.tmp-')), 'tmp path is pid-suffixed, not a fixed name');
   assert.deepStrictEqual(JSON.parse(calls[0][2]), { pass: true });
   assert.deepStrictEqual(calls[1], ['rename', calls[0][1], '/out/report.json']);
 });
@@ -163,7 +163,7 @@ test('gitDir resolves a relative rev-parse answer against cwd and returns an abs
   assert.strictEqual(gitDir(exec, '/repo'), path.resolve('/repo', '.git'));
 });
 
-test('gitDir passes an already-absolute worktree git dir through unchanged (#1921)', () => {
+test('gitDir keeps an already-absolute worktree git dir rather than joining it to cwd (#1921)', () => {
   const exec = () => '/repo/.git/worktrees/wt\n';
   assert.strictEqual(gitDir(exec, '/elsewhere'), path.resolve('/repo/.git/worktrees/wt'));
 });
