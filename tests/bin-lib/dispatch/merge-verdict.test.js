@@ -76,8 +76,9 @@ test('CRLF content is handled', () => {
   assert.strictEqual(confirmPassingVerdicts(content, [5])[5].confirmed, true);
 });
 
-test('confirmFromFile reads the file; a missing file fails closed with an error', () => {
+test('confirmFromFile reads the file; a missing file fails closed with an error', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-verdict-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'decisions.md');
   fs.writeFileSync(file, `${line(VERDICT_STEPS.shortCircuit, verdictText(3))}\n`);
   assert.deepStrictEqual(confirmFromFile(file, [3]), { 3: { confirmed: true, latest: 'auto-merge' } });

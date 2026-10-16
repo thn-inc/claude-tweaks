@@ -291,11 +291,11 @@ gate)" section, this skill's directory, and follow it before Authorization/Conte
    ```bash
    node -e "
      const { confirmFromFile } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/merge-verdict.js');
-     for (const [n, v] of Object.entries(confirmFromFile(process.argv[1], process.argv.slice(2)))) console.log(n + '=' + (v.confirmed ? 1 : 0) + ' latest=' + (v.latest || 'none'));
+     for (const [n, v] of Object.entries(confirmFromFile(process.argv[1], process.argv.slice(2)))) console.log(n + '=' + (v.confirmed ? 1 : 0) + ' latest=' + (v.latest || 'none') + (v.error ? ' error=' + v.error : ''));
    " "{run-dir}/decisions.md" {n1} {n2} ...
    ```
 
-   A 0 for any member — the entry is missing, or a later verdict line for that member overrides it, whatever the reason — means Content
+   Anything but `=1` for any member — a 0, a missing line, or a non-zero exit — means Content
    judgment for that member is not confirmed to have run. Do not merge on that member's behalf:
    treat it exactly like a `needs-human` verdict (fall the whole group back to the normal
    pending-review path) rather than proceeding on the assumption that the step above simply ran
@@ -363,8 +363,8 @@ Runs in `dispatch/SKILL.md` Step 6, in the dispatching session's own thread — 
 (#2429) — this thread is separate from the Task call that reported `OUTCOME: ready-to-merge`,
 and that line alone is not evidence Content judgment ran (it is exactly the self-report the check
 exists not to trust): the same one-read-per-group, checked-in-memory-per-member check above,
-against `{run-dir}/decisions.md`, for every group member — it accepts the singleton short-circuit's `Auto-merge short-circuit:` marker too (`wrap-up/auto-merge-short-circuit.md`, #2941), since a dispatched singleton under `local-merge` relays `OUTCOME: ready-to-merge` to this section. A 0 for any member means do
-not merge — fall the group back to the normal pending-review path instead.
+against `{run-dir}/decisions.md`, for every group member — it accepts the singleton short-circuit's `Auto-merge short-circuit:` marker too (`wrap-up/auto-merge-short-circuit.md`, #2941), since a dispatched singleton under `local-merge` relays `OUTCOME: ready-to-merge` to this section. Anything but `=1` for any
+member — a 0, a missing line, or a non-zero exit — means do not merge: fall the group back to the normal pending-review path instead.
 
 Nothing is threaded back from the second Task call beyond its `OUTCOME: ready-to-merge` line itself (per `_shared/subagent-output-contract.md`'s no-echo rule — a resolution trigger, not a summarized finding). The dispatching session already holds everything else it needs:
 

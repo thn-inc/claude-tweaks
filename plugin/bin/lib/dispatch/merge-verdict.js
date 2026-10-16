@@ -28,6 +28,8 @@ function verdictMarker(step, n, verdict = PASS_VERDICT) {
   return `${step}: ${verdictText(n, verdict)}`;
 }
 
+// "latest" means last in file order; callers write verdict lines without --section, so file
+// order is write order (log-decision.js's --section can splice a line earlier in the file).
 function latestVerdicts(content) {
   const latest = new Map();
   for (const ln of String(content).split(/\r?\n/)) {

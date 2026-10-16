@@ -72,6 +72,13 @@ test('pr-first: the backstop precedes the _shared/pr-first-merge.md invocation',
   );
 });
 
+test('the backstop runs once before acceptance labeling and ledger deletion, not only before the merge calls (final fix wave, #2941)', () => {
+  const backstop = FLAT.indexOf('**Verdict backstop — re-read before any merge (#2941).**');
+  const labeling = FLAT.indexOf('**Both layers pass — acceptance labeling runs first, before the merge.**');
+  assert.ok(backstop > -1 && labeling > -1, 'both headings must be located');
+  assert.ok(backstop < labeling, 'the backstop must precede acceptance labeling and ledger deletion, not just the merge calls');
+});
+
 test('local-merge: the backstop precedes the merge, and the dispatch-claim relay', () => {
   assertPinned(
     /\*\*`integration-model: local-merge`:\*\* run the Verdict backstop above first[\s\S]{0,300}?before merging, clear this run's worktree/,
