@@ -12,7 +12,7 @@ const { withIndexLockRetry } = require('../git-retry');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const {
-  iterRunDirsWithState, writeRunState, readRunState, readEventLines,
+  iterRunDirsWithState, writeRunState, readRunState, readEventLines, isAdHocRunDir,
 } = require('../hooks/context');
 const { resolvePrState, resolvePrStateByNumber, resolveIssueStateByNumber } = require('./pr-state');
 const {
@@ -75,7 +75,7 @@ function isStaleDir(dir, ttlMs, now = Date.now()) {
 // through to the ordinary isOrphanedMint mtime sweep instead, same as any
 // other malformed mint.
 function isAdHocStandaloneMint(dir) {
-  if (!path.basename(dir).endsWith('-adhoc-standalone')) return false;
+  if (!isAdHocRunDir(dir)) return false;
   const state = readRunState(dir);
   return !!(state && typeof state.worktree === 'string' && state.worktree);
 }
