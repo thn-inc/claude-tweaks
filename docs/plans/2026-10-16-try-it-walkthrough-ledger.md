@@ -23,3 +23,4 @@
 | 19 | review | Tests anchor on exact heading and bold-label text, so a harmless rewording breaks them (lens 3f) | accepted | By design: the suite pins the paragraph that owns each rule (fix wave I2); a rewording of an owning label should be a deliberate test edit |
 | 20 | review | FIELD_LINE probes only the Precondition/Access lines (lens 3f) | accepted | Entry point/Steps/Expected lines also occur in observation-plan.md and verification-brief.md, so only Precondition/Access identify a restated Try it block |
 | 21 | review | Test line 194 compares offsets "correct by accident" (lens 3f) | accepted | Both offsets index the same `step2` string; not a defect |
+| 22 | review/hindsight | `_shared/session-tmp-root.md`'s Consumers list omits the three new `try-it-{N}.md` call sites: wrap-up/verification-brief.md and flow/summary-template.md / multispec-summary.md | open | Staged for the Review Console: staged/reflect-1.md |
