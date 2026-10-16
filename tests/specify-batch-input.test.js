@@ -65,7 +65,7 @@ test('shaping-mode.md states the per-record loop', () => {
 test('shaping-mode.md documents github-issues parallel-safety and the local-files contrast (refs #782)', () => {
   assert.ok(/\*\*Parallel-safety\.\*\*/.test(SHAPING), 'shaping-mode.md has no Parallel-safety callout');
   assert.ok(
-    /shaping a record writes no local files — it edits the GitHub issue directly via `gh`, so no worktree is required and multiple records may be shaped concurrently/.test(SHAPING),
+    /shaping a record writes no local files — it edits the GitHub issue directly via `gh`, so no worktree is required \(per `_shared\/worktree-setup\.md`'s "Forge-API-only invocations need no worktree"\) and multiple records may be shaped concurrently/.test(SHAPING),
     'shaping-mode.md does not state the github-issues no-worktree/concurrency-safe property',
   );
   assert.ok(

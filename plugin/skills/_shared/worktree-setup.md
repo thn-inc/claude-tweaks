@@ -41,9 +41,11 @@ invokes it anyway from inside an existing worktree fails every time it runs unde
 `worktree-always` project (`docs/incident-log.md`).
 
 **Forge-API-only invocations need no worktree.** When every write an invocation makes is a
-forge-API call (`gh issue`/`gh pr`/`gh api`, or their MCP equivalents), lands on a path the
-`worktree-always` gate exempts (`_shared/policy-schema-coverage.md`'s gate-coverage block — the run
-dir among them), or lands outside the repository (a session temp file), skip this whole decision:
+forge-API call (`gh issue`/`gh pr`/`gh api`, or their MCP equivalents), lands on an untracked or
+gitignored path the `worktree-always` gate exempts (`_shared/policy-schema-coverage.md`'s
+gate-coverage block — the run dir among them), touches only a git ref and never the working tree
+(a `bin/lib` module's ref push), or lands outside the repository (a session temp file), skip this
+whole decision:
 no `EnterWorktree`, no catch-up merge, nothing to tear down — the gate guards repository files and
 none are touched. The carve-out ends at the first working-tree write (a local record file, a design
 doc, a commit): run this section at that point, the way `/claude-tweaks:tidy` provisions Step 7.5's

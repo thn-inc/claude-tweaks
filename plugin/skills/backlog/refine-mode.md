@@ -2,8 +2,9 @@
 
 The comprehensive "ensure every issue has the right labels" sweep: `priority:*`/`**Related:**` suggestions plus `auto:build`/`auto:merge` grants, presented together and confirmed once.
 
-**Worktree.** Under `work-backend: github-issues` every Step 5 write is a `gh` call or a run-dir
-line, so `_shared/worktree-setup.md`'s "Forge-API-only invocations need no worktree" carve-out
+**Worktree.** Under `work-backend: github-issues` every write is a `gh` call, a run-dir line, a
+session temp file, or the `health-state` ref `bin/lib/issues/merge-lane-breaker.js` pushes, so
+`_shared/worktree-setup.md`'s "Forge-API-only invocations need no worktree" carve-out
 applies — except a `facets.unsynced === true` record and the `local-files` driver, whose
 `writeRecord` + `git commit` needs a worktree first.
 

@@ -13,10 +13,11 @@ file: its labeling lanes render interactively per `refine-lanes.md`, and its Gra
 `refine-mode.md` Step 3's `assess-agent-autonomy` call behind a human batch-confirm, not through
 this file's chain below.
 
-**No worktree.** Every write this posture makes is a `gh` call, a run-dir line, a session temp
-file, or the `health-state` ref a `bin/` CLI pushes — and `work-backend: local-files` stops at
-Preflight — so `_shared/worktree-setup.md`'s "Forge-API-only invocations need no worktree"
-carve-out covers the whole firing.
+**No worktree.** The grant chain below makes only `gh` calls, run-dir lines, session temp
+files, or the `health-state` ref `bin/lib/issues/merge-lane-breaker.js` pushes, so
+`_shared/worktree-setup.md`'s "Forge-API-only invocations need no worktree" carve-out covers it.
+The labeling lanes above inherit `refine-mode.md`'s own exceptions: a `facets.unsynced === true`
+record and the `local-files` driver each need a worktree before their `writeRecord` write.
 
 ## Labeling-lanes preamble
 

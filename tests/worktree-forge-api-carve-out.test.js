@@ -78,6 +78,7 @@ test('backlog refine-headless.md: whole firing is covered (gh + run dir; local-f
   const n = note(skill('backlog', 'refine-headless.md'), 'refine-headless.md');
   assert.match(n, /worktree-setup\.md/);
   assert.match(n, /local-files/);
+  assert.match(n, /unsynced/);
 });
 
 test('backlog refine-mode.md: names the unsynced-record and local-files exceptions', () => {
