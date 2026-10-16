@@ -22,7 +22,10 @@
       "Read(**/.aws/**)",
       "Read(~/.aws/**)",
       "Read(**/.ssh/**)",
-      "Read(~/.ssh/**)"
+      "Read(~/.ssh/**)",
+      "Read(~/.npmrc)",
+      "Read(~/.git-credentials)",
+      "Read(~/.config/gh/hosts.yml)"
     ]
   },
   "enabledPlugins": {
