@@ -398,7 +398,9 @@ test('record-pr, spec-status, close-run, teardown-run, check-resume-freshness, c
     const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
     fs.mkdirSync(run, { recursive: true }); // bare mkdir only — no markers at all
     const result = runHook([verb, '--run', run, ...rest], { cwd: project });
-    assert.strictEqual(result.code, 0, `${verb}: unexpected exit code`);
+    // close-run exits non-zero on a rejected --run so a scripted caller
+    // (dispatch's drain termination) can tell "not closed" from closed.
+    assert.strictEqual(result.code, verb === 'close-run' ? 1 : 0, `${verb}: unexpected exit code`);
     assert.match(result.stdout, /--run path rejected/, `${verb}: expected a rejected---run diagnostic, got: ${result.stdout}`);
   }
 });
@@ -409,10 +411,61 @@ test('close-run with a non-existent --run path fails loudly instead of falling b
   runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
   const bogus = path.join(project, 'does-not-exist');
   const result = runHook(['close-run', '--run', bogus], { cwd: project });
-  assert.strictEqual(result.code, 0);
+  assert.strictEqual(result.code, 1);
   assert.match(result.stdout, /--run path rejected/);
   const state = readRunState(run);
   assert.strictEqual(state.status, 'active', 'an invalid --run must not touch a different run dir at all');
+});
+
+test('close-run --run accepts a bare run-id basename, resolved under the main checkout\'s pipelines dir (dispatch/SKILL.md\'s $RUN_ID)', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
+  const result = runHook(['close-run', '--run', '2026-07-01T090000-spec-1'], { cwd: project });
+  assert.strictEqual(result.code, 0, result.stdout);
+  assert.doesNotMatch(result.stdout, /--run path rejected/);
+  assert.strictEqual(readRunState(run).status, 'clean');
+});
+
+test('close-run --run bare basename from inside a linked worktree resolves to the MAIN checkout\'s pipelines dir', () => {
+  const project = tmpProject();
+  execFileSync('git', ['-C', project, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init']);
+  const wt = path.join(project, '.claude', 'worktrees', 'wt-a');
+  execFileSync('git', ['-C', project, 'worktree', 'add', '-q', '-b', 'wt-a', wt]);
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run, wt], { cwd: project });
+  const result = runHook(['close-run', '--run', '2026-07-01T090000-spec-1'], { cwd: wt });
+  assert.strictEqual(result.code, 0, result.stdout);
+  assert.doesNotMatch(result.stdout, /--run path rejected/, result.stdout);
+  assert.strictEqual(readRunState(run).status, 'clean');
+});
+
+test('close-run --run basename: a same-named cwd-relative directory wins over the pipelines/ fallback', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
+  fs.mkdirSync(path.join(project, '2026-07-01T090000-spec-1'));
+  const result = runHook(['close-run', '--run', '2026-07-01T090000-spec-1'], { cwd: project });
+  assert.strictEqual(result.code, 1, result.stdout);
+  assert.match(result.stdout, /--run path rejected/, 'the cwd-relative dir is judged on its own and is not a run dir');
+  assert.strictEqual(readRunState(run).status, 'active', 'the pipelines/ run must not be touched when a cwd-relative dir exists');
+});
+
+test('close-run --run basename containing a path separator never falls through to the pipelines/ lookup', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
+  const result = runHook(['close-run', '--run', './2026-07-01T090000-spec-1'], { cwd: project });
+  assert.strictEqual(result.code, 1, result.stdout);
+  assert.match(result.stdout, /--run path rejected/, result.stdout);
+  assert.strictEqual(readRunState(run).status, 'active', 'a separator-bearing value must never resolve into the pipelines/ run dir');
+});
+
+test('close-run --run with a bare basename naming no run dir is still rejected, non-zero', () => {
+  const project = tmpProject();
+  const result = runHook(['close-run', '--run', '2026-07-02T090000-spec-9'], { cwd: project });
+  assert.strictEqual(result.code, 1);
+  assert.match(result.stdout, /--run path rejected: 2026-07-02T090000-spec-9 — run not closed/);
 });
 
 test('close-run --run with no following value fails loudly instead of falling back to the newest non-terminal run', () => {
@@ -426,7 +479,7 @@ test('close-run --run with no following value fails loudly instead of falling ba
   assert.strictEqual(readRunState(run).status, 'active');
 
   const result = runHook(['close-run', '--run'], { cwd: project });
-  assert.strictEqual(result.code, 0);
+  assert.strictEqual(result.code, 1);
   assert.match(result.stdout, /claude-tweaks: --run path rejected: \(missing value\) — run not closed/);
   assert.strictEqual(readRunState(run).status, 'active',
     '--run with a missing value must not fall back to closing the newest non-terminal run');
