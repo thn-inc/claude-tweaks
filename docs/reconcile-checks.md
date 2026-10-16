@@ -194,7 +194,7 @@ main loop, landed via #1962/#2226/#2228/#2231):
   in the slug (`recordNumbersFromSlug`) independently resolves `CLOSED` via `gh issue view` (not a
   PR — `pr-state.js`'s `resolveIssueStateByNumber`) and the directory has sat past
   `STRUCTURALLY_STUCK_TTL_MS`. Fails closed (leaves the dir in place) on any unresolved record, a
-  `gh-absent`/`network-failure` probe on any one of them, or a dir that DOES carry a
+  `gh-absent`/`network-failure`/`invalid-arguments` probe on any one of them, or a dir that DOES carry a
   `run-state.json` (however stale) — that shape belongs to the ordinary classifier/branch-resolution
   path instead.
 - **Consolidated `structurally-stuck` escalation** — `escalate-residue.js` files ONE open record per
