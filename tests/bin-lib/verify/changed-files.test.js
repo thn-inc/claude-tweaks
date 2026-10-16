@@ -2,9 +2,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const { execFileSync } = require('child_process');
 
 const {
-  changedFiles, resolveBase, usableAnchor, ChangedFilesError,
+  changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'changed-files.js'));
 
 const FULL = '0123456789abcdef0123456789abcdef01234567';
@@ -216,4 +219,99 @@ test('usableAnchor guards a dash-prefixed anchor with --end-of-options so it can
   const call = exec.calls.find((c) => c.includes('--is-ancestor'));
   const idx = call.indexOf('--is-ancestor');
   assert.strictEqual(call[idx + 1], '--end-of-options');
+});
+
+// ── #3072: mergeNarrowing, against a real temp git repo ───────────────────
+
+// integration branch `trunk`, feature branch `feat` cut from it; anchor = feat's tip at cut time.
+function mergeRepo() {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'merge-narrowing-')));
+  const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  git('init', '-q', '-b', 'trunk');
+  git('config', 'user.email', 'verify-test@example.invalid');
+  git('config', 'user.name', 'verify test');
+  const write = (rel, content) => {
+    fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+    fs.writeFileSync(path.join(repo, rel), content);
+  };
+  const commit = (rel, content) => { write(rel, content); git('add', rel); git('commit', '-q', '-m', `add ${rel}`); };
+  commit('README.md', 'root');
+  git('checkout', '-q', '-b', 'feat');
+  const anchor = git('rev-parse', 'HEAD');
+  const exec = (cmd, args, opts) => execFileSync(cmd, args, { ...opts, cwd: repo });
+  return { repo, git, write, commit, anchor, exec };
+}
+
+function changedSince(r, base) {
+  return changedFiles({ base, execImpl: r.exec }).files;
+}
+
+function mergeTrunkWith(r, files) {
+  r.git('checkout', '-q', 'trunk');
+  for (const [rel, content] of files) r.commit(rel, content);
+  r.git('checkout', '-q', 'feat');
+  r.git('merge', '-q', '--no-ff', '--no-edit', 'trunk');
+}
+
+test('mergeNarrowing: anchor → integration-branch merge → own-work commit keeps only the own-work path (#3072)', () => {
+  const r = mergeRepo();
+  mergeTrunkWith(r, [['ui/a.js', 'a'], ['ui/b.js', 'b'], ['ui/c.js', 'c']]);
+  r.commit('src/own.py', 'own');
+  const files = changedSince(r, r.anchor);
+  assert.deepStrictEqual(files, ['src/own.py', 'ui/a.js', 'ui/b.js', 'ui/c.js']);
+  const n = mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec });
+  assert.strictEqual(n.ref, 'trunk');
+  assert.deepStrictEqual(n.files, ['src/own.py']);
+  assert.deepStrictEqual(n.excluded, ['ui/a.js', 'ui/b.js', 'ui/c.js']);
+});
+
+test('mergeNarrowing: no merge after the anchor returns null — the set stays anchor..HEAD (#3072)', () => {
+  const r = mergeRepo();
+  r.commit('src/own.py', 'own');
+  r.commit('ui/a.js', 'a');
+  const files = changedSince(r, r.anchor);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), null);
+});
+
+test('mergeNarrowing: a merged-in path the branch then edited stays selected (#3072)', () => {
+  const r = mergeRepo();
+  mergeTrunkWith(r, [['ui/a.js', 'a'], ['ui/b.js', 'b']]);
+  r.commit('ui/a.js', 'a — edited on the branch');
+  const files = changedSince(r, r.anchor);
+  const n = mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec });
+  assert.deepStrictEqual(n.files, ['ui/a.js']);
+  assert.deepStrictEqual(n.excluded, ['ui/b.js']);
+});
+
+test('mergeNarrowing: an uncommitted edit to a merge-identical path stays selected (#3072 Review Focus)', () => {
+  const r = mergeRepo();
+  mergeTrunkWith(r, [['ui/a.js', 'a'], ['ui/b.js', 'b']]);
+  r.write('ui/b.js', 'b — uncommitted edit');
+  const files = changedSince(r, r.anchor);
+  const n = mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec });
+  assert.deepStrictEqual(n.files, ['ui/b.js']);
+  assert.deepStrictEqual(n.excluded, ['ui/a.js']);
+});
+
+test('mergeNarrowing: a merge of a non-integration branch after the anchor does not narrow (#3072 Review Focus)', () => {
+  const r = mergeRepo();
+  r.git('checkout', '-q', '-b', 'side', r.anchor);
+  r.commit('lib/side.js', 'side');
+  r.git('checkout', '-q', 'feat');
+  r.git('merge', '-q', '--no-ff', '--no-edit', 'side');
+  const files = changedSince(r, r.anchor);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), null);
+});
+
+test('mergeNarrowing: an unresolvable integration branch degrades to null, never a throw (#3072 Review Focus)', () => {
+  const r = mergeRepo();
+  mergeTrunkWith(r, [['ui/a.js', 'a']]);
+  const files = changedSince(r, r.anchor);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'no-such-branch', files, execImpl: r.exec }), null);
+});
+
+test('mergeNarrowing: no anchor or no integration branch returns null without touching git (#3072)', () => {
+  const boom = () => { throw new Error('git must not be called'); };
+  assert.strictEqual(mergeNarrowing({ anchor: null, integrationBranch: 'trunk', files: ['a'], execImpl: boom }), null);
+  assert.strictEqual(mergeNarrowing({ anchor: 'abc', integrationBranch: null, files: ['a'], execImpl: boom }), null);
 });
