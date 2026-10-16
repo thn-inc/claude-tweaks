@@ -768,6 +768,47 @@ const GIT_TIMING_REFUSAL_REASONS = new Set([
   'work-twin-resolve-failed', 'work-twin-resolve-failed-partial-revert',
 ]);
 
+// #3198: decisions.md/events.jsonl are append-only logs that can legitimately
+// accumulate across more than one archival pass of the same run id (a race
+// where a stale caller recreates runDir after it was already archived, or a
+// second reconcile pass observes the same recreated dir) — losing either
+// pass's content is never acceptable. Every other entry refuses outright on
+// a destination collision instead of silently overwriting real archived
+// content (this record's own incident: a recreated run dir's fresh
+// run-state.json replaced the real archived one).
+const APPEND_ONLY_ARCHIVE_ENTRIES = new Set(['decisions.md', 'events.jsonl']);
+
+class ArchiveDestinationExistsError extends Error {
+  constructor(dest) {
+    super(`archive destination already exists: ${dest}`);
+    this.code = 'ARCHIVE_DEST_EXISTS';
+  }
+}
+
+// Moves one archive entry from `src` to `dest`. When `dest` already exists:
+// an append-only log (APPEND_ONLY_ARCHIVE_ENTRIES) gets src's bytes appended
+// onto dest, then src is removed — dest's original content is never
+// truncated or replaced. Anything else throws ArchiveDestinationExistsError
+// without touching either path, so the caller can refuse cleanly — unless
+// `allowOverwrite` is set (run-state.json's own interim "archiving" marker,
+// written by this same call before the move loop runs — see
+// `runStateDestIsRealPriorArchive` above), in which case the collision is expected
+// and the plain rename proceeds. A real fs failure (permissions, disk full)
+// propagates unchanged — callers already catch that for their own
+// revert/refusal handling.
+function moveArchiveEntry(src, dest, name, { allowOverwrite = false } = {}) {
+  if (fs.existsSync(dest) && !allowOverwrite) {
+    if (APPEND_ONLY_ARCHIVE_ENTRIES.has(name)) {
+      fs.appendFileSync(dest, fs.readFileSync(src));
+      fs.unlinkSync(src);
+      return { appended: true };
+    }
+    throw new ArchiveDestinationExistsError(dest);
+  }
+  fs.renameSync(src, dest);
+  return { moved: true };
+}
+
 function archiveRunDir(root, runDir) {
   const runId = path.basename(runDir);
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
@@ -780,6 +821,24 @@ function archiveRunDir(root, runDir) {
   // `movedEntries`, so an empty `movedEntries` says nothing about whether
   // archiveDir itself is empty.
   const archiveDirPreexisted = fs.existsSync(archiveDir);
+  // #3198: captured BEFORE the "archiving" marker write below (which always
+  // creates/merges archiveDir/run-state.json) so the later move loop can
+  // tell "this call's own marker already sits at the destination" (expected,
+  // safe to overwrite with the real file) from "a REAL prior archival's
+  // run-state.json is already there" (the actual #3198 collision — must
+  // refuse, never silently replaced by a recreated run dir's stub). A
+  // surviving `status: 'archiving'` marker from an earlier FAILED attempt at
+  // THIS same run (#1103's own claim-survives-a-failure protection) is NOT
+  // real prior content — a retry's overwrite of it is the existing,
+  // intended behavior, so only a non-'archiving' status (e.g. 'clean', the
+  // terminal status a completed archival writes) counts as a real collision.
+  let priorArchiveRunState = null;
+  if (archiveDirPreexisted) {
+    try {
+      priorArchiveRunState = JSON.parse(fs.readFileSync(path.join(archiveDir, 'run-state.json'), 'utf8'));
+    } catch { /* missing or unreadable — treat as no real prior content */ }
+  }
+  const runStateDestIsRealPriorArchive = !!(priorArchiveRunState && priorArchiveRunState.status !== 'archiving');
   try {
     fs.mkdirSync(archiveDir, { recursive: true });
   } catch {
@@ -1084,17 +1143,24 @@ function archiveRunDir(root, runDir) {
       const src = path.join(runDir, name);
       if (!fs.existsSync(src)) continue;
       const dest = path.join(archiveDir, name);
+      let outcome;
       try {
-        fs.renameSync(src, dest);
+        outcome = moveArchiveEntry(src, dest, name, {
+          allowOverwrite: name === 'run-state.json' && !runStateDestIsRealPriorArchive,
+        });
       } catch (err) {
         const fullyReverted = revertPlainMoves(movedThisPass);
+        if (err instanceof ArchiveDestinationExistsError) {
+          const reason = fullyReverted ? 'archive-destination-exists' : 'archive-destination-exists-partial-revert';
+          return refuseAfterMarker(reason, { entry: name, hint: err.message });
+        }
         const reason = fullyReverted ? 'move-failed' : 'move-failed-partial-revert';
         return refuseAfterMarker(reason, {
           lastError: err && err.message,
           hint: reason === 'move-failed' ? ((err && err.message) || null) : null,
         });
       }
-      movedThisPass.push([src, dest]);
+      if (outcome.moved) movedThisPass.push([src, dest]);
       movedEntries.push(name);
     }
   }
@@ -1134,17 +1200,22 @@ function archiveRunDir(root, runDir) {
       const src = path.join(specDir, name);
       if (!fs.existsSync(src)) continue;
       const dest = path.join(specArchiveDir, name);
+      let outcome;
       try {
-        fs.renameSync(src, dest);
+        outcome = moveArchiveEntry(src, dest, name);
       } catch (err) {
         const fullyReverted = revertPlainMoves(specMovedThisPass);
+        if (err instanceof ArchiveDestinationExistsError) {
+          const reason = fullyReverted ? 'archive-destination-exists' : 'archive-destination-exists-partial-revert';
+          return refuseAfterMarker(reason, { entry: path.join(specName, name), hint: err.message });
+        }
         const reason = fullyReverted ? 'move-failed' : 'move-failed-partial-revert';
         return refuseAfterMarker(reason, {
           lastError: err && err.message,
           hint: reason === 'move-failed' ? ((err && err.message) || null) : null,
         });
       }
-      specMovedThisPass.push([src, dest]);
+      if (outcome.moved) specMovedThisPass.push([src, dest]);
       movedEntries.push(path.join(specName, name));
     }
     try {
@@ -1186,12 +1257,17 @@ function archiveRunDir(root, runDir) {
       if (!fs.existsSync(src)) continue;
       const dest = path.join(archiveDir, name);
       try {
-        fs.renameSync(src, dest);
+        moveArchiveEntry(src, dest, name, {
+          allowOverwrite: name === 'run-state.json' && !runStateDestIsRealPriorArchive,
+        });
         movedEntries.push(name);
       } catch {
         /* best-effort — leave it on disk for the next archival pass to
            retry rather than fail this whole call over a residual
-           straggler; the rmdirSync below naturally stays a no-op then. */
+           straggler; the rmdirSync below naturally stays a no-op then.
+           Covers both a real move failure and a non-append-only collision
+           (#3198) — either way, nothing here should destroy existing
+           archive content or block the rest of this call. */
       }
     }
   }
