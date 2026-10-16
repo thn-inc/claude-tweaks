@@ -18,6 +18,7 @@ test('readCache: absent file reads as empty defaults, not a throw', () => {
   const root = tmpRoot();
   assert.deepEqual(readCache(root), {
     lastRunAt: null, claimShas: {}, residueFailures: {}, lastHealthCheckOkAt: null,
+    lastOriginHeadRepairFailedAt: null,
   });
 });
 
@@ -27,6 +28,7 @@ test('readCache: corrupt JSON fails closed to empty defaults, not a throw', () =
   fs.writeFileSync(path.join(root, '.claude-tweaks', CACHE_FILENAME), '{not json');
   assert.deepEqual(readCache(root), {
     lastRunAt: null, claimShas: {}, residueFailures: {}, lastHealthCheckOkAt: null,
+    lastOriginHeadRepairFailedAt: null,
   });
 });
 
@@ -34,9 +36,11 @@ test('writeCache then readCache round-trips', () => {
   const root = tmpRoot();
   writeCache(root, {
     lastRunAt: 12345, claimShas: { 7: 'abc' }, residueFailures: {}, lastHealthCheckOkAt: 999,
+    lastOriginHeadRepairFailedAt: 4242,
   });
   assert.deepEqual(readCache(root), {
     lastRunAt: 12345, claimShas: { 7: 'abc' }, residueFailures: {}, lastHealthCheckOkAt: 999,
+    lastOriginHeadRepairFailedAt: 4242,
   });
 });
 
