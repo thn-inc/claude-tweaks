@@ -28,13 +28,20 @@ worktree-mode run at the moment this report renders — the session composing
 this report is still physically inside the worktree it would need to remove to
 pass `worktree-removed`, and `run-dir-archived` only happens after that removal.
 That is a real, expected state for a run that has not yet finished exiting, not
-evidence the run is blocked. When the ONLY failing rows are `worktree-removed`
-and/or `run-dir-archived`, AND no `deferred` expectation already routes them
+evidence the run is blocked. This reach-limited reading applies to
+`worktree-removed` only when its detail reads `worktree still listed` — the
+session hasn't exited yet, so the registration is still there by
+construction. When the ONLY failing rows are `worktree-removed` (under that
+detail) and/or `run-dir-archived`, AND no `deferred` expectation already routes them
 through the `skip` path (a genuine multi-spec defer is unaffected — it already
 reports `skip`, never reaches this clause), render the Verdict's opening line
 normally (e.g. "Everything shipped") and list those specific rows as "not
 applicable — pending this session's own worktree exit" instead of forcing an
-overall BLOCKED verdict beneath it. Any OTHER failing check (`carrier-commit`,
+overall BLOCKED verdict beneath it. A `worktree-removed` fail whose detail
+reads `worktree unlisted but directory still present` (#3023: `git worktree
+prune` dropped the registration but the directory survived removal) is never
+carved out — it blocks like any other failing check; name the path in the
+report. Any OTHER failing check (`carrier-commit`,
 `memory-updates`, `acceptance-labeling`, `reference-repairs`,
 `upstream-feedback`, or either of these two alongside a different failing
 check) still blocks exactly as before — this carve-out is narrowly scoped to
