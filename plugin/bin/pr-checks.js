@@ -41,15 +41,15 @@ function parseArgs(argv) {
   return o;
 }
 
-const QUIET = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true };
+const QUIET = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] };
 
 const realDeps = {
   cwd: () => process.cwd(),
   mainRoot: undefined,
   ghAvailable: () => ghAvailable(),
   hasPullRequestCi: (root) => hasPullRequestCi(root),
-  gh: (args) => execFileSync('gh', args, { ...QUIET, timeout: GH_TIMEOUT_MS }),
-  git: (args) => execFileSync('git', args, { ...QUIET, timeout: GIT_TIMEOUT_MS }),
+  gh: (args) => execFileSync('gh', args, { ...QUIET, timeout: GH_TIMEOUT_MS, windowsHide: true }),
+  git: (args) => execFileSync('git', args, { ...QUIET, timeout: GIT_TIMEOUT_MS, windowsHide: true }),
   readRunState: (runDir) => readRunStateWithParent(runDir, { requireRunIdParent: true }).state,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
