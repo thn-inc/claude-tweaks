@@ -490,3 +490,21 @@ test('CLI: --work-links with an invalid value is a malformed invocation (exit 2)
   assert.equal(code, 2);
   assert.match(err.join(''), /must be "native" or "body-text"/);
 });
+
+test('#2733: --merge-gate adds mergeGate to the envelope; without it the envelope keys are unchanged', () => {
+  const runner = (args) => {
+    if (isIssueView(args, 2670)) return JSON.stringify(issue({ number: 2670, title: 'P', body: specBody(['a.js']) }));
+    if (isIssueView(args, 2682)) return JSON.stringify(issue({ number: 2682, title: 'D', body: `Blocked by #2670\n\n## Deliverables\n- [ ] confirm \`#2670\` is actually merged\n\n${specBody(['b.js'])}` }));
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const gated = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['2670', '2682', '--merge-gate'], gated.deps), 0);
+  const env = JSON.parse(gated.out.join(''));
+  assert.deepEqual(env.mergeGate.deferred, [2682]);
+  assert.deepEqual(env.mergeGate.kept, [2670]);
+  assert.equal(env.mergeGate.rerun, '/claude-tweaks:flow #2682');
+
+  const plain = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['2670', '2682'], plain.deps), 0);
+  assert.deepEqual(Object.keys(JSON.parse(plain.out.join(''))).sort(), ['overlapGroups', 'records', 'workLinks']);
+});
