@@ -29,6 +29,7 @@ const fs = require('fs');
 const path = require('path');
 const { readClaimBlobGit } = require('./lib/issues/claims-git-cas');
 const { classifyClaimBlob } = require('./lib/issues/claims');
+const { GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: verify-run-bookends.js --run <dir> --targets <n,n,...> [--help]\n'
   + '  exit 0 = every bookend confirmed (worktree stamp, PR under pr-first, and a live claim per target)\n'
@@ -111,7 +112,13 @@ function run(argv, deps) {
   for (const issue of targets) {
     const read = deps.readClaimBlobGit({ issueNumber: issue });
     if (read.failure) {
-      missing.push({ bookend: 'claim', issue, reason: `read-failed: ${read.failure}` });
+      // #3051: name the timeout specifically when claims-git-cas reported
+      // one — "remote slow" is a different, more actionable signal than
+      // "remote unreachable" for whoever reads this missing-bookend reason.
+      const reason = read.timedOut
+        ? `read-failed: ${read.failure} (timed out after ${GIT_TIMEOUT_MS} ms)`
+        : `read-failed: ${read.failure}`;
+      missing.push({ bookend: 'claim', issue, reason });
       continue;
     }
     const content = read.absent ? null : read.content;

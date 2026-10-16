@@ -177,24 +177,63 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    `cleanup-procedures-execution-appendix.md`'s "Step 4" section for an unverified caveat on this
    remedy's one known edge case.
 
-   **Prove it before passing `discard_changes: true` — the ancestry check, not a bare SHA
-   match.** Run `_shared/scratch-worktree.md`'s "Tearing down" (§6) ancestry check —
-   `git merge-base --is-ancestor HEAD origin/{integration-branch}` — against the branch this
-   worktree's branch actually merged into, rather than a `git rev-parse HEAD` equality test
-   (`[IL-45]`'s original mitigation): equality only holds after a fast-forward, and this file's
-   own merge procedure (`review-console.md`'s "On approval," `pr-first-merge.md` Step 3) uses
-   `--no-ff`, so the integration branch's tip is a *new* merge commit whose SHA never equals the
-   worktree branch's — an ancestry check is what actually proves the `--no-ff` case safe, not
-   just the fast-forward one. **Exit 0** authorizes `discard_changes: true` directly, with the
-   same one-line stated reason that file's §6 uses — no separate confirmation once the check has
-   actually run and passed; this is what "proven, not improvised" means for this call too. **Non-zero**
-   — stop and surface via `git log origin/{integration-branch}..HEAD --oneline`, same as that
-   file's own non-zero branch; never override on a non-zero result. `[IL-45]`'s content-diff
-   fallback (`git diff <branch> <default-branch>` empty) still applies for a branch discarded
-   without ever merging (no `origin/{integration-branch}` ancestry to prove) — the ancestry check
-   above is the primary proof whenever a merge actually happened, since it is strictly stronger:
-   it holds for `--no-ff`, fast-forward, and squash/rebase merges alike, all of which the SHA
-   equality test alone would reject.
+   **Prove it before passing `discard_changes: true` — a proof matching the merge shape, not a
+   bare SHA match.** Under `integration-model: local-merge` (`_shared/integration-model.md`),
+   merges land via `git merge --no-ff` (`_shared/local-merge-auto-finish.md`,
+   `dispatch/settle-and-merge.md`, `_shared/issue-claims.md`'s "Close-via-merge") or a plain
+   fast-forward — for both, run `_shared/scratch-worktree.md`'s "Tearing down" (§6) ancestry
+   check, `git merge-base --is-ancestor HEAD origin/{integration-branch}`, against the branch
+   this worktree's branch actually merged into, rather than a `git rev-parse HEAD` equality test
+   (`[IL-45]`'s original mitigation): equality only holds after a fast-forward, while `--no-ff`
+   produces a new merge commit whose SHA never equals the worktree branch's — an ancestry check
+   is what proves the `--no-ff` case safe, not just the fast-forward one. **Exit 0** authorizes
+   `discard_changes: true` directly, with the same one-line stated reason that file's §6 uses —
+   no separate confirmation once the check has actually run and passed. **Non-zero** — stop and
+   surface via `git log origin/{integration-branch}..HEAD --oneline`, same as that file's own
+   non-zero branch; never override on a non-zero result.
+
+   Under `integration-model: pr-first` (the GitHub default), every merge goes through
+   `_shared/pr-first-merge.md` Step 3's `gh pr merge --squash`, so the ancestry check above can
+   never pass here: a squash commit's parents never include this worktree branch's `HEAD`, by
+   construction, regardless of how clean the merge was. The primary proof for this shape is a
+   content-containment check against the squash commit, not a plain diff — a plain
+   `git diff HEAD {merge-commit}` false-positives whenever any other PR landed on the integration
+   branch between this branch's fork point and its own merge (a squash commit's tree is the
+   integration branch's tree *at merge time* plus this PR's changes, not the tree at fork time),
+   which is common under concurrent sessions.
+
+   Read the PR's merge commit — `gh pr view {number} --repo {owner}/{repo} --json mergeCommit -q
+   .mergeCommit.oid`, `{number}` from this run's `run-state.json` `pr.number` field. The same
+   session that performed the merge already ran `pr-first-merge-post-merge.md` Step 4's
+   unconditional `git fetch origin {integration-branch}` on this path, which is what makes
+   `{merge-commit}`'s object locally available below — but teardown can also be reached from a
+   resumed or cross-session context that never ran that fetch, so run
+   `git fetch origin {integration-branch}` here too, same as `scratch-worktree.md` §6's own
+   ancestry check does, before trusting `{merge-commit}` to resolve locally. **A `gh pr view`
+   command failure (non-zero exit, a transient auth/network/rate-limit error) is not the same
+   signal as a clean call returning no `mergeCommit`** — distinguish the two: a failed command
+   means the check couldn't run at all (retry once, then stop and surface the error) and must
+   never be folded into the "not merged yet" branch below. **No `mergeCommit` from a successful
+   call (empty/null output — the PR isn't merged yet, e.g. `armed`/`pending-review`)** — stop
+   here; do not proceed to `discard_changes: true` or step 4's removal at all. A PR that hasn't
+   merged has nothing to prove containment against.
+
+   With a merge commit in hand, run `git merge-tree --write-tree {merge-commit} HEAD` and compare
+   its output to `git rev-parse {merge-commit}^{tree}`. **Equal** (and `git status --porcelain`
+   also empty, confirming no uncommitted work) authorizes `discard_changes: true` the same way
+   **Exit 0** does above (stated reason: "git merge-tree --write-tree {merge-commit} HEAD matches
+   {merge-commit}'s own tree — HEAD's content is fully contained, nothing to lose"). **Different,
+   or `git merge-tree` exits non-zero (a real conflict — containment can't be confirmed)** — stop
+   and surface via `git diff HEAD {merge-commit}`, same as the ancestry check's non-zero branch;
+   never override. When `gh` is unavailable (a `gh`-absent MCP sandbox) there is no `pr-first`
+   proof to run at all — stop and surface that gap explicitly, the same posture
+   `pr-first-merge-post-merge.md` Step 5 already takes for its own `gh`-absent case.
+
+   `[IL-45]`'s content-diff fallback (`git diff <branch> <default-branch>` empty) still applies
+   for a branch discarded without ever merging (no `run-state.json` `pr` field at all) — that
+   remains the path for "never merged," never the normal `pr-first` case. Neither proof subsumes
+   the other: the ancestry check only holds for `--no-ff`/fast-forward, and the merge-tree
+   containment check is what `pr-first`'s squash shape actually needs.
 
    For a worktree this session does **not** occupy, use `teardown-run` (below) instead of a raw
    `git worktree remove` — it already checks `git worktree list --porcelain` for you and skips
@@ -212,9 +251,34 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    branch itself), and the remote branch delete (`pr-first-merge-post-merge.md`'s `## Step 5:
    Delete the remote branch` mechanism, verbatim) — replacing what used to be 4-5 hand-assembled
    commands per run. **Own-worktree carve-out:** never call `teardown-run` against the worktree
-   the session is standing in — that removal path is `ExitWorktree` only, per step 4 above and
-   `[IL-58]`; `teardown-run`'s own worktree-removal step is for a worktree this session does not
-   occupy.
+   the session is standing in **while it is still live** — that removal path is `ExitWorktree`
+   only, per step 4 above and `[IL-58]`; `teardown-run`'s own worktree-removal step is for a
+   worktree this session does not occupy. Once step 4 has already removed it, step 5.5 below
+   calls a narrower form of `teardown-run` anyway, for a different reason.
+5.5. **Own-worktree remote-branch delete (#3088).** Only when step 4 actually proceeded past its
+   proof above and removed the worktree via `ExitWorktree` — never when step 4's proof stopped
+   (no `mergeCommit`, a non-empty/differing containment check, or a non-zero ancestry check), and
+   never when this spec's branch-finish outcome never reached `merged` at all. `ExitWorktree(remove)`
+   in step 4 deletes the local branch along with the worktree — nothing in steps 1-4 deletes the
+   remote ref. Run `teardown-run` again, narrowed to just that one step, now that nothing live
+   remains for the rest of it to conflict with — but archival stays Section B's job alone (item 8
+   always runs last, per `cleanup-procedures.md`'s Ordering rule, since Sections D/E and Section
+   B's own archival all still need `$RUN_DIR` to resolve after this point):
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" teardown-run --run "$RUN_DIR" --merged --remote-ref-only
+   ```
+
+   `--remote-ref-only` skips archival (Step 2) only — the run directory stays exactly where it
+   was, for Sections D, E, and B's own archival (item 8) to still find. Its state-close step is a
+   harmless idempotent re-run (step 3.6 already closed it), its worktree-removal step reports "no
+   worktree recorded" (already gone), and its local-branch-delete step reports a harmless failure
+   (already gone) — the step that actually matters is its remote-ref delete, which resolves the
+   branch name from `run-state.json`'s `pr.branch` field even though the local branch no longer
+   exists (`teardown-run.js`'s branch resolution, #3088). This narrows, not contradicts, step 5's
+   own carve-out above: that carve-out is about never routing *worktree removal* through
+   `teardown-run` while the worktree is still live — calling it afterward, purely for this
+   leftover remote-ref cleanup, with archival suppressed, is the documented path.
 
 If no worktree exists for this spec, skip this section silently.
 
@@ -225,8 +289,10 @@ If no worktree exists for this spec, skip this section silently.
 If `/visual-review` or `/stories` auto-started a dev server during this run (`dev-url-detection.md` "Ephemeral server start"), it recorded the PID, port, worktree root, and detach state in `{run-dir}/ephemeral-server.txt` — read whatever it currently names, per that file's liveness-handle rule, since a dispatched second call may have restarted the server and rewritten this record since it was first written.
 
 1. **Multi-spec defer check:** if `MULTISPEC_REVIEW_DEFER=1` is set, **skip this section** — the server is shared across all specs in the run. The parent `/flow` kills it once after the consolidated Review Console (otherwise each later spec's visual review would have to restart it).
-2. Read `{run-dir}/ephemeral-server.txt` (`{pid} {port} {worktree-root} detached:{yes|no}`). Stop the process: `kill {pid}` — with a port-isolation lease (#1795), the recorded port is known and the PID kill alone is sufficient; the `lsof -ti tcp:{port} | xargs kill` fallback for a stale PID is a no-lease/POSIX-only path (see `dev-url-detection.md`'s Step 0.5). When the fourth field reads `detached:yes`, also kill the process group (`kill -- -{pid}`, the negative-pid form) so a detached dev command's own children don't outlive their leader — never do this when the field reads `detached:no`, since a non-detached server shares its process group with whatever spawned it and a group kill there could take down the caller's own shell.
-3. **An already-gone pid is not an error.** `kill {pid}` failing with "no such process" means the server already stopped (a prior cleanup attempt, or the process died on its own) — log "already stopped: pid {pid}" and continue; never surface this as a cleanup failure.
+2. Read `{run-dir}/ephemeral-server.txt` (`{pid} {port} {worktree-root} detached:{yes|no}`). **Detect the platform first** (e.g. `node -p process.platform`, reading `win32`) and stop the process accordingly:
+   - **win32:** stop the recorded PID with a tree kill — `taskkill /PID {pid} /T /F` — regardless of what the `detached:` field reads. On this platform the field is always `detached:no` (`dev-url-detection.md`'s Ownership rule: no detach primitive is available there), so a leader-only stop would leave a shell-spawned dev command's children running and still holding their ports; `/T` scopes the kill to the recorded PID's own descendants, never the caller's own shell, giving the same coverage the POSIX `detached:yes` group kill gives below.
+   - **POSIX:** `kill {pid}` — with a port-isolation lease (#1795), the recorded port is known and the PID kill alone is sufficient; the `lsof -ti tcp:{port} | xargs kill` fallback for a stale PID is a no-lease/POSIX-only path (see `dev-url-detection.md`'s Step 0.5). When the fourth field reads `detached:yes`, also kill the process group (`kill -- -{pid}`, the negative-pid form) so a detached dev command's own children don't outlive their leader — never do this when the field reads `detached:no`, since a non-detached server shares its process group with whatever spawned it and a group kill there could take down the caller's own shell.
+3. **An already-gone pid is not an error.** POSIX: `kill {pid}` failing with "no such process" means the server already stopped (a prior cleanup attempt, or the process died on its own) — log "already stopped: pid {pid}" and continue; never surface this as a cleanup failure. win32: `taskkill` reporting the PID was not found means the same thing — log "already stopped: pid {pid}" and continue. `taskkill /F` also exits non-zero on access-denied; only the not-found case is "already stopped" — any other non-zero exit (access-denied or otherwise) is a real cleanup failure and must be reported as one, never silently treated as already-stopped.
 4. Confirm the port is free, then delete `ephemeral-server.txt`.
 
 This only stops servers *this pipeline started*. A dev server the user was already running (or one on the main checkout) is never touched — it was never recorded in `ephemeral-server.txt`.

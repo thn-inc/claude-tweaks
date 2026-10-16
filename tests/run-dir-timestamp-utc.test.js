@@ -10,9 +10,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { composedBytesReport, overComposedCeiling } = require('../plugin/bin/lib/skill-audit/context-cost.js');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
-const read = (p) => fs.readFileSync(path.join(REPO_ROOT, p), 'utf8');
+const read = (p) => readText(path.join(REPO_ROOT, p));
 
 function mdFilesUnder(dir) {
   const out = [];
@@ -95,7 +96,7 @@ test('multi-spec.md and manifesto.md fit their single-read budgets (#724, #1997)
     'plugin/skills/flow/manifesto.md': 21760,
   };
   for (const [p, budget] of Object.entries(BUDGETS)) {
-    const bytes = fs.statSync(path.join(REPO_ROOT, p)).size;
+    const bytes = Buffer.byteLength(read(p), 'utf8');
     assert.ok(bytes < budget, `${p} is ${bytes} bytes — must stay under ${budget}`);
   }
 });

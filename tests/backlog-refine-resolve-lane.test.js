@@ -7,15 +7,15 @@
 // pins text this change actually introduced.
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const SKILL_DIR = path.join(ROOT, 'plugin', 'skills', 'backlog');
 const { CEILING_BYTES } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'skill-audit', 'context-cost'));
+const { readText } = require('./helpers/read-skill');
 
 function read(...segments) {
-  return fs.readFileSync(path.join(...segments), 'utf8');
+  return readText(path.join(...segments));
 }
 
 // --- (1) SKILL.md routing: one procedure, #N a filter ---
@@ -135,7 +135,7 @@ test('refine-closing-summary.md: filter/posture exclusion lines name the #N-filt
 // --- (7) refine-mode.md stays under the per-file lazy-load ceiling ---
 
 test('refine-mode.md stays under the per-file ceiling after the #1887 additions', () => {
-  const bytes = fs.statSync(path.join(SKILL_DIR, 'refine-mode.md')).size;
+  const bytes = Buffer.byteLength(read(SKILL_DIR, 'refine-mode.md'), 'utf8');
   assert.ok(bytes < CEILING_BYTES, `refine-mode.md is ${bytes} bytes — must stay under the ${CEILING_BYTES}-byte ceiling`);
 });
 

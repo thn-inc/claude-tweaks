@@ -76,6 +76,55 @@ test('Section D logs an already-gone pid as "already stopped", never as an error
   assert.match(body, /never surface this as a cleanup failure/);
 });
 
+// #3083 — win32 has no process-group primitive, so the recorded PID is
+// stopped with a tree kill instead of a leader-only `kill`.
+test('Section D stops the recorded pid with a win32 tree kill (taskkill /T /F), independent of the detached: field, and names the platform check', () => {
+  const text = fs.readFileSync(CLEANUP_EXEC, 'utf8');
+  const idx = text.indexOf('## D. Ephemeral dev server');
+  const endIdx = text.indexOf('## E. Issue claim release');
+  assert.ok(idx !== -1 && endIdx !== -1 && idx < endIdx);
+  const body = text.slice(idx, endIdx);
+  assert.match(body, /\*\*win32:\*\*.*taskkill \/PID \{pid\} \/T \/F.*regardless of what the `detached:` field reads/s);
+  assert.match(body, /process\.platform/);
+});
+
+test('Section D treats a win32 "not found" taskkill result as already-stopped, and any other non-zero exit as a real failure', () => {
+  const text = fs.readFileSync(CLEANUP_EXEC, 'utf8');
+  const idx = text.indexOf('## D. Ephemeral dev server');
+  const endIdx = text.indexOf('## E. Issue claim release');
+  const body = text.slice(idx, endIdx);
+  assert.match(body, /win32: `taskkill` reporting the PID was not found means the same thing/);
+  assert.match(body, /any other non-zero exit \(access-denied or otherwise\) is a real cleanup failure/);
+});
+
+// #3083 — the standalone stop path and the Windows Ownership bullet in
+// dev-url-detection.md also name the win32 tree kill.
+test("dev-url-detection.md's standalone stop names the win32 PID tree kill alongside the POSIX lsof port kill", () => {
+  const doc = fs.readFileSync(path.join(PLUGIN, 'skills', '_shared', 'dev-url-detection.md'), 'utf8');
+  const idx = doc.indexOf('### Cleanup');
+  assert.notEqual(idx, -1);
+  const body = doc.slice(idx);
+  assert.match(body, /on win32, where `lsof` does not exist, `taskkill \/PID \{pid\} \/T \/F`/);
+});
+
+test("dev-url-detection.md's Windows Ownership bullet mentions the tree kill and points to Section D", () => {
+  const doc = fs.readFileSync(path.join(PLUGIN, 'skills', '_shared', 'dev-url-detection.md'), 'utf8');
+  const idx = doc.indexOf('- **Windows:**');
+  const nextBulletIdx = doc.indexOf('\n\n', idx);
+  assert.notEqual(idx, -1);
+  const body = doc.slice(idx, nextBulletIdx === -1 ? undefined : nextBulletIdx);
+  assert.match(body, /stopped as a tree, not a leader-only kill/);
+  assert.match(body, /cleanup-procedures-execution\.md` Section D/);
+  assert.match(body, /taskkill \/PID \{pid\} \/T \/F/);
+});
+
+test('multispec-review-console.md line still delegates to Section D without restating the kill', () => {
+  const doc = fs.readFileSync(path.join(PLUGIN, 'skills', 'flow', 'multispec-review-console.md'), 'utf8');
+  assert.doesNotMatch(doc, /kill \{pid\}/);
+  assert.doesNotMatch(doc, /taskkill/);
+  assert.match(doc, /Section D/);
+});
+
 test('the ephemeral-server-handoff predicates can actually go red (discrimination proof)', () => {
   const text = fs.readFileSync(TASK_PROMPT, 'utf8');
   const paragraphs = text.split(/\r?\n\r?\n/);

@@ -119,6 +119,17 @@ test('closeRunState: a live worktree with a recorded, matching sessionId still c
   }
 });
 
+// #3198: a run dir already archived (or otherwise removed) between
+// resolution and this call must never be recreated by a write attempt —
+// matching log-decision.js's own refusal instead of writing fresh
+// bookkeeping files into a path a concurrent archival just removed.
+test('closeRunState: a non-existent run dir refuses with status "missing" and creates nothing', () => {
+  const missing = path.join(os.tmpdir(), 'close-run-state-test-missing-' + Date.now());
+  const r = closeRunState(missing, { explicit: true, callerIdentity: { sessionId: 's1' } });
+  assert.strictEqual(r.status, 'missing');
+  assert.strictEqual(fs.existsSync(missing), false);
+});
+
 test('closeRunState: explicit: true bypasses the live-worktree refusal, same as it bypasses refused-foreign', () => {
   const dir = makeTmpRunDir();
   const worktree = makeTmpRunDir();

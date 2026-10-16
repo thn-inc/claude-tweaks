@@ -22,10 +22,36 @@ probe, not an environment classification — it holds regardless of *why* `gh` i
 | List open issues by label | `gh issue list --label {label} --state open --json ...` | `list_issues` (filtered by label, state) — never `search_issues` for a find-by-marker/dedup lookup (see below) |
 | Create an issue | `gh issue create --title ... --body ...` | `issue_write` (create mode) |
 | Edit labels / body | `gh issue edit {n} --add-label/--remove-label/--body-file` | `issue_write` (update mode) |
-| Comment | `gh issue comment {n} --body-file` | `add_issue_comment` |
+| Comment | `gh issue comment {n} --body-file` | `add_issue_comment` — a body that starts with a `<!-- … -->` marker follows **Marker comments on the MCP path** below |
 | Close | `gh issue close {n} --reason ...` | `issue_write` (update mode, state change) |
 | Get a single issue by number | `gh issue view {n} --json state,...` | `issue_read` (get mode) |
 | List an issue's comments | `gh api repos/{owner}/{repo}/issues/{n}/comments?per_page=100` | `issue_read` (get_comments mode) |
+
+### Marker comments on the MCP path
+
+**Compose a marker comment's body from the local source — the skill's literal template or a CLI's
+stdout (`claims.js`'s `claimPayload`, a `bin/` composer) — never from text read back through an MCP tool.**
+An escaped marker (`&lt;!-- … --&gt;`) renders as visible text and no find-by-marker lookup ever
+matches it. Evidence (#3131): across the run-comment PRs since 2026-09-20 and #1350,
+`performed_via_github_app` shows the `gh` CLI wrote 53 raw markers and 0 escaped ones, while the
+`claude` app (this MCP path) wrote 9 raw and 5 escaped, interleaved in time. The escaped bodies
+were not copied from a sanitized read: each holds exactly one `&lt;` and one `&gt;`, both in the
+marker, with raw quotes everywhere else, and #1350's escaped claim mirror carries a fresh
+`claimPayload` runId and timestamp no earlier read could have supplied. So the escaping happens on
+the MCP write leg, intermittently, between local composition and storage — the cause (tool-call
+serialization or the server) is not yet identified and needs a `gh`-absent reproduction.
+
+**Read back after posting, and repair once.** Read the new comment through `issue_read`
+(`get_comments`). A body that comes back beginning `&lt;!--` was stored escaped (a raw marker never
+reads back in that form). On that signature only, post the same locally composed body once more
+and read back again; when the re-post is still escaped, trace it (`/{skill}` is the posting
+skill's own section, e.g. `/review`):
+`node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/{skill}" --status SKIP --step "Marker comment read-back (degraded)" --text "condition: comment {id} on #{n} stored with an escaped marker after one re-post → fallback: left as posted; invisible to find-by-marker" --reversibility n/a`.
+When the re-post reads back clean, log `AUTO` naming the escaped original's comment id as an
+orphan to delete by hand — MCP has no comment delete. A read-back call that fails outright counts
+as not escaped: proceed without re-posting and log the failed read as a `SKIP` degrade line. A
+standalone poster with no `$PIPELINE_RUN_DIR` uses `_shared/auto-decision-log.md`'s No-run-dir
+carrier instead.
 
 ### Full-replace hazard
 

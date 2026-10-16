@@ -11,7 +11,7 @@ Input Discipline) — so every `${CLAUDE_PLUGIN_ROOT}`-style env-var reference e
 in a template resolves to nothing inside the dispatched agent's own shell, forcing it to
 rediscover the value from scratch (`--help` probes, `find` searches, trial-and-error against CLI
 argument enums — the exact rediscovery this section eliminates). The dispatching session already
-resolved six of these facts earlier in the same firing (Steps 1-4); it resolves them **once
+resolved seven of these facts earlier in the same firing (Steps 1-4); it resolves them **once
 more here, as literals**, before composing either call — plus one standing instruction (item 7)
 that needs no resolution, only inclusion:
 
@@ -47,7 +47,21 @@ that needs no resolution, only inclusion:
    foreground call with a large explicit timeout, or poll for it synchronously within one tool
    call. If you yourself dispatch nested subagents (via `superpowers:subagent-driven-development`,
    a review-lens fan-out, or any other Task/Agent call), give them this same instruction — the
-   identical trap recurs one level deeper otherwise.
+   identical trap recurs one level deeper otherwise. **Mark every interim reply (#2714):** whenever
+   you end a turn before your genuine final reply — e.g. narrating progress while a nested
+   `Agent`-tool dispatch you launched is still pending, per each template's Foreground execution
+   clause carve-out (#2533) — make that reply's last non-empty line
+   `INTERIM_STATUS: {one-line progress note}`, never `STATUS: {WORD}`, which is reserved for your
+   genuine final reply. An unmarked interim reply is graded by the `SubagentStop` hook as a final
+   reply missing its status line and logged as a false-positive `contract-violation`. Forward
+   this marker rule, with the rest of this item, to any nested dispatch that itself dispatches.
+8. **Selected at** (#3131) — one literal line, `Selected at: {ISO}`: the modification time of
+   this firing's session-scoped `dispatch-groups.json` (`queue-pull-script.md`'s output, resolved
+   via `sessionTmpPath` as `next-ranking.md` does). That pull already dropped every
+   `bot:in-progress` record, so each selected record lacked the label at that moment. A Task call
+   cannot see the dispatcher's files' timing; Settle's contested-claim self-report compares this
+   against the holder's `claimedAt` to tell a missing projection from a claim race. An unreadable
+   file → `Selected at: unknown`; never block the dispatch on it.
 
 Substitute this whole block, filled in with this firing's actual resolved values, as
 `{context-pack}` immediately after each call's opening `Task scope:` paragraph below. This is

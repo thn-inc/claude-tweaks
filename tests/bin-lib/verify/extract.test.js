@@ -5,7 +5,7 @@ const path = require('path');
 
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, specEntryCount,
+  MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles, countUnmatchedFailures, unattributedFailureCount, fileLevelFailures, specEntryCount,
   failingTestsByFile, cancelledCount, testTree,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'extract.js'));
 
@@ -299,6 +299,60 @@ test('extractFailingFiles: a YAML-quoted Windows TAP location line (doubled back
   assert.deepStrictEqual(extractFailingFiles(text, 'tap', { cwd: 'C:\\repo' }), ['tests/a.test.js']);
 });
 
+// #3155: a checkout path containing a space (e.g. this repo's own
+// `/Users/.../Code Workspaces/claude-tweaks`) truncated the extracted path
+// at the space under the old bare-whitespace-anchored regex, so a file
+// failing at both base and HEAD was never recognized as the same file and
+// misclassified `attributable`.
+test('extractFailingFiles: a TAP location line and stack frame naming a space-containing absolute path relativize intact (#3155 AC1)', () => {
+  const text = [
+    'not ok 1 - a fails',
+    '  ---',
+    "  location: '/tmp/a b/repo/tests/x.test.js:1:21'",
+    '  stack: |-',
+    '    at TestContext.<anonymous> (/tmp/a b/repo/tests/x.test.js:1:21)',
+    '  ...',
+    '# tests 1', '# pass 0', '# fail 1',
+  ].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(text, 'tap', { cwd: '/tmp/a b/repo' }), ['tests/x.test.js']);
+});
+
+test('extractFailingFiles: a bare `at path:L:C` frame (no parens) with a space-containing path relativizes intact (#3155)', () => {
+  const text = [
+    'not ok 1 - a fails',
+    '  at /tmp/a b/repo/tests/x.test.js:1:21',
+    '# tests 1', '# pass 0', '# fail 1',
+  ].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(text, 'tap', { cwd: '/tmp/a b/repo' }), ['tests/x.test.js']);
+});
+
+test('failingTestsByFile, fileLevelFailures, and countUnmatchedFailures all return the same intact relative path for a space-containing cwd (#3155 AC2)', () => {
+  const text = [
+    'not ok 1 - a fails',
+    '  ---',
+    "  location: '/tmp/a b/repo/tests/x.test.js:1:21'",
+    '  ...',
+    '# tests 1', '# pass 0', '# fail 1',
+  ].join('\n');
+  const opts = { cwd: '/tmp/a b/repo' };
+  assert.deepStrictEqual([...failingTestsByFile(text, 'tap', opts).keys()], ['tests/x.test.js']);
+  assert.deepStrictEqual([...fileLevelFailures(text, 'tap', opts)], []);
+  assert.strictEqual(countUnmatchedFailures(text, 'tap', opts), 0);
+});
+
+test('extractFailingFiles: a vitest/jest summary FAIL line with a space-containing path stops at the `>`/`(` terminator, not the internal space (#3155)', () => {
+  const text = [
+    'FAIL tests/a b/x.test.js > suite > case',
+    '❯ tests/a b/y.test.ts (3 tests | 1 failed)',
+  ].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(text, 'summary'), ['tests/a b/x.test.js', 'tests/a b/y.test.ts']);
+});
+
+test('extractFailingFiles: pytest FAILED path::name with a space-containing path still stops at `::` (#3155)', () => {
+  const text = 'FAILED tests/a b/test_b.py::test_x - AssertionError';
+  assert.deepStrictEqual(extractFailingFiles(text, 'summary'), ['tests/a b/test_b.py']);
+});
+
 test('extractFailingFiles: generic family and a log with nothing parseable yield [] — no parse, no retry (AC1)', () => {
   assert.deepStrictEqual(extractFailingFiles(GENERIC_FIXTURE, 'generic'), []);
   assert.deepStrictEqual(extractFailingFiles('not ok 1 - fails with no frame\n# fail 1', 'tap'), []);
@@ -392,6 +446,78 @@ test('countUnmatchedFailures: 0 when every spec entry is a test file, and 0 for 
   assert.strictEqual(countUnmatchedFailures(SPEC_LOG, 'spec', { cwd: 'C:\\repo' }), 0);
   assert.strictEqual(countUnmatchedFailures(PYTEST_FIXTURE, 'summary'), 0);
   assert.strictEqual(countUnmatchedFailures(GENERIC_FIXTURE, 'generic'), 0);
+});
+
+test('unattributedFailureCount: a spec log with one allowlisted-shaped failing file plus one entry naming no test file is unattributed (#3066)', () => {
+  const log = ['ℹ tests 3', 'ℹ pass 1', 'ℹ fail 2', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:1:1', '✖ x (1ms)', '', 'test at tests/helper.js:2:1', '✖ y (1ms)'].join('\n');
+  assert.strictEqual(unattributedFailureCount(log, 'spec'), 1);
+});
+
+test('unattributedFailureCount: every spec entry naming a test file and entries == fail + cancelled is fully accounted — 0 (#3066)', () => {
+  // Deliberately NOT SPEC_LOG above: that fixture's own pinned test
+  // (specEntryCount(SPEC_LOG) === 3) has 3 entries against ℹ fail 2 — it is
+  // not accounted either, by the same `baseline.js` accounting this
+  // function mirrors, so it would be the wrong fixture to assert 0 on.
+  const log = ['ℹ tests 2', 'ℹ pass 0', 'ℹ fail 2', 'ℹ cancelled 0', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:1:1', '✖ x (1ms)', '', 'test at tests/sub/b.test.js:5:1', '✖ y (1ms)'].join('\n');
+  assert.strictEqual(unattributedFailureCount(log, 'spec'), 0);
+});
+
+test('unattributedFailureCount: every entry names a test file, but the entry count does not add up to ℹ fail + ℹ cancelled — unattributed (#3066)', () => {
+  const log = ['ℹ tests 4', 'ℹ pass 1', 'ℹ fail 3', 'ℹ cancelled 0', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:1:1', '✖ x (1ms)', '', 'test at tests/b.test.js:2:1', '✖ y (1ms)'].join('\n');
+  assert.strictEqual(countUnmatchedFailures(log, 'spec'), 0, 'both entries do name a test file');
+  assert.strictEqual(unattributedFailureCount(log, 'spec'), 1, 'but the entry count (2) undercounts ℹ fail (3)');
+});
+
+test('unattributedFailureCount: TAP with a stack frame naming no retryable file is unattributed (1) via countUnmatchedFailures, and every non-spec/tap family is 0 (#3066)', () => {
+  // "tests/helper.js" matches no retryable-file pattern (no .test./.spec.
+  // suffix), so countUnmatchedFailures alone — before any counts-parsed
+  // check is reached — already flags this block as unmatched.
+  assert.strictEqual(unattributedFailureCount('not ok 1 - x\n  at tests/helper.js:2:1', 'tap'), 1);
+  assert.strictEqual(unattributedFailureCount(PYTEST_FIXTURE, 'summary'), 0);
+  assert.strictEqual(unattributedFailureCount(GENERIC_FIXTURE, 'generic'), 0);
+});
+
+test('unattributedFailureCount: TAP whose summary counts never parsed (truncated log) is unattributed even when every failing block names a file (#3066)', () => {
+  // Review finding (3a/3b/3c lenses): the TAP branch used to return 0 as
+  // soon as countUnmatchedFailures was 0, without ever checking that `#
+  // tests`/`# pass`/`# fail` parsed — the exact gap `baseline.js`'s
+  // `adjudicate` closes for both families. A log cut off before its
+  // summary line must not read as fully accounted.
+  const log = ['not ok 1 - a flaky one', '  ---', '  stack: |-', '    at tests/a.test.js:12:5', '  ...'].join('\n');
+  assert.strictEqual(countUnmatchedFailures(log, 'tap'), 0, 'the one block does name a test file');
+  assert.strictEqual(parseCounts(log, 'tap'), null, 'no # tests/# pass/# fail line at all');
+  assert.strictEqual(unattributedFailureCount(log, 'tap'), 1);
+});
+
+test('unattributedFailureCount: TAP with every block naming a file, but the block count does not add up to # fail — unattributed (#3066)', () => {
+  const log = ['not ok 1 - a flaky one', '  ---', '  stack: |-', '    at tests/a.test.js:12:5', '  ...',
+    '# tests 2', '# pass 0', '# fail 2'].join('\n');
+  assert.strictEqual(countUnmatchedFailures(log, 'tap'), 0, 'the one block does name a test file');
+  assert.strictEqual(unattributedFailureCount(log, 'tap'), 1, 'but the block count (1) undercounts # fail (2)');
+});
+
+test('unattributedFailureCount: TAP with cancelled > 0 and block count == fail + cancelled is fully accounted — 0 (#3066)', () => {
+  const log = ['not ok 1 - a', '  ---', '  stack: |-', '    at tests/a.test.js:12:5', '  ...',
+    'not ok 2 - b', '  ---', '  stack: |-', '    at tests/b.test.js:12:5', '  ...',
+    '# tests 2', '# pass 0', '# fail 1', '# cancelled 1'].join('\n');
+  assert.strictEqual(unattributedFailureCount(log, 'tap'), 0);
+});
+
+test('unattributedFailureCount: a spec log with ℹ cancelled > 0 correctly adds it into the expected total — 0 when entries == fail + cancelled (#3066)', () => {
+  // Discrimination: dropping "+ cancelled" from `expected` would make this
+  // 2 !== 1 and return 1 instead of 0.
+  const log = ['ℹ tests 3', 'ℹ pass 0', 'ℹ fail 1', 'ℹ cancelled 1', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:1:1', '✖ x (1ms)', '', 'test at tests/b.test.js:2:1', '✖ y (1ms)'].join('\n');
+  assert.strictEqual(unattributedFailureCount(log, 'spec'), 0);
+});
+
+test('unattributedFailureCount: a spec log whose summary counts never parsed fails closed to unattributed (1), not accounted (#3066)', () => {
+  const log = ['', '✖ failing tests:', '', 'test at tests/a.test.js:1:1', '✖ x (1ms)'].join('\n');
+  assert.strictEqual(parseCounts(log, 'spec'), null, 'no ℹ tests/ℹ pass/ℹ fail line at all');
+  assert.strictEqual(unattributedFailureCount(log, 'spec'), 1);
 });
 
 // node --test's real TAP shape (Node 20 and 24 alike): a failing subtest is an

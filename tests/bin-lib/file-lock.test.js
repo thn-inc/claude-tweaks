@@ -148,7 +148,8 @@ test('withLock: a second acquirer waits for the first to release, under real cro
       });
       let stderr = '';
       p.stderr.on('data', (d) => { stderr += d; });
-      p.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`worker ${i} exited ${code}: ${stderr}`))));
+      // 'close', not 'exit': only 'close' guarantees stdio has flushed, so a failing worker's stderr is complete.
+      p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`worker ${i} exited ${code}: ${stderr}`))));
       p.on('error', reject);
     }));
   }

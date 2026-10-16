@@ -17,6 +17,7 @@ Shared, criteria-only fragment — the "what is worth simplifying" knowledge. No
 ## Constraints (what NOT to flag)
 
 - **Preserve all behavior** — simplification never changes behavior. If behavior needs changing, that is a different concern, not a simplification finding.
+- **Don't replace a test's expected value with the code under test** — a literal expected value in a test assertion is an independent oracle, not duplication. Replacing it with the production constant (or a call to the production function) that the test checks still passes, but the assertion can then hold for any value of that constant, so the test can no longer fail. Moving a repeated literal into a test-local constant is fine; reading the expected value from the module under test is not. Production code that duplicates a constant is still fair game.
 - **Stay in scope** — only the changed files. Never flag unrelated code.
 - **Don't over-simplify at the cost of readability** — simpler isn't always better. Dense one-liners can be harder to read than explicit code; a clarity loss is not a simplification.
 - **Don't simplify generated files** — generated code is regenerated, not hand-simplified.

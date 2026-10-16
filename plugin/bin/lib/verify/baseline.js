@@ -200,6 +200,18 @@ function readLog(logPath) {
   try { return stripAnsi(fs.readFileSync(logPath, 'utf8')); } catch { return null; }
 }
 
+// #3167: realpath a directory before it is ever compared against a node
+// --test log's own printed paths. On macOS `os.tmpdir()` — and so the
+// `--baseline` scratch worktree created under it — can sit behind a symlink
+// (`/var` -> `/private/var`), while node reports the real path.
+// `extract.js`'s `relativize()` does a plain string-prefix compare, so a
+// symlinked dir never matches and every file under it is misclassified
+// `attributable`. Fails open to the original value — tests pass
+// non-existent paths (`/repo`, `/scratch`) that cannot be resolved.
+function tryRealpath(dir) {
+  try { return fs.realpathSync(dir); } catch { return dir; }
+}
+
 // Conventional process exit codes for an unhandled signal (128 + signal
 // number) — what every shell and CI runner already expects a killed process
 // to report (#3064).
@@ -212,7 +224,7 @@ async function adjudicate({
   const header = { base, baseSha };
   const ineligible = (reason) => ({ ...header, eligible: false, reason });
   const work = [];
-  const headDir = cwd || process.cwd();
+  const headDir = tryRealpath(cwd || process.cwd());
   for (const c of checks.filter((x) => x.skipped || x.exitCode !== 0)) {
     if (c.skipped) return ineligible(`${c.name} skipped (${c.skipped})`);
     if (c.spawnError !== undefined) return ineligible(`${c.name} could not spawn`);
@@ -269,7 +281,9 @@ async function adjudicate({
   // not sit under git's own toplevel spelling (a junction, a subst drive, an
   // 8.3 name) would put the base-side run outside the scratch worktree —
   // possibly onto HEAD's own tree — so it is never adjudicated.
-  const root = git.repoRoot();
+  // Realpath'd like headDir (#3167), or a symlinked toplevel spelling would
+  // put an ordinary in-repo cwd outside the repository root.
+  const root = tryRealpath(git.repoRoot());
   const sub = path.relative(root, headDir).replace(/\\/g, '/');
   if (sub === '..' || sub.startsWith('../') || path.isAbsolute(sub)) {
     return ineligible(`working directory ${headDir} does not resolve under the repository root ${root}`);
@@ -285,7 +299,8 @@ async function adjudicate({
   const headResolvesDeps = Boolean(env.NODE_PATH) || hasNodeModulesUpward(headDir);
   try {
     if (atBase.some(Boolean)) {
-      scratch = git.addWorktree(baseSha);
+      // Realpath'd like headDir (#3167): addWorktree may return a symlinked path.
+      scratch = tryRealpath(git.addWorktree(baseSha));
       // While the scratch worktree exists, a Ctrl-C or kill removes it
       // before exiting with the signal's conventional code (128 + signal
       // number) — otherwise the process ends before the `finally` below

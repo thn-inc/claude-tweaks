@@ -8,6 +8,10 @@ const {
   jaccard,
   isReconcileResidueTitle,
   DEFAULT_TITLE_SIMILARITY_THRESHOLD,
+  extractCurrentStateAnchors,
+  isGenericAnchor,
+  shapingRefusal,
+  buildShapingState,
 } = require('../../../plugin/bin/lib/issues/near-duplicate');
 
 function withKeyFiles(files) {
@@ -200,4 +204,126 @@ test('sorting: multiple candidates sort by score descending then number ascendin
   };
   const results = findNearDuplicates(subject, [oneSignalHigh, twoSignal, oneSignalLow]);
   assert.deepStrictEqual(results.map((r) => r.number), [20, 5, 30]);
+});
+
+// ── #3141: generic tokens are not body anchors ──────────────────────────────
+
+test('extractCurrentStateAnchors drops flag, skill-invocation and label-name spans', () => {
+  const body = '## Current State\n\nRuns `--run-dir` and `-x` and `--run <dir>`; see `/claude-tweaks:dispatch`, `/claude-tweaks:flow #3124 build`; labels `bot:in-progress`, `risk:low`, `ready`, `parked`.\n\n## Deliverables\n';
+  assert.deepStrictEqual([...extractCurrentStateAnchors(body)], []);
+});
+
+test('extractCurrentStateAnchors keeps file paths, symbols and file:line locations', () => {
+  const body = '## Current State\n\n`plugin/skills/simplify/SKILL.md`, `classifyClaimBlob`, `near-duplicate.js:92`, `## Current State`.\n';
+  assert.deepStrictEqual(
+    [...extractCurrentStateAnchors(body)].sort(),
+    ['## Current State', 'classifyClaimBlob', 'near-duplicate.js:92', 'plugin/skills/simplify/SKILL.md'],
+  );
+});
+
+test('isGenericAnchor classifies each shape', () => {
+  for (const g of ['--run-dir', '-x', '--run <dir>', '--key=value', '/claude-tweaks:dispatch', '/claude-tweaks:flow #3124 build', 'bot:in-progress', 'needs:decision', 'ready', 'parked']) {
+    assert.strictEqual(isGenericAnchor(g), true, g);
+  }
+  for (const k of ['plugin/bin/lib/issues/claims.js', 'classifyClaimBlob', 'near-duplicate.js:92', 'origin/main:claims/issue-1.json', 'readiness', 'c:\\Users\\x', '--run path rejected']) {
+    assert.strictEqual(isGenericAnchor(k), false, k);
+  }
+});
+
+test('a flag-only shared anchor no longer fires body-anchor-overlap; a shared file path still does', () => {
+  const subject = { number: 1, title: 'Materialize docs drift', body: '## Current State\n\nUses `--run-dir` and `bin/lib/x.js`.\n' };
+  const flagOnly = { number: 2, title: 'Wrap-up verify checks', labels: [], body: '## Current State\n\nPasses `--run-dir`.\n' };
+  const fileToo = { number: 3, title: 'Unrelated title words', labels: [], body: '## Current State\n\nEdits `bin/lib/x.js`.\n' };
+  const hits = findNearDuplicates(subject, [flagOnly, fileToo]);
+  assert.deepStrictEqual(hits.map((h) => [h.number, h.signals]), [[3, ['body-anchor-overlap']]]);
+});
+
+// ── #3141: shapingRefusal ───────────────────────────────────────────────────
+
+const LIVE = { ready: true, liveClaim: true, claimRunId: 'run-a', openLinkedPR: null };
+const IDLE = { ready: true, liveClaim: false, claimRunId: null, openLinkedPR: null };
+
+test('the four 2026-10-15 refusals are not refused (no title-similarity)', () => {
+  const cases = [
+    { number: 2552, signals: ['body-anchor-overlap'] },
+    { number: 2552, signals: ['body-anchor-overlap'] },
+    { number: 2634, signals: ['key-files-overlap', 'body-anchor-overlap'] },
+    { number: 2789, signals: ['key-files-overlap', 'body-anchor-overlap'] },
+  ];
+  for (const hit of cases) {
+    assert.strictEqual(shapingRefusal([hit], { [hit.number]: LIVE }), null, String(hit.number));
+  }
+});
+
+test('a true duplicate (title-similarity, ready, live claim) is refused', () => {
+  const hit = { number: 9, signals: ['title-similarity'] };
+  assert.strictEqual(shapingRefusal([hit], { 9: LIVE }), hit);
+});
+
+test('the same duplicate with only bot:in-progress (stale claim) is not refused', () => {
+  const hit = { number: 9, signals: ['title-similarity', 'key-files-overlap'] };
+  assert.strictEqual(shapingRefusal([hit], { 9: IDLE }), null);
+});
+
+test('an open linked PR with no live claim is refused', () => {
+  const hit = { number: 9, signals: ['title-similarity'] };
+  assert.strictEqual(shapingRefusal([hit], { 9: { ...IDLE, openLinkedPR: 77 } }), hit);
+});
+
+test('a non-ready candidate is not refused even with a live claim', () => {
+  const hit = { number: 9, signals: ['title-similarity'] };
+  assert.strictEqual(shapingRefusal([hit], { 9: { ...LIVE, ready: false } }), null);
+});
+
+test('a candidate missing from stateByNumber is not refused', () => {
+  assert.strictEqual(shapingRefusal([{ number: 9, signals: ['title-similarity'] }], {}), null);
+});
+
+test('shapingRefusal returns the first qualifying hit in the given order', () => {
+  const a = { number: 1, signals: ['key-files-overlap', 'body-anchor-overlap', 'title-similarity'] };
+  const b = { number: 2, signals: ['title-similarity'] };
+  assert.strictEqual(shapingRefusal([a, b], { 1: IDLE, 2: LIVE }), b);
+  assert.strictEqual(shapingRefusal([], {}), null);
+  assert.strictEqual(shapingRefusal(null, {}), null);
+});
+
+// ── #3141: buildShapingState ────────────────────────────────────────────────
+
+const NOW = Date.parse('2026-10-15T12:00:00Z');
+const liveBlob = JSON.stringify({ issue: 5, runId: 'run-live', claimedAt: '2026-10-15T11:00:00Z', ttlHours: 72 });
+const staleBlob = JSON.stringify({ issue: 6, runId: 'run-old', claimedAt: '2026-10-01T11:00:00Z', ttlHours: 72 });
+const tombstone = JSON.stringify({ issue: 7, runId: 'run-done', released: true });
+
+test('buildShapingState reads ready from labels, liveness from classifyClaimBlob, and the open linked PR', () => {
+  const state = buildShapingState({
+    numbers: [5, 6, 7, 8, 9],
+    labelsByNumber: { 5: ['ready'], 6: [{ name: 'ready' }, { name: 'bot:in-progress' }], 7: ['ready'], 8: [], 9: ['ready'] },
+    claimContentByNumber: { 5: liveBlob, 6: staleBlob, 7: tombstone, 8: null, 9: '{not json' },
+    linkedPRRepoData: { i9: { closedByPullRequestsReferences: { nodes: [{ number: 41, state: 'OPEN' }] } }, i6: { closedByPullRequestsReferences: { nodes: [{ number: 40, state: 'MERGED' }] } } },
+    now: NOW,
+  });
+  assert.deepStrictEqual(state[5], { ready: true, liveClaim: true, claimRunId: 'run-live', openLinkedPR: null });
+  assert.deepStrictEqual(state[6], { ready: true, liveClaim: false, claimRunId: null, openLinkedPR: null });
+  assert.deepStrictEqual(state[7], { ready: true, liveClaim: false, claimRunId: null, openLinkedPR: null });
+  assert.deepStrictEqual(state[8], { ready: false, liveClaim: false, claimRunId: null, openLinkedPR: null });
+  assert.deepStrictEqual(state[9], { ready: true, liveClaim: false, claimRunId: null, openLinkedPR: 41 });
+});
+
+test('buildShapingState degrades a missing claim map and a null linked-PR response to not in flight', () => {
+  const state = buildShapingState({ numbers: [5], labelsByNumber: { 5: ['ready'] }, claimContentByNumber: undefined, linkedPRRepoData: null, now: NOW });
+  assert.deepStrictEqual(state[5], { ready: true, liveClaim: false, claimRunId: null, openLinkedPR: null });
+});
+
+test('buildShapingState never reads a stale claim as live when the clock is not a finite number', () => {
+  for (const now of [NaN, undefined, null]) {
+    const state = buildShapingState({ numbers: [6], labelsByNumber: { 6: ['ready'] }, claimContentByNumber: { 6: staleBlob }, linkedPRRepoData: null, now });
+    assert.strictEqual(state[6].liveClaim, false, String(now));
+  }
+});
+
+test('malformed shapes degrade to no refusal instead of throwing', () => {
+  assert.strictEqual(shapingRefusal({ number: 5, signals: ['title-similarity'] }, { 5: LIVE }), null);
+  assert.deepStrictEqual(buildShapingState({ numbers: { a: 1 }, labelsByNumber: {}, claimContentByNumber: {}, linkedPRRepoData: null, now: NOW }), {});
+  const state = buildShapingState({ numbers: [5], labelsByNumber: { 5: { labels: ['ready'] } }, claimContentByNumber: {}, linkedPRRepoData: null, now: NOW });
+  assert.strictEqual(state[5].ready, false);
 });

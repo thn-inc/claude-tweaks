@@ -39,6 +39,26 @@ test('classifyGitError: everything else is a plain transport failure', () => {
   assert.deepEqual(classifyGitError(err), { kind: 'transport-failure' });
 });
 
+// #3051: a timeout kill is still a transport-failure (the failure vocabulary
+// is unchanged), but readClaimBlobGit names it distinctly via `timedOut` so
+// a caller can tell "remote slow" from "remote unreachable".
+test('readClaimBlobGit: a timeout-shaped runner error reports transport-failure AND timedOut', () => {
+  const timeoutErr = new Error('Command timed out');
+  timeoutErr.killed = true;
+  timeoutErr.signal = 'SIGTERM';
+  const runner = () => { throw timeoutErr; };
+  const result = readClaimBlobGit({ issueNumber: 42, remote: 'origin', runner });
+  assert.equal(result.failure, 'transport-failure');
+  assert.equal(result.timedOut, true);
+});
+
+test('readClaimBlobGit: a non-timeout runner error reports transport-failure with no timedOut key', () => {
+  const runner = () => { throw new Error('fatal: unable to access: Could not resolve host'); };
+  const result = readClaimBlobGit({ issueNumber: 42, remote: 'origin', runner });
+  assert.equal(result.failure, 'transport-failure');
+  assert.equal('timedOut' in result, false);
+});
+
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');

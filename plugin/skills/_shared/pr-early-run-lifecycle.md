@@ -325,12 +325,13 @@ deliberate decision to withhold its own closing keyword — e.g. a decision alre
 the underlying issue open until a later manual step completes. Composing this block only once, at
 run start, can never see such a decision (nothing has run yet); the check instead lives at the
 point this block is actually corrected against real outcomes — `_shared/pr-checklist-refresh.md`'s
-"Rewrite the `Fixes` block from `manifest.yml` outcomes" step, which must treat a deferred-closure
-spec the same way it already treats a `not-run`/`failed` one: a `Refs` line, never `Fixes`, even
-when that spec's manifest status reads `complete`. The entry shape that step's
-`readDeferredClosures` (`bin/lib/flow/manifest.js`) recognizes — the one shape, written through
-`bin/log-decision.js` like every other decision in this file, to that spec's own
-`spec-{id}/decisions.md` (`flow/multispec-run-dir-layout.md`'s per-spec subdirectory):
+"Rewrite the `Fixes` block from outcomes" step, which must treat a deferred-closure spec the same
+way it already treats a `not-run`/`failed` one: a `Refs` line, never `Fixes`, even when that
+spec's manifest status reads `complete`. The entry shape that step's readers recognize — the one
+shape, written through `bin/log-decision.js` like every other decision in this file, to that
+spec's own `spec-{id}/decisions.md` (`flow/multispec-run-dir-layout.md`'s per-spec subdirectory)
+for a bundle run, or — for a single-record run, which carries no bundle `manifest.yml` to
+namespace a subdirectory against (#3136) — to the run's own top-level `decisions.md` directly:
 
 `deferred-closure: spec #{n} closing keyword withheld ({reason})`
 
@@ -338,10 +339,11 @@ passed as `--text` to `log-decision.js` with `--status AUTO`, producing a line s
 `AUTO {time} — spec #{n}: deferred-closure: spec #{n} closing keyword withheld ({reason}).
 Reversibility: high (a later commit or PR edit can still add Fixes #{n}).` `{reason}` is a short
 free-text phrase (e.g. `AC not fully met, pending manual step`). This is the one entry shape the
-rewrite step's reader recognizes — do not invent a differently-worded line for the same decision.
-A single-record run never writes or checks this line: there is no bundle `manifest.yml` for a
-single-record run to rewrite against, so the one `Fixes #{n}` line it composes here at Step 3 stays
-unconditional, exactly as before.
+rewrite step's readers recognize — do not invent a differently-worded line for the same decision.
+A bundle run's reader is `readDeferredClosures`; a single-record run's is
+`readSingleRecordDeferredClosure` (`bin/lib/flow/manifest.js`) — same regex, same entry shape,
+different file. A single-record run that never logs this line behaves exactly as before: the one
+`Fixes #{n}` line composed here at Step 3 stays unconditional.
 
 The body lands at `$PR_EARLY_BODY` — session-scoped (`_shared/session-tmp-root.md`) and keyed
 on this run's own `{run-id}` (the run-dir basename), so a retried run's fresh write can never

@@ -80,14 +80,15 @@ Before any `gh`/MCP command, run the Detection Ladder from `_shared/forge-detect
 GitHub remote exists, `gh` CLI installed, `gh` authenticated + repo reachable). Check 1 (GitHub
 remote exists) and check 3 (authenticated + reachable, evaluated against whichever transport
 check 2 selects) stay hard gates — there is no meaningful degraded mode for a skill whose entire
-purpose is writing GitHub state. Check 2 (`gh` CLI installed) no longer gates on its own: `gh`
-present → proceed exactly as always; `gh` absent → proceed via the GitHub MCP path documented in
-`mcp-transport.md` in this skill's directory (and, for Settle and the Auto-merge gate, in
-`settle-and-merge.md`) — verified end-to-end against a live cloud Routine run (was
-`docs/superpowers/plans/2026-08-02-dispatch-mcp-bridge.md`, deleted `d83f0720`). Report the specific failing check and
-stop for any real failure (headless self-report above still applies for bare drain, incl. its `next` alias).
+purpose is writing GitHub state. Check 2 (`gh` CLI installed) no longer gates on its own, nor does
+a `gh`-present check 3 failure matching the GraphQL-blocked signature (`GitHub GraphQL is not
+available`) — both route to the GitHub MCP path documented in `mcp-transport.md` in this skill's
+directory (and, for Settle and the Auto-merge gate, in `settle-and-merge.md`), verified
+end-to-end against a live cloud Routine run; any other check 3 failure hard-stops. Report
+the specific failing check and stop for any real failure (headless self-report above still
+applies for bare drain, incl. `next`).
 
-**MCP transport details.** When `gh` is absent, read `mcp-transport.md` in this skill's directory
+**MCP transport details.** On either MCP route, read `mcp-transport.md` in this skill's directory
 before any GitHub call: it carries check 3's own MCP equivalent (a bounded `list_issues` probe, since
 check 3 stays a hard gate on either transport) and the MCP form of every `gh` call site in this
 file. It also records why check 2 no longer gates on its own, including the reverted first attempt
@@ -142,17 +143,18 @@ given before rendering one.
 
 **Blocked-exclusion report (refs #1101).** See `blocked-exclusion-report.md`, this skill's directory (same convention as the Open-PR exclusion report below; not a gate — the exclusion itself already happened inside `queue-pull-script.md`).
 
+**Not-spec-shaped exclusion report (refs #2829).** See `not-spec-shaped-exclusion-report.md`, this skill's directory (same non-gating convention as the reports above; no bypass, unlike Oversized) — runs first, ahead of Open-PR/Shipped-candidate below.
+
 **Open-PR exclusion report (refs #1224).** See `open-pr-exclusion-report.md`, this skill's directory (same convention as the Blocked-exclusion report above; not a gate — the exclusion itself already happened inside `queue-pull-script.md`).
 
 **Shipped-candidate exclusion report (refs #1984).** Read this run's session-scoped
-`dispatch-exclusions.json` (`queue-pull-script.md`'s output, `readExclusions`), filtered to
-`reason: 'shipped'` entries (`records: [number], detail: {pr, signals}` each). Non-empty: render
-one line per entry naming the record, the merged PR, and the signals — a Close proposal is
-staged for approval; same convention as the reports above (weak-tier: see above).
+`dispatch-exclusions.json` (`queue-pull-script.md`'s output, `bin/lib/dispatch/exclusions.js`'s
+`readExclusions`), filtered to `reason: 'shipped'` entries (`records: [number], detail: {pr,
+signals}` each). Non-empty: render one line per entry — `#{number} excluded — already shipped by
+merged PR #{pr} ({signals}); a Close proposal is staged in this firing's run dir for approval.` —
+same convention as the reports above (weak-tier: see above).
 
 **Oversized-group report (refs #1228).** See `oversized-group-report.md`, this skill's directory (groups over the size guard stay selectable via `#N`/`#N,#M,...`; not a gate).
-
-**Not-spec-shaped exclusion report (refs #2829).** See `not-spec-shaped-exclusion-report.md`, this skill's directory (same non-gating convention as the reports above; no bypass, unlike Oversized).
 
 **Cross-PR root-cause overlap report (refs #1579).** See `cross-pr-overlap-report.md`, this skill's directory (warning only, never a gate).
 
@@ -161,8 +163,7 @@ staged for approval; same convention as the reports above (weak-tier: see above)
 landing in *different* file-overlap groups, logging one `AUTO — dispatch: near-duplicate
 candidates across groups: #A / #B ({signals})` line per firing pair to stderr. Same-group pairs
 are already co-built together by Step 2's grouping and have nothing new to warn about. Warning
-only, never a gate — no selection change; a same-group pair (already covered by
-`groupByFileOverlap`) never re-fires here.
+only, never a gate — no selection change.
 
 **Bare (drain)** `/dispatch` — headless, no `AskUserQuestion` (skip this and the rest of Step 3 if the zero-groups case above applies). Resolve `{budget}`: `--budget <n|all>` if present (or its deprecated `--batch-size <n>`/`--concurrent <n>` aliases, each with its own notice), else `dispatch-batch-size` (or its deprecated `dispatch-pick-max-concurrent` key, same notice) — CLI arg beats project policy per `_shared/auto-mode-card.md`. `n` = attempt count; `all` drains to empty. `--budget` + `next`/`#N,#M,...`: **rejected with one notice** (bare-drain-only; `next` already means `--budget 1`).
 
@@ -224,7 +225,7 @@ Two firings running close together each do their own unsynchronized Preflight re
 
 **When the dispatching session itself is a cwd-pinned subagent (#447).** When `/claude-tweaks:dispatch` is itself a Task/Agent-tool subagent, its own cwd is pinned too, and its worktree-entry attempt is refused for the same reason a dispatched call's `EnterWorktree` is — one level higher up the chain. Detect this before Step 5's loop starts by checking this session's own context for the cwd-pinned signal, not by waiting for a failed entry. On detection: still create the group's worktree with a plain `git worktree add` (a filesystem operation, not a cwd repin), but since this session's cwd cannot move there, neither Task call can inherit a worktree cwd from it — instead prefix every command in both calls' prompts with an explicit `cd {worktree-path} &&`, so nothing in the chain depends on a shell cwd nobody can set. A top-level dispatching session is unaffected.
 
-Work through the selected group(s) in the order Step 3's selection already established — bare (and its deprecated `next` alias, itself `--budget 1`): Step 5 processes exactly one group per drain iteration; Step 3's own loop is the driver — re-fetch, rank, dispatch, repeat — and owns the `{budget}`/remainder accounting, not this step. `#N,#M,...`: up to `dispatch-batch-size` groups, unaffected by this migration; `#N`: exactly one. For each group in turn, **this dispatching session** creates and enters that group's worktree (via `/superpowers:using-git-worktrees`, exactly as a normal `/claude-tweaks:flow` invocation would) *before* dispatching that group's first Task call — every Task call dispatched for this group inherits that one cwd and must never create a worktree of its own. This session enters the next group's worktree only once this group's own dispatch sequence has reached its terminal point. Under `local-merge`, that also requires the worktree to have been torn down — always through wrap-up's own cleanup, never a raw removal (`[IL-116]`), which on a first-call failure means one further explicit `/claude-tweaks:flow {target} wrap-up` call, or (on `OUTCOME: ready-to-merge`) Step 6's own merge-and-cleanup via `settle-and-merge.md`'s Dispatching-session merge execution (local-merge fallback) section. Under `pr-first` (`_shared/integration-model.md`), the group's worktree deliberately outlives the firing on every outcome (`settle-and-merge.md`'s outcome-independent worktree constraint): the reconciler reaps it on merged-PR evidence once no live session holds it (`reap-merged.js` skips own-cwd and locked worktrees), so this session enters the next group's worktree without waiting for teardown — per-group worktrees are distinct by construction, so nothing collides. Never share a worktree path across groups. There is no per-group timeout, same posture as existing parallel-Task dispatch sites (e.g. `/help`'s Stage 1-7). See `sequential-execution.md` for the wall-clock trade-off this implies. **Resumed-worktree check (#2838):** read `sibling-session-check.md`'s "Worktree-resume" section first.
+Work through the selected group(s) in the order Step 3's selection already established — bare (and its deprecated `next` alias, itself `--budget 1`): Step 5 processes exactly one group per drain iteration; Step 3's own loop is the driver — re-fetch, rank, dispatch, repeat — and owns the `{budget}`/remainder accounting, not this step. `#N,#M,...`: up to `dispatch-batch-size` groups, unaffected by this migration; `#N`: exactly one. For each group in turn, **this dispatching session** creates and enters that group's worktree on `origin/{integration-branch}` — `git worktree add` then `EnterWorktree(path:)`, never `EnterWorktree(name:)`; read `sequential-execution.md`'s "Creating the group's worktree" — *before* dispatching that group's first Task call — every Task call dispatched for this group inherits that one cwd and must never create a worktree of its own. This session enters the next group's worktree only once this group's own dispatch sequence has reached its terminal point. Under `local-merge`, that also requires the worktree to have been torn down — always through wrap-up's own cleanup, never a raw removal (`[IL-116]`), which on a first-call failure means one further explicit `/claude-tweaks:flow {target} wrap-up` call, or (on `OUTCOME: ready-to-merge`) Step 6's own merge-and-cleanup via `settle-and-merge.md`'s Dispatching-session merge execution (local-merge fallback) section. Under `pr-first` (`_shared/integration-model.md`), the group's worktree deliberately outlives the firing on every outcome (`settle-and-merge.md`'s outcome-independent worktree constraint): the reconciler reaps it on merged-PR evidence once no live session holds it (`reap-merged.js` skips own-cwd and locked worktrees), so this session enters the next group's worktree without waiting for teardown — per-group worktrees are distinct by construction, so nothing collides. Never share a worktree path across groups. There is no per-group timeout, same posture as existing parallel-Task dispatch sites (e.g. `/help`'s Stage 1-7). See `sequential-execution.md` for the wall-clock trade-off this implies. **Resumed-worktree check (#2838):** read `sibling-session-check.md`'s "Worktree-resume" section first.
 
 Pass `PIPELINE_RUN_DIR="{minted-run-dir}"` (this group's run directory, minted by Step 4 before
 either call — `$GROUP_RUN_DIR`) inline on the `/claude-tweaks:flow` command line, as the

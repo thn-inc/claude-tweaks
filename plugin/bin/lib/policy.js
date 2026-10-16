@@ -105,6 +105,12 @@ function readGhTimeoutMs(repoRoot) {
   return resolveValue('gh-timeout-ms', parsePolicy(repoRoot)['gh-timeout-ms']);
 }
 
+// `git-timeout-ms` (#3051) — same shape as readGhTimeoutMs, for
+// claims-git-cas.js's git subprocess calls.
+function readGitTimeoutMs(repoRoot) {
+  return resolveValue('git-timeout-ms', parsePolicy(repoRoot)['git-timeout-ms']);
+}
+
 const SERVICE_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
 // `port-services` (#1792): the list-key convention above, plus per-entry
@@ -142,4 +148,5 @@ function resolvePortServices(repoRoot) {
 
 module.exports = {
   isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, resolvePortServices, readGhTimeoutMs,
+  readGitTimeoutMs,
 };

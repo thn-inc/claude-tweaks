@@ -179,20 +179,24 @@ function stripAnsi(text) { return text.replace(ANSI_RE, ''); }
 // Only test files are retried — a stack frame also names the source files
 // under test, and the retry template runs a test file, never a module.
 const TEST_FILE_RE = /(?:\.(?:test|spec)\.[cm]?[jt]sx?|(?:^|\/)test_[^/]+\.py|_test\.[a-z]+)$/;
-const PATH = '[A-Za-z0-9_./@~-]+';
-// Windows-native node --test frames add a drive-letter colon and backslash
-// separators (`C:\repo\tests\x.test.js:42:10`) — this wider class is for
-// TAP_FRAME_RE only. SUMMARY_FAIL_RE keeps the colon-free PATH: its pytest
-// case (`FAILED path::name`) relies on `:` not being a PATH character so the
-// `(?=\s|::|$)` lookahead stops at `::` instead of the capture swallowing it
-// (review finding, refs #1925).
-const WIN_PATH = '[A-Za-z0-9_./@~:\\\\-]+';
-// node --test: `at fn (path:line:col)` / `at path:line:col`, and the
-// `location: 'path:line:col'` diagnostic newer runners print.
-const TAP_FRAME_RE = new RegExp(`(?:\\(|\\s|')(${WIN_PATH}):\\d+:\\d+\\)?`, 'g');
+// node --test: `at fn (path:line:col)` / bare `at path:line:col`, and the
+// `location: 'path:line:col'` diagnostic newer runners print. Each
+// alternative is delimiter-anchored (a quote, a paren, or line-start/end) —
+// never bare whitespace — so the captured path can safely contain spaces or
+// a Windows drive-letter colon+backslash (`C:\repo\tests\x.test.js:42:10`);
+// a whitespace anchor truncated a space-containing checkout path (#3155).
+// Exactly one capture group is set per match; consumers read whichever one
+// matched.
+const TAP_FRAME_RE = /(?:location:\s*'(.+?):\d+:\d+'|\((.+?):\d+:\d+\)|\bat\s+(.+):\d+:\d+\s*$)/g;
 // vitest (` FAIL  path > name`, `❯ path (n tests | m failed)`), jest
-// (`FAIL path`), pytest (`FAILED path::name`).
-const SUMMARY_FAIL_RE = new RegExp(`^\\s*(?:FAIL|❯|FAILED)\\s+(${PATH})(?=\\s|::|$)`);
+// (`FAIL path`), pytest (`FAILED path::name`). The path capture is
+// unrestricted (`.+?`) so it can contain spaces (#3155); it stops at
+// whichever terminator the runner's own output shape uses — ` > ` / ` (`
+// for vitest/jest, `::` for pytest's `path::name` (review finding, refs
+// #1925 — `:` must not be swallowed into the capture), or end of line for a
+// bare `FAIL path` — never at a bare space, which would truncate a
+// space-containing path.
+const SUMMARY_FAIL_RE = /^\s*(?:FAIL|❯|FAILED)\s+(.+?)(?=\s>\s|\s\(|::|$)/;
 
 // A run of backslashes is ONE separator: node's TAP `location: '...'` line is
 // YAML-quoted, so on Windows it carries `\\` per separator — read as two, the
@@ -456,12 +460,17 @@ function tapBlocks(lines) {
   return blocks;
 }
 
+// Every TAP `not ok` block, counted the same way `specEntryCount` counts
+// spec entries — the accounting `unattributedFailureCount` compares against
+// `# fail` + `# cancelled`.
+function tapBlockCount(text) { return tapBlocks(stripAnsi(text).split('\n')).length; }
+
 // The relativized test files one TAP block's frames name, deduped.
 function tapBlockFiles(block, cwd) {
   const files = [];
   for (const line of block.body) {
     for (const m of line.matchAll(TAP_FRAME_RE)) {
-      const rel = relativize(m[1], cwd);
+      const rel = relativize(m[1] ?? m[2] ?? m[3], cwd);
       if (isRetryableFile(rel) && !files.includes(rel)) files.push(rel);
     }
   }
@@ -479,6 +488,32 @@ function countUnmatchedFailures(text, family, { cwd = process.cwd() } = {}) {
   if (family !== 'spec') return 0;
   return specEntries(lines)
     .filter(({ file }) => !isRetryableFile(relativize(file, cwd))).length;
+}
+
+// Whether a spec/tap log's failing-file list accounts for the whole
+// failure — the same accounting `baseline.js`'s `adjudicate` already
+// applies before trusting a classification, reused here so the flaky-retry
+// hook (#3066) fails closed on the identical gap: a failure
+// `countUnmatchedFailures` could not attribute to any test file, a log
+// whose summary counts don't parse (truncated or unrecognized — spec and
+// tap alike, since TAP's `# fail N` line is exactly as parseable a summary
+// as spec's `ℹ fail`), or a failing-entry count that does not add up to
+// `ℹ fail`/`# fail` + `ℹ cancelled`/`# cancelled` — any of these means the
+// failing-file list used to plan a retry is an undercount, so retrying and
+// passing those named files would wrongly clear the whole check. Returns 0
+// (accounted) or a positive count (unattributed); every family other than
+// spec/tap returns 0 — retry eligibility for those is governed elsewhere
+// and this guard never widens it.
+function unattributedFailureCount(text, family, { cwd = process.cwd() } = {}) {
+  if (family !== 'spec' && family !== 'tap') return 0;
+  const unmatched = countUnmatchedFailures(text, family, { cwd });
+  if (unmatched > 0) return unmatched;
+  const counts = parseCounts(text, family);
+  if (counts === null) return 1;
+  const cancelled = cancelledCount(text, family) || 0;
+  const entries = family === 'spec' ? specEntryCount(text) : tapBlockCount(text);
+  const expected = counts.fail + cancelled;
+  return entries === expected ? 0 : Math.abs(entries - expected);
 }
 
 // Deduped, log-order, repo-relative test files named by the failing part of
@@ -509,7 +544,7 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
 
 module.exports = {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, failingTestsByFile, specEntryCount,
+  stripAnsi, extractFailingFiles, countUnmatchedFailures, unattributedFailureCount, fileLevelFailures, failingTestsByFile, specEntryCount,
   cancelledCount, testTree, TEST_FILE_RE,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, MAX_LINE_CHARS,
 };

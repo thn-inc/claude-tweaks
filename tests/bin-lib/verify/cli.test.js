@@ -1216,6 +1216,41 @@ test('flaky retry: an unlisted failing file is an ordinary failure — no retry 
   assert.strictEqual('flakyRetried' in report.checks.tests, false);
 });
 
+test('flaky retry: a TAP failure with no attributable file refuses retry even when every named file is allowlisted, through the real CLI wiring (#3066)', async () => {
+  // Exercises the actual verify.js retryHook path (readFileSync → stripAnsi
+  // → sniffFamily → unattributedFailureCount → planRetry), not just the
+  // library functions in isolation — review finding (3f): the unit tests
+  // alone would stay green if the 4-line wiring in verify.js were reverted.
+  const r = tmpGitRepo();
+  const tap = [
+    'not ok 1 - a flaky one', '  ---', '  stack: |-', '    at TestContext.<anonymous> (tests/flaky.test.js:12:5)', '  ...',
+    'not ok 2 - an unattributed one', '  ---', '  stack: |-', '    some non-frame diagnostic text', '  ...',
+    '# tests 2', '# pass 0', '# fail 2',
+  ].join('\n');
+  fs.writeFileSync(path.join(r.repo, 'fail.js'), `process.stdout.write(${JSON.stringify(tap)} + '\\n'); process.exit(1);\n`);
+  fs.writeFileSync(path.join(r.repo, 'retry.js'), "require('fs').writeFileSync('retry.marker', process.argv[2]); process.exit(0);\n");
+  const decl = {
+    checks: { tests: 'node fail.js' },
+    retry: { tests: 'node retry.js {file}' },
+    rules: [{ match: 'src/**', suites: ['tests'], static: true }],
+    flaky: { files: ['tests/flaky.test.js'] },
+  };
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'unattributed fixture');
+  const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  const args = ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch, '--cmd', 'tests=node fail.js'];
+  const { code, stdout } = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(code, 1);
+  assert.match(stdout, /\| tests \| fail \|/);
+  assert.doesNotMatch(stdout, /flaky-retried/);
+  assert.ok(!fs.existsSync(path.join(r.repo, 'retry.marker')), 'no retry command may run while a failure is unattributed');
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.checks.tests.retryDecision, { retry: false, reason: 'unattributed-failures: 1' });
+  assert.strictEqual('flakyRetried' in report.checks.tests, false);
+});
+
 // Shared by the no-parse test below: writes a verify-scope.json declaring
 // `testsCmd` (with a flaky allowlist that never matches this fixture) and
 // commits it, returning the --scope args to run it under.

@@ -21,6 +21,32 @@ A top-level dispatching session (the common case, and the one the rest of this f
 
 **Don't reach for `isolation: "worktree"` plus a joining `EnterWorktree(path=)` as a shortcut here.** A cwd-pinned dispatching session might be tempted to launch the first Task call with `Agent(isolation: "worktree")` to get it worktree-isolated on its own, then have the second call join that same worktree via `EnterWorktree(path: <first call's worktree>)` instead of adopting the `cd`-prefix mechanism above. This reported success while leaving the second call's actual Bash execution sandbox pinned to whatever worktree it inherited at its own launch, refusing every subsequent command (`docs/incident-log.md`'s `IL-155`, from #1875). `EnterWorktree`'s own current tool documentation describes `path`-based redirection working for a pinned agent, but that claim is unverified against this exact two-call shape — until a live dispatch confirms it, use the `cd {worktree-path} &&` mechanism above instead of this join pattern.
 
+## Creating the group's worktree
+
+Base it on the integration branch (`_shared/integration-branch.md`), never on the harness default.
+From the main checkout, as separate single-command calls:
+
+```bash
+git fetch origin {integration-branch}
+```
+
+```bash
+git worktree add .claude/worktrees/{name} -b worktree-{name} origin/{integration-branch}
+```
+
+then `EnterWorktree(path: ".claude/worktrees/{name}")` — `{name}` per `build/worktree-setup.md`'s
+Worktree name derivation. Never `EnterWorktree(name:)`: it takes no base ref
+(`_shared/worktree-base-ref.md`) — under `worktree.baseRef: fresh` it branches from
+`origin/<default-branch>`, under `head` from this session's current HEAD, which after group N is
+group N's own branch. The dispatched `/flow`'s post-creation catch-up then *merges*
+`origin/{integration-branch}` on top of that base's extra commits (the default branch's release
+merges when `develop` ≠ `main`; group N's work under `head`) instead of dropping them, and its
+headless ride-along check (`_shared/worktree-setup.md`) stops on exactly those commits. A
+`git worktree add` that fails because the path or branch already exists is
+`sibling-session-check.md`'s Worktree-resume signal: skip the group the same way.
+A cwd-pinned dispatching session (above) runs the same `git worktree add` and skips only the
+`EnterWorktree`.
+
 ## The loop
 
 For group N, enter **one** fresh worktree, then run that group's whole dispatch sequence inside it: both of its Task calls (`build,test`, then — gated — `review,polish,wrap-up`; see `two-call-gate.md`) inherit that single cwd, and each reports its own terminal status line (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED) plus an OUTCOME line. One worktree per group, entered once and torn down once — never one per call.

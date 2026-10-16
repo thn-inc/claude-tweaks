@@ -40,9 +40,30 @@ const STACK_TARGETS = {
   ],
   rust: [{ path: 'Cargo.toml', kind: 'toml', sections: ['package'] }],
   go: [],
+  // java's own root markers (step-21-release.md) are mutually exclusive in practice
+  // (a repo is Maven or Gradle, not both) — every candidate optional, same oneOf
+  // mechanism python's three candidates already use below.
+  java: [
+    { path: 'pom.xml', kind: 'maven', optional: true },
+    { path: 'build.gradle', kind: 'gradle', optional: true },
+    { path: 'build.gradle.kts', kind: 'gradle', optional: true },
+  ],
+  // Gemfile (a root marker for stack DETECTION, step-21-release.md) never carries a
+  // version and is deliberately not a target here. version.rb's location is
+  // convention, not a root guarantee — a gem without a root-level one falls to the
+  // `*.gemspec` glob target (resolveGlobTargets below resolves the actual filename;
+  // this row's `path` is the human-readable label until then).
+  ruby: [
+    { path: 'version.rb', kind: 'ruby-assign', optional: true },
+    { path: '*.gemspec', kind: 'gemspec', optional: true, glob: /\.gemspec$/ },
+  ],
+  dotnet: [
+    { path: '*.csproj', kind: 'csproj', optional: true, glob: /\.csproj$/ },
+    { path: 'AssemblyInfo.cs', kind: 'assembly-info', optional: true },
+  ],
   simple: [{ path: 'version.txt', kind: 'text', create: true }],
 };
-const UNSUPPORTED = new Set(['java', 'ruby', 'dotnet']);
+const UNSUPPORTED = new Set([]);
 
 class ManifestError extends Error {}
 
@@ -100,14 +121,32 @@ function extraFileTarget(entry) {
   throw new ManifestError(`extra-files entry of type ${entry && entry.type} is unsupported by the local engine (json or a generic x-release-please-version path)`);
 }
 
-function resolveTargets({ releaseType, extraFiles = [] }) {
+// A `glob` target (ruby's `*.gemspec`, dotnet's `*.csproj` — the filename varies
+// per repo, unlike every fixed-name target elsewhere in STACK_TARGETS) resolves
+// against a root directory listing. Exactly one match becomes a concrete target;
+// zero or 2+ matches (ambiguous — a multi-project layout the local engine's
+// root-only model does not support) drop the row entirely, same as a fixed-name
+// target that's simply absent — the surrounding oneOf/required logic already
+// handles "this candidate isn't here" without needing to know why.
+function resolveGlobTarget(target, listRoot) {
+  if (!target.glob) return target;
+  const matches = listRoot().filter((name) => target.glob.test(name));
+  if (matches.length !== 1) return null;
+  const { glob, ...rest } = target;
+  return { ...rest, path: matches[0] };
+}
+
+function resolveTargets({ releaseType, extraFiles = [] }, { listRoot } = {}) {
   if (UNSUPPORTED.has(releaseType)) {
     throw new ManifestError(`release-type ${releaseType} manifest edits are unsupported by the local engine — use release-type simple with extra-files naming the version-bearing file`);
   }
-  const stack = STACK_TARGETS[releaseType];
-  if (!stack) throw new ManifestError(`unknown release-type ${releaseType}`);
-  // A stack whose every manifest is optional (python) still needs ONE of them to
-  // carry a version — `oneOf` names the set so applyVersion can say so before writing.
+  const rawStack = STACK_TARGETS[releaseType];
+  if (!rawStack) throw new ManifestError(`unknown release-type ${releaseType}`);
+  const list = typeof listRoot === 'function' ? listRoot : () => [];
+  const stack = rawStack.map((t) => resolveGlobTarget(t, list)).filter(Boolean);
+  // A stack whose every manifest is optional (python; java; ruby; dotnet) still needs
+  // ONE of them to carry a version — `oneOf` names the set so applyVersion can say so
+  // before writing.
   const oneOf = stack.length > 0 && stack.every((t) => t.optional) ? stack.map((t) => t.path) : null;
   const stackTargets = oneOf ? stack.map((t) => ({ ...t, oneOf })) : stack;
   // extra-files names paths the engine writes; the config must not be able to
@@ -206,6 +245,23 @@ function spliceToml(text, sections, to, { unquoted = false } = {}) {
   return { text, found: false, previous: null };
 }
 
+// pom.xml's own `<version>` is the FIRST one after any `<parent>` block — a real
+// maven pom lists `<parent><version>parent-ver</version></parent>` (a DIFFERENT
+// artifact's version) before its own `<groupId>/<artifactId>/<version>`, and
+// `<dependencies>`/`<build>`/`<dependencyManagement>` versions all come later still.
+// Skipping the parent span is the XML analogue of spliceJsonKey's depth tracking —
+// full tag-depth tracking is unneeded because the project's own version always
+// precedes every other `<version>` tag a well-formed pom carries.
+function spliceMavenVersion(text, to) {
+  const parent = /<parent>[\s\S]*?<\/parent>/.exec(text);
+  const searchFrom = parent ? parent.index + parent[0].length : 0;
+  const re = new RegExp(`<version>(${SEMVER})</version>`);
+  const m = re.exec(text.slice(searchFrom));
+  if (!m) return { text, found: false, previous: null };
+  const start = searchFrom + m.index + '<version>'.length;
+  return { text: text.slice(0, start) + to + text.slice(start + m[1].length), found: true, previous: m[1] };
+}
+
 function spliceVersion(kind, text, to, opts = {}) {
   switch (kind) {
     case 'json': return spliceJsonKey(text, 'version', to);
@@ -217,6 +273,36 @@ function spliceVersion(kind, text, to, opts = {}) {
     // (setup.cfg's [metadata] line needs no equivalent — spliceToml anchors it to
     // start-of-line with optional indentation.)
     case 'py-assign': return spliceMatch(text, new RegExp(`((?<![\\w.])version\\s*=\\s*['"])(${SEMVER})(['"])`), to, 2);
+    case 'maven': return spliceMavenVersion(text, to);
+    // Groovy (`version = '1.2.3'` / bare `version '1.2.3'`) and Kotlin DSL
+    // (`version = "1.2.3"`, always with `=`) both anchor the bare word `version`
+    // at the start of the line — a dependency coordinate string never does.
+    case 'gradle': return spliceMatch(text, new RegExp(`(^[ \\t]*version[ \\t]*=?[ \\t]*['"])(${SEMVER})['"]`, 'm'), to, 2);
+    // Ruby's convention constant — `module Foo; VERSION = "1.2.3"; end` — is the
+    // key itself, case-sensitive, never a substring of a longer identifier.
+    case 'ruby-assign': return spliceMatch(text, new RegExp(`((?<![\\w.])VERSION[ \\t]*=[ \\t]*['"])(${SEMVER})['"]`), to, 2);
+    // A gemspec that hardcodes its version inline (`spec.version = "1.2.3"`) —
+    // one that instead references a `Foo::VERSION` constant carries no literal
+    // token here at all, and correctly reads as not-found (version.rb is the
+    // sibling target that carries it in that case).
+    case 'gemspec': return spliceMatch(text, new RegExp(`(\\w+\\.version[ \\t]*=[ \\t]*['"])(${SEMVER})['"]`), to, 2);
+    case 'csproj': return spliceMatch(text, new RegExp(`(<Version>)(${SEMVER})</Version>`), to, 2);
+    // Both AssemblyVersion and AssemblyFileVersion carry the same version in
+    // practice and are bumped together, mirroring the 'generic' kind's
+    // every-annotated-line behavior below. Each keeps its own trailing
+    // `.{revision}` component (traditionally `.0`) untouched — only the leading
+    // three-part semver token moves.
+    case 'assembly-info': {
+      const re = new RegExp(`(Assembly(?:File)?Version\\("(${SEMVER}))((?:\\.\\d+)?)("\\))`, 'g');
+      let previous = null;
+      let found = false;
+      const out = text.replace(re, (whole, prefixWithVersion, ver, suffix, close) => {
+        found = true;
+        if (previous === null) previous = ver;
+        return `${prefixWithVersion.slice(0, prefixWithVersion.length - ver.length)}${to}${suffix}${close}`;
+      });
+      return { text: out, found, previous };
+    }
     case 'text': {
       // release-please's `simple` strategy writes version.txt through
       // DefaultUpdater.updateContent, which returns `this.version + '\n'` —
@@ -335,6 +421,6 @@ function applyVersion(targets, to, readFile, writeFile) {
 }
 
 module.exports = {
-  CONFIG_FILE, MANIFEST_FILE, STACK_TARGETS, ManifestError,
+  CONFIG_FILE, MANIFEST_FILE, STACK_TARGETS, UNSUPPORTED, ManifestError,
   readConfig, readBumpFlags, resolveTargets, spliceVersion, currentVersion, versionAtRef, plannedWrites, applyVersion,
 };

@@ -88,8 +88,10 @@ test('the Output section is unchanged: APP_URL and SERVER_STARTED, exact table',
 test("wrap-up cleanup-procedures-execution.md Section D qualifies the lsof fallback as no-lease-only", () => {
   const wrapup = read('plugin/skills/wrap-up/cleanup-procedures-execution.md');
   const idx = wrapup.indexOf('## D. Ephemeral dev server');
+  const endIdx = wrapup.indexOf('## E. Issue claim release');
   assert.notEqual(idx, -1);
-  const body = wrapup.slice(idx, idx + 1500);
+  assert.notEqual(endIdx, -1);
+  const body = wrapup.slice(idx, endIdx);
   assert.match(body, /no-lease\/POSIX-only/);
   assert.match(body, /kill \{pid\}.*with a port-isolation lease/s);
 });
@@ -159,4 +161,46 @@ test('the Cleanup section reads whatever ephemeral-server.txt currently names, n
   const body = doc.slice(idx);
   assert.match(body, /liveness-handle rule/);
   assert.match(body, /not necessarily the value recorded at start time/);
+});
+
+// #3082 — Step 2 names servers.yml's declared start_command as the first,
+// highest-precedence dev-command source, ahead of CLAUDE.md and package.json.
+test("Step 2 names servers.yml's declared start_command as the first, highest-precedence dev-command source", () => {
+  const doc = read(DOC);
+  const idx = doc.indexOf('### Step 2: Check Project Configuration');
+  const step27Idx = doc.indexOf('### Step 2.7:');
+  assert.ok(idx !== -1 && step27Idx !== -1 && idx < step27Idx);
+  const body = doc.slice(idx, step27Idx);
+  assert.match(body, /first, highest-precedence dev-command source/);
+  const serversYmlPos = body.indexOf('servers.yml');
+  const claudeMdPos = body.indexOf('CLAUDE.md Commands section');
+  const packageJsonPos = body.indexOf('package.json scripts');
+  assert.ok(serversYmlPos !== -1 && claudeMdPos !== -1 && packageJsonPos !== -1);
+  assert.ok(serversYmlPos < claudeMdPos, 'servers.yml source must be listed ahead of CLAUDE.md');
+  assert.ok(claudeMdPos < packageJsonPos, 'CLAUDE.md source must be listed ahead of package.json');
+});
+
+// #3082 — Step 4 item 6 writes start_command only when absent, and states an
+// existing value is never overwritten.
+test("Step 4's start-command item writes servers.default.start_command only when absent, and never overwrites an existing value", () => {
+  const doc = read(DOC);
+  const idx = doc.indexOf('### Step 4: Persist Result');
+  assert.notEqual(idx, -1);
+  const body = doc.slice(idx, idx + 1800);
+  assert.match(body, /\*\*Set-if-absent:\*\*/);
+  assert.match(body, /only when the key is \*\*not already present\*\*/);
+  assert.match(body, /\*\*never overwritten\*\*/);
+});
+
+// #3082 — a servers.yml-declared command runs verbatim from the worktree
+// root, with the lease/free-port environment still applied.
+test("Ephemeral server start runs a servers.yml-declared command verbatim from the worktree root, with the lease/free-port environment still applied", () => {
+  const doc = read(DOC);
+  const idx = doc.indexOf('#### Ephemeral server start');
+  const outputIdx = doc.indexOf('### Output');
+  assert.ok(idx !== -1 && outputIdx !== -1 && idx < outputIdx);
+  const body = doc.slice(idx, outputIdx);
+  assert.match(body, /COMMAND_SOURCE = servers\.yml.*run that declared command exactly as written/s);
+  assert.match(body, /no argument rewriting or substitution/);
+  assert.match(body, /never fall back silently to a CLAUDE\.md\/package\.json command/);
 });

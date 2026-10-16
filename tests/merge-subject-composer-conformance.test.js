@@ -5,11 +5,12 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
 
+const { readText } = require('./helpers/read-skill');
+
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 
 const PR_FIRST = 'plugin/skills/_shared/pr-first-merge.md';
 const LOCAL_SITES = [
@@ -60,7 +61,7 @@ test('pr-first-merge.md: both gh pr merge sites squash and take the composer out
 });
 
 test('pr-first-merge.md stays net-small (AC 6 byte ceiling)', () => {
-  const bytes = fs.statSync(path.join(ROOT, PR_FIRST)).size;
+  const bytes = Buffer.byteLength(read(PR_FIRST), 'utf8');
   assert.ok(bytes <= PR_FIRST_BYTE_CEILING, `${PR_FIRST} is ${bytes} bytes, over the ${PR_FIRST_BYTE_CEILING}-byte ceiling (#2251 AC 6)`);
 });
 

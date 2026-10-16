@@ -829,6 +829,42 @@ test('an existing, never-added file that is NOT gitignored stays denied (no gate
   assert.strictEqual(events[0].type, 'gate-denial', 'must be the ordinary deny breadcrumb, not a gitignored-exemption allow');
 });
 
+// #3080: bare shell redirection reaches the same deny a cp/tee write would —
+// e2e via the real CLI (runHook), same shape as the cp/tee tests above.
+function runBashPreToolUse(command, cwd) {
+  return runHook(['pre-tool-use'], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }), cwd });
+}
+
+test('#3080 AC: bare redirection writes from a worktree-always main checkout are DENIED', () => {
+  const { project } = policyRepoWithRun();
+  const target = path.join(project, 'tracked-file.js');
+  for (const command of [`echo x > ${target}`, `printf y >> ${target}`, `cat a > ${target}`]) {
+    const result = runBashPreToolUse(command, project);
+    assert.strictEqual(result.code, 0, command);
+    assert.match(result.stdout, /"permissionDecision":"deny"/, command);
+  }
+});
+
+// #3080 AC: the common non-write redirection shapes, and the two existing
+// exemptions (gitignored, pipeline bookkeeping), stay ALLOWED.
+test('#3080 AC: /dev/null, fd duplication, a gitignored target, and a pipeline-bookkeeping target are ALLOWED', () => {
+  const { project, run } = policyRepoWithRun();
+  for (const command of ['echo x > /dev/null', 'cmd 2>&1']) {
+    const result = runBashPreToolUse(command, project);
+    assert.strictEqual(result.code, 0, command);
+    assert.doesNotMatch(result.stdout, /"permissionDecision":"deny"/, command);
+  }
+
+  fs.writeFileSync(path.join(project, '.gitignore'), '*.log\n');
+  const ignoredResult = runBashPreToolUse(`echo x > ${path.join(project, 'ignored.log')}`, project);
+  assert.strictEqual(ignoredResult.code, 0);
+  assert.doesNotMatch(ignoredResult.stdout, /"permissionDecision":"deny"/, 'a gitignored redirection target must be allowed');
+
+  const pipelineResult = runBashPreToolUse(`echo x > ${path.join(run, 'work', 'x')}`, project);
+  assert.strictEqual(pipelineResult.code, 0);
+  assert.doesNotMatch(pipelineResult.stdout, /"permissionDecision":"deny"/, 'a .claude-tweaks/pipelines/ redirection target must be allowed');
+});
+
 // #1270 regression: the #1130 fix (`PIPELINE_RUN_DIR: ''` in runHook's spread,
 // proven above at 'record-pr does not resolve against an ambient
 // PIPELINE_RUN_DIR...') guards run-state.json field writes. This is the sibling

@@ -184,11 +184,25 @@ function run(argv, deps = realDeps) {
   }
   let logged = false;
   if (target.ok) {
-    const nothingReleased = r.outcome === 'skipped-not-owner' || r.outcome === 'unreadable' || r.outcome === 'failed';
-    const entry = formatEntry({
-      status: 'AUTO', now: deps.now(), step: o.step || 'Section E', text: decisionText(issue, r, reason, o.link), reversibility: nothingReleased ? 'n/a' : 'high',
-    });
-    try { appendEntry({ runDir, section: o.section, entry }); logged = true; } catch (err) { deps.stderr(`release-claim.js: decisions.md not written (${err && err.message})\n`); }
+    // #3198: re-resolve immediately before writing — the `target` computed
+    // above ran before release.releaseClaim's own GitHub round-trips, which
+    // can take long enough for a concurrent archive-run pass to remove
+    // runDir out from under that stale check. Without this re-check, the
+    // appendEntry call below would let its own lock's bootstrap-parent-mkdir
+    // path (file-lock.js's acquireLock ENOENT branch) silently recreate
+    // runDir instead of refusing, exactly like log-decision.js already does
+    // for a run dir missing from the start.
+    let freshTarget;
+    try { freshTarget = resolveTarget({ runDir, cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch { freshTarget = { ok: false, reason: 'missing' }; }
+    if (!freshTarget.ok) {
+      deps.stderr(`release-claim.js: decisions.md not written — run dir no longer exists (already archived or removed): ${runDir}\n`);
+    } else {
+      const nothingReleased = r.outcome === 'skipped-not-owner' || r.outcome === 'unreadable' || r.outcome === 'failed';
+      const entry = formatEntry({
+        status: 'AUTO', now: deps.now(), step: o.step || 'Section E', text: decisionText(issue, r, reason, o.link), reversibility: nothingReleased ? 'n/a' : 'high',
+      });
+      try { appendEntry({ runDir, section: o.section, entry }); logged = true; } catch (err) { deps.stderr(`release-claim.js: decisions.md not written (${err && err.message})\n`); }
+    }
   }
   deps.stdout(JSON.stringify({
     issue, runId, reason, link: o.link || null, outcome: r.outcome, holder: r.holder || null, commentPosted: r.commentPosted,
