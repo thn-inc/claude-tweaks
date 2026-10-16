@@ -96,3 +96,118 @@ test('#2719 concurrent-grant agreed/DIVERGED skip lines count as skipped, never 
   assert.equal(counts.granted, 1);
   assert.deepEqual(unclassified, []);
 });
+
+// #3267: apply-refine-labels.js logs its own per-action lines, by label, not by lane.
+const { run: applyRefineLabels } = require('../../../plugin/bin/apply-refine-labels');
+
+// Drive the real apply-refine-labels.js with fake gh/fs and capture exactly the
+// decisions.md lines it writes, so the fixture is the producer's output, not a guess.
+function applyLines(actions, { failIssue = null } = {}) {
+  const entries = [];
+  const code = applyRefineLabels(['actions.json', '--run', '/repo/.claude-tweaks/pipelines/x'], {
+    gh: (args) => {
+      if (failIssue !== null && args[2] === String(failIssue)) throw new Error('gh exited 1');
+      return '';
+    },
+    ghAvailable: () => true,
+    remoteUrl: () => 'https://github.com/acme/widgets.git',
+    readFile: () => JSON.stringify(actions),
+    cwd: () => '/repo',
+    mainRoot: () => '/repo',
+    isAnchored: () => true,
+    now: () => 1700000000000,
+    appendEntry: ({ entry }) => { entries.push(entry); },
+    stdout: () => {},
+    stderr: () => {},
+  });
+  assert.equal(code, 0);
+  return `## /backlog\n${entries.join('\n')}\n`;
+}
+
+// The incident run (#3267's Current State), verbatim: apply-refine-labels lines
+// AND the refine-closing-summary template lines for the same writes.
+const REAL_RUN_2026_10_16 = `## /backlog
+- AUTO 19:32:41 — refine confirm-gate: Backlog refine: batch auto-applied — 3 rows across 2 lanes, all recommended values. Reversibility: high. [lever: autonomy=unattended (policy)]
+- AUTO 19:32:46 — apply-refine-labels: #3226: applied +auto:build. Reversibility: high.
+- AUTO 19:32:50 — apply-refine-labels: #3242: applied +auto:build +priority:medium. Reversibility: high.
+- AUTO 19:32:55 — apply-refine-labels: #3225: applied +needs:decision. Reversibility: high.
+- AUTO 19:32:58 — apply-refine-labels: #3225: comment posted. Reversibility: high.
+- AUTO 19:33:16 — refine apply: Backlog refine: granted auto:build to #3226 (risk:low, size:medium). Rationale: well-specified fail-closed repairable classification; edits agent-instruction prose in dispatch two-call-gate.md and sequential-execution.md, so merge stays human. Reversibility: high.
+- AUTO 19:33:16 — refine apply: Backlog refine: granted auto:build to #3242 (risk:low, size:low). Rationale: probe-first, structural-field keyed, falls back to today; edits flow steps-and-gates.md, so merge stays human. Blocked by #3225. Reversibility: high.
+- AUTO 19:33:17 — refine apply: Backlog refine: set priority:medium on #3242. Reversibility: high.
+- AUTO 19:33:17 — refine apply: Backlog refine: stamped needs:decision on #3225 — PreToolUse deny gate spec carries a contradicted ordering premise (materialize commit precedes config.yml in clean first calls); amend before granting. Reversibility: high.
+`;
+
+const ZERO = { priority: 0, related: 0, granted: 0, flaggedBack: 0, dependencyRepair: 0, needsDecision: 0, skipped: 0, failed: 0 };
+
+test('#3267 AC1: a decisions.md written only by apply-refine-labels.js reports the true per-type counts', () => {
+  const text = applyLines([
+    { issue: 31, addLabels: ['auto:build', 'auto:merge'] },
+    { issue: 32, addLabels: ['priority:high'] },
+    { issue: 33, addLabels: ['needs:decision'], commentFile: 'nd.md' },
+    { issue: 34, removeLabels: ['ready'], commentFile: 'fb.md' },
+    { issue: 35, addLabels: ['auto:build'], removeLabels: ['bot:blocked'] },
+  ]);
+  assert.match(text, /#34: comment posted/);
+  const { counts, unclassified } = computeClosingTally(text);
+  assert.deepEqual(counts, { ...ZERO, granted: 2, priority: 1, needsDecision: 1, flaggedBack: 1 });
+  assert.deepEqual(unclassified, []);
+});
+
+test('#3267 AC1: an apply-refine-labels FAILED line counts as failed, never unclassified', () => {
+  const text = applyLines([
+    { issue: 41, addLabels: ['priority:low'] },
+    { issue: 42, addLabels: ['auto:build'] },
+  ], { failIssue: 42 });
+  assert.match(text, /- FAILED .*apply-refine-labels: #42: /);
+  const { counts, unclassified } = computeClosingTally(text);
+  assert.deepEqual(counts, { ...ZERO, priority: 1, failed: 1 });
+  assert.deepEqual(unclassified, []);
+});
+
+test('#3267 AC1 (real input): the incident run\'s apply-only lines report 2 granted, 1 priority, 1 needs-decision', () => {
+  const applyOnly = REAL_RUN_2026_10_16.split('\n')
+    .filter((l) => !/Backlog refine:/.test(l))
+    .join('\n');
+  const { counts, unclassified } = computeClosingTally(applyOnly);
+  assert.deepEqual(counts, { ...ZERO, granted: 2, priority: 1, needsDecision: 1 });
+  assert.deepEqual(unclassified, []);
+});
+
+test('#3267 AC2 (real input): apply lines and template lines for the same writes count each write once', () => {
+  const { counts, unclassified } = computeClosingTally(REAL_RUN_2026_10_16);
+  assert.deepEqual(counts, { ...ZERO, granted: 2, priority: 1, needsDecision: 1 });
+  assert.deepEqual(unclassified, []);
+});
+
+test('#3267 AC2: a template FAILED line and an apply FAILED line for the same record count one failure', () => {
+  const text = `## /backlog
+- FAILED 10:00:00 — apply-refine-labels: #50: +priority:high failed: gh exited 1.
+- FAILED 10:00:01 — Backlog refine: priority write failed on #50: gh exited 1.
+`;
+  const { counts, unclassified } = computeClosingTally(text);
+  assert.deepEqual(counts, { ...ZERO, failed: 1 });
+  assert.deepEqual(unclassified, []);
+});
+
+test('#3267 AC3: an unknown /backlog AUTO line with no "Backlog refine:" prefix is listed in unclassified', () => {
+  const text = `## /backlog
+- AUTO 10:00:00 — refine apply: rewired blocked-by on #60 by hand. Reversibility: high.
+- SKIP 10:00:01 — refine apply: no Manual Steps. Reversibility: n/a.
+## /flow
+- AUTO 10:00:02 — Step 2.8: claimed #61. Reversibility: high.
+`;
+  const { counts, unclassified } = computeClosingTally(text);
+  assert.deepEqual(counts, ZERO);
+  assert.equal(unclassified.length, 1);
+  assert.match(unclassified[0], /rewired blocked-by on #60/);
+});
+
+test('#3267: known /backlog narration (Resolve-lane "Backlog refine #N:" lines) is not reported as unclassified', () => {
+  const text = `## /backlog
+- AUTO 10:00:00 — refine #70: Backlog refine #70: keep — no labels changed. Reversibility: high.
+`;
+  const { counts, unclassified } = computeClosingTally(text);
+  assert.deepEqual(counts, ZERO);
+  assert.deepEqual(unclassified, []);
+});

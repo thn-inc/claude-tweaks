@@ -6,9 +6,10 @@
 //   node bin/closing-tally.js --file <path-to-decisions.md> [--help]
 // Prints one JSON envelope on success: {counts, line, unclassified}. `line`
 // is the canonical tally-line string (refine-closing-summary.md's Per-type
-// tally line); `unclassified` lists every "Backlog refine:" line that didn't
-// match a known tally field — a vocabulary-drift signal, never silently
-// dropped.
+// tally line); `unclassified` lists every "Backlog refine:" line, and every
+// AUTO/FAILED line under `## /backlog`, that didn't match a known tally
+// field — a vocabulary-drift signal, never silently dropped. Writes logged
+// by bin/apply-refine-labels.js count too, once per (field, record) (#3267).
 // Exit 0 success; 2 malformed invocation (neither/both of --run and --file,
 // or an unknown flag); 3 the target file does not exist or could not be read.
 'use strict';
