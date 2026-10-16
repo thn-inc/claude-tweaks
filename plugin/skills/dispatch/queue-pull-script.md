@@ -7,6 +7,7 @@ Referenced by `skills/dispatch/SKILL.md` Step 2. Run this verbatim — it produc
 - `reason: 'open-pr'` (`detail: {pr}`, #1224) — every candidate already covered by an open, unmerged PR that will close it (GitHub's own `closedByPullRequestsReferences` connection, a closing keyword in the PR body), via `record.js`'s `partitionByOpenLinkedPR`. Unlike the blocked-by pass above, this one runs unconditionally, independent of `work-links`, and unlike the cross-PR overlap report below it DOES remove excluded candidates from `dispatch-groups.json` before any selection form reads it — a record with an in-flight PR is not a warning, it is not re-dispatch-eligible at all.
 - `reason: 'target-missing'` (`detail: {path}`, #1983) — every remaining candidate whose `namedTarget` (`bin/lib/issues/named-target.js` — today, `by:docs-health` records only) names a file no longer present at the integration tip — a docs-health-filed ledger correction whose target a since-merged tidy sweep already deleted. This one DOES remove excluded candidates from `dispatch-groups.json` too, the same as the open-PR pass: such a record's own Acceptance Criteria is unsatisfiable, so re-dispatching it only burns a build attempt against the retry ceiling for nothing. Also stages one Close proposal in this firing's own run directory (`tidy`'s Close (GitHub) shape) so the next `tidy --approve` closes the record — nothing is written to GitHub by dispatch itself. SKILL.md Step 3's Blocked-exclusion report reads this reason too, under the same non-silent convention.
 - `reason: 'shipped'` (`detail: {pr, signals}`, #1984) — every remaining candidate a merged PR's `strong`-tier mention already ships (see the False-positive posture note in `SKILL.md`). Also stages one Close proposal, exactly like the `target-missing` pass above.
+- `reason: 'not-spec-shaped'` (`detail: {missing: [...]}`, #2829) — every remaining candidate whose cached body fails `/flow`'s Materialization hard gate (`shapeGate`, `bin/lib/issues/materialize-format.js`). This one DOES remove excluded candidates from `dispatch-groups.json`, the same as the `open-pr`/`target-missing`/`shipped` passes above — no bypass: unlike `oversized`, where a human naming a record directly is itself an accepted size-risk signal, a spec-shape failure is not a risk anyone can accept, since `/flow`'s own Materialization gate would stop the named record anyway, after a claim and a spent retry attempt.
 
 A sixth reason, `firing`, is never written by this script — it is appended incrementally by `SKILL.md`'s Loop between successive re-runs of this script within one firing (`firing-exclusion.md`), which is exactly why this script's own truncation step preserves it rather than dropping it.
 
@@ -36,6 +37,7 @@ eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" <<NODE_EVAL_EOF
     DISPATCH_NAMED_TARGETS: 'dispatch-named-targets.json',
     DISPATCH_SHIPPED_PROBE_PRS: 'dispatch-shipped-probe-prs.json',
     DISPATCH_SHIPPED_PR_FILES: 'dispatch-shipped-pr-files.jsonl',
+    DISPATCH_SHAPE_GATE_ERR: 'dispatch-shape-gate.err',
   };
   for (const [varName, filename] of Object.entries(files)) {
     const p = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
@@ -123,6 +125,14 @@ CACHE_HIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_
   console.log('1');
 NODE_EVAL_EOF
 )
+CACHE_HIT_RC=$?
+# #3110: a non-zero exit here (e.g. appendExclusion refusing a corrupt
+# dispatch-exclusions.json) means this pass's exclusions may be partially
+# written -- stop rather than fall through to the recompute below.
+if [ "$CACHE_HIT_RC" -ne 0 ]; then
+  echo "dispatch: queue-pull stopped -- cache-hit exclusion pass failed (exit $CACHE_HIT_RC); see error above." >&2
+  exit 1
+fi
 
 if [ "$CACHE_HIT" = "1" ]; then
   echo "Queue-order cache hit — using persisted groups/excluded, skipping dependency verification and native blocker query (#1571)." >&2
@@ -225,6 +235,13 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE" "$DISPAT
     appendExclusion(process.argv[4], { reason: 'oversized', records: g.map((i) => i.number), detail: { size: g.length, threshold } });
   }
 NODE_EVAL_EOF
+GROUPING_RC=$?
+# #3110: same stop as the cache-hit check above -- later passes must not
+# build on a partially written $DISPATCH_GROUPS/$DISPATCH_EXCLUSIONS.
+if [ "$GROUPING_RC" -ne 0 ]; then
+  echo "dispatch: queue-pull stopped -- group-building exclusion pass failed (exit $GROUPING_RC); see error above." >&2
+  exit 1
+fi
 
 # #1571: write-back (cache-miss path only — a hit's persisted blob already
 # reflects current state, so re-persisting it would be a wasted, byte-
@@ -319,8 +336,16 @@ NODE_EVAL_EOF
 then
   mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
 else
-  echo "Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: $(cat "$DISPATCH_LINKED_PRS_ERR")" >&2
   rm -f "${DISPATCH_GROUPS}.tmp"
+  # #3110: a thrown appendExclusion (corrupt/unreadable dispatch-exclusions.json)
+  # is not the same failure as a transient resolve-linked-prs.js/network issue --
+  # stop the firing instead of the warn-and-continue-unfiltered degrade below,
+  # since the exclusions file itself may now be partially written.
+  if grep -q 'appendExclusion:' "$DISPATCH_LINKED_PRS_ERR" 2>/dev/null; then
+    echo "dispatch: queue-pull stopped -- open-linked-PR exclusion pass hit a corrupt exclusions file: $(cat "$DISPATCH_LINKED_PRS_ERR")" >&2
+    exit 1
+  fi
+  echo "Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: $(cat "$DISPATCH_LINKED_PRS_ERR")" >&2
 fi
 
 # #1983: named-target existence exclusion. Runs unconditionally, right after
@@ -369,6 +394,13 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_NAMED_TARGETS" "$I
     appendExclusion(process.argv[3], { reason: 'target-missing', records: [number], detail: { path: target.path } });
   }
 NODE_EVAL_EOF
+TARGET_MISSING_RC=$?
+# #3110: stop rather than continue with a partial exclusion list when
+# appendExclusion throws (corrupt/unreadable dispatch-exclusions.json).
+if [ "$TARGET_MISSING_RC" -ne 0 ]; then
+  echo "dispatch: queue-pull stopped -- target-missing exclusion pass failed (exit $TARGET_MISSING_RC); see error above." >&2
+  exit 1
+fi
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
   const fs = require('fs');
   const { readExclusions, groupIsExcluded } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
@@ -452,7 +484,7 @@ done
 # GitHub itself — the proposal is the only write path, fingerprint-
 # deduplicated the same way tidy's own Close (GitHub) shape is). `weak`
 # stays eligible, logged for build-time context. `none` is silent.
-node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_SHIPPED_PR_FILES" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF && mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
+if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_SHIPPED_PR_FILES" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF
   const fs = require('fs');
   const { classifyShipped } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
@@ -481,6 +513,15 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
     .filter((g) => g.length > 0);
   console.log(JSON.stringify(finalGroups));
 NODE_EVAL_EOF
+then
+  mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
+else
+  # #3110: stop -- this pass's shipped-candidate exclusions may be only
+  # partially written (e.g. appendExclusion refusing a corrupt file).
+  echo "dispatch: queue-pull stopped -- shipped-candidate exclusion pass failed; see error above." >&2
+  rm -f "${DISPATCH_GROUPS}.tmp"
+  exit 1
+fi
 
 # Stage one Close proposal per strong-tier exclusion, into this firing's own
 # standalone run dir (Step 1's $RUN_ID — resolved again here since this
@@ -513,6 +554,48 @@ if [ -n "$DISPATCH_FIRING_RUN_DIR" ]; then
 NODE_EVAL_EOF
     node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_FIRING_RUN_DIR" --id "shipped-close-$NUM" --file "$FILE" >/dev/null 2>&1 || true
   done
+fi
+
+# #2829: not-spec-shaped exclusion. Runs unconditionally, right after the
+# #1984 shipped-candidate classification above and before the (read-only)
+# cross-PR overlap report below -- a candidate whose cached body fails
+# /flow's Materialization hard gate (shapeGate) would otherwise be claimed
+# and handed to /flow, where it fails mid-build: the failure counts against
+# dispatch-retry-ceiling, and a correctness-classified failure makes Settle
+# revoke auto:merge (#2786's evidence). No gh/network call -- shapeGate is
+# pure, run here against the body already fetched into $DISPATCH_GROUPS.
+# Like the open-pr/target-missing/shipped passes above (and unlike
+# oversized), this removes the excluded candidate from $DISPATCH_GROUPS
+# unconditionally, with no #N/#N,#M,... bypass -- the exclusion is computed
+# once here, before any selection form reads $DISPATCH_GROUPS.
+if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" 2>"$DISPATCH_SHAPE_GATE_ERR" <<NODE_EVAL_EOF
+  const { shapeGate } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/materialize-format.js');
+  const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
+  const groups = require(process.argv[1]);
+  const finalGroups = groups
+    .map((g) => g.filter((c) => {
+      const result = shapeGate(c.body);
+      if (!result.ok) {
+        appendExclusion(process.argv[2], { reason: 'not-spec-shaped', records: [c.number], detail: { missing: result.missing } });
+        return false;
+      }
+      return true;
+    }))
+    .filter((g) => g.length > 0);
+  console.log(JSON.stringify(finalGroups));
+NODE_EVAL_EOF
+then
+  mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
+else
+  rm -f "${DISPATCH_GROUPS}.tmp"
+  # #3110: same distinction as the open-linked-PR pass above -- a thrown
+  # appendExclusion means the exclusions file itself may be partially
+  # written, which is not safe to just skip past.
+  if grep -q 'appendExclusion:' "$DISPATCH_SHAPE_GATE_ERR" 2>/dev/null; then
+    echo "dispatch: queue-pull stopped -- not-spec-shaped exclusion pass hit a corrupt exclusions file: $(cat "$DISPATCH_SHAPE_GATE_ERR")" >&2
+    exit 1
+  fi
+  echo "Warning: not-spec-shaped pass skipped — $(cat "$DISPATCH_SHAPE_GATE_ERR")" >&2
 fi
 
 # #1579: cross-PR root-cause overlap report. Runs unconditionally (both the

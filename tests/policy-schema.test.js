@@ -128,8 +128,11 @@ test('POLICY_KEYS entries are unique', () => {
   // (1000-60000) how long a shared-primitives.js `gh` subprocess call may
   // run before it is killed and retried once; env var
   // CLAUDE_TWEAKS_GH_TIMEOUT_MS takes precedence over this when both are set.
-  assert.strictEqual(POLICY_KEYS.length, 71);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 71);
+  // 71 -> 72, #3128 (decomposition event log): specify-decomposition-log —
+  // boolean, default false — opts a project into /specify's Ceremony tally
+  // writing docs/specify-decomposition-log.md; off, the step is a no-op.
+  assert.strictEqual(POLICY_KEYS.length, 72);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 72);
 });
 
 test('dispatch-batch-size is registered alongside its deprecated alias', () => {

@@ -149,6 +149,7 @@ function defaultGhApi(args) {
   try {
     const stdout = execFileSync('gh', ['api', ...args], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
+      windowsHide: true,
     });
     return { stdout, failure: null, status: null };
   } catch (e) {
@@ -157,21 +158,47 @@ function defaultGhApi(args) {
   }
 }
 
-// (ghApi, repoSlug) -> { entries: [{name, sha}], failure: null|'gh-absent'|'network-failure' }
-// One Contents-API directory listing — the SAME single call this module
-// already made — extended to keep each entry's `sha` (previously discarded
-// by `-q .[].name`) instead of adding a second Git Trees API call (#820,
-// D6). `claims/` is flat and single-level, so the directory listing already
-// carries everything a Trees API call would add.
+// (ghApi, repoSlug) -> { entries: [{name, sha}], failure: null|'gh-absent'|'network-failure'|'truncated' }
+// #3098: the Contents-API directory listing this used to make caps at 1000
+// entries (GitHub's own documented limit for that endpoint) — silently, with
+// no truncation signal at all. `claims-registry` long since passed that
+// count, so every claim filed after the 1000th-sorted entry (roughly #2983
+// and up, measured 2026-10-10) was invisible to every caller of this
+// function. The Git Trees API has no such cap and reports `truncated: true`
+// on the rare response that still can't fit (GitHub's own ceiling there is
+// much higher — tree-wide byte/entry limits, not a flat 1000), so a listing
+// this function can't prove complete is surfaced as its own failure value
+// rather than returned as a silently partial list. `recursive=1` walks the
+// whole tree in one call; `claims/` is flat and single-level, so the
+// `startswith("claims/")` filter below is just excluding any OTHER top-level
+// blob the branch happens to carry (there are none today, but nothing
+// guarantees that stays true), not flattening real subdirectories.
+// `recursive=1` is a literal query-string segment on the path, never a
+// `-f`/`-F` field — `gh api` switches its default method to POST the
+// instant any `-f`/`-F` is present (`gh help api`), and this endpoint has no
+// POST route, so that shape 404s silently on every real call (confirmed
+// live against this repo's own claims-registry tree: `-f recursive=1` with
+// no explicit method 404s; the identical request with `recursive=1` folded
+// into the path succeeds). `defaultGhApi`'s 404 branch maps to `{failure:
+// null, status: 404}` (a legitimate "not found" elsewhere in this module —
+// see `classifyGhApiError`'s header comment), so a POST-switched call here
+// would come back as `{entries: [], failure: null}`: a silent, complete-
+// looking empty list — a worse failure mode than the 1000-entry cap this
+// function exists to remove.
 function listClaimEntries(ghApi, repoSlug) {
-  const r = ghApi([`repos/${repoSlug}/contents/claims?ref=${CLAIMS_BRANCH}`, '-q', '[.[] | {name, sha}]']);
+  const r = ghApi([
+    `repos/${repoSlug}/git/trees/${CLAIMS_BRANCH}?recursive=1`,
+    '-q', '{truncated: .truncated, entries: [.tree[] | select(.type == "blob" and (.path | startswith("claims/"))) | {name: (.path | split("/") | last), sha: .sha}]}',
+  ]);
   if (r.failure) return { entries: [], failure: r.failure };
+  let parsed;
   try {
-    const parsed = JSON.parse(r.stdout || '[]');
-    return { entries: Array.isArray(parsed) ? parsed : [], failure: null };
+    parsed = JSON.parse(r.stdout || '{}');
   } catch {
     return { entries: [], failure: 'network-failure' };
   }
+  if (parsed.truncated) return { entries: [], failure: 'truncated' };
+  return { entries: Array.isArray(parsed.entries) ? parsed.entries : [], failure: null };
 }
 
 // Thin wrapper — the only pre-existing consumer (release-merged.js) is

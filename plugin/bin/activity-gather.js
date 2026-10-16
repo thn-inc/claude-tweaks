@@ -65,9 +65,9 @@ function errorText(err) {
 }
 
 const realDeps = {
-  runner: (args, opts) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts }),
+  runner: (args, opts) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts, windowsHide: true }),
   ghAvailable: () => ghAvailable(),
-  ghAuthOk: () => execFileSync('gh', ['auth', 'status'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: ACTIVITY_GH_TIMEOUT_MS }),
+  ghAuthOk: () => execFileSync('gh', ['auth', 'status'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: ACTIVITY_GH_TIMEOUT_MS, windowsHide: true }),
   remoteUrl: () => remoteUrl(),
   writeFile: (p, text) => fs.writeFileSync(p, text),
   stdout: (s) => process.stdout.write(s),

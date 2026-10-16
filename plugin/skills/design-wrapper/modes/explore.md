@@ -18,7 +18,7 @@ This file covers both scopes. The `identity` scope (`## Procedure — identity s
 
 Invoked directly via `/claude-tweaks:design-wrapper explore`, or by a caller that resolved the scope on its own side and passes `--scope` explicitly (an explicit `--scope` wins over this mode's auto-resolution, so the two sides cannot disagree). This mode does not assume any particular caller and must work correctly when invoked standalone — caller relationships live in `docs/skill-graph.md`, not here.
 
-Division of labor, load-bearing: **upstream deals, this mode derives and renders.** `concept-seed.mjs` assigns and deals; its output is a single prose instruction block that tells the calling agent how to derive grounded directions, fuse dealt challengers, and weigh them — it emits no per-world card payloads. This mode is that calling agent. The dealing catalog, exclusion rules, and canon semantics stay upstream's; this mode never maintains a parallel catalog and never filters a deal on its own judgment.
+Division of labor, load-bearing: **upstream deals, this mode derives and renders.** The engine's `concept-seed` verb (`impeccable-engine.js run concept-seed`, #2979) assigns and deals; its output is a single prose instruction block that tells the calling agent how to derive grounded directions, fuse dealt challengers, and weigh them — it emits no per-world card payloads. This mode is that calling agent. The dealing catalog, exclusion rules, and canon semantics stay upstream's; this mode never maintains a parallel catalog and never filters a deal on its own judgment.
 
 ## Preconditions
 
@@ -35,21 +35,21 @@ Division of labor, load-bearing: **upstream deals, this mode derives and renders
 
 The genesis worlds tournament renders CSS skins over an HTML scaffold in a browser; a native app has no page for that scaffold to become. This mirrors `live.md`'s Step 1.5 exactly, on the same upstream constraint (`reference/routing.md`: web-only).
 
-**Availability** is exact-pin `resolveImpeccablePlugin`, `doctor`-class — not the looser skill-resolution check `review`/`shape`/`polish`/`live` use. `concept-seed.mjs` is a bundled script that does not exist at every plugin version satisfying skill resolution (`../impeccable-plugin.md`'s "The pin is not pedantry"), so never glob the plugin cache directly, and never treat a resolved `/impeccable:impeccable*` skill as proof the script is present.
+**Availability** is resolved through the `impeccable-engine` module (`bin/lib/impeccable-engine`, #2979) — not the looser skill-resolution check `review`/`shape`/`polish`/`live` use, and no longer the retired exact-pin plugin-cache resolver `doctor` still uses (sibling sub-issue, untouched by this record). The module finds the active Impeccable install (4.2.2+) directly from `~/.claude/plugins/installed_plugins.json` and its launcher script, so never glob the plugin cache directly, and never treat a resolved `/impeccable:impeccable*` skill as proof the engine binary is present.
 
-## Availability (exact-pin, checked before any option is presented)
+## Availability (checked before any option is presented)
 
 Run this immediately after Preconditions, before Scope resolution's `PRODUCT.md` offer below — never after, and never deferred to Deal and derive's own resolve call. A caller (`specify/design-pre-steps.md` Step 2.5b-ii) may already have run this same check on its own side before ever offering the tournament; when it has, this mode still re-confirms rather than trusting an unvalidated caller claim, but the two checks read the identical fact and cannot disagree.
 
-Call `resolveImpeccablePlugin({searchRoot})` per `../impeccable-plugin.md`'s Resolution procedure. On a miss (`null`), return immediately — before the `PRODUCT.md` check, before any `AskUserQuestion` call:
+Run `node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" resolve`. On `ok: false`, return immediately — before the `PRODUCT.md` check, before any `AskUserQuestion` call — naming the module's own `reason` verbatim, plus whichever of `fix`/`detail` it returned:
 
 ```json
-{ "mode": "explore", "skipped": "Impeccable plugin not installed | Impeccable plugin {found} does not match the pinned {pinned}" }
+{ "mode": "explore", "skipped": "<reason>", "fix": "<fix>" }
 ```
 
-naming every version found on a mismatch, per `impeccable-plugin.md`'s degradation table. On a hit, carry the resolved `{root, version}` forward — Deal and derive (both scopes) reuses this same result and never re-globs the cache within one invocation.
+`reason` is one of the module's resolver-level failure reasons: `not-installed`, `upgrade-required`, or `engine-not-installed` (each carrying `fix`, rendered as above), or `timeout`/`exec-failed` when the `engine-probe` handshake itself timed out, could not run, or exited non-zero other than 127 (each carrying `detail` instead — render `{ "mode": "explore", "skipped": "<reason>", "detail": "<detail>" }`). The module's exported `FAILURE_REASONS` list is authoritative if it differs from these names. On a hit (`ok: true`), nothing needs to be carried forward: Deal and derive (both scopes) calls `impeccable-engine.js run concept-seed` directly, and the module's own `run()` re-resolves internally rather than requiring a caller-held root.
 
-This reorders what was previously an implicit resolve buried inside Deal and derive, reached only after Scope resolution and the `PRODUCT.md` offer had already run — so an off-pin install used to surface only after the user had already answered two upstream questions. Resolving it here means an unavailable pin is known before Scope resolution's own `PRODUCT.md` offer ever renders.
+This reorders what was previously an implicit resolve buried inside Deal and derive, reached only after Scope resolution and the `PRODUCT.md` offer had already run — so an unavailable engine used to surface only after the user had already answered two upstream questions. Resolving it here means an unavailable engine is known before Scope resolution's own `PRODUCT.md` offer ever renders.
 
 ## Scope resolution
 
@@ -79,19 +79,29 @@ Each step below carries a **stable heading name** — a later record reuses thes
 
 ### Deal and derive
 
-`concept-seed.mjs`'s path is `<root>/skills/impeccable/scripts/concept-seed.mjs`, where `<root>` is already resolved — by the `## Availability` section above, which now runs ahead of this step and ahead of Scope resolution's `PRODUCT.md` offer, never re-derived here. Then run:
+Run the engine's `concept-seed` verb — resolution already ran in `## Availability` above, which now runs ahead of this step and ahead of Scope resolution's `PRODUCT.md` offer, never re-derived here:
 
 ```bash
-node "<root>/skills/impeccable/scripts/concept-seed.mjs" --scope direction --mode <mode>
+node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" run concept-seed --scope direction --mode <mode>
 ```
 
-`<mode>` is a real, optional parameter of the script — one of `persuade`, `operate`, `read`, `experience`. Map the primary surface's job: **persuade** for marketing/conversion surfaces, **operate** for tools/dashboards, **read** for content/reading surfaces, **experience** for immersive ones. When the job is unclear, **omit `--mode` entirely** — staging then rolls from the full approved pool rather than this mode guessing. Leave `--candidate-count` at the script's own default; sizing the deal is upstream's call, not this mode's. **This is the identity scope's own policy** — the layout scope makes a different, deliberate choice for its own deal; see "Dealing" below, which does not change this sentence's meaning here.
+**Network side effect, load-bearing:** the `concept-seed` verb contacts Impeccable's catalog service (observed reporting `source: api` in the returned header line) — it is not a local computation. An offline or sandboxed run (cloud sessions, Routines) gets `{ "ok": false, "reason": "exec-failed", ... }` back rather than a deal. Treat `exec-failed`, `timeout`, and `shape-mismatch` the same way as an Availability-stage miss — skip immediately, naming the reason and any `detail` the module returned:
 
-Follow the returned instruction block exactly as upstream directs: derive grounded directions, fuse each dealt challenger, weigh them. **The render set is the *presented* directions only** — the assigned direction plus the one or two surviving fused challengers upstream's own presentation rule names — **never the full candidate list** `--candidate-count` sized. Record the deal's id ↔ display-name mapping (`--chosen` below takes the id, never the name). Carry the printed seed `key` and a reroll counter for the whole session — both cross every reroll and the final pick. **This one-to-three render-set size is the identity scope's own count and is unchanged by this record; it does not extend to the layout scope**, whose own, larger render-set size and its own diversity check are defined separately below in "Dealing" and "Machinery reuse".
+```json
+{ "mode": "explore", "skipped": "<reason>", "detail": "<detail>" }
+```
+
+`run()` re-resolves internally on every call, so a plugin lost between the `## Availability` check and this call (uninstalled or downgraded mid-session, including after a reroll minutes later) surfaces here too — as one of `resolve()`'s own reasons: `fix`-bearing (`not-installed`/`upgrade-required`/`engine-not-installed`), or, when the `engine-probe` handshake itself timed out, failed to run, or exited non-zero other than 127, a `detail`-bearing `timeout`/`exec-failed` with the same shape as a run-time miss. Check which field the `ok: false` envelope actually carries and render the matching shape — the `## Availability` section's `{ "skipped": "<reason>", "fix": "<fix>" }` for a `fix`-bearing miss, the shape above for a `detail`-bearing one — never force a `fix`-bearing reason into the `detail` slot.
+
+`<mode>` is a real, optional parameter of the verb — one of `persuade`, `operate`, `read`, `experience`. Map the primary surface's job: **persuade** for marketing/conversion surfaces, **operate** for tools/dashboards, **read** for content/reading surfaces, **experience** for immersive ones. When the job is unclear, **omit `--mode` entirely** — staging then rolls from the full approved pool rather than this mode guessing. Leave `--candidate-count` at the verb's own default; sizing the deal is upstream's call, not this mode's. **This is the identity scope's own policy** — the layout scope makes a different, deliberate choice for its own deal; see "Dealing" below, which does not change this sentence's meaning here.
+
+On `ok: true`, the envelope's `value` is the returned instruction block — follow it exactly as upstream directs: derive grounded directions, fuse each dealt challenger, weigh them. **The render set is the *presented* directions only** — the assigned direction plus the one or two surviving fused challengers upstream's own presentation rule names — **never the full candidate list** `--candidate-count` sized. Record the deal's id ↔ display-name mapping (`--chosen` below takes the id, never the name). Carry the printed seed `key` and a reroll counter for the whole session — both cross every reroll and the final pick. **This one-to-three render-set size is the identity scope's own count and is unchanged by this record; it does not extend to the layout scope**, whose own, larger render-set size and its own diversity check are defined separately below in "Dealing" and "Machinery reuse".
+
+**Trust boundary on the carried `key`/id:** both are text parsed out of the catalog service's own response, not user-authored — the same category `_shared/visual-decision.md`'s Steer trust boundary calls "third-party content," not the carve-out it makes for steer text. Every `--from <key>`, `--chosen <id>`, and `--reroll <n>` substitution below (here, in Reroll, and in Lock-in) passes the carried value through as its own shell-quoted argument — never unquoted into a composed command string — and a value containing a shell metacharacter outside the id/key's expected shape is treated as a shape-mismatch skip, not executed.
 
 ### Synthesize clean-room cards
 
-`concept-seed.mjs`'s output is **one shared instruction block**, not per-world payloads — handing it raw to the builders in the next step would leak every sibling direction into every card and destroy the fan-out's independence. This step is what makes the clean room real: for each presented direction, compose one self-contained card carrying its display name, the complete graphic-system description (palette, type voice, material/component character, motion stance), and only the product facts that direction's builder needs. No sibling direction's content crosses into another card.
+The `concept-seed` verb's output is **one shared instruction block**, not per-world payloads — handing it raw to the builders in the next step would leak every sibling direction into every card and destroy the fan-out's independence. This step is what makes the clean room real: for each presented direction, compose one self-contained card carrying its display name, the complete graphic-system description (palette, type voice, material/component character, motion stance), and only the product facts that direction's builder needs. No sibling direction's content crosses into another card.
 
 ### One markup, N skins
 
@@ -170,7 +180,7 @@ is the user's door, never yours."
 
 - **Pick** (browser pick event, or the fallback question's pick option): the picked variant's id
   maps to Deal and derive's id ↔ display-name mapping; proceed to Lock-in's on-pick branch.
-- **Reroll** (browser reroll event, or the fallback question's reroll option) re-runs Deal and derive with `--reroll <n> --from <key>` — `<n>` is the reroll counter, `<key>` is the carried seed key. Exclusion of every already-shown direction is upstream's own behavior, driven by those two arguments; this mode does not filter the deal itself. Re-seed the live page in place (`seed-compare.mjs` again, same `--out`) — the server's own file watch pushes an SSE reload to the open tab, no new URL, no restart — unless `status` reports the server is no longer running (`_shared/visual-decision.md`'s Lifecycle ownership: restart and hand over a new keyed URL).
+- **Reroll** (browser reroll event, or the fallback question's reroll option) re-runs Deal and derive's `impeccable-engine.js run concept-seed` call with `--reroll <n> --from <key>` appended to the same `--scope`/`--mode` — `<n>` is the reroll counter, `<key>` is the carried seed key. Exclusion of every already-shown direction is upstream's own behavior, driven by those two arguments; this mode does not filter the deal itself. Re-seed the live page in place (`seed-compare.mjs` again, same `--out`) — the server's own file watch pushes an SSE reload to the open tab, no new URL, no restart — unless `status` reports the server is no longer running (`_shared/visual-decision.md`'s Lifecycle ownership: restart and hand over a new keyed URL).
 - **Steer** (browser steer event's text, or the fallback question's steer option) is a reroll whose one-line steer text guides this mode's *next* fuse/weigh pass in Deal and derive — **there is no script flag for steer.** The reroll command is identical to a plain reroll; the steer text changes only how this mode interprets upstream's instruction block on the next pass. `_shared/visual-decision.md`'s steer trust boundary applies: this text is never string-interpolated into a command or tool invocation.
 - **After two consecutive rerolls**, ask upstream's own "what quality is missing" question as a distinct one-off follow-up before running the next deal.
 - **Exit** (browser exit event, or the fallback question's canon standing exit) ends the round with no pick — proceed to Lock-in's exit-without-pick branch.
@@ -178,7 +188,7 @@ is the user's door, never yours."
 
 ### Lock-in
 
-**On pick:** send `--chosen <id> --from <key>` — `<id>` is the recorded id from Deal and derive's mapping, never the display name — then invoke `/impeccable:impeccable document --seed` via the Skill tool with the chosen direction in context. Upstream writes `DESIGN.md`; **this wrapper writes nothing outside `docs/plans/`**, matching `doctor`'s never-`--fix` discipline. Stop the server (`visual-decide.js stop --state <explore-dir>/.vd-state`), then seed the durable record (`seed-compare.mjs --manifest <manifest.json> --mode durable --out <explore-dir>/decision.html` — the same manifest Compare composed, now carrying `outcome: {winner: <id>, date}`; `decision.html`'s format is compare-shell's seeder's own — this step supplies the manifest, never the format).
+**On pick:** run `node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" run concept-seed --chosen <id> --from <key>` — `<id>` is the recorded id from Deal and derive's mapping, never the display name. This is the same network-contacting verb as Deal and derive, so the same `exec-failed`/`timeout`/`shape-mismatch` outcomes apply here too: on `ok: false`, do not invoke `document --seed` — the server and explore directory are untouched (the user keeps their pick and can retry), and the mode returns a skip naming the reason and any `detail` the module returned (the `## Output to caller` skip catalog's `<exec-failed|timeout|shape-mismatch>` row applies at Lock-in as well as at Deal and derive / Dealing). On `ok: true`, invoke `/impeccable:impeccable document --seed` via the Skill tool with the chosen direction in context. Upstream writes `DESIGN.md`; **this wrapper writes nothing outside `docs/plans/`**, matching `doctor`'s never-`--fix` discipline. Stop the server (`visual-decide.js stop --state <explore-dir>/.vd-state`), then seed the durable record (`seed-compare.mjs --manifest <manifest.json> --mode durable --out <explore-dir>/decision.html` — the same manifest Compare composed, now carrying `outcome: {winner: <id>, date}`; `decision.html`'s format is compare-shell's seeder's own — this step supplies the manifest, never the format).
 
 - If `document --seed` completes and writes `DESIGN.md`: `design_md: "seeded"`.
 - If the user backs out of that upstream step after already committing to a pick here: `design_md: "declined"` — the picked scaffold and winning skin are still kept as `visual_reference` either way, since the identity choice itself stands independent of whether upstream's own write completed.
@@ -201,20 +211,20 @@ Run once scope resolution above routes here: an established-world composition to
 
 ### Dealing
 
-Resolve `concept-seed.mjs` the same way the identity scope's Deal and derive step does, then run:
+Run the engine's `concept-seed` verb the same way the identity scope's Deal and derive step does — same Availability precondition, same network-contact and offline-skip handling — then run:
 
 ```bash
-node "<root>/skills/impeccable/scripts/concept-seed.mjs" --scope surface --mode <mode> --from <key> --candidate-count 6
+node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" run concept-seed --scope surface --mode <mode> --from <key> --candidate-count 6
 ```
 
 `<mode>` selection follows the identity scope's Deal and derive rule — the same persuade/operate/read/experience mapping, the same omit-when-unclear fallback — mapped from `<surface-topic>`'s job rather than the project's.
 
-**Unlike the identity scope's Deal and derive** (which leaves `--candidate-count` at the script's own default — unchanged above), this scope explicitly overrides it to `--candidate-count 6`. This is a deliberate policy choice scoped to the layout scope only, not a claim that the identity scope's default was wrong: "Machinery reuse" below applies a diversity check that rejects near-duplicate fused challengers before they reach the render set, and a small dealt pool risks starving that check down to too few survivors. The target is **at least four structurally distinct presented directions** by default — up from the one-to-three the unmodified deal otherwise yields — with no manual reroll or steer text required to reach it. A genuinely exhausted dealt pool (fewer than four directions survive the diversity check) degrades to presenting fewer than four rather than presenting near-duplicates; that degraded case is named in the offer text presented before Compare.
+**Unlike the identity scope's Deal and derive** (which leaves `--candidate-count` at the verb's own default — unchanged above), this scope explicitly overrides it to `--candidate-count 6`. This is a deliberate policy choice scoped to the layout scope only, not a claim that the identity scope's default was wrong: "Machinery reuse" below applies a diversity check that rejects near-duplicate fused challengers before they reach the render set, and a small dealt pool risks starving that check down to too few survivors. The target is **at least four structurally distinct presented directions** by default — up from the one-to-three the unmodified deal otherwise yields — with no manual reroll or steer text required to reach it. A genuinely exhausted dealt pool (fewer than four directions survive the diversity check) degrades to presenting fewer than four rather than presenting near-duplicates; that degraded case is named in the offer text presented before Compare.
 
 `<key>` is the committed direction's seed key. It is **not recorded in `DESIGN.md`** — upstream's `document --seed` does not write it there. Its only durable homes, in resolution order:
 
 1. the caller's record `Design-seed:` body-metadata line — this repo's established carrier, written by this wrapper's own `review` mode per `skills/_shared/design-contract.md`;
-2. absent that, the direction contract's `FORM` block inside a built artifact's opening comment, parsed per `skills/_shared/design-contract.md`'s procedure over the candidate list the caller already resolved — this mode never discovers candidate files on its own.
+2. absent that, the direction contract's `FORM` block, read via `skills/_shared/design-contract.md`'s procedure over the candidate list the caller already resolved — this mode never discovers candidate files on its own.
 
 Zero candidates, no seed label found, or multiple candidates whose keys disagree → **deal without `--from`**, and say so in the offer text presented before dealing: challengers are dealt without the committed direction's seed. Degraded, never fatal.
 
@@ -291,6 +301,8 @@ A layout `ok` exists only on a pick, so `visual_reference` always carries the wi
 - `{ "mode": "explore", "skipped": "design identity already locked — route identity replacement through upstream new-work explicitly" }`
 - `{ "mode": "explore", "skipped": "native surface — explore is web-only", "surface_track": "<ios|android|adaptive>" }`
 - `{ "mode": "explore", "skipped": "no PRODUCT.md — run /impeccable:impeccable init first" }`
-- Plus the standard availability/kill-switch skips defined in `../SKILL.md` (`design integration disabled`, `Impeccable plugin not installed`, version-mismatch, etc.) — this mode does not redefine those, it dispatches into them exactly as every other mode does.
+- `{ "mode": "explore", "skipped": "<not-installed|upgrade-required|engine-not-installed>", "fix": "<fix>" }` — the `## Availability` section's engine-resolve miss.
+- `{ "mode": "explore", "skipped": "<exec-failed|timeout|shape-mismatch>", "detail": "<detail>" }` — a `concept-seed` run-time miss (Deal and derive / Dealing / Lock-in), including the offline/sandboxed case where the catalog-service call itself cannot complete; also the `## Availability` section's `engine-probe` timeout, launch failure, or non-127 exit (`timeout`/`exec-failed` only).
+- Plus the standard availability/kill-switch skips defined in `../SKILL.md` (`design integration disabled`, etc.) — this mode does not redefine those, it dispatches into them exactly as every other mode does.
 
 Both shapes carry the wrapper's standard top-level `platform` and `surface_track` fields — see `../SKILL.md`'s Output contract. This mode adds no field beyond what's shown above.

@@ -49,6 +49,8 @@ Scan `docs/superpowers/plans/` for execution plan files and `~/.claude/plans/`.
 
 → Collect each as: `[plan] {filename} — {recommendation}`
 
+**Before any plan Delete:** run `plan-citation-check.md`.
+
 Also glob `docs/plans/*-ledger.md` — the per-feature pipeline ledgers `/claude-tweaks:ledger` creates (`docs/plans/YYYY-MM-DD-{feature}-ledger.md`, `_shared/ledger-format.md`) and `/claude-tweaks:wrap-up`'s Phase 4 execution step deletes on successful completion. A pipeline that never reaches wrap-up leaves its ledger behind permanently; nothing else sweeps for it (the run-dir-scoped alternate location, `_shared/ledger-format.md`'s Location section, is gitignored and outside this glob's scope by design — it is cleaned up with the rest of its run directory, not by this sweep).
 
 For each matched file, read its content — cheap, these files are a few KB — and classify:
@@ -204,7 +206,7 @@ wrapper object instead of its `.content` field).
 reader (`issue-claims-backstops.md`'s Batched read section), never to check only some blobs:
 
 ```bash
-gh api "repos/{owner}/{repo}/contents/claims?ref=claims-registry" -q '.[].name'
+node "${CLAUDE_PLUGIN_ROOT}/bin/list-claims.js"
 # for each claims/issue-<n>.json: gh issue view <n> --json state -q .state, then
 # "The lock" steps 1-2 against claims/issue-<n>.json to get CLASSIFY_INPUT, then classify.
 ```
@@ -306,7 +308,7 @@ This ordering puts `auto` above `mention`, inverting upstream's `route`/`mention
 
 ### Nothing here is ever applied
 
-These rows are **surface-or-suppress**, not apply-or-skip. This step edits no project file under any condition: `route` and `mention` findings have no mechanical fix by construction, and `auto` findings are staged proposals carrying their own `fix` text — applying them means `doctor.mjs --fix`, which rewrites `PRODUCT.md` and is the user's call, per `_shared/auto-mode-contract.md`'s staging model. The Step 6 decision is only whether the row is worth showing.
+These rows are **surface-or-suppress**, not apply-or-skip. This step edits no project file under any condition: `route` and `mention` findings have no mechanical fix by construction, and `auto` findings are staged proposals carrying their own `fix` text — applying them means running Impeccable's own `doctor --fix`, which rewrites `PRODUCT.md` and is the user's call, per `_shared/auto-mode-contract.md`'s staging model. The Step 6 decision is only whether the row is worth showing.
 
 That is why `[doctor]` routes to **Yours ({N})** and **never** **Approve ({N})**: every entry in Approve carries a recommendation from the Action Vocabulary, and every one of those mutates something.
 
