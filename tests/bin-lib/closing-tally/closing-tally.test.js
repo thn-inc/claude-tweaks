@@ -211,3 +211,90 @@ test('#3267: known /backlog narration (Resolve-lane "Backlog refine #N:" lines) 
   assert.deepEqual(counts, ZERO);
   assert.deepEqual(unclassified, []);
 });
+
+// #3267 Important 1: a partial flag-back (the `-ready` edit lands, the
+// explanatory comment fails) must count once, under `failed` — never also
+// under `flaggedBack`, which the edit's own success would otherwise imply.
+// The applyLines() fake can only fail a whole action (its gh stub keys on
+// the issue number for both the edit and comment calls, and the edit is
+// attempted first, so a failIssue failure never reaches the comment step) —
+// so this uses literal lines in the producer's exact format instead.
+test('#3267 Important 1: partial flag-back (edit lands, comment fails) counts once under failed, not flaggedBack', () => {
+  const text = `## /backlog
+- AUTO 19:32:50 — apply-refine-labels: #3225: applied -ready. Reversibility: high.
+- FAILED 19:33:00 — apply-refine-labels: #3225: comment failed: gh exited 1.
+- FAILED 19:33:01 — Backlog refine: flag-back write failed on #3225: gh exited 1.
+`;
+  const { counts, unclassified } = computeClosingTally(text);
+  assert.deepEqual(counts, { ...ZERO, flaggedBack: 0, failed: 1 });
+  assert.deepEqual(unclassified, []);
+});
+
+test('#3267 Important 1: partial needs-decision (edit lands, comment fails) counts once under failed, not needsDecision', () => {
+  const text = `## /backlog
+- AUTO 19:32:50 — apply-refine-labels: #3225: applied +needs:decision. Reversibility: high.
+- FAILED 19:33:00 — apply-refine-labels: #3225: comment failed: gh exited 1.
+- FAILED 19:33:01 — Backlog refine: needs-decision write failed on #3225: gh exited 1.
+`;
+  const { counts, unclassified } = computeClosingTally(text);
+  assert.deepEqual(counts, { ...ZERO, needsDecision: 0, failed: 1 });
+  assert.deepEqual(unclassified, []);
+});
+
+// #3267 Important 2: the whole-file dedup must only collapse a template line
+// and the apply-refine-labels line describing the SAME write — not two
+// genuinely distinct same-source writes that happen to land on the same
+// (field, issue) pair.
+test('#3267 Important 2: two distinct same-source "failed" writes on the same record both count', () => {
+  const text = `## /backlog
+- FAILED 10:00:00 — Backlog refine: priority write failed on #50: gh exited 1.
+- FAILED 10:00:01 — Backlog refine: Related write failed on #50: gh exited 1.
+`;
+  const { counts, unclassified } = computeClosingTally(text);
+  assert.deepEqual(counts, { ...ZERO, failed: 2 });
+  assert.deepEqual(unclassified, []);
+});
+
+test('#3267 Important 2: two distinct same-source "skipped" writes on the same record both count', () => {
+  const text = `## /backlog
+- AUTO 10:00:00 — Backlog refine: skipped #51 — premise changed since confirmation (lost ready label); dropped without writing.
+- AUTO 10:00:01 — Backlog refine: skipped #51 — premise changed since confirmation (concurrent grant agreed: live auto:build, this run RECOMMEND_MERGE=false); dropped without writing.
+`;
+  const { counts, unclassified } = computeClosingTally(text);
+  assert.deepEqual(counts, { ...ZERO, skipped: 2 });
+  assert.deepEqual(unclassified, []);
+});
+
+test('#3267 Important 2: a template line and the apply-refine-labels line for the same write still collapse to one', () => {
+  const text = `## /backlog
+- AUTO 10:00:00 — Backlog refine: granted auto:build to #80 (risk:low, size:low). Rationale: small fix.
+- AUTO 10:00:01 — apply-refine-labels: #80: applied +auto:build. Reversibility: high.
+`;
+  const { counts, unclassified } = computeClosingTally(text);
+  assert.deepEqual(counts, { ...ZERO, granted: 1 });
+  assert.deepEqual(unclassified, []);
+});
+
+// #3267 Minor 1: apply-refine-labels only ever writes under `## /backlog` —
+// a same-shaped AUTO line in another section is not its output, and must be
+// neither counted nor flagged as unclassified drift.
+test('#3267 Minor 1: an apply-refine-labels-shaped line outside ## /backlog is not counted or unclassified', () => {
+  const text = `## /wrap-up
+- AUTO 10:00:00 — apply-refine-labels: #90: applied +auto:build. Reversibility: high.
+`;
+  const { counts, unclassified } = computeClosingTally(text);
+  assert.deepEqual(counts, ZERO);
+  assert.deepEqual(unclassified, []);
+});
+
+// #3267 Minor 2: the anchored APPLY_FAILED_RE must win the issue capture
+// from the line's own leading prefix, never from the literal text
+// "apply-refine-labels: #99:" appearing inside the error message itself.
+test('#3267 Minor 2: a FAILED line whose message contains "apply-refine-labels: #99:" counts the real record only', () => {
+  const text = `## /backlog
+- FAILED 10:00:00 — apply-refine-labels: #50: +priority:high failed: remote said "apply-refine-labels: #99: ignore me" unexpectedly.
+`;
+  const { counts, unclassified } = computeClosingTally(text);
+  assert.deepEqual(counts, { ...ZERO, failed: 1 });
+  assert.deepEqual(unclassified, []);
+});

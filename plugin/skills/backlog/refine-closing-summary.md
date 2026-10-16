@@ -51,14 +51,13 @@ second bookkeeping channel:
    only vocabulary this bullet may ever render — a count for anything not in that list (e.g. a
    `collision-reconciled` field) requires updating that module (and this file) first, never
    inventing a field ad hoc in the rendered text. The CLI counts both forms a write can be logged
-   in — the templates above and `bin/apply-refine-labels.js`'s own per-action lines (`#{n}:
-   applied {labels}`, typed by the labels applied) — once per record per field, so a write logged
-   both ways counts once (#3267). The envelope's `unclassified` array lists any `decisions.md`
-   line that reads as a Backlog-refine action, or any `AUTO`/`FAILED` line under `## /backlog`,
-   that matched no known field — a drifted log template or a genuinely new write type; surface it
-   as a one-line caveat under the
-   tally ("`{n}` logged action(s) did not match a known tally field — see `{line text}`") rather
-   than silently omitting it from the count.
+   in — the templates above and `bin/apply-refine-labels.js`'s own per-action lines (`#{n}: applied
+   {labels}`, typed by the labels applied) — once per record per field, so a write logged both ways
+   counts once (#3267). The envelope's `unclassified` array lists any `decisions.md` line that
+   reads as a Backlog-refine action, or any `AUTO`/`FAILED` line under `## /backlog`, that matched
+   no known field — a drifted log template or a genuinely new write type; surface it as a one-line
+   caveat under the tally ("`{n}` logged action(s) did not match a known tally field — see `{line
+   text}`") rather than silently omitting it from the count.
 
    **Disclose a substituted detection method inline (#2721).** A lane whose documented detection
    has more than one implementation path — dependency-repair's `findUnresolvedDependencyProse`

@@ -46,8 +46,16 @@ const PATTERNS = [
 // label, not by lane — its actions JSON has no lane field — so the write
 // type is derived from the labels it applied. One action can carry two writes
 // (a grant row that also sets a priority: `applied +auto:build +priority:medium`).
-const APPLY_EDIT_RE = /apply-refine-labels: #(\d+): applied (.+?)\. Reversibility:/;
-const APPLY_FAILED_RE = /^- FAILED .*apply-refine-labels: #(\d+): .*failed: /;
+// Anchored to the producer's exact prefix (Minor 2) so an error message that
+// itself contains the literal text "apply-refine-labels: #N:" can never win
+// the issue capture — only the line's own leading `- {STATUS} {HH:MM:SS} —
+// apply-refine-labels: #N: ` (the real em dash, U+2014) is eligible.
+const APPLY_EDIT_RE = /^- AUTO \d{2}:\d{2}:\d{2} — apply-refine-labels: #(\d+): applied (.+?)\. Reversibility:/;
+const APPLY_FAILED_RE = /^- FAILED \d{2}:\d{2}:\d{2} — apply-refine-labels: #(\d+): /;
+// Distinguishes the comment step's own FAILED line (`#N: comment failed: `)
+// from an edit-step FAILED line (`#N: {labelSummary} failed: `) once
+// APPLY_FAILED_RE has already anchored the issue capture (#3267 Important 1).
+const APPLY_COMMENT_FAILED_RE = /^comment failed: /;
 
 // Lines under `## /backlog` (or anywhere, for the "Backlog refine:" prefix)
 // written by OTHER steps of the same skill, not per-write outcome lines this
@@ -82,59 +90,106 @@ function fieldsForLabels(summary) {
   return fields;
 }
 
-// One decisions.md line -> [{field, issue}] — empty when the line is not a
-// recognized tally line. `issue` is the record the write targeted (the first
-// `#N` after the template prefix), or null when the line names none.
-function classifyLine(line) {
-  const template = line.indexOf('Backlog refine:');
-  if (template !== -1) {
-    for (const { field, re } of PATTERNS) {
-      if (re.test(line)) {
-        const m = line.slice(template).match(/#(\d+)/);
-        return [{ field, issue: m ? Number(m[1]) : null }];
-      }
-    }
-    return [];
-  }
-  const failed = line.match(APPLY_FAILED_RE);
-  if (failed) return [{ field: 'failed', issue: Number(failed[1]) }];
-  const edit = line.match(APPLY_EDIT_RE);
-  if (edit) return fieldsForLabels(edit[2]).map((field) => ({ field, issue: Number(edit[1]) }));
-  return [];
-}
-
 // decisions.md text -> { counts: {field: n, ...}, unclassified: [line, ...] }.
-// A write is counted once per (field, record), so the template line and the
-// apply-refine-labels line for the same write collapse into one (#3267).
+// Each source (the hand-composed template lines, and apply-refine-labels'
+// own per-action lines) counts its own (field, issue) hits by occurrence —
+// NOT deduped against repeats from the same source, since two template lines
+// naming the same record under the same field (e.g. a priority write failure
+// and a Related write failure that both land on #50's `failed` field) are
+// genuinely two writes, not one logged twice. Only hits from the TWO sources
+// describing the SAME write collapse: the final count per (field, issue) is
+// max(templateCount, applyCount), which collapses a template line and the
+// apply-refine-labels line for that same write into one (#3267 Important 2)
+// while still counting genuine same-source repeats separately. A hit with no
+// issue (issue null) always adds one, additively, regardless of source.
+//
 // `unclassified` carries every line that reads as a Backlog-refine entry
-// ("Backlog refine:" anywhere) or is an AUTO/FAILED line under `## /backlog`,
-// and matched no known pattern — a vocab drift signal (AC 2: no tally field
-// may appear outside this file's own enumerated set without this file being
-// updated first), never silently dropped.
+// ("Backlog refine:" anywhere) or is an AUTO/FAILED line under `## /backlog`
+// written by apply-refine-labels.js, and matched no known pattern — a vocab
+// drift signal (AC 2: no tally field may appear outside this file's own
+// enumerated set without this file being updated first), never silently
+// dropped. An apply-refine-labels-shaped line outside `## /backlog` is
+// neither counted nor unclassified (Minor 1): that CLI only ever writes
+// there, so such a line elsewhere is not its output.
 function computeClosingTally(decisionsText) {
-  const seen = Object.fromEntries(FIELDS.map((f) => [f, new Set()]));
+  const templateCount = Object.fromEntries(FIELDS.map((f) => [f, new Map()]));
+  const applyCount = Object.fromEntries(FIELDS.map((f) => [f, new Map()]));
   const anonymous = Object.fromEntries(FIELDS.map((f) => [f, 0]));
+  // Records with an apply-refine-labels `comment failed:` FAILED line — a
+  // partial flag-back/needs-decision write (the label edit landed, the
+  // explanatory comment didn't). refine-lanes.md:194-200 counts that record
+  // once, under `failed`, never also under the write type its successful
+  // edit implies (#3267 Important 1).
+  const commentFailedIssues = new Set();
   const unclassified = [];
   let section = null;
   const lines = String(decisionsText || '').split('\n');
+
+  const addHit = (countMap, field, issue) => {
+    if (issue === null) { anonymous[field] += 1; return; }
+    countMap[field].set(issue, (countMap[field].get(issue) || 0) + 1);
+  };
+
   for (const raw of lines) {
     const line = raw.trim();
     if (!line) continue;
     const heading = line.match(/^## (.+)$/);
     if (heading) { section = heading[1].trim(); continue; }
     if (isIgnoredLine(line)) continue;
-    const hits = classifyLine(line);
-    if (hits.length) {
-      for (const { field, issue } of hits) {
-        if (issue === null) anonymous[field] += 1;
-        else seen[field].add(issue);
+
+    const template = line.indexOf('Backlog refine:');
+    if (template !== -1) {
+      let matched = false;
+      for (const { field, re } of PATTERNS) {
+        if (re.test(line)) {
+          matched = true;
+          const m = line.slice(template).match(/#(\d+)/);
+          addHit(templateCount, field, m ? Number(m[1]) : null);
+          break;
+        }
       }
+      if (!matched) unclassified.push(line);
       continue;
     }
-    const backlogWrite = section === '/backlog' && /^- (AUTO|FAILED) /.test(line);
-    if (backlogWrite || /Backlog refine:/.test(line)) unclassified.push(line);
+
+    // Minor 1: apply-refine-labels only ever writes under `## /backlog` — a
+    // same-shaped AUTO/FAILED line elsewhere is not its output.
+    if (section !== '/backlog' || !/^- (AUTO|FAILED) /.test(line)) continue;
+
+    const failed = line.match(APPLY_FAILED_RE);
+    if (failed) {
+      const issue = Number(failed[1]);
+      const rest = line.slice(failed[0].length);
+      if (APPLY_COMMENT_FAILED_RE.test(rest)) commentFailedIssues.add(issue);
+      addHit(applyCount, 'failed', issue);
+      continue;
+    }
+    const edit = line.match(APPLY_EDIT_RE);
+    if (edit) {
+      const issue = Number(edit[1]);
+      const editFields = fieldsForLabels(edit[2]);
+      if (editFields.length) editFields.forEach((field) => addHit(applyCount, field, issue));
+      else unclassified.push(line);
+      continue;
+    }
+    unclassified.push(line);
   }
-  const counts = Object.fromEntries(FIELDS.map((f) => [f, seen[f].size + anonymous[f]]));
+
+  for (const field of ['flaggedBack', 'needsDecision']) {
+    for (const issue of commentFailedIssues) {
+      templateCount[field].delete(issue);
+      applyCount[field].delete(issue);
+    }
+  }
+
+  const counts = Object.fromEntries(FIELDS.map((f) => {
+    const issues = new Set([...templateCount[f].keys(), ...applyCount[f].keys()]);
+    let total = anonymous[f];
+    for (const issue of issues) {
+      total += Math.max(templateCount[f].get(issue) || 0, applyCount[f].get(issue) || 0);
+    }
+    return [f, total];
+  }));
   return { counts, unclassified };
 }
 
