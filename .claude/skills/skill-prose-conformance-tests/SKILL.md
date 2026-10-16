@@ -128,6 +128,17 @@ lines, and it pins `KEYS.length` to a literal `6`, which is what lets an added o
 red. Import the scanner. Keep the expected count, list, or threshold a literal; a test-local
 constant is fine.
 
+### Grep sibling conformance tests before extending a pinned table row
+
+Extending a byte/line-pinned table cell — adding a second marker form alongside an existing one,
+widening a cell's content — can silently break an older, independently-authored test that
+end-anchored (`$`) that same row before the extension existed. #2970's `pr-run-comments.md`
+timing-row extension (adding `timing:{spec}` alongside the bare `timing` marker) broke
+`tests/timing-prose-conformance.test.js`'s #1928 AC6 pin, which had end-anchored the row — caught
+in a follow-up commit within the same build session, not at review. Before considering a
+table-row content extension complete, grep sibling test files for an anchored regex (`$`/`^`)
+against that same row, not just the test file most obviously related to the change.
+
 ### An allowlist entry owes a stale-check of its own
 
 A sweep with an exemption list has a failure mode the non-empty-haystack rule above does not
