@@ -170,4 +170,9 @@ test('scope (#3028): type(scope): prefix counted inside the 72-char budget; blan
       `scope ${JSON.stringify(bad)} must be rejected`,
     );
   }
+  assert.throws(() => composeSubject({ type: 'feature', title: 'Add the thing', number: 3028, scope: 'a'.repeat(60), releaseNote: 'N.' }),
+    (err) => err instanceof ComposeSubjectError && /scope "a+" is too long/.test(err.message));
+  const fortyScope = composeSubject({ type: 'feature', title: 'Add the thing that is long enough to need truncating here', number: 3028, scope: 'a'.repeat(40), releaseNote: 'N.' }).title;
+  assert.ok(fortyScope.startsWith(`feat(${'a'.repeat(40)}): `), fortyScope);
+  assert.ok(fortyScope.length <= SUBJECT_BUDGET, fortyScope);
 });

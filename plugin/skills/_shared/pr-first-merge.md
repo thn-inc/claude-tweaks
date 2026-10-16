@@ -289,8 +289,7 @@ auto-merged-this-week metric (`_shared/github-pr-scan.md` `triage-queue` item 3)
 three. `{issue-list}` is the record numbers — the manifest's `complete` specs only for a bundle
 (#2015; rest release via their own `never-started:`/`abandoned:` reason). `human-approved`:
 `dispatch/close-out.md`'s human-confirmed merge (that metric excludes it). Append
-`--scope {scope}` when the project's commit convention requires `type(scope):`. The composer
-writes
+`--scope {scope}` when the project's commit convention requires `type(scope):`. The composer writes
 the Conventional-Commits subject and one `Fixes #{n}` line per record. Same set the
 PR body's own `Fixes` lines already carry (`_shared/pr-checklist-refresh.md`'s pre-merge
 refresh), restated here because the merge commit's own message is what GitHub scans for
