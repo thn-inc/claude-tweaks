@@ -226,6 +226,32 @@ test('composeStamp omits preExisting when none is passed and carries it verbatim
   assert.deepStrictEqual(composeStamp({ ...args, preExisting }).preExisting, preExisting);
 });
 
+test('composeStamp sets dirty: false and carries generatedExempt verbatim when given; omits both the override and the key otherwise (#2987)', () => {
+  const args = {
+    report: { sha: 'abc123', dirty: true }, scope: 'full', fullSha: 'abc123', base: null, changedFiles: [],
+    suitesRun: ['tests'], flakyRetried: [], reportPath: '/r.json', at: 't',
+  };
+  const plain = composeStamp(args);
+  assert.strictEqual(plain.dirty, true, 'with no generatedExempt, dirty is report.dirty verbatim');
+  assert.strictEqual('generatedExempt' in plain, false);
+  const withNull = composeStamp({ ...args, generatedExempt: null });
+  assert.strictEqual(withNull.dirty, true);
+  assert.strictEqual('generatedExempt' in withNull, false);
+  const exempt = composeStamp({ ...args, generatedExempt: ['next-env.d.ts'] });
+  assert.strictEqual(exempt.dirty, false, 'a non-null generatedExempt forces dirty: false regardless of report.dirty');
+  assert.deepStrictEqual(exempt.generatedExempt, ['next-env.d.ts']);
+});
+
+test('readStamp returns null for a `generatedExempt` key the runner did not write — scalar, null, or a non-string entry — never a clean full pass (#2987)', () => {
+  const SHA = '0123456789abcdef0123456789abcdef01234567';
+  for (const generatedExempt of [true, 'x', null, ['ok', 7]]) {
+    const fsImpl = fakeFs({ [path.join('/g', STAMP_JSON_NAME)]: JSON.stringify({ sha: SHA, scope: 'full', fullSha: SHA, generatedExempt }) });
+    assert.strictEqual(readStamp('/g', fsImpl), null, JSON.stringify(generatedExempt));
+  }
+  const ok = fakeFs({ [path.join('/g', STAMP_JSON_NAME)]: JSON.stringify({ sha: SHA, scope: 'full', fullSha: SHA, generatedExempt: ['next-env.d.ts'] }) });
+  assert.deepStrictEqual(readStamp('/g', ok).generatedExempt, ['next-env.d.ts']);
+});
+
 test('readStamp returns null for a `preExisting` key the runner did not write — scalar, null or array — never a clean full pass (#3129)', () => {
   const SHA = '0123456789abcdef0123456789abcdef01234567';
   for (const preExisting of [true, 'x', null, []]) {

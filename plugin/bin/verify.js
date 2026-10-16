@@ -21,7 +21,9 @@ const {
 } = require('./lib/verify/extract');
 const { planRetry, runRetries, flakyCaveatLines } = require('./lib/verify/flaky');
 const { matchPreExisting } = require('./lib/verify/pre-existing');
-const { gitInfo, gitDir: resolveGitDir, composeReport, writeReportAtomic } = require('./lib/verify/report');
+const {
+  gitInfo, gitDir: resolveGitDir, composeReport, writeReportAtomic, dirtyFilePaths,
+} = require('./lib/verify/report');
 const {
   readStamp: readCountStamp, detectRegression, caveatLine,
   nextFlakyHits, flakyEscalations, escalationCaveatLine,
@@ -29,10 +31,12 @@ const {
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { composeStamp, writeStamp, readStamp: readVerifyStamp, anchorOf } = require('./lib/verify/stamp');
 const { readDeclaration } = require('./lib/verify/declaration');
+const { readSuiteStamps, writeSuiteStamps, composeSuiteCoverage } = require('./lib/verify/suite-stamp');
 const {
   changedFiles, resolveBase, usableAnchor, ChangedFilesError,
 } = require('./lib/verify/changed-files');
 const { selectScope } = require('./lib/verify/scope');
+const { globToRegExp } = require('./lib/issues/blast-radius');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { appendEvent } = require('./lib/hooks/context');
 
@@ -118,6 +122,30 @@ function stampStatus(parsed) {
   const resolvedOwnGitDir = ownGitDir ? realpathOrNull(ownGitDir) : null;
   const foreignGitDir = Boolean(parsed.gitDir)
     && (requestedGitDir === null || resolvedOwnGitDir === null || requestedGitDir !== resolvedOwnGitDir);
+  // --scope read once (#3002/#2987): feeds both the generated-path
+  // live-dirty exemption directly below and the per-suite composition
+  // further down — read here rather than twice.
+  const scopeRead = parsed.scope && !foreignGitDir ? readDeclaration(parsed.scope) : null;
+  const scopeDecl = scopeRead && scopeRead.ok ? scopeRead.decl : null;
+  // #2987: the SAME generated-path exemption bin/verify.js's own stamp-write
+  // gate applies, re-derived here against the LIVE tree rather than trusted
+  // from the stored stamp — a tree a declared check regenerates every run
+  // (a build rewriting `next-env.d.ts`) stays "dirty" forever in the working
+  // copy, so without this, `match`/`verifiedHead` below would never read
+  // true again after the one run that earned the exemption at write time.
+  // Only computed when the caller named a declaration (--scope) carrying a
+  // `generated` list; `effectiveDirty` falls back to the live boolean
+  // otherwise — no behavior change for a project that doesn't declare one.
+  let liveGeneratedExempt = null;
+  if (scopeDecl && scopeDecl.generated.length && gitDir && git.dirty) {
+    const dirty = dirtyFilePaths();
+    if (dirty !== null && dirty.length > 0) {
+      const generatedRes = scopeDecl.generated.map((g) => globToRegExp(g));
+      const nonGenerated = dirty.filter((f) => !generatedRes.some((re) => re.test(f)));
+      if (nonGenerated.length === 0) liveGeneratedExempt = dirty.slice().sort();
+    }
+  }
+  const effectiveDirty = liveGeneratedExempt !== null ? false : git.dirty;
   // A stamp recorded against a dirty tree (stored dirty !== false) can never
   // cover a verified-clean HEAD, regardless of the live tree's current state:
   // the write gate never consults dirty, so a stamp written mid-edit is
@@ -126,7 +154,7 @@ function stampStatus(parsed) {
   // — undefined is "not false", so it can never prove the tree was clean when
   // it was recorded either (review finding, refs #1921).
   const storedClean = present && stamp.dirty === false;
-  const stampCoversCleanHead = !foreignGitDir && storedClean && git.sha !== null && stamp.sha === git.sha && git.dirty === false;
+  const stampCoversCleanHead = !foreignGitDir && storedClean && git.sha !== null && stamp.sha === git.sha && effectiveDirty === false;
   // A baseline-adjudicated pass (#3043) carries a `baseline` marker: HEAD was
   // accepted with environment-baseline failures still red, so it is verified
   // (verifiedHead) but never a clean full pass — `match` keeps its strict
@@ -145,8 +173,29 @@ function stampStatus(parsed) {
   // whose anchor a history rewrite stranded. `match` keeps its strict
   // full-pass meaning; Skip-if-recent and /review Step 1.5 read this field.
   // a stamp with no scope (corrupt/hand-edited) is unknown coverage, never verified
-  const verifiedHead = stampCoversCleanHead
+  const verifiedHeadBySingleStamp = stampCoversCleanHead
     && (scope === 'full' || (KNOWN_SCOPES.has(scope) && usableAnchor({ stamp }) !== null));
+  // #3002: a second, independent path to verifiedHead — every check declared
+  // in a project's verify-scope.json has its own passing per-suite record at
+  // this exact clean HEAD, composed from one or more chunked `--stamp-suite`
+  // runs rather than one single full-set pass. Only computed when the caller
+  // named a declaration (--scope); omitted (null) otherwise, same as every
+  // other --scope-gated field in this codebase. Never consulted for a
+  // foreign --git-dir, same rule the single stamp's own match/verifiedHead
+  // already apply above.
+  let suiteComposed = null;
+  if (scopeDecl) {
+    const declaredChecks = [
+      ...(scopeDecl.checks.types !== null ? ['types'] : []),
+      ...(scopeDecl.checks.lint !== null ? ['lint'] : []),
+      ...scopeDecl.suites,
+    ];
+    const suiteStamps = gitDir ? readSuiteStamps(gitDir) : {};
+    suiteComposed = composeSuiteCoverage({
+      declaredChecks, suiteStamps, headSha: git.sha, headDirty: effectiveDirty,
+    });
+  }
+  const verifiedHead = verifiedHeadBySingleStamp || Boolean(suiteComposed && suiteComposed.complete);
   const status = {
     present,
     sha: present ? stamp.sha : null,
@@ -160,6 +209,15 @@ function stampStatus(parsed) {
     preExistingAdjudicated,
     reportPath: present && typeof stamp.reportPath === 'string' ? stamp.reportPath : null,
     legacy: present ? stamp.legacy === true : false,
+    suiteComposed,
+    // #2987: the stamp's own recorded exemption (what was dirty-but-exempt
+    // when it was written), and this call's own live re-check (null when no
+    // --scope with a `generated` list was given, or the live tree isn't
+    // dirty at all) — two different moments, surfaced separately rather than
+    // merged, since a live recheck can legitimately diverge from what the
+    // stamp recorded (a different generated file dirty now than at write time).
+    generatedExempt: present && Array.isArray(stamp.generatedExempt) ? stamp.generatedExempt : null,
+    liveGeneratedExempt,
   };
   process.stdout.write(`${JSON.stringify(status)}\n`);
   process.exitCode = 0;
@@ -173,11 +231,19 @@ function stampStatus(parsed) {
 // unresolvable base is exit 1 with a message, never an empty list.
 function changedFilesMode(parsed) {
   const ownGitDir = resolveGitDir();
+  // #3048: --ignore-stamp skips the stamp anchor entirely — resolveBase then
+  // falls straight through to --base / the --integration-branch merge-base,
+  // the same way it already does when there is no usable stamp at all. The
+  // stamp is still read for the warning-footer sha below (unaffected), but
+  // never passed into base resolution on this path.
   const priorStamp = ownGitDir ? readVerifyStamp(ownGitDir) : null;
   let base;
   try {
     base = resolveBase({
-      stamp: priorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base, requireNonDegenerate: true,
+      stamp: parsed.ignoreStamp ? null : priorStamp,
+      integrationBranch: parsed.integrationBranch,
+      base: parsed.base,
+      requireNonDegenerate: true,
     });
   } catch (err) {
     if (!(err instanceof ChangedFilesError)) throw err;
@@ -287,6 +353,15 @@ async function main() {
     }
     decl = read.decl;
 
+    // #3002 Gotchas: --stamp-suite with no declared check list to compose
+    // against (the file is absent — `read.missing`) would write records
+    // nothing can ever reach `complete: true` for. Refuse with a clear
+    // message rather than guess at a declared list.
+    if (parsed.stampSuite && decl === null) {
+      scopeUsageExit(`--stamp-suite: no declaration at ${parsed.scope} to compose against (${read.missing ? 'file not found' : 'empty declaration'})`);
+      return;
+    }
+
     // AC5 (review L13): the --cmd-name-vs-declaration check only needs decl,
     // so it runs immediately after the declaration is read — before any
     // anchor/base resolution below, so a bad --cmd name never pays for a git
@@ -301,78 +376,94 @@ async function main() {
       }
     }
 
-    // M5 (review): the anchor always reads THIS checkout's OWN git dir,
-    // never an explicit --git-dir — the identical rule stampStatus() applies
-    // above (a foreign --git-dir's stamp is read but never trusted): a
-    // sibling checkout must never borrow another repo's pass as its own.
-    // (ownGitDir is resolved once, above, alongside the default log-dir.)
-    priorStamp = ownGitDir ? readVerifyStamp(ownGitDir) : null;
+    // #3002: --stamp-suite reads the declaration for the same name-vs-
+    // declaration check just above and for the declared-check-list
+    // composition at --stamp-status time, but deliberately skips everything
+    // below — the anchor/base resolution, selectScope's file-based
+    // selection, and H2's "every selected check must be present" validation
+    // all assume this ONE invocation covers whatever the selection decided
+    // needs to run. A chunked run is the opposite: each invocation covers an
+    // arbitrary, caller-chosen subset of the declared checks, with no
+    // changed-file selection involved at all — selectScope would otherwise
+    // force mode 'full' (no prior single-stamp anchor ever exists for a
+    // chunked project) and then H2 would demand every declared check appear
+    // in THIS invocation's --cmd list, defeating the whole point of
+    // chunking. `cmds` stays `parsed.cmds` unchanged; `sel`/`resolvedBase`/
+    // `files` stay at their no-scope defaults.
+    if (!parsed.stampSuite) {
+      // M5 (review): the anchor always reads THIS checkout's OWN git dir,
+      // never an explicit --git-dir — the identical rule stampStatus() applies
+      // above (a foreign --git-dir's stamp is read but never trusted): a
+      // sibling checkout must never borrow another repo's pass as its own.
+      // (ownGitDir is resolved once, above, alongside the default log-dir.)
+      priorStamp = ownGitDir ? readVerifyStamp(ownGitDir) : null;
 
-    try {
-      resolvedBase = resolveBase({ stamp: priorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base });
-    } catch (err) {
-      if (!(err instanceof ChangedFilesError)) throw err;
-      scopeUsageExit(`--scope: ${err.message}`);
-      return;
-    }
-
-    // H4 (review): an explicit --base that resolves to a commit other than
-    // the stamp's own anchor is a contradiction, not a silent override — the
-    // caller almost certainly meant the anchor, and running the diff against
-    // the wrong base would silently under- or over-verify. usableAnchor is
-    // the exact same "is this anchor still usable" test resolveBase's own
-    // anchor-first path applies above — a bare rev-parse with no ancestor
-    // check (the earlier version of this block) could reject a --base that
-    // is legitimately correct once history was rewritten and the old anchor
-    // stopped being an ancestor of HEAD, even though it still resolves to a
-    // real (now-stranded) commit (#1922 re-review NEW-1).
-    // Computed once, reused by the H4 --base check right below and by the
-    // scope selection further down: a stamp whose anchor is not a usable
-    // ancestor of HEAD (a rewritten/rebased history) must never reach
-    // selectScope as if it were still valid — that would stamp a non-full
-    // run with `base` pointing at today's merge-base but `fullSha` still
-    // naming the stale anchor, breaking the base === fullSha invariant a
-    // full run relies on. Passing `stamp: null` instead forces mode 'full'
-    // (#1922 review finding: stale anchor must force a full run).
-    const anchorSha = usableAnchor({ stamp: priorStamp });
-    if (parsed.base) {
-      if (anchorSha && resolvedBase !== anchorSha) {
-        scopeUsageExit(`--scope: --base ${parsed.base} conflicts with the stamp anchor ${anchorSha.slice(0, 9)}; omit --base (pass --integration-branch instead) or clear the stamp`);
+      try {
+        resolvedBase = resolveBase({ stamp: priorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base });
+      } catch (err) {
+        if (!(err instanceof ChangedFilesError)) throw err;
+        scopeUsageExit(`--scope: ${err.message}`);
         return;
       }
-    }
 
-    files = changedFiles({ base: resolvedBase }).files;
-    sel = selectScope({ decl, files, stamp: anchorSha ? priorStamp : null });
-    if (decl) {
-      cmds = parsed.cmds.filter((c) => {
-        if (c.name === 'types' || c.name === 'lint') return sel.static;
-        if (sel.mode === 'tool-scoped') return false;
-        return sel.suites === '*' || sel.suites.includes(c.name);
-      });
-      if (sel.mode === 'tool-scoped') {
-        const testsEnv = envOf('tests');
-        cmds = cmds.concat([{
-          name: 'tests', command: decl.checks.tests.replace(/\{base\}/g, resolvedBase), ...(testsEnv ? { env: testsEnv } : {}),
-        }]);
+      // H4 (review): an explicit --base that resolves to a commit other than
+      // the stamp's own anchor is a contradiction, not a silent override — the
+      // caller almost certainly meant the anchor, and running the diff against
+      // the wrong base would silently under- or over-verify. usableAnchor is
+      // the exact same "is this anchor still usable" test resolveBase's own
+      // anchor-first path applies above — a bare rev-parse with no ancestor
+      // check (the earlier version of this block) could reject a --base that
+      // is legitimately correct once history was rewritten and the old anchor
+      // stopped being an ancestor of HEAD, even though it still resolves to a
+      // real (now-stranded) commit (#1922 re-review NEW-1).
+      // Computed once, reused by the H4 --base check right below and by the
+      // scope selection further down: a stamp whose anchor is not a usable
+      // ancestor of HEAD (a rewritten/rebased history) must never reach
+      // selectScope as if it were still valid — that would stamp a non-full
+      // run with `base` pointing at today's merge-base but `fullSha` still
+      // naming the stale anchor, breaking the base === fullSha invariant a
+      // full run relies on. Passing `stamp: null` instead forces mode 'full'
+      // (#1922 review finding: stale anchor must force a full run).
+      const anchorSha = usableAnchor({ stamp: priorStamp });
+      if (parsed.base) {
+        if (anchorSha && resolvedBase !== anchorSha) {
+          scopeUsageExit(`--scope: --base ${parsed.base} conflicts with the stamp anchor ${anchorSha.slice(0, 9)}; omit --base (pass --integration-branch instead) or clear the stamp`);
+          return;
+        }
       }
-    }
 
-    // H2 (review): a filtered check set that leaves out a name the selection
-    // itself requires is a usage error, not a silently-partial run — every
-    // suite/static check the selection says must run has to be among the
-    // caller's --cmd names (minus `tests` under tool-scoped, which is
-    // synthesized from decl.checks.tests rather than passed via --cmd).
-    if (decl && sel.mode !== 'none') {
-      const suiteNames = sel.suites === '*' ? decl.suites : sel.suites;
-      const staticNames = sel.static ? ['types', 'lint'].filter((k) => decl.checks[k] !== null) : [];
-      let required = [...suiteNames, ...staticNames];
-      if (sel.mode === 'tool-scoped') required = required.filter((n) => n !== 'tests');
-      const have = new Set(parsed.cmds.map((c) => c.name));
-      const missing = required.filter((n) => !have.has(n));
-      if (missing.length) {
-        scopeUsageExit(`--scope: mode ${sel.mode} requires --cmd for: ${missing.join(', ')}`);
-        return;
+      files = changedFiles({ base: resolvedBase }).files;
+      sel = selectScope({ decl, files, stamp: anchorSha ? priorStamp : null });
+      if (decl) {
+        cmds = parsed.cmds.filter((c) => {
+          if (c.name === 'types' || c.name === 'lint') return sel.static;
+          if (sel.mode === 'tool-scoped') return false;
+          return sel.suites === '*' || sel.suites.includes(c.name);
+        });
+        if (sel.mode === 'tool-scoped') {
+          const testsEnv = envOf('tests');
+          cmds = cmds.concat([{
+            name: 'tests', command: decl.checks.tests.replace(/\{base\}/g, resolvedBase), ...(testsEnv ? { env: testsEnv } : {}),
+          }]);
+        }
+      }
+
+      // H2 (review): a filtered check set that leaves out a name the selection
+      // itself requires is a usage error, not a silently-partial run — every
+      // suite/static check the selection says must run has to be among the
+      // caller's --cmd names (minus `tests` under tool-scoped, which is
+      // synthesized from decl.checks.tests rather than passed via --cmd).
+      if (decl && sel.mode !== 'none') {
+        const suiteNames = sel.suites === '*' ? decl.suites : sel.suites;
+        const staticNames = sel.static ? ['types', 'lint'].filter((k) => decl.checks[k] !== null) : [];
+        let required = [...suiteNames, ...staticNames];
+        if (sel.mode === 'tool-scoped') required = required.filter((n) => n !== 'tests');
+        const have = new Set(parsed.cmds.map((c) => c.name));
+        const missing = required.filter((n) => !have.has(n));
+        if (missing.length) {
+          scopeUsageExit(`--scope: mode ${sel.mode} requires --cmd for: ${missing.join(', ')}`);
+          return;
+        }
       }
     }
   }
@@ -631,6 +722,24 @@ async function main() {
     && !unchangedHeadNoop && !emptyNonNoneRun
   ) {
     const suitesRun = results.filter((c) => c.name !== 'types' && c.name !== 'lint').map((c) => c.name);
+    // #2987: a dirty tree never disqualifies the pass stamp when every dirty
+    // path matches a declared `.claude-tweaks/verify-scope.json` `generated`
+    // glob (a check that regenerates a tracked file — e.g. a build rewriting
+    // `next-env.d.ts`). `decl` is only ever non-null when --scope named a
+    // readable declaration (same gate `generated` is parsed under); a run
+    // with no declaration, or a declaration with no `generated` entries,
+    // computes nothing here and behaves exactly as before. report.json's
+    // own `dirty` (git.dirty, already written) is never touched — only the
+    // stamp's copy is affected, via composeStamp's `generatedExempt` param.
+    let generatedExempt = null;
+    if (decl && decl.generated.length && git.dirty) {
+      const dirty = dirtyFilePaths();
+      if (dirty !== null && dirty.length > 0) {
+        const generatedRes = decl.generated.map((g) => globToRegExp(g));
+        const nonGenerated = dirty.filter((f) => !generatedRes.some((re) => re.test(f)));
+        if (nonGenerated.length === 0) generatedExempt = dirty.slice().sort();
+      }
+    }
     const stamp = composeStamp({
       report, scope: mode,
       fullSha: mode === 'full' ? git.sha : sel.base,
@@ -652,6 +761,12 @@ async function main() {
       preExisting: preExistingPass
         ? { declared: preExistingAdjudicated.declared, matched: preExistingAdjudicated.matched }
         : (mode !== 'full' && priorStamp && priorStamp.preExisting && priorStamp.fullSha === sel.base ? priorStamp.preExisting : null),
+      // #2987: unlike `baseline`/`preExisting` above, this is never carried
+      // forward from a prior stamp — it feeds this run's OWN `dirty`
+      // computation (composeStamp), and a prior full pass's exempted paths
+      // say nothing about whether THIS run's tree is dirty for an unrelated
+      // reason. Always freshly computed (or null) for the run being stamped.
+      generatedExempt,
     });
     // H1 (review): the legacy bare-SHA twin only ever names a real FULL
     // pass — a narrowed run leaves it untouched rather than repointing it
@@ -661,6 +776,30 @@ async function main() {
     // repoints the twin: an older reader of the bare file must not read it
     // as one.
     try { writeStamp(gitDir, stamp, { legacy: mode === 'full' && !adjudicatedPass && !preExistingPass }); } catch { /* best-effort; next --stamp-status simply reads absent */ }
+  }
+
+  // Per-suite pass records (#3002): independent of the single full-set
+  // stamp above — written whenever `--stamp-suite` was passed (validated to
+  // require `--scope`, so `decl` is always non-null here), regardless of
+  // `fullSet`/`--no-stamp`. This is exactly what lets a chunked run earn
+  // partial credit: each chunk's own `--cmd` checks that passed get a record
+  // of their own, composed later by `--stamp-status --scope <path>`. Never
+  // written against a dirty tree or without a resolvable sha/gitDir — same
+  // fail-toward-nothing posture the full stamp's own write-gate applies
+  // (`!git.dirty` rather than silently stamping a tree that doesn't match
+  // what it claims to describe). A check this run did NOT include is simply
+  // left alone (composeSuiteCoverage treats "no record" as "not covered");
+  // a check this run ran and FAILED has its existing record cleared, since a
+  // fresh failure at this HEAD is more current information than a stale pass.
+  if (parsed.stampSuite && gitDir && git.sha && git.dirty === false && !parsed.gitDir) {
+    const updates = {};
+    for (const check of results) {
+      if (check.skipped) continue;
+      updates[check.name] = check.exitCode === 0
+        ? { sha: git.sha, dirty: false, at: new Date().toISOString(), reportPath: path.resolve(jsonPath) }
+        : null;
+    }
+    try { writeSuiteStamps(gitDir, updates); } catch { /* best-effort; next --stamp-status simply sees no record for these checks */ }
   }
 
   const lines = [];

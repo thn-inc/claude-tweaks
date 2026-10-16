@@ -32,11 +32,18 @@ const SHA_RE = /^[0-9a-f]{40}$/;
 // rule appendEvent states in bin/lib/hooks/context.js).
 function composeStamp({
   report, scope, fullSha, base, changedFiles, suitesRun, flakyRetried, reportPath, at, baseline = null,
-  preExisting = null,
+  preExisting = null, generatedExempt = null,
 }) {
   const stamp = {
     sha: report.sha,
-    dirty: report.dirty,
+    // #2987: `generatedExempt` is computed by bin/verify.js from real git
+    // state (the dirty paths left after filtering out declared `generated`
+    // globs) — a legitimate filtered truth, not a caller override of
+    // report.dirty (report.json's own `dirty` field, which other readers
+    // rely on meaning "any uncommitted change", is never touched). Non-null
+    // only when every dirty path was exempted, so its presence always means
+    // dirty: false here.
+    dirty: generatedExempt !== null ? false : report.dirty,
     scope,
     fullSha,
     base,
@@ -54,6 +61,9 @@ function composeStamp({
   // matched }) — the declared verify-scope.json `preExisting` allowlist that
   // covered this run's entire failing-file set.
   if (preExisting !== null) stamp.preExisting = preExisting;
+  // #2987: the declared-generated paths that were dirty at stamp time —
+  // auditable record of what the dirty-gate exemption actually waived.
+  if (generatedExempt !== null) stamp.generatedExempt = generatedExempt;
   return stamp;
 }
 
@@ -113,6 +123,11 @@ function readStamp(gitDir, fsImpl = fs) {
     // baseline guard above).
     if (parsed.preExisting !== undefined
       && (parsed.preExisting === null || typeof parsed.preExisting !== 'object' || Array.isArray(parsed.preExisting))) return null;
+    // A `generatedExempt` key the runner did not write is malformed the same
+    // way — read as absent, never as a clean full pass (#2987, mirrors
+    // #3043/#3129's guards above).
+    if (parsed.generatedExempt !== undefined
+      && (!Array.isArray(parsed.generatedExempt) || parsed.generatedExempt.some((p) => typeof p !== 'string'))) return null;
     return parsed;
   }
   let bare;

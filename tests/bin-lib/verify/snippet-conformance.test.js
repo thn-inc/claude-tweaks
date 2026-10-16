@@ -30,13 +30,27 @@ function extractSnippet() {
 }
 
 // The one fenced bash block that runs bin/verify.js with --scope (#1923's
-// scoped re-verify invocation).
+// scoped re-verify invocation) — excludes the separate chunked --stamp-suite
+// block (#3002), which carries its own --scope too but is pinned on its own
+// by extractStampSuiteSnippet() below.
 function extractScopedSnippet() {
   const blocks = [...DOC.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]);
-  const hits = blocks.filter((b) => b.includes('bin/verify.js') && b.includes('--scope'));
+  const hits = blocks.filter((b) => b.includes('bin/verify.js') && b.includes('--scope') && !b.includes('--stamp-suite'));
   assert.strictEqual(hits.length, 1,
     `expected exactly one fenced bin/verify.js --scope invocation, found ${hits.length}`);
   return hits[0].trim();
+}
+
+// The one fenced bash block with two chunked --stamp-suite invocations
+// (#3002's chunked-verification example) — each line is its own complete
+// `verify.js` call and is pinned separately below, since snippetArgv's
+// single-invocation split would otherwise mash both lines' argv together.
+function extractStampSuiteSnippet() {
+  const blocks = [...DOC.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]);
+  const hits = blocks.filter((b) => b.includes('bin/verify.js') && b.includes('--stamp-suite'));
+  assert.strictEqual(hits.length, 1,
+    `expected exactly one fenced bin/verify.js --stamp-suite block, found ${hits.length}`);
+  return hits[0].trim().split('\n').filter(Boolean);
 }
 
 function extractStampStatusSnippet() {
@@ -119,6 +133,23 @@ test('the scoped re-verify invocation parses clean through the real arg parser a
 test('the scoped snippet tokenizer can go red on an injected unknown flag (#1923)', () => {
   const mutated = extractScopedSnippet().replace('{ref}', 'main') + ' --bogus';
   assert.throws(() => parseArgs(snippetArgv(mutated)), UsageError);
+});
+
+test('the chunked --stamp-suite snippet parses clean through the real arg parser, one line per chunk (#3002)', () => {
+  const lines = extractStampSuiteSnippet();
+  assert.strictEqual(lines.length, 2, 'expected exactly two chunk invocations in the snippet');
+  for (const line of lines) {
+    const parsed = parseArgs(snippetArgv(line));
+    assert.strictEqual(parsed.scope, '.claude-tweaks/verify-scope.json');
+    assert.strictEqual(parsed.noStamp, true);
+    assert.strictEqual(parsed.stampSuite, true);
+    assert.ok(parsed.cmds.length >= 1, 'each chunk must still pass at least one --cmd');
+  }
+});
+
+test('the chunked snippet tokenizer can go red on an injected unknown flag (#3002)', () => {
+  const [firstLine] = extractStampSuiteSnippet();
+  assert.throws(() => parseArgs(snippetArgv(`${firstLine} --bogus`)), UsageError);
 });
 
 test('agents never write the stamp: no redirect into claude-tweaks-verify-pass remains, and the foreground rule is stated (#1921 AC6)', () => {

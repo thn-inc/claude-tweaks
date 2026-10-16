@@ -10,9 +10,9 @@ const USAGE =
   + '[--log-dir <dir>] [--count-stamp <path>] [--no-stamp] [--git-dir <dir>] [--run <dir>] '
   + '[--cwd <dir>] '
   + '[--baseline <ref> --baseline-cmd <name>=<template-with-{file}> ...] '
-  + '[--scope <path> [--base <ref>] [--integration-branch <name>]] '
-  + '| verify.js --stamp-status [--git-dir <dir>] '
-  + '| verify.js --changed-files [--base <ref>] [--integration-branch <name>]\n'
+  + '[--scope <path> [--base <ref>] [--integration-branch <name>]] [--stamp-suite] '
+  + '| verify.js --stamp-status [--git-dir <dir>] [--scope <path>] '
+  + '| verify.js --changed-files [--base <ref>] [--integration-branch <name>] [--ignore-stamp]\n'
   // #2341: exactly one --cmd name ("types", alongside "lint") gets the
   // fail-fast-before-tests tier — a monorepo with N independent typecheck
   // commands should either combine them into one compound
@@ -84,6 +84,8 @@ function tokenize(argv) {
   let base = null;
   let integrationBranch = null;
   let changedFiles = false;
+  let ignoreStamp = false;
+  let stampSuite = false;
   let run = null;
   let cwd = null;
   let baseline = null;
@@ -93,6 +95,8 @@ function tokenize(argv) {
     if (flag === '--stamp-status') { stampStatus = true; continue; }
     if (flag === '--no-stamp') { noStamp = true; continue; }
     if (flag === '--changed-files') { changedFiles = true; continue; }
+    if (flag === '--ignore-stamp') { ignoreStamp = true; continue; }
+    if (flag === '--stamp-suite') { stampSuite = true; continue; }
     if (VALUE_FLAGS.has(flag)) {
       const value = argv[i + 1];
       i++;
@@ -138,7 +142,7 @@ function tokenize(argv) {
   }
   return {
     cmds, cmdEnvs, cmdTimeouts, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch,
-    changedFiles, run, cwd, baseline, baselineCmds,
+    changedFiles, ignoreStamp, stampSuite, run, cwd, baseline, baselineCmds,
   };
 }
 
@@ -186,21 +190,35 @@ function attachCmdEnvAndTimeout(raw) {
 // the public result never carries them as top-level keys.
 function toResult(raw) {
   const {
-    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run,
-    cwd, baseline, baselineCmds,
+    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles,
+    ignoreStamp, stampSuite, run, cwd, baseline, baselineCmds,
   } = raw;
   return {
-    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run,
-    cwd, baseline, baselineCmds,
+    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles,
+    ignoreStamp, stampSuite, run, cwd, baseline, baselineCmds,
   };
 }
 
 const BASELINE_MODE_CONFLICT = '--baseline/--baseline-cmd apply to a check run — not to --stamp-status or --changed-files';
 const RUN_MODE_CONFLICT = '--run applies to a check run — not to --stamp-status or --changed-files';
 const CWD_MODE_CONFLICT = '--cwd applies to a check run — not to --stamp-status or --changed-files';
+// #3048: --ignore-stamp only ever means anything alongside --changed-files —
+// the other two modes (a check run, --stamp-status) reject it the same way
+// they reject --run/--cwd above, rather than silently ignoring it.
+const IGNORE_STAMP_MODE_CONFLICT = '--ignore-stamp applies only to --changed-files';
+// #3002: --stamp-suite only ever means anything alongside a check run's own
+// --scope (it writes per-suite records for THIS run's checks against the
+// declared list) — the two read-only modes reject it, same posture as
+// --ignore-stamp above.
+const STAMP_SUITE_MODE_CONFLICT = '--stamp-suite applies only to a check run, alongside --scope';
 
 // --stamp-status (#1921): a read-only mode needing no --cmd at all. Every
 // run-scoped flag is a usage error here, not a silently ignored one.
+// #3002: --scope is the one exception (new) — it names the declaration
+// --stamp-status composes the per-suite `verifiedHead` verdict against;
+// --base/--integration-branch still mean nothing here (they only ever
+// affect which commit a diff is measured from, and composing per-suite
+// coverage needs only the declared check list, never a diff).
 function validateStampStatus(raw) {
   attachCmdEnvAndTimeout(raw);
   // #3043: checked first so a read-only mode carrying a baseline flag gets
@@ -208,18 +226,23 @@ function validateStampStatus(raw) {
   if (raw.baseline !== null || raw.baselineCmds.length) throw new UsageError(BASELINE_MODE_CONFLICT);
   if (raw.cmds.length) throw new UsageError('--stamp-status takes no --cmd');
   // L12 (review, #1922): --base/--integration-branch only mean anything
-  // alongside --scope, and --stamp-status takes none of the three — each
-  // combination is a usage error, not a silently ignored flag.
-  if (raw.scope !== null || raw.base !== null || raw.integrationBranch !== null) {
-    throw new UsageError('--stamp-status takes no --scope/--base/--integration-branch');
+  // alongside --scope in the check-run mode; --stamp-status never consults
+  // either, --scope or not.
+  if (raw.base !== null || raw.integrationBranch !== null) {
+    throw new UsageError('--stamp-status takes no --base/--integration-branch');
   }
   if (raw.run !== null) throw new UsageError(RUN_MODE_CONFLICT);
   if (raw.cwd !== null) throw new UsageError(CWD_MODE_CONFLICT);
+  if (raw.ignoreStamp) throw new UsageError(IGNORE_STAMP_MODE_CONFLICT);
+  if (raw.stampSuite) throw new UsageError(STAMP_SUITE_MODE_CONFLICT);
   return toResult(raw);
 }
 
 // --changed-files (#1923): a read-only mode needing no --cmd/--scope, but
 // (unlike --stamp-status) --base/--integration-branch are meaningful here.
+// #3048: --ignore-stamp is meaningful here too — it skips the stamp anchor
+// in resolveBase, so the caller gets the full --base/--integration-branch
+// diff instead of only the changes since the last verification stamp.
 function validateChangedFiles(raw) {
   attachCmdEnvAndTimeout(raw);
   if (raw.baseline !== null || raw.baselineCmds.length) throw new UsageError(BASELINE_MODE_CONFLICT);
@@ -228,6 +251,7 @@ function validateChangedFiles(raw) {
   if (raw.gitDir !== null) throw new UsageError('--changed-files takes no --git-dir');
   if (raw.run !== null) throw new UsageError(RUN_MODE_CONFLICT);
   if (raw.cwd !== null) throw new UsageError(CWD_MODE_CONFLICT);
+  if (raw.stampSuite) throw new UsageError(STAMP_SUITE_MODE_CONFLICT);
   return toResult(raw);
 }
 
@@ -243,10 +267,12 @@ function rejectBothReadOnlyModes(raw) {
   throw new UsageError('--changed-files and --stamp-status are separate modes');
 }
 
+
 // The default mode: one or more --cmd checks, plus --cmd-env/--cmd-timeout/
 // --baseline/--scope — none of which mean anything in the two read-only
 // modes above, so they're validated only here.
 function validateCheckRun(raw) {
+  if (raw.ignoreStamp) throw new UsageError(IGNORE_STAMP_MODE_CONFLICT);
   if (raw.cmds.length === 0) throw new UsageError('at least one --cmd <name>=<command> is required');
   attachCmdEnvAndTimeout(raw);
   if (raw.baseline !== null && raw.baselineCmds.length === 0) throw new UsageError('--baseline requires at least one --baseline-cmd');
@@ -265,6 +291,11 @@ function validateCheckRun(raw) {
   if (!raw.scope && (raw.base !== null || raw.integrationBranch !== null)) {
     throw new UsageError('--base and --integration-branch require --scope or --changed-files');
   }
+  // #3002: --stamp-suite with no declaration has no declared check list to
+  // record progress against — refuse with a clear message rather than write
+  // records nothing will ever compose (Gotchas: "per-suite mode should
+  // refuse there with a clear message rather than guess").
+  if (raw.stampSuite && !raw.scope) throw new UsageError('--stamp-suite requires --scope');
   return toResult(raw);
 }
 
