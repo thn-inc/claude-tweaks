@@ -14,7 +14,7 @@ apply to the type of change" rule and the severity-floor table.
 ## Composed dispatch-contract bundle (#2019)
 
 > Steps 3, 3.5, and 3.6 all cite the Subagent Contract's dispatch-facing sections (Working
-> Directory Discipline, Foreground Execution Discipline, Model Selection, Failed-agent retrieval,
+> Directory Discipline, Foreground Execution Discipline, Read-only Reviewer Discipline, Model Selection, Failed-agent retrieval,
 > the fan-out section) plus the run-directory resolution algorithm — never the whole `_shared/subagent-output-contract.md` or
 > `_shared/pipeline-run-dir.md` files, which carry other content these steps never read. When a
 > pipeline run directory exists, compose the narrower bundle once, before Step 3's first dispatch:
@@ -55,7 +55,9 @@ At `xhigh` and `max`, append the resolver's `effortLine` output to each dispatch
 
 > **Working Directory Discipline:** Applies to every `Task()` dispatch in Step 3, Step 3.5, and Step 3.6 (reproduction, debate, refutation, and gap-sweep agents). Apply the Working Directory Discipline rule from the composed review-dispatch bundle (or, standalone, `_shared/subagent-dispatch-core.md`) before any git or path-sensitive command in the agent prompt. See also `_shared/git-discipline.md`.
 >
-> **Foreground Execution Discipline:** Applies to the same dispatches. Any lens, debate, refutation, or gap-sweep agent that runs a verification command (rather than only reading/reporting) is bound by that same bundle's (or, standalone, `_shared/subagent-dispatch-core.md`'s) Foreground Execution Discipline section — it never backgrounds a check and ends its turn waiting for a Monitor/background-task notification, since none reaches a dispatched agent that way; see that section rather than restating it here.
+> **Read-only Reviewer Discipline:** Applies to the same dispatches. Lens, debate, refutation, and gap-sweep agents read and report only: they never run the project's test suites, builds, dev servers, or e2e runners, because mechanical verification belongs to `/claude-tweaks:test`. Inline the `READ-ONLY REVIEW:` line from that bundle's (or, standalone, `_shared/subagent-dispatch-core.md`'s) Read-only Reviewer Discipline section verbatim into every prompt, alongside the scope and `Path:Line` instructions, and never inside the byte-identical Calibration/Output block below.
+>
+> **Foreground Execution Discipline:** Applies to the same dispatches. The one command a reviewer may run, a single targeted test case for lens 3f's Vacuity-evidence diagnostic, runs in the foreground per that same bundle's (or, standalone, `_shared/subagent-dispatch-core.md`'s) Foreground Execution Discipline section. It never backgrounds a check and ends its turn waiting for a Monitor/background-task notification, since none reaches a dispatched agent that way.
 
 > **Full diff content is read here, in the lens agents — not in the main thread.** Step 2 deliberately holds only `--stat`/`--name-only`, so this dispatch is the first point at which actual diff content is read. Give each lens agent the shared context bundle's path (built below) plus the diff *scope* — the base/branch refs, or the own-work file set when the Merge-Provenance Check found merge commits. Do not inline diff text into the prompts from the main thread: every dispatched agent has its own context window, and re-inlining the diff N times reintroduces the cost Step 2 exists to avoid.
 
