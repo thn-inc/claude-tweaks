@@ -141,16 +141,10 @@ for (const [label, toGlob] of [
   });
 }
 
-// The two tests above only exercise the posix absolute-path branch, even on
-// a Windows CI runner: on posix, forward slashes are already the only
-// separator, so "the platform-native separator" and "forward slashes
-// throughout" produce byte-identical input, and #3040's drive-root fix
-// (tools/upstream-drift/checks.js's splitGlobPattern) never runs its
-// win32-only branch under ubuntu-only CI. `splitGlobPattern` takes an
-// injectable path flavor precisely so its win32 drive-root handling can be
-// pinned here without a real Windows process — `path.win32` is
-// OS-independent by construction, so these assertions hold identically on
-// Linux, macOS and Windows.
+// Under ubuntu-only CI the two tests above both take the posix branch (their
+// inputs are byte-identical there), so #3040's win32 drive-root split never
+// runs. Passing `path.win32` — OS-independent by construction — pins that
+// branch on any host.
 for (const [label, glob, expectedBaseDir] of [
   ['a backslash-separated drive-root glob', 'C:\\slotA\\impeccable\\3.5.0\\.claude-plugin\\plugin.json', 'C:\\'],
   ['a forward-slash drive-root glob', 'C:/slotA/impeccable/3.5.0/.claude-plugin/plugin.json', 'C:/'],

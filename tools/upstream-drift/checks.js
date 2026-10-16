@@ -87,14 +87,9 @@ function expandGlobSegments(baseDir, segments, failures) {
 // split on either there. Posix keeps `/` alone — a backslash is a legal
 // filename character.
 //
-// `pathFlavor` is an injectable path module (`path.win32` / `path.posix`),
-// defaulting to the platform-native `path` so production behavior is exactly
-// what it was before this seam existed. Node's `path.win32`/`path.posix`
-// namespaces are OS-independent by construction, so passing `path.win32`
-// here exercises the drive-root branch under test on any host OS, including
-// Linux CI — this is the ONLY way that branch is reachable without an actual
-// Windows process, since the default `path` module's behavior always follows
-// the host platform.
+// `pathFlavor` defaults to the platform-native `path`. Tests pass `path.win32`
+// — OS-independent by construction — to reach the drive-root branch on
+// Linux CI, where the default `path` never takes it.
 function splitGlobPattern(pattern, pathFlavor = path) {
   const baseDir = pathFlavor.isAbsolute(pattern) ? pathFlavor.parse(pattern).root : '.';
   const rest = baseDir === '.' ? pattern : pattern.slice(baseDir.length);
