@@ -1,5 +1,5 @@
-// plugin/bin/lib/plan-audit/checks.js — Checks A/B/C/D plus the headroom check
-// for bin/plan-audit.js (#903). Mechanizes plan-audit.md's prose checks;
+// plugin/bin/lib/plan-audit/checks.js — Checks A/B/C/D, the headroom check,
+// and Check E (#3099) for bin/plan-audit.js (#903). Mechanizes plan-audit.md's prose checks;
 // policy handling (scope-creep, scope-keywords-required) stays at the skill
 // layer — this module only reports facts.
 'use strict';
@@ -10,6 +10,7 @@ const { execFileSync } = require('node:child_process');
 const {
   CEILING_BYTES, composedBytesReport, COMPOSED_STEP_EXCEPTIONS,
 } = require('../skill-audit/context-cost');
+const { extractAcceptanceClauses, extractCoverageSources } = require('./parser');
 
 const WALK_EXCLUDES = new Set(['.git', 'node_modules', '.claude', '.claude-tweaks']);
 
@@ -528,7 +529,79 @@ function checkD(text) {
   return result;
 }
 
+// ── Check E — Acceptance-criterion clause coverage (#3099) ─────────────────
+// Warn-only: `ok` is always true, so Check E never changes the exit code —
+// clause splitting is a prose heuristic, and a hard gate on a heuristic would
+// block builds on its false positives. Per clause, in order: a waiver line
+// wins (`waived`); else the clause id cited in a test step (`via:
+// 'test-step'`) or a table row (`via: 'coverage-map'`); else the clause's
+// text quoted there, compared backtick-stripped, whitespace-collapsed,
+// case-folded, trailing punctuation dropped (`via: 'quoted-text'`); else
+// `uncovered`. An id matches only whole — `AC2.1` never matches inside
+// `AC2.10` — and a bare item number (`AC2`) covers nothing. `unparsed` passes
+// through from the spec parser untouched: a clause it could not read is
+// never reported as covered.
+function normalizeQuote(text) {
+  return text.replace(/`/g, '').replace(/\s+/g, ' ').trim().toLowerCase().replace(/[.;:,]+$/, '');
+}
+
+// Whole-branch review finding on #3099: the quoted-text fallback was a bare
+// substring `includes()` with no word boundary and no minimum length, so a
+// short clause ("Last." -> normalized "last") was falsely "covered" by any
+// test step containing those letters even inside a longer word ("blast"). A
+// clause under this word count is simply ineligible for the fallback at all
+// (it can still be covered by id citation or a waiver — this guard never by
+// itself marks anything uncovered); an eligible clause must then match on a
+// word boundary, never as a substring of a longer token.
+const QUOTE_FALLBACK_MIN_WORDS = 3;
+
+function quoteMatchesWholeWord(haystack, quote) {
+  if (quote.split(' ').filter(Boolean).length < QUOTE_FALLBACK_MIN_WORDS) return false;
+  const escaped = quote.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${escaped}\\b`).test(haystack);
+}
+
+function checkE(specText, planText) {
+  const { clauses, unparsed } = extractAcceptanceClauses(specText);
+  const { waivers, testSteps, mapRows } = extractCoverageSources(planText);
+  const reasons = new Map();
+  for (const { id, reason } of waivers) if (!reasons.has(id)) reasons.set(id, reason);
+  const stepText = testSteps.join('\n');
+  const rowText = mapRows.join('\n');
+  const stepQuote = normalizeQuote(stepText);
+  const rowQuote = normalizeQuote(rowText);
+  const covered = [];
+  const uncovered = [];
+  const waived = [];
+  for (const { id, text } of clauses) {
+    if (reasons.has(id)) {
+      waived.push({ id, reason: reasons.get(id) });
+      continue;
+    }
+    const idRe = new RegExp(`\\b${id.replace('.', '\\.')}(?!\\d)`);
+    const quote = normalizeQuote(text);
+    if (idRe.test(stepText)) covered.push({ id, via: 'test-step' });
+    else if (idRe.test(rowText)) covered.push({ id, via: 'coverage-map' });
+    else if (quoteMatchesWholeWord(stepQuote, quote) || quoteMatchesWholeWord(rowQuote, quote)) {
+      covered.push({ id, via: 'quoted-text' });
+    } else uncovered.push({ id, clause: text });
+  }
+  // Finding #3099: a `Waived ACx.y:` line whose id matches no clause the spec
+  // parser produced was silently dropped — never covered, never uncovered,
+  // never reported anywhere. Warn-only (ok stays true, same as every other
+  // Check E signal): a stale/typo'd waiver id is a plan-authoring mistake to
+  // flag, never a build-blocking finding on its own.
+  // `reasons` already holds each waiver id once, first occurrence first.
+  const clauseIds = new Set(clauses.map((c) => c.id));
+  const orphanWaivers = [...reasons]
+    .filter(([id]) => !clauseIds.has(id))
+    .map(([id, reason]) => ({ id, reason }));
+  return {
+    ok: true, uncovered, waived, unparsed, covered, orphanWaivers,
+  };
+}
+
 module.exports = {
-  checkA, checkB, checkC, checkD, headroomCheck, looksPassing, isGovernedMdPath,
+  checkA, checkB, checkC, checkD, checkE, headroomCheck, looksPassing, isGovernedMdPath,
   refusedVcsMutation, commandSegments, checkPremiseRefs,
 };
