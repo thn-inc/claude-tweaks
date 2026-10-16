@@ -23,10 +23,14 @@ AUTO {time} — Backlog refine: repaired dependency on #{n} — {wired native bl
 AUTO {time} — Backlog refine: flagged back #{n} — {missing sections | needs scoring | no verdict rendered}.
 AUTO {time} — Backlog refine: stamped needs:decision on #{n} — {grant-check RATIONALE}.
 AUTO {time} — Backlog refine: skipped #{n} — premise changed since confirmation ({what changed}); dropped without writing.
+AUTO {time} — Backlog refine: skipped #{n} — premise changed since confirmation (concurrent grant agreed: live {live grant}, this run RECOMMEND_MERGE={true|false}); dropped without writing.
+AUTO {time} — Backlog refine: skipped #{n} — premise changed since confirmation (concurrent grant DIVERGED: live {live grant}, this run discarded RECOMMEND_MERGE={true|false} — {grant-check RATIONALE}); dropped without writing.
 FAILED {time} — Backlog refine: {priority | Related | grant | dependency-repair | flag-back | needs-decision} write failed on #{n}: {error}.
 ```
 
 The closing summary below counts these lines by type — `FAILED` feeds the tally's `failed` count and per-failure lines; `AUTO … skipped …` (including a reverify-fetch failure) feeds `skipped` and its per-skip lines; a write with no matching line was never attempted and counts toward neither.
+
+**Concurrent-grant comparison (#2719).** When Step 5's pre-write reverify drops a grant row because the record's live labels gained `auto:build` and/or `auto:merge` since Step 1, compare that live grant (`{live grant}`: `auto:build`, `auto:build + auto:merge`, or `auto:merge` alone) against this run's own `RECOMMEND_MERGE` verdict for the row before logging — the grant-check verdict itself, not the session-wide "Grant auto:build only, hold merge" override, which changes only what this run would have written. It **agreed** when live carries `auto:build` and live `auto:merge` presence equals `RECOMMEND_MERGE`; anything else **diverged**. Log the matching line above: the DIVERGED form carries this run's discarded `RECOMMEND_MERGE` value and its grant-check RATIONALE verbatim, so a reader of `decisions.md` sees two independent judgments disagreed instead of assuming they repeated each other. A grant row skipped for any other reason (lost `ready`, a live-state fetch failure) keeps the generic line, as does every non-grant row. Both forms count as `skipped`. Every divergence of one sweep is listed by `grep 'concurrent grant DIVERGED' {run-dir}/decisions.md`, and the closing summary's per-skip lines (item 3) carry the same text.
 
 **Closing summary (required, rendered as assistant text — never delegated to tool output; a
 shell print of the tally does not satisfy this):** after the apply pass above completes, render
@@ -94,6 +98,7 @@ second bookkeeping channel:
 
    ```
    #123 — skipped: premise changed since confirmation (lost ready label)
+   #124 — skipped: premise changed since confirmation (concurrent grant DIVERGED: live auto:build + auto:merge, this run discarded RECOMMEND_MERGE=false — {grant-check RATIONALE})
    ```
 
 4. **Filter/posture exclusion lines (#1887)** — never silent, one line each, naming what was
