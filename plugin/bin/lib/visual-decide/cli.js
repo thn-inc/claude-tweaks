@@ -40,6 +40,15 @@ function readInfo(stateDir) {
   }
 }
 
+// Shared --flag presence check for the three commands below — each lists
+// which opts it needs; the thrown message always names the full required
+// set, regardless of which of them is actually missing.
+function requireOpts(opts, names, command) {
+  if (names.some((name) => !opts[name])) {
+    throw new Error(`${command} requires ${names.map((name) => `--${name}`).join(' and ')}`);
+  }
+}
+
 function pidAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -108,9 +117,9 @@ async function findFreePortFrom(base) {
 }
 
 async function cmdStart(opts) {
+  requireOpts(opts, ['dir', 'state'], 'start');
   const dir = opts.dir;
   const stateDir = opts.state;
-  if (!dir || !stateDir) throw new Error('start requires --dir and --state');
   fs.mkdirSync(stateDir, { recursive: true });
 
   const existing = readInfo(stateDir);
@@ -150,15 +159,8 @@ async function cmdStart(opts) {
   );
   child.unref();
 
-  const infoPath = path.join(stateDir, 'server-info');
   const info = await waitFor(async () => {
-    const parsed = (() => {
-      try {
-        return JSON.parse(fs.readFileSync(infoPath, 'utf8'));
-      } catch {
-        return null;
-      }
-    })();
+    const parsed = readInfo(stateDir);
     if (!parsed) return null;
     return (await probePort(parsed.port)) !== null ? parsed : null;
   });
@@ -183,17 +185,25 @@ async function runDaemon(opts) {
   process.on('SIGINT', stop);
 }
 
+function writeStoppedMarker(stateDir) {
+  try {
+    fs.writeFileSync(path.join(stateDir, 'server-stopped'), '');
+  } catch {
+    // best-effort
+  }
+}
+
+function reportAlreadyStopped(stateDir) {
+  writeStoppedMarker(stateDir);
+  process.stdout.write('already stopped\n');
+}
+
 async function cmdStop(opts) {
+  requireOpts(opts, ['state'], 'stop');
   const stateDir = opts.state;
-  if (!stateDir) throw new Error('stop requires --state');
   const info = readInfo(stateDir);
   if (!info || !pidAlive(info.pid)) {
-    try {
-      fs.writeFileSync(path.join(stateDir, 'server-stopped'), '');
-    } catch {
-      // best-effort
-    }
-    process.stdout.write('already stopped\n');
+    reportAlreadyStopped(stateDir);
     return;
   }
   try {
@@ -202,24 +212,28 @@ async function cmdStop(opts) {
     // TOCTOU: the process could have died between the pidAlive check above
     // and this call (its own idle timeout fired, or an independent crash) —
     // that's still "already stopped", not a failure (review finding).
-    try {
-      fs.writeFileSync(path.join(stateDir, 'server-stopped'), '');
-    } catch {
-      // best-effort
-    }
-    process.stdout.write('already stopped\n');
+    reportAlreadyStopped(stateDir);
     return;
   }
-  await waitFor(
+  const settled = await waitFor(
     () => fs.existsSync(path.join(stateDir, 'server-stopped')) || !pidAlive(info.pid),
     { timeoutMs: 3000, intervalMs: 50 },
   );
+  if (!settled) {
+    // waitFor timed out: on a zombie PID (no reaping init) pidAlive(pid)
+    // keeps answering true via kill(pid, 0) even though the process can no
+    // longer run its own SIGTERM handler to write the marker itself. Write
+    // it defensively here, matching the dead-PID branch's own behavior
+    // above -- stop is a stale-PID-tolerant contract regardless of which
+    // branch gets there.
+    writeStoppedMarker(stateDir);
+  }
   process.stdout.write('stopped\n');
 }
 
 async function cmdStatus(opts) {
+  requireOpts(opts, ['state'], 'status');
   const stateDir = opts.state;
-  if (!stateDir) throw new Error('status requires --state');
   const info = readInfo(stateDir);
   if (!info) {
     process.stdout.write('never-started\n');

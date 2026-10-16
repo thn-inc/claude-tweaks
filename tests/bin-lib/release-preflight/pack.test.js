@@ -34,7 +34,20 @@ function fakeDeps(o = {}) {
         if (key.startsWith('rev-parse --verify --quiet refs/remotes/origin/')) { if (o.noOriginRef) throw new Error('fatal: Needed a single revision'); return `${SHA}\n`; }
         if (key.startsWith('rev-parse ')) return `${SHA}\n`;
         if (key.startsWith('tag --merged')) return o.noTag ? '' : (o.mergedTag === undefined ? 'v1.2.0\n' : o.mergedTag);
-        if (key.startsWith('log --first-parent')) return LOG(o.subjects === undefined ? ['feat: a'] : o.subjects);
+        // #2954: pr-first reads the all-parents walk (no --first-parent flag);
+        // local-merge keeps --first-parent — the mock answers `log` either way.
+        // `o.mergeFixture`: a GitHub-default --no-ff PR merge — the
+        // first-parent walk sees only the (unconventional) merge subject; the
+        // all-parents walk also reaches the branch's own feat: commit via the
+        // merge's second parent.
+        if (args[0] === 'log') {
+          if (o.mergeFixture) {
+            return args.includes('--first-parent')
+              ? LOG(['Merge pull request #1 from org/feat'])
+              : LOG(['Merge pull request #1 from org/feat', 'feat(x): y']);
+          }
+          return LOG(o.subjects === undefined ? ['feat: a'] : o.subjects);
+        }
         if (key === 'tag -l v*') return `${(o.tags === undefined ? ['v1.2.0'] : o.tags).join('\n')}\n`;
         if (key.startsWith('show ')) {
           const spec = args[1];
@@ -89,6 +102,31 @@ test('AC 2: zero commits since the tag → unreleased is empty and proposedVersi
   assert.deepStrictEqual(pack.unreleased.value.commits, []);
   assert.strictEqual(pack.proposedVersion.ok, false);
   assert.match(pack.proposedVersion.error, /nothing to release/);
+});
+
+test('#2954 (pr-first): a --no-ff GitHub merge carrying one feat: commit on its second parent — proposedVersion follows release-please\'s own all-parents range, not the first-parent spine', async () => {
+  const { deps, calls } = fakeDeps({ mergeFixture: true, mergedTag: 'v0.2.0\n', tags: ['v0.2.0'] });
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
+  assert.strictEqual(pack.engine.value, 'pr-first');
+  // Red against the first-parent walk: that range sees only the merge's own
+  // unconventional subject, so bumpPart would return 'none' and this would
+  // throw "nothing to release" instead.
+  assert.strictEqual(pack.proposedVersion.ok, true);
+  assert.strictEqual(pack.proposedVersion.value.version, '0.3.0');
+  assert.strictEqual(pack.proposedVersion.value.part, 'minor');
+  assert.ok(pack.unreleased.value.commits.some((c) => c.type === 'feat' && c.scope === 'x'));
+  assert.ok(calls.git.some((c) => c.startsWith('log ') && !c.includes('--first-parent')));
+});
+
+test('#2954 (local-merge): the same --no-ff merge fixture keeps the first-parent result — only the merge\'s own unconventional subject is seen, so proposedVersion still degrades to nothing-to-release', async () => {
+  const { deps, calls } = fakeDeps({ mergeFixture: true, mergedTag: 'v0.2.0\n', tags: ['v0.2.0'], policy: 'integration-model: local-merge\n' });
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
+  assert.strictEqual(pack.engine.value, 'local-merge');
+  assert.strictEqual(pack.unreleased.value.commits.length, 1);
+  assert.strictEqual(pack.unreleased.value.commits[0].unconventional, true);
+  assert.strictEqual(pack.proposedVersion.ok, false);
+  assert.match(pack.proposedVersion.error, /nothing to release/);
+  assert.ok(calls.git.some((c) => c.startsWith('log --first-parent')));
 });
 
 test('AC 8 (local-merge): the same fixture yields the same unreleased/proposedVersion shape; releasePr is none, ciTip n/a, hook follows the policy key', async () => {
@@ -164,7 +202,9 @@ test('ruling 12: the base is the highest of the v* tags, the manifest at tipRef 
   const a = await gatherReleasePreflight({ cwd: ROOT, deps: withManifest.deps });
   assert.strictEqual(a.lastTag.ok, false);
   assert.match(a.lastTag.error, /no v\* tag reachable from origin\/main/);
-  assert.ok(withManifest.calls.git.some((c) => c.startsWith('log --first-parent') && c.endsWith(' origin/main')));
+  // This fixture resolves pr-first (the default) — #2954: the history walk
+  // this depends on omits --first-parent under that engine.
+  assert.ok(withManifest.calls.git.some((c) => c.startsWith('log ') && c.endsWith(' origin/main')));
   assert.deepStrictEqual(a.proposedVersion.value, { version: '0.2.0', part: 'minor', base: '0.1.0', baseSource: 'manifest', preMajor: true, tipRef: 'origin/main' });
   // A manifest ahead of every tag wins over the tag.
   const ahead = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ tags: ['v1.2.0'], show: { 'origin/main:.release-please-manifest.json': '{ ".": "1.5.0" }' } }).deps });
