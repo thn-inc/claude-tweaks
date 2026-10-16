@@ -443,6 +443,42 @@ function gitTargets(command, cwd) {
   return gitTargetsFrom(resolvedGitSegments(command, cwd));
 }
 
+// #3061: does this command invoke `powershell`/`pwsh` with `-Command` or
+// `-EncodedCommand`? Both hand the interpreter literal (or base64) script
+// text this module cannot read — the exact class `sh -c`/`python -c` already
+// are, deliberately left unparsed (see fileWriteTargets' header just below).
+// Unlike that class, this is the one PowerShell shape pre-tool-use.js's
+// checkPowershellOpaqueCommand gate treats as a content-agnostic DENY rather
+// than falling through to this module's usual "ambiguity resolves to allow"
+// — so this function only has to answer "is the shape present", never try to
+// read what the text contains. `-File <path>` alone (no -Command, no
+// -EncodedCommand) is a plain script-path invocation — the same
+// not-opaque-text category `bash script.sh` already falls into by never
+// matching any guarded word at all — and this function does not flag it.
+// Case-insensitive (Windows exe lookups and PowerShell's own flag matching
+// both are); abbreviated flag forms (-Com, -EncodedCom, …) are deliberately
+// NOT matched, the same narrow-miss posture every best-effort parser in this
+// module already accepts in exchange for never fabricating a false deny.
+const POWERSHELL_LEADS = new Set(['powershell', 'pwsh']);
+const POWERSHELL_OPAQUE_FLAGS = new Set(['-command', '-encodedcommand']);
+function powershellOpaqueCommand(command, cwd) {
+  let found = false;
+  forEachCommandSegment(command, cwd, (t) => {
+    if (found || !t.length) return;
+    let i = 0;
+    while (i < t.length && SIMPLE_ASSIGNMENT_RE.test(t[i])) i += 1;
+    if (i >= t.length) return;
+    const lead = t[i].toLowerCase().replace(/\.exe$/, '');
+    const cut = Math.max(lead.lastIndexOf('/'), lead.lastIndexOf('\\'));
+    const base = cut >= 0 ? lead.slice(cut + 1) : lead;
+    if (!POWERSHELL_LEADS.has(base)) return;
+    for (let j = i + 1; j < t.length; j++) {
+      if (POWERSHELL_OPAQUE_FLAGS.has(t[j].toLowerCase())) { found = true; return; }
+    }
+  });
+  return found;
+}
+
 // Best-effort detection of non-git, non-Edit/Write direct file-write shapes in
 // a Bash command. Every shape here is a word in GUARDED_PROGRAM_WORDS.write (below),
 // from which bash-prefilter.js derives PRE_TOOL_USE_WORDS — so a shape added there
@@ -535,6 +571,9 @@ const WRITE_SHAPES = Object.freeze(['cp', 'mv', 'tee', 'sed', 'perl', 'install',
 //          resolve also carries `git`, so no test can witness it alone.
 //   mkdir: mkdirTargets' command word
 //   write: fileWriteTargets' shapes
+//   powershell: powershellOpaqueCommand's lead (`powershell`, `pwsh`) — pre-tool-use
+//          only (#3061); post-tool-use's POST_TOOL_USE_WORDS stays scoped to the
+//          git family, since this gate has nothing to check after the fact.
 // tests/hooks-bash-prefilter.test.js's differential corpus runs the real parsers
 // and fails when a targeted command's word is missing here — for the commands it
 // lists, so a parser keyed on a new word also needs a corpus line there.
@@ -542,6 +581,7 @@ const GUARDED_PROGRAM_WORDS = Object.freeze({
   git: Object.freeze(['git', 'env']),
   mkdir: Object.freeze(['mkdir']),
   write: WRITE_SHAPES,
+  powershell: Object.freeze([...POWERSHELL_LEADS]),
 });
 
 // Per-shape value-consuming flags. Wrong entries here shift which token is read
@@ -727,5 +767,5 @@ function mkdirTargets(command, cwd) {
 }
 
 module.exports = {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS,
 };

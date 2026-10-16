@@ -127,18 +127,32 @@ above), not necessarily every phase this run actually completed.
    (see `flow/multispec-pr-checklist.md`). A single-record run never reaches this branch — its
    row was already removed or checked at polish's own would-be exit.
 <!-- when: integration-model=pr-first -->
-3. **Rewrite the `Fixes` block from `manifest.yml` outcomes (#2015).** Read parent
-   `manifest.yml`'s `multispec.specs` (`bin/lib/flow/manifest.js`'s `readManifest`), then pass
-   both the parent run dir and that `specs` list to `readDeferredClosures` — it reads every
-   `spec-{id}/decisions.md` for a logged deferred-closure entry (`_shared/pr-early-run-lifecycle.md`'s
-   "Deferred-closure decisions" section defines the one shape it recognizes) and returns a Map of
-   spec id -> reason. Pass `specs` and that Map to `composeFixesBlock`, replacing the fixes span
-   with its output: one `Fixes #{m}` per `complete` spec with no deferred-closure entry, one
-   `Refs #{m} — deferred: {reason}` for a spec carrying one (even when `complete` — the
-   deferred-closure check overrides the status check), one `Refs #{m} — not run/failed: {reason}`
-   for every other non-complete spec. Log: `AUTO {time} — PR-early run lifecycle: rewrote Fixes
-   block for PR #{number} — {c} complete, {d} deferred, {r} not-run/failed. Reversibility: high
-   (gh pr edit).`
+3. **Rewrite the `Fixes` block from outcomes (#2015, #3136).** Read parent `manifest.yml`
+   (`bin/lib/flow/manifest.js`'s `readManifest`) to tell a bundle run from a single-record one —
+   it returns `null` when this run dir carries no `manifest.yml` at all.
+   - **Bundle run (`readManifest` returns a `multispec.specs` list):** pass both the parent run
+     dir and that `specs` list to `readDeferredClosures` — it reads every `spec-{id}/decisions.md`
+     for a logged deferred-closure entry (`_shared/pr-early-run-lifecycle.md`'s "Deferred-closure
+     decisions" section defines the one shape it recognizes) and returns a Map of spec id ->
+     reason. Pass `specs` and that Map to `composeFixesBlock`, replacing the fixes span with its
+     output: one `Fixes #{m}` per `complete` spec with no deferred-closure entry, one
+     `Refs #{m} — deferred: {reason}` for a spec carrying one (even when `complete` — the
+     deferred-closure check overrides the status check), one `Refs #{m} — not run/failed: {reason}`
+     for every other non-complete spec.
+   - **Single-record run (`readManifest` returns `null`):** pass this run's own run dir and the
+     one record id to `readSingleRecordDeferredClosure` — it reads the run's own top-level
+     `decisions.md` (never a `spec-{id}/` subdirectory; there is no sibling spec to namespace
+     against) for the same deferred-closure entry shape. A reason found: build a one-entry Map
+     (`new Map([[String(recordId), reason]])`) and pass `[{ id: recordId, status: 'complete' }]`
+     plus that Map to `composeFixesBlock`, replacing the fixes span with its single-line output
+     (`Refs #{n} — deferred: {reason}`). No reason found: leave the existing `Fixes #{n}` line
+     untouched — this is the one branch that writes nothing, since the line composed at run start
+     (`_shared/pr-early-run-lifecycle.md`'s Step 3) is already correct and a no-op `gh pr edit`
+     buys nothing.
+   Log (bundle or single-record, same shape either way): `AUTO {time} — PR-early run lifecycle:
+   rewrote Fixes block for PR #{number} — {c} complete, {d} deferred, {r} not-run/failed.
+   Reversibility: high (gh pr edit).` A single-record run with no deferred-closure entry logs
+   nothing here — there was nothing to rewrite.
 <!-- /when -->
 4. Read the record's current title (`gh issue view {n} --json title -q .title` for the
    lowest-numbered record). If it no longer matches the PR's own title (the record was retitled
