@@ -131,6 +131,13 @@ When mechanizing a prose heuristic into a deterministic check:
    Review caught it, and `c610df577` anchored the pattern at both ends, including the suffix the
    writer always appends. Anchor both ends against what the writer emits, and pin a truncated copy
    and a tail-carrying copy of an accepted input with their own assertions.
+   A fuzzy text match is the same leak with no anchor at all. `plugin/bin/lib/plan-audit/checks.js`'s
+   Check E (#3099) reads an acceptance-criterion clause as `covered` when the plan quotes its text.
+   Its first version was a bare substring `includes()`, so the one-word clause "Last." read as
+   covered by a test step about "the blast radius". Whole-branch review caught it, and `d9351cbee`
+   added `quoteMatchesWholeWord`: a clause under three words is never matched by its text, and a
+   longer one must match on a word boundary at both ends. Give a text-match recogniser a minimum
+   length and a boundary at each end, and pin a short input hidden inside a longer word.
 7. **A parsed list that feeds a pass verdict owes an independent count to reconcile against.** An
    extractor that returns N items cannot say it missed one more, so an undercount reads exactly
    like a complete list. That is the same silent false negative as a merged `null`, one level up.

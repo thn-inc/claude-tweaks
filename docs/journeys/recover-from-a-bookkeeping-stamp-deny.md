@@ -38,7 +38,7 @@ files:
 - **Action:** if the message reads as a *warning* ("allowing this call because it comes from a different session") rather than a deny, stop — do not run the remediation command anyway. A provable ownership mismatch downgrades the gate to a warning specifically so this command is never handed out against a run you don't own.
 - **Should feel:** protective, not permissive — a warning here is the gate declining to give risky advice, not the gate stepping aside.
 - **Should understand:** `docs/hooks.md`'s own rule (omitting `--run` on `record-worktree` can silently corrupt a different live session's `run-state.json`) is exactly the hazard this check exists to prevent.
-- **Red flags:** running `record-worktree`/logging a degrade against a run you did not start, on the strength of a warning message alone.
+- **Red flags:** running `record-worktree`/logging a degrade against a run you did not start, on the strength of a warning message alone. A worktree-stamp *warning* on your own `/flow` run because this session also owns an `-adhoc-standalone` dir (minted at `EnterWorktree`) — that dir is a friction placeholder, never a distinct recorded run, so it must not downgrade the deny (#2783).
 
 ### 4. Run the remediation, from the owning session — worktree session
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "{run-dir}" "{worktree}"`, or `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --status AUTO --text "PR-early run lifecycle: ... FAILED" --section "/build"` for a genuine push/PR-create failure

@@ -265,3 +265,259 @@ test('countTasks ignores an **Execution:** batched line inside a fenced code blo
   const tilde = '# Plan\n\n~~~\n**Execution:** batched\n~~~\n\n### Task 1: A\n';
   assert.deepStrictEqual(countTasks(tilde), { tasks: 1, batched: false });
 });
+
+// ── #3099 Check E — acceptance-criterion clause splitter ────────────────────
+const { extractAcceptanceClauses, splitClauses } = require('../../../plugin/bin/lib/plan-audit/parser');
+
+const INCIDENT_SPEC = [
+  '# 1: Example',
+  '',
+  '## Acceptance Criteria',
+  '',
+  '1. The report renders.',
+  '2. Each recipient gets one row. A recipient with several instances counts once; the total equals the recipient count.',
+  '3. `npm test` passes.',
+  '',
+  '## Release Note',
+  '',
+  '1. Not a criterion.',
+].join('\n');
+
+test('AC1.1 (#3099): a three-clause item splits on the sentence end and the semicolon into AC2.1-AC2.3', () => {
+  const { clauses, unparsed } = extractAcceptanceClauses(INCIDENT_SPEC);
+  assert.deepStrictEqual(unparsed, []);
+  assert.deepStrictEqual(clauses.map((c) => c.id), ['AC1.1', 'AC2.1', 'AC2.2', 'AC2.3', 'AC3.1']);
+  assert.deepStrictEqual(clauses.filter((c) => c.item === 2).map((c) => c.text), [
+    'Each recipient gets one row.',
+    'A recipient with several instances counts once',
+    'the total equals the recipient count.',
+  ]);
+});
+
+test('#3099: the section ends at the next ## heading — a later section\'s list is never read', () => {
+  const { clauses } = extractAcceptanceClauses(INCIDENT_SPEC);
+  assert.ok(!clauses.some((c) => /Not a criterion/.test(c.text)));
+});
+
+test('#3099: splitClauses never cuts inside a code span, after e.g., before a lowercase word, or inside parentheses', () => {
+  assert.deepStrictEqual(splitClauses('Run `a; b. C` first.'), ['Run `a; b. C` first.']);
+  assert.deepStrictEqual(splitClauses('Use a flag, e.g. `--spec`, to opt in.'), ['Use a flag, e.g. `--spec`, to opt in.']);
+  assert.deepStrictEqual(splitClauses('Version 6.4.1 ships it. then more.'), ['Version 6.4.1 ships it. then more.']);
+  assert.deepStrictEqual(splitClauses('Both shapes (one; two) pass.'), ['Both shapes (one; two) pass.']);
+  assert.deepStrictEqual(splitClauses('One holds. Two holds!'), ['One holds.', 'Two holds!']);
+});
+
+test('#3099: splitClauses masks HTML entities so a `;` ending one is never a cut (spec #272 AC4 regression)', () => {
+  assert.deepStrictEqual(
+    splitClauses("the judge&#39;s material is the evidence string."),
+    ["the judge&#39;s material is the evidence string."],
+  );
+  assert.deepStrictEqual(
+    splitClauses('Escaped &amp; kept whole; a real clause follows.'),
+    ['Escaped &amp; kept whole', 'a real clause follows.'],
+  );
+  assert.deepStrictEqual(
+    splitClauses('A hex entity &#x27;here&#x27; stays put.'),
+    ['A hex entity &#x27;here&#x27; stays put.'],
+  );
+});
+
+test('#3099: splitClauses does not cut a sentence-end right after an in-item sub-label like "3a." (spec #287 regression)', () => {
+  assert.deepStrictEqual(
+    splitClauses('Not deleted outright. 3a. `grep -c "x" f.md` returns at least 1. 3b. Next thing here.'),
+    [
+      'Not deleted outright.',
+      '3a. `grep -c "x" f.md` returns at least 1.',
+      '3b. Next thing here.',
+    ],
+  );
+});
+
+test('#3099: an odd backtick count makes splitClauses refuse (null), never guess', () => {
+  assert.strictEqual(splitClauses('A `broken span; still here.'), null);
+});
+
+test('#3099: an unbalanced paren or bracket makes splitClauses refuse (null), never guess', () => {
+  assert.strictEqual(splitClauses('This (never closes. Another clause follows.'), null);
+  assert.strictEqual(splitClauses('This [never closes. Another clause follows.'), null);
+});
+
+test('#3099: balanced parens still do not split inside them', () => {
+  assert.deepStrictEqual(
+    splitClauses('Both shapes (one; two) pass. Done.'),
+    ['Both shapes (one; two) pass.', 'Done.'],
+  );
+});
+
+test('#3099: ids follow item position, and a leading [ ] checkbox is stripped from a - bullet', () => {
+  const spec = '## Acceptance Criteria\n\n- [ ] First holds.\n- [x] Second holds; third holds.\n';
+  assert.deepStrictEqual(extractAcceptanceClauses(spec).clauses, [
+    { id: 'AC1.1', item: 1, text: 'First holds.' },
+    { id: 'AC2.1', item: 2, text: 'Second holds' },
+    { id: 'AC2.2', item: 2, text: 'third holds.' },
+  ]);
+});
+
+test('#3099: an indented continuation line joins its item', () => {
+  const spec = '## Acceptance Criteria\n\n- First part\n  continues here. Second sentence.\n';
+  assert.deepStrictEqual(extractAcceptanceClauses(spec).clauses.map((c) => c.text), [
+    'First part continues here.',
+    'Second sentence.',
+  ]);
+});
+
+test('#3099: a nested sub-bullet under an AC item is a continuation, never a new item (ids stay stable)', () => {
+  const spec = '## Acceptance Criteria\n\n- Parent item.\n  - Nested detail.\n- Third item.\n';
+  const { clauses, unparsed } = extractAcceptanceClauses(spec);
+  assert.deepStrictEqual(unparsed, []);
+  assert.deepStrictEqual(clauses.map((c) => c.id), ['AC1.1', 'AC1.2', 'AC2.1']);
+  assert.deepStrictEqual(clauses.map((c) => c.text), ['Parent item.', 'Nested detail.', 'Third item.']);
+});
+
+test('#3099: a flat list (no nesting) still numbers items AC1..AC3', () => {
+  const spec = '## Acceptance Criteria\n\n- First.\n- Second.\n- Third.\n';
+  const { clauses } = extractAcceptanceClauses(spec);
+  assert.deepStrictEqual(clauses.map((c) => c.id), ['AC1.1', 'AC2.1', 'AC3.1']);
+});
+
+test('AC3.1 (#3099): a spec with no ## Acceptance Criteria section is unparsed, never an empty clause list', () => {
+  const result = extractAcceptanceClauses('# 1: X\n\n## Deliverables\n\n- Do it.\n');
+  assert.deepStrictEqual(result.clauses, []);
+  assert.strictEqual(result.unparsed.length, 1);
+  assert.strictEqual(result.unparsed[0].item, null);
+  assert.match(result.unparsed[0].raw, /no "## Acceptance Criteria" section/);
+});
+
+test('#3099: a heading inside a fenced block is not the section', () => {
+  const result = extractAcceptanceClauses('```\n## Acceptance Criteria\n- Quoted.\n```\n');
+  assert.deepStrictEqual(result.clauses, []);
+  assert.match(result.unparsed[0].raw, /no "## Acceptance Criteria" section/);
+});
+
+test('#3099: an empty section is unparsed', () => {
+  const result = extractAcceptanceClauses('## Acceptance Criteria\n\n## Gotchas\n');
+  assert.deepStrictEqual(result.clauses, []);
+  assert.deepStrictEqual(result.unparsed, [{ item: null, raw: 'empty "## Acceptance Criteria" section' }]);
+});
+
+test('#3099: an item the splitter refuses lands in unparsed with its item number; its neighbours still split', () => {
+  const spec = '## Acceptance Criteria\n\n- Fine one.\n- A `broken span here.\n- Fine three.\n';
+  const { clauses, unparsed } = extractAcceptanceClauses(spec);
+  assert.deepStrictEqual(clauses.map((c) => c.id), ['AC1.1', 'AC3.1']);
+  assert.deepStrictEqual(unparsed, [{ item: 2, raw: 'A `broken span here.' }]);
+});
+
+test('#3099: a fenced block inside an item makes that item unparsed', () => {
+  const spec = '## Acceptance Criteria\n\n- Runs this:\n```\nnpm test\n```\n- Fine two.\n';
+  const { clauses, unparsed } = extractAcceptanceClauses(spec);
+  assert.deepStrictEqual(clauses.map((c) => c.id), ['AC2.1']);
+  assert.strictEqual(unparsed.length, 1);
+  assert.strictEqual(unparsed[0].item, 1);
+});
+
+test('#3099: a prose-only section makes each paragraph one item', () => {
+  const spec = '## Acceptance Criteria\n\nThe row matches the repo. It names the producer.\n\nThe docs agree.\n';
+  assert.deepStrictEqual(extractAcceptanceClauses(spec).clauses.map((c) => [c.id, c.text]), [
+    ['AC1.1', 'The row matches the repo.'],
+    ['AC1.2', 'It names the producer.'],
+    ['AC2.1', 'The docs agree.'],
+  ]);
+});
+
+test('#3099: stray prose beside list items is unparsed (item null); a one-line italic footer is ignored', () => {
+  const spec = [
+    '## Acceptance Criteria',
+    '',
+    'All of these hold:',
+    '',
+    '- [ ] One holds.',
+    '',
+    '_Filed by `review` via specShapedBody._',
+  ].join('\n');
+  const { clauses, unparsed } = extractAcceptanceClauses(spec);
+  assert.deepStrictEqual(clauses.map((c) => c.id), ['AC1.1']);
+  assert.deepStrictEqual(unparsed, [{ item: null, raw: 'All of these hold:' }]);
+});
+
+test('#3099: a CRLF spec yields exactly the LF result', () => {
+  assert.deepStrictEqual(
+    extractAcceptanceClauses(INCIDENT_SPEC.replace(/\n/g, '\r\n')),
+    extractAcceptanceClauses(INCIDENT_SPEC),
+  );
+});
+
+// ── #3099 Check E — plan coverage sources ───────────────────────────────────
+const { extractCoverageSources } = require('../../../plugin/bin/lib/plan-audit/parser');
+
+const COVERAGE_PLAN = [
+  '# Plan',
+  '',
+  '| Clause | Task |',
+  '|---|---|',
+  '| AC1.1 | Task 1 |',
+  '',
+  'Waived AC3.1: verified by hand at review',
+  '',
+  '### Task 1: Thing',
+  '',
+  '- [ ] **Step 1: Write the failing test**',
+  '',
+  'Cites AC2.1 in the test step.',
+  '',
+  '```js',
+  '## not a heading inside a fence',
+  '| not a row inside a fence |',
+  'Waived AC9.9: not a waiver inside a fence',
+  '```',
+  '',
+  'Still Step 1 after the fence: AC2.2.',
+  '',
+  '- [ ] **Step 3: Write minimal implementation**',
+  '',
+  'Mentions AC2.3 outside any test step.',
+  '',
+  '- [ ] **Step 4: Run tests to verify they pass**',
+  '',
+  '## Self-Review',
+  '',
+  '- [ ] **Step 9: Run the test**',
+  '',
+  'AC5.1 outside any task block.',
+].join('\n');
+
+test('#3099: extractCoverageSources reads waiver lines and consumes them', () => {
+  const { waivers, testSteps } = extractCoverageSources(COVERAGE_PLAN);
+  assert.deepStrictEqual(waivers, [{ id: 'AC3.1', reason: 'verified by hand at review' }]);
+  assert.ok(!testSteps.join('\n').includes('Waived AC3.1'));
+});
+
+test('#3099: test steps are the Step sub-steps whose title names a test or verification, inside a Task block', () => {
+  const { testSteps } = extractCoverageSources(COVERAGE_PLAN);
+  assert.strictEqual(testSteps.length, 2);
+  assert.match(testSteps[0], /Cites AC2\.1 in the test step/);
+  assert.match(testSteps[0], /Still Step 1 after the fence: AC2\.2/);
+  assert.ok(!testSteps.join('\n').includes('AC2.3'), 'an implementation step is not a test step');
+  assert.ok(!testSteps.join('\n').includes('AC5.1'), 'a step after the task block ends is not read');
+});
+
+test('#3099: a fenced line is step content, never a heading, table row, or waiver', () => {
+  const { testSteps, mapRows, waivers } = extractCoverageSources(COVERAGE_PLAN);
+  assert.match(testSteps[0], /## not a heading inside a fence/);
+  assert.ok(!waivers.some((w) => w.id === 'AC9.9'));
+  assert.ok(!mapRows.some((r) => r.includes('not a row inside a fence')));
+});
+
+test('#3099: every table row outside a fence is a coverage-map source', () => {
+  assert.deepStrictEqual(extractCoverageSources(COVERAGE_PLAN).mapRows, [
+    '| Clause | Task |',
+    '|---|---|',
+    '| AC1.1 | Task 1 |',
+  ]);
+});
+
+test('#3099: a CRLF plan yields exactly the LF result', () => {
+  assert.deepStrictEqual(
+    extractCoverageSources(COVERAGE_PLAN.replace(/\n/g, '\r\n')),
+    extractCoverageSources(COVERAGE_PLAN),
+  );
+});

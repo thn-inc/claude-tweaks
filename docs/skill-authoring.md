@@ -171,6 +171,8 @@ A session working inside a worktree created by `EnterWorktree` (or entered into 
 
 For the empirically observed boundary of what Bash commands pass and fail in a worktree session, see `plugin/skills/_shared/scratch-worktree.md`'s "## 7. Shell constraint" — that is the canonical, detailed statement that skill implementers will actually encounter in their dispatch context.
 
+Since #2783 the plugin does see these refusals after the fact: the `post-tool-use-failure` hook (`PostToolUseFailure`, Bash only) logs each refusal whose text carries the harness's `This session is isolated in the worktree … Refusing to run it` frame to the run dir's `events.jsonl` as `wd-guard-refusal` with `reason: harness-worktree-isolation`, and `/claude-tweaks:reflect`'s Friction Lens reads them. That is observation only, never enforcement — see `docs/hooks.md`'s "Observed here, not enforced" paragraph.
+
 ## Harness-level skill re-invocation vs. batched Skill calls (#2728)
 
 A second same-session `Skill` tool invocation of a skill the harness has already flagged as

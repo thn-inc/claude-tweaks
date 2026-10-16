@@ -252,6 +252,54 @@ test('#2779: USAGE names --cmd-env', () => {
   assert.ok(USAGE.includes('--cmd-env <name>=<KEY=VALUE>'));
 });
 
+test('#3063: --cmd-timeout attaches a millisecond value to the named check only, repeatable', () => {
+  const got = parseArgs([
+    '--cmd-timeout', 'foo=1500',
+    '--cmd', 'foo=node check.js',
+    '--cmd', 'bar=node other.js',
+  ]);
+  assert.deepStrictEqual(got.cmds, [
+    { name: 'foo', command: 'node check.js', timeout: 1500 },
+    { name: 'bar', command: 'node other.js' },
+  ]);
+});
+
+test('#3063: a --cmd-timeout naming a check no --cmd declares is a UsageError naming the check and the declared set', () => {
+  assert.throws(
+    () => parseArgs(['--cmd', 'foo=x', '--cmd', 'bar=y', '--cmd-timeout', 'baz=1000']),
+    (err) => err instanceof UsageError
+      && /--cmd-timeout "baz" names no declared --cmd \(declared: foo, bar\)/.test(err.message),
+  );
+});
+
+test('#3063: a second --cmd-timeout for the same check is a UsageError', () => {
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-timeout', 'foo=100', '--cmd-timeout', 'foo=200']), UsageError);
+});
+
+test('#3063: malformed --cmd-timeout values are UsageErrors', () => {
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-timeout', 'foo']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-timeout', '=1000']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-timeout', 'foo=0']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-timeout', 'foo=-5']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-timeout', 'foo=1.5']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-timeout', 'foo=abc']), UsageError);
+  assert.throws(() => parseArgs(['--cmd', 'foo=x', '--cmd-timeout']), UsageError);
+});
+
+test('#3063: --cmd-timeout is a usage error in the read-only modes, which declare no check', () => {
+  assert.throws(() => parseArgs(['--stamp-status', '--cmd-timeout', 'foo=1000']), UsageError);
+  assert.throws(() => parseArgs(['--changed-files', '--cmd-timeout', 'foo=1000']), UsageError);
+});
+
+test('#3063: without --cmd-timeout no check carries a timeout key (unchanged parse shape)', () => {
+  const got = parseArgs(['--cmd', 'foo=x', '--cmd', 'bar=y']);
+  for (const c of got.cmds) assert.ok(!('timeout' in c));
+});
+
+test('#3063: USAGE names --cmd-timeout', () => {
+  assert.ok(USAGE.includes('--cmd-timeout <name>=<ms>'));
+});
+
 test('--baseline with --baseline-cmd parses (#3043)', () => {
   const got = parseArgs(['--cmd', 'tests=npm test', '--baseline', 'origin/main', '--baseline-cmd', 'tests=node --test {file}']);
   assert.strictEqual(got.baseline, 'origin/main');
@@ -291,4 +339,31 @@ test('--baseline and --baseline-cmd are rejected with --stamp-status and --chang
 
 test('USAGE names --baseline and --baseline-cmd (#3043)', () => {
   for (const flag of ['--baseline', '--baseline-cmd']) assert.ok(USAGE.includes(flag), flag);
+});
+
+// #2806 review: splitting parseArgs per mode must not change which UsageError
+// wins when argv carries more than one error — the CLI prints that message,
+// so the pre-split precedence is part of its behavior. Exact messages pinned.
+const throwsExactly = (argv, message) => assert.throws(
+  () => parseArgs(argv), (e) => e instanceof UsageError && e.message === message, argv.join(' '));
+
+test('#2806: --stamp-status with --changed-files reports a more specific conflict before "separate modes"', () => {
+  throwsExactly(['--stamp-status', '--changed-files', '--cmd', 'foo=x'], '--stamp-status takes no --cmd');
+  throwsExactly(['--stamp-status', '--changed-files', '--scope', 's.json'], '--changed-files takes no --scope');
+  throwsExactly(['--stamp-status', '--changed-files', '--git-dir', '/g'], '--changed-files takes no --git-dir');
+  throwsExactly(['--stamp-status', '--changed-files', '--baseline', 'b'],
+    '--baseline/--baseline-cmd apply to a check run — not to --stamp-status or --changed-files');
+  throwsExactly(['--stamp-status', '--changed-files'], '--changed-files and --stamp-status are separate modes');
+});
+
+test('#2806: a duplicate --cmd-env/--cmd-timeout value wins over a read-only mode\'s "takes no --cmd"', () => {
+  throwsExactly(['--stamp-status', '--cmd', 'foo=bar', '--cmd-env', 'foo=KEY=v1', '--cmd-env', 'foo=KEY=v2'],
+    'duplicate --cmd-env variable for foo: KEY');
+  throwsExactly(['--changed-files', '--cmd', 'foo=bar', '--cmd-timeout', 'foo=1', '--cmd-timeout', 'foo=2'],
+    'duplicate --cmd-timeout for foo');
+});
+
+test('#2806: in a check run, a duplicate --cmd-timeout wins over an undeclared --cmd-timeout', () => {
+  throwsExactly(['--cmd', 'foo=x', '--cmd-timeout', 'foo=100', '--cmd-timeout', 'foo=200', '--cmd-timeout', 'baz=300'],
+    'duplicate --cmd-timeout for foo');
 });
