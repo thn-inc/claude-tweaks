@@ -53,6 +53,70 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.141.0](https://github.com/thn-inc/claude-tweaks/compare/v6.140.1...v6.141.0) (2026-10-16)
+
+
+### Features
+
+* Add an event-driven unblock path for watch-item records… ([#3128](https://github.com/thn-inc/claude-tweaks/issues/3128)) ([bd90875](https://github.com/thn-inc/claude-tweaks/commit/bd908756c54cd5b001b70146dcfc4ed7178665e0))
+* review: lens 3f confirms a "these test cases are… ([#3124](https://github.com/thn-inc/claude-tweaks/issues/3124)) ([7715f24](https://github.com/thn-inc/claude-tweaks/commit/7715f2482f63cfd5f192fe6db5466e2354873db5))
+* simplify criteria: no rule against replacing a test's… ([#3134](https://github.com/thn-inc/claude-tweaks/issues/3134)) ([737bcc3](https://github.com/thn-inc/claude-tweaks/commit/737bcc3ca317cd8b51bd01aef0f245bf1aff675f))
+* Singleton /flow runs have no deferred-closure mechanism… ([#3136](https://github.com/thn-inc/claude-tweaks/issues/3136)) ([0af440d](https://github.com/thn-inc/claude-tweaks/commit/0af440d7642a1ba30c9c0af43c24560b90d03b04))
+
+
+### Bug Fixes
+
+* archive-run silently overwrites an already-archived run… ([#3198](https://github.com/thn-inc/claude-tweaks/issues/3198)) ([a17f374](https://github.com/thn-inc/claude-tweaks/commit/a17f374f4547f3dcc8cf28329349038844e4de5b))
+* bin/verify.js baseline adjudication mangles failing-file… ([#3155](https://github.com/thn-inc/claude-tweaks/issues/3155)) ([63e489d](https://github.com/thn-inc/claude-tweaks/commit/63e489df4af3c690a7f80df03b50e0e69f4642ba)), closes [#3167](https://github.com/thn-inc/claude-tweaks/issues/3167) [#3168](https://github.com/thn-inc/claude-tweaks/issues/3168)
+* claim-targets.js: an `alreadyOwned` (self-owned) claim… ([#3032](https://github.com/thn-inc/claude-tweaks/issues/3032)) ([abd9baf](https://github.com/thn-inc/claude-tweaks/commit/abd9baf35234bbe264a8bab86fd205026cbb9b82)), closes [#3051](https://github.com/thn-inc/claude-tweaks/issues/3051) [#3065](https://github.com/thn-inc/claude-tweaks/issues/3065)
+* Claims-registry listing reads at most 1000 entries, so… ([#3098](https://github.com/thn-inc/claude-tweaks/issues/3098)) ([4b0151e](https://github.com/thn-inc/claude-tweaks/commit/4b0151e651ffd46b196ec4e3a49833299aa7fdc6))
+* dev-url-detection: honour a declared stories/servers.yml… ([#3082](https://github.com/thn-inc/claude-tweaks/issues/3082)) ([252fb52](https://github.com/thn-inc/claude-tweaks/commit/252fb527a82d440ed55c5a78b7c7f17c499d3034)), closes [#3083](https://github.com/thn-inc/claude-tweaks/issues/3083)
+* Dispatch headless self-report: flow-step-2.8-claim-contest ([#3131](https://github.com/thn-inc/claude-tweaks/issues/3131)) ([8a4ed0d](https://github.com/thn-inc/claude-tweaks/commit/8a4ed0dfcc59a858c8e34ce240cb64d81d5bb84e))
+* dispatch/flow MCP-transport claim-bootstrap wipes an… ([#2789](https://github.com/thn-inc/claude-tweaks/issues/2789)) ([d5a08a9](https://github.com/thn-inc/claude-tweaks/commit/d5a08a9b0376aa4688f32ad909e5fc58de139c10))
+* Exit-code conformance allowlist check reads hooks.js's… ([#3095](https://github.com/thn-inc/claude-tweaks/issues/3095)) ([ab2300f](https://github.com/thn-inc/claude-tweaks/commit/ab2300fe6a6adf86d2588d066d850028aff19ee8))
+* hook event logging: complexity refusals never append… ([#2553](https://github.com/thn-inc/claude-tweaks/issues/2553)) ([6e88883](https://github.com/thn-inc/claude-tweaks/commit/6e888832058499c55583e380ed9dfe3e02d3151b))
+* Make appendExclusion fail loud instead of clobbering an… ([#3110](https://github.com/thn-inc/claude-tweaks/issues/3110)) ([b59e7e2](https://github.com/thn-inc/claude-tweaks/commit/b59e7e2ed07c39b543f6494511506e77da318024))
+* Restore the dispatch Shipped-candidate exclusion report… ([#3085](https://github.com/thn-inc/claude-tweaks/issues/3085)) ([7a272a7](https://github.com/thn-inc/claude-tweaks/commit/7a272a70c2f50e0e79cbda9801698846e5eaa3b0))
+* simplify dispatch: caller can observe a still-in-flight… ([#2634](https://github.com/thn-inc/claude-tweaks/issues/2634)) ([dfa75b1](https://github.com/thn-inc/claude-tweaks/commit/dfa75b1ad384f9b13e5e4d60f5471a64c6e5d9b6))
+* Specify headless self-report… ([#3141](https://github.com/thn-inc/claude-tweaks/issues/3141)) ([d78172d](https://github.com/thn-inc/claude-tweaks/commit/d78172d80eb1c766f63b83f0bdddc55cdc08347b))
+* Visual review and review still instruct agents to run… ([#3119](https://github.com/thn-inc/claude-tweaks/issues/3119)) ([d763d1d](https://github.com/thn-inc/claude-tweaks/commit/d763d1dadad5069986545cbe075eb0195ab4e7c3))
+* Worktree Bash guard refuses a plain `powershell -File… ([#3061](https://github.com/thn-inc/claude-tweaks/issues/3061)) ([2dbe662](https://github.com/thn-inc/claude-tweaks/commit/2dbe662db42a3de4aadda19de7d27c5c8939cfe7))
+* Worktree teardown after a squash merge: the ancestry… ([#3088](https://github.com/thn-inc/claude-tweaks/issues/3088)) ([a2f9641](https://github.com/thn-inc/claude-tweaks/commit/a2f96415f75a1efc86cf9d99d9d8d2b20f558312))
+* wrap-up-engine verify: run-dir-archived… ([#2552](https://github.com/thn-inc/claude-tweaks/issues/2552)) ([2acba9f](https://github.com/thn-inc/claude-tweaks/commit/2acba9f6b63bf851196422ec36e990ea2686dd9b))
+
+### Highlights
+* /claude-tweaks:wrap-up no longer deletes a plan that code or a decision record still cites when plan pruning is enabled.
+* Fix a resumed dispatch claim never getting its `bot:in-progress` label, which let the drain re-select an already-dispatched record and parked its PR.
+* A pipeline run decision log can no longer be silently overwritten when two cleanup paths archive the same run.
+* Finishing a squash-merged pipeline run now proves the worktree is safe to remove on the first check and deletes the remote branch automatically, instead of failing the merge check and leaving the branch behind.
+* Fix QA and visual-review auto-start ignoring the `start_command` declared in `stories/servers.yml`: a declared command is now used and never overwritten.
+* No user-visible change — documentation accuracy fix.
+* No user-visible change — agent harness reliability fix.
+* No user-visible change.
+* No user-visible change.
+* No user-visible change: documents and mitigates a latent correctness gap in the `gh`-absent MCP
+* Dispatch skips records that are not spec-shaped before checking GitHub for them, so those records no longer cost API calls or produce stray close proposals.
+* Make cloud-transport claims and marker comments verify what actually landed, so dispatch stops re-selecting held records and marker lookups stop missing escaped comments.
+* Stop `/specify` from refusing to shape a record just because a stalled, unrelated record touches the same files.
+* Visual review's instructions now match the playwright-cli browser backend instead of the retired agent-browser.
+* Stop `/simplify` from rewriting a test's expected value to read the production constant it checks, which made the test unable to fail.
+* No user-visible change: internal mechanism for closing out watch-item backlog records more
+* Fix `--baseline` verification misclassifying failing test files as new regressions when the checkout path contains a space.
+* Dispatch no longer silently drops earlier exclusion entries when its exclusion list is corrupted mid-pull.
+* Stop `/review` from auto-deleting test cases on a "these tests are vacuous" finding that no agent actually ran.
+* No user-visible change.
+* The worktree guard now allows plain PowerShell script-file invocations while still refusing inline commands.
+* Claim sweeps and reconcile now see every claim in the registry, not just the first 1000.
+* No user-visible change: closes a gap where a singleton watch-item run's PR could auto-close its
+* No user-visible change — documentation accuracy fix.
+* No user-visible change: verified that spec red-team reviews batch correctly across several sub-issues.
+* Fixed several gaps and duplicates in hook event logging.
+* Fixed wrap-up verification failing on archived runs and ledger checks for reasons outside the run.
+* Clarified that /simplify's out-of-scope revert check waits for the simplifier agent to finish, so late edits can no longer slip past it.
+* No user-visible change — agent harness reliability fix.
+* Design evaluation: whether the plugin's hand-rolled GIF/PNG/LZW codec should be replaced by an established library.
+* Fixes a bug where the dispatch/flow pipeline's GitHub MCP transport (used when `gh` CLI is absent, e.g. in cloud Routine sandboxes) could silently delete an issue's non-workflow labels (risk/size/priority/ceremony/type categorization) when adding a bot-status label.
+
 ## [6.140.1](https://github.com/thn-inc/claude-tweaks/compare/v6.140.0...v6.140.1) (2026-10-11)
 
 

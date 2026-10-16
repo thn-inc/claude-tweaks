@@ -36,14 +36,13 @@ The lines between a point's `---` and `...`, indented two spaces deeper than the
 
 ### Reconcile the failing list against an independent count
 
-An extracted list of failures cannot report that it missed one. `adjudicate` refuses to classify unless:
+An extracted list of failures cannot report that it missed one. `adjudicate` refuses to classify the full run unless:
 
-- the spec `test at` entries (`specEntryCount`) add up to the summary's `ℹ fail N`;
+- the spec `test at` entries (`specEntryCount`) add up to the summary's `ℹ fail N` plus its `ℹ cancelled` count;
 - every failing entry or TAP `not ok` block names a test file (`countUnmatchedFailures` returns 0);
-- the summary counts parse at all, because a truncated log has none;
-- `ℹ cancelled` (spec) or `# cancelled` (TAP) reads 0 in a single-file log.
+- the summary counts parse at all, because a truncated log has none.
 
-The listing and `ℹ fail` do not count the same things. A cancelled test, for example one that timed out, is listed but not counted, so a full run containing one is never adjudicated. That outcome is fail-closed, and a pass is never reached. A diagnostic that says the test timed out or was cancelled (`INCONCLUSIVE_RE`) means the test did not finish, which proves nothing about whether it fails.
+The listing and `ℹ fail` do not count the same things — a cancelled test, for example one that timed out, is listed but not counted, so the full run's entries must reconcile against `ℹ fail` plus `ℹ cancelled`, not `ℹ fail` alone. A cancelled test does not by itself block adjudication of the full run: it is held to the usual per-file evidence (it fails at base, or shows its own pass in isolation). Only each isolated single-file run — the per-file base run and the isolated HEAD rerun — must itself show `ℹ cancelled`/`# cancelled` at 0 (`accountedFamily`) to count as evidence. A single-file run that times out or cancels proves nothing, so it cannot make the file baseline or flaky. Once the full run is adjudicated there is no "unclassified" outcome: every failing file lands in `baselineFailing`, `flakyPassed`, or `attributable`. If only the base run did not finish, a clean isolated HEAD run still makes the file flaky. If the isolated HEAD run did not finish, the base run cannot rescue the file, because both baseline paths (`failsToLoadAtBase`, `baselineInIsolation`) also read the isolated HEAD log. Without that rescue the file is `attributable` and the verdict is `fail`. In the per-file base run, a failure whose diagnostic says the test timed out or was cancelled (`INCONCLUSIVE_RE`, read through `failingTestsByFile`'s `conclusiveOnly`) means the test did not finish, which proves nothing about whether it fails, so that base log is no evidence.
 
 ### Node's runner-level diagnostics are visible only in the log
 
@@ -54,8 +53,9 @@ An uncaught error from async work that outlived its test is reported as a separa
 | The log shows | Read it as |
 |---|---|
 | A family other than spec or tap | No failure-accounting guard. Refuse to classify |
-| Spec entries ≠ `ℹ fail N`, or a failing entry naming no test file | An undercount. Refuse |
-| A non-zero cancelled count, a timeout diagnostic, or a runner-level `ℹ Error:` | Did not finish, or failed outside any test. No evidence |
+| Spec entries ≠ `ℹ fail N` + `ℹ cancelled N`, or a failing entry naming no test file | An undercount. Refuse |
+| A non-zero cancelled count in the full run | Not a refusal by itself. Each cancelled test is held to the per-file evidence: it fails at base, or shows its own pass in isolation |
+| In an isolated single-file run (the per-file base run or the isolated HEAD rerun): a non-zero cancelled count or a runner-level `ℹ Error:`. In the base run, also a failure whose diagnostic says it timed out or was cancelled (`INCONCLUSIVE_RE`) | Did not finish, or failed outside any test. That run is no evidence: it cannot make the file baseline or flaky. The file is `attributable` unless only the base run failed this way and the isolated HEAD run is clean (flaky); a base run never rescues an isolated HEAD run that did not finish |
 | Nesting that does not close | No evidence |
 | A parent `✖` with no listing left for it (spec), or `failureType: 'subtestsFailed'` (TAP) | Inherited from a child. Not the parent's own failure |
 | A full-run failure that is absent from an isolated run | Not a pass. Only the test's own `✔` in that run counts |

@@ -8,7 +8,7 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert');
 const {
-  commandWords, shouldRunFull, earlyGate,
+  commandWords, shouldRunFull, earlyGate, hasFileRedirection,
 } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const {
   WRITE_SHAPES, GUARDED_PROGRAM_WORDS, gitTargets, fileWriteTargets, mkdirTargets, powershellOpaqueCommand,
@@ -32,6 +32,9 @@ const DIFFERENTIAL_CORPUS = [
   '/usr/bin/git commit -m x', 'git worktree remove ../w',
   'G=git; $G commit -m x', 'C=cp; $C a.txt b.txt', 'X=mk; ${X}dir d',
   'powershell -EncodedCommand QQBCAEMA', 'pwsh -Command "echo hi"',
+  // #3080: bare redirection has no command word — hasFileRedirection, not the
+  // word scan, is what reaches it; see shouldRunFull's pre-tool-use-only OR.
+  'echo x > tracked.js',
 ];
 const teardown = (command) => teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: CWD });
 const powershell = (command) => (powershellOpaqueCommand(command, CWD) ? [{ action: 'powershell-opaque' }] : []);
@@ -123,6 +126,29 @@ test('post-tool-use skips write shapes it never handled (cp/mkdir/sed)', () => {
   }
 });
 
+// #3080: hasFileRedirection unit cases — run/skip, standalone/glued, and the
+// fd-dup/DEVNULL_LIKE exclusions the common `2>&1`/`> /dev/null` shapes need
+// to stay cheap.
+for (const command of [
+  'echo x > tracked.js', 'printf y >> tracked.js', 'echo x >out.js', 'cmd &> f', 'cmd &>> f',
+  'cmd >| f', 'cmd 2>> err.log',
+]) {
+  test(`hasFileRedirection detects: ${command}`, () => {
+    assert.strictEqual(hasFileRedirection(command), true, command);
+  });
+}
+for (const command of ['echo hi', 'cmd 2>&1', 'cmd >&2', 'echo x > /dev/null', 'cmd > /dev/stdout', 'echo "a > b"']) {
+  test(`hasFileRedirection does not trigger on: ${JSON.stringify(command)}`, () => {
+    assert.strictEqual(hasFileRedirection(command), false, command);
+  });
+}
+
+test('shouldRunFull ORs hasFileRedirection into pre-tool-use only, never post-tool-use', () => {
+  assert.strictEqual(shouldRunFull('pre-tool-use', bash('echo x > f.js')), true);
+  assert.strictEqual(shouldRunFull('post-tool-use', bash('echo x > f.js')), false,
+    'post-tool-use never consumes fileWriteTargets, so widening it here would cost every redirecting post-tool-use call for nothing');
+});
+
 test('fails open to "run" on anything it cannot read', () => {
   for (const event of ['pre-tool-use', 'post-tool-use']) {
     assert.strictEqual(shouldRunFull(event, null), true);
@@ -196,6 +222,27 @@ test('e2e: an uninteresting Bash call exits 0 with no output and never loads the
 
 test('e2e (probe discriminates): a covered Bash call DOES load the event module', () => {
   const { loaded } = spawnHook('pre-tool-use', { ...bash('git status'), cwd: SANDBOX });
+  assert.ok(loadedModule(loaded, 'lib/hooks/pre-tool-use.js'));
+  assert.ok(loadedModule(loaded, 'lib/hooks/context.js'));
+});
+
+// #3080 AC: `cmd 2>&1` / `cmd > /dev/null` with no other covered word must take
+// the skip path — same require.cache probe as the plain-skip test above,
+// proving the added hasFileRedirection scan doesn't itself pull in the heavy
+// modules for the shapes it's designed to keep cheap.
+test('e2e #3080: `2>&1` / `> /dev/null` with no other covered word never load the heavy modules', () => {
+  for (const command of ['cmd 2>&1', 'cmd > /dev/null']) {
+    const { stdout, loaded } = spawnHook('pre-tool-use', { ...bash(command), cwd: SANDBOX });
+    assert.strictEqual(stdout, '', command);
+    assert.ok(!loadedModule(loaded, 'lib/hooks/context.js'), `${command} loaded context.js on the skip path`);
+    assert.ok(!loadedModule(loaded, 'lib/hooks/pre-tool-use.js'), `${command} loaded pre-tool-use.js on the skip path`);
+  }
+});
+
+// #3080: the inverse discrimination — a real redirection write DOES reach the
+// full handler, so the probe above is proving something, not a tautology.
+test('e2e #3080 (probe discriminates): a bare redirection write DOES load the event module', () => {
+  const { loaded } = spawnHook('pre-tool-use', { ...bash('echo x > f.js'), cwd: SANDBOX });
   assert.ok(loadedModule(loaded, 'lib/hooks/pre-tool-use.js'));
   assert.ok(loadedModule(loaded, 'lib/hooks/context.js'));
 });

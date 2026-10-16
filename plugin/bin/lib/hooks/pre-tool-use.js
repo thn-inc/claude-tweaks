@@ -130,6 +130,13 @@ const GATE_COVERAGE = Object.freeze({
   // commit/push would, closing the bypass IL-141 documented.
   gitActions: Object.freeze(['commit', 'push', 'mv', 'rm', 'update-ref', 'apply']),
   bashWriteShapes: WRITE_SHAPES,
+  // #3080: bare shell redirection has no command word, so it is not part of
+  // bashWriteShapes — git-command.js's redirectWriteTargets (called from
+  // fileWriteTargets for every segment, not gated by WRITE_SHAPES) and
+  // bash-prefilter.js's hasFileRedirection both recognize these operator
+  // spellings (fd-prefixed forms like `2>`/`1>>` are the same operators with
+  // a leading file-descriptor number, not a separate spelling).
+  bashRedirections: Object.freeze(['>', '>>', '>|', '&>', '&>>']),
   // These have their own prose-binding block — skills/_shared/policy-schema-coverage.md's
   // "Teardown gate coverage" section (tests/hooks-gate-coverage.test.js pins
   // the two) — deliberately separate from the worktree-always block above,
@@ -1025,8 +1032,9 @@ function checkWorktreeRequired(ctx, precomputedGitTargets, indeterminateTargets 
       // the gate can never leave this message describing the old reach
       // — the failure this whole binding exists to prevent (#70, #138).
       `claude-tweaks: this project requires an isolated worktree for ` +
-      `${GATE_COVERAGE.tools.join('/')}, git ${GATE_COVERAGE.gitActions.join('/')}, and Bash ` +
-      `${GATE_COVERAGE.bashWriteShapes.join('/')} writes (not every possible Bash write shape — ` +
+      `${GATE_COVERAGE.tools.join('/')}, git ${GATE_COVERAGE.gitActions.join('/')}, Bash ` +
+      `${GATE_COVERAGE.bashWriteShapes.join('/')} writes, and Bash ` +
+      `${GATE_COVERAGE.bashRedirections.join('/')} redirects (not every possible Bash write shape — ` +
       `see _shared/policy-schema-coverage.md's worktree-always coverage block; exempt: ` +
       `${GATE_COVERAGE.exemptions.paths.join(', ')}, an allowlisted (${GATE_COVERAGE.exemptions.commit}) commit, ` +
       `an allowlisted (${GATE_COVERAGE.exemptions.push}) push, and a write target that is ` +

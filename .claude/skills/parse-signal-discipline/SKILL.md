@@ -137,7 +137,8 @@ When mechanizing a prose heuristic into a deterministic check:
    `plugin/bin/lib/verify/baseline.js`'s `adjudicate` (#3043) may turn a failing test run into a
    pass only when its extracted failing files account for the whole failure, so it checks them
    against counts the log states separately. For spec output, the `test at` entries
-   (`specEntryCount`) must equal the summary's `ℹ fail N`. In spec and TAP output, every failing
+   (`specEntryCount`) must equal the summary's `ℹ fail N` plus `ℹ cancelled N`, since the spec
+   reporter lists a cancelled test that `ℹ fail` leaves out. In spec and TAP output, every failing
    entry or `not ok` block must name a test file (`countUnmatchedFailures` returns 0). An output
    family with no such cross-check is refused outright ("has no failure-accounting guard"). Each
    mismatch returns `{eligible: false, reason}` naming both numbers, never a verdict over the
