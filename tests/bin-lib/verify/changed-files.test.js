@@ -30,8 +30,8 @@ function fakeExec(table) {
   return exec;
 }
 
-test('changedFiles unions the committed diff (-z) and the working tree (-z), mapping renames to the new path, deletions to the old, and surviving a C-quotable path (#1922)', () => {
-  const diffZ = ['M', 'src/a.js', 'R100', 'old/b.js', 'new/b.js', 'D', 'gone.js', 'A', 'src/café.js', ''].join('\0');
+test('changedFiles unions the committed diff (-z) and the working tree (-z), mapping renames to both paths, deletions to the old, copies to the new, and surviving a C-quotable path (#1922)', () => {
+  const diffZ = ['M', 'src/a.js', 'R100', 'old/b.js', 'new/b.js', 'D', 'gone.js', 'A', 'src/café.js', 'C75', 'tpl/c.js', 'copy/c.js', ''].join('\0');
   const statusZ = [' M src/a.js', '?? scratch.txt', 'R  y.js', 'x.js', ' D removed.js', ''].join('\0');
   const exec = fakeExec({
     [`diff --name-status -z --end-of-options ${FULL}..HEAD`]: diffZ,
@@ -39,7 +39,10 @@ test('changedFiles unions the committed diff (-z) and the working tree (-z), map
   });
   const r = changedFiles({ base: FULL, execImpl: exec });
   assert.strictEqual(r.base, FULL);
-  assert.deepStrictEqual(r.files, ['gone.js', 'new/b.js', 'removed.js', 'scratch.txt', 'src/a.js', 'src/café.js', 'y.js']);
+  // A rename's source path is gone from HEAD exactly like a deletion, so it is
+  // selected too (ledger #8, #3072 run); a copy's source is unchanged, so only
+  // the new path is.
+  assert.deepStrictEqual(r.files, ['copy/c.js', 'gone.js', 'new/b.js', 'old/b.js', 'removed.js', 'scratch.txt', 'src/a.js', 'src/café.js', 'x.js', 'y.js']);
 });
 
 test('changedFiles with a clean tree and no commits since base is an empty set, not an error', () => {

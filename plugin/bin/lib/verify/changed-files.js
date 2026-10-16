@@ -89,7 +89,9 @@ function resolveBase({
 // `git diff --name-status -z`: a flat NUL-delimited stream — "STATUS\0path\0"
 // per ordinary record, or "STATUS\0old\0new\0" for a rename/copy (status
 // starts with R or C). No quoting is applied to paths in -z mode, unlike the
-// default output which C-quotes non-ASCII bytes.
+// default output which C-quotes non-ASCII bytes. A rename's old path is gone
+// from HEAD exactly like a deletion, so both of its paths are changed; a
+// copy's source is untouched, so only the new path is.
 function parseDiffNameStatusZ(raw) {
   const tokens = raw.split('\0');
   const files = [];
@@ -98,6 +100,7 @@ function parseDiffNameStatusZ(raw) {
     const status = tokens[i];
     if (status === '') { i += 1; continue; }
     if (status[0] === 'R' || status[0] === 'C') {
+      if (status[0] === 'R') files.push(tokens[i + 1]);
       files.push(tokens[i + 2]);
       i += 3;
     } else {
@@ -113,7 +116,8 @@ function parseDiffNameStatusZ(raw) {
 // newline/rename-arrow separator is replaced by NUL) — except a rename or
 // copy (R/C anywhere in XY), which is "XY new\0old\0": the NEW path comes
 // first in -z mode, reversed from the "old -> new" order of the default
-// (non-z) porcelain format.
+// (non-z) porcelain format. As in parseDiffNameStatusZ, a rename's old path
+// is changed too; a copy's is not.
 function parseStatusPorcelainZ(raw) {
   const tokens = raw.split('\0');
   const files = [];
@@ -123,6 +127,7 @@ function parseStatusPorcelainZ(raw) {
     if (entry === '') { i += 1; continue; }
     const xy = entry.slice(0, 2);
     files.push(entry.slice(3));
+    if (xy.includes('R')) files.push(tokens[i + 1]);
     i += (xy.includes('R') || xy.includes('C')) ? 2 : 1;
   }
   return files;
