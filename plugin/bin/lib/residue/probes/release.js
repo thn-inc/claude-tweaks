@@ -72,7 +72,7 @@ function changelogRef({ integrationBranch, run, newestTag }) {
   const remoteRef = resolveRemoteRef(integrationBranch, (args) => run(['git', ...args]));
   const sha = run(['git', 'rev-parse', '--verify', '--quiet', '--end-of-options', `${remoteRef}^{commit}`]);
   if (!sha) return { ref: 'HEAD', remote: false };
-  if (run(['git', 'merge-base', '--is-ancestor', `v${newestTag}`, remoteRef]) === null) {
+  if (run(['git', 'merge-base', '--is-ancestor', '--end-of-options', `v${newestTag}`, remoteRef]) === null) {
     return { ref: 'HEAD', remote: false };
   }
   return { ref: remoteRef, remote: true };
