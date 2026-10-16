@@ -118,8 +118,7 @@ test('#3063 AC2: an isolated run that times out is no evidence — the file stay
   const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-timeout-test-'));
   const git = {
     repoRoot: () => '/repo',
-    fileExistsAt: () => true,
-    sameAtBase: () => true,
+    batchBaseInfo: (sha, files) => new Map(files.map((f) => [f, { exists: true, same: true }])),
     addWorktree: () => '/scratch',
     removeWorktree: () => {},
   };
