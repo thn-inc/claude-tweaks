@@ -316,7 +316,7 @@ function isAbandonedInterrupted(runDir, state, sessionId, now = Date.now()) {
 // this directly (a `Core` suffix, not a class of its own, since it has no
 // TTL of its own to own — only the mtime/recency kinds do); `decideArchive`
 // below is the thin wrapper kept for existing callers/tests.
-function decideArchiveCore(prState, consoleState) {
+function decideArchiveCore(prState, consoleState, hasStagedPending) {
   if (prState === 'gh-absent') return { action: 'skip', reason: 'gh-absent' };
   if (prState === 'network-failure') return { action: 'skip', reason: 'network-failure' };
   if (!prState) return { action: 'skip', reason: 'no-pr' };
@@ -330,7 +330,21 @@ function decideArchiveCore(prState, consoleState) {
   // the empty-console fast path, which closes the run terminal and archives
   // via the archive-run verb without ever reaching this sweep. Archiving on
   // mere PR-merge swept live runs with pending staged decisions (#657).
-  if (consoleState === 'none') return { action: 'skip', reason: 'console-never-rendered' };
+  //
+  // #3249: that protection is about a run with genuinely *pending, unresolved*
+  // staged decisions — but the fast-lane auto-merge short-circuit
+  // (wrap-up/auto-merge-short-circuit.md) renders its console content as a
+  // non-blocking PushNotification FYI and never writes console.json at all,
+  // making this skip permanent for every such run regardless of whether
+  // anything was ever actually staged. `hasStagedPending` is computed by the
+  // caller (this function stays pure — no I/O of its own) from the run's own
+  // staged/ directory; only an explicit `false` unlocks the archive path, so
+  // every existing 2-arg call site (and any caller that genuinely doesn't
+  // know) keeps today's unconditional skip.
+  if (consoleState === 'none') {
+    if (hasStagedPending === false) return { action: 'archive' };
+    return { action: 'skip', reason: 'console-never-rendered' };
+  }
   return { action: 'archive' };
 }
 
@@ -359,6 +373,21 @@ function readConsoleState(runDir) {
     return resolved ? 'resolved' : 'unresolved';
   } catch {
     return 'unresolved'; // unparseable console state fails closed — never silently archived
+  }
+}
+
+// #3249: whether this run's staged/ directory holds any file at all —
+// used to distinguish "nothing was ever staged, safe to archive on a
+// never-rendered console" from "staged/ genuinely holds unapproved items"
+// (the #657/#1130 protection this file's console-never-rendered skip
+// exists for). Returns false when the directory doesn't exist or is
+// empty — an absent and an empty staged/ directory are the same signal
+// (nothing pending), never distinguished.
+function hasStagedItems(runDir) {
+  try {
+    return fs.readdirSync(path.join(runDir, 'staged')).length > 0;
+  } catch {
+    return false;
   }
 }
 
@@ -1443,7 +1472,13 @@ function classifyRunDir(ctx, now = Date.now()) {
       }
     } else if (kind === 'merged') {
       if (prState !== undefined) {
-        const decision = decideArchiveCore(prState, consoleState);
+        // #3249: `dir` is this ctx's own run directory (already present on
+        // every real caller) — undefined only in a handful of direct
+        // classifyRunDir unit tests that don't set it, where `hasStagedItems`
+        // is skipped entirely (hasStagedPending stays undefined, preserving
+        // the existing unconditional skip for those fixtures).
+        const hasStagedPending = dir ? hasStagedItems(dir) : undefined;
+        const decision = decideArchiveCore(prState, consoleState, hasStagedPending);
         if (decision.action === 'archive') return { kind: 'merged', ttlMs: null, evidence: {} };
         return { kind: 'none', ttlMs: null, evidence: { skipReason: decision.reason } };
       }
@@ -1830,6 +1865,18 @@ function archiveMerged({
             continue;
           }
           if (consoleState === 'none') {
+            // #3249: a MERGED PR with nothing pending in staged/ is the
+            // fast-lane auto-merge short-circuit's own normal shape — its
+            // console was never written at all, not left unresolved — so
+            // archive it the same way the ordinary branch-joined path now
+            // does (decideArchiveCore's hasStagedPending exception above).
+            // A CLOSED (never-merged) PR keeps the distinct, tracked reason
+            // below unconditionally — there's no run left to converge
+            // toward regardless of staged/'s contents.
+            if (byNumber.state === 'MERGED' && !hasStagedItems(dir)) {
+              finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+              continue;
+            }
             // #2231: a CLOSED (never-merged) PR's console will never
             // render — nothing drives this run's pipeline to wrap-up
             // anymore, so the plain 'console-never-rendered' reason's
@@ -1902,7 +1949,7 @@ function archiveMerged({
 }
 
 module.exports = {
-  archiveMerged, decideArchive, readConsoleState, archiveRunDir, listSpecDirs,
+  archiveMerged, decideArchive, decideArchiveCore, readConsoleState, archiveRunDir, listSpecDirs,
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
