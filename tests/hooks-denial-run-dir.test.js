@@ -87,3 +87,17 @@ test('#2783 F3: the session lookup skips an ad-hoc dir whose worktree is still l
   const hits = ctxLib.findAdHocRunsBySessionId(main, 'S1');
   assert.deepStrictEqual(hits.map((h) => fs.realpathSync(h.runDir)), [fs.realpathSync(removed)]);
 });
+
+test('#2783 G2: a RELATIVE recorded worktree is never provable as "still exists" — the dir stays included', () => {
+  const main = gitRepo();
+  // A relative path that, resolved against the hook process's OWN cwd
+  // (never the recording session's cwd), happens to point at something real
+  // — chosen deliberately so the guard under test, not mere non-existence,
+  // is what keeps this dir from being wrongly treated as "still live."
+  const relativeWorktree = path.relative(process.cwd(), __dirname);
+  assert.ok(!path.isAbsolute(relativeWorktree), 'fixture precondition: must be a relative path');
+  assert.ok(fs.existsSync(relativeWorktree), 'fixture precondition: must resolve to something real from cwd, proving the guard (not non-existence) is what includes it');
+  const dir = seed(main, '2026-10-04T000000-adhoc-standalone', { status: 'active', sessionId: 'S1', worktree: relativeWorktree });
+  const hits = ctxLib.findAdHocRunsBySessionId(main, 'S1');
+  assert.deepStrictEqual(hits.map((h) => fs.realpathSync(h.runDir)), [fs.realpathSync(dir)]);
+});
