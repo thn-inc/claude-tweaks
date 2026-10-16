@@ -79,7 +79,8 @@ test('SECOND-call template stays on Standard, byte-identical', () => {
 
 test('FIRST-call section names the model-ceiling clamp beside the template', () => {
   const { first } = sections(read());
-  const afterFence = first.slice(first.indexOf(fencedBlock(first)) + fencedBlock(first).length);
+  const block = fencedBlock(first);
+  const afterFence = first.slice(first.indexOf(block) + block.length);
   const caveat = afterFence.slice(0, 1500);
   assert.match(caveat, /model-ceiling: standard/);
   assert.match(caveat, /`sonnet`/);
