@@ -2621,6 +2621,46 @@ test('archiveMerged: ordinary path — a real pending staged/ item still skips c
   assert.equal(fs.existsSync(runDir), true);
 });
 
+// Review finding (#3249): hasStagedItems used to catch every readdirSync
+// error — including a non-ENOENT one — and report "nothing staged" either
+// way. A `staged` entry that exists but isn't a readable directory (here: a
+// plain file sitting where `staged/` should be, producing ENOTDIR) is not
+// the same signal as "genuinely absent" — it must fail closed (treated as
+// pending) rather than unlock the archive path, matching readConsoleState's
+// own fail-closed convention on an unparseable console.json.
+test('archiveMerged: ordinary path — staged/ existing as a non-directory (ENOTDIR) fails closed, never archives (#3249)', () => {
+  const branch = 'feat-3249-ordinary-staged-enotdir';
+  const runId = '2026-08-01T090000-record-3249-ordinary-staged-enotdir';
+  const { root, featureSha } = mergedFeatureBranchRepo(branch);
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', `gone-${runId}`),
+    pr: { number: 3249101, branch },
+  }));
+  // `staged` exists but as a plain file, not a directory — readdirSync on
+  // it throws ENOTDIR, a different failure mode than the absent-directory
+  // ENOENT case the dotfile/empty tests above cover.
+  fs.writeFileSync(path.join(runDir, 'staged'), 'not a directory\n');
+  const wrapper = installGhWrapper([{
+    number: 3249101, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    mergeCommit: { oid: featureSha },
+  }]);
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(!result.archived.includes(runDir), 'an unreadable staged/ entry must never be treated as "nothing pending"');
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'console-never-rendered');
+  assert.equal(fs.existsSync(runDir), true);
+});
+
 test('isAbandonedInterrupted: false for a non-interrupted status', () => {
   assert.equal(isAbandonedInterrupted('/x', { status: 'active' }, 'sess-1', Date.now()), false);
 });

@@ -385,13 +385,20 @@ function readConsoleState(runDir) {
 // exists for). Dotfiles (a stray .DS_Store) are not items: the console's
 // own reader (console/resolve.js readSnapshot) filters names starting with
 // `.` the same way — keep the two agreeing. Returns false when the
-// directory doesn't exist or holds no non-dotfile entry — an absent and an
-// empty staged/ directory are the same signal (nothing pending).
+// directory doesn't exist (ENOENT) or holds no non-dotfile entry — an
+// absent and an empty staged/ directory are the same signal (nothing
+// pending). Any other read failure (EACCES, ENOTDIR, EIO, …) is not the
+// same signal — it means the contents are genuinely unprovable, not
+// genuinely empty — so it fails closed (true, "treat as pending") the same
+// way readConsoleState's own catch two functions above fails closed on an
+// unparseable console.json; this is the one function the #657/#1130
+// protection's archive decision rests on, so an ambiguous read must never
+// resolve toward "safe to archive" (review finding, #3249).
 function hasStagedItems(runDir) {
   try {
     return fs.readdirSync(path.join(runDir, 'staged')).some((n) => !n.startsWith('.'));
-  } catch {
-    return false;
+  } catch (err) {
+    return err && err.code !== 'ENOENT';
   }
 }
 
