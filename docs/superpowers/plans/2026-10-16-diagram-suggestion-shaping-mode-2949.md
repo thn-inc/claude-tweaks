@@ -10,8 +10,6 @@
 
 **Spec:** `.claude-tweaks/pipelines/2026-10-16T214344-record-2949/work/2949-spec.md`
 
-Scope keywords: diagram-suggestion, diagram suggestions, Step 2.5d, visualize
-
 ## Global Constraints
 
 - Advisory only — a diagram suggestion must never become a gate, a prompt, or an `AskUserQuestion`; it never writes record frontmatter and never invokes `/claude-tweaks:visualize` itself.
