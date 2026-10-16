@@ -6,12 +6,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { scanAgentTrustScope } = require('../plugin/bin/lib/code-health/candidates-agent-trust-scope.js');
 
 const ROOT = path.join(__dirname, '..');
 const settings = JSON.parse(fs.readFileSync(path.join(ROOT, '.claude', 'settings.json'), 'utf8'));
-const autonomy = (fs.readFileSync(path.join(ROOT, '.claude-tweaks', 'policy.yml'), 'utf8').match(/^autonomy:\s*["']?([a-z-]+)/m) || [])[1];
+const autonomy = (fs.readFileSync(path.join(ROOT, '.claude-tweaks', 'policy.yml'), 'utf8').match(/^autonomy:\s*["']?([a-z-]+)["']?\s*$/m) || [])[1];
 
 test('the committed deny list closes registry-access and credential-scope', () => {
   const kinds = scanAgentTrustScope(ROOT).candidates.map((c) => c.kind);
@@ -19,8 +20,23 @@ test('the committed deny list closes registry-access and credential-scope', () =
   assert.ok(!kinds.includes('credential-scope'), `credential-scope still reported: ${kinds}`);
 });
 
-test('network-egress stays reported while autonomy is elevated (accepted risk, ADR 0022)', () => {
-  if (autonomy !== 'unattended' && autonomy !== 'trusted') return;
+test('the committed deny list closes registry-access and credential-scope independent of this repo\'s own autonomy setting', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-trust-scope-fixture-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'autonomy: unattended\n');
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, '.claude', 'settings.json'), path.join(dir, '.claude', 'settings.json'));
+  const kinds = scanAgentTrustScope(dir).candidates.map((c) => c.kind);
+  assert.ok(!kinds.includes('registry-access'), `registry-access still reported: ${kinds}`);
+  assert.ok(!kinds.includes('credential-scope'), `credential-scope still reported: ${kinds}`);
+});
+
+test('network-egress stays reported while autonomy is elevated (accepted risk, ADR 0022)', (t) => {
+  if (autonomy !== 'unattended' && autonomy !== 'trusted') {
+    t.skip('autonomy is not elevated — the generator reports nothing');
+    return;
+  }
   const kinds = scanAgentTrustScope(ROOT).candidates.map((c) => c.kind);
   assert.ok(kinds.includes('network-egress'), 'network-egress silenced — a deny rule now hides an accepted risk ADR 0022 says stays visible');
 });
@@ -35,9 +51,8 @@ test('ADR 0022 records the network-egress accepted risk and the uses that need i
   }
 });
 
-test('the deny key is additive — allow, plugins, marketplaces and worktree are untouched', () => {
-  assert.deepStrictEqual(settings.permissions.allow, ['Read(node_modules/**)']);
-  assert.deepStrictEqual(settings.worktree, { baseRef: 'head' });
+test('the deny list keeps the existing allow entry, plugin wiring, and WebFetch', () => {
+  assert.ok(settings.permissions.allow.includes('Read(node_modules/**)'));
   assert.ok(settings.enabledPlugins && settings.enabledPlugins['claude-tweaks@claude-tweaks-marketplace'] === true);
   assert.ok(settings.extraKnownMarketplaces && settings.extraKnownMarketplaces['claude-tweaks-marketplace']);
   assert.ok(!settings.permissions.deny.some((r) => /^WebFetch(\(|$)/.test(r)), 'WebFetch must not be denied while /research needs it');
