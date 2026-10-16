@@ -460,6 +460,11 @@ function tapBlocks(lines) {
   return blocks;
 }
 
+// Every TAP `not ok` block, counted the same way `specEntryCount` counts
+// spec entries — the accounting `unattributedFailureCount` compares against
+// `# fail` + `# cancelled`.
+function tapBlockCount(text) { return tapBlocks(stripAnsi(text).split('\n')).length; }
+
 // The relativized test files one TAP block's frames name, deduped.
 function tapBlockFiles(block, cwd) {
   const files = [];
@@ -506,7 +511,7 @@ function unattributedFailureCount(text, family, { cwd = process.cwd() } = {}) {
   const counts = parseCounts(text, family);
   if (counts === null) return 1;
   const cancelled = cancelledCount(text, family) || 0;
-  const entries = family === 'spec' ? specEntryCount(text) : tapBlocks(stripAnsi(text).split('\n')).length;
+  const entries = family === 'spec' ? specEntryCount(text) : tapBlockCount(text);
   const expected = counts.fail + cancelled;
   return entries === expected ? 0 : Math.abs(entries - expected);
 }
