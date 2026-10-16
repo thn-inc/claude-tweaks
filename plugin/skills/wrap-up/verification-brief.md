@@ -31,7 +31,9 @@ change the unit of acceptance.
 produced by a `/specify` decomposition) — run the **Oversight-floor gate** below, then Steps 1-4,
 applying `demo:pending` to the record itself only when the gate says the record clears the floor.
 
-**Before either branch, on every path:** compose this record's Try it block — the next section. Neither the Parent-Gate Procedure nor the Oversight-floor gate gates it (#2821); they decide only where it lands.
+**Before either branch, on every record-holding entry** (a no-parent record, or a sub-issue-side
+entry into the Parent-Gate Procedure — not the parent-side `/claude-tweaks:tidy` entry below,
+which holds no delivering record of its own): compose this record's Try it block — the next section. Neither the Parent-Gate Procedure nor the Oversight-floor gate gates it (#2821); they decide only where it lands.
 
 A caller that already holds a **parent** number is inside the Parent-Gate Procedure by
 construction — there is no sub-issue to resolve, so it starts at **Enumerate the parent's

@@ -37,6 +37,13 @@ Every step from **Enumerate the parent's sub-issues** onward is shared, unchange
   to this entry exactly as it does to a sub-issue-side one — take the `local-files` branches when
   that is the driver.
 
+**Return to the Try it post (#2821).** A sub-issue-side entry, on every exit of this procedure —
+`incomplete`, `gated`/`resolved`, `exceeds: false`, or `exceeds: true` after **Apply the gate** —
+returns to `verification-brief.md`'s **Posting it alone** and posts this sub-issue's Try it block
+(with any end-to-end variant appended to `"$TRY_IT"`). The one exception is the fail-open fallback
+below, which runs Steps 1-4 on this record and so embeds the block in its own brief (Step 4's
+template). The parent-side (`/claude-tweaks:tidy`) entry does not post one.
+
 **Fail open on every `gh` call in this section.** If `gh` is unavailable, unauthenticated, the
 repo has no GitHub remote, or any parent-gate `gh` call below fails: a **sub-issue-side** entry
 skips the Parent-Gate Procedure entirely and falls back to today's behavior (apply `demo:pending`
@@ -270,7 +277,7 @@ A parent brief consists of:
 
 Where no register exists (fewer than 4 sub-issues — the threshold that was the
 `promise-register-min-leaves` policy lever until its retirement in #331; removal trail:
-`_shared/policy-deprecations.md` — or `work-backend: local-files`), part 2 alone carries the brief, and `### Confirmed` reads `No cross-spec promise register — walk the end-to-end path in Try it below.` (the section stays: the already-posted check below and `engine-verify.js` both key on it).
+`_shared/policy-deprecations.md` — or `work-backend: local-files`), part 2 alone carries the brief, and `### Confirmed` reads `No cross-spec promise register — walk the end-to-end path in Try it above.` (the section stays: the already-posted check below and `engine-verify.js` both key on it).
 
 Render the same `## Verification Brief` template Step 4 (`verification-brief.md`) renders, with:
 **The ask** — the parent's own design summary (problem, chosen approach — `_shared/work-record.md`'s
