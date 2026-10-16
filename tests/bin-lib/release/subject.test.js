@@ -148,3 +148,31 @@ test('truncation: trailing punctuation is trimmed when the word-boundary cut lan
   assert.ok(subject.length <= SUBJECT_BUDGET, `${subject.length} > 72: ${subject}`);
   assert.ok(subject.endsWith(' (#1)'), subject);
 });
+
+test('scope (#3028): type(scope): prefix counted inside the 72-char budget; blank, omitted, or non-string stays unscoped; non-token rejected', () => {
+  assert.equal(composeSubject({ type: 'bug', title: 'Fix Y', number: 7, scope: 'api', releaseNote: 'N.' }).title, 'fix(api): Fix Y (#7)');
+  assert.equal(composeSubject({ type: 'bug', title: 'Fix Y', number: 7, scope: 'ui/forms', releaseNote: 'N.' }).title, 'fix(ui/forms): Fix Y (#7)');
+  assert.equal(composeSubject({ type: 'bug', title: 'Fix Y', number: 7, scope: '  ', releaseNote: 'N.' }).title, 'fix: Fix Y (#7)');
+  assert.equal(composeSubject({ type: 'bug', title: 'Fix Y', number: 7, releaseNote: 'N.' }).title, 'fix: Fix Y (#7)');
+  assert.equal(composeSubject({ type: 'bug', title: 'Fix Y', number: 7, scope: 42, releaseNote: 'N.' }).title, 'fix: Fix Y (#7)');
+  assert.equal(
+    composeSubject({ type: 'feature', title: 'Drop X', number: 8, scope: 'cli', breaking: true, migrationNote: 'Use Y.', releaseNote: 'N.' }).title,
+    'feat(cli)!: Drop X (#8)',
+  );
+  const long = composeSubject({ type: 'feature', title: 'word '.repeat(30).trim(), number: 4321, scope: 'web-ui', releaseNote: 'N.' }).title;
+  assert.ok(long.startsWith('feat(web-ui): word'), long);
+  assert.ok(long.length <= SUBJECT_BUDGET, `${long.length} > ${SUBJECT_BUDGET}: ${long}`);
+  assert.ok(long.endsWith(' (#4321)'), long);
+  for (const bad of ['a(b)', 'two words', 'x:y']) {
+    assert.throws(
+      () => composeSubject({ type: 'bug', title: 'T', number: 1, scope: bad, releaseNote: 'N.' }),
+      (err) => err instanceof ComposeSubjectError && /scope must be a single token/.test(err.message),
+      `scope ${JSON.stringify(bad)} must be rejected`,
+    );
+  }
+  assert.throws(() => composeSubject({ type: 'feature', title: 'Add the thing', number: 3028, scope: 'a'.repeat(60), releaseNote: 'N.' }),
+    (err) => err instanceof ComposeSubjectError && /scope "a+" is too long/.test(err.message));
+  const fortyScope = composeSubject({ type: 'feature', title: 'Add the thing that is long enough to need truncating here', number: 3028, scope: 'a'.repeat(40), releaseNote: 'N.' }).title;
+  assert.ok(fortyScope.startsWith(`feat(${'a'.repeat(40)}): `), fortyScope);
+  assert.ok(fortyScope.length <= SUBJECT_BUDGET, fortyScope);
+});
