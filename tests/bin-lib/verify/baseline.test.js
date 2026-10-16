@@ -27,13 +27,14 @@ const FILE_LEVEL = (f) => ['ℹ tests 1', 'ℹ pass 0', 'ℹ fail 1', 'ℹ cance
 // overrides the text per `${kind}:${file}`.
 const PASS_LOG = ['✔ x (1ms)', 'ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0', 'ℹ cancelled 0'].join('\n');
 
-function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, throwOn = null, logs = {}, repoRoot = '/repo' }) {
+function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, inCheckout = () => true, throwOn = null, logs = {}, repoRoot = '/repo' }) {
   const calls = { runs: [], added: [], removed: [] };
   const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-fake-runs-'));
   const git = {
     repoRoot: () => repoRoot,
     fileExistsAt: (sha, f) => existsAtBase(f),
     sameAtBase: (sha, f) => sameAtBase(f),
+    inCheckout: (dir, rel) => inCheckout(rel, dir),
     addWorktree: (sha) => { calls.added.push(sha); return '/scratch'; },
     removeWorktree: (dir) => { calls.removed.push(dir); },
   };
@@ -692,4 +693,54 @@ test('realGit.sameAtBase: true for a working-tree file whose blob matches the co
   fs.writeFileSync(path.join(repo, 'tests', 'a.test.js'), 'two\n');
   assert.strictEqual(rg.sameAtBase(sha, 'tests/a.test.js'), false);
   assert.strictEqual(rg.sameAtBase(sha, 'tests/missing.test.js'), false);
+});
+
+// #3153: the full-run failure of a meta-test that quotes its spawned child's
+// TAP (temp-dir paths and all) in its assertion message.
+const META_TAP = (root) => ['TAP version 13', 'not ok 1 - meta', '  ---', `  location: '${root}/tests/meta.test.js:9:1'`, '  error: |-',
+  '    not ok 1 - env', '      ---', "      location: '/private/var/folders/x/T/verify-cli-test-abc/tests/env.test.js:1:40'", '      ...',
+  '  stack: |-', `    TestContext.<anonymous> (${root}/tests/meta.test.js:17:10)`, '  ...', '1..1', '# tests 1', '# pass 0', '# fail 1', '# cancelled 0'].join('\n');
+
+test('#3153 AC1: a meta-test quoting its child\'s temp-dir TAP adjudicates on its own file only — baseline, never a phantom attributable', async () => {
+  const { p, dir } = logFile(META_TAP('/repo'));
+  const { git, runOne } = fakes({
+    outcomes: { 'baseline:tests/meta.test.js': 1, 'isolated:tests/meta.test.js': 1 },
+    logs: { 'baseline:tests/meta.test.js': META_TAP('/scratch'), 'isolated:tests/meta.test.js': META_TAP('/repo') },
+  });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(r.failingFiles, ['tests/meta.test.js']);
+  assert.deepStrictEqual(r.attributable, []);
+  assert.deepStrictEqual(r.baselineFailing, ['tests/meta.test.js']);
+  assert.strictEqual(r.verdict, 'pass');
+});
+
+test('#3153 AC3: a failing-file path absent from the checkout never reaches attributable — dropped beside a real file, unclassified alone', async () => {
+  const present = (rel) => rel === 'tests/a.test.js';
+  const beside = ['not ok 1 - a', "  location: '/repo/tests/a.test.js:1:1'", '  at /tmp/sandbox/tests/env.test.js:2:1',
+    '# tests 1', '# pass 0', '# fail 1', '# cancelled 0'].join('\n');
+  const { p, dir } = logFile(beside);
+  const one = fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 0 }, inCheckout: present });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne: one.runOne, git: one.git });
+  assert.deepStrictEqual(r.failingFiles, ['tests/a.test.js']);
+  assert.ok(!r.attributable.some((f) => f !== 'tests/a.test.js'), JSON.stringify(r.attributable));
+
+  const alone = ['not ok 1 - env', '  at tests/env.test.js:2:1', '# tests 1', '# pass 0', '# fail 1', '# cancelled 0'].join('\n');
+  const { p: p2, dir: dir2 } = logFile(alone);
+  const two = fakes({ outcomes: {}, inCheckout: present });
+  const r2 = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p2 }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir2, runOne: two.runOne, git: two.git });
+  assert.strictEqual(r2.eligible, false);
+  assert.match(r2.reason, /^no-parse: no failing test file extractable from tests$/);
+  assert.deepStrictEqual(two.calls.runs, []);
+});
+
+test('#3153: realGit().inCheckout is true only for a relative path present under the given directory', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-incheckout-'));
+  fs.mkdirSync(path.join(root, 'tests'));
+  fs.writeFileSync(path.join(root, 'tests', 'a.test.js'), '');
+  const g = realGit(root);
+  assert.strictEqual(g.inCheckout(root, 'tests/a.test.js'), true);
+  assert.strictEqual(g.inCheckout(root, 'tests/gone.test.js'), false);
+  assert.strictEqual(g.inCheckout(root, `${root.replace(/\\/g, '/')}/tests/a.test.js`), false, 'an absolute path is never inside');
+  assert.strictEqual(g.inCheckout(path.join(root, 'tests'), '../tests/a.test.js'), false, 'a path climbing out is never inside');
+  assert.strictEqual(g.inCheckout(root, 'C:/repo/tests/a.test.js'), false);
 });
