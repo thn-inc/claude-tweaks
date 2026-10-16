@@ -60,6 +60,12 @@ function firstFence(doc) {
   return m[1];
 }
 
+// The text from one marker up to (not including) a later one, or to the end
+// of the doc when no end marker is given.
+function between(doc, start, end) {
+  return doc.slice(doc.indexOf(start), end === undefined ? undefined : doc.indexOf(end));
+}
+
 test('single-spec Pipeline Summary carries a mandatory Try it section before Timing', () => {
   const doc = read('flow/summary-template.md');
   const fence = firstFence(doc);
@@ -100,7 +106,7 @@ test('verification-brief.md composes Try it before any parent or floor branching
 
 test('Routing composes the Try it block on every record-holding entry', () => {
   const doc = read('wrap-up/verification-brief.md');
-  const routing = doc.slice(doc.indexOf('## Routing'), doc.indexOf('## Try it block (every record, before either branch)'));
+  const routing = between(doc, '## Routing', '## Try it block (every record, before either branch)');
   const entry = paragraphAt(routing, '**Before either branch, on every record-holding entry**');
   assert.match(entry.text, /sub-issue-side\s+entry into the Parent-Gate Procedure/);
   assert.match(entry.text, /compose this record's Try it block/);
@@ -120,8 +126,8 @@ test('the producer and both summaries name the same session-scoped try-it file',
 
 test('below the floor: no demo:pending, but the walkthrough still posts', () => {
   const doc = read('wrap-up/verification-brief.md');
-  const gate = doc.slice(doc.indexOf('## Oversight-floor gate'), doc.indexOf('## Step 1:'));
-  const below = gate.slice(gate.indexOf('**`exceeds: false`**'), gate.indexOf('**`exceeds: true`**'));
+  const gate = between(doc, '## Oversight-floor gate', '## Step 1:');
+  const below = between(gate, '**`exceeds: false`**', '**`exceeds: true`**');
   assert.match(below, /no `demo:pending`\s+bootstrap/, 'floor still gates the label');
   assert.match(below, /walkthrough is not skipped/);
   assert.match(below, /\*\*Posting it alone\*\*/);
@@ -130,7 +136,7 @@ test('below the floor: no demo:pending, but the walkthrough still posts', () => 
 
 test('no-PR runs degrade to the Pipeline Summary, citing the pr-run-comments gate', () => {
   const doc = read('wrap-up/verification-brief.md');
-  const alone = doc.slice(doc.indexOf('**Posting it alone**'));
+  const alone = between(doc, '**Posting it alone**');
   assert.match(alone, /No `pr` object/);
   assert.match(alone, /Pipeline Summary carries it/);
   assert.match(alone, /_shared\/pr-run-comments\.md/);
@@ -151,12 +157,12 @@ test('parent gate: the end-to-end Try it replaces the inline Confirmed walkthrou
   assert.ok(doc.includes('### Try it — end to end'));
   assert.doesNotMatch(doc, /inline inside `### Confirmed`/);
   assert.doesNotMatch(doc, /inline within Confirmed/);
-  const evalGate = doc.slice(doc.indexOf('## Evaluate the gate'), doc.indexOf('## Compose the parent brief'));
-  const below = evalGate.slice(evalGate.indexOf('**`exceeds: false`**'), evalGate.indexOf('**`exceeds: true`**'));
+  const evalGate = between(doc, '## Evaluate the gate', '## Compose the parent brief');
+  const below = between(evalGate, '**`exceeds: false`**', '**`exceeds: true`**');
   assert.match(below, /no `demo:pending`, no brief/, 'floor still gates the label and brief');
   assert.match(below, /end-to-end variant/);
   assert.match(below, /Parent-side entry/);
-  const compose = doc.slice(doc.indexOf('## Compose the parent brief'), doc.indexOf('## Apply the gate'));
+  const compose = between(doc, '## Compose the parent brief', '## Apply the gate');
   assert.match(compose, /### Confirmed/, 'Confirmed survives for verify + already-posted checks');
   assert.doesNotMatch(doc, FIELD_LINE);
 });
@@ -169,8 +175,8 @@ test('parent gate: every sub-issue-side exit returns to the Try it post', () => 
   }
   assert.match(ret.text, /\*\*Posting it alone\*\*/);
   assert.match(ret.text, /fail-open fallback/);
-  const evalGate = doc.slice(doc.indexOf('## Evaluate the gate'), doc.indexOf('## Compose the parent brief'));
-  const above = evalGate.slice(evalGate.indexOf('**`exceeds: true`**'));
+  const evalGate = between(doc, '## Evaluate the gate', '## Compose the parent brief');
+  const above = between(evalGate, '**`exceeds: true`**');
   assert.match(above, /"\$TRY_IT"/, 'exceeds: true appends the end-to-end variant too');
 });
 
@@ -182,7 +188,7 @@ test('pr-run-comments.md registers the try-it kind, spec-qualified under multi-s
 
 test('demo Step 2 renders Try it before the design contract and before Prepare', () => {
   const doc = read('demo/SKILL.md');
-  const step2 = doc.slice(doc.indexOf('## Step 2: Per-item walkthrough'), doc.indexOf('### Verdict'));
+  const step2 = between(doc, '## Step 2: Per-item walkthrough', '### Verdict');
   const first = paragraphAt(step2, '**Try it first');
   assert.ok(first.start < step2.indexOf('### The design contract'), 'before the design-contract section');
   assert.ok(first.start < step2.indexOf('**Prepare**'), 'before Prepare');
@@ -204,15 +210,15 @@ test('demo entry paths compose a Try it block on both composer branches', () => 
 
 test('demo #N lookup reads the walkthrough back from the PR before composing one', () => {
   const doc = read('demo/entry-paths.md');
-  const lookup = doc.slice(doc.indexOf('## `#N` given: single-record lookup'), doc.indexOf('### Full verification pointer'));
+  const lookup = between(doc, '## `#N` given: single-record lookup', '### Full verification pointer');
   assert.match(lookup, /`Verification Brief\s+posted to PR #\{pr-number\}: \{pr-url\}`/, 'names the pr-first pointer line');
   assert.ok(lookup.includes('<!-- run-comment: try-it -->'), 'names the try-it marker');
   assert.ok(lookup.includes('<!-- run-comment: try-it:{n} -->'), 'names the multi-spec try-it marker');
   assert.ok(lookup.includes('<!-- run-comment: brief -->'), 'names the brief marker');
   assert.match(lookup, /closedByPullRequestsReferences/, 'reuses the issue-side closing-PR field');
   assert.match(lookup, /`_shared\/pr-run-comments\.md`'s Find step/, 'reuses the find-by-marker read');
-  const recon = lookup.slice(lookup.indexOf('**Found**'), lookup.indexOf('**Not found**'));
-  const tryIt = recon.slice(recon.indexOf('- **Try it**'));
+  const recon = between(lookup, '**Found**', '**Not found**');
+  const tryIt = between(recon, '- **Try it**');
   const prRead = tryIt.indexOf('PR run-comment');
   assert.ok(prRead >= 0 && prRead < tryIt.indexOf('_shared/try-it.md'), 'reads the PR before composing fresh');
 });
