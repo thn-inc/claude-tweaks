@@ -116,6 +116,8 @@ gets refused. Diagnosing the *main checkout's* state from inside this worktree s
 same guard — `git -C <main-checkout> ...` is refused as git-adjacent and too complex to verify;
 use plain filesystem reads (`ls`, `cat`) against the main checkout's path instead (`docs/donts.md`).
 
+**Resolve plugin-supplied values to literals once.** `CLAUDE_PLUGIN_ROOT` is not set in the Bash tool environment, and inside a worktree session the same guard refuses a command that passes `"${CLAUDE_PLUGIN_ROOT}"` or `"$CLAUDE_CODE_SESSION_ID"` as a runtime value (`_shared/scratch-worktree.md` §7's runtime-computed-variable entries). The first time a later command needs either value, resolve it once: the plugin root is the Skill tool's `Base directory for this skill:` line minus its trailing `skills/{name}` (no Skill invocation — the read file's own grandparent); the session id is one plain `printenv CLAUDE_CODE_SESSION_ID` call. Substitute both as literal paths/strings into every later command, and into any prompt handed to a subagent.
+
 Unconditionally, before anything else runs in the new worktree — as two separate single-command
 Bash calls, per the shell constraint just above; never combined into one:
 
