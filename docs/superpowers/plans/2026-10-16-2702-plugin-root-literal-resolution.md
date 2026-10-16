@@ -10,6 +10,8 @@
 
 **Spec:** `.claude-tweaks/pipelines/2026-10-16T173115-spec-2702-2727-2776/spec-2702/work/2702-spec.md`
 
+> **Execution note (deviation from this plan, commit 3eeef834f):** the whole-branch review found this plan's no-Skill-invocation fallback — "the read file's own grandparent" (Review Focus #2, Task 1's test and paragraph below) — off by one level (`<root>/skills/_shared/x.md`'s grandparent is `<root>/skills`). What shipped instead: "the read file's own path, cut before its `skills/` segment", the plugin root sourced from "the invoking claude-tweaks skill's" base-directory line, and a test that asserts the new rule and rejects `grandparent`. The shipped text is `plugin/skills/_shared/worktree-setup.md`'s Post-creation catch-up and `tests/worktree-setup-plugin-root-literal.test.js`; the task text below is the plan as written, kept for history.
+
 ## Global Constraints
 
 - No file under `plugin/bin/lib/hooks/` changes (AC3) — the refusal is the Claude Code harness's guard, not `pre-tool-use.js` (verified: none of "too complex to verify", "computed at runtime", "cannot be shown not to be git" appears under `plugin/bin/`).
