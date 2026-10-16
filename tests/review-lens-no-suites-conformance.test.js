@@ -30,6 +30,16 @@ function section(text, heading) {
   return text.slice(start, next === -1 ? text.length : next);
 }
 
+// Slice between two anchors, asserting both resolve — a missing end anchor would otherwise
+// make slice(start, -1) silently widen the region to the rest of the file.
+function between(text, startAnchor, endAnchor) {
+  const start = text.indexOf(startAnchor);
+  assert.notEqual(start, -1, `missing start anchor: ${startAnchor}`);
+  const end = text.indexOf(endAnchor, start);
+  assert.notEqual(end, -1, `missing end anchor: ${endAnchor}`);
+  return text.slice(start, end);
+}
+
 function reviewDispatchBundle() {
   return compose(
     [
@@ -75,7 +85,7 @@ test('the Foreground note no longer frames running a verification command as an 
 
 test('the Foreground note also covers ordinary read-only probes under SCRATCH:, not just the lens 3f test case', () => {
   const d = read('review', 'step3-lens-dispatch.md');
-  const sec = d.slice(d.indexOf('> **Foreground Execution Discipline:**'), d.indexOf('> **Full diff content is read here'));
+  const sec = between(d, '> **Foreground Execution Discipline:**', '> **Full diff content is read here');
   assert.match(sec, /SCRATCH:/);
 });
 
@@ -105,7 +115,7 @@ test('the debate, refutation, and gap-sweep prompt templates each carry the READ
 
 test('the pre-dispatch listing also snapshots local TCP listeners next to pre-dispatch-status.txt', () => {
   const d = read('review', 'step3-lens-dispatch.md');
-  const para = d.slice(d.indexOf('**Pre-dispatch listing (scratch-sweep baseline).**'), d.indexOf('**`Path:Line` must be file-native'));
+  const para = between(d, '**Pre-dispatch listing (scratch-sweep baseline).**', '**`Path:Line` must be file-native');
   assert.match(para, /pre-dispatch-status\.txt/);
   assert.match(para, /lsof \+c 0 -nP -iTCP -sTCP:LISTEN > \{ctx-dir\}\/pre-dispatch-listeners\.txt/);
   assert.match(para, /lsof.*unavailable[\s\S]*SKIP/);
@@ -123,7 +133,7 @@ test('the post-fan-out sweep documents a report-only listener diff and its outpu
 
 test('the summary template Fan-out leftovers slot lists leftover listeners', () => {
   const t = read('review', 'review-summary-template.md');
-  const slot = t.slice(t.indexOf('### Fan-out leftovers'), t.indexOf('### Implementation Hindsight'));
+  const slot = between(t, '### Fan-out leftovers', '### Implementation Hindsight');
   assert.match(slot, /listener/);
   assert.match(slot, /\{command\}:\{port\}/);
 });
