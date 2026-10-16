@@ -342,6 +342,15 @@ registerCheck('worktree-removed', ({ runDir, expectations, deps, cwd }) => {
   const list = parseWorktreeList(porcelain);
   const match = list.find((wt) => wt.path.includes(slug) || (wt.branch && wt.branch.includes(slug)));
   if (match) return { result: 'fail', detail: `worktree still listed: ${match.path}` };
+  // #3023: `git worktree prune` drops the registration but can leave the
+  // directory behind, so an unlisted worktree is not proof of removal. The
+  // exact path comes from run-state.json's `worktree` stamp (a multi-spec
+  // spec-{N}/ dir inherits the parent's), never guessed from the slug.
+  const { state } = readRunStateWithParent(runDir);
+  const recorded = state && typeof state.worktree === 'string' && state.worktree ? state.worktree : null;
+  if (recorded && fs.existsSync(recorded)) {
+    return { result: 'fail', detail: `worktree unlisted but directory still present: ${recorded}` };
+  }
   return { result: 'pass', detail: '' };
 });
 

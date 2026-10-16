@@ -478,6 +478,49 @@ test('worktree-removed check passes when no matching worktree is listed', () => 
   assert.strictEqual(row.result, 'pass');
 });
 
+test('#3023: worktree-removed fails when the run\'s worktree is unlisted but its directory still exists on disk', () => {
+  const runDir = path.join(makeTmpDir('verify-wt-'), '2026-01-01T000000-spec-901');
+  const wtDir = makeTmpDir('verify-wt-dir-');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'closed', worktree: wtDir }));
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeCleanRepoRoot(), cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'worktree-removed');
+  assert.strictEqual(row.result, 'fail');
+  assert.ok(row.detail.includes(wtDir), `detail must name the path, got: ${row.detail}`);
+});
+
+test('#3023: worktree-removed passes when the worktree is unlisted and its directory is gone', () => {
+  const runDir = path.join(makeTmpDir('verify-wt-'), '2026-01-01T000000-spec-902');
+  const wtDir = path.join(makeTmpDir('verify-wt-gone-'), 'never-created');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'closed', worktree: wtDir }));
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeCleanRepoRoot(), cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'worktree-removed');
+  assert.strictEqual(row.result, 'pass');
+});
+
+test('#3023: worktree-removed keeps list-only behavior when run-state.json records no worktree', () => {
+  const runDir = path.join(makeTmpDir('verify-wt-'), '2026-01-01T000000-spec-903');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'closed' }));
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeCleanRepoRoot(), cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'worktree-removed');
+  assert.strictEqual(row.result, 'pass');
+});
+
+test('#3023: worktree-removed reads a multi-spec run\'s worktree path from the parent run-state.json', () => {
+  const parent = path.join(makeTmpDir('verify-wt-'), '2026-01-01T000000-spec-904-905');
+  const specDir = path.join(parent, 'spec-904');
+  const wtDir = makeTmpDir('verify-wt-dir-');
+  fs.mkdirSync(specDir, { recursive: true });
+  fs.writeFileSync(path.join(parent, 'run-state.json'), JSON.stringify({ status: 'closed', worktree: wtDir }));
+  fs.writeFileSync(path.join(specDir, 'run-state.json'), JSON.stringify({ status: 'closed' }));
+  const result = runVerify({ runDir: specDir, base: 'main', repoRoot: makeCleanRepoRoot(), cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'worktree-removed');
+  assert.strictEqual(row.result, 'fail');
+  assert.ok(row.detail.includes(wtDir));
+});
+
 // ---- multi-spec spec-{N}/ subdirectory resolution (record #900 fix round, C2/I2) ----
 //
 // A multi-spec `/flow` run exports the per-spec `spec-{N}/` subdirectory as
