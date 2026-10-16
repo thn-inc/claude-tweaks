@@ -57,10 +57,8 @@ test('formatPrintedPath: posix branch returns the input unchanged, byte for byte
 });
 
 test('formatPrintedPath: defaults platform/sep to the real process.platform/path.sep', () => {
-  const printed = formatPrintedPath('/tmp/ct-session-sess-default/foo.json');
-  assert.equal(printed, process.platform === 'win32'
-    ? '/tmp/ct-session-sess-default/foo.json'.split(path.sep).join('/')
-    : '/tmp/ct-session-sess-default/foo.json');
+  const nativePath = '/tmp/ct-session-sess-default/foo.json';
+  assert.equal(formatPrintedPath(nativePath), printed(nativePath));
 });
 
 test('posix: output is the unchanged native path, byte for byte', { skip: process.platform === 'win32' }, () => {
