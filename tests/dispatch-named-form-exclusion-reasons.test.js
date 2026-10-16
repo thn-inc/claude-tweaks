@@ -16,6 +16,7 @@ const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 const { sessionTmpPath } = require('../plugin/bin/lib/session-tmp');
+const { CEILING_BYTES } = require('../plugin/bin/lib/skill-audit/context-cost');
 
 const DISPATCH = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch');
 const SKILL = readText(path.join(DISPATCH, 'SKILL.md'));
@@ -120,7 +121,7 @@ test('dispatch #N reports an unreadable dispatch-exclusions.json as reason-unkno
   const probe = report.split('\n').find((l) => l.includes('readExclusionsStatus') && l.trimStart().startsWith('node '));
   assert.ok(probe, 'the report must carry a one-line node probe');
   const bytes = Buffer.byteLength(SKILL, 'utf8');
-  assert.ok(bytes < 46080, `dispatch/SKILL.md is ${bytes} B LF -- must stay under 46080`);
+  assert.ok(bytes < CEILING_BYTES, `dispatch/SKILL.md is ${bytes} B LF -- must stay under ${CEILING_BYTES}`);
 });
 
 // The report's probe must run in a fresh shell (Step 2 is its own Bash call, so `$DISPATCH_EXCLUSIONS` is

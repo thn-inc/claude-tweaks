@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { checkVersion, checkAssertions, replayFixtures, checkContentPins, isContentPinned } = require('../checks');
+const { checkVersion, checkAssertions, replayFixtures, checkContentPins, isContentPinned, splitGlobPattern } = require('../checks');
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'upstream-drift-checks-'));
@@ -138,6 +138,23 @@ for (const [label, toGlob] of [
     const result = checkVersion(entry);
     assert.strictEqual(result.status, 'ok', `an installed candidate behind an absolute glob must not read as absent: ${result.detail}`);
     assert.deepStrictEqual(result.installed, ['3.5.0']);
+  });
+}
+
+// Under ubuntu-only CI the two tests above both take the posix branch (their
+// inputs are byte-identical there), so #3040's win32 drive-root split never
+// runs. Passing `path.win32` — OS-independent by construction — pins that
+// branch on any host.
+for (const [label, glob, expectedBaseDir] of [
+  ['a backslash-separated drive-root glob', 'C:\\slotA\\impeccable\\3.5.0\\.claude-plugin\\plugin.json', 'C:\\'],
+  ['a forward-slash drive-root glob', 'C:/slotA/impeccable/3.5.0/.claude-plugin/plugin.json', 'C:/'],
+]) {
+  test(`splitGlobPattern: resolves ${label} under path.win32`, () => {
+    const result = splitGlobPattern(glob, path.win32);
+    assert.deepStrictEqual(result, {
+      baseDir: expectedBaseDir,
+      segments: ['slotA', 'impeccable', '3.5.0', '.claude-plugin', 'plugin.json'],
+    });
   });
 }
 
