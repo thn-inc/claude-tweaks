@@ -10,6 +10,11 @@ const { makeFinding } = require('../finding');
 
 const RP_MANIFEST_PATH = '.release-please-manifest.json';
 
+// The probe's one network call (#2882's ls-remote) — an unreachable or
+// credential-prompting remote would otherwise hang the whole residue sweep.
+// A timeout returns null through the runner, which is the local-only fallback.
+const LS_REMOTE_TIMEOUT_MS = 10000;
+
 // Both operands "X.Y.Z" strings — true when a >= b. Deliberately not a full
 // semver comparator (no pre-release/build metadata) — v* tags and CHANGELOG
 // headings in this codebase's convention are always bare three-part versions.
@@ -73,7 +78,7 @@ function probeRelease({ scope, run } = {}) {
 
   // Read remote tags to union with local tags. If remote read fails, fall back to local only.
   let reason = null;
-  const remoteTagsOutput = run(['git', 'ls-remote', '--tags', 'origin', 'v*']);
+  const remoteTagsOutput = run(['git', 'ls-remote', '--tags', 'origin', 'v*'], { timeout: LS_REMOTE_TIMEOUT_MS });
   let remoteTags = [];
   if (remoteTagsOutput !== null) {
     // Format: {sha}\trefs/tags/v{version} or {sha}\trefs/tags/v{version}^{}

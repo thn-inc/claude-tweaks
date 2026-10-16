@@ -189,6 +189,17 @@ test('a release-please-generated heading with no tag is reported, in both URL an
   );
 });
 
+test('the remote tag read is bounded by a timeout so an unreachable origin cannot hang the sweep (#2882)', () => {
+  const base = mockRun({ tags: 'v1.0.0\n', changelog: '# Changelog\n\n## v1.0.0 — old\n', remoteTags: '' });
+  let lsRemoteOpts;
+  const run = (argv, opts) => {
+    if (argv.includes('ls-remote')) lsRemoteOpts = opts;
+    return base(argv);
+  };
+  probeRelease({ scope: SCOPE, run });
+  assert.ok(lsRemoteOpts && Number.isInteger(lsRemoteOpts.timeout) && lsRemoteOpts.timeout > 0, `ls-remote must pass a positive timeout, got ${JSON.stringify(lsRemoteOpts)}`);
+});
+
 test('AC1: a tag on remote but not local is not reported as missing', () => {
   const run = mockRun({
     manifestAtBootstrap: '{".": "1.0.0"}',
