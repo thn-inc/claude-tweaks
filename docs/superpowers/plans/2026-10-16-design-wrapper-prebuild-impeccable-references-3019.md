@@ -109,9 +109,11 @@ Reference selection rules (inspect the spec body) — Impeccable 4.5's own load 
 
 - **Always load** when frontend: `new-work.md`, `craft-floor.md`
 - **Add `operate.md`** when the surface is Operate or Read (dashboard, settings, admin, docs, tools, authenticated/task surfaces) — Impeccable's own mode split (its `SKILL.md`: "See new-work.md for new surfaces and operate.md for deeper Operate/Read guidance")
-- **Add `adapt.md`** when the spec mentions breakpoints, mobile, tablet, responsive, or viewport — the 4.5 equivalent of the retired `responsive-design.md`
-- **Add `clarify.md`** when the spec mentions copy, microcopy, error messages, empty states, or labels — the 4.5 equivalent of the retired `ux-writing.md`
+- **Add `adapt.md`** when the spec mentions breakpoints, mobile, tablet, responsive, or viewport
+- **Add `clarify.md`** when the spec mentions copy, microcopy, error messages, empty states, or labels
 ```
+
+Deliberately do not name the retired `responsive-design.md`/`ux-writing.md` files inline in this replacement text (even as "4.5 equivalent of X" commentary) — Task 1's own test (Step 1 above) asserts the retired names are absent from this exact section, so citing them here would make the implementation fail its own test. The migration rationale lives in the commit message and this plan, not in the edited prose.
 
 Leave the paragraph immediately after (starting "The keyword rules above select *which reference files to load*...") unchanged — it is generic commentary that names no specific reference file and stays accurate after this edit.
 
