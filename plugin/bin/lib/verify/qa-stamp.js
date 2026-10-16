@@ -18,12 +18,22 @@ const SHA_RE = /^[0-9a-f]{40}$/;
 const HASH_RE = /^[0-9a-f]{64}$/;
 const PASSED = new Set(['PASS', 'PASS_WITH_CAVEATS']);
 
+// Own-property only (Deferred minor 1): a plain `storyHashes` object keyed by a
+// story's source_file must never resolve `__proto__`/`toString`/… off the
+// prototype chain — read as data, never as a shape.
+function ownHash(storyHashes, key) {
+  return Object.prototype.hasOwnProperty.call(storyHashes, key) ? storyHashes[key] : undefined;
+}
+
 function composeQaStamp({
   report, head, dirty, storyHashes, storiesDir, reportPath, at,
 }) {
   const stories = report && Array.isArray(report.stories) ? report.stories : [];
   if (stories.length === 0) return { error: 'no-stories' };
   for (const s of stories) {
+    // Minor 5: a null/non-object entry (a malformed report.json) must refuse,
+    // never throw — exit 0 in every state, per the CLI header's own contract.
+    if (s === null || typeof s !== 'object') return { error: 'malformed-story-entry' };
     if (!PASSED.has(s.status)) return { error: `story-not-passed: ${s.id} ${s.status}` };
   }
   const summary = (report && report.summary) || {};
@@ -33,7 +43,7 @@ function composeQaStamp({
   if (typeof head !== 'string' || !SHA_RE.test(head)) return { error: 'no-head' };
   const entries = [];
   for (const s of stories) {
-    const sha256 = storyHashes[s.source_file];
+    const sha256 = ownHash(storyHashes, s.source_file);
     if (typeof sha256 !== 'string') return { error: `story-file-unreadable: ${s.source_file}` };
     entries.push({ id: s.id, file: s.source_file, sha256 });
   }
@@ -55,6 +65,9 @@ function decideQaSkip({
   for (const sel of selected) {
     const entry = stamp.stories.find((s) => s.id === sel.id && s.file === sel.file);
     if (!entry) return { skip: false, reason: `story-not-covered: ${sel.id}` };
+    // Minor 8: null means the story file couldn't be read at all — name that
+    // distinctly from a hash mismatch (the file was read, but it changed).
+    if (sel.sha256 === null) return { skip: false, reason: `story-file-unreadable: ${sel.id}` };
     if (entry.sha256 !== sel.sha256) return { skip: false, reason: `story-changed: ${sel.id}` };
   }
   return { skip: true, reason: 'covered' };

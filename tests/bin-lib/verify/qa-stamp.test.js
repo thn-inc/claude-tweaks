@@ -86,6 +86,26 @@ test('composeQaStamp: an empty or missing stories array, or an unreadable story 
   assert.equal(composeQaStamp({ ...base, storyHashes: { 'app.yaml': H1, 'profile.yaml': null }, report: report(GREEN) }).error, 'story-file-unreadable: profile.yaml');
 });
 
+test('composeQaStamp: a null or non-object story entry writes no stamp instead of throwing (Minor 5)', () => {
+  const stories = [...GREEN, null];
+  const r = composeQaStamp({
+    ...base,
+    report: { stories_dir: 'stories', summary: { total: stories.length }, stories },
+  });
+  assert.equal(r.stamp, undefined);
+  assert.equal(r.error, 'malformed-story-entry');
+});
+
+test('composeQaStamp: a story file whose name collides with an inherited Object property is not read off the prototype (Deferred minor 1)', () => {
+  const r = composeQaStamp({
+    ...base,
+    storyHashes: { 'app.yaml': H1 },
+    report: report([{ id: 'login', source_file: 'toString', status: 'PASS' }]),
+  });
+  assert.equal(r.stamp, undefined);
+  assert.equal(r.error, 'story-file-unreadable: toString');
+});
+
 const STAMP = composeQaStamp({ ...base, report: report(GREEN) }).stamp;
 const SEL = [{ id: 'login', file: 'app.yaml', sha256: H1 }, { id: 'profile', file: 'profile.yaml', sha256: H2 }];
 
@@ -109,10 +129,10 @@ test('decideQaSkip: a stamped id under a different file is not covered (Review F
   assert.deepEqual(r, { skip: false, reason: 'story-not-covered: login' });
 });
 
-test('decideQaSkip: a story file edited since the stamp, or now unreadable, runs QA (Review Focus 1)', () => {
+test('decideQaSkip: a story file edited since the stamp runs QA with story-changed; now unreadable runs QA with story-file-unreadable (Review Focus 1, Minor 8)', () => {
   const d = (sha256) => decideQaSkip({ stamp: STAMP, head: HEAD, dirty: false, storiesDir: 'stories', selected: [{ id: 'login', file: 'app.yaml', sha256 }] });
   assert.deepEqual(d(H2), { skip: false, reason: 'story-changed: login' });
-  assert.deepEqual(d(null), { skip: false, reason: 'story-changed: login' });
+  assert.deepEqual(d(null), { skip: false, reason: 'story-file-unreadable: login' });
 });
 
 test('writeQaStamp/readQaStamp round-trip in the given git dir', () => {
