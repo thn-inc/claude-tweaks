@@ -9,9 +9,10 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record.js');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(REPO_ROOT, rel));
 
 const GATE = read('plugin/skills/_shared/deferral-gate.md');
 const LEDGER = read('plugin/skills/_shared/ledger-format.md');

@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const SET_CONFIG = path.join(ROOT, 'plugin', 'bin', 'set-config.js');
@@ -73,7 +74,7 @@ test('mode auto but a diff touching production code leaves config.yml untouched 
 });
 
 test('ceremony-derivation.md states the auto-mode gate and carries no DISPATCH_HEADLESS literal (#1932 AC1)', () => {
-  const text = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'ceremony-derivation.md'), 'utf8');
+  const text = readText(path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'ceremony-derivation.md'));
   assert.ok(!text.includes('DISPATCH_HEADLESS'));
   assert.match(text, /`mode` is `auto`/);
   assert.match(text, /`confirm`, `hybrid`, or `interactive`/);
