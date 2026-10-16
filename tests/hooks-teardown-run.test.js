@@ -252,13 +252,11 @@ test('AC9 (#2362): a recorded worktree that no longer exists must NOT trigger th
   assert.notStrictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '', 'the local branch must survive — it was never a target for deletion');
 });
 
-test('AC10 (#2747): a worktree left prunable after a failed removal (gitdir file gone, registration still present) is cleared via prune, which unblocks the branch delete', () => {
+test('AC10 (#2747, #3023): a prunable worktree whose directory survives the prune is reported as still present, not removed — the branch delete still proceeds', () => {
   const { root, wt, runDir } = fixtureRepo();
   writeRunState(runDir, { status: 'active', worktree: wt, sessionId: 'me' });
-  // Simulate the exact half-reaped state the incident describes: the worktree's gitdir link is
-  // gone, but `git worktree list` still carries its registration and reports it `prunable` — a
-  // state `git worktree remove` itself refuses to clean up (it requires validation to succeed
-  // first), but `git worktree prune` clears outright.
+  // Half-reaped: gitdir link gone, registration still present (`prunable`). `git worktree prune`
+  // clears only the registration — the directory (with b.txt) stays on disk.
   fs.rmSync(path.join(wt, '.git'), { force: true });
 
   const calls = [];
@@ -266,11 +264,38 @@ test('AC10 (#2747): a worktree left prunable after a failed removal (gitdir file
     mode: 'merged', sessionId: 'me', deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
   });
 
-  assert.match(result.lines.join('\n'), /worktree: removed via prune/);
-  assert.match(result.lines.join('\n'), /branch: deleted feat-branch/);
-  assert.match(result.lines.join('\n'), /remote ref: deleted refs\/heads\/feat-branch/);
+  const out = result.lines.join('\n');
+  assert.ok(fs.existsSync(wt), 'fixture precondition: the directory really is still on disk');
+  assert.match(out, new RegExp(`worktree: registration pruned but directory still present at ${wt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.doesNotMatch(out, /worktree: removed/);
+  assert.match(out, /branch: deleted feat-branch/);
+  assert.match(out, /remote ref: deleted refs\/heads\/feat-branch/);
   assert.doesNotMatch(git(root, 'worktree', 'list'), /feat-branch/);
-  assert.strictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
+});
+
+test('#3023: a worktree whose directory is already gone is reported removed directly, never as still present', () => {
+  const { root, wt, runDir } = fixtureRepo();
+  writeRunState(runDir, { status: 'active', worktree: wt, sessionId: 'me' });
+  fs.rmSync(wt, { recursive: true, force: true });
+
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  const out = result.lines.join('\n');
+  assert.match(out, /worktree: removed /);
+  assert.doesNotMatch(out, /directory still present/);
+  assert.doesNotMatch(git(root, 'worktree', 'list'), /feat-branch/);
+});
+
+test('#3023: describeGitFailure keeps stderr, else falls back to exit status and stdout, else "no error text"', () => {
+  const { describeGitFailure } = require('../plugin/bin/lib/hooks/teardown-run');
+  assert.strictEqual(describeGitFailure({ stderr: 'fatal: boom', exitCode: 128, failureStdout: '' }), 'fatal: boom');
+  assert.strictEqual(describeGitFailure({ stderr: '', exitCode: 1, failureStdout: '' }), 'exit 1');
+  assert.strictEqual(describeGitFailure({ stderr: '', exitCode: 1, failureStdout: 'partial' }), 'exit 1; stdout: partial');
+  assert.strictEqual(describeGitFailure({ stderr: '', exitCode: null, failureStdout: '' }), 'no error text');
+  assert.strictEqual(describeGitFailure({ stderr: null }), 'no error text');
 });
 
 test('AC13 (#2747): a failed branch delete reports the underlying git error text, not just "skipped"', () => {

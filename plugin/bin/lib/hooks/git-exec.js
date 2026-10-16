@@ -101,7 +101,11 @@ function buildFailure(err) {
   // `undefined` through a field every caller now expects to be
   // string-or-null.
   const stderr = typeof err.stderr === 'string' ? err.stderr.trim() : '';
-  return { stdout: null, failure: classify(err), stderr };
+  // #3023: additive, like #1341's stderr — a removal that fails with no stderr
+  // text still has an exit status (and sometimes stdout) a caller can report.
+  const exitCode = typeof err.status === 'number' ? err.status : null;
+  const failureStdout = typeof err.stdout === 'string' ? err.stdout.trim() : '';
+  return { stdout: null, failure: classify(err), stderr, exitCode, failureStdout };
 }
 
 // Runs `git -C <cwd> <args>`.

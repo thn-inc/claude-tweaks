@@ -11,6 +11,7 @@
 // guard all SKIP their step and report why; none of them abort the remaining steps, since a
 // locked worktree doesn't block branch/ref cleanup that doesn't depend on it.
 'use strict';
+const fs = require('fs');
 const path = require('path');
 const { closeRunState } = require('./close-run-state');
 const { archiveRunDir } = require('../reconcile/archive-merged');
@@ -90,6 +91,17 @@ function branchOfWorktree(root, worktreePath) {
 // as 'abandoned' for steps 4-5: skip branch/ref deletion rather than guess intent). `opts.deps`
 // — test seam for the gh call only; every git call goes through the real runGit (fixture repos
 // are real git repos, matching this codebase's existing convention for reconcile/archive tests).
+// #3023: a failed git call's best available cause — stderr when git wrote any,
+// else its exit status (plus stdout when present), so "no error text" only
+// appears when nothing at all is known.
+function describeGitFailure(r) {
+  if (r && r.stderr) return r.stderr;
+  if (r && typeof r.exitCode === 'number') {
+    return `exit ${r.exitCode}${r.failureStdout ? `; stdout: ${r.failureStdout}` : ''}`;
+  }
+  return 'no error text';
+}
+
 function teardownRun(runDir, opts = {}) {
   const mode = opts.mode || null;
   const sessionId = opts.sessionId || null;
@@ -258,9 +270,16 @@ function teardownRun(runDir, opts = {}) {
       if (entryAfter && entryAfter.prunable) {
         const prune = runGit(['worktree', 'prune'], root);
         if (!prune.failure) {
-          lines.push(`worktree: removed via prune ${effectiveWorktreePath} (removal had failed: ${rm.stderr || 'no error text'})`);
+          // #3023: prune clears only the registration. Report what is actually on disk —
+          // never retry-delete here (a Windows handle can hold the directory; looping on it
+          // would hang teardown).
+          if (fs.existsSync(effectiveWorktreePath)) {
+            lines.push(`worktree: registration pruned but directory still present at ${effectiveWorktreePath} (removal had failed: ${describeGitFailure(rm)})`);
+          } else {
+            lines.push(`worktree: removed via prune ${effectiveWorktreePath} (removal had failed: ${describeGitFailure(rm)})`);
+          }
         } else {
-          lines.push(`worktree: skipped — removal failed (${rm.stderr || 'no error text'}); prune also failed (${prune.stderr || 'no error text'})`);
+          lines.push(`worktree: skipped — removal failed (${describeGitFailure(rm)}); prune also failed (${describeGitFailure(prune)})`);
         }
       } else {
         lines.push(`worktree: skipped — removal failed${rm.stderr ? ` (${rm.stderr})` : ''}`);
@@ -303,4 +322,4 @@ function teardownRun(runDir, opts = {}) {
   return { lines };
 }
 
-module.exports = { teardownRun, branchOfWorktree, repoSpecOf, defaultGhApiDelete };
+module.exports = { teardownRun, branchOfWorktree, repoSpecOf, defaultGhApiDelete, describeGitFailure };
