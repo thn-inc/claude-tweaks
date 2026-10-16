@@ -1,1 +1,0 @@
-[{"tag":"git","record":null,"title":"17 clean run dirs never archived","action":"Archive each (status clean); list in staged/tidy-archive-runs-1.md","command":"node \"$CLAUDE_PLUGIN_ROOT/bin/hooks.js\" archive-run --run <dir> (x17, per .md)"}]

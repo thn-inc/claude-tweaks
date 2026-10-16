@@ -70,6 +70,19 @@ for (const anchor of BAD_REASON_ANCHORS) {
   });
 }
 
+test('deferral-gate.md\'s Bad reasons list says "pre-existing" alone is not a defer reason for an in-diff file, and names build/SKILL.md as a consumer (#3117)', () => {
+  const start = GATE.indexOf('## Bad reasons to skip a fix');
+  assert.ok(start >= 0, 'Bad reasons heading must exist');
+  const nextHeading = GATE.indexOf('\n## ', start + 1);
+  const section = GATE.slice(start, nextHeading === -1 ? undefined : nextHeading);
+  assert.ok(section.includes('pre-existence alone is never a defer reason'), 'missing the pre-existing bad-reason bullet');
+  assert.ok(section.includes('pre-existing-outside-diff'), 'missing reference to pre-existing-outside-diff');
+  const outOfScopeIdx = section.indexOf('Out of scope of this plan');
+  const preExistingIdx = section.indexOf('pre-existence alone is never a defer reason');
+  assert.ok(outOfScopeIdx > -1 && preExistingIdx > outOfScopeIdx, 'pre-existing bullet must follow the Out of scope bullet');
+  assert.ok(GATE.includes('skills/build/SKILL.md'), 'consumer list must name skills/build/SKILL.md');
+});
+
 test('deferral-gate.md\'s bundling exception cites materiality-floor.md by literal path', () => {
   assert.ok(GATE.includes('_shared/materiality-floor.md'));
 });

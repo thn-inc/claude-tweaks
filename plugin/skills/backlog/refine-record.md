@@ -1,7 +1,7 @@
 # Backlog Refine — Resolve Lane and Breaker Reset
 
 Two human-present-only procedures, split out into their own file rather than added to
-`refine-mode.md` (already close to its 46,080-byte per-file ceiling): the **Resolve lane**'s
+`refine-mode.md` (already close to its 51,200-byte per-file ceiling): the **Resolve lane**'s
 batch-table render and write mechanics, and the standalone `--reset-breaker` reset (#1887 retitled
 this file from "Record Resolver (`#N`)" — `#N` is now a filter over the whole-queue sweep, not a
 separate mode, so this file is no longer `#N`'s own entry point).
