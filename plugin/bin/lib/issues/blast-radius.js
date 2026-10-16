@@ -15,14 +15,21 @@
 //   - a .test./.spec. filename suffix for js/jsx/ts/tsx
 //   - Go's '_test.go' suffix
 //   - Python's 'test_*.py' / '*_test.py' conventions
+//   - a YAML file under a 'stories/' path segment (#3034) — this plugin's own
+//     QA story-file convention (plugin/skills/stories/SKILL.md), the files
+//     /claude-tweaks:stories writes by default
 // Both anchored to a '/' or string boundary so a path merely CONTAINING
 // "test" as a substring (e.g. 'src/latest/widget.js', 'src/contest.js')
 // never false-positives.
 const TEST_PATH_RE = /(^|\/)tests?\//;
 const TEST_SUFFIX_RE = /\.(test|spec)\.(jsx?|tsx?)$|_test\.go$|(^|\/)test_[^/]+\.py$|[^/]+_test\.py$/;
+// Restricted to .yaml/.yml under a 'stories/' segment: the stories schema is
+// YAML, and a bare 'stories/' directory match would misclassify unrelated
+// content (a CMS or docs site's 'stories/' pages) in downstream projects.
+const STORY_PATH_RE = /(^|\/)stories\/.*\.ya?ml$/;
 
 function isTestPath(path) {
-  return TEST_PATH_RE.test(path) || TEST_SUFFIX_RE.test(path);
+  return TEST_PATH_RE.test(path) || TEST_SUFFIX_RE.test(path) || STORY_PATH_RE.test(path);
 }
 
 // Glob support: '*' matches within a path segment (not '/'), while '**' crosses path segments.
