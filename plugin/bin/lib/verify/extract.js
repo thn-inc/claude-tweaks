@@ -448,18 +448,28 @@ function tapBlocks(lines) {
   let current = null;
   let pointPad = null;
   let yamlPad = null;
+  let keyPad = null;
   let yamlKey = null;
   for (const raw of lines) {
     const line = raw.replace(/\r$/, '');
     // A point's YAML block (`---` … `...`, two spaces deeper) is its body,
     // never a new point — an assertion's expected/actual text can hold
-    // `not ok …` lines. A line at exactly the block's indent starts a key;
-    // deeper lines continue the current key's value.
+    // `not ok …` lines. The `...` terminator is always matched at `yamlPad`
+    // (the `---` line's own indent) — node never varies it. Keys are a
+    // different matter: node puts them at `yamlPad` too, but a non-node TAP
+    // producer (tape-style) can indent them deeper, so the key indent is
+    // whatever the FIRST non-blank line after `---` uses (falling back to
+    // `yamlPad` when the block closes before any non-blank line) — a line at
+    // exactly that indent starts a key; deeper lines continue it.
     if (yamlPad !== null) {
       if (current) current.body.push(raw);
-      if (line === `${yamlPad}...`) { yamlPad = null; continue; }
-      if (line.startsWith(yamlPad) && line.length > yamlPad.length && line[yamlPad.length] !== ' ') {
-        const key = line.slice(yamlPad.length).match(/^([A-Za-z_]+):/);
+      if (line === `${yamlPad}...`) { yamlPad = null; keyPad = null; continue; }
+      if (keyPad === null) {
+        const firstNonBlank = line.match(/^(\s*)\S/);
+        if (firstNonBlank) keyPad = firstNonBlank[1];
+      }
+      if (keyPad !== null && line.startsWith(keyPad) && line.length > keyPad.length && line[keyPad.length] !== ' ') {
+        const key = line.slice(keyPad.length).match(/^([A-Za-z_]+):/);
         yamlKey = key ? key[1] : null;
       }
       if (current && TAP_FRAME_KEYS.has(yamlKey)) current.frames.push(raw);
@@ -467,6 +477,7 @@ function tapBlocks(lines) {
     }
     if (pointPad !== null && line === `${pointPad}  ---`) {
       yamlPad = `${pointPad}  `;
+      keyPad = null;
       yamlKey = null;
       if (current) current.body.push(raw);
       continue;

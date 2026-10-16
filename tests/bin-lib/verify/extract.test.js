@@ -814,3 +814,26 @@ test('#3153: an `exists` predicate drops a path absent from the checkout; a fail
   // No predicate: the pre-#3153 behavior, unchanged.
   assert.deepStrictEqual(extractFailingFiles(tap, 'tap', { cwd: '/repo' }), ['tests/a.test.js', '/tmp/elsewhere/tests/ghost.test.js', 'tests/ghost.test.js']);
 });
+
+// Final-review finding 1: a TAP producer (tape-style) indents its YAML keys
+// deeper than its own `---` line. node puts keys at the `---` indent, but a
+// producer that doesn't must still be read correctly — the key indent is the
+// indent of the first non-blank line after `---`, not assumed equal to the
+// `---` line's own indent.
+test('tapBlocks: a YAML key indented deeper than its own `---` line is still recognized (deep-key TAP producer)', () => {
+  const log = [
+    'not ok 1 - deep keys',
+    '  ---',
+    '    operator: fail',
+    "    location: '/repo/tests/deep.test.js:4:3'",
+    '    error: |-',
+    '      not ok 1 - quoted',
+    "        location: '/tmp/x/tests/ghost.test.js:1:1'",
+    '  ...',
+    '# tests 1',
+    '# pass 0',
+    '# fail 1',
+  ].join('\n');
+  assert.deepStrictEqual(extractFailingFiles(log, 'tap', { cwd: '/repo' }), ['tests/deep.test.js']);
+  assert.strictEqual(countUnmatchedFailures(log, 'tap', { cwd: '/repo' }), 0);
+});

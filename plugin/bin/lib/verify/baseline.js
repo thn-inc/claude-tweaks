@@ -200,6 +200,13 @@ function tryRealpath(dir) {
   try { return fs.realpathSync(dir); } catch { return dir; }
 }
 
+// The ineligible reason for a HEAD-side failing entry that named a real test
+// file — just one absent from this checkout — rather than naming no test
+// file at all (#3153 final-review finding 2).
+function absentFromCheckoutReason(n, checkName) {
+  return `absent-from-checkout: ${n} failing ${n === 1 ? 'entry names' : 'entries name'} only paths absent from the checkout in ${checkName}`;
+}
+
 async function adjudicate({
   checks, baselineCmds, base, baseSha, cwd = null, logDir, runOne, spawnImpl, now = Date.now,
   envOf = () => null, git, concurrency = 4, env = process.env,
@@ -221,7 +228,15 @@ async function adjudicate({
     if (text === null) return ineligible(`${c.name} log unreadable`);
     const family = sniffFamily(text);
     const files = extractFailingFiles(text, family, at(headDir));
-    if (files.length === 0) return ineligible(`no-parse: no failing test file extractable from ${c.name}`);
+    if (files.length === 0) {
+      // When dropping `exists` alone would have named a file, every entry
+      // here did name a test file — just one absent from this checkout, not
+      // "no test file" (#3153 final-review finding 2).
+      if (extractFailingFiles(text, family, { cwd: headDir }).length > 0) {
+        return ineligible(absentFromCheckoutReason(countUnmatchedFailures(text, family, at(headDir)), c.name));
+      }
+      return ineligible(`no-parse: no failing test file extractable from ${c.name}`);
+    }
     // The failing-file list must account for the whole failure. Only spec
     // and tap have a guard that proves it; their summary counts must parse
     // (a truncated log has none).
@@ -237,6 +252,12 @@ async function adjudicate({
     // nothing adjudicated.
     const unmatched = countUnmatchedFailures(text, family, at(headDir));
     if (unmatched > 0) {
+      // Same distinction as above: when dropping `exists` alone would have
+      // matched every entry, the gap is entirely paths absent from this
+      // checkout, not entries naming no test file (#3153 finding 2).
+      if (countUnmatchedFailures(text, family, { cwd: headDir }) === 0) {
+        return ineligible(absentFromCheckoutReason(unmatched, c.name));
+      }
       return ineligible(`unclassified failure(s): ${unmatched} failing ${unmatched === 1 ? 'entry names' : 'entries name'} no test file in ${c.name}`);
     }
     if (family === 'spec') {
