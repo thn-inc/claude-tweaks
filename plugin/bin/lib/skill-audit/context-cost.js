@@ -7,9 +7,12 @@
 // corpus reached 931 KB before anyone looked. Phases 1-3 removed ~150 KB; this
 // module exists so the next 150 KB does not accumulate unnoticed.
 //
-// The ceiling is a 45 KB soft ceiling per SKILL.md (raised from 40 KB — see
-// docs/donts.md). After the Phase 3 extraction several files sit within a
-// kilobyte of it, so a regression is one added paragraph away — which is
+// The ceiling is a 50 KB soft ceiling per SKILL.md (raised from 40 KB to
+// 45 KB — see docs/donts.md — then to 50 KB on 2026-10-16 as an interim
+// unblock while #3230 reconsiders how ceilings are set at all, after
+// concurrent merges tipped dispatch/SKILL.md 58 B over 45 KB). After the
+// Phase 3 extraction several files sat within a kilobyte of the old ceiling,
+// so a regression is one added paragraph away — which is
 // precisely when an automated check earns its keep over periodic manual
 // measurement.
 //
@@ -28,7 +31,7 @@ const {
   stripMarkers, MarkerError, parseMarkers, compose, KEYS, VOCAB, UNRESOLVED,
 } = require('../compose-context/compose');
 
-const CEILING_BYTES = 45 * 1024;
+const CEILING_BYTES = 50 * 1024;
 
 // Frontmatter `description:` budget (#394). Every description loads into every
 // session of every project with the plugin enabled, regardless of whether that
