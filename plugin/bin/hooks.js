@@ -100,7 +100,7 @@ function pluginRoot() {
 // "usage:" error strings (printed on malformed non-help args) reuse these
 // same entries rather than a second, driftable copy of the same text.
 const USAGE = {
-  'record-worktree': 'record-worktree --run <dir> <worktree-path>',
+  'record-worktree': 'record-worktree --run <dir> <worktree-path> [--dispatch]',
   'resolve-run-dir': 'resolve-run-dir [--spec-slug <slug>] [--mode <mode>] [--standalone <value>] [--create] [--root-only]',
   'sweep-shadow': 'sweep-shadow [--run <dir>] [--worktree <path>]',
   'adopt-run-dir': 'adopt-run-dir --run <main-checkout-run-dir> --worktree <worktree-path>',
@@ -134,7 +134,7 @@ const HELP_FLAGS = new Set(['--help', '-h']);
 const KNOWN_FLAGS = {
   'close-run': ['--run'],
   'delete-ledger': ['--run', '--ledger'],
-  'record-worktree': ['--run'],
+  'record-worktree': ['--run', '--dispatch'],
   'record-pr': ['--run'],
   'spec-status': ['--run', '--spec', '--status', '--phase', '--now'],
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
@@ -641,7 +641,14 @@ async function main(argv) {
     const {
       runDir, invalidRunArg, rest, worktreeLocalFallback, explicit,
     } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { allowUninitialized: true });
-    const worktreeArg = rest[0];
+    // #3225: `--dispatch` (boolean, any position) marks the run as bound by
+    // /claude-tweaks:dispatch before call 1 — checkDispatchConfigGate
+    // (bin/lib/hooks/pre-tool-use.js) then denies git writes in this worktree
+    // until /claude-tweaks:flow Step 3 writes config.yml. Stripped before the
+    // positional lookup so it can never be read as the worktree path.
+    const dispatch = rest.includes('--dispatch');
+    const positional = rest.filter((a) => a !== '--dispatch');
+    const worktreeArg = positional[0];
     // #1124: every real caller already passes --run explicitly (build's
     // worktree-setup.md Step 4.5, the run-resume-freshness re-stamp, the
     // subagent-output-contract re-stamp) — nothing legitimate depends on the
@@ -677,6 +684,9 @@ async function main(argv) {
       // not clobber a previous stamp.
       const patch = { worktree: path.resolve(worktreeArg), status: 'active' };
       if (process.env.CLAUDE_CODE_SESSION_ID) patch.sessionId = process.env.CLAUDE_CODE_SESSION_ID;
+      // Permanent for the run's lifetime: only ever written true, never
+      // false, so a later plain re-stamp (no --dispatch) cannot clear it.
+      if (dispatch) patch.dispatched = true;
       const result = ctxLib.writeRunState(runDir, patch);
       if (result) {
         process.stdout.write(`claude-tweaks: worktree recorded for ${path.basename(runDir)}\n`);

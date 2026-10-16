@@ -280,7 +280,7 @@ test('#1012: record-worktree rejects an undeclared --* argument (e.g. --bogus-fl
 
   const result = runHook(['record-worktree', '--run', run, '--bogus-flag'], { cwd: project });
   assert.strictEqual(result.code, 0);
-  assert.strictEqual(result.stdout, 'claude-tweaks: usage: record-worktree --run <dir> <worktree-path>\n');
+  assert.strictEqual(result.stdout, 'claude-tweaks: usage: record-worktree --run <dir> <worktree-path> [--dispatch]\n');
   assert.deepStrictEqual(readRunState(run), before, 'run-state.json must be byte-unchanged');
 });
 
@@ -1427,4 +1427,71 @@ test('#1012 unbound-caller variant: a same-session caller with no bound run of i
 
   const after = [runA, runB, runC, runD].map(readRunState);
   assert.deepStrictEqual(after, before, 'no run-state.json file changes when every candidate is excluded as foreign');
+});
+
+// #3225: record-worktree --dispatch — dispatch Step 5 binds the minted run to
+// the group's worktree BEFORE call 1 and marks it dispatched, in ONE
+// read-modify-write of run-state.json (sibling-session-check.md).
+test('#3225: record-worktree --dispatch writes dispatched: true in the same call as the worktree assignment', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  const r = runHook(['record-worktree', '--run', run, '/tmp/wt-3225', '--dispatch'], { cwd: project });
+  assert.strictEqual(r.code, 0);
+  assert.match(r.stdout, /claude-tweaks: worktree recorded for 2026-07-01T090000-spec-1/);
+  const s = readRunState(run);
+  assert.strictEqual(s.worktree, path.resolve('/tmp/wt-3225'));
+  assert.strictEqual(s.status, 'active');
+  assert.strictEqual(s.dispatched, true);
+});
+
+test('#3225: --dispatch is accepted before the worktree positional too, and never read as the worktree path', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  const r = runHook(['record-worktree', '--run', run, '--dispatch', '/tmp/wt-3225b'], { cwd: project });
+  assert.strictEqual(r.code, 0);
+  const s = readRunState(run);
+  assert.strictEqual(s.worktree, path.resolve('/tmp/wt-3225b'));
+  assert.strictEqual(s.dispatched, true);
+});
+
+test('#3225: --dispatch preserves every pre-existing field and writes exactly what a plain record-worktree writes, plus dispatched', () => {
+  const project = tmpProject();
+  const seed = {
+    status: 'interrupted',
+    pr: { number: 7, url: 'https://example.invalid/pull/7', branch: 'b-7' },
+    claimExempt: true,
+    prExempt: false,
+    lastEvent: 'seeded',
+  };
+  const mk = (name) => {
+    const run = path.join(project, '.claude-tweaks', 'pipelines', name);
+    fs.mkdirSync(run, { recursive: true });
+    fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify(seed));
+    return run;
+  };
+  const plainRun = mk('2026-07-01T090001-spec-2');
+  const dispRun = mk('2026-07-01T090002-spec-3');
+  const env = { CLAUDE_CODE_SESSION_ID: 'sess-3225' };
+  assert.strictEqual(runHook(['record-worktree', '--run', plainRun, '/tmp/wt-same'], { cwd: project, env }).code, 0);
+  assert.strictEqual(runHook(['record-worktree', '--run', dispRun, '/tmp/wt-same', '--dispatch'], { cwd: project, env }).code, 0);
+  const plain = readRunState(plainRun);
+  const disp = readRunState(dispRun);
+  assert.strictEqual(plain.dispatched, undefined, 'a plain record-worktree must not write a dispatched key');
+  assert.strictEqual(disp.dispatched, true);
+  const strip = (s) => { const { updatedAt, dispatched, ...rest } = s; return rest; };
+  assert.strictEqual(JSON.stringify(strip(disp)), JSON.stringify(strip(plain)),
+    'apart from dispatched/updatedAt, --dispatch must write byte-for-byte what a plain call writes');
+  assert.deepStrictEqual(disp.pr, seed.pr);
+  assert.strictEqual(disp.claimExempt, true);
+  assert.strictEqual(disp.prExempt, false);
+  assert.strictEqual(disp.lastEvent, 'seeded');
+  assert.strictEqual(disp.sessionId, 'sess-3225');
+});
+
+test('#3225: dispatched is permanent — a later plain record-worktree re-stamp (task-prompt.md) never clears it', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-perm', '--dispatch'], { cwd: project }).code, 0);
+  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-perm'], { cwd: project }).code, 0);
+  assert.strictEqual(readRunState(run).dispatched, true);
 });
