@@ -15,7 +15,7 @@ const { spawn } = require('child_process');
 
 const { parseArgs, UsageError, USAGE } = require('./lib/verify/args');
 const { runChecks, runOne } = require('./lib/verify/run');
-const { adjudicate, realGit } = require('./lib/verify/baseline');
+const { adjudicate, realGit, findStaleBaselineWorktrees } = require('./lib/verify/baseline');
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine, extractFailingFiles, stripAnsi, unattributedFailureCount,
 } = require('./lib/verify/extract');
@@ -71,9 +71,12 @@ function enrich(result) {
   const family = sniffFamily(plain);
   const failed = result.exitCode !== 0;
   const counts = parseCounts(plain, family);
+  // #3063: a hung check's own output rarely has a parseable summary line —
+  // name the timeout explicitly rather than leaving the Summary column blank.
+  const timeoutNote = result.timedOut ? `timed out after ${(result.durationMs / 1000).toFixed(1)}s` : null;
   return {
     ...result,
-    summary: result.spawnError || summaryLine(plain, family) || null,
+    summary: result.spawnError || timeoutNote || summaryLine(plain, family) || null,
     failingRegion: failed ? extractFailingRegion(plain, family) : null,
     counts,
     // A tests check whose counts didn't parse — surfaced on the report entry
@@ -237,6 +240,10 @@ async function main() {
       process.exitCode = 2;
       return;
     }
+    // Named, never swept — see findStaleBaselineWorktrees (#3064).
+    for (const dir of findStaleBaselineWorktrees(bgit.listWorktrees)) {
+      process.stderr.write(`verify.js: a stale baseline scratch worktree is registered at ${dir} from an earlier interrupted run — remove it manually: git worktree remove --force ${dir}\n`);
+    }
   }
   const jsonPath = parsed.json || path.join(logDir, 'report.json');
   const countStampPath = parsed.countStamp || (gitDir ? path.join(gitDir, 'claude-tweaks-test-count.json') : null);
@@ -257,6 +264,12 @@ async function main() {
   const envOf = (name) => {
     const declared = parsed.cmds.find((c) => c.name === name);
     return declared && declared.env ? declared.env : null;
+  };
+  // #3063: a check's own --cmd-timeout, reused as the bounded default for
+  // its per-file --baseline base/isolated runs (baseline.js's `run()`).
+  const timeoutOf = (name) => {
+    const declared = parsed.cmds.find((c) => c.name === name);
+    return declared && typeof declared.timeout === 'number' ? declared.timeout : null;
   };
   if (parsed.scope) {
     // Every --scope usage error below shares this exit shape (message, then
@@ -441,6 +454,7 @@ async function main() {
           runOne,
           spawnImpl: spawn,
           envOf,
+          timeoutOf,
           git: bgit,
         });
       }
@@ -710,7 +724,13 @@ async function main() {
     if (baselineAdjudicated.eligible) {
       const b = baselineAdjudicated;
       lines.push('', `Baseline: adjudicated against ${b.base} (${String(b.baseSha).slice(0, 9)}) — ${b.failingFiles.length} failing file(s): ${b.baselineFailing.length} also fail at base, ${b.flakyPassed.length} flaky (passed in isolation), ${b.attributable.length} attributable`);
-      for (const file of b.attributable) lines.push(`ATTRIBUTABLE: ${file}`);
+      for (const file of b.attributable) {
+        // #3063 AC2: a timed-out base/isolated run is no evidence either
+        // way — the file stays attributable, but naming the timeout here
+        // (rather than a bare file list) says why it has none.
+        const note = b.timedOut && b.timedOut.includes(file) ? ' (timed out — base/isolated run exceeded its --cmd-timeout bound)' : '';
+        lines.push(`ATTRIBUTABLE: ${file}${note}`);
+      }
       for (const file of b.flakyPassed) {
         lines.push('', `CAVEAT: baseline-flaky: ${file} — failed in the full run, passed in isolation at HEAD; see ${b.flakyLogs[file]}`);
       }
