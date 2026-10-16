@@ -96,11 +96,12 @@ function branchOfWorktree(root, worktreePath) {
 // (e.g. timeout, spawn), so "no error text" only appears when nothing at all
 // is known.
 function describeGitFailure(r) {
-  if (r && r.stderr) return r.stderr;
-  if (r && typeof r.exitCode === 'number') {
+  if (!r) return 'no error text';
+  if (r.stderr) return r.stderr;
+  if (typeof r.exitCode === 'number') {
     return `exit ${r.exitCode}${r.failureStdout ? `; stdout: ${r.failureStdout}` : ''}`;
   }
-  if (r && typeof r.failure === 'string' && r.failure) return r.failure;
+  if (typeof r.failure === 'string' && r.failure) return r.failure;
   return 'no error text';
 }
 

@@ -105,8 +105,9 @@ function buildFailure(err) {
   // text still has an exit status (and sometimes stdout) a caller can report.
   // execFileSync puts the exit status on `err.status`; execFile (the async
   // twin) puts it on `err.code`, which is a string for a spawn error instead.
-  const exitCode = typeof err.status === 'number' ? err.status
-    : (typeof err.code === 'number' ? err.code : null);
+  let exitCode = null;
+  if (typeof err.status === 'number') exitCode = err.status;
+  else if (typeof err.code === 'number') exitCode = err.code;
   const failureStdout = typeof err.stdout === 'string' ? err.stdout.trim() : '';
   return { stdout: null, failure: classify(err), stderr, exitCode, failureStdout };
 }
