@@ -34,11 +34,25 @@ every record's recommendation(s) and render them together in the `### Diagram su
 below, after Actions Performed.
 
 **Headless entry** (bare drain / the deprecated `next` alias's headless posture, or `--chained` —
-the same two postures `shaping-mode.md`'s own opening section names): never render the block —
-log one line per emitted recommendation instead, per `diagram-suggestion.md`'s Rendering section,
-with this mode's own `{step-id}` set to `Diagram suggestion`:
+the same two postures `shaping-mode.md`'s own opening section names): never render the block.
+Where the STAGED line below goes depends on which of the two headless postures this is — they do
+not share a log destination:
 
-`STAGED {time} — Diagram suggestion: diagram-suggestion ({type}) for {ref}. Reversibility: high.`
+- **Bare drain / the `next` alias's headless posture:** a run directory resolved for this
+  invocation (`$RUN_DIR`). Log one line per emitted recommendation to `$RUN_DIR`'s decision log
+  (the normal `log-decision.js --run "$RUN_DIR" --status STAGED ...` path), per
+  `diagram-suggestion.md`'s Rendering section, with this mode's own `{step-id}` set to `Diagram
+  suggestion`:
+
+  `STAGED {time} — Diagram suggestion: diagram-suggestion ({type}) for {ref}. Reversibility: high.`
+
+- **`--chained`:** `$PIPELINE_RUN_DIR` is never consulted under `--chained` (`SKILL.md`'s
+  Component-Skill Contract) — there is no run directory to log to for this invocation. Fold the
+  same STAGED line into this call's own returned output instead, the same convention
+  `_shared/worktree-catchup-no-run-dir.md` already uses for the worktree catch-up line under the
+  same no-run-dir posture: report it in the caller's own user-facing output (the next reply) in
+  place of a `decisions.md` entry — never invent a run-directory path for this invocation, and
+  never drop the suggestion silently.
 
 ---
 
@@ -80,10 +94,10 @@ One row per record — a single-record run renders one row, a comma-list batch r
 
 For a comma-list batch, render one row per shaped element, in list order, and prefix each Detail with its outcome: `shaped` (this run edited the record — the row above), `already shaped, no-op` (`compose-record.js --check` exited 0 on the record's live body — `shaping-mode.md`'s Edit the body into spec shape runs it — and every label family was already stamped: nothing written, nothing to undo; a body `--check` rejected is never reported this way), `refused — proposed Absorb into #{candidate}` (`shaping-mode.md`'s Near-duplicate candidate check found a title-similar, `ready` candidate with a live claim or an open linked PR (`shapingRefusal`, #3141) and stopped before composing — no body write, `needs:decision` stamped instead), or `failed` (the pre-write shape check (Compose-then-write-once) refused the composed body, the write call itself failed, or the read-back verification (above) failed — the Detail cell's own text names which one). There is no `skipped` outcome here — the batch branch's stop-all failure semantics (`SKILL.md`'s `## Input`, Comma-list batch form) mean an unresolvable element never reaches shaping mode at all; every row this table renders is an element that was actually shaped, refused, or attempted-and-failed. The Ref column follows the same per-driver rule on every row.
 
-Shaping mode ends here — return to `SKILL.md` and render its `## Next Actions` block: the "Shaping mode — one record shaped in place" row of its Situation table for a single record, the "Shaping mode — multiple records shaped in place" row for a comma-list batch (its recommended command lists every successfully shaped record, in the order given). Under `--chained` (see `SKILL.md`'s Input and Component-Skill Contract), or under the `next` form's headless posture (`next-mode.md`), skip Next Actions entirely and return control to the calling skill — the shaped, `ready` record is the whole deliverable; `next-mode.md` has nobody present to read a rendered Next Actions block anyway.
-
-`/specify` adds `ready`, `risk:*`/`size:*` (when unstamped), and Type (when absent), removes `parked` and every `needs:*`-prefixed label on promotion — and, as the one removal carve-out, strips `ready`/`risk:*`/`size:*`/`ceremony:*`/`solution:unjustified` from a record bearing the parent marker (`parent-issue` label / `facets.isParentIssue`) when `SKILL.md` case 1's parent-record guard fires: cleanup of a past mis-shape, reported in output, never prompted — and never touches `auto:*` or `bot:*` — those stay `/backlog refine`'s (human-granted authorization) and `/dispatch`'s (bot-state mirror) territory.
-
 ### Diagram suggestions (optional — render only on interactive entry, and only when the Diagram suggestion section above emitted any)
 
 - {one or two `**Diagram suggestion:** …` blocks held by the Diagram suggestion section above, one per record that emitted any}
+
+Shaping mode ends here — return to `SKILL.md` and render its `## Next Actions` block: the "Shaping mode — one record shaped in place" row of its Situation table for a single record, the "Shaping mode — multiple records shaped in place" row for a comma-list batch (its recommended command lists every successfully shaped record, in the order given). Under `--chained` (see `SKILL.md`'s Input and Component-Skill Contract), or under the `next` form's headless posture (`next-mode.md`), skip Next Actions entirely and return control to the calling skill — the shaped, `ready` record is the whole deliverable; `next-mode.md` has nobody present to read a rendered Next Actions block anyway.
+
+`/specify` adds `ready`, `risk:*`/`size:*` (when unstamped), and Type (when absent), removes `parked` and every `needs:*`-prefixed label on promotion — and, as the one removal carve-out, strips `ready`/`risk:*`/`size:*`/`ceremony:*`/`solution:unjustified` from a record bearing the parent marker (`parent-issue` label / `facets.isParentIssue`) when `SKILL.md` case 1's parent-record guard fires: cleanup of a past mis-shape, reported in output, never prompted — and never touches `auto:*` or `bot:*` — those stay `/backlog refine`'s (human-granted authorization) and `/dispatch`'s (bot-state mirror) territory.

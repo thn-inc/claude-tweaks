@@ -41,20 +41,28 @@ For each emitted recommendation:
 `{spec-slug}` is the caller's own identifier for what's being visualized — the design doc's slug
 for a decomposition-mode caller, the record's own ref/slug for a shaping-mode caller.
 
-## Rendering — interactive vs. headless
+## Rendering — render and log are independent axes
 
 Advisory only — never blocks, never writes record frontmatter, never invokes a tool itself. The
-calling mode decides placement:
+calling mode decides placement. Render and log are **independent** conditions, not an either/or
+choice — evaluate both, every time:
 
-- **Interactive** (a human present at this turn): render the recommendation(s) inline, in
-  whatever block the calling mode's own render step specifies. The user decides whether to act
-  in the next turn.
-- **Auto / headless** (bare drain, `--chained`, or any other non-interactive posture): never
-  print the recommendation inline — log one line per emitted recommendation to the decision log
-  instead:
+- **Render** the recommendation(s) inline whenever a human is present at this turn to read
+  them — in whatever block the calling mode's own render step specifies. The user decides
+  whether to act in the next turn.
+- **Log** the STAGED line to the decision log whenever a pipeline run directory resolved for
+  this invocation (`$RUN_DIR` / `$PIPELINE_RUN_DIR`) — independent of whether rendering also
+  happened:
 
   `STAGED {time} — {step-id}: diagram-suggestion ({type}) for {ref-or-slug}. Reversibility: high.`
 
   `{step-id}` is the calling mode's own step/section name (`Step 2.5d` for decomposition mode,
   `Diagram suggestion` for shaping mode) — each caller supplies its own; this file does not fix
   one.
+- A posture with no human present and no run directory logs nothing and renders nothing — there
+  is nothing to do.
+
+Decomposition mode's `auto` runs are the case this independence exists for: an `auto`
+decomposition run typically has both a run directory (so it logs) **and** a human reading the
+Step 9 summary afterward (so it also renders) — both outputs fire together, never one in place
+of the other.

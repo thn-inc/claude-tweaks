@@ -22,6 +22,7 @@ test('shaping-mode-readback.md has a Diagram suggestion section citing the share
   assert.match(section, /diagram-suggestion\.md/, 'must cite the shared detection file');
   assert.ok(!section.includes('named status enums'), 'must not restate the detection table inline');
   assert.ok(!section.includes('foreign key'), 'must not restate the detection table inline');
+  assert.match(section, /disabled or missing/i, 'must restate the Gate\'s disabled-or-missing wording for this citation');
 });
 
 test('shaping-mode-readback.md runs the diagram-suggestion step per record, against the composed body', () => {
@@ -36,7 +37,8 @@ test('shaping-mode-readback.md splits interactive render from headless STAGED lo
   const src = read(READBACK);
   const section = src.slice(src.indexOf('### Diagram suggestion'), src.indexOf('### Read-back verification'));
   assert.match(section, /--chained/, 'must name --chained as a headless posture');
-  assert.match(section, /next.*headless posture|headless posture/i, 'must name the next-form headless posture');
+  assert.match(section, /\bnext\b/i, 'must name the next-form headless posture');
+  assert.match(section, /headless posture/i, 'must name the general headless posture phrase');
   assert.match(section, /STAGED/, 'must describe the headless STAGED log line');
 });
 
