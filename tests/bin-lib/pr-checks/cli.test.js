@@ -33,7 +33,11 @@ function makeDeps(main, over = {}) {
     mainRoot: main,
     ghAvailable: () => true,
     hasPullRequestCi: () => true,
-    git: (args) => { if (args.join(' ') === 'rev-parse HEAD') return `${HEAD}\n`; throw new Error('unexpected git ' + args.join(' ')); },
+    git: (args) => {
+      if (args.join(' ') === 'rev-parse HEAD') return `${HEAD}\n`;
+      if (args.join(' ') === 'rev-parse --show-toplevel') return `${main}\n`;
+      throw new Error('unexpected git ' + args.join(' '));
+    },
     gh: (args) => {
       ghCalls.push(args);
       if (args[0] === 'pr' && args[1] === 'view') {
@@ -137,6 +141,23 @@ test('an unreadable local HEAD is read-failed', () => {
   const h = makeDeps(main, { git: () => { throw new Error('not a git repo'); } });
   assert.equal(run(['--run', runDir], h.deps), 0);
   assert.equal(h.json().state, 'read-failed');
+});
+
+test('hasPullRequestCi receives the git toplevel, not cwd (#3013 F7)', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const toplevel = path.join(main, 'nested-cwd-should-not-be-used');
+  let received;
+  const h = makeDeps(main, {
+    cwd: () => path.join(main, 'somewhere-else'),
+    git: (args) => {
+      if (args.join(' ') === 'rev-parse HEAD') return `${HEAD}\n`;
+      if (args.join(' ') === 'rev-parse --show-toplevel') return `${toplevel}\n`;
+      throw new Error('unexpected git ' + args.join(' '));
+    },
+    hasPullRequestCi: (root) => { received = root; return true; },
+  });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  assert.equal(received, toplevel);
 });
 
 test('an empty rollup with no PR workflow is no-ci', () => {

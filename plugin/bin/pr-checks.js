@@ -23,7 +23,7 @@ const { resolveTarget } = require('./lib/log-decision/append');
 const { readRunStateWithParent } = require('./lib/hooks/context');
 const { ghAvailable } = require('./lib/repo-resolve');
 const { hasPullRequestCi } = require('./lib/merge-verification');
-const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
+const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: pr-checks.js --run <run-dir> [--help]\n'
   + '  prints {state, failing, pending, headRefOid, localHead, pr, reason?};\n'
@@ -49,7 +49,7 @@ const realDeps = {
   ghAvailable: () => ghAvailable(),
   hasPullRequestCi: (root) => hasPullRequestCi(root),
   gh: (args) => execFileSync('gh', args, { ...QUIET, timeout: GH_TIMEOUT_MS }),
-  git: (args) => execFileSync('git', args, QUIET),
+  git: (args) => execFileSync('git', args, { ...QUIET, timeout: GIT_TIMEOUT_MS }),
   readRunState: (runDir) => readRunStateWithParent(runDir, { requireRunIdParent: true }).state,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -91,8 +91,10 @@ function run(argv, overrides = {}) {
   try { view = JSON.parse(deps.gh(['pr', 'view', String(n), '--json', 'headRefOid,statusCheckRollup'])); } catch (e) {
     return report(deps, { state: 'read-failed', pr: n, localHead, reason: `gh pr view failed: ${errText(e)}` });
   }
+  let repoRoot = deps.cwd();
+  try { repoRoot = String(deps.git(['rev-parse', '--show-toplevel'])).trim(); } catch { repoRoot = deps.cwd(); }
   let hasPrCi = false;
-  try { hasPrCi = Boolean(deps.hasPullRequestCi(deps.cwd())); } catch { hasPrCi = false; }
+  try { hasPrCi = Boolean(deps.hasPullRequestCi(repoRoot)); } catch { hasPrCi = false; }
   const verdict = classifyRollup({ rollup: view && view.statusCheckRollup, headRefOid: view && view.headRefOid, localHead, hasPrCi });
   return report(deps, { ...verdict, localHead, pr: n });
 }

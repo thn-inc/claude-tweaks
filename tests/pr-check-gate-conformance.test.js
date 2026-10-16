@@ -36,6 +36,12 @@ test('red is a gate failure naming the check and URL; TEST_PASSED is not set', (
   assert.match(red, /do not set `TEST_PASSED`/);
 });
 
+test('red names the merge-verification lever and its off value (parity with pr-first-merge.md Step 2.5)', () => {
+  const red = section(GATE, /\*\*`red`\*\*/, /\n- \*\*/);
+  assert.ok(red.includes('merge-verification'), 'red bullet names the merge-verification lever');
+  assert.ok(red.includes('`off`'), 'red bullet names the off value');
+});
+
 test('pending/stale pass with a caveat and an AUTO line', () => {
   const p = section(GATE, /\*\*`pending`\*\* or \*\*`stale`\*\*/, /\n- \*\*/);
   assert.match(p, /caveat/i);
@@ -52,6 +58,12 @@ test('no-pr / gh-absent / no-ci / read-failed fail open with a SKIP trace', () =
 test('/test pipeline behavior cites the shared gate', () => {
   const pb = section(TEST_SKILL, /\*\*Pipeline behavior:\*\*/, /\n## /);
   assert.ok(pb.includes('_shared/pr-check-gate.md'), 'test/SKILL.md Pipeline behavior cites _shared/pr-check-gate.md');
+});
+
+test('/test Step 2 (Report) also points at the gate, at the point TEST_PASSED is set', () => {
+  const step2 = section(TEST_SKILL, /## Step 2: Report/, /\n## /);
+  assert.ok(step2.includes('_shared/pr-check-gate.md'), 'test/SKILL.md Step 2 cites _shared/pr-check-gate.md');
+  assert.ok(step2.includes('TEST_PASSED'), 'test/SKILL.md Step 2 names TEST_PASSED');
 });
 
 test('/review Step 1.5 cites the shared gate and routes red to STOP in its gate table', () => {

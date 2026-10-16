@@ -97,7 +97,7 @@ After confirming `TEST_PASSED`, read the open items ledger (`docs/plans/*-ledger
 
 | Result | Action |
 |--------|--------|
-| `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: true` | Proceed to Step 2 |
+| `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: true` + `pr-checks.js` not `red` | Proceed to Step 2 |
 | `pr-checks.js` reports `red` (`_shared/pr-check-gate.md`) | **STOP** — name each failing check and its URL; fix forward and re-run `/claude-tweaks:test` |
 | `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: false` | Report it (stamp sha/scope vs HEAD), re-trigger `/claude-tweaks:test`, re-check |
 | Runner stamp `verifiedHead: true` (standalone) | Proceed to Step 2 |

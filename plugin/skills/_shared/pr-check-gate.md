@@ -11,8 +11,11 @@ wrap-up are spent on top of it. Callers cite this file; neither restates it.
 **Classification authority.** The red/pending/empty/green rules are
 `_shared/pr-first-merge.md`'s Step 2.5, applied in that order by `bin/lib/pr-checks/classify.js`
 (any failing check is red — the rollup does not mark which checks are required, and the merge gate
-already treats every failing check as red). This read adds only `stale` — the PR's `headRefOid` is
-not local HEAD, so nothing is concluded. The merge gate keeps its own read and stays the final
+already treats every failing check as red). This read adds two things the merge gate does not need:
+`stale` — the PR's `headRefOid` is not local HEAD, so nothing is concluded — and StatusContext
+normalization, which makes a failed StatusContext entry read as `red` here; the merge gate's literal
+rule, with no such normalization, would hold that same entry `pending` forever (it never carries a
+`status`/`conclusion` pair to complete). The merge gate keeps its own read and stays the final
 authority; this gate never replaces it.
 
 ## When it runs
@@ -30,10 +33,19 @@ like `read-failed` below.
 
 ## Routing by `state`
 
-- **`red`** — a gate failure, the same class as a local test failure: do not set `TEST_PASSED`
-  (`/test`), and **STOP** (`/review` Step 1.5). Render each `failing[]` entry's name and url —
-  "PR #{pr} check `{name}` is failing at {headRefOid short} ({url})" — as the failure card's
-  finding. A green local run is not evidence against it: fix forward, push, and re-run the gate.
+- **`red`** — resolve the lever first: `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run
+  "$PIPELINE_RUN_DIR" --values merge-verification`. When it prints `off`, route `red` like
+  `pending` — pass with a caveat naming the failing checks, same `--status AUTO` line as the
+  `pending`/`stale` bullet below — matching `_shared/pr-first-merge.md` Step 2.5's `off` behaviour
+  (a red PR check is "logged and shown, not acted on" there too). Otherwise (`merge-when-green`,
+  `wait`, unresolved, or any other value): a gate failure, the same class as a local test failure —
+  do not set `TEST_PASSED` (`/test`), and **STOP** (`/review` Step 1.5). Render each `failing[]`
+  entry's name and url — "PR #{pr} check `{name}` is failing at {headRefOid short} ({url})" — as
+  the failure card's finding; if that same check is also failing on `origin/{integration-branch}`'s
+  current tip (inherited, not caused by this run), say so in the card so the operator catches up
+  with the integration branch instead of debugging the diff (code-side base-check comparison is a
+  separate follow-up record). A green local run is not evidence against it: fix forward, push, and
+  re-run the gate.
 - **`pending`** or **`stale`** — pass, with a caveat: `TEST_PASSED` is set and carries the caveat
   naming the pending checks (or the unpushed HEAD), and one entry is logged:
   `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --section "{/test|/review}" --step "PR-check gate" --reversibility high --text "PR #{pr} checks {state} at {headRefOid short} ({pending names, or 'HEAD not yet pushed'}) — passed with caveat"`.

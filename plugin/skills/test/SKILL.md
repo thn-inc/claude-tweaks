@@ -197,6 +197,8 @@ Present results using the format from `verification.md` Step 3 for standard chec
 
 Read `report-templates.md` for the full templates, the `PASS_WITH_CAVEATS` propagation rule, the Actions Performed format, and the canonical `TEST_PASSED` semantics.
 
+**Pipeline mode:** run `_shared/pr-check-gate.md`'s read before setting `TEST_PASSED`; a `red` result means do not set it.
+
 ## Step 3: Fix Mode (Optional)
 
 If tests fail and the failures look straightforward (type errors, lint violations, simple test failures), read `fix-mode.md` in this skill's directory for the full procedure. Auto mode routes per `_shared/auto-mode-contract.md` — auto-fix and re-verify, or stage the fix to `staged/test-fix-{n}.patch` per `_shared/staged-patch.md`, validated with `git apply --check` before logging. Interactive mode asks via `AskUserQuestion`, with reproduce-first debugging for behavioral and QA failures.
