@@ -45,6 +45,15 @@ test('the Try it field lines live in exactly one skill file', () => {
   assert.deepEqual(owners, ['_shared/try-it.md']);
 });
 
+// The paragraph that owns a rule, not any mention of its words — a mention elsewhere
+// in the same section would otherwise satisfy an ordering or content check.
+function paragraphAt(doc, opener) {
+  const start = doc.indexOf(opener);
+  assert.ok(start >= 0, `missing paragraph opening ${opener}`);
+  const end = doc.indexOf('\n\n', start);
+  return { start, text: doc.slice(start, end < 0 ? undefined : end) };
+}
+
 function firstFence(doc) {
   const m = /```markdown\n([\s\S]*?)\n```/.exec(doc);
   assert.ok(m, 'no ```markdown template fence');
@@ -87,6 +96,26 @@ test('verification-brief.md composes Try it before any parent or floor branching
   assert.match(doc, /<!-- run-comment: try-it -->/);
   assert.match(doc, /try-it:\{N\}/);
   assert.doesNotMatch(doc, FIELD_LINE);
+});
+
+test('Routing composes the Try it block on every record-holding entry', () => {
+  const doc = read('wrap-up/verification-brief.md');
+  const routing = doc.slice(doc.indexOf('## Routing'), doc.indexOf('## Try it block (every record, before either branch)'));
+  const entry = paragraphAt(routing, '**Before either branch, on every record-holding entry**');
+  assert.match(entry.text, /sub-issue-side\s+entry into the Parent-Gate Procedure/);
+  assert.match(entry.text, /compose this record's Try it block/);
+  assert.match(entry.text, /Neither the Parent-Gate Procedure nor the Oversight-floor gate gates it/);
+});
+
+test('the producer and both summaries name the same session-scoped try-it file', () => {
+  for (const rel of ['wrap-up/verification-brief.md', 'flow/summary-template.md', 'flow/multispec-summary.md']) {
+    const doc = read(rel);
+    // {number} is summary-template.md's name for the record number the others call {N}.
+    const names = [...doc.matchAll(/TRY_IT=([^\s)"'`]+)/g), ...doc.matchAll(/session-scoped `([^`]+\.md)`/g)]
+      .map((m) => m[1].replace('{number}', '{N}'));
+    assert.ok(names.length > 0, `${rel} names no session-scoped try-it file`);
+    assert.deepEqual([...new Set(names)], ['try-it-{N}.md'], `${rel}: ${JSON.stringify(names)}`);
+  }
 });
 
 test('below the floor: no demo:pending, but the walkthrough still posts', () => {
@@ -132,6 +161,19 @@ test('parent gate: the end-to-end Try it replaces the inline Confirmed walkthrou
   assert.doesNotMatch(doc, FIELD_LINE);
 });
 
+test('parent gate: every sub-issue-side exit returns to the Try it post', () => {
+  const doc = read('wrap-up/verification-brief-parent-gate.md');
+  const ret = paragraphAt(doc, '**Return to the Try it post');
+  for (const exit of ['`incomplete`', '`gated`/`resolved`', '`exceeds: false`', '`exceeds: true`']) {
+    assert.ok(ret.text.includes(exit), `Return paragraph must name the ${exit} exit`);
+  }
+  assert.match(ret.text, /\*\*Posting it alone\*\*/);
+  assert.match(ret.text, /fail-open fallback/);
+  const evalGate = doc.slice(doc.indexOf('## Evaluate the gate'), doc.indexOf('## Compose the parent brief'));
+  const above = evalGate.slice(evalGate.indexOf('**`exceeds: true`**'));
+  assert.match(above, /"\$TRY_IT"/, 'exceeds: true appends the end-to-end variant too');
+});
+
 test('pr-run-comments.md registers the try-it kind, spec-qualified under multi-spec', () => {
   const doc = read('_shared/pr-run-comments.md');
   assert.match(doc, /^\| `try-it` \| `\/claude-tweaks:wrap-up`[^\n]*`<!-- run-comment: try-it -->`[^\n]*`<!-- run-comment: try-it:\{spec\} -->`[^\n]*\|$/m);
@@ -141,12 +183,14 @@ test('pr-run-comments.md registers the try-it kind, spec-qualified under multi-s
 test('demo Step 2 renders Try it before the design contract and before Prepare', () => {
   const doc = read('demo/SKILL.md');
   const step2 = doc.slice(doc.indexOf('## Step 2: Per-item walkthrough'), doc.indexOf('### Verdict'));
-  const tryIt = step2.indexOf('Try it');
-  assert.ok(tryIt >= 0, 'Step 2 must name Try it');
-  assert.ok(tryIt < step2.indexOf('### The design contract'), 'before the design-contract section');
-  assert.ok(tryIt < step2.indexOf('**Prepare**'), 'before Prepare');
+  const first = paragraphAt(step2, '**Try it first');
+  assert.ok(first.start < step2.indexOf('### The design contract'), 'before the design-contract section');
+  assert.ok(first.start < step2.indexOf('**Prepare**'), 'before Prepare');
+  assert.match(first.text, /before any Prepare\/Validate/);
+  assert.match(first.text, /never render it empty/);
+  assert.match(first.text, /PR\s+run-comment lookup/, 'names the PR lookup it reads back from');
+  assert.match(step2, /Try it\s+block hoisted to the top/, 'the full brief never renders the block twice');
   assert.ok(doc.includes('_shared/try-it.md'));
-  assert.match(step2, /never render it empty/);
   assert.doesNotMatch(doc, /walkthrough lives inline in `### Confirmed`/);
   assert.doesNotMatch(doc, FIELD_LINE);
 });
@@ -156,4 +200,19 @@ test('demo entry paths compose a Try it block on both composer branches', () => 
   const hits = doc.split('_shared/try-it.md').length - 1;
   assert.ok(hits >= 2, `expected session-recall and reconstruction to cite the contract, found ${hits}`);
   assert.doesNotMatch(doc, FIELD_LINE);
+});
+
+test('demo #N lookup reads the walkthrough back from the PR before composing one', () => {
+  const doc = read('demo/entry-paths.md');
+  const lookup = doc.slice(doc.indexOf('## `#N` given: single-record lookup'), doc.indexOf('### Full verification pointer'));
+  assert.match(lookup, /`Verification Brief\s+posted to PR #\{pr-number\}: \{pr-url\}`/, 'names the pr-first pointer line');
+  assert.ok(lookup.includes('<!-- run-comment: try-it -->'), 'names the try-it marker');
+  assert.ok(lookup.includes('<!-- run-comment: try-it:{n} -->'), 'names the multi-spec try-it marker');
+  assert.ok(lookup.includes('<!-- run-comment: brief -->'), 'names the brief marker');
+  assert.match(lookup, /closedByPullRequestsReferences/, 'reuses the issue-side closing-PR field');
+  assert.match(lookup, /`_shared\/pr-run-comments\.md`'s Find step/, 'reuses the find-by-marker read');
+  const recon = lookup.slice(lookup.indexOf('**Found**'), lookup.indexOf('**Not found**'));
+  const tryIt = recon.slice(recon.indexOf('- **Try it**'));
+  const prRead = tryIt.indexOf('PR run-comment');
+  assert.ok(prRead >= 0 && prRead < tryIt.indexOf('_shared/try-it.md'), 'reads the PR before composing fresh');
 });
