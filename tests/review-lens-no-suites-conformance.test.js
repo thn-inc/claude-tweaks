@@ -78,3 +78,33 @@ test('the debate, refutation, and gap-sweep prompt templates each carry the READ
   const hits = t.match(/\[\.\.\. READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section \.\.\.\]/g) || [];
   assert.equal(hits.length, 3);
 });
+
+test('the pre-dispatch listing also snapshots local TCP listeners next to pre-dispatch-status.txt', () => {
+  const d = read('review', 'step3-lens-dispatch.md');
+  const para = d.slice(d.indexOf('**Pre-dispatch listing (scratch-sweep baseline).**'), d.indexOf('**`Path:Line` must be file-native'));
+  assert.match(para, /pre-dispatch-status\.txt/);
+  assert.match(para, /lsof -nP -iTCP -sTCP:LISTEN > \{ctx-dir\}\/pre-dispatch-listeners\.txt/);
+  assert.match(para, /lsof.*unavailable[\s\S]*SKIP/);
+});
+
+test('the post-fan-out sweep documents a report-only listener diff and its outputs', () => {
+  const sweep = section(read('review', 'step3-lens-dispatch.md'), '## Post-fan-out untracked-file sweep');
+  assert.match(sweep, /pre-dispatch-listeners\.txt/);
+  assert.match(sweep, /command name and port/, 'diff is keyed on command + port, not PID or raw line');
+  assert.match(sweep, /Never kill/);
+  assert.match(sweep, /cannot attribute/);
+  assert.match(sweep, /Fan-out leftovers/);
+  assert.match(sweep, /STAGED \{HH:MM:SS\} — Review fan-out left \{n\} new listener\(s\): \{command:port list\}\. Not killed\. Reversibility: n\/a\./);
+});
+
+test('the summary template Fan-out leftovers slot lists leftover listeners', () => {
+  const t = read('review', 'review-summary-template.md');
+  const slot = t.slice(t.indexOf('### Fan-out leftovers'), t.indexOf('### Implementation Hindsight'));
+  assert.match(slot, /listener/);
+  assert.match(slot, /\{command\}:\{port\}/);
+});
+
+test('the high-tier closing sweep in step3-debate-and-refutation.md also runs the listener diff', () => {
+  const sec = section(read('review', 'step3-debate-and-refutation.md'), '## Post-fan-out sweep (this file\'s own closing step)');
+  assert.match(sec, /pre-dispatch-listeners\.txt/);
+});

@@ -70,6 +70,7 @@ Possible QA statuses (the four canonical values from qa-reporting.md's Status de
 
 ### Fan-out leftovers
 {None | N untracked file(s) left by the review fan-out, reported (not deleted) by the post-fan-out sweep: {paths}}
+{None | N new local listener(s) since the pre-dispatch snapshot, reported (not killed; ownership unattributed): {command}:{port}, …}
 
 > Findings whose only evidence is one of these paths are downgraded to `unconfirmed` above, per `step3-lens-dispatch.md`'s post-fan-out sweep.
 
