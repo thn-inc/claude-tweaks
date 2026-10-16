@@ -907,6 +907,13 @@ test('#3099: the clause text quoted in a test step covers it (backticks, case, s
   assert.deepStrictEqual(result.covered.find((c) => c.id === 'AC2.3'), { id: 'AC2.3', via: 'quoted-text' });
 });
 
+test('#3099: the clause text quoted in a coverage-map table row covers it via quoted-text', () => {
+  const plan = ePlan(['AC1.1 AC2.1 AC2.2'], ['| Clause | Task |', '|---|---|', '| the total equals the recipient count | Task 1 |', '']);
+  const result = checkE(E_SPEC, plan);
+  assert.deepStrictEqual(result.uncovered, []);
+  assert.deepStrictEqual(result.covered.find((c) => c.id === 'AC2.3'), { id: 'AC2.3', via: 'quoted-text' });
+});
+
 test('#3099: a quoted clause under 3 words is never covered via the quoted-text fallback, even as a substring of a longer word (whole-branch review finding 1)', () => {
   const spec = '## Acceptance Criteria\n\n1. The process ends. Last.\n';
   const plan = ePlan(['AC1.1 only — the blast radius is contained']);
