@@ -186,6 +186,16 @@ test('passes when headers exist only in the worktree mirror of the run dir (pr-f
   assert.deepEqual(result, { ok: true });
 });
 
+test('passes when the header lives under work/ (not spec-{n}/work/) in the worktree mirror -- the pr-first singleton shape (#2775)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-first-call-mirror-singleton-'));
+  const runDir = path.join(root, 'main', '.claude-tweaks', 'pipelines', RUN_ID);
+  const worktree = path.join(root, 'wt');
+  const deps = localMergeGroup(runDir, [2806], { worktree });
+  writeHeader(path.join(worktree, '.claude-tweaks', 'pipelines', RUN_ID), 'work', 2806);
+  const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, deps);
+  assert.deepEqual(result, { ok: true });
+});
+
 test('a header whose record: line names a different number does not count (#2775)', () => {
   const runDir = mkRunDir();
   const deps = localMergeGroup(runDir, [2806]);

@@ -63,7 +63,11 @@ function resolveIntegrationModel(configRaw) {
 //      dir or its worktree mirror -- the same two shapes and mirror rule
 //      `wrap-up/pack.js`'s resolveRecords ladder reads, so a group that clears this
 //      gate never reaches its second call with records unresolved. A header whose
-//      `record:` line names another number does not count.
+//      `record:` line names another number does not count. A group mixing `work/` and
+//      `spec-{n}/work/` layouts across its own members passes this check, but
+//      `pack.js`'s resolveRecords ladder only ever reads ONE of the two shapes per
+//      rung (its first, flat-`work/`, rung wins outright whenever it finds anything) --
+//      no current producer writes that mixed layout.
 
 // The run dir plus its worktree mirror (pack.js's worktreeMirror), deduplicated.
 function headerBases(runDir, runState) {
@@ -100,6 +104,9 @@ function checkFirstCallArtifacts({ runDir, issueNumbers, repoSlug }, deps = {}) 
   } catch {
     return fail('missing-run-state', `run-state.json not found at ${runStatePath}`);
   }
+
+  let parsedRunState = null;
+  try { parsedRunState = JSON.parse(runStateRaw); } catch { parsedRunState = null; }
 
   const configPath = path.join(runDir, 'config.yml');
   let configRaw;
@@ -140,13 +147,7 @@ function checkFirstCallArtifacts({ runDir, issueNumbers, repoSlug }, deps = {}) 
 
   const integrationModel = resolveIntegrationModel(configRaw);
   if (integrationModel === 'pr-first') {
-    let runState = null;
-    try {
-      runState = JSON.parse(runStateRaw);
-    } catch {
-      runState = null;
-    }
-    const pr = runState && runState.pr;
+    const pr = parsedRunState && parsedRunState.pr;
     if (!pr || !pr.number) {
       return fail('pr-missing', 'no recorded PR in run-state.json under integration-model: pr-first');
     }
@@ -165,8 +166,6 @@ function checkFirstCallArtifacts({ runDir, issueNumbers, repoSlug }, deps = {}) 
     }
   }
 
-  let parsedRunState = null;
-  try { parsedRunState = JSON.parse(runStateRaw); } catch { parsedRunState = null; }
   const bases = headerBases(runDir, parsedRunState);
   for (const issueNumber of issueNumbers) {
     if (!hasMaterializedHeader(readFile, bases, Number(issueNumber))) {
