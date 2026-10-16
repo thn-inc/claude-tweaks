@@ -4,3 +4,11 @@
 |---|-------|------|--------|------------|
 | 1 | build/ops | Pre-flight branch-divergence: local main 7 behind origin/main (ff blocked by untracked sibling-run files in the main checkout) | observation | Post-creation catch-up merged origin/main (09e0b08 → 62c548b) before any work; nothing outstanding |
 | 2 | build/ops | origin/main tip 62c548b is CI-red (5 byte-ceiling tests on dispatch/SKILL.md) — this PR's CI inherits it until the fix lands | observation | Sibling PR #3231 ("Trim dispatch/SKILL.md under the context-cost ceiling") is the fix; re-check before merge |
+| 3 | build | normalizeEntry sniffs StatusContext by `context` key + no `status` rather than `__typename` (robustness only; matches the real gh shape) | deferred | Below materiality floor; final review: can wait |
+| 4 | build | pr-checks.js: a throw from hasPullRequestCi collapses to hasPrCi=false, so an unreadable .github/workflows reads `no-ci` instead of `pending` | deferred | Both states pass the gate; only the log wording differs — final review: can wait |
+| 5 | build | pr-checks.js reuses log-decision's resolveTarget for anchoring only (`target.file` discarded) | deferred | Cosmetic — final review: can wait |
+| 6 | build | test/SKILL.md PR-check bullet appended last in Pipeline behavior | fixed | F2: pointer added at Step 2 Report where TEST_PASSED is set, pinned by conformance test — f23ced7b5 |
+| 7 | build | `stale` discards a red check on the pushed (older) PR head; the caveat could name it | deferred | Merge gate still reads the pushed head; caveat enrichment only |
+| 8 | build | `stale` caveat text always says "HEAD not yet pushed" even when the PR head is ahead of local HEAD or the PR is closed (state not fetched) | deferred | Caveat wording only; gate still passes |
+| 9 | build | No /test report-template row for a red PR-check failure | deferred | Card wording lives in `_shared/pr-check-gate.md`; template row is polish |
+| 10 | build | Inherited base red: a check failing on origin/main's tip stops every pr-first run at /test (local verification has baseline adjudication; this gate does not) — compare failing check names against the base's checks and demote matches to a caveat | open | Prose names the inherited case (F4); code comparison needs its own record — file via /claude-tweaks:capture at wrap-up |
