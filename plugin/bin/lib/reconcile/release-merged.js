@@ -62,6 +62,14 @@ function needsIssueEvidence(prState) {
   return typeof prState === 'object' && prState.state === 'CLOSED';
 }
 
+// Shared by Phase 1.5 and the #3249 by-number fallback below: pairs each
+// item's issueNumber with its runWithConcurrency result, mapping a rejected
+// probe (an Error instance) to the same 'network-failure' string every other
+// resolver in this module uses for a transport failure.
+function resultsByIssue(items, results) {
+  return new Map(items.map((c, i) => [c.issueNumber, results[i] instanceof Error ? 'network-failure' : results[i]]));
+}
+
 // Pure: a claim listing entry + the cached sha last seen for that issue ->
 // skip the readClaimBlob call entirely when unchanged (#820, D6). Only ever
 // called by releaseMerged's loop below with a cache entry that was recorded
@@ -396,9 +404,7 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
     needPrState,
     (c) => resolvePrStateAsync(root, c.branch),
   );
-  const prStateByIssue = new Map(
-    needPrState.map((c, i) => [c.issueNumber, prStates[i] instanceof Error ? 'network-failure' : prStates[i]]),
-  );
+  const prStateByIssue = resultsByIssue(needPrState, prStates);
   for (const c of candidates) {
     if (c.joinFailure === null) c.prState = prStateByIssue.get(c.issueNumber);
   }
@@ -416,9 +422,7 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
     needPrByNumber,
     (c) => resolvePrStateByNumberAsync(root, c.prNumber),
   );
-  const prStateByNumberByIssue = new Map(
-    needPrByNumber.map((c, i) => [c.issueNumber, prStatesByNumber[i] instanceof Error ? 'network-failure' : prStatesByNumber[i]]),
-  );
+  const prStateByNumberByIssue = resultsByIssue(needPrByNumber, prStatesByNumber);
   // Iterates needPrByNumber (the same candidate objects, by reference) —
   // not candidates re-filtered by the same predicate — since every entry
   // worth checking is already in that array.
