@@ -68,7 +68,7 @@ const APPLY_COMMENT_FAILED_RE = /^comment failed: /;
 const IGNORED_PATTERNS = [
   /Backlog refine: batch auto-applied/,
   /Backlog refine: merge-lane circuit breaker RESET/,
-  /apply-refine-labels: #\d+: comment posted/,
+  /^- AUTO \d{2}:\d{2}:\d{2} — apply-refine-labels: #\d+: comment posted/,
   /Backlog refine #\d+:/,
 ];
 

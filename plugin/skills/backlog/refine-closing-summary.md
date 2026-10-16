@@ -52,8 +52,11 @@ second bookkeeping channel:
    `collision-reconciled` field) requires updating that module (and this file) first, never
    inventing a field ad hoc in the rendered text. The CLI counts both forms a write can be logged
    in — the templates above and `bin/apply-refine-labels.js`'s own per-action lines (`#{n}: applied
-   {labels}`, typed by the labels applied) — once per record per field, so a write logged both ways
-   counts once (#3267). The envelope's `unclassified` array lists any `decisions.md` line that
+   {labels}`, typed by the labels applied) — per record and field it takes the larger of the two
+   forms' counts, so a write logged both ways counts once while distinct writes on the same record
+   (a priority and a Related write that both failed) still count separately; a flag-back or
+   needs-decision whose label landed but whose comment failed counts once, under `failed` only
+   (#3267). The envelope's `unclassified` array lists any `decisions.md` line that
    reads as a Backlog-refine action, or any `AUTO`/`FAILED` line under `## /backlog`, that matched
    no known field — a drifted log template or a genuinely new write type; surface it as a one-line
    caveat under the tally ("`{n}` logged action(s) did not match a known tally field — see `{line

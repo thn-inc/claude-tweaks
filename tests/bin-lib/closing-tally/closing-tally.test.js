@@ -292,8 +292,12 @@ test('#3267 Minor 1: an apply-refine-labels-shaped line outside ## /backlog is n
 // "apply-refine-labels: #99:" appearing inside the error message itself.
 test('#3267 Minor 2: a FAILED line whose message contains "apply-refine-labels: #99:" counts the real record only', () => {
   const text = `## /backlog
-- FAILED 10:00:00 — apply-refine-labels: #50: +priority:high failed: remote said "apply-refine-labels: #99: ignore me" unexpectedly.
+- FAILED 10:00:00 — apply-refine-labels: #50: +priority:high failed: remote said "apply-refine-labels: #99: +priority:low failed: nested" unexpectedly.
+- FAILED 10:00:01 — refine apply: Backlog refine: priority write failed on #50 — gh: remote error.
 `;
+  // The template line names the same #50 write, so the anchored capture
+  // collapses the pair to one failure; a capture of #99 from the message
+  // would count a second, phantom record.
   const { counts, unclassified } = computeClosingTally(text);
   assert.deepEqual(counts, { ...ZERO, failed: 1 });
   assert.deepEqual(unclassified, []);
