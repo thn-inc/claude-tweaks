@@ -42,7 +42,7 @@ An extracted list of failures cannot report that it missed one. `adjudicate` ref
 - every failing entry or TAP `not ok` block names a test file (`countUnmatchedFailures` returns 0);
 - the summary counts parse at all, because a truncated log has none.
 
-The listing and `ℹ fail` do not count the same things — a cancelled test, for example one that timed out, is listed but not counted, so the full run's entries must reconcile against `ℹ fail` plus `ℹ cancelled`, not `ℹ fail` alone. A cancelled test does not by itself block adjudication of the full run: it is held to the usual per-file evidence (it fails at base, or shows its own pass in isolation). Only that isolated single-file rerun must itself show `ℹ cancelled`/`# cancelled` at 0 (`accountedFamily`) to count as evidence — a rerun that times out or cancels proves nothing and that file stays unclassified. A diagnostic that says the test timed out or was cancelled (`INCONCLUSIVE_RE`) means the test did not finish, which proves nothing about whether it fails.
+The listing and `ℹ fail` do not count the same things — a cancelled test, for example one that timed out, is listed but not counted, so the full run's entries must reconcile against `ℹ fail` plus `ℹ cancelled`, not `ℹ fail` alone. A cancelled test does not by itself block adjudication of the full run: it is held to the usual per-file evidence (it fails at base, or shows its own pass in isolation). Only each isolated single-file run — the per-file base run and the isolated HEAD rerun — must itself show `ℹ cancelled`/`# cancelled` at 0 (`accountedFamily`) to count as evidence — a single-file run that times out or cancels proves nothing and that file stays unclassified. A diagnostic that says the test timed out or was cancelled (`INCONCLUSIVE_RE`) means the test did not finish, which proves nothing about whether it fails.
 
 ### Node's runner-level diagnostics are visible only in the log
 
@@ -55,7 +55,7 @@ An uncaught error from async work that outlived its test is reported as a separa
 | A family other than spec or tap | No failure-accounting guard. Refuse to classify |
 | Spec entries ≠ `ℹ fail N` + `ℹ cancelled N`, or a failing entry naming no test file | An undercount. Refuse |
 | A non-zero cancelled count in the full run | Not a refusal by itself. Each cancelled test is held to the per-file evidence: it fails at base, or shows its own pass in isolation |
-| In an isolated single-file rerun: a non-zero cancelled count, a timeout diagnostic, or a runner-level `ℹ Error:` | Did not finish, or failed outside any test. No evidence — that file stays unclassified |
+| In an isolated single-file run (the per-file base run or the isolated HEAD rerun): a non-zero cancelled count, a timeout diagnostic, or a runner-level `ℹ Error:` | Did not finish, or failed outside any test. No evidence — that file stays unclassified |
 | Nesting that does not close | No evidence |
 | A parent `✖` with no listing left for it (spec), or `failureType: 'subtestsFailed'` (TAP) | Inherited from a child. Not the parent's own failure |
 | A full-run failure that is absent from an isolated run | Not a pass. Only the test's own `✔` in that run counts |
