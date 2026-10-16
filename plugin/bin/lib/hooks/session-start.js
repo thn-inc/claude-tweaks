@@ -364,10 +364,12 @@ async function run(ctx) {
         );
         if (on && !isLinkedWorktree) {
           parts.push(
-            'claude-tweaks: this project requires an isolated worktree for all work ' +
-              '(policy: worktree-always in .claude-tweaks/policy.yml). Before making any edits, ' +
+            'claude-tweaks: this project requires an isolated worktree for repository edits ' +
+              '(policy: worktree-always in .claude-tweaks/policy.yml). Before editing repository files, ' +
               'invoke /superpowers:using-git-worktrees to set one up, then follow ' +
-              "`_shared/worktree-setup.md`'s post-creation catch-up before any other action.",
+              "`_shared/worktree-setup.md`'s post-creation catch-up before any other action. " +
+              'An invocation whose every write is a forge-API call (gh issue/pr/api) needs no worktree — ' +
+              "see that file's Adopt-or-create.",
           );
         }
 
