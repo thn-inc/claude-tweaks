@@ -232,7 +232,150 @@ function countTasks(text) {
   return { tasks: blocks.length, batched };
 }
 
+// ── Check E inputs: the spec's acceptance-criterion clauses (#3099) ────────
+// The spec's `## Acceptance Criteria` section, split into items (one per
+// top-level `-`/`*`/`+`/`1.` list line, a leading `[ ]` checkbox stripped)
+// and each item into clauses on sentence ends and `;`. Ids are
+// `AC{item}.{clause}`, both 1-based, item = position in the section (never
+// the literal list number). A prose-only section (no list lines — about a
+// tenth of real specs) makes each paragraph one item. Code spans and a few
+// abbreviations are masked before splitting so `a; b` inside backticks and
+// "e.g." never cut a clause. Anything the splitter cannot read confidently
+// lands in `unparsed`, never in `clauses` (parse-signal-discipline): a
+// missing or empty section, an item with an odd backtick count or a fence,
+// and — when the section does have list items — any stray prose paragraph
+// beside them, except a one-line italic footer such as
+// `_Filed by review via specShapedBody._`.
+const AC_HEADING_RE = /^##[ \t]+Acceptance Criteria[ \t]*$/i;
+const AC_SECTION_END_RE = /^#{1,2}[ \t]/;
+const AC_FENCE_RE = /^[ \t]*(```|~~~)/;
+const AC_ITEM_RE = /^ {0,3}(?:[-*+]|\d{1,3}[.)])[ \t]+(.*)$/;
+const AC_CHECKBOX_RE = /^\[[ xX]\][ \t]+/;
+const AC_FOOTER_RE = /^(?:_[^_].*_|\*[^*].*\*)$/;
+const AC_ABBREVIATION_RE = /\b(?:e\.g|i\.e|etc|vs|cf)\./gi;
+
+function acceptanceSectionLines(specText) {
+  const lines = specText.replace(/\r\n?/g, '\n').split('\n');
+  let inFence = false;
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (AC_FENCE_RE.test(lines[i])) { inFence = !inFence; continue; }
+    if (!inFence && AC_HEADING_RE.test(lines[i])) { start = i + 1; break; }
+  }
+  if (start === -1) return null;
+  const section = [];
+  inFence = false;
+  for (let i = start; i < lines.length; i++) {
+    if (AC_FENCE_RE.test(lines[i])) inFence = !inFence;
+    if (!inFence && AC_SECTION_END_RE.test(lines[i])) break;
+    section.push(lines[i]);
+  }
+  return section;
+}
+
+// Returns the item's clauses (trimmed, a trailing `;` dropped), or null when
+// the item cannot be split confidently (odd backtick count — a code span the
+// mask cannot bound). A cut is made after `;`, or after `.`/`!`/`?` followed
+// by whitespace and a character that is not a lowercase letter, and never
+// inside parentheses or brackets.
+function splitClauses(text) {
+  if ((text.match(/`/g) || []).length % 2 !== 0) return null;
+  const masked = text
+    .replace(/`[^`]*`/g, (m) => `\`${'x'.repeat(m.length - 2)}\``)
+    .replace(AC_ABBREVIATION_RE, (m) => m.replace(/\./g, 'x'));
+  const cuts = [];
+  let depth = 0;
+  for (let i = 0; i < masked.length; i++) {
+    const ch = masked[i];
+    if (ch === '(' || ch === '[') depth += 1;
+    else if ((ch === ')' || ch === ']') && depth > 0) depth -= 1;
+    else if (depth === 0 && ch === ';') cuts.push(i + 1);
+    else if (depth === 0 && (ch === '.' || ch === '!' || ch === '?')) {
+      const after = masked.slice(i + 1).match(/^\s+(\S)/);
+      if (after && !/[a-z]/.test(after[1])) cuts.push(i + 1);
+    }
+  }
+  const clauses = [];
+  let from = 0;
+  for (const cut of [...cuts, text.length]) {
+    const clause = text.slice(from, cut).trim().replace(/;$/, '').trim();
+    if (/[A-Za-z0-9]/.test(clause)) clauses.push(clause);
+    from = cut;
+  }
+  return clauses.length ? clauses : null;
+}
+
+// Returns { clauses: [{id, item, text}], unparsed: [{item, raw}] }. `item` is
+// null on an unparsed entry that belongs to no single item (no section, an
+// empty section, a stray paragraph).
+function extractAcceptanceClauses(specText) {
+  const section = acceptanceSectionLines(specText);
+  if (section === null) {
+    return { clauses: [], unparsed: [{ item: null, raw: 'no "## Acceptance Criteria" section in the spec' }] };
+  }
+  const items = [];
+  const paragraphs = [];
+  let current = null;
+  let prevBlank = true;
+  let inFence = false;
+  for (const line of section) {
+    if (AC_FENCE_RE.test(line)) {
+      inFence = !inFence;
+      if (!current) {
+        current = { lines: [], fenced: true };
+        paragraphs.push(current);
+      }
+      current.fenced = true;
+      current.lines.push(line.trim());
+      prevBlank = false;
+      continue;
+    }
+    if (inFence) { current.lines.push(line.trim()); continue; }
+    if (line.trim() === '') {
+      prevBlank = true;
+      if (current && !items.includes(current)) current = null;
+      continue;
+    }
+    const itemMatch = line.match(AC_ITEM_RE);
+    if (itemMatch) {
+      current = { lines: [itemMatch[1].replace(AC_CHECKBOX_RE, '')], fenced: false };
+      items.push(current);
+    } else if (current && (/^\s/.test(line) || !prevBlank)) {
+      current.lines.push(line.trim());
+    } else {
+      current = { lines: [line.trim()], fenced: false };
+      paragraphs.push(current);
+    }
+    prevBlank = false;
+  }
+  const prose = paragraphs.filter((p) => p.fenced || !(p.lines.length === 1 && AC_FOOTER_RE.test(p.lines[0])));
+  const unparsed = [];
+  let units = items;
+  if (items.length === 0) {
+    if (prose.length === 0) {
+      return { clauses: [], unparsed: [{ item: null, raw: 'empty "## Acceptance Criteria" section' }] };
+    }
+    units = prose;
+  } else {
+    for (const p of prose) unparsed.push({ item: null, raw: p.lines.join(' ') });
+  }
+  const clauses = [];
+  units.forEach((unit, idx) => {
+    const item = idx + 1;
+    const raw = unit.lines.join(' ').trim();
+    const split = unit.fenced ? null : splitClauses(raw);
+    if (split === null) {
+      unparsed.push({ item, raw });
+      return;
+    }
+    split.forEach((text, c) => clauses.push({ id: `AC${item}.${c + 1}`, item, text }));
+  });
+  return { clauses, unparsed };
+}
+
 module.exports = {
+  extractAcceptanceClauses,
+  splitClauses,
   extractFileEntries,
   extractScopeKeywords,
   extractPremiseRefs,
