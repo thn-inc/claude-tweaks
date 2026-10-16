@@ -61,3 +61,44 @@ test('worktree-setup.md: Post-creation catch-up cross-references the carve-out b
   assert.ok(xref < guard, `expected cross-reference(${xref}) before guard note(${guard})`);
   assert.match(s.slice(Math.max(0, xref - 200), xref + 200), /never reaches this section/);
 });
+
+function skill(...parts) {
+  return readText(path.join(SKILLS, ...parts));
+}
+
+function note(text, label) {
+  const at = text.indexOf(CITE);
+  assert.notStrictEqual(at, -1, `${label} must cite "${CITE}"`);
+  const start = text.lastIndexOf('\n\n', at);
+  const end = text.indexOf('\n\n', at);
+  return text.slice(start === -1 ? 0 : start, end === -1 ? undefined : end);
+}
+
+test('backlog refine-headless.md: whole firing is covered (gh + run dir; local-files already stops)', () => {
+  const n = note(skill('backlog', 'refine-headless.md'), 'refine-headless.md');
+  assert.match(n, /worktree-setup\.md/);
+  assert.match(n, /local-files/);
+});
+
+test('backlog refine-mode.md: names the unsynced-record and local-files exceptions', () => {
+  const n = note(skill('backlog', 'refine-mode.md'), 'refine-mode.md');
+  assert.match(n, /worktree-setup\.md/);
+  assert.match(n, /unsynced/);
+  assert.match(n, /local-files/);
+  assert.match(n, /writeRecord/);
+});
+
+test('capture SKILL.md: names the gh-failure fallback and brainstorm route exceptions', () => {
+  const n = note(skill('capture', 'SKILL.md'), 'capture/SKILL.md');
+  assert.match(n, /worktree-setup\.md/);
+  assert.match(n, /fallback/);
+  assert.match(n, /brainstorm/);
+  assert.match(n, /local-files/);
+});
+
+test('tidy scan-execution.md: scan batch is read-only; the only worktree is Step 7.5', () => {
+  const n = note(skill('tidy', 'scan-execution.md'), 'tidy/scan-execution.md');
+  assert.match(n, /worktree-setup\.md/);
+  assert.match(n, /Step 7\.5/);
+  assert.match(n, /only read/);
+});

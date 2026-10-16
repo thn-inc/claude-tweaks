@@ -13,6 +13,11 @@ file: its labeling lanes render interactively per `refine-lanes.md`, and its Gra
 `refine-mode.md` Step 3's `assess-agent-autonomy` call behind a human batch-confirm, not through
 this file's chain below.
 
+**No worktree.** Every write this posture makes is a `gh` call, a run-dir line, a session temp
+file, or the `health-state` ref a `bin/` CLI pushes — and `work-backend: local-files` stops at
+Preflight — so `_shared/worktree-setup.md`'s "Forge-API-only invocations need no worktree"
+carve-out covers the whole firing.
+
 ## Labeling-lanes preamble
 
 The Priority, Related, Flag-back, and mechanical Dependency-repair lanes run in this posture
