@@ -10,13 +10,13 @@
 // evidence: skills/flow/multispec-merge-gate.md.
 'use strict';
 
-function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+const { escapeRegExp } = require('../shared-primitives');
 
 // integrationBranch (default 'main') -> the strict merge-state RegExp. A demand
 // that a prerequisite be "actually merged", or merged/landed to/into/on the
 // integration branch — never the content-satisfiable "merged first" forms.
 function buildMergeStateRe(integrationBranch = 'main') {
-  const b = escapeRe(integrationBranch);
+  const b = escapeRegExp(integrationBranch);
   const target = `(?:the\\s+)?(?:\`?(?:origin\\/)?${b}\\b\`?(?:\\s+branch\\b)?|integration\\s+branch\\b)`;
   return new RegExp(`\\bactually\\s+merged\\b|\\b(?:merge[sd]?\\s+(?:in)?to|land(?:s|ed)?\\s+(?:on|in|into))\\s+${target}`, 'i');
 }

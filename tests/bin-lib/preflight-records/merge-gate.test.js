@@ -7,8 +7,7 @@ const {
 
 const issue = (number, body) => ({ number, title: `T${number}`, body, labels: [] });
 function fixture(entries) {
-  const issues = new Map(entries.map(([n, body]) => [n, issue(n, body)]));
-  return issues;
+  return new Map(entries.map(([n, body]) => [n, issue(n, body)]));
 }
 
 test('MERGE_STATE_RE: strict integration-branch merge-state forms match; content-satisfiable forms do not', () => {
