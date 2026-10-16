@@ -284,3 +284,17 @@ test('AC1.1, AC2.1: multi-spec Validation cites the merge-state gate sub-file, w
   assert.match(gate, /before Step 2\.8/);
   assert.match(gate, /must be merged first/);
 });
+
+test('AC1.1, AC6.1: parallel waves — decision sub-file, opt-in token, merge-back, single-PR reconciliation (#2677)', () => {
+  const skill = read('plugin/skills/flow/SKILL.md');
+  assert.match(skill, /\| `parallel` \|[^\n]*multispec-parallel-waves\.md/);
+  assert.match(read('plugin/skills/flow/multi-spec.md'), /multispec-parallel-waves\.md/);
+  assert.match(read('plugin/skills/flow/multispec-review-console.md'), /multispec-parallel-waves\.md/);
+  const doc = read('plugin/skills/flow/multispec-parallel-waves.md');
+  assert.match(doc, /preflight-records\.js[^\n]*--waves/);
+  assert.match(doc, /merge --no-ff/);
+  assert.match(doc, /merge --abort/);
+  assert.match(doc, /never calls `AskUserQuestion`/);
+  assert.match(doc, /spec-\{N\}\/ledger\.md/);
+  assert.match(doc, /Rejected — one shared worktree/);
+});

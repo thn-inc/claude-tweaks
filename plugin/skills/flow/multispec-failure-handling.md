@@ -63,3 +63,7 @@ The consolidated console's **Not run / Failed** footer notes the shared worktree
 ```
 
 The user finishes or discards the single shared branch after triage (`/superpowers:finishing-a-development-branch`).
+
+## Parallel waves (`parallel`, #2677)
+
+A HARD-GATE failure in one wave member's build or test never cancels its wave siblings mid-flight — each finishes build and test in its own worktree. Without `keep-going`, the default stop then applies at the wave boundary: no sibling is merged back and no later wave starts; each sibling's per-spec branch is named in the console's "Not run / Failed" footer for a later run. With `keep-going`, the successful siblings merge back and the run continues.

@@ -16,6 +16,7 @@ Before starting, validate the list:
 3. **Pre-flight** — collect each target's set from `materialize.md`'s Resolution (facets + body, read-only): `blocked-by:` dependencies, `surface:`/`design-intent:` via the lift rule, and key files from the body's `### Key Files` subsection. These feed the ordering check, Pipeline Preview, conflict detection (Step 5), and Step 4a's merge-state gate. `bin/preflight-records.js {targets in run order} [--work-links native|body-text] [--repo owner/name] --merge-gate --integration-branch "$INTEGRATION_BRANCH"` mechanizes this step — and Step 5's conflict detection and Step 4a's gate, in one call, never a second invocation — printing `{records, overlapGroups, workLinks, mergeGate}` (exit 0 success, 1 any fetch failed with every failing record named, 2 malformed); `$INTEGRATION_BRANCH` resolves per `_shared/integration-branch.md`; see its `--help` for details.
 4. **Dependency-aware ordering** — see "Dependency-aware ordering" below. Topologically sort and reconcile with the user's order.
 4a. **Merge-state gate** — a target demanding an in-run prerequisite already be merged to the integration branch is split out before claiming, never asked; see `multispec-merge-gate.md` in this skill's directory.
+4b. **Parallel waves (`parallel` only)** — add `--waves` to step 3's call and plan independent-record waves from this DAG; see `multispec-parallel-waves.md`.
 5. **Conflict detection** — see "Cross-spec conflict detection" below. Warn on overlapping key files (`### Key Files` in each record body).
 
 ## Dependency-aware ordering
@@ -153,6 +154,8 @@ When `worktree` is specified, a sequential run uses **one shared worktree for th
 Why shared, not per-record: sequential records in one run are one logical unit of work on one base. Per-record worktrees would each branch from that base and need N separate merges unable to see each other's commits — the divergence/stale-base problem worktrees exist to avoid. One branch accumulates the records in dependency order and merges back as a single reconciled changeset.
 
 > Separate-terminal parallel runs (`/flow #42 worktree` in each terminal) are different — those are N independent single-record runs and each correctly gets its own worktree. See `worktree-merge.md`.
+
+> The opt-in `parallel` token (#2677) is the one in-run exception: a wave's independent records build and test in per-spec worktrees, then merge back into the shared branch before their review — `multispec-parallel-waves.md`.
 
 ## PR phase-checklist convention (shared PR)
 
