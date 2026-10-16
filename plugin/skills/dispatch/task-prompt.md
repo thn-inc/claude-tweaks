@@ -85,13 +85,16 @@ call sites. Compose both before either dispatch anyway: if the compose command i
 **Log each group's resolved first-call model (#3212).** This is a dispatching-session step, not
 part of `{context-pack}`. When resolving the first call's profile
 (`node "{plugin-root}/bin/resolve-profile.js" capable`, the template below), keep the resolved
-`model`; after the first call returns — never before it is dispatched — write one line per group
-to that group's `{minted-run-dir}/decisions.md` through `log-decision.js` (item 4's shape), per
-`_shared/auto-decision-log.md`'s canonical entry schema:
-`AUTO {time} — Dispatch group {group}: first-call model resolved to {model}. Reversibility: n/a (informational).`
-The timing matters: before the first call, the minted directory's `decisions.md` may hold only
-`/flow` Step 2.8's claim-log lines, and any other line makes `/flow` Step 3 treat the directory as
-a recovery (adoption case 3, `bin/lib/flow/preflight.js` via
+`model` and `source`; after the first call returns — never before it is dispatched — write one
+line per group to that group's `{minted-run-dir}/decisions.md` by running
+`node "{plugin-root}/bin/log-decision.js" --run "{minted-run-dir}" --status AUTO --step "Dispatch group {group}" --text "first-call model resolved to {model} (source: {source})" --reversibility n/a`,
+which produces, per `_shared/auto-decision-log.md`'s canonical entry schema:
+`- AUTO {time} — Dispatch group {group}: first-call model resolved to {model} (source: {source}). Reversibility: n/a.`
+where `{model}` and `{source}` are the `model` and `source` fields of the `resolve-profile.js
+capable` JSON, and `{group}` is the group's comma-joined issue list in brackets (e.g. `[42]` or
+`[42,43]`). The timing matters: before the first call, the minted directory's `decisions.md` may
+hold only `/flow` Step 2.8's claim-log lines, and any other line makes `/flow` Step 3 treat the
+directory as a recovery (adoption case 3, `bin/lib/flow/preflight.js` via
 `bin/lib/log-decision/claim-log.js`'s `classifyDecisions`) instead of a fresh mint (case 2). A
 `source` of `ceiling` in the resolver's output means the clamp described under the first-call
 template applied.
@@ -191,8 +194,8 @@ Status line (required): on its own trailing line, after everything above -- the 
 non-empty line -- write exactly `STATUS: {WORD}`, where {WORD} is one of: DONE /
 DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
 
-[Use: Capable] -- raised from Standard because Standard first calls bypassed /flow in 6 of 10 observed firings, Capable in 0 of 3 (#3212);
-the pipeline's own steps still select their own models as usual. Resolve via
+[Use: Capable] -- raised from Standard: bypassed /flow in 6 of 10 firings vs 0 of 3 (#3212); the
+pipeline's own steps still select their own models as usual. Resolve via
 `node "{plugin-root}/bin/resolve-profile.js" capable` (contract § Model Selection).
 ```
 
@@ -202,10 +205,7 @@ the pipeline's own steps still select their own models as usual. Resolve via
 122-128, which reports `source: 'ceiling'` in `resolve-profile.js`'s JSON. On such a project this
 call runs on Sonnet by configuration, an expected and named outcome; the per-group log line in the
 Context pack section above records it. The same function's later diff-size cap does not apply
-here: it fires only when the caller passes `--diff-facts`, and this invocation never does. The
-6-of-10 versus 0-of-3 evidence is a small, opportunistic sample, not a controlled experiment, and
-the added Opus spend is accepted as the cost of fewer stranded builds — re-measure the first-call
-deviation rate once a further batch of dispatch firings has run on Capable.
+here: it fires only when the caller passes `--diff-facts`, and this invocation never does.
 
 The Foreground execution clause above is backed by a mechanical check, not prose alone (#2429):
 `sequential-execution.md`'s "The loop" section verifies this call's `STATUS:` line against the
