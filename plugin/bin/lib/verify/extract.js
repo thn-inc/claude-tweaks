@@ -485,6 +485,32 @@ function countUnmatchedFailures(text, family, { cwd = process.cwd() } = {}) {
     .filter(({ file }) => !isRetryableFile(relativize(file, cwd))).length;
 }
 
+// Whether a spec/tap log's failing-file list accounts for the whole
+// failure — the same accounting `baseline.js`'s `accountedFamily`/
+// `adjudicate` already apply before trusting a classification, reused here
+// so the flaky-retry hook (#3066) fails closed on the identical gap: a
+// failure `countUnmatchedFailures` could not attribute to any test file, or
+// (spec only) a failing-entry count that does not add up to `ℹ fail` +
+// `ℹ cancelled` — either means the failing-file list used to plan a retry
+// is an undercount, so retrying and passing those named files would wrongly
+// clear the whole check. TAP has no `ℹ fail`-style summary line to
+// cross-check against, so `countUnmatchedFailures` alone is its guard.
+// Returns 0 (accounted) or a positive count (unattributed); every family
+// other than spec/tap returns 0 — retry eligibility for those is governed
+// elsewhere and this guard never widens it.
+function unattributedFailureCount(text, family, { cwd = process.cwd() } = {}) {
+  if (family !== 'spec' && family !== 'tap') return 0;
+  const unmatched = countUnmatchedFailures(text, family, { cwd });
+  if (unmatched > 0) return unmatched;
+  if (family !== 'spec') return 0;
+  const counts = parseCounts(text, family);
+  if (counts === null) return 1;
+  const cancelled = cancelledCount(text, family) || 0;
+  const entries = specEntryCount(text);
+  const expected = counts.fail + cancelled;
+  return entries === expected ? 0 : Math.abs(entries - expected);
+}
+
 // Deduped, log-order, repo-relative test files named by the failing part of
 // the log. `[]` whenever nothing parses — no parse ⇒ no retry (the caller
 // never guesses). TAP: frames inside `not ok` blocks only, so a passing
@@ -513,7 +539,7 @@ function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
 
 module.exports = {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, failingTestsByFile, specEntryCount,
+  stripAnsi, extractFailingFiles, countUnmatchedFailures, unattributedFailureCount, fileLevelFailures, failingTestsByFile, specEntryCount,
   cancelledCount, testTree, TEST_FILE_RE,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, MAX_LINE_CHARS,
 };

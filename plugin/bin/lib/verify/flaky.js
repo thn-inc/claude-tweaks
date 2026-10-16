@@ -9,8 +9,14 @@
 
 const { globToRegExp } = require('../issues/blast-radius');
 
-function planRetry({ failingFiles, flaky, retry, suite }) {
+function planRetry({ failingFiles, flaky, retry, suite, unattributedCount = 0 }) {
   if (!Array.isArray(failingFiles) || failingFiles.length === 0) return { retry: false, reason: 'no-parse' };
+  // #3066: a failure the log carries but `extractFailingFiles` could not
+  // attribute to a test file (caller computes this via `unattributedFailureCount`,
+  // the same accounting `baseline.js` already applies) means the file list
+  // below is an undercount — retrying and passing only those named files
+  // would wrongly clear a check that still has an unaccounted failure.
+  if (unattributedCount > 0) return { retry: false, reason: 'unattributed-failures' };
   const patterns = (flaky && flaky.files) || [];
   const unlisted = failingFiles.filter((f) => !patterns.some((entry) => globToRegExp(entry).test(f)));
   if (unlisted.length) return { retry: false, reason: `unlisted: [${unlisted.join(', ')}]`, unlisted };

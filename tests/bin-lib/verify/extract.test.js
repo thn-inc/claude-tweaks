@@ -5,7 +5,7 @@ const path = require('path');
 
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, specEntryCount,
+  MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles, countUnmatchedFailures, unattributedFailureCount, fileLevelFailures, specEntryCount,
   failingTestsByFile, cancelledCount, testTree,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'extract.js'));
 
@@ -446,6 +446,35 @@ test('countUnmatchedFailures: 0 when every spec entry is a test file, and 0 for 
   assert.strictEqual(countUnmatchedFailures(SPEC_LOG, 'spec', { cwd: 'C:\\repo' }), 0);
   assert.strictEqual(countUnmatchedFailures(PYTEST_FIXTURE, 'summary'), 0);
   assert.strictEqual(countUnmatchedFailures(GENERIC_FIXTURE, 'generic'), 0);
+});
+
+test('unattributedFailureCount: a spec log with one allowlisted-shaped failing file plus one entry naming no test file is unattributed (#3066)', () => {
+  const log = ['ℹ tests 3', 'ℹ pass 1', 'ℹ fail 2', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:1:1', '✖ x (1ms)', '', 'test at tests/helper.js:2:1', '✖ y (1ms)'].join('\n');
+  assert.strictEqual(unattributedFailureCount(log, 'spec'), 1);
+});
+
+test('unattributedFailureCount: every spec entry naming a test file and entries == fail + cancelled is fully accounted — 0 (#3066)', () => {
+  // Deliberately NOT SPEC_LOG above: that fixture's own pinned test
+  // (specEntryCount(SPEC_LOG) === 3) has 3 entries against ℹ fail 2 — it is
+  // not accounted either, by the same `baseline.js` accounting this
+  // function mirrors, so it would be the wrong fixture to assert 0 on.
+  const log = ['ℹ tests 2', 'ℹ pass 0', 'ℹ fail 2', 'ℹ cancelled 0', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:1:1', '✖ x (1ms)', '', 'test at tests/sub/b.test.js:5:1', '✖ y (1ms)'].join('\n');
+  assert.strictEqual(unattributedFailureCount(log, 'spec'), 0);
+});
+
+test('unattributedFailureCount: every entry names a test file, but the entry count does not add up to ℹ fail + ℹ cancelled — unattributed (#3066)', () => {
+  const log = ['ℹ tests 4', 'ℹ pass 1', 'ℹ fail 3', 'ℹ cancelled 0', '', '✖ failing tests:', '',
+    'test at tests/a.test.js:1:1', '✖ x (1ms)', '', 'test at tests/b.test.js:2:1', '✖ y (1ms)'].join('\n');
+  assert.strictEqual(countUnmatchedFailures(log, 'spec'), 0, 'both entries do name a test file');
+  assert.strictEqual(unattributedFailureCount(log, 'spec'), 1, 'but the entry count (2) undercounts ℹ fail (3)');
+});
+
+test('unattributedFailureCount: 0 for TAP (mirrors countUnmatchedFailures — no ℹ fail summary to cross-check) and for every non-spec/tap family (#3066)', () => {
+  assert.strictEqual(unattributedFailureCount('not ok 1 - x\n  at tests/helper.js:2:1', 'tap'), 1);
+  assert.strictEqual(unattributedFailureCount(PYTEST_FIXTURE, 'summary'), 0);
+  assert.strictEqual(unattributedFailureCount(GENERIC_FIXTURE, 'generic'), 0);
 });
 
 // node --test's real TAP shape (Node 20 and 24 alike): a failing subtest is an
