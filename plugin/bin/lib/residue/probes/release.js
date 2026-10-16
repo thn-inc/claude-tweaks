@@ -71,9 +71,31 @@ function probeRelease({ scope, run } = {}) {
     return { ran: false, reason: 'could not read CHANGELOG.md or the v* tag list at HEAD', findings: [] };
   }
 
-  const tags = tagList.split('\n').map((t) => t.trim()).filter(Boolean)
-    .map((t) => t.replace(/^v/, ''))
-    .filter((v) => /^\d+\.\d+\.\d+$/.test(v) && versionGte(v, anchor));
+  // Read remote tags to union with local tags. If remote read fails, fall back to local only.
+  let reason = null;
+  let remoteTagsOutput = run(['git', 'ls-remote', '--tags', 'origin', 'v*']);
+  let remoteTags = [];
+  if (remoteTagsOutput !== null) {
+    remoteTags = remoteTagsOutput.split('\n').map((line) => line.trim()).filter(Boolean)
+      .map((line) => {
+        // Format: {sha}\trefs/tags/v{version} or {sha}\trefs/tags/v{version}^{}
+        const parts = line.split('\t');
+        if (parts[1]) {
+          return parts[1].replace(/^refs\/tags\//, '').replace(/\^{}$/, '').replace(/^v/, '');
+        }
+        return '';
+      })
+      .filter((v) => v && /^\d+\.\d+\.\d+$/.test(v));
+  } else {
+    reason = 'remote tag list unavailable (git ls-remote failed) — checked local tags only';
+  }
+
+  const localTags = tagList.split('\n').map((t) => t.trim()).filter(Boolean)
+    .map((t) => t.replace(/^v/, ''));
+
+  // Union remote and local tags, then apply version filter
+  const allTags = [...new Set([...localTags, ...remoteTags])];
+  const tags = allTags.filter((v) => /^\d+\.\d+\.\d+$/.test(v) && versionGte(v, anchor));
 
   // Both heading grammars a post-bootstrap CHANGELOG can hold, since the very
   // entries this probe checks straddle the boundary: the pre-migration
@@ -104,12 +126,12 @@ function probeRelease({ scope, run } = {}) {
   for (const v of headingsAtOrAfterAnchor) {
     if (!tagSet.has(v)) {
       findings.push(makeFinding({
-        kind: 'release', scope: 'blast-radius', subject: `tag for CHANGELOG entry v${v}`, remedy: 'auto',
+        kind: 'release', scope: 'blast-radius', subject: `tag for CHANGELOG entry v${v}`, remedy: 'record',
         evidence: `CHANGELOG.md has a version heading for ${v} (at or after bootstrap v${anchor}) but no matching v${v} tag exists`,
       }));
     }
   }
-  return { ran: true, reason: null, findings };
+  return { ran: true, reason, findings };
 }
 
 module.exports = { probeRelease, versionGte, bootstrapVersion, RP_MANIFEST_PATH };
