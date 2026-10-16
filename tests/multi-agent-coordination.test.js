@@ -1203,34 +1203,45 @@ test('prose twins state the two-tier line rule with the code\'s own values (#295
   const wide = `±${c.LINE_TOLERANCE_REPRODUCTION_WIDE}`;
   const floor = String(c.SUBSTANCE_SIMILARITY_WIDE_MIN);
 
-  const ruleLine = PRIMITIVE_DOC.split('\n').find((l) => l.startsWith('2. **Line within'));
-  assert.ok(ruleLine, 'multi-agent-coordination.md comparison rule item 2 must exist');
-  for (const value of [near, wide, floor]) {
-    assert.ok(ruleLine.includes(value), `comparison rule item 2 must state ${value}`);
+  // Finds the line starting with `prefix` in `text` and asserts it exists and
+  // states every value in `values` — the same two checks the four prose
+  // twins below all need, against a different source line each time.
+  function assertBulletStatesValues(text, prefix, file, label, values) {
+    const line = text.split('\n').find((l) => l.startsWith(prefix));
+    assert.ok(line, `${file} ${label} must exist`);
+    for (const value of values) {
+      assert.ok(line.includes(value), `${label} must state ${value}`);
+    }
   }
+
+  assertBulletStatesValues(
+    PRIMITIVE_DOC,
+    '2. **Line within',
+    'multi-agent-coordination.md',
+    'comparison rule item 2',
+    [near, wide, floor],
+  );
 
   const dispatch = readSkillFile('review', 'step3-lens-dispatch.md');
-  const confirmedBullet = dispatch
-    .split('\n')
-    .find((l) => l.startsWith("> - Findings present in both agents' outputs, same severity bucket"));
-  assert.ok(confirmedBullet, 'step3-lens-dispatch.md confirmed-finding bullet must exist');
-  for (const value of [near, wide, floor]) {
-    assert.ok(confirmedBullet.includes(value), `confirmed-finding bullet must state ${value}`);
-  }
-
-  const straddleBullet = dispatch
-    .split('\n')
-    .find((l) => l.startsWith("> - Findings present in both agents' outputs but straddling a severity-bucket boundary"));
-  assert.ok(straddleBullet, 'step3-lens-dispatch.md severity-straddle bullet must exist');
-  for (const value of [near, wide]) {
-    assert.ok(straddleBullet.includes(value), `severity-straddle bullet must state ${value}`);
-  }
-
-  const coincidenceBullet = dispatch
-    .split('\n')
-    .find((l) => l.startsWith('> - Findings at the same location (path exact, line ±2) but from different substance'));
-  assert.ok(coincidenceBullet, 'step3-lens-dispatch.md #1980 coincidence bullet must exist');
-  for (const value of [near, wide, floor]) {
-    assert.ok(coincidenceBullet.includes(value), `#1980 coincidence bullet must state ${value}`);
-  }
+  assertBulletStatesValues(
+    dispatch,
+    "> - Findings present in both agents' outputs, same severity bucket",
+    'step3-lens-dispatch.md',
+    'confirmed-finding bullet',
+    [near, wide, floor],
+  );
+  assertBulletStatesValues(
+    dispatch,
+    "> - Findings present in both agents' outputs but straddling a severity-bucket boundary",
+    'step3-lens-dispatch.md',
+    'severity-straddle bullet',
+    [near, wide],
+  );
+  assertBulletStatesValues(
+    dispatch,
+    '> - Findings at the same location (path exact, line ±2) but from different substance',
+    'step3-lens-dispatch.md',
+    '#1980 coincidence bullet',
+    [near, wide, floor],
+  );
 });
