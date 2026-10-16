@@ -246,7 +246,7 @@ const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 
 async function adjudicate({
   checks, baselineCmds, base, baseSha, cwd = null, logDir, runOne, spawnImpl, now = Date.now,
-  envOf = () => null, git, concurrency = 4, env = process.env,
+  envOf = () => null, timeoutOf = () => null, git, concurrency = 4, env = process.env,
 }) {
   const header = { base, baseSha };
   const ineligible = (reason) => ({ ...header, eligible: false, reason });
@@ -320,13 +320,17 @@ async function adjudicate({
   // sameness-at-base, instead of up to four per-file git spawns (#3070) — the
   // repo root above is passed straight through rather than resolved again.
   const baseInfo = git.batchBaseInfo(baseSha, work.map((w) => repoRel(w.file)), root);
-  process.stderr.write(`DEBUG baseInfo ${JSON.stringify([...baseInfo.entries()])} root=${root} sub=${sub}\n`);
   const atBase = work.map((w) => baseInfo.get(repoRel(w.file)).exists);
   const unchanged = work.map((w) => baseInfo.get(repoRel(w.file)).same);
   let scratch = null;
   let signalHandlers = [];
+  // #3063: a single-file run bounds at the same timeout as the check's own
+  // full-suite --cmd-timeout (a generous bound — one file should finish
+  // well inside the budget the whole suite gets) when the caller declared
+  // one; absent a declared timeout this stays null, unchanged from before.
   const run = (w, kind, dir) => runOne({
-    name: `${w.check}-${kind}-${slug(w.file)}`, command: w.command, logDir, spawnImpl, now, cwd: dir, env: envOf(w.check),
+    name: `${w.check}-${kind}-${slug(w.file)}`, command: w.command, logDir, spawnImpl, now, cwd: dir,
+    env: envOf(w.check), timeout: timeoutOf(w.check),
   });
   const headResolvesDeps = Boolean(env.NODE_PATH) || hasNodeModulesUpward(headDir);
   try {
@@ -463,8 +467,16 @@ async function adjudicate({
     const baselineIsolated = {};
     const attributable = [];
     const failingByCheck = {};
+    // #3063 AC2: a per-file base/isolated run that times out is no evidence
+    // either way — `exitCode: null` already routes it to `attributable`
+    // below via every classifier's own numeric-exitCode guard; this just
+    // remembers which attributable files got there because of a timeout,
+    // so the caller can name it on stdout instead of a bare file list.
+    const timedOut = [];
     work.forEach((w, k) => {
       (failingByCheck[w.check] = failingByCheck[w.check] || []).push(w.file);
+      if ((baseRuns[k] && baseRuns[k].timedOut) || (headRuns[k] && headRuns[k].timedOut)
+        || (retryRuns[k] && retryRuns[k].timedOut)) timedOut.push(w.file);
       if (headLoadFail[k]) { baselineFailing.push(w.file); return; }
       if (headRanClean[k]) { flakyPassed.push(w.file); flakyLogs[w.file] = headRuns[k].logPath; return; }
       if (headBaselineIso[k]) { baselineFailing.push(w.file); baselineIsolated[w.file] = headBaselineIso[k]; return; }
@@ -484,6 +496,7 @@ async function adjudicate({
       flakyLogs,
       baselineIsolated,
       attributable,
+      timedOut,
     };
   } finally {
     for (const [sig, handler] of signalHandlers) process.removeListener(sig, handler);

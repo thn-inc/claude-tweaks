@@ -4,13 +4,14 @@
 
 class UsageError extends Error {}
 
-const USAGE = 'usage: plan-audit.js <plan-file> [--repo-root <dir>] [--count-tasks] [--bytes]';
+const USAGE = 'usage: plan-audit.js <plan-file> [--repo-root <dir>] [--spec <spec-file>] [--count-tasks] [--bytes]';
 
 // argv = process.argv.slice(2). Throws UsageError on any malformed input —
 // the CLI prints message + USAGE to stderr and exits non-zero.
 function parseArgs(argv) {
   let planFile = null;
   let repoRoot = null;
+  let spec = null;
   let countTasks = false;
   let bytes = false;
   for (let i = 0; i < argv.length; i++) {
@@ -22,6 +23,13 @@ function parseArgs(argv) {
       repoRoot = value;
       continue;
     }
+    if (flag === '--spec') {
+      const value = argv[i + 1];
+      i++;
+      if (value === undefined) throw new UsageError('--spec requires a value');
+      spec = value;
+      continue;
+    }
     if (flag === '--count-tasks') { countTasks = true; continue; }
     if (flag === '--bytes') { bytes = true; continue; }
     if (flag.startsWith('--')) throw new UsageError(`unknown flag: ${flag}`);
@@ -29,8 +37,13 @@ function parseArgs(argv) {
     planFile = flag;
   }
   if (planFile === null) throw new UsageError('plan-file is required');
+  // #3099: --spec feeds Check E, which only the full audit runs — beside a
+  // single-purpose verb it would be silently ignored, so refuse the pairing.
+  if (spec !== null && (countTasks || bytes)) {
+    throw new UsageError('--spec cannot be combined with --count-tasks or --bytes');
+  }
   return {
-    planFile, repoRoot, countTasks, bytes,
+    planFile, repoRoot, spec, countTasks, bytes,
   };
 }
 

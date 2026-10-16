@@ -6,7 +6,7 @@ class UsageError extends Error {}
 
 const USAGE =
   'usage: verify.js --cmd <name>=<command> [--cmd <name>=<command> ...] '
-  + '[--cmd-env <name>=<KEY=VALUE> ...] [--json <path>] '
+  + '[--cmd-env <name>=<KEY=VALUE> ...] [--cmd-timeout <name>=<ms> ...] [--json <path>] '
   + '[--log-dir <dir>] [--count-stamp <path>] [--no-stamp] [--git-dir <dir>] [--run <dir>] '
   + '[--cwd <dir>] '
   + '[--baseline <ref> --baseline-cmd <name>=<template-with-{file}> ...] '
@@ -26,7 +26,7 @@ const USAGE =
   + 'verify.js invocation — a differently-named check (types-a, types-b, …) runs in the '
   + '"any other name" tier, serially after tests, and is skipped on an unrelated tests failure.';
 
-const VALUE_FLAGS = new Set(['--cmd', '--cmd-env', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run', '--cwd', '--baseline', '--baseline-cmd']);
+const VALUE_FLAGS = new Set(['--cmd', '--cmd-env', '--cmd-timeout', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run', '--cwd', '--baseline', '--baseline-cmd']);
 
 // --cmd-env (#2779): <check-name>=<KEY=VALUE>, repeatable. Split on the first
 // two `=` only, so VALUE keeps any later `=` intact.
@@ -44,12 +44,26 @@ function parseCmdEnv(value) {
   return { name, key, value: pair.slice(pairEq + 1) };
 }
 
+// --cmd-timeout (#3063): <check-name>=<ms>, repeatable (one per check). Split
+// on the first `=` only, so a future non-numeric suffix can't hide a typo.
+function parseCmdTimeout(value) {
+  const eq = value.indexOf('=');
+  if (eq <= 0) throw new UsageError(`--cmd-timeout value must be <check-name>=<ms>, got: ${value}`);
+  const name = value.slice(0, eq);
+  const msText = value.slice(eq + 1);
+  if (!/^[1-9][0-9]*$/.test(msText)) {
+    throw new UsageError(`--cmd-timeout ${name} must be a positive integer millisecond value, got: ${msText}`);
+  }
+  return { name, ms: Number(msText) };
+}
+
 // argv = process.argv.slice(2). Throws UsageError on any malformed input —
 // the CLI prints message + USAGE to stderr and exits non-zero (AC6).
 // --stamp-status (#1921) is a read-only mode: it needs no --cmd at all.
 function parseArgs(argv) {
   const cmds = [];
   const cmdEnvs = [];
+  const cmdTimeouts = [];
   let json = null;
   let logDir = null;
   let countStamp = null;
@@ -96,6 +110,7 @@ function parseArgs(argv) {
         continue;
       }
       if (flag === '--cmd-env') { cmdEnvs.push(parseCmdEnv(value)); continue; }
+      if (flag === '--cmd-timeout') { cmdTimeouts.push(parseCmdTimeout(value)); continue; }
       const eq = value.indexOf('=');
       if (eq === -1) throw new UsageError(`--cmd value must be <name>=<command>, got: ${value}`);
       if (eq === 0) throw new UsageError(`--cmd value has an empty name: ${value}`);
@@ -128,6 +143,18 @@ function parseArgs(argv) {
   const undeclared = cmdEnvs.find((e) => !cmds.some((c) => c.name === e.name));
   if (undeclared) {
     throw new UsageError(`--cmd-env "${undeclared.name}" names no declared --cmd (declared: ${cmds.map((c) => c.name).join(', ') || 'none'})`);
+  }
+  // #3063: resolved the same way as --cmd-env above, but scalar per check —
+  // a check carries a `timeout` key only when a --cmd-timeout named it.
+  for (const c of cmds) {
+    const mine = cmdTimeouts.filter((t) => t.name === c.name);
+    if (mine.length === 0) continue;
+    if (mine.length > 1) throw new UsageError(`duplicate --cmd-timeout for ${c.name}`);
+    c.timeout = mine[0].ms;
+  }
+  const undeclaredTimeout = cmdTimeouts.find((t) => !cmds.some((c) => c.name === t.name));
+  if (undeclaredTimeout) {
+    throw new UsageError(`--cmd-timeout "${undeclaredTimeout.name}" names no declared --cmd (declared: ${cmds.map((c) => c.name).join(', ') || 'none'})`);
   }
   // #3043: the mode-conflict check runs first so a read-only mode carrying a
   // baseline flag gets this message, not a generic one.
