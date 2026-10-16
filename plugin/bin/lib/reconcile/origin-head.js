@@ -13,18 +13,32 @@
 'use strict';
 const { runGit: defaultRunGit } = require('../hooks/git-exec');
 const { FETCH_TIMEOUT_MS } = require('./classify');
+const { readCache, writeCache, isFresh, DEFAULT_TTL_MS } = require('./cache');
 
-// -> null                                  no `origin` remote; nothing attempted
-// -> { outcome: 'repaired' }               set-head wrote refs/remotes/origin/HEAD
-// -> { outcome: 'failed', reason: string } set-head failed; reason is git-exec's FAILURE class
+// -> null                                            no `origin` remote; nothing attempted
+// -> { outcome: 'repaired' }                         set-head wrote refs/remotes/origin/HEAD
+// -> { outcome: 'failed', reason: string }           set-head failed; reason is git-exec's FAILURE class
+// -> { outcome: 'skipped', reason: 'recent-failure' } a prior set-head failed within DEFAULT_TTL_MS; not retried this pass
 function repairOriginHead(root, opts = {}) {
   const runGit = opts.runGit || defaultRunGit;
   const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : FETCH_TIMEOUT_MS;
+  const now = opts.now != null ? opts.now : Date.now();
   try {
     const remote = runGit(['remote', 'get-url', 'origin'], root);
     if (remote.failure) return null;
+    // #3132 follow-up: a failed set-head (offline, auth reject, a remote
+    // that silently drops traffic) otherwise re-runs on every pass — up to
+    // FETCH_TIMEOUT_MS each — since the no-remote path below returns before
+    // reconcile ever stamps `lastRunAt`, so skipIfFresh never short-circuits
+    // it. Remember the failure for DEFAULT_TTL_MS instead of retrying blind.
+    if (isFresh(readCache(root), now, DEFAULT_TTL_MS, 'lastOriginHeadRepairFailedAt')) {
+      return { outcome: 'skipped', reason: 'recent-failure' };
+    }
     const set = runGit(['remote', 'set-head', 'origin', '--auto'], root, { timeoutMs });
-    if (set.failure) return { outcome: 'failed', reason: String(set.failure) };
+    if (set.failure) {
+      writeCache(root, { ...readCache(root), lastOriginHeadRepairFailedAt: now });
+      return { outcome: 'failed', reason: String(set.failure) };
+    }
     return { outcome: 'repaired' };
   } catch (e) {
     return { outcome: 'failed', reason: (e && e.message) || 'threw' };

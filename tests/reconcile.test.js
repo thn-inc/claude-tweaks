@@ -969,6 +969,56 @@ test('reconcile: origin configured but unreachable degrades to no-remote with a 
   assert.strictEqual(typeof r.originHeadRepair.reason, 'string');
 });
 
+test('reconcile: an unreachable origin remembers the failure and skips retrying on the next pass (#3132)', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  git(['remote', 'set-url', 'origin', path.join(os.tmpdir(), 'ct-recon-missing-origin-does-not-exist-retry')], mainDir);
+  const { readCache } = require('../plugin/bin/lib/reconcile/cache');
+  const { mainCheckoutRoot } = require('../plugin/bin/lib/hooks/worktree-detect');
+  const root = mainCheckoutRoot(mainDir);
+
+  const first = await reconcile({ cwd: mainDir, checks: ['mirror'] });
+  assert.strictEqual(first.originHeadRepair.outcome, 'failed');
+  assert.strictEqual(typeof readCache(root).lastOriginHeadRepairFailedAt, 'number');
+
+  const second = await reconcile({ cwd: mainDir, checks: ['mirror'] });
+  assert.deepStrictEqual(second.originHeadRepair, { outcome: 'skipped', reason: 'recent-failure' });
+  assert.deepStrictEqual(second.skipped, [{ check: 'all', reason: 'no-remote' }]);
+});
+
+test('reconcile: the failure stamp survives an unrelated cache write (#3132)', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  git(['remote', 'set-url', 'origin', path.join(os.tmpdir(), 'ct-recon-missing-origin-does-not-exist-survive')], mainDir);
+  const { readCache, writeCache } = require('../plugin/bin/lib/reconcile/cache');
+  const { mainCheckoutRoot } = require('../plugin/bin/lib/hooks/worktree-detect');
+  const root = mainCheckoutRoot(mainDir);
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'] });
+  assert.strictEqual(r.originHeadRepair.outcome, 'failed');
+  assert.strictEqual(typeof readCache(root).lastOriginHeadRepairFailedAt, 'number');
+
+  writeCache(root, { ...readCache(root), claimShas: { 1: 'x' } });
+
+  assert.strictEqual(typeof readCache(root).lastOriginHeadRepairFailedAt, 'number');
+});
+
+test('reconcile: a concurrent-winner origin/HEAD still resolves even under a recent-failure skip (#3132)', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  const { writeCache } = require('../plugin/bin/lib/reconcile/cache');
+  const { mainCheckoutRoot } = require('../plugin/bin/lib/hooks/worktree-detect');
+  const root = mainCheckoutRoot(mainDir);
+  writeCache(root, { lastOriginHeadRepairFailedAt: Date.now() });
+  // Simulate the caller's resolver cache still holding this root's null
+  // from an earlier call in the same process — the gap a real concurrent
+  // winner fills between that earlier resolve and this one's repair.
+  const cache = { worktreeList: new Map(), integrationBranch: new Map([[root, null]]) };
+  git(['remote', 'set-head', 'origin', 'main'], mainDir);
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'], cache });
+
+  assert.deepStrictEqual(r.originHeadRepair, { outcome: 'skipped', reason: 'recent-failure', branch: 'main' });
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,console', reason: 'local-merge-model' }]);
+});
+
 test('reconcile: no origin remote keeps the no-remote skip unchanged and attempts no repair (#3132)', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-noorigin-'));
   git(['init', '-q'], dir);
@@ -1204,6 +1254,32 @@ test('formatSummary: a skipped entry carrying names (non-canonical-run-dir, #848
   };
   const summary = formatSummary(result);
   assert.strictEqual(summary, 'skipped: all — non-canonical-run-dir: 20260817T173343-spec-764');
+});
+
+test('formatSummary: a repaired origin/HEAD renders inline (#3132)', () => {
+  const result = {
+    mirror: null, redTip: null, worktrees: null, claims: null, runs: null,
+    branches: null, remoteBranches: null, console: null, skipped: null,
+    originHeadRepair: { outcome: 'repaired', branch: 'main' },
+  };
+  assert.strictEqual(formatSummary(result), 'origin/HEAD repaired (main)');
+});
+
+test('formatSummary: a failed origin/HEAD repair renders its reason (#3132)', () => {
+  const result = {
+    mirror: null, redTip: null, worktrees: null, claims: null, runs: null,
+    branches: null, remoteBranches: null, console: null, skipped: null,
+    originHeadRepair: { outcome: 'failed', reason: 'git-error' },
+  };
+  assert.strictEqual(formatSummary(result), 'origin/HEAD repair: failed (git-error)');
+});
+
+test('formatSummary: no origin/HEAD repair attempted renders no origin/HEAD line (#3132)', () => {
+  const result = {
+    mirror: null, redTip: null, worktrees: null, claims: null, runs: null,
+    branches: null, remoteBranches: null, console: null, skipped: null,
+  };
+  assert.ok(!formatSummary(result).includes('origin/HEAD'), formatSummary(result));
 });
 
 test('reconcile verb: compact default separates branch entries from archive-branches.js\'s interleaved tag-aging entries in result.branches (#638)', () => {

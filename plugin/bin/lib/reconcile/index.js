@@ -117,13 +117,17 @@ async function reconcile(opts = {}) {
   if (!integration) {
     const repair = repairOriginHead(root);
     if (repair) {
+      // Re-resolve after EVERY attempt, not only 'repaired' — a concurrent
+      // session may have written origin/HEAD while this one's set-head lost
+      // the ref lock (failed), or already repaired it before this pass
+      // skipped under recent-failure (skipped). The caller's resolver cache
+      // may already hold this root's null either way.
+      if (opts.cache && opts.cache.integrationBranch) opts.cache.integrationBranch.delete(root);
+      integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache));
       if (repair.outcome === 'repaired') {
-        // The caller's resolver cache may already hold this root's null.
-        if (opts.cache && opts.cache.integrationBranch) opts.cache.integrationBranch.delete(root);
-        integration = bareIntegrationName(resolveIntegrationBranch(root, opts.cache));
         result.originHeadRepair = integration ? { outcome: 'repaired', branch: integration } : { outcome: 'unresolved' };
       } else {
-        result.originHeadRepair = repair;
+        result.originHeadRepair = integration ? { ...repair, branch: integration } : repair;
       }
     }
   }
