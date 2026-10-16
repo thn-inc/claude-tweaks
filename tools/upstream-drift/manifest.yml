@@ -98,6 +98,10 @@ dependencies:
       - "skills/impeccable/reference/doctor.md"
       - "agents/impeccable-finish-reviewer.md"
       - "skills/impeccable/reference/document.md"
+      - "skills/impeccable/reference/craft-floor.md"
+      - "skills/impeccable/reference/operate.md"
+      - "skills/impeccable/reference/adapt.md"
+      - "skills/impeccable/reference/clarify.md"
     assertions:
       - file: "plugin/skills/design-wrapper/command-map.md"
         claims: "the plugin exposes a polish command"
@@ -172,6 +176,22 @@ dependencies:
         claims: "a disposition: fix/rebuild/ship reply carries exactly five named sections: persistence, fidelity, ceiling, material_fixes, keep"
         upstream-path: "agents/impeccable-finish-reviewer.md"
         must-match: "exactly five sections: `persistence`"
+      - file: "plugin/skills/design-wrapper/modes/pre-build.md"
+        claims: "craft-floor.md carries the quality floor, read immediately before any UI edit"
+        upstream-path: "skills/impeccable/reference/craft-floor.md"
+        must-match: "# Craft floor"
+      - file: "plugin/skills/design-wrapper/modes/pre-build.md"
+        claims: "operate.md carries deeper Operate/Read guidance for dashboard, settings, admin, and tools surfaces"
+        upstream-path: "skills/impeccable/reference/operate.md"
+        must-match: "# Operate mode depth"
+      - file: "plugin/skills/design-wrapper/modes/pre-build.md"
+        claims: "adapt.md is the 4.5 equivalent of the retired responsive-design.md — adapting a design to a different screen size, device, platform, or use case"
+        upstream-path: "skills/impeccable/reference/adapt.md"
+        must-match: "Adapt an existing design to a different context"
+      - file: "plugin/skills/design-wrapper/modes/pre-build.md"
+        claims: "clarify.md is the 4.5 equivalent of the retired ux-writing.md — rewriting unclear interface text"
+        upstream-path: "skills/impeccable/reference/clarify.md"
+        must-match: "Rewrite unclear interface text so users understand what happened"
     fixtures: []
 
   # superpowers: the repo's heaviest dependency — eight consumed skills, and

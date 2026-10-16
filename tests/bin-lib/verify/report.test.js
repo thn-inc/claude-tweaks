@@ -77,6 +77,24 @@ test('a skipped check carries {skipped} in place of an exit code and does not af
   assert.strictEqual(report.pass, true);
 });
 
+test('a timed-out check carries {timedOut:true} and flips pass, same as any other null-exit failure (#3063 AC1)', () => {
+  const report = composeReport({
+    checks: [{
+      name: 'tests', command: 'hang', exitCode: null, timedOut: true, durationMs: 20, logPath: '/tmp/l/tests.log',
+    }],
+    startedAt: 'x', durationMs: 1, git: { sha: null, dirty: null },
+  });
+  assert.strictEqual(report.pass, false);
+  assert.strictEqual(report.checks.tests.timedOut, true);
+});
+
+test('a check that did not time out carries no timedOut key (unchanged entry shape)', () => {
+  const report = composeReport({
+    checks: [PASSING], startedAt: 'x', durationMs: 1, git: { sha: null, dirty: null },
+  });
+  assert.ok(!('timedOut' in report.checks.tests));
+});
+
 test('gitInfo returns nulls when git is unavailable (AC3 outside-a-repo)', () => {
   const throwing = () => { throw new Error('not a repo'); };
   assert.deepStrictEqual(gitInfo(throwing), { sha: null, dirty: null });
@@ -202,5 +220,17 @@ test('composeReport omits baselineAdjudicated when none is passed and carries it
   const adjudicated = { base: 'main', baseSha: 'f'.repeat(40), eligible: true, verdict: 'pass', failingFiles: ['tests/a.test.js'], baselineFailing: ['tests/a.test.js'], flakyPassed: [], attributable: [] };
   const report = composeReport({ checks: [failing], startedAt: 't', durationMs: 1, git, baselineAdjudicated: adjudicated });
   assert.deepStrictEqual(report.baselineAdjudicated, adjudicated);
+  assert.strictEqual(report.pass, false);
+});
+
+test('composeReport omits preExistingAdjudicated when none is passed and carries it verbatim when given; pass stays raw (#3129)', () => {
+  const failing = { ...PASSING, exitCode: 1 };
+  const git = { sha: 'abc', dirty: false };
+  const plain = composeReport({ checks: [failing], startedAt: 't', durationMs: 1, git });
+  assert.strictEqual('preExistingAdjudicated' in plain, false);
+  assert.strictEqual('preExistingAdjudicated' in composeReport({ checks: [failing], startedAt: 't', durationMs: 1, git, preExistingAdjudicated: null }), false);
+  const adjudicated = { declared: ['tests/known-shallow.test.js'], matched: ['tests/known-shallow.test.js'] };
+  const report = composeReport({ checks: [failing], startedAt: 't', durationMs: 1, git, preExistingAdjudicated: adjudicated });
+  assert.deepStrictEqual(report.preExistingAdjudicated, adjudicated);
   assert.strictEqual(report.pass, false);
 });

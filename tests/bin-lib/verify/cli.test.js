@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { execFile, spawnSync, execFileSync } = require('child_process');
+const { execFile, spawn, spawnSync, execFileSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 
@@ -283,6 +283,28 @@ test('a failing run, a fail-fast skip, and --no-stamp write neither stamp file (
     assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')), `json stamp written for ${JSON.stringify(args)}`);
     assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass')), `bare stamp written for ${JSON.stringify(args)}`);
   }
+});
+
+test('#3063 AC1: a check that sleeps past its --cmd-timeout ends the run with exit 1, a timedOut report entry, and no stamp', async () => {
+  const { repo, gitDir } = tmpGitRepo();
+  const { code, stdout } = await runCli([
+    '--cmd', 'tests=node -e "setInterval(() => {}, 1000)"', '--cmd-timeout', 'tests=300',
+  ], { cwd: repo });
+  assert.strictEqual(code, 1);
+  const report = JSON.parse(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.pass, false);
+  assert.strictEqual(report.checks.tests.exitCode, null);
+  assert.strictEqual(report.checks.tests.timedOut, true);
+  assert.match(stdout, /\| tests \| fail \| .* \| timed out after [\d.]+s \|/);
+  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp for a timed-out run');
+  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass')), 'no legacy stamp either');
+});
+
+test('#3063: a check that finishes well inside its --cmd-timeout is unaffected', async () => {
+  const { repo, gitDir } = tmpGitRepo();
+  const { code } = await runCli(['--cmd', 'tests=node -e 0', '--cmd-timeout', 'tests=5000'], { cwd: repo });
+  assert.strictEqual(code, 0);
+  assert.ok(fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')));
 });
 
 // #2341: only one --cmd name ("types") gets the fail-fast-before-tests
@@ -1421,6 +1443,76 @@ test('flaky retry: hits accumulate across two runs and a file removed from the a
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(countStampPath, 'utf8')).flakyHits, { 'tests/flaky.test.js': 1, 'tests/other.test.js': 2 });
 });
 
+// Sibling fixture to flakyRepo (#3129): a tests check that always fails with
+// a TAP failure naming `failingFile`, and a verify-scope.json declaring
+// `preExisting` instead of `flaky` — no retry template, no retry.js spawned
+// at all; the declared allowlist is checked, never re-run.
+function preExistingRepo({ failingFile = 'tests/known-shallow.test.js', preExisting = ['tests/known-shallow.test.js'], extraDecl = {} } = {}) {
+  const r = tmpGitRepo();
+  const tap = ['not ok 1 - a known pre-existing failure', '  ---', '  stack: |-', `    at TestContext.<anonymous> (${failingFile}:12:5)`, '  ...', '# tests 1', '# pass 0', '# fail 1'].join('\n');
+  fs.writeFileSync(path.join(r.repo, 'fail.js'), `process.stdout.write(${JSON.stringify(tap)} + '\\n'); process.exit(1);\n`);
+  const decl = {
+    checks: { tests: 'node fail.js' },
+    rules: [{ match: 'src/**', suites: ['tests'], static: true }],
+    preExisting,
+    ...extraDecl,
+  };
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'pre-existing fixture');
+  const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  const args = ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch, '--cmd', 'tests=node fail.js'];
+  return { ...r, branch, args };
+}
+
+test('preExisting: a failing file fully covered by the declared allowlist is adjudicated as passing, and the stamp carries the marker with no legacy twin (#3129)', async () => {
+  const r = preExistingRepo();
+  const { code, stdout, stderr } = await runCli(r.args, { cwd: r.repo });
+  assert.strictEqual(code, 0, stderr);
+  assert.match(stdout, /Pre-existing: adjudicated — 1 failing file\(s\) covered by the declared preExisting allowlist: tests\/known-shallow\.test\.js/);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.pass, false, 'report.pass stays raw');
+  assert.strictEqual(report.checks.tests.exitCode, 1, 'the check keeps its real exit code');
+  assert.deepStrictEqual(report.preExistingAdjudicated, { declared: ['tests/known-shallow.test.js'], matched: ['tests/known-shallow.test.js'] });
+  const stamp = stampOf(r.gitDir);
+  assert.deepStrictEqual(stamp.preExisting, { declared: ['tests/known-shallow.test.js'], matched: ['tests/known-shallow.test.js'] });
+  assert.strictEqual(stamp.scope, 'full');
+  // H1 parity (#3043's own rule): an adjudicated-but-not-clean pass never
+  // rewrites the legacy bare-SHA twin.
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass')));
+});
+
+test('preExisting: an uncovered failing file is an ordinary failure — no stamp, the report names the reason (#3129)', async () => {
+  const r = preExistingRepo({ failingFile: 'tests/real.test.js', preExisting: ['tests/known-shallow.test.js'] });
+  const { code, stdout } = await runCli(r.args, { cwd: r.repo });
+  assert.strictEqual(code, 1);
+  assert.match(stdout, /Pre-existing: not adjudicated — unlisted: \[tests\/real\.test\.js\]/);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')));
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.preExistingAdjudicated, { declared: ['tests/known-shallow.test.js'], eligible: false, reason: 'unlisted: [tests/real.test.js]' });
+});
+
+test('preExisting: no preExisting declared at all never adjudicates — report omits the field entirely (#3129)', async () => {
+  const r = flakyRepo({ flaky: { files: [] } });
+  const { code } = await runCli(r.args, { cwd: r.repo });
+  assert.strictEqual(code, 1);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual('preExistingAdjudicated' in report, false);
+  assert.doesNotMatch(await fs.promises.readFile(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'), /preExisting/);
+});
+
+test('preExisting: --stamp-status reads the marker — preExistingAdjudicated:true, match:false, verifiedHead:true (#3129)', async () => {
+  const r = preExistingRepo();
+  const run = await runCli(r.args, { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const status = await runCli(['--stamp-status'], { cwd: r.repo });
+  const parsed = JSON.parse(status.stdout);
+  assert.strictEqual(parsed.preExistingAdjudicated, true);
+  assert.strictEqual(parsed.match, false);
+  assert.strictEqual(parsed.verifiedHead, true);
+});
+
 // #1928 AC1: the runner is the mechanical source of the verify event.
 function anchoredRunDir(repo) {
   const dir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-09-06T100000-record-7');
@@ -1725,4 +1817,49 @@ test('--baseline: the scratch worktree is gone after the run (#3043)', async () 
   assert.match(stdout, /Baseline: adjudicated against/, 'a scratch worktree was actually created');
   const list = r.git('worktree', 'list', '--porcelain');
   assert.strictEqual((list.match(/^worktree /gm) || []).length, 1, list);
+});
+
+test('--baseline: a stale ct-verify-base-* scratch worktree from an earlier interrupted run is named on stderr, and left alone (#3064)', async () => {
+  // Detection runs as soon as --baseline resolves to a commit — before any
+  // check executes and before adjudication is even attempted — so a trivial
+  // passing repo is enough; this test does not need a real baseline mismatch.
+  const r = tmpGitRepo();
+  const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
+  const staleWt = path.join(staleParent, 'wt');
+  r.git('worktree', 'add', '--detach', staleWt, 'HEAD');
+  const { stderr } = await runCli(['--cmd', 'tests=node -e "process.exit(0)"', '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}'], { cwd: r.repo });
+  assert.ok(
+    stderr.includes(`verify.js: a stale baseline scratch worktree is registered at ${staleWt} from an earlier interrupted run — remove it manually: git worktree remove --force ${staleWt}`),
+    stderr,
+  );
+  assert.ok(fs.existsSync(staleWt), 'never swept automatically — a sibling session\'s own live scratch would look identical');
+  const list = r.git('worktree', 'list', '--porcelain');
+  // Nothing else ever creates a scratch worktree here (the run passes outright); the stale one is the only extra entry.
+  assert.strictEqual((list.match(/^worktree /gm) || []).length, 2, list);
+});
+
+test('--baseline: a SIGINT mid-run removes the scratch worktree and exits 130, leaving nothing registered behind (#3064 AC1)', { skip: process.platform === 'win32' && 'POSIX signal delivery only' }, async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  // {file} is appended but unused by the sleeping script — just needs to
+  // still be running when SIGINT arrives.
+  const SLOW_PER_FILE = 'tests=node -e "setTimeout(() => {}, 8000)" {file}';
+  const child = spawn(process.execPath, [CLI, '--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', SLOW_PER_FILE], {
+    cwd: r.repo, env: r.opts.env, stdio: ['ignore', 'ignore', 'ignore'],
+  });
+  const deadline = Date.now() + 10000;
+  let worktreeCount = 1;
+  while (Date.now() < deadline) {
+    const list = r.git('worktree', 'list', '--porcelain');
+    worktreeCount = (list.match(/^worktree /gm) || []).length;
+    if (worktreeCount >= 2) break;
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
+  }
+  assert.strictEqual(worktreeCount, 2, 'the scratch worktree must exist before sending SIGINT');
+  child.kill('SIGINT');
+  const [code, signal] = await new Promise((resolve) => { child.on('exit', (c, s) => resolve([c, s])); });
+  assert.strictEqual(signal, null, 'the process exits via process.exit() itself, never killed outright by the signal');
+  assert.strictEqual(code, 130);
+  const list = r.git('worktree', 'list', '--porcelain');
+  assert.strictEqual((list.match(/^worktree /gm) || []).length, 1, 'no registered scratch worktree afterwards');
 });

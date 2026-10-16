@@ -53,6 +53,10 @@ function entryFor(check) {
     failingRegion: check.failingRegion === undefined ? null : check.failingRegion,
   };
   if (check.spawnError !== undefined) entry.spawnError = check.spawnError;
+  // #3063: a null exitCode already fails/never-stamps (see `pass` below) —
+  // this just names why, so report.json distinguishes a hang from any other
+  // spawn-less failure.
+  if (check.timedOut) entry.timedOut = true;
   if (check.counts !== undefined && check.counts !== null) entry.counts = check.counts;
   if (check.flakyRetried && check.flakyRetried.length) entry.flakyRetried = check.flakyRetried;
   if (check.retryFailed && check.retryFailed.length) entry.retryFailed = check.retryFailed;
@@ -73,7 +77,7 @@ function entryFor(check) {
 
 function composeReport({
   checks, startedAt, durationMs, git, testCountRegression = null, scope = null, flakyEscalation = [],
-  baselineAdjudicated = null,
+  baselineAdjudicated = null, preExistingAdjudicated = null,
 }) {
   const byName = {};
   for (const check of checks) byName[check.name] = entryFor(check);
@@ -96,6 +100,11 @@ function composeReport({
   // ran. `pass` above stays the raw "every check exited 0"; the verdict lives
   // only here.
   if (baselineAdjudicated !== null) report.baselineAdjudicated = baselineAdjudicated;
+  // #3129: the declared-pre-existing-failures adjudication (verify-scope.json's
+  // `preExisting`) — omitted when it never ran or never applied. Mutually
+  // exclusive with baselineAdjudicated in practice (a run adjudicates against
+  // at most one of the two), but composeReport never enforces that itself.
+  if (preExistingAdjudicated !== null) report.preExistingAdjudicated = preExistingAdjudicated;
   return report;
 }
 
