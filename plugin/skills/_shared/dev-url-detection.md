@@ -65,16 +65,19 @@ Collect all ports that respond with a 2xx or 3xx status code.
 
 ### Step 2: Check Project Configuration
 
-If no ports responded (or to validate the best match), check project configuration:
+If no ports responded (or to validate the best match), check project configuration for a dev command and port, consulting sources in this precedence order — first source that supplies a command wins:
 
-1. **CLAUDE.md Commands section** — look for a dev server command (e.g., `npm run dev`, `yarn dev`, `pnpm dev`). Extract the port if specified.
-2. **package.json scripts** — read `scripts.dev`, `scripts.start`, `scripts.serve` for port configuration.
-3. **Framework config files** — check for port settings in:
+1. **`stories/servers.yml`'s declared `servers.default.start_command`** — the first, highest-precedence dev-command source. When this key is already set, it **is** the dev command, ahead of CLAUDE.md and package.json; those two sources (and framework config below) are then consulted only for a port hint, never for the command itself. Record `COMMAND_SOURCE = servers.yml`.
+2. **CLAUDE.md Commands section** — look for a dev server command (e.g., `npm run dev`, `yarn dev`, `pnpm dev`). Extract the port if specified. Consulted for the command only when `servers.yml` declared none. Record `COMMAND_SOURCE = CLAUDE.md` when this supplies it.
+3. **package.json scripts** — read `scripts.dev`, `scripts.start`, `scripts.serve` for port configuration. Consulted for the command only when neither source above supplied one. Record `COMMAND_SOURCE = package.json` when this supplies it.
+4. **Framework config files** — check for port settings in (port hints only; never a command source):
    - `vite.config.*` (`server.port`)
    - `next.config.*` (port in dev script)
    - `angular.json` (`serve.options.port`)
    - `vue.config.*` (`devServer.port`)
    - `.env` or `.env.local` (`PORT=`)
+
+`COMMAND_SOURCE` names which of the above supplied the dev command — Step 3 and the Ephemeral server start subsection use it to name the command's origin in their output.
 
 ### Step 2.7: Worktree Awareness (mandatory before trusting a responding port)
 
@@ -125,12 +128,12 @@ In the `PRIMARY` (non-worktree) case, skip this check — a responding port is a
 **Ownership.** A server started as a Bash background task belongs to the agent turn that spawned it — it lives only as long as that turn's process tree, whether or not the turn is waiting on it. (This is not in tension with the foreground-execution rule elsewhere in this plugin (#1965): that rule covers commands the agent *blocks on*; this server is started, polled once, and then left running, never awaited.) When the caller is a dispatched Task call and the server must stay reachable past that call's own end — e.g. dispatch's `build,test` call starting the server for a second call's `review`/`stories`/QA work — it must be **detached** at start, or it dies with the call:
 
 - **POSIX:** launch under `setsid` (e.g. `setsid {dev command} > {log} 2>&1 &`) so the child is reparented off the caller's process group and survives the caller's own exit. Record `detached: yes`.
-- **Windows:** no equivalent detach primitive is available to this procedure. Record `detached: no` and accept that the server does not outlive the spawning turn there.
+- **Windows:** no equivalent detach primitive is available to this procedure. Record `detached: no` and accept that the server does not outlive the spawning turn there. A recorded `detached: no` server on this platform is still stopped as a tree, not a leader-only kill — see `wrap-up/cleanup-procedures-execution.md` Section D, whose win32 branch runs `taskkill /PID {pid} /T /F` regardless of the `detached:` field.
 
 When starting a server (auto mode, or interactive with consent):
 
 1. **Pick a port** — **with a lease:** re-run `node "${CLAUDE_PLUGIN_ROOT}/bin/ports.js" env` now, at start time (not the `LEASE_PORTS` snapshot cached from Step 0.5, to avoid acting on a stale read), and pass every printed `KEY=value` line into the spawned server's environment verbatim — no allowlist beyond "whatever this checkout's own managed region currently contains," so sibling services (a backend on `API_PORT`, say) resolve to their own block too. Use the `PORT` value as the port to start on. **Without a lease:** keep the pre-#1795 rule — probe upward from the framework's default (e.g. 3001, 3002, …) until one is free, skipping any port already found responding in Step 1, using the `node -e` check from Step 1 inverted (free = connection refused).
-2. **Anchor to the worktree root** — run the dev command from `git rev-parse --show-toplevel`, never from an assumed CWD (CWD does not propagate reliably — see "Working Directory Discipline" in `subagent-dispatch-core.md`). Pass the port via the framework's env var when arg-passing is unreliable (e.g. `PORT={port}` for Next.js — `next dev` respects `PORT`).
+2. **Anchor to the worktree root** — run the dev command from `git rev-parse --show-toplevel`, never from an assumed CWD (CWD does not propagate reliably — see "Working Directory Discipline" in `subagent-dispatch-core.md`). Pass the port via the framework's env var when arg-passing is unreliable (e.g. `PORT={port}` for Next.js — `next dev` respects `PORT`). **When `COMMAND_SOURCE = servers.yml`** (Step 2), run that declared command exactly as written — no argument rewriting or substitution — still from the worktree root and still with the lease/free-port environment from item 1 above (`PORT={port}` and, with a lease, every `bin/ports.js env` line); name the declared command as the source in the start log line. If the declared command never answers on the leased/free port within the timeout, report it as a start failure naming the declared command — never fall back silently to a CLAUDE.md/package.json command (see Gotchas in the records that introduced this precedence).
 3. **Run in the background** — detached per the Ownership rule above when the server must outlive this turn, plain background otherwise — and poll the port until it responds (2xx/3xx) or a timeout (~90s for first compile). Set `APP_URL = http://localhost:{free-port}` once reachable.
 4. **Record the PID + port + detach state**: write `{run-dir}/ephemeral-server.txt` (one line: `{pid} {port} {worktree-root} detached:{yes|no}`) when a pipeline run dir exists — via a plain Bash redirect, e.g. `printf '%s %s %s detached:%s\n' "$PID" "$PORT" "$WORKTREE_ROOT" "$DETACHED" > "{run-dir}/ephemeral-server.txt"`, never the Edit/Write tool: this path is anchored under the main checkout, so a worktree session's Edit/Write attempt against it is refused by the harness's own cross-checkout write-pinning, while a plain Bash write into `.claude-tweaks/pipelines/` is already exempted from claude-tweaks' own worktree-always gate and untouched by that tool-level pin (see `_shared/pipeline-run-dir.md`, "Anchoring" — "necessary but not sufficient"). This file is also the **liveness handle** for the rest of the run — it is what any later step (this run's own, or a subsequent dispatched call's) re-probes before trusting the server is still up, not a promise that it is. `/wrap-up` cleanup reads it to stop the server; a later step that finds the recorded pid dead re-runs this procedure and rewrites this file rather than treating the file's mere existence as proof of a live server. Outside a pipeline (standalone), the calling skill stops it at the end of its own run.
 5. If the server fails to come up within the timeout, do not block: set no `APP_URL`, log the failure, and let the caller degrade to code-only mode.
@@ -162,7 +165,7 @@ Server URLs are written to `stories/servers.yml` (safe to commit). Credentials, 
    ```
 4. Set (or update) `servers.default.url` to the resolved `APP_URL`.
 5. Set `servers.default.detected` to today's date.
-6. If a start command was discovered in Step 2 (from CLAUDE.md or package.json), set `servers.default.start_command`.
+6. **Set-if-absent:** write `servers.default.start_command` only when the key is **not already present** in the parsed file — a discovered command (from CLAUDE.md or package.json, `COMMAND_SOURCE` per Step 2) is persisted only to fill in a missing value. An existing `servers.default.start_command` (whether a project declared it on purpose or an earlier run's own discovery wrote it) is **never overwritten** by this step.
 7. **Use the Write tool (if creating) or Edit tool (if updating) to save the file now.** Do not defer this to a later step.
 8. **Verify:** Use the Glob tool to confirm `{STORIES_DIR}/servers.yml` exists after writing.
 
@@ -173,4 +176,4 @@ Server URLs are written to `stories/servers.yml` (safe to commit). Credentials, 
 If `SERVER_STARTED = true`, the ephemeral server must be stopped once visual work completes:
 
 - **In a pipeline** (`{run-dir}/ephemeral-server.txt` was written): `/claude-tweaks:wrap-up` cleanup (Section D in `wrap-up/cleanup-procedures.md`) reads the file — its current content, per the Ephemeral server start's liveness-handle rule, not necessarily the value recorded at start time, since a dispatched second call may have restarted the server and rewritten it since this file was first written — and kills the PID at end-of-run. In multi-spec runs the server stays up across specs and is torn down once at the consolidated end (deferred under `MULTISPEC_REVIEW_DEFER=1`). The calling skill does not stop it mid-pipeline — later steps may also need it.
-- **Standalone** (no run dir): the calling skill stops the server before it returns, and notes that it was started for automation. `ephemeral-server.txt` is never written on this path (Step 4 above writes it only "when a pipeline run dir exists"), so cleanup uses `lsof -ti tcp:{port} | xargs kill` directly — the same port-based mechanism Section D's rule in `wrap-up/cleanup-procedures-execution.md` uses when no lease exists, which is always the case here.
+- **Standalone** (no run dir): the calling skill stops the server before it returns, and notes that it was started for automation. `ephemeral-server.txt` is never written on this path (Step 4 above writes it only "when a pipeline run dir exists"), so cleanup stops the server it itself started by PID: on POSIX, `lsof -ti tcp:{port} | xargs kill` — the same port-based mechanism Section D's rule in `wrap-up/cleanup-procedures-execution.md` uses when no lease exists, which is always the case here; on win32, where `lsof` does not exist, `taskkill /PID {pid} /T /F` against the PID this same procedure recorded when it started the server — the same tree kill Section D's win32 branch uses, since a leader-only stop leaves shell-spawned children holding their ports on this platform too.

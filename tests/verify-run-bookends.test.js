@@ -179,6 +179,19 @@ test('a git read failure surfaces as a distinct reason, never mistaken for "neve
   assert.match(claimMiss.reason, /read-failed: transport-failure/);
 });
 
+// #3051: a timed-out git read names the timeout specifically — "remote
+// slow" is a different, more actionable signal than "remote unreachable".
+test('a git read failure with timedOut set names the timeout in the missing-bookend reason', () => {
+  const deps = captured(makeDeps({
+    claims: { 1728: { content: null, absent: false, failure: 'transport-failure', timedOut: true } },
+  }));
+  const code = run(['--run', RUN_DIR, '--targets', '1728'], deps);
+  assert.strictEqual(code, 1);
+  const payload = JSON.parse(deps.out[0]);
+  const claimMiss = payload.missing.find((m) => m.bookend === 'claim' && m.issue === 1728);
+  assert.match(claimMiss.reason, /read-failed: transport-failure \(timed out after \d+ ms\)/);
+});
+
 test('multiple targets: every one is checked independently, all confirmed -> exit 0', () => {
   const deps = captured(makeDeps({
     claims: {

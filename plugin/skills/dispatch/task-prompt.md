@@ -47,7 +47,14 @@ that needs no resolution, only inclusion:
    foreground call with a large explicit timeout, or poll for it synchronously within one tool
    call. If you yourself dispatch nested subagents (via `superpowers:subagent-driven-development`,
    a review-lens fan-out, or any other Task/Agent call), give them this same instruction — the
-   identical trap recurs one level deeper otherwise.
+   identical trap recurs one level deeper otherwise. **Mark every interim reply (#2714):** whenever
+   you end a turn before your genuine final reply — e.g. narrating progress while a nested
+   `Agent`-tool dispatch you launched is still pending, per each template's Foreground execution
+   clause carve-out (#2533) — make that reply's last non-empty line
+   `INTERIM_STATUS: {one-line progress note}`, never `STATUS: {WORD}`, which is reserved for your
+   genuine final reply. An unmarked interim reply is graded by the `SubagentStop` hook as a final
+   reply missing its status line and logged as a false-positive `contract-violation`. Forward
+   this marker rule, with the rest of this item, to any nested dispatch that itself dispatches.
 8. **Selected at** (#3131) — one literal line, `Selected at: {ISO}`: the modification time of
    this firing's session-scoped `dispatch-groups.json` (`queue-pull-script.md`'s output, resolved
    via `sessionTmpPath` as `next-ranking.md` does). That pull already dropped every

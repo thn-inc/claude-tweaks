@@ -104,7 +104,7 @@ const USAGE = {
   'spec-status': 'spec-status --run <parent-dir> --spec <n> --status <pending|running|complete|failed|not-run> --phase <phase>',
   'close-run': 'close-run [--run <dir>]',
   'delete-ledger': 'delete-ledger --run <dir> [--ledger <path>]',
-  'teardown-run': 'teardown-run [--run <dir>] [--merged|--abandoned]',
+  'teardown-run': 'teardown-run [--run <dir>] [--merged|--abandoned] [--remote-ref-only]',
   'archive-run': 'archive-run [--run <dir>]',
   'resolve-console': 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>]',
   'check-resume-freshness': 'check-resume-freshness [--run <dir>]',
@@ -133,7 +133,7 @@ const KNOWN_FLAGS = {
   'record-worktree': ['--run'],
   'record-pr': ['--run'],
   'spec-status': ['--run', '--spec', '--status', '--phase', '--now'],
-  'teardown-run': ['--run', '--merged', '--abandoned'],
+  'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
   'resolve-console': ['--run', '--approve', '--decline'],
 };
 
@@ -943,6 +943,10 @@ async function main(argv) {
       process.stdout.write(`${renderCandidateRefusal('close-run', candidates)}\nRun not closed.\n`);
     } else if (runDir) {
       const r = closeRunState(runDir, { explicit, callerIdentity });
+      if (r.status === 'missing') {
+        process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} no longer exists on disk (already archived or removed) — run not closed\n`);
+        return 0;
+      }
       if (r.status === 'refused-foreign') {
         process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} was recorded by another session — refusing to close it without an explicit --run\n`);
         return 0;
@@ -1034,7 +1038,8 @@ async function main(argv) {
     } else if (candidates) {
       process.stdout.write(`${renderCandidateRefusal('teardown-run', candidates)}\nRun not torn down.\n`);
     } else if (runDir) {
-      const result = teardownRun(runDir, { mode, sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() });
+      const remoteRefOnly = argv.includes('--remote-ref-only');
+      const result = teardownRun(runDir, { mode, sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd(), remoteRefOnly });
       process.stdout.write(`claude-tweaks: teardown-run ${path.basename(runDir)}\n${result.lines.map((l) => `  ${l}`).join('\n')}\n`);
     } else {
       process.stdout.write('claude-tweaks: no pipeline run dir found — run not torn down\n');

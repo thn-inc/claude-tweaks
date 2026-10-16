@@ -16,27 +16,42 @@ const os = require('os');
 const path = require('path');
 const { sessionTmpPath } = require('./lib/session-tmp');
 
-const args = process.argv.slice(2);
-if (args.length === 0) {
-  console.error('Usage: session-tmp-resolve.js VAR=filename [VAR=filename ...]');
-  process.exitCode = 1;
-  return;
+// Print-only: on win32 emit forward slashes (`C:/Users/…`). The value is interpolated by skill
+// snippets into JS string literals inside `node -e "…"`, where `C:\Users\…` would be read as
+// escape sequences (`\U`, `\t`). Node, Git Bash and the Windows fs APIs all accept `/`; the
+// library's return value stays native. Posix output is unchanged. `platform`/`sep` are
+// injectable (default to the real `process.platform`/`path.sep`) so a test can pin the win32
+// branch's behavior on any OS, mirroring `lib/atomic-write.js`'s `platform = process.platform`
+// convention.
+function formatPrintedPath(resolved, { platform = process.platform, sep = path.sep } = {}) {
+  return platform === 'win32' ? resolved.split(sep).join('/') : resolved;
 }
 
-for (const arg of args) {
-  const eq = arg.indexOf('=');
-  if (eq <= 0) {
-    console.error(`Invalid argument (expected VAR=filename): ${arg}`);
+function main() {
+  const args = process.argv.slice(2);
+  if (args.length === 0) {
+    console.error('Usage: session-tmp-resolve.js VAR=filename [VAR=filename ...]');
     process.exitCode = 1;
     return;
   }
-  const varName = arg.slice(0, eq);
-  const filename = arg.slice(eq + 1);
-  const resolved = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
-  // Print-only: on win32 emit forward slashes (`C:/Users/…`). The value is interpolated by skill
-  // snippets into JS string literals inside `node -e "…"`, where `C:\Users\…` would be read as
-  // escape sequences (`\U`, `\t`). Node, Git Bash and the Windows fs APIs all accept `/`; the
-  // library's return value stays native. Posix output is unchanged.
-  const printed = process.platform === 'win32' ? resolved.split(path.sep).join('/') : resolved;
-  console.log(`${varName}=${JSON.stringify(printed)}`);
+
+  for (const arg of args) {
+    const eq = arg.indexOf('=');
+    if (eq <= 0) {
+      console.error(`Invalid argument (expected VAR=filename): ${arg}`);
+      process.exitCode = 1;
+      return;
+    }
+    const varName = arg.slice(0, eq);
+    const filename = arg.slice(eq + 1);
+    const resolved = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
+    const printed = formatPrintedPath(resolved);
+    console.log(`${varName}=${JSON.stringify(printed)}`);
+  }
 }
+
+if (require.main === module) {
+  main();
+}
+
+module.exports = { formatPrintedPath };
