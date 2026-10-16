@@ -194,7 +194,7 @@ main loop, landed via #1962/#2226/#2228/#2231):
   in the slug (`recordNumbersFromSlug`) independently resolves `CLOSED` via `gh issue view` (not a
   PR — `pr-state.js`'s `resolveIssueStateByNumber`) and the directory has sat past
   `STRUCTURALLY_STUCK_TTL_MS`. Fails closed (leaves the dir in place) on any unresolved record, a
-  `gh-absent`/`network-failure` probe on any one of them, or a dir that DOES carry a
+  `gh-absent`/`network-failure`/`invalid-arguments` probe on any one of them, or a dir that DOES carry a
   `run-state.json` (however stale) — that shape belongs to the ordinary classifier/branch-resolution
   path instead.
 - **Consolidated `structurally-stuck` escalation** — `escalate-residue.js` files ONE open record per
@@ -238,6 +238,30 @@ environment with `gh`. This is harmless (stale local state, not a correctness bu
 and closed issue are still the source of truth on GitHub), but it is unbounded, so a project running
 its scheduled Routines exclusively in `gh`-absent sandboxes should periodically reconcile from a
 `gh`-present environment to bound the residue.
+
+## origin/HEAD repair on a fresh clone (#3132)
+
+`worktree-reap.js`'s `resolveIntegrationBranch` falls back to the local `refs/remotes/origin/HEAD`
+when `policy.yml` sets no `integration-branch` — and a fresh clone in a cloud/Routine sandbox can
+lack that symbolic ref even with a working `origin`. When the resolver returns null and an `origin`
+remote is configured, `index.js` runs `git remote set-head origin --auto` once
+(`origin-head.js`, bounded by `classify.js`'s `FETCH_TIMEOUT_MS`), drops any cached null for the
+root, and re-resolves — every attempt (repaired, failed, or skipped), not only a successful one,
+since a concurrent session may have written origin/HEAD in between. A failed `set-head` is
+remembered: `cache.js`'s `lastOriginHeadRepairFailedAt` is stamped on failure, and a subsequent
+attempt within `DEFAULT_TTL_MS` short-circuits to `{outcome: 'skipped', reason: 'recent-failure'}`
+without re-attempting `set-head` — otherwise an offline/auth-rejecting/traffic-dropping remote
+would retry on every pass (SessionStart's inline pass AND its detached background pass), since the
+no-remote path returns before reconcile ever stamps `lastRunAt`, so `skipIfFresh` never short-
+circuits it. The outcome is recorded on the result as `originHeadRepair` —
+`{outcome: 'repaired', branch}`, `{outcome: 'failed', reason}`, or `{outcome: 'skipped',
+reason: 'recent-failure'}` (any of the three degrades to the `no-remote` skip when re-resolving
+still finds nothing, never throws), or `{outcome: 'unresolved'}` when a 'repaired' attempt's
+re-resolve still came up empty — and the key is absent when no repair was attempted (no `origin`
+remote, or the branch already resolved). A failed or skipped outcome also carries `branch` when
+the re-resolve it triggers finds one anyway (the concurrent-winner case). The repair lives in
+reconcile, never in the shared resolver: that resolver runs on the pre/post-tool-use hook paths and
+stays offline.
 
 ## Referenced by
 

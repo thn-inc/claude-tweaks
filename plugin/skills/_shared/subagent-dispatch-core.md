@@ -1,4 +1,4 @@
-# Subagent Dispatch Core — Working Directory, Foreground Execution, Model Selection, Template A, Retrieval, Fan-Out
+# Subagent Dispatch Core — Working Directory, Foreground Execution, Read-only Reviewers, Model Selection, Template A, Retrieval, Fan-Out
 
 Extracted from `_shared/subagent-output-contract.md` (#2019) — the dispatch-facing sections a
 review/test call site actually needs to compose under the 40 KB ceiling, without also paying for
@@ -9,8 +9,9 @@ re-prompt-on-violation, and Anti-Patterns), none of which any of this file's cal
 for everything not reproduced here — cited from there, never restated independently; a change to
 one of the sections below lands here first, exactly as `subagent-output-contract.md` itself
 states at its own top ("This file is the single source of truth"). The Foreground Execution
-Discipline section below is the one exception to "extracted" — it originates here, directly
-(#2271), since no equivalent content exists in the parent file to move from.
+Discipline (#2271) and Read-only Reviewer Discipline (#3001) sections below are the two
+exceptions to "extracted" — they originate here, directly, since no equivalent content exists
+in the parent file to move from.
 
 ## Working Directory Discipline
 
@@ -84,6 +85,21 @@ This is the detail that matters most in practice: without it, "an agent doing bo
 with real tool calls" and "an agent stuck in a silent loop" are indistinguishable from outside
 the transcript, and a coordinating session watching the dispatched work has no signal to check
 before interrupting with a false-alarm check-in (#2784).
+
+## Read-only Reviewer Discipline
+
+Applies only to dispatches whose job is to read and report: `/claude-tweaks:review` Step 3's
+lens, debate, refutation, and gap-sweep agents. It never applies to an implementer, test, or QA
+dispatch, whose job is to run things. Inline this line verbatim into every such prompt, outside
+any byte-pinned Calibration/Output block:
+
+`READ-ONLY REVIEW: never run the project's test suites, builds, dev servers, or e2e runners — read and report only, since mechanical verification belongs to /claude-tweaks:test (a throwaway probe under your SCRATCH: path is fine; sole suite exception: one targeted test case, run in the foreground, when lens 3f's Vacuity-evidence diagnostic needs execution evidence).`
+
+Reading a test file is always fine; running the suite is not. A reviewer that starts the
+project's suite or server races any server the same review started (`/visual-review`'s
+ephemeral dev server), and it reports failures produced by the wrong harness rather than by the
+diff. #3001 observed exactly this: a Fast-profile lens agent ran a full Playwright e2e suite in
+the background on the framework's default ports.
 
 ## Model Selection
 

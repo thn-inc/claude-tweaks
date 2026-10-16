@@ -29,11 +29,12 @@ set is `_shared/terminal-ux.md` plus `_shared/design-craft.md` only — no Impec
 Emil skills, no `PRODUCT.md`/`DESIGN.md`/sidecar read; `missed` stays empty (nothing on this track
 has an install to miss). Skip the keyword rules and Steps 4–5 below for this track.
 
-Reference selection rules (inspect the spec body):
+Reference selection rules (inspect the spec body) — Impeccable 4.5's own load order (its `SKILL.md` Modes section and Setup steps: load the request's playbook, then read `craft-floor.md` immediately before any UI edit):
 
-- **Always load** when frontend: `typography.md`, `color-and-contrast.md`, `spatial-design.md`, `motion-design.md`, `interaction-design.md`, `new-work.md`
-- **Add `responsive-design.md`** when the spec mentions breakpoints, mobile, tablet, responsive, or viewport
-- **Add `ux-writing.md`** when the spec mentions copy, microcopy, error messages, empty states, or labels
+- **Always load** when frontend: `new-work.md`, `craft-floor.md`
+- **Add `operate.md`** when the spec mentions dashboard, settings, admin, docs, tools, or an authenticated/task surface — Impeccable's own mode split (its `SKILL.md` describes loading new-work.md for new surfaces and operate.md for deeper Operate/Read guidance)
+- **Add `adapt.md`** when the spec mentions breakpoints, mobile, tablet, responsive, or viewport
+- **Add `clarify.md`** when the spec mentions copy, microcopy, error messages, empty states, or labels
 
 The keyword rules above select *which reference files to load*. They are not a job-type classifier and must not grow into one: nothing here decides whether the record is a redesign, a new page, or an addition. `new-work.md` is in the always-load set precisely because its first step ("Decide what is already true") is where that determination belongs, and it is made downstream — during the build, against the real code and the record's own description — not guessed here from keywords. Carry the record's description into `description` (see Output to caller) so the implementer has the text that determination needs; do not summarize or label it.
 
