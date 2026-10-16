@@ -24,7 +24,11 @@ const USAGE =
   + '(alongside "lint"); a monorepo with several independent typecheck commands should '
   + 'combine them (--cmd types="tsc -p a && tsc -p b") or run each through its own '
   + 'verify.js invocation — a differently-named check (types-a, types-b, …) runs in the '
-  + '"any other name" tier, serially after tests, and is skipped on an unrelated tests failure.';
+  + '"any other name" tier, serially after tests, and is skipped on an unrelated tests failure.'
+  + '\nnote: a relative --scope path resolves against the checkout root (--cwd when given, '
+  + 'else this process\'s own git toplevel) — never against process.cwd() alone (#3017). A '
+  + '--scope path that still does not exist after that resolution is a usage error (exit 2), '
+  + 'not a silent full-run fallback.';
 
 const VALUE_FLAGS = new Set(['--cmd', '--cmd-env', '--cmd-timeout', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run', '--cwd', '--baseline', '--baseline-cmd']);
 
@@ -126,22 +130,38 @@ function parseArgs(argv) {
     }
     throw new UsageError(`unknown flag: ${flag}`);
   }
-  if (cmds.length === 0 && !stampStatus && !changedFiles) throw new UsageError('at least one --cmd <name>=<command> is required');
+  // #3022: a --scope declaration can supply every check's command itself
+  // (map-form checks.tests, plus checks.types/checks.lint) — verify.js's own
+  // H2 check, once the declaration is read, is what actually enforces that
+  // every selection-required name has a command from one source or the
+  // other; this parser has no fs access and cannot read the declaration to
+  // know whether it does, so it only relaxes the blanket "give me at least
+  // one" floor, never replaces H2's real check.
+  if (cmds.length === 0 && !stampStatus && !changedFiles && !scope) throw new UsageError('at least one --cmd <name>=<command> is required');
   // #2779: resolved after the loop so --cmd-env may precede its --cmd. A check
   // carries an `env` key only when a --cmd-env named it — a --cmd-only
   // invocation parses to exactly the shape it did before the flag existed.
   // Object.fromEntries defines own properties, so a variable literally named
   // __proto__ stays data rather than touching the prototype.
-  for (const c of cmds) {
-    const mine = cmdEnvs.filter((e) => e.name === c.name);
-    if (mine.length === 0) continue;
+  // #3022: the duplicate-variable check runs over every distinct --cmd-env
+  // name, not just ones with a matching --cmd — a declared-only suite (no
+  // --cmd, map-form --scope) can carry duplicate --cmd-env variables too.
+  for (const name of new Set(cmdEnvs.map((e) => e.name))) {
+    const mine = cmdEnvs.filter((e) => e.name === name);
     const keys = mine.map((e) => e.key);
     const dup = keys.find((k, i) => keys.indexOf(k) !== i);
-    if (dup !== undefined) throw new UsageError(`duplicate --cmd-env variable for ${c.name}: ${dup}`);
-    c.env = Object.fromEntries(mine.map((e) => [e.key, e.value]));
+    if (dup !== undefined) throw new UsageError(`duplicate --cmd-env variable for ${name}: ${dup}`);
+    const c = cmds.find((cc) => cc.name === name);
+    if (c) c.env = Object.fromEntries(mine.map((e) => [e.key, e.value]));
   }
+  // #3022: a --cmd-env naming neither a --cmd nor a declared suite is still
+  // a mistake, but this parser has no fs access to read the declaration —
+  // under --scope it only rules out the --cmd side here; verify.js's own
+  // scope-aware check (once the declaration is read) rules out the rest and
+  // raises the same "names no check" message for a name that is genuinely
+  // neither declared nor passed.
   const undeclared = cmdEnvs.find((e) => !cmds.some((c) => c.name === e.name));
-  if (undeclared) {
+  if (undeclared && !scope) {
     throw new UsageError(`--cmd-env "${undeclared.name}" names no declared --cmd (declared: ${cmds.map((c) => c.name).join(', ') || 'none'})`);
   }
   // #3063: resolved the same way as --cmd-env above, but scalar per check —
@@ -196,6 +216,12 @@ function parseArgs(argv) {
   return {
     cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run, cwd,
     baseline, baselineCmds,
+    // #3022: every --cmd-env entry, matched or not — verify.js's own
+    // --scope block uses the unmatched ones to bind env vars onto a
+    // declared-only suite (no --cmd) once it has read the declaration.
+    // Entries already attached to a `cmds[].env` above are included too;
+    // callers that only need the unmatched ones filter by cmds name.
+    cmdEnvs,
   };
 }
 

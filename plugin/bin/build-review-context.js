@@ -9,6 +9,7 @@
 // is mint-only and rejected on build. Exit 0 ok; 2 malformed invocation; 1 git/filesystem failure.
 // Single plain command by design — the compound-shell recipe it replaces is refused by the
 // harness worktree guard (refs #887).
+// `build`'s per-file sections resolve against the repo toplevel, not process.cwd() (#3017).
 'use strict';
 
 const { resolveDir, buildContext } = require('./lib/review-context/build');

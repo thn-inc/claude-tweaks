@@ -699,14 +699,54 @@ test('--scope: a declaration with an unknown suite in a rule exits 2 naming the 
   assert.ok(!fs.existsSync(r.marker));
 });
 
-test('--scope with no declaration file behaves as a full run and stamps full (#1922)', async () => {
+test('--scope with no declaration file is a usage error naming the resolved path, never a silent full run (#3017, supersedes #1922\'s fallback)', async () => {
+  // #1922 originally made a missing declaration behave as a silent full
+  // run. #3017 reverses that: today's "no declaration" fallback is exactly
+  // how a cwd/typo mismatch went unnoticed until an unscoped run had
+  // already run — a missing --scope file is now a hard usage error.
   const r = tmpGitRepo();
   const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
   const run = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch, '--cmd', 'tests=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 2, run.stderr);
+  assert.match(run.stderr, /--scope: no declaration at/);
+  assert.match(run.stderr, new RegExp(path.join(r.repo, '.claude-tweaks', 'verify-scope.json').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.strictEqual(fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')), false, 'a usage error must never write a pass stamp');
+});
+
+test('--scope: an explicit path that does not exist exits 2 naming the resolved (not the literal) path (AC, #3017)', async () => {
+  const r = tmpGitRepo();
+  const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  const run = await runCli(['--scope', 'does-not-exist.json', '--integration-branch', branch, '--cmd', 'tests=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 2, run.stderr);
+  assert.match(run.stderr, /--scope: no declaration at/);
+  assert.match(run.stderr, new RegExp(path.join(r.repo, 'does-not-exist.json').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+});
+
+test('--scope: a relative path resolves against --cwd, not process.cwd(), so a subdirectory invocation still finds the declaration (#3017)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  const sub = path.join(r.repo, 'sub');
+  fs.mkdirSync(sub);
+  // Process cwd is the subdirectory; --cwd (not the process cwd) names the
+  // real checkout root — the same shape verify.js's own check-command
+  // spawning already uses --cwd for.
+  const run = await runCli(
+    ['--scope', r.declPath, '--cwd', r.repo, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'],
+    { cwd: sub },
+  );
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.match(run.stdout, /^Scope: full/m, 'the declaration must be found and read, not silently missed');
+  assert.ok(fs.existsSync(r.marker), 'the declared unit command actually ran');
+});
+
+test('--scope: an absolute path is used as-is, --cwd-resolution is for relative paths only (#3017)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
+  const absDeclPath = path.join(r.repo, '.claude-tweaks', 'verify-scope.json');
+  const run = await runCli(
+    ['--scope', absDeclPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'],
+    { cwd: r.repo },
+  );
   assert.strictEqual(run.code, 0, run.stderr);
   assert.match(run.stdout, /^Scope: full/m);
-  assert.match(run.stdout, /no declaration at/, '#1922 review L10: the message names the missing declaration path');
-  assert.strictEqual(stampOf(r.gitDir).scope, 'full');
 });
 
 test('--scope tool-scoped: {base} is substituted into the single tests command and fullSha never advances (#1922 Gotchas)', async () => {
@@ -740,11 +780,49 @@ test('--scope tool-scoped: {base} is substituted into the single tests command a
   assert.deepStrictEqual(s2.suitesRun, ['tests']);
 });
 
-test('--scope with no --cmd is a usage error even when a declaration exists — an empty check set must never stamp (#1922)', async () => {
-  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
-  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.branch], { cwd: r.repo });
-  assert.strictEqual(run.code, 2);
-  assert.match(run.stderr, /at least one --cmd/);
+test('--scope with no --cmd and nothing declared for a static check is not required at all — unchanged (#1922)', async () => {
+  // Unchanged by #3022: types/lint are only ever "required" when the
+  // declaration itself declares a command for them. This repo's decl
+  // declares neither, so a static:true rule's selection needs nothing for
+  // them — and #3022 lets its map-form unit/other suites run from the
+  // declaration with no --cmd at all.
+  const r = tmpGitRepo();
+  const unitMarker = path.join(r.repo, 'unit.marker');
+  const otherMarker = path.join(r.repo, 'other.marker');
+  fs.writeFileSync(path.join(r.repo, 'dummy.js'), '1;\n');
+  r.git('add', 'dummy.js');
+  r.git('commit', '-q', '-m', 'dummy');
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify({
+    checks: {
+      tests: {
+        unit: `node -e 'require("fs").writeFileSync(${JSON.stringify(unitMarker)}, "ran")'`,
+        other: `node -e 'require("fs").writeFileSync(${JSON.stringify(otherMarker)}, "ran")'`,
+      },
+    },
+    rules: [{ match: 'src/**', suites: ['unit'], static: true }],
+  }));
+  r.git('add', '.claude-tweaks/verify-scope.json');
+  r.git('commit', '-q', '-m', 'declare map-form scope, no types/lint');
+  const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  const run = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.ok(fs.existsSync(unitMarker), 'unit\'s declared command ran with no --cmd at all');
+  assert.ok(fs.existsSync(otherMarker), 'other\'s declared command ran too — full mode selects every declared suite');
+});
+
+test('--scope: a plain string-form tests declaration still requires an explicit --cmd — #3022\'s auto-run is map-form only (AC)', async () => {
+  const r = tmpGitRepo();
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify({
+    checks: { tests: 'npm test' }, rules: [{ match: 'src/**', suites: ['tests'], static: false }],
+  }));
+  r.git('add', '.claude-tweaks/verify-scope.json');
+  r.git('commit', '-q', '-m', 'declare string-form scope');
+  const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  const run = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch], { cwd: r.repo });
+  assert.strictEqual(run.code, 2, run.stderr);
+  assert.match(run.stderr, /--scope: mode full requires --cmd for: tests/);
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')));
 });
 
@@ -757,11 +835,16 @@ test('--scope: an unresolvable base exits 2 with a ChangedFilesError message, ne
   assert.match(run.stderr, /could not resolve a base/);
 });
 
-// Review fix H2: a filtered check set that leaves a required suite out of
-// --cmd is a usage error, not a silently-partial run. A baseline full pass
-// establishes a real anchor first so the second run is genuinely 'scoped'
-// (only 'other' selected) rather than the always-full first run.
-test('--scope: a filtered check set missing a required suite is a usage error naming it, and writes no stamp (#1922 review H2)', async () => {
+// Review fix H2, superseded by #3022: a filtered check set used to leave a
+// required suite out of --cmd as a usage error. A map-form declared suite
+// (scopedRepo's 'other') can no longer be "missing" that way — the
+// declaration itself is always a valid command source once it's required —
+// so H2 cannot fire here any more; this is now a regression guard that it
+// doesn't, plus proof the declared command actually ran (and failed, since
+// scopedRepo's 'placeholder' stand-in is not a real command). A baseline
+// full pass establishes a real anchor first so the second run is genuinely
+// 'scoped' (only 'other' selected) rather than the always-full first run.
+test('--scope: a scoped suite with no --cmd runs its own declared command — never a usage error for a map-form suite (#1922 review H2, superseded by #3022)', async () => {
   const r = scopedRepo([{ match: 'src/**', suites: ['other'], static: false }]);
   const baselineArgs = ['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'];
   const base = await runCli(baselineArgs, { cwd: r.repo });
@@ -771,10 +854,101 @@ test('--scope: a filtered check set missing a required suite is a usage error na
 
   commitFile(r, 'src/a.js', '1');
   const run = await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`], { cwd: r.repo });
-  assert.strictEqual(run.code, 2);
-  assert.match(run.stderr, /--scope: mode scoped requires --cmd for: other/);
-  assert.match(run.stderr, /usage:/);
-  assert.deepStrictEqual(stampOf(r.gitDir), baseline, 'the failed run must not touch the existing stamp');
+  assert.strictEqual(run.code, 1, run.stderr);
+  assert.doesNotMatch(run.stderr, /requires --cmd for/, 'a map-form suite always has a command source now — H2 must not fire');
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.checks.other.command, 'placeholder', 'the declared (unoverridden) command actually ran');
+  assert.deepStrictEqual(stampOf(r.gitDir), baseline, 'a failing check must never touch the existing stamp');
+});
+
+test('--scope: a --cmd override wins over a declared command for that suite, and report.json names the command that actually ran (#3022 AC)', async () => {
+  const r = tmpGitRepo();
+  const declaredMarker = path.join(r.repo, 'declared.marker');
+  const overrideMarker = path.join(r.repo, 'override.marker');
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
+  const decl = {
+    checks: { tests: { unit: `node -e 'require("fs").writeFileSync(${JSON.stringify(declaredMarker)}, "ran")'` } },
+    rules: [{ match: 'src/**', suites: ['unit'], static: false }],
+  };
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  r.git('add', '.claude-tweaks/verify-scope.json');
+  r.git('commit', '-q', '-m', 'declare');
+  const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  const overrideCmd = `node -e 'require("fs").writeFileSync(${JSON.stringify(overrideMarker)}, "ran")'`;
+  const run = await runCli(
+    ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch, '--cmd', `unit=${overrideCmd}`],
+    { cwd: r.repo },
+  );
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.ok(fs.existsSync(overrideMarker), 'the --cmd override must run instead of the declared command');
+  assert.ok(!fs.existsSync(declaredMarker), 'the declared command must not run once overridden');
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.checks.unit.command, overrideCmd, 'report.json names the command that actually ran — the override, not the declared one');
+});
+
+test('--scope: --cmd-env attaches to a declared-only suite with no matching --cmd (#3022 AC)', async () => {
+  const r = tmpGitRepo();
+  const marker = path.join(r.repo, 'env.marker');
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
+  const decl = {
+    checks: { tests: { unit: `node -e 'require("fs").writeFileSync(${JSON.stringify(marker)}, process.env.FOO || "")'` } },
+    rules: [{ match: 'src/**', suites: ['unit'], static: false }],
+  };
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  r.git('add', '.claude-tweaks/verify-scope.json');
+  r.git('commit', '-q', '-m', 'declare');
+  const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  const run = await runCli(
+    ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch, '--cmd-env', 'unit=FOO=bar'],
+    { cwd: r.repo },
+  );
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.strictEqual(fs.readFileSync(marker, 'utf8'), 'bar', '--cmd-env must bind even though no --cmd named "unit"');
+});
+
+test('--scope: --cmd-env naming neither a --cmd nor a declared suite is still a usage error (#3022)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: false }]);
+  const run = await runCli(
+    ['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0', '--cmd-env', 'nonexistent=FOO=1'],
+    { cwd: r.repo },
+  );
+  assert.strictEqual(run.code, 2, run.stderr);
+  assert.match(run.stderr, /--cmd-env "nonexistent" names no check/);
+});
+
+test('--scope: a scoped (non-full) selection runs only the selected suite\'s declared command, not every declared suite (#3022)', async () => {
+  const r = tmpGitRepo();
+  const unitMarker = path.join(r.repo, 'unit.marker');
+  const otherMarker = path.join(r.repo, 'other.marker');
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
+  const decl = {
+    checks: {
+      tests: {
+        unit: `node -e 'require("fs").writeFileSync(${JSON.stringify(unitMarker)}, "ran")'`,
+        other: `node -e 'require("fs").writeFileSync(${JSON.stringify(otherMarker)}, "ran")'`,
+      },
+    },
+    rules: [
+      { match: 'src/**', suites: ['unit'], static: false },
+      { match: 'lib/**', suites: ['other'], static: false },
+    ],
+  };
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  r.git('add', '.claude-tweaks/verify-scope.json');
+  r.git('commit', '-q', '-m', 'declare map-form scope');
+  const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  // Run 1: full (first run, no prior stamp) establishes the anchor.
+  const full = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch], { cwd: r.repo });
+  assert.strictEqual(full.code, 0, full.stderr);
+  fs.unlinkSync(unitMarker);
+  fs.unlinkSync(otherMarker);
+  // Run 2: only touch src/**, so only 'unit' is selected this time.
+  commitFile(r, 'src/a.js', 'content');
+  const scoped = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch], { cwd: r.repo });
+  assert.strictEqual(scoped.code, 0, scoped.stderr);
+  assert.match(scoped.stdout, /^Scope: scoped/m);
+  assert.ok(fs.existsSync(unitMarker), 'the selected suite\'s declared command must run');
+  assert.ok(!fs.existsSync(otherMarker), 'an unselected declared suite must not run');
 });
 
 // Review fix H4: an explicit --base that resolves to a different commit than

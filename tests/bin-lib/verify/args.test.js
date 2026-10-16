@@ -35,6 +35,7 @@ test('parses repeatable --cmd plus --json, --log-dir, and --count-stamp', () => 
     cwd: null,
     baseline: null,
     baselineCmds: [],
+    cmdEnvs: [],
   });
 });
 

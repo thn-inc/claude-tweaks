@@ -129,6 +129,26 @@ test('CLI end-to-end: build from a fixture checkout writes the bundle and prints
   assert.deepStrictEqual(parsed.emptySections, ['doomed.txt']);
 });
 
+test('CLI end-to-end: build from a subdirectory of the checkout still reads real file content (#3017)', () => {
+  // Reproduces the reported bug: invoked from <checkout>/sub instead of the
+  // repo root, every changed file used to land in emptySections because
+  // readFile(f) resolved the repo-root-relative name against process.cwd().
+  const repo = makeFixtureRepo();
+  fs.mkdirSync(path.join(repo, 'sub'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-cli-subdir-'));
+  const out = execFileSync('node', [CLI, 'build', '--base', 'main', '--branch', 'feature', '--dir', dir], {
+    cwd: path.join(repo, 'sub'),
+    encoding: 'utf8',
+  });
+  const parsed = JSON.parse(out);
+  const bundle = fs.readFileSync(parsed.contextPath, 'utf8');
+  assert.match(bundle, /===== kept\.txt =====\nkept line 1\nkept line 2\n/);
+  assert.match(bundle, /===== added\.txt =====\nadded content\n/);
+  // Only the genuinely-deleted file is an empty section — not every file.
+  assert.deepStrictEqual(parsed.emptySections, ['doomed.txt']);
+  assert.strictEqual(parsed.files, 3);
+});
+
 test('CLI: malformed invocations exit 2 with usage', () => {
   for (const args of [[], ['build'], ['frobnicate']]) {
     let code = 0;

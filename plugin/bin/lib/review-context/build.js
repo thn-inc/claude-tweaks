@@ -2,6 +2,8 @@
 // /claude-tweaks:review Step 3 (step3-lens-dispatch.md). Replaces the compound-shell bundle
 // recipe: the shared context every lens agent reads is built here, off the main thread's
 // context, at a collision-free path (refs #887).
+// Per-file sections resolve against the repo toplevel, not process.cwd() (#3017) — run this
+// CLI from any subdirectory of the checkout and every file still reads correctly.
 'use strict';
 
 const fs = require('node:fs');
@@ -61,13 +63,23 @@ function buildContext({
     .map((s) => s.trim())
     .filter(Boolean);
 
+  // #3017: `files` are repo-root-relative paths (from `git diff --name-only`,
+  // or a caller-supplied --files-from list following the same convention) —
+  // reading them with the bare relative name resolves against process.cwd(),
+  // which silently misses every file (landing the whole diff in
+  // emptySections) whenever this CLI runs from a subdirectory of the
+  // checkout. Resolve the repo toplevel once via the same injected `git`
+  // this function already uses for the diff itself, so a test can fake both
+  // without a real repo.
+  const root = git(['rev-parse', '--show-toplevel']).trim();
+
   const emptySections = [];
   let out = diff;
   for (const f of files) {
     out += `\n===== ${f} =====\n`;
     let content = '';
     try {
-      content = readFile(f, 'utf8');
+      content = readFile(path.join(root, f), 'utf8');
     } catch {
       emptySections.push(f);
     }

@@ -147,6 +147,24 @@ test('plan without --base or --run-dir exits 2 with usage on stderr', () => {
   assert.match(r2.stderr, /usage: wrap-up-engine\.js/);
 });
 
+test('plan run from a subdirectory of the checkout still sees the root docs/journeys/ (#3017)', () => {
+  // Reproduces the reported bug: invoked from <checkout>/sub instead of the
+  // repo root, gatherFacts() used to join 'docs/journeys' onto the raw
+  // process.cwd() and report "no journeys" even though docs/journeys/
+  // exists at the real root.
+  const runDir = makeRunDir();
+  const subdir = fs.mkdtempSync(path.join(repoDir, 'sub-'));
+  const r = run(['plan', '--run-dir', runDir, '--base', baseSha, '--dry-run'], { cwd: subdir });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const worklist = JSON.parse(r.stdout);
+  const journeysRow = worklist.rows.find((row) => row.id === 'journeys');
+  assert.strictEqual(journeysRow.gate, 'open', 'journeysExist must be read from the repo root, not the subdirectory');
+  assert.deepStrictEqual(journeysRow.scope.candidates, ['docs/journeys/j1.md']);
+  // skills/docs facts are filesystem-rooted too — same bug class.
+  const skillsRow = worklist.rows.find((row) => row.id === 'skills');
+  assert.strictEqual(skillsRow.gate, 'open');
+});
+
 test('plan without --dry-run appends telemetry under the resolved repo root', () => {
   // In this fixture, repoDir is a normal (non-worktree) checkout, so
   // `git rev-parse --git-common-dir`'s parent resolves to repoDir itself.
