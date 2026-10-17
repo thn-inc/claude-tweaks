@@ -308,12 +308,12 @@ test('an open linked PR with no live claim is refused', () => {
 });
 
 test('a non-ready candidate is not refused even with a live claim', () => {
-  const hit = { number: 9, signals: ['title-similarity'] };
+  const hit = { number: 9, signals: ['title-similarity', 'key-files-overlap'] };
   assert.strictEqual(shapingRefusal([hit], { 9: { ...LIVE, ready: false } }), null);
 });
 
 test('a candidate missing from stateByNumber is not refused', () => {
-  assert.strictEqual(shapingRefusal([{ number: 9, signals: ['title-similarity'] }], {}), null);
+  assert.strictEqual(shapingRefusal([{ number: 9, signals: ['title-similarity', 'key-files-overlap'] }], {}), null);
 });
 
 test('shapingRefusal returns the first qualifying hit in the given order', () => {
