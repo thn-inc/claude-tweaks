@@ -125,6 +125,8 @@ const SCOPE_FILES = [
     .filter((f) => f.startsWith('multispec-') && f.endsWith('.md'))
     .map((f) => `${MULTISPEC_DIR}/${f}`),
   'plugin/skills/_shared/design-wrapper-handling.md',
+  'plugin/skills/design-wrapper/modes/pre-build.md',
+  'plugin/skills/design-wrapper/modes/review-seed-capture.md',
 ];
 
 // Frozen pre-change excerpts (at d3c7fd26b) — the three directives #3395 retires.
