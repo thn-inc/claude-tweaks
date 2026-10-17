@@ -72,6 +72,10 @@ test('crossReferenceKeyFiles fence re-resolves $SPECIFY_DECOMP_MANIFEST via sess
     'the assignment must resolve the manifest via sessionTmpPath'
   );
   assert.ok(
+    CROSSREF_FENCE.includes("|| require('path').join(require('os').tmpdir(), 'specify-decomp-manifest.json')"),
+    'the assignment must keep the os.tmpdir() fallback the sibling fences use'
+  );
+  assert.ok(
     assignIdx < CROSSREF_FENCE.indexOf('crossReferenceKeyFiles(units, grep)'),
     'the assignment must come before the crossReferenceKeyFiles call'
   );
@@ -84,5 +88,5 @@ test('crossReferenceKeyFiles fence runs as its own Bash call against a scratch m
 test('go-red control: the fence without its own re-resolution fails the same assertion', () => {
   const stripped = CROSSREF_FENCE.replace(/^SPECIFY_DECOMP_MANIFEST=\$\(node -e "[\s\S]*?^"\)\n/m, '');
   assert.notStrictEqual(stripped, CROSSREF_FENCE, 'the strip must actually remove the assignment');
-  assert.throws(() => assertCrossrefFenceRunsStandalone(stripped));
+  assert.throws(() => assertCrossrefFenceRunsStandalone(stripped), /fence exited 1: [\s\S]*ENOENT/);
 });
