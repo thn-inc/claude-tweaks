@@ -239,7 +239,7 @@ function teardownRun(runDir, opts = {}) {
   // directory out from under the later cleanup items (ephemeral dev server teardown, issue claim
   // release) that still need $RUN_DIR to resolve.
   if (opts.remoteRefOnly) {
-    lines.push('archive: skipped — --remote-ref-only (archival is the caller\'s own last cleanup step)');
+    lines.push("archive: skipped — --remote-ref-only (archival is the caller's own last cleanup step)");
   } else {
     const archived = archiveRunDir(root, runDir);
     if (archived.ok) {

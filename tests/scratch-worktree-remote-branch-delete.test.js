@@ -174,7 +174,7 @@ test('cleanup-procedures-execution.md Section C has an own-worktree remote-branc
   assert.match(section, /Only when step 4 actually proceeded past its/);
 });
 
-test('multispec-review-console.md Shared teardown step 7 passes --remote-ref-only, leaving archival to the console\'s last step (#3192)', () => {
+test("multispec-review-console.md Shared teardown step 7 passes --remote-ref-only, leaving archival to the console's last step (#3192)", () => {
   const start = MULTISPEC_CONSOLE.indexOf('**Branch + remote-ref cleanup, once the shared worktree is gone (#594).**');
   const end = MULTISPEC_CONSOLE.indexOf('### Per-issue label cleanup');
   assert.ok(start > 0 && end > start, 'Shared teardown step 7 must exist and precede Per-issue label cleanup');
