@@ -196,6 +196,8 @@ test('cli: --id review-13-record (.md file) warns naming the unmapped prefix and
   const stderr = err.join('');
   assert.match(stderr, /--id review-13-record matches no Review Console SECTION_MAP prefix/);
   assert.match(stderr, /Nearest canonical prefixes: .*review-/);
+  // F3: conditional on a wrap-up console — not every producer's run reaches one.
+  assert.match(stderr, / — if a wrap-up Review Console resolves this run, it routes this item to Pending review \(unmapped-prefix\), never auto-resolved\. /);
 });
 
 test('cli: a canonical id prints nothing to stderr (#3370)', () => {

@@ -149,9 +149,10 @@ function run(argv, deps = realDeps) {
   }
 
   // #3370: warn (never fail) when the id that landed matches no SECTION_MAP
-  // prefix — the Review Console would park it in Pending review forever.
+  // prefix — a wrap-up Review Console resolving this run would park it in
+  // Pending review. Not every staging producer's run reaches that console.
   if (classifyStagedItem(result.id + path.extname(o.file)).reason === 'unmapped-prefix') {
-    deps.stderr(`stage-item.js: warning: --id ${result.id} matches no Review Console SECTION_MAP prefix — the console will route it to Pending review (unmapped-prefix), never auto-resolved. Nearest canonical prefixes: ${nearestCanonicalPrefixes(result.id).join(', ')}\n`);
+    deps.stderr(`stage-item.js: warning: --id ${result.id} matches no Review Console SECTION_MAP prefix — if a wrap-up Review Console resolves this run, it routes this item to Pending review (unmapped-prefix), never auto-resolved. Nearest canonical prefixes: ${nearestCanonicalPrefixes(result.id).join(', ')}\n`);
   }
 
   return 0;

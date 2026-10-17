@@ -69,9 +69,10 @@ const SECTION_MAP = [
 // One literal string per alternative of every non-`.patch` SECTION_MAP row,
 // each with the trailing `-` its regex requires (a `(-|\b)` row still lists
 // the `-` form). stage-item.js's unmapped-prefix warning (#3370) suggests the
-// nearest of these. MUST list every alternative of every non-`.patch` row —
-// resolve.test.js's coverage test fails when a SECTION_MAP row gains an
-// alternative this list lacks.
+// nearest of these. MUST list every alternative of every non-`.patch` row.
+// resolve.test.js's coverage test fails only when a SECTION_MAP row matches
+// none of the listed prefixes — a new alternative on a row some entry already
+// matches goes unnoticed, so add it here by hand.
 const CANONICAL_PREFIXES = [
   'review-unconfirmed-',
   'review-contested-', 'review-debate-',
