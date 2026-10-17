@@ -2,15 +2,15 @@
 
 // Mechanical bloat detection for harness documentation.
 //
-// context-cost.js measures how big the payload IS. This module detects the four
-// shapes that make it big, so a regression is a reported finding rather than
+// context-cost.js measures how big the payload IS. This module detects the five
+// signals that make it big, so a regression is a reported finding rather than
 // something a human notices 150 KB later. Every function here is read-only —
 // `/claude-tweaks:harness-health` files issues and never edits a skill, so this
 // returns findings and nothing else.
 //
 // Nothing here is a verdict. Each signal is *evidence* the judging step weighs,
 // in the same sense as the existing evidence pre-checks in
-// `skills/_shared/harness-health-analysis.md`: every one of the four has a
+// `skills/_shared/harness-health-analysis.md`: every one of the five has a
 // legitimate form, spelled out beside its threshold below.
 //
 // Thresholds are calibrated against this repo's corpus immediately after the
@@ -47,9 +47,13 @@ const MIN_ROW_SAMPLE = 20;
 
 // ── Signal 5: skill file size outliers ─────────────────────────────────────
 //
-// A skill file much larger than its siblings. Uses two tiers: nearest-rank p95
-// percentile if the corpus is large enough, otherwise 3× the median if the
-// corpus meets that floor, otherwise no baseline.
+// A skill file much larger than its siblings — real when it holds several
+// independent procedures. Legitimate form: an entry point that is legitimately
+// the largest because it carries a whole lifecycle. Uses two tiers: nearest-rank
+// p95 if ≥20 files, otherwise 3× median if ≥5 files, otherwise no baseline.
+//
+// Measured on this repo's `plugin/skills/*/*.md` corpus: 441 files, p95 threshold
+// 39,519 B, 22 files flagged. By design, the top 5% by size are outliers.
 const SIZE_OUTLIER_PERCENTILE = 0.95;
 const SIZE_PERCENTILE_MIN_SAMPLE = 20;
 const SIZE_MEDIAN_MULTIPLE = 3;
@@ -92,9 +96,6 @@ function overLongRows(text, baselineMedian, multiple = ROW_LENGTH_MULTIPLE) {
 // Corpus-wide baseline for file sizes. Returns { usable, sample, method, threshold }
 // where method is 'p95' (if >= 20 files), 'median-multiple' (if >= 5 files), or null.
 function corpusSizeBaseline(files) {
-  if (files.length === 0) {
-    return { usable: false, sample: 0, method: null, threshold: null };
-  }
   const sizes = files.map((f) => f.bytes);
   if (sizes.length >= SIZE_PERCENTILE_MIN_SAMPLE) {
     // Use p95 nearest-rank percentile

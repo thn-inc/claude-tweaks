@@ -61,6 +61,25 @@ test('corpusRowMedian reports its sample and refuses a baseline below the floor'
   assert.strictEqual(thick.usable, true);
 });
 
+test('corpusSizeBaseline reports its sample and recognizes the 5-file floor', () => {
+  // Below floor: 4 files
+  const tooFew = corpusSizeBaseline(Array.from({ length: 4 }, (_, i) => ({ bytes: 1000 * (i + 1) })));
+  assert.strictEqual(tooFew.sample, 4);
+  assert.strictEqual(tooFew.usable, false, 'four files must not establish a corpus baseline');
+
+  // At floor: exactly 5 files
+  const atFloor = corpusSizeBaseline(Array.from({ length: 5 }, (_, i) => ({ bytes: 1000 * (i + 1) })));
+  assert.strictEqual(atFloor.sample, 5);
+  assert.strictEqual(atFloor.usable, true, 'five files must establish a corpus baseline');
+  assert.strictEqual(atFloor.method, 'median-multiple', 'below 20 files uses median-multiple');
+
+  // Above percentile floor: 20 files
+  const plenty = corpusSizeBaseline(Array.from({ length: 20 }, (_, i) => ({ bytes: 1000 * (i + 1) })));
+  assert.strictEqual(plenty.sample, 20);
+  assert.strictEqual(plenty.usable, true);
+  assert.strictEqual(plenty.method, 'p95', 'at or above 20 files uses p95');
+});
+
 // Discrimination: the same file, one row inflated past the multiple, is caught;
 // a row that merely sits above the median is not.
 test('over-long rows: the inflated row fails, the merely-above-median row passes', () => {
@@ -454,6 +473,10 @@ test('size outlier: suppression with { sizeOutlier: false } prints no size-outli
   // All files should have sizeOutlier: false
   assert.ok(result.files.every((f) => f.sizeOutlier === false), 'all files must have sizeOutlier false');
 
+  // sizeBaseline must stay honest: real sample count, suppressed flag set
+  assert.strictEqual(result.sizeBaseline.sample, 20, 'baseline sample must reflect real corpus size');
+  assert.strictEqual(result.sizeBaseline.suppressed, true, 'baseline must be marked as suppressed');
+
   // Formatreport should not contain any size-outlier or size baseline lines
   const report = formatBloatReport(result);
   assert.ok(!report.includes('size-outlier:'), 'report must not contain size-outlier lines when suppressed');
@@ -502,7 +525,7 @@ test('prose-twin conformance: both prose files list the same signals and guard',
   );
 
   // Extract and assert the size-outlier guard bullet text is identical
-  const sizeGuardBulletRegex = /- \*\*Size outliers\.\*\* ([^-\n]+)/;
+  const sizeGuardBulletRegex = /- \*\*Size outliers\.\*\* ([^\n]+)/;
   const harnessGuardMatch = harnessProse.match(sizeGuardBulletRegex);
   const judgeGuardMatch = judgeProse.match(sizeGuardBulletRegex);
 
