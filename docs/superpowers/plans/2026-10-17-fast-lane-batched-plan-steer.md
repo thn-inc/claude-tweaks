@@ -163,3 +163,9 @@ git commit -m "Steer fast-lane transcription plans to the batched marker — ref
 
 Waived AC5.2: an unchanged-file claim is verified by Task 2 Step 5's `git diff --stat`, not a committed test.
 Waived AC6.1: `npm test` is run centrally by /build Common Step 5, not inside either task.
+
+## Deviations recorded at /build Common Step 4.5
+
+- Beneficial: Task 2 Step 3 prose said "which is SDD's own batch rule"; as built it reads "extending SDD's batch rule to transcription-only plans" — SDD's rule is scoped to same-shape work, so the original overclaimed (final whole-branch review Minor, fix commit 1275defa7).
+- Beneficial: `batchedFastLaneGuidanceProblems` also pins the `**Batch:**` instruction literal and the `stays per-task` exclusion, beyond AC3.1's three phrases — guards the spec's Gotcha 2 (dropping the instruction line). Fix commit 1275defa7.
+- Beneficial: test fixtures share a `FOUR_TASKS` list and read the skill file via the suite's EOL-normalizing `readText` (simplify commit 61ce12d67).
