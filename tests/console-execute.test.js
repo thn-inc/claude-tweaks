@@ -432,7 +432,7 @@ async function withFakeGh(json, fn) {
   const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-ghwrap-'));
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(wrapperPath, `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(json)}\nEOF\n`);
-  fs.chmodSync(wrapperPath, 0o755); // makes a spy script executable, not a permission-denial simulation
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
   process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
   try { return await fn(); } finally { process.env.PATH = originalPath; }
@@ -492,7 +492,7 @@ test('consoleExecuteDetect: a withheld merge grant names the untrusted pending-g
   };
   const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-ghwrap-'));
   fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/bin/sh\ncase "$1" in\n  pr) cat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n  ;;\n  issue) cat <<'EOF'\n${JSON.stringify(issue)}\nEOF\n  ;;\nesac\n`);
-  fs.chmodSync(path.join(wrapperDir, 'gh'), 0o755); // makes a spy script executable, not a permission-denial simulation
+  fs.chmodSync(path.join(wrapperDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
   process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
   let result;
