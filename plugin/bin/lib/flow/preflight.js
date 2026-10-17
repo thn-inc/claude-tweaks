@@ -149,7 +149,7 @@ function computeAdoption({ runDir, mainRoot, cwd, deps }) {
   // pre-Step-3 content — a compliant call 1 logs both claim and ledger lines
   // before Step 3 runs, and a recorded `pr` is what separates the #3226 call-2
   // repair from a fresh call 1.
-  if (state && typeof state === 'object' && state.dispatched === true && !state.pr) {
+  if (state && state.dispatched === true && !state.pr) {
     return { case: 2, note: ADOPTION_NOTES[2].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills: [] };
   }
   if (!hasOtherContent) return { case: 2, note: ADOPTION_NOTES[2].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills: [] };
