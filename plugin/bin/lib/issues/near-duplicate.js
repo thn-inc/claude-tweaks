@@ -11,8 +11,9 @@
 // worth a human's (or the shaper's own) attention, never grounds for an
 // automatic close on its own. The one exception the caller (shaping-mode.md)
 // applies on top of this module's output is narrow and documented there: a
-// title-similar candidate that is itself `ready` with an in-flight build —
-// `shapingRefusal` below (#3141).
+// title-similar candidate that is itself `ready` with an in-flight build, and
+// that carries at least MIN_REFUSAL_SCORE signals — `shapingRefusal` below
+// (#3141, #3366).
 'use strict';
 
 const { extractKeyFiles } = require('./grouping');
@@ -91,14 +92,15 @@ const ANY_HEADING_RE = /^#{1,6}[ \t]/;
 // nothing about two records describing the same work. Three shapes:
 // a flag (`--run-dir`, `-x`, optionally followed by ONE value token such as
 // `<dir>` or `"$VAR"` — a flag followed by prose, like an error phrase,
-// stays an anchor), a skill invocation (`/plugin:skill`, optionally with
+// stays an anchor), a skill invocation (`/plugin:skill` or `/skill`, optionally with
 // arguments), and any `family:value` token — label names, but also
 // namespaced agent ids like `superpowers:using-git-worktrees` — whose
 // family has no `.` or `/` and whose value has no `/` or `\`, so a
 // `file.js:42` location or a `c:\path` stays an anchor; or a bare stage
-// label.
+// label. A skill invocation may be colon-less (`/flow`, #3366); it takes one
+// leading slash only, so a repo path like `/usr/bin/node` stays an anchor.
 const FLAG_ANCHOR_RE = /^--?[A-Za-z][\w-]*(?:[ =]\S+)?$/;
-const SKILL_ANCHOR_RE = /^\/[\w-]+:[\w-]+(?:\s.*)?$/;
+const SKILL_ANCHOR_RE = /^\/[\w-]+(?::[\w-]+)*(?:\s.*)?$/;
 const LABEL_ANCHOR_RE = /^[a-z][a-z0-9-]*:[^\s/\\]+$/;
 const STAGE_LABELS = new Set(['ready', 'parked']);
 
@@ -193,17 +195,23 @@ function findNearDuplicates(subject, records, opts = {}) {
   return results;
 }
 
+// #3366: a refusal needs a score of at least MIN_REFUSAL_SCORE — a
+// title-similarity hit alone (score 1) is surfaced, not refused.
+const MIN_REFUSAL_SCORE = 2;
+
 // #3141: the refusal decision /specify shaping applies on top of the
 // finder's screen (shaping-mode.md's Near-duplicate candidate check).
 // stateByNumber[n]: { ready, liveClaim, claimRunId, openLinkedPR } — built
 // by buildShapingState below. Returns the first hit (in the given order)
-// whose signals include title-similarity AND whose candidate is ready AND
-// in flight (a live claim or an open linked PR); null otherwise. File and
-// anchor overlap alone never refuse — they are build-collision signals,
-// which /flow and /dispatch already handle. bot:in-progress is not read.
+// whose signals include title-similarity, whose score is at least
+// MIN_REFUSAL_SCORE, AND whose candidate is ready AND in flight (a live claim
+// or an open linked PR); null otherwise. File and anchor overlap alone never
+// refuse — they are build-collision signals, which /flow and /dispatch already
+// handle. bot:in-progress is not read.
 function shapingRefusal(hits, stateByNumber) {
   for (const hit of Array.isArray(hits) ? hits : []) {
     if (!hit || !Array.isArray(hit.signals) || !hit.signals.includes('title-similarity')) continue;
+    if (hit.signals.length < MIN_REFUSAL_SCORE) continue;
     const state = stateByNumber && stateByNumber[hit.number];
     if (!state || state.ready !== true) continue;
     if (state.liveClaim === true || state.openLinkedPR) return hit;
@@ -249,5 +257,6 @@ module.exports = {
   isGenericAnchor,
   shapingRefusal,
   buildShapingState,
+  MIN_REFUSAL_SCORE,
   DEFAULT_TITLE_SIMILARITY_THRESHOLD,
 };
