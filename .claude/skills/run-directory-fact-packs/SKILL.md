@@ -95,6 +95,14 @@ proposed field, answer three questions against the code, at plan-authoring time:
      `worktreeAtClose` (#3023). A reader that runs after close-run, such as `engine-verify.js`'s
      `worktree-removed`, falls back to `worktreeAtClose`, its own and then the parent's. Reading
      `worktree` alone there sees `null` and skips the check.
+   - **A location teardown removes.** A materialized spec header is committed in the worktree only,
+     so before merge it lives in the worktree's mirror of the run dir, not in the main checkout's
+     `work/`; `pack.js`'s `resolveRecords` reads own `work/`, then that mirror (#3365). A reader
+     that runs after cleanup removes the worktree, such as `engine-verify.js`'s `carrier-commit`,
+     cannot re-read it. So the Review Console's step 11 persists the set while the mirror still
+     exists (`set-verify-expectations.js --issues`), and verify falls back to
+     `verify-expectations.json`'s `issues` when no header resolves. When a location is gone by the
+     time a late reader runs, persist a copy from an earlier step instead of re-reading.
    - **Why it matters.** #2664's first trace got this wrong by following the writers alone.
 2. **Does the consumer mandate a freshness step first?** `mergeSize` was dropped from the wrap-up
    pack because its consumer must measure *after its own fetch* — a pre-gathered value is stale by
@@ -132,6 +140,16 @@ planned, and give each one a test fixture that holds its output (`tests/bin-lib/
 - **Pin the literals to one source.** Where the pack carries note text or adoption-case wording the
   prose quotes, that text lives in the module (`flow/preflight.js` owns the five adoption-case note
   literals) and a conformance test pins the prose against it — not two copies drifting.
+- **A filter every reader must apply is a field the pack owes.** When a field is usable only under a
+  condition, compute the filtered value in the module and expose it as its own field for readers to
+  cite. `inputs.records` names this run's closing records only when `inputs.sources.records` is
+  `headers` or `worktree-headers` (#3365's Ruling R1); a manifest rung names sibling specs, whose
+  PR-body line is `Refs`, not `Fixes`. #3365 needed that gate at four readers and wrote it by hand
+  into three (`engine-verify.js`'s `HEADER_SOURCES`, `cleanup-procedures-execution.md`'s Section C
+  step 2, `review-console.md`'s step 11); review found `execution-and-verification.md`'s
+  current-branch `Fixes` set reading the field without it. Before adding a reader of a conditional
+  field, check whether the pack exposes the filtered value; if it does not, add that field rather
+  than restate the condition.
 
 ## When to use
 
