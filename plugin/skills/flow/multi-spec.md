@@ -92,13 +92,7 @@ The slug convention, the per-spec `config.yml` copy, and `manifest.yml`'s field-
 
 ### Pre-flight Verify Sweep (once, before spec 1)
 
-Before spec 1's pipeline begins — after the shared worktree exists and is checked out (`worktree` mode), or in the current checkout otherwise — run `test/verification.md` Steps 1-2 (type check, lint, tests) **once** against the unmodified base, before any spec's build touches the code.
-
-Why: without this, each of N specs independently re-diagnoses the same pre-existing failure from scratch — every spec's own `/test` step re-derives the same root cause, with no shared record since the only trace lives in gitignored report files.
-
-Record any failures as ledger items in the **parent** run directory (not a per-spec subdir): phase `test`, status `open`, description naming the failing check and its root cause if apparent. If the sweep finds zero failures, skip the ledger write and proceed silently — do not add a "sweep clean" entry.
-
-This does not replace each spec's own `/test` gate — every spec still runs verification normally. It establishes the baseline so a spec whose `/test` run hits a failure already recorded here cites the existing ledger entry (`Pre-existing — see ledger #{N}, batch pre-flight sweep`) instead of re-diagnosing it, per `test/verification.md`'s "Pre-existing failures (multi-spec batches)" note.
+Before spec 1's pipeline begins, run `test/verification.md` Steps 1-2 **once** against the unmodified base and record any failures to the **parent** run directory's ledger — read `multispec-preflight-sweep.md` in this skill's directory for the procedure, the silent-on-clean rule, and how later specs cite it.
 
 Run each spec's full pipeline in order. Each spec completes its pipeline (build → test → review → wrap-up) before the next begins.
 
@@ -147,6 +141,18 @@ When `worktree` is specified, a sequential run uses **one shared worktree for th
    delimiter in `EnterWorktree`'s accepted charset, but the characters within each segment still
    need sanitizing (#814). Either way, `/flow` ends this step `cd`'d into the worktree — adopted
    or created.
+
+   **Create the open-items ledger here (#3036)** — right after the worktree exists (adopted or
+   created), before any record's build: one ledger for the whole run, at the run-level scope (the
+   parent run dir `{parent}/`, exported later as `$MULTISPEC_PARENT_DIR`; never a per-spec
+   `spec-{N}/` dir), via `/claude-tweaks:ledger`'s create operation — `{feature}` is the shared
+   spec-slug (`spec-{N1}-{N2}…`, the same key `wrap-up/cleanup-procedures.md`'s multi-spec ledger
+   caveat uses) — logged to `{parent}/decisions.md` as
+   `AUTO {time} — flow: created open-items ledger {path}. Reversibility: n/a.` — then follow
+   `/claude-tweaks:ledger` Create's "At a post-worktree creation point" paragraph (resume no-op,
+   held Step 2 notes appended, ledger committed by explicit path). This is the
+   multi-spec run's single creation point — `build/worktree-setup.md` Step 4.6 skips under
+   `MULTISPEC_SHARED_WORKTREE=1` for that reason.
 2. **Per-record builds skip creation** — `/flow` exports `MULTISPEC_SHARED_WORKTREE=1` and runs every record's pipeline inside the shared worktree. Each per-record `/build` Common Step 1 detects it is already inside an isolated worktree (superpowers Step 0: `GIT_DIR != GIT_COMMON`, reinforced by `MULTISPEC_SHARED_WORKTREE`) and **skips worktree creation**, committing into the shared branch. Every record — the first included — materializes as part of its own build step, writing `{parent}/spec-{N}/work/{N}-spec.md` directly into the already-existing shared worktree. This is just `materialize.md`'s worktree-first ordering applied once at the run level instead of once per record: the worktree exists before any materialization, so no record is a special case. It does NOT call `/superpowers:finishing-a-development-branch` between records.
 3. **Finish once at the end** — after the last record's pipeline and the consolidated Review Console, `/flow` finishes the single feature branch via `/superpowers:finishing-a-development-branch` (merge / PR / discard). Re-check `main` divergence immediately before this step, not just at the Step 2.5 pre-flight (a point-in-time check at pipeline *start*) — a long-running multi-record run has a real window for `main` to move again while records 2..N build. If it has, rebase onto the new tip inside the worktree first (checking for real file overlap, not just presence in the diff — see the git-diff-merge-base gotcha in CLAUDE.md's Don'ts) so the branch stays fast-forward-mergeable, then proceed with the finish.
 
