@@ -70,11 +70,14 @@ for (const tok of TOKENS) {
     else assert.match(c, tok.re);
   });
   test(`AC2.1 control: removing ${tok.name} from the section fails its pin`, () => {
-    const doctored = tok.s !== undefined
-      ? collapse(SECTION).split(tok.s).join('')
-      : collapse(SECTION).replace(new RegExp(tok.re.source, 'g' + (tok.re.flags.includes('i') ? 'i' : '')), '');
-    if (tok.s !== undefined) assert.ok(!doctored.includes(tok.s), 'doctored section must no longer contain the token');
-    else assert.doesNotMatch(doctored, tok.re);
+    const c = collapse(SECTION);
+    if (tok.s !== undefined) {
+      const doctored = c.split(tok.s).join('');
+      assert.ok(!doctored.includes(tok.s), 'doctored section must no longer contain the token');
+    } else {
+      const doctored = c.replace(new RegExp(tok.re.source, 'g' + (tok.re.flags.includes('i') ? 'i' : '')), '');
+      assert.doesNotMatch(doctored, tok.re);
+    }
   });
 }
 
