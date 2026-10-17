@@ -138,7 +138,7 @@ const POLICY_KEYS = [
   // CLAUDE_TWEAKS_GIT_TIMEOUT_MS (an env var, not a policy key) takes
   // precedence over this when both are set — see shared-primitives.js's
   // resolution order.
-  { key: 'git-timeout-ms', type: 'integer', min: 1000, max: 120000, default: 30000, summary: "Bounds how long a single claims-registry `git` subprocess call may run before it is killed and classified as a transport failure.", category: 'housekeeping', tier: 'advanced' },
+  { key: 'git-timeout-ms', type: 'integer', min: 1000, max: 120000, default: 30000, summary: "Bounds how long one `git` subprocess call on the claims-registry, pr-checks and compose-subject runners may run before it is killed.", category: 'housekeeping', tier: 'advanced' },
   { key: 'depth-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt asking whether recently changed code deserves a deeper architectural pass.", category: 'housekeeping', tier: 'advanced' },
   { key: 'creative-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt suggesting creative or UX improvement ideas for what was just built.", category: 'housekeeping', tier: 'advanced' },
   { key: 'scope-keywords-required', type: 'boolean', default: false, summary: "When on, a build refuses to start over files outside its plan unless the plan names its intended scope; otherwise it is only a warning.", category: 'pipeline-behavior', tier: 'advanced' },
