@@ -189,3 +189,8 @@ Waived AC4.1: `npm test` passing is verified by `/build` Common Step 5 and `/tes
 ## Byte budget
 
 `multispec-review-console.md` is 40,803 bytes against the shared 51,200 ceiling (no per-file pin found: `git grep multispec-review-console -- tests/bin-lib/skill-audit` hits only a comment); Task 2 adds ~1 KB. `design-wrapper-handling.md` is 6,611 bytes.
+
+## As built (Common Step 4.5 — Beneficial deviations)
+
+1. **Capture position.** Deliverable 2 asks for `parked-at-shaping` to be captured before the shared worktree is removed (step 6). As built, the capture paragraph opens Shared teardown — `**Before any step below — capture each spec's header fields.**` (renamed from this plan's "Before step 1" by the final-review fix wave e18e42f14, since step 1's dev-server row may run any time or be skipped). It therefore precedes step 2's merge too, which makes the worktree a reap candidate (`bin/lib/reconcile/reap-merged.js`). This is stronger than the spec's floor.
+2. **Extra in-scope reader.** `plugin/skills/flow/multispec-console-template.md`'s Issue closures omit-condition keyed on "no materialized header present" — a same-class main-checkout header read with no path literal, so the AC1 path pin cannot see it. The final review found it, and e18e42f14 re-keyed it on `manifest.yml`'s `specs[].id`. It is within AC1's `multispec-*.md` scope.
