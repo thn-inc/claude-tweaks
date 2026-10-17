@@ -265,7 +265,7 @@ When a mismatch is an architectural deviation at module level — a boundary in 
 
 ### Common Step 5: Final Verification
 
-After code simplification, run the shared verification procedure (`skills/test/verification.md`). This runs type checking, linting, and tests using the project's commands from CLAUDE.md.
+After code simplification, run the shared verification procedure (`skills/test/verification.md`). This runs type checking, linting, and tests using the project's commands from CLAUDE.md. **Folded plan tasks:** a plan task folded into this step contributes only its runner checks — every other step it names runs before Common Step 7 or writes a `SKIP` entry — read `dispatch.md`'s "Folded verification task" rule for the exact entry; it applies under `batched` too.
 
 **Note:** `/build` always runs verification (it is the *producer* of `VERIFICATION_PASSED` and of the runner-written pass stamp, #1921). The skip-if-recent rule in `test/verification.md` applies only to `/test` callers — never to this step. On a pass (runner exit 0 — a baseline-adjudicated pass included), read `VERIFICATION_SHA` from `report.json`'s `sha` and pass it forward with `VERIFICATION_PASSED=true`, so `/test`'s skip-if-recent check can detect a tree change between this step and its own invocation instead of trusting a bare boolean.
 
