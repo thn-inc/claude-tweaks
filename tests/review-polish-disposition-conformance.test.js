@@ -90,6 +90,18 @@ test('polish.md\'s four-way table adds the skip row ahead of the suggestion-driv
   assert.ok(skipRowIndex < commandRowIndex, 'the skip row must be checked before the Command row');
 });
 
+test('STAGED-then-skipped: review stages a finding that polish skips, presence-only, so staged is covered', () => {
+  assert.ok(reviewSteps.includes('STAGED → `staged`'), 'code-mode-steps.md must map STAGED to dispositionByReview status staged');
+  assert.ok(
+    /`source: "audit"` with a `dispositionByReview` field \(any value\)[^\n]*\*\*Skipped entirely\*\*/.test(polish),
+    'polish.md must consume an audit entry carrying dispositionByReview (any value) as Skipped entirely'
+  );
+  assert.ok(
+    /could\s+auto-apply\s+what\s+review\s+had\s+just\s+staged/.test(polish),
+    'polish.md must name the hazard: its own dispatch could auto-apply what review had just staged for a human'
+  );
+});
+
 test('polish.md Step 5 checks the skip condition before reading suggestion, for every finding', () => {
   const step5Index = polish.indexOf('### Step 5: Suggestion-driven dispatch');
   assert.ok(step5Index !== -1, 'Step 5 heading must still exist');
