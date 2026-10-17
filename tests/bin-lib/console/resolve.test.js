@@ -485,6 +485,28 @@ test('engine-state.json staged findings classify into their curation sections; a
   assert.strictEqual(r.items.filter((i) => i.id === 'wrap-up-skill-1.md').length, 1, 'a staged engine finding and its staged file are one item');
 });
 
+test('engine findings take their console id from targetPath, fall back to the row target, and two findings on one row stay distinct (#3389)', () => {
+  const engineState = { results: {
+    skills: { result: 'findings', target: 'Skills', findings: [
+      { targetPath: '.claude/skills/x/SKILL.md', action: 'applied', commit: 'abc1234', kind: 'update', summary: 's' },
+      { targetPath: '.claude/skills/y/SKILL.md', action: 'applied', commit: 'def5678', kind: 'update', summary: 's' },
+    ] },
+    docs: { result: 'findings', target: 'Docs', findings: [
+      { targetPath: 'docs/guide.md', action: 'staged', kind: 'update', summary: 's' },
+      { targetPath: 'docs/both.md', target: 'docs/legacy.md', action: 'staged', kind: 'update', summary: 's' },
+      { action: 'applied', commit: 'aaa0000', kind: 'update', summary: 's' },
+    ] },
+  } };
+  const r = resolveAll({ runDir: fixture({ engineState, headers: [7] }), policy: 'console-auto', deps: deps() });
+  const appliedSkillIds = r.items.filter((i) => i.section === 'Skill updates' && i.resolution === 'applied').map((i) => i.id);
+  assert.deepStrictEqual(appliedSkillIds, ['skills:.claude/skills/x/SKILL.md', 'skills:.claude/skills/y/SKILL.md']);
+  assert.ok(r.items.some((i) => i.id === 'docs:docs/guide.md'));
+  assert.ok(r.items.some((i) => i.id === 'docs:docs/both.md'), 'targetPath wins when a finding also carries a legacy target');
+  assert.ok(!r.items.some((i) => i.id === 'docs:docs/legacy.md'));
+  assert.ok(r.items.some((i) => i.id === 'docs:Docs'), 'a finding with no targetPath falls back to the row target');
+  assert.ok(!r.items.some((i) => /:undefined$/.test(i.id)));
+});
+
 test('decisions.md STAGED coordination entries render as Low-confidence / Contested items (#1932)', () => {
   const decisions = '## /review\n- STAGED 10:00:00 — Single-read (low tier): lens "3b" finding src/a.js:4 not directly verified. Staged to Review Console as low-confidence. Reversibility: high.\n- STAGED 10:00:01 — Cross-lens debate inconclusive on src/b.js:9: staged/review-contested-1.md. Reversibility: high.\n';
   const r = resolveAll({ runDir: fixture({ decisions, staged: { 'review-contested-1.md': 'c' }, headers: [7] }), policy: 'console-auto', deps: deps() });
