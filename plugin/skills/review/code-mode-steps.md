@@ -208,6 +208,7 @@ The severity scale, category enum, per-lens floors, and the CALIBRATION filter a
 | 3g-cov Coverage | low / informational | Never blocks the review. |
 | 3h UX (when QA data) | high | Capable profile — judgment-heavy synthesis. |
 | 3i Doc freshness | low / informational | Never blocks the review. |
+| 3j Skill load delta | informational | Runs at every tier and ceremony profile — one read-only CLI call, never blocks. |
 
 **3a skill-routed entries.** Lens 3a records a `review/skill` ledger entry rather than choosing a destination; `/claude-tweaks:wrap-up`'s Skills curation row classifies it via `skills/_shared/learning-routing.md`, where a finding about a claude-tweaks skill resolves to D5 (upstream) rather than a project skill update. Do not inline this note into the 3a agent prompt — that agent's job is to record, not to route.
 
