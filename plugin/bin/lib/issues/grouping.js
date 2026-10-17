@@ -136,13 +136,14 @@ function partitionGroupsBySizeGuard(groups, options = {}) {
 // `ceremony:fast-lane`, so a dispatch firing shares one preflight/wrap-up
 // tail across several small records instead of paying it once per record
 // (the #1535 evidence: ~24min preflight + ~27min wrap-up on a size:low
-// single-module fix). Disjoint Key Files is already guaranteed by
-// construction — two groups only exist as separate entries because
-// groupByFileOverlap found no shared, non-hub file between them, so nothing
-// here re-checks that. What this function adds on top of "is a fast-lane
-// singleton": never crossing a `priority:*` band, and only bundling records
-// that agree on `auto:merge` presence — a merge-authorization grant a bundle
-// must not silently mix across.
+// single-module fix). Disjoint Key Files is NOT guaranteed by construction
+// once every record is its own group (buildDispatchGroups, #3278): two
+// singletons may share a specific, non-hub file. A caller that needs the
+// bundle to stay disjoint passes `options.conflicts`, and no bundle then
+// holds two records for which it returns true. What this function adds on top
+// of "is a fast-lane singleton": never crossing a `priority:*` band, and only
+// bundling records that agree on `auto:merge` presence — a merge-authorization
+// grant a bundle must not silently mix across.
 //
 // `groups`: groupByFileOverlap(...)'s output mapped to full issue objects
 // (each carrying `.number`, `.labels`, `.createdAt` — the shape
@@ -157,6 +158,12 @@ function partitionGroupsBySizeGuard(groups, options = {}) {
 // case; 1 is equally a no-op since there is nothing to merge a lone record
 // with).
 //
+// `options.conflicts` is an optional `(numberA, numberB) => boolean`
+// (default: never conflicts). Chunking is first-fit over the open chunks in
+// sorted order: each issue joins the earliest chunk that has fewer than
+// `bundleCap` members and no member it conflicts with, else starts a new
+// chunk. With no conflicts this is the same fixed-size slicing as before.
+//
 // Returns `{ groups, bundles }` — `groups` is the full output list, every
 // input group appearing exactly once, either untouched or folded into a
 // bundle; `bundles` lists only the groups this pass actually created,
@@ -167,6 +174,7 @@ const FASTLANE_BUNDLE_CAP_DEFAULT = 3;
 
 function bundleFastLaneSingletons(groups, options = {}) {
   const bundleCap = options.bundleCap ?? FASTLANE_BUNDLE_CAP_DEFAULT;
+  const conflicts = options.conflicts ?? (() => false);
   if (!(bundleCap > 1)) return { groups, bundles: [] };
 
   const passthrough = [];
@@ -196,8 +204,14 @@ function bundleFastLaneSingletons(groups, options = {}) {
   const bundles = [];
   for (const bucket of buckets.values()) {
     const sorted = bucket.slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    for (let i = 0; i < sorted.length; i += bundleCap) {
-      const chunk = sorted.slice(i, i + bundleCap);
+    const chunks = [];
+    for (const issue of sorted) {
+      const open = chunks.find((chunk) => chunk.length < bundleCap
+        && !chunk.some((member) => conflicts(member.number, issue.number) || conflicts(issue.number, member.number)));
+      if (open) open.push(issue);
+      else chunks.push([issue]);
+    }
+    for (const chunk of chunks) {
       if (chunk.length > 1) bundles.push(chunk);
       else passthrough.push(chunk);
     }
@@ -207,6 +221,87 @@ function bundleFastLaneSingletons(groups, options = {}) {
     groups: [...passthrough, ...bundles],
     bundles: bundles.map((chunk) => ({ records: chunk.map((issue) => issue.number) })),
   };
+}
+
+// Pairwise (direct, non-transitive) file overlap (#3278). `items`:
+// [{ id, keyFiles }]. Returns Map<id, [{ id, files }]> — every pair of items
+// sharing at least one linking file appears under both ids, `files` sorted,
+// neighbours in `items` order. A pair with no shared linking file is absent,
+// and an id with no neighbour has no entry. A linking file is any keyFile that
+// is neither a hub over `items` (same computeHubPaths rule and defaults as
+// groupByFileOverlap, overridable via options) nor a bare directory entry.
+function directOverlaps(items, options = {}) {
+  const hubPathMinCount = options.hubPathMinCount ?? HUB_PATH_MIN_COUNT;
+  const hubPathFraction = options.hubPathFraction ?? HUB_PATH_FRACTION;
+  const hubPaths = computeHubPaths(items, (item) => item.keyFiles, hubPathMinCount, hubPathFraction);
+
+  const filesToIds = new Map();
+  for (const item of items) {
+    for (const file of new Set(item.keyFiles || [])) {
+      if (hubPaths.has(file) || file.endsWith('/')) continue;
+      if (!filesToIds.has(file)) filesToIds.set(file, []);
+      filesToIds.get(file).push(item.id);
+    }
+  }
+
+  const shared = new Map();
+  for (const [file, ids] of filesToIds) {
+    for (const a of ids) {
+      for (const b of ids) {
+        if (a === b) continue;
+        if (!shared.has(a)) shared.set(a, new Map());
+        const forA = shared.get(a);
+        if (!forA.has(b)) forA.set(b, []);
+        forA.get(b).push(file);
+      }
+    }
+  }
+
+  const order = new Map(items.map((item, index) => [item.id, index]));
+  const result = new Map();
+  for (const [id, neighbours] of shared) {
+    result.set(id, [...neighbours]
+      .sort(([x], [y]) => order.get(x) - order.get(y))
+      .map(([neighbourId, files]) => ({ id: neighbourId, files: files.sort() })));
+  }
+  return result;
+}
+
+// Which in-flight records share a specific file with each candidate (#3278).
+// Both inputs are [{ id, keyFiles }]. Overlap is computed over the union
+// (candidates first, so hubs are judged over the whole pool); an in-flight item
+// whose id is also a candidate id is dropped, so a candidate is never its own
+// neighbour. Returns Map<candidateId, [{ number, files }]> where `number` is the
+// in-flight id; every candidate id has an entry, `[]` when none.
+function findInFlightNeighbours(candidates, inFlight, options = {}) {
+  const candidateIds = new Set(candidates.map((c) => c.id));
+  const liveIds = new Set();
+  const live = [];
+  for (const item of inFlight || []) {
+    if (candidateIds.has(item.id) || liveIds.has(item.id)) continue;
+    liveIds.add(item.id);
+    live.push(item);
+  }
+  const overlaps = directOverlaps([...candidates, ...live], options);
+  const result = new Map();
+  for (const candidate of candidates) {
+    result.set(candidate.id, (overlaps.get(candidate.id) || [])
+      .filter((edge) => liveIds.has(edge.id))
+      .map((edge) => ({ number: edge.id, files: edge.files })));
+  }
+  return result;
+}
+
+// Per-record dispatch groups (#3278): every eligible issue is its own
+// single-record group, instead of the transitive file-overlap chains
+// groupByFileOverlap builds. Fast-lane bundling then folds only singletons that
+// share no direct linking file. `issues`: [{ number, body, labels, createdAt }].
+// Returns bundleFastLaneSingletons's `{ groups, bundles }`.
+function buildDispatchGroups(issues, options = {}) {
+  const items = issues.map((issue) => ({ id: issue.number, keyFiles: extractKeyFiles(issue) }));
+  const overlaps = directOverlaps(items, options);
+  const conflicts = (a, b) => (overlaps.get(a) || []).some((edge) => edge.id === b);
+  return bundleFastLaneSingletons(issues.map((issue) => [issue]), { bundleCap: options.bundleCap, conflicts });
 }
 
 // A path touched by this large a fraction of the *open-PR pool* is generic
@@ -489,4 +584,4 @@ function selectGroupsForExplicitList(requestedNumbers, groups) {
   return { selectedGroups, notFound };
 }
 
-module.exports = { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, hasOrigin, detectCrossPRFileOverlap, CROSS_PR_HUB_MIN_COUNT, CROSS_PR_HUB_FRACTION };
+module.exports = { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, hasOrigin, detectCrossPRFileOverlap, CROSS_PR_HUB_MIN_COUNT, CROSS_PR_HUB_FRACTION, directOverlaps, findInFlightNeighbours, buildDispatchGroups };
