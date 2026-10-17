@@ -654,6 +654,56 @@ test('bookkeeping-stamps gate (#1800): Step 1\'s reopen line satisfies the #989 
   assert.deepStrictEqual(out, {}, 'a logged reopen line for this branch must satisfy the precondition');
 });
 
+test('AC1.1: hasPrEarlyStep1LineFor accepts the three canonical lines and paraphrased Step 1 outcomes naming the branch (#3012)', () => {
+  const B = 'worktree-dispatch-record-3012';
+  for (const line of [
+    `- AUTO 09:00:00 — PR-early run lifecycle: no existing PR for ${B}; creating. Reversibility: n/a.`,
+    `- AUTO 09:00:00 — PR-early run lifecycle: reusing open PR #42 for ${B}. Reversibility: high.`,
+    `- AUTO 09:00:00 — PR-early run lifecycle: reopened PR #42 for ${B} (retry). Reversibility: high.`,
+    `- AUTO 21:52:00 — PR-early run lifecycle: no existing PR found for \`${B}\`. Pushed branch, opened draft PR #443. Reversibility: high.`,
+    `- AUTO 08:42:07 — log-decision: PR-early run lifecycle: no PR existed for ${B} (checked via gh pr list --state all, no match); pushing. Reversibility: n/a.`,
+    `- AUTO 22:03:52 — log-decision: PR-early run lifecycle: reused existing OPEN PR #2535 for branch ${B}. Reversibility: high.`,
+  ]) {
+    assert.strictEqual(pre.hasPrEarlyStep1LineFor(line, B), true, `expected accept: ${line}`);
+  }
+});
+
+test('AC1.1: hasPrEarlyStep1LineFor still rejects a Step 1 that never ran (#3012 Gotcha)', () => {
+  const B = 'worktree-dispatch-record-3012';
+  assert.strictEqual(pre.hasPrEarlyStep1LineFor('', B), false);
+  for (const line of [
+    `- AUTO 03:50:57 — PR-early run lifecycle Step 2 (push): pushed ${B} to origin and opened draft PR #2393. Reversibility: high.`,
+    `- AUTO 09:00:00 — PR-early run lifecycle: push of ${B} to origin FAILED (network); run proceeds local-only, no PR opened. Reversibility: n/a.`,
+    `- AUTO 20:31 — Pushed ${B} to origin per pr-early-run-lifecycle.md and opened PR #432. Reversibility: high (PR can be closed/reopened; branch already existed).`,
+    `- AUTO 09:00:00 — PR-early run lifecycle: no existing PR found for ${B}-retry; creating. Reversibility: n/a.`,
+    `- SKIP 09:00:00 — PR-early run lifecycle: no existing PR found for ${B}. Reversibility: n/a.`,
+  ]) {
+    assert.strictEqual(pre.hasPrEarlyStep1LineFor(line, B), false, `expected reject: ${line}`);
+  }
+  assert.strictEqual(
+    pre.hasPrEarlyStep1LineFor('- AUTO 19:34:01 — PR-early run lifecycle: no existing PR found for worktree-flow+spec-3153-3156, creating. Reversibility: n/a.', 'worktree-flow'),
+    false,
+  );
+});
+
+test('AC1.1 (#3012): a paraphrased Step 1 line satisfies the #989 exemption precondition -> allow', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, wt, undefined);
+  const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(
+    path.join(run, 'decisions.md'),
+    `## /build\n- AUTO 09:00:00 — PR-early run lifecycle: no existing PR found for \`${branch}\`, creating. Reversibility: n/a.\n`,
+  );
+  const out = pre.run(
+    { input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.deepStrictEqual(out, {}, 'a paraphrased Step 1 line naming this branch must satisfy the precondition');
+});
+
 test('bookkeeping-stamps gate (#1860): a worktree branch created via `-b {branch} origin/main` (worktree.baseRef: fresh\'s own form) inherits tracking to origin/main before any push -> still allow the first publish push', () => {
   const main = gitRepo();
   // Give `main` a real self-remote so `origin/main` exists as an actual
