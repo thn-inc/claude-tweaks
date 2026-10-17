@@ -1125,7 +1125,7 @@ test('directOverlaps is symmetric and omits pairs with no linking file', () => {
 });
 
 function fastLaneSingleton(n) {
-  return [{ number: n, labels: [{ name: 'ceremony:fast-lane' }, { name: 'priority:medium' }], createdAt: '2026-01-' + String(n).padStart(2, '0') + 'T00:00:00Z' }];
+  return [{ number: n, labels: [{ name: 'ceremony:fast-lane' }, { name: 'priority:medium' }], createdAt: `2026-01-${String(n).padStart(2, '0')}T00:00:00Z` }];
 }
 
 test('AC6.1: bundleFastLaneSingletons never bundles two conflicting fast-lane singletons', () => {
