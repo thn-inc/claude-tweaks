@@ -72,7 +72,7 @@ function writeWorktreeAlwaysPolicy(project) {
 }
 
 test('invariant: every event exits 0 on garbage stdin, no stdout noise', () => {
-  for (const ev of ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'subagent-stop']) {
+  for (const ev of ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'post-tool-use-failure', 'subagent-stop']) {
     const r = runHook([ev], { input: '%%%not json%%%' });
     assert.strictEqual(r.code, 0, `${ev} must exit 0 on garbage stdin`);
     if (r.stdout.trim()) assert.doesNotThrow(() => JSON.parse(r.stdout), `${ev} stdout must be empty or valid JSON`);
@@ -280,7 +280,7 @@ test('#1012: record-worktree rejects an undeclared --* argument (e.g. --bogus-fl
 
   const result = runHook(['record-worktree', '--run', run, '--bogus-flag'], { cwd: project });
   assert.strictEqual(result.code, 0);
-  assert.strictEqual(result.stdout, 'claude-tweaks: usage: record-worktree --run <dir> <worktree-path>\n');
+  assert.strictEqual(result.stdout, 'claude-tweaks: usage: record-worktree --run <dir> <worktree-path> [--dispatch]\n');
   assert.deepStrictEqual(readRunState(run), before, 'run-state.json must be byte-unchanged');
 });
 
@@ -398,7 +398,9 @@ test('record-pr, spec-status, close-run, teardown-run, check-resume-freshness, c
     const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
     fs.mkdirSync(run, { recursive: true }); // bare mkdir only — no markers at all
     const result = runHook([verb, '--run', run, ...rest], { cwd: project });
-    assert.strictEqual(result.code, 0, `${verb}: unexpected exit code`);
+    // close-run exits non-zero on a rejected --run so a scripted caller
+    // (dispatch's drain termination) can tell "not closed" from closed.
+    assert.strictEqual(result.code, verb === 'close-run' ? 1 : 0, `${verb}: unexpected exit code`);
     assert.match(result.stdout, /--run path rejected/, `${verb}: expected a rejected---run diagnostic, got: ${result.stdout}`);
   }
 });
@@ -409,10 +411,61 @@ test('close-run with a non-existent --run path fails loudly instead of falling b
   runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
   const bogus = path.join(project, 'does-not-exist');
   const result = runHook(['close-run', '--run', bogus], { cwd: project });
-  assert.strictEqual(result.code, 0);
+  assert.strictEqual(result.code, 1);
   assert.match(result.stdout, /--run path rejected/);
   const state = readRunState(run);
   assert.strictEqual(state.status, 'active', 'an invalid --run must not touch a different run dir at all');
+});
+
+test('close-run --run accepts a bare run-id basename, resolved under the main checkout\'s pipelines dir (dispatch/SKILL.md\'s $RUN_ID)', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
+  const result = runHook(['close-run', '--run', '2026-07-01T090000-spec-1'], { cwd: project });
+  assert.strictEqual(result.code, 0, result.stdout);
+  assert.doesNotMatch(result.stdout, /--run path rejected/);
+  assert.strictEqual(readRunState(run).status, 'clean');
+});
+
+test('close-run --run bare basename from inside a linked worktree resolves to the MAIN checkout\'s pipelines dir', () => {
+  const project = tmpProject();
+  execFileSync('git', ['-C', project, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init']);
+  const wt = path.join(project, '.claude', 'worktrees', 'wt-a');
+  execFileSync('git', ['-C', project, 'worktree', 'add', '-q', '-b', 'wt-a', wt]);
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run, wt], { cwd: project });
+  const result = runHook(['close-run', '--run', '2026-07-01T090000-spec-1'], { cwd: wt });
+  assert.strictEqual(result.code, 0, result.stdout);
+  assert.doesNotMatch(result.stdout, /--run path rejected/, result.stdout);
+  assert.strictEqual(readRunState(run).status, 'clean');
+});
+
+test('close-run --run basename: a same-named cwd-relative directory wins over the pipelines/ fallback', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
+  fs.mkdirSync(path.join(project, '2026-07-01T090000-spec-1'));
+  const result = runHook(['close-run', '--run', '2026-07-01T090000-spec-1'], { cwd: project });
+  assert.strictEqual(result.code, 1, result.stdout);
+  assert.match(result.stdout, /--run path rejected/, 'the cwd-relative dir is judged on its own and is not a run dir');
+  assert.strictEqual(readRunState(run).status, 'active', 'the pipelines/ run must not be touched when a cwd-relative dir exists');
+});
+
+test('close-run --run basename containing a path separator never falls through to the pipelines/ lookup', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
+  const result = runHook(['close-run', '--run', './2026-07-01T090000-spec-1'], { cwd: project });
+  assert.strictEqual(result.code, 1, result.stdout);
+  assert.match(result.stdout, /--run path rejected/, result.stdout);
+  assert.strictEqual(readRunState(run).status, 'active', 'a separator-bearing value must never resolve into the pipelines/ run dir');
+});
+
+test('close-run --run with a bare basename naming no run dir is still rejected, non-zero', () => {
+  const project = tmpProject();
+  const result = runHook(['close-run', '--run', '2026-07-02T090000-spec-9'], { cwd: project });
+  assert.strictEqual(result.code, 1);
+  assert.match(result.stdout, /--run path rejected: 2026-07-02T090000-spec-9 — run not closed/);
 });
 
 test('close-run --run with no following value fails loudly instead of falling back to the newest non-terminal run', () => {
@@ -426,7 +479,7 @@ test('close-run --run with no following value fails loudly instead of falling ba
   assert.strictEqual(readRunState(run).status, 'active');
 
   const result = runHook(['close-run', '--run'], { cwd: project });
-  assert.strictEqual(result.code, 0);
+  assert.strictEqual(result.code, 1);
   assert.match(result.stdout, /claude-tweaks: --run path rejected: \(missing value\) — run not closed/);
   assert.strictEqual(readRunState(run).status, 'active',
     '--run with a missing value must not fall back to closing the newest non-terminal run');
@@ -1374,4 +1427,99 @@ test('#1012 unbound-caller variant: a same-session caller with no bound run of i
 
   const after = [runA, runB, runC, runD].map(readRunState);
   assert.deepStrictEqual(after, before, 'no run-state.json file changes when every candidate is excluded as foreign');
+});
+
+// #3225: record-worktree --dispatch — dispatch Step 5 binds the minted run to
+// the group's worktree BEFORE call 1 and marks it dispatched, in ONE
+// read-modify-write of run-state.json (sibling-session-check.md).
+test('#3225: record-worktree --dispatch writes dispatched: true in the same call as the worktree assignment', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  const r = runHook(['record-worktree', '--run', run, '/tmp/wt-3225', '--dispatch'], { cwd: project });
+  assert.strictEqual(r.code, 0);
+  assert.match(r.stdout, /claude-tweaks: worktree recorded for 2026-07-01T090000-spec-1/);
+  const s = readRunState(run);
+  assert.strictEqual(s.worktree, path.resolve('/tmp/wt-3225'));
+  assert.strictEqual(s.status, 'active');
+  assert.strictEqual(s.dispatched, true);
+});
+
+test('#3225: --dispatch is accepted before the worktree positional too, and never read as the worktree path', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  const r = runHook(['record-worktree', '--run', run, '--dispatch', '/tmp/wt-3225b'], { cwd: project });
+  assert.strictEqual(r.code, 0);
+  const s = readRunState(run);
+  assert.strictEqual(s.worktree, path.resolve('/tmp/wt-3225b'));
+  assert.strictEqual(s.dispatched, true);
+});
+
+test('#3225: --dispatch preserves every pre-existing field and writes exactly what a plain record-worktree writes, plus dispatched', () => {
+  const project = tmpProject();
+  const seed = {
+    status: 'interrupted',
+    pr: { number: 7, url: 'https://example.invalid/pull/7', branch: 'b-7' },
+    claimExempt: true,
+    prExempt: false,
+    lastEvent: 'seeded',
+  };
+  const mk = (name) => {
+    const run = path.join(project, '.claude-tweaks', 'pipelines', name);
+    fs.mkdirSync(run, { recursive: true });
+    fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify(seed));
+    return run;
+  };
+  const plainRun = mk('2026-07-01T090001-spec-2');
+  const dispRun = mk('2026-07-01T090002-spec-3');
+  const env = { CLAUDE_CODE_SESSION_ID: 'sess-3225' };
+  assert.strictEqual(runHook(['record-worktree', '--run', plainRun, '/tmp/wt-same'], { cwd: project, env }).code, 0);
+  assert.strictEqual(runHook(['record-worktree', '--run', dispRun, '/tmp/wt-same', '--dispatch'], { cwd: project, env }).code, 0);
+  const plain = readRunState(plainRun);
+  const disp = readRunState(dispRun);
+  assert.strictEqual(plain.dispatched, undefined, 'a plain record-worktree must not write a dispatched key');
+  assert.strictEqual(disp.dispatched, true);
+  const strip = (s) => { const { updatedAt, dispatched, ...rest } = s; return rest; };
+  assert.strictEqual(JSON.stringify(strip(disp)), JSON.stringify(strip(plain)),
+    'apart from dispatched/updatedAt, --dispatch must write byte-for-byte what a plain call writes');
+  assert.deepStrictEqual(disp.pr, seed.pr);
+  assert.strictEqual(disp.claimExempt, true);
+  assert.strictEqual(disp.prExempt, false);
+  assert.strictEqual(disp.lastEvent, 'seeded');
+  assert.strictEqual(disp.sessionId, 'sess-3225');
+});
+
+test('#3225: dispatched is permanent — a later plain record-worktree re-stamp (task-prompt.md) never clears it', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-perm', '--dispatch'], { cwd: project }).code, 0);
+  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-perm'], { cwd: project }).code, 0);
+  assert.strictEqual(readRunState(run).dispatched, true);
+});
+
+// #2783: an `-adhoc-standalone` dir is never a pipeline run a mutating verb
+// should resolve to implicitly. EnterWorktree mints it AFTER /flow's formal
+// run, so it sorts newer and used to win step 2's cwd-binding match.
+test('#2783: bare close-run inside a /flow worktree closes the formal run, never its newer ad-hoc twin', () => {
+  const main = gitRepo();
+  execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-q', '-m', 'init']);
+  const wt = linkedWorktreeOf(main);
+  const formal = mkBoundRun(main, '2026-10-01T100000-spec-42', { status: 'active', sessionId: 'sess-2783-cr', worktree: wt });
+  const adhoc = mkBoundRun(main, '2026-10-01T100100-adhoc-standalone', { status: 'active', sessionId: 'sess-2783-cr', worktree: wt });
+  const result = runHook(['close-run'], { cwd: wt, env: { CLAUDE_CODE_SESSION_ID: 'sess-2783-cr' } });
+  assert.strictEqual(result.code, 0, result.stdout);
+  assert.strictEqual(readRunState(formal).status, 'clean', result.stdout);
+  assert.strictEqual(readRunState(adhoc).status, 'active');
+});
+
+test('#2783: an ad-hoc dir is never a step-3 candidate — it cannot turn one real run into a multiple-candidates refusal', () => {
+  const main = gitRepo();
+  execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-q', '-m', 'init']);
+  const wt = linkedWorktreeOf(main);
+  const formal = mkBoundRun(main, '2026-10-01T100000-spec-43', { status: 'active', sessionId: 'sess-2783-s3' });
+  const adhoc = mkBoundRun(main, '2026-10-01T100100-adhoc-standalone', { status: 'active', sessionId: 'sess-2783-s3', worktree: wt });
+  const result = runHook(['close-run'], { cwd: main, env: { CLAUDE_CODE_SESSION_ID: 'sess-2783-s3' } });
+  assert.strictEqual(result.code, 0, result.stdout);
+  assert.doesNotMatch(result.stdout, /multiple candidate runs/);
+  assert.strictEqual(readRunState(formal).status, 'clean', result.stdout);
+  assert.strictEqual(readRunState(adhoc).status, 'active');
 });

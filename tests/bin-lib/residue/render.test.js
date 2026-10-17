@@ -38,6 +38,13 @@ test('a clean run says so explicitly', () => {
   assert.match(out, /No outstanding items/);
 });
 
+test('a probe that ran on reduced input renders its reason, not only in --json (#2882)', () => {
+  const reason = 'remote tag list unavailable (git ls-remote failed) — checked local tags only';
+  const out = renderOutstanding({ results: [{ ran: true, reason, findings: [] }, { ran: true, reason: null, findings: [] }], dispositions: {} });
+  assert.match(out, /degraded: remote tag list unavailable/);
+  assert.strictEqual(out.split('degraded:').length - 1, 1, 'a clean probe (reason: null) adds no degraded line');
+});
+
 test('a truncated finding list reports the cap rather than hiding it', () => {
   const many = Array.from({ length: 30 }, (_, i) => makeFinding({ ...BRANCH, subject: `origin/b-${i}` }));
   const out = renderOutstanding({ results: [{ ran: true, findings: many }], dispositions: {}, cap: 10 });

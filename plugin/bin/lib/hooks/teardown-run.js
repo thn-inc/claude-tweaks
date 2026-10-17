@@ -5,12 +5,13 @@
 // (3) worktree-reap.js's lock/eligibility predicate for worktree removal, (4) a local branch
 // delete, (5) the remote ref delete `pr-first-merge-post-merge.md` Step 5 already specifies.
 //
-// Cardinal invariant (bin/hooks.js's own header comment): this is dispatched the same way
-// close-run is, so it never sets a non-zero exit and never throws past its own boundary — every
-// step is try/skip/report. A locked worktree, `--abandoned`, or a branch-name-matches-integration
+// Cardinal invariant (bin/hooks.js's own header comment): it never sets a non-zero exit and
+// never throws past its own boundary — every step is try/skip/report — unlike close-run's
+// rejected-`--run` exit 1 (#3025). A locked worktree, `--abandoned`, or a branch-name-matches-integration
 // guard all SKIP their step and report why; none of them abort the remaining steps, since a
 // locked worktree doesn't block branch/ref cleanup that doesn't depend on it.
 'use strict';
+const fs = require('fs');
 const path = require('path');
 const { closeRunState } = require('./close-run-state');
 const { archiveRunDir } = require('../reconcile/archive-merged');
@@ -90,6 +91,20 @@ function branchOfWorktree(root, worktreePath) {
 // as 'abandoned' for steps 4-5: skip branch/ref deletion rather than guess intent). `opts.deps`
 // — test seam for the gh call only; every git call goes through the real runGit (fixture repos
 // are real git repos, matching this codebase's existing convention for reconcile/archive tests).
+// #3023: a failed git call's best available cause — stderr when git wrote any,
+// else its exit status (plus stdout when present), else the failure category
+// (e.g. timeout, spawn), so "no error text" only appears when nothing at all
+// is known.
+function describeGitFailure(r) {
+  if (!r) return 'no error text';
+  if (r.stderr) return r.stderr;
+  if (typeof r.exitCode === 'number') {
+    return `exit ${r.exitCode}${r.failureStdout ? `; stdout: ${r.failureStdout}` : ''}`;
+  }
+  if (typeof r.failure === 'string' && r.failure) return r.failure;
+  return 'no error text';
+}
+
 function teardownRun(runDir, opts = {}) {
   const mode = opts.mode || null;
   const sessionId = opts.sessionId || null;
@@ -258,12 +273,19 @@ function teardownRun(runDir, opts = {}) {
       if (entryAfter && entryAfter.prunable) {
         const prune = runGit(['worktree', 'prune'], root);
         if (!prune.failure) {
-          lines.push(`worktree: removed via prune ${effectiveWorktreePath} (removal had failed: ${rm.stderr || 'no error text'})`);
+          // #3023: prune clears only the registration. Report what is actually on disk —
+          // never retry-delete here (a Windows handle can hold the directory; looping on it
+          // would hang teardown).
+          if (fs.existsSync(effectiveWorktreePath)) {
+            lines.push(`worktree: registration pruned but directory still present at ${effectiveWorktreePath} (removal had failed: ${describeGitFailure(rm)})`);
+          } else {
+            lines.push(`worktree: removed via prune ${effectiveWorktreePath} (removal had failed: ${describeGitFailure(rm)})`);
+          }
         } else {
-          lines.push(`worktree: skipped — removal failed (${rm.stderr || 'no error text'}); prune also failed (${prune.stderr || 'no error text'})`);
+          lines.push(`worktree: skipped — removal failed (${describeGitFailure(rm)}); prune also failed (${describeGitFailure(prune)})`);
         }
       } else {
-        lines.push(`worktree: skipped — removal failed${rm.stderr ? ` (${rm.stderr})` : ''}`);
+        lines.push(`worktree: skipped — removal failed (${describeGitFailure(rm)})`);
       }
     } else {
       lines.push(`worktree: removed ${effectiveWorktreePath}${recoveredWorktreePath ? ' (resolved via branch-name fallback — no worktree recorded in run-state.json)' : ''}`);
@@ -303,4 +325,4 @@ function teardownRun(runDir, opts = {}) {
   return { lines };
 }
 
-module.exports = { teardownRun, branchOfWorktree, repoSpecOf, defaultGhApiDelete };
+module.exports = { teardownRun, branchOfWorktree, repoSpecOf, defaultGhApiDelete, describeGitFailure };

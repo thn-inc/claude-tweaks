@@ -140,7 +140,13 @@ function closeRunState(runDir, {
   }
 
   const notYetArchived = hasUnarchivedWork(runDir);
-  const writeOk = !!ctxLib.writeRunState(runDir, { status: 'clean', worktree: null });
+  // #3023: nulling `worktree` keeps the prior path as `worktreeAtClose` (a
+  // repeat close keeps the first one) so wrap-up verify can still check disk.
+  const patch = { status: 'clean', worktree: null };
+  const usable = (v) => (typeof v === 'string' && v ? v : null);
+  const priorWorktree = prev && (usable(prev.worktree) || usable(prev.worktreeAtClose));
+  if (priorWorktree) patch.worktreeAtClose = priorWorktree;
+  const writeOk = !!ctxLib.writeRunState(runDir, patch);
   return { status: 'closed', foreignOwner, wrapupSeen, writeOk, notYetArchived };
 }
 

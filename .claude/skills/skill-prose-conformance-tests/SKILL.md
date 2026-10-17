@@ -167,6 +167,10 @@ changed) and simpler than the line-span form it replaced. Reach for a structural
 line-count regex whenever the doctored unit is a whole paragraph, list item, or fenced block —
 anything with its own natural delimiter — rather than counting lines to guess where it ends.
 
+### Grep sibling conformance tests before extending a pinned table row
+
+Extending a byte/line-pinned table cell — adding a second marker form alongside an existing one, widening a cell's content — can silently break an older, independently-authored test that end-anchored (`$`) that same row before the extension existed. #2970's `pr-run-comments.md` timing-row extension (adding `timing:{spec}` alongside the bare `timing` marker) broke `tests/timing-prose-conformance.test.js`'s #1928 AC6 pin, which had end-anchored the row — caught in a follow-up commit within the same build session, not at review. Before considering a table-row content extension complete, grep sibling test files for an anchored regex (`$`/`^`) against that same row, not just the test file most obviously related to the change.
+
 ## Decision Framework
 
 | The prose you want to assert on | Do this |
@@ -230,6 +234,8 @@ A varying failure count across runs on byte-identical code tracks machine load f
 | Reading the `{base}` snapshot at module scope, unguarded | An unreachable SHA throws before a single test registers, so `node --test` reports a whole-file failure where only the one go-red control was affected — and a shallow or partial clone makes that the ordinary sandbox outcome rather than a history rewrite (#2436) |
 | Anchoring a fence or line extraction regex on a bare `\n` (`/```[a-z]*\n([\s\S]*?)```/`) | This repo's `.gitattributes` pins only the upstream-drift fixtures, so a `core.autocrlf` Windows checkout reads every skill file with `\r\n`: the extractor finds nothing, the guard goes vacuous or red on Windows only, and the ubuntu-only CI never sees it. Write `\r?\n`, and add a CRLF input built with `.replace(/\n/g, '\r\n')` that asserts the extractor still finds the block (`tests/design-wrapper-doctor-no-fix.test.js`, #3040) |
 | Slicing a region between two `indexOf` anchors while asserting only the start anchor exists | A missing end anchor makes `indexOf` return `-1`, and `text.slice(start, -1)` silently becomes "the rest of the file". The region widens instead of emptying, so a presence assertion can match the pinned literal in a later section and stay green after the real region loses it. Assert `end !== -1` before slicing. When "rest of file" is a deliberate fallback, such as a section helper whose last section has no following heading, write that branch out explicitly (`next === -1 ? rest : …`). Both forms are in `tests/review-vacuity-evidence-conformance.test.js` (#3124) |
+| Asserting one global count for a literal that each of N regions must carry once | A count of N still passes when every copy lands in one region, so a misplaced copy goes unseen. Slice each region by its own start and end anchors, assert both resolve, and assert exactly one per slice (`tests/review-lens-no-suites-conformance.test.js`'s placeholder test, #3001) |
+| Pinning a write-then-render handoff one file at a time | When one skill appends a section to a file another renders, each file's pins stay green while the renderer has no slot for it. Pin the reader's slot for every shape the writer can produce (`tests/try-it-contract-conformance.test.js`'s `#### Parent #{P}` and "own section" pins, #2821) |
 
 ## Advanced proof patterns — lazy-loaded
 

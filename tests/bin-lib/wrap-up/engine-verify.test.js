@@ -478,6 +478,85 @@ test('worktree-removed check passes when no matching worktree is listed', () => 
   assert.strictEqual(row.result, 'pass');
 });
 
+test('#3023: worktree-removed fails when the run\'s worktree is unlisted but its directory still exists on disk', () => {
+  const runDir = path.join(makeTmpDir('verify-wt-'), '2026-01-01T000000-spec-901');
+  const wtDir = makeTmpDir('verify-wt-dir-');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'closed', worktree: wtDir }));
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeCleanRepoRoot(), cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'worktree-removed');
+  assert.strictEqual(row.result, 'fail');
+  assert.ok(row.detail.includes(wtDir), `detail must name the path, got: ${row.detail}`);
+});
+
+test('#3023: worktree-removed passes when the worktree is unlisted and its directory is gone', () => {
+  const runDir = path.join(makeTmpDir('verify-wt-'), '2026-01-01T000000-spec-902');
+  const wtDir = path.join(makeTmpDir('verify-wt-gone-'), 'never-created');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'closed', worktree: wtDir }));
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeCleanRepoRoot(), cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'worktree-removed');
+  assert.strictEqual(row.result, 'pass');
+});
+
+test('#3023: worktree-removed keeps list-only behavior when run-state.json records no worktree', () => {
+  const runDir = path.join(makeTmpDir('verify-wt-'), '2026-01-01T000000-spec-903');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'closed' }));
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeCleanRepoRoot(), cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'worktree-removed');
+  assert.strictEqual(row.result, 'pass');
+});
+
+test('#3023: worktree-removed reads a multi-spec run\'s worktree path from the parent run-state.json', () => {
+  const parent = path.join(makeTmpDir('verify-wt-'), '2026-01-01T000000-spec-904-905');
+  const specDir = path.join(parent, 'spec-904');
+  const wtDir = makeTmpDir('verify-wt-dir-');
+  fs.mkdirSync(specDir, { recursive: true });
+  fs.writeFileSync(path.join(parent, 'run-state.json'), JSON.stringify({ status: 'closed', worktree: wtDir }));
+  fs.writeFileSync(path.join(specDir, 'run-state.json'), JSON.stringify({ status: 'closed' }));
+  const result = runVerify({ runDir: specDir, base: 'main', repoRoot: makeCleanRepoRoot(), cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'worktree-removed');
+  assert.strictEqual(row.result, 'fail');
+  assert.ok(row.detail.includes(wtDir));
+});
+
+// #3023 (final review F1): every sanctioned removal path closes the run
+// first, and the close nulls `worktree` -- so the on-disk check must still
+// see the path after a REAL closeRunState, not only a hand-written state.
+test('#3023: worktree-removed still fails after a real closeRunState nulled run-state.json\'s worktree, and passes once the directory is gone', () => {
+  const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
+  const runDir = path.join(makeTmpDir('verify-wt-'), '2026-01-01T000000-spec-906');
+  const wtDir = makeTmpDir('verify-wt-dir-');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wtDir, sessionId: 's-3023' }));
+  const closed = closeRunState(runDir, { explicit: true, callerIdentity: { sessionId: 's-3023' }, checkLiveWorktree: false });
+  assert.strictEqual(closed.status, 'closed');
+  assert.strictEqual(closed.writeOk, true);
+  const after = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  assert.strictEqual(after.worktree, null);
+  const verify = () => runVerify({ runDir, base: 'main', repoRoot: makeCleanRepoRoot(), cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } })
+    .rows.find((r) => r.check === 'worktree-removed');
+  const present = verify();
+  assert.strictEqual(present.result, 'fail');
+  assert.ok(present.detail.includes(wtDir), `detail must name the path, got: ${present.detail}`);
+  fs.rmSync(wtDir, { recursive: true, force: true });
+  assert.strictEqual(verify().result, 'pass');
+});
+
+test('#3023: worktree-removed reads a closed multi-spec parent\'s worktreeAtClose when neither side still carries worktree', () => {
+  const parent = path.join(makeTmpDir('verify-wt-'), '2026-01-01T000000-spec-907-908');
+  const specDir = path.join(parent, 'spec-907');
+  const wtDir = makeTmpDir('verify-wt-dir-');
+  fs.mkdirSync(specDir, { recursive: true });
+  fs.writeFileSync(path.join(parent, 'run-state.json'), JSON.stringify({ status: 'clean', worktree: null, worktreeAtClose: wtDir }));
+  fs.writeFileSync(path.join(specDir, 'run-state.json'), JSON.stringify({ status: 'clean', worktree: null }));
+  const result = runVerify({ runDir: specDir, base: 'main', repoRoot: makeCleanRepoRoot(), cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'worktree-removed');
+  assert.strictEqual(row.result, 'fail');
+  assert.ok(row.detail.includes(wtDir));
+});
+
 // ---- multi-spec spec-{N}/ subdirectory resolution (record #900 fix round, C2/I2) ----
 //
 // A multi-spec `/flow` run exports the per-spec `spec-{N}/` subdirectory as
@@ -986,10 +1065,9 @@ test('carrier-commit check passes via the ground-truth fallback: a CLOSED issue 
     calls.push(args);
     if (isGraphqlCall(args)) {
       return JSON.stringify({
-        data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'MERGED' }] } } } },
+        data: { repository: { i900: { number: 900, state: 'CLOSED', closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'MERGED' }] } } } },
       });
     }
-    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'CLOSED' });
     return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
@@ -1004,9 +1082,8 @@ test('carrier-commit check still fails via the ground-truth fallback when the is
   const fakeGit = fakeOriginGit();
   const fakeGh = (args) => {
     if (isGraphqlCall(args)) {
-      return JSON.stringify({ data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [] } } } } });
+      return JSON.stringify({ data: { repository: { i900: { number: 900, state: 'CLOSED', closedByPullRequestsReferences: { nodes: [] } } } } });
     }
-    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'CLOSED' });
     return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
@@ -1022,10 +1099,9 @@ test('carrier-commit check still fails via the ground-truth fallback when a clos
   const fakeGh = (args) => {
     if (isGraphqlCall(args)) {
       return JSON.stringify({
-        data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'OPEN' }] } } } },
+        data: { repository: { i900: { number: 900, state: 'OPEN', closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'OPEN' }] } } } },
       });
     }
-    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'OPEN' });
     return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
@@ -1055,14 +1131,65 @@ test('carrier-commit check: a genuinely missing carrier commit (no text match, n
   writeSpecFile(runDir, '900', 900);
   const fakeGit = fakeOriginGit();
   const fakeGh = (args) => {
-    if (isGraphqlCall(args)) return JSON.stringify({ data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [] } } } } });
-    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'OPEN' });
+    if (isGraphqlCall(args)) return JSON.stringify({ data: { repository: { i900: { number: 900, state: 'OPEN', closedByPullRequestsReferences: { nodes: [] } } } } });
     return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'carrier-commit');
   assert.strictEqual(row.result, 'fail');
   assert.match(row.detail, /900/);
+});
+
+test('carrier-commit check still fails when the batched response carries no issue state at all (older shape) and there is a closing-PR reference', () => {
+  // #2934 Gotcha: a fake GraphQL response that predates this change (no
+  // `state` on the issue node) must degrade to not-closed, never be
+  // misread as CLOSED.
+  const runDir = makeTmpDir('verify-carrier-groundtruth-nostate-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = fakeOriginGit();
+  const fakeGh = (args) => {
+    if (isGraphqlCall(args)) {
+      return JSON.stringify({ data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'MERGED' }] } } } } });
+    }
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'fail', 'a missing batched issueState must never be treated as CLOSED');
+});
+
+test('#2934: the carrier-commit ground-truth fallback issues exactly one gh call for N missing issues (no per-issue issue-view loop)', () => {
+  const runDir = makeTmpDir('verify-carrier-groundtruth-onecall-');
+  writeSpecFile(runDir, '900', 900);
+  writeSpecFile(runDir, '901', 901);
+  const fakeGit = fakeOriginGit();
+  const calls = [];
+  const fakeGh = (args) => {
+    calls.push(args);
+    if (isGraphqlCall(args)) {
+      return JSON.stringify({
+        data: {
+          repository: {
+            i900: { number: 900, state: 'CLOSED', closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'MERGED' }] } },
+            i901: { number: 901, state: 'CLOSED', closedByPullRequestsReferences: { nodes: [{ number: 2001, state: 'MERGED' }] } },
+          },
+        },
+      });
+    }
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+  // Scope to carrier-commit's own ground-truth calls -- other checks in this
+  // same runVerify pass (acceptance-labeling's parent resolution, a
+  // labels/comments issue view) also call gh, so a bare isGraphqlCall/
+  // issue-view filter would count those too (same scoping note test 53
+  // above already makes for its own assertion).
+  const linkedPrQueryCalls = calls.filter((a) => isGraphqlCall(a) && a.some((v) => typeof v === 'string' && v.includes('closedByPullRequestsReferences')));
+  const issueViewCalls = calls.filter((a) => a[0] === 'issue' && a[1] === 'view' && (a[2] === '900' || a[2] === '901') && a.includes('state'));
+  assert.strictEqual(linkedPrQueryCalls.length, 1, `expected exactly one linked-PR GraphQL call for 2 missing issues, got: ${JSON.stringify(calls)}`);
+  assert.strictEqual(issueViewCalls.length, 0, `expected zero per-issue "gh issue view {n}" calls, got: ${JSON.stringify(issueViewCalls)}`);
 });
 
 test('reference-repairs check skips when engine-state.json has no applied references findings', () => {

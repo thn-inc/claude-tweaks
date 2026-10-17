@@ -82,6 +82,23 @@ value is what the agent acts on. These `{plugin-root}` lines are placeholders to
 composed-bytes scanner, not call sites of their own — the bundles are measured at their skill
 call sites. Compose both before either dispatch anyway: if the compose command is unavailable or exits non-zero, read the named source files directly — which, for the dispatched agent, each template citation's own fallback already says.
 
+**Log each group's resolved first-call model (#3212).** This is a dispatching-session step, not
+part of `{context-pack}`. When resolving the first call's profile
+(`node "{plugin-root}/bin/resolve-profile.js" capable`, the template below), keep the resolved
+`model` and `source`; after the first call returns — never before it is dispatched — write one
+line per group to that group's `{minted-run-dir}/decisions.md` by running
+`node "{plugin-root}/bin/log-decision.js" --run "{minted-run-dir}" --status AUTO --step "Dispatch group {group}" --text "first-call model resolved to {model} (source: {source})" --reversibility n/a`,
+which produces, per `_shared/auto-decision-log.md`'s canonical entry schema:
+`- AUTO {time} — Dispatch group {group}: first-call model resolved to {model} (source: {source}). Reversibility: n/a.`
+where `{model}` and `{source}` are the `model` and `source` fields of the `resolve-profile.js
+capable` JSON, and `{group}` is the group's comma-joined issue list in brackets (e.g. `[42]` or
+`[42,43]`). The timing matters: before the first call, the minted directory's `decisions.md` may
+hold only `/flow` Step 2.8's claim-log lines, and any other line makes `/flow` Step 3 treat the
+directory as a recovery (adoption case 3, `bin/lib/flow/preflight.js` via
+`bin/lib/log-decision/claim-log.js`'s `classifyDecisions`) instead of a fresh mint (case 2). A
+`source` of `ceiling` in the resolver's output means the clamp described under the first-call
+template applied.
+
 ## First call — build,test
 
 **No handoff to capture from this call's report.** Dispatch Step 4 already minted this group's run directory before either call — `{minted-run-dir}` below is that same directory, substituted literally, on both calls. There is nothing to parse out of this call's prose report to construct the second call's input; the gate between calls (`two-call-gate.md`) reduces to reading the status line and `OUTCOME`.
@@ -177,10 +194,18 @@ Status line (required): on its own trailing line, after everything above -- the 
 non-empty line -- write exactly `STATUS: {WORD}`, where {WORD} is one of: DONE /
 DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
 
-[Use: Standard] -- this dispatch wraps build+test execution, not analysis; the pipeline's own
-steps select their own models as usual. Resolve via `node "{plugin-root}/bin/resolve-profile.js" standard`
-(contract § Model Selection).
+[Use: Capable] -- raised from Standard: bypassed /flow in 6 of 10 firings vs 0 of 3 (#3212); the
+pipeline's own steps still select their own models as usual. Resolve via
+`node "{plugin-root}/bin/resolve-profile.js" capable` (contract § Model Selection).
 ```
+
+**The `model-ceiling` clamp (#3212).** `[Use: Capable]` above does not guarantee Opus. A project
+`model-ceiling: standard` policy value clamps the resolved `capable` profile back to `sonnet` —
+`plugin/bin/lib/model-profiles/profiles.js`'s `resolve()`, the `model-ceiling` clamp at lines
+122-128, which reports `source: 'ceiling'` in `resolve-profile.js`'s JSON. On such a project this
+call runs on Sonnet by configuration, an expected and named outcome; the per-group log line in the
+Context pack section above records it. The same function's later diff-size cap does not apply
+here: it fires only when the caller passes `--diff-facts`, and this invocation never does.
 
 The Foreground execution clause above is backed by a mechanical check, not prose alone (#2429):
 `sequential-execution.md`'s "The loop" section verifies this call's `STATUS:` line against the
@@ -377,7 +402,9 @@ Same mechanical status-line check applies to this call. The Auto-merge gate's `m
 clause this call runs (`settle-and-merge.md`'s Content judgment step) is backed by its own
 mechanical check too (#2429): a verdict is logged to `decisions.md` whether it passes or falls
 back, and the merge action that follows re-reads that log rather than proceeding on having just
-run the loop — see that step's own "Mechanically verify every member's entry" paragraph. Keep
-both current if either clause's wording changes.
+run the loop — see that step's own "Mechanically verify every member's entry" paragraph. A
+dispatched **singleton**'s merge decision runs this same re-check through
+`wrap-up/auto-merge-short-circuit.md`'s Verdict backstop instead (#2941) — both are backed by
+`bin/lib/dispatch/merge-verdict.js`. Keep both current if either clause's wording changes.
 
 None of Templates A/B/C (A in `_shared/subagent-dispatch-core.md`; B/C in `_shared/subagent-output-contract.md`) fit an agent that executes pipeline stages rather than returning findings/locations/a yes-no, so these are their own minimal templates, inlined verbatim at every dispatch site. The universal parts of the contract still apply: the four-value status line, minimal input, and literal (not referenced) output format.

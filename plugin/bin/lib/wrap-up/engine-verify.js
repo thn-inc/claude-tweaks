@@ -27,7 +27,7 @@ const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
-const { readRunStateWithParent } = require('../hooks/context');
+const { readRunStateWithParent, readRunState } = require('../hooks/context');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -342,6 +342,23 @@ registerCheck('worktree-removed', ({ runDir, expectations, deps, cwd }) => {
   const list = parseWorktreeList(porcelain);
   const match = list.find((wt) => wt.path.includes(slug) || (wt.branch && wt.branch.includes(slug)));
   if (match) return { result: 'fail', detail: `worktree still listed: ${match.path}` };
+  // #3023: `git worktree prune` drops the registration but can leave the
+  // directory behind, so an unlisted worktree is not proof of removal. The
+  // exact path comes from run-state.json's `worktree` stamp (a multi-spec
+  // spec-{N}/ dir inherits the parent's), never guessed from the slug. A
+  // closed run has `worktree: null`, so fall back to `worktreeAtClose` --
+  // own first, then the parent's (readRunStateWithParent fills only
+  // `worktree` from the parent).
+  const { state, parentRunDir } = readRunStateWithParent(runDir);
+  const usable = (v) => (typeof v === 'string' && v ? v : null);
+  let recorded = state ? usable(state.worktree) || usable(state.worktreeAtClose) : null;
+  if (!recorded && parentRunDir) {
+    const parent = readRunState(parentRunDir);
+    recorded = parent && typeof parent === 'object' ? usable(parent.worktreeAtClose) : null;
+  }
+  if (recorded && fs.existsSync(recorded)) {
+    return { result: 'fail', detail: `worktree unlisted but directory still present: ${recorded}` };
+  }
   return { result: 'pass', detail: '' };
 });
 
@@ -464,11 +481,12 @@ registerCheck('carrier-commit', ({ runDir, base, deps, cwd }) => {
   for (const n of missingTextual) {
     const entry = linked.get(n);
     if (!entry || !entry.hasClosingPRReference) { stillMissing.push(n); continue; }
-    let state = null;
-    try {
-      state = JSON.parse(deps.gh(['issue', 'view', String(n), '--json', 'state'], cwd)).state;
-    } catch { /* degrades to stillMissing below */ }
-    if (state !== 'CLOSED') stillMissing.push(n);
+    // #2934: read the issue's own state from the batched fetchLinkedPRs
+    // result (buildLinkedPRQuery already selects it) instead of a
+    // per-issue `gh issue view` -- a missing/falsy issueState (an older
+    // query response shape, a fixture that predates #2934) degrades to
+    // not-closed, matching this fallback's existing stillMissing posture.
+    if (entry.issueState !== 'CLOSED') stillMissing.push(n);
   }
   if (stillMissing.length) return { result: 'fail', detail: `no carrier commit found for #${stillMissing.join(', #')}` };
   return { result: 'pass', detail: '' };

@@ -7,6 +7,10 @@ files:
   - plugin/bin/lib/reconcile/budget.js
   - plugin/bin/lib/reconcile/shared-fetch.js
   - plugin/bin/lib/reconcile/gh-pool.js
+  - plugin/bin/lib/reconcile/release-merged.js
+  - plugin/bin/lib/reconcile/archive-merged.js
+  - plugin/bin/lib/reconcile/pr-state.js
+  - plugin/bin/lib/reconcile/origin-head.js
   - plugin/bin/hooks.js
 ---
 
@@ -20,10 +24,10 @@ files:
 ## Steps
 
 ### 1. Session starts — the fast pass runs inline
-- **Action:** `SessionStart` fires `session-start.js`'s `run(ctx)`, which calls `reconcile()` inline for only `mirror`, `red-tip`, and `console` — a short-TTL freshness cache (`cache.js`) short-circuits the whole call first if another session already reconciled this repo within the last few minutes, then a GitHub-health preflight (`preflight.js`, ~2s — up to ~4s when its single retry-on-timeout fires, #2567) runs and skips the rest of the pass on failure, and an overall wall-clock pass budget (`budget.js`) bounds the sum of whatever checks do run so a slow network can't turn the fast pass into a stall — `shared-fetch.js` keeps the mirror/red-tip pair to one fetch round trip.
+- **Action:** `SessionStart` fires `session-start.js`'s `run(ctx)`, which calls `reconcile()` inline for only `mirror`, `red-tip`, and `console` — a short-TTL freshness cache (`cache.js`) short-circuits the whole call first if another session already reconciled this repo within the last few minutes, then a GitHub-health preflight (`preflight.js`, ~2s — up to ~4s when its single retry-on-timeout fires, #2567) runs and skips the rest of the pass on failure, and an overall wall-clock pass budget (`budget.js`) bounds the sum of whatever checks do run so a slow network can't turn the fast pass into a stall — `shared-fetch.js` keeps the mirror/red-tip pair to one fetch round trip. On a fresh clone with no local `origin/HEAD` (common in a cloud/Routine sandbox), the pass first repairs it once via `git remote set-head origin --auto` (`origin-head.js`, bounded by the same fetch timeout) and re-resolves the integration branch, instead of skipping every check as `no-remote`; a failed repair is remembered for the cache TTL so an offline session start does not pay the round trip again (#3132).
 - **Should feel:** Fast and unobtrusive — the session's first message shows up without a noticeable stall, on both a healthy repo and a degraded-GitHub one.
 - **Should understand:** The mirror/branch summary and red-tip warning they see are current as of this session start (or, on a cache hit, as of the very recent prior one) — not stale.
-- **Red flags:** A visible multi-second-to-minutes stall before the first message; a mirror/red-tip summary that silently omits a real problem because a network call timed out with no explanation.
+- **Red flags:** A visible multi-second-to-minutes stall before the first message; a mirror/red-tip summary that silently omits a real problem because a network call timed out with no explanation; every check skipped as `no-remote` in a checkout that plainly has a working `origin`.
 
 ### 2. The background pass is dispatched, detached
 - **Action:** After the fast pass returns, `session-start.js` checks its own background-status file's freshness and, if stale enough, spawns `node bin/hooks.js reconcile-background` as a genuinely detached child process (`spawn(..., {detached: true, stdio: 'ignore'}).unref()`) — this process runs `release`, `archive`, `archive-branches`, `remote-prune`, and `reap` (in that fixed order — `reap` last, since it physically removes worktrees the other checks derive branches from) and writes its outcome to a status file, unrelated to the session's own process lifetime.
@@ -34,10 +38,12 @@ files:
 ### 3. The next session start surfaces what the background pass did
 - **Action:** The following `SessionStart` reads the background-status file once and, if it holds a result not yet shown, renders a "background reconcile (from a prior session)" summary in `additionalContext` — what was released/archived/pruned/reaped, and what was skipped and why (e.g. a locked worktree with a live owner).
 - **Should feel:** Trustworthy — the user can see that janitorial cleanup is actually happening, even though they never watched it run.
-- **Should understand:** Any skip they weren't expecting (a worktree that didn't reap, a branch that wasn't pruned) came with a stated reason, not a silent gap.
-- **Red flags:** A background outcome that never surfaces anywhere (silently dropped diagnostic signal); the same outcome shown twice across two different sessions.
+- **Should understand:** Any skip they weren't expecting (a worktree that didn't reap, a branch that wasn't pruned) came with a stated reason, not a silent gap. A fast-lane pr-first singleton whose merge auto-closed via `gh pr merge` converges in this background pass too — its claim releases, grants/`bot:in-progress` strip, and its run directory archives — even once the worktree and branch that merge tore down are both gone (#3249's by-PR-number fallback), and even when no Review Console was ever rendered for it (#3249's narrowly-scoped archive exception), as long as nothing was left pending in that run's `staged/`.
+- **Red flags:** A background outcome that never surfaces anywhere (silently dropped diagnostic signal); the same outcome shown twice across two different sessions. Before #3249, a merged fast-lane run with nothing pending could show `console-never-rendered` here forever — a skip reason that read as "a stated reason" but was never actually going to resolve on its own; that specific permanent-skip shape is what #3249 closed. A run whose `staged/` genuinely still holds unapproved items is the one case that still shows this skip indefinitely, by design (tracked separately, #3297).
 
 ## Origin
 - Created during build of #820 (Reduce SessionStart reconcile() latency — GitHub-health preflight, batching, parallelism, async split)
 - All steps built in this session
+- Updated during build of #3132 (fresh-clone `origin/HEAD` repair in Step 1)
 - Related specs: #847 (follow-up — restore session/run attribution on the three worktree-reap audit-trail events under this split, filed as a deliberate scope boundary during #820's build)
+- Updated during build of #3249 (fast-lane pr-first merges never release their claim or archive their run — console-never-rendered) — Step 3's release/archive convergence promise now holds for a torn-down worktree/branch and a never-rendered console with nothing staged; the residual pending-staged-items gap is tracked as #3297

@@ -12,7 +12,7 @@ const { withIndexLockRetry } = require('../git-retry');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const {
-  iterRunDirsWithState, writeRunState, readRunState, readEventLines,
+  iterRunDirsWithState, writeRunState, readRunState, readEventLines, isAdHocRunDir,
 } = require('../hooks/context');
 const { resolvePrState, resolvePrStateByNumber, resolveIssueStateByNumber } = require('./pr-state');
 const {
@@ -75,7 +75,7 @@ function isStaleDir(dir, ttlMs, now = Date.now()) {
 // through to the ordinary isOrphanedMint mtime sweep instead, same as any
 // other malformed mint.
 function isAdHocStandaloneMint(dir) {
-  if (!path.basename(dir).endsWith('-adhoc-standalone')) return false;
+  if (!isAdHocRunDir(dir)) return false;
   const state = readRunState(dir);
   return !!(state && typeof state.worktree === 'string' && state.worktree);
 }
@@ -314,9 +314,10 @@ function isAbandonedInterrupted(runDir, state, sessionId, now = Date.now()) {
 //   { action: 'archive' } | { action: 'skip', reason }
 // #1732: the actual decision logic — classifyRunDir's 'merged' branch calls
 // this directly (a `Core` suffix, not a class of its own, since it has no
-// TTL of its own to own — only the mtime/recency kinds do); `decideArchive`
-// below is the thin wrapper kept for existing callers/tests.
-function decideArchiveCore(prState, consoleState) {
+// TTL of its own to own — only the mtime/recency kinds do), and so does
+// archiveMergedRun (with real staged evidence, #3249); `decideArchive`
+// below is the thin 2-arg wrapper kept for its direct unit tests.
+function decideArchiveCore(prState, consoleState, hasStagedPending) {
   if (prState === 'gh-absent') return { action: 'skip', reason: 'gh-absent' };
   if (prState === 'network-failure') return { action: 'skip', reason: 'network-failure' };
   if (!prState) return { action: 'skip', reason: 'no-pr' };
@@ -330,7 +331,21 @@ function decideArchiveCore(prState, consoleState) {
   // the empty-console fast path, which closes the run terminal and archives
   // via the archive-run verb without ever reaching this sweep. Archiving on
   // mere PR-merge swept live runs with pending staged decisions (#657).
-  if (consoleState === 'none') return { action: 'skip', reason: 'console-never-rendered' };
+  //
+  // #3249: that protection is about a run with genuinely *pending, unresolved*
+  // staged decisions — but the fast-lane auto-merge short-circuit
+  // (wrap-up/auto-merge-short-circuit.md) renders its console content as a
+  // non-blocking PushNotification FYI and never writes console.json at all,
+  // making this skip permanent for every such run regardless of whether
+  // anything was ever actually staged. `hasStagedPending` is computed by the
+  // caller (this function stays pure — no I/O of its own) from the run's own
+  // staged/ directory; only an explicit `false` unlocks the archive path, so
+  // every existing 2-arg call site (and any caller that genuinely doesn't
+  // know) keeps today's unconditional skip.
+  if (consoleState === 'none') {
+    if (hasStagedPending === false) return { action: 'archive' };
+    return { action: 'skip', reason: 'console-never-rendered' };
+  }
   return { action: 'archive' };
 }
 
@@ -341,7 +356,8 @@ function decideArchive(prState, consoleState) {
 }
 
 // 'unresolved' | 'resolved' | 'none' (no console.json rendered — #1130:
-// blocks this sweep's archival; the empty-console fast path archives via the
+// blocks this sweep's archival unless staged/ holds nothing pending, #3249 —
+// see hasStagedItems; the empty-console fast path archives via the
 // archive-run verb instead). 'resolved' fires on `resolved === true` OR a
 // non-empty (post-trim) string `executedAt` — the documented write order
 // (`_shared/console-execution.md`) now sets both in the final console.json
@@ -359,6 +375,30 @@ function readConsoleState(runDir) {
     return resolved ? 'resolved' : 'unresolved';
   } catch {
     return 'unresolved'; // unparseable console state fails closed — never silently archived
+  }
+}
+
+// #3249: whether this run's staged/ directory holds any staged item —
+// used to distinguish "nothing was ever staged, safe to archive on a
+// never-rendered console" from "staged/ genuinely holds unapproved items"
+// (the #657/#1130 protection this file's console-never-rendered skip
+// exists for). Dotfiles (a stray .DS_Store) are not items: the console's
+// own reader (console/resolve.js readSnapshot) filters names starting with
+// `.` the same way — keep the two agreeing. Returns false when the
+// directory doesn't exist (ENOENT) or holds no non-dotfile entry — an
+// absent and an empty staged/ directory are the same signal (nothing
+// pending). Any other read failure (EACCES, ENOTDIR, EIO, …) is not the
+// same signal — it means the contents are genuinely unprovable, not
+// genuinely empty — so it fails closed (true, "treat as pending") the same
+// way readConsoleState's own catch two functions above fails closed on an
+// unparseable console.json; this is the one function the #657/#1130
+// protection's archive decision rests on, so an ambiguous read must never
+// resolve toward "safe to archive" (review finding, #3249).
+function hasStagedItems(runDir) {
+  try {
+    return fs.readdirSync(path.join(runDir, 'staged')).some((n) => !n.startsWith('.'));
+  } catch (err) {
+    return err && err.code !== 'ENOENT';
   }
 }
 
@@ -1363,8 +1403,9 @@ const STRUCTURALLY_STUCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // wrap-up anymore, so no console will ever render, and the plain
 // 'console-never-rendered' reason's "a human eventually answers it"
 // rationale does not apply. The MERGED sub-case of that same fallback
-// keeps using plain 'console-never-rendered', unchanged — code landed
-// there, so a console may genuinely still be pending.
+// (and of the ordinary branch-joined path) archives when staged/ holds
+// nothing pending (#3249), and otherwise keeps plain, untracked
+// 'console-never-rendered' — real staged items still await a human.
 const STRUCTURALLY_STUCK_REASONS = new Set(['no-worktree', 'no-branch', 'no-pr', 'console-never-rendered-pr-closed']);
 
 // #1732: thin wrapper — see isOrphanedMint's comment on the `kinds` scoping
@@ -1443,7 +1484,15 @@ function classifyRunDir(ctx, now = Date.now()) {
       }
     } else if (kind === 'merged') {
       if (prState !== undefined) {
-        const decision = decideArchiveCore(prState, consoleState);
+        // #3249: staged evidence is only computable when the caller passed
+        // `dir`. decideArchive (the thin wrapper above) and the direct
+        // prState-only classifyRunDir unit tests pass none, so
+        // hasStagedPending stays undefined and the unconditional
+        // console-never-rendered skip holds for them. The production merged
+        // path (archiveMergedRun) does not route through here — it calls
+        // decideArchiveCore with hasStagedItems(dir) directly.
+        const hasStagedPending = dir ? hasStagedItems(dir) : undefined;
+        const decision = decideArchiveCore(prState, consoleState, hasStagedPending);
         if (decision.action === 'archive') return { kind: 'merged', ttlMs: null, evidence: {} };
         return { kind: 'none', ttlMs: null, evidence: { skipReason: decision.reason } };
       }
@@ -1558,11 +1607,11 @@ function finishArchiveAttempt(cacheTarget, repoSlug, dir, dryRun, runner, archiv
 
 // #1733: the merged-PR archive sequence both the main loop and the
 // #1544 clean-status sweep run, once branch resolution has already produced a
-// `branch` to check — resolvePrState -> decideArchive -> (skip, with the
+// `branch` to check — resolvePrState -> decideArchiveCore -> (skip, with the
 // caller's own onSkip hook) -> localHasMerge -> (skip on not-yet-caught-up) ->
 // dryRun short-circuit -> archiveRunDir -> trackArchiveResult. `onSkip` is the
 // one place the two callers genuinely differ: the main loop also calls
-// `trackStuckSkip` on a `decideArchive` skip (#1613's structurally-stuck
+// `trackStuckSkip` on a `decideArchiveCore` skip (#1613's structurally-stuck
 // visibility); the clean loop does not (see this file's clean-loop comment
 // for why that asymmetry is intentional, not a gap to "fix").
 function archiveMergedRun({
@@ -1570,7 +1619,11 @@ function archiveMergedRun({
 }) {
   const prState = resolvePrState(root, branch);
   const consoleState = readConsoleState(dir);
-  const decision = decideArchive(prState, consoleState);
+  // #3249: decideArchiveCore directly, not decideArchive — that thin wrapper
+  // routes through classifyRunDir without a `dir`, so the staged-items
+  // exception (hasStagedPending) could never fire on this, the ordinary
+  // production path pr-first-merge-post-merge.md Step 4.2's reconcile hits.
+  const decision = decideArchiveCore(prState, consoleState, hasStagedItems(dir));
   if (decision.action === 'skip') {
     if (onSkip) onSkip(decision.reason);
     return { outcome: 'skipped', reason: decision.reason };
@@ -1830,6 +1883,18 @@ function archiveMerged({
             continue;
           }
           if (consoleState === 'none') {
+            // #3249: a MERGED PR with nothing pending in staged/ is the
+            // fast-lane auto-merge short-circuit's own normal shape — its
+            // console was never written at all, not left unresolved — so
+            // archive it the same way the ordinary branch-joined path now
+            // does (decideArchiveCore's hasStagedPending exception above).
+            // A CLOSED (never-merged) PR keeps the distinct, tracked reason
+            // below unconditionally — there's no run left to converge
+            // toward regardless of staged/'s contents.
+            if (byNumber.state === 'MERGED' && !hasStagedItems(dir)) {
+              finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+              continue;
+            }
             // #2231: a CLOSED (never-merged) PR's console will never
             // render — nothing drives this run's pipeline to wrap-up
             // anymore, so the plain 'console-never-rendered' reason's
@@ -1839,8 +1904,9 @@ function archiveMerged({
             // genuinely dead-ended state escalates like no-branch/
             // no-worktree/no-pr, instead of silently freezing the
             // escalation cache the way plain 'console-never-rendered'
-            // does today (that reason stays untracked for the MERGED
-            // case, where a console really may still be pending).
+            // does (that reason stays untracked for the MERGED case,
+            // reached here only when staged/ holds real pending items
+            // a human must still resolve).
             const consoleReason = byNumber.state === 'CLOSED' ? 'console-never-rendered-pr-closed' : 'console-never-rendered';
             skipped.push({ runDir: dir, reason: consoleReason });
             trackStuckSkip(cacheBatch, repoSlug, dir, consoleReason, { runner });
@@ -1868,7 +1934,7 @@ function archiveMerged({
   // the ordinary worktree-list branch lookup above can't answer here; reuse
   // run-integrity.js's own torn-down-worktree fallback (state.pr.branch, or
   // decisions.md's PR-early lifecycle lines) instead. Otherwise identical to
-  // the main loop: decideArchive's merged-PR + resolved-console gate, then
+  // the main loop: decideArchiveCore's merged-PR + resolved-console gate, then
   // the same local-fast-forward check before any move — via the same
   // archiveMergedRun helper, minus the main loop's trackStuckSkip hook (see
   // that helper's own comment for why the asymmetry is intentional).
@@ -1902,7 +1968,7 @@ function archiveMerged({
 }
 
 module.exports = {
-  archiveMerged, decideArchive, readConsoleState, archiveRunDir, listSpecDirs,
+  archiveMerged, decideArchive, decideArchiveCore, readConsoleState, archiveRunDir, listSpecDirs,
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,

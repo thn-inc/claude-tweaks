@@ -77,6 +77,24 @@ test('a skipped check carries {skipped} in place of an exit code and does not af
   assert.strictEqual(report.pass, true);
 });
 
+test('a timed-out check carries {timedOut:true} and flips pass, same as any other null-exit failure (#3063 AC1)', () => {
+  const report = composeReport({
+    checks: [{
+      name: 'tests', command: 'hang', exitCode: null, timedOut: true, durationMs: 20, logPath: '/tmp/l/tests.log',
+    }],
+    startedAt: 'x', durationMs: 1, git: { sha: null, dirty: null },
+  });
+  assert.strictEqual(report.pass, false);
+  assert.strictEqual(report.checks.tests.timedOut, true);
+});
+
+test('a check that did not time out carries no timedOut key (unchanged entry shape)', () => {
+  const report = composeReport({
+    checks: [PASSING], startedAt: 'x', durationMs: 1, git: { sha: null, dirty: null },
+  });
+  assert.ok(!('timedOut' in report.checks.tests));
+});
+
 test('gitInfo returns nulls when git is unavailable (AC3 outside-a-repo)', () => {
   const throwing = () => { throw new Error('not a repo'); };
   assert.deepStrictEqual(gitInfo(throwing), { sha: null, dirty: null });
@@ -111,7 +129,7 @@ test('writeReportAtomic writes a pid-suffixed temp file then renames it over the
   const rename = (from, to) => calls.push(['rename', from, to]);
   writeReportAtomic({ pass: true }, '/out/report.json', { writeFile, rename });
   assert.strictEqual(calls[0][0], 'write');
-  assert.ok(calls[0][1].startsWith('/out/report.json.tmp-'), 'tmp path is pid-suffixed, not a fixed name');
+  assert.ok(calls[0][1].startsWith(path.join('/out', 'report.json.tmp-')), 'tmp path is pid-suffixed, not a fixed name');
   assert.deepStrictEqual(JSON.parse(calls[0][2]), { pass: true });
   assert.deepStrictEqual(calls[1], ['rename', calls[0][1], '/out/report.json']);
 });
@@ -142,12 +160,12 @@ test('gitDir resolves a relative rev-parse answer against cwd and returns an abs
     assert.deepStrictEqual(args, ['rev-parse', '--git-dir']);
     return '.git\n';
   };
-  assert.strictEqual(gitDir(exec, '/repo'), path.join('/repo', '.git'));
+  assert.strictEqual(gitDir(exec, '/repo'), path.resolve('/repo', '.git'));
 });
 
-test('gitDir passes an already-absolute worktree git dir through unchanged (#1921)', () => {
+test('gitDir keeps an already-absolute worktree git dir rather than joining it to cwd (#1921)', () => {
   const exec = () => '/repo/.git/worktrees/wt\n';
-  assert.strictEqual(gitDir(exec, '/elsewhere'), '/repo/.git/worktrees/wt');
+  assert.strictEqual(gitDir(exec, '/elsewhere'), path.resolve('/repo/.git/worktrees/wt'));
 });
 
 test('gitDir returns null when git fails (outside a checkout) (#1921)', () => {
@@ -202,5 +220,17 @@ test('composeReport omits baselineAdjudicated when none is passed and carries it
   const adjudicated = { base: 'main', baseSha: 'f'.repeat(40), eligible: true, verdict: 'pass', failingFiles: ['tests/a.test.js'], baselineFailing: ['tests/a.test.js'], flakyPassed: [], attributable: [] };
   const report = composeReport({ checks: [failing], startedAt: 't', durationMs: 1, git, baselineAdjudicated: adjudicated });
   assert.deepStrictEqual(report.baselineAdjudicated, adjudicated);
+  assert.strictEqual(report.pass, false);
+});
+
+test('composeReport omits preExistingAdjudicated when none is passed and carries it verbatim when given; pass stays raw (#3129)', () => {
+  const failing = { ...PASSING, exitCode: 1 };
+  const git = { sha: 'abc', dirty: false };
+  const plain = composeReport({ checks: [failing], startedAt: 't', durationMs: 1, git });
+  assert.strictEqual('preExistingAdjudicated' in plain, false);
+  assert.strictEqual('preExistingAdjudicated' in composeReport({ checks: [failing], startedAt: 't', durationMs: 1, git, preExistingAdjudicated: null }), false);
+  const adjudicated = { declared: ['tests/known-shallow.test.js'], matched: ['tests/known-shallow.test.js'] };
+  const report = composeReport({ checks: [failing], startedAt: 't', durationMs: 1, git, preExistingAdjudicated: adjudicated });
+  assert.deepStrictEqual(report.preExistingAdjudicated, adjudicated);
   assert.strictEqual(report.pass, false);
 });

@@ -38,9 +38,15 @@ touching shared state runs one member at a time.
    `failing`: report the failure and stop for this candidate — do not treat a stale prior green as
    current. `pending`: report and stop for this candidate too; a headless close-out that waited on
    pending checks would just reinvent `--auto`, which is already armed or available in step 5 below.
-2. **Re-check mergeability (AC3).** Reuse `resolvePrStateByNumber`
-   (`bin/lib/reconcile/pr-state.js`) exactly as `_shared/github-pr-scan.md` item 11 already does for
-   its own `mergeStateStatus` read — the same function, not a third PR-state-reading code path.
+2. **Re-check mergeability (AC3).** Reuse `resolvePrStateByNumber(repoRoot, number)`
+   (`bin/lib/reconcile/pr-state.js` — two positional arguments: the main checkout's path, whose
+   `origin` remote gives `gh` its host and repo, then the PR number) exactly as
+   `_shared/github-pr-scan.md` item 11 already does for its own `mergeStateStatus` read — the same
+   function, not a third PR-state-reading code path. It returns the PR's
+   `{state, mergeable, mergeStateStatus, …}` object, or one of the strings `'gh-absent'` /
+   `'network-failure'` (transport failure) / `'invalid-arguments'` (a misordered or malformed
+   call), or `null` for a missing number. Any string result (or `null`) stops this candidate — report
+   it, and never read it as "not DIRTY".
    `mergeStateStatus: DIRTY`: this is item 11's own finding surfacing again at close-out time —
    report it with that scope's own recommendation (rebase and re-verify: typecheck, lint, full test
    suite) and stop for this candidate. Rebasing changes PR content without the author present, so
@@ -61,8 +67,8 @@ touching shared state runs one member at a time.
    directly against this PR — the second call site reaching Step 3 from outside a build or dispatch
    pipeline (the first is `actions-github-issues.md`'s `## Arm ready PR`), reusing that file's full
    degrade chain (`--auto` arm → immediate merge where auto-merge isn't enabled → ready-and-comment
-   on any other failure) rather than reimplementing it. Report the outcome (`armed`/`merged`) using
-   that same vocabulary.
+   on any other failure) rather than reimplementing it, with `{tag}` = `human-approved` (that
+   step's tag paragraph). Report the outcome (`armed`/`merged`) using that same vocabulary.
 6. **Deploy, when the project has one (AC4).** When this project's CLAUDE.md Commands section
    documents a deploy command and step 5 reported `merged`, run it now and log the command, exit
    code, and one-line outcome — never invented when the project documents none, and never itself
