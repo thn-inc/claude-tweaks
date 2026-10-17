@@ -53,6 +53,15 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.145.0](https://github.com/thn-inc/claude-tweaks/compare/v6.144.0...v6.145.0) (2026-10-17)
+
+
+### Features
+
+* Add the skill-size rail: budgets.js plus read-limit… ([#3306](https://github.com/thn-inc/claude-tweaks/issues/3306)) ([a39cd61](https://github.com/thn-inc/claude-tweaks/commit/a39cd61fad9d8bac2dc855216489b65286fe92e2)), closes [#3307](https://github.com/thn-inc/claude-tweaks/issues/3307) [#3308](https://github.com/thn-inc/claude-tweaks/issues/3308) [#3309](https://github.com/thn-inc/claude-tweaks/issues/3309) [#3310](https://github.com/thn-inc/claude-tweaks/issues/3310)
+* Attribute agent cost to individual subagent dispatches… ([#3375](https://github.com/thn-inc/claude-tweaks/issues/3375)) ([ffe20b9](https://github.com/thn-inc/claude-tweaks/commit/ffe20b982feda6ee34d34a3865426207f46be036)), closes [#3380](https://github.com/thn-inc/claude-tweaks/issues/3380)
+* Decommission CEILING_BYTES, merge-size-probe, and every… ([#3311](https://github.com/thn-inc/claude-tweaks/issues/3311)) ([f492770](https://github.com/thn-inc/claude-tweaks/commit/f49277005147f302d3703c22ba1be0a84d1e8200))
+
 ## [6.144.0](https://github.com/thn-inc/claude-tweaks/compare/v6.143.0...v6.144.0) (2026-10-17)
 
 
