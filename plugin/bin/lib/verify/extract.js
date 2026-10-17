@@ -443,7 +443,9 @@ const TAP_FRAME_KEYS = new Set(['location', 'stack']);
 // {kind: 'notOk' | 'ok' | 'subtest' | 'comment' | 'yamlOpen' | 'yaml' |
 // 'yamlClose' | 'other', indent: the CR-stripped line's leading-whitespace
 // length, owner: the index of the `not ok` line whose block holds this line
-// (itself, its body, its YAML block included) or -1, key: on a 'yaml' line the
+// (itself, its body, its YAML block included) or -1 — ownership continues past
+// the block's yamlClose until the next test point or `# ` line, because
+// tapBlocks' body and frames include those lines, key: on a 'yaml' line the
 // top-level YAML key in force, else null, keyStart: true on a 'yaml' line that
 // starts a `name:` key}. A block ends at the next test point or `# ` line at
 // any indentation.
