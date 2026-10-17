@@ -34,7 +34,8 @@ function assertQaPromptsBlock(block) {
   assert.match(block, /SKIPPED[\s\S]{0,200}`unresolved-secondary-origin`|`unresolved-secondary-origin`[\s\S]{0,200}SKIPPED/, 'skip reason is tied to SKIPPED');
   assert.match(block, /worktree/i, 'worktree run is covered');
   assert.match(block, /isLinkedWorktree/, 'worktree detection signal is named');
-  assert.match(block, /loopback[\s\S]{0,300}qa-procedures\.md|qa-procedures\.md[\s\S]{0,300}loopback/i, 'loopback host set is cited from qa-procedures.md');
+  assert.match(block, /Loopback means[^\n]*qa-procedures\.md[^\n]*Target environment check/, 'loopback host set is cited from qa-procedures.md');
+  assert.match(block, /Root-relative `target`[^\n]*new URL\(target, APP_URL\)[^\n]*never flagged[\s\S]{0,40}Absolute origin already equal to `APP_URL`'s[^\n]*never flagged/, 'root-relative and APP_URL-equal targets are never flagged');
   assert.match(block, /Non-loopback origin[\s\S]{0,120}unchanged/i, 'non-loopback origin is dispatched unchanged');
   assert.match(block, /primary-checkout run[\s\S]{0,200}flag/i, 'primary-checkout loopback origin is flagged');
   assert.match(block, /`fill`[\s\S]{0,200}verbatim/, 'fill values are passed verbatim');
@@ -46,8 +47,8 @@ function assertQaPromptsBlock(block) {
   assert.match(block, /APP_URL=http:\/\/localhost:54321/, 'worked example APP_URL');
   assert.match(block, /http:\/\/localhost:54321\/reset/, 'worked example resolved URL');
   assert.match(block, /4010[\s\S]{0,300}flagged/i, 'worked example states the 4010 step is flagged');
-  assert.match(block, /step origins/i, 'step-origin rewrite-count line');
-  assert.match(block, /flag line|flagged origins/i, 'flag line for secondary origins');
+  assert.match(block, /`QA: N navigate step origins rewritten to APP_URL`/, 'step-origin rewrite-count line');
+  assert.match(block, /`QA: flagged secondary origins /, 'flag line for secondary origins');
   assert.match(block, /story ids/i, 'flag line names affected story ids');
 }
 
@@ -72,6 +73,22 @@ test('AC3.1: each qa-prompts assertion goes red when its prose is reverted', () 
     assert.notEqual(mutated, live, `literal is not present in the live block: ${lit}`);
     assert.throws(() => assertQaPromptsBlock(mutated), undefined, `reverting ${lit} did not fail assertQaPromptsBlock`);
   }
+});
+
+test('AC3.1: loopback, never-flagged, and log-line assertions each go red on their own prose', () => {
+  const live = LIVE_BLOCK();
+  const expectRed = (mutated, message) => {
+    assert.notEqual(mutated, live, `mutation is not a no-op: ${message}`);
+    assert.throws(() => assertQaPromptsBlock(mutated), { message }, `reverting did not fail "${message}"`);
+  };
+
+  expectRed(live.replace(/\n  Loopback means[^\n]*\n/, '\n'), 'loopback host set is cited from qa-procedures.md');
+  const rootRelative = /\n  - \*\*Root-relative `target`\*\*[^\n]*/;
+  const apEqual = /\n  - \*\*Absolute origin already equal to `APP_URL`'s\*\*[^\n]*/;
+  expectRed(live.replace(rootRelative, ''), 'root-relative and APP_URL-equal targets are never flagged');
+  expectRed(live.replace(apEqual, ''), 'root-relative and APP_URL-equal targets are never flagged');
+  expectRed(live.replace('`QA: N navigate step origins rewritten to APP_URL`', ''), 'step-origin rewrite-count line');
+  expectRed(live.replace(/`QA: flagged secondary origins [^`]*`/, ''), 'flag line for secondary origins');
 });
 
 const STORIES_SKILL = 'plugin/skills/stories/SKILL.md';
