@@ -28,6 +28,7 @@ const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve')
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
+const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -676,6 +677,23 @@ function resolvePrNumber(runDir) {
 // `github-issues` path. The Oversight-floor gate's exemption (a non-parent
 // record that doesn't clear the floor legitimately carries no
 // `demo:pending`) IS reproduced here -- see `oversightExemptSet` above.
+// #3358: a brief/pointer marker only counts when its comment's author is an
+// owner, member, or collaborator (`comment-trust.js`) -- anyone who can
+// comment could otherwise plant a `### Confirmed` brief and satisfy the
+// check. Scans every comment the marker test matches: trusted matches count,
+// untrusted ones take the "no such comment" path and come back as skip notes
+// the row names, so the operator sees what was passed over.
+function scanMarkerComments(comments, hasMarker) {
+  let trusted = false;
+  const ignored = [];
+  for (const c of comments) {
+    if (!c || !hasMarker(c)) continue;
+    if (isTrustedComment(c)) trusted = true;
+    else ignored.push(untrustedSkipNote(c));
+  }
+  return { trusted, ignored };
+}
+
 registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
   if (!ghAvailable(deps, cwd)) return { result: 'unknown', detail: 'gh absent' };
   const issues = resolvedIssueNumbers(runDir);
@@ -694,6 +712,7 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
     return { result: 'skip', detail: `oversight floor not cleared for #${issues.join(', #')}` };
   }
   const failing = [];
+  const notes = []; // skip notes from targets that pass (#3358)
 
   // Resolve each issue's target (its parent, when resolvable; itself
   // otherwise), deduping by target -- two sub-issues sharing one parent
@@ -745,42 +764,53 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
       continue;
     }
     const comments = issueData.comments || [];
-    const hasFullBrief = comments.some((c) => c.body && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed'));
-    if (hasFullBrief) continue;
+    // Skip notes for this target's untrusted marker comments; appended to its
+    // failing line, or to `notes` when the target passes.
+    const ignored = [];
+    const fail = (line) => failing.push(ignored.length ? `${line}; ignored: ${ignored.join('; ')}` : line);
+    const fullBrief = scanMarkerComments(
+      comments,
+      (c) => c.body && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed')
+    );
+    ignored.push(...fullBrief.ignored);
+    if (fullBrief.trusted) { notes.push(...ignored); continue; }
 
     // No full brief on the issue itself -- under pr-first (run-state.json
     // carries a `pr` object), verification-brief.md's "`pr` object present"
     // branch posts the full brief on the PR instead, leaving only a
     // one-line pointer on the issue. Check for that form before failing.
     if (prNumber) {
-      const hasPointer = comments.some((c) => c.body && c.body.includes('Verification Brief posted to PR #'));
-      if (hasPointer) {
+      const pointer = scanMarkerComments(comments, (c) => c.body && c.body.includes('Verification Brief posted to PR #'));
+      ignored.push(...pointer.ignored);
+      if (pointer.trusted) {
         let prCommentsRaw;
         try {
           prCommentsRaw = deps.gh(['pr', 'view', String(prNumber), '--json', 'comments'], cwd);
         } catch (err) {
-          failing.push(`#${target}: gh pr view failed for PR #${prNumber} (${err.message})`);
+          fail(`#${target}: gh pr view failed for PR #${prNumber} (${err.message})`);
           continue;
         }
         let prComments;
         try {
           prComments = JSON.parse(prCommentsRaw).comments || [];
         } catch {
-          failing.push(`#${target}: could not parse PR #${prNumber} comments JSON`);
+          fail(`#${target}: could not parse PR #${prNumber} comments JSON`);
           continue;
         }
-        const hasPrBrief = prComments.some(
+        const prBrief = scanMarkerComments(
+          prComments,
           (c) => c.body && c.body.includes('<!-- run-comment: brief -->') && c.body.includes('### Confirmed')
         );
-        if (hasPrBrief) continue;
-        failing.push(`#${target}: pointer to PR #${prNumber} found but no confirmed Verification Brief on PR #${prNumber}`);
+        ignored.push(...prBrief.ignored);
+        if (prBrief.trusted) { notes.push(...ignored); continue; }
+        fail(`#${target}: pointer to PR #${prNumber} found but no confirmed Verification Brief on PR #${prNumber}`);
         continue;
       }
     }
-    failing.push(`#${target}: no comment carries a confirmed Verification Brief`);
+    fail(`#${target}: no comment carries a confirmed Verification Brief`);
   }
   if (failing.length) return { result: 'fail', detail: failing.join('; ') };
-  return { result: 'pass', detail: '' };
+  return { result: 'pass', detail: notes.length ? `ignored: ${notes.join('; ')}` : '' };
 });
 
 // ---- memory updates -----------------------------------------------------------
