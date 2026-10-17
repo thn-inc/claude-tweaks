@@ -183,12 +183,6 @@ test('#2002: pr-checklist-refresh.md carries the Phase-checklist update, Pre-mer
   assert.doesNotMatch(LIFECYCLE, /## Pre-merge title\/description refresh/);
 });
 
-test('#1712: the polish-row creation rule names the every-record condition and manifest.yml specs[]', () => {
-  assert.match(LIFECYCLE, /omit the `polish` row only when \*\*every\*\* record|Omit a `polish` row only when \*\*every\*\* record/);
-  assert.match(LIFECYCLE, /parent `manifest\.yml`'s `specs\[\]` list/);
-  assert.match(LIFECYCLE, /An\s+absent `surface:` facet counts as "can run\s+polish"/);
-});
-
 test('#1712: the skip rule names the multi-spec deferral to the pre-merge refresh', () => {
   assert.match(LIFECYCLE, /In\s+a\s+\*\*multi-spec\*\*\s+run.*never removes the row on its\s+own/s);
   assert.match(LIFECYCLE, /`_shared\/pr-checklist-refresh\.md`'s Pre-merge title\/description\s+refresh removes it once/);
@@ -204,8 +198,35 @@ test('#1712: multispec-pr-checklist.md carries the run-level polish-row paragrap
   assert.match(MULTISPEC_PR_CHECKLIST, /The `polish` row is a run-level, not first-spec, decision \(#1712\)/);
 });
 
-test('#1712: steps-and-gates.md phase-exit paragraph uses the every-record wording for the polish-row omission', () => {
-  assert.match(STEPS_AND_GATES, /omitted at PR creation only when every record in the run has a backend `surface:`/);
+// #3319 retired #1712's creation-time polish-row omission: the composer never implemented it,
+// and tests/bin-lib/flow/pr-body.test.js now pins all five rows for an all-backend run. Scan
+// paragraph by paragraph — "omit" near "polish" and "creation", case-insensitive — so a reworded
+// restatement of the rule goes red, not only the exact old sentence.
+test('#3319: no file states a creation-time polish-row omission rule', () => {
+  const files = {
+    'pr-early-run-lifecycle.md': LIFECYCLE,
+    'flow/steps-and-gates.md': STEPS_AND_GATES,
+    'flow/multispec-pr-checklist.md': read('plugin', 'skills', 'flow', 'multispec-pr-checklist.md'),
+  };
+  for (const [name, text] of Object.entries(files)) {
+    const offending = text
+      .split(/\n\s*\n/)
+      .filter((p) => /\bomit(s|ted|ting)?\b/i.test(p) && /\bpolish\b/i.test(p) && /\bcreation\b/i.test(p));
+    assert.deepEqual(offending, [], `${name} still states a creation-time polish-row omission`);
+  }
+});
+
+test('#3319: flow/multi-spec.md no longer makes the polish row conditional at creation', () => {
+  const MULTI_SPEC = read('plugin', 'skills', 'flow', 'multi-spec.md');
+  assert.doesNotMatch(MULTI_SPEC, /present if any record in the run can run polish/);
+  assert.match(MULTI_SPEC, /present from PR creation/);
+});
+
+test('#3319: steps-and-gates.md phase-exit paragraph routes a non-frontend polish skip through the would-be exit', () => {
+  assert.match(
+    STEPS_AND_GATES,
+    /a non-frontend `surface:`[^\n]*a single-record run removes the row at polish's would-be exit[^\n]*In a multi-spec run that would-be-exit removal is deferred instead/,
+  );
 });
 
 test('bin/hooks.js record-pr verb writes run-state.json.pr through writeRunState, mirroring record-worktree', () => {
