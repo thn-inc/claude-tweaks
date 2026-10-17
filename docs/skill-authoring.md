@@ -171,6 +171,8 @@ A session working inside a worktree created by `EnterWorktree` (or entered into 
 
 For the empirically observed boundary of what Bash commands pass and fail in a worktree session, see `plugin/skills/_shared/scratch-worktree.md`'s "## 7. Shell constraint" — that is the canonical, detailed statement that skill implementers will actually encounter in their dispatch context.
 
+A refusal without the plugin's deny prefix is not automatically this guard, either. A Claude Code permission rule denies with different wording — `Permission to use Bash with command … has been denied` — when a configured `deny` rule matches the command or a path it names. Check the session's permission rules before filing it against the guard or the plugin. That section's 2026-10-16 addendum (#2776) records one such report, produced by a user-scope `Read(**/*.log)` rule.
+
 ## Harness-level skill re-invocation vs. batched Skill calls (#2728)
 
 A second same-session `Skill` tool invocation of a skill the harness has already flagged as
