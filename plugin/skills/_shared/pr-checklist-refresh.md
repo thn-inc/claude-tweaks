@@ -157,11 +157,12 @@ above), not necessarily every phase this run actually completed.
    the final catch-all for any phase whose own best-effort update silently failed. **Multi-spec
    deferred polish-row removal:** if the `polish` row is present and still unchecked
    (`- [ ] polish`) at this point, check every spec's outcome in the parent `manifest.yml`'s
-   `specs[]`; when no spec in the run ever ran polish (every spec's `surface:` was `backend`, or
-   `no-polish`/`ceremony-profile: fast-lane` applied run-wide), remove the row here — the
-   deferred counterpart to `_shared/pr-early-run-lifecycle.md`'s multi-spec skip-rule scoping
-   (see `flow/multispec-pr-checklist.md`). A single-record run never reaches this branch — its
-   row was already removed or checked at polish's own would-be exit.
+   `specs[]`; when no spec in the run ever ran polish (every spec's `surface:` was non-frontend —
+   `backend` or `infra` — or `no-polish`/`ceremony-profile: fast-lane` applied run-wide), remove
+   the row here — the deferred counterpart to `_shared/pr-early-run-lifecycle.md`'s multi-spec
+   skip-rule scoping (see `flow/multispec-pr-checklist.md`).
+   A single-record run never reaches this branch — its row was already removed or checked at
+   polish's own would-be exit.
 <!-- when: integration-model=pr-first -->
 3. **Rewrite the `Fixes` block from outcomes (#2015, #3136).** Read parent `manifest.yml`
    (`bin/lib/flow/manifest.js`'s `readManifest`) to tell a bundle run from a single-record one —
