@@ -24,6 +24,7 @@ const { resolvePolicyConfig } = require('./lib/policy-schema');
 const { resolveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
 const { extractPendingGrantedAt, partitionGrantComments } = require('./lib/issues/grant-maturation');
 const { writeFileAtomic } = require('./lib/atomic-write');
+const { unresolvedItems, formatResidueLines } = require('./lib/console/residue');
 
 const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]';
 
@@ -203,7 +204,18 @@ async function run(argv, deps = {}) {
     appendEntry({ runDir, section: '/wrap-up', entry: [header, ...lines].join('\n') });
     writeFileAtomic(consolePath, `${JSON.stringify({ resolved: true, mode: 'auto-resolve', at, ceiling: 'unattended', items: result.items, merge: result.merge }, null, 2)}\n`);
   }
-  stdout(o.json ? `${JSON.stringify({ ...publicResult, at, dryRun: o.dryRun }, null, 2)}\n` : `${table}\n`);
+  // #3370: items this console deliberately left pending/keep-staged must survive
+  // the run's own final stop. Read-only: nothing here applies or resolves them.
+  const unresolved = unresolvedItems({ items: result.items });
+  if (o.json) {
+    stdout(`${JSON.stringify({ ...publicResult, unresolved, at, dryRun: o.dryRun }, null, 2)}\n`);
+  } else {
+    stdout(`${table}\n`);
+    if (unresolved.length > 0) {
+      const lines = formatResidueLines({ dir: runDir, consoles: [{ path: consolePath, items: unresolved }] }, { pluginRoot: path.resolve(__dirname, '..') });
+      stdout(`\nNeeds a human — ${unresolved.length} item(s) this console did not resolve (never auto-applied):\n${lines.join('\n')}\n`);
+    }
+  }
   return 0;
 }
 
