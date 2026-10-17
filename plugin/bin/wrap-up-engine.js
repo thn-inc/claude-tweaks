@@ -524,6 +524,13 @@ function runVerifyVerb(args) {
   process.exitCode = exitCode;
 }
 
+// finish-console: `issues` participates only when the payload names it
+// (non-null); an absent or null key must neither validate nor overwrite a
+// stored issues array.
+function optionalIssuesField(payload) {
+  return payload.issues != null ? { issues: payload.issues } : {};
+}
+
 // #2546: consolidates the Review Console's three "outcome write" steps the
 // skill text previously hand-assembled separately — writing
 // verify-expectations.json, logging the terminal decision plus each M#/U#
@@ -567,11 +574,8 @@ function validateFinishConsolePayload(payload) {
   const upstream = payload.upstream ?? [];
   const ledger = payload.ledger ?? [];
   // memory/upstream/issues shape is the writer library's own check — one rule
-  // for both writers of verify-expectations.json (#2764). `issues` is included
-  // only when the payload names it (non-null), so an absent/null key validates nothing.
-  const fieldsError = validateFields({
-    memory, upstream, ...(payload.issues != null ? { issues: payload.issues } : {}),
-  });
+  // for both writers of verify-expectations.json (#2764).
+  const fieldsError = validateFields({ memory, upstream, ...optionalIssuesField(payload) });
   if (fieldsError) return fieldsError;
   if (!Array.isArray(ledger)) return '"ledger" must be an array';
   for (const [i, l] of ledger.entries()) {
@@ -602,10 +606,7 @@ function runFinishConsole(args) {
   // field this verb doesn't itself own, same discipline
   // review-console.md's step 11 documents for oversightExempt/issues).
   try {
-    writeExpectations({
-      runDir: args.runDir,
-      fields: { memory, upstream, ...(payload.issues != null ? { issues: payload.issues } : {}) },
-    });
+    writeExpectations({ runDir: args.runDir, fields: { memory, upstream, ...optionalIssuesField(payload) } });
   } catch (e) {
     process.stderr.write(`wrap-up-engine.js finish-console: step 1 (verify-expectations.json) failed: ${e.message}\n`);
     process.exitCode = 1;
