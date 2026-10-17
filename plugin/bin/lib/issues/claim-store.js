@@ -268,13 +268,6 @@ function readClaimBlobContentsApi(ghApi, repoSlug, issueNumber) {
   }
 }
 
-// (#3393) `repos/null/contents/...` is never a valid request: an unresolved
-// repo slug used to reach the contents API as the literal `null` and 404,
-// which read as "claim absent" — a false "no claim" for a claim that may
-// exist. `createClaimReader` is the one chained claim reader the skills
-// build on: an unresolved slug makes the contents-API leg a `repo-slug-
-// unresolved` failure instead of a request, so the git leg's answer stands
-// and a git failure stays a failure, never absent.
 function defaultRunGh(args) {
   return execFileSync('gh', args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
@@ -295,6 +288,13 @@ function resolveRepoSlug(runGh = defaultRunGh) {
 
 const unresolvedSlugGhApi = () => ({ stdout: null, failure: 'repo-slug-unresolved', status: null });
 
+// (#3393) `repos/null/contents/...` is never a valid request: an unresolved
+// repo slug used to reach the contents API as the literal `null` and 404,
+// which read as "claim absent" — a false "no claim" for a claim that may
+// exist. `createClaimReader` is the one chained claim reader the skills
+// build on: an unresolved slug makes the contents-API leg a `repo-slug-
+// unresolved` failure instead of a request, so the git leg's answer stands
+// and a git failure stays a failure, never absent.
 // ({gitRunner?, ghApi?, repoSlug?, runGh?}) -> {repoSlug, read(issueNumber)}
 // `repoSlug` is used as given when the key is present (including `null`);
 // otherwise it is resolved through `runGh`. `read` returns `{content}` (null

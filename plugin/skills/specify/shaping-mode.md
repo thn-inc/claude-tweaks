@@ -151,7 +151,7 @@ alone (one `git fetch` in total, chained through the first read's tip) and skips
 there are none. A failed claim read (the git read falls back to the contents API) — including an unresolved repo
 slug, which is never read as an absent claim — or a failed linked-PR query leaves that candidate
 "not in flight" — never a refusal (a GraphQL error on one issue still keeps the partial `data` for
-the others). A failed claim read also lands in the output's `unreadable` list, which is quoted beside
+the others). A failed claim read also lands in the output's `unreadable` list; quote it beside
 the candidate table. With no `gh` (MCP
 transport), run the call unchanged: the git claim read still works wherever `git fetch` can read
 the remote, and the GraphQL call falls into its `catch` — the per-item PR-read degrade

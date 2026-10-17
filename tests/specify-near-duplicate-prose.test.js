@@ -156,9 +156,12 @@ test('AC1.1: an unreadable claim is reported on the output and the happy path st
   // #7 is title-similar and ready, so the fence reads its claim. An empty PATH makes gh and git
   // unavailable: the slug is unresolved and the git leg fails, so the read is a failure, never an
   // absent claim, and #7 is reported as unreadable while staying not in flight.
-  fs.writeFileSync(hits, JSON.stringify([{ number: 7, title: 'Similar', signals: ['title-similarity'] }]));
-  fs.writeFileSync(snapshot, JSON.stringify([{ number: 7, labels: ['ready'] }]));
-  const out = execFileSync(process.execPath, ['-e', code, hits, snapshot], { encoding: 'utf8', env: { ...process.env, PATH: dir } });
-  assert.deepStrictEqual(JSON.parse(out.trim()), { refuse: false, unreadable: [7] });
-  fs.rmSync(dir, { recursive: true, force: true });
+  try {
+    fs.writeFileSync(hits, JSON.stringify([{ number: 7, title: 'Similar', signals: ['title-similarity'] }]));
+    fs.writeFileSync(snapshot, JSON.stringify([{ number: 7, labels: ['ready'] }]));
+    const out = execFileSync(process.execPath, ['-e', code, hits, snapshot], { encoding: 'utf8', env: { ...process.env, PATH: dir } });
+    assert.deepStrictEqual(JSON.parse(out.trim()), { refuse: false, unreadable: [7] });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
