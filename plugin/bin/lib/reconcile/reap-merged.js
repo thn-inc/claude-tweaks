@@ -50,9 +50,11 @@ function logReapEvent(runDir, type, data) {
 // that no longer string-matches the pre-resolved `real` path this loop
 // already has (caught in review: the removal itself worked, but the join
 // silently found nothing every time).
+// skipAdHoc (#2783): an `-adhoc-standalone` twin, minted after /flow's formal
+// run, sorts newer and would otherwise take the formal run's reap trail.
 function resolveOwningRunDir(root, real) {
   try {
-    const found = findRunByWorktreePath(root, real);
+    const found = findRunByWorktreePath(root, real, { skipAdHoc: true });
     return found ? found.runDir : null;
   } catch { return null; }
 }

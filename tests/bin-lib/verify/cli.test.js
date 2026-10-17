@@ -797,6 +797,8 @@ test('--scope: --base that contradicts the stamp anchor is a usage error, and wr
   const run = await runCli(['--scope', r.declPath, '--base', c1, '--cmd', `unit=${r.unitCmd}`], { cwd: r.repo });
   assert.strictEqual(run.code, 2);
   assert.match(run.stderr, /--scope: --base .* conflicts with the stamp anchor/);
+  assert.doesNotMatch(run.stderr, /pass --integration-branch instead/, '#3072 AC5: the refusal must not imply --integration-branch overrides the anchor');
+  assert.match(run.stderr, /after an integration-branch merge, --integration-branch narrows the scoped set to this branch's own delta/);
   assert.deepStrictEqual(stampOf(r.gitDir), baseline, 'a rejected --base must never touch the existing stamp');
 });
 
@@ -1817,6 +1819,91 @@ test('--baseline: the scratch worktree is gone after the run (#3043)', async () 
   assert.match(stdout, /Baseline: adjudicated against/, 'a scratch worktree was actually created');
   const list = r.git('worktree', 'list', '--porcelain');
   assert.strictEqual((list.match(/^worktree /gm) || []).length, 1, list);
+});
+
+// #3072: scopedRepo on its init branch (the integration branch), a feature
+// branch cut from it carrying the full-pass anchor, then a --no-ff merge of the
+// integration branch bringing in N `ui/**` files plus one own-work `src/**` commit.
+function mergedScopedRepo() {
+  const r = scopedRepo([
+    { match: 'src/**', suites: ['unit'], static: true },
+    { match: 'ui/**', suites: ['other'], static: true },
+  ]);
+  const trunk = r.branch;
+  r.git('checkout', '-q', '-b', 'feat');
+  return { ...r, trunk };
+}
+
+async function anchorFullPass(r, extraArgs = []) {
+  const args = ['--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0', ...extraArgs];
+  const run = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.match(run.stdout, /^Scope: full/m);
+  if (fs.existsSync(r.marker)) fs.unlinkSync(r.marker);
+  return stampOf(r.gitDir).fullSha;
+}
+
+function mergeTrunk(r, rels) {
+  r.git('checkout', '-q', r.trunk);
+  for (const rel of rels) commitFile(r, rel, rel);
+  r.git('checkout', '-q', 'feat');
+  r.git('merge', '-q', '--no-ff', '--no-edit', r.trunk);
+}
+
+test('--scope --integration-branch: after an integration-branch merge, only the own-work path selects suites and report.json counts the merge-identical ones (#3072 AC1)', async () => {
+  const r = mergedScopedRepo();
+  const anchor = await anchorFullPass(r);
+  mergeTrunk(r, ['ui/a.js', 'ui/b.js', 'ui/c.js']);
+  commitFile(r, 'src/own.js', 'own');
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.match(run.stdout, /^Scope: scoped — 1 changed file\(s\) since/m);
+  assert.match(run.stdout, /^merge-narrowed: 3 merge-identical path\(s\) excluded \(identical to /m);
+  const s = stampOf(r.gitDir);
+  assert.strictEqual(s.fullSha, anchor, 'the anchor is untouched — narrowing filters, it never re-bases');
+  assert.deepStrictEqual(s.changedFiles, ['src/own.js']);
+  assert.deepStrictEqual(s.suitesRun, ['unit']);
+  const report = JSON.parse(fs.readFileSync(s.reportPath, 'utf8'));
+  assert.strictEqual(report.scope.base, anchor);
+  assert.deepStrictEqual(report.scope.changedFiles, ['src/own.js']);
+  assert.deepStrictEqual(report.scope.mergeNarrowing, { ref: r.trunk, excluded: 3, excludedFiles: ['ui/a.js', 'ui/b.js', 'ui/c.js'] });
+});
+
+test('--scope: without --integration-branch the same merged fixture selects every anchor..HEAD path, unnarrowed (#3072 AC4)', async () => {
+  const r = mergedScopedRepo();
+  await anchorFullPass(r);
+  mergeTrunk(r, ['ui/a.js', 'ui/b.js']);
+  commitFile(r, 'src/own.js', 'own');
+  const run = await runCli(['--scope', r.declPath, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.doesNotMatch(run.stdout, /merge-narrowed/);
+  const report = JSON.parse(fs.readFileSync(stampOf(r.gitDir).reportPath, 'utf8'));
+  assert.deepStrictEqual(report.scope.changedFiles, ['src/own.js', 'ui/a.js', 'ui/b.js']);
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+});
+
+test('--scope --integration-branch: with no integration-branch merge after the anchor, the set equals anchor..HEAD (#3072 AC2)', async () => {
+  const r = mergedScopedRepo();
+  await anchorFullPass(r);
+  commitFile(r, 'src/own.js', 'own');
+  commitFile(r, 'ui/a.js', 'a');
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const report = JSON.parse(fs.readFileSync(stampOf(r.gitDir).reportPath, 'utf8'));
+  assert.deepStrictEqual(report.scope.changedFiles, ['src/own.js', 'ui/a.js']);
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+});
+
+test('--scope --integration-branch: a merged-in file the branch then edited stays selected (#3072 AC3)', async () => {
+  const r = mergedScopedRepo();
+  await anchorFullPass(r);
+  mergeTrunk(r, ['ui/a.js', 'ui/b.js']);
+  commitFile(r, 'ui/a.js', 'edited on the branch');
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const report = JSON.parse(fs.readFileSync(stampOf(r.gitDir).reportPath, 'utf8'));
+  assert.deepStrictEqual(report.scope.changedFiles, ['ui/a.js']);
+  assert.deepStrictEqual(report.scope.mergeNarrowing, { ref: r.trunk, excluded: 1, excludedFiles: ['ui/b.js'] });
 });
 
 test('--baseline: a stale ct-verify-base-* scratch worktree from an earlier interrupted run is named on stderr, and left alone (#3064)', async () => {

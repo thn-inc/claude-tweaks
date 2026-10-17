@@ -114,3 +114,28 @@ test('#2543 control: a frictionless session (no denial) still reports [] from th
   const events = runFrictionEvents(['--run', laterRunDir, '--worktree', project]);
   assert.deepStrictEqual(events, []);
 });
+
+test('#2813: a main-checkout gate denial lands in a fresh ad-hoc dir even when an unrelated unowned run dir is present', () => {
+  const project = gitRepo();
+  writeWorktreeAlwaysPolicy(project);
+  // An unrelated, adopted (decisions.md present), unowned run dir — exactly the
+  // shape resolveRun's fallback arm guesses into (e.g. a sibling session's
+  // *-tidy-standalone run).
+  const pipelinesDir = path.join(project, '.claude-tweaks', 'pipelines');
+  const sibling = path.join(pipelinesDir, '2026-10-01T000000-tidy-standalone');
+  fs.mkdirSync(sibling, { recursive: true });
+  fs.writeFileSync(path.join(sibling, 'decisions.md'), '## /tidy\n');
+
+  const denyResult = runHook(['pre-tool-use'], {
+    input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: path.join(project, 'a.txt') }, session_id: 'repro-session-2813' }),
+    cwd: project,
+  });
+  assert.match(denyResult.stdout, /"permissionDecision":"deny"/);
+  assert.ok(!fs.existsSync(path.join(sibling, 'events.jsonl')), 'the denial must not be logged into the unrelated sibling run');
+
+  const laterRunDir = fs.mkdtempSync(path.join(pipelinesDir, '2026-10-02T000000-friction-repro-standalone-'));
+  const events = runFrictionEvents(['--run', laterRunDir, '--worktree', project]);
+  const denials = events.filter((e) => e.type === 'gate-denial');
+  assert.strictEqual(denials.length, 1, JSON.stringify(events));
+  assert.strictEqual(denials[0]._source, 'adhoc');
+});

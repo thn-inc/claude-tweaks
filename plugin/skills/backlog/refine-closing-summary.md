@@ -23,10 +23,14 @@ AUTO {time} — Backlog refine: repaired dependency on #{n} — {wired native bl
 AUTO {time} — Backlog refine: flagged back #{n} — {missing sections | needs scoring | no verdict rendered}.
 AUTO {time} — Backlog refine: stamped needs:decision on #{n} — {grant-check RATIONALE}.
 AUTO {time} — Backlog refine: skipped #{n} — premise changed since confirmation ({what changed}); dropped without writing.
+AUTO {time} — Backlog refine: skipped #{n} — premise changed since confirmation (concurrent grant agreed: live {live grant}, this run RECOMMEND_MERGE={true|false}); dropped without writing.
+AUTO {time} — Backlog refine: skipped #{n} — premise changed since confirmation (concurrent grant DIVERGED: live {live grant}, this run discarded RECOMMEND_MERGE={true|false} — {grant-check RATIONALE}); dropped without writing.
 FAILED {time} — Backlog refine: {priority | Related | grant | dependency-repair | flag-back | needs-decision} write failed on #{n}: {error}.
 ```
 
 The closing summary below counts these lines by type — `FAILED` feeds the tally's `failed` count and per-failure lines; `AUTO … skipped …` (including a reverify-fetch failure) feeds `skipped` and its per-skip lines; a write with no matching line was never attempted and counts toward neither.
+
+**Concurrent-grant comparison (#2719).** When Step 5's pre-write reverify drops a grant row because the record's live labels gained `auto:build` and/or `auto:merge`/`auto:merge-pending` since Step 1, compare that live grant (`{live grant}`: `auto:build`, `auto:build + auto:merge`, `auto:build + auto:merge-pending`, or `auto:merge`/`auto:merge-pending` alone — the headless grant chain (`refine-headless.md`'s Grant rows) writes `auto:build` + `auto:merge-pending`, never `auto:merge` directly, so both count as merge-present here) against this run's own `RECOMMEND_MERGE` verdict for the row before logging — the grant-check verdict itself, not the session-wide "Grant auto:build only, hold merge" override, which changes only what this run would have written. A re-authorize row (`bot:blocked`; Step 3 skips its grant-check call entirely, so no `RECOMMEND_MERGE`/RATIONALE exists to compare) keeps the generic skip line instead, with `{what changed}` = `concurrent grant: live {live grant}; re-authorize row, no grant-check verdict to compare` — never "agreed"/"DIVERGED" for these rows. For every other grant row, it **agreed** when live carries `auto:build` and live `auto:merge`-or-`auto:merge-pending` presence equals `RECOMMEND_MERGE`; anything else **diverged**. Log the matching line above: the DIVERGED form carries this run's discarded `RECOMMEND_MERGE` value and its grant-check RATIONALE verbatim, so a reader of `decisions.md` sees the live grant differs from this run's own verdict instead of assuming they repeated each other — this compares this run's verdict against the other actor's *write*, not necessarily its own verdict (a concurrent hold-merge choice or human override writes `auto:build` only). A grant row skipped for any other reason (lost `ready`, a live-state fetch failure) keeps the generic line, as does every non-grant row. Both forms count as `skipped`. Every divergence of one sweep is listed by `grep 'concurrent grant DIVERGED' "$PIPELINE_RUN_DIR/decisions.md"`, and the closing summary's per-skip lines (item 3) carry the same text.
 
 **Closing summary (required, rendered as assistant text — never delegated to tool output; a
 shell print of the tally does not satisfy this):** after the apply pass above completes, render
@@ -46,11 +50,17 @@ second bookkeeping channel:
    The CLI's field set (`plugin/bin/lib/closing-tally/closing-tally.js`'s `FIELDS`/`LABELS`) is the
    only vocabulary this bullet may ever render — a count for anything not in that list (e.g. a
    `collision-reconciled` field) requires updating that module (and this file) first, never
-   inventing a field ad hoc in the rendered text. The envelope's `unclassified` array lists any
-   `decisions.md` line that reads as a Backlog-refine action but matched no known field — a
-   drifted log template or a genuinely new write type; surface it as a one-line caveat under the
-   tally ("`{n}` logged action(s) did not match a known tally field — see `{line text}`") rather
-   than silently omitting it from the count.
+   inventing a field ad hoc in the rendered text. The CLI counts both forms a write can be logged
+   in — the templates above and `bin/apply-refine-labels.js`'s own per-action lines (`#{n}: applied
+   {labels}`, typed by the labels applied) — per record and field it takes the larger of the two
+   forms' counts, so a write logged both ways counts once while distinct writes on the same record
+   (a priority and a Related write that both failed) still count separately; a flag-back or
+   needs-decision whose label landed but whose comment failed counts once, under `failed` only
+   (#3267). The envelope's `unclassified` array lists any `decisions.md` line that
+   reads as a Backlog-refine action, or any `AUTO`/`FAILED` line under `## /backlog`, that matched
+   no known field — a drifted log template or a genuinely new write type; surface it as a one-line
+   caveat under the tally ("`{n}` logged action(s) did not match a known tally field — see `{line
+   text}`") rather than silently omitting it from the count.
 
    **Disclose a substituted detection method inline (#2721).** A lane whose documented detection
    has more than one implementation path — dependency-repair's `findUnresolvedDependencyProse`
@@ -94,6 +104,7 @@ second bookkeeping channel:
 
    ```
    #123 — skipped: premise changed since confirmation (lost ready label)
+   #124 — skipped: premise changed since confirmation (concurrent grant DIVERGED: live auto:build + auto:merge, this run discarded RECOMMEND_MERGE=false — {grant-check RATIONALE})
    ```
 
 4. **Filter/posture exclusion lines (#1887)** — never silent, one line each, naming what was

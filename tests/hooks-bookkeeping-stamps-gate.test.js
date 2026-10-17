@@ -1151,6 +1151,62 @@ test('bookkeeping-stamps gate (#1520, real resolveRun): a stale same-session sib
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/);
 });
 
+// #2783 (final fix wave 2, G1): an ad-hoc `{ts}-adhoc-standalone` twin is a
+// friction placeholder, never "a distinct recorded run" — hasDistinctOwnedRun
+// must not treat ctx.ownedRun naming one as proof this call belongs to a
+// different session's pipeline. Same fixture shape as the #1520 case above
+// (real resolveRun/resolveRunDir, a formal run with a landed materialize
+// commit but no record-worktree stamp yet), except this session's OWN
+// resolveRun resolution lands on its own ad-hoc twin (minted at EnterWorktree,
+// bound to the same worktree) rather than the formal run itself — in every
+// /flow run today, ctx.ownedRun IS that ad-hoc twin while ctx.runDir is the
+// formal run, so owned !== ctx.runDir on every single covered call.
+test('bookkeeping-stamps gate (#2783 G1): a session-owned ad-hoc twin bound to the same worktree does not defeat the record-worktree deny', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const runId = '2026-10-16T000000-record-2783';
+  commitMaterializedSpec(wt, path.join('work', '2783-spec.md'), runId);
+
+  // THIS run: materialize commit landed (in `wt`), but record-worktree never
+  // ran — no run-state.json at all, same as the #1520 fixture above.
+  const run = path.join(main, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'decisions.md'), ''); // a real run dir, not an unadopted mint
+
+  // This session's own ad-hoc twin: minted before the formal run bound its
+  // worktree, active, session-owned, bound to this same worktree — exactly
+  // the #2783 ad-hoc-friction-logging shape.
+  const adhocRun = path.join(main, '.claude-tweaks', 'pipelines', '2026-10-16T000001-adhoc-standalone');
+  fs.mkdirSync(adhocRun, { recursive: true });
+  fs.writeFileSync(path.join(adhocRun, 'run-state.json'), JSON.stringify({ status: 'active', sessionId: 'me', worktree: wt }));
+
+  // Step 1: the real, session-scoped resolveRun must land on the ad-hoc twin
+  // (the actual #2783 mechanism) — this is the scenario precondition, not yet
+  // the behavior under test.
+  const ownedRun = ctxLib.resolveRun(wt, {}, 'me');
+  assert.deepStrictEqual(ownedRun, { dir: adhocRun, attribution: 'session' });
+
+  // Step 2: the real, session-AGNOSTIC resolveRunDir (what bin/hooks.js feeds
+  // as ctx.runDir) must still land on the formal run — ad-hoc dirs are
+  // skipped by the sessionless fallback scan since the first fix wave.
+  const runDir = ctxLib.resolveRunDir(wt, {});
+  assert.strictEqual(runDir, run);
+
+  // Step 3: feeding both real resolutions into the gate must deny — not warn
+  // — even though ownedRun.dir !== ctx.runDir, because the mismatch is only
+  // the session's own ad-hoc placeholder, not a distinct recorded run.
+  const out = pre.run({
+    input: editInput(path.join(wt, 'src', 'x.js')),
+    runDir,
+    runState: null,
+    ownedRun,
+    cwd: wt,
+  });
+  assert.ok(out.json && out.json.hookSpecificOutput, 'expected a deny — an ad-hoc twin must not read as a different session\'s run');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/);
+});
+
 // --- I2: path and foreign-repo exemptions ---
 
 test('bookkeeping-stamps gate (I2.1): an Edit to the run dir\'s own decisions.md is exempt — the deny\'s escape hatch must not be deniable', () => {

@@ -30,6 +30,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { listSkillDirs } = require('../plugin/bin/lib/skill-audit/skill-catalog');
 const { extractArgumentHint, inputSectionBody } = require('../plugin/bin/lib/skill-audit/argument-hint');
+const { splitFrontmatterFence } = require('../plugin/bin/lib/health-core/frontmatter-list');
 
 const ROOT = path.join(__dirname, '..');
 const SKILLS_DIR = path.join(ROOT, 'plugin', 'skills');
@@ -113,6 +114,34 @@ test('every skill declaring argument-hint has an ## Input section', () => {
     assert.ok(
       /^## Input$/m.test(content),
       `skills/${name}/SKILL.md declares argument-hint but has no '## Input' section`,
+    );
+  }
+});
+
+// A double-quoted argument-hint containing a literal `"` must escape it
+// (`\"`) to stay valid YAML -- but docs/skill-authoring.md's own convention
+// is to write such a hint single-quoted instead (`'[... "<name>"]'`), never
+// double-quoted with a `\"` escape. extractArgumentHint strips the
+// surrounding quotes without unescaping, so a double-quoted-with-escape
+// hint leaks its literal backslashes into every consumer that extracts the
+// value verbatim (plugin/bin/lib/skill-audit/argument-hint.js's own
+// extractArgumentHint, and therefore plugin/skills/help/reference-card.md's
+// `Takes` cell). Read the raw frontmatter line directly -- before
+// extractArgumentHint's quote-stripping -- so this check sees the same
+// double-quote-vs-single-quote distinction a human editing the file sees.
+test('argument-hint is never double-quoted with a backslash escape', () => {
+  for (const name of SKILLS) {
+    const content = read(name);
+    const split = splitFrontmatterFence(content);
+    if (!split) continue;
+    const line = split.frontmatter.find((l) => /^argument-hint:\s*/.test(l));
+    if (!line) continue;
+    const raw = line.replace(/^argument-hint:\s*/, '').trim();
+    if (!raw.startsWith('"')) continue; // single-quoted or unquoted: not this check's concern
+    assert.ok(
+      !raw.slice(1, -1).includes('\\"'),
+      `skills/${name}/SKILL.md: argument-hint is double-quoted and contains an escaped \\" -- ` +
+        `per docs/skill-authoring.md, a hint containing a literal " must be written single-quoted instead`,
     );
   }
 });

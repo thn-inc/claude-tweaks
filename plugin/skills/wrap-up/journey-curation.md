@@ -17,6 +17,7 @@ For each journey in scope:
 Route surviving findings by severity, mirroring the shape `_shared/journey-self-review.md`'s own consumers use:
 
 - **Structural-validity failure, or any content-check failure** → collect as `[journey] {file} — {description}` rows. In every mode they surface in the Review Console's own "Journey updates" section (`review-console.md`), which owns the one terminal decision. Applied at Phase 4's execution step exactly like any other approved fix — never filed as a GitHub issue, unlike `/claude-tweaks:journey-health`'s audit-time pass on journeys nobody has touched recently; wrap-up has full session context on what was just built.
+- **Staged file name.** A finding staged as a concrete edit is written to `staged/wrap-up-journey-{N}.md` — the prefix `bin/lib/console/resolve.js`'s `SECTION_MAP` routes to Journey updates. Any other name (e.g. `journey-…`) classifies as `unmapped-prefix` and stays pending, never applied.
 
 ## J2: Missing-journey gap-detection
 
