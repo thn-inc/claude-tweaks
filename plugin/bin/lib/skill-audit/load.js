@@ -158,4 +158,31 @@ function entryPointLoads(pluginRoot, { readFile, listSkillMds }) {
   }).sort((a, b) => (a.entry < b.entry ? -1 : a.entry > b.entry ? 1 : 0));
 }
 
-module.exports = { discoverPluginRoots, extractCitations, withinRoot, entryPointLoads };
+const unresolvedKey = (u) => `${u.citingFile}\u0000${u.token}`;
+
+function loadDelta(baseRows, headRows) {
+  const base = new Map(baseRows.map((r) => [r.entry, r]));
+  const head = new Map(headRows.map((r) => [r.entry, r]));
+  const entries = [...new Set([...base.keys(), ...head.keys()])].sort();
+  const out = [];
+  for (const entry of entries) {
+    const b = base.get(entry);
+    const h = head.get(entry);
+    if (!b) {
+      out.push({ entry, floor: h.floor, dFloor: h.floor, closure: h.closure, dClosure: h.closure, newUnresolved: h.unresolved, added: true });
+      continue;
+    }
+    if (!h) {
+      out.push({ entry, floor: 0, dFloor: -b.floor, closure: 0, dClosure: -b.closure, newUnresolved: [], removed: true });
+      continue;
+    }
+    const dFloor = h.floor - b.floor;
+    const dClosure = h.closure - b.closure;
+    if (dFloor === 0 && dClosure === 0) continue;
+    const known = new Set(b.unresolved.map(unresolvedKey));
+    out.push({ entry, floor: h.floor, dFloor, closure: h.closure, dClosure, newUnresolved: h.unresolved.filter((u) => !known.has(unresolvedKey(u))) });
+  }
+  return out;
+}
+
+module.exports = { discoverPluginRoots, extractCitations, withinRoot, entryPointLoads, loadDelta };

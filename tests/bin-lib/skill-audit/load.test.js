@@ -197,3 +197,59 @@ test('entryPointLoads: unresolved citations and missing compose sources surface,
     [2, 'plugin/skills/_shared/gone.md'],
   ]);
 });
+
+test('loadDelta move-not-cut: a 10,000 B split shows floor ≈ -10,000 and closure = the pointer line', () => {
+  const pointer = 'Read `part.md` in this skill\'s directory.';
+  const base = load.entryPointLoads('plugin', tree({ 'plugin/skills/s/SKILL.md': `${'a'.repeat(19999)}\n` }));
+  const head = load.entryPointLoads('plugin', tree({
+    'plugin/skills/s/SKILL.md': `${'a'.repeat(9999)}\n${pointer}\n`,
+    'plugin/skills/s/part.md': `${'a'.repeat(9999)}\n`,
+  }));
+  assert.strictEqual(base[0].floor, 20000);
+  const [row] = load.loadDelta(base, head);
+  assert.strictEqual(row.entry, 'plugin:s');
+  assert.ok(Math.abs(row.dFloor + 10000) <= B(pointer) + 2, `dFloor ${row.dFloor}`);
+  assert.ok(Math.abs(row.dClosure - B(pointer)) <= 2, `dClosure ${row.dClosure}`);
+});
+
+test('loadDelta: a _shared change fans out to exactly the entry points whose closure holds it', () => {
+  const files = {
+    'plugin/skills/one/SKILL.md': '`_shared/x.md`\n',
+    'plugin/skills/two/SKILL.md': 'see `_shared/x.md`\n',
+    'plugin/skills/three/SKILL.md': 'no citations\n',
+    'plugin/skills/_shared/x.md': 'shared\n',
+  };
+  const base = load.entryPointLoads('plugin', tree(files));
+  const head = load.entryPointLoads('plugin', tree({ ...files, 'plugin/skills/_shared/x.md': 'shared, now longer\n' }));
+  const rows = load.loadDelta(base, head);
+  assert.deepStrictEqual(rows.map((r) => r.entry), ['plugin:one', 'plugin:two']);
+  for (const r of rows) {
+    assert.strictEqual(r.dFloor, 0);
+    assert.strictEqual(r.dClosure, B('shared, now longer\n') - B('shared\n'));
+  }
+});
+
+test('loadDelta: added and removed entry points', () => {
+  const base = load.entryPointLoads('plugin', tree({ 'plugin/skills/old/SKILL.md': 'old\n' }));
+  const head = load.entryPointLoads('plugin', tree({ 'plugin/skills/new/SKILL.md': 'brand new\n' }));
+  assert.deepStrictEqual(load.loadDelta(base, head), [
+    { entry: 'plugin:new', floor: 10, dFloor: 10, closure: 10, dClosure: 10, newUnresolved: [], added: true },
+    { entry: 'plugin:old', floor: 0, dFloor: -4, closure: 0, dClosure: -4, newUnresolved: [], removed: true },
+  ]);
+});
+
+test('loadDelta: CRLF base content measures the same as LF head — no phantom delta', () => {
+  const lf = 'Read `a.md` in this skill\'s directory.\nline two\n';
+  const base = load.entryPointLoads('plugin', tree({
+    'plugin/skills/s/SKILL.md': lf.replace(/\n/g, '\r\n'), 'plugin/skills/s/a.md': 'x\r\n',
+  }));
+  const head = load.entryPointLoads('plugin', tree({ 'plugin/skills/s/SKILL.md': lf, 'plugin/skills/s/a.md': 'x\n' }));
+  assert.deepStrictEqual(load.loadDelta(base, head), []);
+});
+
+test('loadDelta: newUnresolved lists only citations unresolved at head and not at base, ignoring line moves', () => {
+  const base = load.entryPointLoads('plugin', tree({ 'plugin/skills/s/SKILL.md': '`gone.md`\n' }));
+  const head = load.entryPointLoads('plugin', tree({ 'plugin/skills/s/SKILL.md': 'moved down\n`gone.md`\n`new-miss.md`\n' }));
+  const [row] = load.loadDelta(base, head);
+  assert.deepStrictEqual(row.newUnresolved, [{ citingFile: 'plugin/skills/s/SKILL.md', line: 3, token: 'new-miss.md' }]);
+});
