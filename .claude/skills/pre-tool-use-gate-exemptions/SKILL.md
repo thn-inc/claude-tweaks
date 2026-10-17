@@ -38,6 +38,7 @@ description: Use when adding a new deny gate to `plugin/bin/lib/hooks/pre-tool-u
 | Pattern | Why It Fails |
 |---|---|
 | Calling `repoInfo()`/any path-answering function on a literal path without checking for a leaf symlink first | The exact bypass `[IL-150]` names — a symlink outside the check's intended scope can point anywhere |
+| Comparing `fs.realpathSync` output against a root or an exclusion (`===`, `path.relative`, `isPathContained`) | On a case-insensitive volume the JS `realpathSync` echoes the input's casing, while `fs.realpathSync.native` returns the canonical case, so a mis-cased path slips past the comparison. #3380's home exclusion in `plugin/bin/lib/superpowers-version.js` did, and `722ece0d6` switched it to `.native`. `realTarget()`'s `safeReal` still calls the JS form, so a new exemption that compares resolved paths resolves both sides with `.native` rather than copying `safeReal` |
 | Nesting a conclusive exemption's `return {}` inside a check on an unrelated value | A transient failure of the unrelated check denies a target already proven out of scope — `[IL-149]` |
 | Treating `mainCheckoutRoot() === null` as "different repo" | `null` also means "the answer is unknown" (EACCES/ELOOP/EIO, unreadable `.git`) — only a resolved-AND-different root exempts |
 | Proving a Bash exemption's staged set with `git diff --name-only` | A rename into the target collapses to one line and hides a second changed file — use `--name-status` |
