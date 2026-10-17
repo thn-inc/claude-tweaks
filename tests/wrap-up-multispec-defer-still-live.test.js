@@ -59,8 +59,38 @@ test('the defer paragraph is still found as one paragraph under CRLF line ending
   assert.match(paragraph, /^\*\*MULTISPEC_REVIEW_DEFER branch:\*\*/);
 });
 
-test('engine-verify.js carries the deferred-to-parent-console detail for both deferred rows', () => {
+// Slices one registerCheck body: from its own registerCheck( call to the next one.
+function checkBody(src, name) {
+  const start = src.indexOf(`registerCheck('${name}'`);
+  assert.notStrictEqual(start, -1, `registerCheck('${name}' not found in engine source`);
+  const next = src.indexOf('registerCheck(', start + 1);
+  assert.notStrictEqual(next, -1, `no registerCheck( follows '${name}' in engine source`);
+  return src.slice(start, next);
+}
+
+const DEFERRED_DETAIL = `detail: 'deferred to parent console'`;
+
+function assertDeferredRow(src, name) {
+  assert.ok(checkBody(src, name).includes(DEFERRED_DETAIL), `${name} must skip with ${DEFERRED_DETAIL}`);
+}
+
+test('engine-verify.js skips run-dir-archived and worktree-removed with the deferred detail, and renders skip cells with it', () => {
   const src = fs.readFileSync(ENGINE, 'utf8');
-  const count = src.split(`detail: 'deferred to parent console'`).length - 1;
-  assert.ok(count >= 2, `expected at least 2 occurrences, found ${count}`);
+  assertDeferredRow(src, 'run-dir-archived');
+  assertDeferredRow(src, 'worktree-removed');
+  assert.ok(
+    src.includes('`${row.result} (${sanitizeCell(row.detail)})`'),
+    'renderer must form the skip/unknown Result cell as `${row.result} (${sanitizeCell(row.detail)})`'
+  );
+});
+
+test('the per-check pin goes red when only run-dir-archived loses its skip line (same helper, in-memory copy)', () => {
+  const src = fs.readFileSync(ENGINE, 'utf8');
+  const body = checkBody(src, 'run-dir-archived');
+  const skipLine = `if (deferred.has('run-dir-archival')) return { result: 'skip', detail: 'deferred to parent console' };`;
+  assert.ok(body.includes(skipLine), 'control precondition: the run-dir-archived skip line is in its body');
+  const doctored = src.replace(body, () => body.replace(skipLine, ''));
+  assert.notStrictEqual(doctored, src, 'control precondition: the doctored source differs from the real one');
+  assert.throws(() => assertDeferredRow(doctored, 'run-dir-archived'));
+  assert.doesNotThrow(() => assertDeferredRow(doctored, 'worktree-removed'));
 });
