@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { slugForCwd, locateTranscripts, readUsage, isProcedurePath, TRANSCRIPT_SLUG_RULE } = require('../../../plugin/bin/lib/timing/transcript');
+const { slugForCwd, locateTranscripts, readUsage, isProcedurePath, subagentsDirFor, readDispatches, TRANSCRIPT_SLUG_RULE } = require('../../../plugin/bin/lib/timing/transcript');
 
 const FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'transcript-small.jsonl');
 
@@ -98,7 +98,7 @@ test('#1929 AC2: readUsage streams rows, sums procedure bytes for skills Reads o
   assert.equal(rows.reduce((s, r) => s + r.procedureBytes, 0), 18);
   const assistants = rows.filter((r) => r.role === 'assistant');
   assert.deepEqual(assistants.map((r) => r.toolRoundTrip), [false, false, false, false, false]);
-  assert.deepEqual(assistants[0], { ts: '2026-09-05T13:50:00.000Z', role: 'assistant', inputTokens: 10, outputTokens: 20, cacheRead: 300, cacheCreate: 40, toolRoundTrip: false, procedureBytes: 0 });
+  assert.deepEqual(assistants[0], { ts: '2026-09-05T13:50:00.000Z', role: 'assistant', inputTokens: 10, outputTokens: 20, cacheRead: 300, cacheCreate: 40, toolRoundTrip: false, procedureBytes: 0, model: null });
   assert.equal(assistants[3].inputTokens, 100);
   assert.equal(users[0].inputTokens, 0);
   // #1929 whole-branch review fix 1: a duplicate message.id (same turn,
@@ -117,4 +117,152 @@ test('#1929: readUsage on a missing file rejects with a code the CLI can name', 
 
 test('#1929: readUsage on a directory path rejects with EISDIR', async () => {
   await assert.rejects(readUsage(__dirname, {}), (err) => err.code === 'EISDIR');
+});
+
+// ---- #3375: per-subagent-dispatch enumeration --------------------------
+
+const SESS = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'subagents-session');
+const SUBDIR = subagentsDirFor(path.join(SESS, 'sess-1.jsonl'));
+
+function tmpSubagents() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-subagents-'));
+}
+function aLine(role, ts, id, model, usage) {
+  const message = role === 'assistant'
+    ? { id, role, model, content: [], usage: { input_tokens: usage[0], output_tokens: usage[1], cache_read_input_tokens: usage[2], cache_creation_input_tokens: usage[3] } }
+    : { role, content: [] };
+  return JSON.stringify({ type: role, timestamp: ts, message });
+}
+
+test('AC1.1: readDispatches returns one record per agent with model, description and wall-clock span', async () => {
+  const r = await readDispatches(SUBDIR);
+  assert.equal(r.notFound, null);
+  assert.equal(r.excludedOutsideWindow, 0);
+  assert.equal(r.items.length, 3);
+  const [a1, a2, a3] = r.items;
+  assert.equal(a1.agentId, 'a1');
+  assert.equal(a1.metaModel, 'sonnet');
+  assert.equal(a1.description, 'Implement Task 1: parser');
+  assert.equal(a1.agentType, 'general-purpose');
+  assert.equal(a1.spawnDepth, 1);
+  assert.equal(a1.parentAgentId, null);
+  assert.equal(a1.wallClockMs, 65000);
+  assert.equal(a1.startTs, '2026-10-17T10:00:00.000Z');
+  assert.equal(a1.endTs, '2026-10-17T10:01:05.000Z');
+  assert.equal(a1.transcriptModel, 'claude-sonnet-5-5');
+  assert.equal(a1.notFound, null);
+  assert.equal(a2.wallClockMs, 30000);
+  assert.equal(a2.description, 'Review Task 1 (spec + quality)');
+  assert.equal(a3.wallClockMs, 120000);
+  assert.equal(a3.transcriptModel, 'claude-opus-5-5');
+});
+
+test('AC1.1: token totals count each message.id once', async () => {
+  const r = await readDispatches(SUBDIR);
+  assert.deepEqual(r.items[0].tokens, { input: 13, output: 24, cacheRead: 100, cacheCreate: 5 });
+  assert.deepEqual(r.items[2].tokens, { input: 20, output: 30, cacheRead: 0, cacheCreate: 10 });
+});
+
+test('#3375: subagentsDirFor strips .jsonl and appends subagents/', () => {
+  assert.equal(subagentsDirFor('/h/p/sess-1.jsonl'), path.join('/h/p/sess-1', 'subagents'));
+});
+
+test('AC4.1: a meta file whose transcript is unreadable yields notFound and null numbers', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-x.meta.json'), JSON.stringify({ description: 'ghost', model: 'haiku', spawnDepth: 2, parentAgentId: 'p1' }));
+  const r = await readDispatches(dir);
+  assert.equal(r.items.length, 1);
+  const it = r.items[0];
+  assert.match(it.notFound, /^transcript not readable \(ENOENT\)$/);
+  assert.equal(it.tokens, null);
+  assert.equal(it.wallClockMs, null);
+  assert.equal(it.startTs, null);
+  assert.equal(it.endTs, null);
+  assert.equal(it.description, 'ghost');
+  assert.equal(it.metaModel, 'haiku');
+  assert.equal(it.parentAgentId, 'p1');
+  assert.equal(it.spawnDepth, 2);
+});
+
+test('AC4.1: no subagents/ directory reports notFound, no items', async () => {
+  const r = await readDispatches(path.join(os.tmpdir(), 'ct-no-such-subagents-dir'));
+  assert.match(r.notFound, /^no subagents\/ directory at /);
+  assert.deepEqual(r.items, []);
+  assert.equal(r.excludedOutsideWindow, 0);
+});
+
+test('AC4.1: a transcript with no meta file is an orphan — description null, numbers present', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-o1.jsonl'), [
+    aLine('user', '2026-10-17T10:00:00.000Z'),
+    aLine('assistant', '2026-10-17T10:00:10.000Z', 'mo', 'claude-haiku-5', [1, 2, 3, 4]),
+  ].join('\n') + '\n');
+  const r = await readDispatches(dir);
+  assert.equal(r.items.length, 1);
+  const it = r.items[0];
+  assert.equal(it.agentId, 'o1');
+  assert.equal(it.description, null);
+  assert.equal(it.metaModel, null);
+  assert.equal(it.agentType, null);
+  assert.equal(it.notFound, 'meta not found');
+  assert.equal(typeof it.wallClockMs, 'number');
+  assert.equal(it.wallClockMs, 10000);
+  assert.deepEqual(it.tokens, { input: 1, output: 2, cacheRead: 3, cacheCreate: 4 });
+});
+
+test('#3375 review focus 2: malformed meta JSON degrades to an orphan, never throws', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-m1.meta.json'), '{not json');
+  fs.writeFileSync(path.join(dir, 'agent-m1.jsonl'), aLine('assistant', '2026-10-17T10:00:00.000Z', 'mm', 'claude-opus-5-5', [1, 1, 1, 1]) + '\n');
+  const r = await readDispatches(dir);
+  assert.equal(r.items.length, 1);
+  assert.equal(r.items[0].notFound, 'meta not found');
+  assert.equal(r.items[0].description, null);
+  assert.equal(r.items[0].metaModel, null);
+  assert.deepEqual(r.items[0].tokens, { input: 1, output: 1, cacheRead: 1, cacheCreate: 1 });
+});
+
+test('#3375 review focus 1: transcriptModel prefers the first claude- id over <synthetic>', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-s1.jsonl'), [
+    aLine('assistant', '2026-10-17T10:00:00.000Z', 'ms1', '<synthetic>', [0, 0, 0, 0]),
+    aLine('assistant', '2026-10-17T10:00:01.000Z', 'ms2', 'claude-sonnet-5-5', [1, 1, 0, 0]),
+  ].join('\n') + '\n');
+  fs.writeFileSync(path.join(dir, 'agent-s2.jsonl'), aLine('assistant', '2026-10-17T10:00:00.000Z', 'ms3', '<synthetic>', [0, 0, 0, 0]) + '\n');
+  fs.writeFileSync(path.join(dir, 'agent-s3.jsonl'), aLine('user', '2026-10-17T10:00:00.000Z') + '\n');
+  const r = await readDispatches(dir);
+  const by = Object.fromEntries(r.items.map((i) => [i.agentId, i]));
+  assert.equal(by.s1.transcriptModel, 'claude-sonnet-5-5');
+  assert.equal(by.s2.transcriptModel, '<synthetic>'); // no claude- id: first non-null
+  assert.equal(by.s3.transcriptModel, null);
+});
+
+test('#3375 review focus 5: window drops out-of-window rows and excludes dispatches entirely outside it', async () => {
+  const window = { start: Date.parse('2026-10-17T10:02:00Z'), end: Date.parse('2026-10-17T10:10:00Z') };
+  const r = await readDispatches(SUBDIR, { window });
+  assert.deepEqual(r.items.map((i) => i.agentId), ['a2', 'a3']);
+  assert.equal(r.excludedOutsideWindow, 1);
+  // a partially-overlapping dispatch is clipped: rows outside the window drop out of span and tokens.
+  const clip = await readDispatches(SUBDIR, { window: { start: Date.parse('2026-10-17T10:00:30Z'), end: Date.parse('2026-10-17T10:10:00Z') } });
+  const a1 = clip.items.find((i) => i.agentId === 'a1');
+  assert.equal(a1.startTs, '2026-10-17T10:01:05.000Z');
+  assert.equal(a1.wallClockMs, 0);
+  assert.deepEqual(a1.tokens, { input: 3, output: 4, cacheRead: 0, cacheCreate: 0 });
+});
+
+test('#3375: items sort by startTs (nulls last), then agentId', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-z.jsonl'), aLine('user', '2026-10-17T10:00:00.000Z') + '\n');
+  fs.writeFileSync(path.join(dir, 'agent-b.jsonl'), aLine('user', '2026-10-17T10:00:00.000Z') + '\n');
+  fs.writeFileSync(path.join(dir, 'agent-a.jsonl'), aLine('user', '2026-10-17T09:00:00.000Z') + '\n');
+  fs.writeFileSync(path.join(dir, 'agent-n.meta.json'), '{}');
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.items.map((i) => i.agentId), ['a', 'b', 'z', 'n']);
+});
+
+test('#3375: readUsage rows carry model on assistant lines and null on user lines', async () => {
+  const rows = await readUsage(path.join(SUBDIR, 'agent-a1.jsonl'));
+  assert.deepEqual(rows.map((r) => r.model), [null, 'claude-sonnet-5-5', 'claude-sonnet-5-5', 'claude-sonnet-5-5']);
+  const small = await readUsage(FIX, { worktree: '/repo' });
+  assert.ok(small.every((r) => r.model === null));
 });

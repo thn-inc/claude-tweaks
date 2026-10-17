@@ -10,9 +10,13 @@
 //   -Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-design-1904-pipeline-ceremony/
 // (the space and the '.' both became '-', so a worktree cwd yields '--').
 // The session's main transcript is {slug}/{sessionId}.jsonl; a sibling
-// directory named {sessionId}/ holds subagent transcripts and is not read
-// here. If the pinned test ever goes red, Claude Code changed the scheme —
-// re-derive the rule from a fresh observation, do not loosen the test.
+// directory named {sessionId}/ holds subagent transcripts as
+// {sessionId}/subagents/agent-{id}.jsonl + agent-{id}.meta.json, read by
+// readDispatches below (#3375). That layout was OBSERVED on 2026-10-17 — it
+// is not a documented contract — so a drifted layout (missing directory,
+// renamed files, changed meta keys) must degrade to the not-found path, never
+// throw or guess. If the pinned tests ever go red, Claude Code changed the
+// scheme — re-derive the rule from a fresh observation, do not loosen the test.
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -149,8 +153,9 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
       const msg = entry && entry.message;
       if (!entry || typeof entry.timestamp !== 'string' || !msg || typeof msg.role !== 'string') return;
       const content = Array.isArray(msg.content) ? msg.content : [];
-      const row = { ts: entry.timestamp, role: msg.role, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, toolRoundTrip: false, procedureBytes: 0 };
+      const row = { ts: entry.timestamp, role: msg.role, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, toolRoundTrip: false, procedureBytes: 0, model: null };
       if (msg.role === 'assistant') {
+        row.model = typeof msg.model === 'string' ? msg.model : null;
         const u = msg.usage || {};
         row.inputTokens = Number(u.input_tokens) || 0;
         row.outputTokens = Number(u.output_tokens) || 0;
@@ -183,4 +188,102 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
   return rows;
 }
 
-module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, isProcedurePath };
+// mainTranscriptPath -> the sibling {sessionId}/subagents directory.
+function subagentsDirFor(mainTranscriptPath) {
+  return path.join(String(mainTranscriptPath).replace(/\.jsonl$/, ''), 'subagents');
+}
+
+function readMeta(fsImpl, file) {
+  try {
+    const m = JSON.parse(fsImpl.readFileSync(file, 'utf8'));
+    return m && typeof m === 'object' && !Array.isArray(m) ? m : null;
+  } catch { return null; }
+}
+
+const strOrNull = (v) => (typeof v === 'string' ? v : null);
+const numOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+// First assistant row whose model matches /^claude-/, else the first non-null
+// model, else null — a "<synthetic>" row can precede the real model id.
+function transcriptModelOf(rows) {
+  const models = rows.map((r) => r.model).filter((m) => m !== null);
+  return models.find((m) => /^claude-/.test(m)) || models[0] || null;
+}
+
+// subagentsDir, { fsImpl?, window? } -> Promise<{ items, notFound, excludedOutsideWindow }>.
+// One Dispatch per agent-{id}; meta and transcript are paired by id. Token
+// totals come from readUsage, so its message.id dedupe is the one in force.
+// window = { start, end } (epoch ms, inclusive): rows outside it are dropped
+// before span/tokens are taken, and a dispatch with no row inside it is
+// counted in excludedOutsideWindow rather than listed. Never throws.
+async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {}) {
+  let names;
+  try {
+    names = fsImpl.readdirSync(subagentsDir);
+  } catch {
+    return { items: [], notFound: `no subagents/ directory at ${subagentsDir}`, excludedOutsideWindow: 0 };
+  }
+  const ids = new Set();
+  for (const n of names) {
+    const m = /^agent-(.+?)(\.meta\.json|\.jsonl)$/.exec(n);
+    if (m) ids.add(m[1]);
+  }
+  const built = [];
+  let excludedOutsideWindow = 0;
+  for (const agentId of ids) {
+    const meta = readMeta(fsImpl, path.join(subagentsDir, `agent-${agentId}.meta.json`));
+    const d = {
+      agentId,
+      description: meta ? strOrNull(meta.description) : null,
+      agentType: meta ? strOrNull(meta.agentType) : null,
+      metaModel: meta ? strOrNull(meta.model) : null,
+      transcriptModel: null,
+      parentAgentId: meta ? strOrNull(meta.parentAgentId) : null,
+      spawnDepth: meta ? numOrNull(meta.spawnDepth) : null,
+      startTs: null, endTs: null, wallClockMs: null, tokens: null,
+      notFound: meta ? null : 'meta not found',
+    };
+    let startMs = null;
+    let rows = null;
+    try {
+      rows = await readUsage(path.join(subagentsDir, `agent-${agentId}.jsonl`), { fsImpl });
+    } catch (err) {
+      d.notFound = `transcript not readable (${(err && err.code) || 'EUNKNOWN'})`;
+    }
+    if (rows) {
+      const stamped = rows.map((r) => ({ r, ms: Date.parse(r.ts) })).filter((x) => Number.isFinite(x.ms));
+      const kept = window ? stamped.filter((x) => x.ms >= window.start && x.ms <= window.end) : stamped;
+      if (window && stamped.length > 0 && kept.length === 0) {
+        excludedOutsideWindow += 1;
+        continue;
+      }
+      if (kept.length > 0) {
+        const first = kept.reduce((a, b) => (b.ms < a.ms ? b : a));
+        const last = kept.reduce((a, b) => (b.ms > a.ms ? b : a));
+        startMs = first.ms;
+        d.startTs = first.r.ts;
+        d.endTs = last.r.ts;
+        d.wallClockMs = last.ms - first.ms;
+      }
+      const keptRows = kept.map((x) => x.r);
+      d.tokens = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
+      for (const r of keptRows) {
+        d.tokens.input += r.inputTokens;
+        d.tokens.output += r.outputTokens;
+        d.tokens.cacheRead += r.cacheRead;
+        d.tokens.cacheCreate += r.cacheCreate;
+      }
+      d.transcriptModel = transcriptModelOf(keptRows);
+    }
+    built.push({ d, startMs });
+  }
+  built.sort((a, b) => {
+    if (a.startMs === null && b.startMs !== null) return 1;
+    if (b.startMs === null && a.startMs !== null) return -1;
+    if (a.startMs !== b.startMs) return a.startMs - b.startMs;
+    return a.d.agentId < b.d.agentId ? -1 : a.d.agentId > b.d.agentId ? 1 : 0;
+  });
+  return { items: built.map((x) => x.d), notFound: null, excludedOutsideWindow };
+}
+
+module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, isProcedurePath, subagentsDirFor, readDispatches };
