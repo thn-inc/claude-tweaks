@@ -32,7 +32,7 @@ const { execFileSync } = require('child_process');
 const { discoverPluginRoots, entryPointLoads, loadDelta } = require('./lib/skill-audit/load');
 const { corpusDir } = require('./lib/skill-audit/context-cost');
 const { resolveIntegrationBranch, bareIntegrationName } = require('./lib/hooks/worktree-reap');
-const { toPosix, escapeRegExp } = require('./lib/shared-primitives');
+const { toPosix, escapeRegExp, isPathContained } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: load-delta.js [--plugin-root <dir>]... [--base <ref>] [--integration-branch <name>] [--json] [--help]\n';
 
@@ -101,9 +101,7 @@ function headSide(repoRoot, root) {
   const readFile = (p) => {
     try {
       const real = fs.realpathSync(path.join(repoRoot, p));
-      const rel = path.relative(realRoot, real);
-      if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
-      if (!fs.statSync(real).isFile()) return null;
+      if (!isPathContained(real, realRoot) || !fs.statSync(real).isFile()) return null;
       return fs.readFileSync(real, 'utf8');
     } catch (err) {
       if (['ENOENT', 'EISDIR', 'ENOTDIR', 'ELOOP'].includes(err.code)) return null;
@@ -214,11 +212,11 @@ function run(argv, deps = realDeps) {
       for (const r of o.pluginRoots) {
         const abs = path.resolve(cwd, r);
         try { corpusDir(abs); } catch (err) { deps.stderr(`load-delta.js: ${err.message}\n`); return 3; }
-        // realpath: git prints the resolved toplevel, so a symlinked cwd
-        // (macOS /var -> /private/var) must be resolved before comparing.
-        const rel = toPosix(path.relative(repoRoot, fs.realpathSync(abs))) || '.';
-        if (rel === '..' || rel.startsWith('../') || path.isAbsolute(rel)) { deps.stderr(`load-delta.js: --plugin-root ${r} is outside the repository\n`); return 2; }
-        roots.push(rel);
+        // Both sides through realpathSync: a symlinked cwd (macOS /var ->
+        // /private/var) resolves, and separators are native (git prints C:/...).
+        const real = fs.realpathSync(abs);
+        if (!isPathContained(real, fs.realpathSync(repoRoot), { orEqual: true })) { deps.stderr(`load-delta.js: --plugin-root ${r} is outside the repository\n`); return 2; }
+        roots.push(toPosix(path.relative(repoRoot, real)) || '.');
       }
       roots = [...new Set(roots)].sort();
     } else {
