@@ -1,0 +1,17 @@
+# Open Items — #2975 specShapedBody keyFiles (micro-plan gate reachability)
+
+| # | Phase | Item | Status | Resolution |
+|---|-------|------|--------|------------|
+| 1 | build | stray whitespace edit record.js 'const block =(v) =>' — restore space | fixed | a443e717c |
+| 2 | build | AC3.1 test cannot go red alone (also assert body includes ### Key Files) | deferred | origin: SDD Task 1 review (minor); files: tests/bin-lib/issues/record.test.js; trigger: next edit to specShapedBody tests — final review triaged as can-stay-deferred (AC1.1 already proves rendering) |
+| 3 | build | drive-relative win32 path 'C:foo' passes keyFiles validation | deferred | origin: SDD Task 1 review (minor); files: plugin/bin/lib/issues/record.js (keyFilePathProblem); trigger: a producer ever emitting drive-relative paths — final review: can stay deferred |
+| 4 | build | harness omission test noPath case depends on patchFinding() fixture having no default path | deferred | origin: SDD Task 2 review (minor); files: tests/bin-lib/harness-health/issue-payload.test.js; trigger: patchFinding() fixture gains a default path |
+| 5 | build | code-health keyFiles change string 'address the finding at this anchor' is low-information (brief-mandated) | deferred | origin: SDD Task 2 review (minor); files: plugin/bin/lib/code-health/issue-payload.js; trigger: micro-plan composer starts reading the change text |
+| 6 | build | anchorKeyFiles duplicated specShapedBody keyFiles predicates (drift risk) | fixed | a443e717c — shared isRepoRelativeKeyFilePath export |
+| 7 | build | docs-health finding.target / journey-health finding.journey reached keyFiles unguarded (malformed LLM value aborted the sweep) | fixed | a443e717c — composers omit keyFiles on predicate failure; malformed-target tests per composer |
+| 8 | build | prose producers don't explicitly say 'drop out-of-repo targets' | deferred | origin: SDD Task 3 review (minor); files: plugin/skills/capture/SKILL.md, plugin/skills/reflect/SKILL.md, plugin/skills/wrap-up/leftover-routing.md; trigger: an agent compose throws on an absolute keyFiles path — final review: can stay deferred ("repo-relative … omitted when unknown" covers it) |
+| 9 | build | reflect/SKILL.md tangential template line omits ## Release Note (pre-existing) | deferred | origin: SDD Task 3 review (minor, pre-existing); files: plugin/skills/reflect/SKILL.md; trigger: next edit to reflect's staged-finding template |
+| 10 | build | Ruling: AC6.1 whole-file keyFiles/repo-relative match (plan-mandated) kept — cost if wrong: a future removal of the instruction stays green until review notices | observation | final review agreed |
+| 11 | build | Ruling: AC5.1 omit-when-absent control kept — cost if wrong: one redundant test | observation | final review agreed |
+| 12 | build | Pre-existing: harness-health composer throws ("premiseCheck must be a single-line command") when an LLM finding.path contains a newline and buildPremiseCheck composes a command — one bad finding aborts validate-findings (independent of keyFiles; present at base) | open | — |
+| 13 | build/skill | [skill: NEW - shared-composer-validation] A shared body composer that throws on malformed input, fed by LLM-origin fields across several producers, should export its validation as one predicate so producers omit-on-failure instead of aborting a batch run (#2975 final review Important 1). | observation | — |

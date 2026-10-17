@@ -11,9 +11,10 @@
 // copy-pasted. kind: 'new-skill' never consults CLASSIFICATION_SCORING — it
 // stays deliberately unscored (see below).
 const {
-  recordPayload, specShapedBody, CLASSIFICATION_SCORING, fencedBlock,
+  recordPayload, specShapedBody, CLASSIFICATION_SCORING, fencedBlock, isRepoRelativeKeyFilePath,
 } = require('../issues/record');
 const { buildRelatedBlocks } = require('../issues/related-blocks');
+const nodePath = require('node:path');
 
 const ASSET_TYPE_LABELS = { skill: 'Skill', rule: 'Rule', 'claude-md': 'CLAUDE.md', 'design-artifact': 'Design Context', memory: 'Memory' };
 const CATEGORY_LABELS = { drift: 'drift', 'template-conformance': 'structure', 'best-practice': 'best-practice' };
@@ -92,6 +93,8 @@ function buildPremiseCheck(finding, targetPath) {
 // the record at its first materialize). Absent, the line is kept exactly as
 // composed — this module never spawns a shell itself, so its own unit tests
 // stay shell-free.
+// options.repoRoot (#2975, optional): the repo root finding.path is made
+// relative to for the `### Key Files` entry (see keyFiles below).
 function toIssuePayload(finding, verifiedAsOf, pluginVersion, options = {}) {
   const isNewSkill = finding.kind === 'new-skill';
   const assetLabel = ASSET_TYPE_LABELS[finding.assetType] || finding.assetType;
@@ -139,6 +142,20 @@ function toIssuePayload(finding, verifiedAsOf, pluginVersion, options = {}) {
     premiseCheck = undefined;
   }
 
+  // keyFiles (#2975): the patched file, made repo-relative against
+  // options.repoRoot (a relative finding.path resolves against it, not cwd).
+  // Omitted (specShapedBody throws on a bad path) for a new-skill candidate, a
+  // missing path/repoRoot, an out-of-repo target such as a memory file under
+  // --memory-dir, or a path with a backtick/newline.
+  let keyFiles;
+  if (!isNewSkill && finding.path && options.repoRoot) {
+    const absolutePath = nodePath.resolve(options.repoRoot, finding.path);
+    const rel = nodePath.relative(options.repoRoot, absolutePath).split(nodePath.sep).join('/');
+    if (isRepoRelativeKeyFilePath(rel)) {
+      keyFiles = [{ path: rel, change: isRemoval ? 'remove the named content' : 'apply the proposed change' }];
+    }
+  }
+
   const body = specShapedBody({
     header: kindLine,
     currentState: [...relatedBlocks, finding.reason],
@@ -152,6 +169,7 @@ function toIssuePayload(finding, verifiedAsOf, pluginVersion, options = {}) {
     // carry data for.
     releaseNote: 'No user-visible change — agent harness reliability fix.',
     filedBy: '/claude-tweaks:harness-health',
+    keyFiles,
     verifiedAsOf,
     premiseCheck,
     templateStamp,
