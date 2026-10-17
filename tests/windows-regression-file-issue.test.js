@@ -149,3 +149,30 @@ test('findMergedPr picks the merged entry and returns null when none merged', ()
   assert.equal(findMergedPr([PULLS[0]]), null);
   assert.equal(findMergedPr([]), null);
 });
+
+// Workflow shape — .github/workflows/windows-regression.yml, read as text (no YAML
+// parser dependency). The workflow itself only runs on a Windows runner.
+const fs = require('node:fs');
+const path = require('node:path');
+const WORKFLOW = fs.readFileSync(
+  path.join(__dirname, '..', '.github', 'workflows', 'windows-regression.yml'), 'utf8');
+
+test('AC1.1: the windows-regression workflow has no pull_request trigger', () => {
+  assert.doesNotMatch(WORKFLOW, /pull_request/);
+  assert.match(WORKFLOW, /push:\s*\n\s*branches:\s*\[main\]/);
+});
+
+test('AC2.1: concurrency sets cancel-in-progress: false', () => {
+  assert.match(WORKFLOW, /cancel-in-progress:\s*false/);
+});
+
+test('the filer step runs under if: always() after the verify step', () => {
+  const verifyAt = WORKFLOW.indexOf('id: verify');
+  const filerAt = WORKFLOW.indexOf('file-issue.js');
+  assert.ok(verifyAt !== -1 && filerAt !== -1, 'both steps present');
+  assert.ok(verifyAt < filerAt, 'verify step precedes the filer step');
+  assert.ok(WORKFLOW.slice(verifyAt, filerAt).includes('if: always()'));
+  // The upload step between them also carries if: always(), so pin the filer step's own.
+  const filerStepAt = WORKFLOW.lastIndexOf('\n      - ', filerAt);
+  assert.ok(WORKFLOW.slice(filerStepAt, filerAt).includes('if: always()'), 'the filer step has its own if: always()');
+});
