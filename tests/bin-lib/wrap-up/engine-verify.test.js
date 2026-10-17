@@ -269,7 +269,7 @@ test('#3373: malformed console.json keeps both checks failing', () => {
   assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
 });
 
-test('#3373: a multi-spec parent run dir\'s leave-open console.json does not downgrade teardown fails', () => {
+test('#3373: a multi-spec parent run dir with a leave-open console.json keeps both checks failing', () => {
   const result = verifyWithTeardownMissing((runDir) => {
     writeConsole(runDir, 'leave-open');
     fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  specs: []\n');
