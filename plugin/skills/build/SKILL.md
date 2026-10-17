@@ -129,7 +129,7 @@ The plan will be written to `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`.
 
 **Plan-authoring checks:** before finalizing the plan, run every check in `plan-authoring-checks.md` in this skill's directory — one bold paragraph per check; the file, not this sentence, is the list (the enumeration that used to sit here had already fallen two checks behind it). (Same checks apply in Design Step 3 below.)
 
-**Size-headroom check:** when a plan task appends to a `plugin/skills/**/*.md` file already within ~10% of `RAIL_BYTES` (the Read-limit rail, `plugin/bin/lib/skill-audit/budgets.js`), measure `wc -c` on the merge base and name the composition step up front in the plan — `when:` markers or a compose call site, never a "read X now" split; the `rail:` tests fail CI for a file or composed bundle over the rail. (Same check applies in Design Step 3 below.)
+**Size-headroom check:** when a plan task appends to a `plugin/skills/**/*.md` file already within ~10% of `RAIL_BYTES` (the Read-limit rail, `plugin/bin/lib/skill-audit/budgets.js`), measure `wc -c` on the merge base and name the remedy up front in the plan — cut bytes, or move a genuinely lazy section (one some runs never read) into its own cited file; `when:` fencing is the remedy only for a composed bundle near the rail, and does not help a raw file, since the rail measures it with only the marker lines stripped. Never a "read X now" split every run follows; the `rail:` tests fail CI for a file or composed bundle over the rail. (Same check applies in Design Step 3 below.)
 
 Proceed to **Common Step 2**.
 
