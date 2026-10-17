@@ -111,7 +111,7 @@ function flakyEscalations(hits, allowlist) {
   return Object.entries(hits)
     .filter(([, n]) => n >= FLAKY_ESCALATION_HITS)
     .map(([file, n]) => ({ file, hits: n, onAllowlist: patterns.some((entry) => globToRegExp(entry).test(file)) }))
-    .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+    .sort((a, b) => (a.file < b.file ? -1 : 1));
 }
 
 function escalationCaveatLine({ file, hits, onAllowlist }) {

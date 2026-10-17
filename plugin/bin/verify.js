@@ -577,9 +577,13 @@ async function main() {
   // there is no declaration at all to name them.
   let scopeSuites = null;
   if (sel) {
-    scopeSuites = sel.suites === '*'
-      ? (decl ? decl.suites : cmds.filter((c) => c.name !== 'types' && c.name !== 'lint').map((c) => c.name))
-      : sel.suites;
+    if (sel.suites !== '*') {
+      scopeSuites = sel.suites;
+    } else if (decl) {
+      scopeSuites = decl.suites;
+    } else {
+      scopeSuites = cmds.filter((c) => c.name !== 'types' && c.name !== 'lint').map((c) => c.name);
+    }
   }
 
   const report = composeReport({
@@ -604,13 +608,15 @@ async function main() {
     if (!target.ok) {
       process.stderr.write(`verify.js: --run ${parsed.run} refused (${target.reason}) — not an anchored run directory under the main checkout ([IL-127]); no verify event written\n`);
     } else {
+      let preExistingVerdict = null;
+      if (preExistingAdjudicated) preExistingVerdict = preExistingPass ? 'pass' : 'ineligible';
       appendEvent(target.dir, 'verify', {
         mode: report.scope ? report.scope.mode : 'full',
         suitesRun: results.filter((c) => !c.skipped).map((c) => c.name),
         durationMs: report.durationMs,
         pass: report.pass,
         baselineAdjudicated: baselineAdjudicated ? baselineAdjudicated.verdict || 'ineligible' : null,
-        preExistingAdjudicated: preExistingAdjudicated ? (preExistingAdjudicated.matched ? 'pass' : 'ineligible') : null,
+        preExistingAdjudicated: preExistingVerdict,
         sha: git.sha,
         flakyRetried: retriedFiles,
         reportPath: jsonPath,
@@ -626,11 +632,12 @@ async function main() {
           const suite = baselineAdjudicated && baselineAdjudicated.failingByCheck
             ? Object.keys(baselineAdjudicated.failingByCheck).find((name) => baselineAdjudicated.failingByCheck[name].includes(e.file))
             : null;
-          const retryNote = suite
-            ? (decl && decl.retry && decl.retry[suite]
+          let retryNote = '';
+          if (suite) {
+            retryNote = decl && decl.retry && decl.retry[suite]
               ? ` Suite \`${suite}\` already has a retry command template.`
-              : ` Suite \`${suite}\` has no retry command template yet — add one alongside the \`flaky.files\` entry.`)
-            : '';
+              : ` Suite \`${suite}\` has no retry command template yet — add one alongside the \`flaky.files\` entry.`;
+          }
           const slug = e.file.replace(/\//g, '-');
           const note = `# Staged: add ${e.file} to .claude-tweaks/verify-scope.json's flaky.files\n\n`
             + `\`${e.file}\` has been baseline-flaky ${e.hits} time(s) (failed in the full run, passed in isolation at HEAD) `
@@ -724,7 +731,9 @@ async function main() {
 
   const lines = [];
   if (sel) {
-    const suiteList = sel.suites === '*' ? 'all' : (sel.suites.length ? sel.suites.join(', ') : 'none');
+    let suiteList = 'none';
+    if (sel.suites === '*') suiteList = 'all';
+    else if (sel.suites.length) suiteList = sel.suites.join(', ');
     const shortBase = String(resolvedBase).slice(0, 9);
     const sinceClause = `${files.length} changed file(s) since ${shortBase}`;
     // L10 (review): decl === null means "no declaration on disk" — name the
