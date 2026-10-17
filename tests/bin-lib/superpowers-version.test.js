@@ -297,7 +297,7 @@ test('a project entry whose projectPath carries a control character is ignored',
 
 test('a mis-cased home entry and cwd on a case-insensitive volume are still excluded as home', (t) => {
   const w = mkWorld();
-  const work = w.dir('home', 'work');
+  w.dir('home', 'work');
   const upperHome = w.home.toUpperCase();
   if (upperHome === w.home || !fs.existsSync(upperHome)) {
     t.skip('needs a case-insensitive volume');
@@ -312,7 +312,6 @@ test('a mis-cased home entry and cwd on a case-insensitive volume are still excl
   const effective = effectiveSuperpowersVersion(path.join(upperHome, 'work'), w.deps());
   assert.equal(effective.scope, 'user');
   assert.equal(effective.version, '7.0.0');
-  assert.ok(fs.existsSync(work));
 });
 
 test('CLAUDE_CONFIG_DIR: the override dir is read and {home}/.claude is ignored; env without it reads {home}/.claude', () => {
