@@ -199,3 +199,10 @@ test('legacy toIssuePayload (v1) never carries a verifiedAsOf param — frozen s
   const { body } = toIssuePayload(FINDING);
   assert.ok(!body.includes('Verified-as-of:'));
 });
+
+test('AC4.1: toIssuePayloadV2 lists the anchor path under ### Key Files', () => {
+  const { extractKeyFilesSection } = require('../../../plugin/bin/lib/issues/grouping');
+  const { body } = toIssuePayloadV2(V2_FINDING);
+  assert.ok(body.includes('### Key Files\n\n- `src/api/user.js` — address the finding at this anchor'));
+  assert.deepStrictEqual(extractKeyFilesSection(body), ['src/api/user.js']);
+});

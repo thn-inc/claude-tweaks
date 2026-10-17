@@ -228,3 +228,8 @@ test('toIssuePayload threads verifiedAsOf through to the composed body', () => {
   const payload = toIssuePayload(finding(), 'abc1234');
   assert.strictEqual(extractVerifiedAsOf(payload.body), 'abc1234');
 });
+
+test('AC4.1: toIssuePayload lists the doc path under ### Key Files', () => {
+  const payload = toIssuePayload(finding());
+  assert.ok(payload.body.includes('### Key Files\n\n- `docs/decisions/0007-foo.md` — apply the proposed documentation edit'));
+});

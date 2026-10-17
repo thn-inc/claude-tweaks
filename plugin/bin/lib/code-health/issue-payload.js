@@ -67,6 +67,10 @@ function toIssuePayloadV2(finding, verifiedAsOf) {
     // (#2660) rather than a per-finding derivation the judge output doesn't
     // carry data for.
     releaseNote: 'No user-visible change — internal code-quality fix.',
+    // keyFiles (#2975): the anchor's file path (any `#symbol` suffix stripped —
+    // the same split grouping.js's ANCHOR_RE applies) renders under
+    // `### Key Files` so grouping can read the target off a structured section.
+    keyFiles: [{ path: finding.anchor.split('#')[0].trim(), change: 'address the finding at this anchor' }],
     filedBy: '/claude-tweaks:code-health',
     verifiedAsOf,
   });

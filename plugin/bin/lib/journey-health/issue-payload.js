@@ -46,6 +46,9 @@ function toIssuePayload(finding, verifiedAsOf) {
     deliverables: finding.recommendation,
     acceptanceCriteria: `The condition described above is resolved: a fresh \`/claude-tweaks:journey-health\` audit of journey '${finding.journey}' files no finding with this fingerprint.`,
     releaseNote,
+    // keyFiles (#2975): the journey document (the path scope.js's listJourneys
+    // reads) renders under `### Key Files`.
+    keyFiles: [{ path: `docs/journeys/${finding.journey}.md`, change: 'fix the journey document' }],
     filedBy: '/claude-tweaks:journey-health',
     verifiedAsOf,
   });

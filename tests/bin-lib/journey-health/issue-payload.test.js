@@ -222,3 +222,8 @@ test('toIssuePayload threads verifiedAsOf through to the composed body', () => {
   assert.ok(payload.body.includes('Verified-as-of: abc1234'));
   assert.strictEqual(extractVerifiedAsOf(payload.body), 'abc1234');
 });
+
+test('AC4.1: toIssuePayload lists the journey document under ### Key Files', () => {
+  const payload = toIssuePayload(finding());
+  assert.ok(payload.body.includes('### Key Files\n\n- `docs/journeys/checkout-flow.md` — fix the journey document'));
+});
