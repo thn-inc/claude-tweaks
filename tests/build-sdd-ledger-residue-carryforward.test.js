@@ -1,7 +1,7 @@
 'use strict';
 // tests/build-sdd-ledger-residue-carryforward.test.js — pins #1135: /build's subagent-strategy
 // dispatch procedure (dispatch.md, read by SKILL.md Common Step 2's "subagent" branch) directs
-// /superpowers:subagent-driven-development to copy surviving SDD deferred-minor / parked ledger
+// /superpowers:subagent-driven-development to copy surviving SDD deferred-minor / parked / Ruling ledger
 // lines (`<workspace>/progress.md`) into the run's own open items ledger before its Finish step
 // deletes the plan's SDD workspace — otherwise those lines are structurally lost, since
 // /claude-tweaks:wrap-up reads only docs/plans/*-ledger.md, never the deleted SDD workspace.
@@ -28,11 +28,35 @@ test('dispatch.md: the directive names the source lines (progress.md minor (defe
   assert.match(DISPATCH, /<workspace>\/progress\.md` line matching `minor \(deferred\):`, `parked —`, or `Ruling:`/);
 });
 
-test('dispatch.md: the directive names the destination — the run ledger\'s Add Item operation, phase build, deferred/observation status', () => {
+test('AC1.1 AC2.1: the directive maps deferred-minor → deferred, parked → observation, Ruling → open (three-way, first match wins)', () => {
   assert.match(
     DISPATCH,
-    /this build's own open items ledger \(`\/claude-tweaks:ledger`'s Add Item operation\) — phase `build`, status `deferred` for a `minor \(deferred\):` line or `observation` for a `parked —` or `Ruling:` line/
+    /this build's own open items ledger \(`\/claude-tweaks:ledger`'s Add Item operation\) — phase `build`, status `deferred` for a `minor \(deferred\):` line, `observation` for a `parked —` line, or `open` for a `Ruling:` line/
   );
+  assert.doesNotMatch(DISPATCH, /or `observation` for a `parked —` or `Ruling:` line/, 'the pre-#3401 two-way mapping must be gone');
+});
+
+test('AC2.2: the classification rule — a first-match Ruling: line is load-bearing — is stated with its reason', () => {
+  assert.match(DISPATCH, /whose first marker match is `Ruling:` is load-bearing — every pre-flight, mid-run, breaker, and residual final-review ruling/);
+  assert.match(DISPATCH, /SDD writes the bare form only where it decided in lieu of a human, and the residual final-review shape has no pinned prefix to sniff/);
+  assert.match(DISPATCH, /a `parked —` line's first match is `parked —`, so the match order already separates the two classes/);
+});
+
+test('AC2.3: the run-directory branch stages staged/sdd-ruling-{N}.md via stage-item.js --allocate, ledger first then the file, and logs STAGED', () => {
+  assert.match(DISPATCH, /Item `SDD ruling — \{one-liner\}: ratify or reverse at the Review Console \(staged\/sdd-ruling-\{N\}\.md\)`/);
+  assert.match(DISPATCH, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/stage-item\.js" --run "\$PIPELINE_RUN_DIR" --id "sdd-ruling-\{N\}" --file \{tmp\} --allocate/);
+  assert.match(DISPATCH, /`Title:`.*?`Kind: sdd-ruling`.*?`Ruling:`.*?`Staged-at:`.*?`Ledger: \{ledger path\}#\{item-number\}`/);
+  assert.match(DISPATCH, /STAGED \{time\} — SDD ruling carried forward: staged\/sdd-ruling-\{N\}\.md — "\{one-liner\}"\. Reversibility: high\./);
+  const ledgerIdx = DISPATCH.indexOf('(1) append the ledger row — phase `build`, status `open`');
+  const fileIdx = DISPATCH.indexOf('(2) write the staged file via');
+  assert.ok(ledgerIdx > 0 && fileIdx > ledgerIdx, 'ledger row (1) must precede the staged-file write (2)');
+  assert.match(DISPATCH, /ledger first, then the file/);
+});
+
+test('the no-run-directory branch keeps the row open, stages nothing, and hands the ruling to the Step 7 handoff', () => {
+  assert.match(DISPATCH, /\*\*No run directory\*\* \(standalone `\/claude-tweaks:build`, no `\$PIPELINE_RUN_DIR`\): no console will read `staged\/`, so append the ledger row with status `open` and the same Item text minus the staged path, stage nothing, and list each ruling in the Step 7 handoff/);
+  assert.match(DISPATCH, /`Accept` = ratify, `Keep`\/`Defer` = reverse as a follow-up, `Fix anyway` = reverse now/);
+  assert.match(DISPATCH, /a ruling's text states a decision, not a defect, so it does not qualify on its own/);
 });
 
 test('dispatch.md: a line carrying two markers is copied once, under its first match', () => {
