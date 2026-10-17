@@ -189,3 +189,24 @@ test('default plugin roots come from discoverPluginRoots over the cwd\'s tracked
   await run([], deps);
   assert.deepStrictEqual(json().rows.map((r) => [r.skill, r.closure]), [['demo:alpha', closure]]);
 });
+
+test('harness-health names the Skill-load check: command, top 10, filing title, dedup, auto-close, --dry-run', () => {
+  const text = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', 'harness-health', 'SKILL.md'), 'utf8');
+  const start = text.indexOf('**Skill-load check (#3309');
+  assert.ok(start >= 0, 'harness-health/SKILL.md has no Skill-load check paragraph');
+  // The paragraph is its lead-in, one ```bash block, and the text after the
+  // fence up to the next blank line.
+  const fenceEnd = text.indexOf('\n```\n', text.indexOf('```bash', start)) + 5;
+  const para = text.slice(start, text.indexOf('\n\n', fenceEnd));
+  for (const needle of [
+    'node "${CLAUDE_PLUGIN_ROOT}/bin/skill-load-report.js" --plugin-root "${CLAUDE_PLUGIN_ROOT}"',
+    'top 10',
+    '"Skill load exceeds its static closure: {skill}"',
+    'open `by:harness-health` issue already carries that exact title',
+    '`status: "ok"`',
+    '`max ≤ closure`',
+    'Back within its static closure: max {max} B ≤ closure {closure} B over {sessions} sessions',
+    'never closes anything',
+    '`--dry-run`',
+  ]) assert.ok(para.includes(needle), `Skill-load check paragraph is missing: ${needle}`);
+});
