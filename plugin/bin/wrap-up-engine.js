@@ -600,13 +600,14 @@ function runFinishConsole(args) {
   const memory = payload.memory ?? [];
   const upstream = payload.upstream ?? [];
   const ledgerUpdates = payload.ledger ?? [];
-  const issuesNote = payload.issues != null ? `, issues: [${payload.issues.join(', ')}]` : '';
+  const issuesField = optionalIssuesField(payload);
+  const issuesNote = issuesField.issues ? `, issues: [${issuesField.issues.join(', ')}]` : '';
 
   // Step 1: verify-expectations.json (read-modify-write — preserve every
   // field this verb doesn't itself own, same discipline
   // review-console.md's step 11 documents for oversightExempt/issues).
   try {
-    writeExpectations({ runDir: args.runDir, fields: { memory, upstream, ...optionalIssuesField(payload) } });
+    writeExpectations({ runDir: args.runDir, fields: { memory, upstream, ...issuesField } });
   } catch (e) {
     process.stderr.write(`wrap-up-engine.js finish-console: step 1 (verify-expectations.json) failed: ${e.message}\n`);
     process.exitCode = 1;
