@@ -107,3 +107,43 @@ test('the current-branch Fixes issue set takes inputs.records only from header s
   const flat = collapse(read('plugin/skills/wrap-up/execution-and-verification.md'));
   assert.match(flat, /`inputs\.records` when non-empty and its `sources\.records` is `headers` or `worktree-headers`/);
 });
+
+// #3395 — readers of the materialized header outside wrap-up/ must name the worktree mirror too.
+// A block (paragraph or list item) that names a `work/*-spec.md` / `work/{n}-spec.md` header path
+// without the mirror token reads the main-checkout run dir only, which holds no header until merge.
+const HEADER_PATH = /work\/(?:\*|\{[^}]+\})-spec\.md/;
+const MIRROR = '{worktree}/.claude-tweaks/pipelines/{run-id}/';
+function blocks(text) {
+  return text.split(/\n\s*\n|\n(?=\s*(?:\d+\.|-) )/).map(collapse);
+}
+function unmirroredHeaderReads(text) {
+  return blocks(text).filter((b) => HEADER_PATH.test(b) && !b.includes(MIRROR));
+}
+const MULTISPEC_DIR = 'plugin/skills/flow';
+const SCOPE_FILES = [
+  ...fs.readdirSync(path.join(ROOT, MULTISPEC_DIR))
+    .filter((f) => f.startsWith('multispec-') && f.endsWith('.md'))
+    .map((f) => `${MULTISPEC_DIR}/${f}`),
+  'plugin/skills/_shared/design-wrapper-handling.md',
+];
+
+// Frozen pre-change excerpts (at d3c7fd26b) — the three directives #3395 retires.
+const PRE_SURFACE = "- `--surface` — the record's materialized header `surface:` field (`flow/materialize.md`), when exactly one record is in scope (read from `$PIPELINE_RUN_DIR/work/*-spec.md`'s frontmatter).";
+const PRE_STEP3 = 'For each `id` whose `spec-{id}/work/{id}-spec.md` exists (materialized from a record via `materialize.md`), read its header `record:` field to confirm the issue number. The materialized file is never deleted before this point — only archived once the run dir is archived — so it\'s read directly here; there is no separate pre-deletion capture.';
+const PRE_PARKED = "AND that record's materialized header (`spec-{spec}/work/{issue}-spec.md` — read directly; per the release item above, the file is never deleted before this point) carries `parked-at-shaping: true`";
+
+test('AC3.1: unmirroredHeaderReads flags each pre-change directive (the AC1 pin can go red)', () => {
+  for (const pre of [PRE_SURFACE, PRE_STEP3, PRE_PARKED]) assert.equal(unmirroredHeaderReads(pre).length, 1, pre);
+  assert.deepStrictEqual(unmirroredHeaderReads('read `{worktree}/.claude-tweaks/pipelines/{run-id}/work/*-spec.md`, else the run dir\'s own `work/*-spec.md`'), []);
+});
+
+test('the #3395 scope corpus is non-empty (the sweep below is not vacuous)', () => {
+  assert.ok(SCOPE_FILES.length > 10, `only ${SCOPE_FILES.length} scope files`);
+  assert.ok(SCOPE_FILES.includes('plugin/skills/_shared/design-wrapper-handling.md'));
+});
+
+for (const rel of SCOPE_FILES) {
+  test(`AC1.1: ${rel} never reads a main-checkout work/*-spec.md as its only source`, () => {
+    assert.deepStrictEqual(unmirroredHeaderReads(read(rel)), []);
+  });
+}
