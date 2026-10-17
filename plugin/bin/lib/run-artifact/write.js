@@ -21,27 +21,26 @@ const ARTIFACT_NAMES = Object.freeze(['sdd-dispatch-sample.txt']);
 
 // Exact membership — `name` is used as a bare filename directly under runDir.
 function isArtifactName(name) {
-  return typeof name === 'string' && ARTIFACT_NAMES.includes(name);
+  return ARTIFACT_NAMES.includes(name);
 }
 
-function assertArtifactName(name) {
+function artifactPath(runDir, name) {
   if (!isArtifactName(name)) {
     throw new Error(`run-artifact: ${JSON.stringify(name)} is not an allowlisted artifact name`);
   }
+  return path.join(runDir, name);
 }
 
 // { runDir, name, content } -> { file }
 function writeArtifact({ runDir, name, content }) {
-  assertArtifactName(name);
-  const file = path.join(runDir, name);
+  const file = artifactPath(runDir, name);
   writeFileAtomic(file, content);
   return { file };
 }
 
 // { runDir, name } -> { file, existed }. Idempotent: a missing file is not an error.
 function deleteArtifact({ runDir, name }) {
-  assertArtifactName(name);
-  const file = path.join(runDir, name);
+  const file = artifactPath(runDir, name);
   try {
     fs.unlinkSync(file);
     return { file, existed: true };

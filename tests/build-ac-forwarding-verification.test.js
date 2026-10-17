@@ -96,8 +96,9 @@ test('AC1.1/AC2.1 the dispatch.md sample commands run from a worktree cwd and ro
     // Step 3: persist via the writer, {sample-path} substituted with the literal (a separate shell, no inherited variable).
     const target = path.join(runDir, 'sdd-dispatch-sample.txt');
     sh(cmds[0].replace('{sample-path}', samplePath));
-    assert.equal(fs.readFileSync(target, 'utf8'), fs.readFileSync(samplePath, 'utf8'));
-    assert.ok(fs.readFileSync(target, 'utf8').includes(excerpt));
+    const persisted = fs.readFileSync(target, 'utf8');
+    assert.equal(persisted, fs.readFileSync(samplePath, 'utf8'));
+    assert.ok(persisted.includes(excerpt));
     sh(cmds[1]);
     assert.ok(!fs.existsSync(target), 'the delete command removes the sample');
   } finally {
