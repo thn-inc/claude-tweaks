@@ -129,7 +129,7 @@ test('transcript-judge.md lets a consumer whose fallback does not evaluate the s
 // --- 3c. #2916: readers ignore a self-assessment watermark's byte offset ---
 
 test('AC3.1: transcript-judge.md says readers ignore a self-assessment watermark\'s byte offset', () => {
-  assert.match(SHARED, /\*\*Readers ignore a self-assessment watermark's byte offset\.\*\*/);
+  assert.match(SHARED, /\*\*Self-assessment watermark exception — readers ignore its byte offset\.\*\*/);
   assert.match(SHARED, /kept for audit only/);
 });
 

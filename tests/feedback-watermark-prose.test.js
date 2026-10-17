@@ -127,7 +127,7 @@ test('session-evaluation.md no longer claims no stamp is written on a failed Gat
 
 test('AC4.1: session-evaluation.md cites the shared Self-assessment watermark exception rather than restating it', () => {
   assert.match(SESSION_EVAL, /_shared\/transcript-judge\.md`'s Self-assessment watermark exception/);
-  assert.doesNotMatch(SESSION_EVAL, /\*\*Readers ignore a self-assessment watermark's byte offset\.\*\*/);
+  assert.doesNotMatch(SESSION_EVAL, /\*\*Self-assessment watermark exception — readers ignore its byte offset\.\*\*/);
 });
 
 test('bare-invocation.md Gather 2 paragraph points to the Skip check before describing dispatch', () => {
