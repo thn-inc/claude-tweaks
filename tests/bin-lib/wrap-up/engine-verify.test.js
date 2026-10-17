@@ -1585,6 +1585,39 @@ test('a trusted brief after an untrusted one passes and still names the skipped 
   assert.match(row.detail, /^ignored: skipped marker comment https:\/\/x\/c1 by eve \(NONE\)/);
 });
 
+test('a failing row still names the comments a passing target skipped', () => {
+  const runDir = makeTmpDir('verify-acceptance-trust-mixed-');
+  writeSpecFile(runDir, '900', 900);
+  writeSpecFile(runDir, '901', 901);
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+    if (args.includes('labels,comments')) {
+      // #900 passes via a trusted brief after an untrusted one; #901 has no brief at all.
+      if (args.includes('900')) {
+        return JSON.stringify({
+          labels: [{ name: 'demo:pending' }],
+          comments: [
+            { body: TRUST_BRIEF_BODY, url: 'https://x/c900', author: { login: 'eve' }, authorAssociation: 'NONE' },
+            { body: TRUST_BRIEF_BODY, url: 'https://x/c900b', author: { login: 'tom' }, authorAssociation: 'MEMBER' },
+          ],
+        });
+      }
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [] });
+    }
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'acceptance-labeling');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#901: no comment carries a confirmed Verification Brief/);
+  assert.match(row.detail, /; ignored \(#900\): skipped marker comment https:\/\/x\/c900 by eve \(NONE\)/);
+  assert.ok(
+    row.detail.indexOf('#901:') < row.detail.indexOf('ignored (#900)'),
+    'passing-target notes follow the failing lines'
+  );
+});
+
 test('an untrusted comment that carries no brief marker is not named as ignored', () => {
   const { row } = acceptanceTrustRow({
     issueComments: [{ body: 'looks good to me', url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
