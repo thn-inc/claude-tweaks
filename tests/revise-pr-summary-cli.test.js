@@ -15,13 +15,14 @@ const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'revise-pr-summary.js');
 const BODY = composePrEarlyBody({ runId: 'r1', specSummary: 'Old mechanism.', target: '#3050', nextStep: 'build', fixesLines: ['Fixes #3050'] });
 const REV = '- AUTO 09:35:19 — Spec Step 3: premise reversed: health endpoint → release tag. Reversibility: high.';
 
-function fakeDeps(files, manifest = null) {
+function fakeDeps(files, manifest = null, isDir = true) {
   const calls = { stdout: [], stderr: [] };
   return {
     calls, files,
     readFile: (p) => { if (!(p in files)) throw new Error(`ENOENT: ${p}`); return files[p]; },
     writeFile: (p, s) => { files[p] = s; },
     readManifest: () => manifest,
+    isDirectory: () => isDir,
     stdout: (s) => calls.stdout.push(s),
     stderr: (s) => calls.stderr.push(s),
   };
@@ -85,6 +86,14 @@ test('malformed invocations exit 2 and write nothing', () => {
     assert.equal(run(argv, deps), 2, argv.join(' '));
     assert.equal('/o.md' in deps.files, false);
   }
+});
+
+test('a non-directory --run-dir exits 2, prints the message to stderr, and writes nothing (I2)', () => {
+  const deps = fakeDeps({ '/b.md': BODY }, null, false);
+  assert.equal(run(['--run-dir', '/not-a-dir', '--body-file', '/b.md'], deps), 2);
+  assert.equal(deps.calls.stdout.length, 0);
+  assert.match(deps.calls.stderr[0], /--run-dir is not a directory: \/not-a-dir/);
+  assert.equal('/o.md' in deps.files, false);
 });
 
 test('an unreadable --summary-file or unwritable --out is exit 2', () => {

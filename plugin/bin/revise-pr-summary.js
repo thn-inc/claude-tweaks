@@ -13,13 +13,15 @@
 // bin/lib/flow/pr-body.js's reviseSpecSummary; the procedure that calls this
 // is _shared/pr-checklist-refresh.md's Phase-checklist update.
 // Exit 0 = reported or applied (stdout: one JSON line); 2 = malformed
-// invocation, an unreadable --body-file/--summary-file, or an unwritable --out.
+// invocation, a --run-dir that is not a directory, an unreadable
+// --body-file/--summary-file, or an unwritable --out.
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const { parsePremiseReversals, reviseSpecSummary } = require('./lib/flow/pr-body');
 const { readManifest } = require('./lib/flow/manifest');
+const { writeFileAtomic } = require('./lib/atomic-write');
 
 const USAGE = 'usage: revise-pr-summary.js --run-dir <dir> --body-file <file> [--summary-file <file> --out <file>] [--help]\n';
 
@@ -41,8 +43,9 @@ function parseArgs(argv) {
 
 const realDeps = {
   readFile: (p) => fs.readFileSync(p, 'utf8'),
-  writeFile: (p, s) => fs.writeFileSync(p, s),
+  writeFile: (p, s) => writeFileAtomic(p, s),
   readManifest,
+  isDirectory: (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } },
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -70,6 +73,7 @@ function run(argv, deps = realDeps) {
   for (const flag of ['--run-dir', '--body-file']) {
     if (!o[FLAGS[flag]]) return usageError(`${flag} is required`);
   }
+  if (!deps.isDirectory(o.runDir)) return usageError(`--run-dir is not a directory: ${o.runDir}`);
   if (Boolean(o.summaryFile) !== Boolean(o.out)) return usageError('--summary-file and --out go together');
 
   let body;
