@@ -28,6 +28,7 @@ test('docs/donts.md [IL-150] names fs.realpathSync.native', () => {
   const il150 = lines.filter((line) => line.includes('realTarget()') && line.includes('[IL-150]'));
   assert.equal(il150.length, 1);
   assert.match(il150[0], /fs\.realpathSync\.native/);
+  assert.match(il150[0], /realTarget\(\)`'s leaf handling/);
 });
 
 test('docs/incident-log.md IL-150 cites #3380 row 48 as the casing instance', () => {
@@ -38,6 +39,8 @@ test('docs/incident-log.md IL-150 cites #3380 row 48 as the casing instance', ()
   const section = text.slice(start, end);
   assert.match(section, /#3380/);
   assert.match(section, /row 48/);
+  assert.match(section, /#3406/);
   assert.match(section, /ffe20b982/);
+  assert.match(section, /realTarget\(\)` in `pre-tool-use\.js` still uses the JS form/);
   assert.match(section, /fs\.realpathSync\.native/);
 });
