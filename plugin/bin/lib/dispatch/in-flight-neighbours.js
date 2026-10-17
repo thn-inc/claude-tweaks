@@ -1,0 +1,75 @@
+'use strict';
+
+// Neighbour-in-flight exclusions for dispatch's queue-pull script (#3278).
+//
+// Dispatch builds each record as its own group, so the one concurrency guard
+// left is this: a candidate waits while a record that shares a specific key
+// file with it holds a LIVE claim. This module turns those live-claimed direct
+// neighbours into {reason: 'neighbour-in-flight', records, detail} entries in
+// the shape exclusions.js owns.
+//
+// Liveness comes from the claim blob (claims.js classifyClaimBlob), never from
+// a bot:in-progress label — a label outlives its claim. Only in-flight records
+// that actually neighbour some candidate are read, each at most once.
+//
+// A failed read (a thrown read, or a {failure} result) fails open: the record
+// counts as not live and is reported in `unreadable` for the caller to surface.
+// #3278 accepts that gap on purpose — a conflict the guard misses is resolved
+// at merge time by _shared/pr-first-merge.md's Conflict path, which costs less
+// than starving a record on a flaky read. An unparseable blob is a different
+// case: the read succeeded, the content simply is not a live claim, so it is
+// not listed in `unreadable`.
+
+const { findInFlightNeighbours, extractKeyFiles } = require('../issues/grouping');
+const { classifyClaimBlob } = require('../issues/claims');
+
+const REASON = 'neighbour-in-flight';
+
+function toItem(issue) {
+  return { id: issue.number, keyFiles: extractKeyFiles(issue) };
+}
+
+// candidates, inFlight: issue objects ({ number, body, labels? }).
+// readClaimContent(number) -> { content: string|null } | { failure: string }; may throw.
+// now: epoch milliseconds. hubOptions: forwarded to findInFlightNeighbours.
+// Returns { exclusions, unreadable } — exclusions ordered by candidate number,
+// unreadable a sorted, unique list of in-flight numbers whose read failed.
+function neighbourInFlightExclusions({ candidates, inFlight, readClaimContent, now, hubOptions = {} }) {
+  const neighbours = findInFlightNeighbours(candidates.map(toItem), (inFlight || []).map(toItem), hubOptions);
+
+  const liveByNumber = new Map();
+  const unreadable = new Set();
+  for (const list of neighbours.values()) {
+    for (const { number } of list) {
+      if (liveByNumber.has(number)) continue;
+      let live = false;
+      try {
+        const result = readClaimContent(number);
+        if (result && Object.prototype.hasOwnProperty.call(result, 'content')) {
+          live = classifyClaimBlob(result.content, now).state === 'live';
+        } else {
+          unreadable.add(number);
+        }
+      } catch {
+        unreadable.add(number);
+      }
+      liveByNumber.set(number, live);
+    }
+  }
+
+  const exclusions = [];
+  for (const [candidateId, list] of neighbours) {
+    const liveNeighbours = list.filter((n) => liveByNumber.get(n.number));
+    if (liveNeighbours.length === 0) continue;
+    exclusions.push({
+      reason: REASON,
+      records: [candidateId],
+      detail: { neighbours: liveNeighbours.map(({ number, files }) => ({ number, files })) },
+    });
+  }
+  exclusions.sort((a, b) => a.records[0] - b.records[0]);
+
+  return { exclusions, unreadable: [...unreadable].sort((a, b) => a - b) };
+}
+
+module.exports = { neighbourInFlightExclusions };
