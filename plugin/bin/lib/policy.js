@@ -94,6 +94,14 @@ function readListKey(repoRoot, key) {
   return value.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+// `commit-scope` (#3298): the constant Conventional-Commits scope token
+// bin/compose-subject.js falls back to. resolveValue applies the schema's
+// string validation (non-blank, whitespace-free) — anything else resolves
+// to the schema default, which this key leaves unset, hence null.
+function readCommitScope(repoRoot) {
+  return resolveValue('commit-scope', parsePolicy(repoRoot)['commit-scope']) ?? null;
+}
+
 // `gh-timeout-ms` (#2567) — the one integer-typed lever bin/lib/shared-
 // primitives.js reads through this module rather than re-implementing
 // policy-schema.js's own validation/default logic. resolveValue already
@@ -147,6 +155,6 @@ function resolvePortServices(repoRoot) {
 }
 
 module.exports = {
-  isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, resolvePortServices, readGhTimeoutMs,
+  isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, resolvePortServices, readGhTimeoutMs,
   readGitTimeoutMs,
 };

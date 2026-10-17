@@ -136,8 +136,10 @@ test('POLICY_KEYS entries are unique', () => {
   // claims-git-cas.js `git` subprocess call may run before it is killed;
   // env var CLAUDE_TWEAKS_GIT_TIMEOUT_MS takes precedence over this when
   // both are set.
-  assert.strictEqual(POLICY_KEYS.length, 73);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 73);
+  // 73 -> 74, #3298 (merge-subject scope source): commit-scope — string, no default — the constant Conventional-Commits scope token
+  // 74 -> 75, #3298: commit-scope-paths — list, default [] — comma-separated prefix=token pairs resolved against a merge's changed files
+  assert.strictEqual(POLICY_KEYS.length, 75);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 75);
 });
 
 test('dispatch-batch-size is registered alongside its deprecated alias', () => {
