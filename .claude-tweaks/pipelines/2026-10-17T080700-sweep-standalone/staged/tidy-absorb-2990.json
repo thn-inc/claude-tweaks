@@ -1,0 +1,1 @@
+[{"tag":"sizing","record":2990,"title":"CHANGELOG.md is missing the v6.136.0 entry","action":"Absorb into #3175 (v6.136.0 is inside its backfill range)","command":"gh issue comment 2990 … && gh issue close 2990 --reason \"not planned\""}]

@@ -1,0 +1,1 @@
+[{"tag":"sizing","record":3288,"title":"Allowlist statusline.test.js as flaky","action":"Absorb into #3261 (duplicate scope; close not planned)","command":"gh issue comment 3288 … && gh issue close 3288 --reason \"not planned\""}]
