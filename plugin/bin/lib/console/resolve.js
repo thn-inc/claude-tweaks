@@ -48,7 +48,7 @@ const SECTION_MAP = [
   [/^review-unconfirmed-/, SECTIONS.LOW],
   [/^review-(contested|debate)-/, SECTIONS.CONTESTED],
   [/\.patch$/, SECTIONS.PENDING],
-  [/^(polish-suggestion|visual-review|design-decision|build-deviation|simplify|deepen)-/, SECTIONS.PENDING],
+  [/^(polish-suggestion|visual-review|design-decision|build-deviation|simplify|deepen|sdd-ruling)-/, SECTIONS.PENDING],
   [/^wrap-up-skill(-|\b)/, SECTIONS.SKILL],
   // release-backfill- retired #2257 (git describe --contains replaced the
   // staged-backfill mechanism entirely — nothing stages that prefix anymore).

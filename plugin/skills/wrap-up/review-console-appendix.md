@@ -65,7 +65,7 @@ procedure — no row is left unrouted:
 - `apply` on a **Pending review** item — step 1, which covers every staged item 5–7, not only the
   patches: a `.patch` via `_shared/staged-patch.md`'s `git apply` (a stale one takes the
   `Invariant:` re-derivation below), and a staged `.md` proposal (`polish-suggestion-*`,
-  `visual-review-*`, `design-decision-*`, `build-deviation-*`, `simplify-*`, `deepen-*`) applied
+  `visual-review-*`, `design-decision-*`, `build-deviation-*`, `simplify-*`, `deepen-*`, `sdd-ruling-*`) applied
   as that step already describes for a non-patch item.
 - `apply` on a `Q#` item — step 7 (record creation), whose `refused-proposals.md` check still
   runs first; on an `M#` item — step 8 (the `_shared/learning-routing.md` memory write plus its

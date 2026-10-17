@@ -47,6 +47,7 @@ const EVERY_SECTION = {
   'review-unconfirmed-3.md': 'unconfirmed',
   'review-contested-4.md': 'contested',
   'polish-suggestion-1.md': 'polish',
+  'sdd-ruling-1.md': 'Title: ruling\nKind: sdd-ruling\nRuling: Task 2: Ruling: keep the guard — cheaper than the alternative — costs a re-read if wrong\nStaged-at: abc123\nLedger: docs/plans/x-ledger.md#5\n\nratify / reverse\n',
   'wrap-up-skill-1.md': 'skill',
   'wrap-up-doc-1.md': 'doc',
   'wrap-up-claude-md-1.md': 'claude-md',
@@ -63,7 +64,7 @@ test('classifyStagedItem maps every known prefix to its console section and unkn
   const expect = {
     'review-2.patch': 'Pending review', 'test-fix-1.patch': 'Pending review', 'deepen-collapse-1.patch': 'Pending review', 'simplify-1.patch': 'Pending review',
     'review-unconfirmed-3.md': 'Low-confidence findings', 'review-contested-4.md': 'Contested findings', 'review-debate-1.md': 'Contested findings',
-    'polish-suggestion-1.md': 'Pending review', 'visual-review-skipped.md': 'Pending review', 'design-decision-2.md': 'Pending review', 'build-deviation-1.md': 'Pending review',
+    'polish-suggestion-1.md': 'Pending review', 'visual-review-skipped.md': 'Pending review', 'design-decision-2.md': 'Pending review', 'build-deviation-1.md': 'Pending review', 'sdd-ruling-1.md': 'Pending review',
     'wrap-up-skill-1.md': 'Skill updates', 'wrap-up-skill-new-auth.md': 'Skill updates', 'wrap-up-skill-restructure.md': 'Skill updates',
     'wrap-up-doc-1.md': 'Documentation updates', 'tidy-doc-1.md': 'Documentation updates',
     'wrap-up-claude-md-1.md': 'Configuration updates', 'wrap-up-adr-1.md': 'Configuration updates',
@@ -96,6 +97,7 @@ test('resolveAll resolves one item per section per the short-circuit stances and
   assert.strictEqual(by['review-unconfirmed-3.md'].resolution, 'keep-staged');
   assert.strictEqual(by['review-contested-4.md'].resolution, 'keep-staged');
   assert.strictEqual(by['polish-suggestion-1.md'].resolution, 'apply');
+  assert.strictEqual(by['sdd-ruling-1.md'].resolution, 'apply');
   assert.strictEqual(by['wrap-up-skill-1.md'].resolution, 'approve');
   assert.strictEqual(by['wrap-up-doc-1.md'].resolution, 'approve');
   assert.strictEqual(by['wrap-up-claude-md-1.md'].resolution, 'approve');
@@ -508,4 +510,50 @@ test('SECTION_STANCES names a stance for every section the console renders (#193
   for (const s of ['Auto-applied', 'Pending review', 'Low-confidence findings', 'Contested findings', 'Skill updates', 'Documentation updates', 'Journey updates', 'Configuration updates', 'Reference repairs', 'Cleanup actions', 'Queue writes', 'Memory updates', 'Upstream feedback', 'Refused — no defer reason']) {
     assert.ok(SECTION_STANCES[s] && typeof SECTION_STANCES[s].resolution === 'string', s);
   }
+});
+
+// Prose-code twin pin (#3401): resolve.js's Pending-review `.md` prefix
+// alternation and review-console-appendix.md's prose prefix list name the
+// same closed set. Both directions, so a prefix added to one side alone
+// goes red; the two negative controls below run the same assertion the
+// positive test runs, against a mutated input.
+const APPENDIX = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'review-console-appendix.md'), 'utf8');
+
+function pendingMdPrefixesFromCode(map = SECTION_MAP) {
+  const rows = map.filter(([re, section]) => section === 'Pending review' && /^\^\(.*\)-$/.test(re.source));
+  assert.strictEqual(rows.length, 1, 'exactly one Pending-review .md prefix alternation in SECTION_MAP');
+  return rows[0][0].source.slice(2, -2).split('|').sort();
+}
+
+function pendingMdPrefixesFromProse(text = APPENDIX) {
+  const m = /- `apply` on a \*\*Pending review\*\* item[\s\S]*?a staged `\.md` proposal \(([^)]*)\)/.exec(text);
+  assert.ok(m, 'the appendix `apply` on Pending review bullet with its parenthesized `.md` prefix list is present');
+  const prefixes = [...m[1].matchAll(/`([a-z-]+)-\*`/g)].map((x) => x[1]).sort();
+  assert.ok(prefixes.length > 0, 'the prose list names at least one prefix');
+  return prefixes;
+}
+
+function assertPendingPrefixTwin(codeSet, proseSet) {
+  assert.deepStrictEqual(codeSet, proseSet, 'SECTION_MAP Pending-review .md prefixes and review-console-appendix.md prose list must name the same set');
+}
+
+test('AC4.1: the Pending-review .md prefix alternation and the appendix prose list name the same set, both ways (#3401 twin pin)', () => {
+  const code = pendingMdPrefixesFromCode();
+  const prose = pendingMdPrefixesFromProse();
+  assert.ok(code.includes('sdd-ruling'), 'sdd-ruling is in the regex');
+  assert.ok(prose.includes('sdd-ruling'), 'sdd-ruling is in the prose list');
+  assertPendingPrefixTwin(code, prose);
+});
+
+test('AC4.2 (control): removing sdd-ruling from the regex alone makes the twin pin fail', () => {
+  const mutated = SECTION_MAP.map(([re, s]) => (s === 'Pending review' && /^\^\(.*\)-$/.test(re.source)
+    ? [new RegExp(re.source.replace('|sdd-ruling', '').replace('sdd-ruling|', '')), s]
+    : [re, s]));
+  assert.throws(() => assertPendingPrefixTwin(pendingMdPrefixesFromCode(mutated), pendingMdPrefixesFromProse()));
+});
+
+test('AC4.2 (control): removing sdd-ruling-* from the appendix prose alone makes the twin pin fail', () => {
+  const mutated = APPENDIX.replace(/,?\s*`sdd-ruling-\*`/, '');
+  assert.notStrictEqual(mutated, APPENDIX, 'the mutation removed the prose entry');
+  assert.throws(() => assertPendingPrefixTwin(pendingMdPrefixesFromCode(), pendingMdPrefixesFromProse(mutated)));
 });
