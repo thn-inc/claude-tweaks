@@ -61,7 +61,7 @@ function defaultGit(cwd) {
 
 // Separate from defaultGit: a batch-mode `git cat-file --batch` call pipes
 // stdin and must come back as a Buffer (its output is binary-framed, see
-// parseCatFileBatch below), never the utf8-decoded string every other git
+// parseBatchOutput below), never the utf8-decoded string every other git
 // call in this file returns. deps.gitBatch is the injectable seam for it,
 // mirroring deps.git without overloading that one runner's return type.
 function defaultGitBatch(cwd) {
@@ -76,9 +76,11 @@ function defaultGitBatch(cwd) {
 // only for a resolved object, by exactly `{size}` content bytes and one
 // trailing newline. Slicing by the declared byte length rather than
 // splitting the buffer on '\n' is what keeps this correct: every SKILL.md
-// or sub-file this reads contains its own newlines (plugin/bin/lib/issues/
-// claims-git-cas.js's parseCatFileBatch is the same idiom for a different
-// object set). `count` is the number of objects fed, so a truncated or
+// or sub-file this reads contains its own newlines. Not claims-git-cas.js's
+// parseCatFileBatch: that one feeds bare shas and detects `missing` by
+// splitting the header on spaces, but here the input is `{sha}:{path}` and
+// git echoes the path back — a path with a space would read as a content
+// header. `count` is the number of objects fed, so a truncated or
 // malformed stream is a loud error rather than a silently-short result.
 function parseBatchOutput(buf, count) {
   const out = [];
@@ -375,7 +377,9 @@ function run(argv, deps = realDeps) {
           // ('' for root '.', meaning the whole repo) instead of spawning a
           // `git show` per closure member.
           const prefix = h.root === '.' ? '' : `${h.root}/`;
-          const mdPaths = [...baseFiles].filter((p) => (h.root === '.' || p.startsWith(prefix)) && p.endsWith('.md'));
+          // A path holding a newline would break cat-file's line framing; it
+          // stays on the per-file git show fallback instead.
+          const mdPaths = [...baseFiles].filter((p) => (h.root === '.' || p.startsWith(prefix)) && p.endsWith('.md') && !p.includes('\n'));
           const batch = prefetchBaseMd(gitBatch, base, mdPaths);
           return {
             pluginRoot: h.root,
