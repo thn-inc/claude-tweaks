@@ -148,6 +148,7 @@ for (const rel of SCOPE_FILES) {
   });
 }
 
+const REVIEW_CONSOLE = 'plugin/skills/flow/multispec-review-console.md';
 const CAPTURE_ANCHOR = "**Before any step below — capture each spec's header fields.**";
 function assertCaptureBeforeTeardown(text) {
   const start = text.indexOf('### Shared teardown');
@@ -166,11 +167,11 @@ function assertCaptureBeforeTeardown(text) {
 }
 
 test('AC2.1: the multi-spec teardown captures parked-at-shaping before the step that removes the shared worktree', () => {
-  assertCaptureBeforeTeardown(read('plugin/skills/flow/multispec-review-console.md'));
+  assertCaptureBeforeTeardown(read(REVIEW_CONSOLE));
 });
 
 test('AC3.2: assertCaptureBeforeTeardown goes red when the capture is removed or moved after step 6', () => {
-  const live = read('plugin/skills/flow/multispec-review-console.md').replace(/\r\n/g, '\n'); // the '\n\n' paragraph search below needs LF (core.autocrlf checkouts)
+  const live = read(REVIEW_CONSOLE).replace(/\r\n/g, '\n'); // the '\n\n' paragraph search below needs LF (core.autocrlf checkouts)
   const i = live.indexOf(CAPTURE_ANCHOR);
   const j = live.indexOf('\n\n', i);
   const para = live.slice(i, j);
@@ -182,10 +183,10 @@ test('AC3.2: assertCaptureBeforeTeardown goes red when the capture is removed or
 });
 
 test('Per-issue label cleanup uses the captured value, not a fresh header read', () => {
-  const flat = collapse(read('plugin/skills/flow/multispec-review-console.md'));
+  const flat = collapse(read(REVIEW_CONSOLE));
   const at = flat.indexOf('### Per-issue label cleanup');
   assert.notStrictEqual(at, -1, 'Per-issue label cleanup heading vanished');
-  const s = flat.slice(at);
-  assert.match(s.slice(0, 1500), /captured/);
-  assert.doesNotMatch(s.slice(0, 1500), /read directly/);
+  const head = flat.slice(at, at + 1500);
+  assert.match(head, /captured/);
+  assert.doesNotMatch(head, /read directly/);
 });
