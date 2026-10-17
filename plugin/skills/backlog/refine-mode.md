@@ -428,7 +428,7 @@ no `auto:*`. Logged the same as any row above.
 Once every write type above has been attempted, log each result and render the closing summary
 and run closure per `backlog/refine-closing-summary.md` (#1512) — the per-action log-line
 templates, the required tally/failed/skipped closing summary, and the final `close-run` call all
-live there now, split out to keep this file under the 40 KB per-file lazy-load ceiling.
+live there now, split out to keep this file lean.
 
 ## Concurrency
 

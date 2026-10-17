@@ -9,7 +9,7 @@ const REFINE_MODE_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'backlog
 const refineModeProse = fs.readFileSync(REFINE_MODE_PATH, 'utf8');
 
 // #1512 split the closing-summary block (and the log-line templates/close-run call around it)
-// out of refine-mode.md into its own sibling file to relieve the 40 KB lazy-load ceiling —
+// out of refine-mode.md into its own sibling file to keep it lean —
 // the same headroom-relief split #1488's Task 7 already did for the RECOMMEND_BUILD: false
 // branch (grant-lane-decision.md). The claims below now live there; refine-mode.md keeps only
 // a citing pointer.
