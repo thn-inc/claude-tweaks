@@ -10,6 +10,7 @@ const { readText } = require('./helpers/read-skill');
 
 const SKILL = readText(path.join(__dirname, '../plugin/skills/visual-review/SKILL.md'));
 const SUMMARY = readText(path.join(__dirname, '../plugin/skills/review/review-summary-template.md'));
+const MATERIALIZE = readText(path.join(__dirname, '../plugin/skills/flow/materialize.md'));
 
 function step05() {
   const from = SKILL.indexOf('## Step 0.5: Mode — `recommendation`');
@@ -17,6 +18,15 @@ function step05() {
   const to = SKILL.indexOf('\n## Step 1:', from);
   assert.ok(to > from, 'Step 0.5 must end at the "## Step 1:" heading');
   return SKILL.slice(from, to);
+}
+
+function noSurfaceParagraph() {
+  const s = step05();
+  const from = s.indexOf('If journeys overlap but step 3 found no frontend-surface signal');
+  assert.ok(from >= 0, 'Step 0.5 must keep its no-surface paragraph');
+  const to = s.indexOf('\n\n', from);
+  assert.ok(to > from, 'the no-surface paragraph must end at a blank line');
+  return s.slice(from, to);
 }
 
 test('AC1.1: a files: overlap alone no longer makes a journey affected', () => {
@@ -37,6 +47,7 @@ test('AC1.1: no surface signal returns the suppressed-journeys line, never the f
   const s = step05();
   assert.match(s, /If journeys overlap but step 3 found no frontend-surface signal, return this line instead of the table and the `Recommended follow-up` line/);
   assert.match(s, /No frontend surface in this run \(\{Surface: \{value\} \| no UI trigger file in the diff\}\) — visual review not recommended\. Journeys whose files: overlap the diff: \{journey-name\}, \{journey-name\}\./);
+  assert.doesNotMatch(noSurfaceParagraph(), /Recommended follow-up:/);
 });
 
 test('AC1.1: the suppressed line maps to an existing review summary status', () => {
@@ -76,4 +87,19 @@ test('the surface gate sits after the journey match and before the recommendatio
   const ctl = s.indexOf('6. **Return control**');
   assert.ok(match >= 0 && gate > match && score > gate && ret > score && ctl > ret,
     `expected steps 2-6 in order, got ${[match, gate, score, ret, ctl].join(', ')}`);
+});
+
+test('a declared web/mobile/desktop surface is enough without a Layer 3 match', () => {
+  assert.match(step05(), /is a signal on its own — unlike the design wrapper's precedence, the Layer 3 sniff need not also match, because a web record's backend change can still break a page/);
+});
+
+test('the review summary carries the suppressed reason and journey names', () => {
+  assert.match(noSurfaceParagraph(), /records it as `Skipped — no UI changes`, with the reason and the journey names/);
+  assert.match(SUMMARY, /\{If skipped because `\/claude-tweaks:visual-review` found no frontend surface: its reason \(`Surface: \{value\}` or no UI trigger file in the diff\) and the journeys whose `files:` overlapped the diff, copied from its suppressed line\}/);
+});
+
+test('materialize.md names visual-review Step 0.5 as a surface reader', () => {
+  const row = MATERIALIZE.split('\n').find((l) => l.startsWith('| `surface` |'));
+  assert.ok(row, 'materialize.md must keep its `surface` reader-table row');
+  assert.match(row, /`\/claude-tweaks:visual-review` Step 0\.5's recommendation-mode surface gate/);
 });
