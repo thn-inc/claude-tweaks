@@ -224,6 +224,16 @@ function writeTimeoutMarker(markerPath, reason) {
   } catch { /* best-effort */ }
 }
 
+// Shared by deepenShallowClone's two marker checks (before and after
+// acquiring the lock): a ready-to-return failure object when a still-fresh
+// timeout marker exists at markerPath, or null when there's nothing cached
+// to short-circuit on (see readTimeoutMarker's own null conditions).
+function cachedTimeoutFailure(markerPath) {
+  if (!markerPath) return null;
+  const reason = readTimeoutMarker(markerPath);
+  return reason ? { error: reason } : null;
+}
+
 // execFileSync sets err.code to 'ETIMEDOUT' specifically when its own
 // `timeout` option fires (confirmed: a real timeout kill carries
 // {code:"ETIMEDOUT", signal:"SIGTERM", status:null} -- whole-branch
@@ -262,10 +272,8 @@ function deepenShallowClone(git, root, remote) {
   }
   const markerPath = commonDir ? path.join(commonDir, TIMEOUT_MARKER_FILENAME) : null;
 
-  if (markerPath) {
-    const cachedReason = readTimeoutMarker(markerPath);
-    if (cachedReason) return { error: cachedReason };
-  }
+  const precheckFailure = cachedTimeoutFailure(markerPath);
+  if (precheckFailure) return precheckFailure;
 
   const lockPath = commonDir ? path.join(commonDir, DEEPEN_LOCK_FILENAME) : null;
   let held = null;
@@ -294,10 +302,8 @@ function deepenShallowClone(git, root, remote) {
     // redundant fetch here is what turns the loser's old "fetch fails,
     // report unverifiable" outcome into a correct (or correctly cached)
     // classification instead.
-    if (markerPath) {
-      const cachedReason = readTimeoutMarker(markerPath);
-      if (cachedReason) return { error: cachedReason };
-    }
+    const recheckFailure = cachedTimeoutFailure(markerPath);
+    if (recheckFailure) return recheckFailure;
     let shallowNow;
     try {
       shallowNow = isShallow(git, root);
