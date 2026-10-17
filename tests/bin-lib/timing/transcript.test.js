@@ -298,6 +298,33 @@ test('#3375: readUsage rows carry model on assistant lines and null on user line
   assert.ok(small.every((r) => r.model === null));
 });
 
+// ---- #3375 final review M2: symlinks inside subagents/ are not followed (IL-150) ----
+
+test('#3375 M2 [IL-150]: readDispatches skips symlinked agent transcripts and meta files', async () => {
+  const dir = tmpSubagents();
+  const outside = tmpSubagents();
+  fs.writeFileSync(path.join(outside, 'secret.jsonl'), aLine('assistant', '2026-10-17T10:00:00.000Z', 'ms', 'claude-opus-5-5', [9, 9, 9, 9]) + '\n');
+  fs.writeFileSync(path.join(outside, 'secret.meta.json'), JSON.stringify({ description: 'Implement leaked', model: 'opus' }));
+  // fully symlinked agent: neither file may be followed, so no dispatch appears
+  fs.symlinkSync(path.join(outside, 'secret.jsonl'), path.join(dir, 'agent-l1.jsonl'));
+  fs.symlinkSync(path.join(outside, 'secret.meta.json'), path.join(dir, 'agent-l1.meta.json'));
+  // regular meta + symlinked transcript: listed, but the transcript is not read
+  fs.writeFileSync(path.join(dir, 'agent-l2.meta.json'), JSON.stringify({ description: 'Implement Task 2', model: 'sonnet' }));
+  fs.symlinkSync(path.join(outside, 'secret.jsonl'), path.join(dir, 'agent-l2.jsonl'));
+  // regular transcript + symlinked meta: the meta is not read (orphan)
+  fs.writeFileSync(path.join(dir, 'agent-l3.jsonl'), aLine('assistant', '2026-10-17T10:00:00.000Z', 'ml', 'claude-haiku-5', [1, 1, 1, 1]) + '\n');
+  fs.symlinkSync(path.join(outside, 'secret.meta.json'), path.join(dir, 'agent-l3.meta.json'));
+  const r = await readDispatches(dir);
+  const by = Object.fromEntries(r.items.map((i) => [i.agentId, i]));
+  assert.equal(by.l1, undefined);
+  assert.equal(by.l2.tokens, null);
+  assert.match(by.l2.notFound, /^transcript not readable \(symlink\)$/);
+  assert.equal(by.l2.description, 'Implement Task 2');
+  assert.equal(by.l3.description, null);
+  assert.equal(by.l3.notFound, 'meta not found');
+  assert.deepEqual(by.l3.tokens, { input: 1, output: 1, cacheRead: 1, cacheCreate: 1 });
+});
+
 // ---- #3375 final review C1: streaming snapshots in subagent transcripts ----
 
 // A real subagent turn is written as a streaming snapshot (stop_reason null,

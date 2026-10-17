@@ -311,6 +311,16 @@ test('#3375 review focus 3: the same transcript passed twice does not double-cou
   assert.equal(readTiming(s.dir).dispatches.items.length, 3);
 });
 
+test('#3375 M2: the same transcript reached through a symlinked directory alias does not double-count dispatches', () => {
+  const s = subagentRun();
+  const alias = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-alias-')), 'link');
+  fs.symlinkSync(s.slugDir, alias, 'dir');
+  const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--transcript', s.transcript, '--transcript', path.join(alias, 'sess-1.jsonl')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readTiming(s.dir).dispatches.items.length, 3);
+  assert.match(r.stdout, /^\| standard \| 2 \|/m);
+});
+
 test('#3375: the collapsed no-phase-events path still appends the dispatch table', () => {
   const s = subagentRun({ events: null });
   const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--transcript', s.transcript], { encoding: 'utf8' });

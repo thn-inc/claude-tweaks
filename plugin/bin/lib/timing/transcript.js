@@ -237,15 +237,23 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
   } catch {
     return { items: [], notFound: `no subagents/ directory at ${subagentsDir}`, excludedOutsideWindow: 0 };
   }
+  // A symlinked agent file could point outside ~/.claude/projects, so it is
+  // never followed (the lstat twin of locateTranscripts' realpath containment,
+  // IL-150): symlinked names are left out of the id set and never read.
+  const symlinked = new Set();
   const ids = new Set();
   for (const n of names) {
     const m = /^agent-(.+?)(\.meta\.json|\.jsonl)$/.exec(n);
-    if (m) ids.add(m[1]);
+    if (!m) continue;
+    let isLink = false;
+    try { isLink = fsImpl.lstatSync(path.join(subagentsDir, n)).isSymbolicLink(); } catch { /* unreadable entry: left to the normal read path */ }
+    if (isLink) symlinked.add(n);
+    else ids.add(m[1]);
   }
   const built = [];
   let excludedOutsideWindow = 0;
   for (const agentId of ids) {
-    const meta = readMeta(fsImpl, path.join(subagentsDir, `agent-${agentId}.meta.json`));
+    const meta = symlinked.has(`agent-${agentId}.meta.json`) ? null : readMeta(fsImpl, path.join(subagentsDir, `agent-${agentId}.meta.json`));
     const d = {
       agentId,
       description: meta ? strOrNull(meta.description) : null,
@@ -260,6 +268,11 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
     let startMs = null;
     let rows = null;
     try {
+      if (symlinked.has(`agent-${agentId}.jsonl`)) {
+        const e = new Error('symlinked transcript not followed');
+        e.code = 'symlink';
+        throw e;
+      }
       rows = await readUsage(path.join(subagentsDir, `agent-${agentId}.jsonl`), { fsImpl });
     } catch (err) {
       d.notFound = `transcript not readable (${(err && err.code) || 'EUNKNOWN'})`;

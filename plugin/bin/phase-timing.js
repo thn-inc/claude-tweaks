@@ -195,12 +195,17 @@ function renderDispatches(dispatches) {
 
 // paths: the resolved transcript paths; events: parsed events.jsonl rows. The
 // window is the earliest..latest event ts (no event with a ts -> the whole
-// session). Subagents dirs are deduped by path.resolve so a transcript passed
-// twice is not double-counted. -> the timing.json `dispatches` value.
+// session). Subagents dirs are deduped by fs.realpathSync (path.resolve when
+// the dir does not resolve) so a transcript passed twice, or reached through a
+// symlinked alias, is not double-counted. -> the timing.json `dispatches` value.
 async function collectDispatches(paths, events) {
   const stamps = events.map((e) => Date.parse(e && e.ts)).filter(Number.isFinite);
   const window = stamps.length ? { start: Math.min(...stamps), end: Math.max(...stamps) } : null;
-  const dirs = [...new Set(paths.map((p) => path.resolve(subagentsDirFor(p))))];
+  const canonical = (p) => {
+    const dir = path.resolve(subagentsDirFor(p));
+    try { return fs.realpathSync(dir); } catch { return dir; }
+  };
+  const dirs = [...new Set(paths.map(canonical))];
   const items = [];
   const reasons = [];
   let excludedOutsideWindow = 0;
