@@ -32,8 +32,27 @@ const LIFECYCLE = norm(read('plugin', 'skills', '_shared', 'pr-early-run-lifecyc
 function section(text, start, end) {
   const s = text.split(start)[1];
   assert.ok(s, `section "${start}" must exist`);
-  return end ? s.split(end)[0] : s;
+  if (!end) return s;
+  assert.ok(s.includes(end), `section "${start}" must be closed by "${end}"`);
+  return s.split(end)[0];
 }
+
+// Go-red evidence: the bytes #3050 replaced, frozen from its merge base
+// (2e10d142f). Every pin below must fail on these, so a pin that would pass
+// with the change reverted is caught here rather than trusted.
+const PRE_BUILD = norm('**Verify `ASSUMPTION — verify at build:` markers first (#1769).** Before invoking `/superpowers:writing-plans`, probe every `## Gotchas` bullet carrying that literal prefix (`_shared/premise-verification.md`) against this worktree — the same claim decomposition/shaping could not settle at spec time now has a real checkout to check. Log each outcome as one `decisions.md` line per `_shared/auto-decision-log.md` (`confirmed` or `reversed`, naming the probe). A reversed assumption is folded into the context handed to `/superpowers:writing-plans` as the corrected fact — never silently dropped, and never left for the plan to build on the original, now-disproven claim.');
+const PRE_REFRESH = norm('Flip that phase\'s checklist row from `- [ ] {phase}` to `- [x] {phase}` inside whichever span was found, leaving everything else — including the *other* delimiter pair, which this read may not even show — untouched, then write back through the same transport that did the read, to `/tmp/pr-checklist-{run-id}-{n}.md` — scoped by `{run-id}`, same reason as `_shared/pr-early-run-lifecycle.md`\'s Step 3 path. Re-read that file\'s first line back before `gh pr edit` and confirm it still names this run\'s `{run-id}`; hard-stop this update on a mismatch rather than push a wrong body:');
+
+test('the pins go red on the pre-#3050 text (frozen excerpts)', () => {
+  const marker = /`premise reversed: \{original claim\} → \{implemented behavior\}`/;
+  assert.match(BUILD, marker);
+  assert.doesNotMatch(PRE_BUILD, marker);
+  assert.doesNotMatch(PRE_BUILD, /Spec Step 3 plan that departs from a spec premise/);
+  for (const pin of [/bin\/revise-pr-summary\.js/, /`Revised during build: \{original claim\} → \{implemented behavior\}`/, /byte-unchanged/, /never a phase-exit or merge blocker/]) {
+    assert.match(REFRESH, pin);
+    assert.doesNotMatch(PRE_REFRESH, pin);
+  }
+});
 
 test('build/SKILL.md names the marker for an ASSUMPTION reversal and a Spec Step 3 departure', () => {
   const para = section(BUILD, '**Verify `ASSUMPTION — verify at build:` markers first (#1769).**', 'The plan will be written to');
