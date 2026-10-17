@@ -95,6 +95,8 @@ test('every touched skill file stays under the byte ceiling (#1926 AC7)', () => 
 // #3123: the Batched-plan marker paragraph steers fast-lane transcription plans to one batch.
 const PLAN_CHECKS = path.join(SKILLS, 'build', 'plan-authoring-checks.md');
 const INLINES_FULL_CODE = /every task inlines its complete code/;
+const BATCH_INSTRUCTION = '`**Batch:** send every task to one implementer as a single brief; review the combined diff once.`';
+const PER_TASK_EXCLUSION = 'stays per-task (SDD\'s "Reserve one-dispatch-per-task")';
 function batchedMarkerParagraph(text) {
   const line = text.split('\n').find((l) => l.startsWith('**Batched-plan marker.**'));
   assert.ok(line, 'plan-authoring-checks.md lacks the **Batched-plan marker.** paragraph');
@@ -105,8 +107,8 @@ function batchedFastLaneGuidanceProblems(paragraph) {
   if (!paragraph.includes('`ceremony: fast-lane`')) problems.push('`ceremony: fast-lane`');
   if (!paragraph.includes('`size: low`')) problems.push('`size: low`');
   if (!INLINES_FULL_CODE.test(paragraph)) problems.push('inlines-full-code condition');
-  if (!paragraph.includes('`**Batch:** send every task to one implementer as a single brief; review the combined diff once.`')) problems.push('`**Batch:**` instruction literal');
-  if (!paragraph.includes('stays per-task')) problems.push('per-task exclusion');
+  if (!paragraph.includes(BATCH_INSTRUCTION)) problems.push('`**Batch:**` instruction literal');
+  if (!paragraph.includes(PER_TASK_EXCLUSION)) problems.push('per-task exclusion');
   return problems;
 }
 
@@ -120,4 +122,19 @@ test('AC4.1: the guidance assertion goes red when the inlines-full-code conditio
   const doctored = paragraph.replace(INLINES_FULL_CODE, 'every task is small');
   assert.notStrictEqual(doctored, paragraph, 'doctoring found no condition text to remove — anchor text not found');
   assert.deepStrictEqual(batchedFastLaneGuidanceProblems(doctored), ['inlines-full-code condition']);
+});
+
+test('AC4.2: the guidance assertion goes red for each of the other four pins when its text is removed (doctored-text proof, #3123)', () => {
+  const paragraph = batchedMarkerParagraph(readText(PLAN_CHECKS));
+  const cases = [
+    ['`ceremony: fast-lane`', '`ceremony: fast-lane`'],
+    ['`size: low`', '`size: low`'],
+    [BATCH_INSTRUCTION, '`**Batch:**` instruction literal'],
+    [PER_TASK_EXCLUSION, 'per-task exclusion'],
+  ];
+  for (const [anchor, problem] of cases) {
+    const doctored = paragraph.replace(anchor, 'removed');
+    assert.notStrictEqual(doctored, paragraph, `doctoring found no anchor text for ${problem}`);
+    assert.deepStrictEqual(batchedFastLaneGuidanceProblems(doctored), [problem]);
+  }
 });
