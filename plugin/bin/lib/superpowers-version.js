@@ -118,7 +118,8 @@ function superpowersNotice({ effective, floor, projectDir }) {
   }
   return `claude-tweaks: superpowers ${effective.version} is older than ${floor}, the version claude-tweaks is verified against — ` +
     `update with: claude plugin update superpowers@${effective.marketplace} --scope ${effective.scope}${suffix}; ` +
-    `if it reports already at the latest, run claude plugin marketplace update ${effective.marketplace} first`;
+    `if it reports already at the latest, run claude plugin marketplace update ${effective.marketplace} first` +
+    ' — tell the user once, in your first reply; never run the update yourself';
 }
 
 module.exports = { SUPERPOWERS_FLOOR, parseVersion, isOlder, effectiveSuperpowersVersion, superpowersNotice };

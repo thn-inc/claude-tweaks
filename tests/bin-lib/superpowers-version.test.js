@@ -98,8 +98,22 @@ test('notice copy is exact', () => {
     superpowersNotice({ effective, floor: '7.0.0', projectDir: '/x' }),
     'claude-tweaks: superpowers 6.3.0 is older than 7.0.0, the version claude-tweaks is verified against — ' +
       'update with: claude plugin update superpowers@mk --scope user; ' +
-      'if it reports already at the latest, run claude plugin marketplace update mk first'
+      'if it reports already at the latest, run claude plugin marketplace update mk first' +
+      ' — tell the user once, in your first reply; never run the update yourself'
   );
+});
+
+test('a symlinked cwd to the matched project gets no "run from" suffix (both sides are realpathed)', () => {
+  const w = mkWorld();
+  const proj = w.dir('proj');
+  const link = path.join(w.tmp, 'proj-link');
+  fs.symlinkSync(proj, link);
+  // projectPath is the symlink; projectDir is the real dir. Only realpathing
+  // BOTH sides makes them equal.
+  const effective = { version: '6.3.0', scope: 'project', marketplace: MK, projectPath: link };
+  assert.ok(!superpowersNotice({ effective, floor: SUPERPOWERS_FLOOR, projectDir: proj }).includes('run from'));
+  const effective2 = { ...effective, projectPath: proj };
+  assert.ok(!superpowersNotice({ effective: effective2, floor: SUPERPOWERS_FLOOR, projectDir: link }).includes('run from'));
 });
 
 // ---- AC2: no notice at or above the floor; scope resolution -------------------

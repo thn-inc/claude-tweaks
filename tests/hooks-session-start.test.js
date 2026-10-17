@@ -15,7 +15,9 @@ const { INTERACTION_STYLE_DIRECTIVE } = require('../plugin/bin/lib/hooks/interac
 // Every call here goes through runSessionStart so no test can see the
 // maintainer's actual install (and none can start failing when it goes stale).
 const NO_INSTALL = { readFile: () => { throw Object.assign(new Error('no install (test)'), { code: 'ENOENT' }); } };
-const runSessionStart = (ctx) => sessionStart.run({ superpowersDeps: NO_INSTALL, ...ctx });
+// The default is applied after the spread, so a caller passing
+// `superpowersDeps: undefined` still gets NO_INSTALL, never the real file.
+const runSessionStart = (ctx) => sessionStart.run({ ...ctx, superpowersDeps: ctx.superpowersDeps || NO_INSTALL });
 
 function tmpProject() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-'));
@@ -1159,19 +1161,20 @@ const spCtx = (project, input, superpowersDeps) => ({ input, runDir: null, runSt
 test('#3380: startup emits the superpowers notice once', async () => {
   const project = tmpProject();
   const sp = mkSuperpowersWorld(project, { projectVersion: '6.3.0', userVersion: '7.0.0' });
-  const out = await sessionStart.run(spCtx(project, { source: 'startup' }, sp));
+  const out = await runSessionStart(spCtx(project, { source: 'startup' }, sp));
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.strictEqual((ctx.match(SP_NOTICE) || []).length, 1);
   assert.match(ctx, /claude plugin update superpowers@claude-plugins-official --scope project/);
+  assert.match(ctx, /tell the user once, in your first reply; never run the update yourself/);
 });
 
 test('#3380: absent source emits; resume/clear/compact do not', async () => {
   const project = tmpProject();
   const sp = mkSuperpowersWorld(project, { projectVersion: '6.3.0' });
-  const absent = await sessionStart.run(spCtx(project, {}, sp));
+  const absent = await runSessionStart(spCtx(project, {}, sp));
   assert.strictEqual((absent.json.hookSpecificOutput.additionalContext.match(SP_NOTICE) || []).length, 1);
   for (const source of ['resume', 'clear', 'compact']) {
-    const out = await sessionStart.run(spCtx(project, { source }, sp));
+    const out = await runSessionStart(spCtx(project, { source }, sp));
     assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /superpowers 6\.3\.0/, `source=${source} must stay silent`);
   }
 });
@@ -1186,8 +1189,8 @@ test('#3380: no-notice cases leave output byte-identical to a run with no instal
     // Baseline and case run against the SAME project dir: other SessionStart
     // blocks depend on the cwd, so a cross-fixture comparison would be flaky.
     const project = tmpProject();
-    const withCase = await sessionStart.run(spCtx(project, { source: 'startup' }, build(project)));
-    const baseline = await sessionStart.run(spCtx(project, { source: 'startup' }, NO_INSTALL));
+    const withCase = await runSessionStart(spCtx(project, { source: 'startup' }, build(project)));
+    const baseline = await runSessionStart(spCtx(project, { source: 'startup' }, NO_INSTALL));
     assert.strictEqual(JSON.stringify(withCase.json), JSON.stringify(baseline.json), label);
     assert.doesNotMatch(JSON.stringify(withCase.json), /superpowers/i, label);
   }
@@ -1197,7 +1200,7 @@ test('#3380: garbage input does not throw', async () => {
   const project = tmpProject();
   const sp = mkSuperpowersWorld(project, { projectVersion: '6.3.0' });
   for (const input of ['%%%', null]) {
-    const out = await sessionStart.run(spCtx(project, input, sp));
+    const out = await runSessionStart(spCtx(project, input, sp));
     assert.ok(out.json.hookSpecificOutput.additionalContext, `input=${String(input)}`);
   }
 });
@@ -1227,7 +1230,7 @@ test('#3380: a throwing superpowersNotice is swallowed — the rest of the conte
 test('#3380: the notice is inform-only — no permissionDecision, no exit code', async () => {
   const project = tmpProject();
   const sp = mkSuperpowersWorld(project, { projectVersion: '6.3.0' });
-  const out = await sessionStart.run(spCtx(project, { source: 'startup' }, sp));
+  const out = await runSessionStart(spCtx(project, { source: 'startup' }, sp));
   assert.match(out.json.hookSpecificOutput.additionalContext, /superpowers 6\.3\.0/);
   assert.ok(!('permissionDecision' in out.json.hookSpecificOutput));
   assert.strictEqual(out.exitCode, undefined);
