@@ -38,7 +38,10 @@ const RAIL_NAMES = new Set(['RAIL_BYTES', 'RAIL_LINES', 'RAIL_TOKENS', 'DESCRIPT
 const RULE_A = /\b(?:const|let|var)\s+([A-Z0-9_]*(?:CEILING|BUDGET)[A-Z0-9_]*_(?:BYTES|CHARS)|[A-Z0-9_]*_(?:BYTE|CHAR)S?_(?:CEILING|BUDGET)[A-Z0-9_]*)\s*=\s*([^;\n]*)/;
 const SKILL_PATH = /plugin\/skills\b|['"`]skills\/|['"]skills['"]/;
 const MEASURE_API = /\b(?:measuredTextBytes|measuredBytes|measureSkills|measureSubFiles|measureComposed|composedBytesReport|measureDescriptions|totalBytes|totalDescriptionChars|auditCorpus|auditText|bloatReport)\s*\(/;
-const SIZE_MEASURE = /\bBuffer\.byteLength\b|\bmeasuredBytes\b|\.bytes\b|\.size\b|\.max\b|\bbytes\b|\.length\b/;
+// Bare size-named identifiers count too (`size`, `fileSize`, `skillBytes`): a
+// helper like `const size = byteSize(…skills…)` hides the measuring call from the
+// comparison line.
+const SIZE_MEASURE = /\bBuffer\.byteLength\b|\bmeasuredBytes\b|\.bytes\b|\.size\b|\.max\b|\bbytes\b|\.length\b|\bsize\b|\b[a-z][\w$]*(?:Size|Bytes)\b/;
 const COMPARISON = /(<=|>=|<|>)\s*(\(?\s*\d[\d_]*(?:\s*\*\s*1024)?\s*\)?|[A-Za-z_$][\w$.]*(?:\[[^\]]*\])?)/g;
 const NUMERIC = /^\(?\s*(\d[\d_]*)(\s*\*\s*1024)?\s*\)?$/;
 // A plain (not ALL_CAPS, not ceiling/budget/cap-named) identifier declared
@@ -176,6 +179,19 @@ test('AC3.1: self-test — rule (b) catches a tainted .length compared to a lite
     'assert.ok(md.length <= 40960);',
   ].join('\n');
   assert.equal(scanText(fixture).violations[0].rule, 'b');
+});
+
+test('self-test: rule (b) catches a bare size-named result of a measuring helper (the shape #3311 first missed)', () => {
+  const fixture = [
+    'const SCAN_BASELINE = 42466;',
+    'const WRAP_UP_LIMIT = WRAP_UP_BASE + 300;',
+    "const size = byteSize('plugin', 'skills', 'tidy', 'x.md');",
+    'assert.ok(size <= SCAN_BASELINE);',
+    'assert.ok(size <= WRAP_UP_LIMIT);',
+  ].join('\n');
+  const r = scanText(fixture);
+  assert.deepStrictEqual(r.violations.map((v) => v.line), [4]);
+  assert.deepStrictEqual(r.unclassified.map((u) => u.line), [5]);
 });
 
 test('self-test: rule (b) follows a skill path through variables, literals, and for...of bindings', () => {
