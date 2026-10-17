@@ -47,6 +47,7 @@ test('recorded exitCode is the check command own exit code (AC4)', async () => {
   const report = JSON.parse(fs.readFileSync(path.join(logDir, 'report.json'), 'utf8'));
   assert.strictEqual(report.checks.tests.exitCode, 7);
   assert.strictEqual(report.pass, false);
+  assert.strictEqual(report.effectivePass, false, 'an unadjudicated failure is not an effective pass either (#3316)');
 });
 
 test('overall exit is 0 and report carries AC3 top-level fields on pass (AC3, AC7)', async () => {
@@ -56,6 +57,7 @@ test('overall exit is 0 and report carries AC3 top-level fields on pass (AC3, AC
   assert.strictEqual(code, 0);
   const report = JSON.parse(fs.readFileSync(path.join(logDir, 'report.json'), 'utf8'));
   assert.strictEqual(report.pass, true);
+  assert.strictEqual(report.effectivePass, true, 'a plain pass records effectivePass: true (#3316)');
   for (const key of ['sha', 'dirty', 'startedAt', 'durationMs', 'checks']) {
     assert.ok(key in report, `report missing ${key}`);
   }
@@ -1649,6 +1651,7 @@ test('preExisting: a failing file fully covered by the declared allowlist is adj
   assert.match(stdout, /Pre-existing: adjudicated — 1 failing file\(s\) covered by the declared preExisting allowlist: tests\/known-shallow\.test\.js/);
   const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
   assert.strictEqual(report.pass, false, 'report.pass stays raw');
+  assert.strictEqual(report.effectivePass, true, 'an allowlist-covered failure is an effective pass (#3316)');
   assert.strictEqual(report.checks.tests.exitCode, 1, 'the check keeps its real exit code');
   assert.deepStrictEqual(report.preExistingAdjudicated, { declared: ['tests/known-shallow.test.js'], matched: ['tests/known-shallow.test.js'] });
   const stamp = stampOf(r.gitDir);
@@ -1864,6 +1867,7 @@ test('--baseline: failures that also fail at base exit 0, stamp a baseline pass,
   assert.ok(stdout.includes(`| tests | pass (baseline-adjudicated vs ${r.baseSha}: 1 baseline, 0 flaky) |`), stdout);
   const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
   assert.strictEqual(report.pass, false);
+  assert.strictEqual(report.effectivePass, true, 'the adjudicated verdict is recorded in the report itself, so consumers never re-derive it (#3316)');
   assert.strictEqual(report.checks.tests.exitCode, 1, 'report.json keeps the raw exit code');
   assert.strictEqual(report.baselineAdjudicated.verdict, 'pass');
   assert.deepStrictEqual(report.baselineAdjudicated.attributable, []);

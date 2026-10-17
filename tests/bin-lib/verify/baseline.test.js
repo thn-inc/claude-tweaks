@@ -413,6 +413,23 @@ test('file-level base failure + file-level HEAD failure + no node_modules: a gen
   assert.deepStrictEqual(different.attributable, ['tests/a.test.js']);
 });
 
+test('TAP whole-file failure at base and at HEAD that differs only in the run-summary `# duration_ms` is baseline (#3316)', async (t) => {
+  if (nodeModulesAbove(os.tmpdir())) return t.skip('a node_modules above the OS tmpdir makes the fixture root resolve dependencies');
+  const root = path.join(os.tmpdir(), 'baseline-no-such-repo-root');
+  // A whole-file TAP failure; Node's default reporter is TAP whenever stdout is not a TTY.
+  const tapFile = (r, ms) => ['TAP version 13', 'not ok 1 - tests/a.test.js', '  ---', "  location: 'tests/a.test.js:1:1'", `  error: 'Cannot find module ${r}/lib.js'`, '  ...',
+    '1..1', '# tests 1', '# suites 0', '# pass 0', '# fail 1', '# cancelled 0', '# skipped 0', '# todo 0', `# duration_ms ${ms}`].join('\n');
+  const { p, dir } = logFile(tapFile(root, '158.221'));
+  const { git, runOne } = fakes({
+    outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 },
+    logs: { 'baseline:tests/a.test.js': tapFile('/scratch', '158.5401'), 'isolated:tests/a.test.js': tapFile(root, '158.221') },
+    repoRoot: root,
+  });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: root, logDir: dir, runOne, git, env: {} });
+  assert.deepStrictEqual(r.baselineFailing, ['tests/a.test.js']);
+  assert.deepStrictEqual(r.attributable, []);
+});
+
 // I2: HEAD resolves dependencies the way Node does — walking up parent
 // directories, and through NODE_PATH.
 const fileLevelBoth = (cwd, repoRoot) => fakes({
