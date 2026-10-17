@@ -147,3 +147,40 @@ for (const rel of SCOPE_FILES) {
     assert.deepStrictEqual(unmirroredHeaderReads(read(rel)), []);
   });
 }
+
+const CAPTURE_ANCHOR = "**Before step 1 — capture each spec's header fields.**";
+function assertCaptureBeforeTeardown(text) {
+  const start = text.indexOf('### Shared teardown');
+  const end = text.indexOf('### Per-issue label cleanup', start);
+  assert.ok(start !== -1 && end !== -1, 'Shared teardown section anchors vanished');
+  const section = text.slice(start, end);
+  const capture = section.indexOf(CAPTURE_ANCHOR);
+  assert.ok(capture !== -1, 'no header capture paragraph in Shared teardown');
+  const block = blocks(section.slice(capture)).find((b) => b.includes(collapse(CAPTURE_ANCHOR)));
+  assert.ok(block.includes('parked-at-shaping') && block.includes(MIRROR), 'capture must read parked-at-shaping from the worktree mirror');
+  const finish = section.indexOf('2. **Finish the shared branch.**');
+  const removal = section.indexOf('6. **Remove the shared worktree**');
+  assert.ok(finish !== -1 && removal !== -1, 'step 2/6 anchors vanished');
+  assert.ok(capture < finish && finish < removal, 'capture must precede step 2 (merge) and step 6 (worktree removal)');
+}
+
+test('AC2.1: the multi-spec teardown captures parked-at-shaping before the step that removes the shared worktree', () => {
+  assertCaptureBeforeTeardown(read('plugin/skills/flow/multispec-review-console.md'));
+});
+
+test('AC3.1: assertCaptureBeforeTeardown goes red when the capture is removed or moved after step 6', () => {
+  const live = read('plugin/skills/flow/multispec-review-console.md');
+  const i = live.indexOf(CAPTURE_ANCHOR);
+  const j = live.indexOf('\n\n', i);
+  const para = live.slice(i, j);
+  assert.throws(() => assertCaptureBeforeTeardown(live.replace(para, '')));
+  const moved = live.replace(para + '\n\n', '').replace('7. **Branch + remote-ref cleanup', para + '\n\n7. **Branch + remote-ref cleanup');
+  assert.throws(() => assertCaptureBeforeTeardown(moved));
+});
+
+test('Per-issue label cleanup uses the captured value, not a fresh header read', () => {
+  const flat = collapse(read('plugin/skills/flow/multispec-review-console.md'));
+  const s = flat.slice(flat.indexOf('### Per-issue label cleanup'));
+  assert.match(s.slice(0, 1500), /captured/);
+  assert.doesNotMatch(s.slice(0, 1500), /read directly/);
+});
