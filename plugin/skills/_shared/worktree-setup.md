@@ -79,7 +79,10 @@ below, unchanged (`EnterWorktree(name=...)`).
 
 **Idempotent.** The adopt branch is a pure detection-plus-skip with no state mutation beyond
 recording the current branch name, so re-invoking this gate a second time within the same session
-(e.g. a later step in the same pipeline re-checking) produces the same outcome both times.
+(e.g. a later step in the same pipeline re-checking) produces the same outcome both times. That
+holds only while the tree stays clean: a step that writes a tracked-path file after this gate (the
+open-items ledger at `build/worktree-setup.md` Step 4.6, for one) commits it before any later
+re-check, or the clean-tree test above reads the worktree as dirty and abandons it (#3036).
 
 **Not the same problem as `dispatch/sequential-execution.md`'s `#447` handling.** `#447` covers a
 dispatching session that is itself a Task-tool subagent, cwd-*pinned* by its own launcher — it

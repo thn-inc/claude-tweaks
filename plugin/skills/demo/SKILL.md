@@ -108,7 +108,7 @@ first (or, when recall could not name an entry point, the one line saying it was
 
 ### The design contract this was built against
 
-Run the locate-and-parse procedure in `../_shared/design-contract.md` over the changed-path list
+Run the locate-and-parse procedure in `_shared/design-contract.md` over the changed-path list
 Step 1 already produced — the closing commit's `--name-only` list, the label-backed brief's paths,
 or session recall's own list. Do not go looking for files beyond it. **When no contract resolves,**
 render nothing — no heading, no empty section, no "not found" note. **When a contract resolves, or
@@ -131,7 +131,7 @@ instead.
 **Prepare** — run the plan's Prepare commands, one at a time (`Prepare: none` → skip entirely). If
 a Prepare command exits non-zero, or — for a `rendered-page`/`app-route` entry point — the entry
 point does not respond afterward (connection refused or HTTP 404), fall back to
-`skills/_shared/dev-url-detection.md` to resolve a working dev server rather than trusting the
+`_shared/dev-url-detection.md` to resolve a working dev server rather than trusting the
 plan's own Entry point verbatim.
 
 **Validate** — URL surfaces (`rendered-page`/`app-route`) only; `cli`/`flow`/`diff` plans skip

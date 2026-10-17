@@ -12,8 +12,10 @@ const fs = require('fs');
 const path = require('path');
 
 // Overridable via CLAUDE_TWEAKS_LOCK_WAIT_MS — same test-only knob
-// context.js's resolveLockWaitMs documents (production never sets it, so it
-// always gets the 500ms default).
+// context.js's resolveLockWaitMs documents. One production caller now sets
+// it too: plugin/bin/lib/docs-health/commit-ref.js's deepenShallowClone,
+// briefly, around a single acquireLock call, restoring the prior value
+// (or absence) immediately after (#2988 whole-branch review finding).
 function resolveLockWaitMs() {
   const raw = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
   const n = Number(raw);

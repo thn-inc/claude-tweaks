@@ -127,4 +127,6 @@ record-suffixed-caller case above), `skills/journey-health/SKILL.md`,
 `skills/wrap-up/verification-brief-parent-gate.md`, `skills/_shared/label-bootstrap.md`,
 `skills/_shared/github-pr-scan.md`, `skills/_shared/github-pr-scan-acceptance.md` (re-measured
 with `wc -c` after every edit to stay under its 50 KB per-invocation ceiling — see that file's own
-header note), and `skills/_shared/harness-health-analysis.md`.
+header note), `skills/_shared/harness-health-analysis.md`, `skills/wrap-up/verification-brief.md`,
+`skills/flow/summary-template.md`, and `skills/flow/multispec-summary.md` (#2821 — the three share
+one session file, `try-it-{N}.md`: wrap-up writes it and flow's Pipeline Summary reads it back).
