@@ -10,9 +10,10 @@ const LINE_TOLERANCE_DEBATE = 5;
 // #2955: two reproduction agents can anchor one finding on different lines
 // of the same multi-line statement, landing more than
 // LINE_TOLERANCE_REPRODUCTION apart. A same-path pair within this wider
-// bound still pairs, but only on strong, known substance agreement
-// (SUBSTANCE_SIMILARITY_WIDE_MIN). Same value as LINE_TOLERANCE_DEBATE today,
-// kept as its own name so the two can diverge.
+// bound still pairs, but only on known substance agreement at least
+// SUBSTANCE_SIMILARITY_MIN (#3418: the same threshold as inside ±2, so the
+// wide band no longer carries its own floor). Same value as
+// LINE_TOLERANCE_DEBATE today, kept as its own name so the two can diverge.
 const LINE_TOLERANCE_REPRODUCTION_WIDE = 5;
 const REPRODUCTION_AGENT_COUNT = 2;
 const DEBATE_AGENT_COUNT = 2;
@@ -22,6 +23,11 @@ const DEBATE_AGENT_COUNT = 2;
 // same-location pair that is NOT the same underlying issue no longer gets
 // silently merged by categoriseReproduction (see sameSubstance below).
 //
+// #3418: calibrated on 73 archived reproduction pairs (same path, within ±5
+// lines, drawn from 41 review runs). Different defects scored 0.00-0.15, and
+// 54 of 59 same-defect pairs scored at least 0.20. One threshold covers the
+// whole ±5 band, which supersedes #2955's separate 0.6 wide floor.
+//
 // #2331: distinct from near-duplicate.js's DEFAULT_TITLE_SIMILARITY_THRESHOLD
 // by design, not oversight — same Jaccard-over-tokens primitive, but tuned
 // against a different input domain (free-text finding descriptions here vs.
@@ -30,14 +36,7 @@ const DEBATE_AGENT_COUNT = 2;
 // silently shifting one or both call sites' behavior; see this module's
 // tokenizeSubstance vs. near-duplicate.js's tokenizeTitle for the matching
 // preprocessing difference (path:line stripping vs. #N record-ref stripping).
-const SUBSTANCE_SIMILARITY_MIN = 0.4;
-
-// #2955: the stricter floor the wide band demands, since it has weaker
-// location evidence. Calibrated on finding text: close paraphrases of one
-// issue scored 0.70-0.84 and unrelated issues inside one statement scored
-// 0.00-0.18. A loosely worded same-issue pair (0.47) stays unconfirmed in the
-// wide band; it still pairs within ±2.
-const SUBSTANCE_SIMILARITY_WIDE_MIN = 0.6;
+const SUBSTANCE_SIMILARITY_MIN = 0.2;
 
 // Minimal stop-word list for sameSubstance's tokenizer — just enough to keep
 // common connective words from diluting the Jaccard score; not a general NLP
@@ -349,24 +348,26 @@ function categoriseReproduction(agentAFindings, agentBFindings) {
   const pairedB = new Set();
 
   // Pass 1 (#1980 + #2907): every ±2 pair whose substance is not known to
-  // differ — `true` and `null` (unknown) both pair, per sameSubstance's
-  // contract above — assigned best-first across all A findings. A
-  // different-substance neighbour is never reserved here: it may still be
-  // another A finding's real twin.
+  // differ — an unknown score (`null`, a missing text column) still pairs,
+  // per sameSubstance's contract above — assigned best-first across all A
+  // findings. A different-substance neighbour is never reserved here: it may
+  // still be another A finding's real twin.
   const ownLinePairs = [];
   normalizedA.forEach((fa, aIndex) => {
     normalizedB.forEach((fb, bIndex) => {
       if (!sameLocation(fa, fb, LINE_TOLERANCE_REPRODUCTION)) return;
-      if (sameSubstance(fa, fb) === false) return;
-      ownLinePairs.push({ aIndex, bIndex, score: substanceSimilarity(fa, fb), delta: Math.abs(fa.line - fb.line) });
+      const score = substanceSimilarity(fa, fb);
+      if (score !== null && score < SUBSTANCE_SIMILARITY_MIN) return;
+      ownLinePairs.push({ aIndex, bIndex, score, delta: Math.abs(fa.line - fb.line) });
     });
   });
   assignBestPairs(ownLinePairs, ownLine, pairedB);
 
-  // Pass 2 (#2955): the wide band, for A findings with no ±2 twin. A pair
-  // 3-5 lines apart counts only on known, strong substance agreement, and it
-  // runs after pass 1 so it never takes a B finding another A finding
-  // reported on (nearly) the same line.
+  // Pass 2 (#2955, #3418): the wide band, for A findings with no ±2 twin. A
+  // pair 3-5 lines apart counts only on known substance agreement at least
+  // SUBSTANCE_SIMILARITY_MIN, the same bar as inside ±2 — a missing text
+  // column never pairs here. It runs after pass 1 so it never takes a B
+  // finding another A finding reported on (nearly) the same line.
   const widePairs = [];
   normalizedA.forEach((fa, aIndex) => {
     if (ownLine.has(aIndex)) return;
@@ -374,7 +375,7 @@ function categoriseReproduction(agentAFindings, agentBFindings) {
       if (pairedB.has(bIndex)) return;
       if (!sameLocation(fa, fb, LINE_TOLERANCE_REPRODUCTION_WIDE)) return;
       const score = substanceSimilarity(fa, fb);
-      if (score === null || score < SUBSTANCE_SIMILARITY_WIDE_MIN) return;
+      if (score === null || score < SUBSTANCE_SIMILARITY_MIN) return;
       widePairs.push({ aIndex, bIndex, score, delta: Math.abs(fa.line - fb.line) });
     });
   });
@@ -512,7 +513,6 @@ module.exports = {
   DEBATE_AGENT_COUNT,
   RED_TEAM_PERSONAS,
   SUBSTANCE_SIMILARITY_MIN,
-  SUBSTANCE_SIMILARITY_WIDE_MIN,
   // Comparison / aggregation logic
   severityBucket,
   severityRank,

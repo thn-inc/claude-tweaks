@@ -46,7 +46,7 @@ Cut false positives in single-agent review by dispatching two identical agents a
 Two findings match when **all three** hold:
 
 1. **Exact path match** — `src/auth.ts` matches `src/auth.ts`, not `src/auth/index.ts`.
-2. **Line within ±2, or within ±5 on strong text agreement** — same finding, slight line-number disagreement is acceptable. A pair 3-5 lines apart (two agents anchoring one finding on different lines of one multi-line statement) matches only when both findings carry text and their substance similarity is at least 0.6, stricter than the check inside ±2. A pair with missing text never matches in the wider band.
+2. **Line within ±2, or within ±5 on text agreement** — same finding, slight line-number disagreement is acceptable. Inside ±2 a pair matches unless both texts are known and their substance similarity is below 0.2. A pair 3-5 lines apart (two agents anchoring one finding on different lines of one multi-line statement) matches only when both findings carry text and their substance similarity is at least 0.2, the same threshold that applies inside ±2. A pair with missing text never matches in the wider band.
 3. **Matching severity bucket** — `critical` + `high` collapse to one bucket; `medium` + `low` + `info` collapse to another. Cross-bucket mismatches do not reproduce.
 
 ### Auto-resolution

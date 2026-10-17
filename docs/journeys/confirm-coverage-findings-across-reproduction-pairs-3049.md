@@ -23,7 +23,7 @@ files:
 - **URL:** the review summary's `### Code Review Findings (confirmed)` table
 - **Action:** look for the coverage gap both agents found.
 - **Should feel:** confident. The finding is confirmed because the two agents agreed, not because the reviewer had to override two unmatched entries.
-- **Should understand:** `categorise-reproduction` matches on exact path plus line ±2 and a substance check, or line ±5 when the two findings' text agrees strongly (similarity at least 0.6, #2955). #3049 left the matcher unchanged; the prompt rule is what makes both agents report the same location. Two agents that anchor the same gap at the same production line now satisfy that rule. A pair that agrees on location but words the finding differently is a separate substance-match question this rule does not address.
+- **Should understand:** `categorise-reproduction` matches on exact path plus line ±2 and a substance check, or line ±5 when the two findings' text agrees (similarity at least 0.2, one threshold across ±5 since #3418). #3049 left the matcher unchanged; the prompt rule is what makes both agents report the same location. Two agents that anchor the same gap at the same production line now satisfy that rule. A pair that agrees on location but words the finding differently is a separate substance-match question this rule does not address; `confirm-paraphrased-findings-across-reproduction-pairs-3418.md` covers it.
 - **Red flags:** the same coverage gap appears twice under `unconfirmed`, once per anchor. A coverage gap is confirmed only via the direct-verification override even though both agents found it.
 
 ## Origin
