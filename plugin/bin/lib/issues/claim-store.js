@@ -286,7 +286,9 @@ function resolveRepoSlug(runGh = defaultRunGh) {
   }
 }
 
-const unresolvedSlugGhApi = () => ({ stdout: null, failure: 'repo-slug-unresolved', status: null });
+function unresolvedSlugGhApi() {
+  return { stdout: null, failure: 'repo-slug-unresolved', status: null };
+}
 
 // (#3393) `repos/null/contents/...` is never a valid request: an unresolved
 // repo slug used to reach the contents API as the literal `null` and 404,

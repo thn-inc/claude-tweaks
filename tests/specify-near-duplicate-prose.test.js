@@ -125,13 +125,17 @@ test('next-mode-shape.md describes the same refusal condition (#3141)', () => {
   assert.match(section, /title-similar/);
 });
 
-test('AC1.1: the shaping-mode refusal fence reads claims through createClaimReader and reports failed reads as unreadable (#3393)', () => {
+function refusalFenceBody() {
   const open = 'node -e "\n';
   const close = '" "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"\n';
   const start = SHAPING_MODE.indexOf(open);
   const end = SHAPING_MODE.indexOf(close, start);
   assert.ok(start !== -1 && end !== -1, 'refusal fence anchors must exist');
-  const fence = SHAPING_MODE.slice(start + open.length, end);
+  return { fence: SHAPING_MODE.slice(start + open.length, end), end };
+}
+
+test('AC1.1: the shaping-mode refusal fence reads claims through createClaimReader and reports failed reads as unreadable (#3393)', () => {
+  const { fence, end } = refusalFenceBody();
   assert.match(fence, /createClaimReader\(\)/);
   assert.doesNotMatch(fence, /readClaimBlob\(/);
   assert.doesNotMatch(fence, /'repo', 'view'/);
@@ -145,11 +149,7 @@ test('AC1.1: the shaping-mode refusal fence reads claims through createClaimRead
 test('AC1.1: an unreadable claim is reported on the output and the happy path stays { refuse: false } (#3393)', () => {
   const { execFileSync } = require('node:child_process');
   const os = require('node:os');
-  const open = 'node -e "\n';
-  const close = '" "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"\n';
-  const start = SHAPING_MODE.indexOf(open);
-  const end = SHAPING_MODE.indexOf(close, start);
-  const code = SHAPING_MODE.slice(start + open.length, end).split('${CLAUDE_PLUGIN_ROOT}').join(path.join(ROOT, 'plugin'));
+  const code = refusalFenceBody().fence.split('${CLAUDE_PLUGIN_ROOT}').join(path.join(ROOT, 'plugin'));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'near-dup-unreadable-'));
   const hits = path.join(dir, 'hits.json');
   const snapshot = path.join(dir, 'snapshot.json');
