@@ -55,21 +55,32 @@ function prClosesIssue(prState, issueNumber, repoSlug, mergeCommitMessage) {
 }
 
 // One claim's classified state + the branch's PR state (+ optionally the
-// issue's own state) -> what to do. Pure — no I/O — so the whole decision
-// table is unit-testable without a real gh call. `classifiedState` is
-// `classifyClaimBlob(content, now).state`. `issueState` is `'OPEN' | 'CLOSED'
-// | undefined` — when the PR join alone can't release (no-pr or
-// pr-closed-unmerged), a closed issue is independent release evidence: a
-// closed record cannot legitimately still be in progress.
+// issue's own state and whether a merged PR closes the issue) -> what to do.
+// Pure — no I/O — so the whole decision table is unit-testable without a real
+// gh call. `classifiedState` is `classifyClaimBlob(content, now).state`.
+// `issueState` is `'OPEN' | 'CLOSED' | undefined`. `closesIssue` is
+// `prClosesIssue`'s `true | false | undefined` for a MERGED PR.
+//   MERGED + closesIssue true        -> release (merged evidence)
+//   MERGED + issue CLOSED            -> release issue-closed — a closed record
+//                                       cannot legitimately still be in progress
+//   MERGED + closesIssue false       -> skip pr-merged-not-closing
+//   MERGED + closesIssue undefined   -> skip pr-merged-closing-unknown
+// A merged PR is release evidence only when it closes THIS issue: a PR that
+// merely touches the branch's work (a sibling, a partial) leaves the record
+// open, and unknown closing data fails closed — never "does not close" and
+// never "closes" (#3412). When the PR join alone can't release (no-pr or
+// pr-closed-unmerged), a closed issue is likewise independent release evidence.
 //   { action: 'release', reason } | { action: 'skip', reason }
-function decideRelease(classifiedState, prState, issueState) {
+function decideRelease(classifiedState, prState, issueState, closesIssue) {
   if (classifiedState !== 'live' && classifiedState !== 'stale') {
     return { action: 'skip', reason: classifiedState }; // absent/tombstone/unreadable — nothing to release
   }
   if (prState === 'gh-absent') return { action: 'skip', reason: 'gh-absent' };
   if (prState === 'network-failure') return { action: 'skip', reason: 'network-failure' };
   if (prState && prState.state === 'MERGED') {
-    return { action: 'release', reason: `merged: reconciled from PR #${prState.number}` };
+    if (closesIssue === true) return { action: 'release', reason: `merged: reconciled from PR #${prState.number}` };
+    if (issueState === 'CLOSED') return { action: 'release', reason: 'issue-closed' };
+    return { action: 'skip', reason: closesIssue === false ? 'pr-merged-not-closing' : 'pr-merged-closing-unknown' };
   }
   if (prState && prState.state === 'OPEN') {
     return { action: 'skip', reason: 'pr-open' }; // open PR means work may be landing — issue-closed evidence never overrides
@@ -82,13 +93,17 @@ function decideRelease(classifiedState, prState, issueState) {
   return { action: 'skip', reason: prState ? 'pr-closed-unmerged' : 'no-pr' };
 }
 
-// The two joins `decideRelease` cannot settle from PR evidence alone — no PR at
-// all, or a PR closed unmerged. Everything else (MERGED, OPEN, gh-absent,
-// network-failure) is decided without an issue lookup, so this is what gates the
-// extra gh api call at the call site.
-function needsIssueEvidence(prState) {
+// The joins `decideRelease` cannot settle from PR evidence alone — no PR at
+// all, a PR closed unmerged, or a MERGED PR not confirmed to close the issue
+// (`closesIssue` false or unknown: the issue's own state is the only remaining
+// release evidence, #3412). Everything else (OPEN, MERGED + closesIssue true,
+// gh-absent, network-failure) is decided without an issue lookup, so this is
+// what gates the extra gh api call at the call site.
+function needsIssueEvidence(prState, closesIssue) {
   if (prState === null) return true;
-  return typeof prState === 'object' && prState.state === 'CLOSED';
+  if (typeof prState !== 'object') return false;
+  if (prState.state === 'CLOSED') return true;
+  return prState.state === 'MERGED' && closesIssue !== true;
 }
 
 // Shared by Phase 1.5 and the #3249 by-number fallback below: pairs each
@@ -529,5 +544,5 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
 
 module.exports = {
   releaseMerged, decideRelease, releasedEntry, repoSlugOf, writeTombstone, shouldSkipClaimRead,
-  prClosesIssue, CLOSING_KEYWORD_RE,
+  prClosesIssue, CLOSING_KEYWORD_RE, needsIssueEvidence,
 };

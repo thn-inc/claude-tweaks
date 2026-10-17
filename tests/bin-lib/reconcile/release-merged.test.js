@@ -40,8 +40,33 @@ test('decideRelease: live claim + no PR + unknown issue state (fetch failed) -> 
 });
 
 // Unchanged behavior: merged-PR evidence, transports, non-candidates
-test('decideRelease: merged PR still releases regardless of issue state', () => {
-  assert.strictEqual(decideRelease('live', { number: 7, state: 'MERGED' }, 'OPEN').action, 'release');
+test('decideRelease: merged PR that closes the issue releases regardless of issue state (AC2.1)', () => {
+  assert.strictEqual(decideRelease('live', { number: 7, state: 'MERGED' }, 'OPEN', true).action, 'release');
+});
+
+const { needsIssueEvidence } = require('../../../plugin/bin/lib/reconcile/release-merged');
+const merged = { number: 3348, state: 'MERGED' };
+
+test('decideRelease: AC1.1 live claim + MERGED PR not closing the issue + open issue -> skip pr-merged-not-closing', () => {
+  assert.deepStrictEqual(decideRelease('live', merged, 'OPEN', false), { action: 'skip', reason: 'pr-merged-not-closing' });
+  assert.deepStrictEqual(decideRelease('stale', merged, undefined, false), { action: 'skip', reason: 'pr-merged-not-closing' });
+});
+test('decideRelease: AC3.1 MERGED PR not closing the issue + CLOSED issue -> release issue-closed', () => {
+  assert.deepStrictEqual(decideRelease('live', merged, 'CLOSED', false), { action: 'release', reason: 'issue-closed' });
+});
+test('decideRelease: AC4.1 MERGED PR with unknown closing data never releases on merged evidence', () => {
+  assert.deepStrictEqual(decideRelease('live', merged, 'OPEN', undefined), { action: 'skip', reason: 'pr-merged-closing-unknown' });
+  assert.deepStrictEqual(decideRelease('live', merged, 'OPEN'), { action: 'skip', reason: 'pr-merged-closing-unknown' });
+  assert.deepStrictEqual(decideRelease('live', merged, 'CLOSED', undefined), { action: 'release', reason: 'issue-closed' });
+});
+test('needsIssueEvidence: MERGED needs issue evidence unless closesIssue is true', () => {
+  assert.equal(needsIssueEvidence(merged, true), false);
+  assert.equal(needsIssueEvidence(merged, false), true);
+  assert.equal(needsIssueEvidence(merged, undefined), true);
+  assert.equal(needsIssueEvidence({ number: 1, state: 'OPEN' }, false), false);
+  assert.equal(needsIssueEvidence(null), true);
+  assert.equal(needsIssueEvidence({ number: 1, state: 'CLOSED' }), true);
+  assert.equal(needsIssueEvidence('gh-absent'), false);
 });
 test('decideRelease: transport failures still skip even with closed issue', () => {
   assert.strictEqual(decideRelease('live', 'gh-absent', 'CLOSED').action, 'skip');
