@@ -1,0 +1,1 @@
+[{"tag":"sizing","record":3287,"title":"Allowlist palette.test.js as flaky","action":"Absorb into #3261 (duplicate scope; close not planned)","command":"gh issue comment 3287 … && gh issue close 3287 --reason \"not planned\""}]
