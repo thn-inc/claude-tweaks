@@ -954,8 +954,8 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
   // is a skip, not a pass.
   if (skipped.length === targets.length) return { result: 'skip', detail: skipped.join('; ') };
   const notes = passedNotes.flatMap((p) => p.ignored);
-  const detail = [...(notes.length ? [`ignored: ${notes.join('; ')}`] : []), ...skipped].join('; ');
-  return { result: 'pass', detail };
+  const detailParts = notes.length ? [`ignored: ${notes.join('; ')}`, ...skipped] : skipped;
+  return { result: 'pass', detail: detailParts.join('; ') };
 });
 
 // ---- memory updates -----------------------------------------------------------
