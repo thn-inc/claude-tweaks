@@ -8,6 +8,8 @@
 // summary span from them (#3050).
 'use strict';
 
+const { escapeRegExp } = require('../shared-primitives');
+
 // The five canonical phase rows every PR-early body starts with, unchecked
 // and in this order — never narrowed to a run's step list (#2877): a skipped
 // phase's row is removed at its own would-be exit, never predicted here.
@@ -171,7 +173,9 @@ function repairPrBody({ body, runId, fixesLines }) {
 // differently-worded line for the same decision is silently missed.
 const PREMISE_REVERSED_MARKER = 'premise reversed:';
 const REVISION_PREFIX = 'Revised during build:';
-const PREMISE_REVERSED_RE = /^-\s+[A-Z-]+\s+\d{2}:\d{2}:\d{2}\s+—\s.*?\bpremise reversed:\s+(.+?)\s+→\s+(.+?)\.?\s+Reversibility:/;
+const PREMISE_REVERSED_RE = new RegExp(
+  `^-\\s+[A-Z-]+\\s+\\d{2}:\\d{2}:\\d{2}\\s+—\\s.*?\\b${escapeRegExp(PREMISE_REVERSED_MARKER)}\\s+(.+?)\\s+→\\s+(.+?)\\.?\\s+Reversibility:`
+);
 
 function formatReversal({ original, replacement }) {
   return `${original} → ${replacement}`;
@@ -209,6 +213,12 @@ function locateSpecSummary(lines) {
 }
 
 // { body, reversals, summary? } -> { body, changed, uncovered, reason }.
+// `reason` is null on a change, else one of: 'no-reversals' (nothing to
+// cover), 'no-spec-summary-heading' (nowhere to write), 'already-noted'
+// (every reversal is already named), 'summary-required' (no --summary-file
+// yet), 'summary-not-one-paragraph' (the given summary is not one
+// paragraph — a blank line or a heading line inside it would leave a stale
+// tail on the next rewrite, since locateSpecSummary stops at a heading).
 // Idempotent: a reversal already named in the span's existing
 // `Revised during build:` line is covered. An existing note is kept
 // verbatim and only uncovered entries are appended (`; `-joined), so a
@@ -223,18 +233,24 @@ function reviseSpecSummary({ body, reversals, summary }) {
   if (!span) return { body: text, changed: false, uncovered: wanted, reason: 'no-spec-summary-heading' };
   const note = lines.slice(span.start + 1, span.end)
     .map((l) => l.replace(/\r$/, ''))
-    .find((l) => l.startsWith(REVISION_PREFIX)) || null;
+    .find((l) => l.startsWith(REVISION_PREFIX));
+  const trimmedNote = note !== undefined ? note.trimEnd() : null;
   // Delimited match, not substring: `note.includes(w)` would also match `w`
   // as a bare substring of a longer, distinct entry (e.g. wanted `A → B`
   // falsely "covered" by an existing `XA → B`). An entry is noted only when
   // it appears as a whole `; `-delimited item in the note's entry list.
-  const entryList = note ? note.slice(REVISION_PREFIX.length + 1) : '';
-  const isNoted = (w) => note !== null && `; ${entryList}; `.includes(`; ${w}; `);
+  // Leading whitespace on an entry (a stray space after the prefix or a
+  // separator) is stripped so it never defeats this delimited match.
+  const entryList = trimmedNote ? trimmedNote.slice(REVISION_PREFIX.length).trimStart() : '';
+  const isNoted = (w) => trimmedNote !== null && `; ${entryList}; `.includes(`; ${w}; `);
   const uncovered = wanted.filter((w) => !isNoted(w));
   if (uncovered.length === 0) return { body: text, changed: false, uncovered: [], reason: 'already-noted' };
   const paragraph = String(summary || '').trim();
   if (!paragraph) return { body: text, changed: false, uncovered, reason: 'summary-required' };
-  const newNote = note ? `${note}; ${uncovered.join('; ')}` : `${REVISION_PREFIX} ${uncovered.join('; ')}`;
+  if (/\n\s*\n/.test(paragraph) || /^#{1,6}\s/m.test(paragraph)) {
+    return { body: text, changed: false, uncovered, reason: 'summary-not-one-paragraph' };
+  }
+  const newNote = trimmedNote ? `${trimmedNote}; ${uncovered.join('; ')}` : `${REVISION_PREFIX} ${uncovered.join('; ')}`;
   const out = [...lines.slice(0, span.start + 1), '', newNote, '', paragraph, '', ...lines.slice(span.end)];
   return { body: out.join('\n'), changed: true, uncovered, reason: null };
 }

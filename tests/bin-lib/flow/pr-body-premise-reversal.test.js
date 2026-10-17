@@ -118,3 +118,29 @@ test('a CRLF body still has its Spec summary located and rewritten (Review Focus
   assert.match(r.body, /Revised during build: A → B/);
   assert.match(r.body, /### Phases/);
 });
+
+test('a trailing-space note is still recognized as already-noted, not duplicated (M2)', () => {
+  const noted = body().replace('Reads the deployed commit from the health endpoint.', 'Revised during build: A → B \n\nSome paragraph.');
+  const r = reviseSpecSummary({ body: noted, reversals: [{ original: 'A', replacement: 'B' }], summary: 'ignored' });
+  assert.equal(r.changed, false);
+  assert.equal(r.reason, 'already-noted');
+  assert.equal(r.body, noted);
+});
+
+test('a summary with a blank line is refused as summary-not-one-paragraph (M3)', () => {
+  const b = body();
+  const r = reviseSpecSummary({ body: b, reversals: [{ original: 'A', replacement: 'B' }], summary: 'First part.\n\nSecond part.' });
+  assert.equal(r.body, b);
+  assert.equal(r.changed, false);
+  assert.equal(r.reason, 'summary-not-one-paragraph');
+  assert.deepEqual(r.uncovered, ['A → B']);
+});
+
+test('a summary containing a heading line is refused as summary-not-one-paragraph (M3)', () => {
+  const b = body();
+  const r = reviseSpecSummary({ body: b, reversals: [{ original: 'A', replacement: 'B' }], summary: '### Not a paragraph\nmore text' });
+  assert.equal(r.body, b);
+  assert.equal(r.changed, false);
+  assert.equal(r.reason, 'summary-not-one-paragraph');
+  assert.deepEqual(r.uncovered, ['A → B']);
+});
