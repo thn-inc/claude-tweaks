@@ -162,6 +162,9 @@ function assertCaptureBeforeTeardown(text) {
   const block = blocks(section.slice(capture)).find((b) => b.includes(collapse(CAPTURE_ANCHOR)));
   assert.ok(block, 'capture paragraph block not found after its anchor');
   assert.ok(block.includes('parked-at-shaping') && block.includes(MIRROR), 'capture must read parked-at-shaping from the worktree mirror');
+  for (const fallback of ['worktreeAtClose', '`current-branch` run', 'SKIP']) {
+    assert.ok(block.includes(fallback), `capture paragraph lost its ${fallback} fallback`);
+  }
   const finish = section.indexOf('2. **Finish the shared branch.**');
   const removal = section.indexOf('6. **Remove the shared worktree**');
   assert.ok(finish !== -1 && removal !== -1, 'step 2/6 anchors vanished');
