@@ -8,10 +8,6 @@ const path = require('node:path');
 const {
   ROW_LENGTH_MULTIPLE,
   MIN_ROW_SAMPLE,
-  SIZE_OUTLIER_PERCENTILE,
-  SIZE_PERCENTILE_MIN_SAMPLE,
-  SIZE_MEDIAN_MULTIPLE,
-  SIZE_MIN_SAMPLE,
   PROVENANCE_PATTERNS,
   median,
   corpusRowMedian,
@@ -301,9 +297,10 @@ test('size outlier: p95 tier baseline with 20 files', () => {
   // 20 files: 1000 B, 2000 B, ..., 20000 B
   for (let i = 1; i <= 20; i += 1) {
     const file = path.join(dir, `file-${i}.md`);
-    fs.writeFileSync(file, skillWith([SHORT_ROW]), 'utf8');
-    // Pad with zeros to reach target size
-    const padding = 'x'.repeat(i * 1000 - Buffer.byteLength(skillWith([SHORT_ROW]), 'utf8'));
+    const content = skillWith([SHORT_ROW]);
+    fs.writeFileSync(file, content, 'utf8');
+    // Pad with filler bytes to reach target size
+    const padding = 'x'.repeat(i * 1000 - Buffer.byteLength(content, 'utf8'));
     fs.appendFileSync(file, padding);
     files.push(file);
   }
@@ -333,16 +330,17 @@ test('size outlier: median-multiple tier baseline with 10 files', () => {
   const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'size-'));
   const files = [];
   // 9 files of 1000 B each, 1 file of 5000 B
+  const content = skillWith([SHORT_ROW]);
   for (let i = 0; i < 9; i += 1) {
     const file = path.join(dir, `small-${i}.md`);
-    fs.writeFileSync(file, skillWith([SHORT_ROW]), 'utf8');
-    const padding = 'x'.repeat(1000 - Buffer.byteLength(skillWith([SHORT_ROW]), 'utf8'));
+    fs.writeFileSync(file, content, 'utf8');
+    const padding = 'x'.repeat(1000 - Buffer.byteLength(content, 'utf8'));
     fs.appendFileSync(file, padding);
     files.push(file);
   }
   const largeFile = path.join(dir, 'large.md');
-  fs.writeFileSync(largeFile, skillWith([SHORT_ROW]), 'utf8');
-  const padding = 'x'.repeat(5000 - Buffer.byteLength(skillWith([SHORT_ROW]), 'utf8'));
+  fs.writeFileSync(largeFile, content, 'utf8');
+  const padding = 'x'.repeat(5000 - Buffer.byteLength(content, 'utf8'));
   fs.appendFileSync(largeFile, padding);
   files.push(largeFile);
 
@@ -394,7 +392,6 @@ test('size outlier: floor — fewer than 5 files has no baseline', () => {
 
 test('size outlier: boundary — at threshold not outlier, one byte above is', () => {
   const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'size-'));
-  const baseSize = 1000;
   const padding = 'x'.repeat(100);
   const files = [];
 
@@ -463,8 +460,9 @@ test('size outlier: suppression with { sizeOutlier: false } prints no size-outli
   const files = [];
   for (let i = 1; i <= 20; i += 1) {
     const file = path.join(dir, `file-${i}.md`);
-    fs.writeFileSync(file, skillWith([SHORT_ROW]), 'utf8');
-    const padding = 'x'.repeat(i * 1000 - Buffer.byteLength(skillWith([SHORT_ROW]), 'utf8'));
+    const content = skillWith([SHORT_ROW]);
+    fs.writeFileSync(file, content, 'utf8');
+    const padding = 'x'.repeat(i * 1000 - Buffer.byteLength(content, 'utf8'));
     fs.appendFileSync(file, padding);
     files.push(file);
   }

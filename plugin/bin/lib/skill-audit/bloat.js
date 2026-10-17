@@ -97,35 +97,19 @@ function overLongRows(text, baselineMedian, multiple = ROW_LENGTH_MULTIPLE) {
 // where method is 'p95' (if >= 20 files), 'median-multiple' (if >= 5 files), or null.
 function corpusSizeBaseline(files) {
   const sizes = files.map((f) => f.bytes);
-  if (sizes.length >= SIZE_PERCENTILE_MIN_SAMPLE) {
-    // Use p95 nearest-rank percentile
+  const sample = sizes.length;
+  if (sample >= SIZE_PERCENTILE_MIN_SAMPLE) {
+    // Nearest-rank p95
     const sorted = [...sizes].sort((a, b) => a - b);
-    const threshold = sorted[Math.ceil(SIZE_OUTLIER_PERCENTILE * sizes.length) - 1];
-    return {
-      usable: true,
-      sample: sizes.length,
-      method: 'p95',
-      threshold,
-    };
+    const threshold = sorted[Math.ceil(SIZE_OUTLIER_PERCENTILE * sample) - 1];
+    return { usable: true, sample, method: 'p95', threshold };
   }
-  if (sizes.length >= SIZE_MIN_SAMPLE) {
-    // Use 3× median
-    const med = median(sizes);
-    const threshold = med * SIZE_MEDIAN_MULTIPLE;
-    return {
-      usable: true,
-      sample: sizes.length,
-      method: 'median-multiple',
-      threshold,
-    };
+  if (sample >= SIZE_MIN_SAMPLE) {
+    const threshold = median(sizes) * SIZE_MEDIAN_MULTIPLE;
+    return { usable: true, sample, method: 'median-multiple', threshold };
   }
   // Below the floor, no baseline
-  return {
-    usable: false,
-    sample: sizes.length,
-    method: null,
-    threshold: null,
-  };
+  return { usable: false, sample, method: null, threshold: null };
 }
 
 // ── Signal 3: provenance narration ──────────────────────────────────────────
@@ -342,7 +326,7 @@ function auditText(text, { bytes, rowMedian, ceiling = CEILING_BYTES, sizeThresh
     longRows: overLongRows(text, rowMedian),
     provenance: findProvenance(text),
     degenerate: findDegenerateRows(text),
-    sizeOutlier: typeof bytes === 'number' && typeof sizeThreshold === 'number' ? bytes > sizeThreshold : false,
+    sizeOutlier: typeof bytes === 'number' && typeof sizeThreshold === 'number' && bytes > sizeThreshold,
   };
 }
 
@@ -363,9 +347,9 @@ function auditCorpus(files, { ceiling = CEILING_BYTES, sizeOutlier = true } = {}
     .map((file) => ({ file, text: fs.readFileSync(file, 'utf8'), bytes: fs.statSync(file).size }));
   const baseline = corpusRowMedian(loaded);
   const rowMedian = baseline.usable ? baseline.median : null;
-  const realSizeBaseline = corpusSizeBaseline(loaded);
-  const sizeBaseline = sizeOutlier ? realSizeBaseline : { ...realSizeBaseline, suppressed: true };
-  const sizeThreshold = (sizeOutlier && sizeBaseline.usable) ? sizeBaseline.threshold : null;
+  const sizeBaseline = corpusSizeBaseline(loaded);
+  if (!sizeOutlier) sizeBaseline.suppressed = true;
+  const sizeThreshold = sizeOutlier && sizeBaseline.usable ? sizeBaseline.threshold : null;
   return {
     ceiling,
     rowBaseline: baseline,
@@ -429,7 +413,7 @@ function formatBloatReport(result, { only } = {}) {
       out.push(`  size-outlier: ${entry.bytes} B, above the corpus threshold of ${sizeBaseline.threshold} B`);
     }
   }
-  const baselineCount = 1 + (sizeBaseline.suppressed ? 0 : 1);
+  const baselineCount = sizeBaseline.suppressed ? 1 : 2;
   if (out.length === baselineCount) out.push('\nno bloat signals');
   return out.join('\n');
 }
