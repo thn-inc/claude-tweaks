@@ -234,6 +234,10 @@ Fixes #{n}
 <!-- fixes-end -->
 ```
 
+The `### Spec summary` paragraph is not frozen here: when the build logs a `premise reversed:`
+entry, `_shared/pr-checklist-refresh.md`'s Phase-checklist update rewrites it from the
+implemented behavior under a `Revised during build:` note (#3050).
+
 The `<!-- claude-tweaks-run: {run-id} -->` marker is the **first line**, unconditionally,
 immediately followed by a plain-text companion line (`claude-tweaks-run: {run-id}`, no
 comment syntax) — it is the GitHub-side signal the sweep (`sweep-backstop` sub-issue) and the
@@ -295,17 +299,16 @@ and flips it to `- [x] polish`, or `_shared/pr-checklist-refresh.md`'s Pre-merge
 refresh removes it once it's confirmed no spec in the run ever ran polish (see
 `flow/multispec-pr-checklist.md` for the full rationale).
 
-Omit a `polish` row only when **every** record in the run has `surface: backend` (polish never
-runs for any of them) — the same frontend/backend split `flow/steps-and-gates.md`'s own polish
-decision tree already makes; don't duplicate that logic, just skip the row when it will never
-happen for any record. A single-record run checks that one record's `surface:`, unchanged from
-before. A multi-spec run (dispatch bundle or `/flow` multi-spec — see "Multi-spec runs share one
-PR" below) reads every record's `surface:` facet from the parent `manifest.yml`'s `specs[]` list
-— the same list this step already walks to emit one `Fixes #{m}` line per record (see "One
-`Fixes #{n}` line per record" below) — and omits the row only when every entry is `backend`. An
-absent `surface:` facet counts as "can run polish" (only an explicit `backend` omits); the real
-polish decision is made at runtime by `flow/steps-and-gates.md`'s decision tree and detection
-layer 2, and creation must never pre-empt it toward omission.
+**The `polish` row is always present at creation (#3319).** Every run starts with all five rows,
+`polish` included, whatever its records' `surface:` — `composePrEarlyBody` takes no `surface:`
+input and never narrows the rows. A run that never polishes — `no-polish`, `ceremony-profile:
+fast-lane`, or a non-frontend `surface:` (`backend`, `infra`) that `flow/steps-and-gates.md`'s
+polish decision tree skips at runtime — removes the row through the skipped-phase rule above:
+at polish's would-be exit in a single-record run, and at `_shared/pr-checklist-refresh.md`'s
+Pre-merge title/description refresh in a multi-spec run, once no spec in the run ran polish.
+#1712's earlier rule — leave the row out when every record is `surface: backend` — was never
+implemented by the composer and is retired; the runtime decision tree, not creation, decides
+whether polish runs.
 
 **One `Fixes #{n}` line per record.** A single-record run gets one line. A dispatch bundle
 (`dispatch/SKILL.md`'s file-overlap grouping) enumerates every record from the parent
