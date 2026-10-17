@@ -140,8 +140,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const { listTrackedFiles } = require('./candidates-dead-code');
 const { registerGenerator } = require('./focus-generators');
+const { listTrackedFiles } = require('./candidates-dead-code');
 
 const CLIENT_DIR_RE = /(^|\/)(client|frontend|web|public|src\/(components|pages|app))(\/|$)/i;
 const SERVER_DIR_RE = /(^|\/)(server|backend|api)(\/|$)/i;
