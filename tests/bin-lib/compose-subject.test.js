@@ -431,3 +431,35 @@ test('run(): unaffected hosts (REST issueType field works) are unchanged — sti
   assert.equal(code, 0, out.stderr);
   assert.equal(out.calls.length, 1);
 });
+
+test('--scope (#3028): parsed, threaded into the subject, breaking keeps ! after the scope, non-token exits 1', () => {
+  assert.equal(parseArgs(['2251', '--scope', 'api']).scope, 'api');
+  assert.equal(parseArgs(['2251']).scope, null);
+  assert.ok(parseArgs(['2251', '--scope']).error, 'trailing --scope with no value is a parse error');
+  assert.ok(parseArgs(['2251', '--scope', '--shell']).error, '--scope followed by another flag is a parse error');
+
+  const ok = fakeDeps();
+  assert.equal(run(['2251', '--scope', 'web-ui'], ok.deps), 0, ok.out.stderr);
+  assert.equal(JSON.parse(ok.out.stdout).title, 'feat(web-ui): Merge-time conventional subject (#2251)');
+
+  const brk = fakeDeps();
+  assert.equal(run(['2260', '--scope', 'cli'], brk.deps), 0, brk.out.stderr);
+  assert.equal(JSON.parse(brk.out.stdout).title, 'feat(cli)!: Drop the legacy flag (#2260)');
+
+  const bad = fakeDeps();
+  assert.equal(run(['2251', '--scope', 'two words'], bad.deps), 1);
+  assert.match(bad.out.stderr, /scope must be a single token/);
+});
+
+test('realDeps.runner (#3028) pipes gh stderr instead of inheriting it, and keeps windowsHide', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../../plugin/bin/lib/compose-subject.js'), 'utf8');
+  const line = src.split('\n').find((l) => l.includes("runner: (args) => execFileSync('gh'"));
+  assert.ok(line, 'realDeps.runner line must exist');
+  assert.ok(line.includes("stdio: ['ignore', 'pipe', 'pipe']"), line);
+  assert.ok(line.includes('windowsHide: true'), line);
+});
+
+test('USAGE (#3028) advertises --scope', () => {
+  const { USAGE } = require('../../plugin/bin/lib/compose-subject.js');
+  assert.match(USAGE, /\[--scope <scope>\]/);
+});

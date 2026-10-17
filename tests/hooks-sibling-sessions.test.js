@@ -106,6 +106,28 @@ test('findConflictingSession: the same fixture WITHOUT a matching owner still re
   assert.strictEqual(match.path, '/repo/.claude/worktrees/wt-308');
 });
 
+test('findConflictingSession: a worktree recorded only by an ad-hoc friction dir under the calling session id is still reported (#2783 — an ad-hoc dir is not a record-worktree claim)', () => {
+  // Since #2783 every EnterWorktree — a dispatched subagent's included, which
+  // shares the parent's session id — mints an -adhoc-standalone dir recording
+  // that session id and worktree. That dir holds friction events only; it must
+  // not make a sibling subagent's live worktree read as the caller's own claim.
+  const porcelain = porcelainWith({
+    path: '/repo/.claude/worktrees/wt-308',
+    branch: 'worktree-spec-308',
+    lockReason: `claude session x (pid ${process.pid} start Fri Aug  7 14:40:15 2026)`,
+  });
+  const listRunDirsWithState = () => [
+    { dir: '/repo/.claude-tweaks/pipelines/2026-10-16T120000-adhoc-standalone', state: { sessionId: 'me', worktree: '/repo/.claude/worktrees/wt-308' } },
+  ];
+  const match = findConflictingSession('308', {
+    run: stubRun(porcelain),
+    sessionId: 'me',
+    listRunDirsWithState,
+  });
+  assert.ok(match, 'an ad-hoc dir sharing the caller session id must not exclude the worktree as the caller\'s own');
+  assert.strictEqual(match.path, '/repo/.claude/worktrees/wt-308');
+});
+
 test('findConflictingSession: record ref "19" does not match branch "flow-spec-192-193" (token boundary, not substring)', () => {
   const porcelain = porcelainWith({
     path: '/repo/.claude/worktrees/wt-flow',

@@ -63,6 +63,14 @@ test('collectStaleRuns: exclude drops the named run dir from the result, even gi
   assert.ok(!entries.some((e) => e.line.includes('spec-2')), "the excluded run's own dir must never appear");
 });
 
+test('#2783 collectStaleRuns: ad-hoc dirs never crowd a genuinely interrupted formal run out of the capped report', () => {
+  const project = tmpProject();
+  mkRun(project, '2026-10-01T000000-spec-9', { status: 'interrupted', sessionId: 'X', worktree: '/gone/a' });
+  for (let i = 2; i <= 4; i++) mkRun(project, `2026-10-0${i}T000000-adhoc-standalone`, { status: 'active', sessionId: `S${i}`, worktree: `/gone/w${i}` });
+  const lines = residue.collectStaleRuns(project).map((e) => e.line);
+  assert.deepStrictEqual(lines, ['- 2026-10-01T000000-spec-9 (status: interrupted)']);
+});
+
 test('collectStaleRuns: empty when no non-clean run dir exists', () => {
   const project = tmpProject();
   mkRun(project, '2026-06-30T090000-spec-0', { status: 'clean' });

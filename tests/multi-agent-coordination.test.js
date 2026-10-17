@@ -304,6 +304,212 @@ test('findingsMatch: same location and matching severity bucket, but substantive
   assert.strictEqual(c.findingsMatch(a, b), false);
 });
 
+// ------------------------------------------------------------
+// #2955: a substance-gated wider line band for reproduction pairing — two
+// agents that anchor one finding on different lines of the same multi-line
+// statement land 3-5 lines apart, outside the ±2 rule.
+// ------------------------------------------------------------
+
+// The reported shape: one value read inside a multi-line call argument after an
+// external side effect, worded independently by the two agents.
+const WIDE_SAME_A = 'result.id is read inside the multi-line createIssue call argument after the external gh api side effect; if the side effect throws, the read never runs and the error is swallowed';
+const WIDE_SAME_B = 'result.id read inside the multi-line createIssue argument after the external gh api side effect — a throw from the side effect skips the read and the error is swallowed';
+// A different issue inside the same statement.
+const WIDE_DIFFERENT = 'The labels array passed to createIssue is not deduplicated, so a repeated label produces a 422 from the API';
+// The same issue, loosely worded: clears SUBSTANCE_SIMILARITY_MIN but not the wide floor.
+const LOOSE_A = 'Error from the gh api call is swallowed because the catch returns null without logging';
+const LOOSE_B = 'The catch block around the gh api call returns null and drops the error silently';
+
+test('reproduction (#2955): wide-band constants are exported with their own names and the calibrated values', () => {
+  assert.strictEqual(c.LINE_TOLERANCE_REPRODUCTION_WIDE, 5);
+  assert.strictEqual(c.SUBSTANCE_SIMILARITY_WIDE_MIN, 0.6);
+  assert.ok(c.LINE_TOLERANCE_REPRODUCTION_WIDE > c.LINE_TOLERANCE_REPRODUCTION);
+  assert.ok(c.SUBSTANCE_SIMILARITY_WIDE_MIN > c.SUBSTANCE_SIMILARITY_MIN);
+});
+
+test('reproduction (#2955): calibration fixtures sit on the intended side of the wide floor', () => {
+  const at = (text, line) => c.normalizeFinding({ path: 'src/run.js', line, text });
+  assert.ok(c.substanceSimilarity(at(WIDE_SAME_A, 120), at(WIDE_SAME_B, 123)) >= c.SUBSTANCE_SIMILARITY_WIDE_MIN);
+  assert.ok(c.substanceSimilarity(at(WIDE_SAME_A, 120), at(WIDE_DIFFERENT, 123)) < c.SUBSTANCE_SIMILARITY_MIN);
+  const loose = c.substanceSimilarity(at(LOOSE_A, 120), at(LOOSE_B, 123));
+  assert.ok(loose >= c.SUBSTANCE_SIMILARITY_MIN && loose < c.SUBSTANCE_SIMILARITY_WIDE_MIN, `loose pair scored ${loose}`);
+});
+
+test('AC1.1 AC1.2 reproduction (#2955): same path, 3 lines apart, near-identical text, same bucket → one confirmed, zero unconfirmed', () => {
+  const a = [{ path: 'src/run.js', line: 120, severity: 'high', text: WIDE_SAME_A }];
+  const b = [{ path: 'src/run.js', line: 123, severity: 'critical', text: WIDE_SAME_B }];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.strictEqual(confirmed.length, 1);
+  assert.strictEqual(unconfirmed.length, 0);
+  assert.strictEqual(confirmed[0].line, 120);
+  assert.strictEqual(confirmed[0].severityContested, undefined);
+});
+
+test('AC2.1 reproduction (#2955): 3 lines apart, substantively different → both unconfirmed, no nearLocation', () => {
+  const a = [{ path: 'src/run.js', line: 120, severity: 'high', text: WIDE_SAME_A }];
+  const b = [{ path: 'src/run.js', line: 123, severity: 'high', text: WIDE_DIFFERENT }];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.strictEqual(confirmed.length, 0);
+  assert.strictEqual(unconfirmed.length, 2);
+  assert.ok(unconfirmed.every((f) => f.nearLocation === undefined), 'a wide-band miss is not a #1980 coincidence');
+});
+
+test('AC3.1 reproduction (#2955): 3 lines apart, one side missing text → both unconfirmed', () => {
+  const a = [{ path: 'src/run.js', line: 120, severity: 'high' }];
+  const b = [{ path: 'src/run.js', line: 123, severity: 'high', text: WIDE_SAME_B }];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.strictEqual(confirmed.length, 0);
+  assert.strictEqual(unconfirmed.length, 2);
+  assert.ok(unconfirmed.every((f) => f.nearLocation === undefined));
+});
+
+test('reproduction (#2955): band edges — 5 lines apart confirms, 6 lines apart does not', () => {
+  const a = [{ path: 'src/run.js', line: 120, severity: 'high', text: WIDE_SAME_A }];
+  const atFive = c.categoriseReproduction(a, [{ path: 'src/run.js', line: 115, severity: 'high', text: WIDE_SAME_B }]);
+  assert.strictEqual(atFive.confirmed.length, 1);
+  assert.strictEqual(atFive.unconfirmed.length, 0);
+  const atSix = c.categoriseReproduction(a, [{ path: 'src/run.js', line: 126, severity: 'high', text: WIDE_SAME_B }]);
+  assert.strictEqual(atSix.confirmed.length, 0);
+  assert.strictEqual(atSix.unconfirmed.length, 2);
+});
+
+test('reproduction (#2955): loose same-issue pair confirms within ±2 but not at 3 lines (±2 path unchanged)', () => {
+  const a = [{ path: 'src/run.js', line: 120, severity: 'low', text: LOOSE_A }];
+  const near = c.categoriseReproduction(a, [{ path: 'src/run.js', line: 122, severity: 'low', text: LOOSE_B }]);
+  assert.strictEqual(near.confirmed.length, 1);
+  const wide = c.categoriseReproduction(a, [{ path: 'src/run.js', line: 123, severity: 'low', text: LOOSE_B }]);
+  assert.strictEqual(wide.confirmed.length, 0);
+  assert.strictEqual(wide.unconfirmed.length, 2);
+});
+
+test('reproduction (#2955): mixed — different-substance neighbour within ±2 plus a same-substance twin 4 lines away → pairs with the twin', () => {
+  const a = [{ path: 'src/run.js', line: 120, severity: 'high', text: WIDE_SAME_A }];
+  const b = [
+    { path: 'src/run.js', line: 121, severity: 'high', text: WIDE_DIFFERENT },
+    { path: 'src/run.js', line: 124, severity: 'high', text: WIDE_SAME_B },
+  ];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.strictEqual(confirmed.length, 1);
+  assert.strictEqual(unconfirmed.length, 1);
+  assert.strictEqual(unconfirmed[0].line, 121);
+  assert.strictEqual(unconfirmed[0].source, 'B');
+  assert.strictEqual(unconfirmed[0].nearLocation, undefined, 'A found its twin, so the neighbour is not a coincidence partner');
+});
+
+test('reproduction (#2955): findingsMatch is untouched — identical text 3 lines apart still does not match', () => {
+  const a = { path: 'src/run.js', line: 120, severity: 'high', text: WIDE_SAME_A };
+  const b = { path: 'src/run.js', line: 123, severity: 'high', text: WIDE_SAME_A };
+  assert.strictEqual(c.findingsMatch(a, b), false);
+});
+
+test('reproduction (#2955): a wide-band pair never takes a B finding another A finding reported on the same line', () => {
+  const a = [
+    { path: 'src/run.js', line: 100, severity: 'high', text: WIDE_SAME_A },
+    { path: 'src/run.js', line: 104, severity: 'high', text: WIDE_SAME_A },
+  ];
+  const b = [{ path: 'src/run.js', line: 104, severity: 'high', text: WIDE_SAME_A }];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.deepStrictEqual(confirmed.map((f) => f.line), [104]);
+  assert.deepStrictEqual(unconfirmed.map((f) => `${f.source}:${f.line}`), ['A:100']);
+});
+
+test('reproduction (#2955): wide-band score ties break by the smaller line delta', () => {
+  const a = [{ path: 'src/run.js', line: 100, severity: 'high', text: WIDE_SAME_A }];
+  const b = [
+    { path: 'src/run.js', line: 104, severity: 'high', text: WIDE_SAME_A },
+    { path: 'src/run.js', line: 103, severity: 'high', text: WIDE_SAME_A },
+  ];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.strictEqual(confirmed.length, 1);
+  assert.deepStrictEqual(unconfirmed.map((f) => `${f.source}:${f.line}`), ['B:104']);
+});
+
+test('reproduction (#2955): with no wide twin, a ±2 different-substance neighbour still yields the #1980 coincidence pair', () => {
+  const a = [{ path: 'src/run.js', line: 120, severity: 'high', text: WIDE_SAME_A }];
+  const b = [
+    { path: 'src/run.js', line: 121, severity: 'high', text: WIDE_DIFFERENT },
+    { path: 'src/run.js', line: 124, severity: 'high', text: WIDE_DIFFERENT },
+  ];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.strictEqual(confirmed.length, 0);
+  const fromA = unconfirmed.find((f) => f.source === 'A');
+  assert.deepStrictEqual(fromA.nearLocation, { source: 'B', path: 'src/run.js', line: 121 });
+  const far = unconfirmed.find((f) => f.source === 'B' && f.line === 124);
+  assert.strictEqual(far.nearLocation, undefined);
+  assert.strictEqual(unconfirmed.length, 3);
+});
+
+// #2907: pairing must not depend on the order agent A reported its findings.
+// Fixture from #2628's review (lens 3b): both agents reported the symlink
+// containment gap at one path:line, and agent A also reported a size-cap issue there.
+const SIZE_CAP_A = { path: 'plugin/bin/lib/code-health/candidates-app-store-readiness.js', line: 308, severity: 'high', text: 'Bundle size cap is not enforced before reading the archive into memory, so an oversized upload exhausts memory' };
+const SYMLINK_A = { path: 'plugin/bin/lib/code-health/candidates-app-store-readiness.js', line: 308, severity: 'high', text: 'Symlink containment gap: a symlink inside the bundle can point outside the extraction root and be read' };
+const SYMLINK_B = { path: 'plugin/bin/lib/code-health/candidates-app-store-readiness.js', line: 308, severity: 'high', text: 'Symlink containment gap: a symlink inside the bundle can point outside the extraction root and is read' };
+
+test('AC1.1 reproduction (#2907): a same-substance pair at one location is confirmed whichever order agent A reported it in', () => {
+  for (const a of [[SIZE_CAP_A, SYMLINK_A], [SYMLINK_A, SIZE_CAP_A]]) {
+    const { confirmed, unconfirmed } = c.categoriseReproduction(a, [SYMLINK_B]);
+    assert.deepStrictEqual(confirmed.map((f) => f.text), [SYMLINK_A.text]);
+    assert.strictEqual(unconfirmed.length, 1);
+    assert.strictEqual(unconfirmed[0].source, 'A');
+    assert.strictEqual(unconfirmed[0].text, SIZE_CAP_A.text);
+    // B was paired, so it is no coincidence partner for the size-cap finding.
+    assert.strictEqual(unconfirmed[0].nearLocation, undefined);
+  }
+});
+
+test('reproduction (#2907): two A findings that both match one B finding pair it with the closer match, in either A order', () => {
+  const loose = { path: 'src/api.js', line: 40, severity: 'low', text: LOOSE_A };
+  const exact = { path: 'src/api.js', line: 40, severity: 'low', text: LOOSE_B };
+  const b = [{ path: 'src/api.js', line: 40, severity: 'low', text: LOOSE_B }];
+  for (const a of [[loose, exact], [exact, loose]]) {
+    const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+    assert.deepStrictEqual(confirmed.map((f) => f.text), [LOOSE_B]);
+    assert.deepStrictEqual(unconfirmed.map((f) => `${f.source}:${f.text}`), [`A:${LOOSE_A}`]);
+  }
+});
+
+test('reproduction (#2907): a different-substance ±2 neighbour is not reserved from another A finding\'s wide-band twin', () => {
+  const unrelated = { path: 'src/run.js', line: 100, severity: 'high', text: WIDE_DIFFERENT };
+  const twin = { path: 'src/run.js', line: 104, severity: 'high', text: WIDE_SAME_A };
+  const b = [{ path: 'src/run.js', line: 101, severity: 'high', text: WIDE_SAME_B }];
+  for (const a of [[unrelated, twin], [twin, unrelated]]) {
+    const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+    assert.deepStrictEqual(confirmed.map((f) => f.line), [104]);
+    assert.deepStrictEqual(unconfirmed.map((f) => `${f.source}:${f.line}`), ['A:100']);
+    assert.strictEqual(unconfirmed[0].nearLocation, undefined);
+  }
+});
+
+test('reproduction (#2907): when the best pair would strand a finding both agents reported, the pairing re-routes so both confirm', () => {
+  // A1 matches B1 best (a prefix) and B2 too; A2 matches only B1. Taking A1-B1
+  // first would leave A2 unconfirmed beside a B finding it reproduces.
+  const a1 = { path: 'src/token.js', line: 10, severity: 'high', text: 'token cache refresh race lets stale token through to the upstream api call' };
+  const a2 = { path: 'src/token.js', line: 10, severity: 'high', text: 'token cache refresh race stale token' };
+  const b = [
+    { path: 'src/token.js', line: 10, severity: 'high', text: 'token cache refresh race lets stale token through' },
+    { path: 'src/token.js', line: 10, severity: 'high', text: 'stale token through to the upstream api call without retry backoff' },
+  ];
+  for (const a of [[a1, a2], [a2, a1]]) {
+    const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+    assert.strictEqual(confirmed.length, 2);
+    assert.deepStrictEqual(unconfirmed, []);
+    const byText = Object.fromEntries(confirmed.map((f) => [f.text, f]));
+    assert.ok(byText[a1.text] && byText[a2.text], 'both A findings confirmed');
+  }
+});
+
+test('reproduction (#2907): a ±2 score tie pairs with the nearer B finding', () => {
+  const a = [{ path: 'src/run.js', line: 100, severity: 'high', text: WIDE_SAME_A }];
+  const b = [
+    { path: 'src/run.js', line: 102, severity: 'high', text: WIDE_SAME_A },
+    { path: 'src/run.js', line: 100, severity: 'high', text: WIDE_SAME_A },
+  ];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.strictEqual(confirmed.length, 1);
+  assert.deepStrictEqual(unconfirmed.map((f) => `${f.source}:${f.line}`), ['B:102']);
+});
+
 test('reproduction: one-side-only finding → unconfirmed with STAGED entry matching the documented schema', () => {
   const a = [{ path: 'src/auth.ts', line: 42, severity: 'critical', text: 'only-A' }];
   const b = [];
@@ -1060,5 +1266,53 @@ test('review-summary-template.md has a Fan-out leftovers slot, full and compact 
     summaryTemplate,
     /Fan-out leftovers 0/,
     'the compact-form clean-PASS block must carry a "Fan-out leftovers 0" status fact',
+  );
+});
+
+test('prose twins state the two-tier line rule with the code\'s own values (#2955)', () => {
+  const near = `±${c.LINE_TOLERANCE_REPRODUCTION}`;
+  const wide = `±${c.LINE_TOLERANCE_REPRODUCTION_WIDE}`;
+  const floor = String(c.SUBSTANCE_SIMILARITY_WIDE_MIN);
+
+  // Finds the line starting with `prefix` in `text` and asserts it exists and
+  // states every value in `values` — the same two checks the four prose
+  // twins below all need, against a different source line each time.
+  function assertBulletStatesValues(text, prefix, file, label, values) {
+    const line = text.split('\n').find((l) => l.startsWith(prefix));
+    assert.ok(line, `${file} ${label} must exist`);
+    for (const value of values) {
+      assert.ok(line.includes(value), `${label} must state ${value}`);
+    }
+  }
+
+  assertBulletStatesValues(
+    PRIMITIVE_DOC,
+    '2. **Line within',
+    'multi-agent-coordination.md',
+    'comparison rule item 2',
+    [near, wide, floor],
+  );
+
+  const dispatch = readSkillFile('review', 'step3-lens-dispatch.md');
+  assertBulletStatesValues(
+    dispatch,
+    "> - Findings present in both agents' outputs, same severity bucket",
+    'step3-lens-dispatch.md',
+    'confirmed-finding bullet',
+    [near, wide, floor],
+  );
+  assertBulletStatesValues(
+    dispatch,
+    "> - Findings present in both agents' outputs but straddling a severity-bucket boundary",
+    'step3-lens-dispatch.md',
+    'severity-straddle bullet',
+    [near, wide],
+  );
+  assertBulletStatesValues(
+    dispatch,
+    '> - Findings at the same location (path exact, line ±2) but from different substance',
+    'step3-lens-dispatch.md',
+    '#1980 coincidence bullet',
+    [near, wide, floor],
   );
 });
