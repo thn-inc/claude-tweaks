@@ -200,8 +200,8 @@ test('#1712: multispec-pr-checklist.md carries the run-level polish-row paragrap
 
 // #3319 retired #1712's creation-time polish-row omission: the composer never implemented it,
 // and tests/bin-lib/flow/pr-body.test.js now pins all five rows for an all-backend run. Scan
-// paragraph by paragraph — "omit" near "polish" and "creation", case-insensitive — so a reworded
-// restatement of the rule goes red, not only the exact old sentence.
+// paragraph by paragraph — "omit" near "polish" and "creation"/"created" (and other creat- forms),
+// case-insensitive — so a reworded restatement of the rule goes red, not only the exact old sentence.
 test('#3319: no file states a creation-time polish-row omission rule', () => {
   const files = {
     'pr-early-run-lifecycle.md': LIFECYCLE,
@@ -211,7 +211,7 @@ test('#3319: no file states a creation-time polish-row omission rule', () => {
   for (const [name, text] of Object.entries(files)) {
     const offending = text
       .split(/\n\s*\n/)
-      .filter((p) => /\bomit(s|ted|ting)?\b/i.test(p) && /\bpolish\b/i.test(p) && /\bcreation\b/i.test(p));
+      .filter((p) => /\bomit(s|ted|ting)?\b/i.test(p) && /\bpolish\b/i.test(p) && /\bcreat(e|ed|es|ing|ion)\b/i.test(p));
     assert.deepEqual(offending, [], `${name} still states a creation-time polish-row omission`);
   }
 });

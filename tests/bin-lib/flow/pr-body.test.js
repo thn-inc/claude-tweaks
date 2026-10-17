@@ -73,13 +73,14 @@ test('#2877: repairPrBody restores the canonical five rows even when handed a na
 });
 
 test('#3319: an all-backend run still starts all five phase rows, polish included', () => {
-  // composePrEarlyBody takes no surface: input, so an all-backend run (#3028 and #2877 were
-  // both surface: backend) composes exactly like any other run — the creation-time polish-row
-  // omission #1712 once documented has no way to happen here. A non-polishing run removes the
-  // row later, at polish's would-be exit or the multi-spec pre-merge refresh.
+  // composePrEarlyBody takes no surface: input, so an all-backend run composes exactly like
+  // any other run — the creation-time polish-row omission #1712 once documented has no way to
+  // happen here. `surfaces` is passed (and ignored, mirroring the #2877 `phases` precedent
+  // above) to prove the composer never narrows on it. A non-polishing run removes the row
+  // later, at polish's would-be exit or the multi-spec pre-merge refresh.
   const body = composePrEarlyBody({
-    runId: '2026-10-17T080010-spec-3319', specSummary: 's', target: '#2877,#3028', nextStep: 'build',
-    fixesLines: ['Fixes #2877', 'Fixes #3028'],
+    runId: '2026-10-17T080010-spec-3319', specSummary: 's', target: '#101,#102', nextStep: 'build',
+    fixesLines: ['Fixes #101', 'Fixes #102'], surfaces: ['backend', 'backend'],
   });
   assert.deepEqual(phaseRows(body), CANONICAL_ROWS);
   assert.ok(phaseRows(body).includes('- [ ] polish'));
