@@ -1,8 +1,0 @@
-# Open Items — #3398 review lens anchor rule: weak-assertion findings split across test and production lines
-
-| # | Phase | Item | Status | Resolution |
-|---|-------|------|--------|------------|
-| 1 | ops | Pre-flight branch-divergence-check: origin/main was 11 commits ahead of the adopted worktree branch (reason-not-auto: n/a — informational pre-flight note held from /flow Step 2.5) | fixed | Post-creation catch-up fast-forwarded the branch d3c7fd2 → 6a25dc7 |
-| 2 | build | SDD Ruling: hand the implementer the authoring-verified test code (task-1-verified-tests.js) to append verbatim, as the concrete form of Step 1's prose spec — keeps the inline self-consistency result true for the dispatched code — costs if wrong: test naming drifts from brief prose (cosmetic) | observation | SDD pre-flight ruling, carried from the SDD ledger before workspace deletion |
-| 3 | build | SDD Ruling: fix task-review Minor 1 (go-red assert.throws lacked a message matcher) and Minor 2 (no lens 3f-side control) in one fix round rather than defer — costs if wrong: one extra fix round | observation | Applied in 67c5393; scoped re-review: both ADDRESSED, no new breakage |
-| 4 | build | Task-review Minor 3: `PRODUCTION_LINE_TERMS`' `/weak/i` and `/assertion/i` are forbidden in the test-line list — intended strictness, but a future legitimate test-line phrasing (e.g. "weak isolation") would trip it | deferred | Origin: #3398 task review (SDD minor (deferred)). Files: tests/review-coverage-anchor-conformance.test.js (PRODUCTION_LINE_TERMS). Trigger: revisit only if a future edit to step3-lens-dispatch.md's test-line list needs a word the term list forbids |
