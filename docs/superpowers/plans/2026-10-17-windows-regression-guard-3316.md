@@ -48,6 +48,7 @@
 - **AC3 via push probes.** See the `workflow_dispatch` bullet above.
 - **Windows needs Node 22 and root globs.** `npm test` could not launch on `windows-latest`: `tools/run-tests.js` passed ~782 paths as argv and hit Windows' 32,767-char command line (`spawnSync … ENAMETOOLONG`, probe runs 39030139345 / 39030144149). On win32 + Node >= 22 it now passes the root globs; Linux and Node 20 keep the explicit list (#407). The `windows` job pins Node 22.
 - **Like-for-like baseline on Windows.** The first runs that launched called 6 base-failing files attributable: `verify.js`'s `normalizeLog` did not strip TAP's `# duration_ms` summary (any platform), and the base scratch worktree ran on `C:` (`os.tmpdir()`) while the checkout is on `D:`. `normalizeLog` now strips it; the verify step sets `TMP`/`TEMP` to `runner.temp`.
+- **Timeouts: 90-min job, 20-min per run.** Task 2's `timeout-minutes: 60` and 45-min `--cmd-timeout` did not hold: verify reuses `--cmd-timeout` for every per-file baseline, isolated and retry run, so one hung file could outlive the job and lose the report. The suite measured ~8.5 min on `windows-latest`; per-file runs go 4 at a time, so up to 4 hung files cost ~70 min, inside a 90-min job (review fix `19b4b2e3d`).
 - **Crashed-file excerpts.** A file that throws at load prints its stderr before its own `not ok`; the excerpt now opens at that stderr instead of the previous file's failure.
 
 ## Review Focus
