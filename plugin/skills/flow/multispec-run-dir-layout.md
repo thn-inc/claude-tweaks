@@ -36,3 +36,5 @@ multispec:
 ```
 
 `phase` and `phases[]` (#1928) are written by every `spec-status` call — `phase` is the latest, `phases[]` is append-only (a re-entered phase adds another entry, never rewrites one). `bin/phase-timing.js` reads `phases[]` as the manifest-side boundary source for the run's Timing table; nothing else consumes it.
+
+Under the opt-in `parallel` token (#2677), a wave member's build and test also write `spec-{N}/ledger.md` — the run-dir-scoped ledger — which is folded into the shared ledger at merge-back (`multispec-parallel-waves.md`).

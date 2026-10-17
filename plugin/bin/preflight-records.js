@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // bin/preflight-records.js — record pre-flight JSON in one command.
-//   node bin/preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--help]
+//   node bin/preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--help]
 // Fetches every record (`gh issue view`), derives facets/keyFiles/fingerprint
 // (bin/lib/issues/record.js, bin/lib/issues/grouping.js), resolves blockedBy
 // either from the body (work-links: body-text, no extra call) or one batched
@@ -9,22 +9,33 @@
 // (groupByFileOverlap). Mechanizes skills/flow/materialize.md's Resolution +
 // blocked-by bullet and skills/flow/multi-spec.md's Validation steps 1-5.
 // Prints one JSON envelope: { records, overlapGroups, workLinks }.
+// --merge-gate (#2733) treats the positional numbers as one /flow run's
+// targets and adds mergeGate {gates, deferred, kept, rerun}
+// (bin/lib/preflight-records/merge-gate.js). --integration-branch <name>
+// (default 'main') is consumed only with --merge-gate, naming the branch the
+// gate's regex looks for.
+// --waves (#2677) adds waves {waves, parallel} — the opt-in multi-spec parallel-wave plan (bin/lib/preflight-records/waves.js).
 // Exit 0 success; 1 any record fetch (or the native dependency GraphQL call)
 // failed — every failing record named, all-at-once; 2 malformed invocation
-// (no numbers, non-positive, unresolvable owner/repo under native mode).
+// (no numbers, non-positive, unresolvable owner/repo under native mode), or a
+// --waves dependency cycle among the requested records.
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const preflight = require('./lib/preflight-records/preflight-records');
+const { planMergeGateSplit } = require('./lib/preflight-records/merge-gate');
+const { planParallelWaves } = require('./lib/preflight-records/waves');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
 const { parseRepo, repoResolutionNote } = require('./lib/repo-resolve');
 
-const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--help]\n';
+const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--help]\n';
 
 function parseArgs(argv) {
-  const opts = { numbers: [], workLinks: null, repo: null, help: false };
+  const opts = {
+    numbers: [], workLinks: null, repo: null, mergeGate: false, waves: false, integrationBranch: null, help: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i];
@@ -38,6 +49,14 @@ function parseArgs(argv) {
       const v = next();
       if (!v || v.startsWith('--')) return { error: 'missing value for --repo' };
       opts.repo = v;
+    } else if (a === '--merge-gate') {
+      opts.mergeGate = true;
+    } else if (a === '--waves') {
+      opts.waves = true;
+    } else if (a === '--integration-branch') {
+      const v = next();
+      if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: 'missing value for --integration-branch' };
+      opts.integrationBranch = v;
     } else if (a.startsWith('--')) {
       return { error: `unknown argument: ${a}` };
     } else {
@@ -141,7 +160,18 @@ function run(argv, deps = realDeps) {
 
   const records = preflight.buildRecords({ issues, dependencies });
   const overlapGroups = preflight.buildOverlapGroups(records);
-  deps.stdout(`${JSON.stringify({ records, overlapGroups, workLinks }, null, 2)}\n`);
+  const envelope = { records, overlapGroups, workLinks };
+  if (opts.mergeGate) envelope.mergeGate = planMergeGateSplit({ issues, records, numbers, integrationBranch: opts.integrationBranch || 'main' });
+  if (opts.waves) {
+    try {
+      envelope.waves = planParallelWaves({ records, numbers });
+    } catch (err) {
+      if (!/^dependency cycle through #/.test(err && err.message)) throw err;
+      deps.stderr(`preflight-records.js: ${err.message}\n`);
+      return 2;
+    }
+  }
+  deps.stdout(`${JSON.stringify(envelope, null, 2)}\n`);
   return 0;
 }
 

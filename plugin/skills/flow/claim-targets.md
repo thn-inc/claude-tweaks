@@ -114,7 +114,7 @@ to Step 3 for any of them. One invocation claims the whole list:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/claim-targets.js" --run-id "$(basename "$PIPELINE_RUN_DIR")" \
-  --targets {n}[,{m}…] [--keep-going]
+  --targets {n}[,{m}…] [--keep-going] --run "$PIPELINE_RUN_DIR"
 ```
 
 Pass `--keep-going` only when this run is in `keep-going` mode (below); a default-mode run
@@ -156,6 +156,10 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sta
   --section "/flow" --step "Step 2.8" --reversibility high \
   --text "claimed #{n} (bin/claim-targets.js, transport: {git|contents-api|mcp})"
 ```
+
+On the `gh` path, `claim-targets.js` itself already writes this exact line — via `--run` on the
+invocation above — for every target in its `claimed` array (#2775), so the `log-decision.js` call
+just shown is required only for the `gh`-absent MCP procedure's own successful writes.
 
 This does not itself guarantee the CLI/procedure was invoked — an agent that skips the claim call
 above skips this log line too, for the same reason. It exists so a **later** phase (`/wrap-up`'s

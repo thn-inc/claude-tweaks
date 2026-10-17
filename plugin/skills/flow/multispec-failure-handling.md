@@ -63,3 +63,12 @@ The consolidated console's **Not run / Failed** footer notes the shared worktree
 ```
 
 The user finishes or discards the single shared branch after triage (`/superpowers:finishing-a-development-branch`).
+
+## Parallel waves (`parallel`, #2677)
+
+A HARD-GATE failure in one wave member's build or test never cancels its wave siblings mid-flight — each finishes build and test in its own isolated worktree. A member that failed its HARD-GATE is **never merged** into the shared branch, in either mode — so unlike a sequential run, its commits never reach the specs after it.
+
+- **Default** — the stop applies at the wave boundary: no sibling is merged back and no later wave starts.
+- **`keep-going`** — the passing siblings merge back and the run continues, but every in-run record that depends on the failed member, transitively, in a later wave is **dropped from the run** (`not-run`, reason `prerequisite #{N} failed`) — exactly as the merge-state gate drops a deferred record's dependents — since it would otherwise build without its prerequisite.
+
+Every member worktree that is not merged — the failed member, each sibling under the default stop, and a member that conflicted at merge-back and then failed its sequential re-run — is removed with `git worktree remove {worktreePath}`, and its branch is **kept**. The console's "Not run / Failed" footer names each kept branch as `(branch {name})`.

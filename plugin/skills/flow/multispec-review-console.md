@@ -155,6 +155,8 @@ writes GitHub state (releases, grant removal), so there is no fail-open degraded
 6. Execute the Cleanup actions rows the user did not skip, respecting the dependency order established in step 3 above. "Shared teardown" below documents these steps' mechanics.
 7. Archive the parent run dir — same inline archive action as "On approval" step 9 above (routes through `bin/lib/reconcile/archive-merged.js`'s `archiveRunDir`, per-`spec-{N}/` `git mv`-then-`mv` sequencing, `#593` guard, and all).
 
+Under the opt-in `parallel` token, every wave member's per-spec branch was already merged back into the shared branch before that record's review (`multispec-parallel-waves.md`), and its per-spec worktree removed — so this console sees one shared branch and one PR exactly as after a sequential run; a member that conflicted at merge-back was re-run sequentially and is no different here.
+
 ### Shared teardown (dev server, branch finish, claim release, grants, worktree removal)
 
 These steps appear as visible, numbered Cleanup actions rows in the console template above — what the user sees, approves, or overrides. This section documents only their mechanics, which apply identically after both "On approval" step 8 and "On override" step 6; only what triggered them differs:
@@ -195,7 +197,9 @@ These steps appear as visible, numbered Cleanup actions rows in the console temp
    still locked to this session at that point) — harmless either way, but the local branch delete
    would fail outright if attempted while the branch is still checked out in the (not-yet-removed)
    worktree, since git refuses to delete a checked-out branch. Skip when step 6 itself skipped
-   (work left pending).
+   (work left pending). A `worktree: registration pruned but directory still present at {path}`
+   line is not a completed removal: surface the path in the report and leave the directory for
+   manual removal — never retry-delete it.
 
 ### Per-issue label cleanup
 

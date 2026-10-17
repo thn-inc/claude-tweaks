@@ -161,6 +161,9 @@ behind CLAUDE.md's `## Don'ts` rules.
 /claude-tweaks:flow 45 worktree       # Terminal 2
 /claude-tweaks:flow 48 worktree       # Terminal 3
 
+# One batch, independent records built and tested concurrently (opt-in)
+/claude-tweaks:flow #42,#45,#48 parallel
+
 # Check pipeline status (navigation hub)
 /claude-tweaks:help                    # what's ready, what's blocked, what's next
 

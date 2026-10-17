@@ -82,6 +82,12 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
       });
       return result;
     },
+    // Whether `rel` (a relativized, forward-slash path from a log) names a
+    // file inside the checkout at `dir` (#3153). A path that relativize()
+    // left absolute, or one with a `..` segment anywhere (a log can name
+    // `tests/../../x` verbatim), is never inside it.
+    inCheckout: (dir, rel) => !path.posix.isAbsolute(rel) && !/^[A-Za-z]:/.test(rel)
+      && !rel.split('/').includes('..') && fs.existsSync(path.join(dir, rel)),
     addWorktree: (sha) => {
       const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-'));
       const dir = path.join(parent, 'wt');
@@ -198,13 +204,13 @@ const RUNNER_ERROR_RE = /^ℹ Error: |generated asynchronous activity after the 
 // or tap, counts parsed, nothing cancelled, no runner-level error diagnostic,
 // every failing entry naming a test file, and (spec) entries adding up to
 // `ℹ fail` — else null.
-function accountedFamily(text, cwd) {
+function accountedFamily(text, scope) {
   const family = sniffFamily(text);
   if (family !== 'spec' && family !== 'tap') return null;
   if (RUNNER_ERROR_RE.test(text)) return null;
   const counts = parseCounts(text, family);
   if (counts === null || cancelledCount(text, family) !== 0) return null;
-  if (countUnmatchedFailures(text, family, { cwd }) > 0) return null;
+  if (countUnmatchedFailures(text, family, scope) > 0) return null;
   if (family === 'spec' && specEntryCount(text) !== counts.fail) return null;
   return family;
 }
@@ -239,6 +245,13 @@ function tryRealpath(dir) {
   try { return fs.realpathSync(dir); } catch { return dir; }
 }
 
+// The ineligible reason for a HEAD-side failing entry that named a real test
+// file — just one absent from this checkout — rather than naming no test
+// file at all (#3153 final-review finding 2).
+function absentFromCheckoutReason(n, checkName) {
+  return `absent-from-checkout: ${n} failing ${n === 1 ? 'entry names' : 'entries name'} only paths absent from the checkout in ${checkName}`;
+}
+
 // Conventional process exit codes for an unhandled signal (128 + signal
 // number) — what every shell and CI runner already expects a killed process
 // to report (#3064).
@@ -252,6 +265,9 @@ async function adjudicate({
   const ineligible = (reason) => ({ ...header, eligible: false, reason });
   const work = [];
   const headDir = tryRealpath(cwd || process.cwd());
+  // Every log is read against the checkout it ran in, and only a path present
+  // there names a failing file (#3153).
+  const at = (dir) => ({ cwd: dir, exists: (rel) => git.inCheckout(dir, rel) });
   for (const c of checks.filter((x) => x.skipped || x.exitCode !== 0)) {
     if (c.skipped) return ineligible(`${c.name} skipped (${c.skipped})`);
     if (c.spawnError !== undefined) return ineligible(`${c.name} could not spawn`);
@@ -261,8 +277,16 @@ async function adjudicate({
     const text = readLog(c.logPath);
     if (text === null) return ineligible(`${c.name} log unreadable`);
     const family = sniffFamily(text);
-    const files = extractFailingFiles(text, family, { cwd: headDir });
-    if (files.length === 0) return ineligible(`no-parse: no failing test file extractable from ${c.name}`);
+    const files = extractFailingFiles(text, family, at(headDir));
+    if (files.length === 0) {
+      // When dropping `exists` alone would have named a file, every entry
+      // here did name a test file — just one absent from this checkout, not
+      // "no test file" (#3153 final-review finding 2).
+      if (extractFailingFiles(text, family, { cwd: headDir }).length > 0) {
+        return ineligible(absentFromCheckoutReason(countUnmatchedFailures(text, family, at(headDir)), c.name));
+      }
+      return ineligible(`no-parse: no failing test file extractable from ${c.name}`);
+    }
     // The failing-file list must account for the whole failure. Only spec
     // and tap have a guard that proves it; their summary counts must parse
     // (a truncated log has none).
@@ -276,8 +300,14 @@ async function adjudicate({
     // A failing entry extractFailingFiles dropped means `files` is an
     // undercount — classifying the rest could return `pass` over a failure
     // nothing adjudicated.
-    const unmatched = countUnmatchedFailures(text, family, { cwd: headDir });
+    const unmatched = countUnmatchedFailures(text, family, at(headDir));
     if (unmatched > 0) {
+      // Same distinction as above: when dropping `exists` alone would have
+      // matched every entry, the gap is entirely paths absent from this
+      // checkout, not entries naming no test file (#3153 finding 2).
+      if (countUnmatchedFailures(text, family, { cwd: headDir }) === 0) {
+        return ineligible(absentFromCheckoutReason(unmatched, c.name));
+      }
       return ineligible(`unclassified failure(s): ${unmatched} failing ${unmatched === 1 ? 'entry names' : 'entries name'} no test file in ${c.name}`);
     }
     if (family === 'spec') {
@@ -292,9 +322,9 @@ async function adjudicate({
         return ineligible(`${c.name} failing entries (${entries}) do not account for ${accounted}`);
       }
     }
-    const headFileLevel = fileLevelFailures(text, family, { cwd: headDir });
-    const headTests = failingTestsByFile(text, family, { cwd: headDir });
-    const headLocated = failingTestsByFile(text, family, { cwd: headDir, located: true });
+    const headFileLevel = fileLevelFailures(text, family, at(headDir));
+    const headTests = failingTestsByFile(text, family, at(headDir));
+    const headLocated = failingTestsByFile(text, family, { ...at(headDir), located: true });
     for (const file of files) {
       work.push({
         check: c.name, file, command: template.replace(/\{file\}/g, file),
@@ -366,15 +396,15 @@ async function adjudicate({
       if (r === null || typeof r.exitCode !== 'number' || r.exitCode === 0) return null;
       const text = readLog(r.logPath);
       if (text === null) return null;
-      const family = accountedFamily(text, baseDir);
+      const family = accountedFamily(text, at(baseDir));
       if (family === null) return null;
       const file = work[k].file;
-      const located = failingTestsByFile(text, family, { cwd: baseDir, located: true }).get(file);
-      const conclusive = failingTestsByFile(text, family, { cwd: baseDir, conclusiveOnly: true }).get(file);
+      const located = failingTestsByFile(text, family, { ...at(baseDir), located: true }).get(file);
+      const conclusive = failingTestsByFile(text, family, { ...at(baseDir), conclusiveOnly: true }).get(file);
       if (!located || !conclusive || conclusive.length !== located.length) return null;
       const tree = testTree(text, family);
       const qualified = tree.wellFormed ? tree.failed.filter((p) => tree.paths.get(p) === 1) : [];
-      return { text, located, qualified, fileLevel: fileLevelFailures(text, family, { cwd: baseDir }).has(file) };
+      return { text, located, qualified, fileLevel: fileLevelFailures(text, family, at(baseDir)).has(file) };
     });
     // Every file present at base takes one isolated HEAD run. A file absent
     // at base is new on this branch: attributable outright — an isolated pass
@@ -412,7 +442,7 @@ async function adjudicate({
       if (!r || r.exitCode !== 0) return false;
       const text = readLog(r.logPath);
       if (text === null) return false;
-      const family = accountedFamily(text, headDir);
+      const family = accountedFamily(text, at(headDir));
       if (family === null) return false;
       const counts = parseCounts(text, family);
       if (!(counts.tests > 0 && counts.pass > 0 && counts.fail === 0)) return false;
@@ -429,15 +459,15 @@ async function adjudicate({
       if (!r || typeof r.exitCode !== 'number' || r.exitCode === 0 || !baseEv[k]) return null;
       const text = readLog(r.logPath);
       if (text === null) return null;
-      const family = accountedFamily(text, headDir);
+      const family = accountedFamily(text, at(headDir));
       if (family === null) return null;
       const file = work[k].file;
-      const files = extractFailingFiles(text, family, { cwd: headDir });
+      const files = extractFailingFiles(text, family, at(headDir));
       if (files.length !== 1 || files[0] !== file) return null;
-      if (fileLevelFailures(text, family, { cwd: headDir }).has(file)) return null;
+      if (fileLevelFailures(text, family, at(headDir)).has(file)) return null;
       const tree = testTree(text, family);
       if (!tree.wellFormed) return null;
-      const isoNames = failingTestsByFile(text, family, { cwd: headDir }).get(file);
+      const isoNames = failingTestsByFile(text, family, at(headDir)).get(file);
       if (!isoNames || !isoNames.every((n) => n !== null && tree.all.get(n) === 1)) return null;
       if (!tree.failed.every((p) => tree.paths.get(p) === 1) || !coveredBy(tree.failed, baseEv[k].qualified)) return null;
       const waived = multisetMinus(work[k].headTests, isoNames);
