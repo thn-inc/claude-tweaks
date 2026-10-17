@@ -53,6 +53,29 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.144.0](https://github.com/thn-inc/claude-tweaks/compare/v6.143.0...v6.144.0) (2026-10-17)
+
+
+### Features
+
+* Feed verify.js --baseline's flaky verdicts into the… ([#3062](https://github.com/thn-inc/claude-tweaks/issues/3062)) ([5e1e32a](https://github.com/thn-inc/claude-tweaks/commit/5e1e32a124df2f8915a311c828affbee0683afb0))
+* pr-early-run-lifecycle: Spec summary is never refreshed… ([#3050](https://github.com/thn-inc/claude-tweaks/issues/3050)) ([ba6fb4f](https://github.com/thn-inc/claude-tweaks/commit/ba6fb4faf4371669ac190f9ef5fcf48cfc242442))
+* Re-pin superpowers to 7.0.0 and pin the upstream text… ([#3376](https://github.com/thn-inc/claude-tweaks/issues/3376)) ([4f01603](https://github.com/thn-inc/claude-tweaks/commit/4f0160307d0b6bb02ac731a22baa7b385577f418)), closes [#3386](https://github.com/thn-inc/claude-tweaks/issues/3386)
+* verify.js / wrap-up-engine.js / build-review-context.js… ([#3017](https://github.com/thn-inc/claude-tweaks/issues/3017)) ([a13bc40](https://github.com/thn-inc/claude-tweaks/commit/a13bc40a85f624a3501ed5dfc0947873823c6f92)), closes [#3022](https://github.com/thn-inc/claude-tweaks/issues/3022)
+
+
+### Bug Fixes
+
+* dispatch: transitive file-overlap grouping through hub… ([#3278](https://github.com/thn-inc/claude-tweaks/issues/3278)) ([d5ec4d5](https://github.com/thn-inc/claude-tweaks/commit/d5ec4d5efc24592b8236a049a1ecf9817951f942))
+* docs-health verify-commit: parallel judges can race the… ([#2988](https://github.com/thn-inc/claude-tweaks/issues/2988)) ([59e89b6](https://github.com/thn-inc/claude-tweaks/commit/59e89b64552f22845fa686e69eba12fc528f0775))
+* Filter run-comment marker reads by the posting identity… ([#3358](https://github.com/thn-inc/claude-tweaks/issues/3358)) ([e1ef8ce](https://github.com/thn-inc/claude-tweaks/commit/e1ef8ce3b47dedf2ac3fc3f1ff04deb8b4c209c5))
+* flow: Step 1.8 creates the open-items ledger before the… ([#3036](https://github.com/thn-inc/claude-tweaks/issues/3036)) ([e6e77ed](https://github.com/thn-inc/claude-tweaks/commit/e6e77ed9cfebd33b4f3f7e981ac5d651e9f43419))
+* flow/multi-spec.md back under its 20,480-byte read budget ([#3360](https://github.com/thn-inc/claude-tweaks/issues/3360)) ([c885476](https://github.com/thn-inc/claude-tweaks/commit/c8854763c06a2cd1b3fda11ba7e8a25de7d2fbdd))
+* PR-early polish-row omission for all-backend runs: wire… ([#3319](https://github.com/thn-inc/claude-tweaks/issues/3319)) ([b203a6b](https://github.com/thn-inc/claude-tweaks/commit/b203a6b2f6a57568a8386751cb10626ef397b54e))
+* settle [#2821](https://github.com/thn-inc/claude-tweaks/issues/2821)'s dropped ledger leftovers — parent-gate fail-open wording, demo citations, stale bundle figure ([#3371](https://github.com/thn-inc/claude-tweaks/issues/3371)) ([1ea0e3c](https://github.com/thn-inc/claude-tweaks/commit/1ea0e3cb476eafc161f812064f4c8b32727878d0))
+* wrap-up Section C step 2: the carrier-commit glob reads… ([#3365](https://github.com/thn-inc/claude-tweaks/issues/3365)) ([e900eda](https://github.com/thn-inc/claude-tweaks/commit/e900eda34bfc684d5dc4006382a7058642bf484b)), closes [#3368](https://github.com/thn-inc/claude-tweaks/issues/3368)
+* wrap-up verify false-fails a leave-open (pending-review)… ([#3373](https://github.com/thn-inc/claude-tweaks/issues/3373)) ([1b80994](https://github.com/thn-inc/claude-tweaks/commit/1b80994379f65c84ba79e3f881a9c5f8abc37420))
+
 ## [6.143.0](https://github.com/thn-inc/claude-tweaks/compare/v6.142.0...v6.143.0) (2026-10-17)
 
 
