@@ -38,6 +38,6 @@ test('docs/incident-log.md IL-150 cites #3380 row 48 as the casing instance', ()
   const section = text.slice(start, end);
   assert.match(section, /#3380/);
   assert.match(section, /row 48/);
-  assert.match(section, /722ece0d6/);
+  assert.match(section, /ffe20b982/);
   assert.match(section, /fs\.realpathSync\.native/);
 });
