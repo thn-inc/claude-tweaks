@@ -21,21 +21,29 @@ const defaultReaddir = (p) => {
   try { return fs.readdirSync(p); } catch { return []; }
 };
 
-// `path` on each console is the ABSOLUTE console.json path.
+// `path` on each console is the ABSOLUTE console.json path. A console.json that
+// is absent is the normal case (no console, or a spec dir without one) and is
+// silent; one that exists but cannot be read or parsed is listed in
+// `unreadable` instead, so a caller can say its items could not be checked
+// rather than let it read as "no residue".
 function readRunResidue(runDir, { readFile = defaultReadFile, readdir = defaultReaddir } = {}) {
   const candidates = [path.join(runDir, 'console.json')];
   for (const name of readdir(runDir).filter((n) => /^spec-/.test(n)).sort()) {
     candidates.push(path.join(runDir, name, 'console.json'));
   }
   const consoles = [];
+  const unreadable = [];
   for (const p of candidates) {
     let parsed;
-    try { parsed = JSON.parse(readFile(p)); } catch { continue; }
+    try { parsed = JSON.parse(readFile(p)); } catch (err) {
+      if (!(err && err.code === 'ENOENT')) unreadable.push(p);
+      continue;
+    }
     const items = unresolvedItems(parsed);
     if (items.length === 0) continue;
     consoles.push({ path: p, items, acknowledged: typeof parsed.residueAcknowledgedAt === 'string' });
   }
-  return { dir: runDir, consoles };
+  return { dir: runDir, consoles, unreadable };
 }
 
 const shown = (v) => (v === undefined || v === null || v === '' ? '—' : v);

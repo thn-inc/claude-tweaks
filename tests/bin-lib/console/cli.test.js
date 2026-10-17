@@ -422,3 +422,24 @@ test('--json carries unresolved: the two items when present, [] when none (#3370
   assert.strictEqual(await run(['--run', clean.runDir, '--policy', 'console-auto', '--json'], b.d), 0);
   assert.deepStrictEqual(JSON.parse(b.out()).unresolved, []);
 });
+
+test('an already-resolved console.json re-renders the Needs a human block too, and only for unresolved items (#3370)', async () => {
+  const stored = {
+    resolved: true, mode: 'auto-resolve', at: '2026-09-06T11:00:00.000Z', ceiling: 'unattended',
+    items: [
+      { id: 'wrap-up-memory-1.md', section: 'Memory updates', resolution: 'apply', reason: 'pre-checked Apply default (batched-item-drill.md)' },
+      { id: 'review-13-record.md', section: 'Pending review', resolution: 'pending', reason: 'unmapped-prefix' },
+    ],
+    merge: { resolution: 'leave-open', reason: 'lacks auto:merge' },
+  };
+  const fx = mainCheckoutWithRun({ staged: NEEDS, consoleJson: `${JSON.stringify(stored, null, 2)}\n` });
+  const rawBefore = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
+  const { d, out } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  assert.match(out(), /already records a resolved console/);
+  assert.match(out(), /Needs a human — 1 item\(s\)/);
+  const after = out().slice(out().indexOf('Needs a human'));
+  assert.ok(after.includes('review-13-record.md') && after.includes('--ack --run'), after);
+  assert.ok(!after.includes('wrap-up-memory-1.md'), 'a resolved item is not residue');
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), rawBefore, 'console.json is not rewritten');
+});

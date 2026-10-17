@@ -9,7 +9,9 @@
 //   console-residue.js --ack-all               mark every run with unacknowledged residue
 // Exit 0 done; 2 malformed (unknown flag, --run without a value, --ack without
 // --run, --ack-all with --run or --ack, neither --run nor --ack-all); 3 --run
-// missing or not anchored under the main checkout ([IL-127]). A missing --run
+// missing or not anchored under the main checkout ([IL-127]), or a console.json
+// that could not be written (the remaining consoles are still tried, and the
+// summary line says how many failed). A missing --run
 // whose basename exists under the main checkout's pipelines/archive/ (a path
 // printed before the run archived) uses that copy, with one stderr note. An already
 // acknowledged console is never rewritten, and a console.json that does not
@@ -47,18 +49,40 @@ function parseArgs(argv) {
   return out;
 }
 
-// Re-read the raw file and parse it at write time: the scan may be stale, and a
-// file that no longer parses is never written. Returns whether it wrote.
-function acknowledge(consolePath, at, readFile) {
+// Re-read the raw file and parse it at write time: the scan may be stale, so a
+// file that no longer parses is never written and one acknowledged since the
+// scan is never rewritten. Returns the outcome: 'wrote', 'already',
+// 'unparseable', or 'failed' (the write threw — unwritable, or the run dir
+// moved under a concurrent archival).
+function acknowledge(consolePath, at, { readFile, writeFile }) {
   let parsed;
-  try { parsed = JSON.parse(readFile(consolePath)); } catch { return false; }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
-  writeFileAtomic(consolePath, `${JSON.stringify({ ...parsed, residueAcknowledgedAt: at }, null, 2)}\n`);
-  return true;
+  try { parsed = JSON.parse(readFile(consolePath)); } catch { return { status: 'unparseable' }; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { status: 'unparseable' };
+  if (typeof parsed.residueAcknowledgedAt === 'string') return { status: 'already' };
+  try {
+    writeFile(consolePath, `${JSON.stringify({ ...parsed, residueAcknowledgedAt: at }, null, 2)}\n`);
+  } catch (err) {
+    return { status: 'failed', message: err && err.message ? err.message : String(err) };
+  }
+  return { status: 'wrote' };
 }
 
-function ackConsoles(consoles, at, readFile) {
-  return consoles.filter((c) => acknowledge(c.path, at, readFile)).length;
+function ackConsoles(consoles, at, io, stderr) {
+  const tally = { marked: 0, skipped: 0, failed: 0 };
+  for (const c of consoles) {
+    const r = acknowledge(c.path, at, io);
+    if (r.status === 'wrote') tally.marked += 1;
+    else if (r.status === 'failed') {
+      tally.failed += 1;
+      stderr(`console-residue.js: could not write ${c.path}: ${r.message}\n`);
+    } else tally.skipped += 1;
+  }
+  return tally;
+}
+
+// Trailing note for a summary line: skips and failures are never silent.
+function tallyNote({ skipped, failed }) {
+  return `${skipped ? ` (${skipped} skipped — already acknowledged or no longer valid JSON)` : ''}${failed ? ` (${failed} could not be written)` : ''}`;
 }
 
 function run(argv, deps = {}) {
@@ -66,7 +90,10 @@ function run(argv, deps = {}) {
   const stdout = deps.stdout || ((s) => process.stdout.write(s));
   const stderr = deps.stderr || ((s) => process.stderr.write(s));
   const now = deps.now || (() => Date.now());
-  const readFile = deps.readFile || ((p) => fs.readFileSync(p, 'utf8'));
+  const io = {
+    readFile: deps.readFile || ((p) => fs.readFileSync(p, 'utf8')),
+    writeFile: deps.writeFile || writeFileAtomic,
+  };
   const pluginRoot = deps.pluginRoot || path.resolve(__dirname, '..');
   let o;
   try { o = parseArgs(argv); } catch (err) {
@@ -78,10 +105,13 @@ function run(argv, deps = {}) {
 
   if (o.ackAll) {
     const runs = collectUnresolvedConsoles(cwd(), { limit: Infinity, window: Infinity, pluginRoot });
-    let marked = 0;
-    for (const r of runs) marked += ackConsoles(r.consoles, at, readFile);
-    stdout(`claude-tweaks: marked ${marked} console(s) reviewed across ${runs.length} run(s)\n`);
-    return 0;
+    const total = { marked: 0, skipped: 0, failed: 0 };
+    for (const r of runs) {
+      const t = ackConsoles(r.consoles, at, io, stderr);
+      for (const k of Object.keys(total)) total[k] += t[k];
+    }
+    stdout(`claude-tweaks: marked ${total.marked} console(s) reviewed across ${runs.length} run(s)${tallyNote(total)}\n`);
+    return total.failed > 0 ? 3 : 0;
   }
 
   let target = resolveTarget({ runDir: o.run, cwd: cwd(), mainRoot: deps.mainRoot });
@@ -99,13 +129,20 @@ function run(argv, deps = {}) {
     stderr(`console-residue.js: --run ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout'}) — nothing written\n`);
     return 3;
   }
-  const unacknowledged = readRunResidue(target.dir).consoles.filter((c) => !c.acknowledged);
+  const found = readRunResidue(target.dir);
+  const unacknowledged = found.consoles.filter((c) => !c.acknowledged);
   if (o.ack) {
-    const marked = ackConsoles(unacknowledged, at, readFile);
-    stdout(`claude-tweaks: marked ${marked} console(s) reviewed for ${path.basename(target.dir)}\n`);
-    return 0;
+    const tally = ackConsoles(unacknowledged, at, io, stderr);
+    stdout(`claude-tweaks: marked ${tally.marked} console(s) reviewed for ${path.basename(target.dir)}${tallyNote(tally)}\n`);
+    return tally.failed > 0 ? 3 : 0;
   }
   const lines = formatResidueLines({ dir: target.dir, consoles: unacknowledged }, { pluginRoot });
+  // A console.json that exists but is not valid JSON hides its items: say so
+  // here, where the Pipeline Summary renders stdout, instead of printing nothing.
+  if (found.unreadable.length) {
+    if (!lines.length) lines.push(`- ${path.basename(target.dir)}: console.json could not be checked for unreviewed items`);
+    for (const p of found.unreadable) lines.push(`  ! ${path.relative(target.dir, p)} is not valid JSON — any pending items in it cannot be listed`);
+  }
   if (lines.length) stdout(`${lines.join('\n')}\n`);
   return 0;
 }

@@ -30,6 +30,16 @@ const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dr
 
 class UsageError extends Error {}
 
+// #3370: the human-facing block for items a console left pending/keep-staged,
+// or '' when there are none. Read-only: nothing here applies or resolves them.
+function needsAHumanBlock(unresolved, runDir, consolePath) {
+  if (unresolved.length === 0) return '';
+  const pluginRoot = path.resolve(__dirname, '..');
+  const lines = formatResidueLines({ dir: runDir, consoles: [{ path: consolePath, items: unresolved }] }, { pluginRoot });
+  lines.push(`  paths move when the run is archived; current paths: node "${pluginRoot}/bin/console-residue.js" --run "${runDir}"`);
+  return `\nNeeds a human — ${unresolved.length} item(s) this console did not resolve (never auto-applied):\n${lines.join('\n')}\n`;
+}
+
 function parseArgs(argv) {
   const out = { run: null, policy: null, dryRun: false, json: false };
   for (let i = 0; i < argv.length; i++) {
@@ -157,6 +167,9 @@ async function run(argv, deps = {}) {
         : `${consolePath} already records a resolved console — re-rendering it; nothing re-resolved.`;
       stdout(`console-resolve.js: ${notice}\n`);
       stdout(`${renderStoredTable(existing)}\n`);
+      // A resumed wrap-up re-renders here: the block must still reach its final stop.
+      const block = needsAHumanBlock(unresolvedItems(existing), runDir, consolePath);
+      if (block) stdout(block);
       return 0;
     }
     let refusal = null;
@@ -211,12 +224,8 @@ async function run(argv, deps = {}) {
     stdout(`${JSON.stringify({ ...publicResult, unresolved, at, dryRun: o.dryRun }, null, 2)}\n`);
   } else {
     stdout(`${table}\n`);
-    if (unresolved.length > 0) {
-      const pluginRoot = path.resolve(__dirname, '..');
-      const lines = formatResidueLines({ dir: runDir, consoles: [{ path: consolePath, items: unresolved }] }, { pluginRoot });
-      lines.push(`  paths move when the run is archived; current paths: node "${pluginRoot}/bin/console-residue.js" --run "${runDir}"`);
-      stdout(`\nNeeds a human — ${unresolved.length} item(s) this console did not resolve (never auto-applied):\n${lines.join('\n')}\n`);
-    }
+    const block = needsAHumanBlock(unresolved, runDir, consolePath);
+    if (block) stdout(block);
   }
   return 0;
 }

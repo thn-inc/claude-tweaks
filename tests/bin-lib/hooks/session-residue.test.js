@@ -295,6 +295,29 @@ test('scanUnresolvedConsoles: a clean top-level run whose archive twin is clean 
   assert.deepStrictEqual(residue.scanUnresolvedConsoles(project, { pluginRoot: '/p' }).runs.map((r) => r.dir), [twin]);
 });
 
+// The twin rule mirrors iterRunDirsWithState's (context.js): an archive twin
+// that is clean, or `archiving` under a fresh claim, owns the run; one whose
+// claim went stale (the archival died) leaves the top-level clean copy as the run.
+test('scanUnresolvedConsoles: a fresh archiving twin owns the run — its archive copy is read, the top-level copy is not', () => {
+  const project = tmpProject();
+  const top = mkRun(project, runName(9), { status: 'clean' });
+  mkConsole(top, [PENDING('d.md')]);
+  const twin = mkArchived(project, runName(9));
+  mkConsole(twin, [PENDING('d.md')]);
+  fs.writeFileSync(path.join(twin, 'run-state.json'), JSON.stringify({ status: 'archiving', updatedAt: new Date().toISOString() }));
+  assert.deepStrictEqual(residue.scanUnresolvedConsoles(project, { pluginRoot: '/p' }).runs.map((r) => r.dir), [twin]);
+});
+
+test('scanUnresolvedConsoles: a stale archiving twin does not own the run — the top-level clean copy is surfaced', () => {
+  const project = tmpProject();
+  const top = mkRun(project, runName(10), { status: 'clean' });
+  mkConsole(top, [PENDING('e.md')]);
+  const twin = mkArchived(project, runName(10));
+  fs.mkdirSync(twin, { recursive: true });
+  fs.writeFileSync(path.join(twin, 'run-state.json'), JSON.stringify({ status: 'archiving', updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString() }));
+  assert.deepStrictEqual(residue.scanUnresolvedConsoles(project, { pluginRoot: '/p' }).runs.map((r) => r.dir), [top]);
+});
+
 test('scanUnresolvedConsoles: window Infinity with limit Infinity reaches runs beyond SCAN_WINDOW', () => {
   const project = tmpProject();
   for (let i = 1; i <= 205; i++) mkConsole(mkArchived(project, runName(i)), [PENDING('a.md')]);

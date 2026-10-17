@@ -68,6 +68,13 @@ test('readRunResidue skips an unparseable console.json and reads spec-*/console.
   assert.strictEqual(res.consoles.length, 1);
   assert.strictEqual(res.consoles[0].path, path.join(dir, 'spec-12', 'console.json'));
   assert.strictEqual(res.consoles[0].items.length, 1);
+  assert.deepStrictEqual(res.unreadable, [path.join(dir, 'console.json')], 'an existing but unparseable console.json is reported, not silently dropped');
+});
+
+test('readRunResidue reports no unreadable console for an absent console.json or an absent run dir', () => {
+  const dir = tmpRun();
+  assert.deepStrictEqual(readRunResidue(dir).unreadable, []);
+  assert.deepStrictEqual(readRunResidue(path.join(dir, 'missing')).unreadable, []);
 });
 
 test('readRunResidue omits a console with zero unresolved items and an absent run dir', () => {

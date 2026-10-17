@@ -202,3 +202,62 @@ test('--ack-all reaches runs beyond the SessionStart scan window (#3370 F1)', ()
   const oldest = path.join(f.archive, '2026-01-01T000001-spec-1', 'console.json');
   assert.strictEqual(JSON.parse(fs.readFileSync(oldest, 'utf8')).residueAcknowledgedAt, '2026-10-17T12:00:00.000Z');
 });
+
+// A write that throws (unwritable file, or the run dir moved under a concurrent
+// archival) maps to exit 3 with the path named — never an uncaught stack, exit 1.
+test('--ack exits 3 naming the file when the write throws, and leaves console.json untouched', () => {
+  const f = fixture();
+  const before = fs.readFileSync(f.consolePath, 'utf8');
+  const h = harness(f.main);
+  h.deps.writeFile = () => { throw new Error('EACCES: permission denied'); };
+  assert.strictEqual(run(['--ack', '--run', f.runDir], h.deps), 3);
+  assert.ok(h.err().includes(`could not write ${fs.realpathSync(f.consolePath)}: EACCES: permission denied`), h.err());
+  assert.match(h.out(), /marked 0 console\(s\) reviewed for .*\(1 could not be written\)/);
+  assert.strictEqual(fs.readFileSync(f.consolePath, 'utf8'), before);
+});
+
+test('--ack-all keeps going past a failed write, exits 3, and counts the failure', () => {
+  const f = fixture();
+  const second = path.join(f.archive, '2026-10-15T100000-spec-1');
+  fs.mkdirSync(second);
+  const secondConsole = path.join(second, 'console.json');
+  fs.writeFileSync(secondConsole, JSON.stringify(CONSOLE_2821));
+  const h = harness(f.main);
+  const realWrite = require('../../../plugin/bin/lib/atomic-write').writeFileAtomic;
+  h.deps.writeFile = (p, data) => {
+    if (p.includes(RUN_2821)) throw new Error('EROFS');
+    return realWrite(p, data);
+  };
+  assert.strictEqual(run(['--ack-all'], h.deps), 3);
+  assert.match(h.out(), /marked 1 console\(s\) reviewed across 2 run\(s\) \(1 could not be written\)/);
+  assert.strictEqual(JSON.parse(fs.readFileSync(secondConsole, 'utf8')).residueAcknowledgedAt, '2026-10-17T12:00:00.000Z');
+  assert.strictEqual(JSON.parse(fs.readFileSync(f.consolePath, 'utf8')).residueAcknowledgedAt, undefined);
+});
+
+test('--ack never rewrites a console acknowledged between the scan and the write, and says it skipped it', () => {
+  const f = fixture();
+  const h = harness(f.main);
+  let wrote = 0;
+  h.deps.readFile = () => JSON.stringify({ ...CONSOLE_2821, residueAcknowledgedAt: '2026-10-16T00:00:00.000Z' });
+  h.deps.writeFile = () => { wrote += 1; };
+  assert.strictEqual(run(['--ack', '--run', f.runDir], h.deps), 0);
+  assert.strictEqual(wrote, 0);
+  assert.match(h.out(), /marked 0 console\(s\) reviewed for .*\(1 skipped — already acknowledged or no longer valid JSON\)/);
+});
+
+test('--run on an unparseable console.json says it could not be checked instead of printing nothing', () => {
+  const f = fixture();
+  fs.writeFileSync(f.consolePath, '{ truncated');
+  const h = harness(f.main);
+  assert.strictEqual(run(['--run', f.runDir], h.deps), 0);
+  assert.ok(h.out().includes('console.json could not be checked for unreviewed items'), h.out());
+  assert.ok(h.out().includes('! console.json is not valid JSON'), h.out());
+});
+
+test('--run on a run with no console.json at all stays silent', () => {
+  const f = fixture();
+  fs.unlinkSync(f.consolePath);
+  const h = harness(f.main);
+  assert.strictEqual(run(['--run', f.runDir], h.deps), 0);
+  assert.strictEqual(h.out(), '');
+});

@@ -525,13 +525,33 @@ test('every SECTION_MAP row except .patch is covered by some CANONICAL_PREFIXES 
   }
 });
 
+// Expands a SECTION_MAP row's regex source into the literal prefixes it accepts:
+// `^a-`, `^a(-|\b)`, `^(a|b)-`, `^x-(c|d)-` style rows (every row but the .patch one).
+function rowPrefixes(re) {
+  // A `(-|\b)` tail still lists the `-` form (resolve.js's CANONICAL_PREFIXES comment).
+  const src = re.source.replace('(-|\\b)', '-');
+  const m = /^\^([^(]*)(?:\(([^)]*)\))?(-?)$/.exec(src);
+  assert.ok(m, `unrecognised SECTION_MAP row shape ${re.source}`);
+  const [, head, alts, tail] = m;
+  return (alts === undefined ? [''] : alts.split('|')).map((a) => `${head}${a}${tail}`);
+}
+
+test('every alternative of every SECTION_MAP row except .patch is a CANONICAL_PREFIXES entry (#3370)', () => {
+  const rows = SECTION_MAP.filter(([re]) => re.source !== '\\.patch$');
+  const expected = rows.flatMap(([re]) => rowPrefixes(re));
+  assert.ok(expected.length >= rows.length);
+  for (const p of expected) {
+    assert.ok(CANONICAL_PREFIXES.includes(p), `CANONICAL_PREFIXES is missing ${p}`);
+  }
+});
+
 test('nearestCanonicalPrefixes(review-13-record) includes a review-* prefix (#3370)', () => {
   const near = nearestCanonicalPrefixes('review-13-record');
   assert.strictEqual(near.length, 3);
   assert.ok(near.some((p) => p.startsWith('review-')), near.join(', '));
 });
 
-test('nearestCanonicalPrefixes keeps CANONICAL_PREFIXES order on ties and honors n (#3370)', () => {
+test('nearestCanonicalPrefixes ranks an exact head match first and honors n (#3370)', () => {
   assert.deepStrictEqual(nearestCanonicalPrefixes('review-unconfirmed-9', 1), ['review-unconfirmed-']);
   assert.strictEqual(nearestCanonicalPrefixes('zzz', 5).length, 5);
 });
