@@ -90,6 +90,8 @@ The slug convention, the per-spec `config.yml` copy, and `manifest.yml`'s field-
 
 ## Execution
 
+**Create `manifest.yml` once, before spec 1's first `spec-status` call** (parent dir and Manifesto `config.yml` exist): `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" manifest-init --run "{parent}" --specs {N1},{N2},{N3}` — a resume re-run keeps every spec's status and `phases[]` (#3035).
+
 ### Pre-flight Verify Sweep (once, before spec 1)
 
 Before spec 1's pipeline begins, run `test/verification.md` Steps 1-2 **once** against the unmodified base and record any failures to the **parent** run directory's ledger — read `multispec-preflight-sweep.md` in this skill's directory for the procedure, the silent-on-clean rule, and how later specs cite it.

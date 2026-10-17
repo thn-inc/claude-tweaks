@@ -106,6 +106,7 @@ const USAGE = {
   'sweep-shadow': 'sweep-shadow [--run <dir>] [--worktree <path>]',
   'adopt-run-dir': 'adopt-run-dir --run <main-checkout-run-dir> --worktree <worktree-path>',
   'record-pr': 'record-pr [--run <dir>] <number> <url>',
+  'manifest-init': 'manifest-init --run <parent-dir> --specs <n1,n2,...>',
   'spec-status': 'spec-status --run <parent-dir> --spec <n> --status <pending|running|complete|failed|not-run> --phase <phase>',
   'close-run': 'close-run [--run <dir>]',
   'delete-ledger': 'delete-ledger --run <dir> [--ledger <path>]',
@@ -137,6 +138,7 @@ const KNOWN_FLAGS = {
   'delete-ledger': ['--run', '--ledger'],
   'record-worktree': ['--run', '--dispatch'],
   'record-pr': ['--run'],
+  'manifest-init': ['--run', '--specs'],
   'spec-status': ['--run', '--spec', '--status', '--phase', '--now'],
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
   'resolve-console': ['--run', '--approve', '--decline'],
@@ -145,7 +147,7 @@ const KNOWN_FLAGS = {
 // Declared flags that consume the following token as a value — the
 // unknown-flag scan below must skip that token rather than risk misreading
 // it as a flag itself (an argument value could itself start with "--").
-const VALUE_FLAGS = new Set(['--run', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--ledger']);
+const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--ledger']);
 
 // First `--*`-shaped token in `args` that isn't declared for this verb, or
 // null when every `--*` token is declared (or there are none). Scans the
@@ -911,6 +913,43 @@ async function main(argv) {
     }
     return 0;
   }
+  if (cmd === 'manifest-init') {
+    // Creates a multi-spec parent run dir's manifest.yml (#3035) — the
+    // counterpart to spec-status, which only updates an existing one. Same
+    // --run shape and implicit-foreign guard as spec-status. Idempotent: an
+    // existing manifest keeps every spec's status/startedAt/phases[].
+    const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
+    const {
+      runDir, invalidRunArg, rest, worktreeLocalFallback, explicit, candidates,
+    } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
+    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+    const specsArg = flagVal(rest, '--specs');
+    const implicitForeign = !explicit && runDir
+      && ctxLib.classifyOwnership(callerIdentity, ctxLib.readRunState(runDir)) === 'foreign';
+    if (invalidRunArg) {
+      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — manifest not initialized\n`);
+    } else if (candidates) {
+      process.stdout.write(`${renderCandidateRefusal('manifest-init', candidates)}\nManifest not initialized.\n`);
+    } else if (!runDir) {
+      process.stdout.write('claude-tweaks: no pipeline run dir found — manifest not initialized\n');
+    } else if (implicitForeign) {
+      process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} was recorded by another session/worktree — refusing to initialize its manifest without an explicit --run\n`);
+    } else if (!specsArg) {
+      process.stdout.write(`claude-tweaks: usage: ${USAGE['manifest-init']} — manifest not initialized\n`);
+    } else {
+      const result = specStatusLib.manifestInit({
+        runDir,
+        specs: specsArg.split(','),
+        parent: `.claude-tweaks/pipelines/${path.basename(runDir)}/`,
+      });
+      if (!result.ok) {
+        process.stdout.write(`claude-tweaks: manifest not initialized for ${path.basename(runDir)} (${result.reason})\n`);
+      } else {
+        process.stdout.write(`claude-tweaks: manifest.yml ready at ${path.basename(runDir)} — ${result.manifest.multispec.specs.length} specs (${result.added.length} added, ${result.existing.length} already present)\n`);
+      }
+    }
+    return 0;
+  }
   if (cmd === 'spec-status') {
     // Couples a multi-spec manifest.yml status transition to the
     // `## Flow: Running ...` progress banner (#690) — one call does both,
@@ -947,7 +986,10 @@ async function main(argv) {
         now: nowArg ? new Date(nowArg) : new Date(),
       });
       if (!result.ok) {
-        process.stdout.write(`claude-tweaks: spec status not recorded for spec #${specArg} (${result.reason}) — no manifest.yml at ${path.basename(runDir)}, or spec/status/phase invalid\n`);
+        const detail = result.reason === 'no-manifest'
+          ? `no manifest.yml at ${path.basename(runDir)} — create it first: node "${pluginRoot()}/bin/hooks.js" manifest-init --run "${runDir}" --specs <n1,n2,...>`
+          : `no manifest.yml at ${path.basename(runDir)}, or spec/status/phase invalid`;
+        process.stdout.write(`claude-tweaks: spec status not recorded for spec #${specArg} (${result.reason}) — ${detail}\n`);
       } else {
         process.stdout.write(result.banner + '\n');
         if (result.summaryLine) process.stdout.write(result.summaryLine + '\n');
