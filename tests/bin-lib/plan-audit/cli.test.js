@@ -8,7 +8,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'plan-audit.js');
-const { CEILING_BYTES } = require(path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'skill-audit', 'context-cost'));
+const { RAIL_BYTES } = require(path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'skill-audit', 'budgets'));
 
 function makeTmpRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'plan-audit-cli-'));
@@ -75,7 +75,7 @@ test('AC3: a fixture plan adding prose to a near-ceiling governed file gets a so
   const rel = 'plugin/skills/build/plan-audit.md';
   const abs = path.join(repo, rel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, 'x'.repeat(CEILING_BYTES - 500));
+  fs.writeFileSync(abs, 'x'.repeat(RAIL_BYTES - 500));
   try {
     const plan = writePlan(repo, [
       '### Task 1: Add prose',
@@ -84,10 +84,12 @@ test('AC3: a fixture plan adding prose to a near-ceiling governed file gets a so
     ].join('\n'));
     const { exitCode, stdout } = runCli(plan, repo);
     assert.strictEqual(exitCode, 0);
-    const report = JSON.parse(stdout.split('\n')[0]);
+    const [jsonLine, summaryLine] = stdout.split('\n');
+    const report = JSON.parse(jsonLine);
     assert.strictEqual(report.headroom.ok, true);
     assert.strictEqual(report.headroom.nearCeiling.length, 1);
     assert.strictEqual(report.headroom.nearCeiling[0].file, rel);
+    assert.match(summaryLine, /Headroom: 1 near rail/);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
@@ -99,7 +101,7 @@ test('AC4: a fixture plan adding prose to a governed file already over the ceili
   const rel = 'plugin/skills/build/SKILL.md';
   const abs = path.join(repo, rel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, 'x'.repeat(CEILING_BYTES + 1));
+  fs.writeFileSync(abs, 'x'.repeat(RAIL_BYTES + 1));
   try {
     const plan = writePlan(repo, [
       '### Task 1: Add prose',
@@ -299,6 +301,44 @@ test('AC7: a fixture plan touching a compose call site with a malformed sibling 
     assert.strictEqual(report.headroom.composedErrors.length, 1);
     assert.strictEqual(report.headroom.composedErrors[0].step, 'demo');
     assert.match(summaryLine, /Composed: 1 unmeasured/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// #3310 — a composed bundle in the near band (>= 90% of RAIL_BYTES, not over)
+// is a soft composedNearCeiling flag, named "near rail" in the summary.
+test('AC7.1 (#3310): a fixture plan touching a compose call site whose bundle is near the rail reports "Composed: 1 near rail", still exits 0', () => {
+  const repo = makeTmpRepo();
+  const skillDir = path.join(repo, 'plugin', 'skills', 'x');
+  const sharedDir = path.join(repo, 'plugin', 'skills', '_shared');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.mkdirSync(sharedDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), [
+    '---',
+    'name: x',
+    'description: fixture',
+    '---',
+    '',
+    'node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step demo "${CLAUDE_PLUGIN_ROOT}/skills/_shared/a.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/b.md"',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(sharedDir, 'a.md'), 'Source A body.\n');
+  fs.writeFileSync(path.join(sharedDir, 'b.md'), `${'x'.repeat(RAIL_BYTES - 2000)}\n`);
+  try {
+    const plan = writePlan(repo, [
+      '### Task 1: Add prose',
+      '**Files:**',
+      '- Modify: `plugin/skills/_shared/a.md`',
+    ].join('\n'));
+    const { exitCode, stdout } = runCli(plan, repo);
+    assert.strictEqual(exitCode, 0);
+    const [jsonLine, summaryLine] = stdout.split('\n');
+    const report = JSON.parse(jsonLine);
+    assert.strictEqual(report.headroom.ok, true);
+    assert.strictEqual(report.headroom.composedNearCeiling.length, 1);
+    assert.strictEqual(report.headroom.composedNearCeiling[0].ceiling, RAIL_BYTES);
+    assert.match(summaryLine, /Composed: 1 near rail/);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

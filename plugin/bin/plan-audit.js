@@ -42,10 +42,10 @@ function summaryLine(report) {
   if (report.checkC.appendShaped.length) parts.push(`Check C: ${report.checkC.appendShaped.length} append-shaped pre-run(s) accepted`);
   if (!report.checkD.ok) parts.push(`Control bytes: ${report.checkD.findings.length}${report.checkD.truncated ? '+' : ''}`);
   if (!report.headroom.ok) parts.push(`Headroom: ${report.headroom.breaches.length} breach(es)`);
-  if (report.headroom.nearCeiling.length) parts.push(`Headroom: ${report.headroom.nearCeiling.length} near-ceiling`);
+  if (report.headroom.nearCeiling.length) parts.push(`Headroom: ${report.headroom.nearCeiling.length} near rail`);
   const composedOver = report.headroom.composed.filter((c) => c.over > 0).length;
   if (composedOver) parts.push(`Composed: ${composedOver} over`);
-  if (report.headroom.composedNearCeiling.length) parts.push(`Composed: ${report.headroom.composedNearCeiling.length} near-ceiling`);
+  if (report.headroom.composedNearCeiling.length) parts.push(`Composed: ${report.headroom.composedNearCeiling.length} near rail`);
   // Informational-but-visible (#1997): a composed call site this plan
   // touches that the tool could not measure (missing/unreadable source,
   // malformed marker) is never silenced into the same "no findings" bucket

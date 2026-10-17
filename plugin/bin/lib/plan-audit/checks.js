@@ -7,9 +7,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const {
-  CEILING_BYTES, composedBytesReport, COMPOSED_STEP_EXCEPTIONS,
-} = require('../skill-audit/context-cost');
+const { composedBytesReport } = require('../skill-audit/context-cost');
+const { RAIL_BYTES } = require('../skill-audit/budgets');
 const { extractAcceptanceClauses, extractCoverageSources } = require('./parser');
 
 const WALK_EXCLUDES = new Set(['.git', 'node_modules', '.claude', '.claude-tweaks']);
@@ -389,9 +388,9 @@ function checkC(verificationChecks, repoRoot, deps = {}, unparseableStep2s = [])
   };
 }
 
-// ── Headroom — near-ceiling / breaching files the plan adds prose to ───────
+// ── Headroom — near-rail / breaching files the plan adds prose to ──────────
 // Scope: existing files under the governed skill-corpus set
-// (plugin/skills/**/*.md, per context-cost.js — the same ceiling every
+// (plugin/skills/**/*.md — the same Read-limit rail, `RAIL_BYTES`, every
 // SKILL.md and sub-file is already measured against) that this plan
 // *modifies*. "Create" bullets never apply — a file that doesn't exist yet
 // has no current bytes to measure. v1 reports current bytes + headroom only;
@@ -402,13 +401,13 @@ function isGovernedMdPath(relPath) {
 }
 
 // Composed rows — the multi-spec pre-flight [IL-140] lacked: a per-file
-// ceiling never caught two specs each adding a *little* prose to two
+// check never caught two specs each adding a *little* prose to two
 // different sources of the same compose call site, where the composed bundle
-// (not either file alone) is what crosses the ceiling. For every compose
+// (not either file alone) is what crosses the rail. For every compose
 // call site under `<repoRoot>/plugin` whose `sources` intersect this plan's
 // touched governed entries, report the composed max across every combination
-// the sources branch on, alongside `ceiling` (honoring
-// `COMPOSED_STEP_EXCEPTIONS`) and `over` — regardless of which spec in a
+// the sources branch on, alongside `ceiling` (the Read-limit rail,
+// `RAIL_BYTES` — no per-step exceptions) and `over` — regardless of which spec in a
 // multi-spec run happens to touch which source first, since the intersection
 // test is against the call site's full source list, not just the one entry
 // that triggered it. A missing `plugin/` dir (the documented no-corpus case
@@ -454,9 +453,7 @@ function composedHeadroom(governedPaths, repoRoot, { report = composedBytesRepor
       });
       continue;
     }
-    const ceiling = Object.prototype.hasOwnProperty.call(COMPOSED_STEP_EXCEPTIONS, row.step)
-      ? COMPOSED_STEP_EXCEPTIONS[row.step]
-      : CEILING_BYTES;
+    const ceiling = RAIL_BYTES;
     const over = Math.max(0, row.max - ceiling);
     const entry = {
       step: row.step, file: row.file, line: row.line, max: row.max, ceiling, over,
@@ -485,15 +482,15 @@ function headroomCheck(entries, repoRoot, deps = {}) {
     } catch {
       continue; // Check A already reports this path as missing
     }
-    if (bytes > CEILING_BYTES) {
+    if (bytes > RAIL_BYTES) {
       breaches.push({ file: relPath, bytes });
-    } else if (bytes >= CEILING_BYTES * 0.9) {
-      nearCeiling.push({ file: relPath, bytes, headroom: CEILING_BYTES - bytes });
+    } else if (bytes >= RAIL_BYTES * 0.9) {
+      nearCeiling.push({ file: relPath, bytes, headroom: RAIL_BYTES - bytes });
     }
   }
   const { composed, composedNearCeiling, composedErrors } = composedHeadroom(governedPaths, repoRoot, deps);
   // composedErrors never gates `ok` — it's "could not measure", not "over
-  // ceiling" (#1997); still reported so it stays visible rather than
+  // the rail" (#1997); still reported so it stays visible rather than
   // silently dropped.
   const ok = breaches.length === 0 && composed.every((c) => c.over === 0);
   return {

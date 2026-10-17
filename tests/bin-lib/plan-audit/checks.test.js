@@ -9,7 +9,8 @@ const path = require('node:path');
 const {
   checkA, checkB, checkC, checkD, headroomCheck, looksPassing, isGovernedMdPath, checkPremiseRefs,
 } = require('../../../plugin/bin/lib/plan-audit/checks');
-const { CEILING_BYTES, composedBytesReport } = require('../../../plugin/bin/lib/skill-audit/context-cost');
+const { composedBytesReport } = require('../../../plugin/bin/lib/skill-audit/context-cost');
+const { RAIL_BYTES } = require('../../../plugin/bin/lib/skill-audit/budgets');
 
 function makeTmpRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'plan-audit-checks-'));
@@ -598,7 +599,7 @@ function writeFileOfSize(filePath, bytes) {
 test('headroomCheck flags a near-ceiling governed file with < 1,024 B headroom (soft flag, ok stays true) — see #553', () => {
   const repo = makeTmpRepo();
   const rel = 'plugin/skills/build/plan-audit.md';
-  writeFileOfSize(path.join(repo, rel), CEILING_BYTES - 500);
+  writeFileOfSize(path.join(repo, rel), RAIL_BYTES - 500);
   try {
     const result = headroomCheck([{ type: 'Modify', path: rel }], repo);
     assert.strictEqual(result.ok, true);
@@ -614,13 +615,13 @@ test('headroomCheck flags a near-ceiling governed file with < 1,024 B headroom (
 test('headroomCheck reports a breach (ok: false) for a governed file already over the ceiling', () => {
   const repo = makeTmpRepo();
   const rel = 'plugin/skills/build/SKILL.md';
-  writeFileOfSize(path.join(repo, rel), CEILING_BYTES + 200);
+  writeFileOfSize(path.join(repo, rel), RAIL_BYTES + 200);
   try {
     const result = headroomCheck([{ type: 'Modify', path: rel }], repo);
     assert.strictEqual(result.ok, false);
     assert.strictEqual(result.breaches.length, 1);
     assert.strictEqual(result.breaches[0].file, rel);
-    assert.strictEqual(result.breaches[0].bytes, CEILING_BYTES + 200);
+    assert.strictEqual(result.breaches[0].bytes, RAIL_BYTES + 200);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
@@ -629,7 +630,7 @@ test('headroomCheck reports a breach (ok: false) for a governed file already ove
 test('headroomCheck ignores a non-governed .md file even when near the ceiling', () => {
   const repo = makeTmpRepo();
   const rel = 'docs/plugin-structure.md';
-  writeFileOfSize(path.join(repo, rel), CEILING_BYTES + 200);
+  writeFileOfSize(path.join(repo, rel), RAIL_BYTES + 200);
   try {
     const result = headroomCheck([{ type: 'Modify', path: rel }], repo);
     assert.strictEqual(result.ok, true);
@@ -649,6 +650,31 @@ test('headroomCheck ignores Create entries — nothing to measure yet', () => {
     });
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('headroomCheck measures against the Read-limit rail: breach above RAIL_BYTES, near at >= 90% of it, neither below (#3310)', () => {
+  const near = Math.ceil(0.9 * RAIL_BYTES);
+  const cases = [
+    { name: 'over-rail.md', bytes: RAIL_BYTES + 1, breach: true, nearFlag: false },
+    { name: 'at-rail.md', bytes: RAIL_BYTES, breach: false, nearFlag: true },
+    { name: 'near-edge.md', bytes: near, breach: false, nearFlag: true },
+    { name: 'old-ceiling.md', bytes: 51201, breach: false, nearFlag: true },
+    { name: 'below-near.md', bytes: near - 1, breach: false, nearFlag: false },
+  ];
+  for (const c of cases) {
+    const repo = makeTmpRepo();
+    try {
+      const rel = path.join('plugin', 'skills', 'demo', c.name);
+      writeFileOfSize(path.join(repo, rel), c.bytes);
+      const result = headroomCheck([{ type: 'Modify', path: rel }], repo);
+      assert.strictEqual(result.breaches.length, c.breach ? 1 : 0, `${c.name}: breach`);
+      assert.strictEqual(result.nearCeiling.length, c.nearFlag ? 1 : 0, `${c.name}: nearCeiling`);
+      if (c.nearFlag) assert.strictEqual(result.nearCeiling[0].headroom, RAIL_BYTES - c.bytes);
+      assert.strictEqual(result.ok, !c.breach, `${c.name}: ok`);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
   }
 });
 
@@ -672,7 +698,7 @@ test('a clean plan (no missing paths, no scope keywords, no FAIL findings, no he
 // A synthetic plugin root: one skill file (`plugin/skills/x/SKILL.md`) carrying
 // a real compose call site for step "demo", and two marker-bearing sources
 // under `plugin/skills/_shared/`. `bBytes` lets the over-ceiling fixture pad
-// one source past CEILING_BYTES without duplicating the whole layout.
+// one source past RAIL_BYTES without duplicating the whole layout.
 // `bMarkerBroken` swaps source b for an unclosed `when:` marker (a malformed
 // source #1997's `composedErrors` path exists to surface, rather than
 // silently drop) — mutually exclusive with `bBytes`.
@@ -718,7 +744,7 @@ test('headroomCheck reports a composed row for a call site whose source the plan
     assert.strictEqual(result.composed.length, 1);
     assert.strictEqual(result.composed[0].step, 'demo');
     assert.strictEqual(result.composed[0].max, demoRow.max);
-    assert.strictEqual(result.composed[0].ceiling, CEILING_BYTES);
+    assert.strictEqual(result.composed[0].ceiling, RAIL_BYTES);
     assert.strictEqual(result.composed[0].over, 0);
     assert.strictEqual(result.ok, true);
   } finally {
@@ -759,7 +785,7 @@ test('headroomCheck fires the same composed row for two specs regardless of whic
 test('headroomCheck flags an over-ceiling composed row and flips ok to false', () => {
   const repo = makeTmpRepo();
   try {
-    writeComposeFixture(repo, { bBytes: CEILING_BYTES + 2000 });
+    writeComposeFixture(repo, { bBytes: RAIL_BYTES + 2000 });
     const result = headroomCheck([{ type: 'Modify', path: 'plugin/skills/_shared/a.md' }], repo);
     assert.strictEqual(result.composed.length, 1);
     assert.strictEqual(result.composed[0].step, 'demo');
