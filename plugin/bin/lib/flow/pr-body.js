@@ -224,7 +224,13 @@ function reviseSpecSummary({ body, reversals, summary }) {
   const note = lines.slice(span.start + 1, span.end)
     .map((l) => l.replace(/\r$/, ''))
     .find((l) => l.startsWith(REVISION_PREFIX)) || null;
-  const uncovered = wanted.filter((w) => !(note && note.includes(w)));
+  // Delimited match, not substring: `note.includes(w)` would also match `w`
+  // as a bare substring of a longer, distinct entry (e.g. wanted `A → B`
+  // falsely "covered" by an existing `XA → B`). An entry is noted only when
+  // it appears as a whole `; `-delimited item in the note's entry list.
+  const entryList = note ? note.slice(REVISION_PREFIX.length + 1) : '';
+  const isNoted = (w) => note !== null && `; ${entryList}; `.includes(`; ${w}; `);
+  const uncovered = wanted.filter((w) => !isNoted(w));
   if (uncovered.length === 0) return { body: text, changed: false, uncovered: [], reason: 'already-noted' };
   const paragraph = String(summary || '').trim();
   if (!paragraph) return { body: text, changed: false, uncovered, reason: 'summary-required' };

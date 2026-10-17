@@ -85,6 +85,14 @@ test('a sibling spec\'s existing note entry survives; only the new entry is appe
   assert.equal((r.body.match(/Revised during build:/g) || []).length, 1);
 });
 
+test('a distinct reversal is not masked by a longer existing entry that merely contains it as a substring', () => {
+  const afterXA = reviseSpecSummary({ body: body(), reversals: [{ original: 'XA', replacement: 'B' }], summary: 'Run behavior v1.' }).body;
+  const r = reviseSpecSummary({ body: afterXA, reversals: [{ original: 'XA', replacement: 'B' }, { original: 'A', replacement: 'B' }], summary: 'Run behavior v2.' });
+  assert.equal(r.changed, true);
+  assert.deepEqual(r.uncovered, ['A → B']);
+  assert.match(r.body, /\nRevised during build: XA → B; A → B\n\nRun behavior v2\.\n/);
+});
+
 test('missing Spec summary heading leaves the body unchanged with a reason (Review Focus 3)', () => {
   const b = 'claude-tweaks-run: r1\n\n### Phases\n\n- [ ] build\n';
   const r = reviseSpecSummary({ body: b, reversals: [{ original: 'A', replacement: 'B' }], summary: 'x' });
