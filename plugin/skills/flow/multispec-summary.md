@@ -4,6 +4,8 @@ Loaded at summary-render time by `/flow`'s consolidated close-out.
 
 After all specs complete (or one fails), present a consolidated summary:
 
+**Needs-a-human residue (#3370).** Run `node "{pluginRoot}/bin/console-residue.js" --run "$MULTISPEC_PARENT_DIR"` once against the parent run dir (the archive path when already archived, as for Timing) — it covers every `spec-*/console.json` — and render its stdout verbatim under a `### Needs a human` heading, omitting the section when it prints nothing.
+
 ```markdown
 ## Flow: Multi-Spec Pipeline Complete  {— keep-going if applicable}
 
