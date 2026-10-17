@@ -157,7 +157,7 @@ prepend a 4-line header above the `# Reflect —` line, the same shape `wrap-up/
 step 3 writes for `leftover-{slug}.md`. The body below the header is composed via `specShapedBody`
 (the finding → Current State, the proposed change → Deliverables, the observable outcome →
 Acceptance Criteria; `header: ''`; `filedBy: 'reflect'`; `provenance: { origin: 'reflect {mode} from #{n}', deferReason:
-'tangential' }`; footer `_Filed by \`reflect\` via specShapedBody._`; `keyFiles: [{ path, change }]` = the files the finding names, repo-relative and omitted when none are named, so build's micro-plan gate and dispatch's file-overlap grouping can read the record) — with the `# Reflect —
+'tangential' }`; footer `_Filed by \`reflect\` via specShapedBody._`; `keyFiles: [{ path, change }]` = the files the finding names, repo-relative file paths (no directories) and omitted when none are named, so build's micro-plan gate and dispatch's file-overlap grouping can read the record) — with the `# Reflect —
 staged finding {n}` title line and `**Category:**` line kept above it; a finding whose own text
 names an open choice uses the composer's `openQuestion` variant and lands `needs:definition` (no
 `ready`, no scoring). Labels: scored + `ready` (born-ready) on the AC path, per

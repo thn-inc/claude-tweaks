@@ -126,7 +126,7 @@ test('AC5.1 control: a specShapedBody record without keyFiles yields no parseabl
 for (const rel of ['plugin/skills/capture/SKILL.md', 'plugin/skills/reflect/SKILL.md', 'plugin/skills/wrap-up/leftover-routing.md']) {
   test(`AC6.1: ${rel} instructs passing keyFiles when the composer knows the affected files`, () => {
     const text = readText(path.join(ROOT, rel));
-    assert.match(text, /keyFiles/);
+    assert.match(text, /keyFiles: \[\{ path, change \}\]/);
     assert.match(text, /repo-relative/);
   });
 }

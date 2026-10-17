@@ -378,10 +378,14 @@ function extractTemplateStamp(body) {
 // The one specShapedBody keyFiles-path predicate (#2975): specShapedBody throws on it, and
 // the health-sweep composers call isRepoRelativeKeyFilePath to omit keyFiles instead of
 // aborting a whole sweep run on an LLM-supplied path. keyFilePathProblem returns null
-// (valid), 'shape' (not a non-empty single-line string without a backtick), or 'relative'
-// (absolute posix/win32 path or a ".." segment).
+// (valid), 'shape' (not a non-empty single-line file path: no backtick, no line terminator
+// incl. a lone CR, no surrounding whitespace, no trailing slash — grouping.js skips a
+// directory entry without a warning), or 'relative' (absolute posix/win32 path or a ".."
+// segment).
+const KEY_FILE_LINE_BREAK_RE = /[\r\n\u0085\u2028\u2029]/;
 function keyFilePathProblem(filePath) {
-  if (typeof filePath !== 'string' || filePath === '' || /[\n`]/.test(filePath)) return 'shape';
+  if (typeof filePath !== 'string' || filePath === '' || filePath !== filePath.trim()
+    || KEY_FILE_LINE_BREAK_RE.test(filePath) || filePath.includes('`') || /[\\/]$/.test(filePath)) return 'shape';
   if (nodePath.posix.isAbsolute(filePath) || nodePath.win32.isAbsolute(filePath) || filePath.split(/[\\/]/).includes('..')) return 'relative';
   return null;
 }
@@ -906,12 +910,12 @@ function specShapedBody({
     const { path: filePath, change = 'modify' } = entry;
     const pathProblem = keyFilePathProblem(filePath);
     if (pathProblem === 'shape') {
-      throw new Error(`specShapedBody: keyFiles[${i}].path must be a non-empty single-line string with no backtick (got ${JSON.stringify(filePath)})`);
+      throw new Error(`specShapedBody: keyFiles[${i}].path must be a non-empty single-line file path — no backtick, surrounding whitespace, or trailing slash (got ${JSON.stringify(filePath)})`);
     }
     if (pathProblem === 'relative') {
       throw new Error(`specShapedBody: keyFiles[${i}].path must be repo-relative — no absolute path or ".." segment (got "${filePath}")`);
     }
-    if (typeof change !== 'string' || change === '' || /\n/.test(change)) {
+    if (typeof change !== 'string' || change === '' || KEY_FILE_LINE_BREAK_RE.test(change)) {
       throw new Error(`specShapedBody: keyFiles[${i}].change must be a non-empty single-line string`);
     }
     return `- \`${filePath}\` — ${change}`;

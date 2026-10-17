@@ -1202,14 +1202,19 @@ test('specShapedBody: keyFiles keeps the Release Note section clean and the foot
     keyFiles: [{ path: 'plugin/bin/x.js', change: 'add the thing' }] });
   assert.strictEqual(extractSection(body, 'Release Note', { trim: true }), 'r');
   assert.ok(body.endsWith('wontfix` to suppress future reports of this finding._'));
+  const at = (needle) => body.indexOf(needle);
+  assert.ok(at('## Release Note') < at('## Technical Approach') && at('## Technical Approach') < at('### Key Files') && at('### Key Files') < at('_Filed by'),
+    'Technical Approach / Key Files sit between Release Note and the footer');
 });
 
 test('specShapedBody: keyFiles rejects absolute, ..-escaping, empty, multi-line, or backticked paths', () => {
   const call = (keyFiles) => () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', keyFiles });
-  for (const p of ['/abs/x.js', 'C:\\x.js', '../x.js', 'a/../../x.js', 'a\\..\\x.js', '', 'a\nb.js', 'a`b.js']) {
+  for (const p of ['/abs/x.js', 'C:\\x.js', '../x.js', 'a/../../x.js', 'a\\..\\x.js', '', 'a\nb.js', 'a`b.js',
+    'a\r## H', 'a\u2028b.js', ' a.js', 'a.js ', '   ', 'tests/', 'plugin\\skills\\']) {
     assert.throws(call([{ path: p }]), /keyFiles/, `path ${JSON.stringify(p)}`);
   }
   assert.throws(call([{ path: 'a.js', change: 'one\ntwo' }]), /keyFiles/);
+  assert.throws(call([{ path: 'a.js', change: 'one\rtwo' }]), /keyFiles/);
   assert.throws(call([{ path: 'a.js', change: '' }]), /keyFiles/);
   assert.throws(call('a.js'), /keyFiles/);
   assert.throws(call(['a.js']), /keyFiles/);
@@ -1218,7 +1223,8 @@ test('specShapedBody: keyFiles rejects absolute, ..-escaping, empty, multi-line,
 test('isRepoRelativeKeyFilePath agrees with specShapedBody on every keyFiles path', () => {
   const { isRepoRelativeKeyFilePath } = require('../../../plugin/bin/lib/issues/record');
   const compose = (p) => () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', keyFiles: [{ path: p }] });
-  for (const p of ['/abs/x.js', 'C:\\x.js', '../x.js', 'a/../../x.js', 'a\\..\\x.js', '', 'a\nb.js', 'a`b.js', undefined, 42]) {
+  for (const p of ['/abs/x.js', 'C:\\x.js', '../x.js', 'a/../../x.js', 'a\\..\\x.js', '', 'a\nb.js', 'a`b.js',
+    'a\r## H', ' a.js', 'tests/', undefined, 42]) {
     assert.strictEqual(isRepoRelativeKeyFilePath(p), false, `path ${JSON.stringify(p)}`);
     assert.throws(compose(p), /keyFiles/);
   }
