@@ -20,7 +20,7 @@ files:
 - **URL:** `plugin/skills/build/SKILL.md` Spec Step 3 (`ASSUMPTION — verify at build:` paragraph); `plugin/skills/_shared/pr-checklist-refresh.md` "Premise-reversal decisions (#3050)"
 - **Action:** When an assumption probe comes back reversed, or the plan departs from a spec premise, `/build` writes `premise reversed: {original claim} → {implemented behavior}` through `bin/log-decision.js --status AUTO`. The line goes to the run's own `decisions.md`, or to `spec-{id}/decisions.md` in a bundle.
 - **Should feel:** Invisible at this point — one audit line, no prompt.
-- **Should understand:** Only this exact phrase is read. A free-form "we changed the approach" line in `decisions.md` triggers nothing.
+- **Should understand:** Only this exact phrase is read, and only when it opens the entry's text. A free-form "we changed the approach" line in `decisions.md` triggers nothing, and neither does a line that merely quotes the marker mid-sentence.
 - **Red flags:** A reversal logged with different wording. An `{original claim}` that itself contains ` → `, so the split lands in the wrong place.
 
 ### 2. The phase exit re-composes the summary before pushing the body
@@ -34,12 +34,12 @@ files:
 - **URL:** `plugin/skills/_shared/pr-checklist-refresh.md` Pre-merge refresh step 2; `plugin/skills/_shared/pr-early-run-lifecycle.md` Step 3 template note; `plugin/bin/lib/flow/pr-body.js` `reviseSpecSummary`
 - **Action:** Every later phase exit, and the pre-merge refresh (which re-runs the Phase-checklist update unconditionally), runs the same report. With every reversal already noted (`already-noted`), or none logged (`no-reversals`), it writes the body as composed.
 - **Should feel:** Stable — the summary a reviewer read at review time is the one still there at merge.
-- **Should understand:** Idempotency is judged per entry: an entry counts as noted only when it appears delimited in the note, so `XA → B` does not mask a distinct `A → B`.
-- **Red flags:** The note growing a duplicate entry on every phase exit. A run with no reversal changing the Spec summary at all.
+- **Should understand:** Idempotency is judged per entry: an entry counts as noted only when it appears delimited in the note, so `XA → B` does not mask a distinct `A → B`. A `; ` inside a logged claim is written into the note as `, `, because `; ` is the note's own entry separator: kept as-is, an existing `X; Y → Z` entry would make a distinct `Y → Z` read as already noted, and the summary would never be revised for it.
+- **Red flags:** The note growing a duplicate entry on every phase exit. A run with no reversal changing the Spec summary at all. A distinct reversal missing from the note because an existing entry's claim contained a `; `.
 
 ### 4. A failed refresh is a warning, not a stop
 - **URL:** `plugin/skills/_shared/pr-checklist-refresh.md` Refresh paragraph, "Best-effort" sentence; `plugin/bin/revise-pr-summary.js` exit codes
-- **Action:** A non-zero exit (for example exit 2 for a `--run-dir` that is not a directory), or `changed: false` with a non-empty `uncovered` (for example `no-spec-summary-heading` or `summary-not-one-paragraph`), logs a warning to `decisions.md`. The update then pushes the checklist-only body.
+- **Action:** A non-zero exit (for example exit 2 for a `--run-dir` that is not a directory, or that is a worktree-local shadow of the run dir), or `changed: false` with a non-empty `uncovered` and a `reason` other than `summary-required` (the first call's normal ask for a summary, Step 2) — for example `no-spec-summary-heading` or `summary-not-one-paragraph` — logs a warning to `decisions.md`. The update then pushes the checklist-only body.
 - **Should feel:** Recoverable — the PR still advances, and the stale summary is named in the audit trail for the Review Console to surface.
 - **Should understand:** A missing `decisions.md` inside an existing run dir reads as zero reversals (fail-open). A run dir that does not exist at all is an error, so a wrong path is never mistaken for "nothing to revise".
 - **Red flags:** A phase exit or merge blocked by this step. A failed refresh with no `decisions.md` warning.
