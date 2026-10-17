@@ -61,10 +61,10 @@ Expected: FAIL — the first four tests fail (no such sentence yet); the doctore
 
 Keep the single-line paragraph shape (one space before and after the block, no line break).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Verify AC1.1, AC2.1 and AC3.1 — run the tests**
 
 Run: `node --test tests/build-sdd-final-review-capture.test.js tests/build-sdd-ledger-residue-carryforward.test.js tests/ceremony-profile-roster.test.js`
-Expected: PASS, `# fail 0`.
+Expected: PASS, `# fail 0` — the AC1 tests cover AC1.1, the AC2 test covers AC2.1, and the doctored control plus the AC1/AC2 tests cover AC3.1. AC4.1 (`npm test` passes) is verified by `/build`'s Common Step 5 full-suite run after both tasks, not by a task.
 
 - [ ] **Step 5: Commit**
 
@@ -78,7 +78,7 @@ git -C "<worktree>" commit -m "Direct SDD to persist its final whole-branch revi
 **Files:**
 - Modify: `plugin/skills/build/dispatch.md:14` — the "Carry forward surviving SDD ledger residue before Finish" block, and the two "Cleanup step" phrases in the "Standing AC-forwarding verification (#496)" block
 - Modify: `tests/build-sdd-ledger-residue-carryforward.test.js` (regexes 2 and 3; two new tests)
-- Modify: `tests/build-ac-forwarding-verification.test.js:14,18,23` (Cleanup → Finish)
+- Modify: `tests/build-ac-forwarding-verification.test.js` (lines 14, 18, 23: Cleanup → Finish)
 
 **Interfaces:**
 - Consumes: Task 1's block sits between the carry-forward block and the #496 block — do not edit it.
