@@ -8,7 +8,7 @@ files:
   - plugin/skills/dispatch/task-prompt.md
 ---
 
-# Clear the Two-Call Gate for a Dispatched File-Overlap Group
+# Clear the Two-Call Gate for a Dispatched Group
 
 **Persona:** the dispatched first-call (`build,test`) Task agent running `/flow "#a,#b,..." build,test auto` for a fast-lane bundle — an internal tooling user — and the **dispatching session** that decides, from raw artifacts, whether the group's second (`review,polish,wrap-up`) call may run.
 **Goal:** reach the second call with every record already claimed-and-logged and already materialized, so neither the bookkeeping-stamps gate nor `/wrap-up`'s fact pack needs a retroactive backfill.

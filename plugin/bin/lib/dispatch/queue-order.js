@@ -87,7 +87,8 @@ function signalsMatch(persisted, current) {
 }
 
 // { computedAt, runId, freshnessSignal, groups, excluded, bundles } -> the
-// exact blob shape written to order.json. A thin composer, not a validator —
+// exact blob shape written to order.json, plus `grouping: GROUPING_MODE`
+// (#3278), the stamp cacheUsable checks. A thin composer, not a validator —
 // callers already have every field in the right shape; this exists so the
 // field list is stated once, matching claims.js's claimPayload/releasePayload
 // precedent for this codebase's blob-shape convention. `bundles` (#2066) is
