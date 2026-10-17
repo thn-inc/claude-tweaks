@@ -234,7 +234,10 @@ dependencies:
         claims: "SDD has a per-task model-selection heuristic the effort-tier override overrides"
         upstream-path: "skills/subagent-driven-development/SKILL.md"
         must-match: "## Model Selection"
-      # Retargeted (#3376): 7.0.0's brainstorming rewrite dropped "Invoke the writing-plans skill"; the surviving terminal-step line is "For software, invoke superpowers:writing-plans and no other skill." CLAUDE.md's override still holds against it.
+      # Retargeted (#3376): 7.0.0's brainstorming rewrite dropped "Invoke the
+      # writing-plans skill"; the surviving terminal-step line is "For software,
+      # invoke superpowers:writing-plans and no other skill." CLAUDE.md's
+      # override still holds against it.
       - file: "CLAUDE.md"
         claims: "brainstorming's terminal step names writing-plans as the next skill — the step the project override suppresses"
         upstream-path: "skills/brainstorming/SKILL.md"
@@ -280,7 +283,7 @@ dependencies:
         upstream-path: "skills/writing-plans/SKILL.md"
         must-match: "docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md"
       - file: "plugin/skills/build/plan-authoring-checks.md"
-        claims: "will rely on (record #3377): the plan reviewer is defined against SDD's controller pre-flight scan and must not redo it — line first appeared in superpowers 6.3.0"
+        claims: "will rely on (record #3377): the plan reviewer is defined against SDD's controller pre-flight scan and must not redo it — this ledger-table form first appeared in superpowers 6.3.0 (6.2.0 had an ask-the-human scan)"
         upstream-path: "skills/subagent-driven-development/SKILL.md"
         must-match: "Before dispatching Task 1, scan the plan once for conflicts, writing down"
       - file: "plugin/skills/build/dispatch.md"
