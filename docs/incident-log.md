@@ -1749,8 +1749,8 @@ condition above now exist: the shared lstat-backed helper (`plugin/bin/lib/path-
 which flags any new `realpathSync`/`existsSync` token outside the module). The rule is narrowed,
 not retired, because the lint enforces only *routing* for new call sites; it does not make a
 legacy caller's check correct. The allowlisted legacy callers are judged one by one in the
-allowlist's reasons, and any marked `UNSAFE —` (currently `lib/plan-audit/checks.js`) are tracked as
-follow-up records rather than treated as endorsed.
+allowlist's reasons; an entry marked `UNSAFE —` is a known hazard, not an endorsement, and the
+allowlist is the list of them. One is open today, tracked in #3493.
 
 ## IL-162 — Redaction regexes run over uncapped transcript tool output
 
