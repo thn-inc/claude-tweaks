@@ -26,6 +26,8 @@ Agents do not inherit the dispatcher's CWD reliably. When a dispatch will run `g
 
 Before any commit step, the implementer must echo `pwd` and `git rev-parse --show-toplevel` and verify both match the expected worktree. A mismatch means the commit is about to land on the wrong branch — `BLOCKED` is the correct response.
 
+**The prompt's stated path is the authority; ambient context is not.** A freshly dispatched agent's ambient context — the `CLAUDE.md` the harness injects, the working directory its environment block names — can point at a sibling worktree other than the one the prompt states. A dispatch that will Read, Edit, or Write files, not only one that commits, must tell the agent to run `pwd` and `git rev-parse --show-toplevel` before its first file operation and compare both against the prompt's stated path, never against the ambient context. A mismatch is `BLOCKED`; diffing the two worktrees' copies and picking the one that looks right is not a recovery.
+
 **Why this matters:** When the dispatcher is itself inside a worktree (e.g., running from `.claude/worktrees/<name>/`), a dispatched agent can resolve a different CWD and commit to the parent repo's checked-out branch instead of the worktree branch. The branches diverge silently — the dispatcher's `git status` looks fine, but the commit went to `main`. The same risk applies to reviewer agents that run `node --test` from the parent repo where the new test files don't exist and report false failures.
 
 When the dispatch is for a verification or test-running agent (no commits), the working directory still matters: results depend on which files are visible.

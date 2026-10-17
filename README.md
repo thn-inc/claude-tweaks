@@ -99,7 +99,7 @@ a way to wrap an existing marketplace plugin instead of requiring a rewrite.
 > **Left column:** `/claude-tweaks:{name}` — **Right column:** `/superpowers:{name}` ([Superpowers plugin](https://github.com/obra/superpowers))
 > **⚙** = worktree mode only — **┊** = conditional step
 > `/claude-tweaks:init` runs once per project, before entering the pipeline.
-> Under `integration-model: pr-first` (GitHub-backed projects), a worktree run is born public: `build`'s first phase opens a draft PR immediately, every later phase pushes and flips its own PR checklist row, and `wrap-up`'s Review Console renders as PR checkboxes instead of a blocking chat prompt. A background reconciler converges local state (fast-forward, worktree reap, claim release, run-dir archive, branch archival) at every shared-state read point, so no step depends on the session that started it still being alive. `local-merge` (no GitHub remote) keeps the diagram above unchanged.
+> Under `integration-model: pr-first` (GitHub-backed projects), a worktree run is born public: `build`'s first phase opens a draft PR immediately, every later phase pushes and flips its own PR checklist row (re-composing the PR's Spec summary when the build reversed a spec premise), and `wrap-up`'s Review Console renders as PR checkboxes instead of a blocking chat prompt. A background reconciler converges local state (fast-forward, worktree reap, claim release, run-dir archive, branch archival) at every shared-state read point, so no step depends on the session that started it still being alive. `local-merge` (no GitHub remote) keeps the diagram above unchanged.
 
 ## Work Records
 

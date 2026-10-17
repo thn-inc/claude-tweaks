@@ -234,6 +234,10 @@ Fixes #{n}
 <!-- fixes-end -->
 ```
 
+The `### Spec summary` paragraph is not frozen here: when the build logs a `premise reversed:`
+entry, `_shared/pr-checklist-refresh.md`'s Phase-checklist update rewrites it from the
+implemented behavior under a `Revised during build:` note (#3050).
+
 The `<!-- claude-tweaks-run: {run-id} -->` marker is the **first line**, unconditionally,
 immediately followed by a plain-text companion line (`claude-tweaks-run: {run-id}`, no
 comment syntax) — it is the GitHub-side signal the sweep (`sweep-backstop` sub-issue) and the
