@@ -27,6 +27,10 @@ const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
+const { parentGateState } = require('../issues/acceptance');
+const { exceedsOversightFloor, maxRiskTier } = require('../issues/oversight-floor');
+const { parseRecordFacets } = require('../issues/record');
+const { resolvePolicyKeys } = require('../policy-schema');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
 const { resolveRecords } = require('./pack');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
@@ -691,6 +695,50 @@ function resolveParent(n, deps, cwd) {
   }
 }
 
+// #3222: a parent's direct sub-issues, enumerated so acceptance-labeling can
+// read the parent gate from them (parentGateState). Same owner/repo resolution
+// as resolveParent. One JSON object per output line; `state` is upper-cased to
+// the vocabulary parentGateState reads. Zero sub-issues is a gather failure,
+// never a due gate -- an empty answer must not read as "every sub-issue closed".
+function enumerateSubIssues(parent, deps, cwd) {
+  let out;
+  try {
+    const repoSpec = parseRepo(deps.git(['remote', 'get-url', 'origin'], cwd));
+    if (!repoSpec) return { ok: false, error: `could not resolve owner/repo for parent #${parent}` };
+    out = deps.gh(['api', '--paginate', `repos/${repoSpec.owner}/${repoSpec.repo}/issues/${parent}/sub_issues`, '--jq', '.[] | {number, state, labels: [.labels[].name]} | @json'], cwd);
+  } catch (err) {
+    return { ok: false, error: `gh api sub_issues failed for parent #${parent} (${err.message})` };
+  }
+  const subIssues = [];
+  for (const line of (out || '').split('\n')) {
+    if (!line.trim()) continue;
+    let obj;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      return { ok: false, error: `could not parse sub_issues output for parent #${parent}` };
+    }
+    if (!obj || !Number.isInteger(obj.number)) {
+      return { ok: false, error: `could not parse sub_issues output for parent #${parent}` };
+    }
+    subIssues.push({ number: obj.number, state: String(obj.state).toUpperCase(), labels: Array.isArray(obj.labels) ? obj.labels : [] });
+  }
+  if (!subIssues.length) return { ok: false, error: `no sub-issues enumerated for parent #${parent}` };
+  return { ok: true, subIssues };
+}
+
+// #3222: the risk-floor policy key, from the repo root's own policy.yml (a
+// missing file falls back to the schema default). An error entry returns
+// undefined, which exceedsOversightFloor treats as its fail-safe 'high'.
+function resolveRiskFloor(repoRoot) {
+  let policyRaw = null;
+  try {
+    policyRaw = fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
+  } catch { /* no policy.yml -- resolvePolicyKeys' schema default applies */ }
+  const entry = resolvePolicyKeys(['risk-floor'], { policyRaw })['risk-floor'];
+  return entry && !entry.error ? entry.value : undefined;
+}
+
 // `verify`'s --run-dir may be the parent pipeline run directory, or (in a
 // multi-spec run) a spec-{N}/ subdirectory whose own run-state.json carries
 // no PR -- the run's shared PR stamp lives one directory up. Resolved through
@@ -736,6 +784,13 @@ function scanMarkerComments(comments, hasMarker) {
 // contains the brief, never only the most recent one. A last-comment-only
 // test would hard-stop a correctly-gated parent.
 //
+// #3222: the parent path evaluates the Parent-Gate Procedure's gate state and
+// oversight floor first (verification-brief-parent-gate.md's "Evaluate the
+// gate"). An incomplete gate, or a due parent whose sub-issues sit below the
+// oversight floor, skips the parent instead of requiring its demo:pending.
+// The gate input is the parent's enumerated sub-issues with every run record
+// counted as closed, since this run is what closes it.
+//
 // Known, deliberate gap (not reproduced here -- said honestly rather than
 // implied by omission): the `local-files` backend's different acceptance
 // shape (`facets.acceptance` on the record body, no `gh` comments at all) is
@@ -743,7 +798,7 @@ function scanMarkerComments(comments, hasMarker) {
 // `github-issues` path. The Oversight-floor gate's exemption (a non-parent
 // record that doesn't clear the floor legitimately carries no
 // `demo:pending`) IS reproduced here -- see `oversightExemptSet` above.
-registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
+registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectations }) => {
   if (!ghAvailable(deps, cwd)) return { result: 'unknown', detail: 'gh absent' };
   const issues = resolvedIssueNumbers(runDir);
   if (!issues.length) return { result: 'skip', detail: 'no resolved issue numbers found' };
@@ -762,6 +817,8 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
   }
   const failing = [];
   const passedNotes = []; // {target, ignored[]} for targets that pass but skipped untrusted comments (#3358)
+  const skipped = []; // #3222: parent-gate skip reasons (incomplete gate, below oversight floor)
+  const closing = new Set(issues); // every run record is being closed by this run (#3222 gate input)
 
   // Resolve each issue's target (its parent, when resolvable; itself
   // otherwise), deduping by target -- two sub-issues sharing one parent
@@ -774,9 +831,10 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
   // other could-not-gather rows, and returns before any label/comment read
   // runs (a real labeling mismatch on a successfully resolved record still
   // reaches the loop below and can still render 'fail').
-  const targets = [];
+  const targets = []; // {target, parent} -- parent is true when the target is a resolved parent
   const seenTargets = new Set();
   const gatherFailures = [];
+  const parentSubIssues = new Map(); // parent number -> gate input (its enumerated sub-issues, run records forced CLOSED)
   for (const n of checkIssues) {
     const resolved = resolveParent(n, deps, cwd);
     if (!resolved.ok) {
@@ -786,13 +844,21 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
     const target = resolved.parent || n;
     if (seenTargets.has(target)) continue;
     seenTargets.add(target);
-    targets.push(target);
+    targets.push({ target, parent: Boolean(resolved.parent) });
+    if (!resolved.parent) continue;
+    const enumerated = enumerateSubIssues(target, deps, cwd);
+    if (!enumerated.ok) {
+      gatherFailures.push(`#${n}: ${enumerated.error}`);
+      continue;
+    }
+    parentSubIssues.set(target, enumerated.subIssues.map((s) => ({ ...s, state: closing.has(s.number) ? 'CLOSED' : s.state })));
   }
   if (gatherFailures.length) return { result: 'unknown', detail: gatherFailures.join('; ') };
 
   const prNumber = resolvePrNumber(runDir);
+  const riskFloor = resolveRiskFloor(repoRoot); // once per check run, not per parent target
 
-  for (const target of targets) {
+  for (const { target, parent } of targets) {
     let issueRaw;
     try {
       issueRaw = deps.gh(['issue', 'view', String(target), '--json', 'labels,comments'], cwd);
@@ -808,6 +874,24 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
       continue;
     }
     const labels = issueData.labels || [];
+    if (parent) {
+      // #3222: the parent gate decides whether this parent is checked at all.
+      const gateInput = parentSubIssues.get(target);
+      const gate = parentGateState({ subIssues: gateInput, parentLabels: labels.map((l) => l.name) });
+      if (gate === 'incomplete') {
+        const openCount = gateInput.filter((s) => s.state !== 'CLOSED').length;
+        skipped.push(`parent gate #${target} not due — ${openCount} sibling sub-issue(s) open`);
+        continue;
+      }
+      const { exceeds } = exceedsOversightFloor(
+        { risk: maxRiskTier(gateInput.map((s) => parseRecordFacets(s.labels))) },
+        { riskFloor, sizeFloor: null },
+      );
+      if (!exceeds) {
+        skipped.push(`parent #${target} below oversight floor`);
+        continue;
+      }
+    }
     if (!labels.some((l) => l.name === 'demo:pending')) {
       failing.push(`#${target}: missing demo:pending label`);
       continue;
@@ -868,10 +952,14 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
   // comments after the failing lines; an all-pass row's detail is the notes.
   if (failing.length) {
     const passingNotes = passedNotes.flatMap((p) => p.ignored.map((note) => `ignored (#${p.target}): ${note}`));
-    return { result: 'fail', detail: [...failing, ...passingNotes].join('; ') };
+    return { result: 'fail', detail: [...failing, ...passingNotes, ...skipped].join('; ') };
   }
+  // Every target skipped by the parent gate -- nothing was checked, so the row
+  // is a skip, not a pass.
+  if (skipped.length === targets.length) return { result: 'skip', detail: skipped.join('; ') };
   const notes = passedNotes.flatMap((p) => p.ignored);
-  return { result: 'pass', detail: notes.length ? `ignored: ${notes.join('; ')}` : '' };
+  const detail = [...(notes.length ? [`ignored: ${notes.join('; ')}`] : []), ...skipped].join('; ');
+  return { result: 'pass', detail };
 });
 
 // ---- memory updates -----------------------------------------------------------
@@ -994,6 +1082,7 @@ module.exports = {
   defaultGit,
   defaultGh,
   resolveParent,
+  enumerateSubIssues,
   resolvePrNumber,
   resolvedIssueNumbers,
 };
