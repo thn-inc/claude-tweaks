@@ -89,5 +89,3 @@ test('task-prompt.md: rationale paragraph sits right after the Before-substituti
   assert.match(rationale, /an explicit mode argument outranks the project's `auto-mode` policy/);
   assert.match(rationale, /`autonomy` ceiling still bounds what the run may do/);
 });
-
-module.exports = { forms, fencedBlock };

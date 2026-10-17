@@ -238,7 +238,7 @@ Step 4 minted this directory and `/claude-tweaks:flow`'s Step 2.8 (inside the fi
 claim's `runId` as this directory's own basename. See `_shared/issue-claims.md`'s
 Identity section.
 
-**Two Task() calls per group, not one.** The agent's job is now split: a first call runs `/claude-tweaks:flow {target} build,test` and stops; only on a clean `build-test-ok` outcome does a second, entirely fresh Task() call run `/claude-tweaks:flow {target} review,polish,wrap-up`. This gives the reviewing agent genuine conversational isolation from the build — a live dispatch test found build/test/review running in one continuous context, defeating `/claude-tweaks:review`'s own adversarial multi-lens contract.
+**Two Task() calls per group, not one.** The agent's job is now split: a first call runs `/claude-tweaks:flow {target} build,test auto` and stops; only on a clean `build-test-ok` outcome does a second, entirely fresh Task() call run `/claude-tweaks:flow {target} review,polish,wrap-up auto`. This gives the reviewing agent genuine conversational isolation from the build — a live dispatch test found build/test/review running in one continuous context, defeating `/claude-tweaks:review`'s own adversarial multi-lens contract.
 
 **Singleton group** `[123]` — first call: `PIPELINE_RUN_DIR="{minted-run-dir}" /claude-tweaks:flow #123 build,test auto`. Second call (gated): `PIPELINE_RUN_DIR="{minted-run-dir}" /claude-tweaks:flow #123 review,polish,wrap-up auto`.
 
