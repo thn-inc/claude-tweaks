@@ -89,18 +89,19 @@ const ANY_HEADING_RE = /^#{1,6}[ \t]/;
 
 // #3141: backticked spans that are generic vocabulary, not identity
 // anchors — widely cited across unrelated records, so a shared one says
-// nothing about two records describing the same work. Three shapes:
-// a flag (`--run-dir`, `-x`, optionally followed by ONE value token such as
-// `<dir>` or `"$VAR"` — a flag followed by prose, like an error phrase,
-// stays an anchor), a skill invocation (`/plugin:skill` or `/skill`, optionally with
-// arguments), and any `family:value` token — label names, but also
-// namespaced agent ids like `superpowers:using-git-worktrees` — whose
-// family has no `.` or `/` and whose value has no `/` or `\`, so a
-// `file.js:42` location or a `c:\path` stays an anchor; or a bare stage
-// label. A skill invocation may be colon-less (`/flow`, #3366); it takes one
-// leading slash only, so a repo path like `/usr/bin/node` stays an anchor.
+// nothing about two records describing the same work. Four shapes:
+// a flag (`--run-dir`, `-x`, optionally followed by ONE value token such
+// as `<dir>` or `"$VAR"` — a flag followed by prose, like an error
+// phrase, stays an anchor); a skill invocation (`/plugin:skill` with
+// optional trailing arguments, or a bare `/skill` with none, #3366 — a
+// colon-less word followed by prose, like `/settings page 500`, stays an
+// anchor, and so does a multi-segment repo path like `/usr/bin/node`);
+// any `family:value` token — label names, but also namespaced agent ids
+// like `superpowers:using-git-worktrees` — whose family has no `.` or
+// `/` and whose value has no `/` or `\`, so a `file.js:42` location or
+// a `c:\path` stays an anchor; or a bare stage label.
 const FLAG_ANCHOR_RE = /^--?[A-Za-z][\w-]*(?:[ =]\S+)?$/;
-const SKILL_ANCHOR_RE = /^\/[\w-]+(?::[\w-]+)*(?:\s.*)?$/;
+const SKILL_ANCHOR_RE = /^\/[\w-]+(?:(?::[\w-]+)+(?:\s.*)?)?$/;
 const LABEL_ANCHOR_RE = /^[a-z][a-z0-9-]*:[^\s/\\]+$/;
 const STAGE_LABELS = new Set(['ready', 'parked']);
 

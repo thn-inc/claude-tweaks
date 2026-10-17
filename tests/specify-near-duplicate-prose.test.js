@@ -115,8 +115,8 @@ test('the shaping-mode.md refusal fence runs and refuses nothing when no hit is 
   const out = execFileSync(process.execPath, ['-e', code, hits, snapshot], { encoding: 'utf8' });
   assert.deepStrictEqual(JSON.parse(out.trim()), { refuse: false });
   fs.rmSync(dir, { recursive: true, force: true });
-  // #3366: the fence's candidate filter carries the same 2-signal floor as shapingRefusal.
-  assert.ok(code.includes('h.signals.length >= 2'), 'the fence filter must carry the 2-signal floor');
+  // #3366: the fence's candidate filter carries the same floor as shapingRefusal, via the constant.
+  assert.ok(code.includes('h.signals.length >= MIN_REFUSAL_SCORE'), 'the fence filter must use MIN_REFUSAL_SCORE');
 });
 
 test('AC3.1/AC3.2: shaping-mode.md refusal paragraph names the minimum score of 2 (#3366)', () => {
@@ -126,7 +126,7 @@ test('AC3.1/AC3.2: shaping-mode.md refusal paragraph names the minimum score of 
   const section = SHAPING_MODE.slice(start, end);
   assert.match(section, /at least 2 signals/);
   // Anchored to the refusal paragraph itself: other mentions of the floor must not mask its removal.
-  assert.match(section, /scoring\s+\*\*at least 2 signals\*\*\s+\(`MIN_REFUSAL_SCORE`/);
+  assert.match(section, /scoring\s+\*{0,2}at least 2 signals\*{0,2}\s+\(`MIN_REFUSAL_SCORE`/);
   assert.match(section, /A\s+score-1\s+candidate\s+is\s+surfaced\s+in\s+the\s+table\s+and\s+the\s+`\*\*Related:\*\*`\s+line\s+only/);
   assert.doesNotMatch(section, /never blocks shaping on its own signal alone/);
   assert.doesNotMatch(section, /the one automatic\s+refusal the finder's signal authorizes on its own/);

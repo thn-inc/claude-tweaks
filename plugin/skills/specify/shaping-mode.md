@@ -113,7 +113,7 @@ Then run the call below; its first line re-resolves the same two paths:
 ```bash
 eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" NEAR_DUP_HITS=specify-near-dup-hits.json NEAR_DUP_SNAPSHOT=specify-near-dup-snapshot.json)"
 node -e "
-const { shapingRefusal, buildShapingState } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
+const { shapingRefusal, buildShapingState, MIN_REFUSAL_SCORE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
 const { readClaimBlob, defaultGhApi } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claim-store.js');
 const { defaultRunner } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims-git-cas.js');
 const { buildLinkedPRQuery, normalizeLabelNames } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
@@ -121,7 +121,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const [hits, snapshot] = [JSON.parse(fs.readFileSync(process.argv[1], 'utf8')), JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))];
 const labelsByNumber = Object.fromEntries(snapshot.map((r) => [r.number, r.labels]));
-const numbers = hits.filter((h) => Number.isInteger(h.number) && h.signals.length >= 2 && h.signals.includes('title-similarity') && normalizeLabelNames(labelsByNumber[h.number] || []).includes('ready')).map((h) => h.number);
+const numbers = hits.filter((h) => Number.isInteger(h.number) && h.signals.length >= MIN_REFUSAL_SCORE && h.signals.includes('title-similarity') && normalizeLabelNames(labelsByNumber[h.number] || []).includes('ready')).map((h) => h.number);
 const claimContentByNumber = {};
 let linkedPRRepoData = null;
 if (numbers.length) {
