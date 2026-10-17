@@ -14,9 +14,9 @@ files:
 
 ### 1. Find the record, or confirm it should not exist
 - **URL:** `{run-dir}/sdd-final-review.md` (multi-spec: `{run-dir}/spec-{N}/sdd-final-review.md`)
-- **Action:** Open the file. If it is missing, check the run's `config.yml` and `decisions.md` for a standalone `/build` (no run directory) or the single-task fast-lane skip, the two cases where SDD dispatched no final review and nothing is written.
+- **Action:** Open the file. If it is missing, check the run's `config.yml` (`ceremony-profile: fast-lane`) and `decisions.md` (a `SKIP … Whole-branch review skipped: fast-lane, single-task plan` line under `## /build`) for the single-task fast-lane skip, the one case in a `/flow` run where SDD dispatched no final review and nothing is written. A standalone `/build` also writes nothing, but it has no run directory to open, so it never reaches this step.
 - **Should feel:** Like a lookup, not a hunt. One file per spec, always in the same place, with an absolute run-directory path even when SDD ran inside a worktree.
-- **Should understand:** The file is maintainer evidence, not a gate. No skill blocks on it, so a missing file means either that one of the two named cases applied or that SDD ignored the instruction. It never means the run failed.
+- **Should understand:** The file is maintainer evidence, not a gate. No skill blocks on it, so a missing file means either that the fast-lane skip applied or that SDD ignored the instruction. It never means the run failed.
 - **Red flags:** A copy under the worktree's `.claude-tweaks/pipelines/` instead of the main checkout's (a relative-path shadow, `[IL-127]`). A missing file on a run whose decisions log shows a full final review.
 
 ### 2. Read the findings and the commits they belong to
@@ -41,7 +41,7 @@ files:
 - **Red flags:** Counting severity mismatches as misses. Scoring from memory rather than from the file.
 
 ### 5. Cross-check the build's SDD rulings in the run ledger
-- **URL:** `docs/plans/{date}-{slug}-ledger.md`, rows whose Item starts `SDD ruling` or `SDD minor (deferred)`
+- **URL:** `docs/plans/{date}-{slug}-ledger.md`, phase `build` rows with status `observation` (SDD rulings and parked findings) or `deferred` (SDD deferred minors). `/build`'s carry-forward writes the text after the marker as the Item, so a carried row does not start with `SDD ruling` or `SDD minor (deferred)` unless the controller added that prefix by hand
 - **Action:** Read the rulings the controller made instead of stopping, such as fix-wave scope, deferred-minor triage and ranges reviewed, next to the findings they settle.
 - **Should feel:** Like reading the reviewer's margin notes: why a finding was accepted, deferred or folded into one wave.
 - **Should understand:** Since #3386, `/build` copies SDD 6.3.0+ `Ruling:` lines into the run ledger as `observation`. They are durable, but the Review Console does not show them; whether load-bearing rulings should reach a human is #3401.

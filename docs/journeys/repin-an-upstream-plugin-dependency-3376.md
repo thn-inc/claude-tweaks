@@ -54,7 +54,7 @@ files:
 - **URL:** `diff -u` of each `contract-paths` file between the old and new cache copies
 - **Action:** Read the hunks that touch what the repo's own files rely on (for superpowers: SDD's workspace, `progress.md`, the per-task review loop, `## Final Review`, Finish) and list each behavior change with the repo file it affects.
 - **Should feel:** Like reading a changelog aimed at you — a literal can match while the behavior around it moved.
-- **Should understand:** In 6.2.0 → 7.0.0 every pinned literal still matched, yet SDD stopped asking the human on a load-bearing finding and started writing `Ruling:` lines, which `plugin/skills/build/dispatch.md`'s carry-forward does not copy. That gap became its own follow-up record — the diff read is where such changes surface.
+- **Should understand:** In 6.2.0 → 7.0.0 every pinned literal still matched, yet SDD stopped asking the human on a load-bearing finding and started writing `Ruling:` lines, which `plugin/skills/build/dispatch.md`'s carry-forward did not copy at the time. That gap became its own follow-up record (#3386, which now carries `Ruling:` lines into the run ledger) — the diff read is where such changes surface.
 - **Red flags:** Concluding "nothing breaks" because every assertion is `ok`; fixing a behavior gap inside the re-pin instead of filing it.
 
 ## Origin
