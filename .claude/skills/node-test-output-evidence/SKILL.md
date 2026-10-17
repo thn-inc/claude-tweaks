@@ -100,6 +100,7 @@ node --test --test-reporter=tap tests/bin-lib/verify/extract.test.js   # capture
 | Treating an extracted failing-file list as complete | A failure whose entry names no file drops out, and the rest classify as a pass over a failure nothing checked |
 | Reading a test's absence from a re-run as a pass | A child killed mid-file, a skip, or a filter produces the same absence |
 | Applying an accounting check to spec output only when a new consumer reuses it | #3066's first TAP branch returned before checking that the summary counts parsed, so a truncated TAP log read as fully accounted. Carry every check over for spec and TAP alike, and test each family's truncated-log case |
+| Normalizing or matching only the spec form of a run-specific line (`ℹ duration_ms`) | Node writes TAP whenever stdout is not a TTY, so every child run `verify.js` spawns is TAP. `normalizeLog` stripped spec's `ℹ duration_ms` and the YAML `duration_ms:` key but not TAP's `# duration_ms` summary line, so a whole-file failure never matched its base log, on any platform, and came back attributable (#3316, `7a49b742f`). Give every reporter-specific rule its TAP twin and a TAP fixture |
 
 ## Reference
 
