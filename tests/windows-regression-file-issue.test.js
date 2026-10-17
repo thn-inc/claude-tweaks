@@ -201,6 +201,33 @@ test('F1: an excerpt is capped at 12 lines and stops at the next ok line', () =>
   assert.ok(!body.includes('line-10'), 'cut at 12 lines (not ok + location + 10)');
 });
 
+test('F1: a file that crashes at load opens its excerpt at its own stderr, never at an earlier file\'s not-ok (run 39034279077)', () => {
+  // Transcribed from the live run's tests.log: Node prints a crashed file's stderr as
+  // `#` lines BEFORE that file's `# Subtest:` / whole-file `not ok` — the first line
+  // naming the file is the stack, which sits after another file's failure block.
+  const log = [
+    winBlock(70, 'an earlier failure in another file', 'tests/apply-refine-labels.test.js', 'detail-for-other-file'),
+    '# Subtest: every bracketed leaf in argument-hint appears in Input',
+    'ok 83 - every bracketed leaf in argument-hint appears in Input',
+    '  ---',
+    '  duration_ms: 11.5205',
+    "  type: 'test'",
+    '  ...',
+    '# node:internal/test_runner/harness:99',
+    '#       throw err;',
+    '# Error: docs/skill-authoring.md: no "Argument-hint mirror surfaces" heading',
+    '#     at parseEnumeration (D:\\\\a\\\\repo\\\\repo\\\\tests\\\\argument-hint-mirrors.test.js:51:29)',
+    '# Subtest: tests\\\\argument-hint-mirrors.test.js',
+    'not ok 11 - tests\\\\argument-hint-mirrors.test.js',
+  ].join('\n');
+  const deps = fakeDeps({ ...adjudicated('tests/argument-hint-mirrors.test.js'), checks: { tests: { failingRegion: log } } });
+  assert.equal(run(argv(), deps), 1);
+  const body = created(deps).input;
+  assert.ok(body.includes('no "Argument-hint mirror surfaces" heading'), 'excerpt carries the crash message');
+  assert.ok(!body.includes('detail-for-other-file'), 'excerpt never opens at another file\'s failure');
+  assert.ok(!body.includes('an earlier failure in another file'));
+});
+
 test('unreadable report: null JSON exits 1, files nothing', () => {
   for (const report of ['null', '[]', '3']) {
     const deps = fakeDeps(report);

@@ -128,13 +128,20 @@ function namesFile(line, needle) {
 
 // The excerpt for `file`: from the nearest `not ok` line at or before the first
 // line naming the file (so the test's name is shown), through the next ok/not ok
-// line or EXCERPT_MAX_LINES. null when no line names the file.
+// line or EXCERPT_MAX_LINES. A test boundary (`ok N`, `# Subtest:`, a YAML `...`)
+// reached first means the match sits outside any failure block — a crashed file's
+// stderr, printed before its own `not ok` — so the excerpt opens just after that
+// boundary, where the stderr (and its `Error:` line) begins.
+// null when no line names the file.
 function excerptFor(file, lines) {
   const needle = slashes(file);
   const hit = lines.findIndex((l) => namesFile(l, needle));
   if (hit === -1) return null;
   let start = hit;
-  for (let i = hit; i >= 0; i--) if (/^\s*not ok\b/.test(lines[i])) { start = i; break; }
+  for (let i = hit; i >= 0; i--) {
+    if (/^\s*not ok\b/.test(lines[i])) { start = i; break; }
+    if (i < hit && /^\s*(ok \d|# Subtest:|\.\.\.\s*$)/.test(lines[i])) { start = i + 1; break; }
+  }
   let end = Math.min(start + EXCERPT_MAX_LINES, lines.length);
   for (let i = start + 1; i < end; i++) if (/^\s*(not )?ok \d/.test(lines[i])) { end = i; break; }
   return lines.slice(start, end).join('\n');
