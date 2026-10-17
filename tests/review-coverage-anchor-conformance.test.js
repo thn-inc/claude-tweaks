@@ -156,8 +156,7 @@ test('AC1.1 AC1.2 AC2.1: the production-line and test-line anchor lists share no
 });
 
 test('AC1.2 AC2.1: a weak-assertion finding names one anchor — the production line — in the dispatch prompt and lens 3f alike', () => {
-  const { dispatch, lens3f } = anchorLists(read('review', 'step3-lens-dispatch.md'));
-  for (const [name, r] of [['dispatch', dispatch], ['lens3f', lens3f]]) {
+  for (const [name, r] of Object.entries(anchorLists(read('review', 'step3-lens-dispatch.md')))) {
     assert.match(r.production, /an existing test whose assertions cannot catch the regression it guards/i, `${name}: weak-assertion case must sit in the production-line list`);
     assert.doesNotMatch(r.test, /assertion|weak|non-discriminating/i, `${name}: weak-assertion case must not sit in the test-line list`);
   }
