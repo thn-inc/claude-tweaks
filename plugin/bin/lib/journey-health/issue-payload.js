@@ -40,6 +40,8 @@ function toIssuePayload(finding, verifiedAsOf) {
     ? `Fixed a broken user journey: ${finding.journey}.`
     : 'No user-visible change — journey documentation/coverage maintenance.';
 
+  const journeyDocPath = `docs/journeys/${finding.journey}.md`;
+
   const body = specShapedBody({
     header: `**Journey:** ${finding.journey} | **Section:** ${finding.section} | **Category:** ${finding.category} | **Severity:** ${finding.severity} | **Confidence:** ${finding.confidence}`,
     currentState: [...relatedBlocks, finding.description, finding.reason],
@@ -50,8 +52,8 @@ function toIssuePayload(finding, verifiedAsOf) {
     // reads) renders under `### Key Files` (/build's micro-plan condition 3).
     // finding.journey is LLM-supplied, so a malformed one omits the section
     // rather than aborting the sweep run.
-    keyFiles: isRepoRelativeKeyFilePath(`docs/journeys/${finding.journey}.md`)
-      ? [{ path: `docs/journeys/${finding.journey}.md`, change: 'fix the journey document' }]
+    keyFiles: isRepoRelativeKeyFilePath(journeyDocPath)
+      ? [{ path: journeyDocPath, change: 'fix the journey document' }]
       : undefined,
     filedBy: '/claude-tweaks:journey-health',
     verifiedAsOf,

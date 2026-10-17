@@ -149,7 +149,8 @@ function toIssuePayload(finding, verifiedAsOf, pluginVersion, options = {}) {
   // --memory-dir, or a path with a backtick/newline.
   let keyFiles;
   if (!isNewSkill && finding.path && options.repoRoot) {
-    const rel = nodePath.relative(options.repoRoot, nodePath.resolve(options.repoRoot, finding.path)).split(nodePath.sep).join('/');
+    const absolutePath = nodePath.resolve(options.repoRoot, finding.path);
+    const rel = nodePath.relative(options.repoRoot, absolutePath).split(nodePath.sep).join('/');
     if (isRepoRelativeKeyFilePath(rel)) {
       keyFiles = [{ path: rel, change: isRemoval ? 'remove the named content' : 'apply the proposed change' }];
     }
