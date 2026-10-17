@@ -6,6 +6,7 @@ files:
   - plugin/skills/init/bootstrap/step-06-6-verify-scope.md
   - plugin/skills/init/update-mode.md
   - .claude-tweaks/verify-scope.json
+  - tests/verify-scope-declaration.test.js
 ---
 
 # Declare What Each Path Affects With a Verify-Scope Starter
@@ -39,12 +40,13 @@ files:
 - **Red flags:** Every package reported missing on a correct declaration (the proposal was fed to the diff instead of the file); the `tests` sentinel reported as an extra suite forever; drift "fixed" by overwriting the file.
 
 ### 4. Read this repo's own declaration as the worked example
-- **URL:** `cat .claude-tweaks/verify-scope.json` in the claude-tweaks checkout, then `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --scope .claude-tweaks/verify-scope.json --integration-branch main --cmd tests="npm test"`
-- **Action:** Compare the rules with what `npm test` reads.
-- **Should feel:** Conservative — `plugin/**`, `tests/**`, `tools/**` map to every suite; only ledger rows, run-dir files, consumed plans and design docs map to nothing; everything else (top-level `docs/*.md`, `CLAUDE.md`, `package.json`) is unmatched and fails closed to `full`.
-- **Should understand:** The declaration only cheapens a bookkeeping-only delta since the last full pass, and only once a full pass has written a stamp — on a checkout whose suite is red at the baseline, no stamp is ever written and every `--scope` run resolves `full`. `tests/verify-scope-declaration.test.js` pins that no `[]` rule names anything outside the bookkeeping list and that a ledger-row delta classifies as `none` while a skill-prose delta classifies as `full`.
-- **Red flags:** A `[]` rule on a path any suite reads; a `--scope` run reporting `none` for a delta that touched `plugin/**`; expecting the saving before the baseline is green.
+- **URL:** `cat .claude-tweaks/verify-scope.json` in the claude-tweaks checkout, then `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --scope .claude-tweaks/verify-scope.json --integration-branch main --cmd tests="npm test" --cmd journeys="{the declaration's checks.tests.journeys command}"`
+- **Action:** Compare the rules with what `npm test` reads, then commit a change to one `docs/journeys/*.md` file and re-run.
+- **Should feel:** Conservative — `plugin/**`, `tests/**`, `tools/**` map to every suite; `docs/journeys/**` maps to the `journeys` suite alone (the seven test files that read the live journey tree, about a second); only ledger rows, run-dir files, consumed plans and design docs map to nothing; everything else (top-level `docs/*.md`, `CLAUDE.md`, `package.json`) is unmatched and fails closed to `full`. The journey-only re-run prints `Scope: scoped — … suites: journeys; static: no; unmatched: 0`.
+- **Should understand:** `checks.tests` is a suite map (`tests` → `npm test`, `journeys` → the journey readers), so every `--scope` invocation passes one `--cmd` per declared suite — a run missing `--cmd journeys` exits 2 naming it. A full run executes both suites (the journey files twice — seconds). The declaration only cheapens a delta since the last full pass, and only once a full pass has written a stamp — a baseline-adjudicated pass (#3043) writes one too, but a run with an attributable failure never does, and with no stamp every `--scope` run resolves `full`. `tests/verify-scope-declaration.test.js` pins that no `[]` rule names anything outside the bookkeeping list, that a ledger-row delta classifies as `none`, a skill-prose delta as `full`, and a journey-only delta as `scoped` to `journeys`.
+- **Red flags:** A `[]` rule on a path any suite reads; a `--scope` run reporting `none` for a delta that touched `plugin/**`; a journey-only delta reported `unmatched` or `full`; a new test that reads `docs/journeys/` left out of the `journeys` command (the pipeline then under-verifies it until CI's full run catches it); expecting the saving before a stamp exists.
 
 ## Origin
 - Created during build of #1924 (init generates a starter `verify-scope.json`, reports drift, and this repo declares its own) — the operator-facing half of the scoping engine (#1922) and its pipeline wiring (#1923).
+- Updated during build of #3337 — Step 4: this repo's declaration gains a `journeys` suite and a `docs/journeys/**` rule, so a journey-only delta re-verifies in about a second instead of failing closed to the full suite.
 - Related journeys: `run-a-deterministic-verification-check.md` Steps 8-9 (what the declaration does at a scoped re-verify; the shared changed-file set).

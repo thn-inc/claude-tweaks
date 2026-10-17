@@ -3,10 +3,12 @@
 // and couples every status write to the `## Flow: Running ...` progress
 // banner (#690). This is a targeted parser/serializer for that one fixed
 // shape — `{ multispec: { parent, baseSha?, specs: [{id, status, subdir,
-// startedAt?}] } }` — not a general YAML implementation: the plugin ships
-// zero runtime npm deps (see bin/lib/policy.js's own header for the same
-// constraint), and manifest.yml is entirely machine-owned (no hand-editing
-// convention to preserve, unlike policy.yml).
+// startedAt?}] } }` (`baseSha` is legacy: parsed and preserved on rewrite,
+// never written by manifestInit — nothing reads it) — not a general YAML
+// implementation: the plugin ships zero runtime npm deps (see
+// bin/lib/policy.js's own header for the same constraint), and manifest.yml
+// is entirely machine-owned (no hand-editing convention to preserve, unlike
+// policy.yml).
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -137,6 +139,49 @@ function formatElapsedMs(ms) {
   if (h > 0) return `${h}h${String(m).padStart(2, '0')}m`;
   if (m > 0) return `${m}m${String(s).padStart(2, '0')}s`;
   return `${s}s`;
+}
+
+// The one function that CREATES manifest.yml (#3035): transitionSpec only
+// updates existing entries, so a multi-spec run's first `spec-status` call
+// needs this to have run first. Idempotent on resume — an existing manifest
+// keeps every spec's status, startedAt and phases[] untouched; only spec ids
+// not already listed are appended (as `pending`), in the order given.
+//
+// { runDir, specs, parent } ->
+//   { ok:true, manifest, added: id[], existing: id[] } |
+//   { ok:false, reason: 'no-specs'|'invalid-spec-id'|'unreadable-manifest'|'write-failed' }
+// `parent` (the `multispec.parent` value) only matters on a fresh file; an
+// existing manifest keeps its own. An existing manifest.yml that does not
+// parse is refused rather than overwritten — it may hold phases[] history.
+function manifestInit({ runDir, specs, parent }) {
+  const ids = [];
+  for (const raw of Array.isArray(specs) ? specs : []) {
+    const text = String(raw).trim();
+    if (text === '') continue;
+    if (!/^[A-Za-z0-9._-]+$/.test(text)) return { ok: false, reason: 'invalid-spec-id' };
+    const id = coerceId(text);
+    if (!ids.some((x) => String(x) === String(id))) ids.push(id);
+  }
+  if (ids.length === 0) return { ok: false, reason: 'no-specs' };
+
+  let manifest = readManifest(runDir);
+  if (!manifest && fs.existsSync(manifestPath(runDir))) return { ok: false, reason: 'unreadable-manifest' };
+  if (!manifest) manifest = { multispec: { parent: parent || path.basename(runDir) + '/', specs: [] } };
+
+  const added = [];
+  const existing = [];
+  for (const id of ids) {
+    if (manifest.multispec.specs.some((s) => String(s.id) === String(id))) {
+      existing.push(id);
+    } else {
+      manifest.multispec.specs.push({ id, status: 'pending', subdir: `spec-${id}/` });
+      added.push(id);
+    }
+  }
+  if (added.length > 0 && !writeManifest(runDir, manifest)) {
+    return { ok: false, reason: 'write-failed' };
+  }
+  return { ok: true, manifest, added, existing };
 }
 
 // The one function that mutates a spec's manifest.yml status. This is the
@@ -304,6 +349,7 @@ module.exports = {
   serializeManifestYaml,
   readManifest,
   writeManifest,
+  manifestInit,
   formatElapsedMs,
   transitionSpec,
   composeFixesBlock,

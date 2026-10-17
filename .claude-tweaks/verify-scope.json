@@ -1,6 +1,11 @@
 {
-  "checks": { "tests": "npm test" },
-  "retry": { "tests": "node --test {file}" },
+  "checks": {
+    "tests": {
+      "tests": "npm test",
+      "journeys": "node --test tests/argument-hint-mirrors.test.js tests/dispatch-named-form-exclusion-reasons.test.js tests/impeccable-retired-scripts-sweep.test.js tests/plan-citations-resolve.test.js tests/tidy-release-note-repair-conformance.test.js tests/tidy-report-rules.test.js tests/timing-prose-conformance.test.js"
+    }
+  },
+  "retry": { "tests": "node --test {file}", "journeys": "node --test {file}" },
   "flaky": {
     "files": ["tests/bin-lib/log-decision/append.test.js", "tests/bin-lib/verify/cli.test.js", "tests/bin-lib/gif/palette.test.js", "tests/statusline.test.js"],
     "maxRetries": 1
@@ -10,6 +15,7 @@
     { "match": "plugin/**", "suites": "*", "static": true },
     { "match": "tests/**", "suites": "*", "static": true },
     { "match": "tools/**", "suites": "*", "static": true },
+    { "match": "docs/journeys/**", "suites": ["journeys"], "static": false },
     { "match": "docs/plans/*-ledger.md", "suites": [], "static": false },
     { "match": ".claude-tweaks/pipelines/**", "suites": [], "static": false },
     { "match": "docs/superpowers/plans/**", "suites": [], "static": false },

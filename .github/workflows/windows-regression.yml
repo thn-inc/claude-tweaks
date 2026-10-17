@@ -1,0 +1,164 @@
+# Post-merge Windows regression guard (#3316).
+#
+# Runs on pushes to main only, never on PRs: the pr-first merge gate waits on
+# every check in a PR's rollup, so a slow Windows job there would delay every
+# merge. The comparison base is the previous origin/main tip from the push event
+# (github.event.before) — exactly the state this push introduced a change to,
+# whether it was one squash commit, a merge commit or a multi-commit push. It
+# falls back to HEAD^1 for workflow_dispatch and a force-push, where there is no
+# usable `before` commit. main's history is not linear, so HEAD^1 alone would
+# mis-base a direct multi-commit push.
+#
+# Two jobs, split for least privilege. `windows` runs the whole test suite — the
+# repo's own code — with a read-only token. verify.js runs the suite on this
+# commit and, for each failing test file, on the base — only failures that are
+# new on this commit count — and uploads its report and logs as an artifact.
+# `file` runs on ubuntu, never executes the suite, and is the only job granted
+# issue-write permission: the filer reads the artifact and files one type:bug issue on
+# main (or comments on the open one). The filer's exit code is the workflow's
+# result (0 = clean; 1 = new failures, an unreadable report, a non-main ref with
+# failures, or a gh failure while filing).
+#
+# The concurrency group is keyed on the commit sha, not the ref: GitHub keeps at
+# most one pending run per group and replaces it with a newer one even when
+# in-progress runs are never cancelled, so a per-ref group would skip
+# intermediate commits and let a skipped commit's regression become the next
+# run's baseline.
+name: windows-regression
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: windows-regression-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    outputs:
+      base: ${{ steps.base.outputs.base }}
+    env:
+      # Several suites build git fixtures that commit; CI runners have no git identity.
+      GIT_AUTHOR_NAME: ci
+      GIT_AUTHOR_EMAIL: ci@invalid.example
+      GIT_COMMITTER_NAME: ci
+      GIT_COMMITTER_EMAIL: ci@invalid.example
+      # reconcile()'s GitHub-health preflight (plugin/bin/lib/reconcile/preflight.js,
+      # #820) shells to `gh api rate_limit` before any dispatch that doesn't stub
+      # it — an unauthenticated `gh` reads as "GitHub unreachable" and skips the
+      # whole pass, which is exactly what happened here without a token.
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Before checkout: .claude-tweaks/pipelines/**/work/ paths are deep enough to
+      # hit the Windows MAX_PATH limit.
+      - name: Enable long paths
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@v4
+        with:
+          # Full history: the base commit must exist for the baseline run.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          # run-tests.js passes root globs on win32 (the file list overflows the command line), which needs Node >= 22
+          node-version: 22
+      - name: Line-ending diagnostics
+        run: |
+          git config core.autocrlf || true
+          git ls-files --eol -- README.md
+      - name: Resolve the comparison base
+        id: base
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          B="$PUSH_BEFORE"
+          SOURCE="push event before"
+          if [ -z "$B" ] || [[ "$B" =~ ^0+$ ]] || ! git cat-file -e "$B^{commit}" 2>/dev/null; then
+            B=$(git rev-parse HEAD^1)
+            SOURCE="HEAD^1 fallback"
+          fi
+          echo "Comparison base: $B ($SOURCE)"
+          echo "BASE=$B" >> "$GITHUB_ENV"
+          echo "base=$B" >> "$GITHUB_OUTPUT"
+      - name: Verify against the base commit
+        id: verify
+        # Non-fatal so the upload and the file job always run: the file job's exit
+        # code is the workflow's verdict (this windows job is green by design).
+        continue-on-error: true
+        # The base scratch worktree is created under os.tmpdir(); on windows-latest that is on C: while the
+        # checkout is on D:, so tests resolving a drive-less path see different drives at HEAD and base —
+        # keep both on the checkout's drive.
+        env:
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+        # Timeout budget: verify reuses --cmd-timeout for every per-file baseline /
+        # isolated / retry run, not just the suite. Measured suite ~8.5 min on
+        # windows-latest (run 39036270004); per-file runs go 4 at a time, so up to 4
+        # hung files cost suite + 3 sequential 20-min phases ~ 70 min, inside the
+        # 90-min job limit — verify still writes its report and the filer still runs.
+        run: >-
+          node plugin/bin/verify.js
+          --cmd tests="npm test"
+          --cmd-timeout tests=1200000
+          --baseline "$BASE"
+          --baseline-cmd tests="node --test {file}"
+          --json "$RUNNER_TEMP/verify-report.json"
+          --log-dir "$RUNNER_TEMP/verify-logs"
+          --no-stamp
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-report
+          path: |
+            ${{ runner.temp }}/verify-report.json
+            ${{ runner.temp }}/verify-logs
+          if-no-files-found: warn
+
+  file:
+    needs: windows
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      # Needed only by the merged-PR lookup (gh api repos/{repo}/commits/{sha}/pulls);
+      # without it every issue says "Merged PR: unknown".
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BASE_SHA: ${{ needs.windows.outputs.base }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # The filer needs no node --test globs, so it stays on the repo's CI Node.
+          node-version: 20
+      # A missing artifact (the windows job died before uploading) must still reach
+      # the filer, which then exits 1 on the unreadable report.
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: verify-report
+          path: ${{ runner.temp }}/verify
+      - name: File an issue for new failures
+        run: >-
+          node tools/windows-regression/file-issue.js
+          --report "$RUNNER_TEMP/verify/verify-report.json"
+          --log "$RUNNER_TEMP/verify/verify-logs/tests.log"
+          ${BASE_SHA:+--base "$BASE_SHA"}
+          --ref "$GITHUB_REF"
+          --sha "$GITHUB_SHA"
+          --repo "$GITHUB_REPOSITORY"
+          --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

@@ -28,6 +28,7 @@ const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve')
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
+const { resolveRecords } = require('./pack');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
@@ -127,6 +128,35 @@ function readExpectations(runDir) {
     return { ok: false, reason: 'unsupported-version', version: data.version };
   }
   return { ok: true, data };
+}
+
+// #3373: the Review Console records its merge decision in console.json as
+// `merge.resolution`. `leave-open` is the designed resting state for a PR
+// awaiting a human merge -- Section C forbids removing an unmerged PR's
+// worktree, and the reconciler archives the run dir after that merge -- so
+// run-dir-archived and worktree-removed render this skip instead of a fail.
+// Fail-open toward the existing checks: any missing, unreadable, malformed, or
+// differently-shaped console.json reads as null and the checks fail as before.
+// A multi-spec parent run dir (manifest.yml present) also reads as null: its
+// console.json always says leave-open (members-unresolved), which
+// flow/multispec-review-console.md calls expected and discarded -- never the
+// bundle's real merge decision.
+const PENDING_REVIEW_SKIP = { result: 'skip', detail: 'pending-review — teardown follows the human merge' };
+
+function consoleMergeResolution(runDir) {
+  try {
+    if (fs.existsSync(path.join(runDir, 'manifest.yml'))) return null;
+    const data = JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8'));
+    return data && data.merge && typeof data.merge.resolution === 'string' ? data.merge.resolution : null;
+  } catch {
+    return null;
+  }
+}
+
+// Wraps a would-be teardown `fail`: a leave-open console downgrades it to the
+// pending-review skip, anything else keeps the fail.
+function teardownFail(runDir, detail) {
+  return consoleMergeResolution(runDir) === 'leave-open' ? { ...PENDING_REVIEW_SKIP } : { result: 'fail', detail };
 }
 
 function deferredSet(expectations) {
@@ -290,7 +320,7 @@ function isUnderArchiveRoot(repoRoot, candidate) {
   return rel !== '' && rel !== '.' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
-registerCheck('run-dir-archived', ({ originalRunDir, repoRoot, expectations, deps }) => {
+registerCheck('run-dir-archived', ({ runDir, originalRunDir, repoRoot, expectations, deps }) => {
   const deferred = deferredSet(expectations);
   if (deferred.has('run-dir-archival')) return { result: 'skip', detail: 'deferred to parent console' };
   const givenPath = path.resolve(originalRunDir);
@@ -310,7 +340,10 @@ registerCheck('run-dir-archived', ({ originalRunDir, repoRoot, expectations, dep
     originalPath = givenPath;
     archivePath = path.join(pipelinesArchiveRoot(repoRoot), archiveRelativeId(originalRunDir));
   }
-  if (fs.existsSync(originalPath)) return { result: 'fail', detail: `original path still present: ${originalPath}` };
+  // #3373: only the "still present" fail is the pending-review state; the
+  // archive-missing and untracked-archive fails below are genuine archival
+  // faults that a leave-open console does not excuse.
+  if (fs.existsSync(originalPath)) return teardownFail(runDir, `original path still present: ${originalPath}`);
   if (!fs.existsSync(archivePath)) return { result: 'fail', detail: `archive path missing: ${archivePath}` };
   const archivedWork = path.join(archivePath, 'work');
   if (fs.existsSync(archivedWork)) {
@@ -324,6 +357,21 @@ registerCheck('run-dir-archived', ({ originalRunDir, repoRoot, expectations, dep
   }
   return { result: 'pass', detail: '' };
 });
+
+// The run's recorded worktree path: run-state.json's `worktree` stamp (a
+// multi-spec spec-{N}/ dir inherits the parent's), else `worktreeAtClose`
+// for a closed run -- own first, then the parent's (readRunStateWithParent
+// fills only `worktree` from the parent). null when none is usable.
+function recordedWorktree(runDir) {
+  const { state, parentRunDir } = readRunStateWithParent(runDir);
+  const usable = (v) => (typeof v === 'string' && v ? v : null);
+  let recorded = state ? usable(state.worktree) || usable(state.worktreeAtClose) : null;
+  if (!recorded && parentRunDir) {
+    const parent = readRunState(parentRunDir);
+    recorded = parent && typeof parent === 'object' ? usable(parent.worktreeAtClose) : null;
+  }
+  return recorded;
+}
 
 // ---- worktree removed ---------------------------------------------------------
 registerCheck('worktree-removed', ({ runDir, expectations, deps, cwd }) => {
@@ -342,48 +390,41 @@ registerCheck('worktree-removed', ({ runDir, expectations, deps, cwd }) => {
   }
   const list = parseWorktreeList(porcelain);
   const match = list.find((wt) => wt.path.includes(slug) || (wt.branch && wt.branch.includes(slug)));
-  if (match) return { result: 'fail', detail: `worktree still listed: ${match.path}` };
+  if (match) return teardownFail(runDir, `worktree still listed: ${match.path}`);
   // #3023: `git worktree prune` drops the registration but can leave the
   // directory behind, so an unlisted worktree is not proof of removal. The
-  // exact path comes from run-state.json's `worktree` stamp (a multi-spec
-  // spec-{N}/ dir inherits the parent's), never guessed from the slug. A
-  // closed run has `worktree: null`, so fall back to `worktreeAtClose` --
-  // own first, then the parent's (readRunStateWithParent fills only
-  // `worktree` from the parent).
-  const { state, parentRunDir } = readRunStateWithParent(runDir);
-  const usable = (v) => (typeof v === 'string' && v ? v : null);
-  let recorded = state ? usable(state.worktree) || usable(state.worktreeAtClose) : null;
-  if (!recorded && parentRunDir) {
-    const parent = readRunState(parentRunDir);
-    recorded = parent && typeof parent === 'object' ? usable(parent.worktreeAtClose) : null;
-  }
+  // exact path comes from run-state.json's `worktree` stamp, never guessed
+  // from the slug -- see recordedWorktree above.
+  const recorded = recordedWorktree(runDir);
   if (recorded && fs.existsSync(recorded)) {
-    return { result: 'fail', detail: `worktree unlisted but directory still present: ${recorded}` };
+    return teardownFail(runDir, `worktree unlisted but directory still present: ${recorded}`);
   }
   return { result: 'pass', detail: '' };
 });
 
 // ---- resolved-issue-number resolution --------------------------------------
 //
-// existsSync-then-read is a TOCTOU by construction: this project's own
-// reconcile/archive processes concurrently prune exactly these pipeline
-// run-dirs. Reading straight off readdirSync (no existsSync guard -- a
-// missing work/ throws ENOENT the same as a mid-read prune) and wrapping in
-// try/catch degrades to "no headers found" (falls through to the
-// expectations-file fallback below) on either case, rather than throwing
-// uncaught -- matching every other read site in this module.
+// Records resolve through pack.js's resolveRecords (#3365) — the same ladder
+// wrap-up-pack.json's inputs.records uses: the run dir's own work/ headers,
+// then the worktree's mirror of the run dir (the materialized header is
+// committed in the worktree only and reaches the main checkout by merge).
+// The worktree comes from run-state.json via readRunStateWithParent (a
+// multi-spec spec-{N}/ dir inherits the parent's), falling back to
+// worktreeAtClose for a closed run. Only the header rungs count: manifest
+// ids include not-run/failed specs whose PR-body line is `Refs`, not
+// `Fixes`, so a manifest-only resolution falls through to the expectations
+// fallback below, exactly as before. readdir degrades to [] and headerRecords
+// skips an unreadable file, so a concurrent reconcile/archive prune reads as
+// "no headers found" rather than throwing.
+const RECORD_DEPS = {
+  readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
+  readFile: (p) => fs.readFileSync(p, 'utf8'),
+};
+const HEADER_SOURCES = new Set(['headers', 'worktree-headers']);
+
 function resolvedIssueNumbers(runDir) {
-  const workDir = path.join(runDir, 'work');
-  const fromHeaders = [];
-  try {
-    for (const entry of fs.readdirSync(workDir)) {
-      if (!entry.endsWith('-spec.md')) continue;
-      const content = fs.readFileSync(path.join(workDir, entry), 'utf8');
-      const m = content.match(/^record:\s*(\d+)/m);
-      if (m) fromHeaders.push(Number(m[1]));
-    }
-  } catch { /* work/ absent, or pruned mid-read (reconcile/archive race) -- fall through to the expectations fallback below */ }
-  if (fromHeaders.length) return fromHeaders;
+  const { records, source } = resolveRecords(RECORD_DEPS, runDir, recordedWorktree(runDir));
+  if (HEADER_SOURCES.has(source) && records.length) return records;
   const expPath = path.join(runDir, 'verify-expectations.json');
   if (fs.existsSync(expPath)) {
     try {
@@ -946,4 +987,5 @@ module.exports = {
   defaultGh,
   resolveParent,
   resolvePrNumber,
+  resolvedIssueNumbers,
 };

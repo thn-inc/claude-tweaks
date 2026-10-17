@@ -26,8 +26,8 @@ files:
 ### 2. Verify fails `worktree-removed` while the folder survives
 - **Action:** `wrap-up-engine.js verify`'s `worktree-removed` row first checks `git worktree list` (still listed → `fail — worktree still listed: {path}`). When the worktree is unlisted, it reads the run's recorded path — `run-state.json`'s `worktree`, or `worktreeAtClose` once `close-run` has nulled `worktree` (a `spec-{N}/` dir also checks its parent) — and fails with `worktree unlisted but directory still present: {path}` if that path exists.
 - **Should feel:** Consistent with Step 1 — teardown and verify never disagree about the same folder.
-- **Should understand:** `close-run` writes `worktreeAtClose` precisely because every sanctioned removal path closes the run first; without it the on-disk check would have no path to look at and would pass by default.
-- **Red flags:** `worktree-removed: pass` for a run whose recorded worktree folder still exists.
+- **Should understand:** `close-run` writes `worktreeAtClose` precisely because every sanctioned removal path closes the run first; without it the on-disk check would have no path to look at and would pass by default. One exception (#3373): when the run's `console.json` records merge resolution `leave-open`, both of these fails render `skip (pending-review — teardown follows the human merge)` instead. That run's worktree is supposed to stay until a human merges the PR. The check reads only that recorded resolution, never the PR's live state, so a `leave-open` run that was later merged and torn down still reads `skip` here. For such a run, verify does not catch a folder that survived teardown; Step 1's `still present` line does.
+- **Red flags:** `worktree-removed: pass` for a run whose recorded worktree folder still exists; a `skip (pending-review …)` row on a run whose console resolved the merge as anything other than `leave-open`.
 
 ### 3. The wrap-up report blocks on a surviving folder
 - **Action:** `summary-template.md`'s Verdict carve-out lets a lone `worktree-removed` fail read "not applicable — pending this session's own worktree exit" only when its detail is `worktree still listed` (the session simply hasn't exited yet). A `worktree unlisted but directory still present` fail is never carved out — it blocks like any other failing check, and the report names the path.
@@ -44,4 +44,5 @@ files:
 ## Origin
 - Created during build of #3023 (post-merge cleanup reports a clean result when the state is not clean)
 - Steps 1-4 built in this session
+- Updated for #3373 (Step 2's `worktree-removed` fails render a pending-review `skip` when `console.json` records merge resolution `leave-open`)
 - Related journeys: `recover-a-teardown-with-no-recorded-worktree.md` (the same `teardown-run` call when no worktree was recorded at all), `verify-wrap-ups-closure-checklist-900.md` (the `verify` checklist this row belongs to), `sweep-only-your-own-residue-at-close-time.md` (the residue sweep the release probe runs inside)

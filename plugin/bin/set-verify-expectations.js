@@ -15,7 +15,10 @@
 //                        absent; an existing file keeps its recorded fields.
 //   --deferred           replace `deferred` (the multi-spec defer protocol's
 //                        cleanup items).
-//   --issues             replace `issues` (a run with no materialized header).
+//   --issues             replace `issues` (step 11 writes it on every
+//                        non-Approve-all resolution, as verify's post-cleanup
+//                        fallback once the worktree mirror may already be
+//                        gone).
 //   --oversight-exempt   add record numbers to `oversightExempt` (a union —
 //                        the Oversight-floor gate records one at a time).
 //   --file               a JSON object carrying any of memory, upstream,

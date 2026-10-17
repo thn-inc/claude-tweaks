@@ -5,7 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync: realExecFileSync } = require('node:child_process');
-const { renderVerifyTable, runVerify, registerCheck, resolvePrNumber, resolveArchivedRunDir } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
+const { renderVerifyTable, runVerify, registerCheck, resolvePrNumber, resolveArchivedRunDir, resolvedIssueNumbers } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
+const { resolveRecords } = require('../../../plugin/bin/lib/wrap-up/pack');
 const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
 
 function makeTmpDir(prefix) {
@@ -199,6 +200,151 @@ test('AC1: fixture run-dir with one unexecuted approved action exits 3 naming th
     assert.strictEqual(cleanResult.exitCode, 0);
   } finally {
     fs.rmSync(originalPath, { recursive: true, force: true });
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+// #3373: a console that resolved the merge as `leave-open` leaves the PR open
+// for a human, so the run dir and worktree legitimately remain -- both teardown
+// checks render the pending-review skip instead of a fail. Placed before the
+// forced-fail probe below for the same reason as AC1/AC2 above (the AC1 test
+// needs a real, input-driven exitCode 0).
+const PENDING_REVIEW_DETAIL = 'pending-review — teardown follows the human merge';
+
+function writeConsole(runDir, resolution) {
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true, merge: { resolution, reason: 'test' } }));
+}
+
+// Shared setup for the "teardown missing" cases: run dir present and the
+// worktree still listed, with `prepare` deciding what console.json holds.
+function verifyWithTeardownMissing(prepare) {
+  const repoRoot = makeCleanRepoRoot();
+  const runDir = path.join(repoRoot, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-3373');
+  fs.mkdirSync(runDir, { recursive: true });
+  prepare(runDir);
+  const fakeGit = (args) => {
+    if (args[0] === 'worktree') {
+      return 'worktree /repo/.claude/worktrees/flow-spec-3373\nbranch refs/heads/worktree-flow-spec-3373\n\n';
+    }
+    return '';
+  };
+  try {
+    return runVerify({ runDir, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: fakeGit, gh: () => '' } });
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+}
+
+test('#3373: run-dir-archived skips with the pending-review reason when console.json records leave-open and the original path is still present', () => {
+  const result = verifyWithTeardownMissing((runDir) => writeConsole(runDir, 'leave-open'));
+  const row = result.rows.find((r) => r.check === 'run-dir-archived');
+  assert.strictEqual(row.result, 'skip');
+  assert.strictEqual(row.detail, PENDING_REVIEW_DETAIL);
+});
+
+test('#3373: worktree-removed skips with the pending-review reason when console.json records leave-open and the worktree is still listed', () => {
+  const result = verifyWithTeardownMissing((runDir) => writeConsole(runDir, 'leave-open'));
+  const row = result.rows.find((r) => r.check === 'worktree-removed');
+  assert.strictEqual(row.result, 'skip');
+  assert.strictEqual(row.detail, PENDING_REVIEW_DETAIL);
+});
+
+test('#3373: leave-open still passes when teardown already happened', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const runId = '2026-01-01T000000-spec-3373';
+  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  const archivePath = path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive', runId);
+  fs.mkdirSync(archivePath, { recursive: true });
+  writeConsole(archivePath, 'leave-open');
+  try {
+    const result = runVerify({ runDir: archivePath, originalRunDir: originalPath, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+    assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'pass');
+    assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'pass');
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('#3373: merge resolution keeps run-dir-archived and worktree-removed failing when teardown is missing', () => {
+  const result = verifyWithTeardownMissing((runDir) => writeConsole(runDir, 'merge'));
+  assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'fail');
+  assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
+  assert.strictEqual(result.exitCode, 3);
+});
+
+test('#3373: no console.json keeps both checks failing when teardown is missing', () => {
+  const result = verifyWithTeardownMissing(() => {});
+  assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'fail');
+  assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
+});
+
+test('#3373: malformed console.json keeps both checks failing', () => {
+  const result = verifyWithTeardownMissing((runDir) => fs.writeFileSync(path.join(runDir, 'console.json'), '{not json'));
+  assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'fail');
+  assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
+});
+
+test('#3373: a multi-spec parent run dir with a leave-open console.json keeps both checks failing', () => {
+  const result = verifyWithTeardownMissing((runDir) => {
+    writeConsole(runDir, 'leave-open');
+    fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  specs: []\n');
+  });
+  assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'fail');
+  assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
+});
+
+test('#3373: leave-open does not excuse a missing archive path', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const runId = '2026-01-01T000000-spec-3373';
+  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  const consoleDir = makeTmpDir('verify-leave-open-archive-missing-');
+  writeConsole(consoleDir, 'leave-open');
+  try {
+    const result = runVerify({ runDir: consoleDir, originalRunDir: originalPath, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'run-dir-archived');
+    assert.strictEqual(row.result, 'fail');
+    assert.match(row.detail, /archive path missing/);
+  } finally {
+    fs.rmSync(consoleDir, { recursive: true, force: true });
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('#3373: leave-open does not excuse an archived work/ dir that is not git-tracked', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const runId = '2026-01-01T000000-spec-3373';
+  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  const archivePath = path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive', runId);
+  fs.mkdirSync(path.join(archivePath, 'work'), { recursive: true });
+  writeConsole(archivePath, 'leave-open');
+  try {
+    const result = runVerify({ runDir: archivePath, originalRunDir: originalPath, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'run-dir-archived');
+    assert.strictEqual(row.result, 'fail');
+    assert.match(row.detail, /is not git-tracked/);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('#3373 AC1: leave-open run exits 0 when every other check passes', () => {
+  const runId = 'test-ac1-leave-open-3373';
+  const repoRoot = makeCleanRepoRoot();
+  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(originalPath, { recursive: true });
+  writeExpectations(originalPath, { version: 1, memory: [], upstream: [] });
+  writeConsole(originalPath, 'leave-open');
+  try {
+    const fakeGitDirty = (args) => {
+      if (args[0] === 'worktree') return `worktree /repo/.claude/worktrees/flow-${runId}\nbranch refs/heads/worktree-flow-${runId}\n\n`;
+      return '';
+    };
+    const result = runVerify({ runDir: originalPath, base: 'main', repoRoot, cwd: repoRoot, deps: { git: fakeGitDirty, gh: () => 'gh version 2.0.0' } });
+    assert.strictEqual(result.exitCode, 0, `failing rows: ${result.rows.filter((r) => r.result === 'fail').map((r) => r.check).join(', ')}`);
+    assert.strictEqual(result.rows.filter((r) => r.result === 'fail').length, 0);
+    assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'skip');
+    assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'skip');
+  } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });
   }
 });
@@ -952,6 +1098,89 @@ test('carrier-commit check prefers a materialized header over expectations issue
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
   const row = result.rows.find((r) => r.check === 'carrier-commit');
   assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+// ---- #3365: resolvedIssueNumbers reads the worktree mirror ----
+//
+// The materialized header is committed in the worktree only, so a
+// main-checkout run dir has no work/ before merge. These fixtures put the run
+// dir under a real `.claude-tweaks/pipelines/{run-id}` path (worktreeMirror
+// keys on that segment) and the header only under the worktree's mirror.
+
+const mirrorRoots = [];
+test.after(() => {
+  for (const root of mirrorRoots) fs.rmSync(root, { recursive: true, force: true });
+});
+
+function mirrorFixture({ runId = '2026-10-17T075913-spec-3337', specSubdir = null, record = 3337, state }) {
+  const root = makeTmpDir('verify-mirror-');
+  mirrorRoots.push(root);
+  const parentDir = path.join(root, 'main', '.claude-tweaks', 'pipelines', runId);
+  const runDir = specSubdir ? path.join(parentDir, specSubdir) : parentDir;
+  fs.mkdirSync(runDir, { recursive: true });
+  const wtDir = path.join(root, 'wt');
+  const mirrorWork = specSubdir
+    ? path.join(wtDir, '.claude-tweaks', 'pipelines', runId, specSubdir, 'work')
+    : path.join(wtDir, '.claude-tweaks', 'pipelines', runId, 'work');
+  fs.mkdirSync(mirrorWork, { recursive: true });
+  if (record !== null) {
+    fs.writeFileSync(path.join(mirrorWork, `${record}-spec.md`), `---\nrecord: ${record}\n---\n# ${record}: title\n`);
+  }
+  fs.writeFileSync(path.join(parentDir, 'run-state.json'), JSON.stringify(state(wtDir)));
+  if (specSubdir) fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  return { root, runDir, wtDir };
+}
+
+test('#3365: resolvedIssueNumbers resolves a record from the worktree mirror when the run dir has no work/', () => {
+  const { runDir } = mirrorFixture({ state: (wt) => ({ status: 'active', worktree: wt }) });
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [3337]);
+});
+
+test('#3365: resolvedIssueNumbers still falls back to expectations issues when neither location has a header', () => {
+  const { runDir } = mirrorFixture({ record: null, state: (wt) => ({ status: 'active', worktree: wt }) });
+  writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [900] });
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [900]);
+});
+
+test('#3365: resolvedIssueNumbers reads worktreeAtClose when a closed run nulled worktree', () => {
+  const { runDir } = mirrorFixture({ state: (wt) => ({ status: 'closed', worktree: null, worktreeAtClose: wt }) });
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [3337]);
+});
+
+test('#3365: a multi-spec spec-{N}/ run dir inherits the parent run-state worktree for the mirror read', () => {
+  const { runDir } = mirrorFixture({ specSubdir: 'spec-3337', state: (wt) => ({ status: 'active', worktree: wt }) });
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [3337]);
+});
+
+test('#3365: a closed multi-spec spec-{N}/ dir reads the parent worktreeAtClose for the mirror read', () => {
+  const { runDir } = mirrorFixture({ specSubdir: 'spec-3337', state: (wt) => ({ status: 'closed', worktree: null, worktreeAtClose: wt }) });
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [3337]);
+});
+
+test('#3365: a parent run dir with only a manifest does not treat manifest ids as resolved records (Ruling R1)', () => {
+  const { runDir, wtDir } = mirrorFixture({ record: null, state: (wt) => ({ status: 'active', worktree: wt }) });
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  parent: 3300\n  specs:\n    - id: 3337\n      status: not-run\n      subdir: spec-3337/\n');
+  writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [900] });
+  // Precondition: this fixture must actually reach the manifest rung of
+  // resolveRecords — otherwise the assertion below would pass regardless of
+  // whether resolvedIssueNumbers' HEADER_SOURCES filter is even present
+  // (a manifest with no `parent:` line fails to parse and resolveRecords
+  // never gets past 'unavailable', making the whole test non-discriminating).
+  const precondition = resolveRecords(
+    { readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } }, readFile: (p) => fs.readFileSync(p, 'utf8') },
+    runDir,
+    wtDir,
+  );
+  assert.strictEqual(precondition.source, 'manifest', 'fixture does not reach the manifest rung — test would be non-discriminating');
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [900]);
+});
+
+test('#3365: carrier-commit fails, not skips, for a mirror-resolved record with no closing keyword on branch or PR', () => {
+  const { runDir } = mirrorFixture({ state: (wt) => ({ status: 'active', worktree: wt }) });
+  const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'fail', row.detail);
+  assert.match(row.detail, /3337/);
 });
 
 // ---- carrier-commit PR-body fallback (record #900 fix round, C1) ----

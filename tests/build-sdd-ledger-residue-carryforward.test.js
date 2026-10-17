@@ -24,14 +24,25 @@ test('dispatch.md: Common Step 2 subagent-strategy invocation directs the ledger
   );
 });
 
-test('dispatch.md: the directive names the source lines (progress.md minor (deferred)/parked markers)', () => {
-  assert.match(DISPATCH, /<workspace>\/progress\.md` line matching `minor \(deferred\):` or `parked —`/);
+test('dispatch.md: the directive names the source lines (progress.md minor (deferred)/parked/Ruling markers)', () => {
+  assert.match(DISPATCH, /<workspace>\/progress\.md` line matching `minor \(deferred\):`, `parked —`, or `Ruling:`/);
 });
 
 test('dispatch.md: the directive names the destination — the run ledger\'s Add Item operation, phase build, deferred/observation status', () => {
   assert.match(
     DISPATCH,
-    /this build's own open items ledger \(`\/claude-tweaks:ledger`'s Add Item operation\) — phase `build`, status `deferred` for a `minor \(deferred\):` line or `observation` for a `parked —` line/
+    /this build's own open items ledger \(`\/claude-tweaks:ledger`'s Add Item operation\) — phase `build`, status `deferred` for a `minor \(deferred\):` line or `observation` for a `parked —` or `Ruling:` line/
+  );
+});
+
+test('dispatch.md: a line carrying two markers is copied once, under its first match', () => {
+  assert.match(DISPATCH, /a line matching more than one marker is copied once, under its first match in that order/);
+});
+
+test('dispatch.md: the carry-forward states why Ruling: lines matter under SDD 6.3.0+', () => {
+  assert.match(
+    DISPATCH,
+    /SDD 6\.3\.0\+ ledgers its pre-flight, fix-loop breaker and final-review decisions as `Ruling:` lines instead of stopping for the human/
   );
 });
 

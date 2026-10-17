@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/lib/wrap-up/engine-verify.js
+  - plugin/bin/lib/wrap-up/pack.js
   - plugin/bin/wrap-up-engine.js
   - plugin/skills/wrap-up/execution-and-verification.md
   - plugin/skills/wrap-up/review-console.md
@@ -26,7 +27,7 @@ files:
 - **URL:** the same command's stdout
 - **Action:** Inspect a row of each kind — `pass`, `fail`, `skip (reason)`, `unknown (reason)`.
 - **Should feel:** Each state means something different and none of them silently substitute for another.
-- **Should understand:** `pass`/`skip`/`unknown` never change the exit code — only `fail` does (or a `null` run dir, which forces exit 3 even though every row renders `unknown`). `skip` means a real, known condition why the check doesn't apply here (e.g. `deferred to parent console`, `nothing recorded`, or `plans-ledger`'s "found, not owned by this run" — residue that predates the run dir's own creation time, reported informationally rather than counted as a fail, #2552). `unknown` means the check genuinely could not run (`gh` absent, `verify-expectations.json` missing) — visible, but not blocking, matching how the old checklist surfaced an un-runnable check rather than treating it as a failed action.
+- **Should understand:** `pass`/`skip`/`unknown` never change the exit code — only `fail` does (or a `null` run dir, which forces exit 3 even though every row renders `unknown`). `skip` means a real, known condition why the check doesn't apply here (e.g. `deferred to parent console`, `nothing recorded`, or `plans-ledger`'s "found, not owned by this run" — residue that predates the run dir's own creation time, reported informationally rather than counted as a fail, #2552). Another such condition is `run-dir-archived`/`worktree-removed` reading `skip (pending-review — teardown follows the human merge)` when the run's `console.json` records merge resolution `leave-open`. That is the designed resting state of a pr-first run parked for a human merge, where the worktree must stay and the reconciler archives later (#3373). `unknown` means the check genuinely could not run (`gh` absent, `verify-expectations.json` missing) — visible, but not blocking, matching how the old checklist surfaced an un-runnable check rather than treating it as a failed action.
 - **Red flags:** A multi-line or pipe-containing detail string breaking the table's column count (the renderer sanitizes this — collapsing whitespace and escaping `|` — so a broken table here means the sanitizer itself regressed).
 
 ### 3. Trace a memory or upstream row back to the console that recorded it
@@ -41,7 +42,7 @@ files:
 - **Action:** Run the verb against a run where one approved cleanup action didn't actually execute (e.g. the worktree is still listed, or the archive path is missing).
 - **Should feel:** The pipeline stops here, not three steps later when something downstream trips over the half-finished state.
 - **Should understand:** Exit code `3` means "surface `BLOCKED — {failing check row, verbatim}` and stop" — never emit the closure line. This is a genuinely new exit code (`0` unchanged, `1`/`2` keep their existing "bad payload"/"malformed invocation" meanings from the verb's sibling `plan`/`record`/`render` commands).
-- **Red flags:** The closure line emitting anyway despite a `fail` row in the table; a `BLOCKED` message that doesn't name which check failed.
+- **Red flags:** The closure line emitting anyway despite a `fail` row in the table; a `BLOCKED` message that doesn't name which check failed; a run whose Review Console resolved the merge to `leave-open` reporting `BLOCKED` on `run-dir-archived` or `worktree-removed` because its worktree and run dir were correctly left in place for the human merge (#3373). The other path holds just as firmly: a `merge` resolution, an absent or unreadable `console.json`, or a multi-spec parent run dir (one holding `manifest.yml`, whose `console.json` always reads `leave-open` and is never the bundle's merge decision) must still `fail` when teardown is missing — and `run-dir-archived`'s `archive path missing` and `not git-tracked` rows fail under every resolution, `leave-open` included.
 
 ### 5. Run it with `gh` unavailable
 - **URL:** the same command, in an environment with no `gh` on `PATH`
@@ -50,9 +51,18 @@ files:
 - **Should understand:** The verb is deliberately `gh`-CLI-only (module header states this) — a `gh`-absent row always renders `unknown (gh absent)`, never a silent `pass`. Any MCP-path manual verification stays the skill prose's affair, outside this verb's scope.
 - **Red flags:** A `gh`-dependent check reporting `pass` when `gh` never actually ran.
 
+### 6. Confirm `carrier-commit` checked this run's record
+- **URL:** the table's `carrier-commit` row, from the same command
+- **Action:** On a worktree run, read the row and compare it against the record the run built.
+- **Should feel:** The closing-keyword check actually ran against this run's record. A missing `Fixes #N` shows up as a failure you can act on, never as a quiet skip.
+- **Should understand:** The record numbers come from the run's materialized header, read through `pack.js`'s `resolveRecords`. That is the run dir's own `work/` first, then the worktree's mirror of the run dir: on a worktree run the header is committed only on the feature branch, so the main-checkout run dir has no `work/` before merge. A closed run's worktree comes from `worktreeAtClose`, and a multi-spec `spec-{N}/` dir uses its parent's stamps. Only header records count. A multi-spec manifest's ids include specs that never ran, whose PR line is `Refs`, not `Fixes`. When no header resolves (cleanup already removed the worktree, as it does before verify under pr-first), the row falls back to `verify-expectations.json`'s `issues` array. Review Console step 11 writes that array on every resolution except Approve all (#3394 tracks that gap). `skip (no resolved issue numbers found)` is correct only for conversation-based work with no record at all.
+- **Red flags:** `carrier-commit` reporting `skip` on a record-mode worktree run whose worktree still exists. That is the main-checkout-only read that #3365 removed. Also a `pass` when neither the branch log nor the PR body carries a closing keyword for the record.
+
 ## Origin
 - Created during build of #900 (wrap-up verify verb — mechanizes `execution-and-verification.md`'s hand-run closure checklist into a deterministic table), part of the shared #343+#900 `/flow` multi-spec run.
 - Related: #343 (prerequisite — fixed the same skill file's circular gate condition on the same branch), #892/#891 (the sibling `bin/verify.js` deterministic-check-runner family — a different subsystem covering type/lint/test checks, not this feature's closure-gate checks).
 - Updated for #1222 (`plans-ledger`/`design-caches` switched from scanning `repoRoot` to the verb's own invoking `cwd`, closing record #900 finding #3 — a worktree-local leftover was structurally invisible to a main-checkout-only scan under the default `worktree`/`pr-first` mode).
 - Updated for #1841 (`acceptance-labeling`'s parent resolution migrated from `gh issue view --json parent` to GraphQL, since `gh` <2.96 rejects that field — the check's gather failure now actually renders `unknown` for this case, matching Step 2's always-documented `unknown` contract rather than the `fail` the old REST call produced on an incompatible `gh` version; the observable row vocabulary and Step 5's gh-absent behavior are unchanged).
 - Updated for #2552 (`run-dir-archived` now resolves correctly regardless of which of the two candidate paths `--run-dir` is invoked with; `reference-repairs` under `integration-model: pr-first` verifies via the PR's own commit list instead of walking `{base}..HEAD`; `plans-ledger` reports pre-existing, not-this-run's residue as an informational `skip` rather than a `fail`).
+- Updated for #3373. `run-dir-archived` (only its "original path still present" fail) and `worktree-removed` now render `skip (pending-review — teardown follows the human merge)` instead of `fail` when `console.json` records merge resolution `leave-open`. The input is read fail-open, and there is no live PR-state read. The observed trigger was run `2026-10-17T093021-record-3335`, which was otherwise clean but forced to report `BLOCKED`.
+- Updated for #3365: `carrier-commit` resolves its record numbers through `pack.js`'s `resolveRecords`, reading the run dir's own `work/` and then the worktree mirror, using header rungs only. It no longer reads only the main-checkout run dir, which is empty before merge. A record that lacks a closing keyword now fails instead of silently skipping. Added step 6.

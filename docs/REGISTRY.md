@@ -14,7 +14,7 @@
 | README.md | Project overview, install, skill index | `plugin/.claude-plugin/plugin.json`, `plugin/skills/**/SKILL.md` |
 | CLAUDE.md | How to work in this codebase — stack, structure, conventions, philosophy, releasing, Don'ts | `plugin/.claude-plugin/plugin.json`, `package.json`, `plugin/skills/_shared/*.md` |
 | docs/getting-started.md | Full skill reference — every `/claude-tweaks:*` command with its behavior | `plugin/skills/**/*.md` |
-| docs/plugin-structure.md | Directory tree, per-skill sub-file table, command reference | `plugin/skills/**/*.md`, `plugin/skills/**/*.yml`, `plugin/skills/**/*.html`, `plugin/skills/**/*.mjs`, `plugin/bin/**/*.js` |
+| docs/plugin-structure.md | Directory tree, per-skill sub-file table, command reference | `plugin/skills/**/*.md`, `plugin/skills/**/*.yml`, `plugin/skills/**/*.html`, `plugin/skills/**/*.mjs`, `plugin/bin/**/*.js`, `tools/**/*.js` |
 | docs/skill-graph.md | Every skill-to-skill relationship/edge (single source of truth) | `plugin/skills/**/*.md`, `plugin/skills/**/routine-template.yml` |
 | docs/donts.md | Full Don'ts rule list (extracted from CLAUDE.md's `## Don'ts`, which now holds only a pointer) | CLAUDE.md `## Don'ts`, `plugin/bin/lib/hooks/**` |
 | docs/hooks.md | Hook dispatcher contract — tiered posture, run-dir resolution and ownership, never-break-a-session invariant, consumers (extracted from CLAUDE.md's `### Hooks`, which now holds only a pointer) | `plugin/bin/hooks.js`, `plugin/bin/lib/hooks/**`, `plugin/hooks/hooks.json`, `plugin/bin/lib/reconcile/**` |

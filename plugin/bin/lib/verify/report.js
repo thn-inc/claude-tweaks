@@ -97,8 +97,9 @@ function composeReport({
   // threshold — absence over an empty array, same as the fields above.
   if (Array.isArray(flakyEscalation) && flakyEscalation.length) report.flakyEscalation = flakyEscalation;
   // #3043: the baseline adjudication (verify.js --baseline) — omitted when none
-  // ran. `pass` above stays the raw "every check exited 0"; the verdict lives
-  // only here.
+  // ran. `pass` above stays the raw "every check exited 0"; the adjudication
+  // detail lives here, and verify.js records the overall verdict as
+  // `effectivePass` (#3316).
   if (baselineAdjudicated !== null) report.baselineAdjudicated = baselineAdjudicated;
   // #3129: the declared-pre-existing-failures adjudication (verify-scope.json's
   // `preExisting`) — omitted when it never ran or never applied. Mutually

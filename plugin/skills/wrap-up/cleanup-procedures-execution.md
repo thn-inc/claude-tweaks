@@ -61,21 +61,38 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
 
 1. Run `git worktree list` to find worktrees associated with this spec's feature branch.
 2. **Stamp the closing-keyword carrier commit — worktree strategy, single-terminal path only.**
-   Skip this step entirely when this run is part of a multi-terminal-parallel dispatch destined
-   for `flow/worktree-merge.md`'s reconciliation merge (the run was launched via
-   `/claude-tweaks:flow {spec} worktree` alongside sibling terminals, not a solo worktree run) —
-   that merge stamps its own `Fixes #{issue}` lines directly (`--no-ff`, per "Close-via-merge" in
-   `_shared/issue-claims.md`), and a carrier commit here would double-stamp the closing
-   reference. Otherwise, check for a materialized header — glob `${RUN_DIR}/work/*-spec.md`
-   (the file `skills/flow/materialize.md` writes and never deletes) and read each match's
-   header `record:` field:
+   **`integration-model: pr-first` (`_shared/integration-model.md`): skip this step entirely** —
+   FYI: the run's PR body already carries the `Fixes #{issue}` lines
+   (`_shared/pr-early-run-lifecycle.md`). Also skip it when this run is part of a
+   multi-terminal-parallel dispatch destined for `flow/worktree-merge.md`'s reconciliation merge
+   (the run was launched via `/claude-tweaks:flow {spec} worktree` alongside sibling terminals,
+   not a solo worktree run) — that merge stamps its own `Fixes #{issue}` lines directly
+   (`--no-ff`, per "Close-via-merge" in `_shared/issue-claims.md`), and a carrier commit here
+   would double-stamp the closing reference. Otherwise, take the issue set from
+   `{run-dir}/wrap-up-pack.json`'s `inputs.records` (Phase 3's fact pack — `pack.js`'s
+   `resolveRecords`, which already reads the worktree's mirror of the run dir, since the header
+   reaches the main checkout only by merge) — but only when the pack's `inputs.sources.records`
+   reads `headers` or `worktree-headers`; a `manifest`/`worktree-manifest` source carries a parent
+   multi-spec run's sibling ids, including `not-run`/`failed` specs with no closing keyword to
+   stamp, so treat the issue set as empty in that case (Ruling R1). Only when the pack is absent (a
+   `cleanup-only` run skips Phase 3), glob the worktree mirror instead —
+   `{worktree}/.claude-tweaks/pipelines/{run-id}/work/*-spec.md`, where `{worktree}` is
+   `run-state.json`'s `worktree` (else `worktreeAtClose`) and `{run-id}` is the run dir's path
+   after its `.claude-tweaks/pipelines/` segment (for a per-spec dir, `{run-id}/spec-{N}`) — and
+   read each match's header `record:` field:
 
    ```bash
    ISSUES=()
-   for f in "${RUN_DIR}"/work/*-spec.md; do
-     [ -e "$f" ] || continue
-     ISSUES+=("$(grep -m1 '^record:' "$f" | sed 's/^record: *//')")
-   done
+   PACK="${RUN_DIR}/wrap-up-pack.json"
+   MIRROR="{worktree}/.claude-tweaks/pipelines/{run-id}"
+   if [ -f "$PACK" ]; then
+     ISSUES=($(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const s=(p.inputs&&p.inputs.sources&&p.inputs.sources.records)||"";if(["headers","worktree-headers"].includes(s))console.log((p.inputs.records||[]).join(" "))' "$PACK"))
+   else
+     for f in "${MIRROR}"/work/*-spec.md; do
+       [ -e "$f" ] || continue
+       ISSUES+=("$(grep -m1 '^record:' "$f" | sed 's/^record: *//')")
+     done
+   fi
    if [ "${#ISSUES[@]}" -gt 0 ]; then
      git commit --allow-empty -m "$(printf 'Fixes #%s\n' "${ISSUES[@]}")"
    fi
@@ -84,9 +101,9 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    One `Fixes #{issue}` line per resolved issue on the branch — *before* handing off to
    `/superpowers:finishing-a-development-branch`, from inside the worktree. A legacy
    spec-file-mode run (no `#N` origin, no materialized header — "pure-local", per
-   `materialize.md`'s alias) has no `work/` file: the loop above finds nothing, `$ISSUES` stays
-   empty, and this step is a no-op — no carrier commit, no closing keyword, because there was
-   never an issue to close. Skip the commit if one for these issues already exists on the
+   `materialize.md`'s alias) has no `work/` file: the resolution above finds nothing, `$ISSUES`
+   stays empty, and this step is a no-op — no carrier commit, no closing keyword, because there
+   was never an issue to close. Skip the commit if one for these issues already exists on the
    branch (`git log {branch} --grep="Fixes #{issue}"` — avoids duplicate empty commits if this
    step re-runs after an interruption).
 
@@ -312,7 +329,10 @@ branch/commit reference, or, when `skills/flow/materialize.md` wrote one, a mate
 through `/claude-tweaks:dispatch` never held a claim either: step 3's CLI exits `3` (already
 released / never claimed) or `4` (held by another run) there without touching the blob. Release it
 only after the branch outcome is known (item 4, Git
-Worktree, completes first — the execution order of the canonical list guarantees this):
+Worktree, completes first — the execution order of the canonical list guarantees this). The one
+exception: step 7's `parked-at-shaping` read happens at the very start of this execution step,
+before item 4 runs — item 4 removes the worktree that field is read from, and nothing else in the
+canonical list reads it earlier.
 
 Before any step below runs a `gh` command, run the Detection Ladder from
 `_shared/forge-detection.md` (checks 1-3). Checks 1 (GitHub remote) and 3 (repo reachable) are
@@ -415,9 +435,13 @@ checks 1 or 3 fail.
 7. **Remove `bot:in-progress`; restore `parked` if applicable.** `--remove-in-progress` (always
    passed) removes `bot:in-progress` — best-effort, the CLI logs a warning and continues on
    failure. Then, only when the outcome reason is `abandoned: spec {spec}` (i.e. NOT
-   `merged:`/`pr-opened:`) AND the materialized header (`${RUN_DIR}/work/*-spec.md` — read
-   directly; per the step above, the file is never deleted before this point) carries
-   `parked-at-shaping: true` (`materialize.md`'s field for exactly this restore-on-abandon case):
+   `merged:`/`pr-opened:`) AND the materialized header carries
+   `parked-at-shaping: true` (`materialize.md`'s field for exactly this restore-on-abandon case —
+   read at the start of Phase 4's execution step, before item 4 runs, from the worktree mirror,
+   `{worktree}/.claude-tweaks/pipelines/{run-id}/work/{issue}-spec.md` resolved as in Section C
+   step 2, while the worktree still exists, since item 4 removes it before this step runs; a
+   `current-branch` run has no worktree and item 4 never runs, so the run dir's own
+   `work/{issue}-spec.md` holds the header — read it there):
    restore `parked` — bootstrap the label if missing (per _shared/label-bootstrap.md, LABELS_JSON =
    [['parked', 'Deferred backlog entry, waiting on a trigger condition', '2EA44F']]), then
    `gh issue edit "$ISSUE" --add-label parked`. Skip restoration silently when no materialized

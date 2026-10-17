@@ -12,11 +12,18 @@
 // Roots default to the "test" script's set (`tests`, `tools/upstream-drift/tests`); pass one or
 // more repo-relative root paths as CLI positional args to override — `test:perf` invokes this as
 // `node tools/run-tests.js perf`.
+//
+// Elsewhere the explicit file list goes to `node --test`; on Windows (Node >= 22) the root globs
+// go instead, because ~780 paths overflow the 32,767-char command line (#3316).
 
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
+// The repo root every root path is relative to — both the explicit file list and the win32
+// root globs resolve against it (the spawned `node --test` runs with it as cwd), so the two
+// branches select the same files whatever directory the caller ran this from.
+const REPO_ROOT = path.join(__dirname, '..');
 const DEFAULT_ROOTS = ['tests', path.join('tools', 'upstream-drift', 'tests')];
 
 // Reads `dir` directly and treats a missing directory as "no files here" — never
@@ -47,7 +54,7 @@ function collectTestFiles(dir, results) {
 // produce. `roots` defaults to DEFAULT_ROOTS (the "test" script's set) when omitted or empty.
 // Exported so tests can exercise the selection logic directly instead of shelling out.
 function listTestFiles(cwd, roots) {
-  const base = cwd || path.join(__dirname, '..');
+  const base = cwd || REPO_ROOT;
   const useRoots = roots && roots.length ? roots : DEFAULT_ROOTS;
   const files = [];
   for (const root of useRoots) {
@@ -57,12 +64,27 @@ function listTestFiles(cwd, roots) {
   return files;
 }
 
-module.exports = { listTestFiles };
+// Returns the argv (after the node binary) for `node --test`. The explicit file list is the
+// default — `node --test` glob args don't work on Node 20 (#407). On win32 that list overflows
+// the 32,767-char command line (#3316), so there it passes the root globs, which needs Node >= 22.
+// Pure: `platform` and `nodeMajor` are parameters, never read from `process`.
+function buildTestArgs(files, roots, { platform, nodeMajor }) {
+  if (platform !== 'win32') return ['--test', ...files];
+  if (nodeMajor < 22) {
+    throw new Error(
+      'the Windows command line cannot hold the explicit test-file list, and `node --test` ' +
+        `globs need Node >= 22 on Windows (running Node ${nodeMajor}).`,
+    );
+  }
+  return ['--test', ...roots.map((root) => `${root.split(/[\\/]/).join('/')}/**/*.test.js`)];
+}
+
+module.exports = { listTestFiles, buildTestArgs };
 
 if (require.main === module) {
   const argRoots = process.argv.slice(2);
   const roots = argRoots.length ? argRoots : DEFAULT_ROOTS;
-  const files = listTestFiles(undefined, roots).map((f) => path.relative(process.cwd(), f));
+  const files = listTestFiles(REPO_ROOT, roots).map((f) => path.relative(REPO_ROOT, f));
 
   // `node --test` with zero file arguments falls back to its own default-pattern
   // auto-discovery and can exit 0 having run nothing — "the suite gets quieter, not
@@ -79,7 +101,19 @@ if (require.main === module) {
 
   process.env.CT_HOOKS_GIT_TIMEOUT_MS = process.env.CT_HOOKS_GIT_TIMEOUT_MS || '60000';
 
-  const result = spawnSync(process.execPath, ['--test', ...files], {
+  let testArgs;
+  try {
+    testArgs = buildTestArgs(files, roots, {
+      platform: process.platform,
+      nodeMajor: Number(process.versions.node.split('.')[0]),
+    });
+  } catch (err) {
+    console.error(`run-tests.js: ${err.message}`);
+    process.exit(1);
+  }
+
+  const result = spawnSync(process.execPath, testArgs, {
+    cwd: REPO_ROOT,
     stdio: 'inherit',
     env: process.env,
   });

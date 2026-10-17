@@ -23,6 +23,13 @@
 // `run-tests.js` grew an optional `roots` override (CLI positional args, or
 // `listTestFiles(cwd, roots)`) so `test:perf` can invoke it as
 // `node tools/run-tests.js perf` instead of shell `find`.
+//
+// #3316: on windows-latest the explicit file list (~780 paths) overflows the 32,767-char
+// command line (spawnSync ENAMETOOLONG), so `buildTestArgs` passes the root globs there
+// instead. Glob args only work on Node >= 22 (the #407 incident above), so win32 + older Node
+// throws and every other platform keeps the explicit list. `platform`/`nodeMajor` are
+// parameters, pinned with exact arrays below — never a stubbed `process.platform` in this
+// process. Only the main block's error wiring runs in a child, under a preload that fakes both.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -31,7 +38,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-const { listTestFiles } = require(path.join(ROOT, 'tools', 'run-tests.js'));
+const { listTestFiles, buildTestArgs } = require(path.join(ROOT, 'tools', 'run-tests.js'));
 
 test('package.json test/test:perf scripts never pass a raw glob string to `node --test` directly', () => {
   // The exact anti-pattern that broke CI: a quoted glob positional arg,
@@ -132,4 +139,54 @@ test('run-tests.js\'s listTestFiles(cwd, ["perf"]) is exactly what an independen
   expected.sort();
 
   assert.deepStrictEqual(listTestFiles(ROOT, ['perf']), expected);
+});
+
+const FILES = ['tests/a.test.js', 'tests/b.test.js'];
+const ROOTS = ['tests', 'tools\\upstream-drift\\tests'];
+
+test('buildTestArgs passes the explicit file list on linux, Node 20 and Node 22 alike (#3316 — Linux never globs)', () => {
+  const expected = ['--test', 'tests/a.test.js', 'tests/b.test.js'];
+  assert.deepStrictEqual(buildTestArgs(FILES, ROOTS, { platform: 'linux', nodeMajor: 20 }), expected);
+  assert.deepStrictEqual(buildTestArgs(FILES, ROOTS, { platform: 'linux', nodeMajor: 22 }), expected);
+});
+
+test('buildTestArgs passes the explicit file list on darwin, Node 22', () => {
+  assert.deepStrictEqual(
+    buildTestArgs(FILES, ROOTS, { platform: 'darwin', nodeMajor: 22 }),
+    ['--test', 'tests/a.test.js', 'tests/b.test.js'],
+  );
+});
+
+test('buildTestArgs passes forward-slash root globs on win32, Node 22 (#3316 — the file list overflows the command line)', () => {
+  assert.deepStrictEqual(
+    buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 22 }),
+    ['--test', 'tests/**/*.test.js', 'tools/upstream-drift/tests/**/*.test.js'],
+  );
+});
+
+test('buildTestArgs globs on win32 for any Node >= 22, not only Node 22', () => {
+  assert.deepStrictEqual(
+    buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 24 }),
+    ['--test', 'tests/**/*.test.js', 'tools/upstream-drift/tests/**/*.test.js'],
+  );
+});
+
+test('buildTestArgs throws on win32 with Node < 22, naming the running major', () => {
+  assert.throws(() => buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 20 }), /Node >= 22/);
+  assert.throws(() => buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 20 }), /Node 20/);
+});
+
+test('run-tests.js\'s main block turns a buildTestArgs throw into exit 1 and one stderr line, starting no test run', () => {
+  // The only process-level test of the main block: the preload fakes win32 + Node 20 and
+  // replaces spawnSync with a tripwire, so the error path runs for real and a regression
+  // past it prints a marker instead of launching the suite. Error path only, by design.
+  const { spawnSync } = require('child_process');
+  const preload = path.join(ROOT, 'tests', 'fixtures', 'run-tests', 'win32-node20-preload.js');
+  const r = spawnSync(process.execPath, ['-r', preload, path.join('tools', 'run-tests.js')], { cwd: ROOT, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1, r.stderr);
+  const lines = r.stderr.split('\n').filter((l) => l !== '');
+  assert.strictEqual(lines.length, 1, r.stderr);
+  assert.match(lines[0], /^run-tests\.js: .*Node >= 22/);
+  assert.doesNotMatch(r.stderr, /PRELOAD-TRIPWIRE/);
+  assert.strictEqual(r.stdout, '');
 });
