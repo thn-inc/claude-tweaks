@@ -38,6 +38,16 @@
 - **merge-verification derivation is unaffected:** `plugin/bin/lib/merge-verification.js` keys on `PR_TRIGGERS = {pull_request, pull_request_target}`; the new workflow has neither, and `test.yml` already supplies the PR trigger.
 - **Docs:** no file lists `tools/` CLIs or `test.yml` (`grep -n "tools/\|\.github" docs/plugin-structure.md` → only the unrelated `mirror-marketplace.yml` row), so no docs change.
 
+### As-built deviations (Common Step 4.5)
+
+- **Base = `github.event.before`, falling back to `HEAD^1`.** `main` is not linear (its first-parent history carries merge commits), so `HEAD^1` alone mis-bases a direct multi-commit push. The fallback covers `workflow_dispatch`, a new-branch push (all-zero `before`) and a force-push.
+- **Concurrency keyed on `github.sha`, not the ref.** GitHub keeps one pending run per group and replaces it with a newer one even with `cancel-in-progress: false`; a per-ref group would skip commits and let a skipped regression become the next base.
+- **Issue de-duplication.** The filer comments on an open `type:bug` issue for the same sha (or an open "(not adjudicated)" one) instead of filing a second.
+- **Two jobs.** `windows` runs the suite with a read-only token; `file` (ubuntu) holds `issues: write` + `pull-requests: read` and never executes repo tests. The report and logs cross via an artifact.
+- **Uncapped log excerpt.** The filer reads `--log` (the uploaded `tests.log`), not the 100-line `failingRegion`, and starts each excerpt at the nearest `not ok` line so the failing test's name shows.
+- **AC3 via push probes.** See the `workflow_dispatch` bullet above.
+- **Windows needs Node 22 and root globs.** `npm test` could not launch on `windows-latest`: `tools/run-tests.js` passed ~782 paths as argv and hit Windows' 32,767-char command line (`spawnSync … ENAMETOOLONG`, probe runs 39030139345 / 39030144149). On win32 + Node >= 22 it now passes the root globs; Linux and Node 20 keep the explicit list (#407). The `windows` job pins Node 22.
+
 ## Review Focus
 
 1. A Windows `failingRegion` names files with backslashes and absolute paths while `attributable[]` may not — excerpt matching must normalize `\` → `/` and match on the path suffix, or every excerpt silently falls back to "file alone". Pinned in Task 1 (`excerpt matches a backslash-absolute TAP location`).
