@@ -391,8 +391,10 @@ test('L13: a file no readable --log line names takes its excerpt from the failin
   assert.ok(!body.includes('another file'), 'the log, which names no file, contributes nothing');
 });
 
-// A crashed file's stderr whose nearest boundary above is `boundary` — after
-// another file's closed failure block, so its own `...` is the fallback boundary.
+// A crashed file's stderr whose nearest boundary above is `boundary`, placed
+// after another file's closed failure block. The tests that follow this loop
+// cover the case with no such line, where the block's own YAML terminator is
+// the boundary.
 const crashAfter = (boundary) => [
   winBlock(70, 'an earlier failure in another file', 'tests/apply-refine-labels.test.js', 'detail-for-other-file'),
   boundary,

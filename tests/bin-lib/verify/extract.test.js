@@ -855,8 +855,11 @@ test('AC2.1: tapLines classifies a node TAP failure block, its YAML terminator, 
   const text = ['# Subtest: s', 'ok 1 - a', 'not ok 2 - b', '  ---', "  location: 'tests/a.test.js:1:1'", '  error: |-', '    boom', '  ...', '# tests 2'].join('\n');
   assert.deepStrictEqual(kinds(text), ['subtest', 'ok', 'notOk', 'yamlOpen', 'yaml', 'yaml', 'yaml', 'yamlClose', 'comment']);
   assert.deepStrictEqual(owners(text), [-1, -1, 2, 2, 2, 2, 2, 2, -1]);
-  const loc = tapLines(text.split('\n'))[4];
+  const entries = tapLines(text.split('\n'));
+  const loc = entries[4];
   assert.deepStrictEqual([loc.key, loc.keyStart, loc.indent], ['location', true, 2]);
+  const continuation = entries[6];
+  assert.deepStrictEqual([continuation.key, continuation.keyStart], ['error', false], 'a continuation line carries its key but does not start one');
 });
 
 test('AC2.1: a deeper "..." and "not ok"/"ok 1" lines inside YAML error text stay yaml, owned by the block', () => {
