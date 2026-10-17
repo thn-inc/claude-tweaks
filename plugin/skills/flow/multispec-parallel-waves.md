@@ -31,7 +31,7 @@ Validation step 3's `preflight-records.js` call adds `--waves` when `parallel` i
 
 `waves.parallel: false`, as for a strict linear chain, means every wave has one member, and the run is the sequential run. The same holds when the intersection leaves no wave with two members.
 
-**No plan.** If step 3's call exits non-zero (1 a fetch failed; 2 malformed, or a `--waves` dependency cycle), `parallel` falls back to a sequential run: re-run step 3's call without `--waves`, so the sequential path still gets its records, overlap groups and merge-gate result. Once the parent run directory exists, write one `SKIP` entry (`$PIPELINE_RUN_DIR` is the parent here, as in `multispec-merge-gate.md`):
+**No plan.** If step 3's call exits non-zero (1 a fetch failed; 2 malformed, or a `--waves` dependency cycle), `parallel` falls back to a sequential run: re-run step 3's call without `--waves`, so the sequential path still gets its records, overlap groups and merge-gate result. That re-run is step 3's single retry (`multispec-preflight-failure.md`); if it also exits non-zero, step 3's STOP applies. Once the parent run directory exists, write one `SKIP` entry (`$PIPELINE_RUN_DIR` is the parent here, as in `multispec-merge-gate.md`):
 ```
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status SKIP --step "Step 1 parallel waves (skipped)" --text "condition: preflight-records.js --waves exited non-zero ({stderr reason}) → fallback: sequential run." --reversibility n/a
 ```

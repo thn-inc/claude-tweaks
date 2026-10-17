@@ -1,0 +1,18 @@
+# Multi-Spec — Pre-flight Failure Ruling (#3351)
+
+Loaded by `multi-spec.md`'s Validation step 3, before Step 2.8's claim, when the `preflight-records.js` call exits non-zero or `gh` is unavailable.
+
+**Transport.** With `gh` present, step 3's call runs as written. With `gh` unavailable (`_shared/github-write-transport.md`'s routing), fetch each target via MCP `issue_read` (get mode), reusing step 1's already-fetched records where present. Reshape each to `gh issue view`'s `{number,title,body,labels,url}` (`materialize.md`'s `--record-json` paragraph, #1459), write the array to a session-scoped temp file (`_shared/session-tmp-root.md`), and add `--records-json {file}` to the same call. That path makes no `gh` call, so it never exits 1.
+
+**Exit 0.** Proceed. Steps 4, 4a, 4b and 5 read the envelope.
+
+**Exit 1 (`gh` transport).** Re-run the identical call once. A second exit 1 is a **STOP before claiming**, naming every failing record from stderr. Under `parallel`, the re-run without `--waves` in `multispec-parallel-waves.md` is that one retry, never a third call. Nothing needs tearing down: this run has made no claim, worktree or run-dir write yet. Under a `/claude-tweaks:dispatch` bundle, the STOP is that bundle's failed run.
+
+**Exit 2.** **STOP before claiming**, no retry, quoting stderr. It is an invocation bug, an unresolvable owner/repo under `native`, or a `--waves` cycle that step 4 would hard-fail on anyway.
+
+**`nativeLinksUnchecked: true`.** Proceed. Ordering and the merge-state gate run on body-text `blocked-by` only. Once the parent run directory exists (after Step 3's Manifesto write, as `multispec-merge-gate.md` times its own entries), write one `SKIP`:
+```
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status SKIP --step "Step 1 native dependency links (skipped)" --text "condition: gh unavailable under work-links: native, preflight-records.js --records-json reported nativeLinksUnchecked → fallback: blocked-by read from record bodies only; native-only links are invisible, so cross-record ordering and the merge-state gate ran on body-text dependencies (dispatch/mcp-transport.md, #2523)." --reversibility n/a
+```
+
+**Never** read a stopped run as "no dependencies". Never fall back to body text when the `gh` path's native call fails; that is exit 1.
