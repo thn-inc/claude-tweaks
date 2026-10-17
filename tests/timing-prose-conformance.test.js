@@ -94,3 +94,27 @@ test('#1929: docs name the transcript reader, the new flags, and the guard count
   assert.match(ps, /^node plugin\/bin\/phase-timing\.js --run <dir> \[--json\] \[--markdown\] \[--transcript <path> \.\.\.\] \[--auto-transcript\]/m);
   assert.match(read('docs/hooks.md'), /timing\.json[^\n]*(gate-denial|guard)/);
 });
+
+test('#3375 AC10.1: every Timing template documents the Dispatches table and its not-found line', () => {
+  for (const f of ['plugin/skills/wrap-up/summary-template.md', 'plugin/skills/flow/summary-template.md', 'plugin/skills/flow/multispec-summary.md']) {
+    const t = read(f);
+    assert.match(t, /\| Tier \| Dispatches \| Agent-seconds \| Elapsed \(min\) \| Tokens \(in\/out\) \| Cache \(read\/create\) \|/, `${f} tier header`);
+    assert.match(t, /\| Role \| Dispatches \| Agent-seconds \| Elapsed \(min\) \| Tokens \(in\/out\) \| Cache \(read\/create\) \|/, `${f} role header`);
+    assert.match(t, /dispatches: subagent transcripts not found/, `${f} not-found line`);
+    assert.match(t, /`Dispatches \(\{run window \| whole session — no run events\}; …\):` line heads the tables/, `${f} scope line`);
+    assert.match(t, /`dispatch agent-\{id\}: ` followed by `transcript not found \(\.\.\.\)`/, `${f} per-dispatch line`);
+    assert.match(t, /`dispatches: \{n\} outside the run window excluded`/, `${f} excluded line`);
+    assert.match(t, /not comparable to phase minutes/, `${f} comparability (minutes)`);
+    assert.match(t, /never summed with the phase table/, `${f} comparability (tokens)`);
+    // #3375 M3: the CLI prints the Tokens (in/out) footnote between the Guard denials line and the Dispatches section.
+    assert.match(t, /rendered verbatim below the `Tokens \(in\/out\)` footnote that follows the Guard denials line/, `${f} placement`);
+    assert.doesNotMatch(t, /rendered verbatim below the Guard denials line/, `${f} stale placement`);
+  }
+});
+
+test('#3375 M3: docs and the verification brief name the Dispatches section', () => {
+  const ps = read('docs/plugin-structure.md');
+  assert.match(ps, /^plugin\/bin\/lib\/timing\/ [^\n]*readDispatches[^\n]*aggregateDispatches/m);
+  assert.match(ps, /^node plugin\/bin\/phase-timing\.js --run <dir>[^\n]*Dispatches/m);
+  assert.match(read('plugin/skills/wrap-up/verification-brief.md'), /`tokens: transcript not found \(\.\.\.\)` line[^\n]*Dispatches/);
+});

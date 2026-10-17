@@ -50,8 +50,16 @@ const defaultGh = makeDefaultRunner('gh');
 // the table renders in, matching the prose checklist's original order.
 const CHECKS = [];
 
+// Returns an unregister function that removes this registration's own entry
+// (identity-scoped, so a duplicate name registered later is untouched) and is
+// idempotent. Production callers ignore the return value.
 function registerCheck(name, fn) {
-  CHECKS.push({ name, fn });
+  const entry = { name, fn };
+  CHECKS.push(entry);
+  return () => {
+    const index = CHECKS.indexOf(entry);
+    if (index !== -1) CHECKS.splice(index, 1);
+  };
 }
 
 // A multi-spec per-spec leaf ('spec-{N}') resolves relative to its PARENT
