@@ -712,16 +712,14 @@ function enumerateSubIssues(parent, deps, cwd) {
   const subIssues = [];
   for (const line of (out || '').split('\n')) {
     if (!line.trim()) continue;
-    let obj;
+    let obj = null;
     try {
       obj = JSON.parse(line);
-    } catch {
-      return { ok: false, error: `could not parse sub_issues output for parent #${parent}` };
-    }
+    } catch { /* obj stays null -- rejected by the shape check below */ }
     if (!obj || !Number.isInteger(obj.number) || typeof obj.state !== 'string') {
       return { ok: false, error: `could not parse sub_issues output for parent #${parent}` };
     }
-    subIssues.push({ number: obj.number, state: String(obj.state).toUpperCase(), labels: Array.isArray(obj.labels) ? obj.labels : [] });
+    subIssues.push({ number: obj.number, state: obj.state.toUpperCase(), labels: Array.isArray(obj.labels) ? obj.labels : [] });
   }
   if (!subIssues.length) return { ok: false, error: `no sub-issues enumerated for parent #${parent}` };
   return { ok: true, subIssues };
