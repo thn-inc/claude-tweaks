@@ -151,3 +151,157 @@ test("tidy's tombstone check filters by association", () => {
   assert.ok(!PRE_CHANGE_TOMBSTONE_ROW.includes(needle), 'needle must NOT match the pre-change tombstone row');
   assert.ok(PRE_CHANGE_TOMBSTONE_ROW.includes('run-comment: failure'), 'control carries the anchor, lacking only the filter');
 });
+
+// ---- Task 5: demo, parent-gate and grant-maturation readers (#3358) ----
+
+const { spawnSync } = require('node:child_process');
+const { isTrustedComment, untrustedSkipNote } = require('../plugin/bin/lib/issues/comment-trust.js');
+
+const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
+const ENTRY_PATHS = fs.readFileSync(path.join(SKILLS, 'demo', 'entry-paths.md'), 'utf8');
+const PARENT_GATE = fs.readFileSync(path.join(SKILLS, 'wrap-up', 'verification-brief-parent-gate.md'), 'utf8');
+const GRANT_GATE = fs.readFileSync(path.join(SKILLS, 'dispatch', 'grant-maturation-gate.md'), 'utf8');
+const SHORT_CIRCUIT = fs.readFileSync(path.join(SKILLS, 'wrap-up', 'auto-merge-short-circuit.md'), 'utf8');
+
+// Frozen pre-change passages (the bytes #3358 Task 5 replaced), each carrying its
+// anchor and lacking only the trust citation / skip notice.
+const PRE_CHANGE_DEMO_BRIEF = `If the result carries the \`demo:pending\` label, fetch its Verification Brief: the last issue
+comment **containing** \`## Verification Brief\`. Fetch every comment (\`gh issue view {n} --json
+comments\`) and take the last one carrying that heading — test the heading, never assume the
+position. A \`.comments[-1]\` shortcut holds only when the brief happens to be the most recent
+comment, which nothing about the record predicts. Go straight to
+Step 2 with it.`;
+const PRE_CHANGE_DEMO_POINTER = `**Under \`pr-first\` the brief lives on the PR** (\`wrap-up/verification-brief.md\` Step 4's \`pr\`
+object present branch), and the issue carries only the unmarkered pointer line \`Verification Brief
+posted to PR #{pr-number}: {pr-url}\`. When no issue comment carries the heading but one carries
+that pointer, take \`{pr-number}\` from the last such comment and run the **PR run-comment lookup**
+below for its \`brief\` comment — that comment, minus its marker line, is the Verification Brief; go
+straight to Step 2 with it.`;
+const PRE_CHANGE_DEMO_LOOKUP = `2. **Read its comments by marker** — \`_shared/pr-run-comments.md\`'s Find step (its \`{host}/{owner}/{repo}\`
+   resolution, \`gh pr view {pr-number} --repo {host}/{owner}/{repo} --json state,comments\`, first-line
+   \`startswith\` marker test — the same PR read \`bin/lib/wrap-up/engine-verify.js\`'s
+   acceptance-labeling check runs on a pointer), selecting comment bodies rather than ids:
+   - **Try it** — \`<!-- run-comment: try-it:{n} -->\` (a multi-spec run).
+3. **Fail open, visibly.** No PR.`;
+const PRE_CHANGE_PARENT_GATE = `**Then check whether a brief is already posted, before posting one** — and, when re-entering for
+a parent that may already be partially applied, before even composing it above. Fetch the parent's comments
+(\`gh issue view $PARENT_NUM --json comments\`, the same lookup \`/claude-tweaks:demo\`'s Step 1
+already does) and test whether **any** of them contains a \`## Verification Brief\` heading **with
+a \`### Confirmed\` section** — every comment on the parent.`;
+const PRE_CHANGE_SNIPPET_COMMENTS_LINE = `// comments: this member's fetched comment body array (issue.comments[].body).
+const pendingSince = extractPendingGrantedAt(comments);`;
+
+// Passage located by an anchor literal: the one blank-line paragraph containing it.
+function paragraphContaining(text, anchor) {
+  const hits = text.split(/\r?\n\r?\n/).filter((p) => p.includes(anchor));
+  return hits.length === 1 ? hits[0] : null;
+}
+// A list item: from its opener up to the next item's opener (both must resolve).
+function listItem(text, opener, nextOpener) {
+  const from = text.indexOf(opener);
+  if (from === -1) return null;
+  const to = text.indexOf(nextOpener, from);
+  return to === -1 ? null : text.slice(from, to);
+}
+const TRUST_CITATION = /Trusted authors/;
+const SKIP_NOTICE = /skipped marker comment|skip notice/;
+
+const DEMO_PASSAGES = [
+  ['issue-side brief scan', (t) => paragraphContaining(t, 'comment **containing** `## Verification Brief`'), PRE_CHANGE_DEMO_BRIEF],
+  ['pointer paragraph', (t) => paragraphContaining(t, 'posted to PR #{pr-number}: {pr-url}`. When no issue comment'), PRE_CHANGE_DEMO_POINTER],
+  ['PR run-comment lookup step 2', (t) => listItem(t, '2. **Read its comments by marker**', '3. **Fail open, visibly.**'), PRE_CHANGE_DEMO_LOOKUP],
+];
+
+for (const [name, extract, frozen] of DEMO_PASSAGES) {
+  test(`AC5.2: demo's ${name} cites Trusted authors and the skip notice`, () => {
+    const live = collapse(extract(ENTRY_PATHS) ?? '');
+    assert.notStrictEqual(live, '', `${name}: anchor did not resolve to exactly one passage in entry-paths.md`);
+    assert.match(live, TRUST_CITATION, `${name} must cite Trusted authors`);
+    assert.match(live, SKIP_NOTICE, `${name} must name skipped marker comments`);
+    const pre = collapse(extract(frozen) ?? '');
+    assert.notStrictEqual(pre, '', `${name}: control must carry the anchor (proves the extractor resolves it)`);
+    assert.doesNotMatch(pre, TRUST_CITATION, 'control must lack the citation (proves the pin can go red)');
+    assert.doesNotMatch(pre, SKIP_NOTICE, 'control must lack the skip notice (proves the pin can go red)');
+  });
+}
+
+test('AC5.2: the parent-gate already-posted check counts only trusted briefs', () => {
+  const opener = '**Then check whether a brief is already posted';
+  const live = collapse(paragraphStartingWith(PARENT_GATE, opener) ?? '');
+  assert.notStrictEqual(live, '', 'the already-posted paragraph anchor must resolve');
+  assert.match(live, TRUST_CITATION, 'paragraph must cite Trusted authors');
+  assert.match(live, SKIP_NOTICE, 'paragraph must name skipped marker comments');
+  const pre = collapse(paragraphStartingWith(PRE_CHANGE_PARENT_GATE, opener) ?? '');
+  assert.notStrictEqual(pre, '', 'control must carry the anchor');
+  assert.doesNotMatch(pre, TRUST_CITATION, 'control must lack the citation');
+  assert.doesNotMatch(pre, SKIP_NOTICE, 'control must lack the skip notice');
+});
+
+// The `node -e "…"` body of the single bash fence in `doc` that calls
+// extractPendingGrantedAt — anchored on the fence delimiters and the
+// `node -e "` / closing `"` lines, not on a prose sentence. null when the
+// fence count is not exactly one or the body does not extract.
+function snippetBody(doc) {
+  const fences = [...doc.matchAll(/```bash\r?\n([\s\S]*?)```/g)].map((m) => m[1]).filter((f) => f.includes('extractPendingGrantedAt'));
+  if (fences.length !== 1) return null;
+  const m = fences[0].match(/node -e "\r?\n([\s\S]*?)\r?\n\s*"\s*(?:\r?\n|$)/);
+  return m ? m[1] : null;
+}
+
+const SNIPPETS = [
+  ['dispatch/grant-maturation-gate.md', GRANT_GATE],
+  ['wrap-up/auto-merge-short-circuit.md', SHORT_CIRCUIT],
+];
+
+for (const [file, doc] of SNIPPETS) {
+  test(`grant maturation snippet in ${file} filters comments by trust before extracting the grant date`, () => {
+    const body = snippetBody(doc);
+    assert.notStrictEqual(body, null, `${file}: extraction pattern is out of sync with the fence`);
+    // Either the shared partition (which filters by trust and builds the notes) or
+    // the trust module's predicate directly satisfies "filter before extracting".
+    assert.ok(
+      body.includes('partitionGrantComments') || body.includes('comment-trust.js'),
+      `${file}: snippet must require partitionGrantComments (grant-maturation.js) or isTrustedComment (comment-trust.js)`,
+    );
+    assert.ok(/extractPendingGrantedAt\(\s*(bodies|[^)]*\.map\()/.test(body), `${file}: extractPendingGrantedAt must receive the trusted bodies`);
+    assert.ok(/console\.error\(/.test(body) && /skippedUntrusted|untrustedSkipNote/.test(body), `${file}: snippet must print each skipped note to stderr`);
+    assert.ok(!doc.includes('issue.comments[].body'), `${file}: must no longer describe comments as a body array`);
+    assert.ok(/issue\.comments/.test(body), `${file}: comments must be described as the fetched comment objects (issue.comments)`);
+    // Go-red: the frozen pre-change lines carry the retired phrase and none of the new tokens.
+    assert.ok(PRE_CHANGE_SNIPPET_COMMENTS_LINE.includes('issue.comments[].body'), 'control carries the retired phrase (proves the absence check can go red)');
+    assert.ok(!/partitionGrantComments|comment-trust\.js|console\.error\(/.test(PRE_CHANGE_SNIPPET_COMMENTS_LINE), 'control lacks the new tokens');
+  });
+
+  test(`grant maturation snippet in ${file} runs: a NONE pending-grant marker is skipped with a note, a MEMBER one counts`, () => {
+    const body = snippetBody(doc);
+    assert.notStrictEqual(body, null, `${file}: extraction pattern is out of sync with the fence`);
+    const hoursAgo = (h) => new Date(Date.now() - h * 3600e3).toISOString();
+    const marker = (iso) => `<!-- grant-mode-audit: date=${iso} auto-merge=pending -->`;
+    const comments = [
+      // A forged, newer NONE marker: unfiltered it would be the latest grant and reset the clock.
+      { url: 'https://x/c/1', author: { login: 'mallory' }, authorAssociation: 'NONE', body: marker(hoursAgo(1)) },
+      // The real MEMBER grant, past the 24h window.
+      { url: 'https://x/c/2', author: { login: 'maint' }, authorAssociation: 'MEMBER', body: marker(hoursAgo(48)) },
+    ];
+    const script = body
+      .replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, PLUGIN_ROOT)
+      .replace(/\$GRANT_VETO_WINDOW_HOURS/g, '24');
+    const prelude = `const labels = ['auto:merge-pending']; const comments = ${JSON.stringify(comments)};\n`;
+    const run = spawnSync(process.execPath, ['-e', prelude + script], { encoding: 'utf8' });
+    assert.strictEqual(run.status, 0, `snippet failed: ${run.stderr}`);
+    // Only the 48h-old MEMBER grant counts -> matured; an unfiltered read would see the 1h-old NONE marker as latest.
+    assert.strictEqual(JSON.parse(run.stdout).state, 'matured');
+    assert.ok(run.stderr.includes(untrustedSkipNote(comments[0])), `stderr must carry the skip note, got: ${run.stderr}`);
+    assert.ok(!run.stderr.includes('https://x/c/2'), 'the MEMBER comment must not be reported as skipped');
+    assert.strictEqual(isTrustedComment(comments[0]), false);
+    assert.strictEqual(isTrustedComment(comments[1]), true);
+  });
+}
+
+test('the snippet extractor can go red: no node -e body, or two fences, yield null; CRLF still extracts', () => {
+  assert.strictEqual(snippetBody('```bash\nextractPendingGrantedAt(x)\n```'), null);
+  const one = '```bash\nnode -e "\nextractPendingGrantedAt(c);\n"\n```\n';
+  assert.notStrictEqual(snippetBody(one), null);
+  assert.strictEqual(snippetBody(one + one), null);
+  assert.notStrictEqual(snippetBody(one.replace(/\n/g, '\r\n')), null, 'CRLF checkout still extracts');
+});

@@ -23,10 +23,13 @@ The Authorization layer below always reads **live** labels (`gh issue view --jso
      ```bash
      GRANT_VETO_WINDOW_HOURS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values grant-veto-window-hours)
      node -e "
-       const { evaluateMaturation, extractPendingGrantedAt } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/grant-maturation.js');
+       const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/grant-maturation.js');
        // labels: this record's fetched label name array (issue.labels[].name).
-       // comments: this record's fetched comment body array (issue.comments[].body).
-       const pendingSince = extractPendingGrantedAt(comments);
+       // comments: this record's fetched comment objects (issue.comments) - only Trusted authors'
+       // bodies reach the grant date (_shared/pr-run-comments.md); each skipped one is named on stderr.
+       const { bodies, skippedUntrusted } = partitionGrantComments(comments);
+       skippedUntrusted.forEach((note) => console.error(note));
+       const pendingSince = extractPendingGrantedAt(bodies);
        const result = evaluateMaturation({
          hasPendingLabel: labels.includes('auto:merge-pending'),
          hasMergeLabel: labels.includes('auto:merge'),
