@@ -12,10 +12,13 @@ const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const read = (rel) => fs.readFileSync(path.join(SKILLS, rel), 'utf8').replace(/\s+/g, ' ');
 const OLD_CONDITION = /A run with no worktree at all — `run-state\.json` carries no `worktree` field/;
 
-test('AC1.1: flow Step 1.8 creates the ledger only when no new worktree is coming', () => {
+test('AC1.1: flow Step 1.8 creates the ledger only when no worktree is ever created or adopted', () => {
   const text = read('flow/SKILL.md');
   assert.match(text, /Create the open items ledger — here only when no new worktree is coming/);
-  assert.match(text, /Step 1\.3 resolved `current-branch`, or this session is already inside an isolated worktree/);
+  assert.match(text, /Step 1\.3 resolved `current-branch` \(no worktree is ever created or adopted for this run\)/);
+  assert.doesNotMatch(text, /or this session is already inside an isolated worktree/);
+  assert.match(text, /Any ledger-bound note Step 2 generates before that point \(2\.5's divergence `ops` entry, 2\.6's shape-check `ops` entries\) is logged to `decisions\.md`/);
+  assert.match(text, /only when Create actually wrote the file, never when it already existed/);
   assert.match(text, /`build\/worktree-setup\.md` Step 4\.6 \(single-spec\) or `multi-spec\.md`'s "Shared worktree" step 1 \(multi-spec\)/);
 });
 
@@ -25,7 +28,8 @@ test('AC1.1: build/worktree-setup.md Step 4.6 creates the ledger after the workt
   assert.match(text, /only when `\$PIPELINE_RUN_DIR` is already set/);
   assert.match(text, /`MULTISPEC_SHARED_WORKTREE` is not set/);
   assert.match(text, /AUTO \{time\} — flow: created open-items ledger \{path\}\. Reversibility: n\/a\./);
-  assert.match(text, /If the file already exists/);
+  assert.match(text, /Right after creating it, append any ledger-bound note `\/flow` Step 2 held/);
+  assert.match(text, /When this run's active ledger already exists \(a resumed run — resolved per `_shared\/ledger-format\.md`'s resolution rule/);
   assert.ok(text.indexOf('4.5. **Record the assignment**') < text.indexOf('4.6. **Create the open-items ledger'));
 });
 
@@ -53,6 +57,9 @@ test('ledger/SKILL.md Create names every creation site and the re-keyed location
   assert.match(text, /"Shared worktree" step 1/);
   assert.match(text, /for a run that will never have a worktree \(#3036/);
   assert.doesNotMatch(text, /when this run has no worktree \(`run-state\.json` carries no `worktree` field/);
+  assert.match(text, /\/claude-tweaks:build/);
+  assert.doesNotMatch(text, /or an already-isolated session/);
+  assert.match(text, /this run's active ledger already exists \(resuming a pipeline — resolved per `_shared\/ledger-format\.md`'s resolution rule/);
 });
 
 test('go-red proof: the pre-#3036 exception sentence fails the AC2.1 negative assertion', () => {
@@ -66,8 +73,10 @@ test('AC1.1: multi-spec creates one shared ledger at Shared worktree step 1, par
   assert.ok(start !== -1, 'Shared worktree section must exist');
   const section = text.slice(start, text.indexOf('2. **Per-record builds skip creation**', start));
   assert.match(section, /Create the open-items ledger here \(#3036\)/);
-  assert.match(section, /\$MULTISPEC_PARENT_DIR/);
+  assert.match(section, /the parent run dir `\{parent\}\/`, exported later as `\$MULTISPEC_PARENT_DIR`/);
+  assert.match(section, /spec-\{N1\}-\{N2\}/);
   assert.match(section, /AUTO \{time\} — flow: created open-items ledger \{path\}\. Reversibility: n\/a\./);
+  assert.match(section, /When the run's active ledger already exists \(resume\), Create is a no-op/);
 });
 
 test('AC4.1: the QA Ledger Check finds the creation line on both the single-spec and multi-spec paths', () => {
@@ -76,7 +85,7 @@ test('AC4.1: the QA Ledger Check finds the creation line on both the single-spec
   assert.ok(start !== -1);
   const section = text.slice(start, start + 2500);
   assert.match(section, /`build\/worktree-setup\.md` Step 4\.6/);
-  assert.match(section, /\$MULTISPEC_PARENT_DIR\/decisions\.md/);
+  assert.match(section, /\$MULTISPEC_PARENT_DIR\/decisions\.md` as well/);
   assert.doesNotMatch(section, /\(`\/flow`'s Step 1\.8 log line,/);
 });
 

@@ -365,7 +365,8 @@ function namesRecord(file, n) {
 
 function ledgerProbe(inputs, deps) {
   // _shared/ledger-format.md's Location section: a gated no-worktree run
-  // (worktree-always with no worktree resolved) writes its ledger at
+  // (worktree-always and a run that will never have a worktree —
+  // current-branch or wrap-up-only, #3036) writes its ledger at
   // {run-dir}/ledger.md instead of docs/plans/ — the mechanical PreToolUse
   // gate would deny a docs/plans/ write from the main checkout in that
   // shape. That file, when present, is authoritative; the docs/plans/ glob
