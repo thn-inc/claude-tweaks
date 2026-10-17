@@ -332,14 +332,14 @@ test('an unlisted Bash write shape is genuinely not detected', () => {
 // command word — echo/printf/cat/a bare `> f`, not just a WRITE_SHAPES entry.
 test('#3080: fileWriteTargets resolves bare redirection targets for ANY command word', () => {
   for (const [command, file, why] of [
-    ['echo x > tracked-file.js', '/r/tracked-file.js'],
-    ['printf y >> tracked-file.js', '/r/tracked-file.js'],
-    ['cat a > tracked-file.js', '/r/tracked-file.js'],
-    ['echo x >out.js', '/r/out.js', 'a glued operator (no space before the target) must resolve the same as a spaced one'],
-    ['cmd &> out.log', '/r/out.log'],
-    ['cmd &>> out.log', '/r/out.log'],
-    ['cmd >| noclobber.log', '/r/noclobber.log', 'noclobber\'s >| is still a write'],
-    ['cmd 2>> err.log', '/r/err.log', 'a fd-prefixed append operator must resolve the same as the unprefixed form'],
+    ['echo x > tracked-file.js', path.resolve('/r', 'tracked-file.js')],
+    ['printf y >> tracked-file.js', path.resolve('/r', 'tracked-file.js')],
+    ['cat a > tracked-file.js', path.resolve('/r', 'tracked-file.js')],
+    ['echo x >out.js', path.resolve('/r', 'out.js'), 'a glued operator (no space before the target) must resolve the same as a spaced one'],
+    ['cmd &> out.log', path.resolve('/r', 'out.log')],
+    ['cmd &>> out.log', path.resolve('/r', 'out.log')],
+    ['cmd >| noclobber.log', path.resolve('/r', 'noclobber.log'), 'noclobber\'s >| is still a write'],
+    ['cmd 2>> err.log', path.resolve('/r', 'err.log'), 'a fd-prefixed append operator must resolve the same as the unprefixed form'],
   ]) {
     assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file }], why || command);
   }

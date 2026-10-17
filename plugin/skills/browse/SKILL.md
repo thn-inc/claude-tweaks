@@ -1,7 +1,7 @@
 ---
 name: browse
 description: Use when you need browser automation via playwright-cli — defines session naming, screenshot/trace paths, and operation vocabulary used by /stories, /visual-review, /review, and /demo. Keywords - browse, browser, playwright-cli, screenshot, scrape, automation.
-argument-hint: "[<url>|<task description>] [--session <name> ...] [set viewport <wxh>|set device \"<name>\"] [backend=chrome ...] [--quick]"
+argument-hint: '[<url>|<task description>] [--session <name> ...] [set viewport <wxh>|set device "<name>"] [backend=chrome ...] [--quick]'
 ---
 
 # Browse — Browser Conventions

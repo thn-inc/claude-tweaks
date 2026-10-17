@@ -235,32 +235,11 @@ For non-frontend design docs (no frontend signals detected), skip this step enti
 
 **Unlike Step 2.5, this runs for every surface** — architecture, ER, sequence, and state diagrams help backend and infra specs equally.
 
-Read the `diagram-suggestions` flag from CLAUDE.md (written by `/init` Step 12). When the flag is `disabled` or missing, skip this step silently.
+Read the `diagram-suggestions` flag from CLAUDE.md per `diagram-suggestion.md`'s Gate section (this skill's directory) — the same gate shaping mode's Diagram suggestion step (`shaping-mode-readback.md`) reads. When the flag is `disabled` or missing, skip this step silently.
 
-When `enabled`, scan the design doc text + decomposed record titles for structural signals. Use this detection table:
+When `enabled`, run `diagram-suggestion.md`'s Detection against the design doc text plus the decomposed record titles, and render per its Output format — at most two recommendations, the two strongest matches, nothing when no signal matches.
 
-| Signal in design doc | Diagram type (suggest) |
-|----------------------|------------------------|
-| Phrases like "state machine", "states:", "transitions from … to …", named status enums (3+ values) | `state` |
-| Schema definitions, `entity`, `references`, `foreign key`, ORM relations between 2+ tables | `er` |
-| 3+ services / actors / queues exchanging messages or HTTP calls | `sequence` |
-| 3+ named branches in a decision (`If A then B; if C then D; otherwise E`) | `flowchart` |
-| 3+ system components / boxes in a layout (microservices, layers, gateways) | `architecture` |
-| Parent-child taxonomy with 2+ levels (categories → subcategories → items) | `tree` |
-
-Emit at most **two** recommendations per design doc — the two strongest matches. Skip emission entirely if no signal matches (trivial records and refactors should not trigger the hook).
-
-For each emitted recommendation:
-
-```
-**Diagram suggestion:** This design doc describes a state machine for orders
-(pending → paid → shipped → delivered → refunded). Consider a state diagram:
-`/claude-tweaks:visualize state {spec-slug} --source specify`
-```
-
-Place these recommendations in the Step 9 summary under a `### Diagram suggestions` block. They are advisory — they do not block decomposition, do not write spec frontmatter, and do not invoke any tool. The user decides whether to act in the next conversation turn.
-
-**Auto mode:** the diagram suggestion is always advisory — `auto` mode emits the recommendation without prompting, logs `STAGED {time} — Step 2.5d: diagram-suggestion ({type}) for {spec/slug}. Reversibility: high.` to the decision log, and continues. No mid-flow stop.
+Place the rendered recommendation(s) in the Step 9 summary under a `### Diagram suggestions` block. Advisory only — see `diagram-suggestion.md`'s Rendering section for the full interactive/headless split; this mode's own `{step-id}` for the headless log line is `Step 2.5d`.
 
 ---
 

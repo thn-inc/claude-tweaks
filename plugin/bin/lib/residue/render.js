@@ -11,6 +11,10 @@ const DEFAULT_CAP = 20;
 function renderOutstanding({ results = [], dispositions = {}, cap = DEFAULT_CAP } = {}) {
   const findings = results.filter((r) => r.ran).flatMap((r) => r.findings);
   const unrun = results.filter((r) => !r.ran);
+  // A probe that ran on reduced input (e.g. the release probe's local-only
+  // tag fallback, #2882) carries a reason too; its findings are less
+  // trustworthy, so the note must be visible beside them, not only in --json.
+  const degraded = results.filter((r) => r.ran && r.reason);
 
   const lines = [];
   const shown = findings.slice(0, cap);
@@ -32,6 +36,10 @@ function renderOutstanding({ results = [], dispositions = {}, cap = DEFAULT_CAP 
   if (unrun.length) {
     lines.push('', 'Probes that did not run — these are `unknown`, not clean:', '');
     for (const r of unrun) lines.push(`- unknown: ${r.reason}`);
+  }
+  if (degraded.length) {
+    lines.push('', 'Probes that ran on reduced input — their results may be incomplete:', '');
+    for (const r of degraded) lines.push(`- degraded: ${r.reason}`);
   }
   return lines.join('\n');
 }

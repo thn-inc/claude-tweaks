@@ -89,7 +89,7 @@ does for every other ledger producer (build, test, review, reflect):
 ## `remedy: auto` findings and the scratch worktree
 
 A finding the CLI marked `remedy: auto` (an unlocked stale worktree, a claim blob for a closed
-issue, a missing release-triple entry, an un-archived pipeline run dir of this run's own whose `run-state.json`
+issue, a release tag with no CHANGELOG heading — the reverse, a heading with no tag, is `remedy: record` (#2882) — an un-archived pipeline run dir of this run's own whose `run-state.json`
 reached `status: clean`) is naturally a Phase 1 fix-now candidate — its `Item` description should
 say so. A merged-but-undeleted branch carries `remedy: auto` too, but never reaches here under
 this preamble's `--scope blast-radius` (above): `probeBranches` only ever tags a branch

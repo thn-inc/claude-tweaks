@@ -56,6 +56,46 @@ The Authorization layer below always reads **live** labels (`gh issue view --jso
    - `auto:merge` and `auto:merge-pending` are both absent — `manifesto-authorized-merge.md`'s applicability check passed instead (true by construction once this branch is reached under this condition).
 2. **Content judgment** — invoke `/claude-tweaks:assess-agent-autonomy` in `merge-check` mode (`Skill(skill: "claude-tweaks:assess-agent-autonomy", args: "merge-check #{n} --pack {run-dir}/wrap-up-pack.json")`), which weighs the diff's content, `/review`'s findings, and a test-exclusion-aware blast-radius summary holistically. `pack.blastRadius` is merge-check's Step 1 input (#1930); when the pack file is absent, omit `--pack` and merge-check runs `blast-radius.js` itself as before. The verdict must be `auto-merge` to proceed.
 
+   **Log the verdict on either outcome, before anything else (#2941)** — the same "log a passing verdict too" rule `dispatch/settle-and-merge.md` applies on the group path (#2429). A pass gets its own line — the marker the Verdict backstop below re-reads:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "Auto-merge short-circuit" --reversibility n/a --text "#{n} assess-agent-autonomy verdict auto-merge"
+   ```
+
+   A `needs-human` verdict logs the existing line under "Any layer fails" below, unchanged.
+
+**Verdict backstop — re-read before any merge (#2941).** Skip this backstop entirely when Layer
+2's verdict was `needs-human` — go straight to "Any layer fails" below, whose own needs-human log
+line is already the record; the backstop guards only the path that is about to proceed to a
+merge. Layer 2 having been prescribed is not evidence it ran: a dispatched singleton once went
+straight from Authorization to the merge and merged PR #2938 with no `merge-check` at all. Run
+this one-read check of `decisions.md` once here, before acceptance labeling and ledger deletion
+below, and again at the top of each merging branch further down, immediately before its merge
+call or relay — the same check `dispatch/settle-and-merge.md` runs on the group path, backed by
+the same module:
+
+```bash
+node -e "
+  const { confirmFromFile } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/merge-verdict.js');
+  for (const [n, v] of Object.entries(confirmFromFile(process.argv[1], process.argv.slice(2)))) console.log(n + '=' + (v.confirmed ? 1 : 0) + ' latest=' + (v.latest || 'none') + (v.error ? ' error=' + v.error : ''));
+" "$PIPELINE_RUN_DIR/decisions.md" {n}
+```
+
+`{latest}` is the printed `latest=` value, or `none` when the snippet printed no line for `{n}`;
+`{detail}` is `, error: {error}` when the snippet printed `error=`, `, snippet exited {code} with
+no output` on a non-zero exit with no `{n}=` line, otherwise empty.
+
+Proceed only on `{n}=1` — this record's latest logged `merge-check` verdict is `auto-merge`.
+Anything else — `{n}=0`, no `{n}=` line at all, or a non-zero exit — do not merge: log the
+refusal, then fall through to "Any layer fails" below exactly as a `needs-human` verdict does.
+The refusal carries both `merge-check` and `needs-human`, so `console-resolve.js` resolves this
+record's merge to `leave-open`. The refusal line replaces that `needs-human` log line — do not
+also write `assess-agent-autonomy verdict needs-human` for a verdict that never ran.
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "Auto-merge short-circuit" --reversibility n/a --text "#{n} merge-check verdict not confirmed in decisions.md (latest: {latest}{detail}) — treated as needs-human, Review Console renders normally"
+```
+
 **Both layers pass — acceptance labeling runs first, before the merge.** This branch bypasses
 Phase 4's execution step, which is where acceptance labeling normally happens, so this branch must
 perform it itself. Run `verification-brief.md` now, starting from its **Routing** section, exactly as
@@ -138,7 +178,8 @@ dispatch-claim branch matching changes nothing about how this branch merges, onl
 `task-prompt.md`'s reporting format carries the outcome back (`merged`/`armed`/`pending-review`)
 instead of this file's own `PushNotification`.
 
-**`integration-model: local-merge`:** the checkout restriction is real — do not run the merge
+**`integration-model: local-merge`:** the checkout restriction is real — run the Verdict backstop
+above first (anything but `{n}=1`, fall through instead of relaying). Then do not run the merge
 procedure below. Stop here instead: report `OUTCOME: ready-to-merge` per `task-prompt.md`'s
 second-call template — `dispatch/settle-and-merge.md`'s local-merge fallback is what actually
 merges, in dispatch's own thread.
@@ -150,7 +191,8 @@ local-merge stop-and-relay branch above is the one exception.
 Skip the blocking wait and merge directly — bypass the interactive
 `/superpowers:finishing-a-development-branch` handoff entirely; a verdict already exists.
 
-**`integration-model: pr-first` (`_shared/integration-model.md`):** run `_shared/pr-first-merge.md`'s
+**`integration-model: pr-first` (`_shared/integration-model.md`):** run the Verdict backstop above
+first (anything but `{n}=1`, stop here and fall through). Then run `_shared/pr-first-merge.md`'s
 procedure now — `tag: {tag}` (see `manifesto-authorized-merge.md`'s Tag selection section) (distinct from dispatch's `auto-merge` tag; `/help`'s
 auto-merged-this-week count keys on all three, `_shared/github-pr-scan.md` `triage-queue` item 3),
 `issue-list` this one record, `summary` the record's own title. Read that procedure as one composed bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-checklist-refresh.md"`, then read `$PIPELINE_RUN_DIR/context/merge.md`; if the compose command is unavailable or exits non-zero, read the named source files directly. No checkout is needed — `gh pr
@@ -165,7 +207,8 @@ attach it to a
 only the wait for a live approval is skipped. Log to `decisions.md`:
 `AUTO {time} — Fast-lane auto-merge: issue #{n}, assess-agent-autonomy verdict auto-merge (see RATIONALE), pr-first-merge outcome {merged|armed|pending-review}. {Merge commit: {sha}. Reversibility: high (git revert). | Reversibility: n/a (nothing merged yet).} [lever: auto-merge-max-lines={value} ({source}); auto-merge-max-files={value} ({source}); merge-sensitive-paths={value} ({source})]`
 
-**`integration-model: local-merge`:** before merging, clear this run's worktree
+**`integration-model: local-merge`:** run the Verdict backstop above first (anything but `{n}=1`,
+stop here and fall through). Then, before merging, clear this run's worktree
 assignment as `flow/worktree-merge.md`'s reconciliation does
 (`node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"`) so
 the merge, landing in the main checkout, isn't denied as a wrong-checkout

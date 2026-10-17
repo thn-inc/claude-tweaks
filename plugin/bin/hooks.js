@@ -48,7 +48,7 @@ const { closeRunState } = require('./lib/hooks/close-run-state');
 const { teardownRun } = require('./lib/hooks/teardown-run');
 const { deriveBranch, repoRootOf } = require('./lib/hooks/run-integrity');
 
-const EVENTS = ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'subagent-stop'];
+const EVENTS = ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'post-tool-use-failure', 'subagent-stop'];
 
 // The write-only, janitorial half of reconcile/index.js's ALL_CHECKS — run
 // by the `reconcile-background` subcommand below, off session-start.js's hot
@@ -70,6 +70,7 @@ const EVENT_MODULES = {
   'pre-compact': () => require('./lib/hooks/pre-compact'),
   'pre-tool-use': () => require('./lib/hooks/pre-tool-use'),
   'post-tool-use': () => require('./lib/hooks/post-tool-use'),
+  'post-tool-use-failure': () => require('./lib/hooks/post-tool-use-failure'),
   'subagent-stop': () => require('./lib/hooks/subagent-stop'),
 };
 
@@ -100,7 +101,7 @@ function pluginRoot() {
 // "usage:" error strings (printed on malformed non-help args) reuse these
 // same entries rather than a second, driftable copy of the same text.
 const USAGE = {
-  'record-worktree': 'record-worktree --run <dir> <worktree-path>',
+  'record-worktree': 'record-worktree --run <dir> <worktree-path> [--dispatch]',
   'resolve-run-dir': 'resolve-run-dir [--spec-slug <slug>] [--mode <mode>] [--standalone <value>] [--create] [--root-only]',
   'sweep-shadow': 'sweep-shadow [--run <dir>] [--worktree <path>]',
   'adopt-run-dir': 'adopt-run-dir --run <main-checkout-run-dir> --worktree <worktree-path>',
@@ -134,7 +135,7 @@ const HELP_FLAGS = new Set(['--help', '-h']);
 const KNOWN_FLAGS = {
   'close-run': ['--run'],
   'delete-ledger': ['--run', '--ledger'],
-  'record-worktree': ['--run'],
+  'record-worktree': ['--run', '--dispatch'],
   'record-pr': ['--run'],
   'spec-status': ['--run', '--spec', '--status', '--phase', '--now'],
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
@@ -319,11 +320,14 @@ function resolveImplicitRunUnambiguous(cwd, env, callerIdentity) {
       }
     } catch { /* fall through */ }
   }
-  const boundHit = ctxLib.findRunByWorktreePath(cwd, cwd);
+  // #2783: `-adhoc-standalone` dirs are excluded from steps 2-4. One holds only
+  // friction events, never pipeline state these verbs act on, and EnterWorktree
+  // mints it after /flow's formal run, so it would win step 2's match.
+  const boundHit = ctxLib.findRunByWorktreePath(cwd, cwd, { skipAdHoc: true });
   if (boundHit && boundHit.state && boundHit.state.status !== 'clean') {
     return { runDir: boundHit.runDir, candidates: null };
   }
-  const all = ctxLib.listRunDirsWithState(cwd); // already newest-first, terminal runs excluded
+  const all = ctxLib.listRunDirsWithState(cwd).filter(({ dir }) => !ctxLib.isAdHocRunDir(dir)); // newest-first, terminal runs excluded
   if (all.length === 0) return { runDir: null, candidates: null };
   const annotated = all.map(({ dir, state }) => ({
     dir,
@@ -641,7 +645,14 @@ async function main(argv) {
     const {
       runDir, invalidRunArg, rest, worktreeLocalFallback, explicit,
     } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { allowUninitialized: true });
-    const worktreeArg = rest[0];
+    // #3225: `--dispatch` (boolean, any position) marks the run as bound by
+    // /claude-tweaks:dispatch before call 1 — checkDispatchConfigGate
+    // (bin/lib/hooks/pre-tool-use.js) then denies git writes in this worktree
+    // until /claude-tweaks:flow Step 3 writes config.yml. Stripped before the
+    // positional lookup so it can never be read as the worktree path.
+    const dispatch = rest.includes('--dispatch');
+    const positional = rest.filter((a) => a !== '--dispatch');
+    const worktreeArg = positional[0];
     // #1124: every real caller already passes --run explicitly (build's
     // worktree-setup.md Step 4.5, the run-resume-freshness re-stamp, the
     // subagent-output-contract re-stamp) — nothing legitimate depends on the
@@ -677,6 +688,9 @@ async function main(argv) {
       // not clobber a previous stamp.
       const patch = { worktree: path.resolve(worktreeArg), status: 'active' };
       if (process.env.CLAUDE_CODE_SESSION_ID) patch.sessionId = process.env.CLAUDE_CODE_SESSION_ID;
+      // Permanent for the run's lifetime: only ever written true, never
+      // false, so a later plain re-stamp (no --dispatch) cannot clear it.
+      if (dispatch) patch.dispatched = true;
       const result = ctxLib.writeRunState(runDir, patch);
       if (result) {
         process.stdout.write(`claude-tweaks: worktree recorded for ${path.basename(runDir)}\n`);

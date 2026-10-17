@@ -30,7 +30,7 @@ const { writeFileAtomic } = require('./lib/atomic-write');
 const { composeStamp, writeStamp, readStamp: readVerifyStamp, anchorOf } = require('./lib/verify/stamp');
 const { readDeclaration } = require('./lib/verify/declaration');
 const {
-  changedFiles, resolveBase, usableAnchor, ChangedFilesError,
+  changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
 } = require('./lib/verify/changed-files');
 const { selectScope } = require('./lib/verify/scope');
 const { resolveTarget } = require('./lib/stage-item/write');
@@ -257,6 +257,7 @@ async function main() {
   let cmds = parsed.cmds;
   let decl = null;
   let priorStamp = null;
+  let narrowing = null;
   // #2779: a check's --cmd-env variables, by check name — for the two spawns
   // that are not a parsed --cmd entry itself (tool-scoped's synthesized
   // `tests`, and a flaky retry of a check), so they run in the same
@@ -337,12 +338,20 @@ async function main() {
     const anchorSha = usableAnchor({ stamp: priorStamp });
     if (parsed.base) {
       if (anchorSha && resolvedBase !== anchorSha) {
-        scopeUsageExit(`--scope: --base ${parsed.base} conflicts with the stamp anchor ${anchorSha.slice(0, 9)}; omit --base (pass --integration-branch instead) or clear the stamp`);
+        scopeUsageExit(`--scope: --base ${parsed.base} conflicts with the stamp anchor ${anchorSha.slice(0, 9)}; omit --base or clear the stamp (after an integration-branch merge, --integration-branch narrows the scoped set to this branch's own delta)`);
         return;
       }
     }
 
     files = changedFiles({ base: resolvedBase }).files;
+    // #3072: anchored on a full pass and asked about an integration branch the
+    // run has since merged — narrow to the branch's own delta. Only when the
+    // resolved base IS the usable anchor; with no anchor, resolveBase already
+    // returned the merge-base, which excludes merged-in files by construction.
+    if (parsed.integrationBranch && anchorSha && resolvedBase === anchorSha) {
+      narrowing = mergeNarrowing({ anchor: anchorSha, integrationBranch: parsed.integrationBranch, files });
+      if (narrowing) files = narrowing.files;
+    }
     sel = selectScope({ decl, files, stamp: anchorSha ? priorStamp : null });
     if (decl) {
       cmds = parsed.cmds.filter((c) => {
@@ -567,7 +576,7 @@ async function main() {
 
   const report = composeReport({
     checks: results, startedAt, durationMs: Date.now() - startMs, git, testCountRegression,
-    scope: sel ? { mode: sel.mode, suites: scopeSuites, static: sel.static, base: resolvedBase, unmatched: sel.unmatched, changedFiles: files, matched: sel.matched } : null,
+    scope: sel ? { mode: sel.mode, suites: scopeSuites, static: sel.static, base: resolvedBase, unmatched: sel.unmatched, changedFiles: files, matched: sel.matched, mergeNarrowing: narrowing ? { ref: narrowing.ref, excluded: narrowing.excluded.length, excludedFiles: narrowing.excluded } : null } : null,
     flakyEscalation, baselineAdjudicated, preExistingAdjudicated,
   });
   writeReportAtomic(report, jsonPath);
@@ -673,6 +682,7 @@ async function main() {
     // selection outcome, while keeping the same trailing fields.
     const lead = decl === null ? `Scope: full — no declaration at ${parsed.scope}; ${sinceClause}` : `Scope: ${sel.mode} — ${sinceClause}`;
     lines.push(`${lead}; suites: ${suiteList}; static: ${sel.static ? 'yes' : 'no'}; unmatched: ${sel.unmatched.length}`);
+    if (narrowing) lines.push(`merge-narrowed: ${narrowing.excluded.length} merge-identical path(s) excluded (identical to ${narrowing.ref})`);
     if (sel.mode === 'none') {
       // Nit (re-review): an unchanged-HEAD re-run (M6's own scenario) has
       // zero changed files — "bookkeeping-only delta ()" reads as broken
