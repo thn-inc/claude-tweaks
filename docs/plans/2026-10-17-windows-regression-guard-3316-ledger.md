@@ -10,7 +10,7 @@
 | 6 | build | Task 1 minor: `excerptFor` substring match can match a `.snap` sibling or a longer path. | fixed | `/`-boundary match (`namesFile`) in the final-review fix wave — `9e741b3c0` |
 | 7 | build | Task 1 minor: a failing non-`tests` check with no adjudication renders "(no failing output captured)" — the workflow declares only the `tests` check. | deferred | — |
 | 8 | build | Task 2 minor: long paths set with `git config --global` before checkout; reviewer suggests `--system` (checkout FAQ form). The plan Task 4 live run settles it. | deferred | — |
-| 9 | build | Task 2 minor: `fs`/`path` required mid-file at the append site in `tests/windows-regression-file-issue.test.js`; a module-level `readFileSync` makes a missing workflow fail every test in the file. | deferred | — |
+| 9 | build | Task 2 minor: `fs`/`path` required mid-file at the append site in `tests/windows-regression-file-issue.test.js`; a module-level `readFileSync` makes a missing workflow fail every test in the file. | fixed | Requires moved to the top by Common Step 3's simplifier (the module-level read is a loud failure, kept) |
 | 10 | build | Task 2 minor: the filer-step test's `'\n      - '` anchor assumes 6-space step indentation (fails loudly if reindented). | deferred | — |
 | 11 | build | Fix-wave re-review minor: `findExistingIssue`'s title filter is not anchored to `^Windows regression: ` — an unrelated open `type:bug` issue whose title contains the 9-char sha or ends with "(not adjudicated)" could receive the comment. | deferred | — |
 | 12 | build | Fix-wave re-review minor: `--limit 50` on the fuzzy `Windows regression in:title` search could miss the same-sha issue when more than 50 open issues match, producing a duplicate. | deferred | — |

@@ -145,6 +145,11 @@ function failingRegionOf(report) {
   return isPlainObject(tests) && typeof tests.failingRegion === 'string' ? tests.failingRegion : '';
 }
 
+function timedOutOf(report) {
+  const ba = report.baselineAdjudicated;
+  return isPlainObject(ba) && Array.isArray(ba.timedOut) ? ba.timedOut : [];
+}
+
 function composeIssue({ report, verdict, sha, base, pr, runUrl, logText }) {
   const short = sha.slice(0, 9);
   const title = verdict.adjudicated
@@ -159,10 +164,10 @@ function composeIssue({ report, verdict, sha, base, pr, runUrl, logText }) {
   ];
   if (verdict.adjudicated) {
     // Every file name first, excerpts after — the body cap can only drop excerpts.
-    const timedOut = new Set(isPlainObject(report.baselineAdjudicated) && Array.isArray(report.baselineAdjudicated.timedOut)
-      ? report.baselineAdjudicated.timedOut : []);
+    const timedOut = new Set(timedOutOf(report));
     const excerptLines = typeof logText === 'string' ? logText.split(/\r?\n/) : regionLines;
-    parts.push(['### Newly failing test files', ...verdict.attributable.map((f) => `- \`${f}\`${timedOut.has(f) ? ' (timed out — no evidence)' : ''}`)].join('\n'));
+    const bullets = verdict.attributable.map((f) => `- \`${f}\`${timedOut.has(f) ? ' (timed out — no evidence)' : ''}`);
+    parts.push(['### Newly failing test files', ...bullets].join('\n'));
     const excerpts = [];
     for (const file of verdict.attributable) {
       const excerpt = excerptFor(file, excerptLines);

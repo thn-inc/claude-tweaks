@@ -4,6 +4,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { run, findMergedPr } = require('../tools/windows-regression/file-issue');
 
 const SHA = 'abcdef1234567';
@@ -46,6 +48,7 @@ const argv = (over = {}) => {
 const created = (deps) => deps.calls.gh.find((c) => c.args[0] === 'issue' && c.args[1] === 'create');
 const commented = (deps) => deps.calls.gh.find((c) => c.args[0] === 'issue' && c.args[1] === 'comment');
 const listed = (deps) => deps.calls.gh.find((c) => c.args[0] === 'issue' && c.args[1] === 'list');
+const issueList = (number, title) => JSON.stringify([{ number, title }]);
 const flag = (call, name) => call.args[call.args.indexOf(name) + 1];
 
 test('AC5.1: a raw-pass report files nothing and exits 0', () => {
@@ -246,7 +249,7 @@ test('F2: --base puts the comparison base in the lead line', () => {
 });
 
 test('F3: an open issue naming this commit gets a comment, not a second issue', () => {
-  const list = JSON.stringify([{ number: 5, title: 'Windows regression: 1 test file(s) newly failing after abcdef123' }]);
+  const list = issueList(5, 'Windows regression: 1 test file(s) newly failing after abcdef123');
   const deps = fakeDeps(adjudicated('tests/a.test.js'), { 'issue list': list });
   assert.equal(run(argv(), deps), 1);
   assert.equal(created(deps), undefined);
@@ -259,7 +262,7 @@ test('F3: an open issue naming this commit gets a comment, not a second issue', 
 });
 
 test('F3: a not-adjudicated run comments on an open "(not adjudicated)" issue', () => {
-  const list = JSON.stringify([{ number: 8, title: 'Windows regression: tests failing after 111111111 (not adjudicated)' }]);
+  const list = issueList(8, 'Windows regression: tests failing after 111111111 (not adjudicated)');
   const deps = fakeDeps({ pass: false, baselineAdjudicated: { eligible: false, reason: 'x' } }, { 'issue list': list });
   assert.equal(run(argv(), deps), 1);
   assert.equal(created(deps), undefined);
@@ -267,7 +270,7 @@ test('F3: a not-adjudicated run comments on an open "(not adjudicated)" issue', 
 });
 
 test('F3: an adjudicated run does not comment on an unrelated "(not adjudicated)" issue — it creates', () => {
-  const list = JSON.stringify([{ number: 8, title: 'Windows regression: tests failing after 111111111 (not adjudicated)' }]);
+  const list = issueList(8, 'Windows regression: tests failing after 111111111 (not adjudicated)');
   const deps = fakeDeps(adjudicated('tests/a.test.js'), { 'issue list': list });
   assert.equal(run(argv(), deps), 1);
   assert.equal(commented(deps), undefined);
@@ -284,7 +287,7 @@ test('F3: a failing or unparseable issue list falls through to create', () => {
 });
 
 test('F3: a failing comment call exits 1 with a stderr note', () => {
-  const list = JSON.stringify([{ number: 5, title: 'Windows regression: x after abcdef123' }]);
+  const list = issueList(5, 'Windows regression: x after abcdef123');
   const deps = fakeDeps(adjudicated('tests/a.test.js'), { 'issue list': list, 'issue comment': new Error('HTTP 403') });
   assert.equal(run(argv(), deps), 1);
   assert.match(deps.calls.stderr.join(''), /gh issue comment failed: HTTP 403/);
@@ -329,8 +332,6 @@ test('findMergedPr picks the merged entry and returns null when none merged', ()
 
 // Workflow shape — .github/workflows/windows-regression.yml, read as text (no YAML
 // parser dependency). The workflow itself only runs on a Windows runner.
-const fs = require('node:fs');
-const path = require('node:path');
 const WORKFLOW = fs.readFileSync(
   path.join(__dirname, '..', '.github', 'workflows', 'windows-regression.yml'), 'utf8');
 
