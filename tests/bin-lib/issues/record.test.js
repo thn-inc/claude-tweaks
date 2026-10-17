@@ -7,7 +7,7 @@ const {
   buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
-  buildLinkedPRQuery, partitionByOpenLinkedPR, extractSection,
+  buildLinkedPRQuery, partitionByOpenLinkedPR, extractSection, isRepoRelativeKeyFilePath,
 } = require('../../../plugin/bin/lib/issues/record');
 
 test('recordPayload assembles labels for a born-ready health record', () => {
@@ -1221,7 +1221,6 @@ test('specShapedBody: keyFiles rejects absolute, ..-escaping, empty, multi-line,
 });
 
 test('isRepoRelativeKeyFilePath agrees with specShapedBody on every keyFiles path', () => {
-  const { isRepoRelativeKeyFilePath } = require('../../../plugin/bin/lib/issues/record');
   const compose = (p) => () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', keyFiles: [{ path: p }] });
   for (const p of ['/abs/x.js', 'C:\\x.js', '../x.js', 'a/../../x.js', 'a\\..\\x.js', '', 'a\nb.js', 'a`b.js',
     'a\r## H', ' a.js', 'tests/', undefined, 42]) {
