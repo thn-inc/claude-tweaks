@@ -7,7 +7,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'console-resolve.js');
-const { run } = require(CLI);
+const { run, ghReadGrants } = require(CLI);
 
 function mainCheckoutWithRun({ autonomy = 'unattended', staged = {}, decisions = '', policyExtra = '', writePolicy = true, runConfig = null, consoleJson = null } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cli-')));
@@ -77,7 +77,7 @@ test('unattended: exit 0, one decisions block of items+1 lines, console.json res
 // window. Same fixture, two policies, opposite merge halves.
 const PENDING_30H = JSON.stringify({
   labels: [{ name: 'auto:merge-pending' }],
-  comments: [{ body: 'Grant recorded.\n<!-- grant-mode-audit: date=2026-09-05T06:00:00Z auto-merge=pending -->' }],
+  comments: [{ body: 'Grant recorded.\n<!-- grant-mode-audit: date=2026-09-05T06:00:00Z auto-merge=pending -->', authorAssociation: 'MEMBER' }],
 });
 
 function pendingGrantExec(root) {
@@ -101,6 +101,59 @@ test('grant-veto-window-hours is resolved and passed to the maturation check, ne
   const b = baseDeps(dflt, [], { execFile: pendingGrantExec(dflt.root) });
   assert.strictEqual(await run(['--run', dflt.runDir, '--policy', 'console-auto'], b.d), 0);
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dflt.runDir, 'console.json'), 'utf8')).merge.resolution, 'merge');
+});
+
+// #3358 AC3: a `grant-mode-audit` marker is plantable by anyone who can comment on
+// the issue -- a backdated NONE-authored one must not mature a pending grant. The
+// comment is passed over (same path as "no marker"), so the grant reads unknown-age.
+const PLANTED_PENDING = (association) => JSON.stringify({
+  labels: [{ name: 'auto:merge-pending' }],
+  comments: [{
+    body: '<!-- grant-mode-audit: date=2020-01-01T00:00:00Z auto-merge=pending -->',
+    url: 'https://x/issues/7#c1', author: { login: 'eve' }, authorAssociation: association,
+  }],
+});
+
+test('a planted backdated pending-grant marker does not mature a grant (#3358)', async () => {
+  const fx = mainCheckoutWithRun({ staged: THREE });
+  const exec = (cmd, args) => {
+    if (cmd === 'git' && args[0] === 'rev-parse') return `${fx.root}\n`;
+    if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') return PLANTED_PENDING('NONE');
+    if (cmd === 'git' && args[0] === 'apply') return '';
+    throw new Error(`unexpected exec: ${cmd} ${args.join(' ')}`);
+  };
+  const { d } = baseDeps(fx, [], { execFile: exec });
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  const merge = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8')).merge;
+  assert.strictEqual(merge.resolution, 'leave-open');
+  assert.match(merge.reason, /timestamp could not be determined/, 'the planted marker is passed over, so the grant reads unknown-age');
+});
+
+test('ghReadGrants: an untrusted pending-grant marker leaves pendingSince null and is named in skippedUntrusted (#3358)', () => {
+  const g = ghReadGrants(() => PLANTED_PENDING('NONE'), '/unused')([7])[7];
+  assert.deepStrictEqual(g.labels, ['auto:merge-pending']);
+  assert.strictEqual(g.pendingSince, null);
+  assert.deepStrictEqual(g.skippedUntrusted, ['skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator']);
+});
+
+test('ghReadGrants: the same marker authored MEMBER is that date, with nothing skipped (#3358)', () => {
+  const g = ghReadGrants(() => PLANTED_PENDING('MEMBER'), '/unused')([7])[7];
+  assert.strictEqual(g.pendingSince.toISOString(), '2020-01-01T00:00:00.000Z');
+  assert.deepStrictEqual(g.skippedUntrusted, []);
+});
+
+test('ghReadGrants: a trusted marker counts when a later untrusted one is passed over; a non-marker NONE comment is silent (#3358)', () => {
+  const raw = JSON.stringify({
+    labels: ['auto:merge-pending'],
+    comments: [
+      { body: '<!-- grant-mode-audit: date=2026-09-05T06:00:00Z auto-merge=pending -->', authorAssociation: 'OWNER' },
+      { body: '<!-- grant-mode-audit: date=2026-09-06T06:00:00Z auto-merge=pending -->', url: 'https://x/c2', author: { login: 'eve' } },
+      { body: 'unrelated chatter', url: 'https://x/c3', author: { login: 'eve' }, authorAssociation: 'NONE' },
+    ],
+  });
+  const g = ghReadGrants(() => raw, '/unused')([7])[7];
+  assert.strictEqual(g.pendingSince.toISOString(), '2026-09-05T06:00:00.000Z', 'the later untrusted marker must not win');
+  assert.deepStrictEqual(g.skippedUntrusted, ['skipped marker comment https://x/c2 by eve (no association) — not an owner, member, or collaborator']);
 });
 
 test('a console.json already recording resolved: true re-renders and appends nothing (#1932 I3a)', async () => {

@@ -69,6 +69,24 @@ reason's own table row is checked for a non-empty Fix cell matching the right vo
 for a canned `fix` string, `detail` for the two reasons that carry only `detail`) — a reason added,
 renamed, or moved to the other fix-shape bucket fails loudly instead of leaving the doc stale.
 
+**Code-generates-its-prose instance (#3358):** here the prose side is a jq filter that skill prose
+must paste, because a `gh --json comments --jq` pipeline cannot `require` the JavaScript rule it
+restates. `plugin/bin/lib/issues/comment-trust.js` keeps the trusted set once
+(`TRUSTED_AUTHOR_ASSOCIATIONS`) and builds the prose from it: `trustedJqSelect()` and
+`untrustedJqNote()` return the exact jq text. `tests/comment-trust-conformance.test.js` pins each
+prose copy (`_shared/pr-run-comments.md`'s `## Trusted authors` section, `tidy/scan-procedures.md`'s
+tombstone row, and the needs-decision lookups in `backlog/grant-lane-decision.md` and
+`specify/shaping-mode-stamping.md`) with `includes(trustedJqSelect())`. That is a real pin, not the
+citation sweep the second anti-pattern row rejects, because the needle is derived from the set: a
+fourth association changes the needle and every stale copy goes red (the suite proves it by
+doctoring `"OWNER"` to `"OWNER2"`). This shape owes two more checks. The generated text runs in a
+different interpreter from the code, so `tests/bin-lib/issues/comment-trust.test.js` runs
+`untrustedJqNote()` through real `jq` over the same comments and asserts the output equals
+`untrustedSkipNote()`'s, including a deleted author and a missing association (it skips where `jq`
+is absent). And the copy list is hand-written, so derive it by grepping the generated string across
+`plugin/skills/` (`grep -rlF 'select(.authorAssociation == "OWNER"' plugin/skills/` returns the same
+four files today), not from the files the change touched.
+
 **Candidate instance (a live, currently-unpinned gap this check surfaces today):**
 `plugin/bin/lib/compose-subject.js:69`'s `TYPE_PRECEDENCE = ['feature', 'bug', 'task']` is a
 *third* copy of the same closed vocabulary `TYPES`/`TYPE_PREFIX` above already key off — used to

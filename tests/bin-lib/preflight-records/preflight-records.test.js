@@ -390,6 +390,24 @@ test('(c) CLI overlapGroups: shared keyFiles union across three records', () => 
   assert.deepEqual(sorted, [[720, 721], [722]]);
 });
 
+test('CLI directOverlaps: a chain A-B, B-C keeps one transitive group but lists only the direct pairs (#3278)', () => {
+  const runner = (args) => {
+    if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A', body: specBody(['x.js']) }));
+    if (isIssueView(args, 721)) return JSON.stringify(issue({ number: 721, title: 'B', body: specBody(['x.js', 'y.js']) }));
+    if (isIssueView(args, 722)) return JSON.stringify(issue({ number: 722, title: 'C', body: specBody(['y.js']) }));
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner, workLinks: 'body-text' });
+  const code = run(['722', '720', '721'], deps);
+  assert.equal(code, 0);
+  const env = JSON.parse(out.join(''));
+  assert.deepEqual(env.overlapGroups.map((g) => [...g].sort((a, b) => a - b)), [[720, 721, 722]]);
+  assert.deepEqual(env.directOverlaps, [
+    { a: 720, b: 721, files: ['x.js'] },
+    { a: 721, b: 722, files: ['y.js'] },
+  ]);
+});
+
 test('(d) CLI: fetch failure on one of three records exits 1, all failures named', () => {
   const runner = (args) => {
     if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A' }));
@@ -509,7 +527,7 @@ test('#2733: --merge-gate adds mergeGate to the envelope; without it the envelop
 
   const plain = cliDeps({ runner, workLinks: 'body-text' });
   assert.equal(run(['2670', '2682'], plain.deps), 0);
-  assert.deepEqual(Object.keys(JSON.parse(plain.out.join(''))).sort(), ['overlapGroups', 'records', 'workLinks']);
+  assert.deepEqual(Object.keys(JSON.parse(plain.out.join(''))).sort(), ['directOverlaps', 'overlapGroups', 'records', 'workLinks']);
 });
 
 // AC2.1

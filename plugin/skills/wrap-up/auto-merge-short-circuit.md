@@ -23,10 +23,13 @@ The Authorization layer below always reads **live** labels (`gh issue view --jso
      ```bash
      GRANT_VETO_WINDOW_HOURS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values grant-veto-window-hours)
      node -e "
-       const { evaluateMaturation, extractPendingGrantedAt } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/grant-maturation.js');
+       const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/grant-maturation.js');
        // labels: this record's fetched label name array (issue.labels[].name).
-       // comments: this record's fetched comment body array (issue.comments[].body).
-       const pendingSince = extractPendingGrantedAt(comments);
+       // comments: this record's fetched comment objects (issue.comments) - only Trusted authors'
+       // bodies reach the grant date (_shared/pr-run-comments.md); each skipped one is named on stderr.
+       const { bodies, skippedUntrusted } = partitionGrantComments(comments);
+       skippedUntrusted.forEach((note) => console.error(note));
+       const pendingSince = extractPendingGrantedAt(bodies);
        const result = evaluateMaturation({
          hasPendingLabel: labels.includes('auto:merge-pending'),
          hasMergeLabel: labels.includes('auto:merge'),
@@ -37,6 +40,8 @@ The Authorization layer below always reads **live** labels (`gh issue view --jso
        console.log(JSON.stringify(result));
      "
      ```
+
+     Carry each skipped-comment line the snippet prints to stderr into the Review Console's output, so a grant marker that did not count is visible (`_shared/pr-run-comments.md`'s Trusted authors).
 
      `result.state === 'already-mature'` or `'matured'` clears Authorization. `'within-veto-window'`, `'not-pending'`, or `'unknown-age'` fails Authorization — fall through to the normal (non-short-circuit) Review Console path below, exactly as already happens today when `auto:merge` is simply absent. Log to `decisions.md`, matching the log-line shape and `[lever: grant-veto-window-hours=... (source)]` suffix `settle-and-merge.md` uses for its own non-clearing outcome:
      `AUTO {time} — Auto-merge short-circuit: #{n}'s auto:merge-pending has not matured ({result.reason}) — falls back to normal Review Console. Reversibility: n/a (no label change). [lever: grant-veto-window-hours={result.windowHours ?? GRANT_VETO_WINDOW_HOURS} (source)]`.

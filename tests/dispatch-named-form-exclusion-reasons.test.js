@@ -183,3 +183,8 @@ test('the unreadable-exclusions report maps absent to the reason-unknown line, o
   assert.match(unknownText, /The probe itself fails: .*the status probe failed .*Never fall back to "absent from this firing's queue"/,
     'a failed probe must route to the reason-unknown line, never to absent');
 });
+
+test('AC5.3: neighbour-in-flight is a queue-pull reason that is not removing (#3278)', () => {
+  assert.ok(QUEUE_PULL.includes("- `reason: 'neighbour-in-flight'`"), 'queue-pull-script.md has no neighbour-in-flight reason bullet');
+  assert.ok(!REMOVING_REASONS.includes('neighbour-in-flight'), 'neighbour-in-flight records stay in dispatch-groups.json');
+});

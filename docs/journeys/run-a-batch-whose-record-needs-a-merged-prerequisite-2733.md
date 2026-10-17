@@ -18,7 +18,7 @@ files:
 
 ### 1. Pre-flight collects the batch and evaluates the gate in one call — Validation step 3
 - **URL:** `plugin/skills/flow/multi-spec.md` Validation step 3
-- **Action:** `/flow` runs `bin/preflight-records.js {targets in run order} --merge-gate --integration-branch "$INTEGRATION_BRANCH"`, with `$INTEGRATION_BRANCH` resolved per `_shared/integration-branch.md`. One call returns `{records, overlapGroups, workLinks, mergeGate}`.
+- **Action:** `/flow` runs `bin/preflight-records.js {targets in run order} --merge-gate --integration-branch "$INTEGRATION_BRANCH"`, with `$INTEGRATION_BRANCH` resolved per `_shared/integration-branch.md`. One call returns `{records, overlapGroups, directOverlaps, workLinks, mergeGate}`.
 - **Should feel:** Invisible — no extra fetch pass and no question; the gate rides the pre-flight call that already ran.
 - **Should understand:** The gate fires only on a strict demand, on a `## Deliverables` / `## Prerequisites` line that names one of the record's own in-batch `blocked-by` prerequisites. Examples: "#2670 is actually merged", "merged to/into {integration branch}", "lands on main". The generic "must be merged first" phrasing does not fire, because the shared branch already carries that prerequisite's content ahead of the dependent's build.
 - **Red flags:** The flag passed with the claim step's open-queue extras appended; a hardcoded `main` in a repo whose integration branch is something else.

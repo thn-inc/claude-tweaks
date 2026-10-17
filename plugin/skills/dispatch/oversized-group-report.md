@@ -14,3 +14,5 @@ These groups stay selectable via `#N`/`#N,#M,...` (naming one directly is the re
 surfacing); drain's auto-selection excludes them exactly as `next`'s ranking already did —
 reused, not new logic. Same drain+zero-eligible exception as the Blocked-exclusion report
 (`SKILL.md` Step 3); omit when empty.
+
+Since #3278 a group is one record or one fast-lane bundle, so this report fires only when `dispatch-fastlane-bundle-cap` is set above `dispatch-group-size-guard`.

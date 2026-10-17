@@ -276,14 +276,16 @@ it is always available even when `classifyClaimBlob` cannot make sense of what t
 
 ### Group claiming
 
-Records whose key files overlap form a **file-overlap group** (`bin/lib/issues/grouping.js`'s
-`groupByFileOverlap`). A dispatcher claims **all members of the group before starting any** —
-building one member alone would leave the branch and its overlap partners racing each other.
-Per-member acquisition uses the same 201/422 handling; on a partial group claim (some members
-contested live mid-acquisition), release the members this run just claimed, log, and skip the
-whole group this firing. Group membership is computed over *unclaimed* records only, so two
-racing dispatchers converge: exactly one wins each contested member, and the loser backs off
-group-wide.
+A dispatch group is a single record or a fast-lane bundle (disjoint `ceremony:fast-lane` records;
+`bin/lib/issues/grouping.js`'s `buildDispatchGroups`, #3278). A dispatcher claims **all members of
+a fast-lane bundle before starting any** — building one member alone would leave the bundle's
+shared branch half-owned. Per-member acquisition uses the same 201/422 handling; on a partial
+bundle claim (some members contested live mid-acquisition), release the members this run just
+claimed, log, and skip the whole bundle this firing. Bundle membership is computed over
+*unclaimed* records only, so two racing dispatchers converge: exactly one wins each contested
+member, and the loser backs off bundle-wide. File overlap between separate groups is not bundled:
+the non-removing `neighbour-in-flight` exclusion (`dispatch/queue-pull-script.md`) guards it, and
+anything that guard misses resolves at merge through `_shared/pr-first-merge.md`'s Conflict path.
 
 **Post-write verification (#2073, retry/leak-fixed #2329).** A write the claim store reports
 `ok: true` on has not yet been confirmed to have actually landed — `bin/lib/claim-targets/claim-targets.js`
@@ -530,7 +532,7 @@ by `/claude-tweaks:backlog refine`'s interactive invocation. Machinery may remov
 grants; it never adds them:
 
 - `auto:build` — authorized to build. `/dispatch` selects on this, mints the run directory for
-  the record's whole file-overlap group, and hands it to `/flow #{n}`, which claims the group at
+  the record's group (itself, or its fast-lane bundle), and hands it to `/flow #{n}`, which claims the group at
   Step 2.8. Label = standing request, claim = in flight: the claim blob prevents double-dispatch
   across firings, and the grant persists until *successful* wrap-up — a failed run retries at a
   later firing once its claim ages out, up to the `dispatch-retry-ceiling` config key.
@@ -609,7 +611,7 @@ conflict.
 
 | Skill | Role |
 |---|---|
-| `/claude-tweaks:dispatch` | Selects each authorized record's whole file-overlap group, mints the run directory, and hands off to `/flow` (which claims at Step 2.8); the settle procedure it dispatches releases + revokes on failure (per the retry-ceiling procedure) |
+| `/claude-tweaks:dispatch` | Selects each authorized record's group (the record, or its fast-lane bundle), mints the run directory, and hands off to `/flow` (which claims at Step 2.8); the settle procedure it dispatches releases + revokes on failure (per the retry-ceiling procedure) |
 | `/claude-tweaks:flow` (issue-reference mode) | Claims its named targets at Step 2.8 (`flow/claim-targets.md`), whether the invocation came from dispatch's hand-off or a human running `/flow #{n}` directly. Releases via `/wrap-up`'s generic Section E `abandoned:` path when the user doesn't merge, and via failure-card-offered release on a gate failure. |
 | `/claude-tweaks:wrap-up` (`cleanup-procedures.md` item 7 / `cleanup-procedures-execution.md` Section E) | Releases claims with the branch outcome as reason |
 | `/claude-tweaks:tidy` (`scan-procedures.md` Step 4.7) | Sweeps stale/orphaned claims; releases only after batch approval |

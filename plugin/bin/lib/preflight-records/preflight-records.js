@@ -18,7 +18,7 @@ const { execFileSync } = require('child_process');
 const {
   parseRecordFacets, parseDependencies, extractFingerprint,
 } = require('../issues/record');
-const { extractKeyFiles, groupByFileOverlap } = require('../issues/grouping');
+const { extractKeyFiles, groupByFileOverlap, directOverlaps } = require('../issues/grouping');
 const { fetchNativeDependencies: sharedFetchNativeDependencies } = require('../issues/native-dependencies');
 const { repoSlug } = require('../repo-resolve');
 
@@ -156,6 +156,21 @@ function buildOverlapGroups(records) {
   return groupByFileOverlap(items);
 }
 
+// records -> directOverlaps (#3278): the non-transitive companion to
+// buildOverlapGroups. Every pair of records sharing a linking file, once, as
+// [{a, b, files}] with a < b, sorted by a then b. Same record mapping and hub
+// rule as buildOverlapGroups; groupByFileOverlap's transitive groups stay as-is.
+function buildDirectOverlaps(records) {
+  const items = Object.entries(records).map(([n, r]) => ({ id: Number(n), keyFiles: r.keyFiles }));
+  const pairs = [];
+  for (const [a, neighbours] of directOverlaps(items)) {
+    for (const { id: b, files } of neighbours) {
+      if (a < b) pairs.push({ a, b, files });
+    }
+  }
+  return pairs.sort((x, y) => x.a - y.a || x.b - y.b);
+}
+
 module.exports = {
-  defaultRunner, errorText, fetchIssues, issuesFromRecordsJson, fetchNativeDependencies, buildRecords, buildOverlapGroups,
+  defaultRunner, errorText, fetchIssues, issuesFromRecordsJson, fetchNativeDependencies, buildRecords, buildOverlapGroups, buildDirectOverlaps,
 };
