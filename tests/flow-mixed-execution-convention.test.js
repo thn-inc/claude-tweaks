@@ -58,6 +58,8 @@ const TOKENS = [
   { name: 'close-run on the parent', s: 'close-run' },
   { name: 'by-hand close of B record', re: /close it by hand/i },
   { name: 'already-closed record-scoped wrap-up fallback', s: '/claude-tweaks:wrap-up #{n}' },
+  { name: 'close-run ordering: parent comes last', s: '`close-run` on the parent comes last' },
+  { name: 'never-close-parent-first rule', s: '**Never close the parent first.**' },
 ];
 
 for (const tok of TOKENS) {
