@@ -1329,7 +1329,7 @@ async function main(argv) {
     const root = pluginRoot();
     const staleEntries = sessionResidue.collectStaleRuns(process.cwd(), { exclude: runDir, pluginRoot: root });
     const approvableEntries = sessionResidue.collectApprovableStandalone(process.cwd(), { exclude: runDir });
-    const consoleEntries = sessionResidue.collectUnresolvedConsoles(process.cwd(), { exclude: runDir, pluginRoot: root });
+    const { runs: consoleEntries, more: moreConsoles } = sessionResidue.scanUnresolvedConsoles(process.cwd(), { exclude: runDir, pluginRoot: root });
     if (!staleEntries.length && !approvableEntries.length && !consoleEntries.length) {
       process.stdout.write('claude-tweaks: no pending residue from session start\n');
       return 0;
@@ -1350,7 +1350,10 @@ async function main(argv) {
       blocks.push(approvableEntries.map((e) => e.line).join('\n'));
     }
     if (consoleEntries.length) {
-      blocks.push(consoleEntries.flatMap((e) => e.lines).join('\n'));
+      const lines = consoleEntries.flatMap((e) => e.lines);
+      if (moreConsoles) lines.push(sessionResidue.CONSOLE_OVERFLOW_LINE);
+      lines.push(sessionResidue.consoleAckAllLine(root));
+      blocks.push(lines.join('\n'));
     }
     process.stdout.write(
       `claude-tweaks: pending residue from session start still unresolved:\n${blocks.join('\n')}\n`,

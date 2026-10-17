@@ -155,3 +155,50 @@ test('--ack-all marks every unacknowledged run', () => {
   assert.strictEqual(run(['--ack-all'], again.deps), 0);
   assert.match(again.out(), /marked 0 console\(s\) reviewed across 0 run\(s\)/);
 });
+
+// #3370 I4: a --run path printed before the run was archived.
+const MOVED = new RegExp(`^console-residue\\.js: .*/pipelines/${RUN_2821} has moved to .*/pipelines/archive/${RUN_2821} — using the archived copy\\n$`);
+
+test('--run given the pre-archive path prints the archived copy\'s residue with one stderr note', () => {
+  const f = fixture();
+  const preArchive = path.join(f.main, '.claude-tweaks', 'pipelines', RUN_2821);
+  const h = harness(f.main);
+  assert.strictEqual(run(['--run', preArchive], h.deps), 0);
+  assert.ok(h.out().includes('review-13-record.md'), h.out());
+  assert.ok(h.out().includes(`--ack --run "${fs.realpathSync(f.runDir)}"`), h.out());
+  assert.match(h.err(), MOVED);
+});
+
+test('--ack given the pre-archive path acknowledges the archived copy, mainRoot derived from cwd', () => {
+  const f = fixture();
+  const preArchive = path.join(f.main, '.claude-tweaks', 'pipelines', RUN_2821);
+  const h = harness(f.main);
+  delete h.deps.mainRoot;
+  assert.strictEqual(run(['--ack', '--run', preArchive], h.deps), 0);
+  assert.match(h.out(), new RegExp(`marked 1 console\\(s\\) reviewed for ${RUN_2821}`));
+  assert.match(h.err(), MOVED);
+  assert.strictEqual(JSON.parse(fs.readFileSync(f.consolePath, 'utf8')).residueAcknowledgedAt, '2026-10-17T12:00:00.000Z');
+});
+
+test('--run whose basename is in neither place still exits 3 with no moved note', () => {
+  const f = fixture();
+  const h = harness(f.main);
+  assert.strictEqual(run(['--run', path.join(f.main, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-0')], h.deps), 3);
+  assert.doesNotMatch(h.err(), /has moved to/);
+});
+
+test('--ack-all reaches runs beyond the SessionStart scan window (#3370 F1)', () => {
+  const f = fixture();
+  const { SCAN_WINDOW } = require('../../../plugin/bin/lib/hooks/session-residue');
+  const extra = SCAN_WINDOW + 5;
+  for (let i = 1; i <= extra; i++) {
+    const dir = path.join(f.archive, `2026-01-01T${String(i).padStart(6, '0')}-spec-${i}`);
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify(CONSOLE_2821));
+  }
+  const h = harness(f.main);
+  assert.strictEqual(run(['--ack-all'], h.deps), 0);
+  assert.match(h.out(), new RegExp(`marked ${extra + 1} console\\(s\\) reviewed across ${extra + 1} run\\(s\\)`));
+  const oldest = path.join(f.archive, '2026-01-01T000001-spec-1', 'console.json');
+  assert.strictEqual(JSON.parse(fs.readFileSync(oldest, 'utf8')).residueAcknowledgedAt, '2026-10-17T12:00:00.000Z');
+});

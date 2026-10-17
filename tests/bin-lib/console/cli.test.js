@@ -378,6 +378,9 @@ test('unattended: an unmapped-prefix item and a contested item print a Needs a h
   assert.ok(after.includes('review-13-record.md'), after);
   assert.ok(after.includes('review-debate-deviation.md'), after);
   assert.ok(after.includes('--ack --run'), after);
+  const tail = after.trimEnd().split('\n');
+  assert.match(tail[tail.length - 1], new RegExp(`^  paths move when the run is archived; current paths: node "/.+/bin/console-residue\\.js" --run "/.+/${path.basename(fx.runDir)}"$`));
+  assert.ok(tail[tail.length - 2].includes('--ack --run'), 'the paths line follows the formatter lines');
   assert.ok(!after.includes('wrap-up-memory-1.md'), 'a resolved item is not residue');
   const tableOnly = out().slice(0, out().indexOf('Needs a human'));
   assert.ok(tableOnly.includes('wrap-up-memory-1.md'), 'the table still lists every item');

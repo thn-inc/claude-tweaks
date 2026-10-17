@@ -9,7 +9,9 @@
 //   console-residue.js --ack-all               mark every run with unacknowledged residue
 // Exit 0 done; 2 malformed (unknown flag, --run without a value, --ack without
 // --run, --ack-all with --run or --ack, neither --run nor --ack-all); 3 --run
-// missing or not anchored under the main checkout ([IL-127]). An already
+// missing or not anchored under the main checkout ([IL-127]). A missing --run
+// whose basename exists under the main checkout's pipelines/archive/ (a path
+// printed before the run archived) uses that copy, with one stderr note. An already
 // acknowledged console is never rewritten, and a console.json that does not
 // parse is never written.
 'use strict';
@@ -19,6 +21,7 @@ const path = require('path');
 const { readRunResidue, formatResidueLines } = require('./lib/console/residue');
 const { collectUnresolvedConsoles } = require('./lib/hooks/session-residue');
 const { resolveTarget } = require('./lib/stage-item/write');
+const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const { writeFileAtomic } = require('./lib/atomic-write');
 
 const USAGE = 'usage: console-residue.js (--run <dir> | --ack --run <dir> | --ack-all)';
@@ -74,14 +77,24 @@ function run(argv, deps = {}) {
   const at = new Date(now()).toISOString();
 
   if (o.ackAll) {
-    const runs = collectUnresolvedConsoles(cwd(), { limit: Infinity, pluginRoot });
+    const runs = collectUnresolvedConsoles(cwd(), { limit: Infinity, window: Infinity, pluginRoot });
     let marked = 0;
     for (const r of runs) marked += ackConsoles(r.consoles, at, readFile);
     stdout(`claude-tweaks: marked ${marked} console(s) reviewed across ${runs.length} run(s)\n`);
     return 0;
   }
 
-  const target = resolveTarget({ runDir: o.run, cwd: cwd(), mainRoot: deps.mainRoot });
+  let target = resolveTarget({ runDir: o.run, cwd: cwd(), mainRoot: deps.mainRoot });
+  if (!target.ok && target.reason === 'missing') {
+    // A path printed before the run archived: use its archive/ copy.
+    const main = deps.mainRoot || mainCheckoutRoot(cwd());
+    const archiveDir = main && path.join(main, '.claude-tweaks', 'pipelines', 'archive', path.basename(o.run));
+    const moved = archiveDir ? resolveTarget({ runDir: archiveDir, cwd: cwd(), mainRoot: deps.mainRoot }) : target;
+    if (moved.ok) {
+      stderr(`console-residue.js: ${o.run} has moved to ${archiveDir} — using the archived copy\n`);
+      target = moved;
+    }
+  }
   if (!target.ok) {
     stderr(`console-residue.js: --run ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout'}) — nothing written\n`);
     return 3;

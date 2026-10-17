@@ -142,6 +142,39 @@ test('#3370: SessionStart renders no console-residue banner when every console i
   assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /no human has reviewed/);
 });
 
+// #3370 I3: a visible way out of a backlog of unreviewed consoles.
+function mkArchivedResidue(project, n) {
+  for (let i = 1; i <= n; i++) {
+    const dir = path.join(project, '.claude-tweaks', 'pipelines', 'archive', `2026-10-0${i}T000000-spec-${i}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({
+      resolved: true,
+      items: [{ id: `review-${i}-x.md`, section: 'Pending review', resolution: 'pending', reason: 'unmapped-prefix' }],
+    }));
+  }
+}
+const OVERFLOW = /^- … more run\(s\) may have unreviewed console items \(newest 3 shown\)\.$/m;
+const ACK_ALL = /^To dismiss every listed and older unreviewed item at once after reviewing \(a human decision\): node ".*\/bin\/console-residue\.js" --ack-all$/m;
+
+test('#3370: more than MAX_REPORTED runs with residue adds the overflow line and the --ack-all command', async () => {
+  const project = tmpProject();
+  mkArchivedResidue(project, 4);
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  const ctx = out.json.hookSpecificOutput.additionalContext;
+  assert.match(ctx, OVERFLOW);
+  assert.match(ctx, ACK_ALL);
+  assert.doesNotMatch(ctx, /review-1-x\.md/, 'the oldest run is past MAX_REPORTED');
+});
+
+test('#3370: at most MAX_REPORTED runs with residue carries --ack-all but no overflow line', async () => {
+  const project = tmpProject();
+  mkArchivedResidue(project, 3);
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  const ctx = out.json.hookSpecificOutput.additionalContext;
+  assert.doesNotMatch(ctx, OVERFLOW);
+  assert.match(ctx, ACK_ALL);
+});
+
 test('#1493: the standalone-approvable list is capped at MAX_REPORTED, newest-first, no overflow line', async () => {
   const project = tmpProject();
   const names = [

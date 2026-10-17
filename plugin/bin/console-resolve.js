@@ -212,7 +212,9 @@ async function run(argv, deps = {}) {
   } else {
     stdout(`${table}\n`);
     if (unresolved.length > 0) {
-      const lines = formatResidueLines({ dir: runDir, consoles: [{ path: consolePath, items: unresolved }] }, { pluginRoot: path.resolve(__dirname, '..') });
+      const pluginRoot = path.resolve(__dirname, '..');
+      const lines = formatResidueLines({ dir: runDir, consoles: [{ path: consolePath, items: unresolved }] }, { pluginRoot });
+      lines.push(`  paths move when the run is archived; current paths: node "${pluginRoot}/bin/console-residue.js" --run "${runDir}"`);
       stdout(`\nNeeds a human — ${unresolved.length} item(s) this console did not resolve (never auto-applied):\n${lines.join('\n')}\n`);
     }
   }

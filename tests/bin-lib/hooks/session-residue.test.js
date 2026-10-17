@@ -234,3 +234,71 @@ test('collectUnresolvedConsoles: limit Infinity returns every unresolved run', (
   for (const n of [1, 2, 3, 4, 5]) mkConsole(mkArchived(project, `2026-10-0${n}T000000-spec-${n}`), [PENDING('h.md')]);
   assert.strictEqual(residue.collectUnresolvedConsoles(project, { pluginRoot: '/p', limit: Infinity }).length, 5);
 });
+
+// #3370 F1: the scan window bounds the all-acknowledged steady state.
+const runName = (i) => `2026-01-01T${String(i).padStart(6, '0')}-spec-${i}`;
+
+test('scanUnresolvedConsoles: all-acknowledged steady state reads at most SCAN_WINDOW consoles', () => {
+  assert.strictEqual(residue.SCAN_WINDOW, 200);
+  const project = tmpProject();
+  for (let i = 1; i <= 210; i++) {
+    mkConsole(mkArchived(project, runName(i)), [PENDING('a.md')], { residueAcknowledgedAt: '2026-10-17T00:00:00.000Z' });
+  }
+  const reads = [];
+  const readFile = (p) => { reads.push(p); return fs.readFileSync(p, 'utf8'); };
+  const { runs, more } = residue.scanUnresolvedConsoles(project, { pluginRoot: '/p', readFile });
+  assert.deepStrictEqual(runs, []);
+  assert.strictEqual(more, true, 'the window cut 10 candidates off');
+  const consoleReads = reads.filter((p) => p.endsWith('console.json'));
+  assert.ok(consoleReads.length <= residue.SCAN_WINDOW, `read ${consoleReads.length} consoles`);
+  assert.ok(!consoleReads.some((p) => p.includes(runName(10))), 'an out-of-window run is never read');
+});
+
+test('scanUnresolvedConsoles: more is true when the window cuts candidates off, false when it does not', () => {
+  const project = tmpProject();
+  for (const i of [1, 2, 3]) mkConsole(mkArchived(project, runName(i)), [PENDING('a.md')]);
+  const cut = residue.scanUnresolvedConsoles(project, { pluginRoot: '/p', window: 2 });
+  assert.deepStrictEqual(cut.runs.map((r) => path.basename(r.dir)), [runName(3), runName(2)]);
+  assert.strictEqual(cut.more, true);
+  const whole = residue.scanUnresolvedConsoles(project, { pluginRoot: '/p' });
+  assert.strictEqual(whole.runs.length, 3);
+  assert.strictEqual(whole.more, false);
+});
+
+test('scanUnresolvedConsoles: more is true when limit stops the scan with candidates left', () => {
+  const project = tmpProject();
+  for (const i of [1, 2, 3, 4]) mkConsole(mkArchived(project, runName(i)), [PENDING('a.md')]);
+  const r = residue.scanUnresolvedConsoles(project, { pluginRoot: '/p' });
+  assert.strictEqual(r.runs.length, residue.MAX_REPORTED);
+  assert.strictEqual(r.more, true);
+  assert.strictEqual(residue.scanUnresolvedConsoles(project, { pluginRoot: '/p', limit: 4 }).more, false);
+});
+
+test('scanUnresolvedConsoles: a clean top-level run is surfaced, a non-clean one is not, inside the window', () => {
+  const project = tmpProject();
+  const clean = mkRun(project, runName(5), { status: 'clean' });
+  mkConsole(clean, [PENDING('b.md')]);
+  mkConsole(mkRun(project, runName(6), { status: 'interrupted' }), [PENDING('b.md')]);
+  mkConsole(mkRun(project, runName(7)), [PENDING('b.md')]);
+  const { runs, more } = residue.scanUnresolvedConsoles(project, { pluginRoot: '/p' });
+  assert.deepStrictEqual(runs.map((r) => r.dir), [clean]);
+  assert.strictEqual(more, false);
+});
+
+test('scanUnresolvedConsoles: a clean top-level run whose archive twin is clean yields the archived copy', () => {
+  const project = tmpProject();
+  const top = mkRun(project, runName(8), { status: 'clean' });
+  mkConsole(top, [PENDING('c.md')]);
+  const twin = mkArchived(project, runName(8));
+  mkConsole(twin, [PENDING('c.md')]);
+  fs.writeFileSync(path.join(twin, 'run-state.json'), JSON.stringify({ status: 'clean' }));
+  assert.deepStrictEqual(residue.scanUnresolvedConsoles(project, { pluginRoot: '/p' }).runs.map((r) => r.dir), [twin]);
+});
+
+test('scanUnresolvedConsoles: window Infinity with limit Infinity reaches runs beyond SCAN_WINDOW', () => {
+  const project = tmpProject();
+  for (let i = 1; i <= 205; i++) mkConsole(mkArchived(project, runName(i)), [PENDING('a.md')]);
+  const { runs, more } = residue.scanUnresolvedConsoles(project, { pluginRoot: '/p', limit: Infinity, window: Infinity });
+  assert.strictEqual(runs.length, 205);
+  assert.strictEqual(more, false);
+});
