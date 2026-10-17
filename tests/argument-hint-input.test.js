@@ -23,6 +23,14 @@
 // a compact pointer that quotes the whole hint verbatim (build/flow/
 // visual-review/wrap-up, where every leaf is trivially present because the
 // entire hint string is embedded character-for-character).
+//
+// The check runs in both directions. The leaf check above is hint -> Input.
+// undocumentedHintFlags (below) is the converse: every `--flag` in an `## Input`
+// table row's first cell must appear in the hint, unless that row's first cell
+// carries `(producer-only)` or `(deprecated alias)` (EXEMPT_MARKERS) -- a flag
+// a skill takes only from a parent skill, or a superseded alias, which the
+// user-facing hint deliberately leaves out. A marker in any other cell does not
+// exempt the row.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -197,4 +205,49 @@ test('AC2.1: docs/skill-authoring.md argument-hint bullet names every exemption 
   for (const marker of EXEMPT_MARKERS) {
     assert.ok(bullet.includes('`' + marker + '`'), `bullet does not name ${marker}`);
   }
+});
+
+// Every `--flag` in an ## Input table row's first cell that the skill's hint
+// omits, in first-seen order, deduplicated. A row whose first cell carries an
+// EXEMPT_MARKERS entry is skipped. Cells split only on unescaped pipes, so a
+// `\|` inside a first cell (capture's `--risk=<low\|medium\|high>`) stays put.
+// A flag matches the hint only as a whole token: `--batch` in the hint does not
+// cover `--batch-size` in a row.
+function undocumentedHintFlags(content) {
+  const hint = extractArgumentHint(content);
+  const body = inputSectionBody(content);
+  if (!hint || body === null) return [];
+  const found = [];
+  for (const line of body.split('\n')) {
+    if (!line.startsWith('|')) continue;
+    const firstCell = line.split(/(?<!\\)\|/)[1] || '';
+    if (EXEMPT_MARKERS.some((m) => firstCell.includes(m))) continue;
+    for (const flag of firstCell.match(/--[a-z][a-z0-9-]*/g) || []) {
+      if (found.includes(flag)) continue;
+      if (new RegExp(flag + '(?![a-z0-9-])').test(hint)) continue;
+      found.push(flag);
+    }
+  }
+  return found;
+}
+
+test('AC1.1: every --flag an ## Input table row documents is in argument-hint unless marked', () => {
+  for (const name of SKILLS) {
+    assert.deepStrictEqual(undocumentedHintFlags(read(name)), [], `skills/${name}/SKILL.md: ## Input documents flags missing from argument-hint — add them to the hint or mark the row ${EXEMPT_MARKERS.join(' / ')}`);
+  }
+});
+
+test('go-red control: capture with its markers stripped reports exactly its five producer flags', () => {
+  const stripped = read('capture').split(' (producer-only)').join('');
+  assert.deepStrictEqual(undocumentedHintFlags(stripped), ['--defer-reason', '--risk', '--size', '--origin', '--source']);
+});
+
+test('marker outside the first cell does not exempt the row', () => {
+  const c = "---\nargument-hint: '[--a]'\n---\n## Input\n\n| Argument | Behavior |\n|---|---|\n| `--b` | (producer-only) |\n";
+  assert.deepStrictEqual(undocumentedHintFlags(c), ['--b']);
+});
+
+test('prefix flag in hint does not cover a longer flag', () => {
+  const c = "---\nargument-hint: '[--batch]'\n---\n## Input\n\n| Argument | Behavior |\n|---|---|\n| `--batch-size <n>` | x |\n";
+  assert.deepStrictEqual(undocumentedHintFlags(c), ['--batch-size']);
 });
