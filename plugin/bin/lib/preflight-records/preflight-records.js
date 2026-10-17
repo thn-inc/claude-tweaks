@@ -85,6 +85,11 @@ function issuesFromRecordsJson(raw, numbers) {
     if (typeof entry.body !== 'string') {
       return { error: `--records-json entry #${entry.number} is missing a string "body"` };
     }
+    // A missing (or null) labels is an unlabelled issue, as gh reports it; any
+    // other non-array would crash parseRecordFacets downstream.
+    if (entry.labels != null && !Array.isArray(entry.labels)) {
+      return { error: `--records-json entry #${entry.number} has non-array "labels"` };
+    }
     if (ok.has(entry.number)) return { error: `--records-json lists #${entry.number} more than once` };
     ok.set(entry.number, entry);
   }

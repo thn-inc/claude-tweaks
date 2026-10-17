@@ -660,6 +660,8 @@ test('AC4.1: each malformed --records-json input exits 2, names the problem, nev
     ['non-array', { '/r.json': '{}' }, /must be a JSON array/],
     ['entry without number', { '/r.json': JSON.stringify([good(720), { title: 'x', body: '' }]) }, /missing a numeric "number"/],
     ['entry without body', { '/r.json': JSON.stringify([good(720), { number: 721, title: 'x' }]) }, /missing a string "body"/],
+    ['string labels', { '/r.json': JSON.stringify([good(720), { ...good(721), labels: 'ready' }]) }, /non-array "labels"/],
+    ['object labels', { '/r.json': JSON.stringify([good(720), { ...good(721), labels: { name: 'x' } }]) }, /non-array "labels"/],
     ['duplicate number', { '/r.json': JSON.stringify([good(720), good(721), good(721)]) }, /more than once/],
     ['requested number absent', { '/r.json': JSON.stringify([good(720)]) }, /missing requested #721/],
     ['extra number', { '/r.json': JSON.stringify([good(720), good(721), good(722)]) }, /not requested/],
