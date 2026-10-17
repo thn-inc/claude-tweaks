@@ -57,8 +57,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const { listTrackedSourceFiles } = require('./candidates-dead-code');
 const { registerGenerator } = require('./focus-generators');
+const { listTrackedSourceFiles } = require('./candidates-dead-code');
 const { readListKey } = require('../policy');
 
 const DEFAULT_EXCLUDES = ['emergency', 'circuit', 'kill'];
