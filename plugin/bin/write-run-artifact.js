@@ -8,7 +8,8 @@
 // bin/lib/run-artifact/write.js's ARTIFACT_NAMES — today
 // sdd-dispatch-sample.txt, /build's AC-forwarding sample).
 //   node bin/write-run-artifact.js --run <run-dir> --name <artifact> (--file <src> | --delete) [--help]
-// --file writes the source file's bytes to <run-dir>/<artifact> (create or
+// --file reads the source file as UTF-8 text (the allowlisted artifact is
+// prompt text) and writes it to <run-dir>/<artifact> (create or
 // overwrite); --delete removes it, and is idempotent — an absent file is
 // still exit 0.
 // Exit 0 on success (echoes the written/removed file's path — the run dir's

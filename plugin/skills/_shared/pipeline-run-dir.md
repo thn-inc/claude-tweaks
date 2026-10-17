@@ -248,7 +248,7 @@ argument still holds there.
   fallback on any non-zero exit is to read the named source files directly
   (`docs/skill-authoring.md`'s "Conditional blocks and the composer") — and its tests run the real
   binary against tmp-root fixtures outside any checkout, the same documented outside-repo use the
-  two resolver CLIs have. A fifth writer copying it inherits that reasoning only if its own callers
+  two resolver CLIs have. A further writer copying it inherits that reasoning only if its own callers
   share it; otherwise the sanctioned-writer family above is the default.
 
 The first two rules keep the two failure modes distinct in the message — "resolves outside the main

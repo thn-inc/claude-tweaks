@@ -15,8 +15,9 @@ const RUN_ID = '2026-10-18T090000-record-3044';
 // a fake main checkout (.git directory) holding the real run dir, plus a linked
 // worktree (.git FILE) carrying a worktree-local shadow that must be refused.
 // `worktree` doubles as the cwd of the simulated worktree-isolated session.
-function fixture() {
+function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runartcli-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const main = path.join(root, 'main');
   const singleDir = path.join(main, '.claude-tweaks', 'pipelines', RUN_ID);
   const worktree = path.join(main, '.claude', 'worktrees', 'dispatch-record-3044');
@@ -38,8 +39,8 @@ function fakeDeps(cwd) {
   };
 }
 
-test('AC1.1 a worktree-isolated session writes the sample into the anchored main-checkout run dir', () => {
-  const { singleDir, worktree, shadow, src } = fixture();
+test('AC1.1 a worktree-isolated session writes the sample into the anchored main-checkout run dir', (t) => {
+  const { singleDir, worktree, shadow, src } = fixture(t);
   const { deps, out } = fakeDeps(worktree);
   assert.equal(run(['--run', singleDir, '--name', NAME, '--file', src], deps), 0);
   assert.equal(fs.readFileSync(path.join(singleDir, NAME), 'utf8'), 'AC sample\nline two\n');
@@ -47,8 +48,8 @@ test('AC1.1 a worktree-isolated session writes the sample into the anchored main
   assert.ok(!fs.existsSync(path.join(shadow, NAME)), 'nothing is written into the worktree-local shadow');
 });
 
-test('a worktree-local shadow run dir is refused (exit 3) and its existing sample is byte-unchanged', () => {
-  const { worktree, shadow, src } = fixture();
+test('a worktree-local shadow run dir is refused (exit 3) and its existing sample is byte-unchanged', (t) => {
+  const { worktree, shadow, src } = fixture(t);
   fs.writeFileSync(path.join(shadow, NAME), 'sentinel');
   const { deps, err } = fakeDeps(worktree);
   assert.equal(run(['--run', shadow, '--name', NAME, '--file', src], deps), 3);
@@ -56,16 +57,16 @@ test('a worktree-local shadow run dir is refused (exit 3) and its existing sampl
   assert.equal(fs.readFileSync(path.join(shadow, NAME), 'utf8'), 'sentinel');
 });
 
-test('a missing run dir exits 3', () => {
-  const { main, worktree, src } = fixture();
+test('a missing run dir exits 3', (t) => {
+  const { main, worktree, src } = fixture(t);
   const { deps, err } = fakeDeps(worktree);
   assert.equal(run(['--run', path.join(main, 'nope'), '--name', NAME, '--file', src], deps), 3);
   assert.match(err.join(''), /run dir does not exist/);
 });
 
-test('a non-allowlisted --name exits 2 and writes nothing', () => {
+test('a non-allowlisted --name exits 2 and writes nothing', (t) => {
   for (const bad of ['decisions.md', `../${NAME}`]) {
-    const { singleDir, worktree, src } = fixture();
+    const { singleDir, worktree, src } = fixture(t);
     const before = fs.readdirSync(singleDir);
     const { deps, err } = fakeDeps(worktree);
     assert.equal(run(['--run', singleDir, '--name', bad, '--file', src], deps), 2, bad);
@@ -75,8 +76,8 @@ test('a non-allowlisted --name exits 2 and writes nothing', () => {
   }
 });
 
-test('--file and --delete are mutually exclusive, and one is required', () => {
-  const { singleDir, worktree, src } = fixture();
+test('--file and --delete are mutually exclusive, and one is required', (t) => {
+  const { singleDir, worktree, src } = fixture(t);
   const a = fakeDeps(worktree);
   assert.equal(run(['--run', singleDir, '--name', NAME, '--file', src, '--delete'], a.deps), 2);
   const b = fakeDeps(worktree);
@@ -84,16 +85,16 @@ test('--file and --delete are mutually exclusive, and one is required', () => {
   assert.ok(!fs.existsSync(path.join(singleDir, NAME)));
 });
 
-test('an unreadable --file exits 2', () => {
-  const { singleDir, worktree, root } = fixture();
+test('an unreadable --file exits 2', (t) => {
+  const { singleDir, worktree, root } = fixture(t);
   const { deps, err } = fakeDeps(worktree);
   assert.equal(run(['--run', singleDir, '--name', NAME, '--file', path.join(root, 'absent.txt')], deps), 2);
   assert.match(err.join(''), /could not read --file/);
   assert.ok(!fs.existsSync(path.join(singleDir, NAME)));
 });
 
-test('AC2.2 --delete removes the sample and is idempotent', () => {
-  const { singleDir, worktree, src } = fixture();
+test('AC2.2 --delete removes the sample and is idempotent', (t) => {
+  const { singleDir, worktree, src } = fixture(t);
   assert.equal(run(['--run', singleDir, '--name', NAME, '--file', src], fakeDeps(worktree).deps), 0);
   assert.ok(fs.existsSync(path.join(singleDir, NAME)));
   const first = fakeDeps(worktree);
@@ -105,8 +106,20 @@ test('AC2.2 --delete removes the sample and is idempotent', () => {
   assert.match(second.out.join(''), /already absent/);
 });
 
-test('missing --run or --name exits 2', () => {
-  const { singleDir, worktree, src } = fixture();
+test('a write or delete that throws exits 3 with a message (a directory squats on the target)', (t) => {
+  const { singleDir, worktree, src } = fixture(t);
+  fs.mkdirSync(path.join(singleDir, NAME));
+  const w = fakeDeps(worktree);
+  assert.equal(run(['--run', singleDir, '--name', NAME, '--file', src], w.deps), 3);
+  assert.match(w.err.join(''), /could not write sdd-dispatch-sample\.txt/);
+  const d = fakeDeps(worktree);
+  assert.equal(run(['--run', singleDir, '--name', NAME, '--delete'], d.deps), 3);
+  assert.match(d.err.join(''), /could not delete sdd-dispatch-sample\.txt/);
+  assert.ok(fs.statSync(path.join(singleDir, NAME)).isDirectory(), 'the squatting directory is untouched');
+});
+
+test('missing --run or --name exits 2', (t) => {
+  const { singleDir, worktree, src } = fixture(t);
   assert.equal(run(['--name', NAME, '--file', src], fakeDeps(worktree).deps), 2);
   assert.equal(run(['--run', singleDir, '--file', src], fakeDeps(worktree).deps), 2);
 });
@@ -123,8 +136,8 @@ test('an unknown argument exits 2', () => {
   assert.match(err.join(''), /unknown argument: --bogus/);
 });
 
-test('the real binary runs end to end', () => {
-  const { main, singleDir, src } = fixture();
+test('the real binary runs end to end', (t) => {
+  const { main, singleDir, src } = fixture(t);
   execFileSync(process.execPath, [CLI, '--run', singleDir, '--name', NAME, '--file', src], { cwd: main });
   assert.equal(fs.readFileSync(path.join(singleDir, NAME), 'utf8'), 'AC sample\nline two\n');
 });

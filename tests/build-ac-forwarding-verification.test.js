@@ -57,7 +57,7 @@ test('#496: the three verification outcomes (present / absent / no-sample) are e
 // worktree-isolated session, so the sample's write and delete commands in
 // dispatch.md must work as written from a worktree cwd. Extract them from the
 // live prose and run them.
-test('AC1.1/AC2.1 the dispatch.md sample commands run from a worktree cwd and round-trip the sample', () => {
+test('AC1.1/AC2.1 the dispatch.md sample commands run from a worktree cwd and round-trip the sample', { skip: process.platform === 'win32' && 'runs dispatch.md commands through POSIX /bin/sh' }, () => {
   const t = read('plugin/skills/build/dispatch.md');
   const section = t.slice(t.indexOf(SECTION_MARK));
   const cmds = [...section.matchAll(/`(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/write-run-artifact\.js"[^`]*)`/g)].map((m) => m[1]);
