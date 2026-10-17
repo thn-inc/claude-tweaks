@@ -10,6 +10,13 @@ const sessionStart = require('../plugin/bin/lib/hooks/session-start');
 const deps = require('../plugin/bin/lib/deps');
 const { INTERACTION_STYLE_DIRECTIVE } = require('../plugin/bin/lib/hooks/interaction-style');
 
+// #3380: session-start.js reads the real ~/.claude/plugins/installed_plugins.json
+// through effectiveSuperpowersVersion unless a test injects `superpowersDeps`.
+// Every call here goes through runSessionStart so no test can see the
+// maintainer's actual install (and none can start failing when it goes stale).
+const NO_INSTALL = { readFile: () => { throw Object.assign(new Error('no install (test)'), { code: 'ENOENT' }); } };
+const runSessionStart = (ctx) => sessionStart.run({ superpowersDeps: NO_INSTALL, ...ctx });
+
 function tmpProject() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-'));
   fs.mkdirSync(path.join(dir, '.claude-tweaks', 'pipelines'), { recursive: true });
@@ -34,7 +41,7 @@ function mkStagedFile(run, name, content) {
 // unconditionally rather than folded into any one scenario test below.
 test('#1909: run() always includes the Interaction-style directive in additionalContext, even with nothing else to report', async () => {
   const project = tmpProject();
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.ok(out.json, 'additionalContext must render even when every other check is silent');
   assert.match(out.json.hookSpecificOutput.additionalContext, /^> \*\*Interaction style:\*\*/);
   assert.ok(out.json.hookSpecificOutput.additionalContext.includes(INTERACTION_STYLE_DIRECTIVE));
@@ -57,7 +64,7 @@ test('stale runs are reported in additionalContext, capped at 3, newest first', 
   mkRun(project, '2026-07-03T090000-spec-3', { status: 'interrupted' });
   mkRun(project, '2026-07-04T090000-spec-4', { status: 'active' });
   mkRun(project, '2026-06-30T090000-spec-0', { status: 'clean' });
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.strictEqual(out.json.hookSpecificOutput.hookEventName, 'SessionStart');
   assert.match(ctx, /unfinished pipeline run/i);
@@ -73,7 +80,7 @@ test('stale runs are reported in additionalContext, capped at 3, newest first', 
 test('#803: the banner names a designated consumer — relay the list once in the first reply', async () => {
   const project = tmpProject();
   mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /Relay this list once, in your first reply to the user/);
 });
@@ -83,7 +90,7 @@ test('#1493 AC5: a fixture with one interrupted run + one cleanly-clean standalo
   mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
   const standalone = mkRun(project, '2026-07-02T090000-tidy-standalone', { status: 'clean' });
   mkStagedFile(standalone, 'stale-close-1.json', '{}');
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /spec-1 \(status: interrupted\)/, 'the interrupted run keeps its existing entry');
   assert.match(ctx, /close-run --run/, 'the interrupted run keeps its close-run pointer');
@@ -95,7 +102,7 @@ test('#1493 I4: the tidy --approve banner names a designated consumer — relay 
   const project = tmpProject();
   const standalone = mkRun(project, '2026-07-02T090000-tidy-standalone', { status: 'clean' });
   mkStagedFile(standalone, 'stale-close-1.json', '{}');
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /Relay this list once, in your first reply to the user/);
 });
@@ -112,7 +119,7 @@ test('#1493: the standalone-approvable list is capped at MAX_REPORTED, newest-fi
     const run = mkRun(project, name, { status: 'clean' });
     mkStagedFile(run, 'stale-close-1.json', '{}');
   }
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /2026-07-04T090000-tidy-standalone/);
   assert.match(ctx, /2026-07-03T090000-tidy-standalone/);
@@ -125,7 +132,7 @@ test('#1493 I2: a clean *-init-standalone run with non-empty staged/ renders NO 
   const project = tmpProject();
   const standalone = mkRun(project, '2026-07-02T090000-init-standalone', { status: 'clean' });
   mkStagedFile(standalone, 'stale-close-1.json', '{}');
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   if (out.json) {
     assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /tidy --approve/);
   } else {
@@ -137,7 +144,7 @@ test('#1494: a *-sweep-standalone* run with non-empty staged/ is listed exactly 
   const project = tmpProject();
   const standalone = mkRun(project, '2026-08-30T120000-sweep-standalone', { status: 'clean' });
   mkStagedFile(standalone, 'stale-close-1.json', '{}');
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /2026-08-30T120000-sweep-standalone/, 'the cleanly-finished sweep-standalone run is named');
   assert.match(ctx, /\/claude-tweaks:tidy --approve/, 'the sweep-standalone run points at tidy --approve, same as a tidy-standalone run');
@@ -156,7 +163,7 @@ test('#1738: a clean *-tidy-standalone* run with a fully-archived (clean) archiv
   const standalone = mkRun(project, runId, { status: 'clean' });
   mkStagedFile(standalone, 'stale-close-1.json', '{}');
   mkRun(project, path.join('archive', runId), { status: 'clean' });
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   if (out.json) {
     assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /tidy --approve/);
     assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, new RegExp(runId));
@@ -169,7 +176,7 @@ test('#1493: a cleanly-clean standalone run with EMPTY staged/ renders no tidy -
   const project = tmpProject();
   const standalone = mkRun(project, '2026-07-02T090000-tidy-standalone', { status: 'clean' });
   fs.mkdirSync(path.join(standalone, 'staged'), { recursive: true });
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   if (out.json) {
     assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /tidy --approve/);
   } else {
@@ -181,7 +188,7 @@ test('#410: a stale run carrying a recorded pr URL includes it in the reported l
   const project = tmpProject();
   mkRun(project, '2026-07-01T090000-spec-1', { status: 'active', pr: { number: 42, url: 'https://github.com/o/r/pull/42' } });
   mkRun(project, '2026-07-02T090000-spec-2', { status: 'interrupted' });
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /spec-1 \(status: active\) — PR https:\/\/github\.com\/o\/r\/pull\/42/);
   assert.match(ctx, /spec-2 \(status: interrupted\)\n/, 'a run with no recorded pr must not gain a PR suffix');
@@ -194,11 +201,11 @@ test('close-run hint substitutes CLAUDE_PLUGIN_ROOT when set, else keeps the lit
 
   try {
     delete process.env.CLAUDE_PLUGIN_ROOT;
-    const withoutEnv = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const withoutEnv = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     assert.match(withoutEnv.json.hookSpecificOutput.additionalContext, /\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js/);
 
     process.env.CLAUDE_PLUGIN_ROOT = '/opt/claude-tweaks';
-    const withEnv = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const withEnv = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     assert.match(withEnv.json.hookSpecificOutput.additionalContext, /\/opt\/claude-tweaks\/bin\/hooks\.js/);
   } finally {
     if (orig === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
@@ -217,7 +224,7 @@ test('#2070: the build line and the close-run hint derive from the same single C
   const orig = process.env.CLAUDE_PLUGIN_ROOT;
   try {
     process.env.CLAUDE_PLUGIN_ROOT = root;
-    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     const ctx = out.json.hookSpecificOutput.additionalContext;
     assert.match(ctx, new RegExp(`claude-tweaks v6\\.120\\.0 @ ${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), 'build line uses the captured root');
     assert.match(ctx, new RegExp(`${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/bin/hooks\\.js`), 'close-run hint uses the same captured root');
@@ -230,7 +237,7 @@ test('#2070: the build line and the close-run hint derive from the same single C
 test('no stale runs and no deps warnings -> no json output', async () => {
   const project = tmpProject();
   mkRun(project, '2026-07-01T090000-spec-1', { status: 'clean' });
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   if (out.json) {
     // On machines missing agent-browser, deps warnings alone may produce output — accept both, but stale-run text must be absent.
     assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /unfinished pipeline run/i);
@@ -252,7 +259,7 @@ function withPolicy(repo, content) {
 test('worktree-always nudge appears when policy is on and session is not yet isolated', async () => {
   const project = gitProject();
   withPolicy(project, 'worktree-always: true\n');
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.match(out.json.hookSpecificOutput.additionalContext, /worktree-always/);
   assert.match(out.json.hookSpecificOutput.additionalContext, /using-git-worktrees/);
   // #2727: the nudge scopes itself to repository edits and names the
@@ -315,7 +322,7 @@ test('run() includes the resolved-build line in additionalContext, unconditional
   const orig = process.env.CLAUDE_PLUGIN_ROOT;
   try {
     process.env.CLAUDE_PLUGIN_ROOT = root;
-    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     assert.match(out.json.hookSpecificOutput.additionalContext, /claude-tweaks v9\.9\.9 @ /);
     assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /claude-tweaks: claude-tweaks v/);
   } finally {
@@ -330,7 +337,7 @@ test('run() emits no build line (and no crash) when CLAUDE_PLUGIN_ROOT is unset,
   const orig = process.env.CLAUDE_PLUGIN_ROOT;
   try {
     delete process.env.CLAUDE_PLUGIN_ROOT;
-    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     if (out.json) assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /claude-tweaks v/);
   } finally {
     if (orig === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
@@ -340,7 +347,7 @@ test('run() emits no build line (and no crash) when CLAUDE_PLUGIN_ROOT is unset,
 
 test('worktree-always nudge is absent when policy is off', async () => {
   const project = gitProject();
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   if (out.json) assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /worktree-always/);
   else assert.deepStrictEqual(out, {});
 });
@@ -390,7 +397,7 @@ test('SessionStart fast-forwards a behind-and-clean integration branch via recon
   git(['push', '-q', 'origin', 'main'], seedDir);
 
   const before = git(['rev-parse', 'HEAD'], mainDir).trim();
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: mainDir });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: mainDir });
   const after = git(['rev-parse', 'HEAD'], mainDir).trim();
 
   assert.notStrictEqual(before, after, 'the integration branch must be fast-forwarded during SessionStart');
@@ -418,7 +425,7 @@ test('#413: a run carrying an unresolved console.json never crashes SessionStart
     resolved: false, commentIds: ['IC_fake'], prNumber: 999999, items: [],
   }));
 
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   if (out.json) {
     assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /answered console\(s\) awaiting execution/);
   }
@@ -454,7 +461,7 @@ test('#561: a redTip finding from reconcile() renders as its own additionalConte
   delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
   try {
     const freshSessionStart = require('../plugin/bin/lib/hooks/session-start');
-    const out = await freshSessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const out = await freshSessionStart.run({ superpowersDeps: NO_INSTALL, input: {}, runDir: null, runState: null, cwd: project });
     assert.ok(out.json, 'a redTip finding must render additionalContext');
     assert.match(out.json.hookSpecificOutput.additionalContext, /CI is red on main tip at 0123456 — ci\/tests/);
   } finally {
@@ -470,7 +477,7 @@ test('#561: a redTip finding from reconcile() renders as its own additionalConte
 
 test('#561: no redTip finding produces no red-tip line (AC5 — green tip)', async () => {
   const project = gitProject();
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   if (out.json) assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /CI is red on/);
   else assert.deepStrictEqual(out, {});
 });
@@ -484,7 +491,7 @@ test('worktree-always nudge is absent when the session is already inside a linke
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-wt-'));
   const wt = path.join(parent, 'wt');
   execFileSync('git', ['-C', project, 'worktree', 'add', '-q', wt, '-b', 'wt-branch']);
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: fs.realpathSync(wt) });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: fs.realpathSync(wt) });
   // The verdict banner fires unconditionally whenever a policy file exists — including
   // inside a linked worktree — so `additionalContext` legitimately contains the substring
   // `worktree-always` (from the verdict line itself). Only the *nudge* is suppressed by
@@ -500,21 +507,21 @@ test('worktree-always nudge is absent when the session is already inside a linke
 test('verdict banner: old key only (worktree.always) resolves ON with matched key worktree.always', async () => {
   const project = gitProject();
   withPolicy(project, 'worktree.always: true\n');
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.match(out.json.hookSpecificOutput.additionalContext, /worktree-always: ON \(matched key: worktree\.always\)/);
 });
 
 test('verdict banner: new key only (worktree-always) resolves ON with matched key worktree-always', async () => {
   const project = gitProject();
   withPolicy(project, 'worktree-always: true\n');
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.match(out.json.hookSpecificOutput.additionalContext, /worktree-always: ON \(matched key: worktree-always\)/);
 });
 
 test('verdict banner: both keys present — new key wins over old', async () => {
   const project = gitProject();
   withPolicy(project, 'worktree.always: true\nworktree-always: true\n');
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.match(out.json.hookSpecificOutput.additionalContext, /worktree-always: ON \(matched key: worktree-always\)/);
   assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /matched key: worktree\.always/);
 });
@@ -522,13 +529,13 @@ test('verdict banner: both keys present — new key wins over old', async () => 
 test('verdict banner: policy.yml exists but neither key is present — OFF (no key)', async () => {
   const project = gitProject();
   withPolicy(project, 'integration-branch: main\n');
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.match(out.json.hookSpecificOutput.additionalContext, /worktree-always: OFF \(no key\)/);
 });
 
 test('verdict banner: no policy.yml anywhere in the ancestor chain — no verdict line at all', async () => {
   const project = gitProject();
-  const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   if (out.json) assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /worktree-always:/);
   else assert.deepStrictEqual(out, {});
 });
@@ -560,7 +567,7 @@ test('SessionStart surfaces a prior background reconcile pass exactly once (#820
     },
   }));
 
-  const first = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const first = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.match(
     first.json.hookSpecificOutput.additionalContext,
     /background reconcile \(from a prior session\).*2 issue claim\(s\) released.*1 pipeline run\(s\) archived.*worktree\(s\) left in place: foo \(pr-open\)/,
@@ -568,7 +575,7 @@ test('SessionStart surfaces a prior background reconcile pass exactly once (#820
   const statusAfterFirst = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
   assert.strictEqual(statusAfterFirst.surfaced, true, 'the status file must be marked surfaced after the first firing');
 
-  const second = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+  const second = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   if (second.json) {
     assert.doesNotMatch(second.json.hookSpecificOutput.additionalContext, /background reconcile/);
   }
@@ -630,7 +637,7 @@ test('SessionStart spawn gate: a fresh background-status file suppresses the spa
       path.join(statusDir, 'reconcile-background-status.json'),
       JSON.stringify({ completedAt: Date.now(), surfaced: true, summary: {} }),
     );
-    await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     assert.strictEqual(spawnedWith, null, 'a fresh background-status file must not trigger a background spawn');
   } finally {
     cp.spawn = originalSpawn;
@@ -661,7 +668,7 @@ test('SessionStart spawn gate: fires against a real pr-first remote even though 
     // first SessionStart firing in this repo. Also prove the fast pass
     // really does reach reconcile()'s own cache stamp (the contamination
     // source), so this case is not silently degrading to "no-remote skip".
-    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: mainDir });
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: mainDir });
     const reconcileCache = require('../plugin/bin/lib/reconcile/cache');
     const stampedCache = reconcileCache.readCache(fs.realpathSync(mainDir));
     assert.strictEqual(typeof stampedCache.lastRunAt, 'number', 'the FAST_CHECKS pass must have completed and stamped reconcile-cache.json — otherwise this fixture is not reproducing the bug scenario');
@@ -713,7 +720,7 @@ test('SessionStart: a throw while rendering the background summary still leaves 
     );
     let out;
     await assert.doesNotReject(async () => {
-      out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+      out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     });
     if (out && out.json) {
       assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /background reconcile/, 'the render threw, so no summary line is produced');
@@ -739,7 +746,7 @@ test('SessionStart spawn gate: threads ctx.input.session_id into the background 
   cp.spawn = (...args) => { spawnedWith = args; return { unref() {}, on() {} }; };
   try {
     const project = gitProject();
-    await sessionStart.run({ input: { session_id: 'sess-1687-abc' }, runDir: null, runState: null, cwd: project });
+    await runSessionStart({ input: { session_id: 'sess-1687-abc' }, runDir: null, runState: null, cwd: project });
     assert.ok(spawnedWith, 'expected the background pass to spawn');
     assert.strictEqual(spawnedWith[1][1], 'reconcile-background');
     assert.strictEqual(spawnedWith[2].env.CLAUDE_TWEAKS_SESSION_ID, 'sess-1687-abc');
@@ -762,7 +769,7 @@ test('SessionStart spawn gate: no CLAUDE_TWEAKS_SESSION_ID override when ctx.inp
   cp.spawn = (...args) => { spawnedWith = args; return { unref() {}, on() {} }; };
   try {
     const project = gitProject();
-    await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     assert.ok(spawnedWith, 'expected the background pass to spawn');
     assert.strictEqual(spawnedWith[2].env, process.env, 'with no known session id, the child inherits the parent env object unchanged');
   } finally {
@@ -820,13 +827,13 @@ test('SessionStart: a second session start inside the TTL short-circuits the inl
     }
 
     advanceOrigin('second');
-    const first = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: mainDir });
+    const first = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: mainDir });
     const afterFirst = git(['rev-parse', 'HEAD'], mainDir).trim();
     assert.match(first.json.hookSpecificOutput.additionalContext, /reconciled.*fast-forwarded/i, 'the first (cold-cache) pass must do the real work');
 
     // Origin moves again; the local mirror is strictly behind once more.
     advanceOrigin('third');
-    const second = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: mainDir });
+    const second = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: mainDir });
     assert.strictEqual(git(['rev-parse', 'HEAD'], mainDir).trim(), afterFirst, 'the second pass, inside the TTL, must short-circuit before any mirror work');
     if (second.json) {
       assert.doesNotMatch(second.json.hookSpecificOutput.additionalContext, /reconciled.*fast-forwarded/i);
@@ -837,7 +844,7 @@ test('SessionStart: a second session start inside the TTL short-circuits the inl
     const root = fs.realpathSync(mainDir);
     const aged = cacheLib.readCache(root);
     cacheLib.writeCache(root, { ...aged, lastRunAt: Date.now() - (cacheLib.DEFAULT_TTL_MS * 2) });
-    const third = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: mainDir });
+    const third = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: mainDir });
     assert.notStrictEqual(git(['rev-parse', 'HEAD'], mainDir).trim(), afterFirst, 'past the TTL the inline pass must run again');
     assert.match(third.json.hookSpecificOutput.additionalContext, /reconciled.*fast-forwarded/i);
   } finally {
@@ -865,7 +872,7 @@ test('verdict banner: a throw from policy.resolveWorktreeAlways is swallowed —
   try {
     let out;
     await assert.doesNotReject(async () => {
-      out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+      out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     });
     if (out.json) assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /worktree-always:/);
     else assert.deepStrictEqual(out, {});
@@ -912,7 +919,7 @@ test('AC1 (#381): one worktree-list spawn and one origin/HEAD spawn per SessionS
     return realExecFileSync(cmd, args, opts);
   });
 
-  await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: root });
+  await runSessionStart({ input: {}, runDir: null, runState: null, cwd: root });
 
   assert.ok(worktreeListCalls.length <= 1, `expected <=1 'git worktree list --porcelain' spawn, got ${worktreeListCalls.length}`);
   assert.ok(originHeadCalls.length <= 1, `expected <=1 'git rev-parse --abbrev-ref origin/HEAD' spawn, got ${originHeadCalls.length}`);
@@ -935,7 +942,7 @@ test('#1792 AC2: no port-services policy -> ensure() is never called, no ports l
   const original = portsEnsureMod.ensure;
   portsEnsureMod.ensure = async () => { called = true; return { active: false }; };
   try {
-    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     assert.equal(called, false);
     if (out.json) assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /claude-tweaks: ports/);
   } finally {
@@ -959,7 +966,7 @@ test('#1792 AC3: port-services set -> ensure() called with the valid service lis
     };
   };
   try {
-    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     assert.deepEqual(calledWith.opts.policyServices, ['web', 'api']);
     const lines = out.json.hookSpecificOutput.additionalContext.split('\n\n');
     const portsLine = lines.find((l) => l.startsWith('claude-tweaks: ports '));
@@ -979,7 +986,7 @@ test('#1792 AC5: a reallocation renders the REALLOCATED line with old and new bl
     vars: [['PORT', '20010']], reallocated: { from: 20000, to: 20010 }, envWriteError: null,
   });
   try {
-    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     assert.match(
       out.json.hookSpecificOutput.additionalContext,
       /claude-tweaks: ports REALLOCATED 20000→20010 — a foreign process took the old block; URLs moved: 20010-20019 \(PORT=20010\)/,
@@ -997,7 +1004,7 @@ test('#1792 AC6: ensure() throwing is caught and reported; every other SessionSt
   const original = portsEnsureMod.ensure;
   portsEnsureMod.ensure = async () => { throw new Error('registry unwritable (simulated)'); };
   try {
-    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     assert.match(out.json.hookSpecificOutput.additionalContext, /worktree-always: ON/, 'other parts of the hook still render');
     assert.match(out.json.hookSpecificOutput.additionalContext, /claude-tweaks: ports ensure failed — registry unwritable \(simulated\)/);
   } finally {
@@ -1017,7 +1024,7 @@ test('#1792 AC7: an invalid service name is dropped and reported; valid entries 
     return { active: true, base: 20000, ports: [20000, 20001], vars: [['PORT', '20000'], ['API_PORT', '20001']], reallocated: null, envWriteError: null };
   };
   try {
-    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     assert.deepEqual(calledWith.policyServices, ['web', 'api'], 'the invalid entry is dropped, valid ones still activate');
     assert.match(
       out.json.hookSpecificOutput.additionalContext,
@@ -1038,7 +1045,7 @@ test('#1792 AC7: more than BLOCK_SIZE valid services disables port isolation for
   const original = portsEnsureMod.ensure;
   portsEnsureMod.ensure = async () => { called = true; return { active: false }; };
   try {
-    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     assert.equal(called, false, 'ensure() must not be called when the list cannot fit one block');
     assert.match(
       out.json.hookSpecificOutput.additionalContext,
@@ -1059,7 +1066,7 @@ test('#1927: the SessionStart ports line omits CLAUDE_TWEAKS_LEASE from the pare
     vars: [['CLAUDE_TWEAKS_LEASE', '20000'], ['PORT', '20000'], ['API_PORT', '20001']], reallocated: null, envWriteError: null, leaseLineAdded: false,
   });
   try {
-    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     const lines = out.json.hookSpecificOutput.additionalContext.split('\n\n');
     const portsLine = lines.find((l) => l.startsWith('claude-tweaks: ports '));
     assert.match(portsLine, /^claude-tweaks: ports 20000-20009 \(PORT=20000 API_PORT=20001\)$/);
@@ -1082,7 +1089,7 @@ test('#2027: an active result carrying envWriteError renders the ports line foll
     vars: [['PORT', '20000'], ['API_PORT', '20001']], reallocated: null, envWriteError: 'EACCES: permission denied',
   });
   try {
-    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     const lines = out.json.hookSpecificOutput.additionalContext.split('\n\n');
     const portsLineIndex = lines.findIndex((l) => l.startsWith('claude-tweaks: ports 20000-20009'));
     const warningLineIndex = lines.findIndex((l) => l.startsWith('claude-tweaks: ports — env file write failed'));
@@ -1108,11 +1115,120 @@ test('#2027: envWriteError on an inactive result never renders the warning', asy
   const original = portsEnsureMod.ensure;
   portsEnsureMod.ensure = async () => ({ active: false, envWriteError: 'should never be read' });
   try {
-    const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
     if (out.json) {
       assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /env file write failed/);
     }
   } finally {
     portsEnsureMod.ensure = original;
   }
+});
+
+// #3380: the superpowers version notice. Each test writes its own
+// installed_plugins.json under a temp CLAUDE_CONFIG_DIR and injects it (plus a
+// fake homedir) through `superpowersDeps`, so none can read the real config.
+function mkSuperpowersWorld(project, { projectVersion, userVersion, rawFile, userInstallPath } = {}) {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-sp-')));
+  const config = path.join(tmp, 'config');
+  fs.mkdirSync(path.join(config, 'plugins'), { recursive: true });
+  const artifact = (name, version) => {
+    const d = path.join(tmp, 'inst', name);
+    fs.mkdirSync(path.join(d, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(path.join(d, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'superpowers', version }));
+    return d;
+  };
+  const entries = [];
+  if (userVersion || userInstallPath) {
+    entries.push({ scope: 'user', installPath: userInstallPath || artifact('u', userVersion), lastUpdated: '2026-01-01T00:00:00.000Z' });
+  }
+  if (projectVersion) {
+    entries.push({
+      scope: 'project', installPath: artifact('p', projectVersion), projectPath: fs.realpathSync(project),
+      lastUpdated: '2026-01-01T00:00:00.000Z',
+    });
+  }
+  fs.writeFileSync(
+    path.join(config, 'plugins', 'installed_plugins.json'),
+    rawFile !== undefined ? rawFile : JSON.stringify({ version: 2, plugins: { 'superpowers@claude-plugins-official': entries } }),
+  );
+  return { env: { CLAUDE_CONFIG_DIR: config }, homedir: () => path.join(tmp, 'home') };
+}
+const SP_NOTICE = /superpowers 6\.3\.0 is older than 7\.0\.0/g;
+const spCtx = (project, input, superpowersDeps) => ({ input, runDir: null, runState: null, cwd: project, superpowersDeps });
+
+test('#3380: startup emits the superpowers notice once', async () => {
+  const project = tmpProject();
+  const sp = mkSuperpowersWorld(project, { projectVersion: '6.3.0', userVersion: '7.0.0' });
+  const out = await sessionStart.run(spCtx(project, { source: 'startup' }, sp));
+  const ctx = out.json.hookSpecificOutput.additionalContext;
+  assert.strictEqual((ctx.match(SP_NOTICE) || []).length, 1);
+  assert.match(ctx, /claude plugin update superpowers@claude-plugins-official --scope project/);
+});
+
+test('#3380: absent source emits; resume/clear/compact do not', async () => {
+  const project = tmpProject();
+  const sp = mkSuperpowersWorld(project, { projectVersion: '6.3.0' });
+  const absent = await sessionStart.run(spCtx(project, {}, sp));
+  assert.strictEqual((absent.json.hookSpecificOutput.additionalContext.match(SP_NOTICE) || []).length, 1);
+  for (const source of ['resume', 'clear', 'compact']) {
+    const out = await sessionStart.run(spCtx(project, { source }, sp));
+    assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /superpowers 6\.3\.0/, `source=${source} must stay silent`);
+  }
+});
+
+test('#3380: no-notice cases leave output byte-identical to a run with no install', async () => {
+  const cases = {
+    'user-only 7.0.0': (project) => mkSuperpowersWorld(project, { userVersion: '7.0.0' }),
+    'malformed plugins file': (project) => mkSuperpowersWorld(project, { rawFile: '{not json' }),
+    'unreadable installPath': (project) => mkSuperpowersWorld(project, { userInstallPath: path.join(os.tmpdir(), 'ct-ss-sp-missing', 'nope') }),
+  };
+  for (const [label, build] of Object.entries(cases)) {
+    // Baseline and case run against the SAME project dir: other SessionStart
+    // blocks depend on the cwd, so a cross-fixture comparison would be flaky.
+    const project = tmpProject();
+    const withCase = await sessionStart.run(spCtx(project, { source: 'startup' }, build(project)));
+    const baseline = await sessionStart.run(spCtx(project, { source: 'startup' }, NO_INSTALL));
+    assert.strictEqual(JSON.stringify(withCase.json), JSON.stringify(baseline.json), label);
+    assert.doesNotMatch(JSON.stringify(withCase.json), /superpowers/i, label);
+  }
+});
+
+test('#3380: garbage input does not throw', async () => {
+  const project = tmpProject();
+  const sp = mkSuperpowersWorld(project, { projectVersion: '6.3.0' });
+  for (const input of ['%%%', null]) {
+    const out = await sessionStart.run(spCtx(project, input, sp));
+    assert.ok(out.json.hookSpecificOutput.additionalContext, `input=${String(input)}`);
+  }
+});
+
+test('#3380: a throwing superpowersNotice is swallowed — the rest of the context still renders', async () => {
+  // superpowersNotice has no try/catch of its own: the never-break-a-session
+  // invariant lives in the hook's block. Same patch-and-re-require convention as
+  // the #561 red-tip test above (session-start destructures at load time).
+  const project = tmpProject();
+  const sp = mkSuperpowersWorld(project, { projectVersion: '6.3.0' });
+  const versionMod = require('../plugin/bin/lib/superpowers-version');
+  const original = versionMod.superpowersNotice;
+  versionMod.superpowersNotice = () => { throw new Error('boom'); };
+  delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
+  try {
+    const freshSessionStart = require('../plugin/bin/lib/hooks/session-start');
+    const out = await freshSessionStart.run(spCtx(project, { source: 'startup' }, sp));
+    assert.match(out.json.hookSpecificOutput.additionalContext, /^> \*\*Interaction style:\*\*/);
+    assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /superpowers 6\.3\.0/);
+  } finally {
+    versionMod.superpowersNotice = original;
+    delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
+    require('../plugin/bin/lib/hooks/session-start');
+  }
+});
+
+test('#3380: the notice is inform-only — no permissionDecision, no exit code', async () => {
+  const project = tmpProject();
+  const sp = mkSuperpowersWorld(project, { projectVersion: '6.3.0' });
+  const out = await sessionStart.run(spCtx(project, { source: 'startup' }, sp));
+  assert.match(out.json.hookSpecificOutput.additionalContext, /superpowers 6\.3\.0/);
+  assert.ok(!('permissionDecision' in out.json.hookSpecificOutput));
+  assert.strictEqual(out.exitCode, undefined);
 });

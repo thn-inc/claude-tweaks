@@ -40,7 +40,7 @@ Fixtures under `tests/fixtures/impeccable-plugin/` are executed outputs, not han
 
 ### An entry with no contract tests: re-verify every literal, then pin new ones
 
-The `superpowers` entry has one version site, its `pinned` value. It has no `upstream-pin` comment, no contract test and `fixtures: []`, so the drift checks are its only proof. `checkAssertions` reads only the cached copy whose version equals `pinned` (`resolveRoots`), and it matches each `must-match` with `content.includes` on raw bytes. For an entry like that:
+The `superpowers` entry has one version site, its `pinned` value. It has no `upstream-pin` comment, no contract test and `fixtures: []`, so the drift checks are its only proof. Re-pinning it also moves `SUPERPOWERS_FLOOR` in `plugin/bin/lib/superpowers-version.js` (the parity test in `tests/bin-lib/superpowers-version.test.js` fails until it does), which deliberately raises the SessionStart notice threshold (#3380) for every project still on the previous version. `checkAssertions` reads only the cached copy whose version equals `pinned` (`resolveRoots`), and it matches each `must-match` with `content.includes` on raw bytes. For an entry like that:
 
 - Move the pin before adding assertions. A line that exists only in the new release cannot match while the old pin stands.
 - Count every existing `must-match` with `grep -cF` against the new copy of its `upstream-path`. A file that survives can still drop the literal. 7.0.0's brainstorming rewrite dropped `Invoke the writing-plans skill`, and #3376 retargeted the assertion to the surviving `invoke superpowers:writing-plans and no other skill`, with the reason in a manifest comment.
