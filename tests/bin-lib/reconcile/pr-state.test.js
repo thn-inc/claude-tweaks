@@ -517,14 +517,9 @@ test('resolvePrStateByNumberAsync: malformed/misordered call -> invalid-argument
 // objects through untouched). The fixed-output gh wrapper ignores argv, so
 // the argv.log match is the discriminating assertion.
 function installArgvLoggingGhWrapper(json) {
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-closing-'));
-  const wrapperPath = path.join(wrapperDir, 'gh');
-  const argvLog = path.join(wrapperDir, 'argv.log');
-  fs.writeFileSync(wrapperPath, `#!/bin/sh\necho "$@" > "${argvLog}"\ncat <<'EOF'\n${JSON.stringify(json)}\nEOF\n`);
-  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
-  return { argvLog, restore: () => { process.env.PATH = originalPath; } };
+  const argvLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-closing-')), 'argv.log');
+  const { restore } = installGhWrapper(`#!/bin/sh\necho "$@" > "${argvLog}"\ncat <<'EOF'\n${JSON.stringify(json)}\nEOF\n`);
+  return { argvLog, restore };
 }
 
 test('resolvePrState/resolvePrStateAsync: request closingIssuesReferences in the --json field list (#3412)', async () => {

@@ -581,5 +581,5 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
 
 module.exports = {
   releaseMerged, decideRelease, releasedEntry, repoSlugOf, writeTombstone, shouldSkipClaimRead,
-  prClosesIssue, CLOSING_KEYWORD_RE, needsIssueEvidence,
+  prClosesIssue, needsIssueEvidence,
 };

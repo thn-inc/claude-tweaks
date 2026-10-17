@@ -155,8 +155,9 @@ function classifyByNumberError(repoRoot) {
 // instead of giving up. Same JSON shape as `resolvePrState`'s governing PR,
 // widened by `mergeable`/`mergeStateStatus` (#2367 — the pending-review
 // staleness check reuses this function rather than adding a third
-// PR-state-reading code path; archive-merged.js's own caller ignores the two
-// added fields, since JSON.parse keeps every key regardless of which ones a
+// PR-state-reading code path; archive-merged.js's own caller ignores the
+// fields it does not read — those two and #3412's closingIssuesReferences —
+// since JSON.parse keeps every key regardless of which ones a
 // given caller reads): `{number, state, mergedAt, updatedAt, mergeCommit,
 // mergeable, mergeStateStatus, closingIssuesReferences}` — no tie-break
 // needed, since a PR number resolves to at most one PR. Positional signature:
