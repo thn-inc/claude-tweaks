@@ -39,3 +39,4 @@ description: Use when adding or reviewing a scoping exemption in `plugin/bin/lib
 | Proving a Bash exemption's staged set with `git diff --name-only` | A rename into the target collapses to one line and hides a second changed file — use `--name-status` |
 | Retyping `candidate.startsWith(root + path.sep)` instead of calling `isPathContained` | Six independent copies existed before #2324; a copy silently drops the separator (a prefix sibling then matches) or the `orEqual` branch |
 | Shipping a new exemption with no regression test proven to fail on revert | A green suite alone proves nothing about whether the new test actually discriminates |
+| Paraphrasing the gate's exemptions in skill prose, even beside a citation of `_shared/policy-schema-coverage.md`'s gate-coverage block | #2727 cited the block yet wrote "an untracked or gitignored path the gate exempts"; untracked-not-ignored is the branch this file deliberately reverted (#1395) |

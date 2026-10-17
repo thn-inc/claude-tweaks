@@ -6,11 +6,12 @@ files:
   - plugin/skills/backlog/refine-headless.md
   - plugin/skills/capture/SKILL.md
   - plugin/skills/tidy/scan-execution.md
+  - plugin/skills/specify/shaping-mode.md
 ---
 
 # Run a GitHub-Only Skill Without a Worktree
 
-**Persona:** An agent session (or the maintainer driving it) in a `worktree-always` project's main checkout, about to run a skill whose writes all go to GitHub — `/claude-tweaks:backlog refine` under `work-backend: github-issues`, a `keep`/`absorb:N` `/claude-tweaks:capture`, or `/claude-tweaks:tidy`'s scan batch.
+**Persona:** An agent session (or the maintainer driving it) in a `worktree-always` project's main checkout, about to run a skill whose writes all go to GitHub — `/claude-tweaks:backlog refine` under `work-backend: github-issues`, a `keep`/`absorb:N` `/claude-tweaks:capture`, `/claude-tweaks:specify` shaping a `#N` record under `github-issues`, or `/claude-tweaks:tidy`'s scan batch.
 **Goal:** Finish the skill without creating a worktree it never needed — no create, no catch-up merge pulling unrelated upstream commits, no hand-run `git merge-base --is-ancestor` proof before teardown.
 **Entry point:** The SessionStart banner in a `worktree-always` main checkout, then the invoked skill's own **Worktree** note.
 **Success state:** Every label, comment, and issue edit lands through `gh`; no worktree was created; the main checkout's `git status` is unchanged.
@@ -24,7 +25,7 @@ files:
 - **Red flags:** The session creates a worktree before it knows what the skill will write.
 
 ### 2. Check the skill's own note — The skill is invoked.
-- **Action:** The skill's **Worktree** / **No worktree** note cites `_shared/worktree-setup.md`'s "Forge-API-only invocations need no worktree" and names its own exceptions — refine: a `facets.unsynced === true` record or the `local-files` driver; capture: the `local-files` driver, the gh-failure fallback, the `brainstorm` route; tidy: Step 7.5's mutations.
+- **Action:** The skill's **Worktree** / **No worktree** note (for specify shaping, `shaping-mode.md`'s **Parallel-safety** callout) cites `_shared/worktree-setup.md`'s "Forge-API-only invocations need no worktree" and names its own exceptions — refine: a `facets.unsynced === true` record or the `local-files` driver; capture: the `local-files` driver, the gh-failure fallback, the `brainstorm` route; specify shaping: the `local-files` driver's `writeRecord`; tidy: Step 7.5's mutations.
 - **Should feel:** A quick yes/no on this invocation's shape, answered by the skill itself.
 - **Should understand:** The carve-out covers whole invocations; one local-write branch in the run means it does not apply to that branch.
 - **Red flags:** Treating "backlog refine needs no worktree" as unconditional while the worklist holds an unsynced local record.

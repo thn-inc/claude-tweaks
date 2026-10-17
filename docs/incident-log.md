@@ -1779,3 +1779,36 @@ rather than by design.
 **Removal condition:** retire this entry and its `docs/donts.md` rule once
 `/claude-tweaks:capture` itself searches open PRs for title/topic overlap before filing — tracked
 as #3191, filed from this same record's wrap-up.
+
+## IL-165 — Prose describing a safety boundary misstated what it protects, twice in one run
+
+In one multi-spec `/claude-tweaks:flow` run (#2702/#2727/#2776, 2026-10-16), two new `_shared/`
+paragraphs described a safety boundary wrongly. Both survived build, task review and whole-branch
+review; only `/claude-tweaks:review`'s security lens caught them (ledger items 6 and 9 of
+`docs/plans/2026-10-16-spec-2702-2727-2776-ledger.md`).
+
+#2727's forge-API-only carve-out in `_shared/worktree-setup.md` said a write landing on "an
+untracked or gitignored path the `worktree-always` gate exempts" needs no worktree, and cited
+`_shared/policy-schema-coverage.md`'s gate-coverage block as its authority. The block names
+gitignored paths, the run dir and `policy.yml`. An untracked-not-ignored exemption was built and
+deliberately reverted (#1395; the `DELIBERATELY NOT IMPLEMENTED` comment in
+`plugin/bin/lib/hooks/pre-tool-use.js`), because git cannot tell scratch output from real work
+not yet added. The citation sat right beside the error, so the sentence read as checked though
+nobody had compared it to the block. Fixed in c1ce4bb5a.
+
+#2776's addendum to `_shared/scratch-worktree.md` §7 recorded a `.git/…/tests.log` read denied by
+a user-scope `Read(**/*.log)` permission rule, then offered the absolute per-worktree git dir,
+"which ran unrefused", as the **Workaround**. That reads as a route past a deny rule its owner set
+on purpose. The absolute path was in fact the correct location: skill prose already puts the
+verify log at `{git-dir}/claude-tweaks-verify/`, and the relative `.git/worktrees/…` path does not
+resolve in a linked worktree. The entry never said so. Fixed in 80e3dad2d, which names the
+prescribed location and says a deliberate deny rule stays its owner's to honor.
+
+Existing rules sat next to both and caught neither. `[IL-93]` made the gate-coverage block the
+one prose statement of the gate's reach and told every other file to cite it, but #2727 did cite
+it, and its test pins only the block. `[IL-24]` covers paraphrased behavior in design docs, not
+shipped prose. `[IL-141]` forbids tunneling under a deny in action, not documenting a route that
+reads like one.
+
+Cost: two security-lens fix commits in one run, each confirmed by a direct-verification override
+after the lens agents disagreed.
