@@ -61,21 +61,21 @@ phase-exit push, `_shared/git-discipline.md`), check `run-state.json`'s `pr` fie
 
   **Refresh the Spec summary after a premise reversal (#3050).** After writing that file and
   before the run-id re-read and `gh pr edit` (or the MCP write) below, run `node
-  "${CLAUDE_PLUGIN_ROOT}/bin/revise-pr-summary.js" --run-dir "{run-dir}" --body-file
-  /tmp/pr-checklist-{run-id}-{n}.md`. It reads this run's `premise reversed:` entries
-  ("Premise-reversal decisions" below) and prints which ones the body's `### Spec summary` note
-  does not yet name. With none logged, or every one already noted (`changed: false`), write the
-  body as composed so far: the Spec summary stays byte-unchanged. Otherwise, write a one-paragraph
-  summary of the implemented behavior to a session temp file with the Write tool. Take it from this
-  run's diff and nothing it does not show, and cover every spec for a bundle. Then re-run with
-  `--summary-file {file} --out /tmp/pr-checklist-{run-id}-{n}.md`. It locates the span by its
-  `### Spec summary` heading up to the next heading (headings survive both transports; only
-  `<!-- ... -->` spans are stripped, per `_shared/pr-early-run-lifecycle.md`'s Root cause section).
-  It writes one `Revised during build: {original claim} → {implemented behavior}` note above the
-  new paragraph, with entries `; `-joined and appended to any note already there, so a bundle's
-  sibling-spec entries are never dropped. Best-effort, like the checklist edit: a non-zero exit
-  logs a warning to `decisions.md`, and the update writes the checklist-only body. It is never a
-  phase-exit or merge blocker.
+  "${CLAUDE_PLUGIN_ROOT}/bin/revise-pr-summary.js" --run-dir "{run-dir}"` (parent run dir with
+  `manifest.yml` for a bundle, else this run's own dir) `--body-file
+  /tmp/pr-checklist-{run-id}-{n}.md`. Reads this run's `premise reversed:` entries
+  ("Premise-reversal decisions" below) and reports which the `### Spec summary` note lacks, as
+  `uncovered`/`reason`. Empty `uncovered` (`no-reversals`, or `already-noted` — every reversal
+  already noted) → write the body as composed: Spec summary stays byte-unchanged. Non-empty
+  `uncovered` → write a one-paragraph summary to a session temp file (`bin/session-tmp-resolve.js`,
+  e.g. `PR_SUMMARY_REVISION=pr-summary-revision-{run-id}.md`) with the Write tool — this run's
+  diff, nothing it does not show, covering every spec in a bundle — then re-run with
+  `--summary-file {file} --out /tmp/pr-checklist-{run-id}-{n}.md`. Locates the span by its
+  `### Spec summary` heading to the next heading, writing one `Revised during build: {original
+  claim} → {implemented behavior}` note above the paragraph, entries `; `-joined onto any
+  existing note so sibling-spec entries survive. Best-effort: a non-zero exit, or
+  `changed: false` with non-empty `uncovered`, logs a warning to `decisions.md` naming the
+  `reason`; the update writes the checklist-only body — never a phase-exit or merge blocker.
 
   Re-read that file's first line back before `gh pr edit` and confirm it still names
   this run's `{run-id}`; hard-stop this update on a mismatch rather than push a wrong body:
@@ -85,9 +85,9 @@ phase-exit push, `_shared/git-discipline.md`), check `run-state.json`'s `pr` fie
   ```
 
 <!-- when: transport=mcp -->
-  `gh`-absent: `mcp__github__update_pull_request` with the same composed body — this write is
-  unsanitized (`_shared/pr-early-run-lifecycle.md`'s Root cause section), so it carries both
-  delimiter pairs through untouched regardless of which one was used to locate the span.
+  `gh`-absent: `mcp__github__update_pull_request` with the same composed body — unsanitized
+  (`_shared/pr-early-run-lifecycle.md`'s Root cause section), so both delimiter pairs survive
+  regardless of which located the span.
 <!-- /when -->
 
   Compose-then-write-once — read, patch the checklist section in memory, write the whole body

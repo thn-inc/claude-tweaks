@@ -61,6 +61,17 @@ test('the Phase-checklist update runs the Spec-summary refresh with trigger, not
   assert.match(step, /`### Spec summary` heading/);
   assert.match(step, /never a phase-exit or merge blocker/);
   assert.match(step, /nothing it does not show/);
+  assert.match(step, /`uncovered`/);
+  assert.match(step, /`reason`/);
+});
+
+test('the Refresh paragraph precedes the gh pr edit invocation it feeds (M1)', () => {
+  const update = section(REFRESH, '## Phase-checklist update (every phase exit)', '## Pre-merge title/description refresh');
+  const refreshIdx = update.indexOf('**Refresh the Spec summary after a premise reversal (#3050).**');
+  const ghEditIdx = update.indexOf('gh pr edit {number} --repo');
+  assert.ok(refreshIdx !== -1, 'Refresh paragraph must exist');
+  assert.ok(ghEditIdx !== -1, 'gh pr edit invocation must exist');
+  assert.ok(refreshIdx < ghEditIdx, `Refresh paragraph (${refreshIdx}) must precede gh pr edit (${ghEditIdx})`);
 });
 
 test('the pre-merge refresh step 2 still re-runs the whole update, Spec summary included', () => {
