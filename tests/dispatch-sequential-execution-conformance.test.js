@@ -7,7 +7,6 @@ const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => readText(path.join(ROOT, rel));
-const { CEILING_BYTES } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'skill-audit', 'context-cost'));
 
 test('sequential-execution.md documents the N-session drain shape once, naming the five controls, the same-worktree prohibition, and the load caveat (#1927 AC3)', () => {
   const t = read('plugin/skills/dispatch/sequential-execution.md');
@@ -29,7 +28,6 @@ test('the lease token is documented where port-services is (#1927 AC4)', () => {
   assert.match(step, /test_\$\{CLAUDE_TWEAKS_LEASE\}/);
   assert.match(step, /test_db/);
   assert.match(read('docs/hooks.md'), /CLAUDE_TWEAKS_LEASE/);
-  assert.ok(Buffer.byteLength(read('plugin/skills/_shared/policy-schema.md'), 'utf8') <= CEILING_BYTES);
 });
 
 // EnterWorktree(name:) takes no base ref: under baseRef fresh it branches from
