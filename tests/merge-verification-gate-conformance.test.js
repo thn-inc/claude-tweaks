@@ -74,6 +74,23 @@ test('the gate reads state before any merge attempt and names the red-path piece
   assert.ok(!/AskUserQuestion/.test(section), 'the gate is park-and-surface — no mid-pipeline prompt');
 });
 
+test('the gate cross-checks head-sha workflow runs before reading green (#3405)', () => {
+  const gate = fs.readFileSync(GATE_FILE, 'utf8');
+  const step25 = gate.indexOf('## Step 2.5: Merge-verification gate');
+  const step3 = gate.indexOf('## Step 3:');
+  const section = gate.slice(step25, step3);
+  for (const needle of ['gh run list', '--commit {headRefOid}', '--limit 100']) {
+    assert.ok(section.includes(needle), `gate section missing "${needle}"`);
+  }
+  // The bounded watch re-counts head runs on its 0) (all-green) branch — a rollup that is green
+  // while a head run is still in progress must keep waiting, not break out as green.
+  const watch = section.slice(section.indexOf('DEADLINE='), section.indexOf('\n```', section.indexOf('DEADLINE=')));
+  const zeroBranch = watch.slice(watch.indexOf('0)'), watch.indexOf('1)'));
+  assert.ok(zeroBranch.includes('gh run list'), 'bounded-watch 0) branch must count head runs');
+  // Signature (e): PR #3390 is the captured partial-rollup incident.
+  assert.ok(section.includes('#3390') && section.includes('39042323352'), 'Signatures list missing the #3390 capture (run 39042323352)');
+});
+
 test('every pr-first merge site and the resume confirmation cite the gate', () => {
   // #852 extracted dispatch's "Confirm before resuming" procedure (including
   // this citation) out of SKILL.md into its own sub-file to stay under the
