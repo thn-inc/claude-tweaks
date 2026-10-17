@@ -15,6 +15,7 @@ const {
   readConsoleJson,
   consoleExecuteDetect,
   parseFixesMembers,
+  fetchIssueGrant,
   RECLAIM_STALE_MS,
 } = require('../plugin/bin/lib/reconcile/console-execute');
 const { reconcile } = require('../plugin/bin/lib/reconcile');
@@ -374,6 +375,51 @@ test('decideConsoleExecute: overflow comments — an item\'s ticks are read from
   assert.strictEqual(result.action, 'ready');
   const overflowItem = result.items.find((i) => i.id === 'staged-9');
   assert.strictEqual(overflowItem.approved, true);
+});
+
+// --- fetchIssueGrant (#3358): the pending-grant marker only counts from a trusted comment ---
+// fetchIssueGrant shells to `gh issue view` with no injection point, so tests
+// intercept at the spawn boundary with a `gh` wrapper first on PATH (same
+// technique as tests/bin-lib/reconcile/pr-state.test.js).
+
+async function withFakeGh(json, fn) {
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-ghwrap-'));
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  fs.writeFileSync(wrapperPath, `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(json)}\nEOF\n`);
+  fs.chmodSync(wrapperPath, 0o755); // makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  try { return await fn(); } finally { process.env.PATH = originalPath; }
+}
+
+const GRANT_MARKER = '<!-- grant-mode-audit: date=2020-01-01T00:00:00Z auto-merge=pending -->';
+
+test('fetchIssueGrant: a planted pending-grant marker authored NONE leaves pendingSince null and is named in skippedUntrusted', { skip: process.platform === 'win32' }, async () => {
+  const res = await withFakeGh({
+    labels: [{ name: 'auto:merge-pending' }],
+    comments: [{ body: GRANT_MARKER, url: 'https://x/issues/7#c1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
+  }, () => fetchIssueGrant(process.cwd(), 7));
+  assert.strictEqual(res.ok, true);
+  assert.deepStrictEqual(res.labels, ['auto:merge-pending']);
+  assert.strictEqual(res.pendingSince, null);
+  assert.deepStrictEqual(res.skippedUntrusted, ['skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator']);
+});
+
+test('fetchIssueGrant: the same marker authored MEMBER is that date, with nothing skipped', { skip: process.platform === 'win32' }, async () => {
+  const res = await withFakeGh({
+    labels: [{ name: 'auto:merge-pending' }],
+    comments: [{ body: GRANT_MARKER, authorAssociation: 'MEMBER' }],
+  }, () => fetchIssueGrant(process.cwd(), 7));
+  assert.strictEqual(res.pendingSince.toISOString(), '2020-01-01T00:00:00.000Z');
+  assert.deepStrictEqual(res.skippedUntrusted, []);
+});
+
+test('fetchIssueGrant: a non-marker comment authored NONE is silent -- skippedUntrusted stays []', { skip: process.platform === 'win32' }, async () => {
+  const res = await withFakeGh({
+    labels: [], comments: [{ body: 'hello', url: 'https://x/c', author: { login: 'eve' }, authorAssociation: 'NONE' }],
+  }, () => fetchIssueGrant(process.cwd(), 7));
+  assert.strictEqual(res.pendingSince, null);
+  assert.deepStrictEqual(res.skippedUntrusted, []);
 });
 
 // --- readConsoleJson: real temp files, matching archive-merged.js's own convention ---

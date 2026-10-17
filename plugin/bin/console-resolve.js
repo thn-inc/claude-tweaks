@@ -22,8 +22,13 @@ const { resolveTarget } = require('./lib/stage-item/write');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { resolvePolicyConfig } = require('./lib/policy-schema');
 const { resolveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
-const { extractPendingGrantedAt } = require('./lib/issues/grant-maturation');
+const { extractPendingGrantedAt, PENDING_GRANT_MARKER_RE } = require('./lib/issues/grant-maturation');
+const { isTrustedComment, untrustedSkipNote } = require('./lib/issues/comment-trust');
 const { writeFileAtomic } = require('./lib/atomic-write');
+
+// Non-global twin of the /g PENDING_GRANT_MARKER_RE literal: `.test` on a /g
+// regex carries lastIndex between calls.
+const PENDING_GRANT_MARKER_TEST_RE = new RegExp(PENDING_GRANT_MARKER_RE.source);
 
 const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]';
 
@@ -77,8 +82,16 @@ function ghReadGrants(execFile, cwd) {
       const raw = execFile('gh', ['issue', 'view', String(n), '--json', 'labels,comments'], { cwd });
       const parsed = JSON.parse(raw);
       const labels = (parsed.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
-      const bodies = (parsed.comments || []).map((c) => (typeof c === 'string' ? c : c.body || ''));
-      out[n] = { labels, pendingSince: extractPendingGrantedAt(bodies) };
+      // #3358: a `grant-mode-audit` marker is plantable by anyone who can comment --
+      // read trusted comments only, and name each untrusted marker comment passed over.
+      const bodies = [];
+      const skippedUntrusted = [];
+      for (const c of parsed.comments || []) {
+        const body = c && typeof c.body === 'string' ? c.body : '';
+        if (isTrustedComment(c)) bodies.push(body);
+        else if (PENDING_GRANT_MARKER_TEST_RE.test(body)) skippedUntrusted.push(untrustedSkipNote(c));
+      }
+      out[n] = { labels, pendingSince: extractPendingGrantedAt(bodies), skippedUntrusted };
     }
     return out;
   };
@@ -210,4 +223,4 @@ if (require.main === module) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { process.stderr.write(`console-resolve.js: ${err && err.stack ? err.stack : err}\n`); process.exitCode = 1; });
 }
 
-module.exports = { run, parseArgs };
+module.exports = { run, parseArgs, ghReadGrants };
