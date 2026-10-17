@@ -32,7 +32,7 @@ function fixture(runState, { spec = false } = {}) {
   return { main, runDir };
 }
 
-function makeDeps(main, { runList = () => '[]', ...over } = {}) {
+function makeDeps(main, over = {}) {
   const out = []; const err = []; const ghCalls = [];
   const deps = {
     cwd: () => main,
@@ -49,7 +49,7 @@ function makeDeps(main, { runList = () => '[]', ...over } = {}) {
       if (args[0] === 'pr' && args[1] === 'view') {
         return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [{ __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'FAILURE', detailsUrl: 'https://ci.example/test' }] });
       }
-      if (args[0] === 'run' && args[1] === 'list') return runList(args);
+      if (args[0] === 'run' && args[1] === 'list') return '[]';
       throw new Error('unexpected gh ' + args.join(' '));
     },
     stdout: (s) => out.push(s),
@@ -203,6 +203,20 @@ test('a failing gh run list is read-failed, never green (#3405)', () => {
   const j = h.json();
   assert.equal(j.state, 'read-failed');
   assert.match(j.reason, /^gh run list failed:/);
+});
+
+test('a failing gh run list does not mask a red rollup (#3405)', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    gh: (args) => {
+      if (args[0] === 'pr') return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [{ __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'FAILURE', detailsUrl: 'https://ci.example/test' }] });
+      throw new Error('HTTP 503');
+    },
+  });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'red');
+  assert.deepEqual(j.failing, [{ name: 'test', url: 'https://ci.example/test' }]);
 });
 
 test('a non-array gh run list output is read-failed, never green (#3405)', () => {

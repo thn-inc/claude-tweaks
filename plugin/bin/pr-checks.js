@@ -96,6 +96,7 @@ function run(argv, overrides = {}) {
   // The full 40-char sha: an abbreviated --commit lists no runs (#3405).
   const headRefOid = view && view.headRefOid;
   let headRuns;
+  let runsFailure = null;
   // A stale head skips the runs read: the classifier concludes nothing from it,
   // so a transient runs-read failure must not turn `stale` into `read-failed`.
   if (typeof headRefOid === 'string' && headRefOid && headRefOid === localHead) {
@@ -104,7 +105,7 @@ function run(argv, overrides = {}) {
       if (!Array.isArray(rows)) throw new Error('not a JSON array');
       headRuns = rows;
     } catch (e) {
-      return report(deps, { state: 'read-failed', pr: n, localHead, reason: `gh run list failed: ${errText(e)}` });
+      runsFailure = `gh run list failed: ${errText(e)}`;
     }
   }
   let repoRoot = deps.cwd();
@@ -112,6 +113,8 @@ function run(argv, overrides = {}) {
   let hasPrCi = false;
   try { hasPrCi = Boolean(deps.hasPullRequestCi(repoRoot)); } catch { hasPrCi = false; }
   const verdict = classifyRollup({ rollup: view && view.statusCheckRollup, headRefOid, localHead, hasPrCi, headRuns });
+  // A failed runs read cannot conclude green/pending, but a rollup that is already red is conclusive on its own.
+  if (runsFailure && verdict.state !== 'red') return report(deps, { state: 'read-failed', pr: n, localHead, reason: runsFailure });
   return report(deps, { ...verdict, localHead, pr: n });
 }
 

@@ -95,6 +95,22 @@ test('the gate cross-checks head-sha workflow runs before reading green (#3405)'
   // The RC=0 re-read names the not-yet-completed head run case and resumes the watch, never a blind merge.
   const rc0 = section.slice(section.indexOf('`RC=0` → **green**'), section.indexOf('`RC=1` (a check failed'));
   assert.ok(rc0.includes('not yet `completed`') && rc0.includes('DEADLINE'), 'RC=0 bullet must resume the bounded watch on a not-yet-completed head run');
+  // The three classification bullets each carry their head-run clause (the code twin is classifyRollup's headRuns).
+  for (const clause of ['any head run whose `status` is `completed` and whose `conclusion`', 'or any head run whose `status` is not `completed`', 'every head run `completed` without a failing conclusion']) {
+    assert.ok(section.includes(clause), `Step 2.5 classification missing head-run clause "${clause}"`);
+  }
+  // The 0) branch breaks only at zero pending head runs, and a failed runs read stops the watch rather than breaking green.
+  assert.ok(zeroBranch.includes('"${PENDING_RUNS:-x}" = 0 ] && break') && zeroBranch.includes('RC=2; break'), 'bounded-watch 0) branch must gate its break on zero pending head runs and stop on a failed read');
+});
+
+test('every consumer that restates the Step 2.5 CI read also reads the head-sha runs (#3405)', () => {
+  for (const rel of ['release/execute.md', 'dispatch/resume-confirmation.md', 'dispatch/close-out.md', 'tidy/actions-github-issues.md']) {
+    assert.ok(read(...rel.split('/')).includes('gh run list'), `${rel} restates the rollup read without the head-run read`);
+  }
+  // The tidy arm-ready-PR action's re-verify list itself names the read its green-by-construction claim relies on.
+  const tidy = read('tidy', 'actions-github-issues.md');
+  const reverify = tidy.slice(tidy.indexOf('**Re-verify before writing'), tidy.indexOf('When judging `statusCheckRollup`'));
+  assert.ok(reverify.includes('gh run list'), 'tidy Arm ready PR re-verify must fetch the head-sha runs');
 });
 
 test('every pr-first merge site and the resume confirmation cite the gate', () => {

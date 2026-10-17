@@ -99,7 +99,7 @@ test('every head run completed and successful is green', () => {
   assert.equal(r.state, 'green');
 });
 
-test('the pending assertion discriminates: classifying without headRuns reads the same rollup green', () => {
+test('without headRuns the same partial rollup reads green (rollup-only callers keep their behavior)', () => {
   const r = classifyRollup({ rollup: GREEN_ROLLUP, headRefOid: HEAD, localHead: HEAD, hasPrCi: true });
   assert.equal(r.state, 'green');
 });
@@ -118,6 +118,28 @@ test('rollup red wins over a pending head run', () => {
 test('a cancelled completed head run is neither red nor pending', () => {
   const r = classifyRollup({ rollup: GREEN_ROLLUP, headRefOid: HEAD, localHead: HEAD, hasPrCi: true, headRuns: [hr('test', 'completed', 'cancelled')] });
   assert.equal(r.state, 'green');
+});
+
+test('a workflow in both the rollup and the head runs is named once, and the state is unchanged', () => {
+  const pending = classifyRollup({ rollup: [run('test', 'IN_PROGRESS', '')], headRefOid: HEAD, localHead: HEAD, hasPrCi: true, headRuns: [hr('test', 'in_progress', '')] });
+  assert.equal(pending.state, 'pending');
+  assert.deepEqual(pending.pending, ['test']);
+  const red = classifyRollup({ rollup: [run('test', 'COMPLETED', 'FAILURE')], headRefOid: HEAD, localHead: HEAD, hasPrCi: true, headRuns: [hr('test', 'completed', 'failure')] });
+  assert.equal(red.state, 'red');
+  assert.deepEqual(red.failing.map((f) => f.name), ['test']);
+});
+
+test('a head run row with no status, or a non-object row, is pending (fail safe), never green', () => {
+  for (const row of [{ workflowName: 'test', conclusion: 'success' }, 'oops', null]) {
+    const r = classifyRollup({ rollup: GREEN_ROLLUP, headRefOid: HEAD, localHead: HEAD, hasPrCi: true, headRuns: [row] });
+    assert.equal(r.state, 'pending');
+  }
+});
+
+test('an empty rollup with only completed head runs follows the empty-rollup lever, not green', () => {
+  const headRuns = [hr('test', 'completed', 'success')];
+  assert.equal(classifyRollup({ rollup: [], headRefOid: HEAD, localHead: HEAD, hasPrCi: true, headRuns }).state, 'pending');
+  assert.equal(classifyRollup({ rollup: [], headRefOid: HEAD, localHead: HEAD, hasPrCi: false, headRuns }).state, 'no-ci');
 });
 
 test('pending entries are named by workflowName, falling back to name', () => {

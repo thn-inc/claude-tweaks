@@ -59,11 +59,14 @@ function classifyRollup({ rollup, headRefOid, localHead, hasPrCi, headRuns } = {
   }
   const entries = rollup.map(normalizeEntry);
   const checks = [...entries, ...(headRuns || []).map(normalizeHeadRun)];
+  // A workflow can appear in both sources (a rollup job and its head run); name it once — the state is unaffected.
+  const seen = new Set();
   const failing = checks
     .filter((e) => FAILING_CONCLUSIONS.includes(e.conclusion))
-    .map((e) => ({ name: e.name, url: e.url }));
+    .map((e) => ({ name: e.name, url: e.url }))
+    .filter((e) => !seen.has(e.name) && seen.add(e.name));
   if (failing.length > 0) return result('red', headRefOid, { failing });
-  const pending = checks.filter((e) => e.status !== 'COMPLETED').map((e) => e.name);
+  const pending = [...new Set(checks.filter((e) => e.status !== 'COMPLETED').map((e) => e.name))];
   if (pending.length > 0) return result('pending', headRefOid, { pending });
   if (entries.length === 0) return result(hasPrCi ? 'pending' : 'no-ci', headRefOid);
   return result('green', headRefOid);
