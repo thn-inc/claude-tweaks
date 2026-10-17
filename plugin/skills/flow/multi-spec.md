@@ -147,6 +147,18 @@ When `worktree` is specified, a sequential run uses **one shared worktree for th
    delimiter in `EnterWorktree`'s accepted charset, but the characters within each segment still
    need sanitizing (#814). Either way, `/flow` ends this step `cd`'d into the worktree — adopted
    or created.
+
+   **Create the open-items ledger here (#3036)** — right after the worktree exists (adopted or
+   created), before any record's build: one ledger for the whole run, at the run-level scope (the
+   parent run dir `{parent}/`, exported later as `$MULTISPEC_PARENT_DIR`; never a per-spec
+   `spec-{N}/` dir), via `/claude-tweaks:ledger`'s create operation — `{feature}` is the shared
+   spec-slug (`spec-{N1}-{N2}…`, the same key `wrap-up/cleanup-procedures.md`'s multi-spec ledger
+   caveat uses) — logged to `{parent}/decisions.md` as
+   `AUTO {time} — flow: created open-items ledger {path}. Reversibility: n/a.` — then follow
+   `/claude-tweaks:ledger` Create's "At a post-worktree creation point" paragraph (resume no-op,
+   held Step 2 notes appended, ledger committed by explicit path). This is the
+   multi-spec run's single creation point — `build/worktree-setup.md` Step 4.6 skips under
+   `MULTISPEC_SHARED_WORKTREE=1` for that reason.
 2. **Per-record builds skip creation** — `/flow` exports `MULTISPEC_SHARED_WORKTREE=1` and runs every record's pipeline inside the shared worktree. Each per-record `/build` Common Step 1 detects it is already inside an isolated worktree (superpowers Step 0: `GIT_DIR != GIT_COMMON`, reinforced by `MULTISPEC_SHARED_WORKTREE`) and **skips worktree creation**, committing into the shared branch. Every record — the first included — materializes as part of its own build step, writing `{parent}/spec-{N}/work/{N}-spec.md` directly into the already-existing shared worktree. This is just `materialize.md`'s worktree-first ordering applied once at the run level instead of once per record: the worktree exists before any materialization, so no record is a special case. It does NOT call `/superpowers:finishing-a-development-branch` between records.
 3. **Finish once at the end** — after the last record's pipeline and the consolidated Review Console, `/flow` finishes the single feature branch via `/superpowers:finishing-a-development-branch` (merge / PR / discard). Re-check `main` divergence immediately before this step, not just at the Step 2.5 pre-flight (a point-in-time check at pipeline *start*) — a long-running multi-record run has a real window for `main` to move again while records 2..N build. If it has, rebase onto the new tip inside the worktree first (checking for real file overlap, not just presence in the diff — see the git-diff-merge-base gotcha in CLAUDE.md's Don'ts) so the branch stays fast-forward-mergeable, then proceed with the finish.
 
