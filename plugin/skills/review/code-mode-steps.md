@@ -244,6 +244,10 @@ Run the UX analysis procedure from `ux-analysis.md` in this skill's directory. O
 
 Read `step3-doc-freshness-lens.md` in this skill's directory for the procedure: the `docs/REGISTRY.md` Auto-detect match and its informational finding row, plus sub-lens **3i-diagram** (structural-complexity signal table, co-located-diagram check, deterministic tie-break, and its own finding row). Skip `3i-diagram` additionally when CLAUDE.md's `diagram-suggestions` flag is `disabled` or missing.
 
+### 3j: Skill Load Delta (informational)
+
+Read `step3-skill-load-delta.md` in this skill's directory and run it on every code-mode review: one read-only CLI call reporting each skill entry point's floor and closure delta. It never changes the verdict and never skips silently.
+
 ### Step 3.5 & 3.6: Cross-Lens Debate, Per-Candidate Refutation, and Gap-Sweep
 
 Three effort-gated findings-quality mechanisms run after Step 3's per-lens reproduction completes: Cross-Lens Debate (resolves contradictions between different lenses reviewing the same region), the Per-Candidate Refutation Pass (re-examines `confirmed` findings at or above a `medium` severity floor, capped at 10 per review, for correlated error reproduction-pair agreement alone can't catch), and Gap-Sweep / Completeness Critic (a single fresh-eyes agent asking what every angle-scoped lens, collectively, missed).

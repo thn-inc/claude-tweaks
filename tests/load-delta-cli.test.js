@@ -151,3 +151,37 @@ test('AC12: this repo — exits 0 and lists both the plugin and .claude roots', 
   const roots = JSON.parse(r.stdout).roots.map((x) => x.pluginRoot);
   assert.ok(roots.includes('plugin') && roots.includes('.claude'), JSON.stringify(roots));
 });
+
+const REVIEW = path.join(REPO, 'plugin', 'skills', 'review');
+
+test('review 3j pointer: at most 4 lines, cites step3-skill-load-delta.md', () => {
+  const text = fs.readFileSync(path.join(REVIEW, 'code-mode-steps.md'), 'utf8');
+  const start = text.indexOf('### 3j: Skill Load Delta (informational)');
+  assert.ok(start !== -1, '3j heading missing');
+  const end = text.indexOf('\n### ', start + 1);
+  const block = text.slice(start, end).replace(/\n+$/, '');
+  assert.ok(block.split('\n').length <= 4, `3j block is ${block.split('\n').length} lines`);
+  assert.match(block, /`step3-skill-load-delta\.md`/);
+  assert.ok(start > text.indexOf('### 3i: Documentation Freshness'), '3j must follow 3i');
+});
+
+test('step3-skill-load-delta.md quotes every outcome line the CLI prints, verbatim', () => {
+  const doc = fs.readFileSync(path.join(REVIEW, 'step3-skill-load-delta.md'), 'utf8');
+  for (const line of [
+    'Skill load delta: no skill files changed — skipped',
+    'Skill load delta: skill files changed, no entry point\'s load moved',
+    '| Entry | Floor | ΔFloor | Closure | ΔClosure | New unresolved |',
+    'Skill load delta: no baseline (',
+    'Skill load delta: not run — ',
+  ]) assert.ok(doc.includes(line), `missing: ${line}`);
+  assert.match(doc, /\/bin\/load-delta\.js/);
+  assert.match(doc, /never changes the verdict/i);
+});
+
+test('review summary template carries the Skill Load Delta section and a compact-form line', () => {
+  const t = fs.readFileSync(path.join(REVIEW, 'review-summary-template.md'), 'utf8');
+  const full = t.slice(t.indexOf('## Full template'));
+  assert.match(full, /### Skill Load Delta\n/);
+  const compact = t.slice(t.indexOf('## Compact form'), t.indexOf('## Full template'));
+  assert.match(compact, /\*\*Skill load delta:\*\*/);
+});
