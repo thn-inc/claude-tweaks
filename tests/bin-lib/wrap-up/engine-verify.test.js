@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync: realExecFileSync } = require('node:child_process');
-const { renderVerifyTable, runVerify, registerCheck, resolvePrNumber, resolveArchivedRunDir } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
+const { renderVerifyTable, runVerify, registerCheck, resolvePrNumber, resolveArchivedRunDir, resolvedIssueNumbers } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
 const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
 
 function makeTmpDir(prefix) {
@@ -938,6 +938,72 @@ test('carrier-commit check prefers a materialized header over expectations issue
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
   const row = result.rows.find((r) => r.check === 'carrier-commit');
   assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+// ---- #3365: resolvedIssueNumbers reads the worktree mirror ----
+//
+// The materialized header is committed in the worktree only, so a
+// main-checkout run dir has no work/ before merge. These fixtures put the run
+// dir under a real `.claude-tweaks/pipelines/{run-id}` path (worktreeMirror
+// keys on that segment) and the header only under the worktree's mirror.
+
+function mirrorFixture({ runId = '2026-10-17T075913-spec-3337', specSubdir = null, record = 3337, state }) {
+  const root = makeTmpDir('verify-mirror-');
+  const parentDir = path.join(root, 'main', '.claude-tweaks', 'pipelines', runId);
+  const runDir = specSubdir ? path.join(parentDir, specSubdir) : parentDir;
+  fs.mkdirSync(runDir, { recursive: true });
+  const wtDir = path.join(root, 'wt');
+  const mirrorWork = specSubdir
+    ? path.join(wtDir, '.claude-tweaks', 'pipelines', runId, specSubdir, 'work')
+    : path.join(wtDir, '.claude-tweaks', 'pipelines', runId, 'work');
+  fs.mkdirSync(mirrorWork, { recursive: true });
+  if (record !== null) {
+    fs.writeFileSync(path.join(mirrorWork, `${record}-spec.md`), `---\nrecord: ${record}\n---\n# ${record}: title\n`);
+  }
+  fs.writeFileSync(path.join(parentDir, 'run-state.json'), JSON.stringify(state(wtDir)));
+  if (specSubdir) fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  return { root, runDir, wtDir };
+}
+
+test('#3365: resolvedIssueNumbers resolves a record from the worktree mirror when the run dir has no work/', () => {
+  const { runDir } = mirrorFixture({ state: (wt) => ({ status: 'active', worktree: wt }) });
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [3337]);
+});
+
+test('#3365: resolvedIssueNumbers still falls back to expectations issues when neither location has a header', () => {
+  const { runDir } = mirrorFixture({ record: null, state: (wt) => ({ status: 'active', worktree: wt }) });
+  writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [900] });
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [900]);
+});
+
+test('#3365: resolvedIssueNumbers reads worktreeAtClose when a closed run nulled worktree', () => {
+  const { runDir } = mirrorFixture({ state: (wt) => ({ status: 'closed', worktree: null, worktreeAtClose: wt }) });
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [3337]);
+});
+
+test('#3365: a multi-spec spec-{N}/ run dir inherits the parent run-state worktree for the mirror read', () => {
+  const { runDir } = mirrorFixture({ specSubdir: 'spec-3337', state: (wt) => ({ status: 'active', worktree: wt }) });
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [3337]);
+});
+
+test('#3365: a closed multi-spec spec-{N}/ dir reads the parent worktreeAtClose for the mirror read', () => {
+  const { runDir } = mirrorFixture({ specSubdir: 'spec-3337', state: (wt) => ({ status: 'closed', worktree: null, worktreeAtClose: wt }) });
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [3337]);
+});
+
+test('#3365: a parent run dir with only a manifest does not treat manifest ids as resolved records (Ruling R1)', () => {
+  const { runDir } = mirrorFixture({ record: null, state: (wt) => ({ status: 'active', worktree: wt }) });
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  specs:\n    - id: 3337\n      status: not-run\n      subdir: spec-3337/\n');
+  writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [900] });
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [900]);
+});
+
+test('#3365: carrier-commit fails, not skips, for a mirror-resolved record with no closing keyword on branch or PR', () => {
+  const { runDir } = mirrorFixture({ state: (wt) => ({ status: 'active', worktree: wt }) });
+  const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'fail', row.detail);
+  assert.match(row.detail, /3337/);
 });
 
 // ---- carrier-commit PR-body fallback (record #900 fix round, C1) ----
