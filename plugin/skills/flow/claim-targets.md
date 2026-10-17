@@ -83,6 +83,11 @@ Either way, `basename($PIPELINE_RUN_DIR)` is this run's claim identity for every
 
 ## File-overlap warning (never a gate)
 
+**Skip this check entirely when `$PIPELINE_RUN_DIR` was already set on entry** (a dispatched
+run, per "Resolve this run's identity" above): dispatch already applied its `neighbour-in-flight`
+guard and builds per record (`dispatch/design-notes.md`), so a note advising a co-build would
+contradict it. The rest of this section is for a direct human invocation.
+
 Before claiming, check whether any named target file-overlaps an open, unclaimed record. Read
 the same open-queue set `dispatch/SKILL.md` Step 2 uses (open + no `bot:*`, not filtered to
 `auto:build` here — this is informational, not a selection), then run:
@@ -92,20 +97,28 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/preflight-records.js" {target} [{target} …] {o
 ```
 
 passing every named target together with that open-queue's issue numbers as positional
-arguments — its `overlapGroups` output field (`groupByFileOverlap`, `bin/lib/issues/grouping.js`,
-run over each fetched record's key files) is this computation; read the CLI's `--help` for the
-remaining flags. On a hit — an `overlapGroups` entry pairing a named target with a number that
-isn't one — surface one line per overlapping pair:
+arguments — read its `directOverlaps` output field (`[{a, b, files}]`, one entry per pair of
+records sharing a key file, from `directOverlaps` in `bin/lib/issues/grouping.js` over each
+fetched record's key files); not `overlapGroups`, whose transitive groups would chain records
+that share nothing with each other. Read the CLI's `--help` for the remaining flags. On a hit —
+a `directOverlaps` pair with exactly one side among the named targets — surface one line per
+such pair:
 
 ```
-Note: #{target} overlaps open #{other} (untracked file overlap) — consider
+Note: #{target} overlaps open #{other} (untracked file overlap: {files}) — consider
 /claude-tweaks:flow #{target},#{other} to claim and build them together.
 ```
 
 Proceed with only the named target(s) regardless — this is a warning, never a gate, and never
-auto-expands the human's explicitly named list. No new grouping computation is added to flow:
-this reuses the same `bin/preflight-records.js` primitive dispatch's queue pull and `/help`
-already call; flow gains no queue-wide knowledge beyond this one warning check.
+auto-expands the human's explicitly named list. With `gh` unavailable, or on any non-zero exit,
+skip the warning — no retry, no stop — and write one `SKIP`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status SKIP --step "Step 2.8 file-overlap warning (skipped)" --text "condition: preflight-records.js exited non-zero or gh unavailable → fallback: overlap warning not computed; claim proceeds on the named targets only." --reversibility n/a
+```
+No new grouping computation is added to flow: this reuses the `bin/preflight-records.js`
+primitive that `multi-spec.md`'s pre-flight already calls; flow gains no queue-wide knowledge
+beyond this one warning check.
 
 ## Claim every named target, all-or-abort
 
@@ -114,7 +127,7 @@ to Step 3 for any of them. One invocation claims the whole list:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/claim-targets.js" --run-id "$(basename "$PIPELINE_RUN_DIR")" \
-  --targets {n}[,{m}…] [--keep-going]
+  --targets {n}[,{m}…] [--keep-going] --run "$PIPELINE_RUN_DIR"
 ```
 
 Pass `--keep-going` only when this run is in `keep-going` mode (below); a default-mode run
@@ -156,6 +169,10 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sta
   --section "/flow" --step "Step 2.8" --reversibility high \
   --text "claimed #{n} (bin/claim-targets.js, transport: {git|contents-api|mcp})"
 ```
+
+On the `gh` path, `claim-targets.js` itself already writes this exact line — via `--run` on the
+invocation above — for every target in its `claimed` array (#2775), so the `log-decision.js` call
+just shown is required only for the `gh`-absent MCP procedure's own successful writes.
 
 This does not itself guarantee the CLI/procedure was invoked — an agent that skips the claim call
 above skips this log line too, for the same reason. It exists so a **later** phase (`/wrap-up`'s

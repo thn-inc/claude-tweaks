@@ -3,10 +3,17 @@
 // Step 3 and Dual-marker scheme). Mechanizes the template every PR-early
 // `gh pr create`/repair call site used to hand-compose inline (#2997) —
 // nothing else in this module reads or writes a file; callers own the
-// `gh pr create --body-file` / `gh pr edit --body-file` round-trip.
+// `gh pr create --body-file` / `gh pr edit --body-file` round-trip. Also
+// parses build's premise-reversal decisions.md lines and rewrites the Spec
+// summary span from them (#3050).
 'use strict';
 
-const DEFAULT_PHASES = ['build', 'test', 'review', 'polish', 'wrap-up'];
+const { escapeRegExp } = require('../shared-primitives');
+
+// The five canonical phase rows every PR-early body starts with, unchecked
+// and in this order — never narrowed to a run's step list (#2877): a skipped
+// phase's row is removed at its own would-be exit, never predicted here.
+const CANONICAL_PHASES = ['build', 'test', 'review', 'polish', 'wrap-up'];
 
 // Dual-marker scheme (_shared/pr-early-run-lifecycle.md#929) — every marker
 // is written in both an HTML-comment form (what a gh-present read sees) and
@@ -19,9 +26,8 @@ function runMarkerPlain(runId) {
   return `claude-tweaks-run: ${runId}`;
 }
 
-function composePhasesBlock(phases) {
-  const list = phases && phases.length ? phases : DEFAULT_PHASES;
-  const rows = list.map((p) => `- [ ] ${p}`).join('\n');
+function composePhasesBlock() {
+  const rows = CANONICAL_PHASES.map((p) => `- [ ] ${p}`).join('\n');
   return [
     '<!-- phases-start -->',
     '[claude-tweaks-phases-start]',
@@ -46,13 +52,13 @@ function composeResumeLine({ runDir, target, nextStep }) {
   return `\`PIPELINE_RUN_DIR="${runDir || '{run-dir}'}" /claude-tweaks:flow "${target}" ${nextStep}\``;
 }
 
-// { runId, specSummary, target, nextStep, fixesLines, phases?, runDir? } ->
+// { runId, specSummary, target, nextStep, fixesLines, runDir? } ->
 // the full PR-early body string, matching
 // _shared/pr-early-run-lifecycle.md's Step 3 template byte-for-byte in
 // shape (the run marker as the unconditional first line, its plain-text
 // companion immediately after, then Spec summary / Phases / Resume /
 // Fixes, each delimited per the dual-marker scheme above).
-function composePrEarlyBody({ runId, specSummary, target, nextStep, fixesLines, phases, runDir }) {
+function composePrEarlyBody({ runId, specSummary, target, nextStep, fixesLines, runDir }) {
   if (!runId) throw new Error('composePrEarlyBody: runId is required');
   if (!target) throw new Error('composePrEarlyBody: target is required');
   if (!nextStep) throw new Error('composePrEarlyBody: nextStep is required');
@@ -66,7 +72,7 @@ function composePrEarlyBody({ runId, specSummary, target, nextStep, fixesLines, 
     '',
     '### Phases',
     '',
-    composePhasesBlock(phases),
+    composePhasesBlock(),
     '',
     '### Resume',
     '',
@@ -125,7 +131,7 @@ const PHASES_END_TOKENS = ['<!-- phases-end -->', '[claude-tweaks-phases-end]'];
 const FIXES_START_TOKENS = ['<!-- fixes-start -->', '[claude-tweaks-fixes-start]'];
 const FIXES_END_TOKENS = ['<!-- fixes-end -->', '[claude-tweaks-fixes-end]'];
 
-// { body, runId, fixesLines, phases? } -> { body, restored }
+// { body, runId, fixesLines } -> { body, restored }
 // Restores whichever of the run marker / phases pair / fixes pair are
 // missing from `body`, keeping every byte of its existing content
 // (freeform prose included) — never a find-and-replace against content
@@ -133,7 +139,7 @@ const FIXES_END_TOKENS = ['<!-- fixes-end -->', '[claude-tweaks-fixes-end]'];
 // what's absent. `restored` names what was added, in restoration order,
 // for the caller's own AUTO log line (empty when the body already carried
 // everything — a no-op repair, safe to call unconditionally).
-function repairPrBody({ body, runId, fixesLines, phases }) {
+function repairPrBody({ body, runId, fixesLines }) {
   if (!runId) throw new Error('repairPrBody: runId is required');
   let result = typeof body === 'string' ? body : '';
   const restored = [];
@@ -145,7 +151,7 @@ function repairPrBody({ body, runId, fixesLines, phases }) {
   result = stripOrphanedHalf(result, PHASES_START_TOKENS, PHASES_END_TOKENS);
   if (!hasPhasesPair(result)) {
     const sep = result.endsWith('\n') ? '\n' : '\n\n';
-    result = `${result}${sep}### Phases\n\n${composePhasesBlock(phases)}\n`;
+    result = `${result}${sep}### Phases\n\n${composePhasesBlock()}\n`;
     restored.push('phases block');
   }
   result = stripOrphanedHalf(result, FIXES_START_TOKENS, FIXES_END_TOKENS);
@@ -158,8 +164,106 @@ function repairPrBody({ body, runId, fixesLines, phases }) {
   return { body: result, restored };
 }
 
+// Premise reversals (#3050) — the one canonical decisions.md entry shape,
+// defined in _shared/pr-checklist-refresh.md's "Premise-reversal decisions"
+// paragraph: `premise reversed: {original claim} → {implemented behavior}`,
+// written through bin/log-decision.js, so every real line carries
+// formatEntry's `- {STATUS} {HH:MM:SS} — {location}: ` prefix and its
+// ` Reversibility: {r}.` suffix. Matched here and nowhere else — a
+// differently-worded line for the same decision is silently missed. The
+// marker must open the entry text (right after `{location}: `), so a line
+// that merely quotes it mid-sentence is never read as a reversal.
+const PREMISE_REVERSED_MARKER = 'premise reversed:';
+const REVISION_PREFIX = 'Revised during build:';
+const PREMISE_REVERSED_RE = new RegExp(
+  `^-\\s+[A-Z-]+\\s+\\d{2}:\\d{2}:\\d{2}\\s+—\\s.*?:\\s+${escapeRegExp(PREMISE_REVERSED_MARKER)}\\s+(.+?)\\s+→\\s+(.+?)\\.?\\s+Reversibility:`
+);
+
+// A `; ` inside a claim is rewritten to `, ` so no written entry contains the
+// note's entry separator: otherwise an existing `X; Y → Z` entry would make a
+// distinct new `Y → Z` read as already noted and drop it.
+function formatReversal({ original, replacement }) {
+  const clean = (s) => String(s).replace(/; /g, ', ');
+  return `${clean(original)} → ${clean(replacement)}`;
+}
+
+// decisions.md text -> [{original, replacement}], first-appearance order,
+// deduplicated on formatReversal's key. Splits on the first ` → `; strips at
+// most the one trailing period formatEntry adds (internal periods kept).
+function parsePremiseReversals(text) {
+  const seen = new Set();
+  const result = [];
+  for (const rawLine of String(text || '').split('\n')) {
+    const match = PREMISE_REVERSED_RE.exec(rawLine.replace(/\r$/, ''));
+    if (!match) continue;
+    const reversal = { original: match[1].trim(), replacement: match[2].trim() };
+    const key = formatReversal(reversal);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(reversal);
+  }
+  return result;
+}
+
+// The Spec summary has no delimiter markers: locate it by its heading line,
+// up to the next level 1-3 heading. Headings survive both a gh read and a
+// gh-absent MCP read (only `<!-- ... -->` spans are stripped).
+function locateSpecSummary(lines) {
+  const start = lines.findIndex((l) => l.trim() === '### Spec summary');
+  if (start === -1) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^#{1,3}\s/.test(lines[i])) { end = i; break; }
+  }
+  return { start, end };
+}
+
+// { body, reversals, summary? } -> { body, changed, uncovered, reason }.
+// `reason` is null on a change, else one of: 'no-reversals' (nothing to
+// cover), 'no-spec-summary-heading' (nowhere to write), 'already-noted'
+// (every reversal is already named), 'summary-required' (no --summary-file
+// yet), 'summary-not-one-paragraph' (the given summary is not one
+// paragraph — a blank line or a heading line inside it would leave a stale
+// tail on the next rewrite, since locateSpecSummary stops at a heading).
+// Idempotent: a reversal already named in the span's existing
+// `Revised during build:` line is covered. An existing note is kept
+// verbatim and only uncovered entries are appended (`; `-joined), so a
+// sibling spec's entries in a shared bundle PR are never dropped. The new
+// paragraph (agent-written from the diff) replaces the old one.
+function reviseSpecSummary({ body, reversals, summary }) {
+  const text = typeof body === 'string' ? body : '';
+  const wanted = (reversals || []).map(formatReversal);
+  if (wanted.length === 0) return { body: text, changed: false, uncovered: [], reason: 'no-reversals' };
+  const lines = text.split('\n');
+  const span = locateSpecSummary(lines);
+  if (!span) return { body: text, changed: false, uncovered: wanted, reason: 'no-spec-summary-heading' };
+  const note = lines.slice(span.start + 1, span.end)
+    .map((l) => l.replace(/\r$/, ''))
+    .find((l) => l.startsWith(REVISION_PREFIX));
+  const trimmedNote = note !== undefined ? note.trimEnd() : null;
+  // Delimited match, not substring: `note.includes(w)` would also match `w`
+  // as a bare substring of a longer, distinct entry (e.g. wanted `A → B`
+  // falsely "covered" by an existing `XA → B`). An entry is noted only when
+  // it appears as a whole `; `-delimited item in the note's entry list.
+  // A stray space after the prefix (leading whitespace on the entry list) and
+  // trailing whitespace on the note are stripped so neither defeats this
+  // delimited match.
+  const entryList = trimmedNote ? trimmedNote.slice(REVISION_PREFIX.length).trimStart() : '';
+  const isNoted = (w) => trimmedNote !== null && `; ${entryList}; `.includes(`; ${w}; `);
+  const uncovered = wanted.filter((w) => !isNoted(w));
+  if (uncovered.length === 0) return { body: text, changed: false, uncovered: [], reason: 'already-noted' };
+  const paragraph = String(summary || '').trim();
+  if (!paragraph) return { body: text, changed: false, uncovered, reason: 'summary-required' };
+  if (/\n\s*\n/.test(paragraph) || /^#{1,6}\s/m.test(paragraph)) {
+    return { body: text, changed: false, uncovered, reason: 'summary-not-one-paragraph' };
+  }
+  const newNote = trimmedNote ? `${trimmedNote}; ${uncovered.join('; ')}` : `${REVISION_PREFIX} ${uncovered.join('; ')}`;
+  const out = [...lines.slice(0, span.start + 1), '', newNote, '', paragraph, '', ...lines.slice(span.end)];
+  return { body: out.join('\n'), changed: true, uncovered, reason: null };
+}
+
 module.exports = {
-  DEFAULT_PHASES,
+  CANONICAL_PHASES,
   composePrEarlyBody,
   composePhasesBlock,
   composeFixesSpan,
@@ -168,4 +272,9 @@ module.exports = {
   hasPhasesPair,
   hasFixesPair,
   repairPrBody,
+  PREMISE_REVERSED_MARKER,
+  REVISION_PREFIX,
+  parsePremiseReversals,
+  formatReversal,
+  reviseSpecSummary,
 };

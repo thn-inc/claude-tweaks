@@ -38,7 +38,7 @@ files:
 - **Action:** Nothing new to type — every transition a multi-spec run already makes now persists `phase` (latest) and appends to `phases[]`.
 - **Should feel:** `manifest.yml` grows a small indented list per spec; the file still round-trips byte-for-byte when the list is absent.
 - **Should understand:** The log is append-only. A phase re-entered after a review loop adds another entry rather than rewriting the first; the derivation sums every span with the same name.
-- **Red flags:** A hand-edited `manifest.yml` with the list at the wrong indentation parses as no list at all — the writer is `spec-status`, nothing else.
+- **Red flags:** A hand-edited `manifest.yml` with the list at the wrong indentation parses as no list at all — `spec-status` is the list's only writer (`manifest-init`, which creates the file, never touches a listed spec's `phases[]`).
 
 ### 3. Derive the table
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-timing.js" --run "$PIPELINE_RUN_DIR" --markdown --auto-transcript`

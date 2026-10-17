@@ -91,6 +91,18 @@ proposed field, answer three questions against the code, at plan-authoring time:
      `pr-bookkeeping/precondition.js` all read through it, so do not hand-roll another copy. The
      parent's PR-early degrade line in `decisions.md` is not part of the helper:
      `precondition.js` reads it itself from the returned `parentRunDir`.
+   - **A stamp the close clears.** `closeRunState` nulls `worktree` and keeps the prior path as
+     `worktreeAtClose` (#3023). A reader that runs after close-run, such as `engine-verify.js`'s
+     `worktree-removed`, falls back to `worktreeAtClose`, its own and then the parent's. Reading
+     `worktree` alone there sees `null` and skips the check.
+   - **A file the parent writes with a placeholder value.** A multi-spec parent run dir (one
+     holding `manifest.yml`) has its own `console.json`, but its `merge.resolution` always reads
+     `leave-open` (`members-unresolved`): the parent-level call has no members, and
+     `flow/multispec-review-console.md` discards that value. `engine-verify.js`'s
+     `consoleMergeResolution` therefore returns `null` when `manifest.yml` is present (#3373), so a
+     parent dir never downgrades a teardown fail to the pending-review skip. Before keying behavior
+     off a run-dir file, list which writer produces it in each run shape (single-spec, per-spec
+     `spec-{N}/`, multi-spec parent) and whether that writer's value is authoritative there.
    - **Why it matters.** #2664's first trace got this wrong by following the writers alone.
 2. **Does the consumer mandate a freshness step first?** `mergeSize` was dropped from the wrap-up
    pack because its consumer must measure *after its own fetch* — a pre-gathered value is stale by
@@ -101,6 +113,20 @@ proposed field, answer three questions against the code, at plan-authoring time:
 A field failing any of the three is not a pack field. Plan and code will agree with each other
 regardless — the defect surfaces only when the pack is run against a real run directory, so run it
 against one before the review does.
+
+**A probe that classifies a run's stage from what the run dir already holds owes a list of every
+writer that runs before it.** `flow/preflight.js`'s `computeAdoption` reads a run dir holding no
+more than a fresh mint as case 2 (fresh) and anything more as case 3 (repair with backfills). Each
+compliant step that logs into `decisions.md` before Step 3 reads it has made a fresh run look like
+a repair. Step 2.8's claim lines did it first (#2861, fixed by recognising those lines through
+`log-decision/claim-log.js`). Step 1.8's ledger line did it again (#3242, fixed for a dispatched
+call 1 by keying on the `dispatched: true` marker `/dispatch` already stamps in `run-state.json`,
+with a recorded `pr` keeping the call-2 repair in case 3). A direct, non-dispatched `/flow` run
+still reaches case 3 on that same line, and open #3036 moves the writer after the probe. A
+recogniser of known lines has to grow with every new early writer; a stamp the writer already sets,
+or moving the writer after the probe, does not. List the pre-gather writers when the probe is
+planned, and give each one a test fixture that holds its output (`tests/bin-lib/flow/preflight.test.js`'s
+`CLAIM_ONLY` and `CLAIM_AND_LEDGER`).
 
 ## The prose half
 

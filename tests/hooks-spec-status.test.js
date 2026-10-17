@@ -123,6 +123,46 @@ test('spec-status with a non-existent --run path fails loudly instead of falling
   assert.match(result.stdout, /--run path rejected/);
 });
 
+// #3035: manifest-init creates the file spec-status only updates.
+function runDirNoManifest() {
+  const run = runDirWithManifest([{ id: 1, status: 'pending' }]);
+  fs.rmSync(path.join(run, 'manifest.yml'));
+  return run;
+}
+
+test('#3035: spec-status with no manifest names the manifest-init command; manifest-init then makes the first spec-status succeed', () => {
+  const run = runDirNoManifest();
+  const refused = runHook(['spec-status', '--run', run, '--spec', '2', '--status', 'running', '--phase', 'build'], { cwd: run });
+  assert.match(refused.stdout, /\(no-manifest\)/);
+  assert.match(refused.stdout, /manifest-init --run ".*" --specs <n1,n2,\.\.\.>/);
+
+  const init = runHook(['manifest-init', '--run', run, '--specs', '1,2'], { cwd: run });
+  assert.equal(init.code, 0);
+  assert.match(init.stdout, /manifest\.yml ready .* 2 specs \(2 added, 0 already present\)/);
+  assert.deepEqual(readManifest(run).multispec.specs.map((s) => [s.id, s.status, s.subdir]), [[1, 'pending', 'spec-1/'], [2, 'pending', 'spec-2/']]);
+
+  const first = runHook(['spec-status', '--run', run, '--spec', '2', '--status', 'running', '--phase', 'build'], { cwd: run });
+  assert.equal(first.stdout, '## Flow: Running build (2/2) — spec #2\n');
+});
+
+test('#3035: manifest-init is idempotent on resume — a running spec keeps its status and phases[]', () => {
+  const run = runDirNoManifest();
+  runHook(['manifest-init', '--run', run, '--specs', '1,2'], { cwd: run });
+  runHook(['spec-status', '--run', run, '--spec', '1', '--status', 'running', '--phase', 'build'], { cwd: run });
+  const r = runHook(['manifest-init', '--run', run, '--specs', '1,2'], { cwd: run });
+  assert.match(r.stdout, /2 specs \(0 added, 2 already present\)/);
+  const spec1 = readManifest(run).multispec.specs[0];
+  assert.equal(spec1.status, 'running');
+  assert.equal(spec1.phases.length, 1);
+});
+
+test('#3035: manifest-init refuses without --specs or with a bad id, writing nothing', () => {
+  const run = runDirNoManifest();
+  assert.match(runHook(['manifest-init', '--run', run], { cwd: run }).stdout, /usage: manifest-init/);
+  assert.match(runHook(['manifest-init', '--run', run, '--specs', '1,a b'], { cwd: run }).stdout, /\(invalid-spec-id\)/);
+  assert.equal(fs.existsSync(path.join(run, 'manifest.yml')), false);
+});
+
 test('spec-status without a resolvable run dir exits 0 and prints a not-recorded notice', () => {
   const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-specstatus-norun-'));
   const result = runHook(['spec-status', '--spec', '1', '--status', 'running', '--phase', 'build'], { cwd: bare });

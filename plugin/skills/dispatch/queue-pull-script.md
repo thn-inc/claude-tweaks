@@ -1,15 +1,16 @@
 # Dispatch Step 2 — The Queue-Pull Script
 
-Referenced by `skills/dispatch/SKILL.md` Step 2. Run this verbatim — it produces this run's session-scoped `dispatch-groups.json` (`_shared/session-tmp-root.md`), the file-overlap-grouped eligible queue every selection form (bare, `next`, `#N`, `#N,#M,...`) reads next. It also produces this run's session-scoped `dispatch-exclusions.json` (#1752) — one array of `{reason, records: number[], detail}` entries, written and read through `bin/lib/dispatch/exclusions.js` (`readExclusions`/`appendExclusion`), replacing five ad hoc per-reason files that each used to carry their own shape/producer/reader/report. The file is truncated (preserving only `firing`-reason entries — see `firing-exclusion.md`) at the start of this script's run, then five passes append to it:
+Referenced by `skills/dispatch/SKILL.md` Step 2. Run this verbatim — it produces this run's session-scoped `dispatch-groups.json` (`_shared/session-tmp-root.md`), the per-record eligible queue (fast-lane bundles excepted) every selection form (bare, `next`, `#N`, `#N,#M,...`) reads next. It also produces this run's session-scoped `dispatch-exclusions.json` (#1752) — one array of `{reason, records: number[], detail}` entries, written and read through `bin/lib/dispatch/exclusions.js` (`readExclusions`/`appendExclusion`), replacing five ad hoc per-reason files that each used to carry their own shape/producer/reader/report. The file is truncated (preserving only `firing`-reason entries — see `firing-exclusion.md`) at the start of this script's run, then the passes below append to it:
 
 - `reason: 'blocked'` (`detail: {blockedBy: [ids]}`) — every otherwise-`auto:build`-eligible candidate this run's own blocked-by checks (body-text and, under `work-links: native`, the native `blockedBy` connection) dropped from the pool, via `record.js`'s `partitionByOpenBodyBlockers` for the body-text case and `bin/resolve-blockers.js`'s `openBlockerIds` field for the `work-links: native` case — SKILL.md Step 2's Blocked-exclusion report reads these entries so a shrinking pool is never silent.
-- `reason: 'oversized'` (`detail: {size, threshold}`, #1228) — every file-overlap group `grouping.js`'s `partitionGroupsBySizeGuard` found over the size guard. These groups stay IN `dispatch-groups.json` (`#N`/`#N,#M,...` still resolve them normally — a human present, explicitly naming one, is itself the required surfacing); only bare drain's auto-selection (SKILL.md Step 3, reusing the `next`-alias ranking script) excludes an oversized group from its own candidate pool, since nobody is present there to see a table row or answer a prompt. SKILL.md Step 3's Oversized-exclusion report surfaces these entries too, so every form's exclusion (or non-exclusion) is never silent. Before the size guard runs, `grouping.js`'s `bundleFastLaneSingletons` (#1910) merges up to `dispatch-fastlane-bundle-cap` (default 3, `policy.yml`) non-overlapping `ceremony:fast-lane` singleton groups — same `auto:merge` state, same `priority:*` band, oldest-first — into one multi-spec group each, so the pool `dispatch-groups.json` carries already reflects any bundling; it also writes `dispatch-fastlane-bundles.json` (`{records: number[]}[]`), naming exactly the groups this pass created, so the Reporting section can call out a fast-lane bundle distinctly from an ordinary file-overlap group.
+- `reason: 'oversized'` (`detail: {size, threshold}`, #1228) — every dispatch group `grouping.js`'s `partitionGroupsBySizeGuard` found over the size guard. These groups stay IN `dispatch-groups.json` (`#N`/`#N,#M,...` still resolve them normally — a human present, explicitly naming one, is itself the required surfacing); only bare drain's auto-selection (SKILL.md Step 3, reusing the `next`-alias ranking script) excludes an oversized group from its own candidate pool, since nobody is present there to see a table row or answer a prompt. SKILL.md Step 3's Oversized-exclusion report surfaces these entries too, so every form's exclusion (or non-exclusion) is never silent. Before the size guard runs, `grouping.js`'s `bundleFastLaneSingletons` (#1910) merges up to `dispatch-fastlane-bundle-cap` (default 3, `policy.yml`) non-overlapping `ceremony:fast-lane` singleton groups — same `auto:merge` state, same `priority:*` band, oldest-first — into one multi-spec group each, so the pool `dispatch-groups.json` carries already reflects any bundling; it also writes `dispatch-fastlane-bundles.json` (`{records: number[]}[]`), naming exactly the groups this pass created, so the Reporting section can call out a fast-lane bundle distinctly from an ordinary single-record group.
+- `reason: 'neighbour-in-flight'` (`detail: {neighbours: [{number, files}]}`, #3278) — every remaining candidate sharing a linking Key File with an open `bot:in-progress` record whose claim blob reads `live`. These records stay IN `dispatch-groups.json` (`#N`/`#N,#M,...` still report and dispatch them normally); only bare drain's ranking skips them. Fail open: an unreadable claim or a failed fetch means no exclusion.
 - `reason: 'not-spec-shaped'` (`detail: {missing: [...]}`, #2829) — every candidate, right after grouping/bundling completes, whose cached body fails `/flow`'s Materialization hard gate (`shapeGate`, `bin/lib/issues/materialize-format.js`). This one DOES remove excluded candidates from `dispatch-groups.json`, running ahead of the `open-pr`/`target-missing`/`shipped` passes below so an excluded candidate costs none of their `gh` probes and gets no stray Close proposal from them — no bypass: unlike `oversized`, where a human naming a record directly is itself an accepted size-risk signal, a spec-shape failure is not a risk anyone can accept, since `/flow`'s own Materialization gate would stop the named record anyway, after a claim and a spent retry attempt.
 - `reason: 'open-pr'` (`detail: {pr}`, #1224) — every remaining candidate already covered by an open, unmerged PR that will close it (GitHub's own `closedByPullRequestsReferences` connection, a closing keyword in the PR body), via `record.js`'s `partitionByOpenLinkedPR`. Unlike the blocked-by pass above, this one runs unconditionally, independent of `work-links`, and unlike the cross-PR overlap report below it DOES remove excluded candidates from `dispatch-groups.json` before any selection form reads it — a record with an in-flight PR is not a warning, it is not re-dispatch-eligible at all.
 - `reason: 'target-missing'` (`detail: {path}`, #1983) — every remaining candidate whose `namedTarget` (`bin/lib/issues/named-target.js` — today, `by:docs-health` records only) names a file no longer present at the integration tip — a docs-health-filed ledger correction whose target a since-merged tidy sweep already deleted. This one DOES remove excluded candidates from `dispatch-groups.json` too, the same as the open-PR pass: such a record's own Acceptance Criteria is unsatisfiable, so re-dispatching it only burns a build attempt against the retry ceiling for nothing. Also stages one Close proposal in this firing's own run directory (`tidy`'s Close (GitHub) shape) so the next `tidy --approve` closes the record — nothing is written to GitHub by dispatch itself. SKILL.md Step 3's Blocked-exclusion report reads this reason too, under the same non-silent convention.
 - `reason: 'shipped'` (`detail: {pr, signals}`, #1984) — every remaining candidate a merged PR's `strong`-tier mention already ships (see the False-positive posture note in `SKILL.md`). Also stages one Close proposal, exactly like the `target-missing` pass above.
 
-A sixth reason, `firing`, is never written by this script — it is appended incrementally by `SKILL.md`'s Loop between successive re-runs of this script within one firing (`firing-exclusion.md`), which is exactly why this script's own truncation step preserves it rather than dropping it.
+One further reason, `firing`, is never written by this script — it is appended incrementally by `SKILL.md`'s Loop between successive re-runs of this script within one firing (`firing-exclusion.md`), which is exactly why this script's own truncation step preserves it rather than dropping it.
 
 ```bash
 eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" <<NODE_EVAL_EOF
@@ -29,6 +30,7 @@ eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" <<NODE_EVAL_EOF
     DISPATCH_GROUPS: 'dispatch-groups.json',
     DISPATCH_EXCLUSIONS: 'dispatch-exclusions.json',
     DISPATCH_FASTLANE_BUNDLES: 'dispatch-fastlane-bundles.json',
+    DISPATCH_IN_FLIGHT_RAW: 'dispatch-in-flight-raw.json',
     DISPATCH_DEP_FRESHNESS: 'dispatch-dep-freshness.json',
     DISPATCH_OPEN_PRS: 'dispatch-open-prs.json',
     DISPATCH_CROSSPR_OVERLAP: 'dispatch-crosspr-overlap.json',
@@ -94,7 +96,7 @@ if [ -n "$DISPATCH_DEP_NUMBERS" ]; then
 fi
 CACHE_HIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPATCH_DEP_FRESHNESS" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values dispatch-group-size-guard)" "$DISPATCH_FASTLANE_BUNDLES" <<NODE_EVAL_EOF
   const { mainCheckoutRoot } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/hooks/worktree-detect.js');
-  const { readOrder, buildFreshnessSignal, signalsMatch } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/queue-order.js');
+  const { readOrder, buildFreshnessSignal, cacheUsable } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/queue-order.js');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const fs = require('fs');
   const root = mainCheckoutRoot(process.cwd()) || process.cwd();
@@ -103,7 +105,7 @@ CACHE_HIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_
   const autoBuild = require(process.argv[1]);
   const depFreshness = require(process.argv[2]);
   const current = buildFreshnessSignal([...autoBuild, ...depFreshness]);
-  if (!signalsMatch(persisted.freshnessSignal, current)) { console.log('0'); process.exit(0); }
+  if (!cacheUsable(persisted, current)) { console.log('0'); process.exit(0); }
   fs.writeFileSync(process.argv[3], JSON.stringify(persisted.groups));
   // persisted.excluded is the disk cache's own (unchanged) blocked-only
   // shape ({number, blockedBy}[]) -- convert to this run's unified
@@ -191,7 +193,7 @@ if [ "$WORK_LINKS" = "native" ]; then
 fi
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE" "$DISPATCH_NATIVE_DEPS" "$DISPATCH_BLOCKED_EXCLUDED_BODY" "$DISPATCH_EXCLUSIONS" "$DISPATCH_GROUP_SIZE_GUARD" "$DISPATCH_FASTLANE_BUNDLE_CAP" "$DISPATCH_FASTLANE_BUNDLES" > "$DISPATCH_GROUPS" <<NODE_EVAL_EOF
   const fs = require('fs');
-  const { extractKeyFiles, expectsKeyFilesSection, groupByFileOverlap, partitionGroupsBySizeGuard, bundleFastLaneSingletons } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/grouping.js');
+  const { extractKeyFiles, expectsKeyFilesSection, buildDispatchGroups, partitionGroupsBySizeGuard } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/grouping.js');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const eligible = require(process.argv[1]);
   const nativeDeps = require(process.argv[2]);
@@ -210,13 +212,12 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_ELIGIBLE" "$DISPAT
       console.error('Warning: eligible record #' + item.id + ' has no ### Key Files subsection — overlap detection disabled for it.');
     }
   }
-  const rawGroups = groupByFileOverlap(items).map((ids) => ids.map((id) => byId.get(id)));
-  // Fast-lane bundling (#1910): runs after file-overlap grouping, before the
-  // size guard -- a bundle tops out at bundleCap (default 3), always well
-  // under the size guard's own default of 10, so ordering here never
-  // interacts with that gate.
+  // Grouping is per-record (#3278): one group per record, fast-lane bundles
+  // (#1910) kept disjoint, before the size guard -- a bundle tops out at
+  // bundleCap (default 3), always well under the size guard's own default of
+  // 10, so ordering here never interacts with that gate.
   const bundleCap = parseInt(process.argv[6], 10);
-  const { groups, bundles } = bundleFastLaneSingletons(rawGroups, { bundleCap });
+  const { groups, bundles } = buildDispatchGroups(finalEligible, { bundleCap });
   console.log(JSON.stringify(groups));
   fs.writeFileSync(process.argv[7], JSON.stringify(bundles));
   const excludedBody = require(process.argv[3]);
@@ -605,6 +606,45 @@ NODE_EVAL_EOF
   done
 fi
 
+# #3278: neighbour-in-flight pass. Records stay in $DISPATCH_GROUPS; only bare
+# drain's ranking skips them. Fail open: an unreadable claim or a failed fetch
+# excludes nothing. Claim blobs chain one fetch via the first git-tip read.
+if ! gh issue list --label bot:in-progress --state open --json number,body,labels --limit 200 > "$DISPATCH_IN_FLIGHT_RAW" 2>/dev/null; then
+  echo '[]' > "$DISPATCH_IN_FLIGHT_RAW"
+  echo "AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull" >&2
+fi
+IN_FLIGHT_COUNT=$(node -e "console.log(require(process.argv[1]).length)" "$DISPATCH_IN_FLIGHT_RAW")
+if [ "$IN_FLIGHT_COUNT" -ge 200 ]; then
+  echo "Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch." >&2
+fi
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF
+  const { execFileSync } = require('child_process');
+  const { neighbourInFlightExclusions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/in-flight-neighbours.js');
+  const { readClaimBlob, defaultGhApi } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claim-store.js');
+  const { defaultRunner } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims-git-cas.js');
+  const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
+  let slug = null;
+  try { slug = execFileSync('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], { encoding: 'utf8' }).trim(); } catch {}
+  let tip = null;
+  const readClaimContent = (n) => {
+    const r = readClaimBlob({ gitRunner: defaultRunner, ghApi: defaultGhApi }, slug, n, tip);
+    if (!slug && r.via !== 'git') return { failure: 'repo-slug-unresolved' };
+    if (r.failure) return { failure: r.failure };
+    if (r.via === 'git') tip = r.sha;
+    return { content: r.absent ? null : r.content };
+  };
+  const { exclusions, unreadable } = neighbourInFlightExclusions({
+    candidates: require(process.argv[1]).flat(), inFlight: require(process.argv[2]), readClaimContent, now: Date.now(),
+  });
+  for (const e of exclusions) appendExclusion(process.argv[3], e);
+  if (unreadable.length) console.error('AUTO — dispatch: neighbour-in-flight claim read failed for #' + unreadable.join(', #') + '; treated as not in flight');
+NODE_EVAL_EOF
+NEIGHBOUR_RC=$?
+if [ "$NEIGHBOUR_RC" -ne 0 ]; then
+  echo "dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed (exit $NEIGHBOUR_RC); see error above." >&2
+  exit 1
+fi
+
 # #1579: cross-PR root-cause overlap report. Runs unconditionally (both the
 # cache-hit and cache-miss branches above leave $DISPATCH_GROUPS populated),
 # read-only, and never removes anything from $DISPATCH_GROUPS or gates
@@ -641,12 +681,13 @@ NODE_EVAL_EOF
 
 # #1944: cross-group near-duplicate candidate warning. Read-only and never a
 # selection change (AC4) -- run findNearDuplicates pairwise across every pair
-# of records that landed in DIFFERENT groups (a same-group pair is already
-# co-built together by groupByFileOverlap, and has nothing new to warn about
-# here). Each candidate that fires is logged once to this firing's own
+# of records that landed in DIFFERENT groups (a same-group pair is a
+# fast-lane bundle's members, already co-built together, and has nothing new
+# to warn about here). Each candidate that fires is logged once to this firing's own
 # decisions.md as an AUTO line naming both records and the signals that fired
 # -- the dispatcher's cue to look before dispatching both in the same firing,
-# never a gate.
+# never a gate. Since #3278 records sharing a Key File are in separate groups,
+# so they reach this cross-group warning too.
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" <<NODE_EVAL_EOF
   const { findNearDuplicates } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
   const groups = require(process.argv[1]);

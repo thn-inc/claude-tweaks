@@ -41,7 +41,7 @@ degrades it to `[]`, so no `firing` entry survives and the stuck group is re-sel
 same stop every `queue-pull-script.md` append site takes.
 
 `next-ranking.md`'s script reads this same file (absent or unreadable treated as `[]`, per
-`readExclusions`'s own contract) and, via one `groupIsExcluded(g, entries, ['oversized', 'firing'])`
+`readExclusions`'s own contract) and, via one `groupIsExcluded(g, entries, ['oversized', 'firing', 'neighbour-in-flight'])`
 call, excludes any matching group from the candidate pool — the same derivation that already
 excludes an oversized group, not a separate one. `next`'s single-iteration alias never appends
 `firing`-reason entries — there is no second iteration in the same firing for it to protect.

@@ -77,8 +77,19 @@ runs — read only the matching branch in `entry-paths.md` in this skill's direc
 
 ## Step 2: Per-item walkthrough
 
-Render this record's full Verification Brief (The ask / What shipped / Confirmed / Observation
-plan — evidence the human can judge, not a checklist to complete). Label-backed entries were
+**Try it first (#2821).** Before anything else in this step — before the design-contract section
+and before any Prepare/Validate output — render the record's Try it block (`_shared/try-it.md`)
+as Step 1 resolved it: the brief's `### Try it` section (a parent brief's `### Try it — end to
+end`), found on the issue or — under `pr-first` — on the PR its pointer names, or, for a record
+whose walkthrough was posted alone, its closing PR's `try-it` run comment (`entry-paths.md`'s PR
+run-comment lookup). Either way `/claude-tweaks:demo #N` opens on the same walkthrough the
+Pipeline Summary and the PR showed. Step 1 composed a fresh one only when none exists; a
+label-backed brief carrying none (posted before this shipped) — compose one now per that contract
+from the record's Acceptance Criteria and Step 1's entry point, and never render it empty.
+
+Then render the rest of this record's full Verification Brief (The ask / What shipped / Confirmed /
+Observation plan — evidence the human can judge, not a checklist to complete), with its Try it
+block hoisted to the top — rendered once, above, never a second time in place. Label-backed entries were
 fetched per `verification-brief.md`'s digest template in Step 1's `#N` lookup; closing-commit
 reconstructions and session-recall entries composed their own Observation plan directly, in Step
 1's `#N` and no-arguments paths respectively — all three render identically here, and a
@@ -88,15 +99,16 @@ show-first, and ask for the verdict. A brief with no `### Observation plan` sect
 what it carries instead: one carrying a retired `### See it yourself` or `### Verify it yourself
 (manual)` heading — a label-backed brief posted before this schema shipped — walks the
 Compatibility branch below. One carrying neither the section nor a retired heading — a Parent-Gate
-parent brief, whose walkthrough lives inline in `### Confirmed` per
+parent brief, whose walkthrough lives in its `### Try it — end to end` section per
 `wrap-up/verification-brief.md`'s Parent-Gate Procedure, or a session-recall entry whose recall
 yielded no confident path list (Step 1's omission rule) — skips Prepare/Validate/Show entirely and
-goes straight to the Verdict question below: the human judges from the brief's own `### Confirmed`
-content.
+goes straight to the Verdict question below: the human judges from the Try it block rendered
+first (or, when recall could not name an entry point, the one line saying it was omitted —
+`entry-paths.md`'s session-recall Try it bullet) and the brief's own `### Confirmed` content.
 
 ### The design contract this was built against
 
-Run the locate-and-parse procedure in `../_shared/design-contract.md` over the changed-path list
+Run the locate-and-parse procedure in `_shared/design-contract.md` over the changed-path list
 Step 1 already produced — the closing commit's `--name-only` list, the label-backed brief's paths,
 or session recall's own list. Do not go looking for files beyond it. **When no contract resolves,**
 render nothing — no heading, no empty section, no "not found" note. **When a contract resolves, or
@@ -109,7 +121,7 @@ This section never becomes a reason to block.
 
 Applies whenever this record's brief carries a `### Observation plan` section — every **sub-issue**
 brief composed or posted after this schema shipped. Two populations legitimately carry no such
-section at all even now: a Parent-Gate parent brief (walkthrough lives inline in `### Confirmed`
+section at all even now: a Parent-Gate parent brief (walkthrough lives in its `### Try it — end to end` section
 instead) and a session-recall entry whose recall yielded no confident path list (Step 1's omission
 rule) — both skip this whole subsection and go straight to the Verdict question below, per the
 routing above. Only a brief carrying a retired `### See it yourself` / `### Verify it yourself
@@ -119,7 +131,7 @@ instead.
 **Prepare** — run the plan's Prepare commands, one at a time (`Prepare: none` → skip entirely). If
 a Prepare command exits non-zero, or — for a `rendered-page`/`app-route` entry point — the entry
 point does not respond afterward (connection refused or HTTP 404), fall back to
-`skills/_shared/dev-url-detection.md` to resolve a working dev server rather than trusting the
+`_shared/dev-url-detection.md` to resolve a working dev server rather than trusting the
 plan's own Entry point verbatim.
 
 **Validate** — URL surfaces (`rendered-page`/`app-route`) only; `cli`/`flow`/`diff` plans skip

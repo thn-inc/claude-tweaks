@@ -48,7 +48,7 @@ const { closeRunState } = require('./lib/hooks/close-run-state');
 const { teardownRun } = require('./lib/hooks/teardown-run');
 const { deriveBranch, repoRootOf } = require('./lib/hooks/run-integrity');
 
-const EVENTS = ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'subagent-stop'];
+const EVENTS = ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'post-tool-use-failure', 'subagent-stop'];
 
 // The write-only, janitorial half of reconcile/index.js's ALL_CHECKS — run
 // by the `reconcile-background` subcommand below, off session-start.js's hot
@@ -70,6 +70,7 @@ const EVENT_MODULES = {
   'pre-compact': () => require('./lib/hooks/pre-compact'),
   'pre-tool-use': () => require('./lib/hooks/pre-tool-use'),
   'post-tool-use': () => require('./lib/hooks/post-tool-use'),
+  'post-tool-use-failure': () => require('./lib/hooks/post-tool-use-failure'),
   'subagent-stop': () => require('./lib/hooks/subagent-stop'),
 };
 
@@ -100,11 +101,12 @@ function pluginRoot() {
 // "usage:" error strings (printed on malformed non-help args) reuse these
 // same entries rather than a second, driftable copy of the same text.
 const USAGE = {
-  'record-worktree': 'record-worktree --run <dir> <worktree-path>',
+  'record-worktree': 'record-worktree --run <dir> <worktree-path> [--dispatch]',
   'resolve-run-dir': 'resolve-run-dir [--spec-slug <slug>] [--mode <mode>] [--standalone <value>] [--create] [--root-only]',
   'sweep-shadow': 'sweep-shadow [--run <dir>] [--worktree <path>]',
   'adopt-run-dir': 'adopt-run-dir --run <main-checkout-run-dir> --worktree <worktree-path>',
   'record-pr': 'record-pr [--run <dir>] <number> <url>',
+  'manifest-init': 'manifest-init --run <parent-dir> --specs <n1,n2,...>',
   'spec-status': 'spec-status --run <parent-dir> --spec <n> --status <pending|running|complete|failed|not-run> --phase <phase>',
   'close-run': 'close-run [--run <dir>]',
   'delete-ledger': 'delete-ledger --run <dir> [--ledger <path>]',
@@ -134,8 +136,9 @@ const HELP_FLAGS = new Set(['--help', '-h']);
 const KNOWN_FLAGS = {
   'close-run': ['--run'],
   'delete-ledger': ['--run', '--ledger'],
-  'record-worktree': ['--run'],
+  'record-worktree': ['--run', '--dispatch'],
   'record-pr': ['--run'],
+  'manifest-init': ['--run', '--specs'],
   'spec-status': ['--run', '--spec', '--status', '--phase', '--now'],
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
   'resolve-console': ['--run', '--approve', '--decline'],
@@ -144,7 +147,7 @@ const KNOWN_FLAGS = {
 // Declared flags that consume the following token as a value — the
 // unknown-flag scan below must skip that token rather than risk misreading
 // it as a flag itself (an argument value could itself start with "--").
-const VALUE_FLAGS = new Set(['--run', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--ledger']);
+const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--ledger']);
 
 // First `--*`-shaped token in `args` that isn't declared for this verb, or
 // null when every `--*` token is declared (or there are none). Scans the
@@ -319,11 +322,14 @@ function resolveImplicitRunUnambiguous(cwd, env, callerIdentity) {
       }
     } catch { /* fall through */ }
   }
-  const boundHit = ctxLib.findRunByWorktreePath(cwd, cwd);
+  // #2783: `-adhoc-standalone` dirs are excluded from steps 2-4. One holds only
+  // friction events, never pipeline state these verbs act on, and EnterWorktree
+  // mints it after /flow's formal run, so it would win step 2's match.
+  const boundHit = ctxLib.findRunByWorktreePath(cwd, cwd, { skipAdHoc: true });
   if (boundHit && boundHit.state && boundHit.state.status !== 'clean') {
     return { runDir: boundHit.runDir, candidates: null };
   }
-  const all = ctxLib.listRunDirsWithState(cwd); // already newest-first, terminal runs excluded
+  const all = ctxLib.listRunDirsWithState(cwd).filter(({ dir }) => !ctxLib.isAdHocRunDir(dir)); // newest-first, terminal runs excluded
   if (all.length === 0) return { runDir: null, candidates: null };
   const annotated = all.map(({ dir, state }) => ({
     dir,
@@ -641,7 +647,14 @@ async function main(argv) {
     const {
       runDir, invalidRunArg, rest, worktreeLocalFallback, explicit,
     } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { allowUninitialized: true });
-    const worktreeArg = rest[0];
+    // #3225: `--dispatch` (boolean, any position) marks the run as bound by
+    // /claude-tweaks:dispatch before call 1 — checkDispatchConfigGate
+    // (bin/lib/hooks/pre-tool-use.js) then denies git writes in this worktree
+    // until /claude-tweaks:flow Step 3 writes config.yml. Stripped before the
+    // positional lookup so it can never be read as the worktree path.
+    const dispatch = rest.includes('--dispatch');
+    const positional = rest.filter((a) => a !== '--dispatch');
+    const worktreeArg = positional[0];
     // #1124: every real caller already passes --run explicitly (build's
     // worktree-setup.md Step 4.5, the run-resume-freshness re-stamp, the
     // subagent-output-contract re-stamp) — nothing legitimate depends on the
@@ -677,6 +690,9 @@ async function main(argv) {
       // not clobber a previous stamp.
       const patch = { worktree: path.resolve(worktreeArg), status: 'active' };
       if (process.env.CLAUDE_CODE_SESSION_ID) patch.sessionId = process.env.CLAUDE_CODE_SESSION_ID;
+      // Permanent for the run's lifetime: only ever written true, never
+      // false, so a later plain re-stamp (no --dispatch) cannot clear it.
+      if (dispatch) patch.dispatched = true;
       const result = ctxLib.writeRunState(runDir, patch);
       if (result) {
         process.stdout.write(`claude-tweaks: worktree recorded for ${path.basename(runDir)}\n`);
@@ -897,6 +913,43 @@ async function main(argv) {
     }
     return 0;
   }
+  if (cmd === 'manifest-init') {
+    // Creates a multi-spec parent run dir's manifest.yml (#3035) — the
+    // counterpart to spec-status, which only updates an existing one. Same
+    // --run shape and implicit-foreign guard as spec-status. Idempotent: an
+    // existing manifest keeps every spec's status/startedAt/phases[].
+    const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
+    const {
+      runDir, invalidRunArg, rest, worktreeLocalFallback, explicit, candidates,
+    } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
+    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+    const specsArg = flagVal(rest, '--specs');
+    const implicitForeign = !explicit && runDir
+      && ctxLib.classifyOwnership(callerIdentity, ctxLib.readRunState(runDir)) === 'foreign';
+    if (invalidRunArg) {
+      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — manifest not initialized\n`);
+    } else if (candidates) {
+      process.stdout.write(`${renderCandidateRefusal('manifest-init', candidates)}\nManifest not initialized.\n`);
+    } else if (!runDir) {
+      process.stdout.write('claude-tweaks: no pipeline run dir found — manifest not initialized\n');
+    } else if (implicitForeign) {
+      process.stdout.write(`claude-tweaks: run ${path.basename(runDir)} was recorded by another session/worktree — refusing to initialize its manifest without an explicit --run\n`);
+    } else if (!specsArg) {
+      process.stdout.write(`claude-tweaks: usage: ${USAGE['manifest-init']} — manifest not initialized\n`);
+    } else {
+      const result = specStatusLib.manifestInit({
+        runDir,
+        specs: specsArg.split(','),
+        parent: `.claude-tweaks/pipelines/${path.basename(runDir)}/`,
+      });
+      if (!result.ok) {
+        process.stdout.write(`claude-tweaks: manifest not initialized for ${path.basename(runDir)} (${result.reason})\n`);
+      } else {
+        process.stdout.write(`claude-tweaks: manifest.yml ready at ${path.basename(runDir)} — ${result.manifest.multispec.specs.length} specs (${result.added.length} added, ${result.existing.length} already present)\n`);
+      }
+    }
+    return 0;
+  }
   if (cmd === 'spec-status') {
     // Couples a multi-spec manifest.yml status transition to the
     // `## Flow: Running ...` progress banner (#690) — one call does both,
@@ -933,7 +986,10 @@ async function main(argv) {
         now: nowArg ? new Date(nowArg) : new Date(),
       });
       if (!result.ok) {
-        process.stdout.write(`claude-tweaks: spec status not recorded for spec #${specArg} (${result.reason}) — no manifest.yml at ${path.basename(runDir)}, or spec/status/phase invalid\n`);
+        const detail = result.reason === 'no-manifest'
+          ? `no manifest.yml at ${path.basename(runDir)} — create it first: node "${pluginRoot()}/bin/hooks.js" manifest-init --run "${runDir}" --specs <n1,n2,...>`
+          : `no manifest.yml at ${path.basename(runDir)}, or spec/status/phase invalid`;
+        process.stdout.write(`claude-tweaks: spec status not recorded for spec #${specArg} (${result.reason}) — ${detail}\n`);
       } else {
         process.stdout.write(result.banner + '\n');
         if (result.summaryLine) process.stdout.write(result.summaryLine + '\n');
@@ -1191,14 +1247,10 @@ async function main(argv) {
         return stdout;
       },
     };
-    const { resolveConsoleExecution } = require('./lib/reconcile/console-execute');
+    const { resolveConsoleExecution, renderExecutedLines } = require('./lib/reconcile/console-execute');
     const result = await resolveConsoleExecution(runDir, { approve, decline }, deps);
     if (result.status === 'executed') {
-      const summary = result.outcomes.map((o) => `${o.id}:${o.outcome}`).join(', ');
-      process.stdout.write(
-        `claude-tweaks: console resolved for ${path.basename(runDir)} (PR #${result.prNumber}) — ${summary}`
-        + `${result.resolved ? '' : ' — Resolve left unticked (not every item cleared)'}\n`,
-      );
+      process.stdout.write(renderExecutedLines(result, path.basename(runDir)));
       return 0;
     }
     if (result.status === 'noop') {

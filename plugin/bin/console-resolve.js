@@ -22,7 +22,7 @@ const { resolveTarget } = require('./lib/stage-item/write');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { resolvePolicyConfig } = require('./lib/policy-schema');
 const { resolveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
-const { extractPendingGrantedAt } = require('./lib/issues/grant-maturation');
+const { extractPendingGrantedAt, partitionGrantComments } = require('./lib/issues/grant-maturation');
 const { writeFileAtomic } = require('./lib/atomic-write');
 
 const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]';
@@ -77,8 +77,9 @@ function ghReadGrants(execFile, cwd) {
       const raw = execFile('gh', ['issue', 'view', String(n), '--json', 'labels,comments'], { cwd });
       const parsed = JSON.parse(raw);
       const labels = (parsed.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
-      const bodies = (parsed.comments || []).map((c) => (typeof c === 'string' ? c : c.body || ''));
-      out[n] = { labels, pendingSince: extractPendingGrantedAt(bodies) };
+      // #3358: trusted comments only; each untrusted marker comment passed over is named.
+      const { bodies, skippedUntrusted } = partitionGrantComments(parsed.comments);
+      out[n] = { labels, pendingSince: extractPendingGrantedAt(bodies), skippedUntrusted };
     }
     return out;
   };
@@ -210,4 +211,4 @@ if (require.main === module) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { process.stderr.write(`console-resolve.js: ${err && err.stack ? err.stack : err}\n`); process.exitCode = 1; });
 }
 
-module.exports = { run, parseArgs };
+module.exports = { run, parseArgs, ghReadGrants };

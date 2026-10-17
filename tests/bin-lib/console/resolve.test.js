@@ -183,7 +183,7 @@ test('every registry row whose own judge file documents a literal staged/{prefix
   // Pin the exact set of rows this scan is expected to find a literal convention in today —
   // a loose `checked >= 3` floor would still pass if a row's naming line regressed out of the
   // scan (exactly the kind of drift #2773 fixed), as long as 3 others still matched.
-  assert.deepStrictEqual(checkedIds.sort(), ['claude-md', 'decision-records', 'memory', 'skills', 'upstream'], 'the set of registry rows documenting a literal staged/{prefix}-{n} convention changed — update this list deliberately, don\'t let it silently narrow');
+  assert.deepStrictEqual(checkedIds.sort(), ['claude-md', 'decision-records', 'journeys', 'memory', 'skills', 'upstream'], 'the set of registry rows documenting a literal staged/{prefix}-{n} convention changed — update this list deliberately, don\'t let it silently narrow');
 });
 
 test('a staged item named on a REFUSED line in decisions.md resolves to refused, never its section stance (#1932 I2)', () => {
@@ -252,6 +252,21 @@ test('an ungranted member (no auto:merge, no matured auto:merge-pending) resolve
   assert.strictEqual(r.merge.resolution, 'leave-open');
   assert.match(r.merge.reason, /#8/);
   assert.match(r.merge.reason, /veto window/);
+});
+
+test('an unmatured grant names the untrusted marker comments ghReadGrants passed over in the merge reason (#3358)', () => {
+  const note = 'skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator';
+  const grants = { 7: { labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [note] } };
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.ok(r.merge.reason.endsWith(` — ${note}`), r.merge.reason);
+  assert.match(r.table, new RegExp(`Merge: \\*\\*leave-open\\*\\*.*${note.slice(0, 30)}`), 'the note reaches the rendered table');
+});
+
+test('an unmatured grant with no passed-over comment keeps the merge reason unchanged (#3358 characterization)', () => {
+  const grants = { 7: { labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [] } };
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
+  assert.ok(r.merge.reason.endsWith('treated as not yet matured)'), r.merge.reason);
 });
 
 test('a matured auto:merge-pending counts as granted (#1932 AC3)', () => {

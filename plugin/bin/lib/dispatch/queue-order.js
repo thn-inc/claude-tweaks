@@ -22,6 +22,10 @@ const { createNamespacedState } = require('../health-core/durable-state');
 
 const NAMESPACE = 'queue-order';
 
+// #3278: dispatch groups per record, not by transitive file overlap — a blob's
+// `grouping` stamp lets a cache hit refuse groups computed under the old rule.
+const GROUPING_MODE = 'per-record';
+
 function fileSpecs() {
   return [{ key: 'order', file: 'order.json', default: null }];
 }
@@ -83,7 +87,8 @@ function signalsMatch(persisted, current) {
 }
 
 // { computedAt, runId, freshnessSignal, groups, excluded, bundles } -> the
-// exact blob shape written to order.json. A thin composer, not a validator —
+// exact blob shape written to order.json, plus `grouping: GROUPING_MODE`
+// (#3278), the stamp cacheUsable checks. A thin composer, not a validator —
 // callers already have every field in the right shape; this exists so the
 // field list is stated once, matching claims.js's claimPayload/releasePayload
 // precedent for this codebase's blob-shape convention. `bundles` (#2066) is
@@ -94,11 +99,20 @@ function composeOrderBlob({
   computedAt, runId, freshnessSignal, groups, excluded, bundles,
 }) {
   return {
-    computedAt, runId, freshnessSignal, groups, excluded,
+    computedAt, runId, freshnessSignal, groups, excluded, grouping: GROUPING_MODE,
     ...(bundles !== undefined ? { bundles } : {}),
   };
 }
 
+// A persisted blob is reusable only when stamped with the current grouping
+// rule AND its freshness signal still matches. A blob without `grouping` (any
+// older plugin install's write) fails closed. Never throws.
+function cacheUsable(persisted, current) {
+  return !!persisted && persisted.grouping === GROUPING_MODE
+    && signalsMatch(persisted.freshnessSignal, current);
+}
+
 module.exports = {
   readOrder, writeOrder, buildFreshnessSignal, signalsMatch, composeOrderBlob,
+  cacheUsable, GROUPING_MODE,
 };

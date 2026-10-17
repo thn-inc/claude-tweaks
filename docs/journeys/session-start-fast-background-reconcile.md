@@ -7,6 +7,9 @@ files:
   - plugin/bin/lib/reconcile/budget.js
   - plugin/bin/lib/reconcile/shared-fetch.js
   - plugin/bin/lib/reconcile/gh-pool.js
+  - plugin/bin/lib/reconcile/release-merged.js
+  - plugin/bin/lib/reconcile/archive-merged.js
+  - plugin/bin/lib/reconcile/pr-state.js
   - plugin/bin/lib/reconcile/origin-head.js
   - plugin/bin/hooks.js
 ---
@@ -35,11 +38,12 @@ files:
 ### 3. The next session start surfaces what the background pass did
 - **Action:** The following `SessionStart` reads the background-status file once and, if it holds a result not yet shown, renders a "background reconcile (from a prior session)" summary in `additionalContext` — what was released/archived/pruned/reaped, and what was skipped and why (e.g. a locked worktree with a live owner).
 - **Should feel:** Trustworthy — the user can see that janitorial cleanup is actually happening, even though they never watched it run.
-- **Should understand:** Any skip they weren't expecting (a worktree that didn't reap, a branch that wasn't pruned) came with a stated reason, not a silent gap.
-- **Red flags:** A background outcome that never surfaces anywhere (silently dropped diagnostic signal); the same outcome shown twice across two different sessions.
+- **Should understand:** Any skip they weren't expecting (a worktree that didn't reap, a branch that wasn't pruned) came with a stated reason, not a silent gap. A fast-lane pr-first singleton whose merge auto-closed via `gh pr merge` converges in this background pass too — its claim releases, grants/`bot:in-progress` strip, and its run directory archives — even once the worktree and branch that merge tore down are both gone (#3249's by-PR-number fallback), and even when no Review Console was ever rendered for it (#3249's narrowly-scoped archive exception), as long as nothing was left pending in that run's `staged/`.
+- **Red flags:** A background outcome that never surfaces anywhere (silently dropped diagnostic signal); the same outcome shown twice across two different sessions. Before #3249, a merged fast-lane run with nothing pending could show `console-never-rendered` here forever — a skip reason that read as "a stated reason" but was never actually going to resolve on its own; that specific permanent-skip shape is what #3249 closed. A run whose `staged/` genuinely still holds unapproved items is the one case that still shows this skip indefinitely, by design (tracked separately, #3297).
 
 ## Origin
 - Created during build of #820 (Reduce SessionStart reconcile() latency — GitHub-health preflight, batching, parallelism, async split)
 - All steps built in this session
 - Updated during build of #3132 (fresh-clone `origin/HEAD` repair in Step 1)
 - Related specs: #847 (follow-up — restore session/run attribution on the three worktree-reap audit-trail events under this split, filed as a deliberate scope boundary during #820's build)
+- Updated during build of #3249 (fast-lane pr-first merges never release their claim or archive their run — console-never-rendered) — Step 3's release/archive convergence promise now holds for a torn-down worktree/branch and a never-rendered console with nothing staged; the residual pending-staged-items gap is tracked as #3297

@@ -971,6 +971,8 @@ test('--scope: --base that contradicts the stamp anchor is a usage error, and wr
   const run = await runCli(['--scope', r.declPath, '--base', c1, '--cmd', `unit=${r.unitCmd}`], { cwd: r.repo });
   assert.strictEqual(run.code, 2);
   assert.match(run.stderr, /--scope: --base .* conflicts with the stamp anchor/);
+  assert.doesNotMatch(run.stderr, /pass --integration-branch instead/, '#3072 AC5: the refusal must not imply --integration-branch overrides the anchor');
+  assert.match(run.stderr, /after an integration-branch merge, --integration-branch narrows the scoped set to this branch's own delta/);
   assert.deepStrictEqual(stampOf(r.gitDir), baseline, 'a rejected --base must never touch the existing stamp');
 });
 
@@ -1593,7 +1595,7 @@ test('flaky retry: a pre-seeded flakyHits of 4 escalates on the fifth retry — 
   assert.match(stdout, /^CAVEAT: flaky-retried: tests\/flaky\.test\.js — passed on isolated rerun/m);
   assert.match(stdout, /^CAVEAT: flaky-allowlist: tests\/flaky\.test\.js retried 5 times — file a fix or remove it from the allowlist$/m);
   const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
-  assert.deepStrictEqual(report.flakyEscalation, [{ file: 'tests/flaky.test.js', hits: 5 }]);
+  assert.deepStrictEqual(report.flakyEscalation, [{ file: 'tests/flaky.test.js', hits: 5, onAllowlist: true }]);
   const stamp = JSON.parse(fs.readFileSync(countStampPath, 'utf8'));
   assert.deepStrictEqual(stamp.flakyHits, { 'tests/flaky.test.js': 5 });
   assert.strictEqual(stamp.tests, 1);
@@ -1872,6 +1874,37 @@ test('--baseline: failures that also fail at base exit 0, stamp a baseline pass,
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass')), 'no legacy twin for an adjudicated pass');
 });
 
+// #3156: the /flow and /dispatch session shape — a linked worktree under the
+// main checkout's own tree, on a checkout path containing a space (#3155's
+// truncation). An unchanged failing file must classify baseline, never fall
+// through to attributable.
+test('--baseline: run from a linked worktree nested in a space-containing checkout path, an unchanged failing file classifies baseline (#3156)', async () => {
+  const repo = path.join(tmpDir(), 'Code Workspaces', 'repo');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  git(repo, 'init', '-q');
+  git(repo, 'config', 'user.email', 'verify-test@example.invalid');
+  git(repo, 'config', 'user.name', 'verify test');
+  fs.mkdirSync(path.join(repo, 'tests'));
+  fs.writeFileSync(path.join(repo, 'tests', 'env.test.js'), "require('node:test')('env', () => { throw new Error('env-specific'); });\n");
+  fs.writeFileSync(path.join(repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => {});\n");
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-q', '-m', 'base');
+  const baseSha = git(repo, 'rev-parse', 'HEAD').trim();
+  const wt = path.join(repo, '.claude', 'worktrees', 'dispatch-record-1');
+  git(repo, 'worktree', 'add', '-q', '-b', 'feature', wt);
+  fs.writeFileSync(path.join(wt, 'README.md'), 'change\n');
+  git(wt, 'add', '.');
+  git(wt, 'commit', '-q', '-m', 'head');
+  const { code, stdout } = await runCli(['--cmd', SUITE, '--baseline', baseSha, '--baseline-cmd', PER_FILE], { cwd: wt, env: nestedRunEnv() });
+  assert.strictEqual(code, 0, stdout);
+  const gitDir = git(wt, 'rev-parse', '--absolute-git-dir').trim();
+  const report = JSON.parse(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.baselineAdjudicated.verdict, 'pass', JSON.stringify(report.baselineAdjudicated));
+  assert.deepStrictEqual(report.baselineAdjudicated.baselineFailing, ['tests/env.test.js']);
+  assert.deepStrictEqual(report.baselineAdjudicated.attributable, []);
+});
+
 test('--baseline: a file that passes at base but fails at HEAD exits 1 naming it, and writes no stamp (#3043 AC2)', async () => {
   const r = baselineRepo();
   fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => { throw new Error('regressed'); });\n");
@@ -1940,6 +1973,149 @@ test('--baseline: a file failing only in the full run is flaky — exit 0 with a
   assert.match(stdout, /^CAVEAT: baseline-flaky: tests\/flaky\.test\.js — failed in the full run, passed in isolation at HEAD; see .*tests-isolated-tests\+flaky\.test\.js\.log$/m);
 });
 
+test('--baseline: a repeatedly baseline-flaky file not on flaky.files accumulates flakyHits across runs and, at the escalation threshold, stages a flaky-allowlist proposal rather than applying one (#3062)', async () => {
+  const r = baselineRepo();
+  const marker = path.join(tmpDir(), 'flake-repeat-3062');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'flaky.test.js'), `const fs = require('fs');\nrequire('node:test')('flaky', () => { if (fs.existsSync(${JSON.stringify(marker)})) { fs.unlinkSync(${JSON.stringify(marker)}); throw new Error('flake'); } });\n`);
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'add flaky');
+  const baseSha = r.git('rev-parse', 'HEAD').trim();
+  headCommit(r);
+  const runDir = anchoredRunDir(r.repo);
+  // Only the flaky file is in this --cmd (unlike the #3043 fixtures above,
+  // which pair it with the always-failing tests/env.test.js) -- this run's
+  // sole concern is the flaky-escalation counting path, so the only failing
+  // file must be the one that is flaky: attributable.length === 0 makes
+  // the adjudication a clean pass on its own, with nothing else to classify.
+  const args = ['--run', runDir, '--cmd', 'tests=node --test --test-reporter=tap tests/flaky.test.js', '--baseline', baseSha, '--baseline-cmd', PER_FILE];
+  const countStampPath = path.join(r.gitDir, 'claude-tweaks-test-count.json');
+
+  // No `flaky.files` declaration exists for this file at all (no --scope
+  // passed) -- the hit count must still accumulate run over run (#3062
+  // AC1), not reset to 1 every time the way a pruned-to-the-allowlist
+  // counter would.
+  for (let i = 1; i <= 4; i++) {
+    fs.writeFileSync(marker, '');
+    const { code, stdout } = await runCli(args, r.opts);
+    assert.strictEqual(code, 0, stdout);
+    assert.doesNotMatch(stdout, /flaky-allowlist/, `run ${i} of 4 must not escalate yet`);
+  }
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(countStampPath, 'utf8')).flakyHits, { 'tests/flaky.test.js': 4 });
+
+  fs.writeFileSync(marker, '');
+  const fifth = await runCli(args, r.opts);
+  assert.strictEqual(fifth.code, 0, fifth.stdout);
+  assert.match(
+    fifth.stdout,
+    /^CAVEAT: flaky-allowlist: tests\/flaky\.test\.js baseline-flaky 5 times — not on flaky\.files; a staged proposal to add it is pending review$/m,
+  );
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.flakyEscalation, [{ file: 'tests/flaky.test.js', hits: 5, onAllowlist: false }]);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(countStampPath, 'utf8')).flakyHits, { 'tests/flaky.test.js': 5 });
+
+  // AC2: a staged proposal names the file and its hit count, and
+  // verify-scope.json itself is never touched -- the add is never applied
+  // silently.
+  const stagedPath = path.join(runDir, 'staged', 'flaky-allowlist-tests-flaky.test.js.md');
+  assert.ok(fs.existsSync(stagedPath), 'a staged proposal file is written at the escalation threshold');
+  const staged = fs.readFileSync(stagedPath, 'utf8');
+  assert.match(staged, /tests\/flaky\.test\.js/);
+  assert.match(staged, /5 time/);
+  assert.match(staged, /flaky\.files/);
+
+  const decisions = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.match(decisions, /STAGED/);
+  assert.match(decisions, /Flaky-allowlist proposal: tests\/flaky\.test\.js baseline-flaky 5 times/);
+
+  assert.ok(!fs.existsSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json')), 'verify-scope.json is never written by the runner');
+});
+
+test('--baseline: a repeatedly baseline-flaky file already on flaky.files escalates onAllowlist:true with the fix-or-remove wording even with no --scope (review fix, #3062)', async () => {
+  // Review finding: onAllowlist classification was reading `decl`, which is
+  // only populated by a --scope invocation -- the canonical no-scope
+  // `--baseline` invocation (test/verification.md) always classified every
+  // escalated file onAllowlist:false, including one genuinely declared in
+  // flaky.files, since a declaration never existed without --scope. A
+  // declaration on disk (no --scope passed) must still be read for this
+  // classification alone.
+  const r = baselineRepo();
+  const marker = path.join(tmpDir(), 'flake-repeat-3062-declared');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'flaky.test.js'), `const fs = require('fs');\nrequire('node:test')('flaky', () => { if (fs.existsSync(${JSON.stringify(marker)})) { fs.unlinkSync(${JSON.stringify(marker)}); throw new Error('flake'); } });\n`);
+  const decl = { checks: { tests: 'x' }, rules: [], flaky: { files: ['tests/flaky.test.js'] } };
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'));
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'add flaky + declare it on flaky.files');
+  const baseSha = r.git('rev-parse', 'HEAD').trim();
+  headCommit(r);
+  const runDir = anchoredRunDir(r.repo);
+  // No --scope anywhere in these args -- this is the canonical invocation
+  // shape (test/verification.md), yet .claude-tweaks/verify-scope.json
+  // exists on disk declaring the file.
+  const args = ['--run', runDir, '--cmd', 'tests=node --test --test-reporter=tap tests/flaky.test.js', '--baseline', baseSha, '--baseline-cmd', PER_FILE];
+
+  for (let i = 1; i <= 4; i++) {
+    fs.writeFileSync(marker, '');
+    const { code, stdout } = await runCli(args, r.opts);
+    assert.strictEqual(code, 0, stdout);
+    assert.doesNotMatch(stdout, /flaky-allowlist/, `run ${i} of 4 must not escalate yet`);
+  }
+
+  fs.writeFileSync(marker, '');
+  const fifth = await runCli(args, r.opts);
+  assert.strictEqual(fifth.code, 0, fifth.stdout);
+  assert.match(
+    fifth.stdout,
+    /^CAVEAT: flaky-allowlist: tests\/flaky\.test\.js retried 5 times — file a fix or remove it from the allowlist$/m,
+  );
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.flakyEscalation, [{ file: 'tests/flaky.test.js', hits: 5, onAllowlist: true }]);
+
+  // A genuinely-declared file never gets the "not on flaky.files" staged
+  // proposal -- it is already on the allowlist, there is nothing to stage,
+  // and nothing is logged to decisions.md (which may not even exist yet).
+  assert.ok(!fs.existsSync(path.join(runDir, 'staged', 'flaky-allowlist-tests-flaky.test.js.md')));
+  const decisionsPath = path.join(runDir, 'decisions.md');
+  if (fs.existsSync(decisionsPath)) {
+    assert.doesNotMatch(fs.readFileSync(decisionsPath, 'utf8'), /Flaky-allowlist proposal/);
+  }
+});
+
+test('--baseline: a repeatedly baseline-flaky, non-allowlisted file with no --run never claims a pending staged proposal that was never written (review fix, #3062)', async () => {
+  // Review finding: the caveat line was unconditional on onAllowlist alone --
+  // verify.js only ever stages a proposal inside its --run-anchored block,
+  // so a run with no --run (or one whose run dir fails anchoring) renders
+  // "a staged proposal ... is pending review" while nothing was staged.
+  const r = baselineRepo();
+  const marker = path.join(tmpDir(), 'flake-repeat-3062-norun');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'flaky.test.js'), `const fs = require('fs');\nrequire('node:test')('flaky', () => { if (fs.existsSync(${JSON.stringify(marker)})) { fs.unlinkSync(${JSON.stringify(marker)}); throw new Error('flake'); } });\n`);
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'add flaky');
+  const baseSha = r.git('rev-parse', 'HEAD').trim();
+  headCommit(r);
+  // No --run at all.
+  const args = ['--cmd', 'tests=node --test --test-reporter=tap tests/flaky.test.js', '--baseline', baseSha, '--baseline-cmd', PER_FILE];
+
+  for (let i = 1; i <= 4; i++) {
+    fs.writeFileSync(marker, '');
+    const { code, stdout } = await runCli(args, r.opts);
+    assert.strictEqual(code, 0, stdout);
+    assert.doesNotMatch(stdout, /flaky-allowlist/, `run ${i} of 4 must not escalate yet`);
+  }
+
+  fs.writeFileSync(marker, '');
+  const fifth = await runCli(args, r.opts);
+  assert.strictEqual(fifth.code, 0, fifth.stdout);
+  assert.match(
+    fifth.stdout,
+    /^CAVEAT: flaky-allowlist: tests\/flaky\.test\.js baseline-flaky 5 times — not on flaky\.files; re-run under an anchored pipeline run directory to stage a proposal, or add it to flaky\.files by hand$/m,
+  );
+  assert.doesNotMatch(fifth.stdout, /a staged proposal to add it is pending review/);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.flakyEscalation, [{ file: 'tests/flaky.test.js', hits: 5, onAllowlist: false }]);
+  assert.ok(!fs.existsSync(path.join(r.repo, '.claude-tweaks')), 'no staged/ or run-dir artifact is created without --run');
+});
+
 test('--baseline: a file failing beyond its base tests only in the full run is baseline — exit 0 with a baseline-in-isolation CAVEAT (#3043)', async () => {
   const r = baselineRepo();
   // `old` fails everywhere; `once` fails only in the full run (it consumes the marker).
@@ -1991,6 +2167,91 @@ test('--baseline: the scratch worktree is gone after the run (#3043)', async () 
   assert.match(stdout, /Baseline: adjudicated against/, 'a scratch worktree was actually created');
   const list = r.git('worktree', 'list', '--porcelain');
   assert.strictEqual((list.match(/^worktree /gm) || []).length, 1, list);
+});
+
+// #3072: scopedRepo on its init branch (the integration branch), a feature
+// branch cut from it carrying the full-pass anchor, then a --no-ff merge of the
+// integration branch bringing in N `ui/**` files plus one own-work `src/**` commit.
+function mergedScopedRepo() {
+  const r = scopedRepo([
+    { match: 'src/**', suites: ['unit'], static: true },
+    { match: 'ui/**', suites: ['other'], static: true },
+  ]);
+  const trunk = r.branch;
+  r.git('checkout', '-q', '-b', 'feat');
+  return { ...r, trunk };
+}
+
+async function anchorFullPass(r, extraArgs = []) {
+  const args = ['--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0', ...extraArgs];
+  const run = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.match(run.stdout, /^Scope: full/m);
+  if (fs.existsSync(r.marker)) fs.unlinkSync(r.marker);
+  return stampOf(r.gitDir).fullSha;
+}
+
+function mergeTrunk(r, rels) {
+  r.git('checkout', '-q', r.trunk);
+  for (const rel of rels) commitFile(r, rel, rel);
+  r.git('checkout', '-q', 'feat');
+  r.git('merge', '-q', '--no-ff', '--no-edit', r.trunk);
+}
+
+test('--scope --integration-branch: after an integration-branch merge, only the own-work path selects suites and report.json counts the merge-identical ones (#3072 AC1)', async () => {
+  const r = mergedScopedRepo();
+  const anchor = await anchorFullPass(r);
+  mergeTrunk(r, ['ui/a.js', 'ui/b.js', 'ui/c.js']);
+  commitFile(r, 'src/own.js', 'own');
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.match(run.stdout, /^Scope: scoped — 1 changed file\(s\) since/m);
+  assert.match(run.stdout, /^merge-narrowed: 3 merge-identical path\(s\) excluded \(identical to /m);
+  const s = stampOf(r.gitDir);
+  assert.strictEqual(s.fullSha, anchor, 'the anchor is untouched — narrowing filters, it never re-bases');
+  assert.deepStrictEqual(s.changedFiles, ['src/own.js']);
+  assert.deepStrictEqual(s.suitesRun, ['unit']);
+  const report = JSON.parse(fs.readFileSync(s.reportPath, 'utf8'));
+  assert.strictEqual(report.scope.base, anchor);
+  assert.deepStrictEqual(report.scope.changedFiles, ['src/own.js']);
+  assert.deepStrictEqual(report.scope.mergeNarrowing, { ref: r.trunk, excluded: 3, excludedFiles: ['ui/a.js', 'ui/b.js', 'ui/c.js'] });
+});
+
+test('--scope: without --integration-branch the same merged fixture selects every anchor..HEAD path, unnarrowed (#3072 AC4)', async () => {
+  const r = mergedScopedRepo();
+  await anchorFullPass(r);
+  mergeTrunk(r, ['ui/a.js', 'ui/b.js']);
+  commitFile(r, 'src/own.js', 'own');
+  const run = await runCli(['--scope', r.declPath, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.doesNotMatch(run.stdout, /merge-narrowed/);
+  const report = JSON.parse(fs.readFileSync(stampOf(r.gitDir).reportPath, 'utf8'));
+  assert.deepStrictEqual(report.scope.changedFiles, ['src/own.js', 'ui/a.js', 'ui/b.js']);
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+});
+
+test('--scope --integration-branch: with no integration-branch merge after the anchor, the set equals anchor..HEAD (#3072 AC2)', async () => {
+  const r = mergedScopedRepo();
+  await anchorFullPass(r);
+  commitFile(r, 'src/own.js', 'own');
+  commitFile(r, 'ui/a.js', 'a');
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const report = JSON.parse(fs.readFileSync(stampOf(r.gitDir).reportPath, 'utf8'));
+  assert.deepStrictEqual(report.scope.changedFiles, ['src/own.js', 'ui/a.js']);
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+});
+
+test('--scope --integration-branch: a merged-in file the branch then edited stays selected (#3072 AC3)', async () => {
+  const r = mergedScopedRepo();
+  await anchorFullPass(r);
+  mergeTrunk(r, ['ui/a.js', 'ui/b.js']);
+  commitFile(r, 'ui/a.js', 'edited on the branch');
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const report = JSON.parse(fs.readFileSync(stampOf(r.gitDir).reportPath, 'utf8'));
+  assert.deepStrictEqual(report.scope.changedFiles, ['ui/a.js']);
+  assert.deepStrictEqual(report.scope.mergeNarrowing, { ref: r.trunk, excluded: 1, excludedFiles: ['ui/b.js'] });
 });
 
 test('--baseline: a stale ct-verify-base-* scratch worktree from an earlier interrupted run is named on stderr, and left alone (#3064)', async () => {

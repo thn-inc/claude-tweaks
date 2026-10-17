@@ -38,14 +38,14 @@ files:
 - **Action:** if the message reads as a *warning* ("allowing this call because it comes from a different session") rather than a deny, stop — do not run the remediation command anyway. A provable ownership mismatch downgrades the gate to a warning specifically so this command is never handed out against a run you don't own.
 - **Should feel:** protective, not permissive — a warning here is the gate declining to give risky advice, not the gate stepping aside.
 - **Should understand:** `docs/hooks.md`'s own rule (omitting `--run` on `record-worktree` can silently corrupt a different live session's `run-state.json`) is exactly the hazard this check exists to prevent.
-- **Red flags:** running `record-worktree`/logging a degrade against a run you did not start, on the strength of a warning message alone.
+- **Red flags:** running `record-worktree`/logging a degrade against a run you did not start, on the strength of a warning message alone. A worktree-stamp *warning* on your own `/flow` run because this session also owns an `-adhoc-standalone` dir (minted at `EnterWorktree`) — that dir is a friction placeholder, never a distinct recorded run, so it must not downgrade the deny (#2783).
 
 ### 4. Run the remediation, from the owning session — worktree session
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "{run-dir}" "{worktree}"`, or `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --status AUTO --text "PR-early run lifecycle: ... FAILED" --section "/build"` for a genuine push/PR-create failure
 - **Action:** run exactly the command the deny named, from the session that actually owns this run.
 - **Should feel:** a one-line unblock, not a debugging session — the command is paste-ready and idempotent (`record-worktree` is documented as a safe restamp).
 - **Should understand:** the PR-stamp path is a graceful degrade, not a second enforcement layer — a genuinely failed push/PR-create is meant to be logged and moved past, never forced into existing anyway.
-- **Red flags:** inventing a different command; retrying the original call without running either remediation first.
+- **Red flags:** inventing a different command; retrying the original call without running either remediation first; running `record-worktree` from inside a `/flow` `parallel` wave member (`MULTISPEC_PARALLEL_WAVE=1`) — `build/worktree-setup.md` skips Step 4.5 there by design, because the parent run's stamp must stay the shared worktree and `CLAUDE_CODE_SESSION_ID` is shared across subagents, so a member restamp would rebind the parent run's owner session. Whether this gate denies a wave member at all is not yet proven by a live `parallel` run; a deny inside a member is something to report, not a stamp to write.
 
 ### 5. Retry the original call — same terminal
 - **URL:** the exact same `Edit`/`Write`/`git commit`/`git push` call from Step 1

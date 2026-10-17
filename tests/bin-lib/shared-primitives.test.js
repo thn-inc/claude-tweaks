@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
-const { runClassified, runClassifiedAsync, isPathContained } = require('../../plugin/bin/lib/shared-primitives');
+const { runClassified, runClassifiedAsync, isPathContained, toPosix } = require('../../plugin/bin/lib/shared-primitives');
 const path = require('path');
 
 // A synthetic execFileSync/execFile timeout-kill error — the exact shape
@@ -473,4 +473,15 @@ test('isTimeoutError: is exported and recognizes a killed-by-signal error', () =
   const { isTimeoutError } = require('../../plugin/bin/lib/shared-primitives');
   assert.equal(isTimeoutError({ killed: true, signal: 'SIGTERM' }), true);
   assert.equal(isTimeoutError(new Error('plain failure')), false);
+});
+
+test('toPosix converts a win32-separated path to forward slashes (#2767)', () => {
+  assert.strictEqual(toPosix('demo\\SKILL.md', path.win32.sep), 'demo/SKILL.md');
+  assert.strictEqual(toPosix('wrap-up\\a\\b.md', path.win32.sep), 'wrap-up/a/b.md');
+  assert.strictEqual(toPosix('\\lead\\x', path.win32.sep), '/lead/x');
+});
+
+test('toPosix is the identity under a POSIX separator (#2767)', () => {
+  assert.strictEqual(toPosix('a/b/c.md', path.posix.sep), 'a/b/c.md');
+  assert.strictEqual(toPosix('a\\b', path.posix.sep), 'a\\b', 'a backslash is a filename character on POSIX');
 });

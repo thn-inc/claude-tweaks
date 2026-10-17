@@ -22,6 +22,12 @@ function writeRunDir(runDir, { runState, config }) {
   if (config !== undefined) fs.writeFileSync(path.join(runDir, 'config.yml'), config);
 }
 
+function writeHeader(baseDir, relDir, n, recordLine = `record: ${n}`) {
+  const dir = path.join(baseDir, relDir);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${n}-spec.md`), `---\n${recordLine}\n---\n# ${n}: title\n`);
+}
+
 function liveClaimContent(runId) {
   return JSON.stringify({
     runId, sessionId: 's1', claimedAt: new Date(NOW).toISOString(), ttlHours: 72, host: 'h',
@@ -58,6 +64,7 @@ test('fully-formed pr-first run passes: claim live under this run, PR recorded a
     runState: { pr: { number: 42, url: 'https://github.com/acme/widgets/pull/42', branch: 'worktree-2806' } },
     config: 'integration-model: pr-first\nautonomy: trusted\n',
   });
+  writeHeader(runDir, 'work', 2806);
   const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, {
     ghApi: fakeGhApi({ 2806: liveClaimContent(RUN_ID) }),
     gitRunner: fakeGitRunner(['worktree-2806']),
@@ -132,4 +139,68 @@ test('fails with a distinct reason under pr-first when the recorded PR\'s head b
   });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'pr-branch-unpushed');
+});
+
+function localMergeGroup(runDir, issueNumbers, runState = {}) {
+  writeRunDir(runDir, { runState, config: 'integration-model: local-merge\n' });
+  const claims = Object.fromEntries(issueNumbers.map((n) => [n, liveClaimContent(RUN_ID)]));
+  return { ghApi: fakeGhApi(claims), now: NOW };
+}
+
+test('fails materialized-header-missing when a member has no header anywhere (#2775)', () => {
+  const runDir = mkRunDir();
+  const deps = localMergeGroup(runDir, [2806]);
+  const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, deps);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'materialized-header-missing');
+  assert.match(result.message, /#2806/);
+});
+
+test('passes for a multi-record group whose headers live under spec-{n}/work/ (#2775)', () => {
+  const runDir = mkRunDir();
+  const deps = localMergeGroup(runDir, [2806, 2807]);
+  writeHeader(runDir, path.join('spec-2806', 'work'), 2806);
+  writeHeader(runDir, path.join('spec-2807', 'work'), 2807);
+  const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806, 2807], repoSlug: REPO_SLUG }, deps);
+  assert.deepEqual(result, { ok: true });
+});
+
+test('fails naming the one unmaterialized member of an otherwise-materialized group (#2775)', () => {
+  const runDir = mkRunDir();
+  const deps = localMergeGroup(runDir, [2806, 2807]);
+  writeHeader(runDir, path.join('spec-2806', 'work'), 2806);
+  const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806, 2807], repoSlug: REPO_SLUG }, deps);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'materialized-header-missing');
+  assert.match(result.message, /#2807/);
+  assert.doesNotMatch(result.message, /#2806/);
+});
+
+test('passes when headers exist only in the worktree mirror of the run dir (pr-first shape, #2775)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-first-call-mirror-'));
+  const runDir = path.join(root, 'main', '.claude-tweaks', 'pipelines', RUN_ID);
+  const worktree = path.join(root, 'wt');
+  const deps = localMergeGroup(runDir, [2806], { worktree });
+  writeHeader(path.join(worktree, '.claude-tweaks', 'pipelines', RUN_ID), path.join('spec-2806', 'work'), 2806);
+  const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, deps);
+  assert.deepEqual(result, { ok: true });
+});
+
+test('passes when the header lives under work/ (not spec-{n}/work/) in the worktree mirror -- the pr-first singleton shape (#2775)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-first-call-mirror-singleton-'));
+  const runDir = path.join(root, 'main', '.claude-tweaks', 'pipelines', RUN_ID);
+  const worktree = path.join(root, 'wt');
+  const deps = localMergeGroup(runDir, [2806], { worktree });
+  writeHeader(path.join(worktree, '.claude-tweaks', 'pipelines', RUN_ID), 'work', 2806);
+  const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, deps);
+  assert.deepEqual(result, { ok: true });
+});
+
+test('a header whose record: line names a different number does not count (#2775)', () => {
+  const runDir = mkRunDir();
+  const deps = localMergeGroup(runDir, [2806]);
+  writeHeader(runDir, 'work', 2806, 'record: 9999');
+  const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, deps);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'materialized-header-missing');
 });

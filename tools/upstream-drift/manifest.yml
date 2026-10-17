@@ -209,7 +209,8 @@ dependencies:
     installed-probe:
       type: plugin-cache-glob
       glob: "~/.claude/plugins/cache/*/superpowers/*/.claude-plugin/plugin.json"
-    pinned: "6.2.0"
+    # Re-pinned 6.2.0 -> 7.0.0 (#3376), read from the installed 7.0.0 plugin.json.
+    pinned: "7.0.0"
     upstream:
       repo: "obra/superpowers"
       tag-prefix: "v"
@@ -233,10 +234,14 @@ dependencies:
         claims: "SDD has a per-task model-selection heuristic the effort-tier override overrides"
         upstream-path: "skills/subagent-driven-development/SKILL.md"
         must-match: "## Model Selection"
+      # Retargeted (#3376): 7.0.0's brainstorming rewrite dropped "Invoke the
+      # writing-plans skill"; the surviving terminal-step line is "For software,
+      # invoke superpowers:writing-plans and no other skill." CLAUDE.md's
+      # override still holds against it.
       - file: "CLAUDE.md"
-        claims: "brainstorming's terminal step invokes writing-plans — the step the project override suppresses"
+        claims: "brainstorming's terminal step names writing-plans as the next skill — the step the project override suppresses"
         upstream-path: "skills/brainstorming/SKILL.md"
-        must-match: "Invoke the writing-plans skill"
+        must-match: "invoke superpowers:writing-plans and no other skill"
       - file: "plugin/skills/_shared/local-files-preflight-stop.md"
         claims: "the SDD workspace lives at .superpowers/sdd/ — also cited as the SDD ledger by wrap-up's summary template"
         upstream-path: "skills/subagent-driven-development/scripts/sdd-workspace"
@@ -277,6 +282,38 @@ dependencies:
         claims: "/init creates docs/superpowers/plans/ because that's writing-plans' default plan write path"
         upstream-path: "skills/writing-plans/SKILL.md"
         must-match: "docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md"
+      - file: "plugin/skills/build/plan-authoring-checks.md"
+        claims: "will rely on (record #3377): the plan reviewer is defined against SDD's controller pre-flight scan and must not redo it — this ledger-table form first appeared in superpowers 6.3.0 (6.2.0 had an ask-the-human scan)"
+        upstream-path: "skills/subagent-driven-development/SKILL.md"
+        must-match: "Before dispatching Task 1, scan the plan once for conflicts, writing down"
+      - file: "plugin/skills/build/dispatch.md"
+        claims: "will rely on (record #3378): per-task implementer tiers send transcription tasks to the cheapest tier, per SDD's Model Selection — line first appeared in superpowers 6.2.0 or earlier"
+        upstream-path: "skills/subagent-driven-development/SKILL.md"
+        must-match: "that implementer. Single-file mechanical fixes also take the cheapest tier."
+      - file: "plugin/skills/build/dispatch.md"
+        claims: "will rely on (record #3378): the forwarded scoped re-review tier applies SDD's cheap-to-mid rule for small fix diffs — line first appeared in superpowers 6.2.0 or earlier"
+        upstream-path: "skills/subagent-driven-development/SKILL.md"
+        must-match: "small fix diffs take a cheap-to-mid tier."
+      - file: "plugin/skills/build/plan-authoring-checks.md"
+        claims: "the Batched-plan marker cites SDD's batch rule, and will rely on it for adjacent-task merging (record #3379) — line first appeared in superpowers 6.3.0"
+        upstream-path: "skills/subagent-driven-development/SKILL.md"
+        must-match: "**Batch small same-shape work.** When the plan lists several tasks that are"
+      - file: "plugin/skills/build/plan-authoring-checks.md"
+        claims: "will rely on (record #3378): a task whose plan gives only signatures and tests is an integration task, not transcription — line first appeared in superpowers 7.0.0"
+        upstream-path: "skills/writing-plans/SKILL.md"
+        must-match: "writes the body. A body appears only for an algorithm the signature and"
+      - file: "plugin/skills/build/dispatch.md"
+        claims: "will rely on (record #3386): SDD has a step named Finish — the step the carry-forward (#496) and final-review-capture (#3386) directives anchor to, before it deletes the plan's workspace — heading first appeared in superpowers 6.2.0 or earlier"
+        upstream-path: "skills/subagent-driven-development/SKILL.md"
+        must-match: "## Finish"
+      - file: "plugin/skills/build/dispatch.md"
+        claims: "will rely on (record #3386): SDD's Finish step collects every ledger line containing Ruling: before deleting the workspace — the collection the carry-forward directive copies from first; line first appeared in superpowers 6.3.0 (6.2.0 had no Ruling: ledger)"
+        upstream-path: "skills/subagent-driven-development/SKILL.md"
+        must-match: "Before you delete anything, collect every ledger line containing `Ruling:`"
+      - file: "plugin/skills/build/dispatch.md"
+        claims: "will rely on (record #3386): the final-review capture records the fix wave as FIX_BASE..HEAD, the name SDD gives the head the previous review saw — line first appeared in superpowers 6.2.0 or earlier"
+        upstream-path: "skills/subagent-driven-development/SKILL.md"
+        must-match: "where FIX_BASE is the head the previous review saw"
     # fixtures: [] — frozen-artifact rationale: an installed plugin cache dir is
     # immutable post-install, so version movement is the only mechanical change
     # signal; there is no runtime surface to replay (the impeccable-plugin

@@ -262,7 +262,7 @@ test('resolveConsoleExecution: a retry with an existing executed-reply comment u
   const ghCalls = [];
   const deps = {
     now: () => Date.now(),
-    gh: fakeGh(ghCalls, { extraComments: [{ id: 'IC_existing_reply', body: '<!-- console-item: executed -->\n- `1`: executed (stale)' }] }),
+    gh: fakeGh(ghCalls, { extraComments: [{ id: 'IC_existing_reply', body: '<!-- console-item: executed -->\n- `1`: executed (stale)', authorAssociation: 'MEMBER' }] }),
     writeFile: () => {},
   };
   const result = await resolveConsoleExecution(dir, { approve: ['1', '2', '3'], decline: [] }, deps);
@@ -273,6 +273,64 @@ test('resolveConsoleExecution: a retry with an existing executed-reply comment u
   const replyUpdate = graphqlCalls.find((a) => a.includes('id=IC_existing_reply'));
   assert.ok(replyUpdate, 'the existing reply comment must be updated by its own id');
   assert.match(replyUpdate.find((a) => a.startsWith('body=')), /`1`: executed/);
+});
+
+// #3358 AC3: the executed-reply marker is plantable by anyone who can comment on
+// the PR -- only an owner/member/collaborator comment may be updated in place.
+// An untrusted marker comment takes the "no such comment" path: a fresh reply is
+// created, and the skipped comment is named on the result so it is not silent.
+const PLANTED_REPLY = {
+  id: 'IC_planted', body: '<!-- console-item: executed -->\n- x', url: 'https://x/c9', author: { login: 'eve' }, authorAssociation: 'NONE',
+};
+const PLANTED_NOTE = 'skipped marker comment https://x/c9 by eve (NONE) — not an owner, member, or collaborator';
+
+test('AC3.1: an existing executed reply authored NONE is not updated', async () => {
+  const dir = makeRunDir();
+  writeConsoleJson(dir);
+  const ghCalls = [];
+  const deps = { now: () => Date.now(), gh: fakeGh(ghCalls, { extraComments: [PLANTED_REPLY] }), writeFile: () => {} };
+  const result = await resolveConsoleExecution(dir, { approve: ['1', '2', '3'], decline: [] }, deps);
+  assert.equal(result.status, 'executed');
+  assert.ok(ghCalls.every((a) => !a.includes('id=IC_planted')), 'a planted reply must never be the update target');
+});
+
+test('AC3.2: a new reply is created and the result names the skipped comment', async () => {
+  const dir = makeRunDir();
+  writeConsoleJson(dir);
+  const ghCalls = [];
+  const deps = { now: () => Date.now(), gh: fakeGh(ghCalls, { extraComments: [PLANTED_REPLY] }), writeFile: () => {} };
+  const result = await resolveConsoleExecution(dir, { approve: ['1', '2', '3'], decline: [] }, deps);
+  assert.equal(ghCalls.filter((a) => a[0] === 'pr' && a[1] === 'comment').length, 1, 'a fresh reply is created');
+  assert.deepEqual(result.skippedUntrusted, [PLANTED_NOTE]);
+});
+
+test('skippedUntrusted is [] on an executed result when no marker comment was passed over', async () => {
+  const dir = makeRunDir();
+  writeConsoleJson(dir);
+  const deps = { now: () => Date.now(), gh: fakeGh([]), writeFile: () => {} };
+  const result = await resolveConsoleExecution(dir, { approve: ['1', '2', '3'], decline: [] }, deps);
+  assert.deepEqual(result.skippedUntrusted, []);
+});
+
+test('a non-marker comment authored NONE is silently irrelevant -- no skip note', async () => {
+  const dir = makeRunDir();
+  writeConsoleJson(dir);
+  const chatter = { id: 'IC_chat', body: 'looks good to me', url: 'https://x/c10', author: { login: 'eve' }, authorAssociation: 'NONE' };
+  const deps = { now: () => Date.now(), gh: fakeGh([], { extraComments: [chatter] }), writeFile: () => {} };
+  const result = await resolveConsoleExecution(dir, { approve: ['1', '2', '3'], decline: [] }, deps);
+  assert.deepEqual(result.skippedUntrusted, []);
+});
+
+test('a trusted reply is still updated when an untrusted planted one is also present', async () => {
+  const dir = makeRunDir();
+  writeConsoleJson(dir);
+  const ghCalls = [];
+  const trusted = { id: 'IC_real_reply', body: '<!-- console-item: executed -->\n- `1`: executed (stale)', authorAssociation: 'OWNER' };
+  const deps = { now: () => Date.now(), gh: fakeGh(ghCalls, { extraComments: [PLANTED_REPLY, trusted] }), writeFile: () => {} };
+  const result = await resolveConsoleExecution(dir, { approve: ['1', '2', '3'], decline: [] }, deps);
+  assert.ok(ghCalls.some((a) => a.includes('id=IC_real_reply')), 'the trusted reply is updated in place');
+  assert.ok(ghCalls.every((a) => !a.includes('id=IC_planted')));
+  assert.deepEqual(result.skippedUntrusted, [PLANTED_NOTE]);
 });
 
 // The final console.json write is the only unguarded I/O in the function

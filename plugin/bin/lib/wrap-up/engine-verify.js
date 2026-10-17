@@ -27,7 +27,8 @@ const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
-const { readRunStateWithParent } = require('../hooks/context');
+const { readRunStateWithParent, readRunState } = require('../hooks/context');
+const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -126,6 +127,35 @@ function readExpectations(runDir) {
     return { ok: false, reason: 'unsupported-version', version: data.version };
   }
   return { ok: true, data };
+}
+
+// #3373: the Review Console records its merge decision in console.json as
+// `merge.resolution`. `leave-open` is the designed resting state for a PR
+// awaiting a human merge -- Section C forbids removing an unmerged PR's
+// worktree, and the reconciler archives the run dir after that merge -- so
+// run-dir-archived and worktree-removed render this skip instead of a fail.
+// Fail-open toward the existing checks: any missing, unreadable, malformed, or
+// differently-shaped console.json reads as null and the checks fail as before.
+// A multi-spec parent run dir (manifest.yml present) also reads as null: its
+// console.json always says leave-open (members-unresolved), which
+// flow/multispec-review-console.md calls expected and discarded -- never the
+// bundle's real merge decision.
+const PENDING_REVIEW_SKIP = { result: 'skip', detail: 'pending-review — teardown follows the human merge' };
+
+function consoleMergeResolution(runDir) {
+  try {
+    if (fs.existsSync(path.join(runDir, 'manifest.yml'))) return null;
+    const data = JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8'));
+    return data && data.merge && typeof data.merge.resolution === 'string' ? data.merge.resolution : null;
+  } catch {
+    return null;
+  }
+}
+
+// Wraps a would-be teardown `fail`: a leave-open console downgrades it to the
+// pending-review skip, anything else keeps the fail.
+function teardownFail(runDir, detail) {
+  return consoleMergeResolution(runDir) === 'leave-open' ? { ...PENDING_REVIEW_SKIP } : { result: 'fail', detail };
 }
 
 function deferredSet(expectations) {
@@ -289,7 +319,7 @@ function isUnderArchiveRoot(repoRoot, candidate) {
   return rel !== '' && rel !== '.' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
-registerCheck('run-dir-archived', ({ originalRunDir, repoRoot, expectations, deps }) => {
+registerCheck('run-dir-archived', ({ runDir, originalRunDir, repoRoot, expectations, deps }) => {
   const deferred = deferredSet(expectations);
   if (deferred.has('run-dir-archival')) return { result: 'skip', detail: 'deferred to parent console' };
   const givenPath = path.resolve(originalRunDir);
@@ -309,7 +339,10 @@ registerCheck('run-dir-archived', ({ originalRunDir, repoRoot, expectations, dep
     originalPath = givenPath;
     archivePath = path.join(pipelinesArchiveRoot(repoRoot), archiveRelativeId(originalRunDir));
   }
-  if (fs.existsSync(originalPath)) return { result: 'fail', detail: `original path still present: ${originalPath}` };
+  // #3373: only the "still present" fail is the pending-review state; the
+  // archive-missing and untracked-archive fails below are genuine archival
+  // faults that a leave-open console does not excuse.
+  if (fs.existsSync(originalPath)) return teardownFail(runDir, `original path still present: ${originalPath}`);
   if (!fs.existsSync(archivePath)) return { result: 'fail', detail: `archive path missing: ${archivePath}` };
   const archivedWork = path.join(archivePath, 'work');
   if (fs.existsSync(archivedWork)) {
@@ -341,7 +374,24 @@ registerCheck('worktree-removed', ({ runDir, expectations, deps, cwd }) => {
   }
   const list = parseWorktreeList(porcelain);
   const match = list.find((wt) => wt.path.includes(slug) || (wt.branch && wt.branch.includes(slug)));
-  if (match) return { result: 'fail', detail: `worktree still listed: ${match.path}` };
+  if (match) return teardownFail(runDir, `worktree still listed: ${match.path}`);
+  // #3023: `git worktree prune` drops the registration but can leave the
+  // directory behind, so an unlisted worktree is not proof of removal. The
+  // exact path comes from run-state.json's `worktree` stamp (a multi-spec
+  // spec-{N}/ dir inherits the parent's), never guessed from the slug. A
+  // closed run has `worktree: null`, so fall back to `worktreeAtClose` --
+  // own first, then the parent's (readRunStateWithParent fills only
+  // `worktree` from the parent).
+  const { state, parentRunDir } = readRunStateWithParent(runDir);
+  const usable = (v) => (typeof v === 'string' && v ? v : null);
+  let recorded = state ? usable(state.worktree) || usable(state.worktreeAtClose) : null;
+  if (!recorded && parentRunDir) {
+    const parent = readRunState(parentRunDir);
+    recorded = parent && typeof parent === 'object' ? usable(parent.worktreeAtClose) : null;
+  }
+  if (recorded && fs.existsSync(recorded)) {
+    return teardownFail(runDir, `worktree unlisted but directory still present: ${recorded}`);
+  }
   return { result: 'pass', detail: '' };
 });
 
@@ -464,11 +514,12 @@ registerCheck('carrier-commit', ({ runDir, base, deps, cwd }) => {
   for (const n of missingTextual) {
     const entry = linked.get(n);
     if (!entry || !entry.hasClosingPRReference) { stillMissing.push(n); continue; }
-    let state = null;
-    try {
-      state = JSON.parse(deps.gh(['issue', 'view', String(n), '--json', 'state'], cwd)).state;
-    } catch { /* degrades to stillMissing below */ }
-    if (state !== 'CLOSED') stillMissing.push(n);
+    // #2934: read the issue's own state from the batched fetchLinkedPRs
+    // result (buildLinkedPRQuery already selects it) instead of a
+    // per-issue `gh issue view` -- a missing/falsy issueState (an older
+    // query response shape, a fixture that predates #2934) degrades to
+    // not-closed, matching this fallback's existing stillMissing posture.
+    if (entry.issueState !== 'CLOSED') stillMissing.push(n);
   }
   if (stillMissing.length) return { result: 'fail', detail: `no carrier commit found for #${stillMissing.join(', #')}` };
   return { result: 'pass', detail: '' };
@@ -636,6 +687,23 @@ function resolvePrNumber(runDir) {
   return state && state.pr && state.pr.number ? state.pr.number : null;
 }
 
+// #3358: a brief/pointer marker only counts when its comment's author is an
+// owner, member, or collaborator (`comment-trust.js`) -- anyone who can
+// comment could otherwise plant a `### Confirmed` brief and satisfy the
+// check. Scans every comment the marker test matches: trusted matches count,
+// untrusted ones take the "no such comment" path and come back as skip notes
+// the row names, so the operator sees what was passed over.
+function scanMarkerComments(comments, hasMarker) {
+  let trusted = false;
+  const ignored = [];
+  for (const c of comments) {
+    if (!c || !hasMarker(c)) continue;
+    if (isTrustedComment(c)) trusted = true;
+    else ignored.push(untrustedSkipNote(c));
+  }
+  return { trusted, ignored };
+}
+
 // ---- acceptance labeling ---------------------------------------------------
 //
 // Reproduces execution-and-verification.md's existing per-backend,
@@ -676,6 +744,7 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
     return { result: 'skip', detail: `oversight floor not cleared for #${issues.join(', #')}` };
   }
   const failing = [];
+  const passedNotes = []; // {target, ignored[]} for targets that pass but skipped untrusted comments (#3358)
 
   // Resolve each issue's target (its parent, when resolvable; itself
   // otherwise), deduping by target -- two sub-issues sharing one parent
@@ -727,42 +796,65 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
       continue;
     }
     const comments = issueData.comments || [];
-    const hasFullBrief = comments.some((c) => c.body && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed'));
-    if (hasFullBrief) continue;
+    // Skip notes for this target's untrusted marker comments; appended to its
+    // failing line, or to `passedNotes` when the target passes.
+    const ignored = [];
+    const fail = (line) => failing.push(ignored.length ? `${line}; ignored: ${ignored.join('; ')}` : line);
+    const fullBrief = scanMarkerComments(
+      comments,
+      (c) => c.body && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed')
+    );
+    ignored.push(...fullBrief.ignored);
+    if (fullBrief.trusted) {
+      if (ignored.length) passedNotes.push({ target, ignored });
+      continue;
+    }
 
     // No full brief on the issue itself -- under pr-first (run-state.json
     // carries a `pr` object), verification-brief.md's "`pr` object present"
     // branch posts the full brief on the PR instead, leaving only a
     // one-line pointer on the issue. Check for that form before failing.
     if (prNumber) {
-      const hasPointer = comments.some((c) => c.body && c.body.includes('Verification Brief posted to PR #'));
-      if (hasPointer) {
+      const pointer = scanMarkerComments(comments, (c) => c.body && c.body.includes('Verification Brief posted to PR #'));
+      ignored.push(...pointer.ignored);
+      if (pointer.trusted) {
         let prCommentsRaw;
         try {
           prCommentsRaw = deps.gh(['pr', 'view', String(prNumber), '--json', 'comments'], cwd);
         } catch (err) {
-          failing.push(`#${target}: gh pr view failed for PR #${prNumber} (${err.message})`);
+          fail(`#${target}: gh pr view failed for PR #${prNumber} (${err.message})`);
           continue;
         }
         let prComments;
         try {
           prComments = JSON.parse(prCommentsRaw).comments || [];
         } catch {
-          failing.push(`#${target}: could not parse PR #${prNumber} comments JSON`);
+          fail(`#${target}: could not parse PR #${prNumber} comments JSON`);
           continue;
         }
-        const hasPrBrief = prComments.some(
+        const prBrief = scanMarkerComments(
+          prComments,
           (c) => c.body && c.body.includes('<!-- run-comment: brief -->') && c.body.includes('### Confirmed')
         );
-        if (hasPrBrief) continue;
-        failing.push(`#${target}: pointer to PR #${prNumber} found but no confirmed Verification Brief on PR #${prNumber}`);
+        ignored.push(...prBrief.ignored);
+        if (prBrief.trusted) {
+          if (ignored.length) passedNotes.push({ target, ignored });
+          continue;
+        }
+        fail(`#${target}: pointer to PR #${prNumber} found but no confirmed Verification Brief on PR #${prNumber}`);
         continue;
       }
     }
-    failing.push(`#${target}: no comment carries a confirmed Verification Brief`);
+    fail(`#${target}: no comment carries a confirmed Verification Brief`);
   }
-  if (failing.length) return { result: 'fail', detail: failing.join('; ') };
-  return { result: 'pass', detail: '' };
+  // Notes are never dropped: a failing row carries each passing target's skipped
+  // comments after the failing lines; an all-pass row's detail is the notes.
+  if (failing.length) {
+    const passingNotes = passedNotes.flatMap((p) => p.ignored.map((note) => `ignored (#${p.target}): ${note}`));
+    return { result: 'fail', detail: [...failing, ...passingNotes].join('; ') };
+  }
+  const notes = passedNotes.flatMap((p) => p.ignored);
+  return { result: 'pass', detail: notes.length ? `ignored: ${notes.join('; ')}` : '' };
 });
 
 // ---- memory updates -----------------------------------------------------------
@@ -868,7 +960,9 @@ function renderVerifyTable(rows) {
     const resultCell = (row.result === 'skip' || row.result === 'unknown') && row.detail
       ? `${row.result} (${sanitizeCell(row.detail)})`
       : row.result;
-    const detailCell = row.result === 'fail' ? sanitizeCell(row.detail) : '';
+    // A pass row's detail is empty except for #3358's `ignored: ...` skip notes,
+    // which must reach the human; skip/unknown fold theirs into the Result cell.
+    const detailCell = row.result === 'fail' || (row.result === 'pass' && row.detail) ? sanitizeCell(row.detail) : '';
     lines.push(`| ${row.check} | ${resultCell} | ${detailCell} |`);
   }
   return lines.join('\n');

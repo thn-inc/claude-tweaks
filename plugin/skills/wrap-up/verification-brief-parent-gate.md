@@ -37,10 +37,19 @@ Every step from **Enumerate the parent's sub-issues** onward is shared, unchange
   to this entry exactly as it does to a sub-issue-side one — take the `local-files` branches when
   that is the driver.
 
+**Return to the Try it post (#2821).** A sub-issue-side entry, on every exit of this procedure —
+`incomplete`, `gated`/`resolved`, `exceeds: false`, or `exceeds: true` after **Apply the gate** —
+returns to `verification-brief.md`'s **Posting it alone** and posts this sub-issue's Try it block
+(with any end-to-end variant appended to `"$TRY_IT"`). The one exception is the fail-open fallback
+below, which hands this record to the no-parent path, so the block lands where that path's
+Oversight-floor gate puts it: embedded in the record's own brief (Step 4's template) when it clears
+the floor, posted alone (**Posting it alone**) when it does not. The parent-side
+(`/claude-tweaks:tidy`) entry does not post one.
+
 **Fail open on every `gh` call in this section.** If `gh` is unavailable, unauthenticated, the
 repo has no GitHub remote, or any parent-gate `gh` call below fails: a **sub-issue-side** entry
-skips the Parent-Gate Procedure entirely and falls back to today's behavior (apply `demo:pending`
-to this record itself via Steps 1-4 in `verification-brief.md`) — never blocking the wrap-up, the
+skips the Parent-Gate Procedure entirely and falls back to the no-parent path (`verification-brief.md`'s
+Oversight-floor gate, then Steps 1-4 on this record itself when it clears the floor) — never blocking the wrap-up, the
 auto-merge short-circuit, or the dispatched group's merge gate. The **parent-side** entry skips
 this one parent for this run, leaving its `[parent-gate]` finding surfaced and unmutated — never
 failing the whole `/tidy` run over one parent's `gh` call. This paragraph is moot under
@@ -70,12 +79,13 @@ decomposed UI feature can therefore reach `demo:pending` on its parent with no b
 having run for some sub-issue, and the parent brief must not imply otherwise.
 
 **So the brief carries the human instead.** Part 2 of **Compose the parent brief** below — the
-end-to-end walkthrough, rendered inline inside `### Confirmed` — is the only walk instruction a
-parent brief carries (it omits the `### Observation plan` section, so `/claude-tweaks:demo` runs no
-Prepare/Validate/Show for a parent — part 2's inline end-to-end walkthrough inside Confirmed is
-what carries the human). For a parent whose assembled sub-issues
-touch UI, that walkthrough must therefore name the pages or journeys to open and what to look
-for, not just the skill invocation — it is standing in for the safety net, not summarizing it.
+end-to-end walkthrough, rendered as the brief's `### Try it — end to end` section
+(`_shared/try-it.md`'s end-to-end variant) — is the only walk instruction a parent brief carries
+(it omits the `### Observation plan` section, so `/claude-tweaks:demo` runs no Prepare/Validate/Show
+for a parent — it renders that Try it section first and goes to the verdict). For a parent whose
+assembled sub-issues touch UI, that walkthrough must therefore name the pages or journeys to open
+and what to look for, not just the skill invocation — it is standing in for the safety net, not
+summarizing it.
 
 ## Resolve the parent
 
@@ -246,9 +256,16 @@ own (`specify/record-creation.md`'s Parent record section), so there is nothing 
 regardless.
 
 - **`exceeds: false`** — the parent closes cleanly: no `demo:pending`, no brief, same as a
-  below-floor sub-issue record on the non-parent path. Stop here; do not compose the parent brief.
+  below-floor sub-issue record on the non-parent path. Do not compose the parent brief. The
+  walkthrough is not gated (#2821): on a sub-issue-side entry, compose the end-to-end variant
+  (`_shared/try-it.md`) across the assembled sub-issues and append it to this run's `"$TRY_IT"`
+  file (`verification-brief.md`'s **Try it block**), so it posts with the sub-issue's own block and
+  reaches the Pipeline Summary. Parent-side entry (`/claude-tweaks:tidy`): stop here — no delivering
+  run exists to carry it.
 - **`exceeds: true`** — proceed to **Compose the parent brief** below, exactly as `due` alone
-  used to trigger before this gate existed.
+  used to trigger before this gate existed. On a sub-issue-side entry, append the same end-to-end
+  variant that brief carries to `"$TRY_IT"` too, as on `exceeds: false` — one rule for both
+  outcomes, so the run that opens the parent gate shows the end-to-end path in its Pipeline Summary.
 
 ## Compose the parent brief
 
@@ -258,24 +275,24 @@ A parent brief consists of:
    to confirm — e.g. `F1: #48 assumed #46 exposes getStatus() — confirm it does.` Rows still
    `open` are included and marked unverified; they **do not** block the gate from opening. The
    register is deliberately not a hard gate anywhere (`skills/review/SKILL.md:173-175`).
-2. One walkthrough of the feature's primary path across the assembled sub-issues. For this repo the
-   runnable unit is a skill invocation, not a deploy — name the invocation and the observable
-   outcome.
+2. One walkthrough of the feature's primary path across the assembled sub-issues — the
+   end-to-end variant of `_shared/try-it.md`, rendered as the brief's `### Try it — end to end`
+   section.
 
 Where no register exists (fewer than 4 sub-issues — the threshold that was the
 `promise-register-min-leaves` policy lever until its retirement in #331; removal trail:
-`_shared/policy-deprecations.md` — or `work-backend: local-files`), part 2 alone is the brief.
+`_shared/policy-deprecations.md` — or `work-backend: local-files`), part 2 alone carries the brief, and `### Confirmed` reads `No cross-spec promise register — walk the end-to-end path in Try it above.` (the section stays: the already-posted check below and `engine-verify.js` both key on it).
 
 Render the same `## Verification Brief` template Step 4 (`verification-brief.md`) renders, with:
 **The ask** — the parent's own design summary (problem, chosen approach — `_shared/work-record.md`'s
 Decomposition rules); **What shipped** — one-paragraph summary of what was delivered across the
-assembled sub-issues; **Confirmed** — parts 1 and 2 above, in place of Step 4's kind-keyed Confirmed
-branches; **`{poster}`** in the template's own footer — substitute the **skill** actually
+assembled sub-issues; **Confirmed** — part 1 above, in place of Step 4's kind-keyed Confirmed
+branches; **Try it** — part 2, in place of Step 4's per-record Try it block; **`{poster}`** in the template's own footer — substitute the **skill** actually
 running *this* composition (see the Routing table in `verification-brief.md`), never hardcode
 `` `/claude-tweaks:wrap-up` ``: `` `/claude-tweaks:wrap-up` `` for either wrap-up entry (Phase 4's
 execution step or the auto-merge short-circuit), `` `/claude-tweaks:dispatch` `` for the group auto-merge gate,
 `` `/claude-tweaks:tidy` `` for the backstop entry. Omit the **Observation plan** section — part 2's
-walkthrough already names the entry point inline within Confirmed. A parent brief carries the `### Branch`
+Try it section already names the entry point. A parent brief carries the `### Branch`
 section on the same condition Step 4 states — the durability record belongs to the run in hand,
 not to the parent, so it is present exactly when that run produced one.
 
@@ -302,7 +319,10 @@ comment landed but whose label add failed still reads `due`, so `/tidy`'s `Open 
 action re-enters this section for that parent on every future run. Fetch the parent's comments
 (`gh issue view $PARENT_NUM --json comments`, the same lookup `/claude-tweaks:demo`'s Step 1
 already does) and test whether **any** of them contains a `## Verification Brief` heading **with
-a `### Confirmed` section** — every comment on the parent, not just the most recent one, which a
+a `### Confirmed` section** — counting only a comment from a trusted author
+(`_shared/pr-run-comments.md`'s Trusted authors; an untrusted comment carrying the heading reads as
+no brief posted, and each one skipped is named in that section's skip notice in the gate's output,
+since planting a heading must not suppress the real post) — every comment on the parent, not just the most recent one, which a
 human reply or a bot notification will routinely have displaced (this population is long-lived
 open records that other people comment on, so a most-recent-only test reports "no brief" on a
 parent that plainly has one, and posts a duplicate). The `### Confirmed` requirement matches

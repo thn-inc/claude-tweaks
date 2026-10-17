@@ -10,7 +10,7 @@ verification work done in this session, check whether it already correlates to a
 anywhere in this conversation. Work with no correlating `#N` is a session-recall candidate —
 compose its Verification Brief content now, directly from recall, into the same shape
 `verification-brief.md` renders (`### The ask` / `### What shipped` / `### Confirmed` / `###
-Observation plan`):
+Observation plan` / `### Try it`):
 
 - **The ask** — what was actually requested in this conversation, for this unit of work.
 - **What shipped** — what was actually implemented, from recall.
@@ -18,7 +18,7 @@ Observation plan`):
   manual checks), described plainly, including what wasn't checked — not a checklist pretending
   completeness.
 - **Observation plan** — compose the `### Observation plan` section directly from recall, per
-  `../_shared/observation-plan.md`'s schema, grammar, and per-kind semantics — picking the
+  `_shared/observation-plan.md`'s schema, grammar, and per-kind semantics — picking the
   Surface kind by builder judgment from what this session actually did, never from a classifier.
   First recall which paths this unit of work actually touched this session — unlike the
   record-backed path there is no `{base}...HEAD` range to diff here (session-recall work rarely
@@ -33,6 +33,7 @@ Observation plan`):
   evidence, which is worse than no section at all. This is the same omission rule that already
   applied under the pre-schema brief format (what was then called "See it yourself"), restated
   here for the Observation plan schema.
+- **Try it** — compose the block from recall per `_shared/try-it.md` (its Sources and Rules; the Entry point from the Observation plan just composed). When the omission rule above dropped that plan, take the Entry point from what recall says shipped; when recall cannot name one there either, omit the Try it block by the same rule — an invented entry point is the same unconfident guess — and say so in one plain line where the block would render.
 
 This path has no fetch step — there is no comment or record body to read from. A fresh `/claude-tweaks:demo`
 session with no memory of any unrecorded work naturally finds nothing here; that's expected, not
@@ -59,10 +60,22 @@ position. A `.comments[-1]` shortcut holds only when the brief happens to be the
 comment, which nothing about the record predicts: any later reply or bot notification displaces
 it, and a decomposition parent whose gate was completed by the Parent-Gate Procedure's
 already-posted-brief branch (`wrap-up/verification-brief.md`'s **Apply the gate**) received its
-label with no comment posted at all, leaving its brief arbitrarily far from last. Go straight to
-Step 2 with it.
+label with no comment posted at all, leaving its brief arbitrarily far from last. Count only a
+comment from a trusted author (`_shared/pr-run-comments.md`'s Trusted authors — `gh issue view
+--json comments` returns `authorAssociation`); an untrusted comment carrying the heading reads as
+no matching comment, and each one skipped is named in that section's skip notice, one line above
+the verdict. Go straight to Step 2 with it.
 
-**No comment anywhere carries the heading** (`#205`): the label write landed but the brief post
+**Under `pr-first` the brief lives on the PR** (`wrap-up/verification-brief.md` Step 4's `pr`
+object present branch), and the issue carries only the unmarkered pointer line `Verification Brief
+posted to PR #{pr-number}: {pr-url}`. When no issue comment carries the heading but one carries
+that pointer, take `{pr-number}` from the last such comment — counting only Trusted authors' comments,
+with the skip notice, as above — and run the **PR run-comment lookup** below for its `brief` comment —
+that comment, minus its marker line, is the Verification Brief; go
+straight to Step 2 with it. A lookup that finds no `brief` comment, or fails, falls through to the
+closing-commit recovery below, as the no-heading case does.
+
+**No comment anywhere carries the heading or the pointer** (`#205`): the label write landed but the brief post
 did not — a near-unreachable state, since every acceptance-labeling path posts the comment before
 the label (`verification-brief.md`'s Step 4, `verification-brief-parent-gate.md`'s Apply the
 gate), but not one this lookup should treat as an error. Fall through to the closing-commit
@@ -142,15 +155,21 @@ same shape as the no-arguments path, sourced like this:
   checked, never a checklist pretending completeness.
 - **Observation plan** — run the commit's changed-path list through `verificationSurface`
   (`bin/lib/issues/acceptance.js`) as the floor classification, then compose the `### Observation
-  plan` section per `../_shared/observation-plan.md`'s schema from what it returns: `interactive`
+  plan` section per `_shared/observation-plan.md`'s schema from what it returns: `interactive`
   → compose a best-effort `app-route` plan, resolving the entry point via
-  `skills/_shared/dev-url-detection.md`. `non-interactive` → compose the manual steps exactly as
+  `_shared/dev-url-detection.md`. `non-interactive` → compose the manual steps exactly as
   before — concrete commands, file paths, or behavior the commit's own message or path list
   evidences — presented as a `cli` plan when those steps name a runnable command, else a `diff`
   plan (Entry point: `{sha}^..{sha}`). That changed-path list is a real `git` result here, so the
   "recall can't produce a path list" omission case does not arise. **Parent-linked records:** also
   run the Full verification pointer sub-procedure below, and append its block to the composed plan
   when it resolves one.
+- **Try it** — a below-floor record or a parent-linked sub-issue had its walkthrough posted alone,
+  as its PR's `<!-- run-comment: try-it -->` (or `try-it:{n}`) comment: run the **PR run-comment
+  lookup** below against the record's closing PR first, and render what it returns verbatim — the
+  same text the Pipeline Summary and the PR showed. Only when it returns nothing, compose the block
+  per `_shared/try-it.md` from the record's Acceptance Criteria and the Observation plan's Entry
+  point; a reconstruction asserts nothing past what the commit shows.
 
 Go to Step 2 with it.
 
@@ -177,6 +196,40 @@ Brief` body section. Same `demo:pending` → closing-commit → session-recall f
 above, keyed on `facets.acceptance === 'pending'` instead of the label. The closing-commit step is
 identical — it reads git, not the backend, so a local record closed by a `Fixes #N` commit
 reconstructs the same way.
+
+### PR run-comment lookup (`pr-first` records)
+
+Cited by the `demo:pending` pointer case and the closing-commit reconstruction's Try it step, both
+above — stated once, run from either. `work-backend: github-issues` only; a `local-files` record
+has no PR and skips it.
+
+1. **Resolve the PR.** The pointer case already holds `{pr-number}`. Otherwise read the record's
+   closing PR from the issue side — `gh issue view {n} --json closedByPullRequestsReferences`, the
+   native field `tidy/issue-claims-backstops.md`'s parked-restoration backstop already reads. It
+   lists only PRs whose body carries a closing keyword; empty → nothing to read. More than one →
+   use the one step 2 reports `"state": "MERGED"`; several merged → the last in the list; none
+   merged → nothing to read, since no unmerged PR delivered the record.
+2. **Read its comments by marker** — `_shared/pr-run-comments.md`'s Find step (its `{host}/{owner}/{repo}`
+   resolution, `gh pr view {pr-number} --repo {host}/{owner}/{repo} --json state,comments`, first-line
+   `startswith` marker test — the same PR read `bin/lib/wrap-up/engine-verify.js`'s
+   acceptance-labeling check runs on a pointer), selecting comment bodies rather than ids and only
+   from trusted authors (that file's Trusted authors; an untrusted marker comment reads as no
+   matching comment, and the skipped marker comment is named in its skip notice, one line above the
+   verdict, the shape step 3 uses for a failed lookup):
+   - **Try it** — `<!-- run-comment: try-it:{n} -->` (a multi-spec run), else
+     `<!-- run-comment: try-it -->`, else the `<!-- run-comment: brief -->` comment's `### Try it`
+     section.
+   - **Brief** (pointer case only) — the `<!-- run-comment: brief -->` comment that also carries
+     `### Confirmed`, `engine-verify.js`'s own test.
+
+   Two comments of one kind → take the one whose second line reads `Supersedes {url}` naming the
+   other: the MCP transport cannot edit, so its newer post is the current one
+   (`_shared/pr-run-comments.md`'s **MCP transport**). With no such line, the pair is the Find
+   step's race case — take the **first**, as that step does. Drop the marker line, and a
+   `Supersedes …` line after it, and use the rest verbatim.
+3. **Fail open, visibly.** No PR, or no matching comment, returns nothing and the caller's own
+   fallback runs. A `gh` failure in step 1 or 2 does the same and also states so in one plain line
+   above the verdict, naming which lookup failed — never a silent omission.
 
 ### Full verification pointer (parent-linked records)
 

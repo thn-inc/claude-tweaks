@@ -250,7 +250,9 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    local branch delete (only under `--merged`, and only when the branch isn't the integration
    branch itself), and the remote branch delete (`pr-first-merge-post-merge.md`'s `## Step 5:
    Delete the remote branch` mechanism, verbatim) — replacing what used to be 4-5 hand-assembled
-   commands per run. **Own-worktree carve-out:** never call `teardown-run` against the worktree
+   commands per run. A `worktree: registration pruned but directory still present at {path}` line
+   is not a completed removal: surface the path in the report and leave the directory for manual
+   removal — never retry-delete it. **Own-worktree carve-out:** never call `teardown-run` against the worktree
    the session is standing in **while it is still live** — that removal path is `ExitWorktree`
    only, per step 4 above and `[IL-58]`; `teardown-run`'s own worktree-removal step is for a
    worktree this session does not occupy. Once step 4 has already removed it, step 5.5 below

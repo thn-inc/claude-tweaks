@@ -11,6 +11,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { sectionText } = require('../issues/materialize-format');
+const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 
 const CHECK_HEADER = 'compose-record.js: body is not spec-shaped:';
 const RELEASE_NOTE_GAPS = ['missing section: ## Release Note', 'empty section: ## Release Note'];
@@ -78,14 +79,28 @@ function labelNames(labels) {
     .filter(Boolean);
 }
 
+// Is this one comment an UNRESOLVED tidy decision whose Proposed: line is this shape's own
+// staged action, word for word? Text only -- who wrote it is hasPendingTidyDecision's call.
+function isPendingTidyDecision(c) {
+  const text = String((c && c.body) || '');
+  if (!text.includes('<!-- needs-decision: tidy -->') || text.includes('**Resolved:**')) return false;
+  return text.split(/\r?\n/).some((l) => l.trim() === `**Proposed:** ${PROPOSED_ACTION}`);
+}
+
 // Worklist rule, second check (step-1-records.md): an UNRESOLVED tidy decision comment whose
-// Proposed: line is this shape's own staged action, word for word.
+// Proposed: line is this shape's own staged action, word for word. #3358: the marker is
+// plantable by anyone who can comment, so only an owner/member/collaborator comment counts --
+// an untrusted one takes the "no such comment" path (the record stays on the worklist).
 function hasPendingTidyDecision(comments) {
-  return (Array.isArray(comments) ? comments : []).some((c) => {
-    const text = String((c && c.body) || '');
-    if (!text.includes('<!-- needs-decision: tidy -->') || text.includes('**Resolved:**')) return false;
-    return text.split(/\r?\n/).some((l) => l.trim() === `**Proposed:** ${PROPOSED_ACTION}`);
-  });
+  return (Array.isArray(comments) ? comments : []).some((c) => isTrustedComment(c) && isPendingTidyDecision(c));
+}
+
+// Skip notes for the untrusted comments that WOULD have excluded the record had they been
+// trusted -- the only ones whose being passed over changes the outcome.
+function untrustedTidyDecisionNotes(comments) {
+  return (Array.isArray(comments) ? comments : [])
+    .filter((c) => !isTrustedComment(c) && isPendingTidyDecision(c))
+    .map(untrustedSkipNote);
 }
 
 function excluded(record, driver) {
@@ -101,7 +116,12 @@ function scanRecords(records, { driver, checkCli } = {}) {
     if (!record || !record.facets || record.facets.stage !== 'ready') continue;
     if (excluded(record, driver)) continue;
     const local = driver === 'local-files';
-    const base = { ref: local ? record.path : `#${record.number}`, id: local ? record.id : record.number, title: String(record.title || '') };
+    const base = {
+      ref: local ? record.path : `#${record.number}`,
+      id: local ? record.id : record.number,
+      title: String(record.title || ''),
+      skippedUntrusted: untrustedTidyDecisionNotes(record.comments),
+    };
     if (typeof record.body !== 'string') {
       candidates.push({ ...base, verdict: 'scan-error', code: null, stderr: 'record carries no body field', sha: null, deliverables: null });
       continue;
@@ -119,7 +139,11 @@ function scanRecords(records, { driver, checkCli } = {}) {
 function summaryLine(candidates, outPath) {
   if (!candidates.length) return null;
   const matches = candidates.filter((c) => c.verdict === 'release-note-only').length;
-  return `—\t[release-note] ${matches} ready record(s) missing only a Release Note, ${candidates.length - matches} scan error(s) — Fill Release Note (candidates: ${outPath})`;
+  // #3358: an untrusted tidy-decision comment passed over is the reason a record is on the
+  // worklist at all -- name each one (with its record) on the same single row.
+  const passedOver = candidates.flatMap((c) => (c.skippedUntrusted || []).map((note) => `${c.ref}: ${note}`));
+  const notes = passedOver.length ? ` — ignored untrusted decision comment(s): ${passedOver.join('; ')}` : '';
+  return `—\t[release-note] ${matches} ready record(s) missing only a Release Note, ${candidates.length - matches} scan error(s)${notes} — Fill Release Note (candidates: ${outPath})`;
 }
 
 module.exports = {

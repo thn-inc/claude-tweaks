@@ -105,7 +105,8 @@ label name(s) first, in the order they appear on the record's own `labels` array
 for a deterministic Type column.
 
 A record whose types include `needs:decision` also needs the live proposal text for Step 4: read
-its newest comment matching `<!-- needs-decision:` with no `**Resolved:**` line anywhere in its
+its newest comment from a trusted author (`_shared/pr-run-comments.md`'s Trusted authors; each
+skipped one is named on stderr) matching `<!-- needs-decision:` with no `**Resolved:**` line anywhere in its
 body (`_shared/work-record.md`'s Decision-comment template and resolution rule), and capture that
 comment's `**Proposed:** {text}` line verbatim. The snapshot-filtered `needsRecords` set already
 carries each record's `comments` array (part of `_shared/record-queue-fetch.md`'s `UNION_FIELDS`,
@@ -131,6 +132,7 @@ eval "$(node -e "
 ")"
 node -e "
   const { execFileSync } = require('child_process');
+  const { isTrustedComment, untrustedSkipNote } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/comment-trust.js');
   const { needsRecords, botBlockedRecords, botParkedRecords } = require('$ST_BACKLOG_ATTENTION_SNAPSHOT_FILTERED');
   const solutionUnjustified = require('$ST_BACKLOG_ATTENTION_SOLUTION_UNJUSTIFIED');
   const shapedHeadless = require('$ST_BACKLOG_ATTENTION_SHAPED_HEADLESS')
@@ -171,8 +173,11 @@ node -e "
   }
   for (const r of byNumber.values()) {
     if (!r.types.includes('needs:decision')) continue;
-    const live = getComments(r)
-      .filter((c) => c.body && /^<!-- needs-decision: (\S+) -->/m.test(c.body) && !c.body.includes('**Resolved:**'))
+    const unresolved = getComments(r)
+      .filter((c) => c.body && /^<!-- needs-decision: (\S+) -->/m.test(c.body) && !c.body.includes('**Resolved:**'));
+    unresolved.filter((c) => !isTrustedComment(c)).forEach((c) => console.error(untrustedSkipNote(c)));
+    const live = unresolved
+      .filter((c) => isTrustedComment(c))
       .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
       .pop();
     const match = live && live.body.match(/\*\*Proposed:\*\*\s*(.+)/);

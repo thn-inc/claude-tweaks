@@ -18,7 +18,7 @@ files:
    - **Check:** Spec 1 gets no boundary check (the creation-time catch-up just ran). A boundary where `git rev-list --count HEAD..origin/{integration-branch}` is zero writes nothing to `decisions.md` — silence is the log-only-when-changed convention, not a skipped check. A failed fetch is the one loud silence: it writes the distinct `check skipped this boundary` entry so "checked, clean" and "check didn't run" stay distinguishable.
 
 2. **Read a trivial-drift auto-merge entry** — After a boundary where origin moved but nothing overlapped, open the parent run directory's `decisions.md`.
-   - **Action:** The check computed the incoming file set (three-dot `--name-status`, rename entries contributing both paths) against the run's own side (`git merge-base --end-of-options HEAD "origin/{integration-branch}"`, never `manifest.yml`'s `baseSha`) and the remaining specs' Key Files, found no intersection, and merged.
+   - **Action:** The check computed the incoming file set (three-dot `--name-status`, rename entries contributing both paths) against the run's own side (`git merge-base --end-of-options HEAD "origin/{integration-branch}"`, never a base commit stored in `manifest.yml`) and the remaining specs' Key Files, found no intersection, and merged.
    - **Check:** One `AUTO {time} — Boundary freshness check (before spec {N}): shared branch advanced from {before} to {after} ({K} commit(s) from origin/{integration-branch})…` entry per merging boundary, in the **parent** `decisions.md` — not a per-spec subdirectory, and never a "sweep clean" entry for quiet boundaries.
 
 3. **Answer the Boundary-drift gate when it fires** — A boundary whose incoming diff overlaps run-modified paths or a remaining spec's Key Files (or whose merge conflicts) stops the pipeline with a three-option `AskUserQuestion`.
@@ -32,7 +32,7 @@ files:
 
 5. **Finish the batch with an unpolluted curation diff** — Let the run reach the consolidated Review Console and batch curation.
    - **Action:** `multispec-batch-curation.md`'s batch scope derives from `git merge-base --end-of-options HEAD "origin/{integration-branch}"` to `HEAD`, so the upstream commits the boundary merges brought in are excluded from the batch diff.
-   - **Check:** With zero boundary merges, the merge-base equals `manifest.yml`'s `baseSha` — the diff is byte-identical to the old behavior. `baseSha` itself still appears in `manifest.yml` as diagnostic provenance (the batch's true starting commit); nothing reads it as a diff base anymore.
+   - **Check:** With zero boundary merges, the merge-base is the batch's starting commit — the diff is byte-identical to the old behavior. `manifest.yml` does not record that commit: `manifest-init` (#3035) never writes the legacy `baseSha` key, nothing reads it, and an older manifest that still carries one keeps it untouched on rewrite.
 
 ## Outcome
 

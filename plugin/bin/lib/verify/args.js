@@ -61,10 +61,20 @@ function parseCmdTimeout(value) {
   return { name, ms: Number(msText) };
 }
 
-// argv = process.argv.slice(2). Throws UsageError on any malformed input —
-// the CLI prints message + USAGE to stderr and exits non-zero (AC6).
-// --stamp-status (#1921) is a read-only mode: it needs no --cmd at all.
-function parseArgs(argv) {
+// #2806: parseArgs covers four distinct CLI modes (a normal check run,
+// --stamp-status, --changed-files, and --scope's sub-variant of the check
+// run) that used to share one function with roughly ten interleaved
+// cross-mode incompatibility checks. It is now a shared tokenizer (below)
+// feeding three per-mode validate functions — each mode's own rules live
+// together, and a mode's validator never inspects another mode's flags
+// except to reject them. `parseArgs` itself only resolves which mode applies
+// and dispatches.
+
+// Shared flag-tokenizing loop: splits argv into typed buckets, with
+// per-flag validation (malformed values, duplicate --cmd names, unknown
+// flags). No cross-flag or cross-mode validation happens here — that is
+// each mode's own job below. argv = process.argv.slice(2).
+function tokenize(argv) {
   const cmds = [];
   const cmdEnvs = [];
   const cmdTimeouts = [];
@@ -130,28 +140,33 @@ function parseArgs(argv) {
     }
     throw new UsageError(`unknown flag: ${flag}`);
   }
-  // #3022: a --scope declaration can supply every check's command itself
-  // (map-form checks.tests, plus checks.types/checks.lint) — verify.js's own
-  // H2 check, once the declaration is read, is what actually enforces that
-  // every selection-required name has a command from one source or the
-  // other; this parser has no fs access and cannot read the declaration to
-  // know whether it does, so it only relaxes the blanket "give me at least
-  // one" floor, never replaces H2's real check.
-  if (cmds.length === 0 && !stampStatus && !changedFiles && !scope) throw new UsageError('at least one --cmd <name>=<command> is required');
-  // #2779: resolved after the loop so --cmd-env may precede its --cmd. A check
-  // carries an `env` key only when a --cmd-env named it — a --cmd-only
+  return {
+    cmds, cmdEnvs, cmdTimeouts, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch,
+    changedFiles, run, cwd, baseline, baselineCmds,
+  };
+}
+
+// Attaches each --cmd-env/--cmd-timeout onto its --cmd, in every mode and
+// before any mode-specific check: when argv carries several errors, the
+// first one thrown is the one the CLI prints, so this keeps the pre-split
+// order — env duplicate, env undeclared, timeout duplicate, timeout
+// undeclared — rather than letting each mode reorder it (#2806 review).
+function attachCmdEnvAndTimeout(raw) {
+  const declared = () => raw.cmds.map((c) => c.name).join(', ') || 'none';
+  // #2779: resolved after tokenizing so --cmd-env may precede its --cmd. A
+  // check carries an `env` key only when a --cmd-env named it — a --cmd-only
   // invocation parses to exactly the shape it did before the flag existed.
   // Object.fromEntries defines own properties, so a variable literally named
   // __proto__ stays data rather than touching the prototype.
   // #3022: the duplicate-variable check runs over every distinct --cmd-env
   // name, not just ones with a matching --cmd — a declared-only suite (no
   // --cmd, map-form --scope) can carry duplicate --cmd-env variables too.
-  for (const name of new Set(cmdEnvs.map((e) => e.name))) {
-    const mine = cmdEnvs.filter((e) => e.name === name);
+  for (const name of new Set(raw.cmdEnvs.map((e) => e.name))) {
+    const mine = raw.cmdEnvs.filter((e) => e.name === name);
     const keys = mine.map((e) => e.key);
     const dup = keys.find((k, i) => keys.indexOf(k) !== i);
     if (dup !== undefined) throw new UsageError(`duplicate --cmd-env variable for ${name}: ${dup}`);
-    const c = cmds.find((cc) => cc.name === name);
+    const c = raw.cmds.find((cc) => cc.name === name);
     if (c) c.env = Object.fromEntries(mine.map((e) => [e.key, e.value]));
   }
   // #3022: a --cmd-env naming neither a --cmd nor a declared suite is still
@@ -160,62 +175,36 @@ function parseArgs(argv) {
   // scope-aware check (once the declaration is read) rules out the rest and
   // raises the same "names no check" message for a name that is genuinely
   // neither declared nor passed.
-  const undeclared = cmdEnvs.find((e) => !cmds.some((c) => c.name === e.name));
-  if (undeclared && !scope) {
-    throw new UsageError(`--cmd-env "${undeclared.name}" names no declared --cmd (declared: ${cmds.map((c) => c.name).join(', ') || 'none'})`);
+  const undeclaredEnv = raw.cmdEnvs.find((e) => !raw.cmds.some((c) => c.name === e.name));
+  if (undeclaredEnv && !raw.scope) {
+    throw new UsageError(`--cmd-env "${undeclaredEnv.name}" names no declared --cmd (declared: ${declared()})`);
   }
   // #3063: resolved the same way as --cmd-env above, but scalar per check —
   // a check carries a `timeout` key only when a --cmd-timeout named it.
-  for (const c of cmds) {
-    const mine = cmdTimeouts.filter((t) => t.name === c.name);
+  for (const c of raw.cmds) {
+    const mine = raw.cmdTimeouts.filter((t) => t.name === c.name);
     if (mine.length === 0) continue;
     if (mine.length > 1) throw new UsageError(`duplicate --cmd-timeout for ${c.name}`);
     c.timeout = mine[0].ms;
   }
-  const undeclaredTimeout = cmdTimeouts.find((t) => !cmds.some((c) => c.name === t.name));
+  const undeclaredTimeout = raw.cmdTimeouts.find((t) => !raw.cmds.some((c) => c.name === t.name));
   if (undeclaredTimeout) {
-    throw new UsageError(`--cmd-timeout "${undeclaredTimeout.name}" names no declared --cmd (declared: ${cmds.map((c) => c.name).join(', ') || 'none'})`);
+    throw new UsageError(`--cmd-timeout "${undeclaredTimeout.name}" names no declared --cmd (declared: ${declared()})`);
   }
-  // #3043: the mode-conflict check runs first so a read-only mode carrying a
-  // baseline flag gets this message, not a generic one.
-  if ((stampStatus || changedFiles) && (baseline !== null || baselineCmds.length)) {
-    throw new UsageError('--baseline/--baseline-cmd apply to a check run — not to --stamp-status or --changed-files');
-  }
-  if (baseline !== null && baselineCmds.length === 0) throw new UsageError('--baseline requires at least one --baseline-cmd');
-  if (baseline === null && baselineCmds.length) throw new UsageError('--baseline-cmd requires --baseline');
-  const seenBaselineNames = new Set();
-  for (const b of baselineCmds) {
-    if (!cmds.some((c) => c.name === b.name)) {
-      throw new UsageError(`--baseline-cmd "${b.name}" names no declared --cmd (declared: ${cmds.map((c) => c.name).join(', ') || 'none'})`);
-    }
-    if (!b.template.includes('{file}')) throw new UsageError(`--baseline-cmd ${b.name} template must contain {file}, got: ${b.template}`);
-    if (seenBaselineNames.has(b.name)) throw new UsageError(`duplicate --baseline-cmd name: ${b.name}`);
-    seenBaselineNames.add(b.name);
-  }
-  if (stampStatus && cmds.length) throw new UsageError('--stamp-status takes no --cmd');
-  if (changedFiles && cmds.length) throw new UsageError('--changed-files takes no --cmd');
-  if (changedFiles && scope !== null) throw new UsageError('--changed-files takes no --scope');
-  if (changedFiles && gitDir !== null) throw new UsageError('--changed-files takes no --git-dir');
-  if (changedFiles && stampStatus) throw new UsageError('--changed-files and --stamp-status are separate modes');
-  // L12 (review, #1922): --base/--integration-branch only mean anything
-  // alongside --scope, and --stamp-status is a read-only mode that takes
-  // none of the three — each combination is a usage error, not a silently
-  // ignored flag.
-  if (stampStatus && (scope !== null || base !== null || integrationBranch !== null)) {
-    throw new UsageError('--stamp-status takes no --scope/--base/--integration-branch');
-  }
-  if (!scope && !changedFiles && (base !== null || integrationBranch !== null)) {
-    throw new UsageError('--base and --integration-branch require --scope or --changed-files');
-  }
-  if (run !== null && (stampStatus || changedFiles)) {
-    throw new UsageError('--run applies to a check run — not to --stamp-status or --changed-files');
-  }
-  if (cwd !== null && (stampStatus || changedFiles)) {
-    throw new UsageError('--cwd applies to a check run — not to --stamp-status or --changed-files');
-  }
+}
+
+// cmdTimeouts is an intermediate tokenizer bucket only — by the time a mode
+// validator returns, its contents are either attached onto the matching
+// `cmds` entry (as `.timeout`) or have already thrown, so the public result
+// never carries it as a top-level key. cmdEnvs is the one exception (#3022).
+function toResult(raw) {
+  const {
+    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run,
+    cwd, baseline, baselineCmds, cmdEnvs,
+  } = raw;
   return {
-    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run, cwd,
-    baseline, baselineCmds,
+    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run,
+    cwd, baseline, baselineCmds,
     // #3022: every --cmd-env entry, matched or not — verify.js's own
     // --scope block uses the unmatched ones to bind env vars onto a
     // declared-only suite (no --cmd) once it has read the declaration.
@@ -223,6 +212,98 @@ function parseArgs(argv) {
     // callers that only need the unmatched ones filter by cmds name.
     cmdEnvs,
   };
+}
+
+const BASELINE_MODE_CONFLICT = '--baseline/--baseline-cmd apply to a check run — not to --stamp-status or --changed-files';
+const RUN_MODE_CONFLICT = '--run applies to a check run — not to --stamp-status or --changed-files';
+const CWD_MODE_CONFLICT = '--cwd applies to a check run — not to --stamp-status or --changed-files';
+
+// --stamp-status (#1921): a read-only mode needing no --cmd at all. Every
+// run-scoped flag is a usage error here, not a silently ignored one.
+function validateStampStatus(raw) {
+  attachCmdEnvAndTimeout(raw);
+  // #3043: checked first so a read-only mode carrying a baseline flag gets
+  // this message, not the generic --cmd one below.
+  if (raw.baseline !== null || raw.baselineCmds.length) throw new UsageError(BASELINE_MODE_CONFLICT);
+  if (raw.cmds.length) throw new UsageError('--stamp-status takes no --cmd');
+  // L12 (review, #1922): --base/--integration-branch only mean anything
+  // alongside --scope, and --stamp-status takes none of the three — each
+  // combination is a usage error, not a silently ignored flag.
+  if (raw.scope !== null || raw.base !== null || raw.integrationBranch !== null) {
+    throw new UsageError('--stamp-status takes no --scope/--base/--integration-branch');
+  }
+  if (raw.run !== null) throw new UsageError(RUN_MODE_CONFLICT);
+  if (raw.cwd !== null) throw new UsageError(CWD_MODE_CONFLICT);
+  return toResult(raw);
+}
+
+// --changed-files (#1923): a read-only mode needing no --cmd/--scope, but
+// (unlike --stamp-status) --base/--integration-branch are meaningful here.
+function validateChangedFiles(raw) {
+  attachCmdEnvAndTimeout(raw);
+  if (raw.baseline !== null || raw.baselineCmds.length) throw new UsageError(BASELINE_MODE_CONFLICT);
+  if (raw.cmds.length) throw new UsageError('--changed-files takes no --cmd');
+  if (raw.scope !== null) throw new UsageError('--changed-files takes no --scope');
+  if (raw.gitDir !== null) throw new UsageError('--changed-files takes no --git-dir');
+  if (raw.run !== null) throw new UsageError(RUN_MODE_CONFLICT);
+  if (raw.cwd !== null) throw new UsageError(CWD_MODE_CONFLICT);
+  return toResult(raw);
+}
+
+// --stamp-status and --changed-files together: always an error, but a more
+// specific conflict either mode alone would report still wins over "separate
+// modes" — the pre-split order (#2806 review).
+function rejectBothReadOnlyModes(raw) {
+  attachCmdEnvAndTimeout(raw);
+  if (raw.baseline !== null || raw.baselineCmds.length) throw new UsageError(BASELINE_MODE_CONFLICT);
+  if (raw.cmds.length) throw new UsageError('--stamp-status takes no --cmd');
+  if (raw.scope !== null) throw new UsageError('--changed-files takes no --scope');
+  if (raw.gitDir !== null) throw new UsageError('--changed-files takes no --git-dir');
+  throw new UsageError('--changed-files and --stamp-status are separate modes');
+}
+
+// The default mode: one or more --cmd checks, plus --cmd-env/--cmd-timeout/
+// --baseline/--scope — none of which mean anything in the two read-only
+// modes above, so they're validated only here.
+function validateCheckRun(raw) {
+  // #3022: a --scope declaration can supply every check's command itself
+  // (map-form checks.tests, plus checks.types/checks.lint) — verify.js's own
+  // H2 check, once the declaration is read, is what actually enforces that
+  // every selection-required name has a command from one source or the
+  // other; this parser has no fs access and cannot read the declaration to
+  // know whether it does, so it only relaxes the blanket "give me at least
+  // one" floor, never replaces H2's real check.
+  if (raw.cmds.length === 0 && !raw.scope) throw new UsageError('at least one --cmd <name>=<command> is required');
+  attachCmdEnvAndTimeout(raw);
+  if (raw.baseline !== null && raw.baselineCmds.length === 0) throw new UsageError('--baseline requires at least one --baseline-cmd');
+  if (raw.baseline === null && raw.baselineCmds.length) throw new UsageError('--baseline-cmd requires --baseline');
+  const seenBaselineNames = new Set();
+  for (const b of raw.baselineCmds) {
+    if (!raw.cmds.some((c) => c.name === b.name)) {
+      throw new UsageError(`--baseline-cmd "${b.name}" names no declared --cmd (declared: ${raw.cmds.map((c) => c.name).join(', ') || 'none'})`);
+    }
+    if (!b.template.includes('{file}')) throw new UsageError(`--baseline-cmd ${b.name} template must contain {file}, got: ${b.template}`);
+    if (seenBaselineNames.has(b.name)) throw new UsageError(`duplicate --baseline-cmd name: ${b.name}`);
+    seenBaselineNames.add(b.name);
+  }
+  // --base/--integration-branch only mean anything alongside --scope in this
+  // mode (--changed-files has its own, unconditional, allowance for both).
+  if (!raw.scope && (raw.base !== null || raw.integrationBranch !== null)) {
+    throw new UsageError('--base and --integration-branch require --scope or --changed-files');
+  }
+  return toResult(raw);
+}
+
+// argv = process.argv.slice(2). Throws UsageError on any malformed input —
+// the CLI prints message + USAGE to stderr and exits non-zero (AC6).
+// Resolves which of the three modes applies, then dispatches entirely to
+// that mode's own validator — see the #2806 note above tokenize().
+function parseArgs(argv) {
+  const raw = tokenize(argv);
+  if (raw.stampStatus && raw.changedFiles) rejectBothReadOnlyModes(raw);
+  if (raw.stampStatus) return validateStampStatus(raw);
+  if (raw.changedFiles) return validateChangedFiles(raw);
+  return validateCheckRun(raw);
 }
 
 module.exports = { parseArgs, UsageError, USAGE };
