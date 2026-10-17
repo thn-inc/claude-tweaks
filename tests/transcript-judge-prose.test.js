@@ -126,6 +126,22 @@ test('transcript-judge.md lets a consumer whose fallback does not evaluate the s
   assert.match(REFLECT, /reflect opts out of `_shared\/transcript-judge\.md`'s self-assessment watermark write/);
 });
 
+// --- 3c. #2916: readers ignore a self-assessment watermark's byte offset ---
+
+test('AC3.1: transcript-judge.md says readers ignore a self-assessment watermark\'s byte offset', () => {
+  assert.match(SHARED, /\*\*Self-assessment watermark exception — readers ignore its byte offset\.\*\*/);
+  assert.match(SHARED, /kept for audit only/);
+});
+
+test('AC3.1: transcript-judge.md names the Self-assessment watermark exception in the Skip check and prompt item 5', () => {
+  const skip = SHARED.slice(SHARED.indexOf('## Skip check'), SHARED.indexOf('## The judge dispatch'));
+  assert.match(skip, /Self-assessment watermark exception/);
+  const item5 = SHARED.slice(SHARED.indexOf('5. **Conditional — the watermark offset clause.**'), SHARED.indexOf('**Finding norms'));
+  assert.match(item5, /Self-assessment watermark exception/);
+  assert.match(item5, /`mode`/);
+  assert.match(item5, /byte offset 0 \(line 1\)/);
+});
+
 // --- 4. Self-assessment degradation + record-failure clause moved verbatim ---
 
 test('transcript-judge.md documents the (self-assessment) header-tag mitigation', () => {
