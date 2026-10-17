@@ -170,5 +170,15 @@ test('go-red control: re-adding non-discriminating to the test-line list fails t
     'a test that is refactor-coupled, non-discriminating, or polluting shared state',
   );
   assert.notEqual(mutated, d, 'mutation anchor not found — the control would be vacuous');
-  assert.throws(() => assertDisjointAnchorRule(mutated));
+  assert.throws(() => assertDisjointAnchorRule(mutated), /dispatch: .*non-discriminating.* must not be in the test-line list/);
+});
+
+test('go-red control: re-adding non-discriminating to lens 3f\'s test-line list fails the disjointness check', () => {
+  const d = read('review', 'step3-lens-dispatch.md');
+  const mutated = d.replace(
+    '(refactor-coupled, or polluting shared state)',
+    '(refactor-coupled, non-discriminating, or polluting shared state)',
+  );
+  assert.notEqual(mutated, d, 'mutation anchor not found — the control would be vacuous');
+  assert.throws(() => assertDisjointAnchorRule(mutated), /lens3f: .*non-discriminating.* must not be in the test-line list/);
 });
