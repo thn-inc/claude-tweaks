@@ -274,3 +274,10 @@ git commit -m "Point wrap-up closing-keyword readers at inputs.closingRecords �
 
 Run: `npm test > /private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks/4c2bd4e0-a786-4544-8267-a5d03bd117e8/scratchpad/npm-test-3399.log 2>&1; echo exit=$?`
 Expected: `exit=0`; the log's `ℹ fail` line reads `0`.
+
+## As built (Common Step 4.5 — beneficial deviations)
+
+- `inputs.parkedAtShaping` is a per-record map (`{ [n]: boolean }`), not a single value, so a multi-record current-branch run carries one flag per closing record.
+- Section E produces the pack before item 4 whenever it is absent (a `cleanup-only` run, or a failed Phase 3 pack run) with `wrap-up-pack.js --only claim` — `claim` is the one probe a cleanup-only reader consumes — and logs a `SKIP` ("parked restore unverified") instead of treating a still-absent pack as "not parked".
+- Section C step 2's snippet falls through to the worktree-mirror glob when the pack lacks `inputs.closingRecords` (a pack written by a pre-#3399 build).
+- Two further readers were repointed beyond the plan's four: `cleanup-procedures.md`'s ordering-rule citation of the carrier-commit check, and `dispatch/two-call-gate.md:27` (expand-contract: every consumer migrates), each pinned in `tests/wrap-up-record-resolution-conformance.test.js`.
