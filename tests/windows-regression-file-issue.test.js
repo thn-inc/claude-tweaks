@@ -4,9 +4,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { run, findMergedPr, classify } = require('../tools/windows-regression/file-issue');
+const { readText } = require('./helpers/read-skill');
 
 const SHA = 'abcdef1234567';
 const RUN_URL = 'https://github.com/o/r/actions/runs/42';
@@ -636,9 +636,10 @@ test('findMergedPr picks the merged entry and returns null when none merged', ()
 });
 
 // Workflow shape — .github/workflows/windows-regression.yml, read as text (no YAML
-// parser dependency). The workflow itself only runs on a Windows runner.
-const WORKFLOW = fs.readFileSync(
-  path.join(__dirname, '..', '.github', 'workflows', 'windows-regression.yml'), 'utf8');
+// parser dependency). The workflow itself only runs on a Windows runner. Read through
+// readText so a CRLF checkout parses like CI's LF one — stepAnchor's `steps:\n` match
+// failed on windows-latest without it (#3407).
+const WORKFLOW = readText(path.join(__dirname, '..', '.github', 'workflows', 'windows-regression.yml'));
 
 test('AC1.1: the windows-regression workflow has no pull_request trigger', () => {
   assert.doesNotMatch(WORKFLOW, /pull_request/);
