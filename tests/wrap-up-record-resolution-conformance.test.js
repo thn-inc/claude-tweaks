@@ -157,6 +157,7 @@ function assertCaptureBeforeTeardown(text) {
   const capture = section.indexOf(CAPTURE_ANCHOR);
   assert.ok(capture !== -1, 'no header capture paragraph in Shared teardown');
   const block = blocks(section.slice(capture)).find((b) => b.includes(collapse(CAPTURE_ANCHOR)));
+  assert.ok(block, 'capture paragraph block not found after its anchor');
   assert.ok(block.includes('parked-at-shaping') && block.includes(MIRROR), 'capture must read parked-at-shaping from the worktree mirror');
   const finish = section.indexOf('2. **Finish the shared branch.**');
   const removal = section.indexOf('6. **Remove the shared worktree**');
@@ -168,8 +169,8 @@ test('AC2.1: the multi-spec teardown captures parked-at-shaping before the step 
   assertCaptureBeforeTeardown(read('plugin/skills/flow/multispec-review-console.md'));
 });
 
-test('AC3.1: assertCaptureBeforeTeardown goes red when the capture is removed or moved after step 6', () => {
-  const live = read('plugin/skills/flow/multispec-review-console.md');
+test('AC3.2: assertCaptureBeforeTeardown goes red when the capture is removed or moved after step 6', () => {
+  const live = read('plugin/skills/flow/multispec-review-console.md').replace(/\r\n/g, '\n'); // the '\n\n' paragraph search below needs LF (core.autocrlf checkouts)
   const i = live.indexOf(CAPTURE_ANCHOR);
   const j = live.indexOf('\n\n', i);
   const para = live.slice(i, j);
@@ -182,7 +183,9 @@ test('AC3.1: assertCaptureBeforeTeardown goes red when the capture is removed or
 
 test('Per-issue label cleanup uses the captured value, not a fresh header read', () => {
   const flat = collapse(read('plugin/skills/flow/multispec-review-console.md'));
-  const s = flat.slice(flat.indexOf('### Per-issue label cleanup'));
+  const at = flat.indexOf('### Per-issue label cleanup');
+  assert.notStrictEqual(at, -1, 'Per-issue label cleanup heading vanished');
+  const s = flat.slice(at);
   assert.match(s.slice(0, 1500), /captured/);
   assert.doesNotMatch(s.slice(0, 1500), /read directly/);
 });
