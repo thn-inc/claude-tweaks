@@ -79,7 +79,9 @@ function parseArgs(argv) {
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-// The verify outcome. `pass` — report.pass === true or an adjudicated pass.
+// The verify outcome. `pass` — verify.js's own `effectivePass` is the authority;
+// a report from an older verify.js lacks it, so only a raw `pass: true` counts
+// (fail closed: an adjudicated pass on such a report is a failure).
 // `adjudicated` — a usable baseline verdict naming files; false (with `reason`)
 // when adjudication was absent, ineligible, or named nothing, in which case a
 // failure is reported from the raw output instead.
@@ -89,9 +91,7 @@ function classify(report) {
   let reason = null;
   if (!ba) reason = NOT_RUN;
   else if (ba.eligible !== true) reason = typeof ba.reason === 'string' && ba.reason ? ba.reason : NOT_RUN;
-  // Mirrors verify.js's effectivePass: a declared pre-existing allowlist match is a pass too.
-  const preExisting = isPlainObject(report.preExistingAdjudicated) && Array.isArray(report.preExistingAdjudicated.matched);
-  const pass = report.pass === true || preExisting || (ba !== null && ba.eligible === true && ba.verdict === 'pass');
+  const pass = typeof report.effectivePass === 'boolean' ? report.effectivePass : report.pass === true;
   if (reason === null && attributable.length === 0 && !pass) reason = 'baseline adjudication named no failing test file';
   return { outcome: pass ? 'pass' : 'fail', adjudicated: reason === null, attributable, reason };
 }
@@ -114,10 +114,10 @@ function fence(text) {
 // Windows location, doubling every backslash (extract.js's relativize does the same).
 const slashes = (s) => s.replace(/\\+/g, '/');
 
-// Does `line` name `needle` as a whole repo-relative path — on a path boundary
-// before (start, `/`, quote, whitespace) and after (`:`, quote, whitespace, end)?
-function namesFile(line, needle) {
-  const l = slashes(line);
+// Does `l` (a slashes()-normalized line) name `needle` as a whole repo-relative
+// path — on a path boundary before (start, `/`, quote, whitespace) and after
+// (`:`, quote, whitespace, end)?
+function namesFile(l, needle) {
   for (let at = l.indexOf(needle); at !== -1; at = l.indexOf(needle, at + 1)) {
     const before = at === 0 ? '' : l[at - 1];
     const after = l.charAt(at + needle.length);
@@ -128,14 +128,17 @@ function namesFile(line, needle) {
 
 // The excerpt for `file`: from the nearest `not ok` line at or before the first
 // line naming the file (so the test's name is shown), through the next ok/not ok
-// line or EXCERPT_MAX_LINES. A match past that `not ok`'s own YAML terminator (`...`
+// line at or above the opening line's indent (a deeper `ok N` is the failure's own
+// error text) or EXCERPT_MAX_LINES. A match past that `not ok`'s own YAML terminator (`...`
 // at its indent + 2) sits outside any failure block — a crashed file's stderr,
 // printed before its own `not ok` — so the excerpt opens just after the last test
 // boundary (`ok N`, `# Subtest:`, a YAML `...`) above the match, where the stderr
-// (and its `Error:` line) begins. null when no line names the file.
-function excerptFor(file, lines) {
+// (and its `Error:` line) begins; there the end indent is 0. null when no line
+// names the file. `normalized` is `lines` mapped through slashes(), computed once
+// per issue rather than per file.
+function excerptFor(file, lines, normalized) {
   const needle = slashes(file);
-  const hit = lines.findIndex((l) => namesFile(l, needle));
+  const hit = normalized.findIndex((l) => namesFile(l, needle));
   if (hit === -1) return null;
   let notOk = -1;
   for (let i = hit; i >= 0; i--) if (/^\s*not ok\b/.test(lines[i])) { notOk = i; break; }
@@ -152,8 +155,11 @@ function excerptFor(file, lines) {
       if (/^\s*(ok \d|# Subtest:|\.\.\.\s*$)/.test(lines[i])) { start = i + 1; break; }
     }
   }
+  const openIndent = /^\s*not ok\b/.test(lines[start]) ? lines[start].search(/\S/) : 0;
   let end = Math.min(start + EXCERPT_MAX_LINES, lines.length);
-  for (let i = start + 1; i < end; i++) if (/^\s*(not )?ok \d/.test(lines[i])) { end = i; break; }
+  for (let i = start + 1; i < end; i++) {
+    if (/^\s*(not )?ok \d/.test(lines[i]) && lines[i].search(/\S/) <= openIndent) { end = i; break; }
+  }
   return lines.slice(start, end).join('\n');
 }
 
@@ -183,17 +189,19 @@ function composeIssue({ report, verdict, sha, base, pr, runUrl, logText }) {
     // Every file name first, excerpts after — the body cap can only drop excerpts.
     const timedOut = new Set(timedOutOf(report));
     const excerptLines = typeof logText === 'string' ? logText.split(/\r?\n/) : regionLines;
+    const normalized = excerptLines.map(slashes);
     const bullets = verdict.attributable.map((f) => `- \`${f}\`${timedOut.has(f) ? ' (timed out — no evidence)' : ''}`);
     parts.push(['### Newly failing test files', ...bullets].join('\n'));
     const excerpts = [];
     for (const file of verdict.attributable) {
-      const excerpt = excerptFor(file, excerptLines);
+      const excerpt = excerptFor(file, excerptLines, normalized);
       if (excerpt !== null) excerpts.push(`#### \`${file}\`\n\n${fence(excerpt)}`);
     }
     if (excerpts.length) parts.push(['### Failure excerpts', ...excerpts].join('\n\n'));
   } else {
     const output = regionLines.slice(0, FALLBACK_LINES).join('\n');
-    parts.push(`### Failing output (${NOT_RUN}: ${verdict.reason})\n\n${output ? fence(output) : '(no failing output captured)'}`);
+    const cause = verdict.reason === NOT_RUN ? NOT_RUN : `${NOT_RUN}: ${verdict.reason}`;
+    parts.push(`### Failing output (${cause})\n\n${output ? fence(output) : '(no failing output captured)'}`);
   }
   parts.push('_Filed by .github/workflows/windows-regression.yml — failures were compared against the push\'s base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._');
   let body = parts.join('\n\n');
@@ -204,7 +212,8 @@ function composeIssue({ report, verdict, sha, base, pr, runUrl, logText }) {
 function lookupMergedPr(repo, sha, deps) {
   try {
     return findMergedPr(JSON.parse(deps.gh(['api', `repos/${repo}/commits/${sha}/pulls`])));
-  } catch {
+  } catch (e) {
+    deps.stderr(`${TOOL}: merged-PR lookup failed: ${e.message} — composing "unknown"\n`);
     return null;
   }
 }
@@ -222,7 +231,8 @@ function findExistingIssue(repo, short, adjudicated, deps) {
     const hit = open.find((i) => i.title.includes(short))
       || (adjudicated ? undefined : open.find((i) => i.title.endsWith(NOT_ADJUDICATED_SUFFIX)));
     return hit ? hit.number : null;
-  } catch {
+  } catch (e) {
+    deps.stderr(`${TOOL}: open-issue lookup failed: ${e.message} — filing a new issue\n`);
     return null;
   }
 }

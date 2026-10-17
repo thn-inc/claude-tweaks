@@ -16,7 +16,8 @@
 # `file` runs on ubuntu, never executes the suite, and is the only job granted
 # issue-write permission: the filer reads the artifact and files one type:bug issue on
 # main (or comments on the open one). The filer's exit code is the workflow's
-# result (0 = clean, 1 = new failures or an unreadable report).
+# result (0 = clean; 1 = new failures, an unreadable report, a non-main ref with
+# failures, or a gh failure while filing).
 #
 # The concurrency group is keyed on the commit sha, not the ref: GitHub keeps at
 # most one pending run per group and replaces it with a newer one even when
@@ -40,7 +41,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
     outputs:
@@ -92,6 +93,8 @@ jobs:
           echo "base=$B" >> "$GITHUB_OUTPUT"
       - name: Verify against the base commit
         id: verify
+        # Non-fatal so the upload and the file job always run: the file job's exit
+        # code is the workflow's verdict (this windows job is green by design).
         continue-on-error: true
         # The base scratch worktree is created under os.tmpdir(); on windows-latest that is on C: while the
         # checkout is on D:, so tests resolving a drive-less path see different drives at HEAD and base —
@@ -99,10 +102,15 @@ jobs:
         env:
           TMP: ${{ runner.temp }}
           TEMP: ${{ runner.temp }}
+        # Timeout budget: verify reuses --cmd-timeout for every per-file baseline /
+        # isolated / retry run, not just the suite. Measured suite ~8.5 min on
+        # windows-latest (run 39036270004); worst case = suite + 3 sequential 20-min
+        # hangs for one file ~ 70 min, inside the 90-min job limit — so verify always
+        # writes its report and the filer always runs.
         run: >-
           node plugin/bin/verify.js
           --cmd tests="npm test"
-          --cmd-timeout tests=2700000
+          --cmd-timeout tests=1200000
           --baseline "$BASE"
           --baseline-cmd tests="node --test {file}"
           --json "$RUNNER_TEMP/verify-report.json"
@@ -125,6 +133,8 @@ jobs:
     permissions:
       contents: read
       issues: write
+      # Needed only by the merged-PR lookup (gh api repos/{repo}/commits/{sha}/pulls);
+      # without it every issue says "Merged PR: unknown".
       pull-requests: read
     env:
       GH_TOKEN: ${{ github.token }}
@@ -133,6 +143,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
+          # The filer needs no node --test globs, so it stays on the repo's CI Node.
           node-version: 20
       # A missing artifact (the windows job died before uploading) must still reach
       # the filer, which then exits 1 on the unreadable report.

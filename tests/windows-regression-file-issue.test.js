@@ -18,7 +18,9 @@ const FAIL_ATTRIBUTABLE = { eligible: true, verdict: 'fail', attributable: ['tes
 
 // gh: { api, 'issue list', 'issue create', 'issue comment': <stdout string | Error> },
 // keyed by the first one or two args. `files` serves any other readFile path
-// (e.g. --log); an Error value throws. An unkeyed `issue list` is an empty list.
+// (e.g. --log); an Error value throws. An unkeyed call gets an explicit default
+// (empty list / the issue URL / empty comment / empty api list); any other call throws.
+const GH_DEFAULTS = { 'issue list': '[]', 'issue create': 'https://github.com/o/r/issues/1\n', 'issue comment': '', api: '[]' };
 function fakeDeps(report, gh = {}, files = {}) {
   const calls = { gh: [], stdout: [], stderr: [], read: [] };
   const raw = typeof report === 'string' ? report : JSON.stringify(report);
@@ -32,10 +34,12 @@ function fakeDeps(report, gh = {}, files = {}) {
     },
     gh: (args, input) => {
       calls.gh.push({ args, input });
-      const h = args[0] === 'issue' ? gh[`issue ${args[1]}`] : gh[args[0]];
+      const key = args[0] === 'issue' ? `issue ${args[1]}` : args[0];
+      const h = gh[key];
       if (h instanceof Error) throw h;
-      if (h === undefined) return args[1] === 'list' ? '[]' : 'https://github.com/o/r/issues/1\n';
-      return h;
+      if (h !== undefined) return h;
+      if (key in GH_DEFAULTS) return GH_DEFAULTS[key];
+      throw new Error(`unexpected gh ${args.join(' ')}`);
     },
     stdout: (s) => calls.stdout.push(s),
     stderr: (s) => calls.stderr.push(s),
@@ -58,7 +62,30 @@ test('AC5.1: a raw-pass report files nothing and exits 0', () => {
 });
 
 test('AC5.2: a baseline-adjudicated pass files nothing and exits 0', () => {
-  const deps = fakeDeps({ pass: false, baselineAdjudicated: { eligible: true, verdict: 'pass', attributable: [] } });
+  const deps = fakeDeps({ pass: false, effectivePass: true, baselineAdjudicated: { eligible: true, verdict: 'pass', attributable: [] } });
+  assert.equal(run(argv(), deps), 0);
+  assert.equal(deps.calls.gh.length, 0);
+});
+
+test('R1: report.effectivePass is the verdict authority — a false one beats pass: true', () => {
+  const deps = fakeDeps({ pass: true, effectivePass: false, checks: { tests: { failingRegion: 'not ok 1 - x' } } });
+  assert.equal(run(argv(), deps), 1);
+  assert.ok(created(deps));
+});
+
+test('R1: no effectivePass (an older verify.js) fails closed — an adjudicated-pass shape is a failure', () => {
+  for (const report of [
+    { pass: false, baselineAdjudicated: { eligible: true, verdict: 'pass', attributable: [] } },
+    { pass: false, preExistingAdjudicated: { declared: ['tests/a.test.js'], matched: ['tests/a.test.js'] } },
+  ]) {
+    const deps = fakeDeps(report);
+    assert.equal(run(argv(), deps), 1, JSON.stringify(report));
+    assert.ok(created(deps), JSON.stringify(report));
+  }
+});
+
+test('R1: no effectivePass and pass: true is a pass', () => {
+  const deps = fakeDeps({ pass: true });
   assert.equal(run(argv(), deps), 0);
   assert.equal(deps.calls.gh.length, 0);
 });
@@ -80,6 +107,7 @@ test('AC5.4: a failed PR lookup composes unknown', () => {
   const deps = fakeDeps({ pass: false, baselineAdjudicated: FAIL_ATTRIBUTABLE }, { api: new Error('HTTP 502') });
   assert.equal(run(argv(), deps), 1);
   assert.match(created(deps).input, /\*\*Merged PR:\*\* unknown/);
+  assert.ok(deps.calls.stderr.includes('windows-regression: merged-PR lookup failed: HTTP 502 — composing "unknown"\n'), 'the swallowed failure leaves a stderr note');
 });
 
 test('AC5.5: a non-main ref files nothing and exits 1', () => {
@@ -87,6 +115,38 @@ test('AC5.5: a non-main ref files nothing and exits 1', () => {
   assert.equal(run(argv({ '--ref': 'refs/heads/ci-probe/3316-planted' }), deps), 1);
   assert.equal(deps.calls.gh.length, 0);
   assert.match(deps.calls.stdout.join(''), /not filing \(main only\)/);
+});
+
+test('R6: only exactly refs/heads/main files — near-miss refs exit 1 with no gh call', () => {
+  for (const ref of ['refs/heads/main-x', 'refs/heads/main/', 'refs/tags/main', 'refs/heads/MAIN', 'refs/pull/1/merge', 'main']) {
+    const deps = fakeDeps({ pass: false, baselineAdjudicated: FAIL_ATTRIBUTABLE });
+    assert.equal(run(argv({ '--ref': ref }), deps), 1, ref);
+    assert.equal(deps.calls.gh.length, 0, ref);
+  }
+});
+
+test('R6: adjudication that named no failing test file is titled not adjudicated and says why', () => {
+  for (const extra of [{}, { effectivePass: false }]) {
+    const deps = fakeDeps({
+      pass: false, ...extra,
+      baselineAdjudicated: { eligible: true, verdict: 'fail', attributable: [] },
+      checks: { tests: { failingRegion: 'not ok 1 - x' } },
+    });
+    assert.equal(run(argv(), deps), 1);
+    const call = created(deps);
+    assert.match(flag(call, '--title'), /\(not adjudicated\)$/);
+    assert.ok(call.input.includes('baseline adjudication named no failing test file'));
+    assert.match(call.input, /not ok 1 - x/);
+  }
+});
+
+test('R6: an excerpt containing a ``` run is wrapped in a longer fence and keeps the inner run', () => {
+  const region = ['not ok 1 - fenced', "  location: 'tests/a.test.js:1:1'", '  ```js', '  inner', '  ```'].join('\n');
+  const deps = fakeDeps({ ...adjudicated('tests/a.test.js'), checks: { tests: { failingRegion: region } } });
+  assert.equal(run(argv(), deps), 1);
+  const body = created(deps).input;
+  assert.match(body, /^````\nnot ok 1 - fenced\n/m, 'opens with 4 backticks');
+  assert.match(body, /\n  ```\n````$/m, 'the inner run survives and the 4-backtick fence closes after it');
 });
 
 test('AC5.6: a gh issue create failure exits non-zero', () => {
@@ -113,7 +173,8 @@ test('fail-closed: a failed run with no baselineAdjudicated still files', () => 
   assert.equal(run(argv(), deps), 1);
   const call = created(deps);
   assert.match(flag(call, '--title'), /\(not adjudicated\)$/);
-  assert.match(call.input, /baseline adjudication did not run: baseline adjudication did not run/);
+  assert.ok(call.input.includes('### Failing output (baseline adjudication did not run)\n'), 'the heading names the cause once');
+  assert.ok(!call.input.includes('did not run: baseline adjudication did not run'));
   assert.match(call.input, /not ok 1 - x/);
 });
 
@@ -243,7 +304,29 @@ test('F1: a "..." or "ok 1" line inside a failure\'s own error text is not a bou
   ].join('\n');
   const deps = fakeDeps({ ...adjudicated('tests/a.test.js'), checks: { tests: { failingRegion: log } } });
   assert.equal(run(argv(), deps), 1);
-  assert.ok(created(deps).input.includes('not ok 2 - the failing test'), 'excerpt keeps the failing test\'s name');
+  const body = created(deps).input;
+  assert.ok(body.includes('not ok 2 - the failing test'), 'excerpt keeps the failing test\'s name');
+  assert.ok(body.includes('at Object.<anonymous>'), 'an indented ok line inside the error text does not end the excerpt');
+  assert.ok(!body.includes('ok 3 - next'), 'the next top-level test still ends it');
+});
+
+test('R3: a nested not-ok ends at its sibling at the SAME indent, not at a deeper ok line in its own error text', () => {
+  const log = [
+    '# Subtest: s',
+    '    not ok 2 - nested failing',
+    "      location: 'tests/a.test.js:5:5'",
+    '      error: |-',
+    '        ok 1 - quoted in the message',
+    '        tail-line-of-its-own-error',
+    '    not ok 3 - sibling',
+    '      sibling-detail',
+  ].join('\n');
+  const deps = fakeDeps({ ...adjudicated('tests/a.test.js'), checks: { tests: { failingRegion: log } } });
+  assert.equal(run(argv(), deps), 1);
+  const body = created(deps).input;
+  assert.ok(body.includes('tail-line-of-its-own-error'));
+  assert.ok(!body.includes('not ok 3 - sibling'));
+  assert.ok(!body.includes('sibling-detail'));
 });
 
 test('unreadable report: null JSON exits 1, files nothing', () => {
@@ -271,8 +354,10 @@ test('body over 60000 chars is truncated with a note', () => {
 test('usage: a trailing bare --report exits 2', () => {
   const deps = fakeDeps({ pass: true });
   assert.equal(run([...argv({ '--report': null }), '--report'], deps), 2);
-  assert.equal(run(argv({ '--repo': null }), fakeDeps({ pass: true })), 2);
   assert.equal(deps.calls.gh.length, 0);
+  const missingRepo = fakeDeps({ pass: true });
+  assert.equal(run(argv({ '--repo': null }), missingRepo), 2);
+  assert.equal(missingRepo.calls.gh.length, 0);
 });
 
 test('usage: a trailing bare --log or --base exits 2, and neither is required', () => {
@@ -331,6 +416,15 @@ test('F3: a failing or unparseable issue list falls through to create', () => {
   }
 });
 
+test('R5: a thrown issue-list lookup leaves a stderr note and still files', () => {
+  for (const [gh, msg] of [[{ 'issue list': new Error('HTTP 502') }, 'HTTP 502'], [{ 'issue list': 'not json' }, 'Unexpected token']]) {
+    const deps = fakeDeps(adjudicated('tests/a.test.js'), gh);
+    assert.equal(run(argv(), deps), 1);
+    assert.ok(created(deps));
+    assert.match(deps.calls.stderr.join(''), new RegExp(`windows-regression: open-issue lookup failed: .*${msg}.* — filing a new issue\n`));
+  }
+});
+
 test('F3: a failing comment call exits 1 with a stderr note', () => {
   const list = issueList(5, 'Windows regression: x after abcdef123');
   const deps = fakeDeps(adjudicated('tests/a.test.js'), { 'issue list': list, 'issue comment': new Error('HTTP 403') });
@@ -362,10 +456,10 @@ test('M2: a file in baselineAdjudicated.timedOut is annotated', () => {
 });
 
 test('M4: a preExistingAdjudicated.matched allowlist match is a pass', () => {
-  const deps = fakeDeps({ pass: false, preExistingAdjudicated: { declared: ['tests/a.test.js'], matched: ['tests/a.test.js'] } });
+  const deps = fakeDeps({ pass: false, effectivePass: true, preExistingAdjudicated: { declared: ['tests/a.test.js'], matched: ['tests/a.test.js'] } });
   assert.equal(run(argv(), deps), 0);
   assert.equal(deps.calls.gh.length, 0);
-  const unmatched = fakeDeps({ pass: false, preExistingAdjudicated: { declared: [], eligible: false, reason: 'no-parse' } });
+  const unmatched = fakeDeps({ pass: false, effectivePass: false, preExistingAdjudicated: { declared: [], eligible: false, reason: 'no-parse' } });
   assert.equal(run(argv(), unmatched), 1);
 });
 
@@ -394,6 +488,34 @@ test('concurrency group is keyed on github.sha so no pending run is replaced', (
 });
 
 // The text of one top-level job block (from "  name:" to the next top-level job).
+// The text of the single step containing `marker` (from its "      - " line to the next step's).
+const stepContaining = (block, marker) => {
+  const at = block.indexOf(marker);
+  assert.ok(at !== -1, `${marker} present`);
+  const start = block.lastIndexOf('\n      - ', at) + 1;
+  const end = block.indexOf('\n      - ', at);
+  return block.slice(start, end === -1 ? undefined : end);
+};
+
+// Every `run:` script body in a workflow text: the inline value plus, for a block
+// scalar (`|`, `>-`), the following lines indented deeper than the `run:` key.
+const runScripts = (text) => {
+  const lines = text.split('\n');
+  const scripts = [];
+  lines.forEach((line, i) => {
+    const m = line.match(/^(\s*)(- )?run:\s*(.*)$/);
+    if (!m) return;
+    const keyIndent = m[1].length + (m[2] ? 2 : 0);
+    const body = [m[3]];
+    for (let j = i + 1; j < lines.length; j++) {
+      if (lines[j].trim() !== '' && lines[j].search(/\S/) <= keyIndent) break;
+      body.push(lines[j]);
+    }
+    scripts.push(body.join('\n'));
+  });
+  return scripts;
+};
+
 const jobBlock = (name) => {
   const start = WORKFLOW.search(new RegExp(`^  ${name}:\\s*$`, 'm'));
   assert.ok(start !== -1, `job ${name} present`);
@@ -411,7 +533,7 @@ test('F4: the filer runs in a separate ubuntu job after windows, if: always() on
   assert.match(file, /needs:\s*windows/);
   assert.match(file, /^    if:\s*always\(\)\s*$/m, 'if: always() on the job itself');
   assert.match(windows, /runs-on:\s*windows-latest/);
-  assert.match(windows, /id: verify[\s\S]*continue-on-error:\s*true/);
+  assert.match(stepContaining(windows, 'id: verify'), /continue-on-error:\s*true/);
 });
 
 test('F4: issues: write is granted only to the file job; the windows job is contents: read only', () => {
@@ -429,7 +551,7 @@ test('F4: issues: write is granted only to the file job; the windows job is cont
 test('F4: the windows job uploads verify-report and the file job downloads it, tolerating a miss', () => {
   const windows = jobBlock('windows');
   const file = jobBlock('file');
-  assert.match(windows, /upload-artifact@v4[\s\S]*name: verify-report/);
+  assert.match(stepContaining(windows, 'upload-artifact@v4'), /name: verify-report/);
   const dlAt = file.indexOf('download-artifact@v4');
   const download = file.slice(dlAt, file.indexOf('\n      - ', dlAt));
   assert.ok(dlAt !== -1 && /name: verify-report/.test(download) && /continue-on-error:\s*true/.test(download), 'download step tolerates a missing artifact');
@@ -453,11 +575,22 @@ test('F2: verify compares against "$BASE"; the base step reads PUSH_BEFORE and f
   assert.match(step, /git cat-file -e/);
   assert.match(step, /GITHUB_ENV/);
   assert.match(step, /GITHUB_OUTPUT/);
-  assert.doesNotMatch(windows, /run:[^\n]*\$\{\{/, 'no ${{ }} interpolated into a run: script');
 });
 
-test('M3: verify bounds the tests check with a 45-minute --cmd-timeout', () => {
-  assert.match(jobBlock('windows'), /--cmd-timeout tests=2700000/);
+test('no ${{ }} is interpolated into any run: script body — inline or block scalar', () => {
+  const planted = 'steps:\n  - name: x\n    run: |\n      echo "${{ github.event.head_commit.message }}"\n';
+  assert.ok(runScripts(planted).some((b) => b.includes('${{')), 'negative control: the helper sees a block-scalar interpolation');
+  assert.ok(runScripts('    run: echo "${{ github.sha }}"').some((b) => b.includes('${{')), 'negative control: and an inline one');
+  const scripts = runScripts(WORKFLOW);
+  assert.ok(scripts.length >= 4, `found the workflow's run scripts (${scripts.length})`);
+  for (const body of scripts) assert.ok(!body.includes('${{'), `interpolation in a run script: ${body}`);
+});
+
+test('R7: verify bounds each tests run with a 20-minute --cmd-timeout inside the 90-minute job limit', () => {
+  const windows = jobBlock('windows');
+  assert.match(windows, /--cmd-timeout tests=1200000/);
+  assert.doesNotMatch(windows, /2700000/);
+  assert.match(windows, /^    timeout-minutes:\s*90\s*$/m);
 });
 
 test('the workflow no longer claims linear history', () => {
