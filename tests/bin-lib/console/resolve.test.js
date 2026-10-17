@@ -519,8 +519,12 @@ test('SECTION_STANCES names a stance for every section the console renders (#193
 // positive test runs, against a mutated input.
 const APPENDIX = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'review-console-appendix.md'), 'utf8');
 
+function isPendingMdPrefixRow([re, section]) {
+  return section === 'Pending review' && /^\^\(.*\)-$/.test(re.source);
+}
+
 function pendingMdPrefixesFromCode(map = SECTION_MAP) {
-  const rows = map.filter(([re, section]) => section === 'Pending review' && /^\^\(.*\)-$/.test(re.source));
+  const rows = map.filter(isPendingMdPrefixRow);
   assert.strictEqual(rows.length, 1, 'exactly one Pending-review .md prefix alternation in SECTION_MAP');
   return rows[0][0].source.slice(2, -2).split('|').sort();
 }
@@ -546,9 +550,9 @@ test('AC4.1: the Pending-review .md prefix alternation and the appendix prose li
 });
 
 test('AC4.2 (control): removing sdd-ruling from the regex alone makes the twin pin fail', () => {
-  const mutated = SECTION_MAP.map(([re, s]) => (s === 'Pending review' && /^\^\(.*\)-$/.test(re.source)
-    ? [new RegExp(re.source.replace('|sdd-ruling', '').replace('sdd-ruling|', '')), s]
-    : [re, s]));
+  const mutated = SECTION_MAP.map((row) => (isPendingMdPrefixRow(row)
+    ? [new RegExp(row[0].source.replace('|sdd-ruling', '').replace('sdd-ruling|', '')), row[1]]
+    : row));
   assert.throws(() => assertPendingPrefixTwin(pendingMdPrefixesFromCode(mutated), pendingMdPrefixesFromProse()));
 });
 
