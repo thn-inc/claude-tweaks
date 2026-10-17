@@ -87,6 +87,26 @@ is absent). And the copy list is hand-written, so derive it by grepping the gene
 `plugin/skills/` (`grep -rlF 'select(.authorAssociation == "OWNER"' plugin/skills/` returns the same
 four files today), not from the files the change touched.
 
+**Command-to-argv instance (#3405, unpinned today):** the prose side can be a shell command a skill
+tells the reader to run, and the code twin the argv array a `bin/` CLI hands its runner for the same
+call. `_shared/pr-first-merge.md` Step 2.5's head-run read (`gh run list --repo {owner}/{repo}
+--commit {headRefOid} --limit 100 --json name,workflowName,status,conclusion,url`, restated in
+`release/execute.md`'s PR-check gate) and `plugin/bin/pr-checks.js`'s `deps.gh(['run', 'list',
+'--commit', headRefOid, '--limit', '100', '--json', 'name,workflowName,status,conclusion,url'])` are
+one call, and each side is pinned only against itself: `tests/merge-verification-gate-conformance.test.js`
+needle-pins the prose (`'--commit {headRefOid}'`, `'--limit 100'`), and
+`tests/bin-lib/pr-checks/cli.test.js` deep-equals the captured argv against a hand-typed literal. A
+field added to either `--json` list, or a changed `--limit`, leaves both suites green. The pin is one
+assertion: take the `bash` fence under `## Step 2.5` whose single line starts `gh run list`, tokenize
+it, drop `gh` and the `--repo {owner}/{repo}` pair (the CLI runs inside the checkout and names no
+repo, a deliberate difference to state in the test), substitute the test's head sha for
+`{headRefOid}`, and `assert.deepEqual` the result with the argv the fake runner captured. Scope it to
+that fence: the bounded watch's `0)` arm runs a second `gh run list` with `--json status` on
+purpose, so sweeping every `gh run list` in the section would be wrong. The rest of the head-run
+rule needs no equality pin: its closed vocabulary is `FAILING_CONCLUSIONS`, which head runs reuse
+and `tests/pr-check-gate-conformance.test.js` already deep-equals against the prose list, and the
+pending/green clauses are behavior, which `tests/bin-lib/pr-checks/classify.test.js` exercises.
+
 **Candidate instance (a live, currently-unpinned gap this check surfaces today):**
 `plugin/bin/lib/compose-subject.js:69`'s `TYPE_PRECEDENCE = ['feature', 'bug', 'task']` is a
 *third* copy of the same closed vocabulary `TYPES`/`TYPE_PREFIX` above already key off — used to
