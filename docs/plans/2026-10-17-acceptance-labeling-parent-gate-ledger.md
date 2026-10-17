@@ -2,3 +2,12 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | Ruling (SDD pre-flight): `resolved` kept in the require-demo:pending set per spec Deliverable 2 literally — a parent already carrying demo:approved/changes-requested with an above-floor gate still reads `missing demo:pending label` (pre-existing behavior) | observation | Covered by item 9's follow-up |
+| 2 | build | Ruling (SDD Task 1): verify reads risk-floor from policy.yml only, no run-config overlay — risk-floor is not a Manifesto lever and the Parent-Gate Procedure calls resolve-policy.js without --run | observation | — |
+| 3 | build | Ruling (SDD final review): resolved/gated mismatch vs the Parent-Gate Procedure not fixed in this record — spec Deliverable 2 names due/gated/resolved literally | observation | Routed to item 9 |
+| 4 | build | minor: no test discriminates `resolveRiskFloor` (every case uses the default `high` floor; a break degrades to a false skip, never a false fail) — plugin/bin/lib/wrap-up/engine-verify.js, tests/bin-lib/wrap-up/engine-verify.test.js | open | — |
+| 5 | build | minor: `enumerateSubIssues` upper-cased a missing `state` to 'UNDEFINED' (read as open → silent incomplete skip) | fixed | 822a20d09 — non-string state is now the `could not parse sub_issues output` gather failure (unknown), with a test |
+| 6 | build | minor: skip-reason aggregation in fail/pass details untested (mutants survived) | fixed | 822a20d09 — two tests pin both details, go-red verified in a scratch worktree |
+| 7 | build | minor: `resolveRiskFloor` reads policy.yml on every verify run even with no parent target (one small read, no behavioral effect) | open | — |
+| 8 | build | minor (Task 2): the new pre-archive note claimed an archive --run-dir always makes run-dir-archived report `original path still present`, but #2552 accepts an archive path under the checkout's own pipelines archive | fixed | 822a20d09 — sentence qualified to archive paths outside this checkout's archive |
+| 9 | build | follow-up: acceptance-labeling's `resolved`/`gated` handling does not mirror verification-brief-parent-gate.md "Evaluate the gate" — floor should apply only on `due`; `gated` should always check the brief; `resolved` should skip (`parent #P already dispositioned`). Today a sub-issue reopened after its parent was accepted hits BLOCKED, and a below-floor gated parent's brief goes unchecked. Needs a spec-shaped follow-up record (plugin/bin/lib/wrap-up/engine-verify.js, tests/bin-lib/wrap-up/engine-verify.test.js) | open | — |
