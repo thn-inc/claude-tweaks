@@ -150,7 +150,8 @@ test('#2550 (was #1929 whole-branch review fix 8): a run with no phase events bu
   fs.writeFileSync(early, '{"type":"assistant","timestamp":"2026-09-05T12:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":3,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n');
   const r = run(['--run', dir, '--transcript', early, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, 'no phase events; 0 tool round-trips, 3/4 tokens\n');
+  // #3375: a transcript-requested run now also prints the dispatches not-found line (no subagents/ beside this transcript)
+  assert.match(r.stdout, /^no phase events; 0 tool round-trips, 3\/4 tokens\n\ndispatches: subagent transcripts not found \(no subagents\/ directory at [^\n]+\)\n$/);
 });
 
 test('#2550 review fix: the collapsed one-line summary still carries a Guard-denials line when the run recorded real denials', () => {
@@ -160,7 +161,8 @@ test('#2550 review fix: the collapsed one-line summary still carries a Guard-den
   fs.writeFileSync(early, '{"type":"assistant","timestamp":"2026-09-05T12:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":3,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n');
   const r = run(['--run', dir, '--transcript', early, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, 'no phase events; 0 tool round-trips, 3/4 tokens\nGuard denials: 1 gate · 0 wd-ambiguous · 1 wd-deny\n');
+  // #3375: followed by the dispatches not-found line (no subagents/ beside this transcript)
+  assert.match(r.stdout, /^no phase events; 0 tool round-trips, 3\/4 tokens\nGuard denials: 1 gate · 0 wd-ambiguous · 1 wd-deny\n\ndispatches: subagent transcripts not found \(no subagents\/ directory at [^\n]+\)\n$/);
 });
 
 test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds but whose read fails (mode 000) degrades to a note, exit 0', skipUnderRoot('root ignores file permissions'), () => {
@@ -176,4 +178,152 @@ test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds b
     fs.chmodSync(unreadable, 0o644);
     fs.rmSync(unreadable, { force: true });
   }
+});
+
+// --- #3375 per-dispatch cost attribution -------------------------------------
+// The Task 1 fixture session (sess-1 + subagents/) is dated 2026-10-17, so
+// these runs carry their own two-event events.jsonl covering it; record-1535's
+// 2026-09 events sit outside every fixture dispatch (used once, on purpose).
+const SUBFIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'subagents-session');
+const SUB_EVENTS = '{"ts":"2026-10-17T09:58:00.000Z","type":"skill_invoked","skill":"claude-tweaks:build"}\n{"ts":"2026-10-17T10:10:00.000Z","type":"session-end"}\n';
+
+// -> { dir, home, slugDir, transcript, env }: a run dir over the fixture's
+// events, and a tmp HOME holding a copy of the fixture session at the slug of
+// `worktree` (as the --auto-transcript test does).
+function subagentRun({ events = SUB_EVENTS } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-'));
+  if (events !== null) fs.writeFileSync(path.join(dir, 'events.jsonl'), events);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-home-'));
+  const slugDir = path.join(home, '.claude', 'projects', '-Users-x-Code-repo--claude-worktrees-wt');
+  fs.mkdirSync(slugDir, { recursive: true });
+  fs.cpSync(SUBFIX, slugDir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/Users/x/Code/repo/.claude/worktrees/wt', sessionId: 'sess-1', status: 'active' }));
+  return { dir, home, slugDir, transcript: path.join(slugDir, 'sess-1.jsonl'), env: { ...process.env, HOME: home } };
+}
+function runAuto(s, extra = []) {
+  return spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--auto-transcript', ...extra], { encoding: 'utf8', env: s.env });
+}
+const readTiming = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'timing.json'), 'utf8'));
+
+test('#3375 AC3.1: with --auto-transcript the phase table is byte-identical to before, followed by the dispatch table', () => {
+  const s = subagentRun();
+  const r = runAuto(s);
+  assert.equal(r.status, 0, r.stderr);
+  const golden = fs.readFileSync(path.join(SUBFIX, 'golden-auto.md'), 'utf8');
+  assert.ok(r.stdout.startsWith(golden), 'the phase table and Guard footer must be unchanged');
+  assert.ok(r.stdout.slice(golden.length).startsWith('\nDispatches (run window'), r.stdout.slice(golden.length));
+  // a1 65s + a2 30s of standard (two separate minutes), a3 120s of capable
+  assert.match(r.stdout, /^\| standard \| 2 \| 95 \| 2 \| 20\/32 \| 150\/5 \|$/m);
+  assert.match(r.stdout, /^\| capable \| 1 \| 120 \| 2 \| 20\/30 \| 0\/10 \|$/m);
+  assert.match(r.stdout, /^\| implementer \| 1 \| 65 \| 1 \| 13\/24 \| 100\/5 \|$/m);
+  assert.match(r.stdout, /^\| task review \| 1 \| 30 \| 1 \| 7\/8 \| 50\/0 \|$/m);
+  assert.match(r.stdout, /^\| whole-branch review \| 1 \| 120 \| 2 \| 20\/30 \| 0\/10 \|$/m);
+  assert.ok(r.stdout.indexOf('| whole-branch review |') < r.stdout.indexOf('| task review |') && r.stdout.indexOf('| task review |') < r.stdout.indexOf('| implementer |'), 'roles render in ROLE_PATTERNS order');
+  assert.doesNotMatch(r.stdout, /^\| (fast|frontier|unmapped|unlabelled) \|/m);
+  const d = readTiming(s.dir).dispatches;
+  assert.equal(d.scope, 'run-window');
+  assert.equal(d.items.length, 3);
+  assert.equal(d.excludedOutsideWindow, 0);
+});
+
+test('#3375 AC3.2: with no transcript flag, the whole output and timing.json are byte-identical to before', () => {
+  const s = subagentRun();
+  const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown'], { encoding: 'utf8', env: s.env });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, fs.readFileSync(path.join(SUBFIX, 'golden-plain.md'), 'utf8'));
+  assert.equal('dispatches' in readTiming(s.dir), false);
+});
+
+test('#3375 AC4: a not-found dispatch prints a not-found line and no numeric row for it', () => {
+  const s = subagentRun();
+  fs.writeFileSync(path.join(s.slugDir, 'sess-1', 'subagents', 'agent-x.meta.json'), JSON.stringify({ description: 'Implement Task 9', model: 'sonnet' }));
+  const r = runAuto(s);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^dispatch agent-x: transcript not found \(ENOENT\)$/m);
+  assert.match(r.stdout, /^\| standard \| 2 \|/m);
+  assert.match(r.stdout, /^\| implementer \| 1 \|/m);
+  const x = readTiming(s.dir).dispatches.items.find((i) => i.agentId === 'x');
+  assert.equal(x.tokens, null);
+  assert.equal(x.wallClockMs, null);
+});
+
+test('#3375 AC4: an empty transcript, an orphan transcript, and a user-lines-only transcript each render per their own rule', () => {
+  const s = subagentRun();
+  const sub = path.join(s.slugDir, 'sess-1', 'subagents');
+  fs.writeFileSync(path.join(sub, 'agent-empty.meta.json'), JSON.stringify({ description: 'Implement Task 7', model: 'sonnet' }));
+  fs.writeFileSync(path.join(sub, 'agent-empty.jsonl'), '');
+  // orphan: a transcript with usage but no meta -> counted (unlabelled, tier from transcript model)
+  fs.writeFileSync(path.join(sub, 'agent-orphan.jsonl'), '{"type":"assistant","timestamp":"2026-10-17T10:03:00.000Z","message":{"id":"mo","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":2,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n');
+  // user-lines-only: timestamped, no assistant row -> notFound null, tokens 0, renders in its bucket
+  fs.writeFileSync(path.join(sub, 'agent-user.meta.json'), JSON.stringify({ description: 'Review lens security', model: 'fable' }));
+  fs.writeFileSync(path.join(sub, 'agent-user.jsonl'), '{"type":"user","timestamp":"2026-10-17T10:04:00.000Z","message":{"role":"user","content":[{"type":"text","text":"x"}]}}\n');
+  const r = runAuto(s);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^dispatch agent-empty: transcript has no usage rows$/m);
+  assert.match(r.stdout, /^dispatch agent-orphan: meta not found \(description null\)$/m);
+  assert.doesNotMatch(r.stdout, /^dispatch agent-user:/m);
+  assert.match(r.stdout, /^\| fast \| 1 \| /m);
+  assert.match(r.stdout, /^\| frontier \| 1 \| 0 \| 0 \| 0\/0 \| 0\/0 \|$/m);
+  assert.match(r.stdout, /^\| unlabelled \| 1 \| /m);
+  assert.match(r.stdout, /^\| lens reviewer \| 1 \| /m);
+  assert.match(r.stdout, /^\| standard \| 2 \|/m);
+});
+
+test('#3375 AC5.1: a transcript-requested run with no subagent data gains exactly one new key, dispatches, with the not-found reason', () => {
+  const dir = tmpRun(true);
+  const r = run(['--run', dir, '--transcript', TFIX, '--markdown']);
+  assert.equal(r.status, 0, r.stderr);
+  const json = readTiming(dir);
+  // the #1929 key set for this run
+  const before = ['runDir', 'generatedAt', 'phases', 'totals', 'unattributed', 'transcripts'];
+  if (json.notes) before.push('notes');
+  assert.deepEqual(Object.keys(json).filter((k) => k !== 'dispatches').sort(), before.sort());
+  assert.deepEqual(Object.keys(json).filter((k) => !before.includes(k)), ['dispatches']);
+  assert.match(json.dispatches.notFound, /^no subagents\/ directory at /);
+  assert.deepEqual(Object.keys(json.dispatches), ['notFound']);
+  assert.match(r.stdout, /^dispatches: subagent transcripts not found \(no subagents\/ directory at .+\)$/m);
+  assert.doesNotMatch(r.stdout, /Dispatches \(/);
+  assert.ok(r.stdout.endsWith('\n\ndispatches: subagent transcripts not found (' + json.dispatches.notFound + ')\n'));
+});
+
+test('#3375 AC5.2: no existing timing.json key changes', () => {
+  const dir = tmpRun(true);
+  fs.appendFileSync(path.join(dir, 'events.jsonl'), '{"ts":"2026-09-05T13:05:00.000Z","type":"gate-denial"}\n');
+  assert.equal(run(['--run', dir, '--transcript', TFIX, '--transcript', TFIX, '--markdown']).status, 0);
+  const json = readTiming(dir);
+  assert.deepEqual(json.totals.tokens, { input: 232, output: 456, cacheRead: 620, cacheCreate: 104 });
+  assert.equal(json.totals.procedureBytes, 36);
+  assert.equal(json.totals.toolRoundTrips, 6);
+  assert.deepEqual(json.totals.guard, { gateDenial: 1, wdAmbiguous: 0, wdDeny: 0 });
+  assert.equal(json.transcripts.length, 2);
+});
+
+test('#3375 review focus 3: the same transcript passed twice does not double-count dispatches', () => {
+  const s = subagentRun();
+  const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--transcript', s.transcript, '--transcript', s.transcript], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^\| standard \| 2 \|/m);
+  assert.equal(readTiming(s.dir).dispatches.items.length, 3);
+});
+
+test('#3375: the collapsed no-phase-events path still appends the dispatch table', () => {
+  const s = subagentRun({ events: null });
+  const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--transcript', s.transcript], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^no phase events; [^\n]*\n\nDispatches \(whole session — no run events;/);
+  assert.match(r.stdout, /^\| standard \| 2 \|/m);
+  assert.equal(readTiming(s.dir).dispatches.scope, 'whole-session');
+});
+
+test('#3375 R1: a run whose events all sit outside the dispatches reports them excluded and renders no tier rows', () => {
+  const s = subagentRun({ events: null });
+  for (const f of ['events.jsonl', 'manifest.yml']) fs.copyFileSync(path.join(FIX, f), path.join(s.dir, f));
+  const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--transcript', s.transcript], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^dispatches: 3 outside the run window excluded$/m);
+  assert.doesNotMatch(r.stdout, /^\| (fast|standard|capable|frontier|unmapped) \|/m);
+  const d = readTiming(s.dir).dispatches;
+  assert.equal(d.scope, 'run-window');
+  assert.equal(d.excludedOutsideWindow, 3);
+  assert.deepEqual(d.items, []);
 });

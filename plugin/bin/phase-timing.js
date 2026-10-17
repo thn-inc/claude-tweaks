@@ -25,11 +25,16 @@
 // single-session case: it locates {home}/.claude/projects/{slug}/{sessionId}
 // .jsonl from run-state.json's worktree + sessionId (bin/lib/timing/
 // transcript.js), picks the newest candidate, and notes any it ignored.
+//
+// With a transcript requested, timing.json also gains `dispatches` (#3375):
+// the subagent transcripts under each {session}/subagents/ directory,
+// aggregated by tier and role, clipped to the run's event window, and printed
+// after the phase table; the key is absent without a transcript flag.
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { derivePhases, joinTokens, countGuardEvents } = require('./lib/timing/derive');
-const { locateTranscripts, readUsage } = require('./lib/timing/transcript');
+const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches, ROLE_PATTERNS } = require('./lib/timing/derive');
+const { locateTranscripts, readUsage, subagentsDirFor, readDispatches } = require('./lib/timing/transcript');
 const { readManifest } = require('./lib/flow/manifest');
 
 const USAGE = 'usage: phase-timing.js --run <dir> [--json] [--markdown] [--transcript <path> ...] [--auto-transcript]\n';
@@ -145,6 +150,72 @@ function renderMarkdown(out, tokens = null, guard = null, notes = []) {
   return lines.join('\n') + '\n';
 }
 
+const TIER_ORDER = ['fast', 'standard', 'capable', 'frontier', 'unmapped'];
+const ROLE_ORDER = [...ROLE_PATTERNS.map((p) => p.role), 'unlabelled'];
+
+function dispatchRow(label, b) {
+  const t = b.tokens;
+  return `| ${label} | ${b.dispatches} | ${b.agentSeconds} | ${b.elapsedMinutes} | ${t.input}/${t.output} | ${t.cacheRead}/${t.cacheCreate} |`;
+}
+
+// One line per item whose transcript or meta was not found: the three non-null
+// notFound forms readDispatches produces, then a verbatim fallback.
+function dispatchItemLine(d) {
+  const code = /^transcript not readable \((.*)\)$/.exec(d.notFound);
+  if (code) return `dispatch agent-${d.agentId}: transcript not found (${code[1]})`;
+  if (d.notFound === 'meta not found') return `dispatch agent-${d.agentId}: meta not found (description null)`;
+  return `dispatch agent-${d.agentId}: ${d.notFound}`;
+}
+
+// dispatches: the timing.json `dispatches` value, or null/undefined (no
+// transcript requested) -> ''. Otherwise the text starts with one blank line.
+function renderDispatches(dispatches) {
+  if (!dispatches) return '';
+  if (dispatches.notFound) return `\ndispatches: subagent transcripts not found (${dispatches.notFound})\n`;
+  const lines = [''];
+  const tiers = TIER_ORDER.filter((t) => dispatches.byTier[t]);
+  if (tiers.length > 0) {
+    const scope = dispatches.scope === 'run-window' ? 'run window' : 'whole session — no run events';
+    lines.push(`Dispatches (${scope}; agent-seconds sum spans with overlap kept, elapsed is their union — not comparable to phase minutes):`);
+    const cols = '| Dispatches | Agent-seconds | Elapsed (min) | Tokens (in/out) | Cache (read/create) |';
+    lines.push(`| Tier ${cols}`, '|---|---|---|---|---|---|');
+    for (const t of tiers) {
+      const b = dispatches.byTier[t];
+      const raw = t === 'unmapped' && b.rawModels && b.rawModels.length ? ` (raw: ${b.rawModels.join(', ')})` : '';
+      lines.push(dispatchRow(t + raw, b));
+    }
+    lines.push(`| Role ${cols}`, '|---|---|---|---|---|---|');
+    for (const r of ROLE_ORDER.filter((x) => dispatches.byRole[x])) lines.push(dispatchRow(r, dispatches.byRole[r]));
+  }
+  for (const d of dispatches.items) if (d.notFound) lines.push(dispatchItemLine(d));
+  if (dispatches.excludedOutsideWindow > 0) lines.push(`dispatches: ${dispatches.excludedOutsideWindow} outside the run window excluded`);
+  return lines.join('\n') + '\n';
+}
+
+// paths: the resolved transcript paths; events: parsed events.jsonl rows. The
+// window is the earliest..latest event ts (no event with a ts -> the whole
+// session). Subagents dirs are deduped by path.resolve so a transcript passed
+// twice is not double-counted. -> the timing.json `dispatches` value.
+async function collectDispatches(paths, events) {
+  const stamps = events.map((e) => Date.parse(e && e.ts)).filter(Number.isFinite);
+  const window = stamps.length ? { start: Math.min(...stamps), end: Math.max(...stamps) } : null;
+  const dirs = [...new Set(paths.map((p) => path.resolve(subagentsDirFor(p))))];
+  const items = [];
+  const reasons = [];
+  let excludedOutsideWindow = 0;
+  let found = 0;
+  for (const dir of dirs) {
+    const r = await readDispatches(dir, { window });
+    if (r.notFound) { reasons.push(r.notFound); continue; }
+    found += 1;
+    items.push(...r.items);
+    excludedOutsideWindow += r.excludedOutsideWindow;
+  }
+  if (found === 0) return { notFound: reasons.length ? reasons.join('; ') : 'no transcript resolved' };
+  const agg = aggregateDispatches(items);
+  return { scope: window ? 'run-window' : 'whole-session', items: agg.items, byTier: agg.byTier, byRole: agg.byRole, excludedOutsideWindow };
+}
+
 // Resolve the transcript list: explicit --transcript paths, plus the
 // auto-located one. Returns { paths, notes }.
 function resolveTranscripts(o, runState) {
@@ -217,10 +288,11 @@ async function main(argv) {
     timing.totals.guard = guard;
     timing.transcripts = transcripts;
     if (notes.length) timing.notes = notes;
+    timing.dispatches = await collectDispatches(paths, events.events);
   }
   const timingPath = path.join(runDir, 'timing.json');
   fs.writeFileSync(timingPath, JSON.stringify(timing, null, 2) + '\n');
-  if (o.markdown) process.stdout.write(renderMarkdown(out, tokens, guard, notes));
+  if (o.markdown) process.stdout.write(renderMarkdown(out, tokens, guard, notes) + renderDispatches(timing.dispatches));
   else if (o.json) process.stdout.write(JSON.stringify(timing, null, 2) + '\n');
   else process.stdout.write(`timing: wrote ${timingPath}\n`);
   return 0;
@@ -232,4 +304,4 @@ if (require.main === module) {
     process.exitCode = 2;
   });
 }
-module.exports = { main, parseArgs, renderMarkdown };
+module.exports = { main, parseArgs, renderMarkdown, renderDispatches };
