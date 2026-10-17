@@ -23,14 +23,9 @@ const live = JSON.stringify({ runId: 'r', claimedAt: new Date(NOW).toISOString()
 const expired = JSON.stringify({ runId: 'r', claimedAt: new Date(NOW - 100 * HOUR).toISOString(), ttlHours: 72 });
 const tombstone = JSON.stringify({ released: true });
 
-// A reader that serves a fixed table; a value of Error throws, anything else is returned.
-function readerFrom(table, calls = []) {
-  return (number) => {
-    calls.push(number);
-    const value = table[number];
-    if (value instanceof Error) throw value;
-    return value;
-  };
+// A reader that serves a fixed table of { content } / { failure } results.
+function readerFrom(table) {
+  return (number) => table[number];
 }
 
 function run(readClaimContent, extra = {}) {
@@ -53,8 +48,7 @@ test('neighbourClaimTargets lists only in-flight records that neighbour a candid
 });
 
 test('AC1.1: an MCP-read live claim (map-backed reader) produces the neighbour-in-flight exclusion', () => {
-  const map = JSON.parse(JSON.stringify({ 9: live }));
-  const result = run(claimReaderFromMap(map));
+  const result = run(claimReaderFromMap({ 9: live }));
   assert.deepStrictEqual(result.exclusions, [
     { reason: 'neighbour-in-flight', records: [1], detail: { neighbours: [{ number: 9, files: ['a.js'] }] } },
   ]);

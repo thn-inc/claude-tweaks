@@ -96,8 +96,9 @@ function neighbourClaimTargets({ candidates, inFlight, hubOptions = {} }) {
 // claim.
 function claimReaderFromMap(map) {
   return (number) => {
-    if (!Object.prototype.hasOwnProperty.call(map, String(number))) return { failure: 'claim-not-read' };
-    const value = map[String(number)];
+    const key = String(number);
+    if (!Object.prototype.hasOwnProperty.call(map, key)) return { failure: 'claim-not-read' };
+    const value = map[key];
     if (value === null) return { content: null };
     if (typeof value === 'string') return { content: value };
     if (typeof value === 'object' && !Array.isArray(value)) {
