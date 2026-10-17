@@ -60,6 +60,13 @@ test('AC9.1: the waves fallback is step 3\'s single retry', () => {
   assert.ok(para, 'No plan. paragraph present');
   assert.match(para[0], /single retry|one retry/i);
   assert.match(para[0], /multispec-preflight-failure\.md/);
+  assert.doesNotMatch(
+    para[0],
+    /2 malformed, or a `--waves` dependency cycle\), `parallel` falls back/,
+    'the re-run without --waves is for exit 1 only; exit 2 (malformed or a --waves cycle) is step 3\'s STOP',
+  );
+  assert.match(para[0], /exit 2|2 malformed/i, 'names exit 2 as following step 3\'s STOP');
+  assert.match(para[0], /STOP/, 'exit 2 routes to step 3\'s STOP');
 });
 
 test('AC10.1: docs/plugin-structure.md\'s preflight-records CLI line names --records-json', () => {

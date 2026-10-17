@@ -6,9 +6,9 @@ Loaded by `multi-spec.md`'s Validation step 3, before Step 2.8's claim, when the
 
 **Exit 0.** Proceed. Steps 4, 4a, 4b and 5 read the envelope.
 
-**Exit 1 (`gh` transport).** Re-run the identical call once. A second exit 1 is a **STOP before claiming**, naming every failing record from stderr. Under `parallel`, the re-run without `--waves` in `multispec-parallel-waves.md` is that one retry, never a third call. Nothing needs tearing down: this run has made no claim, worktree or run-dir write yet. Under a `/claude-tweaks:dispatch` bundle, the STOP is that bundle's failed run.
+**Exit 1 (`gh` transport).** Re-run the identical call once. A second exit 1 is a **STOP before claiming**, naming every failing record from stderr. Under `parallel`, the exit-1 re-run without `--waves` in `multispec-parallel-waves.md` is that one retry, never a third call. Nothing needs tearing down: this run has made no claim, worktree or run-dir write yet. Under a `/claude-tweaks:dispatch` bundle, the STOP is that bundle's failed run.
 
-**Exit 2.** **STOP before claiming**, no retry, quoting stderr. It is an invocation bug, an unresolvable owner/repo under `native`, or a `--waves` cycle that step 4 would hard-fail on anyway.
+**Exit 2.** **STOP before claiming**, no retry, quoting stderr. It is an invocation bug, an unresolvable owner/repo under `native`, or a `--waves` cycle that step 4 would hard-fail on anyway. Under `parallel`, a `--waves` cycle is also a STOP, never a re-run without `--waves`.
 
 **`nativeLinksUnchecked: true`.** Proceed. Ordering and the merge-state gate run on body-text `blocked-by` only. Once the parent run directory exists (after Step 3's Manifesto write, as `multispec-merge-gate.md` times its own entries), write one `SKIP`:
 ```
