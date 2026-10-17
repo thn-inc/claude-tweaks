@@ -54,7 +54,7 @@ test('dispatch/SKILL.md argument-hint drops --claim-only', () => {
 
 test('task-prompt.md first template no longer claims "already-claimed"; second still does', () => {
   const content = read('plugin/skills/dispatch/task-prompt.md');
-  assert.match(content, /Execute claude-tweaks build\+test for this file-overlap group of/);
+  assert.match(content, /Execute claude-tweaks build\+test for this dispatch group of/);
   assert.doesNotMatch(content, /Execute claude-tweaks build\+test for this already-claimed/);
   assert.match(content, /Execute claude-tweaks review\+polish\+wrap-up for this already-claimed/);
 });
@@ -249,9 +249,8 @@ test('claim step invokes bin/claim-targets.js — no per-target gh api snippet r
   assert.match(content, /@base64d/);
 });
 
-test('multi-spec pre-flight and dispatch cite bin/preflight-records.js (#723)', () => {
+test('multi-spec pre-flight cites bin/preflight-records.js (#723; dispatch stopped deriving groups from it in #3278)', () => {
   assert.match(read('plugin/skills/flow/multi-spec.md'), /bin\/preflight-records\.js/);
-  assert.match(read('plugin/skills/dispatch/SKILL.md'), /bin\/preflight-records\.js/);
 });
 
 test('claim-targets.md mandates a decisions.md log line on successful claim, and documents the mechanical backstop that now enforces it (#2492, #2526)', () => {

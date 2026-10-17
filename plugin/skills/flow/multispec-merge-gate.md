@@ -20,11 +20,7 @@ The phrase and the `#N` must be on the same line. A wrapped bullet, or a demand 
 
 1. Read `mergeGate` off Validation Step 3's own `preflight-records.js --merge-gate --integration-branch "$INTEGRATION_BRANCH"` call (`multi-spec.md` Step 3) — never a second invocation.
 
-   If that call exited non-zero (1 = a fetch or the native GraphQL call failed, including a gh-absent sandbox; 2 = malformed invocation), the gate was not evaluated — this is never read as "nothing to defer." That failure voids the whole Step 3 collection (`records`, `overlapGroups`, `workLinks` too), not just `mergeGate`; what Steps 4-5 do without that data is Step 3's own failure handling, not this gate's. For this gate's slice: proceed unsplit with the full target list, and once the parent run directory exists (after Step 3's Manifesto write), write one `SKIP` entry:
-   ```
-   node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status SKIP --step "Step 1 merge-state gate (skipped)" --text "condition: preflight-records.js --merge-gate exited non-zero ({stderr reason}) → fallback: proceed with the full target list, no split; each target's own build-time premise check is the backstop." --reversibility n/a
-   ```
-   Stop here — do not continue to steps 2-4.
+   A non-zero exit never reaches this gate: step 3's ruling (`multispec-preflight-failure.md`) stops the run before claiming. Under `nativeLinksUnchecked`, the gate evaluates on body-text `blocked-by` only, which that file's `SKIP` records.
 2. `mergeGate.deferred` empty → no-op, write nothing.
 3. Otherwise, before Step 2.8 claims anything: continue with `kept` as the run's target list (one remaining record → an ordinary single-record run). Once the parent run directory exists (after Step 3's Manifesto write), write one `AUTO` entry:
    ```

@@ -224,7 +224,9 @@ test('buildOverlapGroups: records sharing a key file union into one group; items
 
 const { run } = require('../../../plugin/bin/preflight-records');
 
-function cliDeps({ runner, workLinks = 'body-text', remoteUrl = 'https://github.com/acme/w.git' } = {}) {
+function cliDeps({
+  runner, workLinks = 'body-text', remoteUrl = 'https://github.com/acme/w.git', files = {},
+} = {}) {
   const out = [];
   const err = [];
   return {
@@ -232,6 +234,7 @@ function cliDeps({ runner, workLinks = 'body-text', remoteUrl = 'https://github.
       runner,
       resolveWorkLinks: () => workLinks,
       remoteUrl: () => remoteUrl,
+      readFile: (p) => { if (!(p in files)) throw new Error(`ENOENT: ${p}`); return files[p]; },
       stdout: (s) => out.push(s),
       stderr: (s) => err.push(s),
     },
@@ -387,6 +390,24 @@ test('(c) CLI overlapGroups: shared keyFiles union across three records', () => 
   assert.deepEqual(sorted, [[720, 721], [722]]);
 });
 
+test('CLI directOverlaps: a chain A-B, B-C keeps one transitive group but lists only the direct pairs (#3278)', () => {
+  const runner = (args) => {
+    if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A', body: specBody(['x.js']) }));
+    if (isIssueView(args, 721)) return JSON.stringify(issue({ number: 721, title: 'B', body: specBody(['x.js', 'y.js']) }));
+    if (isIssueView(args, 722)) return JSON.stringify(issue({ number: 722, title: 'C', body: specBody(['y.js']) }));
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner, workLinks: 'body-text' });
+  const code = run(['722', '720', '721'], deps);
+  assert.equal(code, 0);
+  const env = JSON.parse(out.join(''));
+  assert.deepEqual(env.overlapGroups.map((g) => [...g].sort((a, b) => a - b)), [[720, 721, 722]]);
+  assert.deepEqual(env.directOverlaps, [
+    { a: 720, b: 721, files: ['x.js'] },
+    { a: 721, b: 722, files: ['y.js'] },
+  ]);
+});
+
 test('(d) CLI: fetch failure on one of three records exits 1, all failures named', () => {
   const runner = (args) => {
     if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A' }));
@@ -506,7 +527,7 @@ test('#2733: --merge-gate adds mergeGate to the envelope; without it the envelop
 
   const plain = cliDeps({ runner, workLinks: 'body-text' });
   assert.equal(run(['2670', '2682'], plain.deps), 0);
-  assert.deepEqual(Object.keys(JSON.parse(plain.out.join(''))).sort(), ['overlapGroups', 'records', 'workLinks']);
+  assert.deepEqual(Object.keys(JSON.parse(plain.out.join(''))).sort(), ['directOverlaps', 'overlapGroups', 'records', 'workLinks']);
 });
 
 // AC2.1
@@ -565,4 +586,191 @@ test('--waves on a dependency cycle exits 2 naming the cycle, no stdout (#2677)'
   assert.equal(run(['811', '812', '--waves'], deps), 2);
   assert.equal(out.length, 0);
   assert.match(err.join(''), /dependency cycle through #81[12]/);
+});
+
+// --- CLI: --records-json (#3351) ----------------------------------------
+
+const noGh = () => { throw new Error('must not call gh'); };
+
+test('AC1.1: --records-json under body-text yields the gh-path envelope and never calls the runner', () => {
+  const issues = [
+    issue({ number: 720, title: 'A', body: `Blocked by #700\n\n${specBody(['a.js'])}` }),
+    issue({ number: 721, title: 'B', body: specBody(['a.js']) }),
+  ];
+  const ghRunner = (args) => {
+    const hit = issues.find((i) => isIssueView(args, i.number));
+    if (hit) return JSON.stringify(hit);
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const viaGh = cliDeps({ runner: ghRunner, workLinks: 'body-text' });
+  assert.equal(run(['720', '721'], viaGh.deps), 0);
+
+  let calls = 0;
+  const viaFile = cliDeps({
+    runner: () => { calls++; throw new Error('must not call gh'); },
+    workLinks: 'body-text',
+    files: { '/r.json': JSON.stringify(issues) },
+  });
+  assert.equal(run(['720', '721', '--records-json', '/r.json'], viaFile.deps), 0);
+  assert.equal(calls, 0);
+  assert.deepEqual(JSON.parse(viaFile.out.join('')), JSON.parse(viaGh.out.join('')));
+});
+
+test('AC2.1: --records-json under native makes zero runner calls, reads blockedBy from bodies, flags nativeLinksUnchecked', () => {
+  let calls = 0;
+  const { deps, out, err } = cliDeps({
+    runner: () => { calls++; throw new Error('must not call gh'); },
+    workLinks: 'body-text',
+    files: {
+      '/r.json': JSON.stringify([
+        issue({ number: 720, title: 'A', body: `Blocked by #700\n\n${specBody(['a.js'])}` }),
+        issue({ number: 721, title: 'B', body: specBody(['b.js']) }),
+      ]),
+    },
+  });
+  assert.equal(run(['720', '721', '--work-links', 'native', '--records-json', '/r.json'], deps), 0);
+  assert.equal(calls, 0);
+  const env = JSON.parse(out.join(''));
+  assert.equal(env.workLinks, 'body-text');
+  assert.equal(env.nativeLinksUnchecked, true);
+  assert.deepEqual(env.records['720'].blockedBy, [700]);
+  assert.match(err.join(''), /native blocked-by links unchecked/);
+});
+
+test('AC2.2: a gh-path envelope carries no nativeLinksUnchecked key', () => {
+  const runner = (args) => {
+    if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A', body: specBody(['a.js']) }));
+    if (isGraphQL(args)) {
+      return JSON.stringify({ data: { repository: { i720: { number: 720, blockedBy: { nodes: [] } } } } });
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const native = cliDeps({ runner, workLinks: 'native' });
+  assert.equal(run(['720'], native.deps), 0);
+  assert.equal('nativeLinksUnchecked' in JSON.parse(native.out.join('')), false);
+
+  const bodyText = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['720'], bodyText.deps), 0);
+  assert.equal('nativeLinksUnchecked' in JSON.parse(bodyText.out.join('')), false);
+});
+
+test('AC3.1: --records-json with --merge-gate and --waves computes mergeGate and waves from the file', () => {
+  const { deps, out } = cliDeps({
+    runner: noGh,
+    files: {
+      '/r.json': JSON.stringify([
+        issue({ number: 720, title: 'A', body: specBody(['a.js']) }),
+        issue({ number: 721, title: 'B', body: `Blocked by #720\n\n## Deliverables\n- #720 must be merged to \`main\` first\n\n${specBody(['b.js'])}` }),
+      ]),
+    },
+  });
+  assert.equal(run(['720', '721', '--records-json', '/r.json', '--merge-gate', '--waves', '--integration-branch', 'main'], deps), 0);
+  const env = JSON.parse(out.join(''));
+  assert.ok(env.mergeGate.deferred.includes(721));
+  assert.ok(Array.isArray(env.waves.waves));
+});
+
+test('AC4.1: each malformed --records-json input exits 2, names the problem, never calls the runner', () => {
+  const good = (n) => issue({ number: n, title: `T${n}`, body: specBody(['a.js']) });
+  const cases = [
+    ['missing file', {}, /cannot read --records-json/],
+    ['unparseable', { '/r.json': '{' }, /not valid JSON/],
+    ['non-array', { '/r.json': '{}' }, /must be a JSON array/],
+    ['entry without number', { '/r.json': JSON.stringify([good(720), { title: 'x', body: '' }]) }, /missing a numeric "number"/],
+    ['entry without body', { '/r.json': JSON.stringify([good(720), { number: 721, title: 'x' }]) }, /missing a string "body"/],
+    ['string labels', { '/r.json': JSON.stringify([good(720), { ...good(721), labels: 'ready' }]) }, /non-array "labels"/],
+    ['object labels', { '/r.json': JSON.stringify([good(720), { ...good(721), labels: { name: 'x' } }]) }, /non-array "labels"/],
+    ['duplicate number', { '/r.json': JSON.stringify([good(720), good(721), good(721)]) }, /more than once/],
+    ['requested number absent', { '/r.json': JSON.stringify([good(720)]) }, /missing requested #721/],
+    ['extra number', { '/r.json': JSON.stringify([good(720), good(721), good(722)]) }, /not requested/],
+  ];
+  for (const [label, files, pattern] of cases) {
+    const path = label === 'missing file' ? '/nope.json' : '/r.json';
+    const { deps, out, err } = cliDeps({ runner: noGh, files });
+    assert.equal(run(['720', '721', '--records-json', path], deps), 2, label);
+    assert.equal(out.length, 0, label);
+    assert.match(err.join(''), pattern, label);
+  }
+});
+
+test('AC5.1: a trailing bare --records-json exits 2', () => {
+  const trailing = cliDeps({ runner: noGh });
+  assert.equal(run(['720', '--records-json'], trailing.deps), 2);
+  assert.equal(trailing.out.length, 0);
+  assert.match(trailing.err.join(''), /missing value for --records-json/);
+
+  const flagNext = cliDeps({ runner: noGh });
+  assert.equal(run(['720', '--records-json', '--waves'], flagNext.deps), 2);
+  assert.equal(flagNext.out.length, 0);
+  assert.match(flagNext.err.join(''), /missing value for --records-json/);
+});
+
+test('--records-json accepts bare-string labels', () => {
+  const envFor = (labels) => {
+    const { deps, out } = cliDeps({
+      runner: noGh,
+      files: { '/r.json': JSON.stringify([issue({ number: 720, title: 'A', body: specBody(['a.js']), labels })]) },
+    });
+    assert.equal(run(['720', '--records-json', '/r.json'], deps), 0);
+    return JSON.parse(out.join(''));
+  };
+  const bare = envFor(['ready', 'risk:low']);
+  const objs = envFor([{ name: 'ready' }, { name: 'risk:low' }]);
+  assert.deepEqual(bare.records['720'].facets, objs.records['720'].facets);
+  assert.equal(bare.records['720'].facets.stage, 'ready');
+});
+
+test('--records-json never resolves the origin remote — a sandbox with no origin still runs', () => {
+  for (const workLinks of ['body-text', 'native']) {
+    const { deps, out } = cliDeps({
+      runner: noGh,
+      workLinks,
+      files: { '/r.json': JSON.stringify([issue({ number: 720, title: 'A', body: specBody(['a.js']) })]) },
+    });
+    let remoteCalls = 0;
+    deps.remoteUrl = () => { remoteCalls += 1; throw new Error('fatal: No such remote \'origin\''); };
+    assert.equal(run(['720', '--records-json', '/r.json'], deps), 0, workLinks);
+    assert.equal(remoteCalls, 0, `${workLinks}: remoteUrl must not be called on the records-json path`);
+    assert.ok(JSON.parse(out.join('')).records['720'], workLinks);
+  }
+});
+
+test('--records-json accepts an unlabelled record — labels missing or null, as gh reports it', () => {
+  for (const [label, entry] of [
+    ['missing', { number: 720, title: 'A', body: specBody(['a.js']) }],
+    ['null', { number: 720, title: 'A', body: specBody(['a.js']), labels: null }],
+  ]) {
+    const { deps, out, err } = cliDeps({ runner: noGh, files: { '/r.json': JSON.stringify([entry]) } });
+    assert.equal(run(['720', '--records-json', '/r.json'], deps), 0, `${label}: ${err.join('')}`);
+    assert.ok(JSON.parse(out.join('')).records['720'], label);
+  }
+});
+
+test('--records-json --waves plans from the file records — independent records share one wave', () => {
+  const { deps, out } = cliDeps({
+    runner: noGh,
+    files: {
+      '/r.json': JSON.stringify([
+        issue({ number: 720, title: 'A', body: specBody(['a.js']) }),
+        issue({ number: 721, title: 'B', body: specBody(['b.js']) }),
+      ]),
+    },
+  });
+  assert.equal(run(['720', '721', '--records-json', '/r.json', '--waves'], deps), 0);
+  assert.deepEqual(JSON.parse(out.join('')).waves.waves, [[720, 721]]);
+});
+
+test('--records-json with a --waves dependency cycle exits 2', () => {
+  const { deps, out, err } = cliDeps({
+    runner: noGh,
+    files: {
+      '/r.json': JSON.stringify([
+        issue({ number: 720, title: 'A', body: `Blocked by #721\n\n${specBody(['a.js'])}` }),
+        issue({ number: 721, title: 'B', body: `Blocked by #720\n\n${specBody(['b.js'])}` }),
+      ]),
+    },
+  });
+  assert.equal(run(['720', '721', '--records-json', '/r.json', '--waves'], deps), 2);
+  assert.equal(out.length, 0);
+  assert.match(err.join(''), /dependency cycle/);
 });

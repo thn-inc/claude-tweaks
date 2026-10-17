@@ -34,7 +34,7 @@ GitHub issue/local file    docs/superpowers/specs/*-design.md  GitHub issue/loca
                                                                     backlog record (/capture)
 ```
 
-Between shaping and build, two utility skills act on the record with no fixed lifecycle position of their own — `/claude-tweaks:backlog` (`refine` mode grants `auto:build`/`auto:merge`) and `/claude-tweaks:dispatch` (selects the authorized record's file-overlap group and hands it to `/claude-tweaks:flow`, which claims it at Step 2.8). See the Work Records section of `README.md` and `_shared/work-record.md` for the full grant/claim contract.
+Between shaping and build, two utility skills act on the record with no fixed lifecycle position of their own — `/claude-tweaks:backlog` (`refine` mode grants `auto:build`/`auto:merge`) and `/claude-tweaks:dispatch` (selects the authorized record's group (the record, or its fast-lane bundle) and hands it to `/claude-tweaks:flow`, which claims it at Step 2.8). See the Work Records section of `README.md` and `_shared/work-record.md` for the full grant/claim contract.
 
 ```
 Code + Journey ──→ Story YAML     ──→ Test (mechanical gate)  ──→ Review (analytical)       ──→ Learnings Routed    ──→ Clean Slate

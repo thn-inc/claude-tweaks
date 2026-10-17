@@ -10,7 +10,7 @@ const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const {
   parseManifestYaml, serializeManifestYaml, readManifest, writeManifest,
   formatElapsedMs, transitionSpec, composeFixesBlock, readDeferredClosures,
-  readSingleRecordDeferredClosure,
+  readSingleRecordDeferredClosure, manifestInit,
 } = manifestModule;
 
 function tmpRunDir() {
@@ -152,9 +152,12 @@ test('transitionSpec is the module\'s only status-mutation entry point, and ever
   // transitionSpec, so the real entry point skills cite has exactly one
   // path from "write a status" to "produce a banner," and they are the
   // same call.
+  // `manifestInit` (#3035) is the one CREATOR: it only ever writes `pending`
+  // for ids not yet listed and never alters a listed spec, so it is not a
+  // second status-mutation path.
   assert.deepEqual(
     Object.keys(manifestModule).sort(),
-    ['VALID_STATUSES', 'composeFixesBlock', 'formatElapsedMs', 'parseManifestYaml', 'readDeferredClosures', 'readManifest', 'readSingleRecordDeferredClosure', 'serializeManifestYaml', 'transitionSpec', 'writeManifest'].sort(),
+    ['VALID_STATUSES', 'composeFixesBlock', 'formatElapsedMs', 'manifestInit', 'parseManifestYaml', 'readDeferredClosures', 'readManifest', 'readSingleRecordDeferredClosure', 'serializeManifestYaml', 'transitionSpec', 'writeManifest'].sort(),
   );
 
   const dir = seedRunDir([{ id: 42, status: 'pending', subdir: 'spec-42/' }]);
@@ -399,4 +402,69 @@ test('#3136: composeFixesBlock consumes readSingleRecordDeferredClosure output f
     composeFixesBlock([{ id: 42, status: 'complete' }], emptyDeferred),
     ['Fixes #42'],
   );
+});
+
+// ---- manifestInit (#3035) ----
+
+test('#3035: manifestInit then transitionSpec works on an empty parent dir (the first spec-status no longer refuses no-manifest)', () => {
+  const dir = tmpRunDir(); // empty — no manifest.yml
+  const init = manifestInit({ runDir: dir, specs: ['157', '159'], parent: '.claude-tweaks/pipelines/x/' });
+  assert.equal(init.ok, true);
+  assert.deepEqual(init.added, [157, 159]);
+
+  const onDisk = readManifest(dir);
+  assert.equal(onDisk.multispec.parent, '.claude-tweaks/pipelines/x/');
+  assert.deepEqual(
+    onDisk.multispec.specs,
+    [{ id: 157, status: 'pending', subdir: 'spec-157/' }, { id: 159, status: 'pending', subdir: 'spec-159/' }],
+  );
+
+  const r = transitionSpec({ runDir: dir, specId: 159, status: 'running', phase: 'build', now: new Date('2026-01-01T00:00:00.000Z') });
+  assert.equal(r.ok, true);
+  assert.equal(r.banner, '## Flow: Running build (2/2) — spec #159');
+});
+
+test('#3035: manifestInit on an existing manifest keeps every spec\'s status, startedAt and phases[] and appends only new ids', () => {
+  const dir = tmpRunDir();
+  manifestInit({ runDir: dir, specs: ['1', '2'] });
+  transitionSpec({ runDir: dir, specId: 1, status: 'running', phase: 'build', now: new Date('2026-01-01T00:00:00.000Z') });
+  transitionSpec({ runDir: dir, specId: 1, status: 'complete', phase: 'wrap-up', now: new Date('2026-01-01T00:10:00.000Z') });
+  const before = readManifest(dir);
+  assert.equal(before.multispec.specs[0].status, 'complete');
+  assert.equal(before.multispec.specs[0].phases.length, 2);
+
+  const again = manifestInit({ runDir: dir, specs: ['1', '2', '3'] });
+  assert.equal(again.ok, true);
+  assert.deepEqual(again.added, [3]);
+  assert.deepEqual(again.existing, [1, 2]);
+
+  const after = readManifest(dir);
+  assert.deepEqual(after.multispec.specs.slice(0, 2), before.multispec.specs, 'listed specs are untouched');
+  assert.deepEqual(after.multispec.specs[2], { id: 3, status: 'pending', subdir: 'spec-3/' });
+  assert.equal(after.multispec.parent, before.multispec.parent, 'an existing manifest keeps its own parent');
+});
+
+test('#3035: manifestInit with nothing new does not rewrite the file; bad input and a corrupt manifest are refused', () => {
+  const dir = tmpRunDir();
+  assert.equal(manifestInit({ runDir: dir, specs: [] }).reason, 'no-specs');
+  assert.equal(manifestInit({ runDir: dir, specs: ['a b'] }).reason, 'invalid-spec-id');
+  assert.equal(fs.existsSync(path.join(dir, 'manifest.yml')), false, 'a refusal writes nothing');
+
+  manifestInit({ runDir: dir, specs: ['5'] });
+  const file = path.join(dir, 'manifest.yml');
+  const old = new Date('2020-01-01T00:00:00.000Z');
+  fs.utimesSync(file, old, old);
+  assert.equal(manifestInit({ runDir: dir, specs: ['5', '5'] }).added.length, 0);
+  assert.equal(fs.statSync(file).mtimeMs, old.getTime(), 'an all-existing re-run leaves the file alone');
+
+  fs.writeFileSync(file, 'not a manifest\n');
+  assert.equal(manifestInit({ runDir: dir, specs: ['5'] }).reason, 'unreadable-manifest');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'not a manifest\n', 'a corrupt manifest is never overwritten');
+});
+
+test('#3035: manifestInit preserves a legacy baseSha on an older manifest', () => {
+  const dir = tmpRunDir();
+  fs.writeFileSync(path.join(dir, 'manifest.yml'), 'multispec:\n  parent: x/\n  baseSha: f9b5ec84d6c462050ed6a40d640ae50b67f6ee36\n  specs:\n    - id: 1\n      status: pending\n      subdir: spec-1/\n');
+  manifestInit({ runDir: dir, specs: ['1', '2'] });
+  assert.equal(readManifest(dir).multispec.baseSha, 'f9b5ec84d6c462050ed6a40d640ae50b67f6ee36');
 });

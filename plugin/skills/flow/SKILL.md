@@ -209,6 +209,7 @@ When multiple record references are provided (e.g., `#42,#45,#48`), flow runs ea
 **Pre-flight enrichments (v4.6.4+):**
 - **Dependency-aware ordering** — reads each target's `blocked-by:` dependency declaration (see `materialize.md`'s Populating the header), builds a DAG, hard-fails on cycles, and offers (or auto-applies in `auto` mode) topological re-ordering when the user's order violates the graph.
 - **Merge-state gate (#2733)** — a target whose text requires an in-run prerequisite already merged to the integration branch is split out (with its in-run dependents) before claiming, logged, and given a re-run command — never asked; see `multispec-merge-gate.md`.
+- **Pre-flight failure (#3351)** — a failed record pre-flight stops the run before claiming (one retry on a `gh` fetch failure), and a `gh`-absent run hands its MCP-fetched records in via `--records-json`; see `multispec-preflight-failure.md`.
 - **Cross-spec conflict detection** — pre-flight scans each spec's `Files:` declarations; surfaces overlapping pairs as a footer line in the Pipeline Preview. Warning, not hard-fail.
 
 **Failure handling:**

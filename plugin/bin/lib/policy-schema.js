@@ -60,11 +60,11 @@ const POLICY_KEYS = [
   // project's existing policy.yml validates; removal condition in
   // skills/dispatch/deprecated-aliases.md.
   { key: 'dispatch-pick-max-concurrent', type: 'integer', default: 3, summary: "Caps how many queued records one dispatch run works through in sequence — an older name for the same cap, kept for migration.", category: 'merge-safety', tier: 'advanced' },
-  { key: 'dispatch-group-size-guard', type: 'integer', default: 10, summary: "Caps how large a file-overlap dispatch group may be before headless `next` selection excludes it.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'dispatch-group-size-guard', type: 'integer', default: 10, summary: "Caps a dispatch group's size before bare-drain selection excludes it; since per-record grouping only a large fast-lane bundle can exceed it.", category: 'merge-safety', tier: 'advanced' },
   // #1910: merges up to this many non-overlapping ceremony:fast-lane
   // singleton groups into one multi-spec dispatch run, sharing one
   // preflight/wrap-up tail instead of paying it per record. 0 disables —
-  // reproduces pre-#1910 grouping byte-for-byte (bundleFastLaneSingletons's
+  // every record stays its own group, no bundling (bundleFastLaneSingletons's
   // own doc comment, bin/lib/issues/grouping.js).
   { key: 'dispatch-fastlane-bundle-cap', type: 'integer', default: 3, summary: "Caps how many non-overlapping ceremony:fast-lane singleton groups dispatch merges into one multi-spec run; 0 disables bundling.", category: 'merge-safety', tier: 'advanced' },
   { key: 'auto-merge-max-lines', type: 'integer', default: 40, summary: "Bounds how large a diff an unattended merge will accept before a human is required — a weighted guideline, not a hard cutoff.", category: 'merge-safety', tier: 'core' },

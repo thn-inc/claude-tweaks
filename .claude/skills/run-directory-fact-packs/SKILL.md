@@ -95,6 +95,14 @@ proposed field, answer three questions against the code, at plan-authoring time:
      `worktreeAtClose` (#3023). A reader that runs after close-run, such as `engine-verify.js`'s
      `worktree-removed`, falls back to `worktreeAtClose`, its own and then the parent's. Reading
      `worktree` alone there sees `null` and skips the check.
+   - **A file the parent writes with a placeholder value.** A multi-spec parent run dir (one
+     holding `manifest.yml`) has its own `console.json`, but its `merge.resolution` always reads
+     `leave-open` (`members-unresolved`): the parent-level call has no members, and
+     `flow/multispec-review-console.md` discards that value. `engine-verify.js`'s
+     `consoleMergeResolution` therefore returns `null` when `manifest.yml` is present (#3373), so a
+     parent dir never downgrades a teardown fail to the pending-review skip. Before keying behavior
+     off a run-dir file, list which writer produces it in each run shape (single-spec, per-spec
+     `spec-{N}/`, multi-spec parent) and whether that writer's value is authoritative there.
    - **Why it matters.** #2664's first trace got this wrong by following the writers alone.
 2. **Does the consumer mandate a freshness step first?** `mergeSize` was dropped from the wrap-up
    pack because its consumer must measure *after its own fetch* — a pre-gathered value is stale by

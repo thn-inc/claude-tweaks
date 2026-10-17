@@ -86,6 +86,20 @@ test('renderVerifyTable renders pass/fail bare and skip/unknown with folded deta
   assert.match(md, /\| acceptance-labeling \| unknown \(gh absent\) \|/);
 });
 
+// #3358: a pass row can carry `ignored: skipped marker comment ...` notes --
+// they must reach the rendered table, or the skip notice never reaches a human.
+test('renderVerifyTable shows a pass row\'s non-empty detail in the Detail cell and leaves an empty one bare', () => {
+  const note = 'ignored: skipped marker comment https://x/c1 by eve (NONE) — not an owner, member, or collaborator';
+  const md = renderVerifyTable([
+    { check: 'acceptance-labeling', result: 'pass', detail: note },
+    { check: 'plans-ledger', result: 'pass', detail: '' },
+  ]);
+  const lines = md.split('\n');
+  assert.strictEqual(lines.length, 4);
+  assert.strictEqual(lines[2], `| acceptance-labeling | pass | ${note} |`);
+  assert.strictEqual(lines[3], '| plans-ledger | pass |  |');
+});
+
 // A multi-line/pipe-containing detail (e.g. a raw multi-line git fatal
 // error) is inserted verbatim into the wrap-up report per the spec -- an
 // un-sanitized cell would corrupt the markdown table (record #900 fix
@@ -185,6 +199,151 @@ test('AC1: fixture run-dir with one unexecuted approved action exits 3 naming th
     assert.strictEqual(cleanResult.exitCode, 0);
   } finally {
     fs.rmSync(originalPath, { recursive: true, force: true });
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+// #3373: a console that resolved the merge as `leave-open` leaves the PR open
+// for a human, so the run dir and worktree legitimately remain -- both teardown
+// checks render the pending-review skip instead of a fail. Placed before the
+// forced-fail probe below for the same reason as AC1/AC2 above (the AC1 test
+// needs a real, input-driven exitCode 0).
+const PENDING_REVIEW_DETAIL = 'pending-review — teardown follows the human merge';
+
+function writeConsole(runDir, resolution) {
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true, merge: { resolution, reason: 'test' } }));
+}
+
+// Shared setup for the "teardown missing" cases: run dir present and the
+// worktree still listed, with `prepare` deciding what console.json holds.
+function verifyWithTeardownMissing(prepare) {
+  const repoRoot = makeCleanRepoRoot();
+  const runDir = path.join(repoRoot, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-3373');
+  fs.mkdirSync(runDir, { recursive: true });
+  prepare(runDir);
+  const fakeGit = (args) => {
+    if (args[0] === 'worktree') {
+      return 'worktree /repo/.claude/worktrees/flow-spec-3373\nbranch refs/heads/worktree-flow-spec-3373\n\n';
+    }
+    return '';
+  };
+  try {
+    return runVerify({ runDir, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: fakeGit, gh: () => '' } });
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+}
+
+test('#3373: run-dir-archived skips with the pending-review reason when console.json records leave-open and the original path is still present', () => {
+  const result = verifyWithTeardownMissing((runDir) => writeConsole(runDir, 'leave-open'));
+  const row = result.rows.find((r) => r.check === 'run-dir-archived');
+  assert.strictEqual(row.result, 'skip');
+  assert.strictEqual(row.detail, PENDING_REVIEW_DETAIL);
+});
+
+test('#3373: worktree-removed skips with the pending-review reason when console.json records leave-open and the worktree is still listed', () => {
+  const result = verifyWithTeardownMissing((runDir) => writeConsole(runDir, 'leave-open'));
+  const row = result.rows.find((r) => r.check === 'worktree-removed');
+  assert.strictEqual(row.result, 'skip');
+  assert.strictEqual(row.detail, PENDING_REVIEW_DETAIL);
+});
+
+test('#3373: leave-open still passes when teardown already happened', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const runId = '2026-01-01T000000-spec-3373';
+  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  const archivePath = path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive', runId);
+  fs.mkdirSync(archivePath, { recursive: true });
+  writeConsole(archivePath, 'leave-open');
+  try {
+    const result = runVerify({ runDir: archivePath, originalRunDir: originalPath, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+    assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'pass');
+    assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'pass');
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('#3373: merge resolution keeps run-dir-archived and worktree-removed failing when teardown is missing', () => {
+  const result = verifyWithTeardownMissing((runDir) => writeConsole(runDir, 'merge'));
+  assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'fail');
+  assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
+  assert.strictEqual(result.exitCode, 3);
+});
+
+test('#3373: no console.json keeps both checks failing when teardown is missing', () => {
+  const result = verifyWithTeardownMissing(() => {});
+  assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'fail');
+  assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
+});
+
+test('#3373: malformed console.json keeps both checks failing', () => {
+  const result = verifyWithTeardownMissing((runDir) => fs.writeFileSync(path.join(runDir, 'console.json'), '{not json'));
+  assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'fail');
+  assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
+});
+
+test('#3373: a multi-spec parent run dir with a leave-open console.json keeps both checks failing', () => {
+  const result = verifyWithTeardownMissing((runDir) => {
+    writeConsole(runDir, 'leave-open');
+    fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  specs: []\n');
+  });
+  assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'fail');
+  assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
+});
+
+test('#3373: leave-open does not excuse a missing archive path', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const runId = '2026-01-01T000000-spec-3373';
+  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  const consoleDir = makeTmpDir('verify-leave-open-archive-missing-');
+  writeConsole(consoleDir, 'leave-open');
+  try {
+    const result = runVerify({ runDir: consoleDir, originalRunDir: originalPath, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'run-dir-archived');
+    assert.strictEqual(row.result, 'fail');
+    assert.match(row.detail, /archive path missing/);
+  } finally {
+    fs.rmSync(consoleDir, { recursive: true, force: true });
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('#3373: leave-open does not excuse an archived work/ dir that is not git-tracked', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const runId = '2026-01-01T000000-spec-3373';
+  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  const archivePath = path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive', runId);
+  fs.mkdirSync(path.join(archivePath, 'work'), { recursive: true });
+  writeConsole(archivePath, 'leave-open');
+  try {
+    const result = runVerify({ runDir: archivePath, originalRunDir: originalPath, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'run-dir-archived');
+    assert.strictEqual(row.result, 'fail');
+    assert.match(row.detail, /is not git-tracked/);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('#3373 AC1: leave-open run exits 0 when every other check passes', () => {
+  const runId = 'test-ac1-leave-open-3373';
+  const repoRoot = makeCleanRepoRoot();
+  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(originalPath, { recursive: true });
+  writeExpectations(originalPath, { version: 1, memory: [], upstream: [] });
+  writeConsole(originalPath, 'leave-open');
+  try {
+    const fakeGitDirty = (args) => {
+      if (args[0] === 'worktree') return `worktree /repo/.claude/worktrees/flow-${runId}\nbranch refs/heads/worktree-flow-${runId}\n\n`;
+      return '';
+    };
+    const result = runVerify({ runDir: originalPath, base: 'main', repoRoot, cwd: repoRoot, deps: { git: fakeGitDirty, gh: () => 'gh version 2.0.0' } });
+    assert.strictEqual(result.exitCode, 0, `failing rows: ${result.rows.filter((r) => r.result === 'fail').map((r) => r.check).join(', ')}`);
+    assert.strictEqual(result.rows.filter((r) => r.result === 'fail').length, 0);
+    assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'skip');
+    assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'skip');
+  } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });
   }
 });
@@ -1291,7 +1450,7 @@ test('acceptance-labeling check passes when demo:pending label and a brief comme
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
     if (args.includes('labels,comments')) {
-      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
     }
     return '';
   };
@@ -1381,7 +1540,7 @@ test('acceptance-labeling check resolves issue numbers from verify-expectations.
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
     if (args.includes('labels,comments')) {
-      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
     }
     return '';
   };
@@ -1399,7 +1558,7 @@ test('acceptance-labeling check redirects to a resolvable parent, never checking
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), 898);
     if (args.includes('labels,comments')) {
-      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
     }
     return '';
   };
@@ -1421,7 +1580,7 @@ test('acceptance-labeling check queries a shared parent exactly once for two sub
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), 898);
     if (args.includes('labels,comments')) {
-      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
     }
     return '';
   };
@@ -1441,12 +1600,12 @@ test('acceptance-labeling check passes via the pr-first pointer+brief form (full
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
     if (args[0] === 'pr' && args[1] === 'view') {
-      return JSON.stringify({ comments: [{ body: '<!-- run-comment: brief -->\n\n## Verification Brief\n### Confirmed\n' }] });
+      return JSON.stringify({ comments: [{ body: '<!-- run-comment: brief -->\n\n## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
     }
     if (args.includes('labels,comments')) {
       return JSON.stringify({
         labels: [{ name: 'demo:pending' }],
-        comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199' }],
+        comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199', authorAssociation: 'MEMBER' }],
       });
     }
     return '';
@@ -1467,7 +1626,7 @@ test('acceptance-labeling check fails when the pr-first pointer is present but t
     if (args.includes('labels,comments')) {
       return JSON.stringify({
         labels: [{ name: 'demo:pending' }],
-        comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199' }],
+        comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199', authorAssociation: 'MEMBER' }],
       });
     }
     return '';
@@ -1476,6 +1635,154 @@ test('acceptance-labeling check fails when the pr-first pointer is present but t
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'fail');
   assert.match(row.detail, /PR #1199/);
+});
+
+// #3358: a Verification Brief marker only counts when GitHub attests its
+// author is an owner, member, or collaborator (comment-trust.js). An untrusted
+// marker comment takes the same path as "no such comment" and is named in the
+// row's detail as `ignored: ...`.
+function acceptanceTrustRow({ issueComments, prComments, withPr }) {
+  const runDir = makeTmpDir('verify-acceptance-trust-');
+  writeSpecFile(runDir, '900', 900);
+  if (withPr) fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ pr: { number: 1199 } }));
+  const prViews = [];
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+    if (args[0] === 'pr' && args[1] === 'view') {
+      // Other checks in this pass also run gh pr view (--json body / commits);
+      // only the acceptance-labeling comments read is tracked.
+      if (args.includes('comments')) prViews.push(args);
+      return JSON.stringify({ comments: prComments || [] });
+    }
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: issueComments });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  return { row: result.rows.find((r) => r.check === 'acceptance-labeling'), prViews };
+}
+
+const TRUST_BRIEF_BODY = '## Verification Brief\n### Confirmed\n';
+const TRUST_POINTER_BODY = 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199';
+const TRUST_PR_BRIEF_BODY = '<!-- run-comment: brief -->\n\n## Verification Brief\n### Confirmed\n';
+
+test('AC2.1: an issue brief authored NONE fails acceptance-labeling and names the ignored comment', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [{ body: TRUST_BRIEF_BODY, url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
+  });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /no comment carries a confirmed Verification Brief/);
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/c1 by eve \(NONE\)/);
+});
+
+test('AC2.1: an issue brief with no association at all fails closed and says "no association"', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [{ body: TRUST_BRIEF_BODY, url: 'https://x/c1', author: { login: 'eve' } }],
+  });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/c1 by eve \(no association\)/);
+});
+
+test('AC2.1: an untrusted pointer is not followed', () => {
+  const { row, prViews } = acceptanceTrustRow({
+    withPr: true,
+    issueComments: [{ body: TRUST_POINTER_BODY, url: 'https://x/p1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
+    prComments: [{ body: TRUST_PR_BRIEF_BODY, url: 'https://x/pr1', author: { login: 'eve' }, authorAssociation: 'MEMBER' }],
+  });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/p1 by eve \(NONE\)/);
+  assert.deepStrictEqual(prViews, [], 'gh pr view must not run for an untrusted pointer');
+});
+
+test('AC2.1: an untrusted PR brief does not satisfy a trusted pointer', () => {
+  const { row } = acceptanceTrustRow({
+    withPr: true,
+    issueComments: [{ body: TRUST_POINTER_BODY, url: 'https://x/p1', author: { login: 'bot' }, authorAssociation: 'MEMBER' }],
+    prComments: [{ body: TRUST_PR_BRIEF_BODY, url: 'https://x/pr1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
+  });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /pointer to PR #1199 found but no confirmed Verification Brief on PR #1199/);
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/pr1 by eve \(NONE\)/);
+});
+
+test('AC2.2: the same issue brief authored MEMBER passes', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [{ body: TRUST_BRIEF_BODY, url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'MEMBER' }],
+  });
+  assert.strictEqual(row.result, 'pass');
+  assert.strictEqual(row.detail, '');
+});
+
+test('AC2.2: the same pointer authored MEMBER is followed and passes', () => {
+  const { row, prViews } = acceptanceTrustRow({
+    withPr: true,
+    issueComments: [{ body: TRUST_POINTER_BODY, url: 'https://x/p1', author: { login: 'eve' }, authorAssociation: 'MEMBER' }],
+    prComments: [{ body: TRUST_PR_BRIEF_BODY, url: 'https://x/pr1', author: { login: 'eve' }, authorAssociation: 'MEMBER' }],
+  });
+  assert.strictEqual(row.result, 'pass');
+  assert.strictEqual(row.detail, '');
+  assert.strictEqual(prViews.length, 1);
+});
+
+test('AC2.2: the same PR brief authored COLLABORATOR satisfies a trusted pointer', () => {
+  const { row } = acceptanceTrustRow({
+    withPr: true,
+    issueComments: [{ body: TRUST_POINTER_BODY, url: 'https://x/p1', author: { login: 'bot' }, authorAssociation: 'OWNER' }],
+    prComments: [{ body: TRUST_PR_BRIEF_BODY, url: 'https://x/pr1', author: { login: 'eve' }, authorAssociation: 'COLLABORATOR' }],
+  });
+  assert.strictEqual(row.result, 'pass');
+});
+
+test('a trusted brief after an untrusted one passes and still names the skipped one', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [
+      { body: TRUST_BRIEF_BODY, url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'NONE' },
+      { body: TRUST_BRIEF_BODY, url: 'https://x/c2', author: { login: 'tom' }, authorAssociation: 'MEMBER' },
+    ],
+  });
+  assert.strictEqual(row.result, 'pass');
+  assert.match(row.detail, /^ignored: skipped marker comment https:\/\/x\/c1 by eve \(NONE\)/);
+});
+
+test('a failing row still names the comments a passing target skipped', () => {
+  const runDir = makeTmpDir('verify-acceptance-trust-mixed-');
+  writeSpecFile(runDir, '900', 900);
+  writeSpecFile(runDir, '901', 901);
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+    if (args.includes('labels,comments')) {
+      // #900 passes via a trusted brief after an untrusted one; #901 has no brief at all.
+      if (args.includes('900')) {
+        return JSON.stringify({
+          labels: [{ name: 'demo:pending' }],
+          comments: [
+            { body: TRUST_BRIEF_BODY, url: 'https://x/c900', author: { login: 'eve' }, authorAssociation: 'NONE' },
+            { body: TRUST_BRIEF_BODY, url: 'https://x/c900b', author: { login: 'tom' }, authorAssociation: 'MEMBER' },
+          ],
+        });
+      }
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [] });
+    }
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'acceptance-labeling');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#901: no comment carries a confirmed Verification Brief/);
+  assert.match(row.detail, /; ignored \(#900\): skipped marker comment https:\/\/x\/c900 by eve \(NONE\)/);
+  assert.ok(
+    row.detail.indexOf('#901:') < row.detail.indexOf('ignored (#900)'),
+    'passing-target notes follow the failing lines'
+  );
+});
+
+test('an untrusted comment that carries no brief marker is not named as ignored', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [{ body: 'looks good to me', url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
+  });
+  assert.strictEqual(row.result, 'fail');
+  assert.doesNotMatch(row.detail, /ignored/);
 });
 
 // A parent gather failure caused by an unresolvable owner/repo (git remote
@@ -1896,7 +2203,7 @@ test('acceptance-labeling check runs its gh probe, issue view, and comments call
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
     if (args.includes('labels,comments')) {
-      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed' }] });
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed', authorAssociation: 'MEMBER' }] });
     }
     return '{}';
   };

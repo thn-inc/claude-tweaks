@@ -7,6 +7,7 @@ files:
   - plugin/skills/dispatch/blocked-exclusion-report.md
   - plugin/skills/dispatch/exclusions-unreadable-report.md
   - plugin/bin/lib/dispatch/exclusions.js
+  - plugin/skills/dispatch/neighbour-in-flight-report.md
 ---
 
 # Learn Why a Named Record Won't Dispatch
@@ -39,6 +40,13 @@ files:
 - **Should understand:** Only a readable file with no entry means "absent from this firing's queue". Step 2 always writes the file, so if it is missing or corrupt at this point, the evidence is gone, not that nothing excluded the record (#3104).
 - **Red flags:** A record reported "absent from this firing's queue" while the probe printed `unreadable` or `absent`, or after the probe itself failed; the reason-unknown line without the file path or the re-run remedy.
 
+### 2c. The record dispatches, but a neighbour is mid-build
+- **URL:** `plugin/skills/dispatch/neighbour-in-flight-report.md`
+- **Action:** `#N` shares a Key File with a record whose claim is live. The queue pull wrote a non-removing `neighbour-in-flight` exclusion, so `#N` is still in `dispatch-groups.json`. Dispatch prints `#N waits — direct neighbour(s) in flight: #m ({files}); bare drain skips it this firing` and then dispatches `#N` anyway.
+- **Should feel:** Informed, not refused. Naming the record is the maintainer's override, and the report says what that override risks.
+- **Should understand:** Unlike the step 1 reasons, this one never removes the record. Bare drain would wait for the neighbour, but `#N` builds now, and any overlap with `#m` resolves at merge through `_shared/pr-first-merge.md`'s Conflict path (#3278).
+- **Red flags:** `#N` refused or reported "absent from this firing's queue" over a neighbour-in-flight entry. The report line missing when a live neighbour exists.
+
 ### 3. Name several records at once
 - **URL:** `plugin/skills/dispatch/SKILL.md` `#N[,#M,#O...]` bullet
 - **Action:** Run `/claude-tweaks:dispatch #N,#M` where `#N` is excluded and `#M` is eligible. `#N` appears in the `notFound` report with the same named reason as step 2; `#M`'s group proceeds to Step 4.
@@ -52,3 +60,4 @@ files:
 - Updated during build of #3103: names `blocked`, the fifth removing exclusion, in Step 1 and the Success state; `blocked-exclusion-report.md` added to `files:`
 - Updated during build of #3104: Step 2b covers an unreadable or missing `dispatch-exclusions.json`, reported as reason unknown and never as absent; `exclusions-unreadable-report.md` and `exclusions.js` added to `files:`
 - Updated during wrap-up of the #3101-#3104 run: Step 2b names the failed-probe branch (#3104 review); Step 2 names the `blocked` report line and visits `blocked-exclusion-report.md` and `open-pr-exclusion-report.md`
+- Updated during build of #3278: Step 2c covers the non-removing `neighbour-in-flight` reason. `#N` prints the waits line and still dispatches. `neighbour-in-flight-report.md` added to `files:`
