@@ -214,3 +214,24 @@ test('composeStamp omits baseline when none is passed and carries it verbatim wh
   const baseline = { base: 'main', baseSha: 'f'.repeat(40), baselineFailing: ['tests/a.test.js'], flakyPassed: [] };
   assert.deepStrictEqual(composeStamp({ ...args, baseline }).baseline, baseline);
 });
+
+test('composeStamp omits preExisting when none is passed and carries it verbatim when given (#3129)', () => {
+  const args = {
+    report: REPORT, scope: 'full', fullSha: 'abc123', base: null, changedFiles: [],
+    suitesRun: ['tests'], flakyRetried: [], reportPath: '/r.json', at: 't',
+  };
+  assert.strictEqual('preExisting' in composeStamp(args), false);
+  assert.strictEqual('preExisting' in composeStamp({ ...args, preExisting: null }), false);
+  const preExisting = { declared: ['tests/known-shallow.test.js'], matched: ['tests/known-shallow.test.js'] };
+  assert.deepStrictEqual(composeStamp({ ...args, preExisting }).preExisting, preExisting);
+});
+
+test('readStamp returns null for a `preExisting` key the runner did not write — scalar, null or array — never a clean full pass (#3129)', () => {
+  const SHA = '0123456789abcdef0123456789abcdef01234567';
+  for (const preExisting of [true, 'x', null, []]) {
+    const fsImpl = fakeFs({ [path.join('/g', STAMP_JSON_NAME)]: JSON.stringify({ sha: SHA, scope: 'full', fullSha: SHA, preExisting }) });
+    assert.strictEqual(readStamp('/g', fsImpl), null, JSON.stringify(preExisting));
+  }
+  const ok = fakeFs({ [path.join('/g', STAMP_JSON_NAME)]: JSON.stringify({ sha: SHA, scope: 'full', fullSha: SHA, preExisting: { declared: ['tests/a.test.js'] } }) });
+  assert.deepStrictEqual(readStamp('/g', ok).preExisting, { declared: ['tests/a.test.js'] });
+});

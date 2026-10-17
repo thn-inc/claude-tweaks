@@ -15,11 +15,12 @@ const { spawn } = require('child_process');
 
 const { parseArgs, UsageError, USAGE } = require('./lib/verify/args');
 const { runChecks, runOne } = require('./lib/verify/run');
-const { adjudicate, realGit } = require('./lib/verify/baseline');
+const { adjudicate, realGit, findStaleBaselineWorktrees } = require('./lib/verify/baseline');
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine, extractFailingFiles, stripAnsi, unattributedFailureCount,
 } = require('./lib/verify/extract');
 const { planRetry, runRetries, flakyCaveatLines } = require('./lib/verify/flaky');
+const { matchPreExisting } = require('./lib/verify/pre-existing');
 const { gitInfo, gitDir: resolveGitDir, composeReport, writeReportAtomic } = require('./lib/verify/report');
 const {
   readStamp: readCountStamp, detectRegression, caveatLine,
@@ -29,7 +30,7 @@ const { writeFileAtomic } = require('./lib/atomic-write');
 const { composeStamp, writeStamp, readStamp: readVerifyStamp, anchorOf } = require('./lib/verify/stamp');
 const { readDeclaration } = require('./lib/verify/declaration');
 const {
-  changedFiles, resolveBase, usableAnchor, ChangedFilesError,
+  changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
 } = require('./lib/verify/changed-files');
 const { selectScope } = require('./lib/verify/scope');
 const { resolveTarget } = require('./lib/stage-item/write');
@@ -70,9 +71,12 @@ function enrich(result) {
   const family = sniffFamily(plain);
   const failed = result.exitCode !== 0;
   const counts = parseCounts(plain, family);
+  // #3063: a hung check's own output rarely has a parseable summary line —
+  // name the timeout explicitly rather than leaving the Summary column blank.
+  const timeoutNote = result.timedOut ? `timed out after ${(result.durationMs / 1000).toFixed(1)}s` : null;
   return {
     ...result,
-    summary: result.spawnError || summaryLine(plain, family) || null,
+    summary: result.spawnError || timeoutNote || summaryLine(plain, family) || null,
     failingRegion: failed ? extractFailingRegion(plain, family) : null,
     counts,
     // A tests check whose counts didn't parse — surfaced on the report entry
@@ -128,7 +132,11 @@ function stampStatus(parsed) {
   // (verifiedHead) but never a clean full pass — `match` keeps its strict
   // meaning, and the marker is surfaced as `baselineAdjudicated`.
   const baselineAdjudicated = present && stamp.baseline !== null && typeof stamp.baseline === 'object';
-  const match = stampCoversCleanHead && scope === 'full' && !baselineAdjudicated;
+  // #3129: a preExisting-adjudicated pass (declared pre-existing/unrelated
+  // test failures) is, like a baseline-adjudicated one, verified but never a
+  // clean full pass — excluded from `match` the same way.
+  const preExistingAdjudicated = present && stamp.preExisting !== null && typeof stamp.preExisting === 'object';
+  const match = stampCoversCleanHead && scope === 'full' && !baselineAdjudicated && !preExistingAdjudicated;
   // verifiedHead (#1923): "HEAD is verified" for the re-verify sites — a
   // clean HEAD covered either by a full pass (match) or by a passing
   // scoped/none/static-only/tool-scoped run whose fullSha anchor is still an
@@ -149,6 +157,7 @@ function stampStatus(parsed) {
     match,
     verifiedHead,
     baselineAdjudicated,
+    preExistingAdjudicated,
     reportPath: present && typeof stamp.reportPath === 'string' ? stamp.reportPath : null,
     legacy: present ? stamp.legacy === true : false,
   };
@@ -231,6 +240,10 @@ async function main() {
       process.exitCode = 2;
       return;
     }
+    // Named, never swept — see findStaleBaselineWorktrees (#3064).
+    for (const dir of findStaleBaselineWorktrees(bgit.listWorktrees)) {
+      process.stderr.write(`verify.js: a stale baseline scratch worktree is registered at ${dir} from an earlier interrupted run — remove it manually: git worktree remove --force ${dir}\n`);
+    }
   }
   const jsonPath = parsed.json || path.join(logDir, 'report.json');
   const countStampPath = parsed.countStamp || (gitDir ? path.join(gitDir, 'claude-tweaks-test-count.json') : null);
@@ -244,6 +257,7 @@ async function main() {
   let cmds = parsed.cmds;
   let decl = null;
   let priorStamp = null;
+  let narrowing = null;
   // #2779: a check's --cmd-env variables, by check name — for the two spawns
   // that are not a parsed --cmd entry itself (tool-scoped's synthesized
   // `tests`, and a flaky retry of a check), so they run in the same
@@ -251,6 +265,12 @@ async function main() {
   const envOf = (name) => {
     const declared = parsed.cmds.find((c) => c.name === name);
     return declared && declared.env ? declared.env : null;
+  };
+  // #3063: a check's own --cmd-timeout, reused as the bounded default for
+  // its per-file --baseline base/isolated runs (baseline.js's `run()`).
+  const timeoutOf = (name) => {
+    const declared = parsed.cmds.find((c) => c.name === name);
+    return declared && typeof declared.timeout === 'number' ? declared.timeout : null;
   };
   if (parsed.scope) {
     // Every --scope usage error below shares this exit shape (message, then
@@ -318,12 +338,20 @@ async function main() {
     const anchorSha = usableAnchor({ stamp: priorStamp });
     if (parsed.base) {
       if (anchorSha && resolvedBase !== anchorSha) {
-        scopeUsageExit(`--scope: --base ${parsed.base} conflicts with the stamp anchor ${anchorSha.slice(0, 9)}; omit --base (pass --integration-branch instead) or clear the stamp`);
+        scopeUsageExit(`--scope: --base ${parsed.base} conflicts with the stamp anchor ${anchorSha.slice(0, 9)}; omit --base or clear the stamp (after an integration-branch merge, --integration-branch narrows the scoped set to this branch's own delta)`);
         return;
       }
     }
 
     files = changedFiles({ base: resolvedBase }).files;
+    // #3072: anchored on a full pass and asked about an integration branch the
+    // run has since merged — narrow to the branch's own delta. Only when the
+    // resolved base IS the usable anchor; with no anchor, resolveBase already
+    // returned the merge-base, which excludes merged-in files by construction.
+    if (parsed.integrationBranch && anchorSha && resolvedBase === anchorSha) {
+      narrowing = mergeNarrowing({ anchor: anchorSha, integrationBranch: parsed.integrationBranch, files });
+      if (narrowing) files = narrowing.files;
+    }
     sel = selectScope({ decl, files, stamp: anchorSha ? priorStamp : null });
     if (decl) {
       cmds = parsed.cmds.filter((c) => {
@@ -435,6 +463,7 @@ async function main() {
           runOne,
           spawnImpl: spawn,
           envOf,
+          timeoutOf,
           git: bgit,
         });
       }
@@ -447,6 +476,41 @@ async function main() {
     }
   }
   const adjudicatedPass = Boolean(baselineAdjudicated && baselineAdjudicated.verdict === 'pass');
+
+  // Declared-pre-existing-failures adjudication (#3129): a sibling to the
+  // --baseline path above, but declarative rather than re-run — a project's
+  // verify-scope.json names known-failing test files/patterns (e.g. a
+  // shallow clone's precondition tests) under `preExisting`, and a run whose
+  // ENTIRE failing-file set is covered by that allowlist is adjudicated as
+  // passing without re-running anything. Gated on `decl` (the declaration
+  // this field lives in) and `!adjudicatedPass` — no need to also adjudicate
+  // a run --baseline already passed. Failing files are extracted the same
+  // way retryHook extracts them for flaky.files (extractFailingFiles,
+  // `[]` on no-parse) — fail-closed: a check whose failure names no file at
+  // all (no-parse) makes the whole run ineligible, never "covered".
+  let preExistingAdjudicated = null;
+  if (decl && decl.preExisting && decl.preExisting.length && !rawPass && !adjudicatedPass) {
+    const failingChecks = results.filter((c) => !c.skipped && c.exitCode !== 0);
+    let noParse = false;
+    const allFailingFiles = [];
+    for (const check of failingChecks) {
+      let text;
+      try { text = fs.readFileSync(check.logPath, 'utf8'); } catch { noParse = true; continue; }
+      const plain = stripAnsi(text);
+      const checkFiles = extractFailingFiles(plain, sniffFamily(plain));
+      if (checkFiles.length === 0) { noParse = true; continue; }
+      allFailingFiles.push(...checkFiles);
+    }
+    if (!noParse) {
+      const verdict = matchPreExisting({ failingFiles: allFailingFiles, preExisting: decl.preExisting });
+      preExistingAdjudicated = verdict.eligible
+        ? { declared: decl.preExisting, matched: verdict.matched }
+        : { declared: decl.preExisting, eligible: false, reason: verdict.reason };
+    } else {
+      preExistingAdjudicated = { declared: decl.preExisting, eligible: false, reason: 'no-parse' };
+    }
+  }
+  const preExistingPass = Boolean(preExistingAdjudicated && preExistingAdjudicated.matched);
 
   // Suite-count regression stamp (#881, IL-84): the "tests" check's own
   // parsed count is compared against the previous run's persisted count.
@@ -512,13 +576,13 @@ async function main() {
 
   const report = composeReport({
     checks: results, startedAt, durationMs: Date.now() - startMs, git, testCountRegression,
-    scope: sel ? { mode: sel.mode, suites: scopeSuites, static: sel.static, base: resolvedBase, unmatched: sel.unmatched, changedFiles: files, matched: sel.matched } : null,
-    flakyEscalation, baselineAdjudicated,
+    scope: sel ? { mode: sel.mode, suites: scopeSuites, static: sel.static, base: resolvedBase, unmatched: sel.unmatched, changedFiles: files, matched: sel.matched, mergeNarrowing: narrowing ? { ref: narrowing.ref, excluded: narrowing.excluded.length, excludedFiles: narrowing.excluded } : null } : null,
+    flakyEscalation, baselineAdjudicated, preExistingAdjudicated,
   });
   writeReportAtomic(report, jsonPath);
   // The exit code and the pass stamp follow the adjudicated verdict; the
   // report's own `pass` stays the raw "every check exited 0".
-  const effectivePass = report.pass || adjudicatedPass;
+  const effectivePass = report.pass || adjudicatedPass || preExistingPass;
 
   // Verify event (#1928): the runner is the mechanical source for the
   // tasks→test phase boundary (bin/lib/timing/derive.js). Written only when
@@ -538,6 +602,7 @@ async function main() {
         durationMs: report.durationMs,
         pass: report.pass,
         baselineAdjudicated: baselineAdjudicated ? baselineAdjudicated.verdict || 'ineligible' : null,
+        preExistingAdjudicated: preExistingAdjudicated ? (preExistingAdjudicated.matched ? 'pass' : 'ineligible') : null,
         sha: git.sha,
         flakyRetried: retriedFiles,
         reportPath: jsonPath,
@@ -590,14 +655,21 @@ async function main() {
           baselineFailing: baselineAdjudicated.baselineFailing, flakyPassed: baselineAdjudicated.flakyPassed,
         }
         : (mode !== 'full' && priorStamp && priorStamp.baseline && priorStamp.fullSha === sel.base ? priorStamp.baseline : null),
+      // #3129: same carry-forward rule as `baseline` immediately above — a
+      // narrowed run anchored on a pre-existing-adjudicated full pass
+      // inherits that pass's marker rather than losing it.
+      preExisting: preExistingPass
+        ? { declared: preExistingAdjudicated.declared, matched: preExistingAdjudicated.matched }
+        : (mode !== 'full' && priorStamp && priorStamp.preExisting && priorStamp.fullSha === sel.base ? priorStamp.preExisting : null),
     });
     // H1 (review): the legacy bare-SHA twin only ever names a real FULL
     // pass — a narrowed run leaves it untouched rather than repointing it
     // at a sha that a scoped/tool-scoped/none run never fully verified. A
-    // baseline-adjudicated pass is not a clean full pass either (#3043), so
-    // it never repoints the twin: an older reader of the bare file must not
-    // read it as one.
-    try { writeStamp(gitDir, stamp, { legacy: mode === 'full' && !adjudicatedPass }); } catch { /* best-effort; next --stamp-status simply reads absent */ }
+    // baseline-adjudicated pass is not a clean full pass either (#3043), and
+    // neither is a pre-existing-adjudicated one (#3129) — neither ever
+    // repoints the twin: an older reader of the bare file must not read it
+    // as one.
+    try { writeStamp(gitDir, stamp, { legacy: mode === 'full' && !adjudicatedPass && !preExistingPass }); } catch { /* best-effort; next --stamp-status simply reads absent */ }
   }
 
   const lines = [];
@@ -610,6 +682,7 @@ async function main() {
     // selection outcome, while keeping the same trailing fields.
     const lead = decl === null ? `Scope: full — no declaration at ${parsed.scope}; ${sinceClause}` : `Scope: ${sel.mode} — ${sinceClause}`;
     lines.push(`${lead}; suites: ${suiteList}; static: ${sel.static ? 'yes' : 'no'}; unmatched: ${sel.unmatched.length}`);
+    if (narrowing) lines.push(`merge-narrowed: ${narrowing.excluded.length} merge-identical path(s) excluded (identical to ${narrowing.ref})`);
     if (sel.mode === 'none') {
       // Nit (re-review): an unchanged-HEAD re-run (M6's own scenario) has
       // zero changed files — "bookkeeping-only delta ()" reads as broken
@@ -661,7 +734,13 @@ async function main() {
     if (baselineAdjudicated.eligible) {
       const b = baselineAdjudicated;
       lines.push('', `Baseline: adjudicated against ${b.base} (${String(b.baseSha).slice(0, 9)}) — ${b.failingFiles.length} failing file(s): ${b.baselineFailing.length} also fail at base, ${b.flakyPassed.length} flaky (passed in isolation), ${b.attributable.length} attributable`);
-      for (const file of b.attributable) lines.push(`ATTRIBUTABLE: ${file}`);
+      for (const file of b.attributable) {
+        // #3063 AC2: a timed-out base/isolated run is no evidence either
+        // way — the file stays attributable, but naming the timeout here
+        // (rather than a bare file list) says why it has none.
+        const note = b.timedOut && b.timedOut.includes(file) ? ' (timed out — base/isolated run exceeded its --cmd-timeout bound)' : '';
+        lines.push(`ATTRIBUTABLE: ${file}${note}`);
+      }
       for (const file of b.flakyPassed) {
         lines.push('', `CAVEAT: baseline-flaky: ${file} — failed in the full run, passed in isolation at HEAD; see ${b.flakyLogs[file]}`);
       }
@@ -673,6 +752,15 @@ async function main() {
       }
     } else {
       lines.push('', `Baseline: not adjudicated — ${baselineAdjudicated.reason}`);
+    }
+  }
+  // #3129: rendered only when the declared preExisting allowlist actually
+  // ran (gated above on decl.preExisting.length && !rawPass && !adjudicatedPass).
+  if (preExistingAdjudicated) {
+    if (preExistingAdjudicated.matched) {
+      lines.push('', `Pre-existing: adjudicated — ${preExistingAdjudicated.matched.length} failing file(s) covered by the declared preExisting allowlist: ${preExistingAdjudicated.matched.join(', ')}`);
+    } else {
+      lines.push('', `Pre-existing: not adjudicated — ${preExistingAdjudicated.reason}`);
     }
   }
   lines.push('', `report: ${jsonPath}`);

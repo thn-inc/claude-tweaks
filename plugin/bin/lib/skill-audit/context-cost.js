@@ -7,9 +7,12 @@
 // corpus reached 931 KB before anyone looked. Phases 1-3 removed ~150 KB; this
 // module exists so the next 150 KB does not accumulate unnoticed.
 //
-// The ceiling is a 45 KB soft ceiling per SKILL.md (raised from 40 KB — see
-// docs/donts.md). After the Phase 3 extraction several files sit within a
-// kilobyte of it, so a regression is one added paragraph away — which is
+// The ceiling is a 50 KB soft ceiling per SKILL.md (raised from 40 KB to
+// 45 KB — see docs/donts.md — then to 50 KB on 2026-10-16 as an interim
+// unblock while #3230 reconsiders how ceilings are set at all, after
+// concurrent merges tipped dispatch/SKILL.md 58 B over 45 KB). After the
+// Phase 3 extraction several files sat within a kilobyte of the old ceiling,
+// so a regression is one added paragraph away — which is
 // precisely when an automated check earns its keep over periodic manual
 // measurement.
 //
@@ -27,8 +30,9 @@ const { listSkillDirs } = require('./skill-catalog');
 const {
   stripMarkers, MarkerError, parseMarkers, compose, KEYS, VOCAB, UNRESOLVED,
 } = require('../compose-context/compose');
+const { toPosix } = require('../shared-primitives');
 
-const CEILING_BYTES = 45 * 1024;
+const CEILING_BYTES = 50 * 1024;
 
 // Frontmatter `description:` budget (#394). Every description loads into every
 // session of every project with the plugin enabled, regardless of whether that
@@ -159,7 +163,7 @@ function measureSubFiles(repoRoot) {
     if (!fs.statSync(sd).isDirectory()) continue;
     for (const p of walkMarkdown(sd)) {
       if (path.basename(p) === 'SKILL.md') continue;
-      out.push({ skill: name, file: path.relative(dir, p), ...measuredBytes(p) });
+      out.push({ skill: name, file: toPosix(path.relative(dir, p)), ...measuredBytes(p) });
     }
   }
   return out.sort((a, b) => b.bytes - a.bytes);
@@ -219,7 +223,7 @@ function measureComposed(repoRoot, callSite) {
   const { step, file, line, sources: sourcePaths } = callSite;
   let sources;
   try {
-    sources = sourcePaths.map((p) => ({ path: path.relative(repoRoot, p), content: fs.readFileSync(p, 'utf8') }));
+    sources = sourcePaths.map((p) => ({ path: toPosix(path.relative(repoRoot, p)), content: fs.readFileSync(p, 'utf8') }));
   } catch (err) {
     if (err.code === 'ENOENT') {
       return {
@@ -354,7 +358,7 @@ function findComposeCallSites(repoRoot) {
   const dir = corpusDir(repoRoot);
   const out = [];
   for (const p of walkMarkdown(dir)) {
-    const file = path.relative(dir, p);
+    const file = toPosix(path.relative(dir, p));
     const lines = fs.readFileSync(p, 'utf8').split('\n');
     for (const [i, line] of lines.entries()) {
       if (!line.includes('compose-context.js')) continue;

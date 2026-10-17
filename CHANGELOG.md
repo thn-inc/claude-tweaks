@@ -53,6 +53,114 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.142.0](https://github.com/thn-inc/claude-tweaks/compare/v6.141.0...v6.142.0) (2026-10-17)
+
+
+### Features
+
+* /claude-tweaks:test + /review Step 1.5: pr-first gates… ([#3013](https://github.com/thn-inc/claude-tweaks/issues/3013)) ([c6f4b74](https://github.com/thn-inc/claude-tweaks/commit/c6f4b747c70eb7ec5649d4ecb7b078c6a43440d5))
+* build/plan-authoring-checks: enumerate every test caller… ([#3115](https://github.com/thn-inc/claude-tweaks/issues/3115)) ([1149518](https://github.com/thn-inc/claude-tweaks/commit/11495183ecd222764ee65e53c097e6eb1d2b38d0))
+* Extend diagram-suggestion hook to /specify shaping mode… ([#2949](https://github.com/thn-inc/claude-tweaks/issues/2949)) ([9c3e7b6](https://github.com/thn-inc/claude-tweaks/commit/9c3e7b60e3449cefcb9191e9f6a6baeec3eec752))
+* flow / verification-brief / demo: a finished feature run… ([#2821](https://github.com/thn-inc/claude-tweaks/issues/2821)) ([36d81e8](https://github.com/thn-inc/claude-tweaks/commit/36d81e86939813b72e8b43333a11e6120c2fcbcc))
+* Gate bare shell redirection (&gt; / &gt;&gt;) under… ([#3080](https://github.com/thn-inc/claude-tweaks/issues/3080)) ([09e0b08](https://github.com/thn-inc/claude-tweaks/commit/09e0b08f21fee4f49ba3536924a537d7af17b0cf))
+* Let verify.js stamp a pass when the only failures are… ([#3129](https://github.com/thn-inc/claude-tweaks/issues/3129)) ([6a95b64](https://github.com/thn-inc/claude-tweaks/commit/6a95b64451b931dfb315bda2fb2f6fce957c669e))
+* plan-audit: Check A passes a plan that drops one clause… ([#3099](https://github.com/thn-inc/claude-tweaks/issues/3099)) ([4937b4f](https://github.com/thn-inc/claude-tweaks/commit/4937b4f4cb57630aec945290bda96f5cdda94fb2))
+* review/step3-lens-dispatch.md: lens agents are never… ([#3001](https://github.com/thn-inc/claude-tweaks/issues/3001)) ([63a335f](https://github.com/thn-inc/claude-tweaks/commit/63a335faead42cc55874aa7e8c42e07d89a34eba))
+* Support java/ruby/dotnet manifest updaters in the… ([#2791](https://github.com/thn-inc/claude-tweaks/issues/2791)) ([62c548b](https://github.com/thn-inc/claude-tweaks/commit/62c548b48b1eaba4748b91ee041bd414b3e2462e))
+* test: a dispatched group's second call re-runs the first… ([#3003](https://github.com/thn-inc/claude-tweaks/issues/3003)) ([6c16f44](https://github.com/thn-inc/claude-tweaks/commit/6c16f44b76690dd1b12b5953b53815c0bd229e61)), closes [#3072](https://github.com/thn-inc/claude-tweaks/issues/3072)
+
+
+### Bug Fixes
+
+* auto-merge-short-circuit.md singleton path has no… ([#2941](https://github.com/thn-inc/claude-tweaks/issues/2941)) ([bf3dbed](https://github.com/thn-inc/claude-tweaks/commit/bf3dbed45f964991f69738d6107d82b61ad21e92))
+* backlog refine: two concurrent unattended-posture grant… ([#2719](https://github.com/thn-inc/claude-tweaks/issues/2719)) ([05c6b2c](https://github.com/thn-inc/claude-tweaks/commit/05c6b2c6a7a0ff611c2418056d14a84b09d76aef)), closes [#3267](https://github.com/thn-inc/claude-tweaks/issues/3267)
+* blast-radius: isTestPath ignores the stories/ QA… ([#3034](https://github.com/thn-inc/claude-tweaks/issues/3034)) ([0ce589d](https://github.com/thn-inc/claude-tweaks/commit/0ce589db5a5e89308c9fb89d55f34072ca30ff49))
+* Bookkeeping-stamps gate blocks the Write of the PR body… ([#2920](https://github.com/thn-inc/claude-tweaks/issues/2920)) ([7b44c41](https://github.com/thn-inc/claude-tweaks/commit/7b44c4113e440e6cf304923a49887e3be72d73ca))
+* build / deferral-gate: the quoted surgical-changes rule… ([#3117](https://github.com/thn-inc/claude-tweaks/issues/3117)) ([f19be4c](https://github.com/thn-inc/claude-tweaks/commit/f19be4c19353648fe93495b585303e7e86f7fec1))
+* Byte-budget tests count CRLF bytes, so a Windows checkout… ([#3113](https://github.com/thn-inc/claude-tweaks/issues/3113)) ([0c6bc66](https://github.com/thn-inc/claude-tweaks/commit/0c6bc66766ba748a9ac11ef2a6faaff3ad52f145))
+* candidates-security-hardening.js requires… ([#2908](https://github.com/thn-inc/claude-tweaks/issues/2908)) ([9c9f5e7](https://github.com/thn-inc/claude-tweaks/commit/9c9f5e722e587eaada7dfbb7549bacb8d1d72e2b)), closes [#2918](https://github.com/thn-inc/claude-tweaks/issues/2918) [#2934](https://github.com/thn-inc/claude-tweaks/issues/2934)
+* categoriseReproduction drops a reproduced finding when… ([#2907](https://github.com/thn-inc/claude-tweaks/issues/2907)) ([4abf467](https://github.com/thn-inc/claude-tweaks/commit/4abf46760479ff83533fdfd03fcc7d278ee8edea))
+* compose-subject.js: handled `issueType` rejection still… ([#3028](https://github.com/thn-inc/claude-tweaks/issues/3028)) ([33ef347](https://github.com/thn-inc/claude-tweaks/commit/33ef347489b29ac2c6f8a761438246ec129b5d05))
+* design-wrapper pre-build: always-load reference list… ([#3019](https://github.com/thn-inc/claude-tweaks/issues/3019)) ([e4c9e15](https://github.com/thn-inc/claude-tweaks/commit/e4c9e1541efa14789a0586d42ad61c45e268d7e4))
+* design-wrapper review mode: Step 3.6 cites… ([#2999](https://github.com/thn-inc/claude-tweaks/issues/2999)) ([e96e67d](https://github.com/thn-inc/claude-tweaks/commit/e96e67de0992f5f19e195a5902185c054518b219)), closes [#3000](https://github.com/thn-inc/claude-tweaks/issues/3000)
+* Dispatch headless self-report… ([#2868](https://github.com/thn-inc/claude-tweaks/issues/2868)) ([0499aba](https://github.com/thn-inc/claude-tweaks/commit/0499abab8f5f273eefe4313b436025ad661dadbb)), closes [#3031](https://github.com/thn-inc/claude-tweaks/issues/3031)
+* Fast-lane pr-first merges never release their claim or… ([#3249](https://github.com/thn-inc/claude-tweaks/issues/3249)) ([90bb3de](https://github.com/thn-inc/claude-tweaks/commit/90bb3decb5d5163e5fc1aa06ba8f15134725f5fb))
+* friction-events: an ad-hoc EnterWorktree session's guard… ([#2783](https://github.com/thn-inc/claude-tweaks/issues/2783)) ([534ae13](https://github.com/thn-inc/claude-tweaks/commit/534ae13c432bc975799567b53b120d56d31ff40d))
+* friction-events.js can attribute an unrelated session's… ([#2989](https://github.com/thn-inc/claude-tweaks/issues/2989)) ([f826796](https://github.com/thn-inc/claude-tweaks/commit/f826796b9d1ba96a390d652dcaf0bd44ecb4ac0a))
+* hooks.js close-run: a bare run-id `--run <basename>` is… ([#3025](https://github.com/thn-inc/claude-tweaks/issues/3025)) ([f6665ee](https://github.com/thn-inc/claude-tweaks/commit/f6665ee7fe534f0699d6b73b1dbad95147023801))
+* Missing git tags for CHANGELOG entries v6.129.0-v6.132.0 ([#2882](https://github.com/thn-inc/claude-tweaks/issues/2882)) ([0b78f09](https://github.com/thn-inc/claude-tweaks/commit/0b78f09f3b8eb7319385745408eaed456554d537))
+* pr-early-run-lifecycle.md's "start every row unchecked"… ([#2877](https://github.com/thn-inc/claude-tweaks/issues/2877)) ([606910e](https://github.com/thn-inc/claude-tweaks/commit/606910ed4b0ef2f8e14be5eb3de75ff717839ee8))
+* pr-state.js: a misordered `resolvePrStateByNumber(number… ([#3029](https://github.com/thn-inc/claude-tweaks/issues/3029)) ([12c2d87](https://github.com/thn-inc/claude-tweaks/commit/12c2d87699351ef01d05c9a413be38e314d1d4d4))
+* reconcile/dispatch Preflight: fresh clone with no… ([#3132](https://github.com/thn-inc/claude-tweaks/issues/3132)) ([2088881](https://github.com/thn-inc/claude-tweaks/commit/2088881fd610716f09031ad6e5e807ee059f4fbc))
+* Refuse a flaky retry when spec-reporter failures cannot… ([#3066](https://github.com/thn-inc/claude-tweaks/issues/3066)) ([e1644d2](https://github.com/thn-inc/claude-tweaks/commit/e1644d2c7e444aca54daa09ef8a7f919cdafd3cb))
+* release-preflight: reports "nothing to release" when… ([#2954](https://github.com/thn-inc/claude-tweaks/issues/2954)) ([d812508](https://github.com/thn-inc/claude-tweaks/commit/d81250829ae2c3db172448be1f3588da29b78222))
+* review-coordination categorise-reproduction: one finding… ([#2955](https://github.com/thn-inc/claude-tweaks/issues/2955)) ([0f958fc](https://github.com/thn-inc/claude-tweaks/commit/0f958fc27c9f9aea2ca37378725aafb1bb747753))
+* review: reproduction pairs anchor the same coverage gap… ([#3049](https://github.com/thn-inc/claude-tweaks/issues/3049)) ([d2a26ab](https://github.com/thn-inc/claude-tweaks/commit/d2a26abf074af89696746f7a1d79315d06eb9b99))
+* Stop browse's argument-hint leaking YAML backslash… ([#2963](https://github.com/thn-inc/claude-tweaks/issues/2963)) ([157b691](https://github.com/thn-inc/claude-tweaks/commit/157b691dc41e165a92fa748b3fe69929409694d6))
+* Trim dispatch/SKILL.md under the context-cost ceiling — main tip red ([#3231](https://github.com/thn-inc/claude-tweaks/issues/3231)) ([e63524e](https://github.com/thn-inc/claude-tweaks/commit/e63524e859a483e7720d0c3204ca760ef0b5e9d9))
+* verify.js --baseline leaves its scratch worktree behind… ([#3064](https://github.com/thn-inc/claude-tweaks/issues/3064)) ([3e103ac](https://github.com/thn-inc/claude-tweaks/commit/3e103acd7eb50a384c4acffeb887b66bd6d25a36))
+* verify.js has no per-check or per-run timeout — a hung… ([#3063](https://github.com/thn-inc/claude-tweaks/issues/3063)) ([8bc3263](https://github.com/thn-inc/claude-tweaks/commit/8bc3263039b8f50c426047a89ba579fc1b95e040))
+* visual-decide stop exits 0 without writing server-stopped marker ([#3130](https://github.com/thn-inc/claude-tweaks/issues/3130)) ([c223eca](https://github.com/thn-inc/claude-tweaks/commit/c223eca065754f2327c7014fa3ba33fa97be6ece))
+
+### Highlights
+* Fix fast-lane auto-merged runs leaving their claim, labels and run directory behind after the PR merges.
+* Added an early safeguard that stops dispatch's automated first build from committing code before it has written its required run configuration, catching a skipped setup step before any work lands instead of after a full build cycle.
+* No user-visible change.
+* A dispatched record's second pipeline call no longer re-runs QA stories that already passed on the same commit.
+* Wrap-up loads less instruction text on a typical run.
+* `/specify` now suggests a diagram when shaping a single record, not only when decomposing a design doc.
+* Fixed stray backslashes in the browse command's argument summary in the help reference card.
+* No user-visible change -- documentation accuracy only.
+* No user-visible change: this repo's own unattended agent configuration now blocks package publishing and reads of credential files.
+* No user-visible change — this hardens the Friction reflect lens's own input data against misattributed events from an unrelated piece of work.
+* The residue sweep no longer reports already-published release tags as missing when the local checkout hasn't fetched them.
+* The single-record auto-merge fast lane now refuses to merge unless its content-judgment check is confirmed to have run and passed.
+* Review reproduction pairing no longer drops a finding both agents reported when one agent also reported a second issue on the same line.
+* Finished feature runs now end with a "Try it" walkthrough that says where to go, what to do and what to expect, even for low-risk changes.
+* Flagged when two concurrent backlog refine runs grant auto-merge differently on the same record.
+* Fixed a module load-order hazard in the security-hardening code-health check.
+* Hardened the PR-checklist composer so a two-call dispatch split always starts every phase row, closing a drift this record's own run hit.
+* Fixed friction logging so guard refusals in a manually entered worktree are recorded.
+* Silenced a misleading error printed during merge-subject composition, added optional commit-scope support, and stopped counting human-confirmed close-out merges as auto-merges.
+* `verify/args.js`'s argument parsing restructured for clarity; no CLI-facing behavior change.
+* Review's reproduction pairs now confirm a finding both agents reported a few lines apart within the same statement, instead of leaving it unconfirmed.
+* No user-visible change: clarified where design-wrapper's review mode finds its seed-capture procedure.
+* Count QA story YAML files as test surface, so story-only changes get the lighter fast-lane ceremony and an accurate merge-check blast radius.
+* No user-facing change. This produces an internal recommendation on self-evolving skill and harness patterns.
+* No user-facing change. This produces an internal go/no-go on listing claude-tweaks on Anthropic's plugin portal.
+* No user-facing change. This produces an internal recommendation on continuous security scanning.
+* No user-facing change unless the recommendation is positive. In that case, claude-tweaks ships its first Claude Code mod, for the capability the recommendation names.
+* No user-facing change. This records a decision on whether claude-tweaks adopts Claude Code's organization-level tool approval ceiling.
+* Make review's test-quality agents anchor coverage findings at the code under test, so two agents finding the same gap now confirm each other.
+* Fixed: reconcile no longer skips every check as "no-remote" in a checkout with a working origin but no local origin/HEAD (a fresh cloud or Routine clone, or a git init + remote add repo) — it repairs origin/HEAD once with a bounded git remote set-head, remembers a failed repair for the cache TTL, and reports it with git's own message.
+* Made the pull-request state lookup report a misused call as invalid arguments instead of a misleading network failure, and documented how dispatch close-out must call it.
+* Design pre-build loads Impeccable's current craft guidance again, instead of reporting missing reference files and building the brief without it.
+* Add a plan-audit check that warns before a build starts when the plan leaves a clause of an acceptance criterion uncovered.
+* Verification runs can now time out a hung test file instead of hanging forever.
+* Interrupting a baseline verification run now cleans up its scratch worktree, and leftovers are reported on the next run.
+* Code review's parallel reviewers are now told never to run your test suites or start servers, and the review reports any server they leave running.
+* Under PR-first runs, the test and review gates now fail when the run's own pull request already has a failing CI check, instead of passing on local results alone.
+* Fixed closing a pipeline run by its short run id, and made a failed close report a non-zero exit code.
+* The release preflight no longer reports "nothing to release" when feature commits arrive through GitHub merge commits under release-please.
+* Switched dispatch's first build/test call to Claude's more capable model profile, reducing how often it skips the pipeline's required safety checks.
+* The worktree-reap long-path fallback now refuses to force-delete when a registered worktree's path cannot be resolved, instead of treating it as already removed.
+* Verification baseline checks now run faster on large failure sets by batching their per-file git probes.
+* Baseline-adjudicated verification no longer fails a build on a one-off flaky extra failure in a file that already fails at base.
+* No user-visible change: internal verification-runner behavior for environments with known,
+* No user-visible change — internal test/CLI reliability fix for the visual-decide stop command in containers without a reaping init.
+* Add a plan-authoring check so a build plan that gives an existing function a new dependency also lists every test that calls it, before any task runs.
+* Clarify that a pre-existing defect in a file the build touches goes through the deferral gate's fix-now test, so "pre-existing" alone no longer defers it.
+* No user-visible change — adds a cross-platform regression test for Windows drive-root glob handling.
+* Local-merge releases now support java/ruby/dotnet manifest bumps directly, instead of requiring the `simple` + `extra-files` config workaround.
+* Scheduled dispatch runs no longer stop in cloud sandboxes that block GitHub's GraphQL API; they switch to the GitHub MCP tools instead.
+* Flaky-test retries are now refused when a failure cannot be attributed to a specific test file.
+* Fixed the pre-PR bookkeeping guard blocking writes to gitignored scratch files, which could stop an agent from writing the draft PR body.
+* No user-visible change.
+* No user-visible change — adds a Linux-runnable test pinning the Windows forward-slash temp path output.
+* The worktree-always gate now also catches file writes made by plain shell redirection (`> file`, `>> file`) from the main checkout.
+* No user-visible change — agent harness reliability fix.
+* No user-visible change — agent harness reliability fix.
+
 ## [6.141.0](https://github.com/thn-inc/claude-tweaks/compare/v6.140.1...v6.141.0) (2026-10-16)
 
 

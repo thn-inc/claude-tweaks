@@ -5,9 +5,9 @@
 // (3) worktree-reap.js's lock/eligibility predicate for worktree removal, (4) a local branch
 // delete, (5) the remote ref delete `pr-first-merge-post-merge.md` Step 5 already specifies.
 //
-// Cardinal invariant (bin/hooks.js's own header comment): this is dispatched the same way
-// close-run is, so it never sets a non-zero exit and never throws past its own boundary — every
-// step is try/skip/report. A locked worktree, `--abandoned`, or a branch-name-matches-integration
+// Cardinal invariant (bin/hooks.js's own header comment): it never sets a non-zero exit and
+// never throws past its own boundary — every step is try/skip/report — unlike close-run's
+// rejected-`--run` exit 1 (#3025). A locked worktree, `--abandoned`, or a branch-name-matches-integration
 // guard all SKIP their step and report why; none of them abort the remaining steps, since a
 // locked worktree doesn't block branch/ref cleanup that doesn't depend on it.
 'use strict';

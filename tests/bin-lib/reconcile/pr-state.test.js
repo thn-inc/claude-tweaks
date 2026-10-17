@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
-  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, resolveIssueStateByNumber, BULK_CHUNK,
+  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, resolveIssueStateByNumber, resolvePrStateByNumberAsync, BULK_CHUNK,
 } = require('../../../plugin/bin/lib/reconcile/pr-state');
 
 // resolvePrState/resolvePrStateAsync both shell to `gh pr list` — neither is
@@ -396,9 +396,116 @@ test('resolveIssueStateByNumber: malformed gh output -> network-failure, no thro
   }
 });
 
+// #3029: a misordered/object-shaped/non-numeric call is a programming error,
+// not a transport failure — it must read 'invalid-arguments', never
+// 'network-failure', and never throw (archive-merged.js's sweep and
+// github-pr-scan.md's forEach both rely on these resolvers never throwing).
+function installArgvSpy(json) {
+  const argvLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-guard-')), 'argv.log');
+  const wrapper = installGhWrapper(`#!/bin/sh\necho "$@" >> "${argvLog}"\ncat <<'EOF'\n${JSON.stringify(json)}\nEOF\n`);
+  return { called: () => fs.existsSync(argvLog), restore: wrapper.restore };
+}
+
+test('by-number resolvers: misordered/object-shaped calls -> invalid-arguments, no gh call, no throw (#3029)', () => {
+  const spy = installArgvSpy({ number: 42, state: 'OPEN' });
+  try {
+    assert.equal(resolvePrStateByNumber(4242, { cwd: '/tmp', repo: 'o/r' }), 'invalid-arguments');
+    assert.equal(resolveIssueStateByNumber(4343, { cwd: '/tmp' }), 'invalid-arguments');
+    assert.equal(spy.called(), false);
+  } finally {
+    spy.restore();
+  }
+});
+
+test('by-number resolvers: non-numeric, negative, and fractional numbers -> invalid-arguments, no gh call (#3029)', () => {
+  const spy = installArgvSpy({ number: 42, state: 'OPEN' });
+  try {
+    for (const bad of ['abc', -5, 3.5, '042', '4 2', {}, Object.create(null)]) {
+      assert.equal(resolvePrStateByNumber('/tmp', bad), 'invalid-arguments', `pr: ${JSON.stringify(bad)}`);
+      assert.equal(resolveIssueStateByNumber('/tmp', bad), 'invalid-arguments', `issue: ${JSON.stringify(bad)}`);
+    }
+    assert.equal(spy.called(), false);
+  } finally {
+    spy.restore();
+  }
+});
+
+test('by-number resolvers: falsy number still short-circuits to null before the guard (#3029)', () => {
+  for (const fn of [resolvePrStateByNumber, resolveIssueStateByNumber]) {
+    assert.equal(fn('/tmp', 0), null);
+    assert.equal(fn('/tmp', undefined), null);
+    assert.equal(fn(4242, null), null);
+  }
+});
+
+test('by-number resolvers: a positive-integer string passes the guard and reaches gh (#3029)', () => {
+  const spy = installArgvSpy({ number: 42, state: 'MERGED' });
+  try {
+    assert.equal(resolvePrStateByNumber('/tmp', '42').state, 'MERGED');
+    assert.equal(resolveIssueStateByNumber('/tmp', '42').state, 'MERGED');
+    assert.equal(spy.called(), true);
+  } finally {
+    spy.restore();
+  }
+});
+
+// A missing cwd and a missing gh binary both surface as ENOENT; a stale or
+// mistyped checkout path must not be reported as "gh is not installed".
+test('by-number resolvers: a non-existent repoRoot -> invalid-arguments, not gh-absent (#3029)', () => {
+  const wrapper = installGhWrapper({ number: 42, state: 'MERGED' });
+  try {
+    assert.equal(resolvePrStateByNumber('/definitely/not/here', 42), 'invalid-arguments');
+    assert.equal(resolveIssueStateByNumber('/definitely/not/here', 42), 'invalid-arguments');
+  } finally {
+    wrapper.restore();
+  }
+});
+
 test('resolvePrStatesBulk: unresolvable repo slug classifies network-failure (fail closed, no spawn)', () => {
   let spawned = 0;
   const r = resolvePrStatesBulk('/tmp/definitely-not-a-repo-xyz', ['a'], { runner: () => { spawned += 1; return '{}'; } });
   assert.equal(r, 'network-failure');
   assert.equal(spawned, 0);
+});
+
+test('resolvePrStateByNumberAsync: no number -> null, no gh call', async () => {
+  assert.equal(await resolvePrStateByNumberAsync('/tmp', null), null);
+  assert.equal(await resolvePrStateByNumberAsync('/tmp', undefined), null);
+});
+
+test('resolvePrStateByNumberAsync: resolves the single PR by number (no tie-break needed)', async () => {
+  const pr = { number: 42, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', mergeCommit: { oid: 'a'.repeat(40) } };
+  const wrapper = installGhWrapper(pr);
+  try {
+    const result = await resolvePrStateByNumberAsync('/tmp', 42);
+    assert.equal(result.number, 42);
+    assert.equal(result.state, 'MERGED');
+  } finally {
+    wrapper.restore();
+  }
+});
+
+test('resolvePrStateByNumberAsync: gh absent -> gh-absent, no throw', async () => {
+  const originalPath = process.env.PATH;
+  process.env.PATH = '/nonexistent-path-with-no-gh';
+  try {
+    assert.equal(await resolvePrStateByNumberAsync('/tmp', 42), 'gh-absent');
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
+test('resolvePrStateByNumberAsync: malformed gh output -> network-failure, no throw', async () => {
+  const wrapper = installGhWrapper('#!/bin/sh\necho "not json"\n');
+  try {
+    assert.equal(await resolvePrStateByNumberAsync('/tmp', 42), 'network-failure');
+  } finally {
+    wrapper.restore();
+  }
+});
+
+test('resolvePrStateByNumberAsync: malformed/misordered call -> invalid-arguments, no gh call (#3029 shape)', async () => {
+  assert.equal(await resolvePrStateByNumberAsync(4242, { cwd: '/tmp' }), 'invalid-arguments');
+  assert.equal(await resolvePrStateByNumberAsync('/tmp', -1), 'invalid-arguments');
+  assert.equal(await resolvePrStateByNumberAsync('/tmp', '4.2'), 'invalid-arguments');
 });

@@ -113,6 +113,27 @@ test('reapMerged: a merged-PR worktree is removed and logs a worktree-reaped eve
   assert.equal(reapedEvent.prNumber, 42);
 });
 
+// #2783: EnterWorktree mints an `-adhoc-standalone` twin AFTER /flow's formal
+// run, so it sorts newer — the reap trail (timing/derive.js reads it) must
+// still land in the formal run, never the friction-only ad-hoc dir.
+test('#2783 reapMerged: the worktree-reaped event lands in the formal run, not its newer ad-hoc twin', () => {
+  const { root, wtPath, runDir } = buildReapableFixture();
+  const adhoc = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000100-adhoc-standalone');
+  fs.mkdirSync(adhoc, { recursive: true });
+  writeRunState(adhoc, { worktree: wtPath, status: 'active', sessionId: 'sess-2783-reap' });
+  const wrapper = installGhWrapper([{ number: 43, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
+  try {
+    reapMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  const read = (dir) => {
+    try { return fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; }
+  };
+  assert.ok(read(runDir).some((e) => e.type === 'worktree-reaped'), `formal run events: ${JSON.stringify(read(runDir))}`);
+  assert.equal(read(adhoc).some((e) => e.type === 'worktree-reaped'), false);
+});
+
 test('reapMerged: a closed-unmerged PR is skipped (never reaped) and logs worktree-reap-skipped, not worktree-reaped', () => {
   const { root, wtPath, runDir } = buildReapableFixture();
   const wrapper = installGhWrapper([{ number: 7, state: 'CLOSED', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z' }]);
@@ -618,6 +639,69 @@ test('gitCommittedToRemoval: false for a worktree git refused to remove (still r
   } finally {
     release();
   }
+});
+
+// #2935 — gitCommittedToRemoval's per-entry match previously fell back to
+// the raw porcelain path whenever realpath failed for any reason
+// (safeReal(wt.path) || wt.path), so an intact, still-registered worktree
+// whose path happened not to resolve (a non-ENOENT realpath error) read as
+// "no matching entry", i.e. "git committed to removal" — fail-open. These
+// two tests pin the fail-closed replacement: a non-ENOENT resolution
+// failure on the registered entry must return false, and an ENOENT failure
+// on an unrelated entry must never change the target's own result.
+test('gitCommittedToRemoval: a non-ENOENT realpath failure on the registered target entry fails closed (false), never read as absent', () => {
+  // Reproduces #2935's actual trigger rather than merely passing an inert
+  // option. `git worktree add` itself canonicalizes the path it registers,
+  // so a symlinked ancestor present *before* creation never survives into
+  // git's own porcelain output — this instead swaps a symlink in *after*
+  // registration: git's recorded path (still the original, unmoved string)
+  // now resolves, via that symlink, to a different real location. That is
+  // exactly the condition under which today's
+  // `(safeReal(wt.path) || wt.path) === real` fallback silently substitutes
+  // the raw (unresolved) path and misses the match. `fs.realpathSync` is
+  // monkeypatched (restored in `finally`) only for this one raw path, so the
+  // same forced failure reaches both the current `safeReal`-based lookup and
+  // the fixed implementation's own default `realpath` parameter — proving
+  // this test goes red against today's fallback and green only once the
+  // fallback is replaced with fail-closed handling.
+  const { root, wtPath: originalPath } = buildReapableFixture();
+  const movedPath = `${originalPath}-moved`;
+  fs.renameSync(originalPath, movedPath);
+  fs.symlinkSync(movedPath, originalPath);
+  const resolvedPath = fs.realpathSync(originalPath);
+  assert.equal(resolvedPath, movedPath, 'the fixture must route through the swapped-in symlink, or this test proves nothing');
+
+  const realRealpathSync = fs.realpathSync;
+  fs.realpathSync = (p, ...rest) => {
+    if (p === originalPath) {
+      const err = new Error('EACCES: permission denied');
+      err.code = 'EACCES';
+      throw err;
+    }
+    return realRealpathSync(p, ...rest);
+  };
+  try {
+    assert.equal(
+      gitCommittedToRemoval(movedPath, root),
+      false,
+      'an intact, registered worktree whose own path cannot be resolved for a non-ENOENT reason must never read as "git committed to removal"',
+    );
+  } finally {
+    fs.realpathSync = realRealpathSync;
+  }
+});
+
+test('gitCommittedToRemoval: an ENOENT realpath failure on a non-target entry leaves the target\'s own result unchanged', () => {
+  const { root, wtPath } = buildReapableFixture();
+  const otherPath = path.join(root, '.claude', 'worktrees', 'issue-2');
+  git(root, 'worktree', 'add', '-q', '-b', 'worktree-issue-2', otherPath);
+  const enoent = Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+  const realpath = (p) => { if (p === otherPath) throw enoent; return fs.realpathSync(p); };
+  assert.equal(
+    gitCommittedToRemoval(wtPath, root, { realpath }),
+    false,
+    "the target worktree is still registered and not prunable — an unrelated entry's ENOENT must not change that result",
+  );
 });
 
 test('attemptLongPathRemoval: on win32 after a mid-deletion failure at an ORDINARY-length path, invokes fsRmSync with the \\\\?\\-prefixed target and removes the directory', MID_DELETE_SKIP, () => {

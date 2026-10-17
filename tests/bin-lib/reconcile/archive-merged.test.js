@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  archiveRunDir, listSpecDirs, decideArchive, readConsoleState, isOrphanedMint, trackArchiveResult,
+  archiveRunDir, listSpecDirs, decideArchive, decideArchiveCore, readConsoleState, isOrphanedMint, trackArchiveResult,
   archiveMerged, lastOwnEventMs, isAbandonedInterrupted, archiveOrphanedMint, ORPHAN_MINT_TTL_MS,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, isStaleDir,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin, resolveIdenticalWorkTwin,
@@ -2478,11 +2478,15 @@ test('archiveMerged: a CLOSED (never-merged) PR reached via the by-number fallba
   );
 });
 
-// Companion case: the MERGED sub-case of the same fallback branch must
-// keep emitting plain 'console-never-rendered' and must NOT be tracked —
-// code landed there, so a console may genuinely still be pending; only the
-// CLOSED sub-case changes in this fix.
-test('archiveMerged: a MERGED PR reached via the by-number fallback with no console.json still uses plain console-never-rendered and is never tracked', () => {
+// #3249: the MERGED sub-case of the same fallback branch used to stay
+// stuck on plain 'console-never-rendered' forever — the fast-lane
+// auto-merge short-circuit (wrap-up/auto-merge-short-circuit.md) renders
+// its console content as a non-blocking PushNotification FYI and never
+// writes console.json, so this state was permanent for every such run,
+// not "a console may still be pending". When staged/ holds nothing
+// pending (this fixture's case — no staged/ directory at all), the run
+// now archives instead.
+test('archiveMerged: a MERGED PR reached via the by-number fallback with no console.json and nothing staged now archives (#3249)', () => {
   const { root, featureSha } = mergedFeatureBranchRepo('feat-2231-merged-noconsole');
   git(root, 'branch', '-D', 'feat-2231-merged-noconsole'); // branch ref gone too — nothing for fallbackBranch to recover
   const runId = '2026-08-01T090000-record-2231-mergedpr-noconsole';
@@ -2510,20 +2514,174 @@ test('archiveMerged: a MERGED PR reached via the by-number fallback with no cons
   } finally {
     wrapper.restore();
   }
-  assert.ok(!result.archived.includes(runDir));
-  const skip = result.skipped.find((s) => s.runDir === runDir);
-  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
-  assert.equal(skip.reason, 'console-never-rendered');
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
 
   const failures = listResidueFailures(root);
   assert.ok(
     !failures.some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
-    `a MERGED PR's never-rendered console must not be tracked toward escalation, got ${JSON.stringify(failures)}`,
+    `an archived run must never be tracked toward structurally-stuck escalation, got ${JSON.stringify(failures)}`,
   );
+});
+
+// Companion (#657/#1130 protection, preserved): the SAME shape as above,
+// except staged/ holds a real pending file — this run must still skip,
+// never silently archived out from under an unresolved staged proposal.
+test('archiveMerged: a MERGED PR reached via the by-number fallback with no console.json but a pending staged/ item still skips (#3249, #657 protection)', () => {
+  const { root, featureSha } = mergedFeatureBranchRepo('feat-3249-merged-staged-pending');
+  git(root, 'branch', '-D', 'feat-3249-merged-staged-pending'); // branch ref gone too — nothing for fallbackBranch to recover
+  const runId = '2026-08-01T090000-record-3249-mergedpr-staged';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'gone-record-3249-staged'),
+    pr: { number: 3249002, branch: 'feat-3249-merged-staged-pending' },
+  }));
+  // Deliberately no console.json — same "never rendered" shape — but
+  // staged/ holds a real pending proposal nobody has acted on yet.
+  fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'staged', 'review-1.patch'), 'diff --git a/x b/x\n');
+  const stuckBackdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(runDir, stuckBackdated, stuckBackdated);
+
+  const wrapper = installGhWrapper({
+    number: 3249002, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    mergeCommit: { oid: featureSha },
+  });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(!result.archived.includes(runDir), 'a run with a genuinely pending staged/ item must never be archived out of sight');
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'console-never-rendered');
+  assert.equal(fs.existsSync(runDir), true);
+});
+
+// #3249 (whole-branch review): the ORDINARY branch-resolvable path — not the
+// by-number fallback above. The worktree is gone but the branch ref still
+// resolves via fallbackBranch (run-state.json's pr.branch), so the sweep
+// reaches archiveMergedRun -> decideArchiveCore. This is the shape
+// pr-first-merge-post-merge.md Step 4.2's reconcile call hits; the
+// staged-items exception must apply here too, not only on the by-number
+// branch. `stagedFiles` seeds staged/ (absent when empty).
+function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = []) {
+  const { root, featureSha } = mergedFeatureBranchRepo(branch); // branch ref stays — fallbackBranch recovers it
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n'); // adopted — keeps isOrphanedMint out of the way
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', `gone-${runId}`), // stamped, already torn down
+    pr: { number: 3249100, branch },
+  }));
+  // Deliberately no console.json — the fast-lane short-circuit never writes one.
+  for (const name of stagedFiles) {
+    fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'staged', name), 'x\n');
+  }
+  const wrapper = installGhWrapper([{
+    number: 3249100, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    mergeCommit: { oid: featureSha },
+  }]);
+  try {
+    return { root, runDir, result: archiveMerged({ cwd: root }) };
+  } finally {
+    wrapper.restore();
+  }
+}
+
+test('archiveMerged: ordinary branch-resolvable path — MERGED PR, worktree gone, no console.json, nothing staged archives (#3249)', () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole('feat-3249-ordinary-empty', '2026-08-01T090000-record-3249-ordinary-empty');
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived via archiveMergedRun, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
+});
+
+// Dotfiles in staged/ (a stray .DS_Store) are not staged items — the
+// console's own reader (console/resolve.js readSnapshot) filters them the
+// same way, so they must never block archiving.
+test('archiveMerged: ordinary path — a staged/ holding only dotfiles counts as nothing pending and archives (#3249)', () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole('feat-3249-ordinary-dotfile', '2026-08-01T090000-record-3249-ordinary-dotfile', ['.DS_Store']);
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+});
+
+// #657/#1130 protection on the ordinary path: a real pending staged item
+// still skips with plain 'console-never-rendered'.
+test('archiveMerged: ordinary path — a real pending staged/ item still skips console-never-rendered (#3249, #657 protection)', () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole('feat-3249-ordinary-pending', '2026-08-01T090000-record-3249-ordinary-pending', ['reflect-1.md']);
+  assert.ok(!result.archived.includes(runDir), 'a run with a genuinely pending staged/ item must never be archived out of sight');
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'console-never-rendered');
+  assert.equal(fs.existsSync(runDir), true);
+});
+
+// Review finding (#3249): hasStagedItems used to catch every readdirSync
+// error — including a non-ENOENT one — and report "nothing staged" either
+// way. A `staged` entry that exists but isn't a readable directory (here: a
+// plain file sitting where `staged/` should be, producing ENOTDIR) is not
+// the same signal as "genuinely absent" — it must fail closed (treated as
+// pending) rather than unlock the archive path, matching readConsoleState's
+// own fail-closed convention on an unparseable console.json.
+test('archiveMerged: ordinary path — staged/ existing as a non-directory (ENOTDIR) fails closed, never archives (#3249)', () => {
+  const branch = 'feat-3249-ordinary-staged-enotdir';
+  const runId = '2026-08-01T090000-record-3249-ordinary-staged-enotdir';
+  const { root, featureSha } = mergedFeatureBranchRepo(branch);
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', `gone-${runId}`),
+    pr: { number: 3249101, branch },
+  }));
+  // `staged` exists but as a plain file, not a directory — readdirSync on
+  // it throws ENOTDIR, a different failure mode than the absent-directory
+  // ENOENT case the dotfile/empty tests above cover.
+  fs.writeFileSync(path.join(runDir, 'staged'), 'not a directory\n');
+  const wrapper = installGhWrapper([{
+    number: 3249101, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    mergeCommit: { oid: featureSha },
+  }]);
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(!result.archived.includes(runDir), 'an unreadable staged/ entry must never be treated as "nothing pending"');
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'console-never-rendered');
+  assert.equal(fs.existsSync(runDir), true);
 });
 
 test('isAbandonedInterrupted: false for a non-interrupted status', () => {
   assert.equal(isAbandonedInterrupted('/x', { status: 'active' }, 'sess-1', Date.now()), false);
+});
+
+// #3249: decideArchiveCore's new third parameter — defaults (2-arg calls,
+// every pre-existing caller) preserve today's unconditional skip; only an
+// explicit `hasStagedPending: false` unlocks the archive path.
+test('decideArchiveCore: consoleState none + MERGED + no 3rd arg still skips (unchanged default)', () => {
+  const decision = decideArchiveCore({ state: 'MERGED' }, 'none');
+  assert.deepStrictEqual(decision, { action: 'skip', reason: 'console-never-rendered' });
+});
+test('decideArchiveCore: consoleState none + MERGED + hasStagedPending:true skips', () => {
+  const decision = decideArchiveCore({ state: 'MERGED' }, 'none', true);
+  assert.deepStrictEqual(decision, { action: 'skip', reason: 'console-never-rendered' });
+});
+test('decideArchiveCore: consoleState none + MERGED + hasStagedPending:false archives (#3249)', () => {
+  const decision = decideArchiveCore({ state: 'MERGED' }, 'none', false);
+  assert.deepStrictEqual(decision, { action: 'archive' });
+});
+test('decideArchiveCore: consoleState unresolved still skips regardless of hasStagedPending', () => {
+  assert.deepStrictEqual(decideArchiveCore({ state: 'MERGED' }, 'unresolved', false), { action: 'skip', reason: 'console-unresolved' });
 });
 
 test('#1854: an auto-resolve console.json ({resolved:true, mode:"auto-resolve", …}) reads as resolved and archives, never console-never-rendered (#1932 AC6)', () => {

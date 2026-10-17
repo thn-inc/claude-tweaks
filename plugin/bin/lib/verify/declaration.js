@@ -140,12 +140,26 @@ function readDeclaration(filePath, fsImpl = fs) {
     }
   }
 
+  // preExisting (#3129): known-failing test files/patterns, analogous to
+  // flaky.files but with no retry template and no maxRetries — the runner
+  // never re-runs these; it only checks whether a failing run's entire
+  // failing-file set is covered by this allowlist (verify.js main()). A
+  // declared-but-empty list (the default) never waives anything.
+  let preExisting = [];
+  if (raw.preExisting !== undefined) {
+    if (!Array.isArray(raw.preExisting) || raw.preExisting.some((f) => typeof f !== 'string')) {
+      errors.push('preExisting: must be an array of path or glob strings');
+    } else {
+      preExisting = raw.preExisting;
+    }
+  }
+
   if (errors.length) return { ok: false, errors };
   return {
     ok: true,
     decl: {
       checks: { types: typeof checks.types === 'string' ? checks.types : null, lint: typeof checks.lint === 'string' ? checks.lint : null, tests },
-      suites, toolScoped, retry, rules, flaky,
+      suites, toolScoped, retry, rules, flaky, preExisting,
     },
   };
 }

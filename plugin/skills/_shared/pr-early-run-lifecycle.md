@@ -282,7 +282,9 @@ replace only the content between the markers, write back) instead of parsing pro
 delimiter pairs bracket the same checklist rows — the HTML-comment pair outermost, the
 plain-text pair immediately inside it (see the template above) — so either reader finds an
 unambiguous, non-overlapping span to replace. Start every row unchecked — `- [ ] {phase}` —
-even for steps this run's step-list argument will skip (e.g. `no-polish`); a skipped phase's
+even for steps this run's step-list argument will skip (e.g. `no-polish`) — `composePrEarlyBody`
+takes no phase list, so it cannot narrow them (pinned in `tests/bin-lib/flow/pr-body.test.js`,
+#2877); a skipped phase's
 row is removed at that phase's own would-be exit rather than predicted at creation, since Step
 1's own step-list resolution can still change before then in `interactive`/`hybrid` mode. This
 would-be-exit removal is immediate in a **single-record** run, unchanged from before. In a

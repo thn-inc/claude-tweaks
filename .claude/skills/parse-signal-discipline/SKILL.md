@@ -130,7 +130,21 @@ When mechanizing a prose heuristic into a deterministic check:
    behind it both classified `claim-log-only`. The build's tests covered whole-line junk and passed.
    Review caught it, and `c610df577` anchored the pattern at both ends, including the suffix the
    writer always appends. Anchor both ends against what the writer emits, and pin a truncated copy
-   and a tail-carrying copy of an accepted input with their own assertions.
+   and a tail-carrying copy of an accepted input with their own assertions. A recogniser that
+   scans a shared narrative log owes one step before the anchors: parse each line with the
+   writer's own inverse and require the expected step. `plugin/bin/lib/dispatch/merge-verdict.js`
+   (#2941) decides whether a merge-check pass was logged in `decisions.md`, which many skills
+   narrate into. Its first version matched the marker anywhere in a line, so a review write-up
+   quoting it counted as a pass and overrode a later `needs-human`. It now reads only
+   `parseEntry` entries under the verdict steps, anchors the pass at both ends, and reads any
+   other pass-shaped action as `unparsed`.
+   A fuzzy text match is the same leak with no anchor at all. `plugin/bin/lib/plan-audit/checks.js`'s
+   Check E (#3099) reads an acceptance-criterion clause as `covered` when the plan quotes its text.
+   Its first version was a bare substring `includes()`, so the one-word clause "Last." read as
+   covered by a test step about "the blast radius". Whole-branch review caught it, and `d9351cbee`
+   added `quoteMatchesWholeWord`: a clause under three words is never matched by its text, and a
+   longer one must match on a word boundary at both ends. Give a text-match recogniser a minimum
+   length and a boundary at each end, and pin a short input hidden inside a longer word.
 7. **A parsed list that feeds a pass verdict owes an independent count to reconcile against.** An
    extractor that returns N items cannot say it missed one more, so an undercount reads exactly
    like a complete list. That is the same silent false negative as a merged `null`, one level up.
@@ -177,7 +191,22 @@ When mechanizing a prose heuristic into a deterministic check:
    caller, guard the input at your call site rather than flipping the shared helper's default.
    Pin each invalid input with its own assertion: `NaN`, `undefined` and `null` all slip past
    a `>=` comparison.
-11. **A check that passes when its input is absent turns silent once an earlier transition clears
+11. **A raw fs read's error code owes the same split as a shell-out's exit code (item 8), one level
+    lower.** `fs.readdirSync` throwing `ENOENT` ("this path doesn't exist") and throwing anything
+    else (`EACCES`, `ENOTDIR`, `EIO`, a transient I/O hiccup) are not the same signal: the first is
+    genuine non-applicability, the second is "couldn't tell." `plugin/bin/lib/reconcile/archive-merged.js`'s
+    `hasStagedItems` (#3249) — the one function the #657/#1130 protection's "don't silently archive
+    a run with pending staged decisions" guarantee rests on — caught every error the same way and
+    returned `false` ("nothing staged") either way, so an unreadable `staged/` directory read
+    identically to a genuinely absent one and unlocked an archive path meant only for the latter.
+    Review caught it (two independently-dispatched lenses, reproduced without seeing each other's
+    output) and the fix branches on `err.code !== 'ENOENT'`, failing closed (`true`, "treat as
+    pending") on anything else — mirroring `readConsoleState`'s own fail-closed catch two functions
+    above it in the same file, which this fix's catch previously disagreed with. Pin the non-ENOENT
+    case with its own fixture (a plain file sitting where a directory is expected, producing
+    `ENOTDIR`), the same way item 6 pins a truncated/tail-carrying input — a fixture that only
+    exercises the absent-directory case cannot discriminate this fix from the pre-fix code.
+12. **A check that passes when its input is absent turns silent once an earlier transition clears
    that input.** It cannot tell "this run never had one" from "a step before me erased it".
    `plugin/bin/lib/wrap-up/engine-verify.js`'s `worktree-removed` (#3023) fails when the run's
    recorded worktree path still exists on disk, because `git worktree list` dropping the entry
@@ -200,6 +229,9 @@ When mechanizing a prose heuristic into a deterministic check:
   actually merges two different situations.
 - Writing a check that shells out to a tool, or a probe in skill prose the agent runs, where an
   empty result could mean either "nothing found" or "the check did not run" (fix-shape items 8-9).
+- Writing a check that reads the filesystem directly (`fs.readdirSync`/`readFileSync`/`existsSync`
+  and the like) where catching every error the same way conflates "genuinely absent" (`ENOENT`)
+  with "couldn't tell" (`EACCES`, `ENOTDIR`, and other non-ENOENT codes) (fix-shape item 11).
 
 ## When not to use
 

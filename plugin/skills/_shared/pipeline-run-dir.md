@@ -144,9 +144,16 @@ sanctioned-write family, the fourth a single documented exception:
   (`main`, `--run-dir`), `bin/materialize.js` (`run`, `--run-dir`), and `bin/apply-refine-labels.js`
   (`--run`) — have no such use: each resolves `mainCheckoutRoot()`/`isAnchoredUnderRoot()` from
   `bin/lib/hooks/worktree-detect.js` and refuses any value not anchored under the main checkout
-  **before any filesystem write**, with exit code 2 (malformed invocation). `bin/hooks.js`'s
-  `resolveRunArg` carries the one narrow exception to this rule — see **Worktree-local `--run`
-  fallback (#280)** immediately below.
+  **before any filesystem write**. `bin/wrap-up-engine.js`, `bin/materialize.js`, and
+  `bin/apply-refine-labels.js` do this with exit code 2 (malformed invocation); `bin/hooks.js`'s
+  `resolveRunArg` carries the same anchoring check but a different exit-code contract — it prints
+  `--run path rejected: …` and exits 0 for every subcommand except `close-run` (#3025) and
+  `resolve-console` (#2568), which exit 1. `resolveRunArg` also carries the one narrow exception to the anchoring rule itself —
+  see **Worktree-local `--run` fallback (#280)** immediately below. A bare run id (no path
+  separator) whose cwd-relative reading is not a directory is retried as
+  `<main checkout>/.claude-tweaks/pipelines/<value>` (#3025) — the form
+  `/claude-tweaks:dispatch`'s `$RUN_ID`, or a `<dir>` copied from the SessionStart notice's run
+  list, passes — and the anchoring check above still runs on that resolved path.
 
 ### Initialized-run-dir requirement (#1566) — moved
 

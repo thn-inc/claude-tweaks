@@ -1,0 +1,58 @@
+[
+ {
+  "tag": "claim",
+  "record": 2983,
+  "title": "Read the direction contract from Impeccable surf…",
+  "action": "Release stale claim (issue closed)",
+  "command": "node release-claim.js 2983 --sweep --reason \"swept: issue closed\""
+ },
+ {
+  "tag": "claim",
+  "record": 2984,
+  "title": "Adapt the finish-reviewer dispatch to Impeccable…",
+  "action": "Release stale claim (issue closed)",
+  "command": "node release-claim.js 2984 --sweep --reason \"swept: issue closed\""
+ },
+ {
+  "tag": "claim",
+  "record": 2985,
+  "title": "Re-pin Impeccable to the engine, re-record fixtu…",
+  "action": "Release stale claim (issue closed)",
+  "command": "node release-claim.js 2985 --sweep --reason \"swept: issue closed\""
+ },
+ {
+  "tag": "claim",
+  "record": 3101,
+  "title": "Repoint the citations 3097 left dangling and m…",
+  "action": "Release stale claim (issue closed)",
+  "command": "node release-claim.js 3101 --sweep --reason \"swept: issue closed\""
+ },
+ {
+  "tag": "claim",
+  "record": 3102,
+  "title": "State the unquoted NODE_EVAL_EOF heredoc conven…",
+  "action": "Release stale claim (issue closed)",
+  "command": "node release-claim.js 3102 --sweep --reason \"swept: issue closed\""
+ },
+ {
+  "tag": "claim",
+  "record": 3103,
+  "title": "Name all five removing exclusions in the 3084 …",
+  "action": "Release stale claim (issue closed)",
+  "command": "node release-claim.js 3103 --sweep --reason \"swept: issue closed\""
+ },
+ {
+  "tag": "claim",
+  "record": 3104,
+  "title": "Dispatch #N reports a record as absent when dis…",
+  "action": "Release stale claim (issue closed)",
+  "command": "node release-claim.js 3104 --sweep --reason \"swept: issue closed\""
+ },
+ {
+  "tag": "claim",
+  "record": 3105,
+  "title": "writeStagedItem allocate:true race test intermi…",
+  "action": "Release stale claim (issue closed)",
+  "command": "node release-claim.js 3105 --sweep --reason \"swept: issue closed\""
+ }
+]

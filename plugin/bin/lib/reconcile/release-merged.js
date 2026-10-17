@@ -13,9 +13,10 @@ const { promisify } = require('util');
 const { runGit, repoSlugOf } = require('../hooks/git-exec');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { readRunState } = require('../hooks/context');
+const { fallbackBranch } = require('../hooks/run-integrity');
 const { classifyClaimBlob, releasePayload } = require('../issues/claims');
 const claimStore = require('../issues/claim-store');
-const { resolvePrStateAsync } = require('./pr-state');
+const { resolvePrStateAsync, resolvePrStateByNumberAsync } = require('./pr-state');
 const { writeTombstone: writeTombstoneShared, GRANT_LABELS } = require('../release-claim/release');
 const { resolveTarget, appendEntry, formatEntry } = require('../log-decision/append');
 const { readCache, writeCache } = require('./cache');
@@ -59,6 +60,14 @@ function decideRelease(classifiedState, prState, issueState) {
 function needsIssueEvidence(prState) {
   if (prState === null) return true;
   return typeof prState === 'object' && prState.state === 'CLOSED';
+}
+
+// Shared by Phase 1.5 and the #3249 by-number fallback below: pairs each
+// item's issueNumber with its runWithConcurrency result, mapping a rejected
+// probe (an Error instance) to the same 'network-failure' string every other
+// resolver in this module uses for a transport failure.
+function resultsByIssue(items, results) {
+  return new Map(items.map((c, i) => [c.issueNumber, results[i] instanceof Error ? 'network-failure' : results[i]]));
 }
 
 // Pure: a claim listing entry + the cached sha last seen for that issue ->
@@ -349,11 +358,27 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
     const wtEntry = runState && runState.worktree
       ? worktrees.find((w) => path.resolve(w.path) === path.resolve(runState.worktree))
       : null;
-    const branch = wtEntry ? wtEntry.branch : null;
-    if (!runState || !runState.worktree) {
-      joinFailure = 'no-run-state'; // archived/gone run dir — issue-closed evidence below may still release
-    } else if (!branch) {
-      joinFailure = 'no-branch';
+    // #3249: a live worktree entry wins; when it's gone (the ordinary
+    // post-merge-teardown timing, not an edge case under `integration-model:
+    // pr-first`), fallbackBranch recovers the branch name from
+    // run-state.json's pr.branch (stamped once, live, by hooks.js
+    // record-pr) or decisions.md, as long as that branch ref still
+    // resolves — mirrors archive-merged.js's identical fallback for this
+    // exact shape (#1962/#1684).
+    const branch = (wtEntry && wtEntry.branch) || fallbackBranch(root, runDir, runState);
+    // Surviving evidence when BOTH the worktree and the branch itself are
+    // gone (e.g. pr-first-merge-post-merge.md Step 5 already deleted the
+    // remote ref) — run-state.json's pr.number, stamped once at
+    // PR-early-lifecycle time and never cleared.
+    const prNumber = runState && runState.pr && runState.pr.number ? runState.pr.number : null;
+    // Gated on `!branch` first: an unstamped worktree whose branch
+    // fallbackBranch still recovered joins normally — mirrors
+    // archive-merged.js, which reports no-worktree only when the fallback
+    // also fails (#1684/#2228). The skip-reason vocabulary is unchanged.
+    if (!branch) {
+      // 'no-run-state': archived/gone run dir (or one never stamped with a
+      // worktree) — issue-closed evidence below may still release.
+      joinFailure = (!runState || !runState.worktree) ? 'no-run-state' : 'no-branch';
     }
     // prState is resolved in Phase 1.5 below (deferred so the per-active-claim
     // `gh pr list` call goes through the pool, not this sync loop) — null here
@@ -365,7 +390,7 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
     // authoritative for its conditional write, and the same distinction
     // the `!isActive` cache-write above draws for exactly the same reason.
     candidates.push({
-      issueNumber, runId, name: entry.name, sha: claim.sha, classifiedState: classified.state, prState: null, joinFailure, branch, runDir,
+      issueNumber, runId, name: entry.name, sha: claim.sha, classifiedState: classified.state, prState: null, joinFailure, branch, prNumber, runDir,
     });
   }
 
@@ -379,11 +404,45 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
     needPrState,
     (c) => resolvePrStateAsync(root, c.branch),
   );
-  const prStateByIssue = new Map(
-    needPrState.map((c, i) => [c.issueNumber, prStates[i] instanceof Error ? 'network-failure' : prStates[i]]),
-  );
+  const prStateByIssue = resultsByIssue(needPrState, prStates);
   for (const c of candidates) {
     if (c.joinFailure === null) c.prState = prStateByIssue.get(c.issueNumber);
+  }
+
+  // #3249: a candidate whose branch could not be derived at all (joinFailure
+  // still set — the ordinary branch join above, including its own
+  // fallbackBranch layer, found nothing) still carries a by-number fallback
+  // when run-state.json stamped pr.number — probe it directly, the same
+  // escape hatch archive-merged.js's own by-number fallback uses for the
+  // identical "worktree AND branch both gone" shape (#1962). Gated on
+  // c.prNumber so this never fires for a run dir with no pr field at all
+  // (an already-archived run with no run-state.json, for instance).
+  const needPrByNumber = candidates.filter((c) => c.joinFailure !== null && c.prNumber);
+  const prStatesByNumber = await runWithConcurrency(
+    needPrByNumber,
+    (c) => resolvePrStateByNumberAsync(root, c.prNumber),
+  );
+  const prStateByNumberByIssue = resultsByIssue(needPrByNumber, prStatesByNumber);
+  // Iterates needPrByNumber (the same candidate objects, by reference) —
+  // not candidates re-filtered by the same predicate — since every entry
+  // worth checking is already in that array.
+  for (const c of needPrByNumber) {
+    const byNumber = prStateByNumberByIssue.get(c.issueNumber);
+    if (byNumber && typeof byNumber === 'object') {
+      // Real evidence recovered — this candidate now behaves exactly like
+      // an ordinary branch-joined one for decideRelease's purposes, and
+      // Phase 2 below gates its own issue-evidence fetch on this same
+      // prState, so a resolved MERGED/OPEN/CLOSED result here correctly
+      // skips an unnecessary issue-state lookup.
+      c.prState = byNumber;
+      c.joinFailure = null;
+    }
+    // Any other result — null (no such PR), 'gh-absent'/'network-failure'
+    // (a failed probe, transient or permanent, e.g. a stale pr.number), or
+    // 'invalid-arguments' — leaves joinFailure and prState (null)
+    // untouched, exactly as before this fallback existed: Phase 2 still
+    // tries issue-closed evidence. Recording the failure string as prState
+    // would make needsIssueEvidence false and block that path.
   }
 
   // Phase 2: parallel issue-state fetches, capped, only for candidates that

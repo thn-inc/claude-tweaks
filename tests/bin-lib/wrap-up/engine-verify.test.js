@@ -1065,10 +1065,9 @@ test('carrier-commit check passes via the ground-truth fallback: a CLOSED issue 
     calls.push(args);
     if (isGraphqlCall(args)) {
       return JSON.stringify({
-        data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'MERGED' }] } } } },
+        data: { repository: { i900: { number: 900, state: 'CLOSED', closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'MERGED' }] } } } },
       });
     }
-    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'CLOSED' });
     return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
@@ -1083,9 +1082,8 @@ test('carrier-commit check still fails via the ground-truth fallback when the is
   const fakeGit = fakeOriginGit();
   const fakeGh = (args) => {
     if (isGraphqlCall(args)) {
-      return JSON.stringify({ data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [] } } } } });
+      return JSON.stringify({ data: { repository: { i900: { number: 900, state: 'CLOSED', closedByPullRequestsReferences: { nodes: [] } } } } });
     }
-    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'CLOSED' });
     return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
@@ -1101,10 +1099,9 @@ test('carrier-commit check still fails via the ground-truth fallback when a clos
   const fakeGh = (args) => {
     if (isGraphqlCall(args)) {
       return JSON.stringify({
-        data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'OPEN' }] } } } },
+        data: { repository: { i900: { number: 900, state: 'OPEN', closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'OPEN' }] } } } },
       });
     }
-    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'OPEN' });
     return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
@@ -1134,14 +1131,65 @@ test('carrier-commit check: a genuinely missing carrier commit (no text match, n
   writeSpecFile(runDir, '900', 900);
   const fakeGit = fakeOriginGit();
   const fakeGh = (args) => {
-    if (isGraphqlCall(args)) return JSON.stringify({ data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [] } } } } });
-    if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ state: 'OPEN' });
+    if (isGraphqlCall(args)) return JSON.stringify({ data: { repository: { i900: { number: 900, state: 'OPEN', closedByPullRequestsReferences: { nodes: [] } } } } });
     return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'carrier-commit');
   assert.strictEqual(row.result, 'fail');
   assert.match(row.detail, /900/);
+});
+
+test('carrier-commit check still fails when the batched response carries no issue state at all (older shape) and there is a closing-PR reference', () => {
+  // #2934 Gotcha: a fake GraphQL response that predates this change (no
+  // `state` on the issue node) must degrade to not-closed, never be
+  // misread as CLOSED.
+  const runDir = makeTmpDir('verify-carrier-groundtruth-nostate-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGit = fakeOriginGit();
+  const fakeGh = (args) => {
+    if (isGraphqlCall(args)) {
+      return JSON.stringify({ data: { repository: { i900: { number: 900, closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'MERGED' }] } } } } });
+    }
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'fail', 'a missing batched issueState must never be treated as CLOSED');
+});
+
+test('#2934: the carrier-commit ground-truth fallback issues exactly one gh call for N missing issues (no per-issue issue-view loop)', () => {
+  const runDir = makeTmpDir('verify-carrier-groundtruth-onecall-');
+  writeSpecFile(runDir, '900', 900);
+  writeSpecFile(runDir, '901', 901);
+  const fakeGit = fakeOriginGit();
+  const calls = [];
+  const fakeGh = (args) => {
+    calls.push(args);
+    if (isGraphqlCall(args)) {
+      return JSON.stringify({
+        data: {
+          repository: {
+            i900: { number: 900, state: 'CLOSED', closedByPullRequestsReferences: { nodes: [{ number: 2000, state: 'MERGED' }] } },
+            i901: { number: 901, state: 'CLOSED', closedByPullRequestsReferences: { nodes: [{ number: 2001, state: 'MERGED' }] } },
+          },
+        },
+      });
+    }
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'carrier-commit');
+  assert.strictEqual(row.result, 'pass', row.detail);
+  // Scope to carrier-commit's own ground-truth calls -- other checks in this
+  // same runVerify pass (acceptance-labeling's parent resolution, a
+  // labels/comments issue view) also call gh, so a bare isGraphqlCall/
+  // issue-view filter would count those too (same scoping note test 53
+  // above already makes for its own assertion).
+  const linkedPrQueryCalls = calls.filter((a) => isGraphqlCall(a) && a.some((v) => typeof v === 'string' && v.includes('closedByPullRequestsReferences')));
+  const issueViewCalls = calls.filter((a) => a[0] === 'issue' && a[1] === 'view' && (a[2] === '900' || a[2] === '901') && a.includes('state'));
+  assert.strictEqual(linkedPrQueryCalls.length, 1, `expected exactly one linked-PR GraphQL call for 2 missing issues, got: ${JSON.stringify(calls)}`);
+  assert.strictEqual(issueViewCalls.length, 0, `expected zero per-issue "gh issue view {n}" calls, got: ${JSON.stringify(issueViewCalls)}`);
 });
 
 test('reference-repairs check skips when engine-state.json has no applied references findings', () => {
