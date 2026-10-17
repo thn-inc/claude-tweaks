@@ -30,7 +30,7 @@ For each lever, record both the recommended value AND its source.
 
 **Git lever override.** When `.claude-tweaks/policy.yml` sets `worktree-always: true`, the Git lever is forced to `worktree` regardless of CLI args or defaults above — `current-branch` is never offered. This is enforced mechanically by a `PreToolUse` gate (`_shared/git-discipline.md`); the Manifesto short-circuits to `worktree`.
 
-**Ceremony profile computation.** Unlike the other levers (policy preferences resolved via the precedence chain above), `ceremony-profile`'s value is computed by folding every record's materialized `ceremony:` header field (`materialize.md`) with a logical AND: `fast-lane` only when every record in this run has `ceremony: fast-lane`; any record missing the field (defaults to `standard`) or carrying an explicit `standard` sends the whole run's `ceremony-profile` to `standard` — mirrors the auto-merge gate's existing "every member of the group must carry `auto:merge`" rule (`dispatch/SKILL.md`'s Auto-merge gate). Source is always `header`. The computed value still becomes this lever's Recommended value, overridable via the normal `9=value` mechanism below — unlike Design intent (locked in from `/specify`), `ceremony-check`'s verdict is a fresh automated judgment call, and this Manifesto is the first point a human sees it.
+**Ceremony profile computation.** Unlike the other levers (policy preferences resolved via the precedence chain above), `ceremony-profile`'s value is computed by folding every record's `ceremony:*` label (`facets.ceremony`, from Step 1's resolution fetch) with a logical AND: `fast-lane` only when every record in this run has `ceremony:fast-lane`; any record carrying an explicit `standard` sends the whole run's `ceremony-profile` to `standard` — mirrors the auto-merge gate's existing "every member of the group must carry `auto:merge`" rule (`dispatch/SKILL.md`'s Auto-merge gate). A record that carries no `ceremony:*` label is judged here, before the fold: run the canonical pattern (`_shared/ceremony-check-invocation.md`) with `#{n}`, using Step 1's fetched body and labels, then log once per record: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status AUTO --step "Manifesto ceremony-check" --text "#{n} carries no ceremony:* label -> CEREMONY: {verdict}" --reversibility n/a`. This is the run's only verdict for that record: Step 4's materialize passes it through as `--ceremony` (cite `materialize.md`'s `ceremony` bullet). Why here: the materialized header this lever used to read does not exist at Step 3, so `standard` was the only possible outcome for an unlabeled record (#3160). Output with no `CEREMONY:` line stops the pipeline before Step 4 with the generic failure card (`failure-cards.md`, gate `ceremony-check`); it is never defaulted to `standard`. Source is always `header`. The computed value still becomes this lever's Recommended value, overridable via the normal `9=value` mechanism below — unlike Design intent (locked in from `/specify`), `ceremony-check`'s verdict is a fresh automated judgment call, and this Manifesto is the first point a human sees it.
 
 ## Compute per-spec preview
 
@@ -39,7 +39,7 @@ Before rendering the Manifesto, derive a per-spec preview by reading each record
 | Field | Source | How to derive |
 |---|---|---|
 | Surface | Materialized header `surface:` (`materialize.md`) — or the record body's `Surface:` line when no run-dir header exists yet (or detect from Key Files extensions, using the same trigger-extension/trigger-path rules as `/claude-tweaks:design-wrapper`'s Layer 3 sniff — for the canonical list, read `frontend-detection.md` in that skill's directory) | `frontend` if trigger files present; else `backend` / `infra` per header or content |
-| Ceremony | Materialized header `ceremony:` (`materialize.md`) — always present | Read directly (`fast-lane` or `standard`) |
+| Ceremony | the record's `ceremony:*` label, else the Ceremony profile computation's ceremony-check verdict above | Read directly (`fast-lane` or `standard`) |
 | Polish | `surface` × materialized header `design-intent:` (or the body's `Design-intent:` line) × `no-polish` arg | `run` if frontend + design-intent != none + no-polish not set; `skip ({reason})` otherwise |
 | Stories | UI files in plan + `no-stories` arg | `auto-detect` if UI files in plan + no-stories not set; `skip` otherwise |
 | QA | `stories/*.yaml` exists for this record's surface | `run` if matching stories; `skip` if none |
@@ -151,10 +151,10 @@ I've pre-filled recommendations from project policy + sensible defaults. The Rec
 | Merge authorization | `ask` | Never a `policy.yml` default — only a live `confirm`/`hybrid` override sets it (`wrap-up/manifesto-authorized-merge.md`'s "Why policy.yml is excluded" section) |
 | Design critique | `auto` | Critics run when the project shows design investment (`DESIGN.md`) or the record asks (`Design-intent:`); `full`/`off` opt in/out explicitly |
 
-`ceremony-profile` (lever 9) has no row here — its source is always `header` (bundle-folded from each
-record's materialized `ceremony:` field), never `arg`/`policy`/`default`: `/claude-tweaks:specify`
-stamps `ceremony:*` on every record, so the header always has a value and there's nothing for a
-default to fill. From `docs/superpowers/specs/2026-07-20-lifecycle-ceremony-tiering-design.md`'s
+`ceremony-profile` (lever 9) has no row here — its source is always `header`, bundle-folded per the
+Ceremony profile computation above, never `arg`/`policy`/`default`. A labeled record carries its
+`/claude-tweaks:specify`-stamped value, and an unlabeled one is judged at that step, so there is
+nothing for a default to fill. From `docs/superpowers/specs/2026-07-20-lifecycle-ceremony-tiering-design.md`'s
 "Promoting `ceremony:` to an explicit, always-present label" — deleted `70849915`.
 
 ## Approval flow
