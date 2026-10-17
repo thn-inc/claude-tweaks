@@ -267,15 +267,14 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
     };
     let startMs = null;
     let rows = null;
-    try {
-      if (symlinked.has(`agent-${agentId}.jsonl`)) {
-        const e = new Error('symlinked transcript not followed');
-        e.code = 'symlink';
-        throw e;
+    if (symlinked.has(`agent-${agentId}.jsonl`)) {
+      d.notFound = 'transcript not readable (symlink)';
+    } else {
+      try {
+        rows = await readUsage(path.join(subagentsDir, `agent-${agentId}.jsonl`), { fsImpl });
+      } catch (err) {
+        d.notFound = `transcript not readable (${(err && err.code) || 'EUNKNOWN'})`;
       }
-      rows = await readUsage(path.join(subagentsDir, `agent-${agentId}.jsonl`), { fsImpl });
-    } catch (err) {
-      d.notFound = `transcript not readable (${(err && err.code) || 'EUNKNOWN'})`;
     }
     if (rows) {
       const stamped = rows.map((r) => ({ r, ms: Date.parse(r.ts) })).filter((x) => Number.isFinite(x.ms));
@@ -291,14 +290,12 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
         excludedOutsideWindow += 1;
         continue;
       }
-      if (kept.length > 0) {
-        const first = kept.reduce((a, b) => (b.ms < a.ms ? b : a));
-        const last = kept.reduce((a, b) => (b.ms > a.ms ? b : a));
-        startMs = first.ms;
-        d.startTs = first.r.ts;
-        d.endTs = last.r.ts;
-        d.wallClockMs = last.ms - first.ms;
-      }
+      const first = kept.reduce((a, b) => (b.ms < a.ms ? b : a));
+      const last = kept.reduce((a, b) => (b.ms > a.ms ? b : a));
+      startMs = first.ms;
+      d.startTs = first.r.ts;
+      d.endTs = last.r.ts;
+      d.wallClockMs = last.ms - first.ms;
       const keptRows = kept.map((x) => x.r);
       d.tokens = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
       for (const r of keptRows) {
@@ -315,7 +312,8 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
     if (a.startMs === null && b.startMs !== null) return 1;
     if (b.startMs === null && a.startMs !== null) return -1;
     if (a.startMs !== b.startMs) return a.startMs - b.startMs;
-    return a.d.agentId < b.d.agentId ? -1 : a.d.agentId > b.d.agentId ? 1 : 0;
+    if (a.d.agentId === b.d.agentId) return 0;
+    return a.d.agentId < b.d.agentId ? -1 : 1;
   });
   return { items: built.map((x) => x.d), notFound: null, excludedOutsideWindow };
 }

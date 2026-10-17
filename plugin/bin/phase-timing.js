@@ -200,7 +200,10 @@ function renderDispatches(dispatches) {
 // symlinked alias, is not double-counted. -> the timing.json `dispatches` value.
 async function collectDispatches(paths, events) {
   const stamps = events.map((e) => Date.parse(e && e.ts)).filter(Number.isFinite);
-  const window = stamps.length ? { start: Math.min(...stamps), end: Math.max(...stamps) } : null;
+  // reduce, not Math.min(...stamps): a spread of a very large array can throw RangeError.
+  const window = stamps.length
+    ? { start: stamps.reduce((a, b) => Math.min(a, b)), end: stamps.reduce((a, b) => Math.max(a, b)) }
+    : null;
   const canonical = (p) => {
     const dir = path.resolve(subagentsDirFor(p));
     try { return fs.realpathSync(dir); } catch { return dir; }

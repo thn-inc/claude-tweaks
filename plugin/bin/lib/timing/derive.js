@@ -383,32 +383,32 @@ function aggregateDispatches(items) {
   });
   const byTier = {};
   const byRole = {};
-  const spansOf = new Map();
-  const bucketFor = (map, key) => {
-    if (!map[key]) {
-      map[key] = { dispatches: 0, agentSeconds: 0, elapsedMinutes: 0, tokens: ZERO_TOKENS() };
-      spansOf.set(map[key], { ms: 0, spans: [] });
-    }
-    return map[key];
-  };
+  // Per-bucket running totals, keyed like the buckets: summed own wall-clock
+  // ms (agent-seconds) and the {start,end} spans whose union is the elapsed time.
+  const timeByTier = {};
+  const timeByRole = {};
+  function tally(buckets, times, key, d, span) {
+    buckets[key] ??= { dispatches: 0, agentSeconds: 0, elapsedMinutes: 0, tokens: ZERO_TOKENS() };
+    times[key] ??= { ms: 0, spans: [] };
+    const b = buckets[key];
+    b.dispatches += 1;
+    for (const k of Object.keys(b.tokens)) b.tokens[k] += Number(d.tokens[k]) || 0;
+    times[key].ms += Number(d.wallClockMs) || 0;
+    if (span) times[key].spans.push(span);
+  }
   for (const d of list) {
     if (!d.tokens) continue;
     const start = ms(d.startTs);
     const end = ms(d.endTs);
-    const own = Number(d.wallClockMs) || 0;
-    for (const [map, key] of [[byTier, d.tier], [byRole, d.role]]) {
-      const b = bucketFor(map, key);
-      b.dispatches += 1;
-      for (const k of Object.keys(b.tokens)) b.tokens[k] += Number(d.tokens[k]) || 0;
-      const acc = spansOf.get(b);
-      acc.ms += own;
-      if (start !== null && end !== null) acc.spans.push({ start, end });
-    }
+    const span = start !== null && end !== null ? { start, end } : null;
+    tally(byTier, timeByTier, d.tier, d, span);
+    tally(byRole, timeByRole, d.role, d, span);
   }
-  for (const b of [...Object.values(byTier), ...Object.values(byRole)]) {
-    const acc = spansOf.get(b);
-    b.agentSeconds = Math.round(acc.ms / 1000);
-    b.elapsedMinutes = Math.round(unionMs(acc.spans) / 60000);
+  for (const [buckets, times] of [[byTier, timeByTier], [byRole, timeByRole]]) {
+    for (const [key, b] of Object.entries(buckets)) {
+      b.agentSeconds = Math.round(times[key].ms / 1000);
+      b.elapsedMinutes = Math.round(unionMs(times[key].spans) / 60000);
+    }
   }
   const unmapped = list.filter((d) => d.tokens && d.tier === 'unmapped');
   if (byTier.unmapped) byTier.unmapped.rawModels = [...new Set(unmapped.map((d) => d.rawModel ?? 'null'))].sort();
