@@ -40,6 +40,9 @@ const PRE_WORKTREE_MERGE_SITE = `   git merge --no-ff {branch} -m "Merge {branch
 // The pre-#3298 composer call — no changed-paths source (neither --range nor --pr).
 const PRE_RANGELESS_CALL = `SUBJECT_EXPORTS=$(node "\${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --shell) || exit 1
    eval "$SUBJECT_EXPORTS"`;
+// The pre-#3298 worktree-merge.md call (two-issue form, no changed-paths source).
+const PRE_WORKTREE_RANGELESS_CALL = `   SUBJECT_EXPORTS=$(node "\${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --shell) || exit 1
+   eval "$SUBJECT_EXPORTS"`;
 
 // local-merge fences read the changed paths from a local `--range {base}...{head}` diff;
 // pr-first fences read them from the PR itself via `--pr {pr-number}` (#3298 final review).
@@ -89,4 +92,6 @@ test('go-red proof: the frozen pre-change local-merge forms match the stale patt
   }
   assert.doesNotMatch(PRE_RANGELESS_CALL, LOCAL_COMPOSER_CALL);
   assert.doesNotMatch(PRE_RANGELESS_CALL, PR_FIRST_COMPOSER_CALL);
+  assert.doesNotMatch(PRE_WORKTREE_RANGELESS_CALL, LOCAL_COMPOSER_CALL);
+  assert.doesNotMatch(PRE_WORKTREE_RANGELESS_CALL, PR_FIRST_COMPOSER_CALL);
 });

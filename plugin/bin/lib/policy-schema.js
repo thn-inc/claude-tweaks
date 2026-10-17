@@ -72,7 +72,7 @@ const POLICY_KEYS = [
   { key: 'merge-sensitive-paths', type: 'list', default: [], summary: "Lists path patterns that always require a human to sign off on a merge, no matter how small the change looks.", category: 'merge-safety', tier: 'advanced' },
   // commit-scope / commit-scope-paths (#3298): the merge-subject scope source bin/compose-subject.js resolves when --scope is absent — explicit flag > a commit-scope-paths match over the changed files > commit-scope > unscoped. Both advanced: the core tier is at its cap.
   { key: 'commit-scope', type: 'string', summary: "Names the one Conventional-Commits scope every merge subject carries, and the fallback when a path rule is ambiguous.", category: 'merge-safety', tier: 'advanced' },
-  { key: 'commit-scope-paths', type: 'list', default: [], summary: "Maps changed-path prefixes to the Conventional-Commits scope a merge subject carries when every changed file agrees.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'commit-scope-paths', type: 'list', default: [], summary: "Maps changed-path prefixes to the Conventional-Commits scope a merge subject carries when the matched files all agree on one scope.", category: 'merge-safety', tier: 'advanced' },
   // Sweep-backstop thresholds (#414) — how long a green, gate-passed PR may sit
   // with `--auto` unarmed, or a claimed/pushed run may sit with no PR progress,
   // before the repo-wide scan surfaces it. See _shared/github-pr-scan.md's

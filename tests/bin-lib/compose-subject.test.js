@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  run, parseArgs, shellQuote, extractSection, firstSentence, isUnknownIssueTypeField, fetchIssueTypeGraphQL,
+  run, parseArgs, shellQuote, extractSection, firstSentence, isUnknownIssueTypeField, fetchIssueTypeGraphQL, realDeps,
 } = require('../../plugin/bin/lib/compose-subject.js');
 const { ComposeSubjectError } = require('../../plugin/bin/lib/release/subject.js');
 
@@ -492,21 +492,21 @@ test('AC1.1: explicit --scope beats a commit-scope policy value', () => {
 });
 
 test('AC2.1: commit-scope-paths with one matching scope across the diff scopes the subject', () => {
-  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/skills/=skills', 'plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\nplugin/bin/lib/y.js\n' });
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/skills/=skills', 'plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\0plugin/bin/lib/y.js\0' });
   assert.equal(run(['2251', '--range', 'main...feat', '--shell'], deps), 0, out.stderr);
   assert.match(out.stdout, /^SUBJECT_TITLE='feat\(bin\): /);
-  assert.deepEqual(out.gitCalls, [['diff', '--name-only', 'main...feat']]);
+  assert.deepEqual(out.gitCalls, [['diff', '--name-only', '-z', '--end-of-options', 'main...feat']]);
 });
 
 test('AC2.2: paths spanning two scopes fall back to commit-scope with a stderr note', () => {
-  const { deps, out } = fakeDeps({ commitScope: 'plugin', commitScopePaths: ['plugin/skills/=skills', 'plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\nplugin/skills/a.md\n' });
+  const { deps, out } = fakeDeps({ commitScope: 'plugin', commitScopePaths: ['plugin/skills/=skills', 'plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\0plugin/skills/a.md\0' });
   assert.equal(run(['2251', '--range', 'main...feat', '--shell'], deps), 0, out.stderr);
   assert.match(out.stdout, /^SUBJECT_TITLE='feat\(plugin\): /);
   assert.match(out.stderr, /span scopes bin, skills — falling back to commit-scope "plugin"/);
 });
 
 test('AC2.3: paths spanning two scopes with no commit-scope leave the subject unscoped, with the note', () => {
-  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/skills/=skills', 'plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\nplugin/skills/a.md\r\n\n' });
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/skills/=skills', 'plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\0plugin/skills/a.md\0' });
   assert.equal(run(['2251', '--range', 'main...feat', '--shell'], deps), 0, out.stderr);
   assert.match(out.stdout, /^SUBJECT_TITLE='feat: /);
   assert.match(out.stderr, /span scopes bin, skills — subject left unscoped/);
@@ -593,5 +593,58 @@ test('commit-scope-paths set with neither --range nor --pr names both flags', ()
 test('a whitespace-bearing commit-scope policy value exits 1 loudly (never a silent unscoped subject)', () => {
   const { deps, out } = fakeDeps({ commitScope: 'web app' });
   assert.equal(run(['2251'], deps), 1);
-  assert.ok(out.stderr.length > 0);
+  assert.match(out.stderr, /scope must be a single token/);
+});
+
+test('--range argv pins -z and --end-of-options', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\0' });
+  assert.equal(run(['2251', '--range', 'main...feat'], deps), 0, out.stderr);
+  assert.deepEqual(out.gitCalls[0], ['diff', '--name-only', '-z', '--end-of-options', 'main...feat']);
+});
+
+test('--range must be <base>...<head>: a two-dot range, a bare ref, or a dash-leading value is a usage error', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\0' });
+  assert.equal(run(['2251', '--range', 'main..feat'], deps), 1);
+  assert.match(out.stderr, /invalid --range value: main\.\.feat/);
+  assert.equal(run(['2251', '--range', 'main'], deps), 1);
+  assert.equal(run(['2251', '--range', '-Ofile'], deps), 1);
+  assert.equal(out.gitCalls.length, 0);
+});
+
+test('a non-ASCII changed path still matches its prefix because -z output is not C-quoted', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['docs/=docs', 'plugin/bin/=bin'], changedFiles: 'docs/café.md\0docs/a b.md\0' });
+  assert.equal(run(['2251', '--range', 'main...feat', '--shell'], deps), 0, out.stderr);
+  assert.match(out.stdout, /\(docs\)/);
+});
+
+test('explicit --scope skips path resolution entirely even when commit-scope-paths is set', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], changedFiles: null });
+  assert.equal(run(['2251', '--scope', 'api', '--shell'], deps), 0, out.stderr);
+  assert.match(out.stdout, /feat\(api\)/);
+  assert.equal(out.gitCalls.length, 0);
+  assert.equal(out.calls.filter((c) => c[0] === 'pr').length, 0);
+});
+
+test('an empty changed-file list with commit-scope-paths set falls through to commit-scope silently', () => {
+  const { deps, out } = fakeDeps({ commitScope: 'plugin', commitScopePaths: ['plugin/bin/=bin'], changedFiles: '' });
+  assert.equal(run(['2251', '--range', 'main...feat', '--shell'], deps), 0, out.stderr);
+  assert.match(out.stdout, /\(plugin\)/);
+  assert.equal(out.stderr, '');
+});
+
+test('realDeps reads commit-scope and commit-scope-paths from the cwd policy', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-subject-policy-'));
+  const prev = process.cwd();
+  try {
+    fs.mkdirSync(path.join(dir, '.claude-tweaks'));
+    fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'commit-scope: web\ncommit-scope-paths: plugin/bin/=bin, plugin/skills/=skills\n');
+    process.chdir(dir);
+    try {
+      assert.equal(realDeps.readCommitScope(), 'web');
+      assert.deepEqual(realDeps.readCommitScopePaths(), ['plugin/bin/=bin', 'plugin/skills/=skills']);
+    } finally { process.chdir(prev); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

@@ -63,3 +63,11 @@ test('resolveCommitScope: ambiguous matches fall back with a sorted note — to 
 test('resolveCommitScope: blank explicit/constant are treated as absent', () => {
   assert.deepEqual(resolveCommitScope({ explicit: '  ', constant: '', pairs: [], changedPaths: [] }), { scope: null, source: 'none', note: null });
 });
+
+test('two prefixes mapping to the same token resolve to one paths scope with no note', () => {
+  assert.deepEqual(resolveCommitScope({ explicit: null, constant: null, pairs: parseScopePaths(['plugin/bin/=plugin', 'plugin/skills/=plugin']), changedPaths: ['plugin/bin/x.js', 'plugin/skills/a.md'] }), { scope: 'plugin', source: 'paths', note: null });
+});
+
+test('empty changedPaths with pairs set falls through to the constant with no note', () => {
+  assert.deepEqual(resolveCommitScope({ explicit: null, constant: 'x', pairs: parseScopePaths(['plugin/bin/=bin']), changedPaths: [] }), { scope: 'x', source: 'constant', note: null });
+});

@@ -186,7 +186,7 @@ test('AC10.1: readCommitScope: key present -> the token; absent or blank -> null
   assert.strictEqual(readCommitScope(tmpRepo()), null);
 });
 
-test('readCommitScope (#3298 final review): a whitespace-bearing value is returned raw, so the composer rejects it loudly', () => {
+test("readCommitScope returns the trimmed value without schema validation — a whitespace-bearing token reaches the composer's own check", () => {
   const repo = tmpRepo();
   writePolicy(repo, 'commit-scope: web app\n');
   assert.strictEqual(readCommitScope(repo), 'web app');

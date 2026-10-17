@@ -29,8 +29,10 @@
 // ## Breaking Change section — the composer's own usage error, message on
 // stderr); 2 `gh` absent or owner/repo unresolvable (no --repo and no readable
 // origin remote); 3 an external read failed — a `gh issue view` call, the
-// `git diff --name-only` behind --range, or the `gh pr diff --name-only`
+// `git diff --name-only -z` behind --range, or the `gh pr diff --name-only`
 // behind --pr.
+// --range is read with -z and --end-of-options so a C-quoted (non-ASCII) path
+// still matches its prefix and a dash-leading value can never be read as a git option.
 // Every side effect goes through deps so tests never touch gh or git
 // (gh-api-module-pattern's CLI wrapper contract).
 //
@@ -92,6 +94,7 @@ function parseArgs(argv) {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) return { error: `missing value for ${a}` };
       if (a === '--pr' && !/^\d+$/.test(v)) return { error: `invalid --pr value: ${v}` };
+      if (a === '--range' && !/^[^\s-][^\s]*\.\.\.[^\s-][^\s]*$/.test(v)) return { error: `invalid --range value: ${v} — expected <base>...<head>` };
       opts[a.slice(2)] = v;
       i++;
       continue;
@@ -312,16 +315,14 @@ function run(argv, deps = realDeps) {
         return 1;
       }
       const command = opts.range ? `git diff --name-only ${opts.range}` : `gh pr diff ${opts.pr} --name-only`;
-      let rawPaths;
       try {
-        rawPaths = opts.range
-          ? deps.gitRunner(['diff', '--name-only', opts.range])
-          : deps.runner(['pr', 'diff', String(opts.pr), '--repo', slug, '--name-only']);
+        changedPaths = opts.range
+          ? deps.gitRunner(['diff', '--name-only', '-z', '--end-of-options', opts.range]).split('\0').filter(Boolean)
+          : deps.runner(['pr', 'diff', String(opts.pr), '--repo', slug, '--name-only']).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
       } catch (err) {
         deps.stderr(`compose-subject.js: ${command} failed: ${errMessage(err)}\n`);
         return 3;
       }
-      changedPaths = rawPaths.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     }
     const resolved = resolveCommitScope({ explicit: null, constant, pairs, changedPaths });
     scope = resolved.scope;
