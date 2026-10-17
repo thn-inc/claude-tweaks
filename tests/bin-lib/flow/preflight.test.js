@@ -322,6 +322,10 @@ test('defaultDeps().resolvePolicy applies computeDerivedDefaults, so merge-verif
 // classifier, so a freshly minted dir is never byte-empty by the time it is read.
 const NO_SPEC = { git: (args) => (args[0] === 'ls-tree' ? '' : 'feat-branch\n') };
 const CLAIM_ONLY = '## /flow\n- AUTO 18:42:06 — Step 2.8: claimed #7 (bin/claim-targets.js, transport: git). Reversibility: high.\n';
+// #3242: a compliant dispatched call 1 logs both the Step 2.8 claim above and
+// a Step 1.8 ledger line before Step 3 runs.
+const LEDGER_LINE = '- AUTO 18:42:10 — Step 1.8: flow: created open-items ledger docs/plans/2026-09-06-record-7-ledger.md. Reversibility: n/a.\n';
+const CLAIM_AND_LEDGER = `${CLAIM_ONLY}${LEDGER_LINE}`;
 
 function adoptionFor(decisions, extra = {}) {
   const fx = mainRoot();
@@ -393,9 +397,7 @@ test('claim-log-only decisions.md beside a non-empty events.jsonl is still case 
 
 test('AC 2: dispatched call 1 (dispatched: true, no pr, no config) with Step 1.8 ledger line → case 2', () => {
   const fx = mainRoot();
-  const ledgerLine = '- AUTO 18:42:10 — Step 1.8: flow: created open-items ledger docs/plans/2026-09-06-record-7-ledger.md. Reversibility: n/a.\n';
-  const decisionsContent = `${CLAIM_ONLY}${ledgerLine}`;
-  fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), decisionsContent);
+  fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), CLAIM_AND_LEDGER);
   fs.writeFileSync(path.join(fx.runDir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', status: 'active', dispatched: true }));
   const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, NO_SPEC) });
   assert.strictEqual(a.case, 2, `expected case 2, got case ${a.case}`);
@@ -405,9 +407,7 @@ test('AC 2: dispatched call 1 (dispatched: true, no pr, no config) with Step 1.8
 
 test('AC 3: dispatched call 1 with pr recorded → case 3 (repair path unchanged)', () => {
   const fx = mainRoot();
-  const ledgerLine = '- AUTO 18:42:10 — Step 1.8: flow: created open-items ledger docs/plans/2026-09-06-record-7-ledger.md. Reversibility: n/a.\n';
-  const decisionsContent = `${CLAIM_ONLY}${ledgerLine}`;
-  fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), decisionsContent);
+  fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), CLAIM_AND_LEDGER);
   fs.writeFileSync(path.join(fx.runDir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', status: 'active', dispatched: true, pr: { number: 1, url: 'u', branch: 'b' } }));
   const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, NO_SPEC) });
   assert.strictEqual(a.case, 3, `expected case 3 with pr, got case ${a.case}`);
@@ -417,9 +417,7 @@ test('AC 3: dispatched call 1 with pr recorded → case 3 (repair path unchanged
 
 test('AC 4: same fixture without dispatched: true → case 3 with same backfills as today', () => {
   const fx = mainRoot();
-  const ledgerLine = '- AUTO 18:42:10 — Step 1.8: flow: created open-items ledger docs/plans/2026-09-06-record-7-ledger.md. Reversibility: n/a.\n';
-  const decisionsContent = `${CLAIM_ONLY}${ledgerLine}`;
-  fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), decisionsContent);
+  fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), CLAIM_AND_LEDGER);
   fs.writeFileSync(path.join(fx.runDir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', status: 'active' }));
   const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, NO_SPEC) });
   assert.strictEqual(a.case, 3, `expected case 3 without dispatched flag, got case ${a.case}`);
@@ -430,9 +428,7 @@ test('AC 4: same fixture without dispatched: true → case 3 with same backfills
 test('AC 5: unreadable or malformed run-state.json → case 3; a throwing readRunState propagates', () => {
   // Test 1: malformed JSON — defaultDeps.readRunState catches and returns null
   const fx1 = mainRoot();
-  const ledgerLine = '- AUTO 18:42:10 — Step 1.8: flow: created open-items ledger docs/plans/2026-09-06-record-7-ledger.md. Reversibility: n/a.\n';
-  const decisionsContent = `${CLAIM_ONLY}${ledgerLine}`;
-  fs.writeFileSync(path.join(fx1.runDir, 'decisions.md'), decisionsContent);
+  fs.writeFileSync(path.join(fx1.runDir, 'decisions.md'), CLAIM_AND_LEDGER);
   fs.writeFileSync(path.join(fx1.runDir, 'run-state.json'), '{not json');
   const a1 = computeAdoption({ runDir: fx1.runDir, mainRoot: fx1.root, cwd: fx1.root, deps: deps(fx1, NO_SPEC) });
   assert.strictEqual(a1.case, 3, 'malformed JSON (caught by readRunState) should fall through to case 3');
@@ -440,7 +436,7 @@ test('AC 5: unreadable or malformed run-state.json → case 3; a throwing readRu
 
   // Test 2: readRunState throws — propagates to caller (gatherPreflight's wrapProbe catches it)
   const fx2 = mainRoot();
-  fs.writeFileSync(path.join(fx2.runDir, 'decisions.md'), decisionsContent);
+  fs.writeFileSync(path.join(fx2.runDir, 'decisions.md'), CLAIM_AND_LEDGER);
   fs.writeFileSync(path.join(fx2.runDir, 'run-state.json'), '{}');
   const d2 = deps(fx2, {
     ...NO_SPEC,
@@ -455,9 +451,7 @@ test('AC 5: unreadable or malformed run-state.json → case 3; a throwing readRu
 
 test('falsy-but-not-true dispatched value → case 3 (strict === true check)', () => {
   const fx = mainRoot();
-  const ledgerLine = '- AUTO 18:42:10 — Step 1.8: flow: created open-items ledger docs/plans/2026-09-06-record-7-ledger.md. Reversibility: n/a.\n';
-  const decisionsContent = `${CLAIM_ONLY}${ledgerLine}`;
-  fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), decisionsContent);
+  fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), CLAIM_AND_LEDGER);
 
   // Test with string "true"
   fs.writeFileSync(path.join(fx.runDir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', status: 'active', dispatched: 'true' }));
