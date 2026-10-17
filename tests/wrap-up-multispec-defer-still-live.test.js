@@ -63,13 +63,14 @@ test('the defer paragraph is still found as one paragraph under CRLF line ending
   assert.match(paragraph, /^\*\*MULTISPEC_REVIEW_DEFER branch:\*\*/);
 });
 
-// Slices one registerCheck body: from its own registerCheck( call to the next one.
+// Slices one registerCheck body: from its own registerCheck( call to its closing `});` at column 0.
+// Ending at the next registerCheck( instead would also swallow any helper declared between two checks.
 function checkBody(src, name) {
   const start = src.indexOf(`registerCheck('${name}'`);
   assert.notStrictEqual(start, -1, `registerCheck('${name}' not found in engine source`);
-  const next = src.indexOf('registerCheck(', start + 1);
-  assert.notStrictEqual(next, -1, `no registerCheck( follows '${name}' in engine source`);
-  return src.slice(start, next);
+  const end = src.indexOf('\n});', start);
+  assert.notStrictEqual(end, -1, `no closing }); follows registerCheck('${name}' in engine source`);
+  return src.slice(start, end);
 }
 
 const DEFERRED_DETAIL = `detail: 'deferred to parent console'`;
@@ -97,4 +98,14 @@ test('the per-check pin goes red when only run-dir-archived loses its skip line 
   assert.notStrictEqual(doctored, src, 'control precondition: the doctored source differs from the real one');
   assert.throws(() => assertDeferredRow(doctored, 'run-dir-archived'));
   assert.doesNotThrow(() => assertDeferredRow(doctored, 'worktree-removed'));
+});
+
+test('the per-check pin goes red when the skip line moves into a helper declared between two checks', () => {
+  const src = engineSource();
+  const body = checkBody(src, 'run-dir-archived');
+  const skipLine = `if (deferred.has('run-dir-archival')) return { result: 'skip', detail: 'deferred to parent console' };`;
+  const stripped = src.replace(body, () => body.replace(skipLine, ''));
+  const doctored = stripped.replace("registerCheck('worktree-removed'", () => `function skipHelper(deferred) {\n  ${skipLine}\n}\n\nregisterCheck('worktree-removed'`);
+  assert.notStrictEqual(doctored, stripped, 'control precondition: the helper was inserted between the two checks');
+  assert.throws(() => assertDeferredRow(doctored, 'run-dir-archived'));
 });
