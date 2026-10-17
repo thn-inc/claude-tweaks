@@ -62,6 +62,7 @@ Expected: FAIL — all three of AC1.1, AC1.2, AC1.3 red against the unedited fil
   - Step 5 fix guidance: append to the sentence `If anything fails, fix it and commit the fix.` the clause ` If a fix changes behavior, re-check any journey or doc Common Steps 6/6.5 wrote that the fix now contradicts.`
   - Workflow diagram: on the line after the closing fence of the Workflow code block, add `Common Steps run in file order: 6 and 6.5 precede 5, so the final verification covers journeys and synced docs.`
   - Step 5.5 keeps `After verification passes` unchanged.
+  - Added at the final whole-branch review (Common Step 4.5 Beneficial deviation, commit c570bcd6b): the intro (:9) now lists "capture the journeys it enables, and verify it"; the Steps 3 + 4.5 paragraph ends "Common Steps 6 and 6.5, then Common Step 5 (Final Verification), follow once both are done."; the Step 5 re-check clause says "before re-running verification".
 
 - [ ] **Step 4: Run test to verify it passes**
 
