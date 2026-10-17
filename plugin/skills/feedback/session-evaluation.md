@@ -60,7 +60,7 @@ treat absent the same as empty rather than surfacing `undefined`.
 exactly as today — feedback's own full-reset override, per `_shared/transcript-judge.md`'s
 parameterization note.
 
-**When `false` (grown, or no watermark exists):** proceed to the judge dispatch as today, per the
+**When `false` (grown, no watermark exists, or a self-assessment watermark):** proceed to the judge dispatch as today, per the
 shared procedure.
 
 ## Watermark payload
