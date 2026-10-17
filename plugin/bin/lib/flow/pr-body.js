@@ -177,8 +177,12 @@ const PREMISE_REVERSED_RE = new RegExp(
   `^-\\s+[A-Z-]+\\s+\\d{2}:\\d{2}:\\d{2}\\s+—\\s.*?\\b${escapeRegExp(PREMISE_REVERSED_MARKER)}\\s+(.+?)\\s+→\\s+(.+?)\\.?\\s+Reversibility:`
 );
 
+// A `; ` inside a claim is rewritten to `, ` so no written entry contains the
+// note's entry separator: otherwise an existing `X; Y → Z` entry would make a
+// distinct new `Y → Z` read as already noted and drop it.
 function formatReversal({ original, replacement }) {
-  return `${original} → ${replacement}`;
+  const clean = (s) => String(s).replace(/; /g, ', ');
+  return `${clean(original)} → ${clean(replacement)}`;
 }
 
 // decisions.md text -> [{original, replacement}], first-appearance order,

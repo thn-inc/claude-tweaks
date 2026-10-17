@@ -46,6 +46,7 @@ test('parsePremiseReversals dedupes repeated entries and ignores non-entry text'
 
 test('formatReversal joins with a spaced U+2192 arrow', () => {
   assert.equal(formatReversal({ original: 'A', replacement: 'B' }), 'A → B');
+  assert.equal(formatReversal({ original: 'A; B', replacement: 'C; D' }), 'A, B → C, D');
 });
 
 test('no reversals leaves the body byte-unchanged', () => {
@@ -91,6 +92,15 @@ test('a distinct reversal is not masked by a longer existing entry that merely c
   assert.equal(r.changed, true);
   assert.deepEqual(r.uncovered, ['A → B']);
   assert.match(r.body, /\nRevised during build: XA → B; A → B\n\nRun behavior v2\.\n/);
+});
+
+test('a distinct reversal is not masked by an existing claim that itself contains the "; " separator', () => {
+  const afterXY = reviseSpecSummary({ body: body(), reversals: [{ original: 'X; Y', replacement: 'Z' }], summary: 'Run behavior v1.' }).body;
+  assert.match(afterXY, /\nRevised during build: X, Y → Z\n/);
+  const r = reviseSpecSummary({ body: afterXY, reversals: [{ original: 'X; Y', replacement: 'Z' }, { original: 'Y', replacement: 'Z' }], summary: 'Run behavior v2.' });
+  assert.equal(r.changed, true);
+  assert.deepEqual(r.uncovered, ['Y → Z']);
+  assert.match(r.body, /\nRevised during build: X, Y → Z; Y → Z\n\nRun behavior v2\.\n/);
 });
 
 test('missing Spec summary heading leaves the body unchanged with a reason (Review Focus 3)', () => {
