@@ -463,6 +463,9 @@ function composedHeadroom(governedPaths, repoRoot, { report = composedBytesRepor
   return { composed, composedNearCeiling, composedErrors };
 }
 
+// `nearCeiling` and `composedNearCeiling` keep their pre-rail names because
+// they are JSON-envelope keys plan-audit's consumers read (#3310); both now
+// mean "within 10% of RAIL_BYTES, not over it".
 function headroomCheck(entries, repoRoot, deps = {}) {
   const nearCeiling = [];
   const breaches = [];
