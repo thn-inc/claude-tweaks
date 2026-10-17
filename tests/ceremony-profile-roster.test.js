@@ -111,12 +111,12 @@ function batchedFastLaneGuidanceProblems(paragraph) {
 }
 
 test('AC3.1: the Batched-plan marker paragraph names ceremony: fast-lane, size: low, and the inlines-full-code condition (#3123)', () => {
-  const paragraph = batchedMarkerParagraph(fs.readFileSync(PLAN_CHECKS, 'utf8'));
+  const paragraph = batchedMarkerParagraph(readText(PLAN_CHECKS));
   assert.deepStrictEqual(batchedFastLaneGuidanceProblems(paragraph), []);
 });
 
 test('AC4.1: the guidance assertion goes red when the inlines-full-code condition is removed (doctored-text proof, #3123)', () => {
-  const paragraph = batchedMarkerParagraph(fs.readFileSync(PLAN_CHECKS, 'utf8'));
+  const paragraph = batchedMarkerParagraph(readText(PLAN_CHECKS));
   const doctored = paragraph.replace(INLINES_FULL_CODE, 'every task is small');
   assert.notStrictEqual(doctored, paragraph, 'doctoring found no condition text to remove — anchor text not found');
   assert.deepStrictEqual(batchedFastLaneGuidanceProblems(doctored), ['inlines-full-code condition']);
