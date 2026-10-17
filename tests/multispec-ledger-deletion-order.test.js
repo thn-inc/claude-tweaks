@@ -36,9 +36,10 @@ test('AC1.1: the final spec\'s wrap-up under MULTISPEC_REVIEW_DEFER=1 no longer 
   assert.doesNotMatch(exec, /executes the idempotent cleanups \(items 1 Execution plans, 2 Open items ledger/);
 });
 
-test('AC2.1: the multi-spec finish step deletes the shared ledger after the consolidated console, before the branch finish', () => {
-  const text = read('flow/multispec-review-console.md');
-  const stepAt = text.indexOf('0. **Delete the shared open-items ledger (#3420).**');
+const STEP0 = '0. **Delete the shared open-items ledger (#3420).**';
+
+function assertFinishOrder(text) {
+  const stepAt = text.indexOf(STEP0);
   const finishAt = text.indexOf('**Finish the shared branch.**');
   const teardownAt = text.indexOf('### Shared teardown');
   const batchAt = text.indexOf('0. If `MULTISPEC_CURATION_DEFER=1`, run the batch pass first');
@@ -54,6 +55,17 @@ test('AC2.1: the multi-spec finish step deletes the shared ledger after the cons
   assert.match(step, /zero `open` rows/);
   assert.match(step, /SKIP/);
   assert.match(step, /push/);
+}
+
+test('AC2.1: the multi-spec finish step deletes the shared ledger after the consolidated console, before the branch finish', () => {
+  assertFinishOrder(read('flow/multispec-review-console.md'));
+});
+
+test('go-red proof: step 0 moved below the branch finish fails the AC2.1 order pin on the order assertion', () => {
+  const live = read('flow/multispec-review-console.md');
+  const permuted = live.replace(STEP0, '0. **(moved)**').replace('**Finish the shared branch.**', `**Finish the shared branch.** ${STEP0}`);
+  assert.notStrictEqual(permuted, live);
+  assert.throws(() => assertFinishOrder(permuted), /order must be batch pass < Shared teardown < step 0 < branch finish/);
 });
 
 test('AC2.2: the cleanup-procedures.md / multispec-batch-curation.md order is pinned', () => {
