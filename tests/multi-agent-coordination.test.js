@@ -476,14 +476,35 @@ test('reproduction (#3418): one named substance threshold, calibrated at 0.2, th
 });
 
 test('reproduction (#3418): a paraphrased wide-band twin never takes a B finding another A finding reported on the same line', () => {
+  // The wide pair (234/238, B-text vs B-text) scores 1.0 and the same-line pair 0.267, so only the tight-first pass order keeps the tight twin.
   const a = [
-    { path: 'src/t.js', line: 234, severity: 'medium', text: READDIR_A },
-    { path: 'src/t.js', line: 238, severity: 'medium', text: READDIR_B },
+    { path: 'src/t.js', line: 234, severity: 'medium', text: READDIR_B },
+    { path: 'src/t.js', line: 238, severity: 'medium', text: READDIR_A },
   ];
   const b = [{ path: 'src/t.js', line: 238, severity: 'medium', text: READDIR_B }];
   const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
   assert.deepStrictEqual(confirmed.map((f) => f.line), [238]);
   assert.deepStrictEqual(unconfirmed.map((f) => `${f.source}:${f.line}`), ['A:234']);
+});
+
+test('reproduction (#3418): the wide band uses the same 0.2 threshold — a pair scoring just under it does not pair, just over it does', () => {
+  const textA = 'Cache key omits the locale, so translated pages collide in the store';
+  const justUnder = 'Entries keyed without locale; pages overwritten'; // wide-band pair, similarity ~0.167
+  const justOver = 'Entries keyed without locale, pages overwrite each other in the store'; // ~0.214
+  const findingA = { path: 'src/cache.js', line: 100, severity: 'medium', text: textA };
+  const score = (text) => c.substanceSimilarity(c.normalizeFinding(findingA), c.normalizeFinding({ ...findingA, text }));
+  const under = score(justUnder);
+  const over = score(justOver);
+  assert.ok(under >= 0.15 && under < 0.2, `just-under fixture drifted: ${under}`);
+  assert.ok(over >= 0.2 && over < 0.3, `just-over fixture drifted: ${over}`);
+
+  const apart = (text) => c.categoriseReproduction([findingA], [{ ...findingA, line: 104, text }]);
+  const below = apart(justUnder);
+  assert.strictEqual(below.confirmed.length, 0);
+  assert.strictEqual(below.unconfirmed.length, 2);
+  const above = apart(justOver);
+  assert.strictEqual(above.confirmed.length, 1);
+  assert.strictEqual(above.unconfirmed.length, 0);
 });
 
 // #2907: pairing must not depend on the order agent A reported its findings.
