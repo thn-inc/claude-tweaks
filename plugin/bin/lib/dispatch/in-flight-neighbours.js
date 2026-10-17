@@ -123,7 +123,8 @@ function claimReaderFromMap(map) {
     if (value === null) return { content: null };
     if (typeof value === 'string') {
       const parsed = parseObject(value);
-      return parsed !== null && !isClaimShaped(parsed) ? { failure: 'malformed-claim-entry' } : { content: value };
+      if (parsed !== null && !isClaimShaped(parsed)) return { failure: 'malformed-claim-entry' };
+      return { content: value };
     }
     if (typeof value === 'object' && !Array.isArray(value)) {
       if (Object.prototype.hasOwnProperty.call(value, 'failure')) return { failure: String(value.failure) };
