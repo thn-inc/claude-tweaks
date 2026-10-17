@@ -1,6 +1,6 @@
 ---
 name: pre-tool-use-gate-exemptions
-description: Use when adding or reviewing a scoping exemption in `plugin/bin/lib/hooks/pre-tool-use.js`'s deny gates (`checkBookkeepingStampsGate`, `checkWorktreeRequired`, and their sibling checks) — the unwritten discipline every existing exemption in that file already obeys, reproduced independently in two review findings on record #1678 alone. Keywords - pre-tool-use, exemption, deny gate, fail closed, indeterminate, realTarget, symlink, worktree-detect, bookkeeping-stamps, IL-83, IL-149, IL-150.
+description: Use when adding a new deny gate to `plugin/bin/lib/hooks/pre-tool-use.js`, or adding or reviewing a scoping exemption in its deny gates (`checkBookkeepingStampsGate`, `checkWorktreeRequired`, `checkDispatchConfigGate`, and their sibling checks) — the unwritten discipline every existing exemption in that file already obeys, reproduced independently in two review findings on record #1678 alone, plus which run (`ctx.runDir` or `ctx.ownedRun`) a new gate must read. Keywords - pre-tool-use, exemption, deny gate, new gate, fail closed, indeterminate, realTarget, symlink, worktree-detect, bookkeeping-stamps, ctx.runDir, ctx.ownedRun, classifyOwnership, IL-83, IL-149, IL-150.
 ---
 
 # pre-tool-use.js gate-exemption authoring
