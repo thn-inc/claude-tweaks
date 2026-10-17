@@ -8,7 +8,7 @@ files:
 
 # Recover from a Dispatch Config Deny
 
-**Persona:** a dispatched first-call agent running `/claude-tweaks:flow #{n} build,test` inside a `/claude-tweaks:dispatch` group's worktree, usually headless. Secondary persona: the maintainer reading the run afterwards.
+**Persona:** a dispatched first-call agent running `/claude-tweaks:flow #{n} build,test` inside a `/claude-tweaks:dispatch` group's worktree, usually headless. Secondary persona: the `/claude-tweaks:dispatch` session that binds the run before call 1 (Step 1 only).
 **Goal:** when a git commit in the group's worktree is denied because `/claude-tweaks:flow` Step 3 never wrote `config.yml`, recover in one step by writing it the sanctioned way and retrying the same commit. The agent should not stall, re-stamp in a loop, or report BLOCKED.
 **Entry point:** the dispatching session has run `hooks.js record-worktree --run "$GROUP_RUN_DIR" "{worktree}" --dispatch` before call 1, so the run carries `dispatched: true`. The first call then attempts a Bash git write (`git commit` including `--amend`, `git push`, `git mv`/`rm`/`update-ref`/`apply`) in that worktree while `$GROUP_RUN_DIR/config.yml` does not exist yet. The usual shape is the materialize commit landing before Step 3's Manifesto has run (observed in #3064 and #3066). It also covers a call that skipped `/claude-tweaks:flow` entirely.
 **Success state:** Step 3 writes `config.yml` through `set-config.js`, and the identical commit command passes on retry. The run then proceeds through Step 4 in the documented order, and no BLOCKED report is filed for a self-correctable ordering slip.
@@ -56,7 +56,7 @@ files:
 - **URL:** the exact command from Step 2
 - **Action:** re-issue it unchanged.
 - **Should feel:** ordinary. It is identical to a commit that never hit the gate, and from now on the gate costs nothing because the `config.yml` check runs before any git spawn.
-- **Should understand:** the gate re-reads the run on every call, so Step 4's write is picked up immediately.
+- **Should understand:** the gate re-reads the run on every call, so the `config.yml` that `/claude-tweaks:flow` Step 3 wrote (journey step 4 above) is picked up immediately.
 - **Red flags:** the retry still denying after `config.yml` exists in `$GROUP_RUN_DIR`. That is a real gap, worth its own report.
 
 ## Known limit
