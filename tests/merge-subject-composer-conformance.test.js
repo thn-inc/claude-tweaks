@@ -38,7 +38,7 @@ const PRE_WORKTREE_MERGE_SITE = `   git merge --no-ff {branch} -m "Merge {branch
    Fixes #{issue}
    Fixes #{second-issue}"`;
 
-const COMPOSER_CALL = /SUBJECT_EXPORTS=\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/compose-subject\.js" [^\n]*--shell\) \|\| exit 1\n[ \t]*eval "\$SUBJECT_EXPORTS"/;
+const COMPOSER_CALL = /SUBJECT_EXPORTS=\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/compose-subject\.js" [^\n]*--range \{[a-z-]+\}\.\.\.\{[a-z-]+\} --shell\) \|\| exit 1\n[ \t]*eval "\$SUBJECT_EXPORTS"/;
 const LOCAL_MERGE_FORM = /git merge --no-ff \{[a-z-]+\} -m "\$SUBJECT_TITLE\n\n\$SUBJECT_BODY"/;
 const STALE_LOCAL_FORM = /git merge --no-ff \{[a-z-]+\} -m "(\[|Merge \{branch\})/;
 const STALE_PR_FIRST_FORM = /gh pr merge \{pr-number\}[^\n]*--merge \\/;

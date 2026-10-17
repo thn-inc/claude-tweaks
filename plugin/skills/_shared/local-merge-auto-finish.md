@@ -115,7 +115,7 @@ it literally into the next call; never carry it in a shell variable across calls
    ends in an explicit, logged outcome.
 
    ```bash
-   SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --shell) || exit 1
+   SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --range {base-branch}...{feature-branch} --shell) || exit 1
    eval "$SUBJECT_EXPORTS"
    git merge --no-ff {feature-branch} -m "$SUBJECT_TITLE
 
@@ -126,7 +126,7 @@ $SUBJECT_BODY"
    reason to stderr and nothing has been merged): this is not a bare, unlogged exit — log it via
    the Park branch's `log-decision.js` call below, with `{conflict|failed verification}` replaced
    by `"composer failed: {first stderr line}"` — a record with no resolvable Type, or a `breaking`
-   label with no `## Breaking Change` section, is a shaping defect to fix on the record, not a
+   label with no `## Breaking Change` section, or `commit-scope-paths` set while this call passes no `--range`, is a shaping defect to fix on the record, not a
    merge problem; report `pending-review` to the caller, per this file's own invariant that every
    run ends in an explicit, logged outcome.
 
