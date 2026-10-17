@@ -1856,6 +1856,92 @@ test('--baseline: a repeatedly baseline-flaky file not on flaky.files accumulate
   assert.ok(!fs.existsSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json')), 'verify-scope.json is never written by the runner');
 });
 
+test('--baseline: a repeatedly baseline-flaky file already on flaky.files escalates onAllowlist:true with the fix-or-remove wording even with no --scope (review fix, #3062)', async () => {
+  // Review finding: onAllowlist classification was reading `decl`, which is
+  // only populated by a --scope invocation -- the canonical no-scope
+  // `--baseline` invocation (test/verification.md) always classified every
+  // escalated file onAllowlist:false, including one genuinely declared in
+  // flaky.files, since a declaration never existed without --scope. A
+  // declaration on disk (no --scope passed) must still be read for this
+  // classification alone.
+  const r = baselineRepo();
+  const marker = path.join(tmpDir(), 'flake-repeat-3062-declared');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'flaky.test.js'), `const fs = require('fs');\nrequire('node:test')('flaky', () => { if (fs.existsSync(${JSON.stringify(marker)})) { fs.unlinkSync(${JSON.stringify(marker)}); throw new Error('flake'); } });\n`);
+  const decl = { checks: { tests: 'x' }, rules: [], flaky: { files: ['tests/flaky.test.js'] } };
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'));
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'add flaky + declare it on flaky.files');
+  const baseSha = r.git('rev-parse', 'HEAD').trim();
+  headCommit(r);
+  const runDir = anchoredRunDir(r.repo);
+  // No --scope anywhere in these args -- this is the canonical invocation
+  // shape (test/verification.md), yet .claude-tweaks/verify-scope.json
+  // exists on disk declaring the file.
+  const args = ['--run', runDir, '--cmd', 'tests=node --test --test-reporter=tap tests/flaky.test.js', '--baseline', baseSha, '--baseline-cmd', PER_FILE];
+
+  for (let i = 1; i <= 4; i++) {
+    fs.writeFileSync(marker, '');
+    const { code, stdout } = await runCli(args, r.opts);
+    assert.strictEqual(code, 0, stdout);
+    assert.doesNotMatch(stdout, /flaky-allowlist/, `run ${i} of 4 must not escalate yet`);
+  }
+
+  fs.writeFileSync(marker, '');
+  const fifth = await runCli(args, r.opts);
+  assert.strictEqual(fifth.code, 0, fifth.stdout);
+  assert.match(
+    fifth.stdout,
+    /^CAVEAT: flaky-allowlist: tests\/flaky\.test\.js retried 5 times — file a fix or remove it from the allowlist$/m,
+  );
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.flakyEscalation, [{ file: 'tests/flaky.test.js', hits: 5, onAllowlist: true }]);
+
+  // A genuinely-declared file never gets the "not on flaky.files" staged
+  // proposal -- it is already on the allowlist, there is nothing to stage,
+  // and nothing is logged to decisions.md (which may not even exist yet).
+  assert.ok(!fs.existsSync(path.join(runDir, 'staged', 'flaky-allowlist-tests-flaky.test.js.md')));
+  const decisionsPath = path.join(runDir, 'decisions.md');
+  if (fs.existsSync(decisionsPath)) {
+    assert.doesNotMatch(fs.readFileSync(decisionsPath, 'utf8'), /Flaky-allowlist proposal/);
+  }
+});
+
+test('--baseline: a repeatedly baseline-flaky, non-allowlisted file with no --run never claims a pending staged proposal that was never written (review fix, #3062)', async () => {
+  // Review finding: the caveat line was unconditional on onAllowlist alone --
+  // verify.js only ever stages a proposal inside its --run-anchored block,
+  // so a run with no --run (or one whose run dir fails anchoring) renders
+  // "a staged proposal ... is pending review" while nothing was staged.
+  const r = baselineRepo();
+  const marker = path.join(tmpDir(), 'flake-repeat-3062-norun');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'flaky.test.js'), `const fs = require('fs');\nrequire('node:test')('flaky', () => { if (fs.existsSync(${JSON.stringify(marker)})) { fs.unlinkSync(${JSON.stringify(marker)}); throw new Error('flake'); } });\n`);
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'add flaky');
+  const baseSha = r.git('rev-parse', 'HEAD').trim();
+  headCommit(r);
+  // No --run at all.
+  const args = ['--cmd', 'tests=node --test --test-reporter=tap tests/flaky.test.js', '--baseline', baseSha, '--baseline-cmd', PER_FILE];
+
+  for (let i = 1; i <= 4; i++) {
+    fs.writeFileSync(marker, '');
+    const { code, stdout } = await runCli(args, r.opts);
+    assert.strictEqual(code, 0, stdout);
+    assert.doesNotMatch(stdout, /flaky-allowlist/, `run ${i} of 4 must not escalate yet`);
+  }
+
+  fs.writeFileSync(marker, '');
+  const fifth = await runCli(args, r.opts);
+  assert.strictEqual(fifth.code, 0, fifth.stdout);
+  assert.match(
+    fifth.stdout,
+    /^CAVEAT: flaky-allowlist: tests\/flaky\.test\.js baseline-flaky 5 times — not on flaky\.files; re-run under an anchored pipeline run directory to stage a proposal, or add it to flaky\.files by hand$/m,
+  );
+  assert.doesNotMatch(fifth.stdout, /a staged proposal to add it is pending review/);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.flakyEscalation, [{ file: 'tests/flaky.test.js', hits: 5, onAllowlist: false }]);
+  assert.ok(!fs.existsSync(path.join(r.repo, '.claude-tweaks')), 'no staged/ or run-dir artifact is created without --run');
+});
+
 test('--baseline: a file failing beyond its base tests only in the full run is baseline — exit 0 with a baseline-in-isolation CAVEAT (#3043)', async () => {
   const r = baselineRepo();
   // `old` fails everywhere; `once` fails only in the full run (it consumes the marker).

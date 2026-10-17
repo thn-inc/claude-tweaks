@@ -524,6 +524,12 @@ async function main() {
     : null;
   let testCountRegression = null;
   let flakyEscalation = [];
+  // Review fix (#3062): which onAllowlist:false files actually got a staged
+  // proposal written (only ever inside the --run-anchored block below) —
+  // the caveat-rendering loop reads this regardless of whether that block
+  // ran at all, so a run with no anchored --run never claims a pending
+  // proposal that was never staged.
+  const stagedFlakyFiles = new Set();
   // H3 (review): a narrowed run's "tests" count is not comparable to a full
   // run's baseline — comparing it would fire a false CAVEAT, and persisting
   // it would silently corrupt the baseline the next full run reads against.
@@ -547,7 +553,21 @@ async function main() {
       ? baselineAdjudicated.flakyPassed : [];
     const flaggedFiles = [...new Set([...retriedFiles, ...baselineFlakyPassed])];
     const hits = nextFlakyHits(previousCount, flaggedFiles, allowlist);
-    flakyEscalation = flakyEscalations(hits, allowlist);
+    // Review fix (#3062): onAllowlist classification must not depend on
+    // --scope having been passed — baseline adjudication (unlike the
+    // scope/retry path above) runs independently of --scope, so the
+    // canonical no-scope `--baseline` invocation (test/verification.md) was
+    // classifying every escalated file onAllowlist:false, including a file
+    // genuinely declared in flaky.files, since `allowlist` is always null
+    // without --scope. A best-effort, scope-independent read of the
+    // conventional declaration path, used only for this classification —
+    // never substituted for `decl` itself, which still gates scope
+    // selection, retries, and the hit-count pruning above unchanged.
+    const classificationAllowlist = decl ? decl.flaky.files : (() => {
+      const read = readDeclaration('.claude-tweaks/verify-scope.json');
+      return (read.ok && read.decl) ? read.decl.flaky.files : null;
+    })();
+    flakyEscalation = flakyEscalations(hits, classificationAllowlist);
     let toWrite = null;
     if (fullMode && currentCount !== null) toWrite = { ...currentCount, flakyHits: hits };
     // Deliberately NOT gated on `!fullMode`: a full run with a retry but an
@@ -646,6 +666,7 @@ async function main() {
           writeStagedItem({
             runDir: target.dir, id: `flaky-allowlist-${slug}`, sourcePath: 'note.md', content: note,
           });
+          stagedFlakyFiles.add(e.file);
           const decisionTarget = resolveDecisionTarget({ runDir: parsed.run });
           if (decisionTarget.ok) {
             appendEntry({
@@ -788,7 +809,7 @@ async function main() {
     }
   }
   for (const line of flakyCaveatLines(results)) lines.push('', line);
-  for (const e of flakyEscalation) lines.push('', escalationCaveatLine(e));
+  for (const e of flakyEscalation) lines.push('', escalationCaveatLine({ ...e, staged: stagedFlakyFiles.has(e.file) }));
   if (baselineAdjudicated) {
     if (baselineAdjudicated.eligible) {
       const b = baselineAdjudicated;

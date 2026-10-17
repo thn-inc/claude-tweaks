@@ -114,10 +114,19 @@ function flakyEscalations(hits, allowlist) {
     .sort((a, b) => (a.file < b.file ? -1 : 1));
 }
 
-function escalationCaveatLine({ file, hits, onAllowlist }) {
-  return onAllowlist
-    ? `CAVEAT: flaky-allowlist: ${file} retried ${hits} times — file a fix or remove it from the allowlist`
-    : `CAVEAT: flaky-allowlist: ${file} baseline-flaky ${hits} times — not on flaky.files; a staged proposal to add it is pending review`;
+// `staged` (review fix, #3062) tells the caller whether verify.js actually
+// wrote a staged proposal for this onAllowlist:false entry — it only does so
+// inside its --run-anchored block, so a run with no anchored --run (a
+// standalone invocation, or a run dir that fails anchoring) never stages
+// anything. Caring about `staged` only when `onAllowlist` is false matches
+// the only path that ever stages; an onAllowlist:true entry ignores it.
+function escalationCaveatLine({
+  file, hits, onAllowlist, staged = true,
+}) {
+  if (onAllowlist) return `CAVEAT: flaky-allowlist: ${file} retried ${hits} times — file a fix or remove it from the allowlist`;
+  return staged
+    ? `CAVEAT: flaky-allowlist: ${file} baseline-flaky ${hits} times — not on flaky.files; a staged proposal to add it is pending review`
+    : `CAVEAT: flaky-allowlist: ${file} baseline-flaky ${hits} times — not on flaky.files; re-run under an anchored pipeline run directory to stage a proposal, or add it to flaky.files by hand`;
 }
 
 module.exports = {
