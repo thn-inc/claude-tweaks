@@ -143,7 +143,7 @@ Rules that follow:
 A fenced `bash` block a skill tells an agent to run verbatim is code, and it drifts like code: a later prose edit changes the documented procedure while nothing re-checks that the changed procedure still works. Every such block in `plugin/skills/**` today is bound to a `node --test` file that both pins the snippet and executes it against a fixture — see the two forms below. Bind each new one the same way.
 
 - **Extract and run** — the test pulls the block out of the doc with a heading-anchored regex and runs exactly that string (`tests/pipeline-run-dir-adoption-anchoring.test.js`, which does this for `plugin/skills/_shared/pipeline-run-dir.md` and for `plugin/skills/wrap-up/SKILL.md`'s own copy of the same resolution). The doc is the only source of the executed text, so the two cannot drift, and the test fails loudly — *"extraction pattern is out of sync with the doc"* — when the heading or fence moves. Prefer this form.
-- **Byte-pin and run** — the test holds the snippet as a literal constant, asserts the doc's fence is byte-identical to it, then runs the constant (`tests/curation-judge-stagepath.test.js`). Use it when the probe must wrap the snippet in fixture-specific surroundings, and accept that a deliberate doc edit has to be mirrored in the constant.
+- **Byte-pin and run** — the test holds the snippet as a literal constant, asserts the doc's fence is byte-identical to it, then runs the constant (`tests/spec-template-generator-grep.test.js`). Use it when the probe must wrap the snippet in fixture-specific surroundings, and accept that a deliberate doc edit has to be mirrored in the constant.
 
 Either way the string must actually be **executed**, not only matched. Two whole-branch reviews caught real defects in one such snippet — a silent `mv` collision and a silent `mv` failure — only because a live probe ran it; a snippet asserted by shape alone is untested prose.
 
@@ -172,6 +172,8 @@ A session working inside a worktree created by `EnterWorktree` (or entered into 
 For the empirically observed boundary of what Bash commands pass and fail in a worktree session, see `plugin/skills/_shared/scratch-worktree.md`'s "## 7. Shell constraint" — that is the canonical, detailed statement that skill implementers will actually encounter in their dispatch context.
 
 A refusal without the plugin's deny prefix is not automatically this guard, either. A Claude Code permission rule denies with different wording — `Permission to use Bash with command … has been denied` — when a configured `deny` rule matches the command or a path it names. Check the session's permission rules before filing it against the guard or the plugin. That section's 2026-10-16 addendum (#2776) records one such report, produced by a user-scope `Read(**/*.log)` rule.
+
+Since #2783 the plugin does see these refusals after the fact: the `post-tool-use-failure` hook (`PostToolUseFailure`, Bash only) logs each refusal whose text carries the harness's `This session is isolated in the worktree … Refusing to run it` frame to the run dir's `events.jsonl` as `wd-guard-refusal` with `reason: harness-worktree-isolation`, and `/claude-tweaks:reflect`'s Friction Lens reads them. That is observation only, never enforcement — see `docs/hooks.md`'s "Observed here, not enforced" paragraph.
 
 ## Harness-level skill re-invocation vs. batched Skill calls (#2728)
 
@@ -243,6 +245,15 @@ https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompti
 | Formatting | 5.1 leans toward less bold/fewer headers/lists by default than earlier models did; anti-formatting instructions written against an earlier model's over-formatting tendency can now over-correct. | A skill carrying explicit anti-bullet/anti-bold language (written against an earlier model's opposite bias) should be re-checked against the new model's own default rather than assumed still necessary. |
 | Safeguard false positives | 5.1's safety classifiers produce fewer false positives than earlier launches, but specific phrasings (e.g. "does this compile?" vs. "are there bugs?") and base64 tool output still trigger them more than other phrasings. | A skill instructing an agent to phrase a security/bug-finding request should prefer "are there bugs/vulnerabilities" phrasing over "does this compile/pass" phrasing, and avoid routing base64-encoded tool output through a step that also asks the model to reason about it. |
 | Subagent and vision handling | 5.1 coding agents get lower time-to-completion when the lead agent keeps working while a dispatched subagent runs, rather than blocking on it; vision work benefits from crop/zoom tooling on dense images. | A skill dispatching Task-tool subagents for independent work should not require blocking-wait phrasing when the lead has other independent work to continue; a skill analyzing a screenshot/chart should offer a crop/zoom step rather than a single full-image read when detail matters. |
+
+**Claude Sonnet 5.5** (source: the Sonnet 5.5 migration guide) renames the no-upfront-thinking
+setting from `thinkingdisabled` to `between_tools`. claude-tweaks sets no thinking mode anywhere
+today — agent/routine frontmatter and `bin/resolve-profile.js`'s model profiles (`profiles.js`)
+carry only `model`/`effort`, never a thinking-mode key — so there is nothing to migrate (record
+#3058; build-time repo-wide `git grep -i -E 'thinking_?disabled|between_tools'` over `plugin/`,
+`docs/`, `tests/`, and `evals/` returned zero hits). Any future agent, routine template, or model
+profile that adds a thinking-mode setting while targeting Sonnet 5.5 should use `between_tools`,
+not the retired `thinkingdisabled` name.
 
 **Sample cross-check (2026-09-30, record #2644).** Read `plugin/skills/_shared/subagent-dispatch-core.md`
 (dispatch instructions to subagents), `plugin/skills/flow/SKILL.md` (multi-phase pipeline orchestrator),

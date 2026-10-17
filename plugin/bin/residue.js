@@ -53,8 +53,8 @@ const USAGE = 'usage: residue.js --base <commit-ish> [--scope repo|blast-radius]
 function runner(cwd) {
   // `opts` lets a caller pass extra `execFileSync` options (e.g. `timeout`)
   // for a specific command without changing every other call through this
-  // shared seam — a probe that needs to contact a remote (unlike the
-  // local-only checks every probe currently runs) needs a bound; the
+  // shared seam — a probe that contacts a remote (today only probeRelease's
+  // `git ls-remote`, #2882; every other probe is local-only) needs a bound; the
   // existing catch-all below already treats a timeout kill the same as any
   // other failure (returns null), so no new error handling is needed here.
   // `maxBuffer` defaults to 64 MiB (mirrors suiteRun()'s own bound below) —

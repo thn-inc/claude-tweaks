@@ -13,6 +13,52 @@ which precede this file in reading order.
 
 ---
 
+### Diagram suggestion
+
+Once this record's write call (`shaping-mode-stamping.md`'s Compose-then-write-once) has run —
+landed, been refused by the pre-write shape check, or failed — but before Read-back verification
+below, run `diagram-suggestion.md`'s Gate (this skill's directory) against this record. A record
+the Near-duplicate candidate check refused (`shaping-mode.md`'s Absorb refusal, reported
+`refused — proposed Absorb into #{candidate}`) never reaches Compose-then-write-once, so this
+section does not apply to it — `shaping-mode.md` routes it straight to its Actions Performed row,
+skipping this section and Read-back verification. When the `diagram-suggestions` flag is
+disabled or missing, skip the rest of this section for this record — no scan, no block, no log
+line.
+
+When enabled, run `diagram-suggestion.md`'s Detection against this record's already-composed body
+(the one assembled in `shaping-mode-stamping.md`'s Compose-then-write-once section — no re-fetch
+needed), and hold the result per `diagram-suggestion.md`'s Output format — at most two
+recommendations for this record, the two strongest matches, nothing when no signal matches. On a
+comma-list batch, run this independently for each record in the batch — the two-per-record cap is
+per record, never two for the whole batch.
+
+**Interactive entry** (case 1 or case 5 of `SKILL.md`'s Resolve-the-input, not `--chained`): hold
+every record's recommendation(s) and render them together in the `### Diagram suggestions` block
+below, after Actions Performed.
+
+**Headless entry** (bare drain / the deprecated `next` alias's headless posture, or `--chained` —
+the same two postures `shaping-mode.md`'s own opening section names): never render the block.
+Where the STAGED line below goes depends on which of the two headless postures this is — they do
+not share a log destination:
+
+- **Bare drain / the `next` alias's headless posture:** a run directory resolved for this
+  invocation (`$RUN_DIR`). Log one line per emitted recommendation to `$RUN_DIR`'s decision log
+  (the normal `log-decision.js --run "$RUN_DIR" --status STAGED ...` path), per
+  `diagram-suggestion.md`'s Rendering section, with this mode's own `{step-id}` set to `Diagram
+  suggestion`:
+
+  `STAGED {time} — Diagram suggestion: diagram-suggestion ({type}) for {ref}. Reversibility: high.`
+
+- **`--chained`:** `$PIPELINE_RUN_DIR` is never consulted under `--chained` (`SKILL.md`'s
+  Component-Skill Contract) — there is no run directory to log to for this invocation. Fold the
+  same STAGED line into this call's own returned output instead, the same convention
+  `_shared/worktree-catchup-no-run-dir.md` already uses for the worktree catch-up line under the
+  same no-run-dir posture: report it in the caller's own user-facing output (the next reply) in
+  place of a `decisions.md` entry — never invent a run-directory path for this invocation, and
+  never drop the suggestion silently.
+
+---
+
 ### Read-back verification
 
 Immediately after each record's write lands — the `gh issue edit`/`writeRecord` call above, for that record specifically, before moving to the next record in the batch — re-fetch the record fresh (never trust the write call's own response) and assert it landed correctly:
@@ -50,6 +96,10 @@ One row per record — a single-record run renders one row, a comma-list batch r
 | Operational | Shaped record {ref} into spec shape — stamped `risk:{tier}`/`size:{tier}`/`ceremony:{tier}` and Type where each was absent, added `ready`, removed `parked` if present | `{hash}` (local-files) / `—` (github-issues — edit already landed via API, no commit) |
 
 For a comma-list batch, render one row per shaped element, in list order, and prefix each Detail with its outcome: `shaped` (this run edited the record — the row above), `already shaped, no-op` (`compose-record.js --check` exited 0 on the record's live body — `shaping-mode.md`'s Edit the body into spec shape runs it — and every label family was already stamped: nothing written, nothing to undo; a body `--check` rejected is never reported this way), `refused — proposed Absorb into #{candidate}` (`shaping-mode.md`'s Near-duplicate candidate check found a title-similar, `ready` candidate with a live claim or an open linked PR (`shapingRefusal`, #3141) and stopped before composing — no body write, `needs:decision` stamped instead), or `failed` (the pre-write shape check (Compose-then-write-once) refused the composed body, the write call itself failed, or the read-back verification (above) failed — the Detail cell's own text names which one). There is no `skipped` outcome here — the batch branch's stop-all failure semantics (`SKILL.md`'s `## Input`, Comma-list batch form) mean an unresolvable element never reaches shaping mode at all; every row this table renders is an element that was actually shaped, refused, or attempted-and-failed. The Ref column follows the same per-driver rule on every row.
+
+### Diagram suggestions (optional — render only on interactive entry, and only when the Diagram suggestion section above emitted any)
+
+- {one or two `**Diagram suggestion:** …` blocks held by the Diagram suggestion section above, one per record that emitted any}
 
 Shaping mode ends here — return to `SKILL.md` and render its `## Next Actions` block: the "Shaping mode — one record shaped in place" row of its Situation table for a single record, the "Shaping mode — multiple records shaped in place" row for a comma-list batch (its recommended command lists every successfully shaped record, in the order given). Under `--chained` (see `SKILL.md`'s Input and Component-Skill Contract), or under the `next` form's headless posture (`next-mode.md`), skip Next Actions entirely and return control to the calling skill — the shaped, `ready` record is the whole deliverable; `next-mode.md` has nobody present to read a rendered Next Actions block anyway.
 

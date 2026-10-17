@@ -464,11 +464,12 @@ registerCheck('carrier-commit', ({ runDir, base, deps, cwd }) => {
   for (const n of missingTextual) {
     const entry = linked.get(n);
     if (!entry || !entry.hasClosingPRReference) { stillMissing.push(n); continue; }
-    let state = null;
-    try {
-      state = JSON.parse(deps.gh(['issue', 'view', String(n), '--json', 'state'], cwd)).state;
-    } catch { /* degrades to stillMissing below */ }
-    if (state !== 'CLOSED') stillMissing.push(n);
+    // #2934: read the issue's own state from the batched fetchLinkedPRs
+    // result (buildLinkedPRQuery already selects it) instead of a
+    // per-issue `gh issue view` -- a missing/falsy issueState (an older
+    // query response shape, a fixture that predates #2934) degrades to
+    // not-closed, matching this fallback's existing stillMissing posture.
+    if (entry.issueState !== 'CLOSED') stillMissing.push(n);
   }
   if (stillMissing.length) return { result: 'fail', detail: `no carrier commit found for #${stillMissing.join(', #')}` };
   return { result: 'pass', detail: '' };

@@ -726,10 +726,17 @@ function partitionByOpenNativeBlockers(candidates, repoData) {
 // itself correctly scores the pair `strong` once given the mention. Fetch
 // the most recent N instead (`last:20`) — the freshest signal is what
 // matters for "is this already shipped," not the earliest.
+//
+// #2934: each alias also selects the issue's own `state` (distinct from
+// `closedByPullRequestsReferences.nodes[].state`, a PR's state) — additive,
+// so existing consumers that ignore it are unaffected. `fetchLinkedPRs`
+// (linked-prs.js) passes it through as `issueState` on each Map entry, so
+// wrap-up's carrier-commit fallback can read whether the issue is CLOSED
+// from this one batched call instead of a per-issue `gh issue view`.
 function buildLinkedPRQuery(numbers) {
   if (!Array.isArray(numbers) || numbers.length === 0) return null;
   const fields = numbers
-    .map((n) => `i${n}: issue(number:${n}){ number closedByPullRequestsReferences(first:10){ nodes{ number state } } timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], last:20){ nodes{ ... on CrossReferencedEvent { source { ... on PullRequest { number title state merged mergedAt repository { nameWithOwner } } } } } } }`)
+    .map((n) => `i${n}: issue(number:${n}){ number state closedByPullRequestsReferences(first:10){ nodes{ number state } } timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], last:20){ nodes{ ... on CrossReferencedEvent { source { ... on PullRequest { number title state merged mergedAt repository { nameWithOwner } } } } } } }`)
     .join('\n      ');
   return `query($owner:String!,$repo:String!){\n  repository(owner:$owner,name:$repo){\n      ${fields}\n  }\n}`;
 }

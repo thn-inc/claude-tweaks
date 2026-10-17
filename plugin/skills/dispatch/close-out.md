@@ -67,8 +67,8 @@ touching shared state runs one member at a time.
    directly against this PR — the second call site reaching Step 3 from outside a build or dispatch
    pipeline (the first is `actions-github-issues.md`'s `## Arm ready PR`), reusing that file's full
    degrade chain (`--auto` arm → immediate merge where auto-merge isn't enabled → ready-and-comment
-   on any other failure) rather than reimplementing it. Report the outcome (`armed`/`merged`) using
-   that same vocabulary.
+   on any other failure) rather than reimplementing it, with `{tag}` = `human-approved` (that
+   step's tag paragraph). Report the outcome (`armed`/`merged`) using that same vocabulary.
 6. **Deploy, when the project has one (AC4).** When this project's CLAUDE.md Commands section
    documents a deploy command and step 5 reported `merged`, run it now and log the command, exit
    code, and one-line outcome — never invented when the project documents none, and never itself

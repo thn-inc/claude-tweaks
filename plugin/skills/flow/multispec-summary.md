@@ -18,6 +18,14 @@ After all specs complete (or one fails), present a consolidated summary:
 
 **Release status:** {one line for the run's single shared branch, from `_shared/pr-first-merge-post-merge.md` Step 4.1, verbatim — same vocabulary as `summary-template.md`'s line; `n/a — not merged in this run (outcome: {armed | pending-review})` when the bundle PR did not merge in this run}
 
+### Try it
+
+#### Spec {N}: {title}
+{one `#### Spec {N}` group per spec, in run order. That spec's Try it block (`_shared/try-it.md`) — the body of its session-scoped `try-it-{N}.md`, verbatim, minus its own heading line and up to any appended `### Try it — end to end` section, which renders below instead; when the file cannot be used, compose it per `_shared/try-it.md`'s Rules. A spec that did not complete reads `Not delivered — {outcome}` instead}
+
+### Try it — end to end
+{the contract's end-to-end variant, composed now across every completed spec, minus its own heading line. When fewer than two specs completed: `Only spec {N} completed — its Try it above is the end-to-end path.` Then, for each spec whose file carries a parent gate's appended `### Try it — end to end` section (`wrap-up/verification-brief-parent-gate.md` — the parent's whole sub-issue set, a different scope from this bundle), that section's body under `#### Parent #{P}`}
+
 ### Timing
 
 Rendered verbatim from `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-timing.js" --run "$MULTISPEC_PARENT_DIR" --markdown --auto-transcript` (#1928) — never composed by hand; a phase with no event reads `unattributed`. `{Minutes}` is the phase's span, with `(own N)` when nested phases are excluded. An `unattributed` table row (below the phase rows, above `total`) appears only when transcript usage rows fall outside every phase's span (#1929). When wrap-up's cleanup item 8 has already archived the run directory (`cleanup-procedures.md`), pass `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` as `--run` instead — the events and manifest travel with the archive. When the CLI prints a `tokens: transcript not found (...)` line, render it verbatim above the table — blank token columns are a fact about the run, not a formatting error (#1929). `Tokens (in/out)` sums the transcript's raw `input_tokens`/`output_tokens` only — cache reads and cache creation are separate fields in `timing.json`'s `tokens`, and on a cache-heavy session dwarf `in`.
@@ -39,6 +47,8 @@ Guard denials: {n} gate · {n} wd-ambiguous · {n} wd-deny
 ### Per-Spec Details
 (expand each spec's key outputs, failures, and review findings)
 ```
+
+Both Try it sections are mandatory on every multi-spec summary (#2821) — the oversight floor never gates them; see `summary-template.md`'s Try it rule for where each spec's block is read from.
 
 The header includes `— keep-going` when the run was invoked with that flag. The outcome column distinguishes:
 - `Complete` — all gates passed

@@ -3,7 +3,7 @@
 // local-merge `git merge --no-ff -m` sites (settle-and-merge.md,
 // auto-merge-short-circuit.md, local-merge-auto-finish.md, worktree-merge.md)
 // all reach it through bin/compose-subject.js. Conventional Commits grammar
-// (https://www.conventionalcommits.org/): `{type}[!]: {title} (#{n})` subject,
+// (https://www.conventionalcommits.org/): `{type}[(scope)][!]: {title} (#{n})` subject,
 // optional summary paragraph, optional `[{tag}]` paragraph (kept because
 // _shared/github-pr-scan.md's auto-merged-this-week metric matches the tag
 // anywhere in the message), a required `Release-Note: {line}` paragraph
@@ -51,8 +51,12 @@ function truncateHead(head, prefix, suffixLength) {
   return cut.replace(/[\s.,;:—-]+$/u, '') + ELLIPSIS;
 }
 
-// { type, title, number, breaking?, summary?, migrationNote?, releaseNote, fixes?, tag?, breakingRecords? } -> { title, body }
-function composeSubject({ type, title, number, breaking = false, summary, migrationNote, releaseNote, fixes, tag, breakingRecords } = {}) {
+// { type, title, number, scope?, breaking?, summary?, migrationNote?, releaseNote, fixes?, tag?, breakingRecords? } -> { title, body }
+// `scope` is Conventional Commits' optional `type(scope):` noun (#3028) — for a
+// project whose own commit convention requires one; omitted or blank, the
+// subject is unscoped. One token only: `(`/`)`/whitespace would break the
+// prefix grammar release-please parses back out.
+function composeSubject({ type, title, number, scope, breaking = false, summary, migrationNote, releaseNote, fixes, tag, breakingRecords } = {}) {
   // number is validated first so the type/title usage errors below can cite "for #{number}".
   if (!Number.isInteger(number) || number <= 0) throw usage(`number must be a positive integer, got ${JSON.stringify(number)}`);
   const prefixBase = TYPE_PREFIX[type];
@@ -70,8 +74,17 @@ function composeSubject({ type, title, number, breaking = false, summary, migrat
   const cleanReleaseNote = typeof releaseNote === 'string' ? releaseNote.trim() : '';
   if (!cleanReleaseNote) throw usage(`releaseNote must be a non-empty string for #${number}`);
 
-  const prefix = breaking ? `${prefixBase}!` : prefixBase;
+  const cleanScope = typeof scope === 'string' ? scope.trim() : '';
+  if (cleanScope && !/^[A-Za-z0-9._/-]+$/.test(cleanScope)) {
+    throw usage(`scope must be a single token of letters, digits, . _ / -, got ${JSON.stringify(scope)} for #${number}`);
+  }
+  const scoped = cleanScope ? `${prefixBase}(${cleanScope})` : prefixBase;
+  const prefix = breaking ? `${scoped}!` : scoped;
   const suffix = ` (#${number})`;
+  const MIN_TITLE_LENGTH = 1;
+  if (prefix.length + ': '.length + MIN_TITLE_LENGTH + ELLIPSIS.length + suffix.length > SUBJECT_BUDGET) {
+    throw usage(`scope ${JSON.stringify(cleanScope)} is too long — "${prefix}: " leaves no room for the title within the ${SUBJECT_BUDGET}-char subject for #${number}`);
+  }
   const head = truncateHead(`${prefix}: ${cleanTitle}`, prefix, suffix.length);
 
   const fixList = Array.isArray(fixes) && fixes.length ? fixes : [number];

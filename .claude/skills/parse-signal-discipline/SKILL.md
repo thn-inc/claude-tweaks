@@ -130,7 +130,14 @@ When mechanizing a prose heuristic into a deterministic check:
    behind it both classified `claim-log-only`. The build's tests covered whole-line junk and passed.
    Review caught it, and `c610df577` anchored the pattern at both ends, including the suffix the
    writer always appends. Anchor both ends against what the writer emits, and pin a truncated copy
-   and a tail-carrying copy of an accepted input with their own assertions.
+   and a tail-carrying copy of an accepted input with their own assertions. A recogniser that
+   scans a shared narrative log owes one step before the anchors: parse each line with the
+   writer's own inverse and require the expected step. `plugin/bin/lib/dispatch/merge-verdict.js`
+   (#2941) decides whether a merge-check pass was logged in `decisions.md`, which many skills
+   narrate into. Its first version matched the marker anywhere in a line, so a review write-up
+   quoting it counted as a pass and overrode a later `needs-human`. It now reads only
+   `parseEntry` entries under the verdict steps, anchors the pass at both ends, and reads any
+   other pass-shaped action as `unparsed`.
    A fuzzy text match is the same leak with no anchor at all. `plugin/bin/lib/plan-audit/checks.js`'s
    Check E (#3099) reads an acceptance-criterion clause as `covered` when the plan quotes its text.
    Its first version was a bare substring `includes()`, so the one-word clause "Last." read as
