@@ -83,7 +83,6 @@ test('#3319: an all-backend run still starts all five phase rows, polish include
     fixesLines: ['Fixes #101', 'Fixes #102'], surfaces: ['backend', 'backend'],
   });
   assert.deepEqual(phaseRows(body), CANONICAL_ROWS);
-  assert.ok(phaseRows(body).includes('- [ ] polish'));
 });
 
 test('composePrEarlyBody requires runId/target/nextStep', () => {
