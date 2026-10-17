@@ -6,6 +6,8 @@
 
 **Architecture:** Factor the state machine inside extract.js's private `tapBlocks` into an exported per-line classifier, `tapLines(lines)`, and rebuild `tapBlocks` on it so every existing extract.js output is byte-identical. `excerptFor` in file-issue.js then reads line kinds, indents and block ownership from `tapLines` rather than matching `ok N` / `# Subtest:` / `...` / `not ok` itself.
 
+**As built (architecture alignment, Beneficial):** the spec asked for a helper returning "the failing block for a file, with its YAML terminator"; the export is the lower-level per-line classifier instead, from which the consumer derives both (a block = the lines sharing an `owner`; its terminator = the owned `yamlClose`). One classifier now drives both `tapBlocks` and the filer, so the TAP boundary rules live in exactly one state machine. Because `owner` runs past the terminator (to the next test point or `# ` line, matching `tapBlocks`' `body`), the filer stops ownership at the block's `yamlClose` via `ownerAt` — a rule the plan's Task 2 Step 2 originally missed (fixed in `ac627fd68` and `72bf6c6d8`).
+
 **Tech Stack:** Node 18+ CommonJS, `node --test`, no dependencies.
 
 **Spec:** `.claude-tweaks/pipelines/2026-10-17T183722-record-3404/work/3404-spec.md` (record #3404)
