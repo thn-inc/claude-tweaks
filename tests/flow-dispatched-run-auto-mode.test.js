@@ -1,0 +1,113 @@
+'use strict';
+
+// Pins /flow's Step 1 mode-resolution order: a dispatched run (run-state.json `dispatched: true`,
+// stamped by /claude-tweaks:dispatch) resolves `auto` at rung 2, ahead of the `auto-mode` policy,
+// so `auto-mode: default-off` cannot bounce a headless dispatch to `interactive` (#3372). The
+// Manifesto's Mode row names this source via the `dispatch` row of its Source values table.
+// Live-file reads, not frozen fixtures: the prose IS the contract being enforced
+// (skill-prose-conformance-tests' declared-contract carve-out). Synthetic fixtures prove the
+// extractors can go red.
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+function read(...parts) {
+  return fs.readFileSync(path.join(__dirname, '..', ...parts), 'utf8').replace(/\r\n/g, '\n');
+}
+
+// The Step 1 body: from its heading up to Step 2's heading.
+function step1(text) {
+  const a = text.indexOf('### Step 1: Validate Input');
+  const b = text.indexOf('### Step 2:');
+  if (a === -1 || b === -1) throw new Error('Step 1 or Step 2 heading not found');
+  return text.slice(a, b);
+}
+
+// The nested mode-resolution rungs: 3-space-indented `N. ` lines after the "Resolve the mode"
+// marker, up to Step 1's next top-level item.
+function rungs(section) {
+  const lines = section.split('\n');
+  const start = lines.findIndex((l) => l.includes('**Resolve the mode**'));
+  if (start === -1) throw new Error('"Resolve the mode" marker not found');
+  const out = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^\d+\. /.test(line)) break;
+    const m = line.match(/^   (\d+)\. (.*)$/);
+    if (m) out.push({ n: m[1], text: m[2] });
+  }
+  return out;
+}
+
+function kind(t) {
+  if (/^Explicit mode keyword/.test(t)) return 'keyword';
+  if (/^\*\*Dispatch binding → `auto`\*\*/.test(t)) return 'dispatch';
+  if (/^`auto-mode` policy/.test(t)) return 'policy';
+  if (/^\*\*Intrinsic default → `auto`\.\*\*/.test(t)) return 'intrinsic';
+  return null;
+}
+
+const EXPECTED_ORDER = ['keyword', 'dispatch', 'policy', 'intrinsic'];
+
+// --- Proof the extractors can go red (synthetic fixtures) ---
+
+test('synthetic: kind order flags a missing or misplaced dispatch rung', () => {
+  const fixtureA = [
+    '1. Parse `$ARGUMENTS`. **Resolve the mode** in this order (first match wins):',
+    '   1. Explicit mode keyword in `$ARGUMENTS` — `interactive` / `hybrid` / `confirm` / `auto`.',
+    '   2. `auto-mode` policy — `AUTO_MODE=…`.',
+    '   3. **Intrinsic default → `auto`.** Flow is hands-off by purpose.',
+    '2. Determine record mode.',
+  ].join('\n');
+  const fixtureB = [
+    '1. Parse `$ARGUMENTS`. **Resolve the mode** in this order (first match wins):',
+    '   1. **Dispatch binding → `auto`** (#3372). Dispatched.',
+    '   2. Explicit mode keyword in `$ARGUMENTS` — `interactive` / `hybrid` / `confirm` / `auto`.',
+    '   3. `auto-mode` policy — `AUTO_MODE=…`.',
+    '   4. **Intrinsic default → `auto`.** Flow is hands-off by purpose.',
+    '2. Determine record mode.',
+  ].join('\n');
+  const a = rungs(fixtureA).map((r) => kind(r.text));
+  const b = rungs(fixtureB).map((r) => kind(r.text));
+  assert.deepStrictEqual(a, ['keyword', 'policy', 'intrinsic']);
+  assert.deepStrictEqual(b, ['dispatch', 'keyword', 'policy', 'intrinsic']);
+  assert.notDeepStrictEqual(a, EXPECTED_ORDER);
+  assert.notDeepStrictEqual(b, EXPECTED_ORDER);
+});
+
+// --- Live files ---
+
+test('flow/SKILL.md Step 1 lists the four mode rungs in order', () => {
+  const found = rungs(step1(read('plugin', 'skills', 'flow', 'SKILL.md')));
+  assert.deepStrictEqual(found.map((r) => kind(r.text)), EXPECTED_ORDER);
+  assert.deepStrictEqual(found.map((r) => r.n), ['1', '2', '3', '4']);
+});
+
+test('the dispatch-binding rung names its source, anchoring, and every fall-through case', () => {
+  const rung2 = rungs(step1(read('plugin', 'skills', 'flow', 'SKILL.md'))).find((r) => r.n === '2');
+  assert.ok(rung2, 'no rung 2 in Step 1 mode resolution');
+  const required = [
+    /`run-state\.json`/,
+    /`dispatched: true`/,
+    /`\$RUN_ROOT`/,
+    /`_shared\/pipeline-run-dir\.md`/,
+    /`PIPELINE_RUN_DIR` unset/,
+    /fails the `\$RUN_ROOT` anchoring check/,
+    /missing or unparseable `run-state\.json`/,
+    /`dispatched` absent or not `true`/,
+    /falls through to rung 3/,
+    /never stops the run/,
+    /Log nothing to `decisions\.md` here/,
+  ];
+  for (const re of required) assert.match(rung2.text, re);
+});
+
+test('manifesto.md names the dispatch binding as the Mode source', () => {
+  const rows = read('plugin', 'skills', 'flow', 'manifesto.md')
+    .split('\n')
+    .filter((l) => l.startsWith('| `dispatch` | '));
+  assert.strictEqual(rows.length, 1, 'expected exactly one `dispatch` Source values row');
+  assert.match(rows[0], /auto \(dispatched run\)/);
+  assert.match(rows[0], /source: dispatch binding/);
+});

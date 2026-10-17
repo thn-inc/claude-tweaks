@@ -130,6 +130,7 @@ I've pre-filled recommendations from project policy + sensible defaults. The Rec
 |---|---|
 | `arg` | Set by an explicit CLI argument in `$ARGUMENTS` |
 | `policy` | From `.claude-tweaks/policy.yml`'s `auto-mode:` key (resolver envelope `source: "policy"`) |
+| `dispatch` | Mode only — `SKILL.md` Step 1's dispatch-binding rung (`run-state.json` `dispatched: true`). Render the Mode row's Recommended as `auto (dispatched run)` and log `AUTO {time} — Manifesto: mode auto (source: dispatch binding, run-state.json dispatched: true). Reversibility: n/a.` |
 | `default` | Hardcoded sensible default |
 | `header` | Locked by the materialized header (`materialize.md`) — e.g. `surface:`/`design-intent:`/`ceremony:` — or the record body's `Surface:`/`Design-intent:` metadata lines (e.g., `design-intent:` set on every record in the run) |
 | `preflight.json` | The pack, when adopted (#1931) |
