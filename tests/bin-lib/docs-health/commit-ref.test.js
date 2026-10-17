@@ -1,10 +1,63 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { verifyCommits, OUTCOMES } = require('../../../plugin/bin/lib/docs-health/commit-ref');
+const path = require('path');
+const fs = require('fs');
+const { spawn } = require('child_process');
+const {
+  verifyCommits, defaultGit, OUTCOMES, DEEPEN_LOCK_FILENAME, TIMEOUT_MARKER_FILENAME,
+} = require('../../../plugin/bin/lib/docs-health/commit-ref');
 const { git, tmpDir, makeOriginRepo, cloneOf, makeAmbiguousRepo } = require('./commit-fixtures');
 
 const outcomeOf = (result, input) => result.commits.find((c) => c.input === input).outcome;
+
+// Shared by the cross-process locking tests below (#2988): each spawns a
+// real OS process (the real caller, plugin/bin/docs-health.js's
+// verify-commit command, is invoked as a fresh process per citation, so
+// only cross-process behavior exercises what those tests are checking).
+const commitRefModule = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'docs-health', 'commit-ref.js');
+
+// Runs `script` in a fresh child process, resolving with the parsed JSON
+// verifyCommits result it writes to stdout.
+function runChildScript(script) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(process.execPath, ['-e', script]);
+    let stdout = ''; let stderr = '';
+    p.stdout.on('data', (d) => { stdout += d; });
+    p.stderr.on('data', (d) => { stderr += d; });
+    p.on('close', (code) => (code === 0
+      ? resolve(JSON.parse(stdout))
+      : reject(new Error(`child exited ${code}: ${stderr}`))));
+    p.on('error', reject);
+  });
+}
+
+// Builds the worker script shared by the two racing-fetch tests below:
+// counts real `git fetch --unshallow` invocations via `countingGit` and
+// sleeps 300ms right before issuing one, widening the real fetch's own
+// duration so two children spawned back-to-back reliably overlap instead
+// of depending on OS scheduling luck. The sleep happens in this wrapper,
+// never inside git itself, so it never interacts with execFileSync's own
+// DEEPEN_TIMEOUT_MS bound.
+function raceWorkerScript(root, hash, counterPath) {
+  return `
+    const fs = require('fs');
+    const { verifyCommits, defaultGit } = require(${JSON.stringify(commitRefModule)});
+    function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+    const countingGit = (args, opts) => {
+      if (args.includes('fetch')) {
+        fs.appendFileSync(${JSON.stringify(counterPath)}, '1\\n');
+        sleepSync(300);
+      }
+      return defaultGit(args, opts);
+    };
+    const r = verifyCommits({
+      root: ${JSON.stringify(root)}, hashes: [${JSON.stringify(hash)}],
+      integrationBranch: 'main', git: countingGit,
+    });
+    process.stdout.write(JSON.stringify(r));
+  `;
+}
 
 test('OUTCOMES lists exactly the six outcome strings', () => {
   assert.deepStrictEqual([...OUTCOMES], [
@@ -138,4 +191,190 @@ test('verifyCommits throws a clear TypeError on a non-array hashes value', () =>
     () => verifyCommits({ root: origin.dir, hashes: 'abcd', integrationBranch: 'main' }),
     /verifyCommits: hashes must be an array, got string/,
   );
+});
+
+test('two real child processes racing verifyCommits against the same shallow clone: exactly one real fetch, both classify correctly (#2988)', async () => {
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  const counterPath = path.join(tmpDir('counter'), 'fetch-count.txt');
+  fs.writeFileSync(counterPath, '');
+
+  const [resultA, resultB] = await Promise.all([
+    runChildScript(raceWorkerScript(dir, origin.root, counterPath)),
+    runChildScript(raceWorkerScript(dir, origin.sideOnly, counterPath)),
+  ]);
+
+  const fetchCount = fs.readFileSync(counterPath, 'utf8').split('\n').filter(Boolean).length;
+  assert.strictEqual(fetchCount, 1, 'exactly one real git fetch --unshallow must be issued across both racing processes');
+  assert.deepStrictEqual(resultA.commits, [{ input: origin.root, outcome: 'reachable', sha: origin.root }]);
+  assert.deepStrictEqual(resultB.commits, [{ input: origin.sideOnly, outcome: 'exists-unreachable', sha: origin.sideOnly }]);
+  assert.strictEqual(resultA.shallow.deepened, true);
+  assert.strictEqual(resultB.shallow.deepened, true);
+});
+
+test('two real child processes racing verifyCommits against a shallow LINKED WORKTREE: exactly one real fetch, both classify correctly (#2988 review finding)', async () => {
+  // A linked worktree's `.git` is a FILE (a `gitdir:` pointer), not a
+  // directory -- this is the shape `path.join(root, '.git', lockFile)`
+  // would silently fail open against (ENOTDIR), and exactly the shape
+  // this project's own pipeline worktree runs use. Shallow state lives in
+  // the shared git-common dir, so a worktree added off a shallow clone is
+  // shallow too, which lets the same race shape as the plain-clone test
+  // above exercise the lock's git-common-dir resolution specifically.
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  const worktreeDir = path.join(tmpDir('worktree'), 'wt');
+  git(dir, ['worktree', 'add', '-q', '--detach', worktreeDir, 'HEAD']);
+  assert.ok(fs.statSync(path.join(worktreeDir, '.git')).isFile(),
+    'sanity check: a linked worktree\'s .git must be a file, not a directory');
+
+  const counterPath = path.join(tmpDir('counter'), 'fetch-count.txt');
+  fs.writeFileSync(counterPath, '');
+
+  const [resultA, resultB] = await Promise.all([
+    runChildScript(raceWorkerScript(worktreeDir, origin.root, counterPath)),
+    runChildScript(raceWorkerScript(worktreeDir, origin.sideOnly, counterPath)),
+  ]);
+
+  const fetchCount = fs.readFileSync(counterPath, 'utf8').split('\n').filter(Boolean).length;
+  assert.strictEqual(fetchCount, 1, 'exactly one real git fetch --unshallow must be issued across both racing processes against the linked worktree');
+  assert.deepStrictEqual(resultA.commits, [{ input: origin.root, outcome: 'reachable', sha: origin.root }]);
+  assert.deepStrictEqual(resultB.commits, [{ input: origin.sideOnly, outcome: 'exists-unreachable', sha: origin.sideOnly }]);
+  assert.strictEqual(resultA.shallow.deepened, true);
+  assert.strictEqual(resultB.shallow.deepened, true);
+});
+
+test('a cached deepen-timeout is not retried with a fresh fetch on a second call in the same process (#2988)', () => {
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  let fetchCalls = 0;
+  const timeoutGit = (args, opts) => {
+    if (args.includes('fetch')) {
+      fetchCalls += 1;
+      const err = new Error('git fetch --unshallow timed out');
+      err.code = 'ETIMEDOUT';
+      throw err;
+    }
+    return defaultGit(args, opts);
+  };
+  const first = verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main', git: timeoutGit });
+  assert.strictEqual(outcomeOf(first, origin.third), 'unverifiable');
+  assert.strictEqual(fetchCalls, 1);
+
+  const second = verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main', git: timeoutGit });
+  assert.strictEqual(outcomeOf(second, origin.third), 'unverifiable');
+  assert.strictEqual(fetchCalls, 1, 'the cached timeout must not trigger a second real fetch attempt');
+});
+
+test('the deepen lock is released even when the fetch throws, leaving the repo lockable immediately after (#2988)', () => {
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  const failingGit = (args, opts) => {
+    if (args.includes('fetch')) { const err = new Error('network unreachable'); err.status = 1; throw err; }
+    return defaultGit(args, opts);
+  };
+  const r = verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main', git: failingGit });
+  assert.strictEqual(outcomeOf(r, origin.third), 'unverifiable');
+
+  const { acquireLock, releaseLock } = require('../../../plugin/bin/lib/file-lock');
+  const lockPath = path.join(dir, '.git', DEEPEN_LOCK_FILENAME);
+  const held = acquireLock(lockPath);
+  assert.notStrictEqual(held, null, 'the lock must be free immediately after an ordinary (non-timeout) fetch failure');
+  releaseLock(held);
+});
+
+test('CLAUDE_TWEAKS_LOCK_WAIT_MS is restored after a deepen attempt, even on failure (#2988)', () => {
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  const failingGit = (args, opts) => {
+    if (args.includes('fetch')) { const err = new Error('network unreachable'); err.status = 1; throw err; }
+    return defaultGit(args, opts);
+  };
+  const prev = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+  process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '42';
+  try {
+    verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main', git: failingGit });
+    assert.strictEqual(process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS, '42');
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+    else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prev;
+  }
+});
+
+test('a non-timeout fetch failure does not poison the cache -- a later call still attempts a fresh fetch (#2988)', () => {
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  let fetchCalls = 0;
+  const flakyGit = (args, opts) => {
+    if (args.includes('fetch')) {
+      fetchCalls += 1;
+      if (fetchCalls === 1) { const err = new Error('network unreachable'); err.status = 1; throw err; }
+    }
+    return defaultGit(args, opts);
+  };
+  const first = verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main', git: flakyGit });
+  assert.strictEqual(outcomeOf(first, origin.third), 'unverifiable');
+  assert.strictEqual(fetchCalls, 1);
+
+  const second = verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main', git: flakyGit });
+  assert.strictEqual(outcomeOf(second, origin.third), 'reachable');
+  assert.strictEqual(fetchCalls, 2, 'a non-timeout failure must not be cached -- the second call retries for real');
+});
+
+test('the deepen-timeout cache is keyed per repo root -- a cached timeout for one repo does not block a different one (#2988)', () => {
+  const originA = makeOriginRepo();
+  const dirA = cloneOf(originA, { depth: 1 });
+  const originB = makeOriginRepo();
+  const dirB = cloneOf(originB, { depth: 1 });
+  const timeoutGit = (args, opts) => {
+    if (args.includes('fetch')) { const err = new Error('timed out'); err.code = 'ETIMEDOUT'; throw err; }
+    return defaultGit(args, opts);
+  };
+  const a1 = verifyCommits({ root: dirA, hashes: [originA.third], integrationBranch: 'main', git: timeoutGit });
+  assert.strictEqual(outcomeOf(a1, originA.third), 'unverifiable');
+
+  const b1 = verifyCommits({ root: dirB, hashes: [originB.third], integrationBranch: 'main', git: defaultGit });
+  assert.strictEqual(outcomeOf(b1, originB.third), 'reachable', "repo B must still deepen normally -- its own cache entry is independent of repo A's");
+});
+
+test('a timeout marker written by a prior process is honored by a fresh process, with zero real fetch calls (#2988 whole-branch review finding)', async () => {
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  // Simulate a PRIOR process having already recorded a confirmed timeout --
+  // this is exactly what a real docs-health run under --budget > 1 needs:
+  // the real caller (plugin/bin/docs-health.js's verify-commit command) is
+  // invoked as a fresh process per citation, so only a cross-process marker
+  // (not an in-process cache) can actually help the real workload.
+  const markerPath = path.join(dir, '.git', TIMEOUT_MARKER_FILENAME);
+  fs.writeFileSync(markerPath, JSON.stringify({ at: Date.now(), reason: 'simulated prior timeout' }));
+
+  const counterPath = path.join(tmpDir('counter'), 'fetch-count.txt');
+  fs.writeFileSync(counterPath, '');
+  const child = await runChildScript(`
+    const fs = require('fs');
+    const { verifyCommits, defaultGit } = require(${JSON.stringify(commitRefModule)});
+    const countingGit = (args, opts) => {
+      if (args.includes('fetch')) fs.appendFileSync(${JSON.stringify(counterPath)}, '1\\n');
+      return defaultGit(args, opts);
+    };
+    const r = verifyCommits({
+      root: ${JSON.stringify(dir)}, hashes: [${JSON.stringify(origin.third)}],
+      integrationBranch: 'main', git: countingGit,
+    });
+    process.stdout.write(JSON.stringify(r));
+  `);
+
+  const fetchCount = fs.readFileSync(counterPath, 'utf8').split('\n').filter(Boolean).length;
+  assert.strictEqual(fetchCount, 0, "a fresh process must honor a prior process's timeout marker without attempting its own fetch");
+  assert.strictEqual(outcomeOf(child, origin.third), 'unverifiable');
+  assert.match(child.commits[0].reason, /simulated prior timeout/);
+});
+
+test('an expired timeout marker is ignored -- a stale cached failure does not block a fresh attempt (#2988)', () => {
+  const origin = makeOriginRepo();
+  const dir = cloneOf(origin, { depth: 1 });
+  const markerPath = path.join(dir, '.git', TIMEOUT_MARKER_FILENAME);
+  const past = Date.now() - (31 * 60 * 1000); // 31 minutes ago -- just past the 30-minute TTL
+  fs.writeFileSync(markerPath, JSON.stringify({ at: past, reason: 'stale simulated timeout' }));
+  const r = verifyCommits({ root: dir, hashes: [origin.third], integrationBranch: 'main' });
+  assert.strictEqual(outcomeOf(r, origin.third), 'reachable');
 });

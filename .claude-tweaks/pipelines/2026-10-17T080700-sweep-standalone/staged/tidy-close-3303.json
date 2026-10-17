@@ -1,0 +1,1 @@
+[{"tag":"gh-issue","record":3303,"title":"Remove leftover probe-guard-hooks worktree/branch","action":"Close as completed (worktree and branch already removed by tidy)","command":"gh issue comment 3303 … && gh issue close 3303 --reason completed"}]
