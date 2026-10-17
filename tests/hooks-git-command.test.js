@@ -2,6 +2,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
+const path = require('node:path');
 const {
   gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets, powershellOpaqueCommand,
 } = require('../plugin/bin/lib/hooks/git-command');
@@ -11,27 +12,27 @@ test('plain commit resolves to cwd', () => {
 });
 
 test('git -C targets the given dir, resolved against cwd', () => {
-  assert.deepStrictEqual(gitTargets('git -C /wt/spec-1 commit -m "x"', '/repo'), [{ action: 'commit', dir: '/wt/spec-1' }]);
-  assert.deepStrictEqual(gitTargets('git -C ../other commit -m "x"', '/repo/sub'), [{ action: 'commit', dir: '/repo/other' }]);
+  assert.deepStrictEqual(gitTargets('git -C /wt/spec-1 commit -m "x"', '/repo'), [{ action: 'commit', dir: path.resolve('/wt/spec-1') }]);
+  assert.deepStrictEqual(gitTargets('git -C ../other commit -m "x"', '/repo/sub'), [{ action: 'commit', dir: path.resolve('/repo/other') }]);
 });
 
 test('cd chains update the effective cwd', () => {
   assert.deepStrictEqual(gitTargets('cd /wt/spec-1 && git add f.js && git commit -m "x"', '/repo'), [
-    { action: 'commit', dir: '/wt/spec-1' },
+    { action: 'commit', dir: path.resolve('/wt/spec-1') },
   ]);
 });
 
 test('a cd on its own line, preceded by an unrelated statement joined only by a newline, still updates the effective cwd', () => {
   assert.deepStrictEqual(
     gitTargets('VAR="unrelated"\ncd /wt/spec-1 && git add f.js && git commit -m "x"', '/repo'),
-    [{ action: 'commit', dir: '/wt/spec-1' }],
+    [{ action: 'commit', dir: path.resolve('/wt/spec-1') }],
   );
 });
 
 test('a shell-variable cd on its own line, preceded by an unrelated statement, resolves via the same-command assignment (no fallback to the stale cwd — the assignment IS the proof)', () => {
   assert.deepStrictEqual(
     gitTargets('MKT="/wt/spec-1"\ncd "$MKT" && git commit -m "x"', '/repo'),
-    [{ action: 'commit', dir: '/wt/spec-1' }],
+    [{ action: 'commit', dir: path.resolve('/wt/spec-1') }],
   );
 });
 
@@ -45,7 +46,7 @@ test('a cd referencing a variable with no same-command assignment stays unresolv
 test('fileWriteTargets resolves a same-command literal assignment substituted into a write target', () => {
   assert.deepStrictEqual(
     fileWriteTargets('SP=/private/tmp/foo; sed -i "" -e "s/x/y/" "$SP/file.md" && grep -c x "$SP/file.md"', '/repo'),
-    [{ action: 'edit', file: '/private/tmp/foo/file.md' }],
+    [{ action: 'edit', file: path.resolve('/private/tmp/foo/file.md') }],
   );
 });
 
@@ -59,7 +60,7 @@ test('a dynamic/unresolvable assignment value is never chained — target stays 
 test('a later re-assignment of the same name overrides the earlier one', () => {
   assert.deepStrictEqual(
     fileWriteTargets('SP=/a; SP=/b; sed -i "" -e "s/x/y/" "$SP/file.md"', '/repo'),
-    [{ action: 'edit', file: '/b/file.md' }],
+    [{ action: 'edit', file: path.resolve('/b/file.md') }],
   );
 });
 
@@ -112,7 +113,7 @@ test('value-taking global flags do not swallow the subcommand', () => {
 });
 
 test('quoted paths are unquoted', () => {
-  assert.deepStrictEqual(gitTargets('git -C "/wt/my spec" commit -m "x"', '/repo'), [{ action: 'commit', dir: '/wt/my spec' }]);
+  assert.deepStrictEqual(gitTargets('git -C "/wt/my spec" commit -m "x"', '/repo'), [{ action: 'commit', dir: path.resolve('/wt/my spec') }]);
 });
 
 test('non-git and empty commands yield nothing, never throw', () => {
@@ -145,20 +146,20 @@ test('unresolvable cd forms poison the effective cwd — a following git commit 
 test('poisoned cwd + git -C <absolute plain path> is still provable', () => {
   assert.deepStrictEqual(
     gitTargets('cd && git -C /abs/path commit -m "x"', '/repo'),
-    [{ action: 'commit', dir: '/abs/path' }],
+    [{ action: 'commit', dir: path.resolve('/abs/path') }],
   );
 });
 
 test('poisoned cwd then cd to an absolute plain path restores provability', () => {
   assert.deepStrictEqual(
     gitTargets('cd && cd /abs/known && git commit -m "x"', '/repo'),
-    [{ action: 'commit', dir: '/abs/known' }],
+    [{ action: 'commit', dir: path.resolve('/abs/known') }],
   );
 });
 
 test('repeated -C flags stack cumulatively like real git', () => {
-  assert.deepStrictEqual(gitTargets('git -C /a -C b commit -m "x"', '/repo'), [{ action: 'commit', dir: '/a/b' }]);
-  assert.deepStrictEqual(gitTargets('git -C /a -C /c commit -m "x"', '/repo'), [{ action: 'commit', dir: '/c' }]);
+  assert.deepStrictEqual(gitTargets('git -C /a -C b commit -m "x"', '/repo'), [{ action: 'commit', dir: path.resolve('/a', 'b') }]);
+  assert.deepStrictEqual(gitTargets('git -C /a -C /c commit -m "x"', '/repo'), [{ action: 'commit', dir: path.resolve('/c') }]);
 });
 
 test('-C value containing $ or ~ yields no target regardless of cwd state', () => {
@@ -223,19 +224,19 @@ test('fileWriteTargets: /dev/null and friends are never a write target', () => {
 });
 
 test('fileWriteTargets: tee resolves its first non-flag argument', () => {
-  assert.deepStrictEqual(fileWriteTargets('echo hi | tee out.txt', '/repo'), [{ action: 'write', file: '/repo/out.txt' }]);
-  assert.deepStrictEqual(fileWriteTargets('echo hi | tee -a out.txt', '/repo'), [{ action: 'write', file: '/repo/out.txt' }]);
+  assert.deepStrictEqual(fileWriteTargets('echo hi | tee out.txt', '/repo'), [{ action: 'write', file: path.resolve('/repo', 'out.txt') }]);
+  assert.deepStrictEqual(fileWriteTargets('echo hi | tee -a out.txt', '/repo'), [{ action: 'write', file: path.resolve('/repo', 'out.txt') }]);
 });
 
 test('fileWriteTargets: cp/mv resolve the last non-flag argument as the destination', () => {
-  assert.deepStrictEqual(fileWriteTargets('cp a.txt b.txt', '/repo'), [{ action: 'copy', file: '/repo/b.txt' }]);
-  assert.deepStrictEqual(fileWriteTargets('mv a.txt b.txt', '/repo'), [{ action: 'move', file: '/repo/b.txt' }]);
-  assert.deepStrictEqual(fileWriteTargets('cp -r a b c/dest', '/repo'), [{ action: 'copy', file: '/repo/c/dest' }]);
+  assert.deepStrictEqual(fileWriteTargets('cp a.txt b.txt', '/repo'), [{ action: 'copy', file: path.resolve('/repo', 'b.txt') }]);
+  assert.deepStrictEqual(fileWriteTargets('mv a.txt b.txt', '/repo'), [{ action: 'move', file: path.resolve('/repo', 'b.txt') }]);
+  assert.deepStrictEqual(fileWriteTargets('cp -r a b c/dest', '/repo'), [{ action: 'copy', file: path.resolve('/repo', 'c/dest') }]);
 });
 
 test('fileWriteTargets: cd chains update the effective cwd before a write', () => {
   assert.deepStrictEqual(fileWriteTargets('cd /wt/spec-1 && tee out.txt', '/repo'), [
-    { action: 'write', file: '/wt/spec-1/out.txt' },
+    { action: 'write', file: path.resolve('/wt/spec-1', 'out.txt') },
   ]);
 });
 
@@ -256,7 +257,7 @@ test('an empty -C value ("git -C \'\' commit") behaves like omitting -C entirely
   // "no value follows", mis-consuming only the -C flag and leaving the
   // leftover '' to be misread as the subcommand — silently producing zero
   // targets for a command real git treats as fully valid.
-  assert.deepStrictEqual(gitTargets('git -C "" commit -m "msg"', '/repo'), [{ action: 'commit', dir: '/repo' }]);
+  assert.deepStrictEqual(gitTargets('git -C "" commit -m "msg"', '/repo'), [{ action: 'commit', dir: path.resolve('/repo') }]);
 });
 
 test('an empty value for a global VALUE_FLAG (-c) does not swallow the subcommand either', () => {
@@ -296,19 +297,19 @@ test("cd's own flags (-P, -L, --) are not mistaken for a path argument — poiso
 
 test('fileWriteTargets: tee with multiple destination files reports every one of them, not just the first', () => {
   assert.deepStrictEqual(fileWriteTargets('tee /worktree/notes.txt /etc/important-file', '/repo'), [
-    { action: 'write', file: '/worktree/notes.txt' },
-    { action: 'write', file: '/etc/important-file' },
+    { action: 'write', file: path.resolve('/worktree/notes.txt') },
+    { action: 'write', file: path.resolve('/etc/important-file') },
   ]);
 });
 
 test('fileWriteTargets: cp/mv -t DIR names the real destination directory, not the last source', () => {
-  assert.deepStrictEqual(fileWriteTargets('cp -t /main/checkout secret.txt', '/repo'), [{ action: 'copy', file: '/main/checkout' }]);
-  assert.deepStrictEqual(fileWriteTargets('mv -t /main/checkout a.txt b.txt', '/repo'), [{ action: 'move', file: '/main/checkout' }]);
+  assert.deepStrictEqual(fileWriteTargets('cp -t /main/checkout secret.txt', '/repo'), [{ action: 'copy', file: path.resolve('/main/checkout') }]);
+  assert.deepStrictEqual(fileWriteTargets('mv -t /main/checkout a.txt b.txt', '/repo'), [{ action: 'move', file: path.resolve('/main/checkout') }]);
 });
 
 test('fileWriteTargets: cp/mv --target-directory=DIR and --target-directory DIR are both recognized', () => {
-  assert.deepStrictEqual(fileWriteTargets('cp --target-directory=/main/checkout secret.txt', '/repo'), [{ action: 'copy', file: '/main/checkout' }]);
-  assert.deepStrictEqual(fileWriteTargets('cp --target-directory /main/checkout secret.txt', '/repo'), [{ action: 'copy', file: '/main/checkout' }]);
+  assert.deepStrictEqual(fileWriteTargets('cp --target-directory=/main/checkout secret.txt', '/repo'), [{ action: 'copy', file: path.resolve('/main/checkout') }]);
+  assert.deepStrictEqual(fileWriteTargets('cp --target-directory /main/checkout secret.txt', '/repo'), [{ action: 'copy', file: path.resolve('/main/checkout') }]);
 });
 
 test('fileWriteTargets: a tee argument formed by a quoted prefix glued to an unresolvable unquoted suffix yields no target', () => {
@@ -322,32 +323,32 @@ test('fileWriteTargets: a tee argument formed by a quoted prefix glued to an unr
 // own, separate mkdir target parser instead.
 test('mkdirTargets: resolves a plain absolute target', () => {
   assert.deepStrictEqual(mkdirTargets('mkdir /worktree/.claude-tweaks/pipelines/x', '/repo'), [
-    { action: 'mkdir', file: '/worktree/.claude-tweaks/pipelines/x' },
+    { action: 'mkdir', file: path.resolve('/worktree/.claude-tweaks/pipelines/x') },
   ]);
 });
 
 test('mkdirTargets: -p and other bare flags are skipped, not mistaken for a target', () => {
   assert.deepStrictEqual(mkdirTargets('mkdir -p /worktree/.claude-tweaks/pipelines/x', '/repo'), [
-    { action: 'mkdir', file: '/worktree/.claude-tweaks/pipelines/x' },
+    { action: 'mkdir', file: path.resolve('/worktree/.claude-tweaks/pipelines/x') },
   ]);
 });
 
 test('mkdirTargets: every positional is a target — mkdir can create multiple directories at once', () => {
   assert.deepStrictEqual(mkdirTargets('mkdir -p a b', '/repo'), [
-    { action: 'mkdir', file: '/repo/a' },
-    { action: 'mkdir', file: '/repo/b' },
+    { action: 'mkdir', file: path.resolve('/repo', 'a') },
+    { action: 'mkdir', file: path.resolve('/repo', 'b') },
   ]);
 });
 
 test('mkdirTargets: -m MODE consumes its value, not a positional', () => {
   assert.deepStrictEqual(mkdirTargets('mkdir -m 0755 /worktree/x', '/repo'), [
-    { action: 'mkdir', file: '/worktree/x' },
+    { action: 'mkdir', file: path.resolve('/worktree/x') },
   ]);
 });
 
 test('mkdirTargets: a relative path resolves against cwd, cd chains update it', () => {
   assert.deepStrictEqual(mkdirTargets('cd /worktree && mkdir sub', '/repo'), [
-    { action: 'mkdir', file: '/worktree/sub' },
+    { action: 'mkdir', file: path.resolve('/worktree', 'sub') },
   ]);
 });
 
@@ -398,7 +399,7 @@ test('an env-var-prefixed cd changes the effective cwd, matching real bash — a
   // Verified empirically: `FOO=1 cd /x` really does change the shell's cwd
   // (cd is a regular, not a POSIX "special", builtin — it has no subprocess
   // to scope the assignment to, so cd still runs against the current shell).
-  assert.deepStrictEqual(gitTargets('FOO=1 cd /var && git commit -m "x"', '/repo'), [{ action: 'commit', dir: '/var' }]);
+  assert.deepStrictEqual(gitTargets('FOO=1 cd /var && git commit -m "x"', '/repo'), [{ action: 'commit', dir: path.resolve('/var') }]);
 });
 
 test('an env-WRAPPED cd (as opposed to env-var-PREFIXED) does not change cwd, matching real bash — env execs a nonexistent "cd" binary and errors, so a following bare commit still targets the stale cwd', () => {
@@ -410,17 +411,17 @@ test('an env-WRAPPED cd (as opposed to env-var-PREFIXED) does not change cwd, ma
 // while GNU env really runs git with that dir as its cwd — the exact bypass
 // shape for a worktree session mutating the protected main checkout.
 test("env -C <dir> git commit resolves the target to env's chdir dir, not the caller cwd", () => {
-  assert.deepStrictEqual(gitTargets('env -C /main-checkout git commit -m "x"', '/repo'), [{ action: 'commit', dir: '/main-checkout' }]);
+  assert.deepStrictEqual(gitTargets('env -C /main-checkout git commit -m "x"', '/repo'), [{ action: 'commit', dir: path.resolve('/main-checkout') }]);
 });
 
 test('env --chdir=<dir> and env --chdir <dir> both resolve the target to the chdir dir', () => {
-  assert.deepStrictEqual(gitTargets('env --chdir=/main-checkout git push', '/repo'), [{ action: 'push', dir: '/main-checkout' }]);
-  assert.deepStrictEqual(gitTargets('env --chdir /main-checkout git push', '/repo'), [{ action: 'push', dir: '/main-checkout' }]);
+  assert.deepStrictEqual(gitTargets('env --chdir=/main-checkout git push', '/repo'), [{ action: 'push', dir: path.resolve('/main-checkout') }]);
+  assert.deepStrictEqual(gitTargets('env --chdir /main-checkout git push', '/repo'), [{ action: 'push', dir: path.resolve('/main-checkout') }]);
 });
 
 test('a relative env -C value resolves against the effective cwd, and stacks with git\'s own -C', () => {
-  assert.deepStrictEqual(gitTargets('env -C sub git commit -m "x"', '/repo'), [{ action: 'commit', dir: '/repo/sub' }]);
-  assert.deepStrictEqual(gitTargets('env -C /a git -C b commit -m "x"', '/repo'), [{ action: 'commit', dir: '/a/b' }]);
+  assert.deepStrictEqual(gitTargets('env -C sub git commit -m "x"', '/repo'), [{ action: 'commit', dir: path.resolve('/repo', 'sub') }]);
+  assert.deepStrictEqual(gitTargets('env -C /a git -C b commit -m "x"', '/repo'), [{ action: 'commit', dir: path.resolve('/a', 'b') }]);
 });
 
 test('an unresolvable env -C value ($VAR, ~) yields no target — never a fabricated one', () => {
@@ -437,8 +438,8 @@ test('the ATTACHED-value env -C<dir> form resolves the target like the separate 
   // Real env (macOS and GNU alike) honors `-C/dir` with the value attached;
   // treating it as a valueless flag left the resolved dir at the caller's
   // cwd while git was still detected as lead — a silent-allow bypass.
-  assert.deepStrictEqual(gitTargets('env -C/main-checkout git commit -m "x"', '/repo'), [{ action: 'commit', dir: '/main-checkout' }]);
-  assert.deepStrictEqual(gitTargets('env -Csub git push', '/repo'), [{ action: 'push', dir: '/repo/sub' }]);
+  assert.deepStrictEqual(gitTargets('env -C/main-checkout git commit -m "x"', '/repo'), [{ action: 'commit', dir: path.resolve('/main-checkout') }]);
+  assert.deepStrictEqual(gitTargets('env -Csub git push', '/repo'), [{ action: 'push', dir: path.resolve('/repo', 'sub') }]);
   assert.deepStrictEqual(gitTargets('env -C"$DIR" git commit -m "x"', '/repo'), []);
 });
 

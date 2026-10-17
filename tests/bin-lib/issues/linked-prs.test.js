@@ -11,8 +11,8 @@ test('fetchLinkedPRs maps each alias to its open linked PR number', () => {
     i257: { number: 257, closedByPullRequestsReferences: { nodes: [{ number: 900, state: 'MERGED' }] } },
   });
   const out = fetchLinkedPRs({ numbers: [1224, 257], owner: 'o', repo: 'r', runner });
-  assert.deepStrictEqual(out.get(1224), { openPR: 1572, mentions: [], hasClosingPRReference: true });
-  assert.deepStrictEqual(out.get(257), { openPR: null, mentions: [], hasClosingPRReference: true });
+  assert.deepStrictEqual(out.get(1224), { openPR: 1572, mentions: [], hasClosingPRReference: true, issueState: null });
+  assert.deepStrictEqual(out.get(257), { openPR: null, mentions: [], hasClosingPRReference: true, issueState: null });
 });
 
 // #2240: a non-github.com host threads --hostname onto this call — the only
@@ -37,7 +37,7 @@ test('#2240: fetchLinkedPRs passes --hostname on a non-github.com host, omits it
 test('no linked PR at all reports openPR: null', () => {
   const runner = () => resp({ i42: { number: 42, closedByPullRequestsReferences: { nodes: [] } } });
   const out = fetchLinkedPRs({ numbers: [42], owner: 'o', repo: 'r', runner });
-  assert.deepStrictEqual(out.get(42), { openPR: null, mentions: [], hasClosingPRReference: false });
+  assert.deepStrictEqual(out.get(42), { openPR: null, mentions: [], hasClosingPRReference: false, issueState: null });
 });
 
 test('a missing alias throws rather than returning a partial map', () => {
@@ -53,7 +53,7 @@ test('null repository throws rather than returning a partial map', () => {
 test('a malformed nodes array (not an array) degrades to openPR: null rather than throwing', () => {
   const runner = () => resp({ i9: { number: 9, closedByPullRequestsReferences: { nodes: 'not-an-array' } } });
   const out = fetchLinkedPRs({ numbers: [9], owner: 'o', repo: 'r', runner });
-  assert.deepStrictEqual(out.get(9), { openPR: null, mentions: [], hasClosingPRReference: false });
+  assert.deepStrictEqual(out.get(9), { openPR: null, mentions: [], hasClosingPRReference: false, issueState: null });
 });
 
 test('empty input returns empty result without calling the runner', () => {
@@ -80,6 +80,7 @@ test('a same-repo PR mention (no closing keyword) is returned in mentions', () =
     openPR: null,
     mentions: [{ number: 1803, title: 'Fix context.js resolveRun fallback', state: 'MERGED', merged: true, mergedAt: '2026-09-03T00:00:00Z' }],
     hasClosingPRReference: false,
+    issueState: null,
   });
 });
 
@@ -109,11 +110,28 @@ test('a non-PR cross-reference source (an Issue, not a PullRequest) resolves to 
 
 test('a missing timelineItems field (older query response shape) degrades to mentions: [] rather than throwing', () => {
   const runner = () => resp({ i5: { number: 5, closedByPullRequestsReferences: { nodes: [] } } });
-  assert.deepStrictEqual(fetchLinkedPRs({ numbers: [5], owner: 'o', repo: 'r', runner }).get(5), { openPR: null, mentions: [], hasClosingPRReference: false });
+  assert.deepStrictEqual(fetchLinkedPRs({ numbers: [5], owner: 'o', repo: 'r', runner }).get(5), { openPR: null, mentions: [], hasClosingPRReference: false, issueState: null });
 });
 
 test('#2676: a non-empty closedByPullRequestsReferences connection reports hasClosingPRReference: true regardless of that PR\'s own state', () => {
   const runner = () => resp({ i42: { number: 42, closedByPullRequestsReferences: { nodes: [{ number: 100, state: 'MERGED' }] } } });
   const out = fetchLinkedPRs({ numbers: [42], owner: 'o', repo: 'r', runner });
   assert.equal(out.get(42).hasClosingPRReference, true);
+});
+
+// #2934 — the issue's own `state` (distinct from `mentions[].state`, which is
+// a PR's state) passes through from the batched query so the carrier-commit
+// fallback can read it instead of running `gh issue view` per issue.
+test('#2934: the issue node\'s own state passes through as issueState', () => {
+  const runner = () => resp({
+    i42: { number: 42, state: 'CLOSED', closedByPullRequestsReferences: { nodes: [{ number: 100, state: 'MERGED' }] } },
+  });
+  const out = fetchLinkedPRs({ numbers: [42], owner: 'o', repo: 'r', runner });
+  assert.equal(out.get(42).issueState, 'CLOSED');
+});
+
+test('#2934: a missing issue state on the batched response reports issueState: null', () => {
+  const runner = () => resp({ i42: { number: 42, closedByPullRequestsReferences: { nodes: [] } } });
+  const out = fetchLinkedPRs({ numbers: [42], owner: 'o', repo: 'r', runner });
+  assert.equal(out.get(42).issueState, null);
 });

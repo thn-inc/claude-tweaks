@@ -49,7 +49,17 @@ const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
   }) => fetchLinkedPRs({
     numbers, owner, repo, host, runner,
   }),
-  mapResult: (n, byNumber) => byNumber.get(n),
+  // #2934: fetchLinkedPRs' Map entries also carry `issueState` now (consumed
+  // directly by wrap-up/engine-verify.js's carrier-commit fallback) --
+  // excluded here so this CLI's own public output shape stays exactly what
+  // it was (openPR/mentions/hasClosingPRReference), never silently growing
+  // a field this contract doesn't document.
+  mapResult: (n, byNumber) => {
+    const entry = byNumber.get(n);
+    if (!entry) return entry;
+    const { openPR, mentions, hasClosingPRReference } = entry;
+    return { openPR, mentions, hasClosingPRReference };
+  },
 });
 
 module.exports = { run, parseArgs, parseNumbers, parseRepo: require('./lib/repo-resolve').parseRepo };

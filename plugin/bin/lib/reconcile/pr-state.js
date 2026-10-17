@@ -233,6 +233,29 @@ async function resolvePrStateAsync(repoRoot, branch) {
   );
 }
 
+// Async twin of resolvePrStateByNumber — mirrors resolvePrStateAsync's
+// non-blocking execFile shape (#3249) so release-merged.js's by-number
+// fallback can run through gh-pool's runWithConcurrency the same way its
+// branch-based Phase 1.5 probe already does, rather than blocking the
+// event loop once per candidate. Same argument validation, same return
+// shape, same classifyByNumberError mapping as the sync version.
+async function resolvePrStateByNumberAsync(repoRoot, number) {
+  if (!number) return null;
+  if (!byNumberArgsValid(repoRoot, number)) return 'invalid-arguments';
+  return runClassifiedAsync(
+    async () => {
+      const { stdout } = await execFileAsync(
+        'gh',
+        ['pr', 'view', String(number), '--json', 'number,state,mergedAt,updatedAt,mergeCommit,mergeable,mergeStateStatus'],
+        { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
+      );
+      return JSON.parse(stdout);
+    },
+    classifyByNumberError(repoRoot),
+    { retryOnTimeout: true },
+  );
+}
+
 const BULK_TIMEOUT_MS = 15000; // one chunked call covers many branches — roomier than FETCH_TIMEOUT_MS's per-branch 5s
 const BULK_CHUNK = 50; // probe-validated 2026-08-20: a 50-alias chunk costs 1 GraphQL rate-limit point (see header)
 
@@ -300,6 +323,6 @@ function resolvePrStatesBulk(repoRoot, branches, opts = {}) {
 }
 
 module.exports = {
-  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, resolveIssueStateByNumber,
+  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, resolveIssueStateByNumber, resolvePrStateByNumberAsync,
   FETCH_TIMEOUT_MS, BULK_CHUNK,
 };

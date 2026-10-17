@@ -47,6 +47,31 @@ test('composePrEarlyBody defaults the phase checklist to the canonical five phas
   }
 });
 
+// #2877: the rows between the plain-text phase delimiters, as an array of lines.
+function phaseRows(body) {
+  const match = body.match(/\[claude-tweaks-phases-start\]\n([\s\S]*?)\n\[claude-tweaks-phases-end\]/);
+  assert.ok(match, 'phases span present');
+  return match[1].split('\n');
+}
+
+const CANONICAL_ROWS = ['- [ ] build', '- [ ] test', '- [ ] review', '- [ ] polish', '- [ ] wrap-up'];
+
+test('#2877: a build,test-scoped first call still starts all five phase rows, unchecked, in order', () => {
+  const body = composePrEarlyBody({
+    runId: 'r1', specSummary: 's', target: '#2749', nextStep: 'build',
+    fixesLines: ['Fixes #2749'], phases: ['build', 'test'],
+  });
+  assert.deepEqual(phaseRows(body), CANONICAL_ROWS);
+});
+
+test('#2877: repairPrBody restores the canonical five rows even when handed a narrower list', () => {
+  const { body, restored } = repairPrBody({
+    body: 'Freeform body with no markers.', runId: 'r1', fixesLines: ['Fixes #2749'], phases: ['build', 'test'],
+  });
+  assert.ok(restored.includes('phases block'));
+  assert.deepEqual(phaseRows(body), CANONICAL_ROWS);
+});
+
 test('composePrEarlyBody requires runId/target/nextStep', () => {
   assert.throws(() => composePrEarlyBody({ specSummary: 's', target: '#1', nextStep: 'build' }), /runId/);
   assert.throws(() => composePrEarlyBody({ runId: 'r1', specSummary: 's', nextStep: 'build' }), /target/);

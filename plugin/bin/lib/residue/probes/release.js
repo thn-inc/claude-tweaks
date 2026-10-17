@@ -10,6 +10,11 @@ const { makeFinding } = require('../finding');
 
 const RP_MANIFEST_PATH = '.release-please-manifest.json';
 
+// The probe's one network call (#2882's ls-remote) — an unreachable or
+// credential-prompting remote would otherwise hang the whole residue sweep.
+// A timeout returns null through the runner, which is the local-only fallback.
+const LS_REMOTE_TIMEOUT_MS = 10000;
+
 // Both operands "X.Y.Z" strings — true when a >= b. Deliberately not a full
 // semver comparator (no pre-release/build metadata) — v* tags and CHANGELOG
 // headings in this codebase's convention are always bare three-part versions.
@@ -71,9 +76,28 @@ function probeRelease({ scope, run } = {}) {
     return { ran: false, reason: 'could not read CHANGELOG.md or the v* tag list at HEAD', findings: [] };
   }
 
-  const tags = tagList.split('\n').map((t) => t.trim()).filter(Boolean)
-    .map((t) => t.replace(/^v/, ''))
-    .filter((v) => /^\d+\.\d+\.\d+$/.test(v) && versionGte(v, anchor));
+  // Read remote tags to union with local tags. If remote read fails, fall back to local only.
+  let reason = null;
+  const remoteTagsOutput = run(['git', 'ls-remote', '--tags', 'origin', 'v*'], { timeout: LS_REMOTE_TIMEOUT_MS });
+  let remoteTags = [];
+  if (remoteTagsOutput !== null) {
+    // Format: {sha}\trefs/tags/v{version} or {sha}\trefs/tags/v{version}^{}
+    remoteTags = remoteTagsOutput.split('\n').map((line) => line.trim()).filter(Boolean)
+      .map((line) => line.split('\t')[1]).filter(Boolean)
+      .map((ref) => ref.replace(/^refs\/tags\//, '').replace(/\^{}$/, '').replace(/^v/, ''));
+  } else {
+    reason = 'remote tag list unavailable (git ls-remote failed) — checked local tags only';
+  }
+
+  const localTags = tagList.split('\n').map((t) => t.trim()).filter(Boolean)
+    .map((t) => t.replace(/^v/, ''));
+
+  // The tag → heading check reads local tags only: a remote-only tag newer
+  // than this checkout's CHANGELOG would report a heading HEAD can't have yet.
+  // The remote/local union only clears the heading → tag check below.
+  const inRange = (v) => /^\d+\.\d+\.\d+$/.test(v) && versionGte(v, anchor);
+  const tags = localTags.filter(inRange);
+  const knownTags = [...new Set([...localTags, ...remoteTags])].filter(inRange);
 
   // Both heading grammars a post-bootstrap CHANGELOG can hold, since the very
   // entries this probe checks straddle the boundary: the pre-migration
@@ -89,7 +113,7 @@ function probeRelease({ scope, run } = {}) {
   while ((m = headingRe.exec(changelog))) headings.push(m[1] || m[2] || m[3]);
   const headingsAtOrAfterAnchor = headings.filter((v) => versionGte(v, anchor));
 
-  const tagSet = new Set(tags);
+  const tagSet = new Set(knownTags);
   const headingSet = new Set(headingsAtOrAfterAnchor);
   const findings = [];
 
@@ -104,12 +128,12 @@ function probeRelease({ scope, run } = {}) {
   for (const v of headingsAtOrAfterAnchor) {
     if (!tagSet.has(v)) {
       findings.push(makeFinding({
-        kind: 'release', scope: 'blast-radius', subject: `tag for CHANGELOG entry v${v}`, remedy: 'auto',
+        kind: 'release', scope: 'blast-radius', subject: `tag for CHANGELOG entry v${v}`, remedy: 'record',
         evidence: `CHANGELOG.md has a version heading for ${v} (at or after bootstrap v${anchor}) but no matching v${v} tag exists`,
       }));
     }
   }
-  return { ran: true, reason: null, findings };
+  return { ran: true, reason, findings };
 }
 
 module.exports = { probeRelease, versionGte, bootstrapVersion, RP_MANIFEST_PATH };

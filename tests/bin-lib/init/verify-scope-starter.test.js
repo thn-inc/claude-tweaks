@@ -6,15 +6,19 @@ const path = require('path');
 const M = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'init', 'verify-scope-starter.js');
 const { detectWorkspace, composeStarter, diffAgainstWorkspace, BOOKKEEPING_RULES } = require(M);
 const { readDeclaration } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'declaration.js'));
+const { toPosix } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'shared-primitives.js'));
 
-// An in-memory fs keyed by absolute path; directories are listed from the file map.
+// An in-memory fs keyed by absolute `/`-separated path; directories are listed from the file map.
 // `symlinks` names entries that list as symbolic links (never as directories).
+// Every incoming path is normalized with toPosix first, so the `/`-keyed map
+// answers whatever separator the producer's path.join built with (#2767).
 function memFs(files, symlinks = []) {
   const has = (p) => Object.prototype.hasOwnProperty.call(files, p);
   return {
-    readFileSync: (p) => { if (!has(p)) { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; } return files[p]; },
-    existsSync: (p) => has(p) || Object.keys(files).some((f) => f.startsWith(`${p}/`)),
+    readFileSync: (p) => { p = toPosix(p); if (!has(p)) { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; } return files[p]; },
+    existsSync: (p) => { p = toPosix(p); return has(p) || Object.keys(files).some((f) => f.startsWith(`${p}/`)); },
     readdirSync: (p, opts) => {
+      p = toPosix(p);
       const names = new Set();
       for (const f of Object.keys(files)) if (f.startsWith(`${p}/`)) names.add(f.slice(p.length + 1).split('/')[0]);
       for (const s of symlinks) if (path.posix.dirname(s) === p) names.add(path.posix.basename(s));

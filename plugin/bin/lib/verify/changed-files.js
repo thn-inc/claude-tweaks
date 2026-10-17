@@ -89,7 +89,9 @@ function resolveBase({
 // `git diff --name-status -z`: a flat NUL-delimited stream — "STATUS\0path\0"
 // per ordinary record, or "STATUS\0old\0new\0" for a rename/copy (status
 // starts with R or C). No quoting is applied to paths in -z mode, unlike the
-// default output which C-quotes non-ASCII bytes.
+// default output which C-quotes non-ASCII bytes. A rename's old path is gone
+// from HEAD exactly like a deletion, so both of its paths are changed; a
+// copy's source is untouched, so only the new path is.
 function parseDiffNameStatusZ(raw) {
   const tokens = raw.split('\0');
   const files = [];
@@ -98,6 +100,7 @@ function parseDiffNameStatusZ(raw) {
     const status = tokens[i];
     if (status === '') { i += 1; continue; }
     if (status[0] === 'R' || status[0] === 'C') {
+      if (status[0] === 'R') files.push(tokens[i + 1]);
       files.push(tokens[i + 2]);
       i += 3;
     } else {
@@ -113,7 +116,8 @@ function parseDiffNameStatusZ(raw) {
 // newline/rename-arrow separator is replaced by NUL) — except a rename or
 // copy (R/C anywhere in XY), which is "XY new\0old\0": the NEW path comes
 // first in -z mode, reversed from the "old -> new" order of the default
-// (non-z) porcelain format.
+// (non-z) porcelain format. As in parseDiffNameStatusZ, a rename's old path
+// is changed too; a copy's is not.
 function parseStatusPorcelainZ(raw) {
   const tokens = raw.split('\0');
   const files = [];
@@ -123,6 +127,7 @@ function parseStatusPorcelainZ(raw) {
     if (entry === '') { i += 1; continue; }
     const xy = entry.slice(0, 2);
     files.push(entry.slice(3));
+    if (xy.includes('R')) files.push(tokens[i + 1]);
     i += (xy.includes('R') || xy.includes('C')) ? 2 : 1;
   }
   return files;
@@ -139,6 +144,53 @@ function changedFiles({ base, execImpl = execFileSync }) {
   return { base, files: [...set].sort() };
 }
 
+// `git diff --name-only -z`: one NUL-terminated path per record, no status.
+function parseNameOnlyZ(raw) {
+  return raw.split('\0').filter((p) => p !== '');
+}
+
+// mergeNarrowing (#3072): a --scope run anchored on a full pass that has since
+// merged its integration branch would otherwise select every suite the merged-in
+// files touch, though those files are byte-identical to the integration tip that
+// already passed its own CI. When a merge commit in {anchor}..HEAD has a non-first
+// parent that is an ancestor of {ref}, drop every changed path whose HEAD content
+// equals {ref}'s tip — unless the working tree also changes it. Two rules keep the
+// "own" (kept) set honest: (1) the {ref}..HEAD diff runs with --no-renames —
+// --name-only alone prints only a rename's destination, which would silently drop
+// a path the branch itself deleted after the anchor (a near-copy already present
+// upstream, then a delete, would otherwise read as "unchanged"); (2) every path
+// the branch touched as of the anchor (merge-base(anchor, {ref})..{anchor}) is
+// also kept in "own" even when its HEAD content now equals {ref}'s tip — a merge
+// conflict resolved in {ref}'s favour must not silently drop a file the branch's
+// own verified code depends on. Returns null (no narrowing, today's behavior) when
+// there is no such merge, {ref} does not resolve, or any read above fails: the
+// fallback over-verifies, never under-verifies. resolveBase's anchor-first
+// contract is untouched — this filters its result, it never moves the base.
+function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileSync }) {
+  if (!anchor || !integrationBranch) return null;
+  const ref = preferOriginRef((args) => git(execImpl, args), integrationBranch);
+  const merges = tryGit(execImpl, ['rev-list', '--merges', '--parents', '--end-of-options', `${anchor}..HEAD`]);
+  if (merges === null) return null;
+  const hasMergedRef = merges.split('\n').filter((l) => l.trim() !== '').some((line) => {
+    const otherParents = line.trim().split(/\s+/).slice(2);
+    return otherParents.some((p) => tryGit(execImpl, ['merge-base', '--is-ancestor', '--end-of-options', p, ref]) !== null);
+  });
+  if (!hasMergedRef) return null;
+  const differs = tryGit(execImpl, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', ref, 'HEAD']);
+  if (differs === null) return null;
+  const own = new Set(parseNameOnlyZ(differs));
+  const status = tryGit(execImpl, ['status', '--porcelain', '-z', '--untracked-files=all']);
+  if (status === null) return null;
+  for (const f of parseStatusPorcelainZ(status)) own.add(f);
+  const mb = tryGit(execImpl, ['merge-base', '--end-of-options', anchor, ref]);
+  if (mb === null || mb.trim() === '') return null;
+  const ownAsOfAnchor = tryGit(execImpl, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', mb.trim(), anchor]);
+  if (ownAsOfAnchor === null) return null;
+  for (const f of parseNameOnlyZ(ownAsOfAnchor)) own.add(f);
+  const excluded = files.filter((f) => !own.has(f));
+  return { ref, excluded, files: files.filter((f) => own.has(f)) };
+}
+
 module.exports = {
-  changedFiles, resolveBase, usableAnchor, ChangedFilesError,
+  changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
 };
