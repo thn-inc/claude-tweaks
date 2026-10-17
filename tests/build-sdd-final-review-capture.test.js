@@ -26,7 +26,7 @@ test('dispatch.md: SDD invocation directs the final-review capture before Finish
 function assertFourItems(text) {
   assert.match(text, /the final reviewer's findings verbatim with their severities/);
   assert.match(text, /the reviewed commit SHA \(HEAD when the final review's package was built\) and that package's base commit/);
-  assert.match(text, /the fix wave's commit range \(`FIX_BASE\.\.HEAD`\), or "no fix wave"/);
+  assert.match(text, /the fix wave's commit range \(`FIX_BASE\.\.HEAD`, both ends written as commit SHAs\), or "no fix wave"/);
   assert.match(text, /the scoped re-review's per-finding verdicts verbatim, or "no re-review" when there was no fix wave/);
 }
 
