@@ -165,8 +165,8 @@ Below each row, show the full staged file content for the item so the user can s
 The run shares **one** worktree (see `multi-spec.md`, "Shared worktree"), so the Worktree column names the single shared path once on the first failed/blocked row — there is no per-spec worktree. Under `parallel`, an unmerged wave member's row puts `(branch {name})` in this column instead — its kept branch (`multispec-parallel-waves.md`).
 
 Status values:
-- **failed** — spec hit a HARD-GATE but the run continued (only happens under `keep-going`). Worktree is preserved for inspection.
-- **not-run** — spec was skipped because an earlier spec failed and `keep-going` was not set. No worktree was created.
+- **failed** — spec hit a HARD-GATE. In a sequential run this row exists only under `keep-going`, which continued the run; a failed `parallel` wave member gets it either way. Its worktree or kept branch is preserved for inspection.
+- **not-run** — spec was skipped because an earlier spec failed and `keep-going` was not set. No worktree was created — except for a `parallel` wave sibling that built and tested in its own worktree but was not merged, whose row names its kept branch.
 - **running** (stuck) — spec started but the run never reached `/wrap-up`'s Phase 4 execution step or a HARD-GATE for it (rare; e.g., subagent crash). `manifest.yml`'s status schema (`multi-spec.md`) has no dedicated `incomplete` value and no procedure ever writes one — a crash simply leaves the entry at whatever status it last had, almost always `running`. Treat any spec whose manifest status is still `running` when the console renders as this case.
 
 Populate this footer from `manifest.yml` — any spec with `status: failed`, `not-run`, or still `running` gets a row.

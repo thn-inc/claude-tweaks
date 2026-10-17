@@ -3,7 +3,9 @@
 // Turns the run's in-run blocked-by DAG into ordered waves: longest-path
 // levels, each split so two records sharing a Key Files file path never share
 // a wave — groupByFileOverlap with hub paths NOT exempt, since a widely shared
-// file is exactly what conflicts at merge-back. A record with no Key Files, or
+// file is exactly what conflicts at merge-back. Overlap is transitive: A and C
+// share no file but both share one with B, so all three land in separate waves.
+// A record with no Key Files, or
 // with any bare-directory entry (trailing "/", which groupByFileOverlap never
 // bridges on), cannot be proven independent, so it gets a wave of its own. A
 // wave of one runs exactly as a sequential run does. Execution model:
@@ -40,6 +42,8 @@ function planParallelWaves({ records, numbers }) {
     const members = numbers.filter((n) => level.get(n) === l);
     const known = members.filter(isKnown);
     const groups = groupByFileOverlap(known.map((n) => ({ id: n, keyFiles: keyFilesOf(n) })), { hubPathMinCount: Infinity });
+    // Each group is one overlap component; its members must run apart. Transpose:
+    // wave i takes the i-th member of every group, so independent groups share waves.
     const depth = groups.reduce((max, g) => Math.max(max, g.length), 0);
     for (let i = 0; i < depth; i++) waves.push(known.filter((n) => groups.some((g) => g[i] === n)));
     for (const n of members) if (!isKnown(n)) waves.push([n]);

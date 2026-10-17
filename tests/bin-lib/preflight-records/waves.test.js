@@ -46,6 +46,16 @@ test('a record with a bare-directory Key Files entry gets a wave of its own', ()
   assert.deepEqual(planParallelWaves({ records, numbers: [1, 2, 3] }).waves, [[3], [1], [2]]);
 });
 
+test('a level whose records all lack Key Files runs them one per wave, in run order', () => {
+  const records = { 1: rec([], []), 2: rec([], ['lib/']), 3: rec([], []) };
+  assert.deepEqual(planParallelWaves({ records, numbers: [1, 2, 3] }), { waves: [[1], [2], [3]], parallel: false });
+});
+
+test('overlap is transitive: two records sharing no file are still split through a third', () => {
+  const records = { 1: rec([], ['a.js']), 2: rec([], ['a.js', 'c.js']), 3: rec([], ['c.js']), 4: rec([], ['d.js']) };
+  assert.deepEqual(planParallelWaves({ records, numbers: [1, 2, 3, 4] }).waves, [[1, 4], [2], [3]]);
+});
+
 test('a blocker outside the run does not delay a record', () => {
   const records = { 1: rec([99], ['a.js']), 2: rec([], ['b.js']) };
   assert.deepEqual(planParallelWaves({ records, numbers: [1, 2] }).waves, [[1, 2]]);

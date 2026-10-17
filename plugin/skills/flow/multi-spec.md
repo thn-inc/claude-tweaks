@@ -1,6 +1,6 @@
 # Multi-Spec Sequential Flow
 
-When multiple records are provided (e.g., `#42,#45,#48`), flow runs each one's pipeline **sequentially** in one terminal — see `SKILL.md`'s Input resolution for how each form resolves. Everything below is keyed by `{N}`, a record id.
+When multiple records are provided (e.g., `#42,#45,#48`), flow runs each one's pipeline **sequentially** in one terminal (except under the opt-in `parallel` token, step 4b) — see `SKILL.md`'s Input resolution for how each form resolves. Everything below is keyed by `{N}`, a record id.
 
 ## Validation
 
@@ -13,7 +13,7 @@ Before starting, validate the list:
 
 > **Parallel execution:** frontmatter/record reads across N targets (step 3) are independent — run concurrently.
 
-3. **Pre-flight** — collect each target's set from `materialize.md`'s Resolution (facets + body, read-only): `blocked-by:` dependencies, `surface:`/`design-intent:` via the lift rule, and key files from the body's `### Key Files` subsection. These feed the ordering check, Pipeline Preview, conflict detection (Step 5), and Step 4a's merge-state gate. `bin/preflight-records.js {targets in run order} [--work-links native|body-text] [--repo owner/name] --merge-gate --integration-branch "$INTEGRATION_BRANCH"` mechanizes this step — and Step 5's conflict detection and Step 4a's gate, in one call, never a second invocation — printing `{records, overlapGroups, workLinks, mergeGate}` (exit 0 success, 1 any fetch failed with every failing record named, 2 malformed); `$INTEGRATION_BRANCH` resolves per `_shared/integration-branch.md`; see its `--help` for details.
+3. **Pre-flight** — collect each target's set from `materialize.md`'s Resolution (facets + body, read-only): `blocked-by:` dependencies, `surface:`/`design-intent:` via the lift rule, and key files from the body's `### Key Files` subsection. These feed the ordering check, Pipeline Preview, conflict detection (Step 5), and Step 4a's merge-state gate. `bin/preflight-records.js {targets in run order} [--work-links native|body-text] [--repo owner/name] --merge-gate --integration-branch "$INTEGRATION_BRANCH"` mechanizes this step — and Step 5's conflict detection and Step 4a's gate, in one call, never a second invocation — printing `{records, overlapGroups, workLinks, mergeGate}` (exit 0 success, 1 any fetch failed with every failing record named, 2 malformed or a `--waves` dependency cycle); `$INTEGRATION_BRANCH` resolves per `_shared/integration-branch.md`; see its `--help` for details.
 4. **Dependency-aware ordering** — see "Dependency-aware ordering" below. Topologically sort and reconcile with the user's order.
 4a. **Merge-state gate** — a target demanding an in-run prerequisite already be merged to the integration branch is split out before claiming, never asked; see `multispec-merge-gate.md` in this skill's directory.
 4b. **Parallel waves (`parallel` only)** — add `--waves` to step 3's call and plan independent-record waves from this DAG; see `multispec-parallel-waves.md`.
