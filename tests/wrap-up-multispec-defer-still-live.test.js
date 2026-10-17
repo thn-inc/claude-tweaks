@@ -24,6 +24,10 @@ function live() {
   return fs.readFileSync(FILE, 'utf8');
 }
 
+function engineSource() {
+  return fs.readFileSync(ENGINE, 'utf8');
+}
+
 function deferParagraph(text) {
   const matches = text.split(/\r?\n\r?\n/).filter((p) => p.startsWith('**MULTISPEC_REVIEW_DEFER branch:**'));
   assert.strictEqual(matches.length, 1, 'expected exactly one MULTISPEC_REVIEW_DEFER branch paragraph');
@@ -75,7 +79,7 @@ function assertDeferredRow(src, name) {
 }
 
 test('engine-verify.js skips run-dir-archived and worktree-removed with the deferred detail, and renders skip cells with it', () => {
-  const src = fs.readFileSync(ENGINE, 'utf8');
+  const src = engineSource();
   assertDeferredRow(src, 'run-dir-archived');
   assertDeferredRow(src, 'worktree-removed');
   assert.ok(
@@ -85,7 +89,7 @@ test('engine-verify.js skips run-dir-archived and worktree-removed with the defe
 });
 
 test('the per-check pin goes red when only run-dir-archived loses its skip line (same helper, in-memory copy)', () => {
-  const src = fs.readFileSync(ENGINE, 'utf8');
+  const src = engineSource();
   const body = checkBody(src, 'run-dir-archived');
   const skipLine = `if (deferred.has('run-dir-archival')) return { result: 'skip', detail: 'deferred to parent console' };`;
   assert.ok(body.includes(skipLine), 'control precondition: the run-dir-archived skip line is in its body');
