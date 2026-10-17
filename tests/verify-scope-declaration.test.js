@@ -16,12 +16,19 @@ const { selectScope } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 've
 const { BOOKKEEPING_RULES } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'init', 'verify-scope-starter.js'));
 const STAMP = { sha: 'a'.repeat(40), fullSha: 'a'.repeat(40), scope: 'full' };
 
-test('this repo declares its own verify scope and it passes readDeclaration (#1924 AC5)', () => {
+test('this repo declares its own verify scope and it passes readDeclaration (#1924 AC5, #3337)', () => {
   assert.ok(fs.existsSync(DECL), 'missing .claude-tweaks/verify-scope.json');
   const r = readDeclaration(DECL);
   assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
-  assert.deepStrictEqual(r.decl.suites, ['tests']);
-  for (const rule of r.decl.rules) assert.ok(rule.suites === '*' || (Array.isArray(rule.suites) && rule.suites.length === 0), `rule ${rule.match} must be "*" or []`);
+  assert.deepStrictEqual(r.decl.suites, ['tests', 'journeys']);
+  assert.strictEqual(r.decl.checks.tests.tests, 'npm test');
+  for (const rule of r.decl.rules) {
+    if (rule.match === 'docs/journeys/**') {
+      assert.deepStrictEqual(rule.suites, ['journeys'], 'docs/journeys/** maps to the journeys suite only');
+      continue;
+    }
+    assert.ok(rule.suites === '*' || (Array.isArray(rule.suites) && rule.suites.length === 0), `rule ${rule.match} must be "*" or []`);
+  }
   for (const rule of r.decl.rules) {
     if (/^(plugin|tests|tools)\//.test(rule.match)) assert.strictEqual(rule.suites, '*', `${rule.match} must map to every suite`);
   }
@@ -36,6 +43,22 @@ test('a ledger-row delta resolves to none; a skill-prose delta resolves to full 
   assert.strictEqual(sel(['plugin/bin/verify.js', 'docs/plans/x-ledger.md']).mode, 'full');
   assert.strictEqual(sel(['docs/skill-graph.md']).mode, 'full');
   assert.deepStrictEqual(sel(['docs/skill-graph.md']).unmatched, ['docs/skill-graph.md']);
+});
+
+test('a journey-only delta runs only the journeys suite; a mixed delta stays full (#3337)', () => {
+  const { decl } = readDeclaration(DECL);
+  const sel = (files) => selectScope({ decl, files, stamp: STAMP });
+  const journeyOnly = sel(['docs/journeys/recover-from-a-dispatch-config-deny-3225.md']);
+  assert.strictEqual(journeyOnly.mode, 'scoped');
+  assert.deepStrictEqual(journeyOnly.suites, ['journeys']);
+  assert.deepStrictEqual(journeyOnly.unmatched, []);
+  assert.strictEqual(journeyOnly.static, false);
+  assert.strictEqual(sel(['docs/journeys/a.md', 'docs/plans/x-ledger.md']).mode, 'scoped');
+  assert.strictEqual(sel(['docs/journeys/a.md', 'plugin/bin/verify.js']).mode, 'full');
+  const files = decl.checks.tests.journeys.split(/\s+/).filter((t) => t.startsWith('tests/'));
+  assert.ok(files.length > 0, 'journeys suite names no test files');
+  for (const f of files) assert.ok(fs.existsSync(path.join(REPO_ROOT, f)), `journeys suite names a missing file: ${f}`);
+  assert.ok(decl.retry.journeys && decl.retry.journeys.includes('{file}'), 'journeys suite needs a retry template for baseline adjudication');
 });
 
 test('every rule with suites:[] is one of the bookkeeping-only globs — no source tree can ever be mapped to nothing (#1924 A8)', () => {
