@@ -22,8 +22,10 @@ That procedure returns one of three outcomes and this step handles each:
 - **Contract found** — continue below.
 
 **Resolve the record.** The seed belongs on the work record, not in a cache. Read `record:` from the
-materialized header of `<spec>` (`{run-dir}/work/{n}-spec.md`, or its `spec-{N}/` equivalent —
-`skills/flow/materialize.md` owns that format). If `<spec>` is not a materialized record file — a
+materialized header of `<spec>` (`{run-dir}/work/{n}-spec.md` when present, else the worktree mirror
+`{worktree}/.claude-tweaks/pipelines/{run-id}/work/{n}-spec.md` — resolved as
+`_shared/design-wrapper-handling.md`'s `--surface` bullet describes — or the `spec-{N}/` equivalent of
+either; `skills/flow/materialize.md` owns that format). If `<spec>` is not a materialized record file — a
 path-driven or standalone `/claude-tweaks:review` with no record behind it — there is no record to
 write to: skip the write, carry the contract into the return, and stop here. That is not a failure;
 it is a review of work that no record is tracking.
