@@ -512,10 +512,10 @@ test('prose-twin conformance: both prose files list the same signals and guard',
     'Signal-list sentences must be identical between prose files',
   );
 
-  // Assert the sentence names five signals including the size signal
+  // Assert the sentence names four signals including the size signal
   assert.ok(
-    harnessSignalList.includes('five signals'),
-    'Signal list must explicitly mention "five signals"',
+    harnessSignalList.includes('four signals'),
+    'Signal list must explicitly mention "four signals"',
   );
   assert.ok(
     harnessSignalList.includes('skill file far larger than its siblings'),
@@ -540,9 +540,9 @@ test('prose-twin conformance: both prose files list the same signals and guard',
 // Prose ↔ code pin: the signal list both judging procedures restate must name
 // exactly the signals auditText returns, so a signal added to or removed from
 // bloat.js without the prose following fails here rather than at the next audit.
-// The frozen excerpt is the pre-#3308 sentence; it must fail against today's code.
+// The frozen excerpt is the pre-#3310 sentence; it must fail against today's live signal set.
 const SIGNAL_COUNT_WORDS = { three: 3, four: 4, five: 5, six: 6, seven: 7 };
-const FOUR_SIGNAL_EXCERPT = 'Four signals: files over the 50 KB soft ceiling, Anti-Pattern rows more than twice the corpus median byte length, provenance-narration phrasing (text addressed to whoever edited the file rather than to the model running it), and adjacent table rows whose right-hand cells are identical or near-identical.';
+const FIVE_SIGNAL_EXCERPT = 'It reports five signals: files over the 50 KB soft ceiling, Anti-Pattern rows more than twice the corpus median byte length, provenance-narration phrasing (text addressed to whoever edited the file rather than to the model running it), adjacent table rows whose right-hand cells are identical or near-identical, and a skill file far larger than its siblings.';
 
 function proseSignalCount(text) {
   const m = text.match(/(\w+) signals: ([^.]+)\./i);
@@ -552,17 +552,51 @@ function proseSignalCount(text) {
 }
 
 test('prose signal list names exactly the signals auditText returns', () => {
+  // overCeiling is suppressed at both call sites with { ceiling: Infinity } (#3310);
+  // #3311 deletes the field itself.
   const codeSignals = Object.keys(auditText('', { bytes: 0, rowMedian: null, sizeThreshold: 0 }))
-    .filter((k) => k !== 'bytes' && k !== 'headroom');
+    .filter((k) => k !== 'bytes' && k !== 'headroom' && k !== 'overCeiling');
   for (const rel of [['_shared', 'harness-health-analysis.md'], ['harness-health', 'judge-procedure.md']]) {
     const got = proseSignalCount(fs.readFileSync(path.join(REPO, 'plugin', 'skills', ...rel), 'utf8'));
     assert.ok(got, `${rel.join('/')} must contain a signal-list sentence`);
     assert.strictEqual(got.stated, codeSignals.length, `${rel.join('/')} states the wrong signal count`);
     assert.strictEqual(got.items, codeSignals.length, `${rel.join('/')} lists the wrong number of signals`);
   }
-  const frozen = proseSignalCount(FOUR_SIGNAL_EXCERPT);
+  const frozen = proseSignalCount(FIVE_SIGNAL_EXCERPT);
   assert.notStrictEqual(frozen.stated, codeSignals.length);
   assert.notStrictEqual(frozen.items, codeSignals.length);
+});
+
+test('both bloat-scan call sites suppress the ceiling signal, and suppress size outliers only for non-skill targets (#3310)', () => {
+  for (const rel of [['_shared', 'harness-health-analysis.md'], ['harness-health', 'judge-procedure.md']]) {
+    const text = fs.readFileSync(path.join(REPO, 'plugin', 'skills', ...rel), 'utf8');
+    const label = rel.join('/');
+    assert.match(text, /kind === 'skill' \? \{ ceiling: Infinity \} : \{ ceiling: Infinity, sizeOutlier: false \}/, `${label}: bloat call must pick options by kind`);
+    assert.match(text, /bloatReport\(target, corpus, opts\)/, `${label}: bloat call must pass opts`);
+    assert.doesNotMatch(text, /soft ceiling/, `${label}: no soft-ceiling signal`);
+    assert.doesNotMatch(text, /\*\*Over the ceiling\.\*\*/, `${label}: guard bullet must be the rail bullet`);
+    assert.match(text, /- \*\*Over the rail\.\*\* /, `${label}: rail guard bullet`);
+  }
+  const analysis = fs.readFileSync(path.join(REPO, 'plugin', 'skills', '_shared', 'harness-health-analysis.md'), 'utf8');
+  assert.match(analysis, /composedRailViolations/, 'check 10 must go through rail.js');
+  assert.doesNotMatch(analysis, /overComposedCeiling|CEILING_BYTES|COMPOSED_STEP_EXCEPTIONS/);
+  const skill = fs.readFileSync(path.join(REPO, 'plugin', 'skills', 'harness-health', 'SKILL.md'), 'utf8');
+  assert.doesNotMatch(skill, /overComposedCeiling/);
+  assert.match(skill, /`rail:` suite/);
+});
+
+test('a 60,000 B skill target scanned with { ceiling: Infinity } prints no soft-ceiling line (#3310 AC3)', () => {
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'bloat-3310-'));
+  try {
+    const target = path.join(dir, 'big.md');
+    fs.writeFileSync(target, `# Big\n\n${'word '.repeat(12000)}`);
+    const sibling = path.join(dir, 'small.md');
+    fs.writeFileSync(sibling, '# Small\n\ntext\n');
+    assert.ok(fs.statSync(target).size >= 60000);
+    assert.ok(!bloatReport(target, [sibling], { ceiling: Infinity }).includes('soft ceiling'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('auditCorpus runs over the whole live skill corpus and reports a usable baseline', () => {
