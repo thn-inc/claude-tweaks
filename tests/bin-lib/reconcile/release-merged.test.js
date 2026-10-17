@@ -754,9 +754,28 @@ test('prClosesIssue: #N is matched on a word boundary', () => {
 test('prClosesIssue: a closing keyword must start its line (prose mention never matches)', () => {
   assert.equal(prClosesIssue({ closingIssuesReferences: [] }, 3311, 'acme/w', 'this change fixes #3311 partially\n'), false);
 });
-test('prClosesIssue: no closingIssuesReferences array -> undefined unless the commit message closes it (AC4.1)', () => {
+test('prClosesIssue: no closingIssuesReferences array -> undefined, even when the commit message closes it (AC4)', () => {
   assert.equal(prClosesIssue({ state: 'MERGED', number: 7 }, 7, 'acme/w'), undefined);
-  assert.equal(prClosesIssue({ state: 'MERGED', number: 7 }, 7, 'acme/w', 'Fixes #7'), true);
+  assert.equal(prClosesIssue({ state: 'MERGED', number: 7 }, 7, 'acme/w', 'Fixes #7'), undefined);
+  assert.equal(prClosesIssue({ state: 'MERGED' }, 3311, 'acme/w', 'Fixes #3311\n'), undefined);
+});
+test('prClosesIssue: a keyword and its #N on different lines never match', () => {
+  assert.equal(prClosesIssue({ closingIssuesReferences: [] }, 3311, 'acme/w', 'Fixes\n#3311'), false);
+});
+test('prClosesIssue: a long run of blank lines before the keyword stays linear', () => {
+  // The blank run must be followed by a non-matching line: a greedy `\s*` that goes on to match
+  // would finish at once, so only a failing tail exposes the quadratic backtracking.
+  const message = `${'\n'.repeat(40000)}x\nFixes #3311`;
+  const start = performance.now();
+  const verdict = prClosesIssue({ closingIssuesReferences: [] }, 3311, 'acme/w', message);
+  const elapsed = performance.now() - start;
+  assert.equal(verdict, true);
+  assert.ok(elapsed < 200, `matching took ${elapsed.toFixed(0)}ms — the keyword regex must not backtrack across newlines`);
+});
+test('prClosesIssue: the repo slug compares case-insensitively', () => {
+  const mixed = { number: 3311, repository: { name: 'W', owner: { login: 'ACME' } } };
+  assert.equal(prClosesIssue({ closingIssuesReferences: [mixed] }, 3311, 'acme/w'), true);
+  assert.equal(prClosesIssue({ closingIssuesReferences: [ref(3311)] }, 3311, 'ACME/W'), true);
 });
 
 // #3412: end-to-end — a MERGED PR is release evidence only when it closes THIS
@@ -765,8 +784,10 @@ test('prClosesIssue: no closingIssuesReferences array -> undefined unless the co
 // claim issue-3311.json, and a `gh` wrapper answering `pr list` with the
 // merged PR. `commit` is the ghApi fake's answer for '/commits/a39cd61' (a
 // function that throws marks the fetch as unreachable); `putExit` is the
-// tombstone PUT's exit code (1 = no release must happen).
-async function run3348Scenario({ refs, commit, issueState, putExit }) {
+// tombstone PUT's exit code — 0 in the keep-the-claim scenarios so a wrongly
+// attempted release would succeed and show up in `released` / `labelDeletes`.
+// `refs` undefined omits closingIssuesReferences; `withMergeCommit: false` omits mergeCommit.
+async function run3348Scenario({ refs, commit, issueState, putExit, withMergeCommit = true }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-3348-')));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
@@ -807,7 +828,7 @@ async function run3348Scenario({ refs, commit, issueState, putExit }) {
 
   const prJson = JSON.stringify([{
     number: 3348, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
-    mergeCommit: { oid: 'a39cd61' }, closingIssuesReferences: refs,
+    mergeCommit: withMergeCommit ? { oid: 'a39cd61' } : undefined, closingIssuesReferences: refs, // undefined fields are omitted from the JSON
   }]);
   const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-3348-ghwrap-'));
   const wrapperPath = path.join(wrapperDir, 'gh');
@@ -841,7 +862,7 @@ test('releaseMerged: AC1.1 AC5.1 the #3348 shape — merged PR closing other rec
     refs: [ref(3306), ref(3307)],
     commit: commitBody('feat: x (#3306)\n\nFixes #3306\nFixes #3307\n'),
     issueState: 'OPEN\n',
-    putExit: 1, // a tombstone write must never be attempted
+    putExit: 0, // a wrongly attempted release would succeed, making released/labelDeletes falsifiable
   });
   assert.equal(result.released.length, 0, `merged-not-closing must not release, got ${JSON.stringify(result)}`);
   assert.ok(result.skipped.some((s) => s.issueNumber === 3311 && s.reason === 'pr-merged-not-closing'), JSON.stringify(result.skipped));
@@ -868,7 +889,7 @@ test('releaseMerged: references present, commit fetch fails -> still decided fro
     refs: [ref(3306), ref(3307)],
     commit: () => ({ stdout: null, failure: 'network-failure' }),
     issueState: 'OPEN\n',
-    putExit: 1,
+    putExit: 0,
   });
   assert.equal(result.released.length, 0);
   const skip = result.skipped.find((s) => s.issueNumber === 3311);
@@ -900,4 +921,31 @@ test('releaseMerged: references already naming the issue skip the commit fetch e
   });
   assert.equal(result.released.length, 1, JSON.stringify(result));
   assert.equal(reads.commit, 0);
+});
+
+test('releaseMerged: a merged PR with no closingIssuesReferences array never releases and fetches no commit (AC4)', async () => {
+  const { result, labelDeletes, reads } = await run3348Scenario({
+    refs: undefined,
+    commit: () => { throw new Error('the commit fetch must not be reached'); },
+    issueState: 'OPEN\n',
+    putExit: 0,
+  });
+  assert.equal(result.released.length, 0, JSON.stringify(result));
+  assert.ok(result.skipped.some((s) => s.issueNumber === 3311 && s.reason === 'pr-merged-closing-unknown'), JSON.stringify(result.skipped));
+  assert.equal(reads.commit, 0);
+  assert.equal(labelDeletes.length, 0);
+});
+
+test('releaseMerged: merged-not-closing references and no mergeCommit field -> pr-merged-not-closing without a commit fetch', async () => {
+  const { result, labelDeletes, reads } = await run3348Scenario({
+    refs: [ref(3306), ref(3307)],
+    commit: () => { throw new Error('the commit fetch must not be reached'); },
+    issueState: 'OPEN\n',
+    putExit: 0,
+    withMergeCommit: false,
+  });
+  assert.equal(result.released.length, 0, JSON.stringify(result));
+  assert.ok(result.skipped.some((s) => s.issueNumber === 3311 && s.reason === 'pr-merged-not-closing'), JSON.stringify(result.skipped));
+  assert.equal(reads.commit, 0);
+  assert.equal(labelDeletes.length, 0);
 });

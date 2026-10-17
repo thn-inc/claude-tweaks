@@ -1,5 +1,8 @@
 // bin/lib/reconcile/release-merged.js — convergence check 3: release claims
-// and remove the `bot:in-progress` label on merged-PR evidence. Iterates the
+// and remove the `bot:in-progress` label when the run's PR merged AND closes
+// the claimed issue (a closing reference or a merge-commit closing keyword) or
+// the issue itself is closed; a merged PR that does not close it keeps the
+// claim until the issue closes or the TTL lapses (#3412). Iterates the
 // open claim blobs themselves — `claims/issue-{n}.json` names its issue
 // number and `runId`, and `runId` -> this repo's own run-state.json -> branch
 // -> PR state IS the branch<->issue join, no naming convention needed (see
@@ -27,31 +30,35 @@ const execFileAsync = promisify(execFile);
 
 // Does a MERGED PR actually close issue `issueNumber` in `repoSlug`? Pure.
 // Signals: the PR's `closingIssuesReferences` (matched on number AND
-// `owner/name`, so a cross-repo reference never counts), or a closing-keyword
-// line in the merge commit message (the squash/merge body GitHub reads).
+// `owner/name`, case-insensitively as GitHub names are, so a cross-repo
+// reference never counts), or a closing-keyword line in the merge commit
+// message (the squash/merge body GitHub reads).
 //   true      — a closing reference or a closing-keyword line names the issue
 //   false     — the references array is present and neither signal matches
-//   undefined — no references array (field unavailable) and no keyword match:
-//               "unknown", never "does not close" (#3412)
+//   undefined — no references array (field unavailable): "unknown", never
+//               "does not close" and never "closes" — the commit message is
+//               not consulted, since without the array the verdict must fail
+//               closed (#3412, AC4)
 // The regex carries the `g` flag, so iterate `matchAll` — never `.test()` on
 // the shared instance, whose stale `lastIndex` would make results order-dependent.
-const CLOSING_KEYWORD_RE = /^\s*(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved):?\s+#(\d+)\b/gim;
+// Whitespace is `[ \t]`, never `\s`: under `/m` `\s` crosses newlines, which is
+// quadratic on blank-line runs and lets `Fixes\n#N` match.
+const CLOSING_KEYWORD_RE = /^[ \t]*(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved):?[ \t]+#(\d+)\b/gim;
 
 function prClosesIssue(prState, issueNumber, repoSlug, mergeCommitMessage) {
-  const refs = prState && Array.isArray(prState.closingIssuesReferences)
-    ? prState.closingIssuesReferences
-    : null;
-  if (refs && refs.some((entry) => {
+  if (!prState || !Array.isArray(prState.closingIssuesReferences)) return undefined;
+  const slug = String(repoSlug).toLowerCase();
+  if (prState.closingIssuesReferences.some((entry) => {
     const owner = entry && entry.repository && entry.repository.owner;
     return Boolean(owner) && Number(entry.number) === issueNumber
-      && `${owner.login}/${entry.repository.name}` === repoSlug;
+      && `${owner.login}/${entry.repository.name}`.toLowerCase() === slug;
   })) return true;
   if (typeof mergeCommitMessage === 'string') {
     for (const m of mergeCommitMessage.matchAll(CLOSING_KEYWORD_RE)) {
       if (Number(m[1]) === issueNumber) return true;
     }
   }
-  return refs ? false : undefined;
+  return false;
 }
 
 // One claim's classified state + the branch's PR state (+ optionally the
@@ -503,6 +510,7 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
   // gates the issue-state fetch on it.
   const isMerged = (c) => c.prState && typeof c.prState === 'object' && c.prState.state === 'MERGED';
   const needCommit = candidates.filter((c) => isMerged(c)
+    && Array.isArray(c.prState.closingIssuesReferences)
     && prClosesIssue(c.prState, c.issueNumber, repoSlug) !== true
     && c.prState.mergeCommit && c.prState.mergeCommit.oid);
   const commitReads = await runWithConcurrency(
