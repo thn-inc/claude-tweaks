@@ -316,7 +316,7 @@ const WIDE_SAME_A = 'result.id is read inside the multi-line createIssue call ar
 const WIDE_SAME_B = 'result.id read inside the multi-line createIssue argument after the external gh api side effect — a throw from the side effect skips the read and the error is swallowed';
 // A different issue inside the same statement.
 const WIDE_DIFFERENT = 'The labels array passed to createIssue is not deduplicated, so a repeated label produces a 422 from the API';
-// loosely worded; clears the substance threshold.
+// The same issue, loosely worded; clears SUBSTANCE_SIMILARITY_MIN.
 const LOOSE_A = 'Error from the gh api call is swallowed because the catch returns null without logging';
 const LOOSE_B = 'The catch block around the gh api call returns null and drops the error silently';
 
