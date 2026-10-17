@@ -120,3 +120,46 @@ test('AC1.2 the documented spec-status call, extracted and run, records B not-ru
     fs.rmSync(repo, { recursive: true, force: true });
   }
 });
+
+// Task 2 (#3033): the wrap-up detect-from-context block and the skill-graph
+// wrap-up → /flow row point at the Mixed execution convention. The frozen
+// pre-change bytes (473afed84) back each live pin with a control.
+const WRAPUP_LIVE = read('plugin/skills/wrap-up/SKILL.md');
+const GRAPH_LIVE = read('docs/skill-graph.md');
+
+const detectBlock = (text) =>
+  sectionBetween(text, /^#### If no arguments, detect from context:\r?$/m, /^\| Type \|/m);
+
+const flowRow = (text) => {
+  const sec = sectionBetween(text, /^## wrap-up\r?$/m, /^## Provenance\r?$/m);
+  const row = sec.split(/\r?\n/).find((l) => l.startsWith('| `/flow` |'));
+  assert.ok(row, 'wrap-up section must have a /flow row');
+  return row;
+};
+
+const WRAPUP_PRE = `#### If no arguments, detect from context:
+
+1. Check recent git commits and the current branch name for record references
+2. Review conversation for references to records or features
+3. Check for a materialized header (\`work/*-spec.md\` in the run dir or its worktree mirror) — record mode
+
+| Type | Characteristics | Primary Focus |
+`;
+
+const GRAPH_PRE = '## wrap-up\n\n' + `| \`/flow\` | Invoked BY \`/flow\` as the pipeline's final step; flow waits for \`/wrap-up\`'s Phase 4 Review Console before archiving the run directory. Multi-spec runs set \`MULTISPEC_REVIEW_DEFER=1\` so per-spec wrap-ups defer to flow's consolidated console, and \`MULTISPEC_CURATION_DEFER=1\` so per-spec Phase 1 Reflect and Phase 2 registry curation defer to flow's batch-scope pass (\`flow/multispec-batch-curation.md\`). |` + '\n\n## Provenance\n';
+
+test('AC1.3 wrap-up detect-from-context block points at the Mixed execution section', () => {
+  assert.match(collapse(detectBlock(WRAPUP_LIVE)), /multi-spec\.md`?'s "Mixed execution" section/);
+});
+
+test('AC2.1 control: the pre-change detect-from-context block does not point at it', () => {
+  assert.doesNotMatch(collapse(detectBlock(WRAPUP_PRE)), /multi-spec\.md`?'s "Mixed execution" section/);
+});
+
+test('AC1.4 skill-graph wrap-up → /flow edge names the mixed-execution convention', () => {
+  assert.match(flowRow(GRAPH_LIVE), /Mixed execution convention/);
+});
+
+test('AC2.1 control: the pre-change wrap-up → /flow edge does not name it', () => {
+  assert.doesNotMatch(flowRow(GRAPH_PRE), /Mixed execution convention/);
+});
