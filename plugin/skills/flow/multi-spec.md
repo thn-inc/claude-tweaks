@@ -151,10 +151,9 @@ When `worktree` is specified, a sequential run uses **one shared worktree for th
    `spec-{N}/` dir), via `/claude-tweaks:ledger`'s create operation — `{feature}` is the shared
    spec-slug (`spec-{N1}-{N2}…`, the same key `wrap-up/cleanup-procedures.md`'s multi-spec ledger
    caveat uses) — logged to `{parent}/decisions.md` as
-   `AUTO {time} — flow: created open-items ledger {path}. Reversibility: n/a.` When the run's
-   active ledger already exists (resume), Create is a no-op and no creation line is logged. Either
-   way, append any ledger-bound note Step 2 held as `ops` rows right after, then commit a
-   `docs/plans/` ledger by its explicit path (untracked, it fails a later Adopt-or-create re-check). This is the
+   `AUTO {time} — flow: created open-items ledger {path}. Reversibility: n/a.` — then follow
+   `/claude-tweaks:ledger` Create's "At a post-worktree creation point" paragraph (resume no-op,
+   held Step 2 notes appended, ledger committed by explicit path). This is the
    multi-spec run's single creation point — `build/worktree-setup.md` Step 4.6 skips under
    `MULTISPEC_SHARED_WORKTREE=1` for that reason.
 2. **Per-record builds skip creation** — `/flow` exports `MULTISPEC_SHARED_WORKTREE=1` and runs every record's pipeline inside the shared worktree. Each per-record `/build` Common Step 1 detects it is already inside an isolated worktree (superpowers Step 0: `GIT_DIR != GIT_COMMON`, reinforced by `MULTISPEC_SHARED_WORKTREE`) and **skips worktree creation**, committing into the shared branch. Every record — the first included — materializes as part of its own build step, writing `{parent}/spec-{N}/work/{N}-spec.md` directly into the already-existing shared worktree. This is just `materialize.md`'s worktree-first ordering applied once at the run level instead of once per record: the worktree exists before any materialization, so no record is a special case. It does NOT call `/superpowers:finishing-a-development-branch` between records.

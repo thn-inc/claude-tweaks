@@ -28,9 +28,7 @@ test('AC1.1: build/worktree-setup.md Step 4.6 creates the ledger after the workt
   assert.match(text, /only when `\$PIPELINE_RUN_DIR` is already set/);
   assert.match(text, /`MULTISPEC_SHARED_WORKTREE` is not set/);
   assert.match(text, /AUTO \{time\} — flow: created open-items ledger \{path\}\. Reversibility: n\/a\./);
-  assert.match(text, /Either way — created now or found — append any ledger-bound note `\/flow` Step 2 held/);
-  assert.match(text, /then commit a `docs\/plans\/` ledger by its explicit path/);
-  assert.match(text, /When this run's active ledger already exists \(a resumed run — resolved per `_shared\/ledger-format\.md`'s resolution rule/);
+  assert.match(text, /Then follow `\/claude-tweaks:ledger` Create's "At a post-worktree creation point" paragraph/);
   const recordAt = text.indexOf('4.5. **Record the assignment**');
   const createAt = text.indexOf('4.6. **Create the open-items ledger');
   assert.notStrictEqual(recordAt, -1, 'Step 4.5 marker must exist');
@@ -65,6 +63,14 @@ test('ledger/SKILL.md Create names every creation site and the re-keyed location
   assert.match(text, /\/claude-tweaks:build/);
   assert.doesNotMatch(text, /or an already-isolated session/);
   assert.match(text, /this run's active ledger already exists \(resuming a pipeline — resolved per `_shared\/ledger-format\.md`'s resolution rule/);
+  assert.match(text, /\*\*At a post-worktree creation point\*\*/);
+  assert.match(text, /Either way — created now or found — append any ledger-bound note `\/flow` Step 2 held/);
+  assert.match(text, /then commit a `docs\/plans\/` ledger by its explicit path/);
+});
+
+test('_shared/worktree-setup.md states that a tracked write after Adopt-or-create must be committed', () => {
+  const text = read('_shared/worktree-setup.md');
+  assert.match(text, /a step that writes a tracked-path file after this gate .* commits it before any later re-check/);
 });
 
 test('go-red proof: the pre-#3036 exception sentence fails the AC2.1 negative assertion', () => {
@@ -83,8 +89,7 @@ test('AC1.1: multi-spec creates one shared ledger at Shared worktree step 1, par
   assert.match(section, /the parent run dir `\{parent\}\/`, exported later as `\$MULTISPEC_PARENT_DIR`/);
   assert.match(section, /spec-\{N1\}-\{N2\}/);
   assert.match(section, /AUTO \{time\} — flow: created open-items ledger \{path\}\. Reversibility: n\/a\./);
-  assert.match(section, /When the run's active ledger already exists \(resume\), Create is a no-op/);
-  assert.match(section, /Either way, append any ledger-bound note Step 2 held as `ops` rows right after, then commit a `docs\/plans\/` ledger by its explicit path/);
+  assert.match(section, /then follow `\/claude-tweaks:ledger` Create's "At a post-worktree creation point" paragraph/);
 });
 
 test('AC4.1: the QA Ledger Check finds the creation line on both the single-spec and multi-spec paths', () => {

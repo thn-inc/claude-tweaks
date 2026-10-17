@@ -64,6 +64,8 @@ File: `docs/plans/YYYY-MM-DD-{feature}-ledger.md` — or, for a run that will ne
 
 If this run's active ledger already exists (resuming a pipeline — resolved per `_shared/ledger-format.md`'s resolution rule, `{run-dir}/ledger.md` first, so a pre-#3036 run-dir ledger is found too), read it and continue from the last item number; create nothing and log no creation line.
 
+**At a post-worktree creation point** (`build/worktree-setup.md` Step 4.6, `flow/multi-spec.md`'s "Shared worktree" step 1 — #3036), the caller logs its creation line only when this call wrote the file. Either way — created now or found — append any ledger-bound note `/flow` Step 2 held (`flow/SKILL.md` Step 1 item 8) as `ops` rows right after, then commit a `docs/plans/` ledger by its explicit path: an untracked file reads as dirty to a later Adopt-or-create re-check (`_shared/worktree-setup.md`'s `git status --porcelain` test), which would abandon the worktree.
+
 ### Add Item
 
 Append a row to the ledger table.
