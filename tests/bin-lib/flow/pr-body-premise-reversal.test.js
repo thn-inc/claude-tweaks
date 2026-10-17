@@ -44,6 +44,15 @@ test('parsePremiseReversals dedupes repeated entries and ignores non-entry text'
   assert.deepEqual(parsePremiseReversals(''), []);
 });
 
+test('a line that only quotes the marker mid-sentence is not read as a reversal', () => {
+  const text = [
+    line('docs sync names the `premise reversed: A → B` marker in README.', 'Common Step 6.5'),
+    line('lens probe logged "premise reversed: X → Y" as a fixture.', 'review'),
+    line('premise reversed: health endpoint → release tag.'),
+  ].join('\n');
+  assert.deepEqual(parsePremiseReversals(text), [{ original: 'health endpoint', replacement: 'release tag' }]);
+});
+
 test('formatReversal joins with a spaced U+2192 arrow', () => {
   assert.equal(formatReversal({ original: 'A', replacement: 'B' }), 'A → B');
   assert.equal(formatReversal({ original: 'A; B', replacement: 'C; D' }), 'A, B → C, D');

@@ -170,11 +170,13 @@ function repairPrBody({ body, runId, fixesLines }) {
 // written through bin/log-decision.js, so every real line carries
 // formatEntry's `- {STATUS} {HH:MM:SS} — {location}: ` prefix and its
 // ` Reversibility: {r}.` suffix. Matched here and nowhere else — a
-// differently-worded line for the same decision is silently missed.
+// differently-worded line for the same decision is silently missed. The
+// marker must open the entry text (right after `{location}: `), so a line
+// that merely quotes it mid-sentence is never read as a reversal.
 const PREMISE_REVERSED_MARKER = 'premise reversed:';
 const REVISION_PREFIX = 'Revised during build:';
 const PREMISE_REVERSED_RE = new RegExp(
-  `^-\\s+[A-Z-]+\\s+\\d{2}:\\d{2}:\\d{2}\\s+—\\s.*?\\b${escapeRegExp(PREMISE_REVERSED_MARKER)}\\s+(.+?)\\s+→\\s+(.+?)\\.?\\s+Reversibility:`
+  `^-\\s+[A-Z-]+\\s+\\d{2}:\\d{2}:\\d{2}\\s+—\\s.*?:\\s+${escapeRegExp(PREMISE_REVERSED_MARKER)}\\s+(.+?)\\s+→\\s+(.+?)\\.?\\s+Reversibility:`
 );
 
 // A `; ` inside a claim is rewritten to `, ` so no written entry contains the

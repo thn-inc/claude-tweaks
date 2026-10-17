@@ -115,7 +115,8 @@ decisions):
 
 `/claude-tweaks:build` logs it whenever the build changes a mechanism the spec described: an
 `ASSUMPTION — verify at build:` probe that came back reversed, or a Spec Step 3 plan departing
-from a spec premise. `{original claim}` must not itself contain ` → `. Its reader is
+from a spec premise. The marker opens the entry's `--text` (a line quoting it mid-sentence is not
+an entry), and `{original claim}` must not itself contain ` → `. Its reader is
 `parsePremiseReversals` (`bin/lib/flow/pr-body.js`). Do not log a differently-worded line for the
 same decision; the refresh would silently miss it.
 
