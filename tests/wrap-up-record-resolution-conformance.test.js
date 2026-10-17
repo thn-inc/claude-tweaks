@@ -58,7 +58,8 @@ test('Section C step 2 is skipped under integration-model: pr-first', () => {
 test('Section C step 2 takes its issue set from wrap-up-pack.json inputs.closingRecords, with the worktree mirror as fallback', () => {
   const block = step2Block();
   assert.match(block, /`\{run-dir\}\/wrap-up-pack\.json`'s `inputs\.closingRecords`/);
-  assert.match(block, /console\.log\(\(\(p\.inputs&&p\.inputs\.closingRecords\)\|\|\[\]\)\.join\(" "\)\)/);
+  assert.match(block, /const c=p\.inputs&&p\.inputs\.closingRecords;if\(!Array\.isArray\(c\)\)process\.exit\(1\);console\.log\(c\.join\(" "\)\)/);
+  assert.match(block, /if \[ -f "\$PACK" \] && CLOSING=\$\(node -e .* "\$PACK" 2>\/dev\/null\); then ISSUES=\(\$CLOSING\) else/);
   assert.match(block, /\{worktree\}\/\.claude-tweaks\/pipelines\/\{run-id\}\/work\/\*-spec\.md/);
 });
 
@@ -153,6 +154,33 @@ test('AC3.1 go-red: the restore check fails on the pre-change step 7, and on a w
 test('the cleanup ordering rule names inputs.closingRecords for the carrier-commit check (#3399)', () => {
   assert.match(collapse(read('plugin/skills/wrap-up/cleanup-procedures.md')), /carrier-commit check reads the run's records from `\$\{RUN_DIR\}\/wrap-up-pack\.json` \(`inputs\.closingRecords`\)/);
 });
-test('Section E produces the pack before item 4 on a cleanup-only run (Review Focus 4)', () => {
-  assert.match(collapse(read('plugin/skills/wrap-up/cleanup-procedures-execution.md')), /A `cleanup-only` run skips Phase 3: when the pack is absent, produce it at the very start of this execution step, before item 4 removes the worktree — `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/wrap-up-pack\.js" --run "\$PIPELINE_RUN_DIR" --only ledger`/);
+test('Section E produces the pack before item 4 whenever it is absent, with the claim probe (Review Focus 4)', () => {
+  const flat = collapse(read('plugin/skills/wrap-up/cleanup-procedures-execution.md'));
+  assert.match(flat, /A `cleanup-only` run skips Phase 3, and Phase 3's pack run can fail: whenever `\{run-dir\}\/wrap-up-pack\.json` is absent at the start of this execution step, produce it before item 4 removes the worktree — `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/wrap-up-pack\.js" --run "\$PIPELINE_RUN_DIR" --only claim`/);
+  assert.doesNotMatch(flat, /--only ledger/);
+});
+test('Section C step 2 no longer calls the pack absent on every cleanup-only run', () => {
+  assert.doesNotMatch(step2Block(), /a `cleanup-only` run skips Phase 3/);
+});
+test('Section E step 7 logs a SKIP when the pack is absent or lacks parkedAtShaping, never a silent skip', () => {
+  const step7 = sectionEStep7(read('plugin/skills/wrap-up/cleanup-procedures-execution.md'));
+  assert.match(step7, /When the pack is still absent after the preamble's production step, or lacks `inputs\.parkedAtShaping`, do not skip silently/);
+  assert.match(step7, /log-decision\.js" --run "\$PIPELINE_RUN_DIR" --status SKIP --section "\/wrap-up" --step "Section E" --text "condition: wrap-up-pack\.json absent or lacks inputs\.parkedAtShaping → fallback: parked restore unverified for #\{issue\}; \/tidy Step 4\.7's backstop re-checks" --reversibility n\/a/);
+  assert.match(step7, /Skip restoration silently when the pack holds no `true` entry/);
+  assertRestoreReadsPack(step7);
+});
+// dispatch/two-call-gate.md item 4's record resolution (#3399 final review)
+const PRE_FIX_TWO_CALL_GATE = "it resolves the run's records (`wrap-up-pack.json`'s `inputs.records`, or the worktree mirror's `work/*-spec.md` when the pack is absent, as it is in a `cleanup-only` run) and treats";
+function assertTwoCallGateNamesClosingRecords(text) {
+  assertNoGateRestatement('two-call-gate.md', text);
+  const flat = collapse(text);
+  assert.match(flat, /resolves the run's records \(`wrap-up-pack\.json`'s `inputs\.closingRecords`/);
+  assert.doesNotMatch(flat, /`inputs\.records`/);
+  assert.doesNotMatch(flat, /as it is in a `cleanup-only` run/);
+}
+test('two-call-gate.md names inputs.closingRecords for item 4 and does not call the pack absent in cleanup-only', () => {
+  assertTwoCallGateNamesClosingRecords(read('plugin/skills/dispatch/two-call-gate.md'));
+});
+test('two-call-gate go-red: the check fails on the pre-fix inputs.records text', () => {
+  assert.throws(() => assertTwoCallGateNamesClosingRecords(PRE_FIX_TWO_CALL_GATE));
 });

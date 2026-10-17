@@ -152,7 +152,7 @@ function headerEntries(deps, dir) {
     const n = Number(rec ? rec[1] : m[1]);
     const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
     const parked = front !== null && /^parked-at-shaping:\s*true\s*$/m.test(front[1]);
-    byRecord.set(n, (byRecord.get(n) || false) || parked);
+    byRecord.set(n, byRecord.get(n) === true || parked);
   }
   return [...byRecord.keys()].sort((a, b) => a - b).map((record) => ({ record, parkedAtShaping: byRecord.get(record) }));
 }

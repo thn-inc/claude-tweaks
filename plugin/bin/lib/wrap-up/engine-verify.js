@@ -410,13 +410,11 @@ registerCheck('worktree-removed', ({ runDir, expectations, deps, cwd }) => {
 // committed in the worktree only and reaches the main checkout by merge).
 // The worktree comes from run-state.json via readRunStateWithParent (a
 // multi-spec spec-{N}/ dir inherits the parent's), falling back to
-// worktreeAtClose for a closed run. Only the header rungs count: manifest
-// ids include not-run/failed specs whose PR-body line is `Refs`, not
-// `Fixes`, so a manifest-only resolution falls through to the expectations
-// fallback below, exactly as before. The header-rung rule lives in pack.js's
-// closingRecords, not here. readdir degrades to [] and headerRecords
-// skips an unreadable file, so a concurrent reconcile/archive prune reads as
-// "no headers found" rather than throwing.
+// worktreeAtClose for a closed run. Which rungs may close a record is pack.js's
+// closingRecords; a resolution it empties falls through to the expectations
+// fallback below. readdir degrades to [] and headerEntries skips an
+// unreadable file, so a concurrent reconcile/archive prune reads as "no
+// headers found" rather than throwing.
 const RECORD_DEPS = {
   readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
   readFile: (p) => fs.readFileSync(p, 'utf8'),
