@@ -61,9 +61,9 @@ phase-exit push, `_shared/git-discipline.md`), check `run-state.json`'s `pr` fie
 
   **Refresh the Spec summary after a premise reversal (#3050).** After writing that file and
   before the run-id re-read and `gh pr edit` (or the MCP write) below, run `node
-  "${CLAUDE_PLUGIN_ROOT}/bin/revise-pr-summary.js" --run-dir "{run-dir}"` (parent run dir with
-  `manifest.yml` for a bundle, else this run's own dir) `--body-file
-  /tmp/pr-checklist-{run-id}-{n}.md`. Reads this run's `premise reversed:` entries
+  "${CLAUDE_PLUGIN_ROOT}/bin/revise-pr-summary.js" --run-dir "{run-dir}" --body-file
+  /tmp/pr-checklist-{run-id}-{n}.md` — `{run-dir}` is the parent run dir with `manifest.yml` for
+  a bundle, else this run's own dir. Reads this run's `premise reversed:` entries
   ("Premise-reversal decisions" below) and reports which the `### Spec summary` note lacks, as
   `uncovered`/`reason`. Empty `uncovered` (`no-reversals`, or `already-noted` — every reversal
   already noted) → write the body as composed: Spec summary stays byte-unchanged. Non-empty
@@ -73,9 +73,10 @@ phase-exit push, `_shared/git-discipline.md`), check `run-state.json`'s `pr` fie
   `--summary-file {file} --out /tmp/pr-checklist-{run-id}-{n}.md`. Locates the span by its
   `### Spec summary` heading to the next heading, writing one `Revised during build: {original
   claim} → {implemented behavior}` note above the paragraph, entries `; `-joined onto any
-  existing note so sibling-spec entries survive. Best-effort: a non-zero exit, or
-  `changed: false` with non-empty `uncovered`, logs a warning to `decisions.md` naming the
-  `reason`; the update writes the checklist-only body — never a phase-exit or merge blocker.
+  existing note so sibling-spec entries survive. Best-effort: a non-zero exit (stderr carries the
+  cause, no JSON), or the apply run's `changed: false` with non-empty `uncovered`, logs a warning
+  to `decisions.md` naming that cause or the `reason`; the update writes the checklist-only body —
+  never a phase-exit or merge blocker.
 
   Re-read that file's first line back before `gh pr edit` and confirm it still names
   this run's `{run-id}`; hard-stop this update on a mismatch rather than push a wrong body:

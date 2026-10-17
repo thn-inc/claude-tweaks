@@ -245,8 +245,9 @@ function reviseSpecSummary({ body, reversals, summary }) {
   // as a bare substring of a longer, distinct entry (e.g. wanted `A → B`
   // falsely "covered" by an existing `XA → B`). An entry is noted only when
   // it appears as a whole `; `-delimited item in the note's entry list.
-  // Leading whitespace on an entry (a stray space after the prefix or a
-  // separator) is stripped so it never defeats this delimited match.
+  // A stray space after the prefix (leading whitespace on the entry list) and
+  // trailing whitespace on the note are stripped so neither defeats this
+  // delimited match.
   const entryList = trimmedNote ? trimmedNote.slice(REVISION_PREFIX.length).trimStart() : '';
   const isNoted = (w) => trimmedNote !== null && `; ${entryList}; `.includes(`; ${w}; `);
   const uncovered = wanted.filter((w) => !isNoted(w));
