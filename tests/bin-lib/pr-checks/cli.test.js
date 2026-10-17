@@ -32,7 +32,7 @@ function fixture(runState, { spec = false } = {}) {
   return { main, runDir };
 }
 
-function makeDeps(main, over = {}) {
+function makeDeps(main, { runList = () => '[]', ...over } = {}) {
   const out = []; const err = []; const ghCalls = [];
   const deps = {
     cwd: () => main,
@@ -49,6 +49,7 @@ function makeDeps(main, over = {}) {
       if (args[0] === 'pr' && args[1] === 'view') {
         return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [{ __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'FAILURE', detailsUrl: 'https://ci.example/test' }] });
       }
+      if (args[0] === 'run' && args[1] === 'list') return runList(args);
       throw new Error('unexpected gh ' + args.join(' '));
     },
     stdout: (s) => out.push(s),
@@ -168,7 +169,52 @@ test('hasPullRequestCi receives the git toplevel, not cwd (#3013 F7)', () => {
 
 test('an empty rollup with no PR workflow is no-ci', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
-  const h = makeDeps(main, { hasPullRequestCi: () => false, gh: () => JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [] }) });
+  const h = makeDeps(main, { hasPullRequestCi: () => false, gh: (args) => (args[0] === 'run' ? '[]' : JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [] })) });
   assert.equal(run(['--run', runDir], h.deps), 0);
   assert.equal(h.json().state, 'no-ci');
+});
+
+test('a green rollup plus an in_progress head run is pending, not green (#3405)', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const ghCalls = [];
+  const h = makeDeps(main, {
+    gh: (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'pr') return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [{ __typename: 'CheckRun', name: 'deploy', status: 'COMPLETED', conclusion: 'SKIPPED' }, { __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' }] });
+      return JSON.stringify([{ name: 'test', workflowName: 'test', status: 'in_progress', conclusion: '', url: 'https://ci.example/r/1' }]);
+    },
+  });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'pending');
+  assert.deepEqual(j.pending, ['test']);
+  assert.deepEqual(ghCalls.find((a) => a[0] === 'run'), ['run', 'list', '--commit', HEAD, '--limit', '100', '--json', 'name,workflowName,status,conclusion,url']);
+});
+
+test('a failing gh run list is read-failed, never green (#3405)', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    gh: (args) => {
+      if (args[0] === 'pr') return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [{ __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' }] });
+      throw new Error('HTTP 503');
+    },
+  });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'read-failed');
+  assert.match(j.reason, /^gh run list failed:/);
+});
+
+test('a non-array gh run list output is read-failed, never green (#3405)', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    gh: (args) => {
+      if (args[0] === 'pr') return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [{ __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' }] });
+      return JSON.stringify({ message: 'not a list' });
+    },
+  });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'read-failed');
+  assert.match(j.reason, /^gh run list failed:/);
 });
