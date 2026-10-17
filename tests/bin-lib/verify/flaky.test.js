@@ -72,6 +72,12 @@ test('planRetry: no-parse still wins over no-accounting-guard when no failing fi
     { retry: false, reason: 'no-parse' });
 });
 
+test('planRetry: a caller passing unattributedCount null without family renders no-accounting-guard: unknown, never undefined (#3204)', () => {
+  assert.deepStrictEqual(
+    planRetry({ failingFiles: ['tests/a.test.js'], flaky: FLAKY, retry: RETRY, suite: 'tests', unattributedCount: null }),
+    { retry: false, reason: 'no-accounting-guard: unknown' });
+});
+
 test('planRetry: a spec log whose every failure is an allowlisted file still retries and passes as today (#3066 AC2)', () => {
   const log = ['ℹ tests 2', 'ℹ pass 0', 'ℹ fail 2', '', '✖ failing tests:', '',
     'test at tests/a.test.js:1:1', '✖ x (1ms)', '', 'test at tests/b.test.js:2:1', '✖ y (1ms)'].join('\n');

@@ -9,7 +9,7 @@
 
 const { globToRegExp } = require('../issues/blast-radius');
 
-function planRetry({ failingFiles, flaky, retry, suite, unattributedCount = 0, family }) {
+function planRetry({ failingFiles, flaky, retry, suite, unattributedCount = 0, family = 'unknown' }) {
   if (!Array.isArray(failingFiles) || failingFiles.length === 0) return { retry: false, reason: 'no-parse' };
   // #3204: a family with no failure-accounting guard (`unattributedFailureCount`
   // returns null) cannot prove the named file list is complete, so refuse.
