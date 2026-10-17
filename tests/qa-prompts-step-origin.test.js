@@ -81,7 +81,7 @@ const SCHEMA_END = '## Auth Vault';
 
 function assertStoriesSchema(section) {
   assert.match(section, /- action: navigate\n\s+target: /, 'navigate step is in the YAML example');
-  assert.match(section, /`navigate`[\s\S]{0,300}`target`/, 'navigate takes its URL from target');
+  assert.match(section, /`navigate` step takes no locator[^\n]*`target`/, 'navigate takes its URL from target');
   assert.match(section, /`value`[\s\S]{0,200}(fallback|older)/i, 'value is read as a fallback');
   assert.match(section, /The `url:` field\.[\s\S]*`navigate` step/, 'url paragraph gains the step rule');
   assert.match(section, /`unresolved-secondary-origin`/, 'skip reason is named');
@@ -108,17 +108,38 @@ test('AC2.1: qa-agent.md navigate bullet names the target field', () => {
 
 test('AC3.1: stories/qa-agent assertions go red when their prose is reverted', () => {
   const section = between(read(STORIES_SKILL), SCHEMA_START, SCHEMA_END);
+  // Each mutation must fail the one assertion it targets (matched by its message), not any assertion.
+  const expectSchemaRed = (mutated, message) => {
+    assert.notEqual(mutated, section, `mutation is not a no-op: ${message}`);
+    assert.throws(() => assertStoriesSchema(mutated), { message }, `reverting did not fail "${message}"`);
+  };
 
-  const noStep = section.replace(/- action: navigate\n\s+target: [^\n]*\n/, '');
-  assert.notEqual(noStep, section, 'navigate YAML step is present before mutation');
-  assert.throws(() => assertStoriesSchema(noStep), undefined, 'removing the navigate YAML step did not fail');
-
-  const noSkip = section.replaceAll('`unresolved-secondary-origin`', '');
-  assert.notEqual(noSkip, section, 'skip reason is present before mutation');
-  assert.throws(() => assertStoriesSchema(noSkip), undefined, 'removing the skip reason did not fail');
+  expectSchemaRed(
+    section.replace(/- action: navigate\n\s+target: [^\n]*\n/, ''),
+    'navigate step is in the YAML example',
+  );
+  expectSchemaRed(
+    section.replace(/A `navigate` step takes no locator[^\n]*\n\n/, ''),
+    'navigate takes its URL from target',
+  );
+  expectSchemaRed(
+    section.replace(/ Older stories that wrote the URL in `value` are still read as a fallback when `target` is absent\./, ''),
+    'value is read as a fallback',
+  );
+  expectSchemaRed(
+    section.replace(/ The same rule covers `navigate` steps:[^\n]*?dispatch step\./, ''),
+    'url paragraph gains the step rule',
+  );
+  expectSchemaRed(
+    section.replaceAll('`unresolved-secondary-origin`', ''),
+    'skip reason is named',
+  );
 
   const line = navigateBullet();
-  const reverted = line.replace('<target>', '<url>');
-  assert.notEqual(reverted, line, 'navigate bullet names <target> before mutation');
-  assert.throws(() => assertAgentNavigateBullet(reverted), undefined, 'reverting the bullet to <url> did not fail');
+  const expectAgentRed = (mutated, message) => {
+    assert.notEqual(mutated, line, `mutation is not a no-op: ${message}`);
+    assert.throws(() => assertAgentNavigateBullet(mutated), { message }, `reverting did not fail "${message}"`);
+  };
+  expectAgentRed(line.replace('<target>', '<url>'), 'navigate maps goto to <target>');
+  expectAgentRed(line.replace('`target` field', 'URL field'), 'target field is named');
 });
