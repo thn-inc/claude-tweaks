@@ -28,7 +28,7 @@ Pre-#1101, the old batch emitter's `buildChains` (`ranking.js`, deleted — no s
 
 Before #3278, Step 2 unioned every pair of records sharing a key file into one group, and dispatch built the whole group together. The rule it served, "two records touching the same file must not be in flight together", is pairwise. Union-find spread it along chains: if A overlaps B and B overlaps C, then A and C sat in one group although they share nothing. The live 2026-10-17 queue had one 18-record group held together by 25 real direct overlaps, and no path in it was cut by the hub threshold of 7. Under bare drain that group was oversized and excluded as a whole, so each of its records starved even when most had no live neighbour.
 
-A group is now one record, or one disjoint `ceremony:fast-lane` bundle (`grouping.js`'s `buildDispatchGroups`). Overlap between separate groups is guarded by the non-removing `neighbour-in-flight` exclusion (`queue-pull-script.md`): bare drain skips a record while a direct neighbour holds a live claim, and `#N` reports it and dispatches anyway. Whatever that guard misses resolves at merge through `_shared/pr-first-merge.md`'s Conflict path.
+A group is now one record, or one disjoint `ceremony:fast-lane` bundle (`grouping.js`'s `buildDispatchGroups`). Overlap between separate groups is guarded by the non-removing `neighbour-in-flight` exclusion (`queue-pull-script.md`): bare drain holds a record back while a direct neighbour holds a live claim, and `#N` reports it and dispatches anyway. Whatever that guard misses resolves at merge through `_shared/pr-first-merge.md`'s Conflict path.
 
 Rejected alternatives:
 
