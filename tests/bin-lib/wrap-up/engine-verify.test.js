@@ -405,7 +405,7 @@ test('acceptance-labeling check renders unknown -- not fail -- when a parent-res
 });
 
 // The 'runVerify returns one row per registered check' test further above
-// (immediately before the AC1/AC2 fixtures) re-derives its expected exitCode
+// re-derives its expected exitCode
 // from the same rows array runVerify just returned, so it can't distinguish
 // a bug in the exitCode derivation from correct behavior. This test pins the
 // literal value: force
@@ -2335,11 +2335,15 @@ test('#3388: probe checks registered by earlier tests do not leak -- a clean fix
   const before = registeredNames();
   const unregA = registerCheck('__test-dup__', () => ({ result: 'pass', detail: 'a' }));
   const unregB = registerCheck('__test-dup__', () => ({ result: 'pass', detail: 'b' }));
-  unregA();
-  unregA();
-  const mid = registeredNames();
-  assert.deepStrictEqual(mid, [...before, '__test-dup__']);
-  unregB();
+  try {
+    unregA();
+    unregA();
+    const mid = registeredNames();
+    assert.deepStrictEqual(mid, [...before, '__test-dup__']);
+  } finally {
+    unregA();
+    unregB();
+  }
   assert.deepStrictEqual(registeredNames(), before);
 
   const runId = 'test-3388-clean-tail';
