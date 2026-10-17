@@ -209,13 +209,14 @@ function run(argv, deps = realDeps) {
     const pluginRootsGiven = o.pluginRoots.length > 0;
     if (pluginRootsGiven) {
       roots = [];
+      // Both sides through realpathSync: a symlinked cwd (macOS /var ->
+      // /private/var) resolves, and separators are native (git prints C:/...).
+      const realRepoRoot = fs.realpathSync(repoRoot);
       for (const r of o.pluginRoots) {
         const abs = path.resolve(cwd, r);
         try { corpusDir(abs); } catch (err) { deps.stderr(`load-delta.js: ${err.message}\n`); return 3; }
-        // Both sides through realpathSync: a symlinked cwd (macOS /var ->
-        // /private/var) resolves, and separators are native (git prints C:/...).
         const real = fs.realpathSync(abs);
-        if (!isPathContained(real, fs.realpathSync(repoRoot), { orEqual: true })) { deps.stderr(`load-delta.js: --plugin-root ${r} is outside the repository\n`); return 2; }
+        if (!isPathContained(real, realRepoRoot, { orEqual: true })) { deps.stderr(`load-delta.js: --plugin-root ${r} is outside the repository\n`); return 2; }
         roots.push(toPosix(path.relative(repoRoot, real)) || '.');
       }
       roots = [...new Set(roots)].sort();
