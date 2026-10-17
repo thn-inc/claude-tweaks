@@ -609,7 +609,14 @@ fi
 # #3278: neighbour-in-flight pass. Records stay in $DISPATCH_GROUPS; only bare
 # drain's ranking skips them. Fail open: an unreadable claim or a failed fetch
 # excludes nothing. Claim blobs chain one fetch via the first git-tip read.
-gh issue list --label bot:in-progress --state open --json number,body,labels --limit 200 > "$DISPATCH_IN_FLIGHT_RAW" 2>/dev/null || echo '[]' > "$DISPATCH_IN_FLIGHT_RAW"
+if ! gh issue list --label bot:in-progress --state open --json number,body,labels --limit 200 > "$DISPATCH_IN_FLIGHT_RAW" 2>/dev/null; then
+  echo '[]' > "$DISPATCH_IN_FLIGHT_RAW"
+  echo "AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull" >&2
+fi
+IN_FLIGHT_COUNT=$(node -e "console.log(require(process.argv[1]).length)" "$DISPATCH_IN_FLIGHT_RAW")
+if [ "$IN_FLIGHT_COUNT" -ge 200 ]; then
+  echo "Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch." >&2
+fi
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF
   const { execFileSync } = require('child_process');
   const { neighbourInFlightExclusions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/in-flight-neighbours.js');
@@ -678,7 +685,8 @@ NODE_EVAL_EOF
 # to warn about here). Each candidate that fires is logged once to this firing's own
 # decisions.md as an AUTO line naming both records and the signals that fired
 # -- the dispatcher's cue to look before dispatching both in the same firing,
-# never a gate.
+# never a gate. Since #3278 records sharing a Key File are in separate groups,
+# so they reach this cross-group warning too.
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" <<NODE_EVAL_EOF
   const { findNearDuplicates } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
   const groups = require(process.argv[1]);
