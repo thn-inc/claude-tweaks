@@ -109,6 +109,39 @@ test('#1493 I4: the tidy --approve banner names a designated consumer — relay 
   assert.match(ctx, /Relay this list once, in your first reply to the user/);
 });
 
+test('#3370: an archived run with unreviewed console items gets its own banner naming both items', async () => {
+  const project = tmpProject();
+  const archived = path.join(project, '.claude-tweaks', 'pipelines', 'archive', '2026-10-16T210949-spec-2821');
+  fs.mkdirSync(archived, { recursive: true });
+  fs.writeFileSync(path.join(archived, 'console.json'), JSON.stringify({
+    resolved: true,
+    items: [
+      { id: 'review-13-record.md', section: 'Pending review', resolution: 'pending', reason: 'unmapped-prefix' },
+      { id: 'review-debate-deviation.md', section: 'Contested findings', resolution: 'keep-staged', reason: 'debate inconclusive' },
+    ],
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  const ctx = out.json.hookSpecificOutput.additionalContext;
+  assert.match(ctx, /claude-tweaks: closed or archived run\(s\) whose unattended Review Console left item\(s\) no human has reviewed:/);
+  assert.match(ctx, /review-13-record\.md/);
+  assert.match(ctx, /review-debate-deviation\.md/);
+  assert.match(ctx, /console-residue\.js" --ack --run/);
+  assert.match(ctx, /Relay this list once, in your first reply to the user, one line per item with its command/);
+});
+
+test('#3370: SessionStart renders no console-residue banner when every console is acknowledged', async () => {
+  const project = tmpProject();
+  const archived = path.join(project, '.claude-tweaks', 'pipelines', 'archive', '2026-10-16T210949-spec-2821');
+  fs.mkdirSync(archived, { recursive: true });
+  fs.writeFileSync(path.join(archived, 'console.json'), JSON.stringify({
+    resolved: true,
+    residueAcknowledgedAt: '2026-10-17T00:00:00.000Z',
+    items: [{ id: 'review-13-record.md', section: 'Pending review', resolution: 'pending', reason: 'unmapped-prefix' }],
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /no human has reviewed/);
+});
+
 test('#1493: the standalone-approvable list is capped at MAX_REPORTED, newest-first, no overflow line', async () => {
   const project = tmpProject();
   const names = [

@@ -5,6 +5,10 @@
 // unfinished/in-progress pipeline runs and unapproved standalone staged
 // proposals, surfaced at SESSION start, not wrap-up's own close-time sweep.
 //
+// Three detections: unfinished runs, unapproved standalone staged proposals,
+// and (#3370) closed or archived runs whose unattended Review Console left
+// items no human has reviewed.
+//
 // Two consumers read this same detection: SessionStart's own advisory
 // banners (session-start.js) and `hooks.js check-session-residue`, the CLI
 // wrap-up's Review Console runs to re-surface any residue that was flagged
@@ -20,7 +24,10 @@ const fs = require('fs');
 const path = require('path');
 const ctxLib = require('./context');
 const runIntegrity = require('./run-integrity');
-const { safeReal } = require('./worktree-detect');
+const wtDetect = require('./worktree-detect');
+const { readRunResidue, formatResidueLines } = require('../console/residue');
+
+const { safeReal } = wtDetect;
 
 // Caps both lists at the same size SessionStart has always used — a long
 // tail of stale runs is exactly the noise MAX_REPORTED exists to avoid.
@@ -94,4 +101,35 @@ function collectApprovableStandalone(cwd, { exclude } = {}) {
   }));
 }
 
-module.exports = { MAX_REPORTED, collectStaleRuns, collectApprovableStandalone };
+// Closed (clean, top-level) and archived runs whose Review Console left
+// `pending` / `keep-staged` items no human has reviewed (#3370), newest first
+// by basename, capped at `limit` (default MAX_REPORTED). Candidates are the
+// clean top-level runs plus every run-id-shaped dir under archive/; a basename
+// in both is kept once, top-level preferred. Only consoles not yet
+// acknowledged count — a run is kept when at least one remains, and only
+// those are listed. Reading stops as soon as `limit` runs are kept, so a long
+// archive costs nothing. `readFile` is the readRunResidue test seam.
+function collectUnresolvedConsoles(cwd, { exclude, pluginRoot, limit = MAX_REPORTED, readFile } = {}) {
+  const root = pluginRoot || '${CLAUDE_PLUGIN_ROOT}';
+  const byName = new Map();
+  const archiveBase = path.join(wtDetect.mainCheckoutRoot(cwd) || cwd, '.claude-tweaks', 'pipelines', 'archive');
+  let archived = [];
+  try { archived = fs.readdirSync(archiveBase, { withFileTypes: true }); } catch { /* no archive/ */ }
+  for (const e of archived) {
+    if (e.isDirectory() && ctxLib.RUN_ID_RE.test(e.name)) byName.set(e.name, path.join(archiveBase, e.name));
+  }
+  for (const { dir } of ctxLib.iterRunDirsWithState(cwd, { status: 'clean' })) byName.set(path.basename(dir), dir);
+  const kept = [];
+  for (const name of [...byName.keys()].sort().reverse()) {
+    if (kept.length >= limit) break;
+    const dir = byName.get(name);
+    if (sameDir(dir, exclude)) continue;
+    const found = readRunResidue(dir, readFile ? { readFile } : undefined);
+    const consoles = found.consoles.filter((c) => !c.acknowledged);
+    if (!consoles.length) continue;
+    kept.push({ dir, consoles, lines: formatResidueLines({ dir, consoles }, { pluginRoot: root }) });
+  }
+  return kept;
+}
+
+module.exports = { MAX_REPORTED, collectStaleRuns, collectApprovableStandalone, collectUnresolvedConsoles };

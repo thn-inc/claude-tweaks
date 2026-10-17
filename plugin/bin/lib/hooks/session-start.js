@@ -174,6 +174,23 @@ async function run(ctx) {
     }
   } catch { /* best-effort */ }
   try {
+    // #3370: an `unattended` run's Review Console records items it deliberately
+    // left `pending` / `keep-staged`; once the run closes or archives nothing
+    // else re-surfaces them. Same designated-consumer relay directive as the
+    // two banners above — detection without a follow-through is #803's defect.
+    const consoleEntries = sessionResidue.collectUnresolvedConsoles(ctx.cwd, {
+      pluginRoot: pluginRootEnv || '${CLAUDE_PLUGIN_ROOT}',
+    });
+    if (consoleEntries.length) {
+      parts.push(advisoryBanner(
+        'claude-tweaks: closed or archived run(s) whose unattended Review Console left item(s) no human has reviewed:',
+        consoleEntries.flatMap((e) => e.lines),
+        'Read each item, then act on it (apply it, file it with /claude-tweaks:capture, or drop it) and mark the run reviewed with its own command above.\n' +
+          'Relay this list once, in your first reply to the user, one line per item with its command — do not proceed silently without mentioning it.',
+      ));
+    }
+  } catch { /* best-effort */ }
+  try {
     // reconcile() resolves the shared main checkout internally the same way
     // the pre-#408 direct reaper.reapWorktrees call did (mainCheckoutRoot,
     // never repoInfo().repoRoot — see `_shared/integration-branch.md`'s named
