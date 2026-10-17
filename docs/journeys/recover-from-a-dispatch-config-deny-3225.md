@@ -5,6 +5,7 @@ files:
   - plugin/bin/hooks.js
   - plugin/bin/lib/hooks/pre-tool-use.js
   - plugin/skills/flow/manifesto.md
+  - plugin/skills/flow/SKILL.md
 ---
 
 # Recover from a Dispatch Config Deny
