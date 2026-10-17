@@ -493,6 +493,7 @@ test('engine findings take their console id from targetPath, fall back to the ro
     ] },
     docs: { result: 'findings', target: 'Docs', findings: [
       { targetPath: 'docs/guide.md', action: 'staged', kind: 'update', summary: 's' },
+      { targetPath: 'docs/both.md', target: 'docs/legacy.md', action: 'staged', kind: 'update', summary: 's' },
       { action: 'applied', commit: 'aaa0000', kind: 'update', summary: 's' },
     ] },
   } };
@@ -500,6 +501,8 @@ test('engine findings take their console id from targetPath, fall back to the ro
   const appliedSkillIds = r.items.filter((i) => i.section === 'Skill updates' && i.resolution === 'applied').map((i) => i.id);
   assert.deepStrictEqual(appliedSkillIds, ['skills:.claude/skills/x/SKILL.md', 'skills:.claude/skills/y/SKILL.md']);
   assert.ok(r.items.some((i) => i.id === 'docs:docs/guide.md'));
+  assert.ok(r.items.some((i) => i.id === 'docs:docs/both.md'), 'targetPath wins when a finding also carries a legacy target');
+  assert.ok(!r.items.some((i) => i.id === 'docs:docs/legacy.md'));
   assert.ok(r.items.some((i) => i.id === 'docs:Docs'), 'a finding with no targetPath falls back to the row target');
   assert.ok(!r.items.some((i) => /:undefined$/.test(i.id)));
 });
