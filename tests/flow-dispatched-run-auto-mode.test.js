@@ -111,3 +111,36 @@ test('manifesto.md names the dispatch binding as the Mode source', () => {
   assert.match(rows[0], /auto \(dispatched run\)/);
   assert.match(rows[0], /source: dispatch binding/);
 });
+
+// --- #3372: the dispatched-run auto exception, carried through the contract, card and policy row ---
+
+// The one table row whose first cell is `cell`; asserts it is unique so a duplicate can't hide a stale copy.
+function tableRow(text, cell) {
+  const rows = text.split('\n').filter((l) => l.startsWith(`| \`${cell}\` | `));
+  assert.strictEqual(rows.length, 1, `expected exactly one | \`${cell}\` | row`);
+  return rows[0];
+}
+
+test('auto-mode-contract.md interactive row and Default note state the dispatched-run exception', () => {
+  const text = read('plugin', 'skills', '_shared', 'auto-mode-contract.md');
+  const row = tableRow(text, 'interactive');
+  assert.match(row, /`dispatched: true`/);
+  assert.match(row, /an explicit `interactive` arg still wins/);
+  const notes = text.split('\n').filter((l) => l.startsWith('**Default note:**'));
+  assert.strictEqual(notes.length, 1, 'expected exactly one **Default note:** line');
+  assert.match(notes[0], /`default-off`/);
+  assert.match(notes[0], /`dispatched: true`/);
+  assert.match(notes[0], /an explicit mode keyword still outranks the binding/);
+});
+
+test('auto-mode-card.md interactive row mirrors the exception', () => {
+  const row = tableRow(read('plugin', 'skills', '_shared', 'auto-mode-card.md'), 'interactive');
+  assert.match(row, /`dispatched: true`/);
+});
+
+test('policy-schema.md auto-mode meaning cell states the exception', () => {
+  const row = tableRow(read('plugin', 'skills', '_shared', 'policy-schema.md'), 'auto-mode');
+  const meaning = row.split(/(?<!\\)\|/)[5];
+  assert.match(meaning, /`dispatched: true`/);
+  assert.match(meaning, /`default-off`\s*→\s*`interactive`/);
+});
