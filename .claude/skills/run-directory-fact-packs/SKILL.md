@@ -108,7 +108,8 @@ proposed field, answer three questions against the code, at plan-authoring time:
      `work/`; `pack.js`'s `resolveRecords` reads own `work/`, then that mirror (#3365). A reader
      that runs after cleanup removes the worktree, such as `engine-verify.js`'s `carrier-commit`,
      cannot re-read it. So the Review Console's step 11 persists the set while the mirror still
-     exists (`set-verify-expectations.js --issues`), and verify falls back to
+     exists (`set-verify-expectations.js --issues`, or the `issues` key of `finish-console`'s
+     payload under Approve all), and verify falls back to
      `verify-expectations.json`'s `issues` when no header resolves. When a location is gone by the
      time a late reader runs, persist a copy from an earlier step instead of re-reading.
    - **Why it matters.** #2664's first trace got this wrong by following the writers alone.
