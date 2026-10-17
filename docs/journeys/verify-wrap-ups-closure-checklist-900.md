@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/lib/wrap-up/engine-verify.js
+  - plugin/bin/lib/wrap-up/pack.js
   - plugin/bin/wrap-up-engine.js
   - plugin/skills/wrap-up/execution-and-verification.md
   - plugin/skills/wrap-up/review-console.md
@@ -50,9 +51,17 @@ files:
 - **Should understand:** The verb is deliberately `gh`-CLI-only (module header states this) — a `gh`-absent row always renders `unknown (gh absent)`, never a silent `pass`. Any MCP-path manual verification stays the skill prose's affair, outside this verb's scope.
 - **Red flags:** A `gh`-dependent check reporting `pass` when `gh` never actually ran.
 
+### 6. Confirm `carrier-commit` checked this run's record
+- **URL:** the table's `carrier-commit` row, from the same command
+- **Action:** On a worktree run, read the row and compare it against the record the run built.
+- **Should feel:** The closing-keyword check actually ran against this run's record. A missing `Fixes #N` shows up as a failure you can act on, never as a quiet skip.
+- **Should understand:** The record numbers come from the run's materialized header, read through `pack.js`'s `resolveRecords`. That is the run dir's own `work/` first, then the worktree's mirror of the run dir: on a worktree run the header is committed only on the feature branch, so the main-checkout run dir has no `work/` before merge. A closed run's worktree comes from `worktreeAtClose`, and a multi-spec `spec-{N}/` dir uses its parent's stamps. Only header records count. A multi-spec manifest's ids include specs that never ran, whose PR line is `Refs`, not `Fixes`. When no header resolves (cleanup already removed the worktree, as it does before verify under pr-first), the row falls back to `verify-expectations.json`'s `issues` array. Review Console step 11 writes that array on every resolution except Approve all (#3394 tracks that gap). `skip (no resolved issue numbers found)` is correct only for conversation-based work with no record at all.
+- **Red flags:** `carrier-commit` reporting `skip` on a record-mode worktree run whose worktree still exists. That is the main-checkout-only read that #3365 removed. Also a `pass` when neither the branch log nor the PR body carries a closing keyword for the record.
+
 ## Origin
 - Created during build of #900 (wrap-up verify verb — mechanizes `execution-and-verification.md`'s hand-run closure checklist into a deterministic table), part of the shared #343+#900 `/flow` multi-spec run.
 - Related: #343 (prerequisite — fixed the same skill file's circular gate condition on the same branch), #892/#891 (the sibling `bin/verify.js` deterministic-check-runner family — a different subsystem covering type/lint/test checks, not this feature's closure-gate checks).
 - Updated for #1222 (`plans-ledger`/`design-caches` switched from scanning `repoRoot` to the verb's own invoking `cwd`, closing record #900 finding #3 — a worktree-local leftover was structurally invisible to a main-checkout-only scan under the default `worktree`/`pr-first` mode).
 - Updated for #1841 (`acceptance-labeling`'s parent resolution migrated from `gh issue view --json parent` to GraphQL, since `gh` <2.96 rejects that field — the check's gather failure now actually renders `unknown` for this case, matching Step 2's always-documented `unknown` contract rather than the `fail` the old REST call produced on an incompatible `gh` version; the observable row vocabulary and Step 5's gh-absent behavior are unchanged).
 - Updated for #2552 (`run-dir-archived` now resolves correctly regardless of which of the two candidate paths `--run-dir` is invoked with; `reference-repairs` under `integration-model: pr-first` verifies via the PR's own commit list instead of walking `{base}..HEAD`; `plans-ledger` reports pre-existing, not-this-run's residue as an informational `skip` rather than a `fail`).
+- Updated for #3365: `carrier-commit` resolves its record numbers through `pack.js`'s `resolveRecords`, reading the run dir's own `work/` and then the worktree mirror, using header rungs only. It no longer reads only the main-checkout run dir, which is empty before merge. A record that lacks a closing keyword now fails instead of silently skipping. Added step 6.
