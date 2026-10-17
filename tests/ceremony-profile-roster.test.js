@@ -105,6 +105,8 @@ function batchedFastLaneGuidanceProblems(paragraph) {
   if (!paragraph.includes('`ceremony: fast-lane`')) problems.push('`ceremony: fast-lane`');
   if (!paragraph.includes('`size: low`')) problems.push('`size: low`');
   if (!INLINES_FULL_CODE.test(paragraph)) problems.push('inlines-full-code condition');
+  if (!paragraph.includes('`**Batch:** send every task to one implementer as a single brief; review the combined diff once.`')) problems.push('`**Batch:**` instruction literal');
+  if (!paragraph.includes('stays per-task')) problems.push('per-task exclusion');
   return problems;
 }
 
