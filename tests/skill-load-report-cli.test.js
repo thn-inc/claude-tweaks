@@ -16,6 +16,7 @@ const path = require('node:path');
 const { run } = require('../plugin/bin/skill-load-report');
 const { slugForCwd } = require('../plugin/bin/lib/timing/transcript');
 const { measuredTextBytes } = require('../plugin/bin/lib/skill-audit/context-cost');
+const { skipUnderRoot } = require('./helpers/root');
 
 const TS = '2026-10-17T12:00:00.000Z';
 
@@ -101,7 +102,7 @@ test('a transcript directory holding no main transcript is no-data too', async (
   assert.strictEqual(json().status, 'no-data');
 });
 
-test('an unreadable main transcript is counted, and with none read the result is no-data', { skip: process.getuid && process.getuid() === 0 }, async () => {
+test('an unreadable main transcript is counted, and with none read the result is no-data', skipUnderRoot('mode bits are ignored under root'), async () => {
   const { transcriptDir, deps, json } = setup();
   const file = path.join(transcriptDir, 's1.jsonl');
   writeJsonl(file, invocation('demo:alpha', 't1', 500));
@@ -111,6 +112,23 @@ test('an unreadable main transcript is counted, and with none read the result is
     assert.deepStrictEqual(json(), { status: 'no-data', transcriptDir, sessions: 0, unreadable: 1, rows: [] });
   } finally {
     fs.chmodSync(file, 0o600);
+  }
+});
+
+test('an unreadable subagents/ directory is counted and the run continues', skipUnderRoot('mode bits are ignored under root'), async () => {
+  const { transcriptDir, deps, json } = setup();
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), invocation('demo:alpha', 't1', 500));
+  const subagentsDir = path.join(transcriptDir, 's1', 'subagents');
+  fs.mkdirSync(subagentsDir, { recursive: true });
+  fs.chmodSync(subagentsDir, 0o000);
+  try {
+    assert.strictEqual(await run([], deps), 0);
+    const result = json();
+    assert.strictEqual(result.status, 'ok');
+    assert.strictEqual(result.sessions, 1);
+    assert.strictEqual(result.unreadable, 1);
+  } finally {
+    fs.chmodSync(subagentsDir, 0o700);
   }
 });
 
@@ -131,7 +149,7 @@ test('closure joins on namespace + skill: over its closure is flagged, another p
   ]);
 });
 
-test('a project-local root (no plugin.json) joins bare and path-namespaced skill names', async () => {
+test('a project-local root (no plugin.json) folds path-namespaced names into the bare skill', async () => {
   const { transcriptDir, deps, json } = setup();
   const { root, closure } = pluginRoot();
   fs.rmSync(path.join(root, '.claude-plugin'), { recursive: true });
@@ -141,10 +159,9 @@ test('a project-local root (no plugin.json) joins bare and path-namespaced skill
     ...invocation('demo:alpha', 't3', 50),
   ]);
   await run(['--plugin-root', root], deps);
-  assert.deepStrictEqual(json().rows.map((r) => [r.skill, r.closure]), [
-    ['alpha', closure],
-    ['.claude/worktrees/wt:alpha', closure],
-    ['demo:alpha', null],
+  assert.deepStrictEqual(json().rows, [
+    { skill: 'alpha', invocations: 2, median: 150, max: 200, closure, overClosure: false },
+    { skill: 'demo:alpha', invocations: 1, median: 50, max: 50, closure: null, overClosure: false },
   ]);
 });
 

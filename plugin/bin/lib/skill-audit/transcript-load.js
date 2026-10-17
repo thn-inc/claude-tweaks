@@ -42,8 +42,9 @@
 // (f) input.skill is "{plugin}:{skill}" for a plugin skill, and for a
 //     project-local skill either bare ("{skill}") or, from a worktree
 //     session, "{path to the skills dir's parent}:{skill}"
-//     (".claude/worktrees/{name}:{skill}"). Rows keep the name as invoked;
-//     bin/skill-load-report.js normalizes it for the closure join.
+//     (".claude/worktrees/{name}:{skill}"). Rows from readSkillLoads still
+//     keep the name as invoked; bin/skill-load-report.js folds the path
+//     form into the bare name before summarizing.
 //
 // Real-input check (20 newest main transcripts of this repo + 510 subagent
 // transcripts): 442 invocation rows = 416 unique Skill tool_use ids + 26
@@ -54,7 +55,12 @@
 // Two Skill calls in one turn leave the cursor on the second; that is a
 // documented limitation, not an error. A skill-path Read with no preceding
 // invocation, and an injected body no invocation claims, land in
-// "({kind}, unattributed)", so nothing is dropped.
+// "({kind}, unattributed)", so nothing is dropped. injectedBytes counts the
+// whole injected block, including its "Base directory for this skill:" line
+// and any trailing ARGUMENTS: text the invocation carried — that is what the
+// session paid for, but not all of it is skill prose. The cursor never
+// expires: in a session editing this repo, a Read of plugin/skills/**.md
+// long after an invocation is still attributed to the last-invoked skill.
 
 const fs = require('fs');
 const readline = require('readline');

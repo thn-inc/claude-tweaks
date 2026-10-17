@@ -72,7 +72,7 @@ const realDeps = {
   configDir: () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
   listFiles: (cwd) => {
     try {
-      return execFileSync('git', ['ls-files', '-z'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 })
+      return execFileSync('git', ['ls-files', '-z'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, maxBuffer: 64 * 1024 * 1024 })
         .split('\0').filter(Boolean);
     } catch {
       return [];
@@ -81,7 +81,9 @@ const realDeps = {
 };
 
 // Regular .jsonl files directly in `dir`, newest first; null when `dir` is
-// absent. Dirent.isFile() is false for a symlink, so none is followed.
+// absent. Dirent.isFile() is false for a symlink, so none is followed. An
+// entry deleted between readdirSync and statSync (a session being cleaned
+// up concurrently) is skipped rather than aborting the whole run.
 function jsonlFiles(dir) {
   let entries;
   try {
@@ -94,8 +96,16 @@ function jsonlFiles(dir) {
     .filter((d) => d.isFile() && d.name.endsWith('.jsonl'))
     .map((d) => {
       const p = path.join(dir, d.name);
-      return { path: p, sessionId: d.name.slice(0, -'.jsonl'.length), mtimeMs: fs.statSync(p).mtimeMs };
+      let mtimeMs;
+      try {
+        mtimeMs = fs.statSync(p).mtimeMs;
+      } catch (err) {
+        if (err.code === 'ENOENT') return null;
+        throw err;
+      }
+      return { path: p, sessionId: d.name.slice(0, -'.jsonl'.length), mtimeMs };
     })
+    .filter(Boolean)
     .sort((a, b) => b.mtimeMs - a.mtimeMs || (a.path < b.path ? -1 : 1));
 }
 
@@ -140,10 +150,20 @@ function closureIndex(rootsAbs) {
 // A project-local skill is invoked bare ("gh-api-module-pattern") or, from
 // a worktree session, under its skills directory's path
 // (".claude/worktrees/x:gh-api-module-pattern" — observed on 2.1.302); a
-// namespace carrying "/" is that path form, so it joins like a bare name.
+// namespace carrying "/" is that path form, so it folds into the bare name
+// before any row groups or joins by skill — otherwise the same skill splits
+// across several rows (one per distinct worktree path seen) instead of one.
+function foldPathNamespace(skill) {
+  const i = skill.indexOf(':');
+  return i >= 0 && skill.slice(0, i).includes('/') ? skill.slice(i + 1) : skill;
+}
+
+// Plain `{ns}:{name}` / bare-name split — every row's skill is already
+// folded (foldPathNamespace, above) before this runs, so no path form
+// reaches here.
 function closureOf(index, skill) {
   const i = skill.indexOf(':');
-  const ns = i < 0 || skill.slice(0, i).includes('/') ? '' : skill.slice(0, i);
+  const ns = i < 0 ? '' : skill.slice(0, i);
   const key = `${ns}\0${skill.slice(i + 1)}`;
   return index.has(key) ? index.get(key) : null;
 }
@@ -176,12 +196,24 @@ async function run(argv, deps = realDeps) {
   };
   for (const m of mains) {
     if (await read(m.path, 'main')) sessions++;
-    for (const s of jsonlFiles(path.join(transcriptDir, m.sessionId, 'subagents')) || []) await read(s.path, 'subagent');
+    let subagentFiles;
+    try {
+      subagentFiles = jsonlFiles(path.join(transcriptDir, m.sessionId, 'subagents'));
+    } catch {
+      // Unreadable subagents/ directory (e.g. EACCES) — count it once and
+      // keep going; the main transcript directory keeps its stricter rule
+      // (absent is no-data, another error propagates) above and in
+      // jsonlFiles(transcriptDir) at the top of this function.
+      unreadable++;
+      subagentFiles = null;
+    }
+    for (const s of subagentFiles || []) await read(s.path, 'subagent');
   }
   if (sessions === 0) {
     deps.stdout(`${JSON.stringify({ status: 'no-data', transcriptDir, sessions: 0, unreadable, rows: [] })}\n`);
     return 0;
   }
+  for (const r of rows) r.skill = foldPathNamespace(r.skill);
   const index = closureIndex(rootsAbs);
   const out = summarizeLoads(rows)
     .map((r) => {
