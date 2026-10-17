@@ -702,6 +702,21 @@ test('--records-json accepts bare-string labels', () => {
   assert.equal(bare.records['720'].facets.stage, 'ready');
 });
 
+test('--records-json never resolves the origin remote — a sandbox with no origin still runs', () => {
+  for (const workLinks of ['body-text', 'native']) {
+    const { deps, out } = cliDeps({
+      runner: noGh,
+      workLinks,
+      files: { '/r.json': JSON.stringify([issue({ number: 720, title: 'A', body: specBody(['a.js']) })]) },
+    });
+    let remoteCalls = 0;
+    deps.remoteUrl = () => { remoteCalls += 1; throw new Error('fatal: No such remote \'origin\''); };
+    assert.equal(run(['720', '--records-json', '/r.json'], deps), 0, workLinks);
+    assert.equal(remoteCalls, 0, `${workLinks}: remoteUrl must not be called on the records-json path`);
+    assert.ok(JSON.parse(out.join('')).records['720'], workLinks);
+  }
+});
+
 test('--records-json accepts an unlabelled record — labels missing or null, as gh reports it', () => {
   for (const [label, entry] of [
     ['missing', { number: 720, title: 'A', body: specBody(['a.js']) }],
