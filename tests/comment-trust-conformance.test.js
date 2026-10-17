@@ -156,6 +156,12 @@ test("tidy's tombstone check filters by association", () => {
   assert.ok(PRE_CHANGE_TOMBSTONE_ROW.includes('run-comment: failure'), 'control carries the anchor, lacking only the filter');
 });
 
+test("tidy's tombstone check names each skipped untrusted tombstone", () => {
+  const row = SCAN.split(/\r?\n/).find((l) => l.includes('run-comment: failure'));
+  assert.match(row, /name each skipped one per `_shared\/pr-run-comments\.md`'s skip notice/);
+  assert.doesNotMatch(PRE_CHANGE_TOMBSTONE_ROW, /skip notice/, 'pre-change row must lack the skip notice (proves the pin can go red)');
+});
+
 // ---- Task 5: demo, parent-gate and grant-maturation readers (#3358) ----
 
 const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
