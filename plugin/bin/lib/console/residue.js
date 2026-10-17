@@ -38,20 +38,46 @@ function readRunResidue(runDir, { readFile = defaultReadFile, readdir = defaultR
   return { dir: runDir, consoles };
 }
 
+const shown = (v) => (v === undefined || v === null || v === '' ? '—' : v);
+
+// One item line plus its pointer: a `cat` of the staged file, or for a
+// `decision:` item (no staged file — it lives in decisions.md) a `see` line.
+// An item without a usable id is still listed, as `(no id)`, but gets no
+// pointer — a malformed item must never throw and hide every other banner.
+function itemLines(item, consoleDir) {
+  const hasId = typeof item.id === 'string' && item.id !== '';
+  const lines = [`  - ${hasId ? item.id : '(no id)'} — ${shown(item.section)}: ${item.resolution} (${shown(item.reason)})`];
+  if (!hasId) return lines;
+  if (item.id.startsWith('decision:')) {
+    const decisions = path.join(consoleDir, 'decisions.md');
+    if (fs.existsSync(decisions)) lines.push(`    see "${decisions}"`);
+    return lines;
+  }
+  const staged = path.join(consoleDir, 'staged', item.id);
+  if (fs.existsSync(staged)) lines.push(`    cat "${staged}"`);
+  return lines;
+}
+
+// One header per run; `maxItems` caps item lines across the whole run, not
+// per console. With several consoles each gets a `(relative path)` sub-line.
 function formatResidueLines({ dir, consoles }, { pluginRoot, maxItems = 5 }) {
   if (!consoles || consoles.length === 0) return [];
-  const lines = [];
+  const single = consoles.length === 1;
+  const total = consoles.reduce((n, c) => n + c.items.length, 0);
+  const lines = [`- ${path.basename(dir)}: ${total} item(s) no human has reviewed${single ? ` (${path.relative(dir, consoles[0].path)})` : ''}`];
+  let count = 0;
   for (const c of consoles) {
+    if (count >= maxItems) break;
     const consoleDir = path.dirname(c.path);
-    lines.push(`- ${path.basename(dir)}: ${c.items.length} item(s) no human has reviewed (${path.relative(dir, c.path)})`);
-    for (const item of c.items.slice(0, maxItems)) {
-      lines.push(`  - ${item.id} — ${item.section}: ${item.resolution} (${item.reason})`);
-      const staged = path.join(consoleDir, 'staged', item.id);
-      if (fs.existsSync(staged)) lines.push(`    cat "${staged}"`);
+    if (!single) lines.push(`  (${path.relative(dir, c.path)})`);
+    for (const item of c.items) {
+      if (count >= maxItems) break;
+      lines.push(...itemLines(item, consoleDir));
+      count += 1;
     }
-    if (c.items.length > maxItems) {
-      lines.push(`  … and ${c.items.length - maxItems} more — see "${c.path}"`);
-    }
+  }
+  if (total > count) {
+    lines.push(`  … and ${total - count} more — see "${single ? consoles[0].path : dir}"`);
   }
   lines.push(`  mark reviewed: node "${pluginRoot}/bin/console-residue.js" --ack --run "${dir}"`);
   return lines;

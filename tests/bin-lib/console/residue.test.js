@@ -126,3 +126,52 @@ test('formatResidueLines caps items at maxItems', () => {
 test('formatResidueLines renders nothing for a run with no residue', () => {
   assert.deepStrictEqual(formatResidueLines({ dir: '/x', consoles: [] }, { pluginRoot: '/p' }), []);
 });
+
+test('formatResidueLines caps item lines per run, across consoles: 2 consoles x 4 items show 5 plus the overflow (#3370 F2)', () => {
+  const dir = tmpRun();
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ items: pendingItems(4) }));
+  fs.mkdirSync(path.join(dir, 'spec-2'));
+  fs.writeFileSync(path.join(dir, 'spec-2', 'console.json'), JSON.stringify({ items: pendingItems(4) }));
+  const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
+  assert.strictEqual(lines[0], `- ${path.basename(dir)}: 8 item(s) no human has reviewed`);
+  assert.strictEqual(lines.filter((l) => l.startsWith('- ')).length, 1, 'one header per run');
+  assert.strictEqual(lines.filter((l) => l.startsWith('  - ')).length, 5);
+  assert.deepStrictEqual(lines.filter((l) => l.startsWith('  (')), ['  (console.json)', '  (spec-2/console.json)']);
+  assert.strictEqual(lines[lines.indexOf('  (spec-2/console.json)') + 1], '  - polish-suggestion-1.md — Pending review: pending (r)');
+  assert.ok(lines.includes(`  … and 3 more — see "${dir}"`));
+  assert.strictEqual(lines.filter((l) => l.includes('--ack --run')).length, 1);
+  assert.strictEqual(lines[lines.length - 1], `  mark reviewed: node "/p/bin/console-residue.js" --ack --run "${dir}"`);
+});
+
+test('formatResidueLines omits the sub-line of a console the per-run cap cut off entirely (#3370 F2)', () => {
+  const dir = tmpRun();
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ items: pendingItems(6) }));
+  fs.mkdirSync(path.join(dir, 'spec-2'));
+  fs.writeFileSync(path.join(dir, 'spec-2', 'console.json'), JSON.stringify({ items: pendingItems(1) }));
+  const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
+  assert.ok(!lines.includes('  (spec-2/console.json)'), lines.join('\n'));
+  assert.ok(lines.includes(`  … and 2 more — see "${dir}"`), lines.join('\n'));
+});
+
+test('formatResidueLines renders an item without an id as (no id), with — for missing fields and no cat line (#3370 M2)', () => {
+  const dir = tmpRun();
+  fs.mkdirSync(path.join(dir, 'staged'));
+  fs.writeFileSync(path.join(dir, 'staged', 'polish-suggestion-1.md'), 'x');
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ items: [{ resolution: 'pending' }, ...pendingItems(1)] }));
+  const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
+  assert.ok(lines[0].includes('2 item(s)'));
+  assert.ok(lines.includes('  - (no id) — —: pending (—)'), lines.join('\n'));
+  assert.ok(!lines.some((l) => l.includes('undefined')), lines.join('\n'));
+  assert.deepStrictEqual(lines.filter((l) => l.trimStart().startsWith('cat ')), [`    cat "${dir}/staged/polish-suggestion-1.md"`]);
+});
+
+test('formatResidueLines points a decision: item at decisions.md, never a cat line, and only when decisions.md exists (#3370 M1)', () => {
+  const dir = tmpRun();
+  const id = 'decision:STAGED 01:00:20 — Step 3: full mode (wrap-up): pattern obs';
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ items: [{ id, section: 'Contested findings', resolution: 'keep-staged', reason: 'r' }] }));
+  assert.ok(!formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' }).some((l) => l.startsWith('    ')));
+  fs.writeFileSync(path.join(dir, 'decisions.md'), '');
+  const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
+  assert.ok(lines.includes(`    see "${dir}/decisions.md"`), lines.join('\n'));
+  assert.ok(!lines.some((l) => l.trimStart().startsWith('cat ')));
+});
