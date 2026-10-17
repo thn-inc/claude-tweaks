@@ -78,8 +78,21 @@ test('AC3.1: a failed MCP claim read (failure entry or never-read key) writes no
   }
 });
 
+test('an object-valued live claim (the parsed blob embedded in the map) produces the exclusion, not an unreadable read', () => {
+  const map = { 9: JSON.parse(live) };
+  assert.deepStrictEqual(run(claimReaderFromMap(map)), {
+    exclusions: [
+      { reason: 'neighbour-in-flight', records: [1], detail: { neighbours: [{ number: 9, files: ['a.js'] }] } },
+    ],
+    unreadable: [],
+  });
+  assert.deepStrictEqual(run(claimReaderFromMap({ 9: JSON.parse(tombstone) })), { exclusions: [], unreadable: [] });
+});
+
 test('claimReaderFromMap maps each entry shape', () => {
-  const read = claimReaderFromMap({ 1: null, 2: 'x', 3: { failure: 'boom' }, 4: 7 });
+  const read = claimReaderFromMap({ 1: null, 2: 'x', 3: { failure: 'boom' }, 4: 7, 6: { runId: 'r' }, 7: [1] });
+  assert.deepStrictEqual(read(6), { content: JSON.stringify({ runId: 'r' }) });
+  assert.deepStrictEqual(read(7), { failure: 'malformed-claim-entry' });
   assert.deepStrictEqual(read(1), { content: null });
   assert.deepStrictEqual(read(2), { content: 'x' });
   assert.deepStrictEqual(read(3), { failure: 'boom' });

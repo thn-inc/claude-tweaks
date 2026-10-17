@@ -117,15 +117,17 @@ test('the section maps the pool to list_issues and the claim read to issue-claim
   const text = section();
   for (const token of [
     'list_issues', 'bot:in-progress', '_shared/github-write-transport.md', '_shared/issue-claims.md',
-    'claims/issue-{n}.json', 'claims-registry', 'claimReaderFromMap', '#3137',
+    'claims/issue-{n}.json', 'claims-registry', 'claimReaderFromMap', '#3137', 'extractKeyFiles',
+    'NEIGHBOUR_RC', '100 per page', 'returned exactly the --limit cap (200)',
   ]) {
     assert.ok(text.includes(token), `section lacks ${token}`);
   }
   assert.ok(!text.includes('documented gap'), 'the gap prose must be gone');
   assert.ok(!text.includes('Re-open when'), 'the re-open clause must be gone');
+  assert.ok(!text.includes('does not touch this pass'), 'the false #3137 claim must be gone');
 });
 
-test('queue-pull-script.md declares DISPATCH_IN_FLIGHT_CLAIMS and points gh-absent firings at mcp-transport.md', () => {
+test('queue-pull-script.md declares DISPATCH_IN_FLIGHT_CLAIMS and points MCP-transport firings at mcp-transport.md', () => {
   assert.ok(QUEUE_PULL.includes("DISPATCH_IN_FLIGHT_CLAIMS: 'dispatch-in-flight-claims.json'"));
   const anchor = '# #3278: neighbour-in-flight pass.';
   const at = QUEUE_PULL.indexOf(anchor);

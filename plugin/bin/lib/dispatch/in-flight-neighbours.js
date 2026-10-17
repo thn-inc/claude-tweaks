@@ -89,17 +89,20 @@ function neighbourClaimTargets({ candidates, inFlight, hubOptions = {} }) {
 
 // Adapts a plain object of agent-fetched claims (keyed by issue number as a
 // string) to the readClaimContent contract. null -> absent blob, string ->
-// blob content, { failure } -> failed read, absent key -> never read; any
-// other value is malformed. A failed or unread entry fails open as an
-// unreadable read, never as a live or absent claim.
+// blob content, a plain object without a `failure` key -> the parsed blob
+// (re-serialised as its content), { failure } -> failed read, absent key ->
+// never read; any other value (array, number, boolean) is malformed. A failed
+// or unread entry fails open as an unreadable read, never as a live or absent
+// claim.
 function claimReaderFromMap(map) {
   return (number) => {
     if (!Object.prototype.hasOwnProperty.call(map, String(number))) return { failure: 'claim-not-read' };
     const value = map[String(number)];
     if (value === null) return { content: null };
     if (typeof value === 'string') return { content: value };
-    if (typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, 'failure')) {
-      return { failure: String(value.failure) };
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      if (Object.prototype.hasOwnProperty.call(value, 'failure')) return { failure: String(value.failure) };
+      return { content: JSON.stringify(value) };
     }
     return { failure: 'malformed-claim-entry' };
   };
