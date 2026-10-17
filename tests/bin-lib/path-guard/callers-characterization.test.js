@@ -92,6 +92,96 @@ test('transcript: readDispatches reads a directory-typed agent entry as before (
   assert.equal(r.items[0].notFound, 'meta not found; transcript not readable (EISDIR)');
 });
 
+// ---- pre-tool-use.js: realTarget(), observed through isPolicyFile -----------
+// realTarget is private; isPolicyFile(repoRoot, target) is `realTarget(target)
+// === parent-resolved canonical policy path`, so each leaf state shows up as a
+// true/false verdict.
+
+const { isPolicyFile, POLICY_FILE } = require('../../../plugin/bin/lib/hooks/pre-tool-use');
+
+function policyRepo() {
+  const root = fresh();
+  const policy = path.join(root, POLICY_FILE);
+  fs.mkdirSync(path.dirname(policy), { recursive: true });
+  return { root, policy };
+}
+
+test('realTarget: an existing policy file and a symlink alias to it both match', () => {
+  const { root, policy } = policyRepo();
+  fs.writeFileSync(policy, 'x: 1\n');
+  const alias = path.join(root, 'alias.yml');
+  fs.symlinkSync(policy, alias);
+  assert.equal(isPolicyFile(root, policy), true);
+  assert.equal(isPolicyFile(root, alias), true);
+});
+
+test('realTarget: a not-yet-existing leaf takes the parent-only fallback and matches', () => {
+  const { root, policy } = policyRepo();
+  assert.equal(isPolicyFile(root, policy), true);
+});
+
+test('realTarget: a missing parent directory is unprovable', () => {
+  const root = fresh();
+  assert.equal(isPolicyFile(root, path.join(root, POLICY_FILE)), false);
+});
+
+test('realTarget: a dangling symlink at the policy path never takes the parent-only fallback', () => {
+  const { root, policy } = policyRepo();
+  fs.symlinkSync(path.join(root, 'nowhere.yml'), policy);
+  assert.equal(isPolicyFile(root, policy), false);
+});
+
+test('realTarget: a symlink swapped in for policy.yml resolves elsewhere and does not match', () => {
+  const { root, policy } = policyRepo();
+  const elsewhere = path.join(root, 'elsewhere.yml');
+  fs.writeFileSync(elsewhere, 'x: 1\n');
+  fs.symlinkSync(elsewhere, policy);
+  assert.equal(isPolicyFile(root, policy), false);
+});
+
+test('realTarget: empty, non-string and relative targets are unprovable', () => {
+  const { root } = policyRepo();
+  assert.equal(isPolicyFile(root, ''), false);
+  assert.equal(isPolicyFile(root, null), false);
+  assert.equal(isPolicyFile(root, POLICY_FILE), false);
+});
+
+test('realTarget: a leaf whose realpath AND lstat fail with a non-ENOENT code takes the parent-only fallback', () => {
+  const { root, policy } = policyRepo();
+  fs.writeFileSync(policy, 'x: 1\n');
+  const realReal = fs.realpathSync;
+  const realLstat = fs.lstatSync;
+  const denied = () => Object.assign(new Error('EACCES'), { code: 'EACCES' });
+  const patchedReal = (p, ...a) => { if (p === policy) throw denied(); return realReal(p, ...a); };
+  patchedReal.native = realReal.native;
+  fs.realpathSync = patchedReal;
+  fs.lstatSync = (p, ...a) => { if (p === policy) throw denied(); return realLstat(p, ...a); };
+  try {
+    assert.equal(isPolicyFile(root, policy), true);
+  } finally {
+    fs.realpathSync = realReal;
+    fs.lstatSync = realLstat;
+  }
+});
+
+test('realTarget: resolves with the JS fs.realpathSync, never .native', () => {
+  const { root, policy } = policyRepo();
+  fs.writeFileSync(policy, 'x: 1\n');
+  // A symlink alias, so a .native call that throws could not be masked by the
+  // parent-only fallback that a plain missing leaf would take.
+  const alias = path.join(root, 'alias.yml');
+  fs.symlinkSync(policy, alias);
+  const realReal = fs.realpathSync;
+  const patched = (p, ...a) => realReal(p, ...a);
+  patched.native = () => { throw new Error('native realpath must not be used here'); };
+  fs.realpathSync = patched;
+  try {
+    assert.equal(isPolicyFile(root, alias), true);
+  } finally {
+    fs.realpathSync = realReal;
+  }
+});
+
 // ---- installed-plugins.js ---------------------------------------------------
 
 const { selectEntry, safeRealpath } = require('../../../plugin/bin/lib/installed-plugins');
