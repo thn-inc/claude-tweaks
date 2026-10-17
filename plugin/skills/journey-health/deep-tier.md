@@ -1,8 +1,8 @@
 # Journey Health — Step 3.5 Deep Tier
 
 Full procedure for `/journey-health`'s deep tier, run only when `--deep` was passed. Cited from
-`SKILL.md`'s Step 3.5 rather than restated there, to keep that file's own per-invocation
-content-cost under the 40 KB ceiling (`tests/bin-lib/skill-audit/context-cost.test.js`).
+`SKILL.md`'s Step 3.5 rather than restated there, so `SKILL.md` stays lean and this procedure is
+lazy-loaded only when `--deep` is actually passed.
 
 **Step 3.5 — DEEP TIER (only when `--deep` was passed).**
 

@@ -116,8 +116,8 @@ test('every consumer that restates the Step 2.5 CI read also reads the head-sha 
 test('every pr-first merge site and the resume confirmation cite the gate', () => {
   // #852 extracted dispatch's "Confirm before resuming" procedure (including
   // this citation) out of SKILL.md into its own sub-file to stay under the
-  // 40 KB ceiling — the resume confirmation's own citation of the gate now
-  // lives there instead.
+  // former 40 KB ceiling — the resume confirmation's own citation of the gate
+  // now lives there instead.
   for (const rel of ['dispatch/settle-and-merge.md', 'dispatch/resume-confirmation.md', 'flow/worktree-merge.md', 'release/execute.md']) {
     assert.ok(read(...rel.split('/')).includes('Merge-verification gate'), `${rel} does not cite the gate`);
   }

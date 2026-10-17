@@ -4,6 +4,7 @@ files:
   - tools/upstream-drift/checks.js
   - .claude/skills/upstream-repin/SKILL.md
   - .claude/skills/upstream-drift/SKILL.md
+  - plugin/bin/lib/superpowers-version.js
 ---
 
 # Re-pin an Upstream Plugin Dependency and Prove the Pinned Lines Still Hold
@@ -24,10 +25,10 @@ files:
 
 ### 2. Move the pin, reading the version from the artifact
 - **URL:** `.claude/skills/upstream-repin/SKILL.md` → edit the entry's `pinned:` in `tools/upstream-drift/manifest.yml`
-- **Action:** Set `pinned` to the version the installed `plugin.json` reports, with a comment naming the old and new versions.
+- **Action:** Set `pinned` to the version the installed `plugin.json` reports, with a comment naming the old and new versions. For superpowers, move `SUPERPOWERS_FLOOR` in `plugin/bin/lib/superpowers-version.js` to the same value in the same change.
 - **Should feel:** Mechanical and sourced — the value is copied from the installed artifact, never from release notes or a marketplace page.
-- **Should understand:** A pin is a verification baseline, not a minimum-version requirement; a project still on an older project-scope install is a separate concern (a version notice), not something the pin enforces.
-- **Red flags:** A version string typed from memory; a second site that holds the same pin left on the old value.
+- **Should understand:** A pin is a verification baseline, not a minimum-version requirement; a project still on an older project-scope install is a separate concern (a version notice), not something the pin enforces. The superpowers pin does set that notice's threshold: `SUPERPOWERS_FLOOR` must equal the manifest's superpowers `pinned` (the parity test in `tests/bin-lib/superpowers-version.test.js` fails until it does), so a re-pin deliberately starts the SessionStart notice (#3380) in every project still on the previous version.
+- **Red flags:** A version string typed from memory; a second site that holds the same pin left on the old value (for superpowers, `SUPERPOWERS_FLOOR`).
 
 ### 3. Re-verify every existing assertion and retarget what upstream retired
 - **URL:** a byte-count of each `must-match` against the new cache copy of its `upstream-path`
@@ -60,3 +61,4 @@ files:
 ## Origin
 - Created during build of #3376 (re-pin superpowers to 7.0.0 and pin the upstream text the dispatch cost-shape records lean on), part of the "Build dispatch cost shape" decomposition (parent #3374).
 - Related: `.claude/skills/upstream-repin/SKILL.md` (the re-pin procedure) and `.claude/skills/upstream-drift/SKILL.md` (the read-only drift audit).
+- Updated after #3380 (SessionStart superpowers version notice): Step 2's superpowers re-pin also moves `SUPERPOWERS_FLOOR`, which raises the notice threshold.

@@ -357,7 +357,7 @@ gh issue comment {issue} --body "Verification Brief posted to PR #{pr-number}: {
 gh issue edit {issue} --add-label demo:pending
 ```
 
-Then post the run's Timing table as the `timing` kind, under the same gate (#1928); a `tokens: transcript not found (...)` line, when present, is posted verbatim with the table. The same multi-spec marker rule applies: `<!-- run-comment: timing:{spec} -->` when `$MULTISPEC_PARENT_DIR` is set, the plain `<!-- run-comment: timing -->` marker otherwise:
+Then post the run's Timing table as the `timing` kind, under the same gate (#1928); a `tokens: transcript not found (...)` line, when present, is posted verbatim with the table, and so is the CLI's Dispatches block (tier and role tables and any `dispatches:`/`dispatch agent-{id}:` lines) when it prints one. The same multi-spec marker rule applies: `<!-- run-comment: timing:{spec} -->` when `$MULTISPEC_PARENT_DIR` is set, the plain `<!-- run-comment: timing -->` marker otherwise:
 
 ```bash
 printf '<!-- run-comment: timing -->\n\n' > /tmp/pr-timing-{issue}.md

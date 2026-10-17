@@ -42,6 +42,16 @@ Rendered verbatim from `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-timing.js" --run "
 
 Guard denials: {n} gate · {n} wd-ambiguous · {n} wd-deny
 
+Under `--auto-transcript`/`--transcript` the CLI also appends a Dispatches section (#3375), rendered verbatim below the `Tokens (in/out)` footnote that follows the Guard denials line — never composed by hand. It carries two tables over the run's subagent dispatches, scoped to the `run window` (or the `whole session` when the run has no events): one by model tier (`fast`, `standard`, `capable`, `frontier`; an `unmapped` row carries the raw model names), one by role (implementer, task review, re-review, whole-branch review, plan review, lens reviewer, unlabelled). `Agent-seconds` sums each dispatch's span with overlap kept; `Elapsed (min)` is the union of those spans in minutes. The two are not comparable to phase minutes, and the Dispatches tokens are never summed with the phase table's main-session `Tokens (in/out)` column. A `Dispatches ({run window | whole session — no run events}; …):` line heads the tables. Render the not-found line (`dispatches: subagent transcripts not found (...)`, once per transcript whose `subagents/` directory yielded nothing), each per-dispatch line (`dispatch agent-{id}: ` followed by `transcript not found (...)`, `transcript has no usage rows`, `meta not found (description null)` or `meta not readable (...) (description null)`) and `dispatches: {n} outside the run window excluded` verbatim — a missing value is a fact about the run, never a zero.
+
+| Tier | Dispatches | Agent-seconds | Elapsed (min) | Tokens (in/out) | Cache (read/create) |
+|---|---|---|---|---|---|
+| {fast \| standard \| capable \| frontier \| unmapped (raw: {model}[, {model}…])} | {n} | {s} | {min} | {in/out} | {read/create} |
+
+| Role | Dispatches | Agent-seconds | Elapsed (min) | Tokens (in/out) | Cache (read/create) |
+|---|---|---|---|---|---|
+| {role} | {n} | {s} | {min} | {in/out} | {read/create} |
+
 ### Key Outputs
 - {summary of what was built}
 - {summary of review findings, if any}

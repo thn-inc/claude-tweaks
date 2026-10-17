@@ -1,7 +1,7 @@
 # Work Record — Permission Matrix
 
 Extracted from `_shared/work-record.md` (which cites this file rather than restating it) to keep
-that file under the 40 KB per-file lazy-load ceiling (`tests/bin-lib/skill-audit/context-cost.test.js`).
+that file lean.
 Every consumer that previously said "`_shared/work-record.md`'s permission matrix" still resolves
 correctly — that file's own `## Permission matrix` section is now a one-paragraph pointer here.
 

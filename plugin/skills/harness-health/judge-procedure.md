@@ -113,7 +113,7 @@ Run these mechanical checks first and treat their output as **evidence a later j
    node -e "
    const { bloatReport } = require('{plugin-root}/bin/lib/skill-audit/bloat.js');
    const [kind, target, ...corpus] = process.argv.slice(1);
-   const opts = kind === 'skill' ? { ceiling: Infinity } : { ceiling: Infinity, sizeOutlier: false };
+   const opts = kind === 'skill' ? {} : { sizeOutlier: false };
    console.log(bloatReport(target, corpus, opts));
    " "{target.kind}" "{target.path}" "{root}"/.claude/skills/*.md "{root}"/.claude/skills/*/*.md
    ```

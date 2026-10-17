@@ -14,6 +14,7 @@ const portsEnsure = require('../ports/ensure');
 const { BLOCK_SIZE: PORTS_BLOCK_SIZE } = require('../ports/registry');
 const { INTERACTION_STYLE_DIRECTIVE } = require('./interaction-style');
 const { resolvePluginVersion } = require('../plugin-version');
+const { SUPERPOWERS_FLOOR, effectiveSuperpowersVersion, superpowersNotice } = require('../superpowers-version');
 
 // #1738: the one banner-assembly shape both advisory scans below build by
 // hand today — a header sentence, the per-run "- name — detail" lines, and a
@@ -101,6 +102,24 @@ async function run(ctx) {
   try {
     const buildLine = resolveBuildLine({ CLAUDE_PLUGIN_ROOT: pluginRootEnv });
     if (buildLine) parts.push(buildLine);
+  } catch { /* best-effort */ }
+  try {
+    // #3380: inform-tier notice when the superpowers install this project
+    // resolves to is older than the version claude-tweaks is verified against
+    // (superpowers-version.js owns the resolution and the copy). Fires on
+    // `startup` or an absent `source` only — resume/clear/compact re-fire this
+    // hook in a session that already saw it. Silent on every no-install,
+    // malformed or at-or-above-floor outcome. `superpowersDeps` is a test-only
+    // seam; bin/hooks.js never sets it.
+    const source = ctx.input && typeof ctx.input === 'object' ? ctx.input.source : undefined;
+    if (typeof source !== 'string' || source === 'startup') {
+      const notice = superpowersNotice({
+        effective: effectiveSuperpowersVersion(ctx.cwd, ctx.superpowersDeps),
+        floor: SUPERPOWERS_FLOOR,
+        projectDir: ctx.cwd,
+      });
+      if (notice) parts.push(notice);
+    }
   } catch { /* best-effort */ }
   try {
     // #2736: detection lives in session-residue.js, shared with `hooks.js

@@ -175,6 +175,19 @@ the cause as not yet identified. So for each candidate cause, write down one thi
 that the alternatives do not, check it against real stored instances (`gh api`, an
 `issue_read` body), and ship "cause not yet identified" when nothing discriminates.
 
+## One transcript kind does not speak for another
+
+A shape observed in the main session transcript is a claim about a subagent transcript, not a
+fact. `readUsage` (`plugin/bin/lib/timing/transcript.js`, #1929) kept the first line per
+`message.id`, on a main-transcript observation that every content block of a turn repeats the
+same usage, and #3375 pointed it at subagent transcripts. Those
+(`{sessionId}/subagents/agent-{id}.jsonl`) open each turn with a streaming snapshot (`stop_reason`
+null, a small `output_tokens`) and close it with the settled count, so first-line dedupe
+undercounted subagent output 8-9x and the cost baseline had to be re-run (`a662004f9`). `6de93fc03` takes the max per `message.id` instead. When code reads more than one
+producer's transcripts, run step 2 against a real sample of each kind (the main transcript, a
+subagent transcript, and any path a caller passes with `--transcript`), and keep the observation
+date beside the rule, the way `transcript.js`'s header does for the subagent layout.
+
 ## When to use
 
 - Implementing a hook handler, integration, or any code that parses a tool's input/output payload

@@ -19,8 +19,8 @@ const CALL_SITES = [
   path.join(SKILLS_DIR, 'wrap-up', 'resume-halted-run.md'),
   // #852 extracted dispatch's "Confirm before resuming" procedure (including
   // this citation) out of SKILL.md into its own sub-file to stay under the
-  // 40 KB ceiling — the resume path's freshness-probe citation now lives
-  // there instead.
+  // former 40 KB ceiling — the resume path's freshness-probe citation now
+  // lives there instead.
   path.join(SKILLS_DIR, 'dispatch', 'resume-confirmation.md'),
   path.join(SKILLS_DIR, 'flow', 'steps-and-gates.md'),
 ];

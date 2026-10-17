@@ -116,7 +116,7 @@ function countSharedCitations(repoRoot, skillName) {
 // byte payload (not sub-files, which are lazy-loaded — `context-cost.js`'s
 // own distinction) + shared-citation depth. Sorted by byte size descending,
 // matching this corpus's existing reporting convention
-// (`measureSubFiles`/`overCeilingWarnings`).
+// (`measureSubFiles`).
 function estimateHarnessCost(repoRoot) {
   const dir = path.join(repoRoot, 'skills');
   const entries = measureSkillToolCost(repoRoot).map(({ name, tools, toolCount, overageRatio }) => ({

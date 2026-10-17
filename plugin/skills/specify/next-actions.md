@@ -1,8 +1,7 @@
 # Specify — Next Actions
 
-Full Next Actions procedure for `/claude-tweaks:specify`, lazy-loaded from `SKILL.md` to keep
-that file's own per-invocation content-cost under the 40 KB ceiling
-(`tests/bin-lib/skill-audit/context-cost.test.js`). Rendered for both modes — this is the one
+Full Next Actions procedure for `/claude-tweaks:specify`, lazy-loaded from `SKILL.md` so that
+file stays lean. Rendered for both modes — this is the one
 block that straddles them, which is why it lives in its own file rather than either mode's own
 sub-file.
 

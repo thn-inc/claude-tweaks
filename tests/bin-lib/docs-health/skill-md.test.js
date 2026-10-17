@@ -63,7 +63,7 @@ registerRequiredTokenTests(test, assert, read, [
 // SKILL.md: Step 3 reads it, and Step 1's parallel dispatch inlines its body
 // verbatim into each agent's prompt. One source, two callers — keeping it
 // inline in both places is the "contract restated twice, only one copy
-// updated" failure CLAUDE.md's 40 KB SKILL.md ceiling exists to prevent.
+// updated" failure keeping SKILL.md lean is meant to prevent.
 
 const JUDGE = path.join(path.dirname(SKILL), 'judge-procedure.md');
 const readJudge = () => fs.readFileSync(JUDGE, 'utf8');

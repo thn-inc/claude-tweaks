@@ -75,9 +75,8 @@ registerNoEmojiTest(test, assert, read);
 // ── P4 Task 6: new section anchors ────────────────────────────────────────────
 //
 // #923: both sections moved out to ci-integration.md (a lazy-loaded sub-file,
-// same pattern as filing.md/focus-mode.md) to bring SKILL.md back under the
-// 40 KB per-invocation ceiling — SKILL.md now points to them instead of
-// carrying the content inline.
+// same pattern as filing.md/focus-mode.md) to keep SKILL.md lean — SKILL.md
+// now points to them instead of carrying the content inline.
 
 const ciIntegrationPath = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'code-health', 'ci-integration.md');
 
