@@ -108,7 +108,7 @@ I've pre-filled recommendations from project policy + sensible defaults. The Rec
 | 2 | Scope-creep | **add-to-plan** | **add-to-plan** / stop-and-ask / drop | Files outside plan auto-added; nothing dropped silently |
 | 5 | Leftover routing | **defer** | **defer** / backlog / drop | Unfinished sections → a new work record (parked), reversible at Review Console |
 | 6 | Auto-fix threshold | **lint+type** | lint-only / **lint+type** / lint+type+test | Lint + type errors auto-fixed; test failures still surface |
-| 7 | Review auto-apply ceiling | **{computed}** | none / low / medium | Ceiling-conditional (see Recommendation defaults below): `low` — LOW auto-applied, MED staged, HIGH prompts; `medium` — MED also auto-applies |
+| 7 | Review auto-apply ceiling | **{computed}** | none / low / medium | Ceiling-conditional (see Recommendation defaults below): `low` — LOW auto-applied, MED and HIGH staged, Critical prompts; `medium` — MED also auto-applies |
 | 9 | Ceremony profile | **{computed}** | **fast-lane** / standard | Fast-lane trims wrap-up ceremony depth (reflect light mode, narrower skill-curation scan, doc-scan pre-check); standard runs full depth |
 | 10 | Model stance | **default** | economy / **default** / max-rigor | Shifts every dispatch's resolved effort one notch (`economy` also degrades Frontier to Capable); never changes which profile a dispatch requests |
 | 11 | Merge verification | **{derived}** | **merge-when-green** / wait / off | How much CI verification the run's merge waits for — derived per `_shared/policy-schema-coverage.md`'s `merge-verification` coverage block; explicit `policy.yml` value wins |
@@ -144,7 +144,7 @@ I've pre-filled recommendations from project policy + sensible defaults. The Rec
 | Design intent | `none` | No creative direction unless user opts in |
 | Leftover routing | `defer` | Reversible at the Review Console |
 | Auto-fix threshold | `lint+type` | Mechanical fixes only; semantic failures need judgment |
-| Review auto-apply ceiling | ceiling-conditional: `medium` when the resolved `autonomy` ceiling is `unattended`, `low` otherwise (`_shared/autonomy-ceiling.md`) | Auto LOW, stage MED, prompt HIGH; an unattended run has nobody to answer staged MED, so the default raises there. Computed here, not only in `step3-routing.md` — writing it to `config.yml` resolves as `source: run-config` downstream, and a flat `low` here would make step3's ceiling branch (fires only on `source: default`) unreachable for the runs it targets |
+| Review auto-apply ceiling | ceiling-conditional: `medium` when the resolved `autonomy` ceiling is `unattended`, `low` otherwise (`_shared/autonomy-ceiling.md`) | Auto LOW, stage MED and HIGH, prompt Critical; an unattended run has nobody to answer staged MED, so the default raises there. Computed here, not only in `step3-routing.md` — writing it to `config.yml` resolves as `source: run-config` downstream, and a flat `low` here would make step3's ceiling branch (fires only on `source: default`) unreachable for the runs it targets |
 | Tidy aggressiveness | `moderate` | Reversible git-tracked cleanups auto-apply; outward GitHub writes stage (`conservative` opts down) |
 | Model stance | `default` | No effort shift or Frontier degrade; the resolver's table applies unmodified |
 | Merge verification | derived (`resolve-policy.js --run "$PIPELINE_RUN_DIR" --values merge-verification`) | `_shared/policy-schema-coverage.md`'s coverage-block ladder already encodes the safe answer per repo shape — no hardcoded literal |

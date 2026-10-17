@@ -51,6 +51,19 @@ function assertMediumRow(text) {
   assert.match(text, /Critical prompts/i);
 }
 
+function assertLowRow(text) {
+  assert.match(text, /LOW auto-applied/);
+  assert.match(text, /MED and HIGH staged/);
+  assert.match(text, /only Critical prompts/);
+}
+
+// manifesto.md's lever-7 cells restate the `low` column too (the "Effect if approved" cell and
+// the Recommendation-defaults row); neither may say HIGH prompts.
+function assertNoHighPrompts(text) {
+  assert.doesNotMatch(text, /HIGH prompts/);
+  assert.doesNotMatch(text, /prompt HIGH/);
+}
+
 const cols = routingColumns(routing);
 
 test('premise: step3-routing none column stages every non-critical severity', () => {
@@ -67,6 +80,24 @@ test('premise: step3-routing medium column auto-applies Low and Medium, stages H
   assert.strictEqual(cols.Critical.medium, 'KEPT-PROMPT');
 });
 
+test('premise: step3-routing low column auto-applies Low, stages Medium and High, prompts Critical', () => {
+  assert.strictEqual(cols.Low.low, 'AUTO');
+  assert.strictEqual(cols.Medium.low, 'STAGED');
+  assert.strictEqual(cols.High.low, 'STAGED');
+  assert.strictEqual(cols.Critical.low, 'KEPT-PROMPT');
+});
+
+test('low override row exists and matches the routing table (MED and HIGH staged, only Critical prompts)', () => {
+  assertLowRow(ceilingRow(overrides, 'low'));
+});
+
+test('manifesto.md lever-7 cells do not claim HIGH prompts', () => {
+  const manifesto = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'manifesto.md'), 'utf8');
+  const lever7 = manifesto.split('\n').filter((l) => /Review auto-apply ceiling/.test(l) && l.startsWith('|'));
+  assert.ok(lever7.length >= 2, `expected the lever-7 table row and the Recommendation-defaults row, found ${lever7.length}`);
+  lever7.forEach((l) => assertNoHighPrompts(l));
+});
+
 test('AC1.1 + AC2.1: none override row describes staging and names the prose-exempt exception', () => {
   assertNoneRow(ceilingRow(overrides, 'none'));
 });
@@ -81,4 +112,13 @@ test('go-red control: the pre-#3166 none wording fails assertNoneRow', () => {
 
 test('go-red control: the pre-#3166 medium wording fails assertMediumRow', () => {
   assert.throws(() => assertMediumRow('LOW + MED auto-applied; only HIGH prompts'));
+});
+
+test('go-red control: a low row claiming HIGH prompts fails assertLowRow', () => {
+  assert.throws(() => assertLowRow('LOW auto-applied; MED staged; HIGH prompts'));
+});
+
+test('go-red control: the pre-fix lever-7 wordings fail assertNoHighPrompts', () => {
+  assert.throws(() => assertNoHighPrompts('`low` — LOW auto-applied, MED staged, HIGH prompts; `medium`'));
+  assert.throws(() => assertNoHighPrompts('Auto LOW, stage MED, prompt HIGH; an unattended'));
 });
