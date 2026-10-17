@@ -9,4 +9,5 @@
 | 5 | build | Ruling: implementers ran targeted suites only; npm test runs centrally at Common Step 5 (cost if wrong: a late full-suite failure) | observation | SDD ruling, recorded for wrap-up |
 | 6 | build | Ruling: cleanup-procedures.md line 7's carrier-commit `inputs.records` citation was in scope and repointed to `inputs.closingRecords` (027b7d4, pinned) | observation | SDD ruling, recorded for wrap-up |
 | 7 | build | Ruling: final-review Minor 8 (multispec-review-console.md:206) is out of #3399's scope — routed to item 4 | observation | SDD ruling, recorded for wrap-up |
+| 9 | build/skill | Extends `run-directory-fact-packs`: a subset pack (`--only`) produced as a stand-in for a skipped phase must name the probe(s) its later readers consume, since a present pack's missing key reads as that reader's failure path, not as "absent file" (#3399 final review finding 3) | observation | For wrap-up's Skills curation row |
 | 8 | build | Parked: Section E step 7's SKIP log-decision call uses `--step "Section E"` without the Degrade-trace `(degraded)` tag | observation | Cosmetic; appender accepts it; no second SDD fix wave |
