@@ -125,6 +125,9 @@ test('AC3.1/AC3.2: shaping-mode.md refusal paragraph names the minimum score of 
   assert.ok(start !== -1 && end !== -1, 'Near-duplicate section anchors must exist');
   const section = SHAPING_MODE.slice(start, end);
   assert.match(section, /at least 2 signals/);
+  // Anchored to the refusal paragraph itself: other mentions of the floor must not mask its removal.
+  assert.match(section, /scoring\s+\*\*at least 2 signals\*\*\s+\(`MIN_REFUSAL_SCORE`/);
+  assert.match(section, /A\s+score-1\s+candidate\s+is\s+surfaced\s+in\s+the\s+table\s+and\s+the\s+`\*\*Related:\*\*`\s+line\s+only/);
   assert.doesNotMatch(section, /never blocks shaping on its own signal alone/);
   assert.doesNotMatch(section, /the one automatic\s+refusal the finder's signal authorizes on its own/);
   const mod = require('../plugin/bin/lib/issues/near-duplicate');
