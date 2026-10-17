@@ -21,7 +21,7 @@ files:
 - **URL:** `plugin/skills/flow/SKILL.md` Arguments table (`parallel` row) and `## Syntax`
 - **Action:** The operator appends `parallel` to a multi-record `/flow` invocation (e.g. `/claude-tweaks:flow #12,#13,#14 parallel`). Without it, nothing in this journey happens, and the run is the sequential multi-spec run.
 - **Should feel:** Explicit and low-risk — one token, discoverable in the argument hint, that changes nothing unless typed.
-- **Should understand:** `parallel` is a no-op, with one printed note, under `current-branch` mode, for a single-record run (including one the merge-state gate reduced to one record), and for a step-list resume.
+- **Should understand:** `parallel` is a no-op, with one printed note, under `current-branch` mode, under `interactive` mode (a wave member is a dispatched agent and cannot prompt; `confirm` and `hybrid` keep `parallel`), for a single-record run (including one the merge-state gate reduced to one record), and for a step-list resume.
 - **Red flags:** Any behavior change in a run invoked without `parallel`. `parallel` absent from the argument hint, so the operator can't find it.
 
 ### 2. Pre-flight plans the waves — Validation steps 3 and 4b
@@ -43,7 +43,7 @@ files:
 - **Action:** After every member has returned, the orchestrator merges each `built-tested` member's `worktreeBranch` into the shared branch with `git merge --no-ff`, in run order. It folds that member's `spec-{N}/ledger.md` rows into the shared ledger, then removes the member worktree and deletes its branch. On a merge conflict it aborts the merge and re-runs that record's build and test sequentially, logging one `AUTO` line.
 - **Should feel:** Mechanical and quiet — a conflict costs a sequential re-run, never a question.
 - **Should understand:** Key Files are only a proxy for what a build touches, so a merge-back conflict is the expected signal of a Key Files miss, not a run failure.
-- **Red flags:** A member's ledger rows missing from the shared ledger after the fold. Ledger #12 tracks a known risk that Write-tool worktree pinning loses them. An `agent-*` worktree or `worktree-agent-*` branch left behind after a clean merge.
+- **Red flags:** A member's ledger rows missing from the shared ledger after the fold. The fold must read the path the member's `LEDGER:` line names, which may be a copy inside its worktree because Write and Edit are pinned there, and it must run before that worktree is removed. A row count that differs from the line's `{k}` with no mismatch named in the mapping line. An `agent-*` worktree or `worktree-agent-*` branch left behind after a clean merge with no Pipeline Summary line naming it for manual cleanup.
 
 ### 5. Review, polish and wrap-up run sequentially on the merged tree
 - **URL:** `plugin/skills/flow/multispec-parallel-waves.md` "Procedure, per wave", step 4; `review/code-mode-steps.md` Step 1.5

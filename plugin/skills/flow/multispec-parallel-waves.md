@@ -79,7 +79,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{parent}/spec-{N}" --sec
 
 This is a dispatch site under `_shared/subagent-output-contract.md`. Each member is a fresh agent, never `fork`. Resolve its model once per wave with `node "{plugin-root}/bin/resolve-profile.js" capable`, the profile `dispatch/task-prompt.md`'s first `build,test` call uses, and pass `model` explicitly on every `Agent` call.
 
-Inline the block below verbatim, substituting `{N}`, `{parent}`, `{shared-worktree}` and `{context-pack}`. `{parent}` is the parent run directory's absolute path, resolved under `$RUN_ROOT` (`_shared/pipeline-run-dir.md`): a relative path would resolve inside the member's own worktree `[IL-127]`. `{context-pack}` is `dispatch/task-prompt.md`'s Context pack items 1 (the literal plugin root), 6 (the worktree shell constraint) and 7 (async-wait discipline, with its `INTERIM_STATUS` rule), plus that file's `build,test` template's Foreground execution clause, which item 7 cites, all copied verbatim, with item 1 resolved to this session's own plugin root.
+Inline the block below verbatim, substituting `{N}`, `{parent}`, `{shared-worktree}`, `{stories-step}` and `{context-pack}`. `{stories-step}` carries `SKILL.md`'s Automatic story generation into the member, which would otherwise skip it: with `no-stories` set it is empty; otherwise it is the line `If that build changed a UI file (the trigger list in frontend-detection.md, in the /claude-tweaks:design-wrapper skill's directory), run PIPELINE_RUN_DIR="{parent}/spec-{N}" MULTISPEC_SHARED_WORKTREE=1 MULTISPEC_PARALLEL_WAVE=1 /claude-tweaks:stories next.` `{parent}` is the parent run directory's absolute path, resolved under `$RUN_ROOT` (`_shared/pipeline-run-dir.md`): a relative path would resolve inside the member's own worktree `[IL-127]`. `{context-pack}` is `dispatch/task-prompt.md`'s Context pack items 1 (the literal plugin root), 6 (the worktree shell constraint) and 7 (async-wait discipline, with its `INTERIM_STATUS` rule), plus that file's `build,test` template's Foreground execution clause, which item 7 cites, all copied verbatim, with item 1 resolved to this session's own plugin root.
 
 ```
 Task scope: build and test record #{N} as one member of a /claude-tweaks:flow parallel
@@ -95,8 +95,9 @@ with STATUS: BLOCKED. Otherwise run the project's dependency setup the way
 /superpowers:using-git-worktrees Step 2 auto-detects it (e.g. `npm install` when
 package.json exists).
 
-Then run these two invocations, in order:
+Then run these invocations, in order:
 PIPELINE_RUN_DIR="{parent}/spec-{N}" MULTISPEC_SHARED_WORKTREE=1 MULTISPEC_PARALLEL_WAVE=1 /claude-tweaks:build #{N}
+{stories-step}
 PIPELINE_RUN_DIR="{parent}/spec-{N}" MULTISPEC_SHARED_WORKTREE=1 MULTISPEC_PARALLEL_WAVE=1 /claude-tweaks:test
 
 Never push, never open or edit a PR, never run `hooks.js record-worktree` or

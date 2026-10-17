@@ -1409,6 +1409,19 @@ test('--run whose basename differs from --run-id: exit 2, no gh call', () => {
   assert.equal(io.out.length, 0);
 });
 
+test('--run with no value (trailing bare flag, or empty): exit 2 with usage, no gh call', () => {
+  const gh = () => { throw new Error('must not be called'); };
+  const ghApi = () => { throw new Error('must not be called'); };
+  for (const argv of [
+    ['--run-id', 'r1', '--targets', '720', '--run'],
+    ['--run-id', 'r1', '--targets', '720', '--run', ''],
+  ]) {
+    const { deps, io } = baseDeps({ ghApi, gh });
+    assert.equal(run(argv, deps), 2);
+    assert.equal(io.out.length, 0);
+  }
+});
+
 test('--run: an appendClaimLog that throws never un-claims — claim stands, claimLogFailures names the issue, exit 0', () => {
   const { ghApi } = makeGhApi({
     reads: { 750: [readAbsent, confirmRead()] },

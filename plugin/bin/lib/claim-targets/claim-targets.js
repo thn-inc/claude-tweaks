@@ -251,6 +251,7 @@ function run(argv, deps) {
   // The claim identity and the log location must be the same run — a `--run`
   // pointed at a different run dir would log a claim under the wrong run's
   // decisions.md (#2775).
+  if (opts.runDir !== null && (typeof opts.runDir !== 'string' || opts.runDir.trim() === '')) { deps.stderr(USAGE); return 2; }
   const runDirBasename = opts.runDir !== null ? path.basename(opts.runDir) : null;
   if (runDirBasename !== null && runDirBasename !== opts.runId) {
     deps.stderr(`claim-targets: --run basename (${runDirBasename}) must equal --run-id (${opts.runId})\n`);

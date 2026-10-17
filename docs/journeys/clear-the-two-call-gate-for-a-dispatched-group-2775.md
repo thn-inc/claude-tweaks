@@ -18,10 +18,10 @@ files:
 ## Steps
 
 ### 1. Claim the group and let the CLI write the claim log — `/flow` Step 2.8
-- **URL:** `plugin/skills/flow/claim-targets.md` "Claim every named target, all-or-abort"
+- **URL:** `plugin/skills/flow/claim-targets.md` "Claim every named target, all-or-abort"; the `claim-targets.js` row of `plugin/skills/dispatch/task-prompt.md`'s Context pack CLI table, which carries the `--run "{minted-run-dir}"` shape the dispatched agent copies
 - **Action:** Run `claim-targets.js --run-id "$(basename "$PIPELINE_RUN_DIR")" --targets {n},{m} --run "$PIPELINE_RUN_DIR"`. On success the CLI appends one `- AUTO … — Step 2.8: claimed #n (bin/claim-targets.js, transport: …)` line per claimed target under `## /flow`, through `log-decision`'s own writer and its run-dir anchoring check.
 - **Should feel:** One command, nothing to hand-type — the claim and its audit line land together.
-- **Should understand:** The line is written per target, never as a combined `claimed #a, #b` line (which the bookkeeping-stamps gate accepts only for its first number). A write the CLI could not make — e.g. a worktree-local, unanchored `--run` path — comes back in the envelope's `claimLogFailures`; the claim itself still stands.
+- **Should understand:** The line is written per target, never as a combined `claimed #a, #b` line (which the bookkeeping-stamps gate accepts only for its first number). A write the CLI could not make — e.g. a worktree-local, unanchored `--run` path — comes back in the envelope's `claimLogFailures`; the claim itself still stands. This is the `gh` path only: in a `gh`-absent sandbox the manual MCP claim procedure runs instead of the CLI, and the `log-decision.js` call in `claim-targets.md`'s "Log the claim" paragraph is still required once per target it claimed.
 - **Red flags:** A non-empty `claimLogFailures` ignored — the materialize-commit push is then denied by the bookkeeping-stamps gate exactly as before; hand-typing a grouped claim line instead of passing `--run`.
 
 ### 2. Materialize every member before building — `/flow` multi-spec per-record `/build`
