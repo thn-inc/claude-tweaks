@@ -611,10 +611,13 @@ async function main() {
     scope: sel ? { mode: sel.mode, suites: scopeSuites, static: sel.static, base: resolvedBase, unmatched: sel.unmatched, changedFiles: files, matched: sel.matched, mergeNarrowing: narrowing ? { ref: narrowing.ref, excluded: narrowing.excluded.length, excludedFiles: narrowing.excluded } : null } : null,
     flakyEscalation, baselineAdjudicated, preExistingAdjudicated,
   });
-  writeReportAtomic(report, jsonPath);
   // The exit code and the pass stamp follow the adjudicated verdict; the
-  // report's own `pass` stays the raw "every check exited 0".
+  // report's own `pass` stays the raw "every check exited 0". The verdict is
+  // also recorded as `effectivePass` (#3316) — added here, after composeReport,
+  // so a consumer reads it instead of re-deriving it from the adjudication fields.
   const effectivePass = report.pass || adjudicatedPass || preExistingPass;
+  report.effectivePass = effectivePass;
+  writeReportAtomic(report, jsonPath);
 
   // Verify event (#1928): the runner is the mechanical source for the
   // tasks→test phase boundary (bin/lib/timing/derive.js). Written only when
