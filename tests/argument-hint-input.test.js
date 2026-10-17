@@ -38,6 +38,8 @@ const SKILLS = listSkillDirs(path.join(ROOT, 'plugin'));
 
 const read = (name) => fs.readFileSync(path.join(SKILLS_DIR, name, 'SKILL.md'), 'utf8');
 
+const EXEMPT_MARKERS = ['(producer-only)', '(deprecated alias)'];
+
 // Split `group` on `|` characters that are not nested inside `<...>` or
 // `[...]` -- e.g. `tier=<fast|standard|capable>` stays one leaf (the pipes
 // are inside `<>`), and `next|#N[,#M...]` splits into `next` and
@@ -185,5 +187,14 @@ test('every bracketed leaf in argument-hint appears in ## Input', () => {
         `skills/${name}/SKILL.md: argument-hint leaf '${leaf}' (key '${key}') does not appear in '## Input'`,
       );
     }
+  }
+});
+
+test('AC2.1: docs/skill-authoring.md argument-hint bullet names every exemption marker', () => {
+  const doc = fs.readFileSync(path.join(ROOT, 'docs', 'skill-authoring.md'), 'utf8');
+  const bullet = doc.split('\n').find((l) => l.startsWith('- **`argument-hint`**'));
+  assert.ok(bullet, 'argument-hint bullet not found');
+  for (const marker of EXEMPT_MARKERS) {
+    assert.ok(bullet.includes('`' + marker + '`'), `bullet does not name ${marker}`);
   }
 });
