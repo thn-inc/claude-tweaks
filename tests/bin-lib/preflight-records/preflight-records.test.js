@@ -702,6 +702,31 @@ test('--records-json accepts bare-string labels', () => {
   assert.equal(bare.records['720'].facets.stage, 'ready');
 });
 
+test('--records-json accepts an unlabelled record — labels missing or null, as gh reports it', () => {
+  for (const [label, entry] of [
+    ['missing', { number: 720, title: 'A', body: specBody(['a.js']) }],
+    ['null', { number: 720, title: 'A', body: specBody(['a.js']), labels: null }],
+  ]) {
+    const { deps, out, err } = cliDeps({ runner: noGh, files: { '/r.json': JSON.stringify([entry]) } });
+    assert.equal(run(['720', '--records-json', '/r.json'], deps), 0, `${label}: ${err.join('')}`);
+    assert.ok(JSON.parse(out.join('')).records['720'], label);
+  }
+});
+
+test('--records-json --waves plans from the file records — independent records share one wave', () => {
+  const { deps, out } = cliDeps({
+    runner: noGh,
+    files: {
+      '/r.json': JSON.stringify([
+        issue({ number: 720, title: 'A', body: specBody(['a.js']) }),
+        issue({ number: 721, title: 'B', body: specBody(['b.js']) }),
+      ]),
+    },
+  });
+  assert.equal(run(['720', '721', '--records-json', '/r.json', '--waves'], deps), 0);
+  assert.deepEqual(JSON.parse(out.join('')).waves.waves, [[720, 721]]);
+});
+
 test('--records-json with a --waves dependency cycle exits 2', () => {
   const { deps, out, err } = cliDeps({
     runner: noGh,

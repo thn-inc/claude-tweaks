@@ -3,7 +3,9 @@
 // JSON CLI that mechanizes skills/flow/materialize.md's Resolution + the
 // blocked-by bullet and skills/flow/multi-spec.md's Validation steps 1-5
 // (Prerequisites + Cross-spec conflict detection). Fetches N records
-// (`gh issue view`), derives their facets/keyFiles/fingerprint, resolves
+// (`gh issue view`) — or takes them already fetched from a `--records-json`
+// file via issuesFromRecordsJson, the gh-free path (#3351) — derives their
+// facets/keyFiles/fingerprint, resolves
 // each record's blockedBy either from body text (work-links: body-text, no
 // extra call) or one batched aliased GraphQL call (work-links: native), and
 // groups records that share key files via bin/lib/issues/grouping.js's

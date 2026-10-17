@@ -19,8 +19,15 @@ test('AC6.1: the ruling sub-file states all five branches', () => {
   const text = read(RULING);
   assert.match(text, /exit 0/i, 'exit 0 branch');
   assert.match(text, /exit 1[\s\S]*?re-run[^\n]*once/i, 'exit 1 re-runs once');
-  assert.match(text, /STOP[^\n]*before[^\n]*claim/i, 'a STOP before claiming');
-  assert.match(text, /exit 2[\s\S]*?no retry/i, 'exit 2 never retries');
+  const exit1 = text.split('\n').find((l) => l.startsWith('**Exit 1'));
+  assert.ok(exit1, 'exit 1 branch paragraph present');
+  assert.match(exit1, /second exit 1 is a \*\*STOP before claiming\*\*/i, 'a second exit 1 STOPs before claiming');
+  assert.match(exit1, /names every failing record/i, 'the exit-1 STOP names every failing record');
+  const exit2 = text.split('\n').find((l) => l.startsWith('**Exit 2'));
+  assert.ok(exit2, 'exit 2 branch paragraph present');
+  assert.match(exit2, /\*\*STOP before claiming\*\*, no retry/i, 'exit 2 STOPs before claiming, never retries');
+  assert.match(exit2, /--records-json/, 'exit 2 names a bad --records-json input among its causes');
+  assert.match(text, /issue_read[\s\S]*?fails[^\n]*STOP before claiming/i, 'an MCP fetch failure STOPs before claiming');
   assert.match(text, /--records-json/, 'gh-free records path');
   assert.match(text, /issue_read/, 'MCP fetch for the gh-free path');
   assert.match(text, /nativeLinksUnchecked/, 'native-unchecked branch');
