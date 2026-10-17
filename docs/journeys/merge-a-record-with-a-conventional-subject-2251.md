@@ -9,6 +9,8 @@ files:
   - plugin/skills/_shared/pr-first-merge.md
   - plugin/skills/_shared/local-merge-auto-finish.md
   - plugin/skills/dispatch/settle-and-merge.md
+  - plugin/skills/wrap-up/auto-merge-short-circuit.md
+  - plugin/skills/flow/worktree-merge.md
   - plugin/skills/dispatch/close-out.md
   - plugin/skills/specify/shaping-mode-stamping.md
   - plugin/skills/specify/spec-template.md
@@ -38,7 +40,7 @@ files:
 - **Red flags:** A pr-first merge that produced a merge commit instead of a squash; a subject longer than 72 characters; a truncated `(#N)`.
 
 ### 3. A bundle merges under its most significant member — `dispatch/settle-and-merge.md`
-- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {n} {m} --tag auto-merge --shell`
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {n} {m} --tag auto-merge --range {integration-branch}...{branch} --shell`
 - **Action:** A dispatched group of several records merges as one commit: the title and `(#N)` come from the lowest-numbered record, the prefix from the bundle's highest-precedence Type (`feature` > `bug` > `task`), one `Fixes #` line per record, and `breaking` if any member carries it.
 - **Should feel:** Nothing is lost — a feature bundled behind a lower-numbered chore still reads `feat:`.
 - **Should understand:** `chore` is invisible to release-please's changelog and bump by default, so aggregating by precedence is what keeps a bundled feature from silently producing no minor bump.
