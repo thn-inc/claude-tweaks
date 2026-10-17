@@ -24,3 +24,4 @@
 | 20 | build | SDD Ruling: false dead-dep minor struck (final review I1) | observation | SDD controller ruling |
 | 21 | build | SDD Ruling: final fix wave = I1, M1, M2, M3, T1-a, T1-b; M4 and remaining minors deferred; M5 baseline corrected to 308/308 | observation | SDD controller ruling; 71eac80c5 |
 | 22 | build | isPolicyFile compares a JS-realpath leaf against a JS-realpath canonical path; moving both sides to .native is a separate change | deferred | tracked in #3495 |
+| 23 | build/skill | The new path-guard routing rule extends .claude/skills/pre-tool-use-gate-exemptions (its leaf-symlink bullet now points at resolveLeaf; updated in-branch) — its safeReal anti-pattern row stays true until #3495 lands | observation | updated in 4bf4792e3/51a0a85fe |
