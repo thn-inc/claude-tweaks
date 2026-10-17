@@ -33,7 +33,9 @@ node plugin/bin/phase-timing.js --run <scratch> --markdown --transcript <main tr
 
 `<scratch>` was `$TMPDIR/dispatch-baseline-3316` (`os.tmpdir()`), a fresh directory holding copies of
 the run's `events.jsonl`, `run-state.json` and `config.yml` (the run has no `manifest.yml`). The
-CLI writes `timing.json` into `--run`, so the archived run directory was never passed to it.
+CLI writes `timing.json` into `--run`, so the archived run directory was never passed to it. That
+scratch directory was not kept; to re-run, make a new empty directory, copy those three files into
+it from `.claude-tweaks/pipelines/archive/2026-10-17T110950-record-3316/`, and pass it as `--run`.
 `<main transcript>` is, as of this file's last verification,
 `~/.claude/projects/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks/bfb315de-981e-4d1a-8cdc-15688ef61019.jsonl`.
 This is the path that reproduces the table below. The exit code was 0.

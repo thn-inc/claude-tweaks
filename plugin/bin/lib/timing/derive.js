@@ -343,7 +343,8 @@ const TIER_BY_ALIAS = Object.freeze(Object.fromEntries(Object.entries(PROFILES).
 // Every tier resolveTier can return, in render order: a profile added to
 // PROFILES gets a Tier row without a second list to keep in step.
 const TIERS = Object.freeze([...Object.keys(PROFILES), 'unmapped']);
-const MODEL_FAMILY_RE = new RegExp(`^claude-(${Object.keys(TIER_BY_ALIAS).join('|')})`);
+// The family must end at a hyphen or the id's end: claude-sonnetx is unmapped, not standard.
+const MODEL_FAMILY_RE = new RegExp(`^claude-(${Object.keys(TIER_BY_ALIAS).join('|')})(?:-|$)`);
 
 // ({ metaModel, transcriptModel }) -> { tier, rawModel }. `rawModel` is the
 // value the tier came from; on `unmapped` it is the transcript model, else

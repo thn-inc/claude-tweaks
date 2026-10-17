@@ -42,7 +42,7 @@ files:
 ### 3. Read the lines that say what is missing
 - **URL:** the lines after the tables
 - **Action:** Check for:
-  - `dispatches: subagent transcripts not found (…)` (no `subagents/` directory beside the transcript, or one that cannot be listed — the error code is named);
+  - `dispatches: subagent transcripts not found (…)` (no `subagents/` directory beside the transcript, one that cannot be listed — the error code is named — one with no `agent-*` files, or a symlinked one, which is never followed; with several transcripts, one line per directory that yielded nothing, below the tables);
   - `dispatch agent-{id}: transcript not found ({code})` (`symlink` when the file is a symlink, which is never followed);
   - `dispatch agent-{id}: transcript has no usage rows`;
   - `dispatch agent-{id}: meta not found (description null)`, or `meta not readable ({code|malformed|symlink}) (description null)` for a meta file that exists but cannot be used;

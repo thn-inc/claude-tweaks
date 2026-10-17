@@ -211,7 +211,7 @@ test('#3375 AC3.1: with --auto-transcript the phase table is byte-identical to b
   const s = subagentRun();
   const r = runAuto(s);
   assert.equal(r.status, 0, r.stderr);
-  const golden = fs.readFileSync(path.join(SUBFIX, 'golden-auto.md'), 'utf8');
+  const golden = fs.readFileSync(path.join(SUBFIX, '..', 'subagents-golden-auto.md'), 'utf8');
   assert.ok(r.stdout.startsWith(golden), 'the phase table and Guard footer must be unchanged');
   assert.ok(r.stdout.slice(golden.length).startsWith('\nDispatches (run window'), r.stdout.slice(golden.length));
   // a1 65s + a2 30s of standard (two separate minutes), a3 120s of capable
@@ -235,7 +235,7 @@ test('#3375 AC3.2: with no transcript flag, the whole output and timing.json are
   const s = subagentRun();
   const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown'], { encoding: 'utf8', env: s.env });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, fs.readFileSync(path.join(SUBFIX, 'golden-plain.md'), 'utf8'));
+  assert.equal(r.stdout, fs.readFileSync(path.join(SUBFIX, '..', 'subagents-golden-plain.md'), 'utf8'));
   assert.equal('dispatches' in readTiming(s.dir), false);
 });
 
@@ -308,6 +308,20 @@ test('#3375 review focus 3: the same transcript passed twice does not double-cou
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^\| standard \| 2 \|/m);
   assert.equal(readTiming(s.dir).dispatches.items.length, 3);
+});
+
+test('#3375: with several transcripts, one whose subagents/ directory is missing is still named beside the tables', () => {
+  const s = subagentRun();
+  const other = path.join(s.slugDir, 'sess-2.jsonl');
+  fs.writeFileSync(other, '');
+  const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--transcript', s.transcript, '--transcript', other], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const d = readTiming(s.dir).dispatches;
+  assert.equal(d.items.length, 3);
+  assert.equal(d.notFoundDirs.length, 1);
+  assert.match(d.notFoundDirs[0], /^no subagents\/ directory at .+sess-2\/subagents$/);
+  assert.match(r.stdout, /^\| standard \| 2 \|/m);
+  assert.match(r.stdout, /^dispatches: subagent transcripts not found \(no subagents\/ directory at .+sess-2\/subagents\)$/m);
 });
 
 test('#3375 M2: the same transcript reached through a symlinked directory alias does not double-count dispatches', () => {

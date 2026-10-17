@@ -255,7 +255,7 @@ test('#1929: countGuardEvents counts the three guard event types and ignores the
 });
 
 // --- #3375 dispatch aggregation ---
-const { resolveTier, roleOf, ROLE_PATTERNS, aggregateDispatches, unionMinutes } = require('../../../plugin/bin/lib/timing/derive');
+const { resolveTier, roleOf, aggregateDispatches, unionMinutes } = require('../../../plugin/bin/lib/timing/derive');
 
 const T0 = Date.parse('2026-10-17T10:00:00.000Z');
 const at = (min) => new Date(T0 + min * 60000).toISOString();
@@ -305,6 +305,9 @@ test('AC2.2: a PROFILES alias in meta wins over the transcript model', () => {
 
 test('AC2.3: a model matching no family reports unmapped with its raw name', () => {
   assert.deepEqual(resolveTier({ metaModel: 'inherit', transcriptModel: 'gpt-x' }), { tier: 'unmapped', rawModel: 'gpt-x' });
+  // the family must end at a hyphen or the id's end
+  assert.deepEqual(resolveTier({ metaModel: null, transcriptModel: 'claude-sonnetx-1' }), { tier: 'unmapped', rawModel: 'claude-sonnetx-1' });
+  assert.equal(resolveTier({ metaModel: null, transcriptModel: 'claude-haiku-4-5-20251001' }).tier, 'fast');
   const r = aggregateDispatches([
     disp({ agentId: 'u1', metaModel: 'inherit', transcriptModel: 'gpt-x' }),
     disp({ agentId: 'u2', metaModel: 'inherit', transcriptModel: 'gpt-x' }),
@@ -349,7 +352,8 @@ test('AC7.1: every captured description classifies to its intended role', () => 
   for (const d of DESCRIPTIONS) {
     assert.equal(roleOf(d.description), d.role, `${d.source}: "${d.description}"`);
   }
-  assert.equal(ROLE_PATTERNS[0].role, 're-review');
+  // precedence: a description matching both re-review and plan review is a re-review
+  assert.equal(roleOf('Re-review plan review fix round 1'), 're-review');
 });
 
 test('AC7.1: an unknown string classifies as unlabelled', () => {

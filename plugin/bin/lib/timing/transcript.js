@@ -194,9 +194,14 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
   return rows;
 }
 
-// mainTranscriptPath -> the sibling {sessionId}/subagents directory.
-function subagentsDirFor(mainTranscriptPath) {
-  return path.join(String(mainTranscriptPath).replace(/\.jsonl$/, ''), 'subagents');
+// transcriptPath -> the session's {sessionId}/subagents directory: the sibling
+// directory for a main transcript, or the containing directory for a
+// subagent's own agent-{id}.jsonl (what /dispatch passes via --transcript),
+// which already sits in it.
+function subagentsDirFor(transcriptPath) {
+  const p = String(transcriptPath);
+  if (path.basename(path.dirname(p)) === 'subagents' && /^agent-.+\.jsonl$/.test(path.basename(p))) return path.dirname(p);
+  return path.join(p.replace(/\.jsonl$/, ''), 'subagents');
 }
 
 // -> { meta, reason }: reason is null when meta parsed, else the notFound text.
@@ -235,10 +240,18 @@ function transcriptModelOf(rows) {
 // before span/tokens are taken, and a dispatch with no row inside it is
 // counted in excludedOutsideWindow rather than listed. Window clipping runs
 // after readUsage's message.id dedupe, so a turn whose first line falls before
-// window.start loses its tokens (an edge undercount). A readable transcript
-// with no timestamped rows is notFound 'transcript has no usage rows' (numbers
-// null), decided before clipping. Never throws.
+// window.start loses its tokens (an edge undercount). Rows with no valid
+// timestamp cannot be placed against the window; their tokens count toward a
+// dispatch that has a timed row kept. A readable transcript with no timestamped
+// rows is notFound 'transcript has no usage rows' (numbers null), decided
+// before clipping. A symlinked subagents/ directory is never followed, and one
+// with no agent-* files is notFound rather than an empty table. Never throws.
 async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {}) {
+  try {
+    if (fsImpl.lstatSync(subagentsDir).isSymbolicLink()) {
+      return { items: [], notFound: `subagents/ directory is a symlink (not followed) at ${subagentsDir}`, excludedOutsideWindow: 0 };
+    }
+  } catch { /* absent or unreadable: readdirSync below names the code */ }
   let names;
   try {
     names = fsImpl.readdirSync(subagentsDir);
@@ -266,6 +279,7 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
       skipped.set(n, (err && err.code) || 'EUNKNOWN');
     }
   }
+  if (ids.size === 0) return { items: [], notFound: `no agent-* transcripts in ${subagentsDir}`, excludedOutsideWindow: 0 };
   const built = [];
   let excludedOutsideWindow = 0;
   for (const agentId of ids) {
@@ -285,23 +299,27 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
       startTs: null, endTs: null, wallClockMs: null, tokens: null,
       notFound: metaReason,
     };
+    // A transcript failure keeps the meta reason ahead of it, so an orphan
+    // whose transcript is also unusable still says its meta was missing.
+    const fail = (reason) => { d.notFound = metaReason ? `${metaReason}; ${reason}` : reason; };
     let startMs = null;
     let rows = null;
     if (skipped.has(jsonlName)) {
-      d.notFound = `transcript not readable (${skipped.get(jsonlName)})`;
+      fail(`transcript not readable (${skipped.get(jsonlName)})`);
     } else {
       try {
         rows = await readUsage(path.join(subagentsDir, jsonlName), { fsImpl });
       } catch (err) {
-        d.notFound = `transcript not readable (${(err && err.code) || 'EUNKNOWN'})`;
+        fail(`transcript not readable (${(err && err.code) || 'EUNKNOWN'})`);
       }
     }
     if (rows) {
-      const stamped = rows.map((r) => ({ r, ms: Date.parse(r.ts) })).filter((x) => Number.isFinite(x.ms));
+      const timed = rows.map((r) => ({ r, ms: Date.parse(r.ts) }));
+      const stamped = timed.filter((x) => Number.isFinite(x.ms));
       if (stamped.length === 0) {
         // Readable but nothing usable (empty file, no/invalid timestamps, a
         // drifted layout): report not-found rather than zero-filled numbers.
-        d.notFound = 'transcript has no usage rows';
+        fail('transcript has no usage rows');
         built.push({ d, startMs });
         continue;
       }
@@ -316,7 +334,7 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
       d.startTs = first.r.ts;
       d.endTs = last.r.ts;
       d.wallClockMs = last.ms - first.ms;
-      const keptRows = kept.map((x) => x.r);
+      const keptRows = kept.map((x) => x.r).concat(timed.filter((x) => !Number.isFinite(x.ms)).map((x) => x.r));
       d.tokens = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
       for (const r of keptRows) {
         d.tokens.input += r.inputTokens;

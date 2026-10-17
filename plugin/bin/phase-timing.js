@@ -189,6 +189,7 @@ function renderDispatches(dispatches) {
     for (const r of ROLE_ORDER.filter((x) => dispatches.byRole[x])) lines.push(dispatchRow(r, dispatches.byRole[r]));
   }
   for (const d of dispatches.items) if (d.notFound) lines.push(dispatchItemLine(d));
+  for (const r of dispatches.notFoundDirs || []) lines.push(`dispatches: subagent transcripts not found (${r})`);
   if (dispatches.excludedOutsideWindow > 0) lines.push(`dispatches: ${dispatches.excludedOutsideWindow} outside the run window excluded`);
   return lines.join('\n') + '\n';
 }
@@ -206,9 +207,11 @@ async function collectDispatches(paths, events) {
   const window = stamps.length
     ? { start: stamps.reduce((a, b) => Math.min(a, b)), end: stamps.reduce((a, b) => Math.max(a, b)) }
     : null;
+  // A symlinked subagents/ leaf keeps its own path, so readDispatches sees the
+  // link and refuses it instead of reading wherever it points.
   const canonical = (p) => {
     const dir = path.resolve(subagentsDirFor(p));
-    try { return fs.realpathSync(dir); } catch { return dir; }
+    try { return fs.lstatSync(dir).isSymbolicLink() ? dir : fs.realpathSync(dir); } catch { return dir; }
   };
   const dirs = [...new Set(paths.map(canonical))];
   const items = [];
@@ -224,7 +227,10 @@ async function collectDispatches(paths, events) {
   }
   if (found === 0) return { notFound: reasons.length ? reasons.join('; ') : 'no transcript resolved' };
   const agg = aggregateDispatches(items);
-  return { scope: window ? 'run-window' : 'whole-session', items: agg.items, byTier: agg.byTier, byRole: agg.byRole, excludedOutsideWindow };
+  const out = { scope: window ? 'run-window' : 'whole-session', items: agg.items, byTier: agg.byTier, byRole: agg.byRole, excludedOutsideWindow };
+  // A dir that yielded nothing beside one that did is still named, not dropped.
+  if (reasons.length) out.notFoundDirs = reasons;
+  return out;
 }
 
 // Resolve the transcript list: explicit --transcript paths, plus the

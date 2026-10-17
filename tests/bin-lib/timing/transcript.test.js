@@ -169,6 +169,50 @@ test('#3375: subagentsDirFor strips .jsonl and appends subagents/', () => {
   assert.equal(subagentsDirFor('/h/p/sess-1.jsonl'), path.join('/h/p/sess-1', 'subagents'));
 });
 
+test('#3375 M4: a subagent transcript passed as --transcript (/dispatch) maps to the session subagents/ dir it sits in', () => {
+  assert.equal(subagentsDirFor('/h/p/sess-1/subagents/agent-a7.jsonl'), '/h/p/sess-1/subagents');
+  // a main transcript that merely lives under a dir named subagents is not an agent transcript
+  assert.equal(subagentsDirFor('/h/subagents/sess-1.jsonl'), path.join('/h/subagents/sess-1', 'subagents'));
+});
+
+test('#3375: a subagents/ directory with no agent-* files is notFound, not an empty table', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'notes.txt'), 'x');
+  const r = await readDispatches(dir);
+  assert.equal(r.notFound, `no agent-* transcripts in ${dir}`);
+  assert.deepEqual(r.items, []);
+});
+
+test('#3375 [IL-150]: a symlinked subagents/ directory is never followed', async () => {
+  const real = tmpSubagents();
+  fs.writeFileSync(path.join(real, 'agent-s1.jsonl'), aLine('assistant', '2026-10-17T10:00:00.000Z', 'ms1', 'claude-opus-5-5', [9, 9, 9, 9]) + '\n');
+  const link = path.join(tmpSubagents(), 'subagents');
+  fs.symlinkSync(real, link);
+  const r = await readDispatches(link);
+  assert.equal(r.notFound, `subagents/ directory is a symlink (not followed) at ${link}`);
+  assert.deepEqual(r.items, []);
+});
+
+test('#3375: an orphan transcript that is also unusable keeps "meta not found" ahead of the transcript reason', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-z1.jsonl'), '');
+  const r = await readDispatches(dir);
+  assert.equal(r.items[0].notFound, 'meta not found; transcript has no usage rows');
+  assert.equal(r.items[0].tokens, null);
+});
+
+test('#3375: a usage row with an invalid timestamp still counts toward a dispatch with timed rows', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-t1.meta.json'), JSON.stringify({ description: 'Implement Task 1', model: 'sonnet' }));
+  fs.writeFileSync(path.join(dir, 'agent-t1.jsonl'), [
+    aLine('assistant', '2026-10-17T10:00:00.000Z', 'mt1', 'claude-sonnet-5', [1, 2, 3, 4]),
+    aLine('assistant', 'not-a-time', 'mt2', 'claude-sonnet-5', [10, 20, 30, 40]),
+  ].join('\n') + '\n');
+  const r = await readDispatches(dir, { window: { start: Date.parse('2026-10-17T09:00:00.000Z'), end: Date.parse('2026-10-17T11:00:00.000Z') } });
+  assert.deepEqual(r.items[0].tokens, { input: 11, output: 22, cacheRead: 33, cacheCreate: 44 });
+  assert.equal(r.items[0].wallClockMs, 0);
+});
+
 test('AC4.1: a meta file whose transcript is unreadable yields notFound and null numbers', async () => {
   const dir = tmpSubagents();
   fs.writeFileSync(path.join(dir, 'agent-x.meta.json'), JSON.stringify({ description: 'ghost', model: 'haiku', spawnDepth: 2, parentAgentId: 'p1' }));
@@ -316,7 +360,7 @@ test('#3375 M2 [IL-150]: readDispatches skips symlinked agent transcripts and me
   fs.symlinkSync(path.join(outside, 'secret.meta.json'), path.join(dir, 'agent-l3.meta.json'));
   const r = await readDispatches(dir);
   const by = Object.fromEntries(r.items.map((i) => [i.agentId, i]));
-  assert.equal(by.l1.notFound, 'transcript not readable (symlink)');
+  assert.equal(by.l1.notFound, 'meta not readable (symlink); transcript not readable (symlink)');
   assert.equal(by.l1.tokens, null);
   assert.equal(by.l1.description, null);
   assert.equal(by.l2.tokens, null);
