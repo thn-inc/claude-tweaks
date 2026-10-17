@@ -1778,6 +1778,66 @@ test('acceptance-labeling fails closed on an unscored sibling when the parent ga
   assert.match(row.detail, /#898: missing demo:pending label/);
 });
 
+// Two run records under different parents: #898 stays incomplete (open
+// sibling #901) while #899 is due, so each row's detail must carry the not-due
+// skip reason alongside the due parent's outcome.
+function twoParentRow({ dueParentLabels, dueParentComments }) {
+  const runDir = makeTmpDir('verify-acceptance-twoparents-');
+  writeSpecFile(runDir, '900', 900);
+  writeSpecFile(runDir, '910', 910);
+  const parentOf = { 900: 898, 910: 899 };
+  const subsOf = {
+    898: [
+      { number: 900, state: 'open', labels: ['risk:high'] },
+      { number: 901, state: 'open', labels: ['risk:high'] },
+    ],
+    899: [
+      { number: 910, state: 'open', labels: ['risk:high'] },
+      { number: 911, state: 'closed', labels: ['risk:high'] },
+    ],
+  };
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) {
+      const n = parentQueryNumber(args);
+      return parentGraphqlResponse(n, parentOf[n]);
+    }
+    if (isSubIssuesCall(args)) return subIssuesGh(subsOf[Number(args[2].match(/issues\/(\d+)\/sub_issues$/)[1])]);
+    if (args.includes('labels,comments')) {
+      if (args[2] === '899') return JSON.stringify({ labels: dueParentLabels.map((name) => ({ name })), comments: dueParentComments });
+      return JSON.stringify({ labels: [], comments: [] });
+    }
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeCleanRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
+  return result.rows.find((r) => r.check === 'acceptance-labeling');
+}
+
+test('acceptance-labeling pass detail carries the not-due skip reason of a sibling parent', () => {
+  const row = twoParentRow({
+    dueParentLabels: ['demo:pending'],
+    dueParentComments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }],
+  });
+  assert.strictEqual(row.result, 'pass', row.detail);
+  assert.match(row.detail, /parent gate #898 not due — 1 sibling sub-issue\(s\) open/);
+});
+
+test('acceptance-labeling fail detail carries the not-due skip reason alongside the missing demo:pending line', () => {
+  const row = twoParentRow({ dueParentLabels: [], dueParentComments: [] });
+  assert.strictEqual(row.result, 'fail', row.detail);
+  assert.match(row.detail, /#899: missing demo:pending label/);
+  assert.match(row.detail, /parent gate #898 not due — 1 sibling sub-issue\(s\) open/);
+});
+
+test('acceptance-labeling renders unknown when a sub-issue line carries no string state', () => {
+  const { row } = parentGateRow({
+    records: [900],
+    subIssuesReply: () => JSON.stringify({ number: 900, labels: ['risk:high'] }),
+  });
+  assert.strictEqual(row.result, 'unknown', row.detail);
+  assert.match(row.detail, /could not parse sub_issues output for parent #898/);
+});
+
 test('acceptance-labeling check passes via the pr-first pointer+brief form (full brief on the PR, pointer on the issue)', () => {
   const runDir = makeTmpDir('verify-acceptance-prpointer-pass-');
   writeSpecFile(runDir, '900', 900);

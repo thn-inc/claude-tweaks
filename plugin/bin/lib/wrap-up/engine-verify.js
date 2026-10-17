@@ -718,7 +718,7 @@ function enumerateSubIssues(parent, deps, cwd) {
     } catch {
       return { ok: false, error: `could not parse sub_issues output for parent #${parent}` };
     }
-    if (!obj || !Number.isInteger(obj.number)) {
+    if (!obj || !Number.isInteger(obj.number) || typeof obj.state !== 'string') {
       return { ok: false, error: `could not parse sub_issues output for parent #${parent}` };
     }
     subIssues.push({ number: obj.number, state: String(obj.state).toUpperCase(), labels: Array.isArray(obj.labels) ? obj.labels : [] });
@@ -1065,8 +1065,9 @@ function renderVerifyTable(rows) {
     const resultCell = (row.result === 'skip' || row.result === 'unknown') && row.detail
       ? `${row.result} (${sanitizeCell(row.detail)})`
       : row.result;
-    // A pass row's detail is empty except for #3358's `ignored: ...` skip notes,
-    // which must reach the human; skip/unknown fold theirs into the Result cell.
+    // A pass row's detail is empty except for #3358's `ignored: ...` skip notes
+    // and #3222's parent-gate skip reasons, which must reach the human;
+    // skip/unknown fold theirs into the Result cell.
     const detailCell = row.result === 'fail' || (row.result === 'pass' && row.detail) ? sanitizeCell(row.detail) : '';
     lines.push(`| ${row.check} | ${resultCell} | ${detailCell} |`);
   }
