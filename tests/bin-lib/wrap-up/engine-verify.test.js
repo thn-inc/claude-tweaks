@@ -269,6 +269,15 @@ test('#3373: malformed console.json keeps both checks failing', () => {
   assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
 });
 
+test('#3373: a multi-spec parent run dir\'s leave-open console.json does not downgrade teardown fails', () => {
+  const result = verifyWithTeardownMissing((runDir) => {
+    writeConsole(runDir, 'leave-open');
+    fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  specs: []\n');
+  });
+  assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'fail');
+  assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
+});
+
 test('#3373 AC1: leave-open run exits 0 when every other check passes', () => {
   const runId = 'test-ac1-leave-open-3373';
   const repoRoot = makeCleanRepoRoot();

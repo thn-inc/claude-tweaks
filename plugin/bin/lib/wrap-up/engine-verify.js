@@ -135,10 +135,15 @@ function readExpectations(runDir) {
 // run-dir-archived and worktree-removed render this skip instead of a fail.
 // Fail-open toward the existing checks: any missing, unreadable, malformed, or
 // differently-shaped console.json reads as null and the checks fail as before.
+// A multi-spec parent run dir (manifest.yml present) also reads as null: its
+// console.json always says leave-open (members-unresolved), which
+// flow/multispec-review-console.md calls expected and discarded -- never the
+// bundle's real merge decision.
 const PENDING_REVIEW_SKIP = { result: 'skip', detail: 'pending-review — teardown follows the human merge' };
 
 function consoleMergeResolution(runDir) {
   try {
+    if (fs.existsSync(path.join(runDir, 'manifest.yml'))) return null;
     const data = JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8'));
     return data && data.merge && typeof data.merge.resolution === 'string' ? data.merge.resolution : null;
   } catch {
