@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+, `node --test`, no npm deps.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-16T172750-spec-2775-2733-2677/spec-2775/work/2775-spec.md`
+**Spec:** `.claude-tweaks/pipelines/archive/2026-10-16T172750-spec-2775-2733-2677/spec-2775/work/2775-spec.md`
 
 ## Global Constraints
 
