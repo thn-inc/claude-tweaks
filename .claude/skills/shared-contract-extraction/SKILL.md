@@ -37,6 +37,16 @@ The steps above describe a first extraction. The shape this repo now runs more o
   in-scope-or-not verdict — expect prose false positives (a carve-out saying the label must *not* apply to some record class)
   and classify them rather than edit them. A two-item enumeration goes wrong silently the moment a third item exists: nothing
   about adding the third makes the other two go red.
+- **A consumer that cites a contract's recognition rule but deliberately departs from it states the departure in the citing
+  sentence, and a test pins that sentence.** It is an exception to "the contract owns recognition" below, and an unstated
+  one reads as drift: the next editor "aligns" the consumer with the file it cites and reintroduces the risk
+  the departure existed to avoid, with every test green. Put the departure in the sentence that carries the citation, not a
+  later paragraph, so an aligning edit has to delete the pinned text and goes red. #2927's `visual-review/SKILL.md` Step 0.5
+  cites `design-wrapper/frontend-detection.md`'s Layer 2 → Layer 3 order but treats a declared `web`/`mobile`/`desktop` as
+  sufficient without the sniff the cited diagram continues to. Whole-branch review found the exception unstated (M2), and
+  mutation M4, an added "on `web`, Layer 3 must also match" line, passed all 9 original tests. Fixed in `7020bc28e`, pinned by
+  `tests/visual-review-recommendation-surface-gate.test.js`'s "a declared web/mobile/desktop surface is enough without a
+  Layer 3 match".
 
 ## Variant: consolidating runtime sidecar files, not prose
 
