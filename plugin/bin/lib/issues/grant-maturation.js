@@ -59,12 +59,14 @@ function extractPendingGrantedAt(commentBodies) {
 // extractPendingGrantedAt. Returns { bodies, skippedUntrusted }: bodies are the
 // trusted comments' bodies (feed them to extractPendingGrantedAt); skippedUntrusted
 // holds one note per untrusted comment whose body carries the pending-grant marker
-// (a non-marker untrusted comment is irrelevant and stays silent).
+// (a non-marker untrusted comment is irrelevant and stays silent). A bare string has no
+// association to attest it, so isTrustedComment fails it closed, but it is still tested
+// for the marker so a pending-grant marker inside one is named rather than dropped silently.
 function partitionGrantComments(comments) {
   const bodies = [];
   const skippedUntrusted = [];
   for (const c of Array.isArray(comments) ? comments : []) {
-    const body = c && typeof c.body === 'string' ? c.body : '';
+    const body = typeof c === 'string' ? c : (c && typeof c.body === 'string' ? c.body : '');
     if (isTrustedComment(c)) bodies.push(body);
     else if (PENDING_GRANT_MARKER_TEST_RE.test(body)) skippedUntrusted.push(untrustedSkipNote(c));
   }

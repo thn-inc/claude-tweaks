@@ -1,6 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
+const { spawnSync } = require('node:child_process');
 const {
   TRUSTED_AUTHOR_ASSOCIATIONS,
   commentAssociation,
@@ -55,6 +56,28 @@ test('untrustedSkipNote formats gh and REST shapes', () => {
     untrustedSkipNote({ id: 'IC_1' }),
     'skipped marker comment IC_1 by unknown (no association) — not an owner, member, or collaborator',
   );
+  // Nothing identifies the comment: ref and login both fall back to 'unknown'.
+  assert.strictEqual(
+    untrustedSkipNote({}),
+    'skipped marker comment unknown by unknown (no association) — not an owner, member, or collaborator',
+  );
+});
+
+test('untrustedJqNote prints the same text as untrustedSkipNote, including a deleted (null) author and a missing association', (t) => {
+  const probe = spawnSync('jq', ['--version'], { encoding: 'utf8' });
+  if (probe.error || probe.status !== 0) {
+    t.skip('jq not found in this environment'); // same precedent as tests/issue-branch-tracking.test.js
+    return;
+  }
+  const comments = [
+    { url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'NONE' },
+    { url: 'https://x/c2', author: null, authorAssociation: 'NONE' },
+    { url: 'https://x/c3', author: { login: 'eve' } },
+  ];
+  const r = spawnSync('jq', ['-r', `.comments[] | ${untrustedJqNote()}`], { input: JSON.stringify({ comments }), encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, `jq failed: ${r.stderr}`);
+  assert.strictEqual(r.stdout, `${comments.map((c) => untrustedSkipNote(c)).join('\n')}\n`);
+  assert.ok(r.stdout.includes('by unknown (NONE)'), 'a deleted author prints unknown');
 });
 
 test('trustedJqSelect/untrustedJqNote are derived from the set', () => {
@@ -64,6 +87,6 @@ test('trustedJqSelect/untrustedJqNote are derived from the set', () => {
   );
   assert.strictEqual(
     untrustedJqNote(),
-    'select((.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | not) | "skipped marker comment \\(.url) by \\(.author.login) (\\(.authorAssociation // "no association")) — not an owner, member, or collaborator"',
+    'select((.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | not) | "skipped marker comment \\(.url) by \\(.author.login // "unknown") (\\(.authorAssociation // "no association")) — not an owner, member, or collaborator"',
   );
 });

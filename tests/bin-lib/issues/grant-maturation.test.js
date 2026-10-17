@@ -147,3 +147,10 @@ test('partitionGrantComments: non-array, null entries, and bare strings never th
   assert.deepStrictEqual(partitionGrantComments(undefined), { bodies: [], skippedUntrusted: [] });
   assert.deepStrictEqual(partitionGrantComments([null, 'a plain string', { authorAssociation: 'NONE' }]), { bodies: [], skippedUntrusted: [] });
 });
+
+test('partitionGrantComments: a bare string carrying the pending-grant marker is untrusted and named as unknown; a plain string stays silent', () => {
+  const { bodies, skippedUntrusted } = partitionGrantComments([MARKER('2020-01-01T00:00:00Z'), 'a plain string']);
+  assert.deepStrictEqual(bodies, []);
+  assert.strictEqual(extractPendingGrantedAt(bodies), null);
+  assert.deepStrictEqual(skippedUntrusted, [NOTE('unknown', 'unknown', 'no association')]);
+});

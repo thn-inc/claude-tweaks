@@ -563,3 +563,50 @@ for (const [name, extract, doc, frozen, window] of PROSE_READERS) {
     assert.doesNotMatch(pre, /Trusted authors/, 'control must lack the citation');
   });
 }
+
+// ---- Whole-branch review fixes (#3358) ----
+
+const TIDY_SKILL = fs.readFileSync(path.join(SKILLS, 'tidy', 'SKILL.md'), 'utf8');
+
+// Frozen pre-change passages (the bytes the review fixes replaced / followed).
+const PRE_CHANGE_TIDY_GATE_ROW = '- [x] Opened parent gate: "{title}" — parent #{n} carries a brief comment headed `## Verification Brief` (the template\'s own first line) and `demo:pending` in its labels, both re-queried (`gh issue view {n} --json labels,comments`); comment present before label, per the invariant (`github-issues`)';
+const PRE_CHANGE_GATE_SNIPPET_TAIL = `  console.log(JSON.stringify(result));
+"
+\`\`\`
+
+Once every member has a \`result\`, decide for the group as a whole — this decision gates whether
+Phase 2 runs at all:`;
+const PRE_CHANGE_SHORT_CIRCUIT_SNIPPET_TAIL = `       console.log(JSON.stringify(result));
+     "
+     \`\`\`
+
+     \`result.state === 'already-mature'\` or \`'matured'\` clears Authorization.`;
+
+test("tidy's Opened-parent-gate completion re-query counts only a brief from a trusted author", () => {
+  const rowOf = (t) => oneLine(t, (l) => l.startsWith('- [x] Opened parent gate:') && l.includes('parent #{n}'));
+  const live = collapse(rowOf(TIDY_SKILL) ?? '');
+  assert.notStrictEqual(live, '', 'exactly one github-issues Opened-parent-gate completion row must resolve in tidy/SKILL.md');
+  assert.match(live, /brief comment from a trusted author/, 'the row must say the brief comment is from a trusted author');
+  assert.match(live, TRUST_CITATION, 'the row must cite Trusted authors');
+  const pre = collapse(rowOf(PRE_CHANGE_TIDY_GATE_ROW) ?? '');
+  assert.notStrictEqual(pre, '', 'control must carry the anchor (proves the extractor resolves it)');
+  assert.doesNotMatch(pre, /from a trusted author/, 'control must lack the wording (proves the pin can go red)');
+  assert.doesNotMatch(pre, TRUST_CITATION, 'control must lack the citation');
+});
+
+for (const [file, doc, frozen] of [
+  ['dispatch/grant-maturation-gate.md', GRANT_GATE, PRE_CHANGE_GATE_SNIPPET_TAIL],
+  ['wrap-up/auto-merge-short-circuit.md', SHORT_CIRCUIT, PRE_CHANGE_SHORT_CIRCUIT_SNIPPET_TAIL],
+]) {
+  test(`${file} tells the agent to relay the snippet's skipped-comment lines, right after the snippet`, () => {
+    // Directly after the snippet's closing fence: a relay instruction elsewhere would not sit with the code that prints the notes.
+    const after = /console\.log\(JSON\.stringify\(result\)\);\r?\n\s*"\r?\n\s*```\r?\n\r?\n\s*(Carry each skipped-comment line[^\n]*(?:\n[^\n]+)*)/.exec(doc);
+    assert.notStrictEqual(after, null, `${file}: a "Carry each skipped-comment line" paragraph must follow the extractPendingGrantedAt fence`);
+    const para = collapse(after[1].split(/\r?\n\r?\n/)[0]);
+    assert.match(para, /stderr/, `${file}: the instruction must name stderr, where the snippet prints the notes`);
+    assert.match(para, TRUST_CITATION, `${file}: the instruction must cite Trusted authors`);
+    assert.ok(!SKIP_NOTICE.test(frozen) && !/skipped-comment line/.test(frozen), 'control must lack the relay instruction (proves the pin can go red)');
+    assert.ok(frozen.includes('console.log(JSON.stringify(result));'), 'control must carry the anchor (proves the extractor target exists)');
+    assert.strictEqual(/console\.log\(JSON\.stringify\(result\)\);\r?\n\s*"\r?\n\s*```\r?\n\r?\n\s*(Carry each skipped-comment line)/.test(frozen), false, 'the extractor must not match the pre-change text');
+  });
+}

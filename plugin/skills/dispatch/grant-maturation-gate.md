@@ -47,6 +47,9 @@ node -e "
 "
 ```
 
+Carry each skipped-comment line the snippet prints to stderr into the gate's report, so a grant
+marker that did not count is visible (`_shared/pr-run-comments.md`'s Trusted authors).
+
 Once every member has a `result`, decide for the group as a whole — this decision gates whether
 Phase 2 runs at all:
 

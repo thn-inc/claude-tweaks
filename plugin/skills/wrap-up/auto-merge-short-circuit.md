@@ -41,6 +41,8 @@ The Authorization layer below always reads **live** labels (`gh issue view --jso
      "
      ```
 
+     Carry each skipped-comment line the snippet prints to stderr into the Review Console's output, so a grant marker that did not count is visible (`_shared/pr-run-comments.md`'s Trusted authors).
+
      `result.state === 'already-mature'` or `'matured'` clears Authorization. `'within-veto-window'`, `'not-pending'`, or `'unknown-age'` fails Authorization — fall through to the normal (non-short-circuit) Review Console path below, exactly as already happens today when `auto:merge` is simply absent. Log to `decisions.md`, matching the log-line shape and `[lever: grant-veto-window-hours=... (source)]` suffix `settle-and-merge.md` uses for its own non-clearing outcome:
      `AUTO {time} — Auto-merge short-circuit: #{n}'s auto:merge-pending has not matured ({result.reason}) — falls back to normal Review Console. Reversibility: n/a (no label change). [lever: grant-veto-window-hours={result.windowHours ?? GRANT_VETO_WINDOW_HOURS} (source)]`.
 

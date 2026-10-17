@@ -46,12 +46,12 @@ function isTrustedComment(comment) {
 }
 
 // The note a reader emits for each skipped comment. {ref} = `url` (gh) /
-// `html_url` (REST) / `id` fallback; {login} = `author.login` (gh) /
+// `html_url` (REST) / `id` fallback / 'unknown'; {login} = `author.login` (gh) /
 // `user.login` (REST) / 'unknown'; {association} = the value or
 // 'no association'.
 function untrustedSkipNote(comment) {
   const c = comment && typeof comment === 'object' ? comment : {};
-  const ref = c.url || c.html_url || c.id;
+  const ref = c.url || c.html_url || c.id || 'unknown';
   const login = (c.author && c.author.login) || (c.user && c.user.login) || 'unknown';
   const association = commentAssociation(c) || 'no association';
   return `skipped marker comment ${ref} by ${login} (${association}) — not an owner, member, or collaborator`;
@@ -69,10 +69,10 @@ function trustedJqSelect() {
 }
 
 // jq filter emitting the skip note for each untrusted comment (the `gh` shape;
-// a missing association prints as "no association"). Same text as
-// untrustedSkipNote's gh-shape output.
+// a missing association prints as "no association", a deleted author as
+// "unknown"). Same text as untrustedSkipNote's gh-shape output.
 function untrustedJqNote() {
-  return `select((${trustedJqPredicate()}) | not) | "skipped marker comment \\(.url) by \\(.author.login) (\\(.authorAssociation // "no association")) — not an owner, member, or collaborator"`;
+  return `select((${trustedJqPredicate()}) | not) | "skipped marker comment \\(.url) by \\(.author.login // "unknown") (\\(.authorAssociation // "no association")) — not an owner, member, or collaborator"`;
 }
 
 module.exports = {
