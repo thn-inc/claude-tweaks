@@ -276,11 +276,12 @@ function parseComposeCallLine(line, repoRoot) {
 }
 
 // Every compose call site in the shipped skill prose — the producer set the
-// composed-bytes hard gate (`rail.js`'s `composedRailViolations`) runs over. Single-line call form only,
-// by construction of this decomposition's call sites: every call site this
-// decomposition produces sits on one line; a wrapped call is not found. A
-// line that has the invocation form but doesn't parse is emitted as an
-// `unparsed` row rather than silently dropped (parse-signal discipline).
+// composed-bytes hard gate (`rail.js`'s `composedRailViolations`) runs over.
+// Single-line call form only, by construction of this decomposition's call
+// sites: every call site this decomposition produces sits on one line; a
+// wrapped call is not found. A line that has the invocation form but doesn't
+// parse is emitted as an `unparsed` row rather than silently dropped
+// (parse-signal discipline).
 function findComposeCallSites(repoRoot) {
   const dir = corpusDir(repoRoot);
   const out = [];

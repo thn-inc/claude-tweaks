@@ -53,6 +53,12 @@ function escapeName(name) {
   return name.replace(/\$/g, '\\$');
 }
 
+// A NUMERIC match is "large" when it carries the `* 1024` multiplier, or its
+// bare value is already >= 1024 — the one rule both size-literal checks below apply.
+function isLargeNumeric(match) {
+  return Boolean(match[2]) || Number(match[1].replace(/_/g, '')) >= 1024;
+}
+
 // scanText(text) -> { violations: [{ line, rule, text }], unclassified: [{ line, operand, text }] }
 function scanText(text) {
   const violations = [];
@@ -71,7 +77,7 @@ function scanText(text) {
     const numDecl = code.match(NUM_LITERAL_DECL);
     if (numDecl) {
       const val = numDecl[2].match(NUMERIC);
-      if (val && (val[2] || Number(val[1].replace(/_/g, '')) >= 1024)) numericLiterals.add(numDecl[1]);
+      if (val && isLargeNumeric(val)) numericLiterals.add(numDecl[1]);
     }
     const refsTainted = [...tainted].some((t) => new RegExp(`(^|[^\\w$])${escapeName(t)}([^\\w$]|$)`).test(line));
     const refsSkill = SKILL_PATH.test(line) || MEASURE_API.test(line) || refsTainted;
@@ -93,7 +99,7 @@ function scanText(text) {
       const op = m[2].trim();
       const num = op.match(NUMERIC);
       if (num) {
-        if (num[2] || Number(num[1].replace(/_/g, '')) >= 1024) flagged = true;
+        if (isLargeNumeric(num)) flagged = true;
         continue;
       }
       const last = op.split('.').pop().replace(/\[.*$/, '');
