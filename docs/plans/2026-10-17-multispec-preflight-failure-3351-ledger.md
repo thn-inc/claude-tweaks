@@ -22,4 +22,5 @@
 | 18 | review | Lens 3f (low): AC3.1 asserted only `Array.isArray(env.waves.waves)` | fixed | Review AUTO, 2ad656b28 — new test asserts `[[720, 721]]` from disjoint file records; empty-records mutation goes red |
 | 19 | review | Lens 3a (low): lib module header described gh-only input | fixed | Review AUTO, 2ad656b28 |
 | 20 | review | Lens 3a (low): `flow/SKILL.md` Multi-Spec summary had no pointer to `multispec-preflight-failure.md` | fixed | Review AUTO, 2ad656b28 |
-| 21 | review | Lens 3f (low, unconfirmed — one agent): no test pins that the `--records-json` path skips `deps.remoteUrl()` | open | Low-confidence; staged to the Review Console |
+| 21 | review | Lens 3f (low, unconfirmed — one agent): no test pins that the `--records-json` path skips `deps.remoteUrl()` | open | Low-confidence; staged to the Review Console (staged/review-unconfirmed-1.md) |
+| 22 | review/hindsight | [skill: skill-prose-conformance-tests] On a multi-branch prose file, a positive file-wide `assert.match` on a phrase several branch paragraphs share passes when one branch loses it. Select the branch paragraph first (#3351 AC6.1) | deferred | Staged for wrap-up's Skills curation row (staged/reflect-1.md) |
