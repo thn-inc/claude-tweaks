@@ -55,17 +55,25 @@ test('Step 5 creates each group worktree on origin/{integration-branch} and ente
 // own rationale, which names the rejected /flow form on purpose; the quoted
 // "{target}" parked-run resume command in settle-parked.md is a different literal.
 const STALE_TEARDOWN = /\/claude-tweaks:flow \{target\} wrap-up(?! cleanup-only)/;
+// Absence assertions scan whitespace-collapsed text: a line wrap inside the retired
+// phrase must not let it slip past a literal-space match (skill-prose-conformance-tests, IL-66).
+const collapse = (s) => s.replace(/\s+/g, ' ');
 
 test('AC1.1/AC1.2: sequential-execution.md names the direct wrap-up cleanup-only call as the first-call teardown (#3367)', () => {
   const t = read('plugin/skills/dispatch/sequential-execution.md');
   const para = t.slice(t.indexOf('Where that teardown falls'));
   assert.match(para.slice(0, para.indexOf('\n')), /`\/claude-tweaks:wrap-up \{target\} cleanup-only`[^\n]*`two-call-gate\.md` section 5/);
-  assert.ok(!t.includes('/claude-tweaks:flow {target} wrap-up'), 'no /flow-routed teardown remains');
+  assert.ok(!collapse(t).includes('/claude-tweaks:flow {target} wrap-up'), 'no /flow-routed teardown remains');
 });
 
 test('AC2: no file under plugin/skills/dispatch/ describes the first-call teardown as /claude-tweaks:flow {target} wrap-up (#3367)', () => {
   const dir = path.join(ROOT, 'plugin', 'skills', 'dispatch');
   const offenders = fs.readdirSync(dir).filter((f) => f.endsWith('.md'))
-    .filter((f) => STALE_TEARDOWN.test(readText(path.join(dir, f))));
+    .filter((f) => STALE_TEARDOWN.test(collapse(readText(path.join(dir, f)))));
   assert.deepStrictEqual(offenders, []);
+});
+
+test('AC2 control: the collapsed matcher catches a line-wrapped retired phrase and exempts the cleanup-only form (#3367)', () => {
+  assert.ok(STALE_TEARDOWN.test(collapse('routes through `/claude-tweaks:flow {target}\n  wrap-up` call')));
+  assert.ok(!STALE_TEARDOWN.test(collapse('the rejected /claude-tweaks:flow {target} wrap-up cleanup-only form')));
 });
