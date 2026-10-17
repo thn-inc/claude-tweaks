@@ -136,11 +136,12 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
   const rows = [];
   const procedureReads = new Set(); // tool_use ids of Reads on procedure files
   // Claude Code writes one JSONL line per content block of an assistant
-  // turn, each repeating that turn's single cumulative `usage` under the
-  // same message.id — summing every line would inflate tokens ~3x. Zero
-  // the token fields on every line after the first seen for a given id
-  // (#1929 whole-branch review fix 1).
-  const seenMsgIds = new Set();
+  // turn under the same message.id — summing every line would inflate tokens
+  // ~3x. Main transcripts repeat one cumulative `usage` on each line; subagent
+  // transcripts open the turn with a streaming snapshot and close it with the
+  // final count. Per id, the first row carries the max of each usage field and
+  // every later line is zeroed (#1929 whole-branch review fix 1; #3375 C1).
+  const firstRowById = new Map();
   const stream = fsImpl.createReadStream(filePath, { encoding: 'utf8' });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
   await new Promise((resolve, reject) => {
@@ -165,13 +166,22 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
           if (b && b.type === 'tool_use' && b.name === 'Read' && b.input && isProcedurePath(b.input.file_path, worktree)) procedureReads.add(b.id);
         }
         if (typeof msg.id === 'string') {
-          if (seenMsgIds.has(msg.id)) {
+          const firstRow = firstRowById.get(msg.id);
+          if (firstRow) {
+            // Subagent transcripts open a turn with a streaming snapshot
+            // (stop_reason null, a tiny output_tokens) and close it with the
+            // settled count; keep the max per field on the first row and
+            // zero this one (#3375 final review C1).
+            firstRow.inputTokens = Math.max(firstRow.inputTokens, row.inputTokens);
+            firstRow.outputTokens = Math.max(firstRow.outputTokens, row.outputTokens);
+            firstRow.cacheRead = Math.max(firstRow.cacheRead, row.cacheRead);
+            firstRow.cacheCreate = Math.max(firstRow.cacheCreate, row.cacheCreate);
             row.inputTokens = 0;
             row.outputTokens = 0;
             row.cacheRead = 0;
             row.cacheCreate = 0;
           } else {
-            seenMsgIds.add(msg.id);
+            firstRowById.set(msg.id, row);
           }
         }
       } else {

@@ -348,3 +348,8 @@ git commit -m "Record the pre-change dispatch cost baseline — per-tier and per
 | AC8.3 | Task 5 Step 2 (CLI output pasted verbatim, never retyped) |
 | AC9.1 | Task 5 Step 5 |
 | AC10.1 | Task 5 Step 5 + Task 4 Step 4 byte check + central full suite |
+
+## Revised during build
+
+- The spec's Current State premise ("repeats a turn's cumulative usage on every content-block line") does not hold for subagent transcripts. A subagent turn opens with a streaming snapshot (`stop_reason: null`, a tiny `output_tokens`) and closes with the final count under the same `message.id`; only `output_tokens` differs between the lines (input and cache fields are equal). Main transcripts show no differing ids. Keeping the first line's usage undercounted subagent output tokens roughly 8-9x on the baseline session.
+- `readUsage` now takes the max of each usage field per `message.id`, carries it on the first row for that id (phase attribution still uses the first row's timestamp), and zeroes later lines. Main-transcript totals are unchanged (the #1929 tests and the AC3/AC5 goldens stay byte-identical).

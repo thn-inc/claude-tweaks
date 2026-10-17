@@ -297,3 +297,44 @@ test('#3375: readUsage rows carry model on assistant lines and null on user line
   const small = await readUsage(FIX, { worktree: '/repo' });
   assert.ok(small.every((r) => r.model === null));
 });
+
+// ---- #3375 final review C1: streaming snapshots in subagent transcripts ----
+
+// A real subagent turn is written as a streaming snapshot (stop_reason null,
+// small output_tokens) followed by the final line (the settled count) under
+// the same message.id; input/cache fields are equal on every line.
+function snapLine(ts, id, stopReason, usage, blockType) {
+  return JSON.stringify({ type: 'assistant', timestamp: ts, message: { id, role: 'assistant', model: 'claude-sonnet-5-5', stop_reason: stopReason, content: [{ type: blockType, text: 'x' }], usage: { input_tokens: usage[0], output_tokens: usage[1], cache_read_input_tokens: usage[2], cache_creation_input_tokens: usage[3] } } });
+}
+
+test('#3375 C1: readUsage takes the max usage per message.id (the final line, not the streaming snapshot) on the first row', async () => {
+  const dir = tmpSubagents();
+  const f = path.join(dir, 'agent-c1.jsonl');
+  fs.writeFileSync(f, [
+    aLine('user', '2026-10-17T10:00:00.000Z'),
+    snapLine('2026-10-17T10:00:05.000Z', 'mc1', null, [7, 8, 100, 5], 'thinking'),
+    snapLine('2026-10-17T10:00:09.000Z', 'mc1', 'tool_use', [7, 407, 100, 5], 'tool_use'),
+    snapLine('2026-10-17T10:01:00.000Z', 'mc2', 'end_turn', [2, 50, 0, 0], 'text'),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f);
+  assert.equal(rows.length, 4);
+  // the max lands on the FIRST row for the id (its timestamp drives phase attribution); later lines stay zeroed
+  assert.deepEqual(rows.map((r) => r.outputTokens), [0, 407, 0, 50]);
+  assert.deepEqual(rows.map((r) => r.inputTokens), [0, 7, 0, 2]);
+  assert.equal(rows[1].ts, '2026-10-17T10:00:05.000Z');
+  assert.equal(rows[1].cacheRead, 100);
+  assert.equal(rows[2].cacheCreate, 0);
+  const r = await readDispatches(dir);
+  assert.deepEqual(r.items[0].tokens, { input: 9, output: 457, cacheRead: 100, cacheCreate: 5 });
+});
+
+test('#3375 C1: a lower later line never reduces the id\'s usage (max, not last)', async () => {
+  const dir = tmpSubagents();
+  const f = path.join(dir, 'agent-c2.jsonl');
+  fs.writeFileSync(f, [
+    snapLine('2026-10-17T10:00:05.000Z', 'mc1', 'end_turn', [7, 407, 100, 5], 'text'),
+    snapLine('2026-10-17T10:00:09.000Z', 'mc1', 'end_turn', [7, 12, 100, 5], 'text'),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f);
+  assert.deepEqual(rows.map((r) => r.outputTokens), [407, 0]);
+});
