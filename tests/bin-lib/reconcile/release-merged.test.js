@@ -833,15 +833,12 @@ test('prClosesIssue: no closingIssuesReferences array -> undefined, even when th
 test('prClosesIssue: a keyword and its #N on different lines never match', () => {
   assert.equal(prClosesIssue({ closingIssuesReferences: [] }, 3311, 'acme/w', 'Fixes\n#3311'), false);
 });
-test('prClosesIssue: a long run of blank lines before the keyword stays linear', () => {
-  // The blank run must be followed by a non-matching line: a greedy `\s*` that goes on to match
-  // would finish at once, so only a failing tail exposes the quadratic backtracking.
+test('prClosesIssue: a keyword after a long run of blank lines still matches', () => {
+  // The blank run is followed by a non-matching line so the regex has to scan past it. The
+  // wall-clock budget for this input lives in perf/closing-keyword-linearity.test.js — timing
+  // assertions stay out of `npm test` (docs/plugin-structure.md's perf/ entry).
   const message = `${'\n'.repeat(40000)}x\nFixes #3311`;
-  const start = performance.now();
-  const verdict = prClosesIssue({ closingIssuesReferences: [] }, 3311, 'acme/w', message);
-  const elapsed = performance.now() - start;
-  assert.equal(verdict, true);
-  assert.ok(elapsed < 200, `matching took ${elapsed.toFixed(0)}ms — the keyword regex must not backtrack across newlines`);
+  assert.equal(prClosesIssue({ closingIssuesReferences: [] }, 3311, 'acme/w', message), true);
 });
 test('prClosesIssue: the repo slug compares case-insensitively', () => {
   const mixed = { number: 3311, repository: { name: 'W', owner: { login: 'ACME' } } };
