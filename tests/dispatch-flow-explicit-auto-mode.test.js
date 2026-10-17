@@ -38,6 +38,14 @@ function forms(text) {
   return [...text.matchAll(FORM)];
 }
 
+function assertTwoFormsAllWithAuto(text, label) {
+  const found = forms(text);
+  assert.strictEqual(found.length, 2, `expected exactly 2 flow forms ${label}`);
+  for (const m of found) {
+    assert.ok(m[2], `flow form lacks auto after its step list: ${m[0]}`);
+  }
+}
+
 // --- Proof the extractor can go red (synthetic fixture) ---
 
 test('forms() flags a step list that is not followed by auto', () => {
@@ -57,11 +65,7 @@ test('task-prompt.md: each fenced Task-scope block carries 2 flow forms, all end
   const b = text.indexOf(SECOND_HEADING);
   assert.ok(a !== -1 && b !== -1 && b > a, 'first/second call headings not found in order');
   for (const section of [text.slice(a, b), text.slice(b)]) {
-    const found = forms(fencedBlock(section));
-    assert.strictEqual(found.length, 2, 'expected exactly 2 flow forms per fenced block');
-    for (const m of found) {
-      assert.ok(m[2], `flow form lacks auto after its step list: ${m[0]}`);
-    }
+    assertTwoFormsAllWithAuto(fencedBlock(section), 'per fenced block');
   }
 });
 
@@ -69,11 +73,7 @@ test('SKILL.md: Singleton group and Bundle group lines each carry 2 flow forms, 
   const lines = read(SKILL).split('\n').filter((l) => /^\*\*(Singleton|Bundle) group\*\*/.test(l));
   assert.strictEqual(lines.length, 2, 'expected exactly the Singleton and Bundle group lines');
   for (const line of lines) {
-    const found = forms(line);
-    assert.strictEqual(found.length, 2, `expected exactly 2 flow forms on: ${line.slice(0, 40)}`);
-    for (const m of found) {
-      assert.ok(m[2], `flow form lacks auto after its step list: ${m[0]}`);
-    }
+    assertTwoFormsAllWithAuto(line, `on: ${line.slice(0, 40)}`);
   }
 });
 
