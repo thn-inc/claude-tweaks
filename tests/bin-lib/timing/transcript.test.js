@@ -121,6 +121,7 @@ test('#1929: readUsage on a directory path rejects with EISDIR', async () => {
 
 // ---- #3375: per-subagent-dispatch enumeration --------------------------
 
+// sess-1.jsonl (the main transcript) is read by no test; it anchors the {sessionId}/ sibling path layout that subagentsDirFor derives.
 const SESS = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'subagents-session');
 const SUBDIR = subagentsDirFor(path.join(SESS, 'sess-1.jsonl'));
 
@@ -248,6 +249,36 @@ test('#3375 review focus 5: window drops out-of-window rows and excludes dispatc
   assert.equal(a1.startTs, '2026-10-17T10:01:05.000Z');
   assert.equal(a1.wallClockMs, 0);
   assert.deepEqual(a1.tokens, { input: 3, output: 4, cacheRead: 0, cacheCreate: 0 });
+});
+
+test('AC4.1 [R4]: an empty transcript with a meta file is notFound "transcript has no usage rows", numbers null', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-e1.jsonl'), '');
+  fs.writeFileSync(path.join(dir, 'agent-e1.meta.json'), JSON.stringify({ description: 'empty', model: 'opus' }));
+  const r = await readDispatches(dir, { window: { start: 0, end: Date.now() } });
+  assert.equal(r.excludedOutsideWindow, 0);
+  assert.equal(r.items.length, 1);
+  const it = r.items[0];
+  assert.equal(it.notFound, 'transcript has no usage rows');
+  assert.equal(it.tokens, null);
+  assert.equal(it.wallClockMs, null);
+  assert.equal(it.startTs, null);
+  assert.equal(it.endTs, null);
+  assert.equal(it.description, 'empty');
+  assert.equal(it.metaModel, 'opus');
+});
+
+test('AC4.1 [R4]: a transcript whose only lines lack a timestamp is notFound "transcript has no usage rows", numbers null', async () => {
+  const dir = tmpSubagents();
+  const noTs = JSON.stringify({ type: 'assistant', message: { id: 'mx', role: 'assistant', model: 'claude-opus-5-5', content: [], usage: { input_tokens: 9, output_tokens: 9, cache_read_input_tokens: 9, cache_creation_input_tokens: 9 } } });
+  fs.writeFileSync(path.join(dir, 'agent-t1.jsonl'), noTs + '\n' + noTs + '\n');
+  fs.writeFileSync(path.join(dir, 'agent-t1.meta.json'), JSON.stringify({ description: 'no ts' }));
+  const r = await readDispatches(dir);
+  const it = r.items[0];
+  assert.equal(it.notFound, 'transcript has no usage rows');
+  assert.equal(it.tokens, null);
+  assert.equal(it.wallClockMs, null);
+  assert.equal(it.description, 'no ts');
 });
 
 test('#3375: items sort by startTs (nulls last), then agentId', async () => {

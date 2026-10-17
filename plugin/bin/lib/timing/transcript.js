@@ -215,7 +215,11 @@ function transcriptModelOf(rows) {
 // totals come from readUsage, so its message.id dedupe is the one in force.
 // window = { start, end } (epoch ms, inclusive): rows outside it are dropped
 // before span/tokens are taken, and a dispatch with no row inside it is
-// counted in excludedOutsideWindow rather than listed. Never throws.
+// counted in excludedOutsideWindow rather than listed. Window clipping runs
+// after readUsage's message.id dedupe, so a turn whose first line falls before
+// window.start loses its tokens (an edge undercount). A readable transcript
+// with no timestamped rows is notFound 'transcript has no usage rows' (numbers
+// null), decided before clipping. Never throws.
 async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {}) {
   let names;
   try {
@@ -252,8 +256,15 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
     }
     if (rows) {
       const stamped = rows.map((r) => ({ r, ms: Date.parse(r.ts) })).filter((x) => Number.isFinite(x.ms));
+      if (stamped.length === 0) {
+        // Readable but nothing usable (empty file, no/invalid timestamps, a
+        // drifted layout): report not-found rather than zero-filled numbers.
+        d.notFound = 'transcript has no usage rows';
+        built.push({ d, startMs });
+        continue;
+      }
       const kept = window ? stamped.filter((x) => x.ms >= window.start && x.ms <= window.end) : stamped;
-      if (window && stamped.length > 0 && kept.length === 0) {
+      if (window && kept.length === 0) {
         excludedOutsideWindow += 1;
         continue;
       }
