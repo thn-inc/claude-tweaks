@@ -6,6 +6,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFileSync: realExecFileSync } = require('node:child_process');
 const { renderVerifyTable, runVerify, registerCheck, resolvePrNumber, resolveArchivedRunDir, resolvedIssueNumbers } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
+const { resolveRecords } = require('../../../plugin/bin/lib/wrap-up/pack');
 const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
 
 function makeTmpDir(prefix) {
@@ -992,9 +993,20 @@ test('#3365: a closed multi-spec spec-{N}/ dir reads the parent worktreeAtClose 
 });
 
 test('#3365: a parent run dir with only a manifest does not treat manifest ids as resolved records (Ruling R1)', () => {
-  const { runDir } = mirrorFixture({ record: null, state: (wt) => ({ status: 'active', worktree: wt }) });
-  fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  specs:\n    - id: 3337\n      status: not-run\n      subdir: spec-3337/\n');
+  const { runDir, wtDir } = mirrorFixture({ record: null, state: (wt) => ({ status: 'active', worktree: wt }) });
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  parent: 3300\n  specs:\n    - id: 3337\n      status: not-run\n      subdir: spec-3337/\n');
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [900] });
+  // Precondition: this fixture must actually reach the manifest rung of
+  // resolveRecords — otherwise the assertion below would pass regardless of
+  // whether resolvedIssueNumbers' HEADER_SOURCES filter is even present
+  // (a manifest with no `parent:` line fails to parse and resolveRecords
+  // never gets past 'unavailable', making the whole test non-discriminating).
+  const precondition = resolveRecords(
+    { readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } }, readFile: (p) => fs.readFileSync(p, 'utf8') },
+    runDir,
+    wtDir,
+  );
+  assert.strictEqual(precondition.source, 'manifest', 'fixture does not reach the manifest rung — test would be non-discriminating');
   assert.deepStrictEqual(resolvedIssueNumbers(runDir), [900]);
 });
 

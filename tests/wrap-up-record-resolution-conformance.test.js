@@ -61,9 +61,14 @@ test('Section C step 2 takes its issue set from wrap-up-pack.json inputs.records
   assert.match(block, /\{worktree\}\/\.claude-tweaks\/pipelines\/\{run-id\}\/work\/\*-spec\.md/);
 });
 
-test('Section E reads parked-at-shaping at cleanup planning, before item 4 removes the worktree (Ruling R2)', () => {
+test('Section C step 2 counts inputs.records only when sourced from a materialized header, not a manifest (Ruling R1)', () => {
+  const block = step2Block();
+  assert.match(block, /worktree-headers/);
+});
+
+test('Section E reads parked-at-shaping at the start of Phase 4 execution, before item 4 removes the worktree (Ruling R2)', () => {
   const flat = collapse(read('plugin/skills/wrap-up/cleanup-procedures-execution.md'));
-  assert.match(flat, /parked-at-shaping: true`[\s\S]{0,120}?read during cleanup planning from the worktree mirror/);
+  assert.match(flat, /parked-at-shaping: true`[\s\S]{0,120}?read at the start of Phase 4's execution step, before item 4 runs, from the worktree mirror/);
 });
 
 test('Section E names the current-branch header read (no worktree, item 4 never runs)', () => {

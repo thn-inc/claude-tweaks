@@ -71,18 +71,22 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    would double-stamp the closing reference. Otherwise, take the issue set from
    `{run-dir}/wrap-up-pack.json`'s `inputs.records` (Phase 3's fact pack — `pack.js`'s
    `resolveRecords`, which already reads the worktree's mirror of the run dir, since the header
-   reaches the main checkout only by merge). Only when the pack is absent (a `cleanup-only` run
-   skips Phase 3), glob the worktree mirror instead —
+   reaches the main checkout only by merge) — but only when the pack's `inputs.sources.records`
+   reads `headers` or `worktree-headers`; a `manifest`/`worktree-manifest` source carries a parent
+   multi-spec run's sibling ids, including `not-run`/`failed` specs with no closing keyword to
+   stamp, so treat the issue set as empty in that case (Ruling R1). Only when the pack is absent (a
+   `cleanup-only` run skips Phase 3), glob the worktree mirror instead —
    `{worktree}/.claude-tweaks/pipelines/{run-id}/work/*-spec.md`, where `{worktree}` is
    `run-state.json`'s `worktree` (else `worktreeAtClose`) and `{run-id}` is the run dir's path
-   from its `.claude-tweaks/pipelines/` segment on — and read each match's header `record:` field:
+   after its `.claude-tweaks/pipelines/` segment (for a per-spec dir, `{run-id}/spec-{N}`) — and
+   read each match's header `record:` field:
 
    ```bash
    ISSUES=()
    PACK="${RUN_DIR}/wrap-up-pack.json"
    MIRROR="{worktree}/.claude-tweaks/pipelines/{run-id}"
    if [ -f "$PACK" ]; then
-     ISSUES=($(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log(((p.inputs||{}).records||[]).join(" "))' "$PACK"))
+     ISSUES=($(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const s=(p.inputs&&p.inputs.sources&&p.inputs.sources.records)||"";if(["headers","worktree-headers"].includes(s))console.log((p.inputs.records||[]).join(" "))' "$PACK"))
    else
      for f in "${MIRROR}"/work/*-spec.md; do
        [ -e "$f" ] || continue
@@ -325,7 +329,10 @@ branch/commit reference, or, when `skills/flow/materialize.md` wrote one, a mate
 through `/claude-tweaks:dispatch` never held a claim either: step 3's CLI exits `3` (already
 released / never claimed) or `4` (held by another run) there without touching the blob. Release it
 only after the branch outcome is known (item 4, Git
-Worktree, completes first — the execution order of the canonical list guarantees this):
+Worktree, completes first — the execution order of the canonical list guarantees this). The one
+exception: step 7's `parked-at-shaping` read happens at the very start of this execution step,
+before item 4 runs — item 4 removes the worktree that field is read from, and nothing else in the
+canonical list reads it earlier.
 
 Before any step below runs a `gh` command, run the Detection Ladder from
 `_shared/forge-detection.md` (checks 1-3). Checks 1 (GitHub remote) and 3 (repo reachable) are
@@ -430,7 +437,7 @@ checks 1 or 3 fail.
    failure. Then, only when the outcome reason is `abandoned: spec {spec}` (i.e. NOT
    `merged:`/`pr-opened:`) AND the materialized header carries
    `parked-at-shaping: true` (`materialize.md`'s field for exactly this restore-on-abandon case —
-   read during cleanup planning from the worktree mirror,
+   read at the start of Phase 4's execution step, before item 4 runs, from the worktree mirror,
    `{worktree}/.claude-tweaks/pipelines/{run-id}/work/{issue}-spec.md` resolved as in Section C
    step 2, while the worktree still exists, since item 4 removes it before this step runs; a
    `current-branch` run has no worktree and item 4 never runs, so the run dir's own
