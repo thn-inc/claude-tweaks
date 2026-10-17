@@ -133,7 +133,12 @@ function entryPointLoads(pluginRoot, { readFile, listSkillMds }) {
     return edges.get(p);
   };
   const bytesOf = (p) => measuredTextBytes(read(p) || '', p).bytes;
-  const rootName = pluginRoot === '.' ? '.' : posix.basename(pluginRoot);
+  // The full repo-relative root path, not just its basename: two explicit
+  // `--plugin-root a/foo` / `--plugin-root b/foo` roots share a basename but
+  // must never collide on one entry name (ledger row 18). For every
+  // depth-≤1 root (`plugin`, `.claude`) this is identical to the old
+  // basename-only name, and `.` stays `.`.
+  const rootName = pluginRoot;
 
   return listSkillMds().map((skillMd) => {
     const seen = new Set([skillMd]);

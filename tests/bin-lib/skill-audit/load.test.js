@@ -95,6 +95,15 @@ test('extractCitations rule (d) does not apply without the phrase or without a s
   assert.deepStrictEqual(noToken.resolved, []);
 });
 
+test('extractCitations rule (d): two skills named on one line, interleaved with an unrelated citation, each resolve against their own nearest preceding token (ledger row 7)', () => {
+  const line = 'See `unrelated.md`, then `/claude-tweaks:stories` reads `story.md` in that skill\'s directory, '
+    + 'and `/claude-tweaks:build` reads `build-notes.md` in that skill\'s directory.';
+  const r = load.extractCitations(line, 'plugin/skills/flow/SKILL.md', 'plugin', {
+    exists: existsIn(['plugin/skills/stories/story.md', 'plugin/skills/build/build-notes.md']),
+  });
+  assert.deepStrictEqual(r.resolved, ['plugin/skills/stories/story.md', 'plugin/skills/build/build-notes.md']);
+});
+
 test('extractCitations: an unresolvable token is recorded with its 1-based line, never counted', () => {
   const r = load.extractCitations('line one\nsee `docs/skill-graph.md` here', 'plugin/skills/flow/SKILL.md', 'plugin', { exists: () => false });
   assert.deepStrictEqual(r, {
@@ -150,6 +159,22 @@ test('entryPointLoads: entries are namespaced by root so same-named skills never
   assert.deepStrictEqual([a[0].entry, b[0].entry], ['plugin:x', '.claude:x']);
 });
 
+test('entryPointLoads: entries are sorted by entry name regardless of listSkillMds\' own order (ledger row 10)', () => {
+  const files = {
+    'plugin/skills/zebra/SKILL.md': 'z\n',
+    'plugin/skills/apple/SKILL.md': 'a\n',
+    'plugin/skills/mango/SKILL.md': 'm\n',
+  };
+  const rows = load.entryPointLoads('plugin', tree(files));
+  assert.deepStrictEqual(rows.map((r) => r.entry), ['plugin:apple', 'plugin:mango', 'plugin:zebra']);
+});
+
+test('entryPointLoads: deep explicit roots use the full root path, not just its basename, so same-basename roots never collide (ledger row 18)', () => {
+  const a = load.entryPointLoads('a/foo', tree({ 'a/foo/skills/s/SKILL.md': 'p\n' }));
+  const b = load.entryPointLoads('b/foo', tree({ 'b/foo/skills/s/SKILL.md': 'q\n' }));
+  assert.deepStrictEqual([a[0].entry, b[0].entry], ['a/foo:s', 'b/foo:s']);
+});
+
 test('entryPointLoads: a citation cycle terminates and counts each file once', () => {
   const files = {
     'plugin/skills/s/SKILL.md': '`a.md`\n',
@@ -174,6 +199,19 @@ test('entryPointLoads: compose sources join the closure and are walked transitiv
     'plugin/skills/_shared/deep.md', 'plugin/skills/_shared/src.md',
     'plugin/skills/s/SKILL.md', 'plugin/skills/s/step.md',
   ]);
+});
+
+test('entryPointLoads: a compose call line in a closure member that parseComposeCallLine cannot parse adds nothing to the closure and does not throw (ledger row 8)', () => {
+  const files = {
+    'plugin/skills/s/SKILL.md': 'Read `step.md` in this skill\'s directory.\n',
+    'plugin/skills/s/step.md': 'Run `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --bogus-flag x`.\n',
+  };
+  const [row] = load.entryPointLoads('plugin', tree(files));
+  assert.deepStrictEqual(row.files, ['plugin/skills/s/SKILL.md', 'plugin/skills/s/step.md']);
+  assert.ok(
+    row.unresolved.some((u) => u.token.startsWith('compose-context.js: unknown flag --bogus-flag')),
+    JSON.stringify(row.unresolved)
+  );
 });
 
 test('entryPointLoads: a file both cited and a compose source counts once', () => {
