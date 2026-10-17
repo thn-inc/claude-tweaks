@@ -1,6 +1,6 @@
 # Code-Mode Procedure — Focus-Criterion Component Passes (Steps 6.6, 6.65, 6.66)
 
-Split out of `code-mode-steps.md` (#2628) to stay under the per-file byte ceiling — these three steps are code-health focus-criterion passes reused directly inside `/claude-tweaks:review`'s Code-Mode Procedure, between Step 6.5 (Design Quality Pass) and Step 6.7 (Late Findings Routing). Loaded by `code-mode-steps.md` at that point in the procedure; step numbering is unchanged by the split.
+Split out of `code-mode-steps.md` (#2628) — these three steps are code-health focus-criterion passes reused directly inside `/claude-tweaks:review`'s Code-Mode Procedure, between Step 6.5 (Design Quality Pass) and Step 6.7 (Late Findings Routing). Loaded by `code-mode-steps.md` at that point in the procedure; step numbering is unchanged by the split.
 
 ## Step 6.6: Security Hardening Pass (#2624)
 

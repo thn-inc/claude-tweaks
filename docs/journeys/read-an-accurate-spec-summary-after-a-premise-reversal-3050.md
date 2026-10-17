@@ -31,7 +31,7 @@ files:
 - **Red flags:** The unrevised body pushed while the revision sits unused in the temp file. A summary that describes behavior the diff does not show. A sibling spec's `Revised during build:` entry disappearing after this spec's phase exit.
 
 ### 3. Later phase exits and the pre-merge refresh leave it alone
-- **URL:** `plugin/skills/_shared/pr-checklist-refresh.md` Pre-merge refresh step 2; `plugin/skills/_shared/pr-early-run-lifecycle.md` Step 3 template note; `plugin/bin/lib/flow/pr-body.js` `reviseSpecSummary`
+- **URL:** `plugin/skills/_shared/pr-checklist-refresh.md` Pre-merge refresh step 1; `plugin/skills/_shared/pr-early-run-lifecycle.md` Step 3 template note; `plugin/bin/lib/flow/pr-body.js` `reviseSpecSummary`
 - **Action:** Every later phase exit, and the pre-merge refresh (which re-runs the Phase-checklist update unconditionally), runs the same report. With every reversal already noted (`already-noted`), or none logged (`no-reversals`), it writes the body as composed.
 - **Should feel:** Stable — the summary a reviewer read at review time is the one still there at merge.
 - **Should understand:** Idempotency is judged per entry: an entry counts as noted only when it appears delimited in the note, so `XA → B` does not mask a distinct `A → B`. A `; ` inside a logged claim is written into the note as `, `, because `; ` is the note's own entry separator: kept as-is, an existing `X; Y → Z` entry would make a distinct `Y → Z` read as already noted, and the summary would never be revised for it.

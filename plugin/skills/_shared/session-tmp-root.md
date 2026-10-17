@@ -50,16 +50,16 @@ The degrade fallback resolves the OS temp dir programmatically (`os.tmpdir()`) r
 
 **Several paths in one fence** — `bin/session-tmp-resolve.js`, a thin CLI wrapper, is the
 byte-cheaper form once a script needs three or more (each inline `node -e` block above costs
-roughly 350 bytes; this form costs roughly 90 bytes total, which matters for a skill file already
-close to the 50 KB ceiling):
+roughly 350 bytes; this form costs roughly 90 bytes total, which matters for a skill file near the
+Read rail):
 
 ```bash
 eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" VAR1=file1.json VAR2=file2.md)"
 ```
 
 Both forms resolve through the same `sessionTmpPath` and degrade identically; pick whichever
-reads better at the call site, and prefer the CLI form once a file is within a few hundred bytes
-of the ceiling (`wc -c` before committing).
+reads better at the call site, and prefer the shorter CLI form once a file nears `RAIL_BYTES`,
+the Read rail in `plugin/bin/lib/skill-audit/budgets.js` (`wc -c` before committing).
 
 On win32 the CLI prints forward-slash paths (`C:/Users/…`) even though `sessionTmpPath` itself
 returns native ones. Snippets interpolate these values into `node -e` string literals, where a
@@ -125,8 +125,7 @@ record-suffixed-caller case above), `skills/journey-health/SKILL.md`,
 `skills/wrap-up/SKILL.md`, `skills/wrap-up/unblocked-records.md`,
 `skills/wrap-up/docs-health-integration.md`, `skills/wrap-up/leftover-routing.md`,
 `skills/wrap-up/verification-brief-parent-gate.md`, `skills/_shared/label-bootstrap.md`,
-`skills/_shared/github-pr-scan.md`, `skills/_shared/github-pr-scan-acceptance.md` (re-measured
-with `wc -c` after every edit to stay under its 50 KB per-invocation ceiling — see that file's own
-header note), `skills/_shared/harness-health-analysis.md`, `skills/wrap-up/verification-brief.md`,
+`skills/_shared/github-pr-scan.md`, `skills/_shared/github-pr-scan-acceptance.md`,
+`skills/_shared/harness-health-analysis.md`, `skills/wrap-up/verification-brief.md`,
 `skills/flow/summary-template.md`, and `skills/flow/multispec-summary.md` (#2821 — the three share
 one session file, `try-it-{N}.md`: wrap-up writes it and flow's Pipeline Summary reads it back).

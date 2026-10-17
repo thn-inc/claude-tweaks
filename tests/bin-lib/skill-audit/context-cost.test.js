@@ -35,6 +35,8 @@ const {
 } = require('../../../plugin/bin/lib/skill-audit/context-cost.js');
 const { listSkillDirs, KNOWN_SKILLS } = require('../../../plugin/bin/lib/skill-audit/skill-catalog.js');
 const { compose, KEYS, VOCAB } = require('../../../plugin/bin/lib/compose-context/compose.js');
+const { RAIL_BYTES, RAIL_LINES, DESCRIPTION_MAX_CHARS, listingBudgetChars } = require('../../../plugin/bin/lib/skill-audit/budgets.js');
+const { skillFileRailViolations, composedRailViolations, descriptionRailViolations } = require('../../../plugin/bin/lib/skill-audit/rail.js');
 
 // The corpus root these measurements take is the plugin payload root — the one
 // with `skills/` directly beneath it — which is `plugin/`, not the repo root.
@@ -731,4 +733,42 @@ test('reports composed bytes per call site and combination', () => {
     }
     console.log(`    ${row.step} @ ${row.file}:${row.line} — max: ${kb(row.max)} KB`);
   }
+});
+
+// ── Read-limit rail (#3306). The one size check that guards a real platform
+// limit: every shipped skill .md and every composed bundle fits one Read call
+// (budgets.js holds the numbers and their calibration). Each test's go-red
+// fixture lives in budgets.test.js and runs the same rail.js code.
+// Every test name here carries "rail" so #3311 can tell these suites from the
+// ones it deletes.
+
+test('rail: every shipped skill .md fits one Read call (bytes and lines)', () => {
+  assert.deepStrictEqual(
+    skillFileRailViolations(REPO).map((e) => `${e.file} ${e.bytes} B, ${e.lines} lines`),
+    [],
+    `over the Read rail (${RAIL_BYTES} B / ${RAIL_LINES} lines, budgets.js) — a file this size cannot be read in one call; split it`,
+  );
+});
+
+test('rail: every compose call site\'s max composed bytes fit one Read call', () => {
+  assert.deepStrictEqual(
+    composedRailViolations(REPO).map((e) => (e.error ? `${e.file}: ${e.error}` : `${e.file} ${e.bytes} B`)),
+    [],
+    `a composed bundle is consumed by a single Read — fence or restructure its sources to fit ${RAIL_BYTES} B (budgets.js)`,
+  );
+});
+
+test('rail: every skill description fits the CLI listing max', () => {
+  assert.deepStrictEqual(
+    descriptionRailViolations(REPO).map((d) => `${d.name} (${d.chars} chars)`),
+    [],
+    `the CLI truncates a skill description past ${DESCRIPTION_MAX_CHARS} chars in the skill listing`,
+  );
+});
+
+test('rail diagnostic: total description chars against the listing budget (reported, never failed)', () => {
+  const total = totalDescriptionChars(measureDescriptions(REPO));
+  console.log(`    rail diagnostic: description total ${total} chars vs listing budget `
+    + `${listingBudgetChars(200000)} chars (200k context) / ${listingBudgetChars(1000000)} chars (1M context) — `
+    + 'listing entries also carry whenToUse and the name, so the real listing cost is higher');
 });

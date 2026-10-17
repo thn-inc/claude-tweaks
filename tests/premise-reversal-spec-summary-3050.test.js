@@ -93,7 +93,7 @@ test('the Refresh paragraph precedes the gh pr edit invocation it feeds (M1)', (
   assert.ok(refreshIdx < ghEditIdx, `Refresh paragraph (${refreshIdx}) must precede gh pr edit (${ghEditIdx})`);
 });
 
-test('the pre-merge refresh step 2 still re-runs the whole update, Spec summary included', () => {
+test('the pre-merge refresh step 1 still re-runs the whole update, Spec summary included', () => {
   const pre = section(REFRESH, '## Pre-merge title/description refresh', '## Merge-time gh-absent degrade');
   assert.match(pre, /Re-run the Phase-checklist update procedure above once more, unconditionally/);
   assert.match(pre, /its Spec-summary refresh included/);

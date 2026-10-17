@@ -7,7 +7,7 @@ The single canonical judging procedure for `/claude-tweaks:docs-health`, used by
 
 Both callers substitute the same four placeholders before use: `{target.path}` and `{target.id}` (from Step 1's selection), `{plugin-root}` (the resolved `$CLAUDE_PLUGIN_ROOT`), and `{root}` (the resolved `${ROOT:-$PWD}`).
 
-Keeping this in one file is deliberate: it previously lived twice — once in Step 3 and once inlined in the dispatch prompt — which is exactly the "a contract restated twice, only one copy updated" failure mode CLAUDE.md's 40 KB SKILL.md ceiling exists to prevent. Edit here, never in a caller.
+Keeping this in one file is deliberate: it previously lived twice — once in Step 3 and once inlined in the dispatch prompt — which is exactly the "a contract restated twice, only one copy updated" failure mode, and the second copy spent bytes against the Read rail (`RAIL_BYTES`, `plugin/bin/lib/skill-audit/budgets.js`) without adding an instruction. Edit here, never in a caller.
 
 Everything below the horizontal rule is the inlinable body.
 

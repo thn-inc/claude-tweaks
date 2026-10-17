@@ -896,16 +896,16 @@ test('the release probe is gone — pre-merge it is a constant and its consumer 
   assert.strictEqual(PROBE_NAMES.length, 8);
 });
 
-// The pre-merge merge-size step fetches `origin/{integration-branch}`
-// immediately before measuring; the pack is gathered back in Phase 3, so a
-// pack-fed value would be exactly the stale prediction that step forbids.
-test('the mergeSize probe is gone — its consumer must measure after its own fetch (#1930 fix round 4)', () => {
+// #3310 removed the pre-merge merge-size step itself: nothing consumes a
+// merge-size prediction, from the pack or from the CLI.
+test('no merge-size probe anywhere in the pre-merge refresh (#1930 fix round 4, #3310)', () => {
   assert.ok(!PROBE_NAMES.includes('mergeSize'));
-  // #2002 moved the pre-merge step (which runs this probe) from pr-early-run-lifecycle.md into
-  // the new pr-checklist-refresh.md.
-  const lifecycle = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-checklist-refresh.md'), 'utf8');
-  assert.ok(!lifecycle.includes('pack.mergeSize'), 'the pre-merge step no longer reads a pack-fed merge size');
-  assert.ok(lifecycle.includes('bin/merge-size-probe.js'), 'it still runs the probe CLI itself');
+  const refresh = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-checklist-refresh.md'), 'utf8');
+  assert.ok(!refresh.includes('pack.mergeSize'), 'the pre-merge step reads no pack-fed merge size');
+  assert.ok(!refresh.includes('merge-size-probe'), 'the pre-merge step no longer runs the probe CLI');
+  const section = refresh.slice(refresh.indexOf('## Pre-merge title/description refresh'), refresh.indexOf('## Merge-time gh-absent degrade'));
+  const numbers = [...section.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
+  assert.deepStrictEqual(numbers, numbers.map((_, i) => i + 1), 'items are numbered contiguously from 1');
 });
 
 test('gatherPack: claim probe surfaces a clean error when readClaimBlob falls through to the gh API fallback the pack has none for (#1930 fix)', async () => {

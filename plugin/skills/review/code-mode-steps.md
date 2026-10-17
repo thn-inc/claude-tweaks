@@ -209,6 +209,7 @@ The severity scale, category enum, per-lens floors, and the CALIBRATION filter a
 | 3g-cov Coverage | low / informational | Never blocks the review. |
 | 3h UX (when QA data) | high | Capable profile — judgment-heavy synthesis. |
 | 3i Doc freshness | low / informational | Never blocks the review. |
+| 3j Skill load delta | informational | Runs at every tier and ceremony profile — one read-only CLI call, never blocks. |
 
 **3a skill-routed entries.** Lens 3a records a `review/skill` ledger entry rather than choosing a destination; `/claude-tweaks:wrap-up`'s Skills curation row classifies it via `skills/_shared/learning-routing.md`, where a finding about a claude-tweaks skill resolves to D5 (upstream) rather than a project skill update. Do not inline this note into the 3a agent prompt — that agent's job is to record, not to route.
 
@@ -244,6 +245,10 @@ Run the UX analysis procedure from `ux-analysis.md` in this skill's directory. O
 **Skip when** `docs/REGISTRY.md` doesn't exist, or the diff is docs-only.
 
 Read `step3-doc-freshness-lens.md` in this skill's directory for the procedure: the `docs/REGISTRY.md` Auto-detect match and its informational finding row, plus sub-lens **3i-diagram** (structural-complexity signal table, co-located-diagram check, deterministic tie-break, and its own finding row). Skip `3i-diagram` additionally when CLAUDE.md's `diagram-suggestions` flag is `disabled` or missing.
+
+### 3j: Skill Load Delta (informational)
+
+Read `step3-skill-load-delta.md` in this skill's directory and run it on every code-mode review: one read-only CLI call reporting each skill entry point's floor and closure delta. It never changes the verdict and never skips silently.
 
 ### Step 3.5 & 3.6: Cross-Lens Debate, Per-Candidate Refutation, and Gap-Sweep
 
@@ -324,7 +329,7 @@ See `_shared/design-wrapper-handling.md` for the canonical return-shape contract
 
 ## Steps 6.6, 6.65, 6.66: Focus-Criterion Component Passes
 
-Read `focus-criterion-passes.md` in this skill's directory now and follow its three steps in order: Step 6.6 (Security Hardening Pass, #2624), Step 6.65 (Agent Trust Scope Pass, #2749), and Step 6.66 (App Store Readiness Pass, #2628) — split into that file to keep this one under its byte ceiling. Each is a `code-health` focus-criterion reused directly as a component skill (own pre-check, own result-handling table, own optional routing into Step 6.7 below); step numbering is unaffected by the split.
+Read `focus-criterion-passes.md` in this skill's directory now and follow its three steps in order: Step 6.6 (Security Hardening Pass, #2624), Step 6.65 (Agent Trust Scope Pass, #2749), and Step 6.66 (App Store Readiness Pass, #2628), kept in that file. Each is a `code-health` focus-criterion reused directly as a component skill (own pre-check, own result-handling table, own optional routing into Step 6.7 below); step numbering is unaffected by the split.
 
 ## Step 6.7: Late Findings Routing (design + visual + security + agent-trust-scope + app-store-readiness, consolidated)
 

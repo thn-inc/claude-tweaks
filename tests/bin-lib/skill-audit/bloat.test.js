@@ -11,6 +11,7 @@ const {
   PROVENANCE_PATTERNS,
   median,
   corpusRowMedian,
+  corpusSizeBaseline,
   overLongRows,
   findProvenance,
   extractTables,
@@ -54,6 +55,25 @@ test('corpusRowMedian reports its sample and refuses a baseline below the floor'
   );
   assert.strictEqual(thick.sample, MIN_ROW_SAMPLE);
   assert.strictEqual(thick.usable, true);
+});
+
+test('corpusSizeBaseline reports its sample and recognizes the 5-file floor', () => {
+  // Below floor: 4 files
+  const tooFew = corpusSizeBaseline(Array.from({ length: 4 }, (_, i) => ({ bytes: 1000 * (i + 1) })));
+  assert.strictEqual(tooFew.sample, 4);
+  assert.strictEqual(tooFew.usable, false, 'four files must not establish a corpus baseline');
+
+  // At floor: exactly 5 files
+  const atFloor = corpusSizeBaseline(Array.from({ length: 5 }, (_, i) => ({ bytes: 1000 * (i + 1) })));
+  assert.strictEqual(atFloor.sample, 5);
+  assert.strictEqual(atFloor.usable, true, 'five files must establish a corpus baseline');
+  assert.strictEqual(atFloor.method, 'median-multiple', 'below 20 files uses median-multiple');
+
+  // Above percentile floor: 20 files
+  const plenty = corpusSizeBaseline(Array.from({ length: 20 }, (_, i) => ({ bytes: 1000 * (i + 1) })));
+  assert.strictEqual(plenty.sample, 20);
+  assert.strictEqual(plenty.usable, true);
+  assert.strictEqual(plenty.method, 'p95', 'at or above 20 files uses p95');
 });
 
 // Discrimination: the same file, one row inflated past the multiple, is caught;
@@ -267,6 +287,331 @@ test('bloatReport reports only the target, dedupes it out of its own corpus, and
   assert.ok(!bloatReport(target, [sibling], { ceiling: Infinity }).includes('soft ceiling'));
 
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ── Signal 5: size outliers ────────────────────────────────────────────────
+
+test('size outlier: p95 tier baseline with 20 files', () => {
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'size-'));
+  const files = [];
+  // 20 files: 10 at 1000 B, then 10000 B, 11000 B, ..., 19000 B
+  for (let i = 1; i <= 20; i += 1) {
+    const file = path.join(dir, `file-${i}.md`);
+    const content = skillWith([SHORT_ROW]);
+    fs.writeFileSync(file, content, 'utf8');
+    // Pad with filler bytes to reach target size
+    const target = i <= 10 ? 1000 : (i - 1) * 1000;
+    const padding = 'x'.repeat(target - Buffer.byteLength(content, 'utf8'));
+    fs.appendFileSync(file, padding);
+    files.push(file);
+  }
+
+  const result = auditCorpus(files);
+  assert.ok(result.sizeBaseline.usable, 'p95 baseline must be usable with 20 files');
+  assert.strictEqual(result.sizeBaseline.sample, 20);
+  assert.strictEqual(result.sizeBaseline.method, 'p95');
+  // p95 nearest-rank: index = Math.ceil(0.95 * 20) - 1 = 18, so 18000 B.
+  // The 3x median floor is 3 * 5500 = 16500 B, below p95, so p95 wins.
+  assert.strictEqual(result.sizeBaseline.threshold, 18000);
+
+  // Only the 19,000 B file (last one) should be an outlier
+  const outliers = result.files.filter((f) => f.sizeOutlier);
+  assert.strictEqual(outliers.length, 1, 'only the 19,000 B file should be an outlier');
+  assert.ok(outliers[0].file.includes('file-20'));
+
+  // Check the literal report-line text (AC1)
+  const report = formatBloatReport(result);
+  assert.match(report, /size baseline: p95 \(floor 3× median\) 18000 B over 20 files/);
+  assert.match(report, /size-outlier: 19000 B, above the corpus threshold of 18000 B/);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('size outlier: a uniform 20+ file corpus flags nothing — the p95 threshold is floored at 3x median (#3305 F1)', () => {
+  const files = Array.from({ length: 20 }, (_, i) => ({ file: `f${i}.md`, bytes: 10000 + i * 10 }));
+  const b = corpusSizeBaseline(files);
+  assert.strictEqual(b.method, 'p95');
+  assert.ok(files.every((f) => f.bytes <= b.threshold), `threshold ${b.threshold} must cover a uniform corpus`);
+});
+
+test('size outlier: the 19 to 20 file tier edge no longer flips a verdict (#3305 F1)', () => {
+  const nineteen = [...Array.from({ length: 18 }, () => ({ bytes: 5000 })), { bytes: 14000 }];
+  const twenty = [...nineteen, { bytes: 5000 }];
+  assert.ok(14000 <= corpusSizeBaseline(nineteen).threshold);
+  assert.ok(14000 <= corpusSizeBaseline(twenty).threshold);
+});
+
+test('size outlier: median-multiple tier baseline with 10 files', () => {
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'size-'));
+  const files = [];
+  // 9 files of 1000 B each, 1 file of 5000 B
+  const content = skillWith([SHORT_ROW]);
+  for (let i = 0; i < 9; i += 1) {
+    const file = path.join(dir, `small-${i}.md`);
+    fs.writeFileSync(file, content, 'utf8');
+    const padding = 'x'.repeat(1000 - Buffer.byteLength(content, 'utf8'));
+    fs.appendFileSync(file, padding);
+    files.push(file);
+  }
+  const largeFile = path.join(dir, 'large.md');
+  fs.writeFileSync(largeFile, content, 'utf8');
+  const padding = 'x'.repeat(5000 - Buffer.byteLength(content, 'utf8'));
+  fs.appendFileSync(largeFile, padding);
+  files.push(largeFile);
+
+  const result = auditCorpus(files);
+  assert.ok(result.sizeBaseline.usable, 'median-multiple baseline must be usable with 10 files');
+  assert.strictEqual(result.sizeBaseline.sample, 10);
+  assert.strictEqual(result.sizeBaseline.method, 'median-multiple');
+  // median of [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 5000] = 1000
+  // 3 * 1000 = 3000
+  assert.strictEqual(result.sizeBaseline.threshold, 3000);
+
+  // Only the 5000 B file should be an outlier
+  const outliers = result.files.filter((f) => f.sizeOutlier);
+  assert.strictEqual(outliers.length, 1, 'only the 5000 B file should be an outlier');
+  assert.ok(outliers[0].file.includes('large'));
+
+  // Check the literal report-line text (AC2)
+  const report = formatBloatReport(result);
+  assert.match(report, /size baseline: 3× median 3000 B over 10 files/);
+  assert.match(report, /size-outlier: 5000 B, above the corpus threshold of 3000 B/);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('size outlier: floor — fewer than 5 files has no baseline', () => {
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'size-'));
+  const files = [];
+  for (let i = 1; i <= 4; i += 1) {
+    const file = path.join(dir, `file-${i}.md`);
+    fs.writeFileSync(file, skillWith([SHORT_ROW]), 'utf8');
+    files.push(file);
+  }
+
+  const result = auditCorpus(files);
+  assert.strictEqual(result.sizeBaseline.usable, false, 'baseline must be unusable under 5 files');
+  assert.strictEqual(result.sizeBaseline.method, null);
+  assert.strictEqual(result.sizeBaseline.threshold, null);
+
+  // No file should be an outlier
+  const outliers = result.files.filter((f) => f.sizeOutlier);
+  assert.strictEqual(outliers.length, 0, 'no outliers when baseline not usable');
+
+  // Check the full NO BASELINE line (AC3)
+  const report = formatBloatReport(result);
+  assert.match(report, /size baseline: NO BASELINE — 4 files is under the 5-file floor, so the size-outlier signal was not evaluated/);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('size outlier: boundary — at threshold not outlier, one byte above is', () => {
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'size-'));
+  const padding = 'x'.repeat(100);
+  const files = [];
+
+  // Create 20 files of base size (should all be 1000 + 100 = 1100 B)
+  for (let i = 0; i < 20; i += 1) {
+    const file = path.join(dir, `file-${i}.md`);
+    const content = skillWith([SHORT_ROW]);
+    fs.writeFileSync(file, content);
+    fs.appendFileSync(file, padding);
+    files.push(file);
+  }
+
+  const result = auditCorpus(files);
+  const threshold = result.sizeBaseline.threshold;
+
+  // Create a file exactly at threshold
+  const atThreshold = path.join(dir, 'at-threshold.md');
+  const atContent = skillWith([SHORT_ROW]);
+  fs.writeFileSync(atThreshold, atContent);
+  const atPadding = 'x'.repeat(threshold - Buffer.byteLength(atContent, 'utf8'));
+  fs.appendFileSync(atThreshold, atPadding);
+
+  const resultAt = auditCorpus([...files, atThreshold]);
+  const atFile = resultAt.files.find((f) => f.file === atThreshold);
+  assert.strictEqual(atFile.sizeOutlier, false, 'file exactly at threshold is not an outlier');
+
+  // Create a file one byte above threshold
+  const aboveThreshold = path.join(dir, 'above-threshold.md');
+  const aboveContent = skillWith([SHORT_ROW]);
+  fs.writeFileSync(aboveThreshold, aboveContent);
+  const abovePadding = 'x'.repeat(threshold - Buffer.byteLength(aboveContent, 'utf8') + 1);
+  fs.appendFileSync(aboveThreshold, abovePadding);
+
+  const resultAbove = auditCorpus([...files, aboveThreshold]);
+  const aboveFile = resultAbove.files.find((f) => f.file === aboveThreshold);
+  assert.strictEqual(aboveFile.sizeOutlier, true, 'file one byte above threshold is an outlier');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('size outlier: dedup — target listed twice yields sample of 20, not 21', () => {
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'size-'));
+  const files = [];
+  const target = path.join(dir, 'target.md');
+  fs.writeFileSync(target, skillWith([SHORT_ROW]), 'utf8');
+  files.push(target);
+
+  // 19 other files
+  for (let i = 0; i < 19; i += 1) {
+    const file = path.join(dir, `sibling-${i}.md`);
+    fs.writeFileSync(file, skillWith([SHORT_ROW]), 'utf8');
+    files.push(file);
+  }
+
+  // Add target a second time
+  files.push(target);
+
+  const result = auditCorpus(files);
+  assert.strictEqual(result.sizeBaseline.sample, 20, 'duplicated target must be deduped to sample 20');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('size outlier: suppression with { sizeOutlier: false } prints no size-outlier lines', () => {
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'size-'));
+  const files = [];
+  for (let i = 1; i <= 20; i += 1) {
+    const file = path.join(dir, `file-${i}.md`);
+    const content = skillWith([SHORT_ROW]);
+    fs.writeFileSync(file, content, 'utf8');
+    const padding = 'x'.repeat(i * 1000 - Buffer.byteLength(content, 'utf8'));
+    fs.appendFileSync(file, padding);
+    files.push(file);
+  }
+
+  const result = auditCorpus(files, { sizeOutlier: false });
+  // All files should have sizeOutlier: false
+  assert.ok(result.files.every((f) => f.sizeOutlier === false), 'all files must have sizeOutlier false');
+
+  // sizeBaseline must stay honest: real sample count, suppressed flag set
+  assert.strictEqual(result.sizeBaseline.sample, 20, 'baseline sample must reflect real corpus size');
+  assert.strictEqual(result.sizeBaseline.suppressed, true, 'baseline must be marked as suppressed');
+
+  // Formatreport should not contain any size-outlier or size baseline lines
+  const report = formatBloatReport(result);
+  assert.ok(!report.includes('size-outlier:'), 'report must not contain size-outlier lines when suppressed');
+  assert.ok(!report.includes('size baseline:'), 'report must not contain size baseline line when suppressed');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('prose-twin conformance: both prose files list the same signals and guard', () => {
+  const harnessProse = fs.readFileSync(
+    path.join(REPO, 'plugin', 'skills', '_shared', 'harness-health-analysis.md'),
+    'utf8',
+  );
+  const judgeProse = fs.readFileSync(
+    path.join(REPO, 'plugin', 'skills', 'harness-health', 'judge-procedure.md'),
+    'utf8',
+  );
+
+  // Extract signal-list sentences: "It reports [number] signals: ..."
+  const signalListRegex = /It reports (\w+) signals: ([^.]+)\./i;
+  const harnessMatch = harnessProse.match(signalListRegex);
+  const judgeMatch = judgeProse.match(signalListRegex);
+
+  assert.ok(harnessMatch, 'harness-health-analysis.md must contain signal-list sentence');
+  assert.ok(judgeMatch, 'judge-procedure.md must contain signal-list sentence');
+
+  // Extract the full sentences (including "It reports ... signals:")
+  const harnessSignalList = harnessMatch[0];
+  const judgeSignalList = judgeMatch[0];
+
+  // Assert they're identical
+  assert.strictEqual(
+    harnessSignalList,
+    judgeSignalList,
+    'Signal-list sentences must be identical between prose files',
+  );
+
+  // Assert the sentence names four signals including the size signal
+  assert.ok(
+    harnessSignalList.includes('four signals'),
+    'Signal list must explicitly mention "four signals"',
+  );
+  assert.ok(
+    harnessSignalList.includes('skill file far larger than its siblings'),
+    'Signal list must mention size outliers',
+  );
+
+  // Extract and assert the size-outlier guard bullet text is identical
+  const sizeGuardBulletRegex = /- \*\*Size outliers\.\*\* ([^\n]+)/;
+  const harnessGuardMatch = harnessProse.match(sizeGuardBulletRegex);
+  const judgeGuardMatch = judgeProse.match(sizeGuardBulletRegex);
+
+  assert.ok(harnessGuardMatch, 'harness-health-analysis.md must contain size-outlier guard bullet');
+  assert.ok(judgeGuardMatch, 'judge-procedure.md must contain size-outlier guard bullet');
+
+  assert.strictEqual(
+    harnessGuardMatch[0],
+    judgeGuardMatch[0],
+    'Size-outlier guard bullets must be identical between prose files',
+  );
+});
+
+// Prose ↔ code pin: the signal list both judging procedures restate must name
+// exactly the signals auditText returns, so a signal added to or removed from
+// bloat.js without the prose following fails here rather than at the next audit.
+// The frozen excerpt is the pre-#3310 sentence; it must fail against today's live signal set.
+const SIGNAL_COUNT_WORDS = { three: 3, four: 4, five: 5, six: 6, seven: 7 };
+const FIVE_SIGNAL_EXCERPT = 'It reports five signals: files over the 50 KB soft ceiling, Anti-Pattern rows more than twice the corpus median byte length, provenance-narration phrasing (text addressed to whoever edited the file rather than to the model running it), adjacent table rows whose right-hand cells are identical or near-identical, and a skill file far larger than its siblings.';
+
+function proseSignalCount(text) {
+  const m = text.match(/(\w+) signals: ([^.]+)\./i);
+  if (!m) return null;
+  const items = m[2].replace(/\([^)]*\)/g, '').split(/,\s*(?:and\s+)?/).filter((s) => s.trim());
+  return { stated: SIGNAL_COUNT_WORDS[m[1].toLowerCase()], items: items.length };
+}
+
+test('prose signal list names exactly the signals auditText returns', () => {
+  // overCeiling is suppressed at both call sites with { ceiling: Infinity } (#3310);
+  // #3311 deletes the field itself.
+  const codeSignals = Object.keys(auditText('', { bytes: 0, rowMedian: null, sizeThreshold: 0 }))
+    .filter((k) => k !== 'bytes' && k !== 'headroom' && k !== 'overCeiling');
+  for (const rel of [['_shared', 'harness-health-analysis.md'], ['harness-health', 'judge-procedure.md']]) {
+    const got = proseSignalCount(fs.readFileSync(path.join(REPO, 'plugin', 'skills', ...rel), 'utf8'));
+    assert.ok(got, `${rel.join('/')} must contain a signal-list sentence`);
+    assert.strictEqual(got.stated, codeSignals.length, `${rel.join('/')} states the wrong signal count`);
+    assert.strictEqual(got.items, codeSignals.length, `${rel.join('/')} lists the wrong number of signals`);
+  }
+  const frozen = proseSignalCount(FIVE_SIGNAL_EXCERPT);
+  assert.notStrictEqual(frozen.stated, codeSignals.length);
+  assert.notStrictEqual(frozen.items, codeSignals.length);
+});
+
+test('both bloat-scan call sites suppress the ceiling signal, and suppress size outliers only for non-skill targets (#3310)', () => {
+  for (const rel of [['_shared', 'harness-health-analysis.md'], ['harness-health', 'judge-procedure.md']]) {
+    const text = fs.readFileSync(path.join(REPO, 'plugin', 'skills', ...rel), 'utf8');
+    const label = rel.join('/');
+    assert.match(text, /kind === 'skill' \? \{ ceiling: Infinity \} : \{ ceiling: Infinity, sizeOutlier: false \}/, `${label}: bloat call must pick options by kind`);
+    assert.match(text, /bloatReport\(target, corpus, opts\)/, `${label}: bloat call must pass opts`);
+    assert.doesNotMatch(text, /soft ceiling/, `${label}: no soft-ceiling signal`);
+    assert.doesNotMatch(text, /\*\*Over the ceiling\.\*\*/, `${label}: guard bullet must be the rail bullet`);
+    assert.match(text, /- \*\*Over the rail\.\*\* /, `${label}: rail guard bullet`);
+  }
+  const analysis = fs.readFileSync(path.join(REPO, 'plugin', 'skills', '_shared', 'harness-health-analysis.md'), 'utf8');
+  assert.match(analysis, /composedRailViolations/, 'check 10 must go through rail.js');
+  assert.doesNotMatch(analysis, /overComposedCeiling|CEILING_BYTES|COMPOSED_STEP_EXCEPTIONS/);
+  const skill = fs.readFileSync(path.join(REPO, 'plugin', 'skills', 'harness-health', 'SKILL.md'), 'utf8');
+  assert.doesNotMatch(skill, /overComposedCeiling/);
+  assert.match(skill, /`rail:` suite/);
+});
+
+test('a 60,000 B skill target scanned with { ceiling: Infinity } prints no soft-ceiling line (#3310 AC3)', () => {
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'bloat-3310-'));
+  try {
+    const target = path.join(dir, 'big.md');
+    fs.writeFileSync(target, `# Big\n\n${'word '.repeat(12000)}`);
+    const sibling = path.join(dir, 'small.md');
+    fs.writeFileSync(sibling, '# Small\n\ntext\n');
+    assert.ok(fs.statSync(target).size >= 60000);
+    assert.ok(!bloatReport(target, [sibling], { ceiling: Infinity }).includes('soft ceiling'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('auditCorpus runs over the whole live skill corpus and reports a usable baseline', () => {

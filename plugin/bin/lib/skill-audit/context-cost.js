@@ -118,18 +118,22 @@ function corpusDir(repoRoot) {
 // malformed marker is reported on the entry as `markerError`, never thrown
 // out of a measurement pass (parent #1987 promise F1) — the raw byte count is
 // returned instead so the entry is still usable.
-function measuredBytes(file) {
-  const raw = fs.readFileSync(file, 'utf8');
+// Text-level core of measuredBytes, for content that is not on disk (git show — load.js, #3307).
+function measuredTextBytes(raw, label = '<text>') {
   const text = raw.replace(/\r\n/g, '\n');
   try {
     const stripped = stripMarkers(text);
     return { bytes: Buffer.byteLength(stripped, 'utf8') };
   } catch (err) {
     if (err instanceof MarkerError) {
-      return { bytes: Buffer.byteLength(text, 'utf8'), markerError: `${file}:${err.line}: ${err.message}` };
+      return { bytes: Buffer.byteLength(text, 'utf8'), markerError: `${label}:${err.line}: ${err.message}` };
     }
     throw err;
   }
+}
+
+function measuredBytes(file) {
+  return measuredTextBytes(fs.readFileSync(file, 'utf8'), file);
 }
 
 // Every SKILL.md, with its size. This is the per-invocation payload: sub-files
@@ -522,6 +526,8 @@ module.exports = {
   CEILING_BYTES,
   DESCRIPTION_CEILING_CHARS,
   DESCRIPTION_TOTAL_CEILING_CHARS,
+  corpusDir,
+  measuredTextBytes,
   measuredBytes,
   walkMarkdown,
   measureSkills,

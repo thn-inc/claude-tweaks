@@ -129,7 +129,7 @@ The plan will be written to `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`.
 
 **Plan-authoring checks:** before finalizing the plan, run every check in `plan-authoring-checks.md` in this skill's directory — one bold paragraph per check; the file, not this sentence, is the list (the enumeration that used to sit here had already fallen two checks behind it). (Same checks apply in Design Step 3 below.)
 
-**Size-headroom check:** when a plan task appends to a `skills/_shared/*.md` or `SKILL.md` file already within ~10% of the 50 KB ceiling, measure `wc -c` against the ceiling on the merge base and name the split up front in the plan — since #1990 the per-file test only warns, and it's the composed-bytes gate (`context-cost.js`'s `overComposedCeiling`) at that file's compose call site(s) that actually fails. (Same check applies in Design Step 3 below.)
+**Size-headroom check:** when a plan task appends to a `plugin/skills/**/*.md` file already within ~10% of `RAIL_BYTES` (the Read-limit rail, `plugin/bin/lib/skill-audit/budgets.js`), measure `wc -c` on the merge base and name the remedy up front in the plan — cut bytes, or move a genuinely lazy section (one some runs never read) into its own cited file; `when:` fencing is the remedy only for a composed bundle near the rail, and does not help a raw file, since the rail measures it with only the marker lines stripped. Never a "read X now" split every run follows; the `rail:` tests fail CI for a file or composed bundle over the rail. (Same check applies in Design Step 3 below.)
 
 Proceed to **Common Step 2**.
 
@@ -184,7 +184,7 @@ Audit the plan against the actual repo before dispatching execution, via `node "
 - **Check B (conditional):** when the plan declares `Scope keywords:`, an fs-walk sweeps the repo for each keyword and lists any matched files not in the plan.
 - **Check C (always):** pre-run each task's own declared Step 2 `Run:`/`Expected: FAIL` verification command once, read-only, against current repo state before dispatch; stop unconditionally if a command already exhibits a passing signature despite declaring `Expected: FAIL`. An append-shaped task (Step 1 appends to an existing, already-passing file) is not a finding — reported under `appendShaped` instead. A `warnings` entry (Step 2 present but unparseable) is informational only — never a stop, even though the summary line names Check C.
 - **Check D (always):** scan the raw plan text for a control byte other than tab/LF/CR (e.g. a raw NUL) — an unconditional stop, the one check the skip gate below does not cover.
-- **Headroom (always):** for each existing governed-corpus `.md` file (`plugin/skills/**/*.md`) the plan modifies, current bytes + headroom against the shared ceiling constant — a soft `nearCeiling` flag never fails the check; a `breach` (already at/over the ceiling) does.
+- **Headroom (always):** for each existing governed-corpus `.md` file (`plugin/skills/**/*.md`) the plan modifies, current bytes + headroom against `RAIL_BYTES`, the Read-limit rail — a soft `nearCeiling` flag (at or above 90% of the rail) never fails the check; a `breach` (over the rail) does.
 
 **Auto mode** (including a standalone `auto` invocation with no pipeline run dir): apply the `scope-creep` policy, resolved per the standard precedence (default `add-to-plan`). **Interactive mode:** call `AskUserQuestion` with three options: "Add to plan and continue" (Recommended), "Continue without", "Stop".
 

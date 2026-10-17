@@ -2,7 +2,7 @@
 
 Referenced by `build/worktree-setup.md`'s "Cherry-pick source-branch PR check" heading — read
 only in Common Step 2's per-commit loop, after a commit lands carrying a `(cherry picked from
-commit {sha})` trailer; extracted to stay under the composed-bytes ceiling at that call site
+commit {sha})` trailer; kept in its own file, outside the composed bundle at that call site
 (`context-cost.test.js`'s `worktree-setup @ build/SKILL.md` composed bundle, #2768).
 
 Runs later than Steps 1.5/1.6 — in Common Step 2's per-commit loop, **after each commit lands**,

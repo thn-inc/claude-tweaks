@@ -2,8 +2,8 @@
 
 Split from `_shared/github-pr-scan.md` (#204) — that file's own header, Detection Ladder,
 Staleness Thresholds, and Output Contract still govern every scope below; this file holds only
-the three acceptance-related scope bodies extracted to keep `github-pr-scan.md` under the 40 KB
-per-invocation ceiling. A dispatcher inlining any scope below must inline `github-pr-scan.md`'s
+the three acceptance-related scope bodies, extracted when `github-pr-scan.md` neared the
+since-retired 40 KB per-invocation ceiling (decision 0024 replaced it with the Read-limit rail). A dispatcher inlining any scope below must inline `github-pr-scan.md`'s
 Output Contract section alongside it — that section was not duplicated here, since duplicating a
 canonical contract two files deep is worse than one extra `Read` at dispatch time. Consumed by
 `/claude-tweaks:help` (Stage 4.7, **`acceptance-queue`** scope) and `/claude-tweaks:tidy` (Step

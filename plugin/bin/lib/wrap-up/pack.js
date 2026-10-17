@@ -477,12 +477,9 @@ function buildProbes(inputs, deps) {
       return JSON.parse(stdout);
     },
     blastRadius: () => deps.computeBlastRadius({ base: inputs.base, integrationBranch: inputs.integrationBranch }, { git }),
-    // No mergeSize probe (#1930 fix round 4): its only consumer,
-    // `_shared/pr-early-run-lifecycle.md`'s pre-merge merge-size step, mandates
-    // a `git fetch origin {integration-branch}` immediately before measuring.
-    // The pack is gathered in Phase 3, before that fetch, so a pack-fed value
-    // would be exactly the stale prediction that step's own text forbids —
-    // that step keeps running `bin/merge-size-probe.js` itself.
+    // No mergeSize probe (#1930 fix round 4). #3310 removed its only consumer,
+    // the pre-merge merge-size step: size limits block only at the Read rail,
+    // which the rail tests enforce on the merged tree.
     ledger: () => { recordsOrThrow(); return ledgerProbe(inputs, deps); },
     // --no-suite: a fact pack never re-runs the project's test suite. Suite
     // state belongs to /claude-tweaks:test's verification stamp, which already

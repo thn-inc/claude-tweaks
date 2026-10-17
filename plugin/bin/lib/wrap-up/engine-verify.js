@@ -6,9 +6,9 @@
 // trailers/markers this module greps for.
 //
 // Injectable seam: every check function takes `deps.git`/`deps.gh`
-// (execFileSync-backed defaults below), following the same fake-runner
-// convention as bin/lib/merge-size-probe.js (see the gh-api-module-pattern
-// skill) — argv array only, never a shell string.
+// (execFileSync-backed defaults below), following the fake-runner
+// convention the gh-api-module-pattern project skill documents — argv array
+// only, never a shell string.
 //
 // Deliberately gh-CLI-only, same constraint every other reconcile check
 // states: a Node subprocess cannot reach an agent session's MCP tools, so a

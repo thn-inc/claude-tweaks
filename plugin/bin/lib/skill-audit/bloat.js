@@ -2,15 +2,15 @@
 
 // Mechanical bloat detection for harness documentation.
 //
-// context-cost.js measures how big the payload IS. This module detects the four
-// shapes that make it big, so a regression is a reported finding rather than
+// context-cost.js measures how big the payload IS. This module detects the five
+// signals that make it big, so a regression is a reported finding rather than
 // something a human notices 150 KB later. Every function here is read-only —
 // `/claude-tweaks:harness-health` files issues and never edits a skill, so this
 // returns findings and nothing else.
 //
 // Nothing here is a verdict. Each signal is *evidence* the judging step weighs,
 // in the same sense as the existing evidence pre-checks in
-// `skills/_shared/harness-health-analysis.md`: every one of the four has a
+// `skills/_shared/harness-health-analysis.md`: every one of the five has a
 // legitimate form, spelled out beside its threshold below.
 //
 // Thresholds are calibrated against this repo's corpus immediately after the
@@ -45,6 +45,23 @@ const ROW_LENGTH_MULTIPLE = 2;
 // posture the eval cost check takes with a thin history.
 const MIN_ROW_SAMPLE = 20;
 
+// ── Signal 5: skill file size outliers ─────────────────────────────────────
+//
+// A skill file much larger than its siblings — real when it holds several
+// independent procedures. Legitimate form: an entry point that is legitimately
+// the largest because it carries a whole lifecycle. Uses two tiers: ≥20 files
+// takes nearest-rank p95, floored at SIZE_MEDIAN_MULTIPLE × median (#3305 F1);
+// 5–19 files takes SIZE_MEDIAN_MULTIPLE × median; fewer has no baseline. The
+// floor means a uniform corpus flags nothing and the 19→20-file tier edge
+// cannot flip a verdict.
+//
+// Measured on this repo's `plugin/skills/*/*.md` corpus: 442 files, threshold
+// 39,519 B (p95; the floor is 25,605 B), 22 files flagged.
+const SIZE_OUTLIER_PERCENTILE = 0.95;
+const SIZE_PERCENTILE_MIN_SAMPLE = 20;
+const SIZE_MEDIAN_MULTIPLE = 3;
+const SIZE_MIN_SAMPLE = 5;
+
 function rowBytes(row) {
   return Buffer.byteLength(`${row.pattern} ${row.why}`, 'utf8');
 }
@@ -77,6 +94,28 @@ function overLongRows(text, baselineMedian, multiple = ROW_LENGTH_MULTIPLE) {
   return extractAntiPatternRows(text)
     .map((row) => ({ line: row.line, bytes: rowBytes(row), pattern: row.pattern }))
     .filter((row) => row.bytes > threshold);
+}
+
+// Corpus-wide baseline for file sizes. Returns { usable, sample, method, threshold }
+// where method is 'p95' (if >= 20 files), 'median-multiple' (if >= 5 files), or null.
+function corpusSizeBaseline(files) {
+  const sizes = files.map((f) => f.bytes);
+  const sample = sizes.length;
+  if (sample >= SIZE_PERCENTILE_MIN_SAMPLE) {
+    // Nearest-rank p95, floored at the small-corpus tier's 3× median: a
+    // uniform corpus flags nothing, and the 19→20-file edge cannot flip a
+    // verdict (#3305 F1)
+    const sorted = [...sizes].sort((a, b) => a - b);
+    const p95 = sorted[Math.ceil(SIZE_OUTLIER_PERCENTILE * sample) - 1];
+    const threshold = Math.max(p95, median(sizes) * SIZE_MEDIAN_MULTIPLE);
+    return { usable: true, sample, method: 'p95', threshold };
+  }
+  if (sample >= SIZE_MIN_SAMPLE) {
+    const threshold = median(sizes) * SIZE_MEDIAN_MULTIPLE;
+    return { usable: true, sample, method: 'median-multiple', threshold };
+  }
+  // Below the floor, no baseline
+  return { usable: false, sample, method: null, threshold: null };
 }
 
 // ── Signal 3: provenance narration ──────────────────────────────────────────
@@ -283,9 +322,9 @@ function findDegenerateRows(markdown, opts = {}) {
 
 // ── Composition ─────────────────────────────────────────────────────────────
 
-// One file's four signals. `bytes` is passed in (not stat'ed) so this stays a
+// One file's five signals. `bytes` is passed in (not stat'ed) so this stays a
 // pure function over text; auditCorpus supplies it.
-function auditText(text, { bytes, rowMedian, ceiling = CEILING_BYTES } = {}) {
+function auditText(text, { bytes, rowMedian, ceiling = CEILING_BYTES, sizeThreshold } = {}) {
   return {
     bytes,
     overCeiling: typeof bytes === 'number' && bytes > ceiling,
@@ -293,6 +332,7 @@ function auditText(text, { bytes, rowMedian, ceiling = CEILING_BYTES } = {}) {
     longRows: overLongRows(text, rowMedian),
     provenance: findProvenance(text),
     degenerate: findDegenerateRows(text),
+    sizeOutlier: typeof bytes === 'number' && typeof sizeThreshold === 'number' && bytes > sizeThreshold,
   };
 }
 
@@ -302,7 +342,7 @@ function auditText(text, { bytes, rowMedian, ceiling = CEILING_BYTES } = {}) {
 // target is normally also a member of its own corpus, and a shell glob that
 // re-lists it must not double-count its rows in the baseline or its findings
 // in the report.
-function auditCorpus(files, { ceiling = CEILING_BYTES } = {}) {
+function auditCorpus(files, { ceiling = CEILING_BYTES, sizeOutlier = true } = {}) {
   const loaded = [...new Set(files)]
     // Callers pass shell globs, and a glob matching nothing survives as a
     // literal path under bash's default nullglob-off. Skipping a non-file keeps
@@ -313,11 +353,15 @@ function auditCorpus(files, { ceiling = CEILING_BYTES } = {}) {
     .map((file) => ({ file, text: fs.readFileSync(file, 'utf8'), bytes: fs.statSync(file).size }));
   const baseline = corpusRowMedian(loaded);
   const rowMedian = baseline.usable ? baseline.median : null;
+  const sizeBaseline = corpusSizeBaseline(loaded);
+  if (!sizeOutlier) sizeBaseline.suppressed = true;
+  const sizeThreshold = sizeOutlier && sizeBaseline.usable ? sizeBaseline.threshold : null;
   return {
     ceiling,
     rowBaseline: baseline,
     rowThreshold: rowMedian ? rowMedian * ROW_LENGTH_MULTIPLE : null,
-    files: loaded.map(({ file, text, bytes }) => ({ file, ...auditText(text, { bytes, rowMedian, ceiling }) })),
+    sizeBaseline,
+    files: loaded.map(({ file, text, bytes }) => ({ file, ...auditText(text, { bytes, rowMedian, ceiling, sizeThreshold }) })),
   };
 }
 
@@ -325,7 +369,8 @@ function hasFindings(entry) {
   return entry.overCeiling
     || entry.longRows.length > 0
     || entry.provenance.length > 0
-    || entry.degenerate.length > 0;
+    || entry.degenerate.length > 0
+    || entry.sizeOutlier;
 }
 
 // Compact text report. The consumer is a model reading this inside a skill
@@ -335,10 +380,21 @@ function hasFindings(entry) {
 // row threshold is only meaningful relative to that target's siblings.
 function formatBloatReport(result, { only } = {}) {
   const out = [];
-  const { rowBaseline, rowThreshold } = result;
+  const { rowBaseline, rowThreshold, sizeBaseline } = result;
   out.push(rowBaseline.usable
     ? `row baseline: median ${rowBaseline.median} B over ${rowBaseline.sample} rows; flag above ${rowThreshold} B`
     : `row baseline: NO BASELINE — ${rowBaseline.sample} anti-pattern rows is under the ${MIN_ROW_SAMPLE}-row floor, so the over-long-row signal was not evaluated`);
+
+  if (!sizeBaseline.suppressed) {
+    if (sizeBaseline.usable) {
+      const methodStr = sizeBaseline.method === 'p95'
+        ? `p95 (floor 3× median) ${sizeBaseline.threshold} B`
+        : `3× median ${sizeBaseline.threshold} B`;
+      out.push(`size baseline: ${methodStr} over ${sizeBaseline.sample} files`);
+    } else {
+      out.push(`size baseline: NO BASELINE — ${sizeBaseline.sample} files is under the ${SIZE_MIN_SAMPLE}-file floor, so the size-outlier signal was not evaluated`);
+    }
+  }
 
   for (const entry of result.files) {
     if (only && entry.file !== only) continue;
@@ -359,8 +415,12 @@ function formatBloatReport(result, { only } = {}) {
     for (const d of entry.degenerate) {
       out.push(`  degenerate L${d.previousLine}/L${d.line}: ${d.exact ? 'identical' : `sim ${d.similarity}`} — ${d.cell.slice(0, 60)}`);
     }
+    if (entry.sizeOutlier && sizeBaseline.usable) {
+      out.push(`  size-outlier: ${entry.bytes} B, above the corpus threshold of ${sizeBaseline.threshold} B`);
+    }
   }
-  if (out.length === 1) out.push('\nno bloat signals');
+  const baselineCount = sizeBaseline.suppressed ? 1 : 2;
+  if (out.length === baselineCount) out.push('\nno bloat signals');
   return out.join('\n');
 }
 
@@ -375,6 +435,10 @@ function formatBloatReport(result, { only } = {}) {
 // byte-ceiling hit on those kinds is the same fact twice — pass
 // `{ ceiling: Infinity }` to suppress it there rather than filing it as a
 // second, differently-worded finding.
+//
+// The size-outlier signal can be suppressed with `{ sizeOutlier: false }`,
+// mirroring the ceiling suppression for rule files and CLAUDE.md that carry
+// their own line budgets.
 function bloatReport(targetPath, corpusPaths = [], opts = {}) {
   return formatBloatReport(
     auditCorpus([targetPath, ...corpusPaths], opts),
@@ -385,12 +449,17 @@ function bloatReport(targetPath, corpusPaths = [], opts = {}) {
 module.exports = {
   ROW_LENGTH_MULTIPLE,
   MIN_ROW_SAMPLE,
+  SIZE_OUTLIER_PERCENTILE,
+  SIZE_PERCENTILE_MIN_SAMPLE,
+  SIZE_MEDIAN_MULTIPLE,
+  SIZE_MIN_SAMPLE,
   DEGENERATE_SIMILARITY,
   DEGENERATE_MIN_WORDS,
   PROVENANCE_PATTERNS,
   rowBytes,
   median,
   corpusRowMedian,
+  corpusSizeBaseline,
   overLongRows,
   findProvenance,
   extractTables,

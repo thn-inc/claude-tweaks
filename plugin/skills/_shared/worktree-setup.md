@@ -71,8 +71,9 @@ prior work in the same session.
 
 **Dependency freshness check (adopt path only).** Read `_shared/worktree-adopt-freshness.md`
 in full and follow it now, **after** Post-creation catch-up's fetch+merge above (its lockfile read
-must see that merge's final state) — extracted to stay under the composed-bytes ceiling;
-unconditional on the adopt branch, read every time this gate is reached.
+must see that merge's final state) — kept in its own file, outside the composed `worktree-setup`
+bundle, since only the adopt path reads it; unconditional on the adopt branch, read every time
+this gate is reached.
 
 **Not isolated:** create normally — proceed to Pre-creation reconcile and Post-creation catch-up
 below, unchanged (`EnterWorktree(name=...)`).

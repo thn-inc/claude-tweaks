@@ -63,9 +63,9 @@ test('collapse-decision.md states 3+ units never collapse', () => {
   assert.match(text, /3\+ work units.*never collapses/i);
 });
 
-test('the collapse-decision step cites Implicit Dependency Detection, not the ceiling-headroom flag, as its data source', () => {
+test('the collapse-decision step cites Implicit Dependency Detection, not the rail-headroom flag, as its data source', () => {
   const text = read(COLLAPSE_DECISION);
-  assert.match(text, /never read the adjacent Ceiling-headroom flag/);
+  assert.match(text, /never read the adjacent Rail-headroom flag/);
 });
 
 // --- decomposition-mode.md: Step 9 origin-closure + summary ---
@@ -277,3 +277,13 @@ test('spec-template.md\'s canonical `Parent:` field reference is conditional on 
 // RECORD_CREATION_SUBISSUES, RECORD_CREATION_LINKING, SKILL) retired by
 // #1997 — the per-file tier is a warning since #1990 and these files have no
 // compose call site; removal condition in docs/incident-log.md [IL-153].
+
+test('decomposition-mode names a rail-headroom flag measured against RAIL_BYTES, and collapse-decision follows the rename (#3310)', () => {
+  const decomp = read('plugin/skills/specify/decomposition-mode.md');
+  assert.match(decomp, /\*\*Rail-headroom flag\.\*\*/);
+  assert.match(decomp, /RAIL_BYTES/);
+  assert.doesNotMatch(decomp, /CEILING_BYTES|Ceiling-headroom/);
+  const collapse = read('plugin/skills/specify/collapse-decision.md');
+  assert.match(collapse, /rail-headroom flag/i);
+  assert.doesNotMatch(collapse, /ceiling-headroom/i);
+});

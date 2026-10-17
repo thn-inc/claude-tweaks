@@ -112,14 +112,17 @@ Run these mechanical checks first and treat their output as **evidence a later j
    setopt nullglob 2>/dev/null || shopt -s nullglob 2>/dev/null
    node -e "
    const { bloatReport } = require('{plugin-root}/bin/lib/skill-audit/bloat.js');
-   const [target, ...corpus] = process.argv.slice(1);
-   console.log(bloatReport(target, corpus));
-   " "{target.path}" "{root}"/.claude/skills/*.md "{root}"/.claude/skills/*/*.md
+   const [kind, target, ...corpus] = process.argv.slice(1);
+   const opts = kind === 'skill' ? { ceiling: Infinity } : { ceiling: Infinity, sizeOutlier: false };
+   console.log(bloatReport(target, corpus, opts));
+   " "{target.kind}" "{target.path}" "{root}"/.claude/skills/*.md "{root}"/.claude/skills/*/*.md
    ```
 
    Both skill layouts are listed because a project uses one or the other. On zsh, an unmatched glob aborts the whole command with `no matches found` by default — it is bash, not zsh, where an unmatched glob is skipped. The `setopt nullglob 2>/dev/null || shopt -s nullglob 2>/dev/null` guard line normalizes this so an unmatched glob expands to nothing in both shells and only the layout that actually exists reaches `corpus`. Quote the substituted root but leave the `*` unquoted — a project path containing a space otherwise splits into several bad paths, and quoting the whole pattern would stop it globbing at all.
 
-   Four signals: files over the 50 KB soft ceiling, Anti-Pattern rows more than twice the corpus median byte length, provenance-narration phrasing (text addressed to whoever edited the file rather than to the model running it), and adjacent table rows whose right-hand cells are identical or near-identical. Each reported line is evidence dimension 9 weighs, never a finding by itself. When the corpus yields fewer than 20 Anti-Pattern rows the report prints `NO BASELINE` and the row signal was **not evaluated** — read that as "not checked," never as "clean."
+   `{target.kind}` is the target's kind (`skill`, `rule`, or `claude-md`): a rule file or CLAUDE.md carries check 4's tiered line budget, so it never joins the skill-size sample.
+
+   It reports four signals: Anti-Pattern rows more than twice the corpus median byte length, provenance-narration phrasing (text addressed to whoever edited the file rather than to the model running it), adjacent table rows whose right-hand cells are identical or near-identical, and a skill file far larger than its siblings (skill targets only). Each reported line is evidence dimension 9 weighs, never a finding by itself. When the corpus yields fewer than 20 Anti-Pattern rows the report prints `NO BASELINE` and the row signal was **not evaluated** — read that as "not checked," never as "clean."
 
 ## Part 2 — The dimension check
 
@@ -135,7 +138,7 @@ Apply the dimensions that meaningfully apply to this target's kind:
 | **6. Decision-framework completeness** | Does the Decision Framework cover the choices the codebase actually makes? | ✓ | — | rarely |
 | **7. Template/structural conformance** | Does this still match the structure its own generator established? | ✓ | ✓ | ✓ |
 | **8. Best-practice / harness-performance fit** | Does it follow known practices for making an LLM harness perform well — clear triggers, right-sized scope, concision? | ✓ | ✓ | ✓ |
-| **9. Context-cost bloat** | Is the document paying context for text that instructs nobody — an oversized file, rows grown into paragraphs, narration of its own edit history, a table spending N rows on one fact? (check 9 is the evidence) | ✓ (all four signals) | ✓ (provenance and degenerate-row signals only; size is check 4's tiered line budget, not the byte ceiling) | ✓ (same as rule) |
+| **9. Context-cost bloat** | Is the document paying context for text that instructs nobody — an oversized file, rows grown into paragraphs, narration of its own edit history, a table spending N rows on one fact? (check 9 is the evidence) | ✓ (all four signals) | ✓ (provenance and degenerate-row signals; size is check 4's tiered line budget, so the size-outlier signal is suppressed) | ✓ (same as rule) |
 | **10. Model-generation fit** (#2656) | Does this read like scaffolding for an older Claude generation's limitations — defensive repetition, an explicit breakdown of something the current model does unprompted — rather than something it still needs spelled out? | ✓ | ✓ | ✓ |
 
 For `rule` and `claude-md`, dimensions 7 and 8 read the **same** origin template — for those kinds the structural template and the best-practice guidance are one document, because the author already encoded best-practice judgment into the template.
@@ -151,10 +154,11 @@ Always reason about *why* the ratio is low before emitting anything. Never repor
 
 **Bloat-signal guard (dimension 9).** Every signal check 9 reports has a legitimate form, so none is a finding on its own. Read the flagged line first:
 
-- **Over the ceiling.** Real for a skill file or one of its sub-files: it loads in full on every invocation and once per dispatched subagent. The fix is extraction to a lazy-loaded sub-file, never raising the ceiling — and a sub-file cited by two or more stubs naming *sections* of it is the same defect one level down, since `Read` has no section granularity. On a `rule` or `claude-md` target this line restates check 4's tiered line budget; bundle them, do not file both.
+- **Over the rail.** A real finding for a skill file or one of its sub-files over `RAIL_BYTES` (`budgets.js`): it cannot be read in one Read call, so a reader sees a paged partial view. The `rail:` tests catch it in CI only when the target is this plugin's own shipped skills; for any other target, this finding is the only signal. Cite `wc -c` against `RAIL_BYTES`. The fix is to cut bytes, or move a genuinely lazy section (one some runs never read) into its own cited file — `when:` fencing does not help, since the rail measures the raw file with only the marker lines stripped. Never a "read X now" split every run follows, and never raising the rail. A sub-file cited by two or more stubs naming *sections* of it is the same defect one level down, since `Read` has no section granularity.
 - **Over-long rows.** A row carrying an irreducible constraint can be long. What is not legitimate is a row that has absorbed the *reason* it was added — an incident narrative, a summary of what some past change did — which belongs in a project's incident log, not in a table re-read on every invocation.
 - **Provenance narration.** Text whose subject is the document's own edit history. The test is deletion: if removing the sentence changes nothing about what the model does, it was written for a reviewer, not for the harness. A phrase that also constrains runtime behavior stays, however historical it sounds.
 - **Degenerate tables.** N adjacent rows whose right-hand cells say one thing. Legitimate when the left-hand column carries the content and the right-hand column is a deliberate verdict repeated across cases — a decision matrix is supposed to repeat its verdicts. A defect when the repeated cell is prose that could be stated once in the table's lead-in, or when two rows differ only by a reworded clause.
+- **Size outliers.** Real when a skill file is far larger than its siblings because it holds several independent procedures. Not real when an entry point is legitimately the largest because it carries a whole lifecycle from entry to close. The fix is never a "read X now" split that moves bytes without cutting them.
 
 Nothing here licenses an edit. A bloat finding proposes the exact `oldString`/`newString` that removes the weight and files like any other, and it owes the same anchor requirement — cite check 9's reported line and byte count, never an impression that the file feels long.
 

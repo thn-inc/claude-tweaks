@@ -1,0 +1,99 @@
+## /tidy
+- AUTO 10:13:51 — Step 7 Fill Release Note: filled the Release Note on #3269 with "Auto-merge arming now recognizes the "Protected branch rules not configured" failure and routes it to the auto-merge-unavailable handling instead of a generic failure."; snapshot snapshots/tidy-release-note-3269.original.md. Reversibility: high.
+- AUTO 10:13:52 — Step 7 Fill Release Note: filled the Release Note on #3261 with "No user-visible change: two known-flaky test files are added to the verify flaky allowlist so they retry instead of failing verification."; snapshot snapshots/tidy-release-note-3261.original.md. Reversibility: high.
+- SCANNED 10:15:58 — Step 4.5 reconcile: reconcile --json (x2): archived 58 clean run dirs; reap/archive-branches/remote-prune skipped (budget-exceeded) both passes; mirror not fast-forwarded (dirty); CI red on main tip e6e77ed (test); console.ready empty. Reversibility: n/a.
+- AUTO 10:15:58 — Step 7 Delete worktree: removed worktree .claude/worktrees/probe-guard-hooks and branch worktree-probe-guard-hooks (ancestor of origin/main, net-empty, unlocked — re-verified before removal). Reversibility: med. [lever: tidy-aggressiveness=moderate (default)]
+- AUTO 10:15:58 — Step 7 Delete plans: deleted 47 orphaned plans whose related records are closed and uncited (re-verified in scratch worktree; commit 55a58ee90, housekeeping PR); kept windows-path-separator-class-2767 (#2767 open). Reversibility: med. [lever: tidy-aggressiveness=moderate (default)]
+- SKIP 10:15:58 — Step 4 ledger: docs/plans/2026-10-16-spec-2775-2733-2677-ledger.md not deleted: open records #3349 #3350 #3351 cite its rows as provenance (referencing-record check); proposing their Close would destroy real follow-up work, so the ledger is kept. Reversibility: n/a.
+- SKIP 10:15:58 — Step 4.9 doctor: design-wrapper doctor skipped at Layer 1 (design integration not configured) — no report row per silent-degradation rule. Reversibility: n/a.
+- SKIP 10:15:58 — Step 6 archival compaction: not run: tidy adopted sweep's run dir (--source sweep), not the Standalone-auto fallback that carries compaction. Reversibility: n/a.
+- STAGED 10:18:44 — Step 6 Close (GitHub): close #3303 as completed — its deliverable (remove probe-guard-hooks worktree/branch) done by this run. Stage path: staged/tidy-close-3303.md; needs:decision marker posted. Reversibility: n/a.
+- STAGED 10:18:44 — Step 6 Absorb (github-issues): absorb #3287 and #3288 into #3261 (strict-subset duplicates). Stage paths: staged/tidy-absorb-3287.md, staged/tidy-absorb-3288.md; needs:decision markers posted. Reversibility: n/a.
+- STAGED 10:18:44 — Step 6 Absorb (github-issues): absorb #2990 into #3175 (v6.136.0 inside backfill range). Stage path: staged/tidy-absorb-2990.md; needs:decision marker posted. Reversibility: n/a.
+- SKIP 10:18:44 — Step 5.6 digest cluster: docs-area cluster (4 entries on #1426) not proposed: every cited ledger (2026-09-06 skill-context-composer, 2026-09-12 record-2278, 2026-09-30 flow-spec-2704-2709, 2026-10-14 record-1350) is already deleted from the tree — promotion would file a record about absent files; surfaced in Yours review. Reversibility: n/a.
+- SKIP 10:18:44 — Step 5.5 pattern captures: not staged: manifest.yml seeding already filed (#3035); plan-audit Check A Modify-after-Create, preflight fallback-attribution case 3, and #3307 ledger rows 16-20 are open rows in live run 2026-10-17T062549-spec-3307-... whose own resolve gate routes them; origin-ahead-at-start is the designed post-creation catch-up. Reversibility: n/a.
+- AUTO 10:22:48 — Step 7.5 housekeeping PR: PR #3361 opened and armed --auto (housekeeping-auto-merge: explicit); carries commits 55a58ee9 (47 plan deletes) and f25eebf7 (run trail). Reversibility: med. [lever: housekeeping-auto-merge=true (policy)]
+- AUTO 10:22:55 — Step 7.5 housekeeping PR (correction): PR #3361 merged immediately on --auto (no pending required checks) — squash-merged, not left armed. Reversibility: med.
+## /specify
+- AUTO 10:33:49 — Release: released claim on #3195 (shaped: #3195); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 10:33:49 — Drain #3195: shaped #3195: framing guard open; body already spec-shaped (check exit 0) — added Surface: backend, Related #3030 #3193 #3339 (body-anchor overlap only, no refusal), Technical Approach + Key Files + Gotchas, Original request; ceremony-check standard; framing-check open; stamped ready, ceremony:standard, shaped:headless; Design-intent/Ui-stack n/a (backend); read-back ok. Reversibility: high.
+- AUTO 10:35:45 — Release: released claim on #3222 (shaped: #3222); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 10:35:46 — Drain #3222: shaped #3222: framing guard open; raw body not spec-shaped (check exit 4) — composed seven sections + Original request; premise probe: cited L511-547 stale, bug confirmed live at registerCheck('acceptance-labeling') ~L679-745 (no parentGateState call); near-dup none; ceremony-check fast-lane; framing-check open; stamped ready, risk:medium, size:low, ceremony:fast-lane, type:bug, shaped:headless; read-back ok. Reversibility: high.
+- AUTO 10:37:33 — Release: released claim on #3171 (failed: shaping); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 10:37:34 — Drain #3171: refused #3171 (not shaped): framing guard open, but premise check failed — cited fixture failures no longer reproduce (verify/cli.test.js 100/100, wrap-up/engine-verify.test.js 106/106 in isolation; leftover-plan fixture gone) and the space-path half duplicates #3178. Posted needs:decision proposing Absorb into #3178; released failed: shaping. Headless self-report not filed: deliberate premise refusal with its own durable decision comment, not a tooling failure. Reversibility: high.
+- AUTO 10:39:06 — Release: released claim on #3178 (failed: shaping); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 10:39:07 — Drain #3178: refused #3178 (not shaped): premise check — cited extract.js character class removed by #3155 (63e489df4, closed); live extractFailingFiles probe with a space-containing root returns full paths (spec + TAP). Posted needs:decision proposing close as completed; released failed: shaping. Framing Guard was not run before the premise probe (deviation; outcome unaffected — refusal stands either way). Revised #3171's decision comment to propose close-as-completed (its absorb target #3178 is itself already fixed). Reversibility: high.
+- AUTO 10:40:47 — Release: released claim on #3206 (shaped: #3206); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 10:40:47 — Drain #3206: shaped #3206: framing guard open; raw body missing only Release Note — added Surface: backend, Related (8 body-anchor hits, no refusal), Release Note, Technical Approach + Key Files, Gotchas, Original request; premise verified (coordination.js threshold, #361 decision, Step 3.5 gating); ceremony-check standard; framing-check open; stamped ready, risk:low, size:medium, ceremony:standard, shaped:headless; read-back ok. Reversibility: high.
+- AUTO 10:40:57 — Drain close-out: {shaped: 3, routed: 0, failed: 2} — shaped #3195 #3222 #3206; failed (premise refusals, needs:decision posted) #3171 #3178; budget 5 exhausted, remaining #3214 #3215 #3216 #3217 #3218 #3295 #3330 #3360. Reversibility: n/a.
+## /backlog refine
+- AUTO 10:42:36 — Backlog grant: ceiling gate satisfied (ceiling=unattended, opt-in=true); merge-lane breaker untripped, watched set empty; zero-eligible short-circuit — 13 candidate(s), 0 needing grant-check: trust: 13 (#3347 #3297 #3276 #3266 #3265 #3256 #3200 #3195 #3192 #3187 #3161 #2964 #2870). Reversibility: n/a.
+- SKIP 10:44:19 — Dependency repair: 3 prose-dependency flags, none wired: #3306 prose explicitly says 'Not blocked by #2767' (native link deliberately removed); #3212 and #2826 are decomposition parents whose Leaves prose describes a sub-issue's blocker (#3225/#2920, #2828/#2827), not the parent's own — detector false positives, not judgment-required repairs. Reversibility: n/a.
+- AUTO 10:46:31 — Related: #3245: added **Related:** #3289. Reversibility: high.
+- AUTO 10:46:33 — Related: #3289: added **Related:** #3245 #3335 #3336. Reversibility: high.
+- AUTO 10:46:35 — Related: #3246: added **Related:** #3261 #3287. Reversibility: high.
+- AUTO 10:46:37 — Related: #3261: added **Related:** #3246 #3287 #3288 #3337. Reversibility: high.
+- AUTO 10:46:39 — Related: #3287: added **Related:** #3246 #3261. Reversibility: high.
+- AUTO 10:46:41 — Related: #3288: added **Related:** #3261. Reversibility: high.
+- AUTO 10:46:43 — Related: #3337: added **Related:** #3261. Reversibility: high.
+- AUTO 10:46:45 — Related: #3335: added **Related:** #3289 #3336. Reversibility: high.
+- AUTO 10:46:46 — Related: #3336: added **Related:** #3289 #3335. Reversibility: high.
+- AUTO 10:46:48 — Related: #3290: added **Related:** #3297. Reversibility: high.
+- AUTO 10:46:50 — Related: #3297: added **Related:** #3290 #3327. Reversibility: high.
+- AUTO 10:46:52 — Related: #3327: added **Related:** #3297. Reversibility: high.
+- AUTO 10:46:54 — Related: #3314: added **Related:** #3315 #3317 #3318. Reversibility: high.
+- AUTO 10:46:56 — Related: #3315: added **Related:** #3314 #3316 #3317 #3318. Reversibility: high.
+- AUTO 10:46:57 — Related: #3317: added **Related:** #3314 #3315 #3316 #3318. Reversibility: high.
+- AUTO 10:47:00 — Related: #3318: added **Related:** #3314 #3315 #3316 #3317. Reversibility: high.
+- AUTO 10:47:01 — Related: #3316: added **Related:** #3315 #3317 #3318. Reversibility: high.
+- AUTO 10:47:04 — Related: #3326: added **Related:** #3329. Reversibility: high.
+- AUTO 10:47:06 — Related: #3329: added **Related:** #3326. Reversibility: high.
+- AUTO 10:47:08 — Related: #3338: added **Related:** #3340. Reversibility: high.
+- AUTO 10:47:10 — Related: #3340: added **Related:** #3338. Reversibility: high.
+- AUTO 10:49:39 — Refine close-out: headless (--source sweep): granted 0, re-authorized 0, needs-decision 0, skipped 13 (trust: 13); labeling: priority set on 40 records (2 high, 13 medium, 25 low), Related added on 21 records (#3312<->#3330 suggestion dropped as unsupported), flag-back 0, dependency-repair 3 flagged / 0 wired (false positives); 7 more missing-priority records beyond --budget 40; Resolve lane: 6 needs:decision + 0 bot:blocked record(s) unresolved (human decision only). Reversibility: n/a.
+## /backlog
+- AUTO 10:47:27 — apply-refine-labels: #3229: applied +priority:medium. Reversibility: high.
+- AUTO 10:47:31 — apply-refine-labels: #3245: applied +priority:low. Reversibility: high.
+- AUTO 10:47:34 — apply-refine-labels: #3246: applied +priority:low. Reversibility: high.
+- AUTO 10:47:37 — apply-refine-labels: #3256: applied +priority:high. Reversibility: high.
+- AUTO 10:47:40 — apply-refine-labels: #3261: applied +priority:medium. Reversibility: high.
+- AUTO 10:47:43 — apply-refine-labels: #3263: applied +priority:medium. Reversibility: high.
+- AUTO 10:47:46 — apply-refine-labels: #3265: applied +priority:low. Reversibility: high.
+- AUTO 10:47:49 — apply-refine-labels: #3266: applied +priority:low. Reversibility: high.
+- AUTO 10:47:52 — apply-refine-labels: #3269: applied +priority:medium. Reversibility: high.
+- AUTO 10:47:55 — apply-refine-labels: #3276: applied +priority:low. Reversibility: high.
+- AUTO 10:47:58 — apply-refine-labels: #3278: applied +priority:medium. Reversibility: high.
+- AUTO 10:48:01 — apply-refine-labels: #3287: applied +priority:low. Reversibility: high.
+- AUTO 10:48:04 — apply-refine-labels: #3288: applied +priority:low. Reversibility: high.
+- AUTO 10:48:07 — apply-refine-labels: #3289: applied +priority:medium. Reversibility: high.
+- AUTO 10:48:10 — apply-refine-labels: #3290: applied +priority:medium. Reversibility: high.
+- AUTO 10:48:13 — apply-refine-labels: #3291: applied +priority:low. Reversibility: high.
+- AUTO 10:48:16 — apply-refine-labels: #3295: applied +priority:low. Reversibility: high.
+- AUTO 10:48:19 — apply-refine-labels: #3297: applied +priority:medium. Reversibility: high.
+- AUTO 10:48:22 — apply-refine-labels: #3298: applied +priority:low. Reversibility: high.
+- AUTO 10:48:25 — apply-refine-labels: #3305: applied +priority:medium. Reversibility: high.
+- AUTO 10:48:29 — apply-refine-labels: #3312: applied +priority:low. Reversibility: high.
+- AUTO 10:48:32 — apply-refine-labels: #3313: applied +priority:low. Reversibility: high.
+- AUTO 10:48:35 — apply-refine-labels: #3314: applied +priority:low. Reversibility: high.
+- AUTO 10:48:38 — apply-refine-labels: #3315: applied +priority:low. Reversibility: high.
+- AUTO 10:48:41 — apply-refine-labels: #3316: applied +priority:low. Reversibility: high.
+- AUTO 10:48:43 — apply-refine-labels: #3317: applied +priority:low. Reversibility: high.
+- AUTO 10:48:46 — apply-refine-labels: #3318: applied +priority:low. Reversibility: high.
+- AUTO 10:48:49 — apply-refine-labels: #3319: applied +priority:low. Reversibility: high.
+- AUTO 10:48:52 — apply-refine-labels: #3324: applied +priority:low. Reversibility: high.
+- AUTO 10:48:55 — apply-refine-labels: #3326: applied +priority:medium. Reversibility: high.
+- AUTO 10:48:58 — apply-refine-labels: #3327: applied +priority:high. Reversibility: high.
+- AUTO 10:49:01 — apply-refine-labels: #3328: applied +priority:low. Reversibility: high.
+- AUTO 10:49:04 — apply-refine-labels: #3329: applied +priority:low. Reversibility: high.
+- AUTO 10:49:07 — apply-refine-labels: #3330: applied +priority:medium. Reversibility: high.
+- AUTO 10:49:11 — apply-refine-labels: #3335: applied +priority:medium. Reversibility: high.
+- AUTO 10:49:14 — apply-refine-labels: #3336: applied +priority:low. Reversibility: high.
+- AUTO 10:49:18 — apply-refine-labels: #3337: applied +priority:low. Reversibility: high.
+- AUTO 10:49:21 — apply-refine-labels: #3338: applied +priority:medium. Reversibility: high.
+- AUTO 10:49:24 — apply-refine-labels: #3339: applied +priority:low. Reversibility: high.
+- AUTO 10:49:27 — apply-refine-labels: #3340: applied +priority:low. Reversibility: high.
+## /sweep
+- AUTO 10:50:30 — Close-out: tidy: applied 7 (2 Release Notes, 47 plans via PR #3361, 1 worktree, 58 run dirs reconcile-converged), staged 4, yours 45, clean 7 scans; specify: {shaped: 3, routed: 0, failed: 2} (shaped #3195 #3222 #3206; premise refusals #3171 #3178); refine: granted 0, skipped 13 (trust), priority 40, Related 21, flag-back 0, dependency-repair 0 wired; attention: 18 records. Reversibility: n/a.
+## /tidy --approve
+- AUTO 20:32:53 — --approve (explicit run): re-verified all 4 staged items fresh; every one is stale — already applied by this sweep's own tidy Step 7 at 08:55 on 2026-10-17: #2990 (CLOSED not planned, absorbed into #3175 which names v6.136.0), #3287 and #3288 (CLOSED not planned, absorbed into #3261 — itself CLOSED 14:03 with both files in verify-scope.json flaky.files), #3303 (CLOSED completed, probe-guard-hooks worktree and branch confirmed absent). Nothing to execute; staged proposals retained in the trail. Reversibility: n/a (no write).
+- AUTO 20:34:02 — Step 7.5 (pr-first): PR #3410 opened from scratch worktree (origin/main base, commit 699b9e6b8) with the run's full decisions.md and armed --auto --squash; merged immediately — state re-queried MERGED. Reversibility: n/a. [lever: housekeeping-auto-merge=true (policy)]

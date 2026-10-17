@@ -3,9 +3,9 @@
 Referenced by `build/worktree-setup.md`'s skip-creation guard — read only when Common Step 1 skips
 worktree creation because the run is already inside one (a dispatched group, a multi-spec shared
 worktree, an adopted session worktree), under `integration-model: pr-first`
-(`_shared/integration-model.md`). Kept out of that file
-to stay under the composed-bytes ceiling at its call site (`context-cost.test.js`'s
-`worktree-setup @ build/SKILL.md` bundle).
+(`_shared/integration-model.md`). Kept in its own file, outside the composed bundle at its call
+site (`context-cost.test.js`'s `worktree-setup @ build/SKILL.md` bundle), since only an adopted
+worktree reads it.
 
 The adopt-path counterpart of Step 1.6 (Remote-only stale branch check). Step 1.6 runs before
 `EnterWorktree` and is skipped with the rest of Steps 1-3 when no worktree is created, so an

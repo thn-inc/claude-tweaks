@@ -88,9 +88,22 @@ function configValue(text, key) {
   return m ? m[1] : null;
 }
 
-function nonEmpty(deps, file) {
+// Ledger row 1: a freshly minted run dir can pick up ANOTHER session's
+// fallback-attributed events.jsonl line (context.js's resolveRun 'fallback'
+// arm is a guess at ownership, not evidence this run did any work) within
+// the mint-to-first-probe window. A line carrying that guess must not count
+// as other-run content on its own; any line without it, or one that fails
+// to parse, still does (fail toward the existing, more cautious case 3).
+function eventsHaveOwnContent(deps, file) {
   const t = readText(deps, file);
-  return t !== null && t.trim().length > 0;
+  if (t === null) return false;
+  for (const line of t.split('\n')) {
+    if (!line.trim()) continue;
+    let ev;
+    try { ev = JSON.parse(line); } catch { return true; }
+    if (!ev || ev.attribution !== 'fallback') return true;
+  }
+  return false;
 }
 
 // "work/{n}-spec.md committed on the run's branch", checked from the main
@@ -142,7 +155,7 @@ function computeAdoption({ runDir, mainRoot, cwd, deps }) {
   } catch (err) {
     decisionsHasContent = !(err && err.code === 'ENOENT');
   }
-  const hasOtherContent = decisionsHasContent || nonEmpty(deps, path.join(real, 'events.jsonl')) || specMaterialized === true;
+  const hasOtherContent = decisionsHasContent || eventsHaveOwnContent(deps, path.join(real, 'events.jsonl')) || specMaterialized === true;
   if (hasConfig) return { case: 1, note: ADOPTION_NOTES[1].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills: [] };
   // #3242: a dispatched first call with `dispatched: true` and no `pr`
   // adopts as case 2 (fresh) even when decisions.md carries Step 1.8 or other
