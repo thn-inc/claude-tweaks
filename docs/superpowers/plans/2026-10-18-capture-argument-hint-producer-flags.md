@@ -161,3 +161,10 @@ git commit -m "Check Input-table flags against argument-hint — mark capture an
 | Deliverable 3 — conditional test extension | Not required by the chosen rule, but done anyway: Task 2 adds the Input→hint check, with the markers as named exceptions |
 | AC1.1 — capture hint and Input agree, npm test passes | Task 2 test `AC1.1` and the full suite at Common Step 5 |
 | AC2.1 — skill-authoring states the condition | Task 1 test `AC2.1` |
+
+## As built — deviations from this plan (Common Step 4.5, all Beneficial)
+
+1. **Rule wording is permissive.** The Decision section and Task 1 above say producer-only flags "stay out" of the hint. As built (876490a03), `docs/skill-authoring.md` says a marked flag *may* be left out: marking is the condition for absence, not a mandate. Reason: five skills (visual-review, design-wrapper, visualize, tidy, specify) deliberately keep caller-only flags in their hints, so a "must" rule would have contradicted the corpus. The spec's AC2 asks only "whether… may be absent, and under what condition". Corpus convergence is routed to open-items ledger row 1.
+2. **The check also reads bullet-form `## Input`.** The plan scoped `undocumentedHintFlags` to table first cells. As built, it also reads a bullet's leading code span, with the marker right after it. This surfaced backlog's human-typed `--trust`, which was missing from its hint; `[--trust]` was added to backlog's hint and both of its mirrors.
+3. **Mirror-surface carve-out clauses** were added to `docs/skill-authoring.md`'s "Adding a mode or argument" paragraph and to `plugin/skills/build/plan-authoring-checks.md`'s Mirror-surface enumeration check.
+4. **Prefix-boundary test direction swapped** (ce15d4358): the hint is `[--batch-size]` and the row is `--batch`, the only direction the lookahead discriminates.
