@@ -9,6 +9,12 @@
 # HEAD^1 — only failures that are new on this commit count. The filer step reads
 # its report and files one type:bug issue on main; the filer's exit code is the
 # job's result (0 = clean, 1 = new failures or an unreadable report).
+#
+# The concurrency group is keyed on the commit sha, not the ref: GitHub keeps at
+# most one pending run per group and replaces it with a newer one even when
+# in-progress runs are never cancelled, so a per-ref group would skip
+# intermediate commits and let a skipped commit's regression become the next
+# run's HEAD^1 baseline.
 name: windows-regression
 
 on:
@@ -17,7 +23,7 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: windows-regression-${{ github.ref }}
+  group: windows-regression-${{ github.sha }}
   cancel-in-progress: false
 
 permissions:

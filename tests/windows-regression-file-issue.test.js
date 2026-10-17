@@ -166,6 +166,10 @@ test('AC2.1: concurrency sets cancel-in-progress: false', () => {
   assert.match(WORKFLOW, /cancel-in-progress:\s*false/);
 });
 
+test('concurrency group is keyed on github.sha so no pending run is replaced', () => {
+  assert.match(WORKFLOW, /group:\s*windows-regression-\$\{\{\s*github\.sha\s*\}\}/);
+});
+
 test('the filer step runs under if: always() after the verify step', () => {
   const verifyAt = WORKFLOW.indexOf('id: verify');
   const filerAt = WORKFLOW.indexOf('file-issue.js');
