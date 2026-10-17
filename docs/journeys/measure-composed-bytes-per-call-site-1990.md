@@ -9,9 +9,9 @@ files:
 # Measure Composed Bytes Per Compose Call Site
 
 **Persona:** claude-tweaks maintainer who has just fenced a `_shared/*.md` contract with `when:` markers, or added a compose call site to a skill step, and wants to know what the reader of that step actually pays — and why the suite is red or green about it.
-**Goal:** Run the composed-bytes measurement the hard gate uses, read one row per call site and one column per condition combination, and understand how the Read rail judges each row and what the per-file warning tier still reports.
+**Goal:** Run the composed-bytes measurement the hard gate uses, read one row per call site and one column per condition combination, and understand how the Read rail judges each row.
 **Entry point:** A terminal at this repo's checkout root; `plugin/` is the plugin root (the directory with `skills/` directly beneath it) — every call below takes that, never the repo root.
-**Success state:** A table of composed bytes for every call site under every combination its sources branch on, plus the `unresolved` both-branches row; a clear reading of `rail.js`'s `composedRailViolations` output; and a per-file warning list that no longer fails anything.
+**Success state:** A table of composed bytes for every call site under every combination its sources branch on, plus the `unresolved` both-branches row; and a clear reading of `rail.js`'s `composedRailViolations` output.
 
 ## Steps
 
