@@ -537,10 +537,11 @@ function countUnmatchedFailures(text, family, { cwd = process.cwd(), exists } = 
 // failing-file list used to plan a retry is an undercount, so retrying and
 // passing those named files would wrongly clear the whole check. Returns 0
 // (accounted) or a positive count (unattributed); every family other than
-// spec/tap returns 0 — retry eligibility for those is governed elsewhere
-// and this guard never widens it.
+// spec/tap returns null — no failure-accounting guard exists for it (the
+// same refusal `baseline.js`'s `adjudicate` applies), so a caller must never
+// read it as accounted (#3204).
 function unattributedFailureCount(text, family, { cwd = process.cwd() } = {}) {
-  if (family !== 'spec' && family !== 'tap') return 0;
+  if (family !== 'spec' && family !== 'tap') return null;
   const unmatched = countUnmatchedFailures(text, family, { cwd });
   if (unmatched > 0) return unmatched;
   const counts = parseCounts(text, family);

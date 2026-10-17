@@ -471,13 +471,13 @@ test('unattributedFailureCount: every entry names a test file, but the entry cou
   assert.strictEqual(unattributedFailureCount(log, 'spec'), 1, 'but the entry count (2) undercounts ℹ fail (3)');
 });
 
-test('unattributedFailureCount: TAP with a stack frame naming no retryable file is unattributed (1) via countUnmatchedFailures, and every non-spec/tap family is 0 (#3066)', () => {
+test('unattributedFailureCount: TAP with a stack frame naming no retryable file is unattributed (1) via countUnmatchedFailures, and every non-spec/tap family is null — no accounting guard (#3066, #3204)', () => {
   // "tests/helper.js" matches no retryable-file pattern (no .test./.spec.
   // suffix), so countUnmatchedFailures alone — before any counts-parsed
   // check is reached — already flags this block as unmatched.
   assert.strictEqual(unattributedFailureCount('not ok 1 - x\n  at tests/helper.js:2:1', 'tap'), 1);
-  assert.strictEqual(unattributedFailureCount(PYTEST_FIXTURE, 'summary'), 0);
-  assert.strictEqual(unattributedFailureCount(GENERIC_FIXTURE, 'generic'), 0);
+  assert.strictEqual(unattributedFailureCount(PYTEST_FIXTURE, 'summary'), null);
+  assert.strictEqual(unattributedFailureCount(GENERIC_FIXTURE, 'generic'), null);
 });
 
 test('unattributedFailureCount: TAP whose summary counts never parsed (truncated log) is unattributed even when every failing block names a file (#3066)', () => {
