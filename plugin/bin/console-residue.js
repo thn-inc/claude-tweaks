@@ -11,11 +11,11 @@
 // --run, --ack-all with --run or --ack, neither --run nor --ack-all); 3 --run
 // missing or not anchored under the main checkout ([IL-127]), or a console.json
 // that could not be written (the remaining consoles are still tried, and the
-// summary line says how many failed). A missing --run
-// whose basename exists under the main checkout's pipelines/archive/ (a path
-// printed before the run archived) uses that copy, with one stderr note. An already
-// acknowledged console is never rewritten, and a console.json that does not
-// parse is never written.
+// summary line says how many failed). A missing --run whose basename exists
+// under the main checkout's pipelines/archive/ (a path printed before the run
+// archived) uses that copy, with one stderr note. An already acknowledged
+// console is never rewritten, and a console.json that does not parse is never
+// written.
 'use strict';
 
 const fs = require('fs');
@@ -105,11 +105,7 @@ function run(argv, deps = {}) {
 
   if (o.ackAll) {
     const runs = collectUnresolvedConsoles(cwd(), { limit: Infinity, window: Infinity, pluginRoot });
-    const total = { marked: 0, skipped: 0, failed: 0 };
-    for (const r of runs) {
-      const t = ackConsoles(r.consoles, at, io, stderr);
-      for (const k of Object.keys(total)) total[k] += t[k];
-    }
+    const total = ackConsoles(runs.flatMap((r) => r.consoles), at, io, stderr);
     stdout(`claude-tweaks: marked ${total.marked} console(s) reviewed across ${runs.length} run(s)${tallyNote(total)}\n`);
     return total.failed > 0 ? 3 : 0;
   }
