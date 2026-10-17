@@ -278,6 +278,40 @@ test('#3373: a multi-spec parent run dir with a leave-open console.json keeps bo
   assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
 });
 
+test('#3373: leave-open does not excuse a missing archive path', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const runId = '2026-01-01T000000-spec-3373';
+  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  const consoleDir = makeTmpDir('verify-leave-open-archive-missing-');
+  writeConsole(consoleDir, 'leave-open');
+  try {
+    const result = runVerify({ runDir: consoleDir, originalRunDir: originalPath, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'run-dir-archived');
+    assert.strictEqual(row.result, 'fail');
+    assert.match(row.detail, /archive path missing/);
+  } finally {
+    fs.rmSync(consoleDir, { recursive: true, force: true });
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('#3373: leave-open does not excuse an archived work/ dir that is not git-tracked', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const runId = '2026-01-01T000000-spec-3373';
+  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  const archivePath = path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive', runId);
+  fs.mkdirSync(path.join(archivePath, 'work'), { recursive: true });
+  writeConsole(archivePath, 'leave-open');
+  try {
+    const result = runVerify({ runDir: archivePath, originalRunDir: originalPath, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'run-dir-archived');
+    assert.strictEqual(row.result, 'fail');
+    assert.match(row.detail, /is not git-tracked/);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test('#3373 AC1: leave-open run exits 0 when every other check passes', () => {
   const runId = 'test-ac1-leave-open-3373';
   const repoRoot = makeCleanRepoRoot();
