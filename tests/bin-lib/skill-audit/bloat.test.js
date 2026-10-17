@@ -294,13 +294,14 @@ test('bloatReport reports only the target, dedupes it out of its own corpus, and
 test('size outlier: p95 tier baseline with 20 files', () => {
   const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'size-'));
   const files = [];
-  // 20 files: 1000 B, 2000 B, ..., 20000 B
+  // 20 files: 10 at 1000 B, then 10000 B, 11000 B, ..., 19000 B
   for (let i = 1; i <= 20; i += 1) {
     const file = path.join(dir, `file-${i}.md`);
     const content = skillWith([SHORT_ROW]);
     fs.writeFileSync(file, content, 'utf8');
     // Pad with filler bytes to reach target size
-    const padding = 'x'.repeat(i * 1000 - Buffer.byteLength(content, 'utf8'));
+    const target = i <= 10 ? 1000 : (i - 1) * 1000;
+    const padding = 'x'.repeat(target - Buffer.byteLength(content, 'utf8'));
     fs.appendFileSync(file, padding);
     files.push(file);
   }
@@ -309,21 +310,35 @@ test('size outlier: p95 tier baseline with 20 files', () => {
   assert.ok(result.sizeBaseline.usable, 'p95 baseline must be usable with 20 files');
   assert.strictEqual(result.sizeBaseline.sample, 20);
   assert.strictEqual(result.sizeBaseline.method, 'p95');
-  // p95 nearest-rank: index = Math.ceil(0.95 * 20) - 1 = Math.ceil(19) - 1 = 18
-  // So the 19th smallest (index 18), which is 19000 B
-  assert.strictEqual(result.sizeBaseline.threshold, 19000);
+  // p95 nearest-rank: index = Math.ceil(0.95 * 20) - 1 = 18, so 18000 B.
+  // The 3x median floor is 3 * 5500 = 16500 B, below p95, so p95 wins.
+  assert.strictEqual(result.sizeBaseline.threshold, 18000);
 
-  // Only the 20,000 B file (last one) should be an outlier
+  // Only the 19,000 B file (last one) should be an outlier
   const outliers = result.files.filter((f) => f.sizeOutlier);
-  assert.strictEqual(outliers.length, 1, 'only the 20,000 B file should be an outlier');
+  assert.strictEqual(outliers.length, 1, 'only the 19,000 B file should be an outlier');
   assert.ok(outliers[0].file.includes('file-20'));
 
   // Check the literal report-line text (AC1)
   const report = formatBloatReport(result);
-  assert.match(report, /size baseline: p95 19000 B over 20 files/);
-  assert.match(report, /size-outlier: 20000 B, above the corpus threshold of 19000 B/);
+  assert.match(report, /size baseline: p95 \(floor 3× median\) 18000 B over 20 files/);
+  assert.match(report, /size-outlier: 19000 B, above the corpus threshold of 18000 B/);
 
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('size outlier: a uniform 20+ file corpus flags nothing — the p95 threshold is floored at 3x median (#3305 F1)', () => {
+  const files = Array.from({ length: 20 }, (_, i) => ({ file: `f${i}.md`, bytes: 10000 + i * 10 }));
+  const b = corpusSizeBaseline(files);
+  assert.strictEqual(b.method, 'p95');
+  assert.ok(files.every((f) => f.bytes <= b.threshold), `threshold ${b.threshold} must cover a uniform corpus`);
+});
+
+test('size outlier: the 19 to 20 file tier edge no longer flips a verdict (#3305 F1)', () => {
+  const nineteen = [...Array.from({ length: 18 }, () => ({ bytes: 5000 })), { bytes: 14000 }];
+  const twenty = [...nineteen, { bytes: 5000 }];
+  assert.ok(14000 <= corpusSizeBaseline(nineteen).threshold);
+  assert.ok(14000 <= corpusSizeBaseline(twenty).threshold);
 });
 
 test('size outlier: median-multiple tier baseline with 10 files', () => {

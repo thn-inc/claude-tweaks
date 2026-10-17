@@ -19,7 +19,7 @@ files:
 - **Action:** Find the `size baseline:` line.
 - **Should feel:** Grounded. The number comes from this project's own files, so the evidence fits the project.
 - **Should understand:** There are three forms:
-  - `size baseline: p95 39519 B over 441 files`: 20 or more files, nearest-rank 95th percentile.
+  - `size baseline: p95 (floor 3× median) 39519 B over 441 files`: 20 or more files, nearest-rank 95th percentile, floored at three times the median so a uniform corpus flags nothing.
   - `size baseline: 3× median {t} B over {n} files`: 5–19 files, three times the median.
   - `size baseline: NO BASELINE — {n} files is under the 5-file floor, so the size-outlier signal was not evaluated`.
 
@@ -52,3 +52,6 @@ files:
 ## Origin
 - Created during build of #3308 (corpus-relative size-outlier signal, the expand step of parent #3305's strangler-fig rollout).
 - Related specs: #3310 (cuts every size consumer over to the rail), #3311 (removes `overCeiling`, `headroom`, and the `ceiling` option). Open question for #3310: the p95 tier also flags files in a corpus with no real outlier (ledger row 29).
+
+## Notes
+- Threshold floored at 3 × median during build of #3310 (#3305 F1): a uniform corpus flags nothing; live corpus unchanged (22 flagged).

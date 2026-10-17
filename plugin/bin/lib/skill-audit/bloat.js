@@ -99,9 +99,12 @@ function corpusSizeBaseline(files) {
   const sizes = files.map((f) => f.bytes);
   const sample = sizes.length;
   if (sample >= SIZE_PERCENTILE_MIN_SAMPLE) {
-    // Nearest-rank p95
+    // Nearest-rank p95, floored at the small-corpus tier's 3x median: a
+    // uniform corpus flags nothing, and the 19->20-file edge cannot flip a
+    // verdict (#3305 F1)
     const sorted = [...sizes].sort((a, b) => a - b);
-    const threshold = sorted[Math.ceil(SIZE_OUTLIER_PERCENTILE * sample) - 1];
+    const p95 = sorted[Math.ceil(SIZE_OUTLIER_PERCENTILE * sample) - 1];
+    const threshold = Math.max(p95, median(sizes) * SIZE_MEDIAN_MULTIPLE);
     return { usable: true, sample, method: 'p95', threshold };
   }
   if (sample >= SIZE_MIN_SAMPLE) {
@@ -382,7 +385,7 @@ function formatBloatReport(result, { only } = {}) {
   if (!sizeBaseline.suppressed) {
     if (sizeBaseline.usable) {
       const methodStr = sizeBaseline.method === 'p95'
-        ? `p95 ${sizeBaseline.threshold} B`
+        ? `p95 (floor 3× median) ${sizeBaseline.threshold} B`
         : `3× median ${sizeBaseline.threshold} B`;
       out.push(`size baseline: ${methodStr} over ${sizeBaseline.sample} files`);
     } else {
