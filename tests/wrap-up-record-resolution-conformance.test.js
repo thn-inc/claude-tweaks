@@ -102,3 +102,8 @@ test('Review Console step 11 always records issues from inputs.records (Ruling R
 test('the auto-merge short-circuit applicability reads inputs.records', () => {
   assert.match(collapse(read('plugin/skills/wrap-up/auto-merge-short-circuit.md')), /wrap-up-pack\.json`'s `inputs\.records` is non-empty/);
 });
+
+test('the current-branch Fixes issue set takes inputs.records only from header sources (Ruling R1)', () => {
+  const flat = collapse(read('plugin/skills/wrap-up/execution-and-verification.md'));
+  assert.match(flat, /`inputs\.records` when non-empty and its `sources\.records` is `headers` or `worktree-headers`/);
+});

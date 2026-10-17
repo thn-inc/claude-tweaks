@@ -26,8 +26,10 @@ Commit with a message summarizing the wrap-up actions. When the run is `current-
 include one `Fixes #{issue}` line per resolved issue in this commit message — it is the
 closing-keyword carrier for current-branch runs (see `cleanup-procedures-execution.md` Section C); GitHub
 closes the issues when the commit reaches the default branch. Resolve the issue set from
-`{run-dir}/wrap-up-pack.json`'s `inputs.records` when non-empty (a multi-spec current-branch
-run can resolve more than one), otherwise
+`{run-dir}/wrap-up-pack.json`'s `inputs.records` when non-empty and its `sources.records` is
+`headers` or `worktree-headers` (a multi-spec current-branch run can resolve more than one; a
+`manifest`/`worktree-manifest` source lists specs that never ran, whose line is `Refs`, so it
+never feeds `Fixes`), otherwise
 fall back to this run's own identified record (Phase 1 — a `#`-prefixed argument, or a
 branch/commit reference) as the single issue resolved. A run with neither — conversation-based
 work — carries no closing keyword; there was never an issue to close.
