@@ -131,12 +131,7 @@ function computeAdoption({ runDir, mainRoot, cwd, deps }) {
   }
   const real = target.dir;
   const hasConfig = readText(deps, path.join(real, 'config.yml')) !== null;
-  let state;
-  try {
-    state = deps.readRunState(real);
-  } catch {
-    state = null;
-  }
+  const state = deps.readRunState(real);
   const specMaterialized = specOnBranch(deps, { mainRoot, runDirReal: real, state });
   // /flow Step 2.8 logs its claim before this runs, so claim-log-only is still
   // a fresh mint (#2861); anything classifyDecisions cannot place is content,
@@ -150,10 +145,10 @@ function computeAdoption({ runDir, mainRoot, cwd, deps }) {
   const hasOtherContent = decisionsHasContent || nonEmpty(deps, path.join(real, 'events.jsonl')) || specMaterialized === true;
   if (hasConfig) return { case: 1, note: ADOPTION_NOTES[1].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills: [] };
   // #3242: a dispatched first call with `dispatched: true` and no `pr`
-  // (state is a plain object, not null) adopts as case 2 (fresh) even when
-  // decisions.md carries Step 1.8 or other pre-Step-3 content — a compliant
-  // call 1 logs both claim and ledger lines before Step 3 runs, and a recorded
-  // `pr` is what separates the #3226 call-2 repair from a fresh call 1.
+  // adopts as case 2 (fresh) even when decisions.md carries Step 1.8 or other
+  // pre-Step-3 content — a compliant call 1 logs both claim and ledger lines
+  // before Step 3 runs, and a recorded `pr` is what separates the #3226 call-2
+  // repair from a fresh call 1.
   if (state && typeof state === 'object' && state.dispatched === true && !state.pr) {
     return { case: 2, note: ADOPTION_NOTES[2].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills: [] };
   }
