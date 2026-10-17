@@ -38,6 +38,12 @@ test('dispatch.md: nothing is written for standalone /build or a skipped whole-b
   assert.match(DISPATCH, /Write nothing for a standalone `\/build` \(no `\$PIPELINE_RUN_DIR`\) or when the whole-branch review was skipped/);
 });
 
+test('dispatch.md: a dispatched final review leaves a captured-or-absent decisions.md line on SDD return', () => {
+  assert.match(DISPATCH, /When SDD returns, if its final whole-branch review was dispatched, log one non-blocking line under `## \/build` in `\$PIPELINE_RUN_DIR\/decisions\.md`/);
+  assert.match(DISPATCH, /`AUTO … — SDD final review captured to sdd-final-review\.md` when the file exists/);
+  assert.match(DISPATCH, /`SKIP … — SDD final review dispatched but sdd-final-review\.md absent` when it does not/);
+});
+
 test('dispatch.md: the capture is evidence, not a gate', () => {
   assert.match(DISPATCH, /nothing blocks on its absence/);
 });

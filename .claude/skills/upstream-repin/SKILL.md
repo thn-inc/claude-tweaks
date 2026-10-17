@@ -54,13 +54,17 @@ node -e "const{loadManifest}=require('./tools/upstream-drift/manifest.js');const
 
 The re-pin is done when the drift run reports assertions `ok` with every assertion checked. `skipped` means no cached copy matched `pinned`, so nothing was checked.
 
+### Read what changed, not just whether it still matches
+
+A `must-match` proves that a line survived. It does not show that the behaviour around that line stayed the same. For each of the entry's `contract-paths`, diff the old and new cached copies, for example `diff -u ~/.claude/plugins/cache/claude-plugins-official/superpowers/{old}/skills/subagent-driven-development/SKILL.md ~/.claude/plugins/cache/claude-plugins-official/superpowers/{new}/skills/subagent-driven-development/SKILL.md`. Read the hunks that touch what this repo's files rely on, and list each behaviour change next to the local file it affects. In 6.2.0 → 7.0.0 every pinned literal still matched, yet SDD stopped asking the human about load-bearing findings and started writing `Ruling:` ledger lines instead. `plugin/skills/build/dispatch.md`'s carry-forward did not copy those lines (#3386). A gap found this way gets its own record. Do not fix it inside the re-pin.
+
 ## Verify
 
 ```bash
 node --test tests/impeccable-plugin-contract.test.js tests/impeccable-cli-contract.test.js tests/impeccable-retired-scripts-sweep.test.js tools/upstream-drift/tests/run.test.js
 ```
 
-Then run `/upstream-drift --dep <name> --drift-only`. A contract-test skip reason that reads "installed version(s) do not match the pin" means the re-pin is not done.
+Then run `/upstream-drift --dep <name> --drift-only`. A contract-test skip reason that reads "installed version(s) do not match the pin" means the re-pin is not done. Neither check reads behaviour, so the re-pin is also not done until every `contract-paths` diff has been read and each behaviour change is fixed or filed.
 
 ## Anti-Patterns
 
@@ -70,3 +74,4 @@ Then run `/upstream-drift --dep <name> --drift-only`. A contract-test skip reaso
 | Recording the plugin and engine pins from different installs | The manifest then describes an install that does not exist. Both come from one `resolve()` call |
 | Hand-editing a fixture to the new shape | The contract test then proves the fixture matches the validator, not that the engine does |
 | Treating a re-pin as part of an `/upstream-drift` audit | That skill is read-only by declared `allowed-tools`. Re-pinning is separate work, captured as its own record |
+| Concluding "nothing breaks" because every assertion is `ok` | Literals survive while the behaviour around them moves. The 7.0.0 `Ruling:` change was found only by reading the `contract-paths` diff |
