@@ -69,7 +69,9 @@ procedure — no row is left unrouted:
   as that step already describes for a non-patch item.
 - `apply` on an `sdd-ruling-*` item — still step 1, but it executes no code change: it
   writes the item's `Ledger:` row back to `accepted`, Resolution
-  `ratified at Review Console — {the ruling's own "— why" clause}` (under Approve all,
+  `ratified at Review Console — {the ruling's own "— why" clause, or "no — why clause on the ruling line" when it carries none}`
+  — never an empty clause: `finish-console` rejects an `accepted` entry with no resolution text
+  before writing anything (under Approve all,
   through `finish-console`'s existing `ledger` array — `review-console.md` step 11).
   `reverse` (the Override vocabulary for a ruling row, `review-console-interactive.md`)
   composes a born-ready record proposal exactly as
@@ -77,13 +79,17 @@ procedure — no row is left unrouted:
   ruling and the finding it ruled on; Deliverables = the reversal;
   `Origin: SDD ruling reversed at Review Console`; `Defer-reason: genuinely-larger`),
   stages it as `staged/ledger-record-sdd-ruling-{N}.md`,
-  routes it through step 7 in the same pass, and
-  writes the row back to `deferred`, Resolution `reversed → #{new record}`. The console
+  routes it through step 7 in the same pass, and — once step 7 has created the record —
+  writes the row back to `deferred`, Resolution `reversed → #{new record}`; when step 7
+  declines or fails to create it (`refused-proposals.md`, a `gh` failure), the row stays
+  `open` with the cause logged, so the nothing-left-behind gate surfaces it — never
+  `deferred` without a record number, since terminal statuses are final. The console
   cannot change code for a reversal — the fix wave is closed — so filing is the only
   reverse action.
-  Outside Approve all, and for every `reverse` on any path, write the row directly at step 1
+  Outside Approve all, a ratify writes the row directly at step 1
   per `_shared/staged-patch.md`'s Write-back to the ledger — the same per-item write that
-  step already performs for a `.patch`.
+  step already performs for a `.patch`; a `reverse` on any path writes it at step 7, as
+  above, never at step 1.
 - `apply` on a `Q#` item — step 7 (record creation), whose `refused-proposals.md` check still
   runs first; on an `M#` item — step 8 (the `_shared/learning-routing.md` memory write plus its
   `MEMORY.md` index line).

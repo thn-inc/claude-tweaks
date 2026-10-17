@@ -96,18 +96,19 @@ const CONSOLE = read('plugin', 'skills', 'wrap-up', 'review-console.md');
 
 test('AC5.1: the appendix maps apply on an sdd-ruling-* item to ratify (ledger accepted) and reverse to a born-ready reversal record (ledger deferred, reversed →)', () => {
   assert.ok((APPENDIX.match(/sdd-ruling/g) || []).length >= 2, 'prefix list plus the Resolution-to-step bullet');
-  // Each literal below sits on one physical line of the wrapped bullet (Task 3 Step 3 gives the exact wrap).
-  assert.match(APPENDIX, /- `apply` on an `sdd-ruling-\*` item — still step 1, but it executes no code change: it/);
-  assert.match(APPENDIX, /writes the item's `Ledger:` row back to `accepted`, Resolution/);
-  assert.match(APPENDIX, /`ratified at Review Console — \{the ruling's own "— why" clause\}`/);
-  assert.match(APPENDIX, /through `finish-console`'s existing `ledger` array/);
-  assert.match(APPENDIX, /`reverse`[\s\S]*?composes a born-ready record proposal exactly as/);
-  assert.match(APPENDIX, /`_shared\/ledger-format\.md`'s Phase 3 `Keep` does \(`specShapedBody`/);
-  assert.match(APPENDIX, /`Origin: SDD ruling reversed at Review Console`; `Defer-reason: genuinely-larger`/);
-  assert.match(APPENDIX, /stages it as `staged\/ledger-record-sdd-ruling-\{N\}\.md`,/);
-  assert.match(APPENDIX, /routes it through step 7 in the same pass, and/);
-  assert.match(APPENDIX, /writes the row back to `deferred`, Resolution `reversed → #\{new record\}`/);
-  assert.match(APPENDIX, /Outside Approve all, and for every `reverse` on any path, write the row directly at step 1/);
+  // Wrap-tolerant pins: `\s+` wherever the hard-wrapped bullet may break a line, so a reflow
+  // with no wording change stays green (review #3401, lens 3f).
+  const ws = (s) => new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
+  assert.match(APPENDIX, ws('- `apply` on an `sdd-ruling-*` item — still step 1, but it executes no code change: it writes the item\'s `Ledger:` row back to `accepted`, Resolution `ratified at Review Console — {the ruling\'s own "— why" clause, or "no — why clause on the ruling line" when it carries none}`'));
+  assert.match(APPENDIX, ws('never an empty clause: `finish-console` rejects an `accepted` entry with no resolution text before writing anything'));
+  assert.match(APPENDIX, ws('through `finish-console`\'s existing `ledger` array'));
+  assert.match(APPENDIX, ws('composes a born-ready record proposal exactly as `_shared/ledger-format.md`\'s Phase 3 `Keep` does (`specShapedBody`'));
+  assert.match(APPENDIX, ws('`Origin: SDD ruling reversed at Review Console`; `Defer-reason: genuinely-larger`'));
+  assert.match(APPENDIX, ws('stages it as `staged/ledger-record-sdd-ruling-{N}.md`, routes it through step 7 in the same pass, and — once step 7 has created the record — writes the row back to `deferred`, Resolution `reversed → #{new record}`'));
+  assert.match(APPENDIX, ws('when step 7 declines or fails to create it (`refused-proposals.md`, a `gh` failure), the row stays `open` with the cause logged'));
+  assert.match(APPENDIX, ws('never `deferred` without a record number'));
+  assert.match(APPENDIX, ws('Outside Approve all, a ratify writes the row directly at step 1 per `_shared/staged-patch.md`\'s Write-back to the ledger'));
+  assert.match(APPENDIX, ws('a `reverse` on any path writes it at step 7, as above, never at step 1'));
 });
 
 test('AC5.2: the interactive console names ratify/reverse as the Override vocabulary for a ruling row and refuses a bare skip', () => {
@@ -117,5 +118,13 @@ test('AC5.2: the interactive console names ratify/reverse as the Override vocabu
 });
 
 test('review-console.md step 1 points an sdd-ruling-* write-back at the appendix bullet', () => {
-  assert.match(CONSOLE, /an `sdd-ruling-\*` item's write-back follows `review-console-appendix\.md`'s `sdd-ruling-\*` bullet \(ratify → `accepted`; reverse → `deferred`\), not the patch table/);
+  assert.match(CONSOLE, /an `sdd-ruling-\*` item's write-back follows `review-console-appendix\.md`'s `sdd-ruling-\*` bullet \(ratify → `accepted` here; reverse → `deferred` at step 7, once the reversal record exists\), not the patch table/);
+});
+
+test('review #3401: the carry-forward names the stage-item.js failure branch, the Item-cell rewrite rule, and the no-dedupe rule for ruling rows', () => {
+  assert.match(DISPATCH, /If `stage-item\.js` exits non-zero, write no `STAGED` line: rewrite the row's Item text without its `\(staged\/…\)` suffix/);
+  assert.match(DISPATCH, /SKIP \{time\} — SDD ruling carry-forward: stage-item\.js exited \{code\} for sdd-ruling-\{N\} \(\{first stderr line\}\) → fallback: ledger row #\{item\} left open with no staged file/);
+  assert.match(DISPATCH, /the same operation, not an Update Item/);
+  assert.match(DISPATCH, /De-duplication on Append never skips a ruling row/);
+  assert.match(DISPATCH, /takes the staged extension from the source; the file opens with a header block `Title:`/);
 });
