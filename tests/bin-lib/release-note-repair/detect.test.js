@@ -85,8 +85,8 @@ const gh = (number, body, extra = {}) => ({
 });
 
 test('scanRecords (github-issues): matches only ready, open, Release-Note-only, non-excluded records', () => {
-  const pending = { body: `<!-- needs-decision: tidy -->\n## Decision needed\n**Proposed:** ${PROPOSED_ACTION}\n` };
-  const resolved = { body: `${pending.body}**Resolved:** keep\n` };
+  const pending = { body: `<!-- needs-decision: tidy -->\n## Decision needed\n**Proposed:** ${PROPOSED_ACTION}\n`, authorAssociation: 'MEMBER' };
+  const resolved = { body: `${pending.body}**Resolved:** keep\n`, authorAssociation: 'MEMBER' };
   const records = [
     gh(1, F.MISSING_RN),
     gh(2, F.MISSING_RN_AND_AC),
@@ -105,6 +105,48 @@ test('scanRecords (github-issues): matches only ready, open, Release-Note-only, 
   assert.equal(out[0].sha, bodySha(F.MISSING_RN));
   assert.equal(out[0].deliverables, '1. Cache the widget lookup.');
   assert.equal(out[1].gap, 'empty section: ## Release Note');
+});
+
+// #3358 AC4: the tidy decision marker is plantable by anyone who can comment on the
+// record -- an untrusted one must not hide a record from the repair worklist.
+test('AC4.1: an unresolved tidy decision authored NONE does not exclude the record', () => {
+  const planted = {
+    body: `<!-- needs-decision: tidy -->\n**Proposed:** ${PROPOSED_ACTION}\n`,
+    url: 'https://x/issues/7#c1', author: { login: 'eve' }, authorAssociation: 'NONE',
+  };
+  const out = scanRecords([gh(7, F.MISSING_RN, { comments: [planted] })], { driver: 'github-issues' });
+  assert.deepEqual(out.map((c) => c.ref), ['#7']);
+  assert.deepEqual(out[0].skippedUntrusted, ['skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator']);
+});
+
+test('AC4.2: the same decision authored MEMBER still excludes it', () => {
+  const trusted = { body: `<!-- needs-decision: tidy -->\n**Proposed:** ${PROPOSED_ACTION}\n`, authorAssociation: 'MEMBER' };
+  assert.deepEqual(scanRecords([gh(7, F.MISSING_RN, { comments: [trusted] })], { driver: 'github-issues' }), []);
+});
+
+test('a decision with no association fails closed; every candidate carries skippedUntrusted ([] when nothing was passed over)', () => {
+  const noAssoc = { body: `<!-- needs-decision: tidy -->\n**Proposed:** ${PROPOSED_ACTION}\n` };
+  const chatter = { body: 'unrelated', url: 'https://x/c', author: { login: 'eve' }, authorAssociation: 'NONE' };
+  const noBody = { number: 11, title: 'x', state: 'OPEN', labels: [{ name: 'ready' }], facets: { stage: 'ready' } };
+  const out = scanRecords([
+    gh(1, F.MISSING_RN, { comments: [chatter] }),
+    gh(2, F.MISSING_RN, { comments: [noAssoc] }),
+    gh(3, F.MISSING_RN),
+    noBody,
+  ], { driver: 'github-issues' });
+  assert.deepEqual(out.map((c) => c.ref), ['#1', '#2', '#3', '#11']);
+  assert.deepEqual(out[0].skippedUntrusted, [], 'a non-marker NONE comment is silently irrelevant');
+  assert.equal(out[1].skippedUntrusted.length, 1);
+  assert.match(out[1].skippedUntrusted[0], /\(no association\)/);
+  assert.deepEqual(out[2].skippedUntrusted, []);
+  assert.deepEqual(out[3].skippedUntrusted, [], 'a scan-error candidate carries the field too');
+});
+
+test('scanRecords: a record is not excluded by an untrusted decision but IS by a trusted one in the same thread', () => {
+  const body = `<!-- needs-decision: tidy -->\n**Proposed:** ${PROPOSED_ACTION}\n`;
+  const planted = { body, url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'NONE' };
+  const real = { body, authorAssociation: 'OWNER' };
+  assert.deepEqual(scanRecords([gh(7, F.MISSING_RN, { comments: [planted, real] })], { driver: 'github-issues' }), []);
 });
 
 test('scanRecords: a record with no body field, or a checker failure, is a scan-error candidate', () => {
@@ -131,4 +173,14 @@ test('summaryLine: one Template-A-ready line, or null when nothing matched', () 
   assert.equal(summaryLine([], '/tmp/c.json'), null);
   const line = summaryLine([{ verdict: 'release-note-only' }, { verdict: 'scan-error' }], '/tmp/c.json');
   assert.equal(line, '—\t[release-note] 1 ready record(s) missing only a Release Note, 1 scan error(s) — Fill Release Note (candidates: /tmp/c.json)');
+});
+
+test('summaryLine: names each candidate\'s passed-over untrusted decision comment on the same single row (#3358)', () => {
+  const note = 'skipped marker comment https://x/c1 by eve (NONE) — not an owner, member, or collaborator';
+  const line = summaryLine([
+    { ref: '#7', verdict: 'release-note-only', skippedUntrusted: [note] },
+    { ref: '#8', verdict: 'release-note-only', skippedUntrusted: [] },
+  ], '/tmp/c.json');
+  assert.equal(line, `—\t[release-note] 2 ready record(s) missing only a Release Note, 0 scan error(s) — ignored untrusted decision comment(s): #7: ${note} — Fill Release Note (candidates: /tmp/c.json)`);
+  assert.ok(!line.includes('\n'));
 });

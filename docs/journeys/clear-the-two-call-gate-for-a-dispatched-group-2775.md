@@ -8,9 +8,9 @@ files:
   - plugin/skills/dispatch/task-prompt.md
 ---
 
-# Clear the Two-Call Gate for a Dispatched File-Overlap Group
+# Clear the Two-Call Gate for a Dispatched Group
 
-**Persona:** the dispatched first-call (`build,test`) Task agent running `/flow "#a,#b,..." build,test auto` for a file-overlap group — an internal tooling user — and the **dispatching session** that decides, from raw artifacts, whether the group's second (`review,polish,wrap-up`) call may run.
+**Persona:** the dispatched first-call (`build,test`) Task agent running `/flow "#a,#b,..." build,test auto` for a fast-lane bundle — an internal tooling user — and the **dispatching session** that decides, from raw artifacts, whether the group's second (`review,polish,wrap-up`) call may run.
 **Goal:** reach the second call with every record already claimed-and-logged and already materialized, so neither the bookkeeping-stamps gate nor `/wrap-up`'s fact pack needs a retroactive backfill.
 **Entry point:** `/flow`'s Step 2.8 claim, inside the group's first Task call.
 **Success state:** `decisions.md` carries one canonical `Step 2.8: claimed #n` line per member, written by the claim CLI itself; every member has a materialized header under its run's worktree mirror; the dispatching session's artifact check returns `{ ok: true }` and the second call is dispatched; that call's wrap-up fact pack resolves every record on its first read.

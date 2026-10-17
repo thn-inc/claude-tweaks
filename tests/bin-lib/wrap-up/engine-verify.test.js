@@ -86,6 +86,20 @@ test('renderVerifyTable renders pass/fail bare and skip/unknown with folded deta
   assert.match(md, /\| acceptance-labeling \| unknown \(gh absent\) \|/);
 });
 
+// #3358: a pass row can carry `ignored: skipped marker comment ...` notes --
+// they must reach the rendered table, or the skip notice never reaches a human.
+test('renderVerifyTable shows a pass row\'s non-empty detail in the Detail cell and leaves an empty one bare', () => {
+  const note = 'ignored: skipped marker comment https://x/c1 by eve (NONE) — not an owner, member, or collaborator';
+  const md = renderVerifyTable([
+    { check: 'acceptance-labeling', result: 'pass', detail: note },
+    { check: 'plans-ledger', result: 'pass', detail: '' },
+  ]);
+  const lines = md.split('\n');
+  assert.strictEqual(lines.length, 4);
+  assert.strictEqual(lines[2], `| acceptance-labeling | pass | ${note} |`);
+  assert.strictEqual(lines[3], '| plans-ledger | pass |  |');
+});
+
 // A multi-line/pipe-containing detail (e.g. a raw multi-line git fatal
 // error) is inserted verbatim into the wrap-up report per the spec -- an
 // un-sanitized cell would corrupt the markdown table (record #900 fix
@@ -1291,7 +1305,7 @@ test('acceptance-labeling check passes when demo:pending label and a brief comme
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
     if (args.includes('labels,comments')) {
-      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
     }
     return '';
   };
@@ -1381,7 +1395,7 @@ test('acceptance-labeling check resolves issue numbers from verify-expectations.
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
     if (args.includes('labels,comments')) {
-      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
     }
     return '';
   };
@@ -1399,7 +1413,7 @@ test('acceptance-labeling check redirects to a resolvable parent, never checking
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), 898);
     if (args.includes('labels,comments')) {
-      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
     }
     return '';
   };
@@ -1421,7 +1435,7 @@ test('acceptance-labeling check queries a shared parent exactly once for two sub
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), 898);
     if (args.includes('labels,comments')) {
-      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n' }] });
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
     }
     return '';
   };
@@ -1441,12 +1455,12 @@ test('acceptance-labeling check passes via the pr-first pointer+brief form (full
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
     if (args[0] === 'pr' && args[1] === 'view') {
-      return JSON.stringify({ comments: [{ body: '<!-- run-comment: brief -->\n\n## Verification Brief\n### Confirmed\n' }] });
+      return JSON.stringify({ comments: [{ body: '<!-- run-comment: brief -->\n\n## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
     }
     if (args.includes('labels,comments')) {
       return JSON.stringify({
         labels: [{ name: 'demo:pending' }],
-        comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199' }],
+        comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199', authorAssociation: 'MEMBER' }],
       });
     }
     return '';
@@ -1467,7 +1481,7 @@ test('acceptance-labeling check fails when the pr-first pointer is present but t
     if (args.includes('labels,comments')) {
       return JSON.stringify({
         labels: [{ name: 'demo:pending' }],
-        comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199' }],
+        comments: [{ body: 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199', authorAssociation: 'MEMBER' }],
       });
     }
     return '';
@@ -1476,6 +1490,154 @@ test('acceptance-labeling check fails when the pr-first pointer is present but t
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'fail');
   assert.match(row.detail, /PR #1199/);
+});
+
+// #3358: a Verification Brief marker only counts when GitHub attests its
+// author is an owner, member, or collaborator (comment-trust.js). An untrusted
+// marker comment takes the same path as "no such comment" and is named in the
+// row's detail as `ignored: ...`.
+function acceptanceTrustRow({ issueComments, prComments, withPr }) {
+  const runDir = makeTmpDir('verify-acceptance-trust-');
+  writeSpecFile(runDir, '900', 900);
+  if (withPr) fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ pr: { number: 1199 } }));
+  const prViews = [];
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+    if (args[0] === 'pr' && args[1] === 'view') {
+      // Other checks in this pass also run gh pr view (--json body / commits);
+      // only the acceptance-labeling comments read is tracked.
+      if (args.includes('comments')) prViews.push(args);
+      return JSON.stringify({ comments: prComments || [] });
+    }
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: issueComments });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  return { row: result.rows.find((r) => r.check === 'acceptance-labeling'), prViews };
+}
+
+const TRUST_BRIEF_BODY = '## Verification Brief\n### Confirmed\n';
+const TRUST_POINTER_BODY = 'Verification Brief posted to PR #1199: https://github.com/org/repo/pull/1199';
+const TRUST_PR_BRIEF_BODY = '<!-- run-comment: brief -->\n\n## Verification Brief\n### Confirmed\n';
+
+test('AC2.1: an issue brief authored NONE fails acceptance-labeling and names the ignored comment', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [{ body: TRUST_BRIEF_BODY, url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
+  });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /no comment carries a confirmed Verification Brief/);
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/c1 by eve \(NONE\)/);
+});
+
+test('AC2.1: an issue brief with no association at all fails closed and says "no association"', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [{ body: TRUST_BRIEF_BODY, url: 'https://x/c1', author: { login: 'eve' } }],
+  });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/c1 by eve \(no association\)/);
+});
+
+test('AC2.1: an untrusted pointer is not followed', () => {
+  const { row, prViews } = acceptanceTrustRow({
+    withPr: true,
+    issueComments: [{ body: TRUST_POINTER_BODY, url: 'https://x/p1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
+    prComments: [{ body: TRUST_PR_BRIEF_BODY, url: 'https://x/pr1', author: { login: 'eve' }, authorAssociation: 'MEMBER' }],
+  });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/p1 by eve \(NONE\)/);
+  assert.deepStrictEqual(prViews, [], 'gh pr view must not run for an untrusted pointer');
+});
+
+test('AC2.1: an untrusted PR brief does not satisfy a trusted pointer', () => {
+  const { row } = acceptanceTrustRow({
+    withPr: true,
+    issueComments: [{ body: TRUST_POINTER_BODY, url: 'https://x/p1', author: { login: 'bot' }, authorAssociation: 'MEMBER' }],
+    prComments: [{ body: TRUST_PR_BRIEF_BODY, url: 'https://x/pr1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
+  });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /pointer to PR #1199 found but no confirmed Verification Brief on PR #1199/);
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/pr1 by eve \(NONE\)/);
+});
+
+test('AC2.2: the same issue brief authored MEMBER passes', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [{ body: TRUST_BRIEF_BODY, url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'MEMBER' }],
+  });
+  assert.strictEqual(row.result, 'pass');
+  assert.strictEqual(row.detail, '');
+});
+
+test('AC2.2: the same pointer authored MEMBER is followed and passes', () => {
+  const { row, prViews } = acceptanceTrustRow({
+    withPr: true,
+    issueComments: [{ body: TRUST_POINTER_BODY, url: 'https://x/p1', author: { login: 'eve' }, authorAssociation: 'MEMBER' }],
+    prComments: [{ body: TRUST_PR_BRIEF_BODY, url: 'https://x/pr1', author: { login: 'eve' }, authorAssociation: 'MEMBER' }],
+  });
+  assert.strictEqual(row.result, 'pass');
+  assert.strictEqual(row.detail, '');
+  assert.strictEqual(prViews.length, 1);
+});
+
+test('AC2.2: the same PR brief authored COLLABORATOR satisfies a trusted pointer', () => {
+  const { row } = acceptanceTrustRow({
+    withPr: true,
+    issueComments: [{ body: TRUST_POINTER_BODY, url: 'https://x/p1', author: { login: 'bot' }, authorAssociation: 'OWNER' }],
+    prComments: [{ body: TRUST_PR_BRIEF_BODY, url: 'https://x/pr1', author: { login: 'eve' }, authorAssociation: 'COLLABORATOR' }],
+  });
+  assert.strictEqual(row.result, 'pass');
+});
+
+test('a trusted brief after an untrusted one passes and still names the skipped one', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [
+      { body: TRUST_BRIEF_BODY, url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'NONE' },
+      { body: TRUST_BRIEF_BODY, url: 'https://x/c2', author: { login: 'tom' }, authorAssociation: 'MEMBER' },
+    ],
+  });
+  assert.strictEqual(row.result, 'pass');
+  assert.match(row.detail, /^ignored: skipped marker comment https:\/\/x\/c1 by eve \(NONE\)/);
+});
+
+test('a failing row still names the comments a passing target skipped', () => {
+  const runDir = makeTmpDir('verify-acceptance-trust-mixed-');
+  writeSpecFile(runDir, '900', 900);
+  writeSpecFile(runDir, '901', 901);
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+    if (args.includes('labels,comments')) {
+      // #900 passes via a trusted brief after an untrusted one; #901 has no brief at all.
+      if (args.includes('900')) {
+        return JSON.stringify({
+          labels: [{ name: 'demo:pending' }],
+          comments: [
+            { body: TRUST_BRIEF_BODY, url: 'https://x/c900', author: { login: 'eve' }, authorAssociation: 'NONE' },
+            { body: TRUST_BRIEF_BODY, url: 'https://x/c900b', author: { login: 'tom' }, authorAssociation: 'MEMBER' },
+          ],
+        });
+      }
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [] });
+    }
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'acceptance-labeling');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#901: no comment carries a confirmed Verification Brief/);
+  assert.match(row.detail, /; ignored \(#900\): skipped marker comment https:\/\/x\/c900 by eve \(NONE\)/);
+  assert.ok(
+    row.detail.indexOf('#901:') < row.detail.indexOf('ignored (#900)'),
+    'passing-target notes follow the failing lines'
+  );
+});
+
+test('an untrusted comment that carries no brief marker is not named as ignored', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [{ body: 'looks good to me', url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
+  });
+  assert.strictEqual(row.result, 'fail');
+  assert.doesNotMatch(row.detail, /ignored/);
 });
 
 // A parent gather failure caused by an unresolvable owner/repo (git remote
@@ -1896,7 +2058,7 @@ test('acceptance-labeling check runs its gh probe, issue view, and comments call
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
     if (args.includes('labels,comments')) {
-      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed' }] });
+      return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed', authorAssociation: 'MEMBER' }] });
     }
     return '{}';
   };

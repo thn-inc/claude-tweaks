@@ -18,8 +18,8 @@ default_schedule:
 notes: >
   Headless queue consumer: pulls the open + auto:build, no bot:*, unclaimed queue, claims
   every member of that group, and hands it to /claude-tweaks:flow for pure execution.
-  each firing runs the bare drain with an explicit --budget 1 — exactly one file-overlap
-  group per firing, chosen by priority-then-age ranking. --budget 1 is stated explicitly
+  each firing runs the bare drain with an explicit --budget 1 — exactly one dispatch group
+  (one record, or one fast-lane bundle) per firing, chosen by priority-then-age ranking. --budget 1 is stated explicitly
   (rather than inheriting dispatch-batch-size, default 3) to preserve the fleet's
   one-group-per-firing cadence after #1492 retired `dispatch next`; raise it deliberately
   if you want each firing to drain more. The claim ref makes

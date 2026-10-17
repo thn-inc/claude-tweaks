@@ -87,7 +87,7 @@ function excludedNumbers(entries, reasons) {
   return numbers;
 }
 
-// True when ANY member of `group` (a file-overlap group -- {number}[]) is
+// True when ANY member of `group` (a dispatch group -- {number}[]) is
 // excluded under one of `reasons` -- a group is claimed/released as a unit,
 // so one excluded member excludes the whole group (next-ranking.md's and
 // firing-exclusion.md's existing semantics, preserved here, not changed).
