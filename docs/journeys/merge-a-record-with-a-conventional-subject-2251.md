@@ -3,6 +3,7 @@ files:
   - plugin/bin/compose-subject.js
   - plugin/bin/lib/compose-subject.js
   - plugin/bin/lib/commit-scope.js
+  - plugin/bin/lib/policy.js
   - plugin/bin/lib/release/subject.js
   - plugin/bin/lib/issues/record.js
   - plugin/bin/lib/compose-record/compose.js
