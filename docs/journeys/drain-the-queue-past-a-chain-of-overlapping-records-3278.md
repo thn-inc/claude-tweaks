@@ -29,7 +29,7 @@ files:
 - **URL:** `plugin/skills/dispatch/queue-pull-script.md` (neighbour-in-flight pass); `plugin/bin/lib/dispatch/in-flight-neighbours.js`
 - **Action:** The pass fetches the open `bot:in-progress` records. For each one that shares a linking file with a candidate, it reads the claim blob once and counts the record as in flight only when the blob reads `live`. Each candidate with a live neighbour gets a `neighbour-in-flight` exclusion naming the neighbour and the shared files. The candidate stays in `dispatch-groups.json`.
 - **Should feel:** Conservative only where it matters. A leftover `bot:in-progress` label or an expired claim never blocks anything.
-- **Should understand:** The guard fails open. An unreadable claim prints `AUTO — dispatch: neighbour-in-flight claim read failed …`, and a failed pool fetch prints `AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull`. Either way the records build, and any real conflict resolves at merge. On a `gh`-absent firing the guard is off by design (`dispatch/mcp-transport.md`).
+- **Should understand:** The guard fails open. An unreadable claim prints `AUTO — dispatch: neighbour-in-flight claim read failed …`, and a failed pool fetch prints `AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull`. Either way the records build, and any real conflict resolves at merge. On a `gh`-absent firing the same guard runs over the MCP transport (`dispatch/mcp-transport.md`, #3392).
 - **Red flags:** A record held back by a neighbour whose claim is expired or absent. A silent pool-fetch failure with no AUTO line. A bare-directory or hub path reported as the shared file.
 
 ### 3. Rank, dispatch, and re-pull

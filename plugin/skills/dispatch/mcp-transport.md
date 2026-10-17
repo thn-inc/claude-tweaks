@@ -109,9 +109,39 @@ note accordingly.
 
 There is no confirmed MCP mapping for `gh pr list --json number,files,closingIssuesReferences` (a repo-wide open-PR listing with per-PR changed-file lists) yet. On the MCP transport, `queue-pull-script.md`'s cross-PR overlap fetch is skipped entirely and `dispatch-crosspr-overlap.json` is written as `[]` — the same fail-open posture as a `gh pr list` failure on the `gh` transport (SKILL.md Step 3's report renders nothing when its input is empty). This is a documented gap, not a silent one: the report is informational only (never a gate, per that section's AC2 fallback), so its absence on this transport costs a missed warning, not a missed exclusion.
 
-## Step 2 — neighbour-in-flight pool (#3278)
+## Step 2 — neighbour-in-flight pool (#3278, #3392)
 
-`queue-pull-script.md`'s neighbour-in-flight pass needs `gh` for three things: the `gh issue list --label bot:in-progress` pool fetch, the `gh repo view` slug lookup, and the claim-blob reads (`claim-store.js`'s `readClaimBlob` over git and `gh api`). The label list already has an MCP mapping (`list_issues`, `_shared/github-write-transport.md`'s CRUD table), but the pass has no MCP branch, and its claim-blob reads have no MCP path wired in. On the MCP transport the pool fetch fails, the pool is written as `[]`, the `AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull` line fires, and no `neighbour-in-flight` exclusion is written — the same fail-open posture as a `gh` failure on the `gh` transport. This is a documented gap, not a silent one: overlapping records may build concurrently in one firing and resolve at merge through `_shared/pr-first-merge.md`'s Conflict path, so its absence costs a possible merge conflict, not a wrong build. Re-open when a firing on this transport needs the guard: add an MCP branch that lists the pool through `list_issues` and reads claims through `_shared/issue-claims.md`'s file-blob path.
+`queue-pull-script.md`'s neighbour-in-flight pass needs `gh` for its pool list, its `gh repo view` slug and its claim-blob reads, so on this transport skip that pass's `gh issue list` line and its `node-eval-file.js` block and run these four steps in their place. A Node subprocess cannot call MCP tools, so the agent fetches and Node computes. Fail open exactly as the `gh` branch does: a failed list or read prints one AUTO line and excludes nothing.
+
+**1. Pool.** List the open `bot:in-progress` records through `list_issues` (`_shared/github-write-transport.md`'s "List open issues by label" row: label `bot:in-progress`, state open, body included, up to 200 records). Omit `fields`. The #3137 label truncation above does not touch this pass: the label filter runs server-side, and liveness comes from the claim blob, never a label. Write `[{number, body, labels}]` to `$DISPATCH_IN_FLIGHT_RAW` with the Write tool. If the call fails, write `[]` there and print `AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull`.
+
+**2. Claim targets.** Print the in-flight records that neighbour some candidate, the only ones whose claim needs reading:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" <<NODE_EVAL_EOF
+  const { neighbourClaimTargets } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/in-flight-neighbours.js');
+  console.log(JSON.stringify(neighbourClaimTargets({ candidates: require(process.argv[1]).flat(), inFlight: require(process.argv[2]) })));
+NODE_EVAL_EOF
+```
+
+**3. Claim reads.** For each printed number, read `claims/issue-{n}.json` on `claims-registry` through `_shared/issue-claims.md`'s file-blob path ("The lock" step 1's MCP bullet). Record the returned content as a string, a not-found response as `null`, and any other error as `{"failure": "{error}"}`. Write the object, keyed by number, to `$DISPATCH_IN_FLIGHT_CLAIMS` with the Write tool, `{}` when nothing was printed. A number left out of the map counts as a failed read.
+
+**4. Exclusions.** Run the pass's computation over the map, through `claimReaderFromMap` (`bin/lib/dispatch/in-flight-neighbours.js`):
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" "$DISPATCH_EXCLUSIONS" "$DISPATCH_IN_FLIGHT_CLAIMS" <<NODE_EVAL_EOF
+  const { neighbourInFlightExclusions, claimReaderFromMap } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/in-flight-neighbours.js');
+  const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
+  const { exclusions, unreadable } = neighbourInFlightExclusions({
+    candidates: require(process.argv[1]).flat(), inFlight: require(process.argv[2]),
+    readClaimContent: claimReaderFromMap(require(process.argv[4])), now: Date.now(),
+  });
+  for (const e of exclusions) appendExclusion(process.argv[3], e);
+  if (unreadable.length) console.error('AUTO — dispatch: neighbour-in-flight claim read failed for #' + unreadable.join(', #') + '; treated as not in flight');
+NODE_EVAL_EOF
+```
+
+A non-zero exit stops the queue pull, the same as the `gh` branch's `NEIGHBOUR_RC` check.
 
 ## Step 2 — open-linked-PR exclusion (#1224)
 
