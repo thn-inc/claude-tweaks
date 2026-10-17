@@ -537,6 +537,34 @@ test('prose-twin conformance: both prose files list the same signals and guard',
   );
 });
 
+// Prose ↔ code pin: the signal list both judging procedures restate must name
+// exactly the signals auditText returns, so a signal added to or removed from
+// bloat.js without the prose following fails here rather than at the next audit.
+// The frozen excerpt is the pre-#3308 sentence; it must fail against today's code.
+const SIGNAL_COUNT_WORDS = { three: 3, four: 4, five: 5, six: 6, seven: 7 };
+const FOUR_SIGNAL_EXCERPT = 'Four signals: files over the 50 KB soft ceiling, Anti-Pattern rows more than twice the corpus median byte length, provenance-narration phrasing (text addressed to whoever edited the file rather than to the model running it), and adjacent table rows whose right-hand cells are identical or near-identical.';
+
+function proseSignalCount(text) {
+  const m = text.match(/(\w+) signals: ([^.]+)\./i);
+  if (!m) return null;
+  const items = m[2].replace(/\([^)]*\)/g, '').split(/,\s*(?:and\s+)?/).filter((s) => s.trim());
+  return { stated: SIGNAL_COUNT_WORDS[m[1].toLowerCase()], items: items.length };
+}
+
+test('prose signal list names exactly the signals auditText returns', () => {
+  const codeSignals = Object.keys(auditText('', { bytes: 0, rowMedian: null, sizeThreshold: 0 }))
+    .filter((k) => k !== 'bytes' && k !== 'headroom');
+  for (const rel of [['_shared', 'harness-health-analysis.md'], ['harness-health', 'judge-procedure.md']]) {
+    const got = proseSignalCount(fs.readFileSync(path.join(REPO, 'plugin', 'skills', ...rel), 'utf8'));
+    assert.ok(got, `${rel.join('/')} must contain a signal-list sentence`);
+    assert.strictEqual(got.stated, codeSignals.length, `${rel.join('/')} states the wrong signal count`);
+    assert.strictEqual(got.items, codeSignals.length, `${rel.join('/')} lists the wrong number of signals`);
+  }
+  const frozen = proseSignalCount(FOUR_SIGNAL_EXCERPT);
+  assert.notStrictEqual(frozen.stated, codeSignals.length);
+  assert.notStrictEqual(frozen.items, codeSignals.length);
+});
+
 test('auditCorpus runs over the whole live skill corpus and reports a usable baseline', () => {
   const skillsDir = path.join(REPO, 'plugin', 'skills');
   const files = [];
