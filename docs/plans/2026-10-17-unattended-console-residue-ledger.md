@@ -6,7 +6,7 @@
 | 2 | build | SDD Ruling R1: `readRunResidue` console `path` is absolute; `formatResidueLines` renders it relative for display. | observation | Final review: agree |
 | 3 | build | SDD Ruling R2: `--run` and `--ack` act only on unacknowledged consoles; `--ack` re-parses and never writes an unparseable file; `--run` with no value exits 2, a missing dir exits 3. | observation | Final review: agree (a concurrent re-ack can refresh the timestamp — cosmetic) |
 | 4 | build | SDD Ruling R3: `stage-item.js` requires `./lib/console/resolve` (the plan's `../lib` path was wrong). | observation | Final review: agree |
-| 5 | build | SDD Ruling R4: `(-\|\b)` `SECTION_MAP` rows get a trailing-dash `CANONICAL_PREFIXES` entry; the `.patch` row gets none. | observation | Final review: agree |
+| 5 | build | SDD Ruling R4: `SECTION_MAP` rows ending in a dash-or-word-boundary group get a trailing-dash `CANONICAL_PREFIXES` entry; the `.patch` row gets none. | observation | Final review: agree |
 | 6 | build | SDD Ruling R5: local Levenshtein helper, no new dependency. | observation | Final review: agree |
 | 7 | build | SDD Ruling R6: length-normalized Levenshtein (distance / prefix.length) in place of the plan's raw distance, which failed the plan's own review-* test. | observation | Final review: agree |
 | 8 | build | SDD Ruling F1: the SessionStart scan is bounded by a 200-name window over readdir names, with a `more` flag, not a high-water-mark file. Residue older than the newest 200 runs is not surfaced at SessionStart, but is still reachable via `console-residue.js --run` and `--ack-all`. | observation | Re-review: I1 ADDRESSED (8f3c0ea31) |

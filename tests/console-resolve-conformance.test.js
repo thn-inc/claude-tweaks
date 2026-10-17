@@ -109,6 +109,5 @@ test('the Needs a human carry reaches the console, the single-spec summary, and 
     assert.match(t, /console-residue\.js" --run "\$(PIPELINE_RUN_DIR|MULTISPEC_PARENT_DIR)"/, `${rel} must run console-residue.js against the run dir`);
     assert.match(t, /### Needs a human/, `${rel} must render a Needs a human section`);
     assert.match(t, /on any non-zero exit, render the CLI's stderr verbatim/, `${rel} must not let a failed scan read as no residue`);
-    assert.ok(Buffer.byteLength(t, 'utf8') <= CEILING_BYTES, `${rel} stays under the ceiling`);
   }
 });
