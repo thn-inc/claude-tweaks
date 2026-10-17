@@ -56,6 +56,8 @@ function assertQaPromptsBlock(block) {
   assert.match(block, /`QA: N navigate step origins rewritten to APP_URL`/, 'step-origin rewrite-count line');
   assert.match(block, /`QA: flagged secondary origins /, 'flag line for secondary origins');
   assert.match(block, /story ids/i, 'flag line names affected story ids');
+  assert.match(block, /`QA: N stories had an embedded origin rewritten to APP_URL /, 'story-origin rewrite log line');
+  assert.match(block, /Protocol-relative `\/\/host\/path`[^\n]*new URL\(target, APP_URL\)[^\n]*absolute origin/, 'protocol-relative targets are resolved then classified as absolute');
 }
 
 function liveBlock() {
@@ -66,35 +68,53 @@ test('AC1.1, AC4.1, AC4.2: qa-prompts.md URL-resolution block states the navigat
   assertQaPromptsBlock(liveBlock());
 });
 
-test('AC3.1: each qa-prompts assertion goes red when its prose is reverted', () => {
+// One entry per assertion in assertQaPromptsBlock, in assertion order: the mutation removes only the
+// prose that assertion pins, and expectRed requires the failure to carry that assertion's own message.
+const without = (...literals) => (text) => literals.reduce((acc, lit) => acc.split(lit).join(''), text);
+const withoutMatch = (re) => (text) => text.replace(re, '');
+const QA_PROMPTS_GO_RED = [
+  ['navigate action is named', without('`navigate`')],
+  ['setup.steps is in scope', without('`setup.steps`')],
+  ['story.steps is in scope', without('`story.steps`')],
+  ['teardown.steps is in scope', without('`teardown.steps`')],
+  ['both target and value URL fields are read', without('`value`')],
+  ["story own origin is defined", withoutMatch(/story's own origin/gi)],
+  ['root-relative story.url origin rule', without("When `story.url` is root-relative, the story's own origin is `APP_URL`'s")],
+  ['path/query/fragment preservation applies to navigate steps', without('path/query/fragment')],
+  ['skip reason is named', without('`unresolved-secondary-origin`')],
+  ['skip reason is tied to SKIPPED', without('SKIPPED')],
+  ['worktree run is covered', withoutMatch(/worktree/gi)],
+  ['worktree detection signal is named', without('isLinkedWorktree')],
+  ['loopback host set is cited from qa-procedures.md', withoutMatch(/\n  Loopback means[^\n]*\n/)],
+  ['root-relative and APP_URL-equal targets are never flagged', withoutMatch(/\n  - \*\*Root-relative `target`\*\*[^\n]*/)],
+  ['root-relative and APP_URL-equal targets are never flagged', withoutMatch(/\n  - \*\*Absolute origin already equal to `APP_URL`'s\*\*[^\n]*/)],
+  ['non-loopback origin is dispatched unchanged', withoutMatch(/\n  - \*\*Non-loopback origin\*\*[^\n]*/)],
+  ['primary-checkout loopback origin is flagged', without('primary-checkout')],
+  ['fill values are passed verbatim', without('verbatim')],
+  ['legacy workflow stories are a coverage limit', without('`workflow`')],
+  ['secondary-server follow-up is referenced', without('#3082')],
+  ['worked example story url', without('http://127.0.0.1:9999/app')],
+  ['worked example rewritten navigate step', without('http://127.0.0.1:9999/reset')],
+  ['worked example flagged navigate step', without('http://127.0.0.1:4010/__reset')],
+  ['worked example APP_URL', without('APP_URL=http://localhost:54321')],
+  ['worked example resolved URL', without('http://localhost:54321/reset')],
+  ['worked example states the 4010 step is flagged', (text) => text.replace('/__reset` is flagged (', '/__reset` is fine (')],
+  ['step-origin rewrite-count line', without('`QA: N navigate step origins rewritten to APP_URL`')],
+  ['flag line for secondary origins', withoutMatch(/`QA: flagged secondary origins [^`]*`/)],
+  ['flag line names affected story ids', withoutMatch(/story ids/gi)],
+  ['story-origin rewrite log line', withoutMatch(/`QA: N stories had an embedded origin rewritten to APP_URL [^`]*`/)],
+  ['protocol-relative targets are resolved then classified as absolute', withoutMatch(/\n  - \*\*Protocol-relative `\/\/host\/path`\*\*[^\n]*/)],
+];
+
+test('AC3.1: every qa-prompts assertion goes red on its own prose, matched by its own message', () => {
   const live = liveBlock();
-  const literals = [
-    '`unresolved-secondary-origin`',
-    '`teardown.steps`',
-    'path/query/fragment',
-    'qa-procedures.md',
-    'http://127.0.0.1:4010/__reset',
-    'When `story.url` is root-relative',
-  ];
-  for (const lit of literals) {
-    const mutated = live.split(lit).join('');
-    assert.notEqual(mutated, live, `literal is not present in the live block: ${lit}`);
-    assert.throws(() => assertQaPromptsBlock(mutated), undefined, `reverting ${lit} did not fail assertQaPromptsBlock`);
+  const asserted = [...new Set(QA_PROMPTS_GO_RED.map(([message]) => message))];
+  const source = fs.readFileSync(__filename, 'utf8');
+  const declared = [...source.matchAll(/^\s+assert\.match\(block, .*, '([^']+)'\);$/gm)].map((m) => m[1]);
+  assert.deepEqual(asserted.sort(), [...new Set(declared)].sort(), 'the table covers exactly the assertions assertQaPromptsBlock declares');
+  for (const [message, mutate] of QA_PROMPTS_GO_RED) {
+    expectRed(assertQaPromptsBlock, live, mutate(live), message);
   }
-});
-
-test('AC3.1: loopback, never-flagged, and log-line assertions each go red on their own prose', () => {
-  const live = liveBlock();
-  const expectBlockRed = (mutated, message) => expectRed(assertQaPromptsBlock, live, mutated, message);
-  const neverFlaggedMessage = 'root-relative and APP_URL-equal targets are never flagged';
-  const rootRelative = /\n  - \*\*Root-relative `target`\*\*[^\n]*/;
-  const appUrlEqual = /\n  - \*\*Absolute origin already equal to `APP_URL`'s\*\*[^\n]*/;
-
-  expectBlockRed(live.replace(/\n  Loopback means[^\n]*\n/, '\n'), 'loopback host set is cited from qa-procedures.md');
-  expectBlockRed(live.replace(rootRelative, ''), neverFlaggedMessage);
-  expectBlockRed(live.replace(appUrlEqual, ''), neverFlaggedMessage);
-  expectBlockRed(live.replace('`QA: N navigate step origins rewritten to APP_URL`', ''), 'step-origin rewrite-count line');
-  expectBlockRed(live.replace(/`QA: flagged secondary origins [^`]*`/, ''), 'flag line for secondary origins');
 });
 
 const STORIES_SKILL = 'plugin/skills/stories/SKILL.md';
@@ -106,7 +126,9 @@ function assertStoriesSchema(section) {
   assert.match(section, /- action: navigate\n\s+target: /, 'navigate step is in the YAML example');
   assert.match(section, /`navigate` step takes no locator[^\n]*`target`/, 'navigate takes its URL from target');
   assert.match(section, /`value`[\s\S]{0,200}(fallback|older)/i, 'value is read as a fallback');
-  assert.match(section, /The `url:` field\.[\s\S]*`navigate` step/, 'url paragraph gains the step rule');
+  const urlParagraph = section.split('\n\n').find((p) => p.startsWith('**The `url:` field.**'));
+  assert.ok(urlParagraph, 'url paragraph is found');
+  assert.match(urlParagraph, /The same rule covers `navigate` steps/, 'url paragraph gains the step rule');
   assert.match(section, /`unresolved-secondary-origin`/, 'skip reason is named');
 }
 
@@ -138,7 +160,7 @@ test('AC3.1: stories/qa-agent assertions go red when their prose is reverted', (
     'navigate step is in the YAML example',
   );
   expectSchemaRed(
-    section.replace(/A `navigate` step takes no locator[^\n]*\n\n/, ''),
+    section.replace(/A `navigate` step takes no locator; its URL goes in the `target` field \(the canonical name, as in `story-examples\.md`\)\./, ''),
     'navigate takes its URL from target',
   );
   expectSchemaRed(

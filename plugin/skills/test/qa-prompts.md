@@ -76,6 +76,7 @@ Use `resolved_url` everywhere below — the `**URL:**` field and the `open` comm
 - Classify each `navigate` URL against the story's own origin:
   - **Root-relative `target`** (no scheme+host) → `new URL(target, APP_URL).toString()`, never flagged.
   - **Absolute origin already equal to `APP_URL`'s** → unchanged, never flagged.
+  - **Protocol-relative `//host/path`** → has a host, so it is not root-relative: resolve it with `new URL(target, APP_URL)` (it borrows `APP_URL`'s scheme) and classify the resolved URL as an absolute origin by the rules above and below.
   - **Matches the story's own origin** → rewrite to `APP_URL`'s origin, preserving the step's path/query/fragment (the same rule as `story.url`).
   - **Other loopback origin, worktree run** (`repoInfo(process.cwd()).isLinkedWorktree`) → mark the story `SKIPPED` with reason `unresolved-secondary-origin`, naming the origin; its dependents cascade as `SKIPPED` (as with `missing-auth-vault`).
   - **Other loopback origin, primary-checkout run** → dispatch unchanged and include the origin in the flag line.
