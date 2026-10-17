@@ -380,13 +380,14 @@ function extractTemplateStamp(body) {
 // aborting a whole sweep run on an LLM-supplied path. keyFilePathProblem returns null
 // (valid), 'shape' (not a non-empty single-line file path: no backtick, no line terminator
 // incl. a lone CR, no surrounding whitespace, no trailing slash — grouping.js skips a
-// directory entry without a warning), or 'relative' (absolute posix/win32 path or a ".."
-// segment).
+// directory entry without a warning), or 'relative' (absolute posix/win32 path, a drive
+// prefix such as "C:foo", or a ".." segment).
 const KEY_FILE_LINE_BREAK_RE = /[\r\n\u0085\u2028\u2029]/;
 function keyFilePathProblem(filePath) {
   if (typeof filePath !== 'string' || filePath === '' || filePath !== filePath.trim()
     || KEY_FILE_LINE_BREAK_RE.test(filePath) || filePath.includes('`') || /[\\/]$/.test(filePath)) return 'shape';
-  if (nodePath.posix.isAbsolute(filePath) || nodePath.win32.isAbsolute(filePath) || filePath.split(/[\\/]/).includes('..')) return 'relative';
+  if (nodePath.posix.isAbsolute(filePath) || nodePath.win32.isAbsolute(filePath) || /^[A-Za-z]:/.test(filePath)
+    || filePath.split(/[\\/]/).includes('..')) return 'relative';
   return null;
 }
 

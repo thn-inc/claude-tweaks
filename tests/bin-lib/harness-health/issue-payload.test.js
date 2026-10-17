@@ -489,7 +489,7 @@ test('harness payload omits Technical Approach for an out-of-repo target, a miss
   assert.ok(!outOfRepo.body.includes('## Technical Approach'));
   const noRoot = toIssuePayload(patchFinding({ path: '/repo/plugin/skills/foo/SKILL.md' }), 'abc1234');
   assert.ok(!noRoot.body.includes('## Technical Approach'));
-  const noPath = toIssuePayload(patchFinding(), 'abc1234', undefined, { repoRoot: '/repo' });
+  const noPath = toIssuePayload(patchFinding({ path: undefined }), 'abc1234', undefined, { repoRoot: '/repo' });
   assert.ok(!noPath.body.includes('## Technical Approach'));
   const newSkill = toIssuePayload(
     newSkillFinding({ path: '/repo/plugin/skills/foo/SKILL.md' }), 'abc1234', undefined, { repoRoot: '/repo' },
