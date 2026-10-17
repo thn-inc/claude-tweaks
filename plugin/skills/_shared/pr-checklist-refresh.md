@@ -70,6 +70,24 @@ phase-exit push, `_shared/git-discipline.md`), check `run-state.json`'s `pr` fie
   delimiter pairs through untouched regardless of which one was used to locate the span.
 <!-- /when -->
 
+  **Refresh the Spec summary after a premise reversal (#3050).** After composing the file above
+  and before its run-id re-read and `gh pr edit` (or the MCP write), run `node
+  "${CLAUDE_PLUGIN_ROOT}/bin/revise-pr-summary.js" --run-dir "{run-dir}" --body-file
+  /tmp/pr-checklist-{run-id}-{n}.md`. It reads this run's `premise reversed:` entries
+  ("Premise-reversal decisions" below) and prints which ones the body's `### Spec summary` note
+  does not yet name. With none logged, or every one already noted (`changed: false`), write the
+  body as composed so far: the Spec summary stays byte-unchanged. Otherwise, write a one-paragraph
+  summary of the implemented behavior to a session temp file with the Write tool. Take it from this
+  run's diff and nothing it does not show, and cover every spec for a bundle. Then re-run with
+  `--summary-file {file} --out /tmp/pr-checklist-{run-id}-{n}.md`. It locates the span by its
+  `### Spec summary` heading up to the next heading (headings survive both transports; only
+  `<!-- ... -->` spans are stripped, per `_shared/pr-early-run-lifecycle.md`'s Root cause section).
+  It writes one `Revised during build: {original claim} → {implemented behavior}` note above the
+  new paragraph, with entries `; `-joined and appended to any note already there, so a bundle's
+  sibling-spec entries are never dropped. Best-effort, like the checklist edit: a non-zero exit
+  logs a warning to `decisions.md`, and the update writes the checklist-only body. It is never a
+  phase-exit or merge blocker.
+
   Compose-then-write-once — read, patch the checklist section in memory, write the whole body
   back in one call. Never a partial/streaming edit.
 
@@ -84,6 +102,20 @@ are **cumulative across every spec in the run, never reset per spec** — see
 `flow/multispec-pr-checklist.md` for the full rationale and the per-spec status source
 (`manifest.yml`'s `specs[].status`) a maintainer should read instead when they need spec-level,
 not run-level, granularity.
+
+**Premise-reversal decisions (#3050).** The one `decisions.md` entry shape the Spec-summary
+refresh above reads. It is written through `bin/log-decision.js` (`--status AUTO`): to the run's
+own top-level `decisions.md` for a single-record run, or to that spec's `spec-{id}/decisions.md`
+in a bundle (the same placement as `_shared/pr-early-run-lifecycle.md`'s Deferred-closure
+decisions):
+
+`premise reversed: {original claim} → {implemented behavior}`
+
+`/claude-tweaks:build` logs it whenever the build changes a mechanism the spec described: an
+`ASSUMPTION — verify at build:` probe that came back reversed, or a Spec Step 3 plan departing
+from a spec premise. `{original claim}` must not itself contain ` → `. Its reader is
+`parsePremiseReversals` (`bin/lib/flow/pr-body.js`). Do not log a differently-worded line for the
+same decision; the refresh would silently miss it.
 
 ## Pre-merge title/description refresh
 
@@ -116,7 +148,7 @@ above), not necessarily every phase this run actually completed.
    a fresh overflow the probe never saw. A probe failure (unresolvable ref, a real merge conflict)
    degrades like any other best-effort step here: log a warning and continue — the merge sequence
    surfaces a real conflict on its own.
-2. Re-run the Phase-checklist update procedure above once more, unconditionally — idempotent
+2. Re-run the Phase-checklist update procedure above once more, unconditionally, its Spec-summary refresh included — idempotent
    (a phase whose own update already landed re-flips the same rows to the same values); this is
    the final catch-all for any phase whose own best-effort update silently failed. **Multi-spec
    deferred polish-row removal:** if the `polish` row is present and still unchecked
