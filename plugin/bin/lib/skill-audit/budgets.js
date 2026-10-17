@@ -12,6 +12,13 @@
 // landed at 42,000 B, under 17 shipped files, and was set to the cap at the
 // build's plan-validation gate.
 //
+// What sits at the cap with no margin left: (1) tokenizer drift — nothing
+// absorbs it until the calibration below is re-run (#3304 tracks the drift
+// checks); (2) `when:` marker lines, which measuredBytes strips but a direct
+// Read sees (≤ ~1.4% on today's most-marked file); (3) density — 2.1 is the
+// densest of three samples (the code-fence-heaviest large file), not a proven
+// worst case. Today's largest bundle sits ~11% under the rail.
+//
 // Calibration (Task 0) — 2026-10-17, `claude --version`: 2.1.302 (Claude Code).
 // Three scratchpad samples, each read with the Read tool and no offset/limit:
 //   (a) `git ls-files 'plugin/skills/*.md' 'plugin/skills/**/*.md'`, LC_ALL=C
@@ -56,8 +63,12 @@ function listingBudgetChars(contextTokens) {
 
 // Entries over the byte rail, or over the line rail when they carry `lines`.
 // An entry without a `lines` field (a composed bundle) is judged on bytes only.
+// An entry without a numeric `bytes` (an error row, or a raw composedBytesReport
+// row, which carries `max`) is returned too — an unmeasured entry never passes.
 function overRail(entries) {
-  return entries.filter((e) => e.bytes > RAIL_BYTES || (typeof e.lines === 'number' && e.lines > RAIL_LINES));
+  return entries.filter((e) => typeof e.bytes !== 'number'
+    || e.bytes > RAIL_BYTES
+    || (typeof e.lines === 'number' && e.lines > RAIL_LINES));
 }
 
 module.exports = {

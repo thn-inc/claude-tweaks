@@ -13,7 +13,7 @@ const {
   skillFileRailViolations,
   composedRailViolations,
   descriptionRailViolations,
-} = require('./rail-entries.js');
+} = require('../../../plugin/bin/lib/skill-audit/rail.js');
 
 const {
   READ_TOKEN_CAP, READ_LINE_CAP, BASH_OUTPUT_CAP_CHARS, RAIL_RATIO, RAIL_TOKENS, RAIL_LINES,
@@ -66,9 +66,8 @@ test('budgets: the rails derive from the caps by formula', () => {
   assert.strictEqual(RAIL_BYTES, Math.floor(RAIL_TOKENS * BYTES_PER_TOKEN));
 });
 
-test('budgets: BYTES_PER_TOKEN is a calibrated ratio rounded down to one decimal', () => {
-  assert.ok(BYTES_PER_TOKEN > 0);
-  assert.strictEqual(Math.round(BYTES_PER_TOKEN * 10) / 10, BYTES_PER_TOKEN);
+test('budgets: BYTES_PER_TOKEN is the recorded calibration — changing it means re-running the calibration in the header', () => {
+  assert.strictEqual(BYTES_PER_TOKEN, 2.1, 'BYTES_PER_TOKEN changed: re-run the Task 0 calibration and update budgets.js\'s header with the new samples');
 });
 
 test('budgets: listingBudgetChars at 200k and 1M context', () => {
@@ -102,6 +101,15 @@ test('overRail: over the byte rail or the line rail, never at it', () => {
 test('overRail: an entry with no lines field is judged on bytes only', () => {
   assert.deepStrictEqual(overRail([{ file: 'bundle', bytes: RAIL_BYTES }]), []);
   assert.deepStrictEqual(overRail([{ file: 'bundle', bytes: RAIL_BYTES + 1 }]).map((e) => e.file), ['bundle']);
+});
+
+test('overRail: an entry without numeric bytes fails closed (error row, or a raw composedBytesReport row carrying max)', () => {
+  const entries = [
+    { file: 'err', error: 'missing source' },
+    { file: 'raw', max: 10 },
+    { file: 'ok', bytes: 10 },
+  ];
+  assert.deepStrictEqual(overRail(entries).map((e) => e.file), ['err', 'raw']);
 });
 
 // ── lineCount

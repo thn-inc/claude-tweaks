@@ -36,7 +36,7 @@ const {
 const { listSkillDirs, KNOWN_SKILLS } = require('../../../plugin/bin/lib/skill-audit/skill-catalog.js');
 const { compose, KEYS, VOCAB } = require('../../../plugin/bin/lib/compose-context/compose.js');
 const { RAIL_BYTES, RAIL_LINES, DESCRIPTION_MAX_CHARS, listingBudgetChars } = require('../../../plugin/bin/lib/skill-audit/budgets.js');
-const { skillFileRailViolations, composedRailViolations, descriptionRailViolations } = require('./rail-entries.js');
+const { skillFileRailViolations, composedRailViolations, descriptionRailViolations } = require('../../../plugin/bin/lib/skill-audit/rail.js');
 
 // The corpus root these measurements take is the plugin payload root — the one
 // with `skills/` directly beneath it — which is `plugin/`, not the repo root.
@@ -738,7 +738,7 @@ test('reports composed bytes per call site and combination', () => {
 // ── Read-limit rail (#3306). The one size check that guards a real platform
 // limit: every shipped skill .md and every composed bundle fits one Read call
 // (budgets.js holds the numbers and their calibration). Each test's go-red
-// fixture lives in budgets.test.js and runs the same rail-entries.js code.
+// fixture lives in budgets.test.js and runs the same rail.js code.
 // Every test name here carries "rail" so #3311 can tell these suites from the
 // ones it deletes.
 

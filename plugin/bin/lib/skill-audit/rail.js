@@ -1,9 +1,12 @@
 'use strict';
 
-// Shared corpus → rail-violation mapping for the #3306 rail suites. The
-// live-corpus rail tests (context-cost.test.js) and their go-red fixtures
-// (budgets.test.js) run this same code against different roots, so a fixture
-// that goes red proves the live assertion can.
+// The Read-limit rail over a plugin corpus (#3306): every shipped skill .md
+// (bytes and lines), every compose call site's max composed bytes, and every
+// description, each mapped to the entry shape budgets.js's overRail judges.
+// Shipped (not a test helper) so harness-health's rail check (#3310) and the
+// rail tests run the same mapping — the live-corpus rail tests in
+// context-cost.test.js and their go-red fixtures in budgets.test.js call it
+// with different roots.
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -13,8 +16,8 @@ const {
   measureSubFiles,
   composedBytesReport,
   measureDescriptions,
-} = require('../../../plugin/bin/lib/skill-audit/context-cost.js');
-const { overRail, DESCRIPTION_MAX_CHARS } = require('../../../plugin/bin/lib/skill-audit/budgets.js');
+} = require('./context-cost.js');
+const { overRail, DESCRIPTION_MAX_CHARS } = require('./budgets.js');
 
 // Lines as Read counts them: CRLF-normalized, and a trailing newline ends the
 // last line rather than starting another.
