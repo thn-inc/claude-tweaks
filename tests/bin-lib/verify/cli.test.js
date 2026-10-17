@@ -202,7 +202,13 @@ test('an unreadable tests log under --count-stamp prints the CAVEAT line too, di
   // the write stream stays open (POSIX unlink semantics), but a later
   // readFileSync by verify.js's own enrich() step gets ENOENT, exercising
   // the unreadable-log catch path deterministically.
-  const unlinkOwnLog = `node -e "console.log('will vanish'); require('fs').unlinkSync('${logPath}')"`;
+  // Ledger row 26: run.js's createWriteStream(logPath) opens the file
+  // asynchronously, while spawn() starts this child right after -- under
+  // load the child can reach unlinkSync before the stream's open has
+  // created the file, so unlinkSync throws ENOENT and the child exits 1
+  // instead of 0. Poll for the file's existence first (bounded, pure JS,
+  // no external `sleep` binary) so the unlink always targets a real file.
+  const unlinkOwnLog = `node -e "console.log('will vanish'); const fs=require('fs'); const p='${logPath}'; const deadline=Date.now()+5000; while(!fs.existsSync(p)){ if(Date.now()>deadline){ console.error('log file never appeared: '+p); process.exit(1); } Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,50); } fs.unlinkSync(p)"`;
   const { code, stdout } = await runCli([
     '--log-dir', logDir, '--count-stamp', countStamp, '--cmd', `tests=${unlinkOwnLog}`]);
   assert.strictEqual(code, 0, 'an unreadable log must not fail an otherwise-passing tests check (exitCode still decides pass/fail)');
