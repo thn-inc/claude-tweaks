@@ -362,8 +362,9 @@ function auditCorpus(files, { ceiling = CEILING_BYTES, sizeOutlier = true } = {}
     .map((file) => ({ file, text: fs.readFileSync(file, 'utf8'), bytes: fs.statSync(file).size }));
   const baseline = corpusRowMedian(loaded);
   const rowMedian = baseline.usable ? baseline.median : null;
-  const sizeBaseline = sizeOutlier ? corpusSizeBaseline(loaded) : { usable: false, sample: 0, method: null, threshold: null };
-  const sizeThreshold = sizeBaseline.usable ? sizeBaseline.threshold : null;
+  const realSizeBaseline = corpusSizeBaseline(loaded);
+  const sizeBaseline = sizeOutlier ? realSizeBaseline : { ...realSizeBaseline, suppressed: true };
+  const sizeThreshold = (sizeOutlier && sizeBaseline.usable) ? sizeBaseline.threshold : null;
   return {
     ceiling,
     rowBaseline: baseline,
@@ -393,13 +394,15 @@ function formatBloatReport(result, { only } = {}) {
     ? `row baseline: median ${rowBaseline.median} B over ${rowBaseline.sample} rows; flag above ${rowThreshold} B`
     : `row baseline: NO BASELINE — ${rowBaseline.sample} anti-pattern rows is under the ${MIN_ROW_SAMPLE}-row floor, so the over-long-row signal was not evaluated`);
 
-  if (sizeBaseline.usable) {
-    const methodStr = sizeBaseline.method === 'p95'
-      ? `p95 ${sizeBaseline.threshold} B`
-      : `3× median ${sizeBaseline.threshold} B`;
-    out.push(`size baseline: ${methodStr} over ${sizeBaseline.sample} files`);
-  } else {
-    out.push(`size baseline: NO BASELINE — ${sizeBaseline.sample} files is under the ${SIZE_MIN_SAMPLE}-file floor, so the size-outlier signal was not evaluated`);
+  if (!sizeBaseline.suppressed) {
+    if (sizeBaseline.usable) {
+      const methodStr = sizeBaseline.method === 'p95'
+        ? `p95 ${sizeBaseline.threshold} B`
+        : `3× median ${sizeBaseline.threshold} B`;
+      out.push(`size baseline: ${methodStr} over ${sizeBaseline.sample} files`);
+    } else {
+      out.push(`size baseline: NO BASELINE — ${sizeBaseline.sample} files is under the ${SIZE_MIN_SAMPLE}-file floor, so the size-outlier signal was not evaluated`);
+    }
   }
 
   for (const entry of result.files) {
@@ -425,7 +428,8 @@ function formatBloatReport(result, { only } = {}) {
       out.push(`  size-outlier: ${entry.bytes} B, above the corpus threshold of ${sizeBaseline.threshold} B`);
     }
   }
-  if (out.length === 2) out.push('\nno bloat signals');
+  const baselineCount = 1 + (sizeBaseline.suppressed ? 0 : 1);
+  if (out.length === baselineCount) out.push('\nno bloat signals');
   return out.join('\n');
 }
 

@@ -302,6 +302,11 @@ test('size outlier: p95 tier baseline with 20 files', () => {
   assert.strictEqual(outliers.length, 1, 'only the 20,000 B file should be an outlier');
   assert.ok(outliers[0].file.includes('file-20'));
 
+  // Check the literal report-line text (AC1)
+  const report = formatBloatReport(result);
+  assert.match(report, /size baseline: p95 19000 B over 20 files/);
+  assert.match(report, /size-outlier: 20000 B, above the corpus threshold of 19000 B/);
+
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -335,6 +340,11 @@ test('size outlier: median-multiple tier baseline with 10 files', () => {
   assert.strictEqual(outliers.length, 1, 'only the 5000 B file should be an outlier');
   assert.ok(outliers[0].file.includes('large'));
 
+  // Check the literal report-line text (AC2)
+  const report = formatBloatReport(result);
+  assert.match(report, /size baseline: 3× median 3000 B over 10 files/);
+  assert.match(report, /size-outlier: 5000 B, above the corpus threshold of 3000 B/);
+
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -355,6 +365,10 @@ test('size outlier: floor — fewer than 5 files has no baseline', () => {
   // No file should be an outlier
   const outliers = result.files.filter((f) => f.sizeOutlier);
   assert.strictEqual(outliers.length, 0, 'no outliers when baseline not usable');
+
+  // Check the full NO BASELINE line (AC3)
+  const report = formatBloatReport(result);
+  assert.match(report, /size baseline: NO BASELINE — 4 files is under the 5-file floor, so the size-outlier signal was not evaluated/);
 
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -440,9 +454,10 @@ test('size outlier: suppression with { sizeOutlier: false } prints no size-outli
   // All files should have sizeOutlier: false
   assert.ok(result.files.every((f) => f.sizeOutlier === false), 'all files must have sizeOutlier false');
 
-  // Formatreport should not contain any size-outlier lines
+  // Formatreport should not contain any size-outlier or size baseline lines
   const report = formatBloatReport(result);
   assert.ok(!report.includes('size-outlier:'), 'report must not contain size-outlier lines when suppressed');
+  assert.ok(!report.includes('size baseline:'), 'report must not contain size baseline line when suppressed');
 
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -457,28 +472,47 @@ test('prose-twin conformance: both prose files list the same signals and guard',
     'utf8',
   );
 
-  // Both should mention the five signals
-  const signals = ['50 KB soft ceiling', 'Anti-Pattern rows', 'provenance', 'degenerate', 'size'];
-  for (const signal of signals) {
-    assert.ok(
-      harnessProse.includes(signal),
-      `harness-health-analysis.md must mention "${signal}" signal`,
-    );
-    assert.ok(
-      judgeProse.includes(signal),
-      `judge-procedure.md must mention "${signal}" signal`,
-    );
-  }
+  // Extract signal-list sentences: "It reports [number] signals: ..."
+  const signalListRegex = /It reports (\w+) signals: ([^.]+)\./i;
+  const harnessMatch = harnessProse.match(signalListRegex);
+  const judgeMatch = judgeProse.match(signalListRegex);
 
-  // Both should have the dimension-9 guard bullet about size outliers being real or not
-  const sizeGuardKeyword = 'skill file far larger than its siblings';
+  assert.ok(harnessMatch, 'harness-health-analysis.md must contain signal-list sentence');
+  assert.ok(judgeMatch, 'judge-procedure.md must contain signal-list sentence');
+
+  // Extract the full sentences (including "It reports ... signals:")
+  const harnessSignalList = harnessMatch[0];
+  const judgeSignalList = judgeMatch[0];
+
+  // Assert they're identical
+  assert.strictEqual(
+    harnessSignalList,
+    judgeSignalList,
+    'Signal-list sentences must be identical between prose files',
+  );
+
+  // Assert the sentence names five signals including the size signal
   assert.ok(
-    harnessProse.includes(sizeGuardKeyword),
-    'harness-health-analysis.md must mention the size-outlier guard',
+    harnessSignalList.includes('five signals'),
+    'Signal list must explicitly mention "five signals"',
   );
   assert.ok(
-    judgeProse.includes(sizeGuardKeyword),
-    'judge-procedure.md must mention the size-outlier guard',
+    harnessSignalList.includes('skill file far larger than its siblings'),
+    'Signal list must mention size outliers',
+  );
+
+  // Extract and assert the size-outlier guard bullet text is identical
+  const sizeGuardBulletRegex = /- \*\*Size outliers\.\*\* ([^-\n]+)/;
+  const harnessGuardMatch = harnessProse.match(sizeGuardBulletRegex);
+  const judgeGuardMatch = judgeProse.match(sizeGuardBulletRegex);
+
+  assert.ok(harnessGuardMatch, 'harness-health-analysis.md must contain size-outlier guard bullet');
+  assert.ok(judgeGuardMatch, 'judge-procedure.md must contain size-outlier guard bullet');
+
+  assert.strictEqual(
+    harnessGuardMatch[0],
+    judgeGuardMatch[0],
+    'Size-outlier guard bullets must be identical between prose files',
   );
 });
 
