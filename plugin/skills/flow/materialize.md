@@ -86,7 +86,7 @@ parked-at-shaping: true            # omitted unless the record was parked when s
 | `grants` | Snapshot for audit; `/wrap-up`'s auto-merge check RE-READS LIVE LABELS before any merge (truth, not projection) |
 | `fingerprint` | Audit snapshot / dedup cross-reference |
 | `blocked-by` | `/flow`'s multi-spec dependency-aware ordering — DAG construction, cycle detection, and Prerequisites check (`multi-spec.md`) |
-| `surface` | `/claude-tweaks:design-wrapper` wrapper Layer-2 detection (via /build Common Step 1.7 and /flow polish phase) |
+| `surface` | `/claude-tweaks:design-wrapper` wrapper Layer-2 detection (via /build Common Step 1.7 and /flow polish phase); `/claude-tweaks:visual-review` Step 0.5's recommendation-mode surface gate, which reads it directly, without the wrapper's Layer 1 |
 | `design-intent` | design wrapper polish-mode intent-driven dispatch |
 | `ui-stack` | `/claude-tweaks:build` Common Step 1.7 (`design-prebuild.md`) forwards it into the implementer subagent's prompt; `/claude-tweaks:design-wrapper` documents the read side in `frontend-detection.md` |
 | `design-seed` | Audit snapshot of the Impeccable direction contract's seed key — a build's direction is unreproducible without it, since Impeccable 4.x is deliberately non-deterministic by dice. No mechanical reader consumes it at build time; `/claude-tweaks:demo` reads the record body's own `Design-seed:` line, not this copy |

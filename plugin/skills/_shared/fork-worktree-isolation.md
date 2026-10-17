@@ -24,6 +24,10 @@ worktree during #2278's own build (2026-09-12) established:
    git toplevel. This is a harness-level filesystem boundary, not a prompt convention:
    nothing the dispatched agent does — malicious, confused, or merely scope-creeping —
    can land a write in the dispatcher's worktree once its own cwd is rooted elsewhere.
+   A 2026-10-16 re-probe (#2677), dispatched from inside a linked worktree, found the new
+   worktree on branch `worktree-agent-{agent-id}` based at the dispatcher's own HEAD (that
+   worktree's branch tip, not the default branch), a commit in it succeeding with no hook
+   denial, and the `Agent` result carrying `worktreePath`/`worktreeBranch` metadata.
 3. A `fork` dispatched with `isolation: "worktree"` and an explicit "ignore all prior
    context, this is a one-shot diagnostic probe" instruction still misidentified its own
    role — it echoed back prose resembling the dispatcher's own unrelated in-progress

@@ -490,3 +490,79 @@ test('CLI: --work-links with an invalid value is a malformed invocation (exit 2)
   assert.equal(code, 2);
   assert.match(err.join(''), /must be "native" or "body-text"/);
 });
+
+test('#2733: --merge-gate adds mergeGate to the envelope; without it the envelope keys are unchanged', () => {
+  const runner = (args) => {
+    if (isIssueView(args, 2670)) return JSON.stringify(issue({ number: 2670, title: 'P', body: specBody(['a.js']) }));
+    if (isIssueView(args, 2682)) return JSON.stringify(issue({ number: 2682, title: 'D', body: `Blocked by #2670\n\n## Deliverables\n- [ ] confirm \`#2670\` is actually merged\n\n${specBody(['b.js'])}` }));
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const gated = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['2670', '2682', '--merge-gate'], gated.deps), 0);
+  const env = JSON.parse(gated.out.join(''));
+  assert.deepEqual(env.mergeGate.deferred, [2682]);
+  assert.deepEqual(env.mergeGate.kept, [2670]);
+  assert.equal(env.mergeGate.rerun, '/claude-tweaks:flow #2682');
+
+  const plain = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['2670', '2682'], plain.deps), 0);
+  assert.deepEqual(Object.keys(JSON.parse(plain.out.join(''))).sort(), ['overlapGroups', 'records', 'workLinks']);
+});
+
+// AC2.1
+test('AC2.1: --merge-gate --integration-branch master defers a record whose Deliverables line says "#2670 is merged into master"', () => {
+  const runner = (args) => {
+    if (isIssueView(args, 2670)) return JSON.stringify(issue({ number: 2670, title: 'P', body: specBody(['a.js']) }));
+    if (isIssueView(args, 2682)) return JSON.stringify(issue({ number: 2682, title: 'D', body: `Blocked by #2670\n\n## Deliverables\n- [ ] confirm \`#2670\` is merged into master\n\n${specBody(['b.js'])}` }));
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner, workLinks: 'body-text' });
+  const code = run(['2670', '2682', '--merge-gate', '--integration-branch', 'master'], deps);
+  assert.equal(code, 0);
+  const env = JSON.parse(out.join(''));
+  assert.deepEqual(env.mergeGate.deferred, [2682]);
+  assert.deepEqual(env.mergeGate.kept, [2670]);
+});
+
+test('--integration-branch with a trailing bare flag, or an empty value, exits 2 with no stdout and no gh call', () => {
+  const runner = () => { throw new Error('must not call gh'); };
+
+  const trailing = cliDeps({ runner });
+  const trailingCode = run(['2670', '--merge-gate', '--integration-branch'], trailing.deps);
+  assert.equal(trailingCode, 2);
+  assert.equal(trailing.out.length, 0);
+  assert.match(trailing.err.join(''), /missing value for --integration-branch/);
+
+  const empty = cliDeps({ runner });
+  const emptyCode = run(['2670', '--merge-gate', '--integration-branch', ''], empty.deps);
+  assert.equal(emptyCode, 2);
+  assert.equal(empty.out.length, 0);
+  assert.match(empty.err.join(''), /missing value for --integration-branch/);
+});
+
+test('AC2.1, AC4.1: --waves adds a waves plan; without it the envelope has no waves key (#2677)', () => {
+  const runner = (args) => {
+    if (isIssueView(args, 801)) return JSON.stringify(issue({ number: 801, title: 'A', body: specBody(['a.js']) }));
+    if (isIssueView(args, 802)) return JSON.stringify(issue({ number: 802, title: 'B', body: specBody(['b.js']) }));
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const withFlag = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['801', '802', '--waves'], withFlag.deps), 0);
+  assert.deepEqual(JSON.parse(withFlag.out.join('')).waves, { waves: [[801, 802]], parallel: true });
+
+  const without = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['801', '802'], without.deps), 0);
+  assert.equal('waves' in JSON.parse(without.out.join('')), false);
+});
+
+test('--waves on a dependency cycle exits 2 naming the cycle, no stdout (#2677)', () => {
+  const runner = (args) => {
+    if (isIssueView(args, 811)) return JSON.stringify(issue({ number: 811, title: 'A', body: `Blocked by #812\n\n${specBody(['a.js'])}` }));
+    if (isIssueView(args, 812)) return JSON.stringify(issue({ number: 812, title: 'B', body: `Blocked by #811\n\n${specBody(['b.js'])}` }));
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out, err } = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['811', '812', '--waves'], deps), 2);
+  assert.equal(out.length, 0);
+  assert.match(err.join(''), /dependency cycle through #81[12]/);
+});

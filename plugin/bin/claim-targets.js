@@ -13,7 +13,7 @@
 const os = require('os');
 const { execFileSync } = require('child_process');
 const claimStore = require('./lib/issues/claim-store');
-const { run } = require('./lib/claim-targets/claim-targets');
+const { run, defaultAppendClaimLog } = require('./lib/claim-targets/claim-targets');
 const { defaultRunner: gitDefaultRunner } = require('./lib/issues/claims-git-cas');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 
@@ -33,6 +33,7 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
   hostname: os.hostname(),
   sessionId: process.env.CLAUDE_CODE_SESSION_ID || '',
+  appendClaimLog: defaultAppendClaimLog,
 };
 
 // `realDeps` is exported so the CLI's own wiring is testable — specifically

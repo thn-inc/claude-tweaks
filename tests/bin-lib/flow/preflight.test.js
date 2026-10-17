@@ -322,6 +322,10 @@ test('defaultDeps().resolvePolicy applies computeDerivedDefaults, so merge-verif
 // classifier, so a freshly minted dir is never byte-empty by the time it is read.
 const NO_SPEC = { git: (args) => (args[0] === 'ls-tree' ? '' : 'feat-branch\n') };
 const CLAIM_ONLY = '## /flow\n- AUTO 18:42:06 — Step 2.8: claimed #7 (bin/claim-targets.js, transport: git). Reversibility: high.\n';
+// #3242: a compliant dispatched call 1 logs both the Step 2.8 claim above and
+// a Step 1.8 ledger line before Step 3 runs.
+const LEDGER_LINE = '- AUTO 18:42:10 — Step 1.8: flow: created open-items ledger docs/plans/2026-09-06-record-7-ledger.md. Reversibility: n/a.\n';
+const CLAIM_AND_LEDGER = `${CLAIM_ONLY}${LEDGER_LINE}`;
 
 function adoptionFor(decisions, extra = {}) {
   const fx = mainRoot();
@@ -389,4 +393,73 @@ test('claim-log-only decisions.md beside a non-empty events.jsonl is still case 
   const withConfig = adoptionFor(CLAIM_ONLY, { 'config.yml': 'mode: auto\n' }).a;
   assert.strictEqual(withConfig.case, 1);
   assert.strictEqual(withConfig.hasOtherContent, false);
+});
+
+test('AC 2: dispatched call 1 (dispatched: true, no pr, no config) with Step 1.8 ledger line → case 2', () => {
+  const fx = mainRoot();
+  fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), CLAIM_AND_LEDGER);
+  fs.writeFileSync(path.join(fx.runDir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', status: 'active', dispatched: true }));
+  const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, NO_SPEC) });
+  assert.strictEqual(a.case, 2, `expected case 2, got case ${a.case}`);
+  assert.deepStrictEqual(a.backfills, []);
+  assert.strictEqual(a.note, ADOPTION_NOTES[2].replace('{path}', fs.realpathSync(fx.runDir)));
+});
+
+test('AC 3: dispatched call 1 with pr recorded → case 3 (repair path unchanged)', () => {
+  const fx = mainRoot();
+  fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), CLAIM_AND_LEDGER);
+  fs.writeFileSync(path.join(fx.runDir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', status: 'active', dispatched: true, pr: { number: 1, url: 'u', branch: 'b' } }));
+  const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, NO_SPEC) });
+  assert.strictEqual(a.case, 3, `expected case 3 with pr, got case ${a.case}`);
+  // When pr is present, 'PR-early lifecycle' is NOT added to backfills; only 'materialize commit' is
+  assert.deepStrictEqual(a.backfills, ['materialize commit']);
+});
+
+test('AC 4: same fixture without dispatched: true → case 3 with same backfills as today', () => {
+  const fx = mainRoot();
+  fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), CLAIM_AND_LEDGER);
+  fs.writeFileSync(path.join(fx.runDir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', status: 'active' }));
+  const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, NO_SPEC) });
+  assert.strictEqual(a.case, 3, `expected case 3 without dispatched flag, got case ${a.case}`);
+  // When worktree is present but no pr, we get PR-early lifecycle + materialize commit
+  assert.deepStrictEqual(a.backfills, ['PR-early lifecycle', 'materialize commit']);
+});
+
+test('AC 5: unreadable or malformed run-state.json → case 3; a throwing readRunState propagates', () => {
+  // Test 1: malformed JSON — defaultDeps.readRunState catches and returns null
+  const fx1 = mainRoot();
+  fs.writeFileSync(path.join(fx1.runDir, 'decisions.md'), CLAIM_AND_LEDGER);
+  fs.writeFileSync(path.join(fx1.runDir, 'run-state.json'), '{not json');
+  const a1 = computeAdoption({ runDir: fx1.runDir, mainRoot: fx1.root, cwd: fx1.root, deps: deps(fx1, NO_SPEC) });
+  assert.strictEqual(a1.case, 3, 'malformed JSON (caught by readRunState) should fall through to case 3');
+  assert.deepStrictEqual(a1.backfills, ['worktree registration', 'PR-early lifecycle', 'materialize commit']);
+
+  // Test 2: readRunState throws — propagates to caller (gatherPreflight's wrapProbe catches it)
+  const fx2 = mainRoot();
+  fs.writeFileSync(path.join(fx2.runDir, 'decisions.md'), CLAIM_AND_LEDGER);
+  fs.writeFileSync(path.join(fx2.runDir, 'run-state.json'), '{}');
+  const d2 = deps(fx2, {
+    ...NO_SPEC,
+    readRunState: () => { throw new Error('read failed'); },
+  });
+  assert.throws(
+    () => computeAdoption({ runDir: fx2.runDir, mainRoot: fx2.root, cwd: fx2.root, deps: d2 }),
+    /read failed/,
+    'throwing readRunState should propagate uncaught from computeAdoption',
+  );
+});
+
+test('falsy-but-not-true dispatched value → case 3 (strict === true check)', () => {
+  const fx = mainRoot();
+  fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), CLAIM_AND_LEDGER);
+
+  // Test with string "true"
+  fs.writeFileSync(path.join(fx.runDir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', status: 'active', dispatched: 'true' }));
+  const a1 = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, NO_SPEC) });
+  assert.strictEqual(a1.case, 3, 'string "true" should not match case 2');
+
+  // Test with number 1
+  fs.writeFileSync(path.join(fx.runDir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', status: 'active', dispatched: 1 }));
+  const a2 = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: deps(fx, NO_SPEC) });
+  assert.strictEqual(a2.case, 3, 'number 1 should not match case 2');
 });

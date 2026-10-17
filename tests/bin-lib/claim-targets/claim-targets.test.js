@@ -7,9 +7,14 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const {
-  run, BOT_IN_PROGRESS, ABORT_REASON, USAGE,
+  run, BOT_IN_PROGRESS, ABORT_REASON, USAGE, defaultAppendClaimLog,
 } = require('../../../plugin/bin/lib/claim-targets/claim-targets');
+const { hasClaimLogFor, classifyDecisions } = require('../../../plugin/bin/lib/log-decision/claim-log');
 // #787 residual finding (progress.md's parked "expectedContent has zero test
 // coverage" item): claim-targets.js requires this same module-level object,
 // so spying on it here observes the real call — pins that `run()`'s claim
@@ -1301,4 +1306,152 @@ test('--help short-circuits before any gh call, exit 0', () => {
 
   assert.equal(code, 0);
   assert.ok(io.out[0].includes('usage:'));
+});
+
+// ---- #2775: --run writes the Step 2.8 claim-log line itself -------------
+
+test('--run: appendClaimLog is called once per claimed issue with its transport, and the envelope carries claimLogFailures: []', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 720: [readAbsent, confirmRead()], 721: [readAbsent, confirmRead()] },
+    writes: { 720: [writeOk], 721: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  const calls = [];
+  deps.appendClaimLog = (args) => { calls.push(args); };
+
+  const code = run(['--run-id', 'r1', '--targets', '720,721', '--run', '/some/run/r1'], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimLogFailures, []);
+  assert.deepEqual(calls, [
+    { runDir: '/some/run/r1', issue: 720, transport: 'contents-api' },
+    { runDir: '/some/run/r1', issue: 721, transport: 'contents-api' },
+  ]);
+});
+
+// #2775 controller ruling: defaultAppendClaimLog must gate on resolveTarget's
+// anchoring check ([IL-127]) using PRODUCTION defaults for cwd/mainRoot —
+// i.e. the real process.cwd() at call time, not an injected override. Proving
+// the "ok" branch therefore needs a real child process whose own cwd sits
+// inside a (fake, `.git`-is-a-directory) checkout root — the same technique
+// tests/bin-lib/log-decision/append.test.js's concurrent-writers test uses
+// (`spawn`/`execFileSync` with an explicit `cwd`, never `process.chdir()` on
+// the shared test-runner process, and never a write into the real repo).
+test('defaultAppendClaimLog round-trip: an anchored run dir (real child-process cwd inside a fake checkout) ends up claim-log-only, hasClaimLogFor true for both issues', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-anchored-'));
+  fs.mkdirSync(path.join(root, '.git')); // a real checkout root: mainCheckoutRoot(cwd) anchors here
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-2775');
+  fs.mkdirSync(runDir, { recursive: true });
+
+  const modulePath = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'claim-targets', 'claim-targets');
+  const script = [
+    `const { defaultAppendClaimLog } = require(${JSON.stringify(modulePath)});`,
+    `defaultAppendClaimLog({ runDir: ${JSON.stringify(runDir)}, issue: 2775, transport: 'git' });`,
+    `defaultAppendClaimLog({ runDir: ${JSON.stringify(runDir)}, issue: 2733, transport: 'contents-api' });`,
+  ].join('\n');
+  execFileSync(process.execPath, ['-e', script], { cwd: root, encoding: 'utf8' });
+
+  const decisionsText = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.equal(hasClaimLogFor(decisionsText, 2775), true);
+  assert.equal(hasClaimLogFor(decisionsText, 2733), true);
+  assert.equal(classifyDecisions(decisionsText), 'claim-log-only', '/flow Step 3 must still treat this dir as a fresh mint');
+});
+
+// #2775 controller ruling: an unanchored run dir (no `.git` anywhere above it
+// — a worktree-local shadow copy, or just a bare scratch dir) must be refused
+// rather than silently written. Needs no cwd trickery: `resolveTarget`'s
+// `findGitRoot` walk returns null before ever consulting cwd/mainRoot when
+// there is no `.git` anywhere above `runDir`, so this holds under ANY cwd —
+// os.tmpdir()'s own ancestry has no `.git` to find.
+test('defaultAppendClaimLog on an unanchored run dir (no .git anywhere above it): throws, naming the not-anchored reason', () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-unanchored-'));
+
+  assert.throws(
+    () => defaultAppendClaimLog({ runDir, issue: 2775, transport: 'git' }),
+    /not-anchored/,
+  );
+});
+
+// The same unanchored-dir failure, exercised through run()'s --run plumbing
+// with the REAL defaultAppendClaimLog (not a fake): the claim must still
+// stand, and claimLogFailures must name the issue and carry the reason.
+test('--run pointed at an unanchored dir, with the real defaultAppendClaimLog: claim stands, claimLogFailures names the issue and the not-anchored reason', () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-unanchored-run-'));
+  const runId = path.basename(runDir);
+  const { ghApi } = makeGhApi({
+    reads: { 752: [readAbsent, confirmRead(runId)] },
+    writes: { 752: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.appendClaimLog = defaultAppendClaimLog;
+
+  const code = run(['--run-id', runId, '--targets', '752', '--run', runDir], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, [752]);
+  assert.equal(body.claimLogFailures.length, 1);
+  assert.equal(body.claimLogFailures[0].issue, 752);
+  assert.match(body.claimLogFailures[0].error, /not-anchored/);
+});
+
+test('--run whose basename differs from --run-id: exit 2, no gh call', () => {
+  const gh = () => { throw new Error('must not be called'); };
+  const ghApi = () => { throw new Error('must not be called'); };
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720', '--run', '/some/run/other-id'], deps);
+
+  assert.equal(code, 2);
+  assert.equal(io.out.length, 0);
+});
+
+test('--run with no value (trailing bare flag, or empty): exit 2 with usage, no gh call', () => {
+  const gh = () => { throw new Error('must not be called'); };
+  const ghApi = () => { throw new Error('must not be called'); };
+  for (const argv of [
+    ['--run-id', 'r1', '--targets', '720', '--run'],
+    ['--run-id', 'r1', '--targets', '720', '--run', ''],
+  ]) {
+    const { deps, io } = baseDeps({ ghApi, gh });
+    assert.equal(run(argv, deps), 2);
+    assert.equal(io.out.length, 0);
+  }
+});
+
+test('--run: an appendClaimLog that throws never un-claims — claim stands, claimLogFailures names the issue, exit 0', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 750: [readAbsent, confirmRead()] },
+    writes: { 750: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.appendClaimLog = () => { throw new Error('disk full'); };
+
+  const code = run(['--run-id', 'r1', '--targets', '750', '--run', '/some/run/r1'], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, [750]);
+  assert.deepEqual(body.claimLogFailures, [{ issue: 750, error: 'disk full' }]);
+  assert.match(io.err.join(''), /claim-log write failed for #750/);
+});
+
+test('without --run: the envelope carries no claimLogFailures key (existing behaviour unchanged)', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 751: [readAbsent, confirmRead()] },
+    writes: { 751: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '751'], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, [751]);
+  assert.ok(!('claimLogFailures' in body), 'claimLogFailures must be absent, not merely empty, when --run was never passed');
 });
