@@ -14,7 +14,7 @@
 // bin/lib/release/subject.js's composeSubject() output. Skill prose reaches
 // the composer only through this CLI — the pure module has no shell surface.
 //
-// Usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--shell] [--help]
+// Usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--shell] [--help]
 // Numbers may be comma-joined and/or space-separated; the subject record is
 // the lowest number, and the body carries one `Fixes #n` line per number.
 // Output: JSON {"title","body"} by default; `--shell` prints two POSIX sh
@@ -25,9 +25,10 @@
 // malformed invocation OR a record that cannot be composed (no resolvable
 // Type, `breaking` label with no ## Breaking Change section — the composer's
 // own usage error, message on stderr); 2 `gh` absent or owner/repo
-// unresolvable (no --repo and no readable origin remote); 3 a `gh issue view`
-// call itself failed. Every side effect goes through deps so tests never
-// touch gh or git (gh-api-module-pattern's CLI wrapper contract).
+// unresolvable (no --repo and no readable origin remote); 3 an external read
+// failed — a `gh issue view` call, or the `git diff --name-only` behind --range.
+// Every side effect goes through deps so tests never touch gh or git
+// (gh-api-module-pattern's CLI wrapper contract).
 //
 // Decision (#2319, review minor from #2251): exit 1 stays overloaded —
 // malformed invocation and an uncomposable record share one code. A fourth
@@ -50,9 +51,11 @@ const {
 const {
   parseRepo, ghAvailable, remoteUrl, repoSlug,
 } = require('./repo-resolve');
-const { GH_TIMEOUT_MS } = require('./shared-primitives');
+const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./shared-primitives');
+const { readCommitScope, readListKey } = require('./policy');
+const { parseScopePaths, resolveCommitScope, CommitScopeError } = require('./commit-scope');
 
-const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--shell] [--help]\n';
+const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--shell] [--help]\n';
 // Decision (#2319): kept at the single-call convention, not widened. Each
 // `gh issue view` call below fetches exactly one record — unlike
 // fetch-sub-issues.js's 30000ms bound, which covers a single batched
@@ -76,15 +79,15 @@ function errMessage(err) {
 }
 
 function parseArgs(argv) {
-  const opts = { numbers: [], repo: null, tag: null, scope: null, shell: false, help: false };
+  const opts = { numbers: [], repo: null, tag: null, scope: null, range: null, shell: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { opts.help = true; return opts; }
     if (a === '--shell') { opts.shell = true; continue; }
-    if (a === '--repo' || a === '--tag' || a === '--scope') {
+    if (a === '--repo' || a === '--tag' || a === '--scope' || a === '--range') {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) return { error: `missing value for ${a}` };
-      if (a === '--repo') opts.repo = v; else if (a === '--tag') opts.tag = v; else opts.scope = v;
+      if (a === '--repo') opts.repo = v; else if (a === '--tag') opts.tag = v; else if (a === '--range') opts.range = v; else opts.scope = v;
       i++;
       continue;
     }
@@ -210,6 +213,9 @@ const realDeps = {
   // err.message (the fatal paths) still carry the text.
   runner: (args) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true }),
   fetchIssueType: fetchIssueTypeGraphQL,
+  readCommitScope: () => readCommitScope(process.cwd()),
+  readCommitScopePaths: () => readListKey(process.cwd(), 'commit-scope-paths'),
+  gitRunner: (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true }),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -284,13 +290,42 @@ function run(argv, deps = realDeps) {
   const migrationNote = breakingRecords.map((r) => extractSection(r.body, 'Breaking Change')).filter(Boolean).join('\n\n');
   const releaseNote = extractSection(subjectRecord.body, 'Release Note');
 
+  let scope = opts.scope;
+  if (scope === null) {
+    const constant = deps.readCommitScope();
+    let pairs;
+    try { pairs = parseScopePaths(deps.readCommitScopePaths()); } catch (err) {
+      if (!(err instanceof CommitScopeError)) throw err;
+      deps.stderr(`compose-subject.js: ${errMessage(err)}\n`);
+      return 1;
+    }
+    let changedPaths = [];
+    if (pairs.length > 0) {
+      if (!opts.range) {
+        deps.stderr('compose-subject.js: commit-scope-paths is set but no --range was given — pass --range {base}...{head}\n');
+        return 1;
+      }
+      try {
+        changedPaths = deps.gitRunner(['diff', '--name-only', opts.range]).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      } catch (err) {
+        deps.stderr(`compose-subject.js: git diff --name-only ${opts.range} failed: ${errMessage(err)}\n`);
+        return 3;
+      }
+    }
+    const resolved = resolveCommitScope({ explicit: null, constant, pairs, changedPaths });
+    scope = resolved.scope;
+    if (resolved.note) {
+      deps.stderr(`compose-subject.js: changed paths span scopes ${resolved.note.join(', ')} — ${scope === null ? 'subject left unscoped' : `falling back to commit-scope "${scope}"`}\n`);
+    }
+  }
+
   let composed;
   try {
     composed = composeSubject({
       type: aggregateType(records),
       title: subjectRecord.title,
       number: subjectRecord.number,
-      scope: opts.scope,
+      scope,
       breaking: breakingRecords.length > 0,
       summary: firstSentence(extractSection(subjectRecord.body, 'Overview') || extractSection(subjectRecord.body, 'Current State')),
       migrationNote,
