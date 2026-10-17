@@ -174,8 +174,9 @@ test('AC3.1: assertCaptureBeforeTeardown goes red when the capture is removed or
   const j = live.indexOf('\n\n', i);
   const para = live.slice(i, j);
   assert.throws(() => assertCaptureBeforeTeardown(live.replace(para, '')), /no header capture paragraph/);
-  const moved = live.replace(para + '\n\n', '').replace('7. **Branch + remote-ref cleanup', para + '\n\n7. **Branch + remote-ref cleanup');
-  assert.notStrictEqual(moved, live.replace(para + '\n\n', ''), 'step-7 anchor drifted — the moved control would degrade to the removed control');
+  const removed = live.replace(para + '\n\n', '');
+  const moved = removed.replace('7. **Branch + remote-ref cleanup', para + '\n\n7. **Branch + remote-ref cleanup');
+  assert.notStrictEqual(moved, removed, 'step-7 anchor drifted — the moved control would degrade to the removed control');
   assert.throws(() => assertCaptureBeforeTeardown(moved), /capture must precede/);
 });
 
