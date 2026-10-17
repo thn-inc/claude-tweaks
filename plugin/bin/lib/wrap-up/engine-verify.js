@@ -655,6 +655,23 @@ function resolvePrNumber(runDir) {
   return state && state.pr && state.pr.number ? state.pr.number : null;
 }
 
+// #3358: a brief/pointer marker only counts when its comment's author is an
+// owner, member, or collaborator (`comment-trust.js`) -- anyone who can
+// comment could otherwise plant a `### Confirmed` brief and satisfy the
+// check. Scans every comment the marker test matches: trusted matches count,
+// untrusted ones take the "no such comment" path and come back as skip notes
+// the row names, so the operator sees what was passed over.
+function scanMarkerComments(comments, hasMarker) {
+  let trusted = false;
+  const ignored = [];
+  for (const c of comments) {
+    if (!c || !hasMarker(c)) continue;
+    if (isTrustedComment(c)) trusted = true;
+    else ignored.push(untrustedSkipNote(c));
+  }
+  return { trusted, ignored };
+}
+
 // ---- acceptance labeling ---------------------------------------------------
 //
 // Reproduces execution-and-verification.md's existing per-backend,
@@ -677,23 +694,6 @@ function resolvePrNumber(runDir) {
 // `github-issues` path. The Oversight-floor gate's exemption (a non-parent
 // record that doesn't clear the floor legitimately carries no
 // `demo:pending`) IS reproduced here -- see `oversightExemptSet` above.
-// #3358: a brief/pointer marker only counts when its comment's author is an
-// owner, member, or collaborator (`comment-trust.js`) -- anyone who can
-// comment could otherwise plant a `### Confirmed` brief and satisfy the
-// check. Scans every comment the marker test matches: trusted matches count,
-// untrusted ones take the "no such comment" path and come back as skip notes
-// the row names, so the operator sees what was passed over.
-function scanMarkerComments(comments, hasMarker) {
-  let trusted = false;
-  const ignored = [];
-  for (const c of comments) {
-    if (!c || !hasMarker(c)) continue;
-    if (isTrustedComment(c)) trusted = true;
-    else ignored.push(untrustedSkipNote(c));
-  }
-  return { trusted, ignored };
-}
-
 registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
   if (!ghAvailable(deps, cwd)) return { result: 'unknown', detail: 'gh absent' };
   const issues = resolvedIssueNumbers(runDir);
@@ -928,7 +928,9 @@ function renderVerifyTable(rows) {
     const resultCell = (row.result === 'skip' || row.result === 'unknown') && row.detail
       ? `${row.result} (${sanitizeCell(row.detail)})`
       : row.result;
-    const detailCell = row.result === 'fail' ? sanitizeCell(row.detail) : '';
+    // A pass row's detail is empty except for #3358's `ignored: ...` skip notes,
+    // which must reach the human; skip/unknown fold theirs into the Result cell.
+    const detailCell = row.result === 'fail' || (row.result === 'pass' && row.detail) ? sanitizeCell(row.detail) : '';
     lines.push(`| ${row.check} | ${resultCell} | ${detailCell} |`);
   }
   return lines.join('\n');

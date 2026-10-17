@@ -86,6 +86,20 @@ test('renderVerifyTable renders pass/fail bare and skip/unknown with folded deta
   assert.match(md, /\| acceptance-labeling \| unknown \(gh absent\) \|/);
 });
 
+// #3358: a pass row can carry `ignored: skipped marker comment ...` notes --
+// they must reach the rendered table, or the skip notice never reaches a human.
+test('renderVerifyTable shows a pass row\'s non-empty detail in the Detail cell and leaves an empty one bare', () => {
+  const note = 'ignored: skipped marker comment https://x/c1 by eve (NONE) — not an owner, member, or collaborator';
+  const md = renderVerifyTable([
+    { check: 'acceptance-labeling', result: 'pass', detail: note },
+    { check: 'plans-ledger', result: 'pass', detail: '' },
+  ]);
+  const lines = md.split('\n');
+  assert.strictEqual(lines.length, 4);
+  assert.strictEqual(lines[2], `| acceptance-labeling | pass | ${note} |`);
+  assert.strictEqual(lines[3], '| plans-ledger | pass |  |');
+});
+
 // A multi-line/pipe-containing detail (e.g. a raw multi-line git fatal
 // error) is inserted verbatim into the wrap-up report per the spec -- an
 // un-sanitized cell would corrupt the markdown table (record #900 fix
