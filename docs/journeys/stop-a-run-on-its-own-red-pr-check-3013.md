@@ -34,9 +34,10 @@ files:
 - **URL:** `plugin/skills/_shared/pr-check-gate.md` `pending`/`stale` and fail-open bullets
 - **Action:** `pending`/`stale` → the gate passes with an `AUTO` decision line naming the pending checks (or the unpushed HEAD); `no-pr`, `gh-absent`, `no-ci`, `read-failed` → the gate passes on the local result with one `SKIP` decision line naming the condition.
 - **Should feel:** Quiet — nothing changes for a `local-merge` run except one audit line.
-- **Should understand:** `read-failed` means the gate could not tell, never that CI is green; the merge gate's own read stays the final authority before anything merges.
-- **Red flags:** A `local-merge` run stopping on this gate; a `read-failed` result logged as a pass with no `SKIP` line.
+- **Should understand:** `read-failed` means the gate could not tell, never that CI is green; the merge gate's own read stays the final authority before anything merges. A rollup that is all green while a head-sha workflow run is still in progress — a sibling workflow not yet registered in the rollup — reads `pending`, not `green` (#3405).
+- **Red flags:** A `local-merge` run stopping on this gate; a `read-failed` result logged as a pass with no `SKIP` line; `green` reported while `gh run list --commit {headRefOid}` still lists a run that has not completed.
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #3013 (2026-10-16): `/test`'s pipeline gate and `/review` Step 1.5 read the run PR's checks at HEAD through `bin/pr-checks.js`; red fails the gate.
+- Updated during `/claude-tweaks:build` of record #3405 (2026-10-17): the reader also lists the head sha's workflow runs, so a partial rollup reads `pending`; a stale head skips that read.
 - Related: `docs/journeys/recover-a-ci-parked-run.md` (the merge gate's own red path, after review)
