@@ -33,7 +33,7 @@ files:
 - **URL:** the target file's block in the same report, for example `plugin/skills/flow/SKILL.md`.
 - **Action:** Look for `size-outlier: {bytes} B, above the corpus threshold of {threshold} B`.
 - **Should feel:** Specific. One line gives the file's bytes and the threshold it crossed.
-- **Should understand:** It fires only when the file's bytes are strictly above the threshold; a file exactly at the threshold is not an outlier. In a corpus of 20 or more files, the p95 tier flags roughly the largest 5% by design: on this repo's 441 skill files that is 22 files from 40 KB to 46 KB. This line is evidence the judge weighs, never a finding by itself. The ceiling signal is suppressed at every call site since #3310; #3311 removes it.
+- **Should understand:** It fires only when the file's bytes are strictly above the threshold; a file exactly at the threshold is not an outlier. In a corpus of 20 or more files, the threshold is the p95 size or three times the median, whichever is larger, so a uniform corpus flags nothing: on this repo's 441 skill files p95 wins and 22 files from 40 KB to 46 KB are flagged. This line is evidence the judge weighs, never a finding by itself. The ceiling signal is suppressed at every call site since #3310; #3311 removes it.
 - **Red flags:**
   - A `size-outlier:` line under a `NO BASELINE` baseline.
   - An outlier line whose bytes are at or below the stated threshold.
@@ -51,7 +51,5 @@ files:
 
 ## Origin
 - Created during build of #3308 (corpus-relative size-outlier signal, the expand step of parent #3305's strangler-fig rollout).
-- Related specs: #3310 (cuts every size consumer over to the rail), #3311 (removes `overCeiling`, `headroom`, and the `ceiling` option). Open question for #3310: the p95 tier also flags files in a corpus with no real outlier (ledger row 29).
-
-## Notes
 - Threshold floored at 3 × median during build of #3310 (#3305 F1): a uniform corpus flags nothing; live corpus unchanged (22 flagged).
+- Related specs: #3310 (cuts every size consumer over to the rail), #3311 (removes `overCeiling`, `headroom`, and the `ceiling` option).

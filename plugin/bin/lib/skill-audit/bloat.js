@@ -49,11 +49,14 @@ const MIN_ROW_SAMPLE = 20;
 //
 // A skill file much larger than its siblings — real when it holds several
 // independent procedures. Legitimate form: an entry point that is legitimately
-// the largest because it carries a whole lifecycle. Uses two tiers: nearest-rank
-// p95 if ≥20 files, otherwise 3× median if ≥5 files, otherwise no baseline.
+// the largest because it carries a whole lifecycle. Uses two tiers: ≥20 files
+// takes nearest-rank p95, floored at SIZE_MEDIAN_MULTIPLE × median (#3305 F1);
+// 5–19 files takes SIZE_MEDIAN_MULTIPLE × median; fewer has no baseline. The
+// floor means a uniform corpus flags nothing and the 19→20-file tier edge
+// cannot flip a verdict.
 //
-// Measured on this repo's `plugin/skills/*/*.md` corpus: 441 files, p95 threshold
-// 39,519 B, 22 files flagged. By design, the top 5% by size are outliers.
+// Measured on this repo's `plugin/skills/*/*.md` corpus: 442 files, threshold
+// 39,519 B (p95; the floor is 25,605 B), 22 files flagged.
 const SIZE_OUTLIER_PERCENTILE = 0.95;
 const SIZE_PERCENTILE_MIN_SAMPLE = 20;
 const SIZE_MEDIAN_MULTIPLE = 3;
