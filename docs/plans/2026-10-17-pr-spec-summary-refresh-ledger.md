@@ -2,3 +2,11 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | SDD Task 1 minor: `PREMISE_REVERSED_RE` hard-coded `premise reversed:` instead of building on `PREMISE_REVERSED_MARKER` | fixed | Final-review fix wave M7 builds the regex from the escaped constant, source byte-identical — 4acb8a87d |
+| 2 | build | SDD Task 1 minor: the parser strips only a trailing `.` before `Reversibility:`, so a decision text ending in `!` or `?` keeps it in the replacement | accepted | `formatEntry` adds a period only when the text lacks a terminal `.`, `!` or `?` — the kept punctuation is the author's own text (whole-branch review concurred) |
+| 3 | build | SDD Task 1 minor: on a CRLF body the inserted Spec-summary lines are LF-only (mixed line endings) | accepted | Below the materiality floor — GitHub renders mixed endings identically and the span is still located (CRLF test); no behavior impact |
+| 4 | build | SDD Task 2 minor: `revise-pr-summary.js` parseArgs lets a repeated flag silently override the earlier value | accepted | Last-wins matches `bin/log-decision.js` and `compose-pr-body.js` parseArgs — the repo convention (whole-branch review concurred) |
+| 5 | build | SDD Task 3 minor: `pr-checklist-refresh.md` grew 2,454 B, ~20% over the plan's ~2 KB guideline for the `merge` compose bundle | fixed | Final-review fix wave tightened the paragraph (net -47 B); merge bundle stays under the 51,200 B composed ceiling, context-cost suite green — 039948c66 |
+| 6 | build | Fix-wave residual: `pr-body.js` comment says a stray space "after the prefix or a separator" is stripped, but only the entry list's leading whitespace is trimmed | open | Wording-only; route at wrap-up fix-exhaust |
+| 7 | build | Fix-wave residual: the Refresh paragraph's CLI invocation is split across two inline code spans by the run-dir parenthetical, so it is no longer one copy-pasteable command | open | Wording-only; route at wrap-up fix-exhaust |
+| 8 | build | Fix-wave residual: the Refresh paragraph's warning names "the `reason`", but a non-zero exit (e.g. exit 2 for a non-directory `--run-dir`) prints no JSON — only stderr | open | Wording-only; route at wrap-up fix-exhaust |
