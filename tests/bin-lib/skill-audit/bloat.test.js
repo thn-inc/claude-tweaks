@@ -237,16 +237,6 @@ test('degenerate detection never pairs rows across two different tables', () => 
 
 // ── Composition ─────────────────────────────────────────────────────────────
 
-test('auditText reports the ceiling breach and its headroom', () => {
-  const clean = auditText(skillWith([SHORT_ROW]), { bytes: 1000, rowMedian: 150 });
-  assert.strictEqual(clean.overCeiling, false);
-  assert.ok(clean.headroom > 0);
-
-  const over = auditText(skillWith([SHORT_ROW]), { bytes: 1000, rowMedian: 150, ceiling: 500 });
-  assert.strictEqual(over.overCeiling, true);
-  assert.strictEqual(over.headroom, -500);
-});
-
 test('formatBloatReport says NO BASELINE rather than reporting a clean row check', () => {
   const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'bloat-'));
   const file = path.join(dir, 'SKILL.md');
@@ -258,7 +248,7 @@ test('formatBloatReport says NO BASELINE rather than reporting a clean row check
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('bloatReport reports only the target, dedupes it out of its own corpus, and honours the ceiling opt', () => {
+test('bloatReport reports only the target and dedupes it out of its own corpus', () => {
   const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'bloat-'));
   const long = `| A pattern | ${'x'.repeat(400)} |`;
   const target = path.join(dir, 'target.md');
@@ -281,10 +271,6 @@ test('bloatReport reports only the target, dedupes it out of its own corpus, and
   // whole scan down with an ENOENT.
   const withDeadGlob = bloatReport(target, [path.join(dir, 'nope', '*', 'SKILL.md'), sibling]);
   assert.ok(withDeadGlob.includes('target.md'));
-
-  const withCeiling = bloatReport(target, [sibling], { ceiling: 10 });
-  assert.match(withCeiling, /over the 10 B soft ceiling/);
-  assert.ok(!bloatReport(target, [sibling], { ceiling: Infinity }).includes('soft ceiling'));
 
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -567,10 +553,9 @@ function proseSignalCount(text) {
 }
 
 test('prose signal list names exactly the signals auditText returns', () => {
-  // overCeiling is suppressed at both call sites with { ceiling: Infinity } (#3310);
-  // #3311 deletes the field itself.
+  // auditText returns four signals plus bytes (#3311 deleted overCeiling/headroom).
   const codeSignals = Object.keys(auditText('', { bytes: 0, rowMedian: null, sizeThreshold: 0 }))
-    .filter((k) => k !== 'bytes' && k !== 'headroom' && k !== 'overCeiling');
+    .filter((k) => k !== 'bytes');
   for (const rel of [['_shared', 'harness-health-analysis.md'], ['harness-health', 'judge-procedure.md']]) {
     const got = proseSignalCount(fs.readFileSync(path.join(REPO, 'plugin', 'skills', ...rel), 'utf8'));
     assert.ok(got, `${rel.join('/')} must contain a signal-list sentence`);
@@ -582,11 +567,12 @@ test('prose signal list names exactly the signals auditText returns', () => {
   assert.notStrictEqual(frozen.items, codeSignals.length);
 });
 
-test('both bloat-scan call sites suppress the ceiling signal, and suppress size outliers only for non-skill targets (#3310)', () => {
+test('both bloat-scan call sites suppress size outliers only for non-skill targets, and carry no ceiling option (#3311)', () => {
   for (const rel of [['_shared', 'harness-health-analysis.md'], ['harness-health', 'judge-procedure.md']]) {
     const text = fs.readFileSync(path.join(REPO, 'plugin', 'skills', ...rel), 'utf8');
     const label = rel.join('/');
-    assert.match(text, /kind === 'skill' \? \{ ceiling: Infinity \} : \{ ceiling: Infinity, sizeOutlier: false \}/, `${label}: bloat call must pick options by kind`);
+    assert.match(text, /kind === 'skill' \? \{\} : \{ sizeOutlier: false \}/, `${label}: bloat call must pick options by kind`);
+    assert.doesNotMatch(text, /ceiling: Infinity/, `${label}: no ceiling option`);
     assert.match(text, /bloatReport\(target, corpus, opts\)/, `${label}: bloat call must pass opts`);
     assert.doesNotMatch(text, /soft ceiling/, `${label}: no soft-ceiling signal`);
     assert.doesNotMatch(text, /\*\*Over the ceiling\.\*\*/, `${label}: guard bullet must be the rail bullet`);
@@ -600,15 +586,20 @@ test('both bloat-scan call sites suppress the ceiling signal, and suppress size 
   assert.match(skill, /`rail:` suite/);
 });
 
-test('a 60,000 B skill target scanned with { ceiling: Infinity } prints no soft-ceiling line (#3310 AC3)', () => {
-  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'bloat-3310-'));
+test('AC4.1: a 60,000 B skill target prints no ceiling line, and per-file objects carry no overCeiling/headroom keys', () => {
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'bloat-3311-'));
   try {
     const target = path.join(dir, 'big.md');
     fs.writeFileSync(target, `# Big\n\n${'word '.repeat(12000)}`);
     const sibling = path.join(dir, 'small.md');
     fs.writeFileSync(sibling, '# Small\n\ntext\n');
     assert.ok(fs.statSync(target).size >= 60000);
-    assert.ok(!bloatReport(target, [sibling], { ceiling: Infinity }).includes('soft ceiling'));
+    assert.doesNotMatch(bloatReport(target, [sibling]), /ceiling/);
+    for (const entry of auditCorpus([target, sibling]).files) {
+      assert.ok(!('overCeiling' in entry), `${entry.file} still carries overCeiling`);
+      assert.ok(!('headroom' in entry), `${entry.file} still carries headroom`);
+    }
+    assert.ok(!('ceiling' in auditCorpus([target, sibling])), 'auditCorpus still returns a ceiling');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -630,18 +621,17 @@ test('auditCorpus runs over the whole live skill corpus and reports a usable bas
   assert.ok(result.rowBaseline.usable, 'the live corpus must clear the sample floor');
 
   const totals = result.files.reduce((acc, f) => ({
-    ceiling: acc.ceiling + (f.overCeiling ? 1 : 0),
     rows: acc.rows + f.longRows.length,
     provenance: acc.provenance + f.provenance.length,
     degenerate: acc.degenerate + f.degenerate.length,
-  }), { ceiling: 0, rows: 0, provenance: 0, degenerate: 0 });
+  }), { rows: 0, provenance: 0, degenerate: 0 });
 
   // Informational, not asserted as a ratchet: these are report-only signals fed
   // to a judging step, so pinning the counts would fail on every legitimate
   // edit. What IS asserted is that the detector stays a signal rather than a
   // wall — past a few percent of the corpus nobody reads the output.
   console.log(`    bloat signals over ${files.length} files: `
-    + `${totals.ceiling} over-ceiling, ${totals.rows} long rows, `
+    + `${totals.rows} long rows, `
     + `${totals.provenance} provenance, ${totals.degenerate} degenerate`);
   console.log(`    row baseline: median ${result.rowBaseline.median} B `
     + `over ${result.rowBaseline.sample} rows, flag above ${result.rowThreshold} B`);

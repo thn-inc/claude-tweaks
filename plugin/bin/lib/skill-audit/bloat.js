@@ -2,7 +2,7 @@
 
 // Mechanical bloat detection for harness documentation.
 //
-// context-cost.js measures how big the payload IS. This module detects the five
+// context-cost.js measures how big the payload IS. This module detects the four
 // signals that make it big, so a regression is a reported finding rather than
 // something a human notices 150 KB later. Every function here is read-only —
 // `/claude-tweaks:harness-health` files issues and never edits a skill, so this
@@ -10,7 +10,7 @@
 //
 // Nothing here is a verdict. Each signal is *evidence* the judging step weighs,
 // in the same sense as the existing evidence pre-checks in
-// `skills/_shared/harness-health-analysis.md`: every one of the five has a
+// `skills/_shared/harness-health-analysis.md`: every one of the four has a
 // legitimate form, spelled out beside its threshold below.
 //
 // Thresholds are calibrated against this repo's corpus immediately after the
@@ -18,7 +18,6 @@
 // they mark regrowth rather than re-flagging what was just fixed.
 
 const fs = require('node:fs');
-const { CEILING_BYTES } = require('./context-cost.js');
 const { extractAntiPatternRows } = require('./anti-patterns.js');
 
 // ── Signal 2: over-long table rows ──────────────────────────────────────────
@@ -322,13 +321,11 @@ function findDegenerateRows(markdown, opts = {}) {
 
 // ── Composition ─────────────────────────────────────────────────────────────
 
-// One file's five signals. `bytes` is passed in (not stat'ed) so this stays a
+// One file's four signals. `bytes` is passed in (not stat'ed) so this stays a
 // pure function over text; auditCorpus supplies it.
-function auditText(text, { bytes, rowMedian, ceiling = CEILING_BYTES, sizeThreshold } = {}) {
+function auditText(text, { bytes, rowMedian, sizeThreshold } = {}) {
   return {
     bytes,
-    overCeiling: typeof bytes === 'number' && bytes > ceiling,
-    headroom: typeof bytes === 'number' ? ceiling - bytes : null,
     longRows: overLongRows(text, rowMedian),
     provenance: findProvenance(text),
     degenerate: findDegenerateRows(text),
@@ -342,7 +339,7 @@ function auditText(text, { bytes, rowMedian, ceiling = CEILING_BYTES, sizeThresh
 // target is normally also a member of its own corpus, and a shell glob that
 // re-lists it must not double-count its rows in the baseline or its findings
 // in the report.
-function auditCorpus(files, { ceiling = CEILING_BYTES, sizeOutlier = true } = {}) {
+function auditCorpus(files, { sizeOutlier = true } = {}) {
   const loaded = [...new Set(files)]
     // Callers pass shell globs, and a glob matching nothing survives as a
     // literal path under bash's default nullglob-off. Skipping a non-file keeps
@@ -357,17 +354,15 @@ function auditCorpus(files, { ceiling = CEILING_BYTES, sizeOutlier = true } = {}
   if (!sizeOutlier) sizeBaseline.suppressed = true;
   const sizeThreshold = sizeOutlier && sizeBaseline.usable ? sizeBaseline.threshold : null;
   return {
-    ceiling,
     rowBaseline: baseline,
     rowThreshold: rowMedian ? rowMedian * ROW_LENGTH_MULTIPLE : null,
     sizeBaseline,
-    files: loaded.map(({ file, text, bytes }) => ({ file, ...auditText(text, { bytes, rowMedian, ceiling, sizeThreshold }) })),
+    files: loaded.map(({ file, text, bytes }) => ({ file, ...auditText(text, { bytes, rowMedian, sizeThreshold }) })),
   };
 }
 
 function hasFindings(entry) {
-  return entry.overCeiling
-    || entry.longRows.length > 0
+  return entry.longRows.length > 0
     || entry.provenance.length > 0
     || entry.degenerate.length > 0
     || entry.sizeOutlier;
@@ -400,12 +395,6 @@ function formatBloatReport(result, { only } = {}) {
     if (only && entry.file !== only) continue;
     if (!hasFindings(entry)) continue;
     out.push(`\n${entry.file}`);
-    if (entry.overCeiling) {
-      // The ceiling actually applied, not the module default — a caller that
-      // suppressed or narrowed it must not read the default back in the report.
-      const applied = result.ceiling ?? CEILING_BYTES;
-      out.push(`  ceiling: ${entry.bytes} B, over the ${applied} B soft ceiling by ${-entry.headroom} B`);
-    }
     for (const row of entry.longRows) {
       out.push(`  long-row L${row.line}: ${row.bytes} B — ${row.pattern.slice(0, 60)}`);
     }
@@ -430,15 +419,11 @@ function formatBloatReport(result, { only } = {}) {
 // `.claude/skills/*.md`). Pass no corpus and the row signal honestly reports
 // that it had no baseline rather than reporting the target clean.
 //
-// The byte ceiling is the SKILL.md/sub-file rule. A rule file or CLAUDE.md
-// already has its own tiered LINE budget in the harness-health procedure, so a
-// byte-ceiling hit on those kinds is the same fact twice — pass
-// `{ ceiling: Infinity }` to suppress it there rather than filing it as a
-// second, differently-worded finding.
-//
-// The size-outlier signal can be suppressed with `{ sizeOutlier: false }`,
-// mirroring the ceiling suppression for rule files and CLAUDE.md that carry
-// their own line budgets.
+// The size-outlier signal can be suppressed with `{ sizeOutlier: false }`: a
+// rule file or CLAUDE.md already has its own tiered LINE budget in the
+// harness-health procedure, so it never joins the skill-size sample. File size
+// against the Read limit is the rail's job (`rail.js`, decision 0024), not a
+// bloat signal.
 function bloatReport(targetPath, corpusPaths = [], opts = {}) {
   return formatBloatReport(
     auditCorpus([targetPath, ...corpusPaths], opts),
