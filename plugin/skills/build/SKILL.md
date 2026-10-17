@@ -281,7 +281,7 @@ If `docs/REGISTRY.md` exists, read `docs-sync.md` in this skill's directory for 
 
 ### Common Step 5: Final Verification
 
-After Common Steps 6 and 6.5, so the verified tree is the final one (journeys and synced docs included), run the shared verification procedure (`skills/test/verification.md`). This runs type checking, linting, and tests using the project's commands from CLAUDE.md.
+After Common Steps 6 and 6.5, so the verified tree includes the journeys and synced docs, run the shared verification procedure (`skills/test/verification.md`). This runs type checking, linting, and tests using the project's commands from CLAUDE.md.
 
 **Note:** `/build` always runs verification (it is the *producer* of `VERIFICATION_PASSED` and of the runner-written pass stamp, #1921). The skip-if-recent rule in `test/verification.md` applies only to `/test` callers — never to this step. On a pass (runner exit 0 — a baseline-adjudicated pass included), read `VERIFICATION_SHA` from `report.json`'s `sha` and pass it forward with `VERIFICATION_PASSED=true`, so `/test`'s skip-if-recent check can detect a tree change between this step and its own invocation instead of trusting a bare boolean.
 

@@ -32,7 +32,7 @@ files:
 - **URL:** `plugin/skills/test/verification.md` skip-if-recent
 - **Action:** `/claude-tweaks:test` compares `VERIFICATION_SHA` to HEAD.
 - **Should feel:** Instant on the types/lint/tests half — the remaining time is QA only.
-- **Should understand:** Steps 5.5 (ledger rows) and 7 (run-state under `.claude-tweaks/pipelines/**`) still run after verification. They write only bookkeeping paths, which `.claude-tweaks/verify-scope.json` classifies as `suites: []`, so they do not force a re-run.
+- **Should understand:** Steps 5.5 (ledger rows) and 7 (run-state under `.claude-tweaks/pipelines/**`) still run after verification. In the common case they write only bookkeeping paths, which `.claude-tweaks/verify-scope.json` classifies as `suites: []`, so they do not force a re-run. The exception is a Step 5.5 Category A operational fix (schema push, env-example entry), which edits tracked files and moves HEAD past `VERIFICATION_SHA`.
 - **Red flags:** `/test` re-running the full suite on a build whose only post-verify commits are ledger/run-state bookkeeping.
 
 ## Origin

@@ -1,15 +1,16 @@
 'use strict';
 // tests/build-verify-after-doc-steps.test.js — pins #3060: build's journeys (Common Step 6) and
 // docs sync (Common Step 6.5) must run before final verification (Common Step 5), so the verified
-// tree is the final one. Common Steps are executed in file order, so the headings' order is the
+// tree includes them. Common Steps are executed in file order, so the headings' order is the
 // execution order.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 
+const { readText } = require('./helpers/read-skill');
+
 const ROOT = path.join(__dirname, '..');
-const BUILD_SKILL = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'build', 'SKILL.md'), 'utf8');
+const BUILD_SKILL = readText(path.join(ROOT, 'plugin', 'skills', 'build', 'SKILL.md'));
 
 function section(heading) {
   const start = BUILD_SKILL.indexOf(heading);
