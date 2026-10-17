@@ -107,7 +107,7 @@ files share that one procedure since the Auto-resolution short-circuit above als
 
 ## On approval (option 1)
 
-1. Apply all staged items in `staged/` for items 5–7 per `_shared/staged-patch.md`: `git apply` while the diff still fits; a stale diff is re-derived from its `Target:`/`Invariant:` preamble, never dropped silently. Write back to the item's own ledger row (`_shared/staged-patch.md`'s Write-back to the ledger) — its Status is never left `open` for a finding this step just applied
+1. Apply all staged items in `staged/` for items 5–7 per `_shared/staged-patch.md`: `git apply` while the diff still fits; a stale diff is re-derived from its `Target:`/`Invariant:` preamble, never dropped silently. Write back to the item's own ledger row (`_shared/staged-patch.md`'s Write-back to the ledger) — its Status is never left `open` for a finding this step just applied — an `sdd-ruling-*` item's write-back follows `review-console-appendix.md`'s `sdd-ruling-*` bullet (ratify → `accepted`; reverse → `deferred`), not the patch table
 2. Apply skill updates and create new skills (items 11–12, from the Skills curation row)
 3. Apply documentation updates (item 13, from the Docs curation row) — including any approved missing-doc scaffolding (D2) and restructural docs-health filings (D1)
 4. Apply journey updates (item 14, from the Journeys curation row) — including any approved missing-journey scaffolding (J2) and self-review fixes (J1)

@@ -67,6 +67,20 @@ procedure — no row is left unrouted:
   `Invariant:` re-derivation below), and a staged `.md` proposal (`polish-suggestion-*`,
   `visual-review-*`, `design-decision-*`, `build-deviation-*`, `simplify-*`, `deepen-*`, `sdd-ruling-*`) applied
   as that step already describes for a non-patch item.
+- `apply` on an `sdd-ruling-*` item — still step 1, but it executes no code change: it
+  writes the item's `Ledger:` row back to `accepted`, Resolution
+  `ratified at Review Console — {the ruling's own "— why" clause}` (under Approve all,
+  through `finish-console`'s existing `ledger` array — `review-console.md` step 11).
+  `reverse` (the Override vocabulary for a ruling row, `review-console-interactive.md`)
+  composes a born-ready record proposal exactly as
+  `_shared/ledger-format.md`'s Phase 3 `Keep` does (`specShapedBody`; Current State = the
+  ruling and the finding it ruled on; Deliverables = the reversal;
+  `Origin: SDD ruling reversed at Review Console`; `Defer-reason: genuinely-larger`),
+  stages it as `staged/ledger-record-sdd-ruling-{N}.md`,
+  routes it through step 7 in the same pass, and
+  writes the row back to `deferred`, Resolution `reversed → #{new record}`. The console
+  cannot change code for a reversal — the fix wave is closed — so filing is the only
+  reverse action.
 - `apply` on a `Q#` item — step 7 (record creation), whose `refused-proposals.md` check still
   runs first; on an `M#` item — step 8 (the `_shared/learning-routing.md` memory write plus its
   `MEMORY.md` index line).

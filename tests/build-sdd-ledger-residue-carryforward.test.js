@@ -82,3 +82,32 @@ test('SKILL.md Common Step 2 still points the subagent strategy at dispatch.md (
     /\*\*subagent\*\* \(default\): read `dispatch\.md` in this skill's directory and follow its full dispatch procedure/
   );
 });
+
+const APPENDIX = read('plugin', 'skills', 'wrap-up', 'review-console-appendix.md');
+const INTERACTIVE = read('plugin', 'skills', 'wrap-up', 'review-console-interactive.md');
+const CONSOLE = read('plugin', 'skills', 'wrap-up', 'review-console.md');
+
+test('AC5.1: the appendix maps apply on an sdd-ruling-* item to ratify (ledger accepted) and reverse to a born-ready reversal record (ledger deferred, reversed →)', () => {
+  assert.ok((APPENDIX.match(/sdd-ruling/g) || []).length >= 2, 'prefix list plus the Resolution-to-step bullet');
+  // Each literal below sits on one physical line of the wrapped bullet (Task 3 Step 3 gives the exact wrap).
+  assert.match(APPENDIX, /- `apply` on an `sdd-ruling-\*` item — still step 1, but it executes no code change: it/);
+  assert.match(APPENDIX, /writes the item's `Ledger:` row back to `accepted`, Resolution/);
+  assert.match(APPENDIX, /`ratified at Review Console — \{the ruling's own "— why" clause\}`/);
+  assert.match(APPENDIX, /through `finish-console`'s existing `ledger` array/);
+  assert.match(APPENDIX, /`reverse`[\s\S]*?composes a born-ready record proposal exactly as/);
+  assert.match(APPENDIX, /`_shared\/ledger-format\.md`'s Phase 3 `Keep` does \(`specShapedBody`/);
+  assert.match(APPENDIX, /`Origin: SDD ruling reversed at Review Console`; `Defer-reason: genuinely-larger`/);
+  assert.match(APPENDIX, /stages it as `staged\/ledger-record-sdd-ruling-\{N\}\.md`,/);
+  assert.match(APPENDIX, /routes it through step 7 in the same pass, and/);
+  assert.match(APPENDIX, /writes the row back to `deferred`, Resolution `reversed → #\{new record\}`/);
+});
+
+test('AC5.2: the interactive console names ratify/reverse as the Override vocabulary for a ruling row and refuses a bare skip', () => {
+  assert.match(INTERACTIVE, /the Override vocabulary for one is `ratify \{#\}` \/ `reverse \{#\}`/);
+  assert.match(INTERACTIVE, /A bare `skip \{#\}` on one is refused with a one-line notice naming the two/);
+  assert.match(INTERACTIVE, /SDD already decided, so the human confirms or files the reversal, never leaves it undecided/);
+});
+
+test('review-console.md step 1 points an sdd-ruling-* write-back at the appendix bullet', () => {
+  assert.match(CONSOLE, /an `sdd-ruling-\*` item's write-back follows `review-console-appendix\.md`'s `sdd-ruling-\*` bullet \(ratify → `accepted`; reverse → `deferred`\), not the patch table/);
+});
