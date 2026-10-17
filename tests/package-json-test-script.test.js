@@ -28,7 +28,8 @@
 // command line (spawnSync ENAMETOOLONG), so `buildTestArgs` passes the root globs there
 // instead. Glob args only work on Node >= 22 (the #407 incident above), so win32 + older Node
 // throws and every other platform keeps the explicit list. `platform`/`nodeMajor` are
-// parameters, pinned with exact arrays below — never a stubbed `process.platform`.
+// parameters, pinned with exact arrays below — never a stubbed `process.platform` in this
+// process. Only the main block's error wiring runs in a child, under a preload that fakes both.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -173,4 +174,19 @@ test('buildTestArgs globs on win32 for any Node >= 22, not only Node 22', () => 
 test('buildTestArgs throws on win32 with Node < 22, naming the running major', () => {
   assert.throws(() => buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 20 }), /Node >= 22/);
   assert.throws(() => buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 20 }), /Node 20/);
+});
+
+test('run-tests.js\'s main block turns a buildTestArgs throw into exit 1 and one stderr line, starting no test run', () => {
+  // The only process-level test of the main block: the preload fakes win32 + Node 20 and
+  // replaces spawnSync with a tripwire, so the error path runs for real and a regression
+  // past it prints a marker instead of launching the suite. Error path only, by design.
+  const { spawnSync } = require('child_process');
+  const preload = path.join(ROOT, 'tests', 'fixtures', 'run-tests', 'win32-node20-preload.js');
+  const r = spawnSync(process.execPath, ['-r', preload, path.join('tools', 'run-tests.js')], { cwd: ROOT, encoding: 'utf8' });
+  assert.strictEqual(r.status, 1, r.stderr);
+  const lines = r.stderr.split('\n').filter((l) => l !== '');
+  assert.strictEqual(lines.length, 1, r.stderr);
+  assert.match(lines[0], /^run-tests\.js: .*Node >= 22/);
+  assert.doesNotMatch(r.stderr, /PRELOAD-TRIPWIRE/);
+  assert.strictEqual(r.stdout, '');
 });

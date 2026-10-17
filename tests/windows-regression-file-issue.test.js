@@ -6,7 +6,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { run, findMergedPr } = require('../tools/windows-regression/file-issue');
+const { run, findMergedPr, classify } = require('../tools/windows-regression/file-issue');
 
 const SHA = 'abcdef1234567';
 const RUN_URL = 'https://github.com/o/r/actions/runs/42';
@@ -17,7 +17,8 @@ const PULLS = [
 const FAIL_ATTRIBUTABLE = { eligible: true, verdict: 'fail', attributable: ['tests/a.test.js'] };
 
 // gh: { api, 'issue list', 'issue create', 'issue comment': <stdout string | Error> },
-// keyed by the first one or two args. `files` serves any other readFile path
+// keyed by the first one or two args; a function value is called with the args and
+// its result used the same way. `files` serves any other readFile path
 // (e.g. --log); an Error value throws. An unkeyed call gets an explicit default
 // (empty list / the issue URL / empty comment / empty api list); any other call throws.
 const GH_DEFAULTS = { 'issue list': '[]', 'issue create': 'https://github.com/o/r/issues/1\n', 'issue comment': '', api: '[]' };
@@ -35,7 +36,7 @@ function fakeDeps(report, gh = {}, files = {}) {
     gh: (args, input) => {
       calls.gh.push({ args, input });
       const key = args[0] === 'issue' ? `issue ${args[1]}` : args[0];
-      const h = gh[key];
+      const h = typeof gh[key] === 'function' ? gh[key](args) : gh[key];
       if (h instanceof Error) throw h;
       if (h !== undefined) return h;
       if (key in GH_DEFAULTS) return GH_DEFAULTS[key];
@@ -147,6 +148,52 @@ test('R6: an excerpt containing a ``` run is wrapped in a longer fence and keeps
   const body = created(deps).input;
   assert.match(body, /^````\nnot ok 1 - fenced\n/m, 'opens with 4 backticks');
   assert.match(body, /\n  ```\n````$/m, 'the inner run survives and the 4-backtick fence closes after it');
+});
+
+test('L4: an eligible fail verdict naming no file (empty, or no string entry) is classified not adjudicated — never "0 test file(s)"', () => {
+  for (const attributable of [[], [null, 42]]) {
+    const report = { pass: false, baselineAdjudicated: { eligible: true, verdict: 'fail', attributable }, checks: { tests: { failingRegion: 'not ok 1 - x' } } };
+    assert.deepEqual(classify(report), { outcome: 'fail', adjudicated: false, attributable: [], reason: 'baseline adjudication named no failing test file' });
+    const deps = fakeDeps(report);
+    assert.equal(run(argv(), deps), 1);
+    assert.equal(flag(created(deps), '--title'), 'Windows regression: tests failing after abcdef123 (not adjudicated)', JSON.stringify(attributable));
+  }
+});
+
+test('L4: a 5-backtick run in the failing output widens the fence past the longest run, and it closes', () => {
+  const region = ['not ok 1 - x', '`', '```', '`````', 'tail'].join('\n');
+  const deps = fakeDeps({ pass: false, checks: { tests: { failingRegion: region } } });
+  assert.equal(run(argv(), deps), 1);
+  const m = created(deps).input.match(/^(`+)\nnot ok 1 - x\n`\n```\n`````\ntail\n(`+)$/m);
+  assert.ok(m, 'the fenced output is intact');
+  assert.ok(m[1].length > 5, `fence of ${m[1].length} is longer than the 5-backtick run`);
+  assert.equal(m[2], m[1], 'the closing fence matches the opening one');
+});
+
+test('L7: with no tests failing region, a non-adjudicated failure shows the first failed check\'s region', () => {
+  const deps = fakeDeps({ pass: false, checks: {
+    tests: { exitCode: 0, failingRegion: null },
+    types: { exitCode: 0, failingRegion: null },
+    lint: { exitCode: 1, failingRegion: 'src/x.js:1:1 error no-unused-vars' },
+  } });
+  assert.equal(run(argv(), deps), 1);
+  const body = created(deps).input;
+  assert.ok(body.includes('src/x.js:1:1 error no-unused-vars'));
+  assert.ok(!body.includes('(no failing output captured)'));
+  const none = fakeDeps({ pass: false, checks: { tests: { exitCode: null, failingRegion: null }, lint: { exitCode: 0, failingRegion: null } } });
+  run(argv(), none);
+  assert.ok(created(none).input.includes('(no failing output captured)'), 'no region anywhere still says so');
+});
+
+test('L7: the tests region wins over another failed check\'s', () => {
+  const deps = fakeDeps({ pass: false, checks: {
+    lint: { exitCode: 1, failingRegion: 'lint-region' },
+    tests: { exitCode: 1, failingRegion: 'not ok 1 - tests-region' },
+  } });
+  run(argv(), deps);
+  const body = created(deps).input;
+  assert.ok(body.includes('tests-region'));
+  assert.ok(!body.includes('lint-region'));
 });
 
 test('AC5.6: a gh issue create failure exits non-zero', () => {
@@ -329,6 +376,43 @@ test('R3: a nested not-ok ends at its sibling at the SAME indent, not at a deepe
   assert.ok(!body.includes('sibling-detail'));
 });
 
+test('L13: a file no readable --log line names takes its excerpt from the failingRegion', () => {
+  const deps = fakeDeps(
+    { ...adjudicated(LEDGER_FILE), checks: { tests: { failingRegion: winBlock(3, 'only in the region', LEDGER_FILE, 'region-only detail') } } },
+    {},
+    { 'tests.log': 'ok 1 - unrelated\nnot ok 2 - another file\n' },
+  );
+  assert.equal(run(argv({ '--log': 'tests.log' }), deps), 1);
+  assert.ok(deps.calls.read.includes('tests.log'));
+  const body = created(deps).input;
+  assert.ok(body.includes('### Failure excerpts'));
+  assert.ok(body.includes('not ok 3 - only in the region'));
+  assert.ok(body.includes('region-only detail'));
+  assert.ok(!body.includes('another file'), 'the log, which names no file, contributes nothing');
+});
+
+// A crashed file's stderr whose nearest boundary above is `boundary` — after
+// another file's closed failure block, so its own `...` is the fallback boundary.
+const crashAfter = (boundary) => [
+  winBlock(70, 'an earlier failure in another file', 'tests/apply-refine-labels.test.js', 'detail-for-other-file'),
+  boundary,
+  '# node:internal/test_runner/harness:99',
+  '# Error: crashed at load',
+  '#     at parse (D:\\\\a\\\\repo\\\\repo\\\\tests\\\\argument-hint-mirrors.test.js:51:29)',
+  'not ok 11 - tests\\\\argument-hint-mirrors.test.js',
+].join('\n');
+
+for (const [name, boundary] of [['an `ok N` line', 'ok 83 - a passing test'], ['a `# Subtest:` line', '# Subtest: a passing suite']]) {
+  test(`L21: a crashed file's excerpt opens on the first stderr line after ${name} boundary`, () => {
+    const deps = fakeDeps({ ...adjudicated('tests/argument-hint-mirrors.test.js'), checks: { tests: { failingRegion: crashAfter(boundary) } } });
+    assert.equal(run(argv(), deps), 1);
+    const body = created(deps).input;
+    assert.match(body, /\n```\n# node:internal\/test_runner\/harness:99\n# Error: crashed at load\n/, 'the fence opens on the first stderr line');
+    assert.ok(!body.includes(boundary), 'the boundary line itself is not in the excerpt');
+    assert.ok(!body.includes('detail-for-other-file'));
+  });
+}
+
 test('unreadable report: null JSON exits 1, files nothing', () => {
   for (const report of ['null', '[]', '3']) {
     const deps = fakeDeps(report);
@@ -341,14 +425,50 @@ test('unreadable report: null JSON exits 1, files nothing', () => {
   assert.equal(missing.calls.gh.length, 0);
 });
 
-test('body over 60000 chars is truncated with a note', () => {
-  const NOTE = '\n\n…(truncated — see the run\'s verify-report artifact)';
+const NOTE = '\n\n…(truncated — see the run\'s verify-report artifact)';
+
+// The backtick run of a fence `text` leaves open at its end, or null — an
+// independent CommonMark scan (opener: 3+ backticks; closer: a backtick-only line
+// at least as long).
+const unclosedFence = (text) => {
+  let open = null;
+  for (const line of text.split('\n')) {
+    const ticks = (line.match(/^ {0,3}(`{3,})/) || [])[1];
+    if (!ticks) continue;
+    if (open === null) open = ticks;
+    else if (line.trim() === line.trim().replace(/[^`]/g, '') && line.trim().length >= open.length) open = null;
+  }
+  return open;
+};
+
+test('body over 60000 chars is cut, the fence it cut inside is closed, and the note ends it', () => {
   const region = Array.from({ length: 300 }, (_, i) => `${i} ${'x'.repeat(400)}`).join('\n');
   const deps = fakeDeps({ pass: false, checks: { tests: { failingRegion: region } } });
   assert.equal(run(argv(), deps), 1);
   const body = created(deps).input;
+  const uncutOutput = region.split('\n').slice(0, 200).join('\n');
+  assert.ok(body.length < uncutOutput.length, `cut: ${body.length} < the ${uncutOutput.length}-char output the uncut body holds`);
+  assert.ok(!body.includes('199 x'), 'the last fallback line was cut off');
   assert.ok(body.length <= 60000 + NOTE.length, `length ${body.length}`);
   assert.ok(body.endsWith(NOTE));
+  assert.equal(unclosedFence(body.slice(0, -NOTE.length)), null, 'every fence that opens also closes');
+  assert.ok(body.endsWith(`\n\`\`\`${NOTE}`), 'the closer sits right before the note');
+});
+
+test('truncation never splits a UTF-16 surrogate pair straddling the cap', () => {
+  const probe = fakeDeps({ pass: false, checks: { tests: { failingRegion: 'MARK' } } });
+  run(argv(), probe);
+  const offset = created(probe).input.indexOf('MARK');
+  // The emoji's high surrogate lands at index 59999, its low one at 60000.
+  const region = `${'a'.repeat(60000 - 1 - offset)}😀${'b'.repeat(70000)}`;
+  const deps = fakeDeps({ pass: false, checks: { tests: { failingRegion: region } } });
+  assert.equal(run(argv(), deps), 1);
+  assert.equal((created(probe).input.slice(0, offset) + region).charCodeAt(59999), 0xd83d, 'fixture check: uncut, the cap would split the pair');
+  const body = created(deps).input;
+  assert.ok(body.length <= 60000 + NOTE.length, `length ${body.length}`);
+  assert.doesNotMatch(body, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/, 'no lone surrogate');
+  assert.ok(!body.includes('😀'), 'the straddling pair is dropped whole');
+  assert.ok(body.endsWith(`aaaa\n\`\`\`${NOTE}`), 'cut before the pair, fence closed, note last');
 });
 
 test('usage: a trailing bare --report exits 2', () => {
@@ -388,15 +508,44 @@ test('F3: an open issue naming this commit gets a comment, not a second issue', 
   assert.match(c.input, /`tests\/a\.test\.js`/);
   assert.match(deps.calls.stdout.join(''), /windows-regression: commented on #5 \(existing open issue\)/);
   assert.deepEqual(listed(deps).args, ['issue', 'list', '--repo', 'o/r', '--state', 'open', '--label', 'type:bug',
-    '--search', 'Windows regression in:title', '--json', 'number,title', '--limit', '50']);
+    '--search', 'Windows regression abcdef123 in:title', '--json', 'number,title', '--limit', '50']);
+  assert.equal(deps.calls.gh.filter((c) => c.args[1] === 'list').length, 1, 'an adjudicated run lists once');
 });
 
-test('F3: a not-adjudicated run comments on an open "(not adjudicated)" issue', () => {
+const SHA_SEARCH = 'Windows regression abcdef123 in:title';
+const NOT_ADJUDICATED_SEARCH = 'Windows regression not adjudicated in:title';
+
+test('F3/L12: a not-adjudicated run searches by sha first, then for an open "(not adjudicated)" issue, and comments on it', () => {
   const list = issueList(8, 'Windows regression: tests failing after 111111111 (not adjudicated)');
-  const deps = fakeDeps({ pass: false, baselineAdjudicated: { eligible: false, reason: 'x' } }, { 'issue list': list });
+  const deps = fakeDeps({ pass: false, baselineAdjudicated: { eligible: false, reason: 'x' } },
+    { 'issue list': (args) => (flag({ args }, '--search') === NOT_ADJUDICATED_SEARCH ? list : '[]') });
   assert.equal(run(argv(), deps), 1);
   assert.equal(created(deps), undefined);
   assert.equal(commented(deps).args[2], '8');
+  assert.deepEqual(deps.calls.gh.filter((c) => c.args[1] === 'list').map((c) => c.args), [SHA_SEARCH, NOT_ADJUDICATED_SEARCH].map((search) =>
+    ['issue', 'list', '--repo', 'o/r', '--state', 'open', '--label', 'type:bug', '--search', search, '--json', 'number,title', '--limit', '50']));
+});
+
+test('L12: a not-adjudicated run whose sha search hits comments there without the fallback search', () => {
+  const list = issueList(5, 'Windows regression: tests failing after abcdef123 (not adjudicated)');
+  const deps = fakeDeps({ pass: false, baselineAdjudicated: { eligible: false, reason: 'x' } },
+    { 'issue list': (args) => (flag({ args }, '--search') === SHA_SEARCH ? list : new Error('fallback search not expected')) });
+  assert.equal(run(argv(), deps), 1);
+  assert.equal(commented(deps).args[2], '5');
+  assert.equal(deps.calls.stderr.length, 0);
+});
+
+test('L11: an open issue that contains the sha (or the suffix) but is not titled "Windows regression: …" is never chosen', () => {
+  const list = JSON.stringify([
+    { number: 4, title: 'Flaky build after abcdef123' },
+    { number: 6, title: 'Re: Windows regression: tests failing after 111111111 (not adjudicated)' },
+  ]);
+  for (const report of [adjudicated('tests/a.test.js'), { pass: false, baselineAdjudicated: { eligible: false, reason: 'x' } }]) {
+    const deps = fakeDeps(report, { 'issue list': list });
+    assert.equal(run(argv(), deps), 1);
+    assert.equal(commented(deps), undefined, JSON.stringify(report));
+    assert.ok(created(deps), JSON.stringify(report));
+  }
 });
 
 test('F3: an adjudicated run does not comment on an unrelated "(not adjudicated)" issue — it creates', () => {
@@ -487,13 +636,22 @@ test('concurrency group is keyed on github.sha so no pending run is replaced', (
   assert.match(WORKFLOW, /group:\s*windows-regression-\$\{\{\s*github\.sha\s*\}\}/);
 });
 
-// The text of one top-level job block (from "  name:" to the next top-level job).
-// The text of the single step containing `marker` (from its "      - " line to the next step's).
+// The "\n<indent>- " that starts each step in a job block, its indent read off the
+// first item under `steps:` — so a reindented workflow keeps the same anchor and a
+// deeper nested list item is never mistaken for a step.
+const stepAnchor = (block) => {
+  const m = block.match(/^[ \t]*steps:[ \t]*\n(?:[ \t]*(?:#.*)?\n)*([ \t]*)- /m);
+  assert.ok(m, 'steps: list present');
+  return `\n${m[1]}- `;
+};
+
+// The text of the single step containing `marker` (from its step line to the next step's).
 const stepContaining = (block, marker) => {
   const at = block.indexOf(marker);
   assert.ok(at !== -1, `${marker} present`);
-  const start = block.lastIndexOf('\n      - ', at) + 1;
-  const end = block.indexOf('\n      - ', at);
+  const anchor = stepAnchor(block);
+  const start = block.lastIndexOf(anchor, at) + 1;
+  const end = block.indexOf(anchor, at);
   return block.slice(start, end === -1 ? undefined : end);
 };
 
@@ -516,6 +674,7 @@ const runScripts = (text) => {
   return scripts;
 };
 
+// The text of one top-level job block (from "  name:" to the next top-level job).
 const jobBlock = (name) => {
   const start = WORKFLOW.search(new RegExp(`^  ${name}:\\s*$`, 'm'));
   assert.ok(start !== -1, `job ${name} present`);
@@ -523,6 +682,11 @@ const jobBlock = (name) => {
   const next = rest.search(/^  [a-z][\w-]*:\s*$/m);
   return next === -1 ? WORKFLOW.slice(start) : WORKFLOW.slice(start, start + 1 + next);
 };
+
+test('L10: stepContaining finds a step at any indentation and is not cut by a deeper nested list item', () => {
+  const block = ['  job:', '    steps:', '    - name: one', '      with:', '        paths:', '          - a', '          - b', '      id: target', '    - name: two'].join('\n');
+  assert.equal(stepContaining(block, 'id: target'), ['    - name: one', '      with:', '        paths:', '          - a', '          - b', '      id: target'].join('\n'));
+});
 
 test('F4: the filer runs in a separate ubuntu job after windows, if: always() on the job', () => {
   const windows = jobBlock('windows');
@@ -553,7 +717,7 @@ test('F4: the windows job uploads verify-report and the file job downloads it, t
   const file = jobBlock('file');
   assert.match(stepContaining(windows, 'upload-artifact@v4'), /name: verify-report/);
   const dlAt = file.indexOf('download-artifact@v4');
-  const download = file.slice(dlAt, file.indexOf('\n      - ', dlAt));
+  const download = file.slice(dlAt, file.indexOf(stepAnchor(file), dlAt));
   assert.ok(dlAt !== -1 && /name: verify-report/.test(download) && /continue-on-error:\s*true/.test(download), 'download step tolerates a missing artifact');
   assert.match(file, /--report "\$RUNNER_TEMP\/verify\/verify-report\.json"/);
   assert.match(file, /--log "\$RUNNER_TEMP\/verify\/verify-logs\/tests\.log"/);

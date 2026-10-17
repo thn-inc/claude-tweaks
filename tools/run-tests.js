@@ -20,6 +20,10 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
+// The repo root every root path is relative to — both the explicit file list and the win32
+// root globs resolve against it (the spawned `node --test` runs with it as cwd), so the two
+// branches select the same files whatever directory the caller ran this from.
+const REPO_ROOT = path.join(__dirname, '..');
 const DEFAULT_ROOTS = ['tests', path.join('tools', 'upstream-drift', 'tests')];
 
 // Reads `dir` directly and treats a missing directory as "no files here" — never
@@ -50,7 +54,7 @@ function collectTestFiles(dir, results) {
 // produce. `roots` defaults to DEFAULT_ROOTS (the "test" script's set) when omitted or empty.
 // Exported so tests can exercise the selection logic directly instead of shelling out.
 function listTestFiles(cwd, roots) {
-  const base = cwd || path.join(__dirname, '..');
+  const base = cwd || REPO_ROOT;
   const useRoots = roots && roots.length ? roots : DEFAULT_ROOTS;
   const files = [];
   for (const root of useRoots) {
@@ -80,7 +84,7 @@ module.exports = { listTestFiles, buildTestArgs };
 if (require.main === module) {
   const argRoots = process.argv.slice(2);
   const roots = argRoots.length ? argRoots : DEFAULT_ROOTS;
-  const files = listTestFiles(undefined, roots).map((f) => path.relative(process.cwd(), f));
+  const files = listTestFiles(REPO_ROOT, roots).map((f) => path.relative(REPO_ROOT, f));
 
   // `node --test` with zero file arguments falls back to its own default-pattern
   // auto-discovery and can exit 0 having run nothing — "the suite gets quieter, not
@@ -109,6 +113,7 @@ if (require.main === module) {
   }
 
   const result = spawnSync(process.execPath, testArgs, {
+    cwd: REPO_ROOT,
     stdio: 'inherit',
     env: process.env,
   });

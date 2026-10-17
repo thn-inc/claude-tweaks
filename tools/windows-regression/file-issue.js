@@ -43,6 +43,7 @@ const NOT_RUN = 'baseline adjudication did not run';
 const REQUIRED_FLAGS = ['--report', '--ref', '--sha', '--repo', '--run-url'];
 const OPTIONAL_FLAGS = ['--log', '--base'];
 const NOT_ADJUDICATED_SUFFIX = '(not adjudicated)';
+const TITLE_PREFIX = 'Windows regression: ';
 
 const USAGE = `usage: file-issue.js --report <path> --ref <ref> --sha <sha> --repo <owner/name> --run-url <url>
                      [--log <path>] [--base <sha>]
@@ -163,9 +164,44 @@ function excerptFor(file, lines, normalized) {
   return lines.slice(start, end).join('\n');
 }
 
+// The tests check's failing region, else the first other failed check's — verify.js
+// sets a check's failingRegion only when its exitCode is non-zero (null on a hang
+// or a pass), and its report entries carry no per-check `pass`.
 function failingRegionOf(report) {
-  const tests = isPlainObject(report.checks) ? report.checks.tests : null;
-  return isPlainObject(tests) && typeof tests.failingRegion === 'string' ? tests.failingRegion : '';
+  const checks = isPlainObject(report.checks) ? report.checks : {};
+  const region = (c) => (isPlainObject(c) && typeof c.failingRegion === 'string' ? c.failingRegion : null);
+  if (region(checks.tests) !== null) return checks.tests.failingRegion;
+  const other = Object.values(checks).find((c) => region(c) !== null && c.exitCode !== 0);
+  return other ? other.failingRegion : '';
+}
+
+// The text inside the fence `body` leaves open at its end (its opening backtick
+// run), or null — CommonMark: an opener is a line of 3+ backticks (no backtick in
+// its info string), closed only by a backtick-only line at least as long.
+function openFenceAtEnd(body) {
+  let open = null;
+  for (const line of body.split('\n')) {
+    const m = line.match(open === null ? /^ {0,3}(`{3,})[^`]*$/ : /^ {0,3}(`{3,})\s*$/);
+    if (open === null) { if (m) open = m[1]; } else if (m && m[1].length >= open.length) open = null;
+  }
+  return open;
+}
+
+// `body` cut to BODY_CAP: never between a UTF-16 surrogate pair, and a fence the
+// cut leaves open is closed before TRUNCATION_NOTE — the closer counts against the
+// cap, so each retry cuts earlier and the loop ends.
+function truncateBody(body) {
+  if (body.length <= BODY_CAP) return body;
+  let cut = BODY_CAP;
+  for (;;) {
+    const c = body.charCodeAt(cut - 1);
+    if (cut > 0 && c >= 0xd800 && c <= 0xdbff) cut--;
+    const head = body.slice(0, cut);
+    const open = openFenceAtEnd(head);
+    const closer = open === null ? '' : `\n${open}`;
+    if (head.length + closer.length <= BODY_CAP) return head + closer + TRUNCATION_NOTE;
+    cut = Math.max(0, BODY_CAP - closer.length);
+  }
 }
 
 function timedOutOf(report) {
@@ -176,8 +212,8 @@ function timedOutOf(report) {
 function composeIssue({ report, verdict, sha, base, pr, runUrl, logText }) {
   const short = sha.slice(0, 9);
   const title = verdict.adjudicated
-    ? `Windows regression: ${verdict.attributable.length} test file(s) newly failing after ${short}`
-    : `Windows regression: tests failing after ${short} ${NOT_ADJUDICATED_SUFFIX}`;
+    ? `${TITLE_PREFIX}${verdict.attributable.length} test file(s) newly failing after ${short}`
+    : `${TITLE_PREFIX}tests failing after ${short} ${NOT_ADJUDICATED_SUFFIX}`;
   const region = failingRegionOf(report);
   const regionLines = region ? region.split(/\r?\n/) : [];
   const parts = [
@@ -188,13 +224,16 @@ function composeIssue({ report, verdict, sha, base, pr, runUrl, logText }) {
   if (verdict.adjudicated) {
     // Every file name first, excerpts after — the body cap can only drop excerpts.
     const timedOut = new Set(timedOutOf(report));
-    const excerptLines = typeof logText === 'string' ? logText.split(/\r?\n/) : regionLines;
-    const normalized = excerptLines.map(slashes);
+    // The uncapped log first when readable; a file no log line names retries on
+    // the report's failing region before going without an excerpt.
+    const sources = (typeof logText === 'string' ? [logText.split(/\r?\n/), regionLines] : [regionLines])
+      .map((lines) => ({ lines, normalized: lines.map(slashes) }));
     const bullets = verdict.attributable.map((f) => `- \`${f}\`${timedOut.has(f) ? ' (timed out — no evidence)' : ''}`);
     parts.push(['### Newly failing test files', ...bullets].join('\n'));
     const excerpts = [];
     for (const file of verdict.attributable) {
-      const excerpt = excerptFor(file, excerptLines, normalized);
+      let excerpt = null;
+      for (const s of sources) if (excerpt === null) excerpt = excerptFor(file, s.lines, s.normalized);
       if (excerpt !== null) excerpts.push(`#### \`${file}\`\n\n${fence(excerpt)}`);
     }
     if (excerpts.length) parts.push(['### Failure excerpts', ...excerpts].join('\n\n'));
@@ -204,9 +243,7 @@ function composeIssue({ report, verdict, sha, base, pr, runUrl, logText }) {
     parts.push(`### Failing output (${cause})\n\n${output ? fence(output) : '(no failing output captured)'}`);
   }
   parts.push('_Filed by .github/workflows/windows-regression.yml — failures were compared against the push\'s base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._');
-  let body = parts.join('\n\n');
-  if (body.length > BODY_CAP) body = body.slice(0, BODY_CAP) + TRUNCATION_NOTE;
-  return { title, body };
+  return { title, body: truncateBody(parts.join('\n\n')) };
 }
 
 function lookupMergedPr(repo, sha, deps) {
@@ -218,18 +255,24 @@ function lookupMergedPr(repo, sha, deps) {
   }
 }
 
-// The open issue already covering this run, or null: one naming this commit's
-// short sha, else — for a run that was not adjudicated — one ending in the
-// not-adjudicated suffix. A failing or unparseable listing is "none": it must
-// never block filing.
+// The open issue already covering this run, or null: one of ours (titled
+// TITLE_PREFIX…) naming this commit's short sha, else — for a run that was not
+// adjudicated — one of ours ending in the not-adjudicated suffix. Each lookup
+// puts its distinguishing words in the search, so a busy label can't push the
+// match past --limit. A failing or unparseable listing is "none": it must never
+// block filing.
 function findExistingIssue(repo, short, adjudicated, deps) {
-  try {
+  const ours = (search) => {
     const issues = JSON.parse(deps.gh(['issue', 'list', '--repo', repo, '--state', 'open', '--label', LABEL,
-      '--search', 'Windows regression in:title', '--json', 'number,title', '--limit', '50']));
-    if (!Array.isArray(issues)) return null;
-    const open = issues.filter((i) => isPlainObject(i) && Number.isInteger(i.number) && typeof i.title === 'string');
-    const hit = open.find((i) => i.title.includes(short))
-      || (adjudicated ? undefined : open.find((i) => i.title.endsWith(NOT_ADJUDICATED_SUFFIX)));
+      '--search', search, '--json', 'number,title', '--limit', '50']));
+    if (!Array.isArray(issues)) return [];
+    return issues.filter((i) => isPlainObject(i) && Number.isInteger(i.number) && typeof i.title === 'string'
+      && i.title.startsWith(TITLE_PREFIX));
+  };
+  try {
+    const hit = ours(`Windows regression ${short} in:title`).find((i) => i.title.includes(short))
+      || (adjudicated ? undefined
+        : ours('Windows regression not adjudicated in:title').find((i) => i.title.endsWith(NOT_ADJUDICATED_SUFFIX)));
     return hit ? hit.number : null;
   } catch (e) {
     deps.stderr(`${TOOL}: open-issue lookup failed: ${e.message} — filing a new issue\n`);
