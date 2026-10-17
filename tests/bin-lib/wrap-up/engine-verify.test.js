@@ -200,59 +200,7 @@ function writeConsole(runDir, resolution) {
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true, merge: { resolution, reason: 'test' } }));
 }
 
-test('#3373: run-dir-archived skips with the pending-review reason when console.json records leave-open and the original path is still present', () => {
-  const repoRoot = makeCleanRepoRoot();
-  const runDir = path.join(repoRoot, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-3373');
-  fs.mkdirSync(runDir, { recursive: true });
-  writeConsole(runDir, 'leave-open');
-  try {
-    const result = runVerify({ runDir, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
-    const row = result.rows.find((r) => r.check === 'run-dir-archived');
-    assert.strictEqual(row.result, 'skip');
-    assert.strictEqual(row.detail, PENDING_REVIEW_DETAIL);
-  } finally {
-    fs.rmSync(repoRoot, { recursive: true, force: true });
-  }
-});
-
-test('#3373: worktree-removed skips with the pending-review reason when console.json records leave-open and the worktree is still listed', () => {
-  const repoRoot = makeCleanRepoRoot();
-  const runDir = path.join(repoRoot, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-3373');
-  fs.mkdirSync(runDir, { recursive: true });
-  writeConsole(runDir, 'leave-open');
-  const fakeGit = (args) => {
-    if (args[0] === 'worktree') {
-      return 'worktree /repo/.claude/worktrees/flow-spec-3373\nbranch refs/heads/worktree-flow-spec-3373\n\n';
-    }
-    return '';
-  };
-  try {
-    const result = runVerify({ runDir, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: fakeGit, gh: () => '' } });
-    const row = result.rows.find((r) => r.check === 'worktree-removed');
-    assert.strictEqual(row.result, 'skip');
-    assert.strictEqual(row.detail, PENDING_REVIEW_DETAIL);
-  } finally {
-    fs.rmSync(repoRoot, { recursive: true, force: true });
-  }
-});
-
-test('#3373: leave-open still passes when teardown already happened', () => {
-  const repoRoot = makeCleanRepoRoot();
-  const runId = '2026-01-01T000000-spec-3373';
-  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
-  const archivePath = path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive', runId);
-  fs.mkdirSync(archivePath, { recursive: true });
-  writeConsole(archivePath, 'leave-open');
-  try {
-    const result = runVerify({ runDir: archivePath, originalRunDir: originalPath, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
-    assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'pass');
-    assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'pass');
-  } finally {
-    fs.rmSync(repoRoot, { recursive: true, force: true });
-  }
-});
-
-// Shared setup for the three "teardown missing" cases: run dir present and the
+// Shared setup for the "teardown missing" cases: run dir present and the
 // worktree still listed, with `prepare` deciding what console.json holds.
 function verifyWithTeardownMissing(prepare) {
   const repoRoot = makeCleanRepoRoot();
@@ -271,6 +219,36 @@ function verifyWithTeardownMissing(prepare) {
     fs.rmSync(repoRoot, { recursive: true, force: true });
   }
 }
+
+test('#3373: run-dir-archived skips with the pending-review reason when console.json records leave-open and the original path is still present', () => {
+  const result = verifyWithTeardownMissing((runDir) => writeConsole(runDir, 'leave-open'));
+  const row = result.rows.find((r) => r.check === 'run-dir-archived');
+  assert.strictEqual(row.result, 'skip');
+  assert.strictEqual(row.detail, PENDING_REVIEW_DETAIL);
+});
+
+test('#3373: worktree-removed skips with the pending-review reason when console.json records leave-open and the worktree is still listed', () => {
+  const result = verifyWithTeardownMissing((runDir) => writeConsole(runDir, 'leave-open'));
+  const row = result.rows.find((r) => r.check === 'worktree-removed');
+  assert.strictEqual(row.result, 'skip');
+  assert.strictEqual(row.detail, PENDING_REVIEW_DETAIL);
+});
+
+test('#3373: leave-open still passes when teardown already happened', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const runId = '2026-01-01T000000-spec-3373';
+  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  const archivePath = path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive', runId);
+  fs.mkdirSync(archivePath, { recursive: true });
+  writeConsole(archivePath, 'leave-open');
+  try {
+    const result = runVerify({ runDir: archivePath, originalRunDir: originalPath, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+    assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'pass');
+    assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'pass');
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
 
 test('#3373: merge resolution keeps run-dir-archived and worktree-removed failing when teardown is missing', () => {
   const result = verifyWithTeardownMissing((runDir) => writeConsole(runDir, 'merge'));
