@@ -89,6 +89,12 @@ test('the gate cross-checks head-sha workflow runs before reading green (#3405)'
   assert.ok(zeroBranch.includes('gh run list'), 'bounded-watch 0) branch must count head runs');
   // Signature (e): PR #3390 is the captured partial-rollup incident.
   assert.ok(section.includes('#3390') && section.includes('39042323352'), 'Signatures list missing the #3390 capture (run 39042323352)');
+  // The resume confirmation's one read-then-decide classifies from both reads, not the rollup alone.
+  const resume = section.slice(section.indexOf('**Resume-to-merge is one-shot.**'));
+  assert.ok(resume.includes('gh run list') && resume.includes('not-yet-completed head run reads pending'), 'resume paragraph must classify from the head-run read too');
+  // The RC=0 re-read names the not-yet-completed head run case and resumes the watch, never a blind merge.
+  const rc0 = section.slice(section.indexOf('`RC=0` → **green**'), section.indexOf('`RC=1` (a check failed'));
+  assert.ok(rc0.includes('not yet `completed`') && rc0.includes('DEADLINE'), 'RC=0 bullet must resume the bounded watch on a not-yet-completed head run');
 });
 
 test('every pr-first merge site and the resume confirmation cite the gate', () => {

@@ -217,7 +217,7 @@ done
   `headRefOid` changed since the first read (a new push landed) or `state` is not `OPEN`, re-enter this
   step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`)
   — never merge blind; a failing head run takes the Red path, reason `check-failed:{names}` (names from
-  its `workflowName`s); otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) (outcome `merged`,
+  its `workflowName`s); a head run not yet `completed` resumes the bounded watch at the same `DEADLINE`; otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) (outcome `merged`,
   then Step 4).
 - `RC=1` (a check failed during the watch) → **Red path**, reason `check-failed:{names}` (names from
   the `fail` rows of `/tmp/pr-checks-{n}.txt`).
@@ -278,7 +278,7 @@ never suggest bypassing protection.
 - Also captured: `gh pr merge` against an already-merged PR: stderr `! Pull request {owner}/{repo}#{n} was already merged`, `exit=0` — a no-op, not an error; the state read (`state: MERGED`) catches it first.
 
 **Resume-to-merge is one-shot.** `dispatch/SKILL.md`'s "Confirm before resuming" confirmation applies
-this same lever as a single read-then-decide (green → proceed; red → surface in the confirmation;
+this same lever as a single read-then-decide over both of Step 2.5's reads (the state read and the head-run `gh run list` read; a not-yet-completed head run reads pending, a failing one red) (green → proceed; red → surface in the confirmation;
 pending with `mergeStateStatus: BLOCKED` → arm `--auto`, since the forge is what holds it; pending
 with any other `mergeStateStatus` → do **not** arm — on an unprotected repo arming *is* an immediate
 merge (capture (a)), so the confirmation itself carries the choice: wait for green, or leave parked)
