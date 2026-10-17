@@ -23,9 +23,9 @@ files:
 
 ### 2. A shallow clone is deepened first, or no verdict is given
 - **URL:** N/A
-- **Action:** When `git rev-parse --is-shallow-repository` reads `true`, the helper runs one bounded fetch (`--unshallow --no-tags`, every branch head, 120 s, no terminal prompt) and re-checks. `--no-deepen` skips the fetch.
-- **Should feel:** Slow once on a fresh sandbox, then instant — `result.shallow.deepened` reports whether the fetch ran.
-- **Should understand:** Every branch head is fetched, not only the integration branch: a clone made with `--depth` is single-branch, and a commit that lives only on another branch would otherwise read `not-found` — the exact mistake #2785's filed text made about `41dc8424f`.
+- **Action:** When `git rev-parse --is-shallow-repository` reads `true`, the helper runs one bounded fetch (`--unshallow --no-tags`, every branch head, 120 s, no terminal prompt) and re-checks. Parallel judges under `--budget > 1` each run `verify-commit` as a separate process against the same checkout; a lock in the repository's git-common directory makes them take turns, so one process fetches while the others wait, re-check, and skip the fetch once history is complete. `--no-deepen` skips the fetch.
+- **Should feel:** Slow once on a fresh sandbox, then instant — `result.shallow.deepened` reports whether history was deepened during this call, by this process's own fetch or by a concurrent one it waited on.
+- **Should understand:** Every branch head is fetched, not only the integration branch: a clone made with `--depth` is single-branch, and a commit that lives only on another branch would otherwise read `not-found` — the exact mistake #2785's filed text made about `41dc8424f`. A fetch that hits the 120 s timeout is remembered for 30 minutes in `docs-health-verify-commit.timeout` beside that lock: calls in that window return `unverifiable` at once, with the recorded timeout as `result.shallow.error`, instead of paying another 120 s. Delete that file to retry sooner. Offline and auth failures are not remembered, so every call retries them.
 - **Check:** in a `git clone --depth 1` of this repository, `verify-commit 41dc8424f cdb32b046` returns `exists-unreachable` and `reachable` after deepening; with `--no-deepen` both read `unverifiable`.
 - **Red flags:** Any `reachable` or `not-found` while `result.shallow.deepened` is false on a shallow clone. A failed fetch (offline, auth, timeout) must show as `unverifiable` with `result.shallow.error` set, never as `not-found`.
 
