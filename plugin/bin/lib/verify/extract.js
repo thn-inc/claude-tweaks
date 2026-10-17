@@ -210,8 +210,13 @@ function relativize(file, cwd) {
   return normalizedFile.startsWith(prefix) ? normalizedFile.slice(prefix.length) : normalizedFile;
 }
 
-// A path extractFailingFiles would keep: a test file, never a node: internal.
-function isRetryableFile(rel) { return TEST_FILE_RE.test(rel) && !rel.startsWith('node:'); }
+// A path extractFailingFiles would keep: a test file, never a node: internal
+// — and, when the caller passes an `exists` predicate, one present in the
+// checkout under test (#3153: a path absent there was never a real failing
+// file of this run).
+function isRetryableFile(rel, exists) {
+  return TEST_FILE_RE.test(rel) && !rel.startsWith('node:') && (!exists || exists(rel));
+}
 
 // Every `test at <path>:L:C` entry ({file: raw path, loc: 'L:C', next: the
 // line right after it, body: the diagnostic lines after that}, in log order)
@@ -264,11 +269,12 @@ const TAP_LOCATION_RE = /location:\s*'.*:(\d+:\d+)'/;
 // so a load failure (`1:1`) and a file-scoped hook failure stay distinct.
 // `conclusiveOnly`: an entry whose diagnostics say it timed out or was
 // cancelled is dropped — it did not finish, which proves nothing about
-// whether it fails.
-function failingTestsByFile(text, family, { cwd = process.cwd(), located = false, conclusiveOnly = false } = {}) {
+// whether it fails. A TAP block's diagnostics are its own top-level YAML keys
+// only — an `error:` value can quote a child's timeout (#3153).
+function failingTestsByFile(text, family, { cwd = process.cwd(), located = false, conclusiveOnly = false, exists } = {}) {
   const byFile = new Map();
-  const add = (rel, name, loc, body) => {
-    if (conclusiveOnly && body.some((l) => INCONCLUSIVE_RE.test(l))) return;
+  const add = (rel, name, loc, diagnostics) => {
+    if (conclusiveOnly && diagnostics.some((l) => INCONCLUSIVE_RE.test(l))) return;
     let named = name !== null && relativize(name, cwd) === rel ? rel : name;
     if (located && named !== null) named = loc ? `${named}@${loc}` : null;
     if (!byFile.has(rel)) byFile.set(rel, []);
@@ -278,7 +284,7 @@ function failingTestsByFile(text, family, { cwd = process.cwd(), located = false
   if (family === 'spec') {
     for (const { file, loc, next, body } of specEntries(lines)) {
       const rel = relativize(file, cwd);
-      if (!isRetryableFile(rel)) continue;
+      if (!isRetryableFile(rel, exists)) continue;
       const m = next.match(SPEC_FAIL_NAME_RE);
       add(rel, m ? m[1] : null, loc, body);
     }
@@ -287,8 +293,8 @@ function failingTestsByFile(text, family, { cwd = process.cwd(), located = false
     for (const block of tapBlocks(lines)) {
       const [, name, directive] = block.line.replace(/\r$/, '').match(TAP_NAME_RE);
       if (directive) continue;
-      const locLine = block.body.map((l) => l.match(TAP_LOCATION_RE)).find(Boolean);
-      tapBlockFiles(block, cwd).forEach((rel) => add(rel, name, locLine ? locLine[1] : null, block.body));
+      const locLine = block.frames.map((l) => l.match(TAP_LOCATION_RE)).find(Boolean);
+      tapBlockFiles(block, cwd, exists).forEach((rel) => add(rel, name, locLine ? locLine[1] : null, block.keys));
     }
   }
   return byFile;
@@ -415,9 +421,9 @@ function testTree(text, family) {
 // Relativized forward-slash test paths whose failing entries are ALL
 // file-level (the name is the path itself). A file with any per-test entry
 // is absent. Families other than spec and tap return an empty Set.
-function fileLevelFailures(text, family, { cwd = process.cwd() } = {}) {
+function fileLevelFailures(text, family, { cwd = process.cwd(), exists } = {}) {
   const fileLevel = new Set();
-  failingTestsByFile(text, family, { cwd }).forEach((names, rel) => {
+  failingTestsByFile(text, family, { cwd, exists }).forEach((names, rel) => {
     if (names.every((n) => n === rel)) fileLevel.add(rel);
   });
   return fileLevel;
@@ -427,35 +433,64 @@ function fileLevelFailures(text, family, { cwd = process.cwd() } = {}) {
 // adjudicator's check that the list accounts for `ℹ fail N`.
 function specEntryCount(text) { return specEntries(stripAnsi(text).split('\n')).length; }
 
+// The YAML keys whose values are the failing point's own site: its
+// `location:` and its `stack:`. Every other key (`error:`, `expected:`,
+// `actual:`) is message text, which can quote a whole TAP document a test
+// spawned (#3153) — its paths are that child's, never this point's.
+const TAP_FRAME_KEYS = new Set(['location', 'stack']);
+
 // Every TAP `not ok` block, at any indentation (a failing subtest nests under
 // its suite), in log order: {line: the `not ok` line, body: the lines after
-// it up to the next test point or `# ` line at any indentation}.
+// it up to the next test point or `# ` line at any indentation, frames: the
+// body lines that can name this point's own file — every line outside its
+// YAML block, and inside it only the `location:`/`stack:` keys; keys: its own
+// top-level YAML key lines, never their continuation lines}.
 function tapBlocks(lines) {
   const blocks = [];
   let current = null;
   let pointPad = null;
   let yamlPad = null;
+  let keyPad = null;
+  let yamlKey = null;
   for (const raw of lines) {
     const line = raw.replace(/\r$/, '');
     // A point's YAML block (`---` … `...`, two spaces deeper) is its body,
     // never a new point — an assertion's expected/actual text can hold
-    // `not ok …` lines.
+    // `not ok …` lines. The `...` terminator is always matched at `yamlPad`
+    // (the `---` line's own indent) — node never varies it. Keys are a
+    // different matter: node puts them at `yamlPad` too, but a non-node TAP
+    // producer (tape-style) can indent them deeper, so the key indent is
+    // whatever the FIRST non-blank line after `---` uses (falling back to
+    // `yamlPad` when the block closes before any non-blank line) — a line at
+    // exactly that indent starts a key; deeper lines continue it.
     if (yamlPad !== null) {
       if (current) current.body.push(raw);
-      if (line === `${yamlPad}...`) yamlPad = null;
+      if (line === `${yamlPad}...`) { yamlPad = null; keyPad = null; continue; }
+      if (keyPad === null) {
+        const firstNonBlank = line.match(/^(\s*)\S/);
+        if (firstNonBlank) keyPad = firstNonBlank[1];
+      }
+      if (keyPad !== null && line.startsWith(keyPad) && line.length > keyPad.length && line[keyPad.length] !== ' ') {
+        const key = line.slice(keyPad.length).match(/^([A-Za-z_]+):/);
+        yamlKey = key ? key[1] : null;
+        if (current && key) current.keys.push(raw);
+      }
+      if (current && TAP_FRAME_KEYS.has(yamlKey)) current.frames.push(raw);
       continue;
     }
     if (pointPad !== null && line === `${pointPad}  ---`) {
       yamlPad = `${pointPad}  `;
+      keyPad = null;
+      yamlKey = null;
       if (current) current.body.push(raw);
       continue;
     }
     const notOk = line.match(/^(\s*)not ok\b/);
-    if (notOk) { current = { line: raw, body: [] }; blocks.push(current); pointPad = notOk[1]; continue; }
+    if (notOk) { current = { line: raw, body: [], frames: [], keys: [] }; blocks.push(current); pointPad = notOk[1]; continue; }
     const ok = line.match(/^(\s*)ok \d/);
     if (ok) { current = null; pointPad = ok[1]; continue; }
     if (/^\s*# /.test(line)) { current = null; pointPad = null; continue; }
-    if (current) current.body.push(raw);
+    if (current) { current.body.push(raw); current.frames.push(raw); }
   }
   return blocks;
 }
@@ -465,13 +500,13 @@ function tapBlocks(lines) {
 // `# fail` + `# cancelled`.
 function tapBlockCount(text) { return tapBlocks(stripAnsi(text).split('\n')).length; }
 
-// The relativized test files one TAP block's frames name, deduped.
-function tapBlockFiles(block, cwd) {
+// The relativized test files one TAP block's own frames name, deduped.
+function tapBlockFiles(block, cwd, exists) {
   const files = [];
-  for (const line of block.body) {
+  for (const line of block.frames) {
     for (const m of line.matchAll(TAP_FRAME_RE)) {
       const rel = relativize(m[1] ?? m[2] ?? m[3], cwd);
-      if (isRetryableFile(rel) && !files.includes(rel)) files.push(rel);
+      if (isRetryableFile(rel, exists) && !files.includes(rel)) files.push(rel);
     }
   }
   return files;
@@ -482,12 +517,12 @@ function tapBlockFiles(block, cwd) {
 // whose frames name no test file. The baseline adjudicator refuses to
 // classify when this is non-zero — an undercounted file list must never read
 // as a clean pass. Every other family returns 0.
-function countUnmatchedFailures(text, family, { cwd = process.cwd() } = {}) {
+function countUnmatchedFailures(text, family, { cwd = process.cwd(), exists } = {}) {
   const lines = stripAnsi(text).split('\n');
-  if (family === 'tap') return tapBlocks(lines).filter((b) => tapBlockFiles(b, cwd).length === 0).length;
+  if (family === 'tap') return tapBlocks(lines).filter((b) => tapBlockFiles(b, cwd, exists).length === 0).length;
   if (family !== 'spec') return 0;
   return specEntries(lines)
-    .filter(({ file }) => !isRetryableFile(relativize(file, cwd))).length;
+    .filter(({ file }) => !isRetryableFile(relativize(file, cwd), exists)).length;
 }
 
 // Whether a spec/tap log's failing-file list accounts for the whole
@@ -520,15 +555,15 @@ function unattributedFailureCount(text, family, { cwd = process.cwd() } = {}) {
 // the log. `[]` whenever nothing parses — no parse ⇒ no retry (the caller
 // never guesses). TAP: frames inside `not ok` blocks only, so a passing
 // test that printed a stack never reads as failing.
-function extractFailingFiles(text, family, { cwd = process.cwd() } = {}) {
+function extractFailingFiles(text, family, { cwd = process.cwd(), exists } = {}) {
   const lines = stripAnsi(text).split('\n');
   const found = [];
   const push = (file) => {
     const rel = relativize(file, cwd);
-    if (isRetryableFile(rel) && !found.includes(rel)) found.push(rel);
+    if (isRetryableFile(rel, exists) && !found.includes(rel)) found.push(rel);
   };
   if (family === 'tap') {
-    tapBlocks(lines).forEach((b) => tapBlockFiles(b, cwd).forEach(push));
+    tapBlocks(lines).forEach((b) => tapBlockFiles(b, cwd, exists).forEach(push));
     return found;
   }
   if (family === 'summary') {

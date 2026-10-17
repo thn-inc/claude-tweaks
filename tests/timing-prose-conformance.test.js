@@ -42,8 +42,10 @@ test('#1928: the multi-spec summary also carries a ### Timing section, rendered 
 
 test('#1928 AC6: pr-run-comments.md has a timing comment kind with its producer', () => {
   const t = read('plugin/skills/_shared/pr-run-comments.md');
-  assert.match(t, /^\| `timing` \| `\/claude-tweaks:wrap-up`[^|]*\| `<!-- run-comment: timing -->` \|$/m);
-  assert.match(t, /^\| `\/claude-tweaks:wrap-up` \([^)]*verification-brief\.md[^)]*\) \| `timing` \|/m);
+  // #2970 extended this row's Marker cell with the multi-spec `timing:{spec}` form (same shape
+  // as #2592's verdict row), so the base marker is asserted without an end-of-line anchor here.
+  assert.match(t, /^\| `timing` \| `\/claude-tweaks:wrap-up`[^|]*\| `<!-- run-comment: timing -->`/m);
+  assert.match(t, /^\| `\/claude-tweaks:wrap-up` \([^)]*verification-brief\.md[^)]*\) \| `timing`/m);
   assert.match(read('plugin/skills/wrap-up/verification-brief.md'), /run-comment: timing/);
 });
 

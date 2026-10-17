@@ -1700,6 +1700,37 @@ test('--baseline: failures that also fail at base exit 0, stamp a baseline pass,
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass')), 'no legacy twin for an adjudicated pass');
 });
 
+// #3156: the /flow and /dispatch session shape — a linked worktree under the
+// main checkout's own tree, on a checkout path containing a space (#3155's
+// truncation). An unchanged failing file must classify baseline, never fall
+// through to attributable.
+test('--baseline: run from a linked worktree nested in a space-containing checkout path, an unchanged failing file classifies baseline (#3156)', async () => {
+  const repo = path.join(tmpDir(), 'Code Workspaces', 'repo');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  git(repo, 'init', '-q');
+  git(repo, 'config', 'user.email', 'verify-test@example.invalid');
+  git(repo, 'config', 'user.name', 'verify test');
+  fs.mkdirSync(path.join(repo, 'tests'));
+  fs.writeFileSync(path.join(repo, 'tests', 'env.test.js'), "require('node:test')('env', () => { throw new Error('env-specific'); });\n");
+  fs.writeFileSync(path.join(repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => {});\n");
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-q', '-m', 'base');
+  const baseSha = git(repo, 'rev-parse', 'HEAD').trim();
+  const wt = path.join(repo, '.claude', 'worktrees', 'dispatch-record-1');
+  git(repo, 'worktree', 'add', '-q', '-b', 'feature', wt);
+  fs.writeFileSync(path.join(wt, 'README.md'), 'change\n');
+  git(wt, 'add', '.');
+  git(wt, 'commit', '-q', '-m', 'head');
+  const { code, stdout } = await runCli(['--cmd', SUITE, '--baseline', baseSha, '--baseline-cmd', PER_FILE], { cwd: wt, env: nestedRunEnv() });
+  assert.strictEqual(code, 0, stdout);
+  const gitDir = git(wt, 'rev-parse', '--absolute-git-dir').trim();
+  const report = JSON.parse(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.baselineAdjudicated.verdict, 'pass', JSON.stringify(report.baselineAdjudicated));
+  assert.deepStrictEqual(report.baselineAdjudicated.baselineFailing, ['tests/env.test.js']);
+  assert.deepStrictEqual(report.baselineAdjudicated.attributable, []);
+});
+
 test('--baseline: a file that passes at base but fails at HEAD exits 1 naming it, and writes no stamp (#3043 AC2)', async () => {
   const r = baselineRepo();
   fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => { throw new Error('regressed'); });\n");
