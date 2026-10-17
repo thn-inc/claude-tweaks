@@ -128,19 +128,29 @@ function namesFile(line, needle) {
 
 // The excerpt for `file`: from the nearest `not ok` line at or before the first
 // line naming the file (so the test's name is shown), through the next ok/not ok
-// line or EXCERPT_MAX_LINES. A test boundary (`ok N`, `# Subtest:`, a YAML `...`)
-// reached first means the match sits outside any failure block — a crashed file's
-// stderr, printed before its own `not ok` — so the excerpt opens just after that
-// boundary, where the stderr (and its `Error:` line) begins.
-// null when no line names the file.
+// line or EXCERPT_MAX_LINES. A match past that `not ok`'s own YAML terminator (`...`
+// at its indent + 2) sits outside any failure block — a crashed file's stderr,
+// printed before its own `not ok` — so the excerpt opens just after the last test
+// boundary (`ok N`, `# Subtest:`, a YAML `...`) above the match, where the stderr
+// (and its `Error:` line) begins. null when no line names the file.
 function excerptFor(file, lines) {
   const needle = slashes(file);
   const hit = lines.findIndex((l) => namesFile(l, needle));
   if (hit === -1) return null;
+  let notOk = -1;
+  for (let i = hit; i >= 0; i--) if (/^\s*not ok\b/.test(lines[i])) { notOk = i; break; }
+  let close = -1;
+  if (notOk !== -1) {
+    const terminator = `${' '.repeat(lines[notOk].search(/\S/) + 2)}...`;
+    close = lines.findIndex((l, i) => i > notOk && l.trimEnd() === terminator);
+  }
   let start = hit;
-  for (let i = hit; i >= 0; i--) {
-    if (/^\s*not ok\b/.test(lines[i])) { start = i; break; }
-    if (i < hit && /^\s*(ok \d|# Subtest:|\.\.\.\s*$)/.test(lines[i])) { start = i + 1; break; }
+  if (notOk !== -1 && (close === -1 || hit <= close)) {
+    start = notOk;
+  } else {
+    for (let i = hit - 1; i >= Math.max(close, 0); i--) {
+      if (/^\s*(ok \d|# Subtest:|\.\.\.\s*$)/.test(lines[i])) { start = i + 1; break; }
+    }
   }
   let end = Math.min(start + EXCERPT_MAX_LINES, lines.length);
   for (let i = start + 1; i < end; i++) if (/^\s*(not )?ok \d/.test(lines[i])) { end = i; break; }

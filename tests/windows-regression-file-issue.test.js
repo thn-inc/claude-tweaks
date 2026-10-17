@@ -228,6 +228,24 @@ test('F1: a file that crashes at load opens its excerpt at its own stderr, never
   assert.ok(!body.includes('an earlier failure in another file'));
 });
 
+test('F1: a "..." or "ok 1" line inside a failure\'s own error text is not a boundary — the excerpt still opens at its not-ok', () => {
+  const log = [
+    'ok 1 - fine',
+    'not ok 2 - the failing test',
+    '  ---',
+    '  error: |-',
+    '    Expected values to be strictly deep-equal:',
+    '    ...',
+    '    ok 1 - quoted in the message',
+    '    at Object.<anonymous> (D:\\\\a\\\\repo\\\\tests\\\\a.test.js:5:1)',
+    '  ...',
+    'ok 3 - next',
+  ].join('\n');
+  const deps = fakeDeps({ ...adjudicated('tests/a.test.js'), checks: { tests: { failingRegion: log } } });
+  assert.equal(run(argv(), deps), 1);
+  assert.ok(created(deps).input.includes('not ok 2 - the failing test'), 'excerpt keeps the failing test\'s name');
+});
+
 test('unreadable report: null JSON exits 1, files nothing', () => {
   for (const report of ['null', '[]', '3']) {
     const deps = fakeDeps(report);
