@@ -18,6 +18,14 @@
   { "description": "Judge Skills curation row", "role": "unlabelled", "source": "captured" },
   { "description": "Builder check on design doc", "role": "unlabelled", "source": "captured" },
   { "description": "Specify Steps 3-9 for #3229 design", "role": "unlabelled", "source": "captured" },
+  { "description": "Lens 3c Error handling (A)", "role": "lens reviewer", "source": "captured" },
+  { "description": "Lens 3e Architecture (B)", "role": "lens reviewer", "source": "captured" },
+  { "description": "Lens 3f tests B", "role": "lens reviewer", "source": "captured" },
+  { "description": "Review lens 3f Test quality (A)", "role": "lens reviewer", "source": "captured" },
+  { "description": "Scoped re-review of review fixes", "role": "re-review", "source": "captured" },
+  { "description": "Scoped re-review of whole-branch review fix wave", "role": "re-review", "source": "captured" },
+  { "description": "Fix wave: whole-branch review findings", "role": "unlabelled", "source": "captured" },
+  { "description": "Fix whole-branch review findings for #2621", "role": "unlabelled", "source": "captured" },
   { "description": "Plan review for #3375", "role": "plan review", "source": "synthetic" },
   { "description": "Zork the frobnicator", "role": "unlabelled", "source": "synthetic" }
 ]

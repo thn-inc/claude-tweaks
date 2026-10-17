@@ -328,6 +328,21 @@ test('AC6.1: overlapping spans — elapsed is their union', () => {
   assert.equal(unionMinutes([{ start: 0, end: 120000 }, { start: 60000, end: 180000 }]), 3);
 });
 
+test('#3375 M1: elapsed never exceeds agent-seconds by more than rounding — it is the rounded union, not a sum of rounded clusters', () => {
+  const sec = (s) => new Date(T0 + s * 1000).toISOString();
+  // three disjoint 30 s spans: each cluster rounds to 1 min under the per-cluster rule (3 min) while agent-seconds is 90.
+  const items = [0, 120, 240].map((s, i) => disp({ agentId: `m${i}`, startTs: sec(s), endTs: sec(s + 30), wallClockMs: 30000 }));
+  const r = aggregateDispatches(items);
+  assert.equal(r.byTier.standard.agentSeconds, 90);
+  assert.equal(r.byTier.standard.elapsedMinutes, 2);
+  assert.ok(r.byTier.standard.elapsedMinutes * 60 <= r.byTier.standard.agentSeconds + 30);
+  // a single 30 s span: round(0.5) = 1 min, within the +30 s allowance.
+  const one = aggregateDispatches([disp({ agentId: 'm9', startTs: sec(0), endTs: sec(30), wallClockMs: 30000 })]);
+  assert.equal(one.byRole.implementer.agentSeconds, 30);
+  assert.equal(one.byRole.implementer.elapsedMinutes, 1);
+  assert.ok(one.byRole.implementer.elapsedMinutes * 60 <= one.byRole.implementer.agentSeconds + 30);
+});
+
 const DESCRIPTIONS = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'fixtures', 'timing', 'dispatch-descriptions.json'), 'utf8'));
 
 test('AC7.1: every captured description classifies to its intended role', () => {

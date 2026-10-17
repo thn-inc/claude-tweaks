@@ -54,6 +54,25 @@ function unionMinutes(spans) {
   if (curStart !== null) total += minutesBetween(curStart, curEnd);
   return total;
 }
+// Same merge as unionMinutes, but returns the exact covered milliseconds so a
+// caller can round once instead of rounding each disjoint cluster (#3375 M1).
+function unionMs(spans) {
+  const list = spans
+    .filter((s) => s && Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start)
+    .slice()
+    .sort((a, b) => a.start - b.start);
+  let total = 0;
+  let curStart = null;
+  let curEnd = null;
+  for (const s of list) {
+    if (curStart === null) { curStart = s.start; curEnd = s.end; continue; }
+    if (s.start <= curEnd) { curEnd = Math.max(curEnd, s.end); continue; }
+    total += curEnd - curStart;
+    curStart = s.start; curEnd = s.end;
+  }
+  if (curStart !== null) total += curEnd - curStart;
+  return total;
+}
 function skillName(ev) { return typeof ev.skill === 'string' && ev.skill.startsWith(NS) ? ev.skill.slice(NS.length) : null; }
 function isTopLevel(ev) { const n = skillName(ev); return n !== null && !(n in NESTED_PARENT); }
 
@@ -339,11 +358,11 @@ function resolveTier({ metaModel = null, transcriptModel = null } = {}) {
 // (tests/fixtures/timing/dispatch-descriptions.json); the SDD-composed ones are
 // best-effort, so growth in `unlabelled` is the drift signal.
 const ROLE_PATTERNS = Object.freeze([
-  { role: 're-review', re: /^re-review\b/i },
-  { role: 'whole-branch review', re: /\bwhole-branch review\b/i },
+  { role: 're-review', re: /\bre-review\b/i },
+  { role: 'whole-branch review', re: /^(final )?whole-branch (code )?review\b/i },
   { role: 'plan review', re: /\bplan review\b/i },
   { role: 'task review', re: /^review task \d+/i },
-  { role: 'lens reviewer', re: /^review lens\b/i },
+  { role: 'lens reviewer', re: /^((review|delta) )?lens \d/i },
   { role: 'implementer', re: /^implement\b/i },
 ].map((p) => Object.freeze(p)));
 
@@ -389,7 +408,7 @@ function aggregateDispatches(items) {
   for (const b of [...Object.values(byTier), ...Object.values(byRole)]) {
     const acc = spansOf.get(b);
     b.agentSeconds = Math.round(acc.ms / 1000);
-    b.elapsedMinutes = unionMinutes(acc.spans);
+    b.elapsedMinutes = Math.round(unionMs(acc.spans) / 60000);
   }
   const unmapped = list.filter((d) => d.tokens && d.tier === 'unmapped');
   if (byTier.unmapped) byTier.unmapped.rawModels = [...new Set(unmapped.map((d) => d.rawModel ?? 'null'))].sort();

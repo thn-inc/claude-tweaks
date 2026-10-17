@@ -260,7 +260,7 @@ test('#3375 AC4: an empty transcript, an orphan transcript, and a user-lines-onl
   // orphan: a transcript with usage but no meta -> counted (unlabelled, tier from transcript model)
   fs.writeFileSync(path.join(sub, 'agent-orphan.jsonl'), '{"type":"assistant","timestamp":"2026-10-17T10:03:00.000Z","message":{"id":"mo","role":"assistant","model":"claude-haiku-4-5","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":2,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n');
   // user-lines-only: timestamped, no assistant row -> notFound null, tokens 0, renders in its bucket
-  fs.writeFileSync(path.join(sub, 'agent-user.meta.json'), JSON.stringify({ description: 'Review lens security', model: 'fable' }));
+  fs.writeFileSync(path.join(sub, 'agent-user.meta.json'), JSON.stringify({ description: 'Review lens 3b security', model: 'fable' }));
   fs.writeFileSync(path.join(sub, 'agent-user.jsonl'), '{"type":"user","timestamp":"2026-10-17T10:04:00.000Z","message":{"role":"user","content":[{"type":"text","text":"x"}]}}\n');
   const r = runAuto(s);
   assert.equal(r.status, 0, r.stderr);
