@@ -15,7 +15,7 @@ This Override semantics table is loaded only when the Manifesto runs as an appro
 | Review auto-apply ceiling | `none` | All findings auto-applied (lowest friction, highest revert load) |
 | Review auto-apply ceiling | `medium` | LOW + MED auto-applied; only HIGH prompts |
 | Ceremony profile | `standard` | Forces full-depth wrap-up ceremony (reflect full mode, unrestricted skill-curation scan, doc/CLAUDE.md/ADR sub-scans) even though `ceremony-check` verdicted `fast-lane` for every record |
-| Ceremony profile | `fast-lane` | Forces the fast-lane shape even if a record's `ceremony:` header was `standard` (or one member of a bundle was) — an active, informed human override, not the automated default |
+| Ceremony profile | `fast-lane` | Forces the fast-lane shape even if a record's `ceremony:*` label or ceremony-check verdict was `standard` (or one member of a bundle was) — an active, informed human override, not the automated default |
 | Model stance | `economy` | Every profile's resolved effort drops one notch on `EFFORT_SCALE`; a Frontier resolution additionally degrades to Capable — lower cost, lower rigor |
 | Model stance | `max-rigor` | Every profile's resolved effort rises one notch, capped at `max`; never promotes a profile's model upward |
 | Merge verification | `merge-when-green` | Merge sites arm `--auto` and let the forge merge once checks are green (the derived recommendation on a default-branch pr-first repo with PR CI) |

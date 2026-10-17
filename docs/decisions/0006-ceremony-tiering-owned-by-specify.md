@@ -10,7 +10,7 @@
 
 **Note (2026-09-06):** the skip roster — every step each ceremony profile skips, and every step no profile may skip — now lives in `plugin/skills/_shared/ceremony-profile.md` (#1926), pinned by `tests/ceremony-profile-roster.test.js`; consumers cite it by tag rather than restating a skip. Two skips were added there: SDD's final whole-branch review for a single-task, non-batched fast-lane plan, and the polish phase under fast-lane. The two-call split (`build,test` then `review,polish,wrap-up`) is deliberately kept for fast-lane records: collapsing it saves only the second call's preflight and loses the clean-room review — the last independent judgment a fast-lane record gets (`[IL-07]`, `[IL-130]`).
 
-**Note (2026-10-17):** the `/flow` fallback this ADR describes now runs at the Manifesto (Step 3), not at materialize time, so an unlabeled record's verdict reaches the run's `ceremony-profile` fold (#3160). Materialize passes the same verdict through as `--ceremony`, so it is still one judgment per record per run, and never written back. The body is left as originally written.
+**Note (2026-10-17):** the `/flow` fallback this ADR describes now runs at the Manifesto (Step 3), not at materialize time, so an unlabeled record's verdict reaches the run's `ceremony-profile` fold (#3160). Materialize passes the same verdict through as `--ceremony` (and judges itself only when no Manifesto verdict exists: a standalone build, an `interactive` run, or a run that predates this), so it is still one judgment per record per run, and never written back. The body is left as originally written.
 
 ## Context
 

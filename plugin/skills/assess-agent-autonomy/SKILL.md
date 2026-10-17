@@ -84,7 +84,7 @@ directly by a human, and never renders a `## Next Actions` block. Its only calle
 `/claude-tweaks:dispatch` (Auto-merge gate `merge-check`; Settle step `failure-check`),
 `/claude-tweaks:wrap-up` (Review Console's Auto-merge short-circuit, `merge-check`),
 `/claude-tweaks:specify` (Step 3, `ceremony-check`), and `/claude-tweaks:flow` (fallback, `ceremony-check`,
-from the Manifesto or, standalone, materialize; only when a record carries no `ceremony:*` label) — each sub-file's own
+from the Manifesto, else at materialize only when no Manifesto verdict exists; only when a record carries no `ceremony:*` label) — each sub-file's own
 "Called from" line is the source of truth for the full detail behind each entry here.
 
 ## Anti-Patterns

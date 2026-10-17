@@ -44,7 +44,7 @@ write; `record-creation-subissues.md`: the sub-issue is not created, reported wi
 per-sub-issue isolation as a write-path failure (the rest of the decomposition continues) —
 the local-store fallback does not apply, since there is no verdict to write;
 `flow/manifesto.md`: the pipeline stops before Step 4 with the generic failure card, gate
-`ceremony-check`; `materialize.md`, on a standalone build: the run stops for that record with the
+`ceremony-check`; `materialize.md`, where no Manifesto verdict exists: the run stops for that record with the
 same stop semantics as a Materialization hard-gate failure) — and is never treated as `standard`: the conservative default
 applies to a rendered verdict, not to a missing one.
 

@@ -9,7 +9,7 @@ stamping. Every sub-issue/single record, every `/specify` run, no pre-filtering 
 carrying no `ceremony:*` label at all — a legacy hand-authored spec file, or a record created before
 this mode moved upstream. `flow/manifesto.md`'s Ceremony profile computation runs it once per such
 record at the Manifesto (Step 3); `flow/materialize.md` (`skills/flow/materialize.md`) runs it itself
-only when no Manifesto ran, a standalone `/claude-tweaks:build`. Full rationale was in
+only when no Manifesto verdict exists (a standalone `/claude-tweaks:build`, an `interactive` run, or a run that predates this). Full rationale was in
 `docs/superpowers/specs/2026-07-20-lifecycle-ceremony-tiering-design.md`, deleted `70849915`.
 
 ## Step 1: Gather
@@ -19,7 +19,7 @@ Acceptance Criteria) and its `risk:*`/`size:*` labels are already composed in me
 step's own create/edit call — no fetch at all, more direct than a re-fetch. Read them straight from
 whatever local variable Step 3 already holds; there's nothing to shell out for.
 
-**Fallback call, from `/flow`'s Manifesto (Step 3) or, standalone, `materialize.md`:** only when a record reaches `/flow` carrying no
+**Fallback call, from `/flow`'s Manifesto (Step 3) or, where no Manifesto verdict exists, `materialize.md`:** only when a record reaches `/flow` carrying no
 `ceremony:*` label. Reuses the same body/labels already fetched during Resolution:
 
 ```bash
@@ -70,5 +70,5 @@ conservative-on-ambiguity principle as this skill's other three modes (see `SKIL
 explicit `ceremony:fast-lane`/`ceremony:standard` label — never omitted, unlike `risk:*`/
 `size:*`'s omit-when-unscored convention (this axis has no unscored state; every record gets a
 verdict the first time it's shaped). `/flow`'s fallback call — the Manifesto's, folded into that run's
-`ceremony-profile`, or materialize's on a standalone build — uses the verdict only for that run's
+`ceremony-profile`, or materialize's where no Manifesto verdict exists — uses the verdict only for that run's
 own header and never writes a label back to the record.
