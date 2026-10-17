@@ -28,6 +28,11 @@ test('AC6.1: the ruling sub-file states all five branches', () => {
   assert.match(text, /github-write-transport\.md/, 'cites the transport routing');
   assert.match(text, /mcp-transport\.md/, 'cites the MCP transport');
   assert.match(text, /#1459/, 'cites the --record-json precedent');
+  const skipLine = text.split('\n').find((l) => l.includes('bin/log-decision.js') && l.includes('Step 1 native dependency links (skipped)'));
+  assert.ok(skipLine, 'SKIP command line present');
+  const textArg = skipLine.match(/--text "([^"]*)"/);
+  assert.ok(textArg, 'SKIP --text double-quoted argument present');
+  assert.doesNotMatch(textArg[1], /`/, 'SKIP --text must be shell-safe: no backticks inside the double-quoted argument');
 });
 
 test('AC6.2: multi-spec.md step 3 points to the ruling', () => {

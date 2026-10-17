@@ -12,7 +12,7 @@ Loaded by `multi-spec.md`'s Validation step 3, before Step 2.8's claim, when the
 
 **`nativeLinksUnchecked: true`.** Proceed. Ordering, the merge-state gate and (under `parallel`) the wave plan run on body-text `blocked-by` only. Once the parent run directory exists (after Step 3's Manifesto write, as `multispec-merge-gate.md` times its own entries), write one `SKIP`:
 ```
-node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status SKIP --step "Step 1 native dependency links (skipped)" --text "condition: gh unavailable under work-links: native, preflight-records.js --records-json reported nativeLinksUnchecked → fallback: blocked-by read from record bodies only; native-only links are invisible, so cross-record ordering, the merge-state gate and (under `parallel`) the wave plan ran on body-text dependencies (dispatch/mcp-transport.md, #2523)." --reversibility n/a
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status SKIP --step "Step 1 native dependency links (skipped)" --text "condition: gh unavailable under work-links: native, preflight-records.js --records-json reported nativeLinksUnchecked → fallback: blocked-by read from record bodies only; native-only links are invisible, so cross-record ordering, the merge-state gate and (under parallel) the wave plan ran on body-text dependencies (dispatch/mcp-transport.md, #2523)." --reversibility n/a
 ```
 
 **Never** read a stopped run as "no dependencies". Never fall back to body text when the `gh` path's native call fails; that is exit 1.
