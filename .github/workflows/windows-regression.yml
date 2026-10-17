@@ -104,9 +104,9 @@ jobs:
           TEMP: ${{ runner.temp }}
         # Timeout budget: verify reuses --cmd-timeout for every per-file baseline /
         # isolated / retry run, not just the suite. Measured suite ~8.5 min on
-        # windows-latest (run 39036270004); worst case = suite + 3 sequential 20-min
-        # hangs for one file ~ 70 min, inside the 90-min job limit — so verify always
-        # writes its report and the filer always runs.
+        # windows-latest (run 39036270004); per-file runs go 4 at a time, so up to 4
+        # hung files cost suite + 3 sequential 20-min phases ~ 70 min, inside the
+        # 90-min job limit — verify still writes its report and the filer still runs.
         run: >-
           node plugin/bin/verify.js
           --cmd tests="npm test"
