@@ -167,8 +167,9 @@ test('step-6-auto.md cites decision-markers.md for the Stage-tier marker write',
 });
 
 // Per-file 40 KB pin on step-6-auto.md retired by #1997 — the per-file tier
-// is a warning since #1990 and this file has no compose call site; removal
-// condition in docs/incident-log.md [IL-153].
+// was a warning from #1990 until #3311 deleted the ceiling model entirely,
+// and this file has no compose call site; removal condition in
+// docs/incident-log.md [IL-153].
 
 // --- Task 4: step-1-records.md's Proposed:-text-aware loop-safety skip ---
 

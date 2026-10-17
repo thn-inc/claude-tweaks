@@ -160,6 +160,6 @@ test('both review-console.md and multispec-review-console.md cite the shared int
 });
 
 // Per-file 40 KB pins on review-console.md and multispec-review-console.md
-// retired by #1997 — the per-file tier is a warning since #1990 and these
-// files have no compose call site; removal condition in
-// docs/incident-log.md [IL-153].
+// retired by #1997 — the per-file tier was a warning from #1990 until #3311
+// deleted the ceiling model entirely, and these files have no compose call
+// site; removal condition in docs/incident-log.md [IL-153].

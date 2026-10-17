@@ -9,7 +9,6 @@ const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const SET_CONFIG = path.join(ROOT, 'plugin', 'bin', 'set-config.js');
-const { CEILING_BYTES } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'skill-audit', 'context-cost'));
 const { shouldDerive, deriveCeremonyProfile } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'dispatch', 'ceremony-derive'));
 
 // A test-only diff: one test file plus its materialized spec doc — the #1545 evidence shape.
@@ -79,5 +78,4 @@ test('ceremony-derivation.md states the auto-mode gate and carries no DISPATCH_H
   assert.match(text, /`mode` is `auto`/);
   assert.match(text, /`confirm`, `hybrid`, or `interactive`/);
   assert.match(text, /shouldDerive/);
-  assert.ok(Buffer.byteLength(text, 'utf8') <= CEILING_BYTES);
 });

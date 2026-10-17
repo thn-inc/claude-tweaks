@@ -40,3 +40,7 @@ Plan-audit keeps its near band at 90% of the limit (now `RAIL_BYTES`), unchanged
 - **Per-file ceilings tuned per file:** rejected. Hundreds of numbers to maintain, still unrelated to any platform limit.
 - **A rail at 80% of the Read cap:** rejected at #3306's plan gate. 42,000 B at the measured ratio sat under 17 shipped files.
 - **A rail on the Bash 30,000-character cap:** rejected. Skills read with Read, and the cap sits below files shipping today.
+
+## Update (2026-10-17, #3311)
+
+#3311 shipped the deletions listed under Consequences, plus the description ceilings in `context-cost.js` and `bloat.js`'s ceiling signal. 0016's composed gate now runs only as the rail's composed check (`composedRailViolations`), with no per-step exceptions, and its per-file warning tier is gone. "The only size limit" is now enforced, not just documented: `tests/skill-size-single-source.test.js` fails when any file under `tests/` or `plugin/bin/` other than `budgets.js` declares or compares a skill-size number. That guard is one more consumer to update when `RAIL_BYTES` or `budgets.js` is renamed. It names the path as `SINGLE_SOURCE` and the rail's export names in `RAIL_NAMES`, and a rail name missing from that set is reported as unclassified. This does not revise the decision above; it records how it was enforced.

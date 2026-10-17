@@ -1,6 +1,6 @@
 # Review — Code-Mode Procedure (Steps 1-7)
 
-Loaded by `SKILL.md` in `code` and `full` mode only — `visual`/`journey`/`discover` modes delegate entirely to `/claude-tweaks:visual-review` and never read this file (that skip is exactly why this file is not part of `SKILL.md`: the dispatcher stays cheap for modes that use none of it, and both files keep real headroom under the 40 KB ceiling). Extracted from `SKILL.md` for #887, following `/claude-tweaks:visual-review`'s own prelude/mode split (#108).
+Loaded by `SKILL.md` in `code` and `full` mode only — `visual`/`journey`/`discover` modes delegate entirely to `/claude-tweaks:visual-review` and never read this file (that skip is exactly why this file is not part of `SKILL.md`: the dispatcher stays cheap for modes that use none of it, and both files stay lean). Extracted from `SKILL.md` for #887, following `/claude-tweaks:visual-review`'s own prelude/mode split (#108).
 
 ## Ceremony-Aware Step Selection
 

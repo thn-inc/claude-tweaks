@@ -9,7 +9,7 @@ files:
 
 **Persona:** A maintainer of a project with its own skills, running `/claude-tweaks:harness-health` (or reading the dimension-9 evidence `/claude-tweaks:wrap-up` and `/claude-tweaks:init` produce through `_shared/harness-health-analysis.md`), who wants to know whether a skill file is doing too much.
 **Goal:** See whether the target skill file is much larger than its siblings, measured against that project's own skill corpus rather than a fixed byte limit, and decide whether that size is real bloat.
-**Entry point:** `/claude-tweaks:harness-health` on a skill target. Check 9 runs `bloatReport(target, corpus, opts)` over the target's whole skill corpus, with options chosen by kind: `{ ceiling: Infinity }` for a skill target, `{ ceiling: Infinity, sizeOutlier: false }` for a CLAUDE.md or rule file.
+**Entry point:** `/claude-tweaks:harness-health` on a skill target. Check 9 runs `bloatReport(target, corpus, opts)` over the target's whole skill corpus, with options chosen by kind: `{}` for a skill target, `{ sizeOutlier: false }` for a CLAUDE.md or rule file.
 **Success state:** The bloat evidence names the corpus baseline it measured against and, when the file is an outlier, gives its bytes against that threshold. The judge decides whether that is real bloat or a legitimately large entry point. Nothing is filed on size alone.
 
 ## Steps
@@ -33,7 +33,7 @@ files:
 - **URL:** the target file's block in the same report, for example `plugin/skills/flow/SKILL.md`.
 - **Action:** Look for `size-outlier: {bytes} B, above the corpus threshold of {threshold} B`.
 - **Should feel:** Specific. One line gives the file's bytes and the threshold it crossed.
-- **Should understand:** It fires only when the file's bytes are strictly above the threshold; a file exactly at the threshold is not an outlier. In a corpus of 20 or more files, the threshold is the p95 size or three times the median, whichever is larger, so a uniform corpus flags nothing: on this repo's 442 skill files p95 wins (39,519 B, against a median near 8.5 KB) and 22 files from 40,016 B to 49,445 B are flagged. This line is evidence the judge weighs, never a finding by itself. The ceiling signal is suppressed at every call site since #3310; #3311 removes it.
+- **Should understand:** It fires only when the file's bytes are strictly above the threshold; a file exactly at the threshold is not an outlier. In a corpus of 20 or more files, the threshold is the p95 size or three times the median, whichever is larger, so a uniform corpus flags nothing: on this repo's 442 skill files p95 wins (39,519 B, against a median near 8.5 KB) and 22 files from 40,016 B to 49,445 B are flagged. This line is evidence the judge weighs, never a finding by itself. The ceiling signal was suppressed at every call site by #3310 and removed outright by #3311.
 - **Red flags:**
   - A `size-outlier:` line under a `NO BASELINE` baseline.
   - An outlier line whose bytes are at or below the stated threshold.

@@ -64,8 +64,8 @@ test('wrap-up/skill-curation.md and docs-health-integration.md cite the digest f
   assert.ok(docsMd.includes('fast-lane-digest.md'), 'docs-health-integration.md must cite fast-lane-digest.md');
 });
 
-test('wrap-up/SKILL.md is untouched by this change (stays under the 40 KB ceiling with no new growth)', () => {
+test('wrap-up/SKILL.md is untouched by this change (no new growth, #1808)', () => {
   const md = read('plugin/skills/wrap-up/SKILL.md');
   assert.ok(!md.includes('fast-lane-digest.md'),
-    'wrap-up/SKILL.md must not be edited in this plan (near-zero headroom under the 40 KB ceiling, #1808)');
+    'wrap-up/SKILL.md must not be edited in this plan (no new growth, #1808)');
 });

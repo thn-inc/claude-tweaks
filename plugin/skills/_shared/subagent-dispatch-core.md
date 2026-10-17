@@ -1,7 +1,7 @@
 # Subagent Dispatch Core — Working Directory, Foreground Execution, Read-only Reviewers, Model Selection, Template A, Retrieval, Fan-Out
 
 Extracted from `_shared/subagent-output-contract.md` (#2019) — the dispatch-facing sections a
-review/test call site actually needs to compose under the 40 KB ceiling, without also paying for
+review/test call site actually needs to compose as a lean bundle, without also paying for
 that file's remaining content (Input Discipline, HARD-GATE Marker Convention, Waiting for
 Dispatched Agents, Implementer Status Protocol, Templates B/C, the third-party exemption,
 re-prompt-on-violation, and Anti-Patterns), none of which any of this file's call sites cite.

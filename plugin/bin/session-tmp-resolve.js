@@ -5,7 +5,7 @@
 // snippets that need several session-scoped temp paths in one bash fence
 // without inlining the same `node -e "..."` resolution boilerplate per
 // call site (#266 shipped that inline form first; this is the byte-cheaper
-// follow-up for files pushed near the 40 KB skill-file ceiling by it).
+// follow-up for files pushed near the then-40 KB skill-file ceiling by it).
 //
 // Usage: session-tmp-resolve.js VAR=filename [VAR=filename ...]
 // Output: one `VAR=path` line per argument, in argument order — eval-ready

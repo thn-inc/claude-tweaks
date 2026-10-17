@@ -249,7 +249,7 @@ When a qualifying group's `/flow` run reaches `/wrap-up`'s Review Console, check
 
 **Drain-overlap hold, before `merge-check`.** Read `drain-pr-overlap.md`'s "Step 6 (Auto-merge
 gate)" section, this skill's directory, and follow it before Authorization/Content judgment below
-— extracted to keep this file under the 40 KB ceiling (`[IL-153]`).
+— extracted so this file stays lean (`[IL-153]`).
 
 1. **Authorization** — a two-phase check: evaluate every group member first (fresh labels +
    comments, `evaluateMaturation` per member), act only if every one cleared. A member already
