@@ -105,12 +105,14 @@ template applied.
 
 **Before substituting this template**, the dispatching session decides whether to add `DISPATCH_HEADLESS=1 ` immediately before `/claude-tweaks:flow` on the invocation line below — a decision made once, here, never left in the copy-pasted text for the dispatched agent to reason about. Add it when this firing came from a scheduled Routine — a bare drain, or its deprecated `next` alias — with nobody present; omit it entirely (no `{headless-marker}` placeholder, no trailing space) when a human typed the command directly, in any form (bare, `next`, `#N`, or explicit-list) — the same human-present/Routine discriminator `SKILL.md`'s Next Actions render rule already uses. When set, it tells this call's Settle procedure (`settle-and-merge.md`) that nobody is present to read a Step 2.8 claim-contest stop, so a contest there should self-report via `_shared/headless-self-report.md` instead of just failing silently to whoever isn't watching. This is exactly why the marker must not live inside the fenced block below: the block is copied verbatim into every dispatch regardless of firing form, and the dispatched agent itself has no way to know which form the dispatching session used — only the dispatching session can make this call, before substitution.
 
+A dispatched call is headless and cannot answer `interactive` prompts, so both calls pass `auto` explicitly; an explicit mode argument outranks the project's `auto-mode` policy (`_shared/auto-mode-contract.md`'s precedence: CLI arg > pipeline config > project policy > skill default), and the `autonomy` ceiling still bounds what the run may do.
+
 ```
 Task scope: Execute claude-tweaks build+test for this file-overlap group of
 GitHub records: {issue list}. Singleton -> run
-`PIPELINE_RUN_DIR="{minted-run-dir}" /claude-tweaks:flow #{issue} build,test`.
+`PIPELINE_RUN_DIR="{minted-run-dir}" /claude-tweaks:flow #{issue} build,test auto`.
 Bundle (2+ issues) -> run
-`PIPELINE_RUN_DIR="{minted-run-dir}" /claude-tweaks:flow "#{n1},#{n2},..." build,test`
+`PIPELINE_RUN_DIR="{minted-run-dir}" /claude-tweaks:flow "#{n1},#{n2},..." build,test auto`
 once, comma-joined. Stop after the test gate -- do not proceed to review, polish, or wrap-up;
 a separate Task call handles those. If you reference any of these issue numbers in an
 intermediate commit message, write "refs #N" -- never "closes #N" or "fixes #N".
@@ -235,8 +237,8 @@ This call's prompt names ONLY the record number(s) and the `PIPELINE_RUN_DIR` pa
 Task scope: Execute claude-tweaks review+polish+wrap-up for this already-claimed file-overlap
 group of GitHub records: {issue list}. Singleton -> run
 `PIPELINE_RUN_DIR="{minted-run-dir}" /claude-tweaks:flow #{issue}
-review,polish,wrap-up`. Bundle -> run `PIPELINE_RUN_DIR="{minted-run-dir}"
-/claude-tweaks:flow "#{n1},#{n2},..." review,polish,wrap-up` once, comma-joined. The
+review,polish,wrap-up auto`. Bundle -> run `PIPELINE_RUN_DIR="{minted-run-dir}"
+/claude-tweaks:flow "#{n1},#{n2},..." review,polish,wrap-up auto` once, comma-joined. The
 {minted-run-dir} value substituted into those commands is the same run directory dispatch
 minted before either call and the first call's own /flow invocation adopted; passing it on
 the command line is what makes this call resume that exact run rather than start a new one --
