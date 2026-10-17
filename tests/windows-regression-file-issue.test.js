@@ -413,6 +413,21 @@ for (const [name, boundary] of [['an `ok N` line', 'ok 83 - a passing test'], ['
   });
 }
 
+test("L21: a crashed file's non-comment stderr directly after another file's closed failure block opens on the first stderr line", () => {
+  const log = [
+    winBlock(70, 'an earlier failure in another file', 'tests/apply-refine-labels.test.js', 'detail-for-other-file'),
+    'Error: crashed at load',
+    '    at parse (D:\\\\a\\\\repo\\\\repo\\\\tests\\\\argument-hint-mirrors.test.js:51:29)',
+    'not ok 11 - tests\\\\argument-hint-mirrors.test.js',
+  ].join('\n');
+  const deps = fakeDeps({ ...adjudicated('tests/argument-hint-mirrors.test.js'), checks: { tests: { failingRegion: log } } });
+  assert.equal(run(argv(), deps), 1);
+  const body = created(deps).input;
+  assert.match(body, /\n```\nError: crashed at load\n/, 'the fence opens on the first stderr line');
+  assert.ok(!body.includes('an earlier failure in another file'), "the other test's name is not in the excerpt");
+  assert.ok(!body.includes('detail-for-other-file'));
+});
+
 test('unreadable report on main exits 1 and files a "no verify report" issue naming the commit and run', () => {
   for (const report of ['null', '[]', '3', undefined]) {
     const deps = fakeDeps(report);

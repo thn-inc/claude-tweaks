@@ -136,22 +136,25 @@ function namesFile(l, needle) {
 // naming the file — the failing-test line whose block holds that line, so the
 // test's name is shown — and runs to the next pass/fail line at or above the
 // opening line's indent (a deeper one is the failure's own error text) or
-// EXCERPT_MAX_LINES. A match no block owns is a crashed file's stderr, printed
+// EXCERPT_MAX_LINES. A match no block owns, or one past its own block's YAML-close
+// line (ownership outlives the close), is a crashed file's stderr, printed
 // before its own failing-test line: the excerpt opens just after the nearest
 // boundary above the match (a pass/fail, subtest or YAML-close line, or a line a
-// block owns), where the stderr (and its `Error:` line) begins; there the end
-// indent is 0. null when no line names the file. `normalized` is `lines` mapped
-// through slashes(), computed once per issue rather than per file.
+// different block owns), where the stderr (and its `Error:` line) begins; there
+// the end indent is 0. null when no line names the file. `normalized` is `lines`
+// mapped through slashes(), computed once per issue rather than per file.
 function excerptFor(file, { lines, normalized, tap }) {
   const needle = slashes(file);
   const hit = normalized.findIndex((l) => namesFile(l, needle));
   if (hit === -1) return null;
-  let start = tap[hit].owner;
-  if (start === -1) {
+  const { owner } = tap[hit];
+  const close = owner === -1 ? -1 : tap.findIndex((t, i) => i > owner && t.owner === owner && t.kind === 'yamlClose');
+  let start = owner;
+  if (owner === -1 || (close !== -1 && hit > close)) {
     start = hit;
     for (let i = hit - 1; i >= 0; i--) {
-      const { kind, owner } = tap[i];
-      if (owner !== -1 || kind === 'ok' || kind === 'notOk' || kind === 'subtest' || kind === 'yamlClose') { start = i + 1; break; }
+      const t = tap[i];
+      if ((t.owner !== -1 && t.owner !== owner) || t.kind === 'ok' || t.kind === 'notOk' || t.kind === 'subtest' || t.kind === 'yamlClose') { start = i + 1; break; }
     }
   }
   const openIndent = tap[start].kind === 'notOk' ? tap[start].indent : 0;
