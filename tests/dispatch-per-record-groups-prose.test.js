@@ -11,6 +11,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
+const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 const { CEILING_BYTES } = require('../plugin/bin/lib/skill-audit/context-cost');
 
@@ -119,5 +121,36 @@ test('design-notes.md records the per-record decision and names the hub-exclusio
   const section = notes.slice(start, next === -1 ? undefined : next);
   for (const token of ['#1365', 'weakest', 'bare drain']) {
     assert.ok(section.includes(token), `the per-record decision section must name ${token}`);
+  }
+});
+
+test('AC1.1: the neighbour-in-flight pass reads claims through createClaimReader (#3393)', () => {
+  const start = QUEUE_PULL.indexOf('# #3278: neighbour-in-flight pass');
+  assert.ok(start !== -1, 'neighbour-in-flight anchor must exist');
+  const block = QUEUE_PULL.slice(start, QUEUE_PULL.indexOf('NEIGHBOUR_RC=$?', start));
+  assert.match(block, /readClaimContent: createClaimReader\(\)\.read/);
+  assert.doesNotMatch(block, /readClaimBlob\(/);
+  assert.doesNotMatch(block, /'repo', 'view'/);
+});
+
+test('AC2.1: the neighbour-in-flight heredoc runs offline and excludes nothing when no in-flight record neighbours a candidate (#3393)', () => {
+  const open = 'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF\n';
+  const close = '\nNODE_EVAL_EOF\nNEIGHBOUR_RC';
+  const start = QUEUE_PULL.indexOf(open);
+  const end = QUEUE_PULL.indexOf(close, start);
+  assert.ok(start !== -1 && end !== -1, 'neighbour-in-flight heredoc anchors must exist');
+  const code = QUEUE_PULL.slice(start + open.length, end).split('${CLAUDE_PLUGIN_ROOT}').join(path.join(ROOT, 'plugin'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neighbour-pass-'));
+  const groups = path.join(dir, 'groups.json');
+  const inFlight = path.join(dir, 'in-flight.json');
+  const exclusions = path.join(dir, 'exclusions.json');
+  fs.writeFileSync(groups, JSON.stringify([[{ number: 1, body: '### Key Files\n\n- `a.js`\n', labels: [] }]]));
+  fs.writeFileSync(inFlight, '[]');
+  // PATH is an empty dir so any `gh` call fails fast: no neighbour means no claim read, and nothing reaches the network.
+  try {
+    execFileSync(process.execPath, ['-e', code, groups, inFlight, exclusions], { encoding: 'utf8', env: { ...process.env, PATH: dir } });
+    assert.ok(!fs.existsSync(exclusions) || !JSON.parse(fs.readFileSync(exclusions, 'utf8')).some((e) => e.reason === 'neighbour-in-flight'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
