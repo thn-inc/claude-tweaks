@@ -20,7 +20,9 @@
 //      — nothing filed
 //   1  the verify outcome is a failure, whether or not an issue was filed
 //      (a non-main ref files nothing); or the report is missing / unreadable /
-//      not a JSON object; or `gh issue create` / `gh issue comment` failed
+//      not a JSON object (on main, that also files a "no verify report" issue —
+//      the next push would otherwise take the unevaluated commit as its base);
+//      or `gh issue create` / `gh issue comment` failed
 //   2  malformed invocation
 //
 // Fails closed: a failed run whose adjudication never ran or crashed
@@ -44,6 +46,7 @@ const REQUIRED_FLAGS = ['--report', '--ref', '--sha', '--repo', '--run-url'];
 const OPTIONAL_FLAGS = ['--log', '--base'];
 const NOT_ADJUDICATED_SUFFIX = '(not adjudicated)';
 const TITLE_PREFIX = 'Windows regression: ';
+const GH_TIMEOUT_MS = 60000;
 
 const USAGE = `usage: file-issue.js --report <path> --ref <ref> --sha <sha> --repo <owner/name> --run-url <url>
                      [--log <path>] [--base <sha>]
@@ -246,6 +249,21 @@ function composeIssue({ report, verdict, sha, base, pr, runUrl, logText }) {
   return { title, body: truncateBody(parts.join('\n\n')) };
 }
 
+// The issue for a main run whose report could not be read: this commit was never
+// evaluated, so the next push's run takes it as its base unchecked.
+function composeNoReportIssue({ sha, runUrl, problem }) {
+  const short = sha.slice(0, 9);
+  return {
+    title: `${TITLE_PREFIX}no verify report for ${short} ${NOT_ADJUDICATED_SUFFIX}`,
+    body: [
+      `The post-merge Windows check on commit ${sha} produced no usable verify report (${problem}), so the commit was never evaluated.`,
+      `**Run:** ${runUrl}`,
+      'The next push to `main` compares against this commit, so anything this commit broke on Windows would read as pre-existing there. Re-run the workflow on this commit (or check its `windows` job log for why the report is missing) before trusting later runs.',
+      '_Filed by .github/workflows/windows-regression.yml. Shape it with /claude-tweaks:specify before building._',
+    ].join('\n\n'),
+  };
+}
+
 function lookupMergedPr(repo, sha, deps) {
   try {
     return findMergedPr(JSON.parse(deps.gh(['api', `repos/${repo}/commits/${sha}/pulls`])));
@@ -289,14 +307,18 @@ function run(argv, deps) {
   const { report: reportPath, ref, sha, repo, 'run-url': runUrl, log: logPath, base } = parsed.opts;
 
   let report;
+  let problem = null;
   try {
     report = JSON.parse(deps.readFile(reportPath));
+    if (!isPlainObject(report)) problem = `report ${reportPath} is not a JSON object`;
   } catch (e) {
-    err(`${TOOL}: cannot read report ${reportPath}: ${e.message}`);
-    return 1;
+    problem = `cannot read report ${reportPath}: ${e.message}`;
   }
-  if (!isPlainObject(report)) {
-    err(`${TOOL}: report ${reportPath} is not a JSON object`);
+  if (problem !== null) {
+    err(`${TOOL}: ${problem}`);
+    // On main this commit was never evaluated, yet the next push compares
+    // against it — its regressions would silently become that run's baseline.
+    if (ref === MAIN_REF) fileOrComment(composeNoReportIssue({ sha, runUrl, problem }), { repo, sha, adjudicated: false }, deps);
     return 1;
   }
 
@@ -313,8 +335,17 @@ function run(argv, deps) {
     }
   }
 
-  const { title, body } = composeIssue({ report, verdict, sha, base, pr: lookupMergedPr(repo, sha, deps), runUrl, logText });
-  const existing = findExistingIssue(repo, sha.slice(0, 9), verdict.adjudicated, deps);
+  const issue = composeIssue({ report, verdict, sha, base, pr: lookupMergedPr(repo, sha, deps), runUrl, logText });
+  fileOrComment(issue, { repo, sha, adjudicated: verdict.adjudicated }, deps);
+  return 1;
+}
+
+// Comment on the open issue already covering this commit, else file a new one.
+// A gh failure is a stderr line; the caller's exit code is 1 either way.
+function fileOrComment({ title, body }, { repo, sha, adjudicated }, deps) {
+  const out = (s) => deps.stdout(`${s}\n`);
+  const err = (s) => deps.stderr(`${s}\n`);
+  const existing = findExistingIssue(repo, sha.slice(0, 9), adjudicated, deps);
   if (existing !== null) {
     try {
       deps.gh(['issue', 'comment', String(existing), '--repo', repo, '--body-file', '-'], body);
@@ -322,7 +353,7 @@ function run(argv, deps) {
     } catch (e) {
       err(`${TOOL}: gh issue comment failed: ${e.message}`);
     }
-    return 1;
+    return;
   }
   try {
     const url = String(deps.gh(['issue', 'create', '--repo', repo, '--label', LABEL, '--title', title, '--body-file', '-'], body)).trim();
@@ -330,13 +361,13 @@ function run(argv, deps) {
   } catch (e) {
     err(`${TOOL}: gh issue create failed: ${e.message}`);
   }
-  return 1;
 }
 
 function defaultDeps() {
   return {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
-    gh: (args, input) => execFileSync('gh', args, { input, encoding: 'utf8' }),
+    // Bounded: a hung gh call fails this one call, not the whole `file` job.
+    gh: (args, input) => execFileSync('gh', args, { input, encoding: 'utf8', timeout: GH_TIMEOUT_MS }),
     stdout: (s) => process.stdout.write(s),
     stderr: (s) => process.stderr.write(s),
   };

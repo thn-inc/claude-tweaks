@@ -413,16 +413,33 @@ for (const [name, boundary] of [['an `ok N` line', 'ok 83 - a passing test'], ['
   });
 }
 
-test('unreadable report: null JSON exits 1, files nothing', () => {
-  for (const report of ['null', '[]', '3']) {
+test('unreadable report on main exits 1 and files a "no verify report" issue naming the commit and run', () => {
+  for (const report of ['null', '[]', '3', undefined]) {
     const deps = fakeDeps(report);
-    assert.equal(run(argv(), deps), 1, report);
-    assert.equal(deps.calls.gh.length, 0, report);
+    assert.equal(run(argv(), deps), 1, String(report));
     assert.match(deps.calls.stderr.join(''), /r\.json/);
+    const call = created(deps);
+    assert.ok(call, `files an issue for ${String(report)}`);
+    assert.equal(flag(call, '--title'), 'Windows regression: no verify report for abcdef123 (not adjudicated)');
+    assert.equal(flag(call, '--label'), 'type:bug');
+    assert.ok(call.input.includes(SHA) && call.input.includes(RUN_URL) && call.input.includes('r.json'));
+    assert.match(call.input, /next push to `main` compares against this commit/);
   }
-  const missing = fakeDeps(undefined);
-  assert.equal(run(argv(), missing), 1);
-  assert.equal(missing.calls.gh.length, 0);
+});
+
+test('unreadable report on main comments on the open issue already covering the commit', () => {
+  const deps = fakeDeps('null', { 'issue list': issueList(9, 'Windows regression: no verify report for abcdef123 (not adjudicated)') });
+  assert.equal(run(argv(), deps), 1);
+  assert.equal(created(deps), undefined);
+  assert.equal(commented(deps).args[2], '9');
+});
+
+test('unreadable report on a non-main ref exits 1 with no gh call', () => {
+  for (const report of ['null', undefined]) {
+    const deps = fakeDeps(report);
+    assert.equal(run(argv({ '--ref': 'refs/heads/ci-probe/x' }), deps), 1);
+    assert.equal(deps.calls.gh.length, 0);
+  }
 });
 
 const NOTE = '\n\n…(truncated — see the run\'s verify-report artifact)';

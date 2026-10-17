@@ -11,7 +11,7 @@ files:
 **Persona:** claude-tweaks maintainer who develops on macOS, merges PRs gated only by the ubuntu `test` check, and has users installing the plugin on Windows.
 **Goal:** Find out — without running anything on Windows and without slowing any PR — when a merge breaks a test only on a Windows checkout (a hard-coded `/` path, CRLF line endings, a `.cmd` launcher), and which PR did it.
 **Entry point:** Merging a PR to `main` (or any direct push to `main`); nothing to invoke.
-**Success state:** Either the `windows-regression` run on that commit goes green, or exactly one `type:bug` issue titled `Windows regression: {N} test file(s) newly failing after {sha}` names the newly failing files, the merged PR, and the run (or a comment on the open issue already covering it). A red run with nothing filed means the filer could not read the report or `gh` failed — the `file` job's log says which.
+**Success state:** Either the `windows-regression` run on that commit goes green, or exactly one `type:bug` issue titled `Windows regression: {N} test file(s) newly failing after {sha}` names the newly failing files, the merged PR, and the run (or a comment on the open issue already covering it). When the report itself is missing or unreadable, the issue is instead titled `Windows regression: no verify report for {sha} (not adjudicated)`: that commit was never evaluated, and the next push compares against it. A red run with nothing filed means `gh` failed — the `file` job's log says so.
 
 ## Steps
 
@@ -24,7 +24,7 @@ files:
 - **Action:** Nothing. The push to `main` starts one run per commit (concurrency keyed on the sha, never cancelled), comparing against the push's previous `main` tip.
 - **Should feel:** Like background monitoring — a run you can look at, not one you have to.
 - **Should understand:** The run's "Resolve the comparison base" step prints which commit it compares against and why (push event before, or the `HEAD^1` fallback). A clean run takes about 17 minutes. The `windows` job is capped at 90 minutes and every per-file baseline run at 20 (`--cmd-timeout`), so a hung test file ends as a named timeout, not a run that never finishes.
-- **Red flags:** A skipped commit (no run for a merged sha); `npm test` dying before any test runs (`ENAMETOOLONG` — the runner must pass root globs on Windows); the `windows` job cancelled at its 90-minute limit, which uploads no report and leaves a red run with nothing filed.
+- **Red flags:** A skipped commit (no run for a merged sha); `npm test` dying before any test runs (`ENAMETOOLONG` — the runner must pass root globs on Windows); the `windows` job cancelled at its 90-minute limit, which uploads no report and files a "no verify report" issue instead of a verdict.
 
 ### 3a. Green — nothing new broke on Windows
 - **Action:** None. A raw pass, or failures that also fail on the base commit or pass in isolation (baseline-adjudicated), end green and file nothing.
