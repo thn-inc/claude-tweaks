@@ -59,6 +59,63 @@ function defaultGit(cwd) {
   });
 }
 
+// Separate from defaultGit: a batch-mode `git cat-file --batch` call pipes
+// stdin and must come back as a Buffer (its output is binary-framed, see
+// parseCatFileBatch below), never the utf8-decoded string every other git
+// call in this file returns. deps.gitBatch is the injectable seam for it,
+// mirroring deps.git without overloading that one runner's return type.
+function defaultGitBatch(cwd) {
+  return (args, input) => execFileSync('git', args, {
+    cwd, input, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, maxBuffer: 64 * 1024 * 1024,
+  });
+}
+
+// Parses `git cat-file --batch`'s streamed stdout: one header line per fed
+// object, in input order — `{oid} {type} {size}\n` for a resolved object,
+// `{object} missing\n` for one that doesn't exist at that sha — followed,
+// only for a resolved object, by exactly `{size}` content bytes and one
+// trailing newline. Slicing by the declared byte length rather than
+// splitting the buffer on '\n' is what keeps this correct: every SKILL.md
+// or sub-file this reads contains its own newlines (plugin/bin/lib/issues/
+// claims-git-cas.js's parseCatFileBatch is the same idiom for a different
+// object set). `count` is the number of objects fed, so a truncated or
+// malformed stream is a loud error rather than a silently-short result.
+function parseBatchOutput(buf, count) {
+  const out = [];
+  let offset = 0;
+  for (let i = 0; i < count; i++) {
+    const nl = buf.indexOf(0x0a, offset);
+    if (nl === -1) throw new Error('load-delta.js: git cat-file --batch output truncated');
+    const header = buf.slice(offset, nl).toString('utf8');
+    offset = nl + 1;
+    if (header.endsWith(' missing')) { out.push(null); continue; }
+    const m = /^[0-9a-f]+ \S+ (\d+)$/.exec(header);
+    if (!m) throw new Error(`load-delta.js: unexpected git cat-file --batch header: ${header}`);
+    const size = Number(m[1]);
+    out.push(buf.slice(offset, offset + size).toString('utf8'));
+    offset += size + 1; // +1 skips the single trailing newline git appends after content
+  }
+  return out;
+}
+
+// Prefetches every `paths` entry's base content in one `git cat-file
+// --batch` process (ledger row 16 — baseSide previously spawned one `git
+// show` per file: 481 spawns, ~3.6s of a 4.1s run on this repo). Returns a
+// Map<path, string> for every path git resolved at `sha`; a path git itself
+// reports missing is simply absent from the map (never stored as null),
+// so a caller's `batch.has(p)` falls through to the existing per-file
+// git-show fallback instead of masquerading a real git miss as "prefetched
+// and empty".
+function prefetchBaseMd(gitBatch, sha, paths) {
+  const map = new Map();
+  if (paths.length === 0) return map;
+  const input = paths.map((p) => `${sha}:${p}\n`).join('');
+  const buf = gitBatch(['cat-file', '--batch'], input);
+  const contents = parseBatchOutput(buf, paths.length);
+  paths.forEach((p, i) => { if (contents[i] !== null) map.set(p, contents[i]); });
+  return map;
+}
+
 const realDeps = {
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -110,7 +167,21 @@ function headSide(repoRoot, root) {
   };
   const listSkillMds = () => {
     const dir = path.join(repoRoot, root, 'skills');
-    return fs.readdirSync(dir, { withFileTypes: true })
+    // A root discovered only via the base-tree union (ledger row 17) — all
+    // its SKILL.md files deleted, committed, at head — has no skills/
+    // directory left on disk at all; a root whose index entries are deleted
+    // in the working tree only (never committed) can hit the same ENOENT.
+    // Either way that is "no entries at head", not a crash: readdirSync's
+    // ENOENT/ENOTDIR become [], and anything else (a real permissions or I/O
+    // error) still rethrows.
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      if (['ENOENT', 'ENOTDIR'].includes(err.code)) return [];
+      throw err;
+    }
+    return entries
       .filter((d) => d.isDirectory())
       .map((d) => `${skillsPrefix(root)}${d.name}/SKILL.md`)
       .filter((p) => readFile(p) !== null);
@@ -118,12 +189,21 @@ function headSide(repoRoot, root) {
   return { readFile, listSkillMds };
 }
 
-function baseSide(git, sha, baseFiles, root) {
+function baseSide(git, sha, baseFiles, root, batch = null) {
   const re = SKILL_MD_UNDER(root);
   return {
     // A path absent from the base tree is "did not exist at base" (null → 0
     // bytes), decided from the ls-tree set, never from a swallowed git error.
-    readFile: (p) => (baseFiles.has(p) ? git(['show', '--end-of-options', `${sha}:${p}`]) : null),
+    // `batch` (prefetchBaseMd's map, scoped to this root's own .md paths)
+    // serves most reads from the single cat-file --batch call already made
+    // for this root; a path the caller never prefetched (not under this
+    // root's prefix, or not a .md path) falls back to the per-file git show
+    // this function always used before item A.
+    readFile: (p) => {
+      if (!baseFiles.has(p)) return null;
+      if (batch && batch.has(p)) return batch.get(p);
+      return git(['show', '--end-of-options', `${sha}:${p}`]);
+    },
     listSkillMds: () => [...baseFiles].filter((p) => re.test(p)),
   };
 }
@@ -204,27 +284,14 @@ function run(argv, deps = realDeps) {
       deps.stderr('load-delta.js: not inside a git work tree\n'); return 2;
     }
     const git = (args) => rawGit(['-C', repoRoot, ...args]);
+    const rawGitBatch = deps.gitBatch || defaultGitBatch(cwd);
+    const gitBatch = (args, input) => rawGitBatch(['-C', repoRoot, ...args], input);
 
-    let roots;
-    const pluginRootsGiven = o.pluginRoots.length > 0;
-    if (pluginRootsGiven) {
-      roots = [];
-      // Both sides through realpathSync: a symlinked cwd (macOS /var ->
-      // /private/var) resolves, and separators are native (git prints C:/...).
-      const realRepoRoot = fs.realpathSync(repoRoot);
-      for (const r of o.pluginRoots) {
-        const abs = path.resolve(cwd, r);
-        try { corpusDir(abs); } catch (err) { deps.stderr(`load-delta.js: ${err.message}\n`); return 3; }
-        const real = fs.realpathSync(abs);
-        if (!isPathContained(real, realRepoRoot, { orEqual: true })) { deps.stderr(`load-delta.js: --plugin-root ${r} is outside the repository\n`); return 2; }
-        roots.push(toPosix(path.relative(repoRoot, real)) || '.');
-      }
-      roots = [...new Set(roots)].sort();
-    } else {
-      const listed = splitZ(git(['ls-files', '-z', '--', ':(glob)skills/*/SKILL.md', ':(glob)*/skills/*/SKILL.md']));
-      roots = discoverPluginRoots(() => listed);
-    }
-
+    // Base resolution moves ahead of plugin-root discovery: with no explicit
+    // --plugin-root, discovery unions the head and base listings (ledger row
+    // 17, below) so a root that exists at base but was deleted — committed —
+    // at head still reports its removed entries, and that union needs the
+    // base sha first.
     let base = null;
     let baseRef = null;
     let baseKind;
@@ -254,6 +321,40 @@ function run(argv, deps = realDeps) {
       }
     }
 
+    // The full base tree listing, computed once a base resolves — reused for
+    // plugin-root union discovery just below and for baseSide's
+    // existence/batch-prefetch logic in the 'ok' branch further down.
+    const baseFiles = base ? new Set(splitZ(git(['ls-tree', '-r', '-z', '--name-only', '--full-tree', base]))) : null;
+
+    let roots;
+    const pluginRootsGiven = o.pluginRoots.length > 0;
+    if (pluginRootsGiven) {
+      roots = [];
+      // Both sides through realpathSync: a symlinked cwd (macOS /var ->
+      // /private/var) resolves, and separators are native (git prints C:/...).
+      const realRepoRoot = fs.realpathSync(repoRoot);
+      for (const r of o.pluginRoots) {
+        const abs = path.resolve(cwd, r);
+        try { corpusDir(abs); } catch (err) { deps.stderr(`load-delta.js: ${err.message}\n`); return 3; }
+        const real = fs.realpathSync(abs);
+        if (!isPathContained(real, realRepoRoot, { orEqual: true })) { deps.stderr(`load-delta.js: --plugin-root ${r} is outside the repository\n`); return 2; }
+        roots.push(toPosix(path.relative(repoRoot, real)) || '.');
+      }
+      roots = [...new Set(roots)].sort();
+    } else {
+      const listedHead = splitZ(git(['ls-files', '-z', '--', ':(glob)skills/*/SKILL.md', ':(glob)*/skills/*/SKILL.md']));
+      // Head-index-only discovery misses a root whose SKILL.md files were
+      // all deleted (committed) at head but still exist at base (ledger row
+      // 17) — union with the full base tree whenever a base resolved.
+      // discoverPluginRoots filters to ROOT_SKILL_MD paths itself, so handing
+      // it the whole base tree (not a second glob-restricted ls-tree call)
+      // costs nothing beyond this one in-memory concat. The no-baseline path
+      // (baseFiles === null) keeps head-only discovery — there is no base
+      // tree to union with.
+      const listed = baseFiles ? [...listedHead, ...baseFiles] : listedHead;
+      roots = discoverPluginRoots(() => listed);
+    }
+
     const heads = roots.map((root) => ({ root, rows: entryPointLoads(root, headSide(repoRoot, root)) }));
     let result;
     let changedFiles = [];
@@ -263,16 +364,24 @@ function run(argv, deps = realDeps) {
         roots: heads.map((h) => ({ pluginRoot: h.root, entries: h.rows })),
       };
     } else {
-      const baseFiles = new Set(splitZ(git(['ls-tree', '-r', '-z', '--name-only', '--full-tree', base])));
       result = {
         status: 'ok',
         base,
         baseKind,
         baseLabel,
-        roots: heads.map((h) => ({
-          pluginRoot: h.root,
-          entries: loadDelta(entryPointLoads(h.root, baseSide(git, base, baseFiles, h.root)), h.rows),
-        })),
+        roots: heads.map((h) => {
+          // One git cat-file --batch process per root (ledger row 16, item
+          // A): prefetch every base .md path under this root's own prefix
+          // ('' for root '.', meaning the whole repo) instead of spawning a
+          // `git show` per closure member.
+          const prefix = h.root === '.' ? '' : `${h.root}/`;
+          const mdPaths = [...baseFiles].filter((p) => (h.root === '.' || p.startsWith(prefix)) && p.endsWith('.md'));
+          const batch = prefetchBaseMd(gitBatch, base, mdPaths);
+          return {
+            pluginRoot: h.root,
+            entries: loadDelta(entryPointLoads(h.root, baseSide(git, base, baseFiles, h.root, batch)), h.rows),
+          };
+        }),
       };
       changedFiles = [
         ...splitZ(git(['diff', '--name-only', '-z', '--no-renames', '--end-of-options', base])),

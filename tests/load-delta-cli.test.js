@@ -57,6 +57,70 @@ function call(argv, cwd, extra = {}) {
 
 const POINTER = 'Read `part.md` in this skill\'s directory.';
 
+// Spies for deps.git / deps.gitBatch that still shell out for real (so the
+// rest of the CLI behaves exactly as it would unspied) while recording every
+// call's argv — used to prove base .md reads go through one cat-file
+// --batch process per root rather than one git show per file (ledger row 16).
+function spyGit(cwd, calls) {
+  return (args) => {
+    calls.push(args);
+    return execFileSync('git', args, {
+      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, maxBuffer: 64 * 1024 * 1024,
+    });
+  };
+}
+function spyGitBatch(cwd, calls) {
+  return (args, input) => {
+    calls.push(args);
+    return execFileSync('git', args, {
+      cwd, input, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, maxBuffer: 64 * 1024 * 1024,
+    });
+  };
+}
+
+test('A: base .md reads are served from one git cat-file --batch process per root, never a git show per file (ledger row 16)', () => {
+  const dir = makeRepo({
+    'plugin/skills/s/SKILL.md': 'Read `a.md` in this skill\'s directory.\n',
+    'plugin/skills/s/a.md': 'leaf\n',
+  });
+  write(dir, 'plugin/skills/s/SKILL.md', 'Read `a.md` in this skill\'s directory.\nchanged\n');
+  const gitCalls = [];
+  const gitBatchCalls = [];
+  const r = call(['--json'], dir, { git: spyGit(dir, gitCalls), gitBatch: spyGitBatch(dir, gitBatchCalls) });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const showCalls = gitCalls.filter((a) => a.includes('show'));
+  assert.deepStrictEqual(showCalls, [], 'no per-file git show calls for base .md reads');
+  assert.strictEqual(gitBatchCalls.length, 1, 'exactly one cat-file --batch process for the single root');
+  assert.deepStrictEqual(gitBatchCalls[0].slice(-2), ['cat-file', '--batch']);
+});
+
+test('B1: a root present at base and deleted (committed) at head reports its entries with removed: true (ledger row 17)', () => {
+  const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'hello world\n' });
+  fs.rmSync(path.join(dir, 'plugin'), { recursive: true });
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-q', '-m', 'delete plugin root');
+  const r = call(['--json'], dir);
+  assert.strictEqual(r.code, 0, r.stderr);
+  const j = JSON.parse(r.stdout);
+  assert.strictEqual(j.status, 'ok');
+  const root = j.roots.find((x) => x.pluginRoot === 'plugin');
+  assert.ok(root, JSON.stringify(j.roots));
+  assert.deepStrictEqual(root.entries, [
+    { entry: 'plugin:s', floor: 0, dFloor: -12, closure: 0, dClosure: -12, newUnresolved: [], removed: true },
+  ]);
+});
+
+test('B2: a root whose SKILL.md is deleted in the working tree only (still indexed) exits 0, not 1, and reports it removed (ledger row 17)', () => {
+  const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'hello world\n' });
+  fs.rmSync(path.join(dir, 'plugin', 'skills'), { recursive: true }); // uncommitted — still tracked
+  const r = call(['--json'], dir);
+  assert.strictEqual(r.code, 0, r.stderr);
+  const j = JSON.parse(r.stdout);
+  const root = j.roots.find((x) => x.pluginRoot === 'plugin');
+  assert.ok(root, JSON.stringify(j.roots));
+  assert.deepStrictEqual(root.entries.map((e) => [e.entry, e.removed]), [['plugin:s', true]]);
+});
+
 test('ok: a committed move-not-cut split reports one changed entry against the merge-base', () => {
   const dir = makeRepo({ 'plugin/skills/s/SKILL.md': `${'a'.repeat(19999)}\n` });
   const baseSha = git(dir, 'rev-parse', 'HEAD').trim();
@@ -131,6 +195,14 @@ test('a --plugin-root with no skills/ exits 3 with corpusDir\'s message', () => 
   assert.match(r.stderr, /not a plugin root: no skills\/ directory beneath it/);
 });
 
+test('--plugin-root accepts an in-repo directory literally named "..foo" — not a traversal (ledger row 14)', () => {
+  const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'x\n', '..foo/skills/x/SKILL.md': 'z\n' });
+  const r = call(['--plugin-root', '..foo', '--json'], dir);
+  assert.strictEqual(r.code, 0, r.stderr);
+  const j = JSON.parse(r.stdout);
+  assert.deepStrictEqual(j.roots.map((x) => x.pluginRoot), ['..foo']);
+});
+
 test('malformed invocations exit 2', () => {
   const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'x\n' });
   assert.strictEqual(call(['--bogus'], dir).code, 2);
@@ -164,7 +236,10 @@ test('F1: no plugin roots discovered (deep skill layout) names the parent and --
   );
   const scoped = call(['--plugin-root', 'plugins/foo'], dir).stdout;
   assert.match(scoped, /^Skill load delta \(base [0-9a-f]{7} = merge-base with origin\/main\):\n/);
-  assert.match(scoped, /\| foo:s \|/);
+  // Full repo-relative root path, not just its basename (ledger row 18): a
+  // depth-2 explicit --plugin-root names its entry "plugins/foo:s", never
+  // the collision-prone "foo:s".
+  assert.match(scoped, /\| plugins\/foo:s \|/);
 });
 
 test('F1: roots discovered but none moved, with a changed skill file outside any discovered root, routes to outcome 2 with a suffix', () => {
@@ -227,6 +302,20 @@ test('text outcome 1: a diff touching no skill file', () => {
 test('text outcome 2: skill files changed but no entry point moved', () => {
   const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'x\n', 'plugin/skills/s/orphan.md': 'o\n' });
   write(dir, 'plugin/skills/s/orphan.md', 'orphan, not cited by anything\n');
+  assert.strictEqual(call([], dir).stdout, 'Skill load delta: skill files changed, no entry point\'s load moved\n');
+});
+
+test('text outcome: a committed rename (git mv) out of the skills tree still counts as touched, since the CLI diffs --no-renames (ledger row 15)', () => {
+  const dir = makeRepo({
+    'plugin/skills/s/SKILL.md': 'x\n',
+    'plugin/skills/s/orphan.md': 'uncited content, long enough for git to pair it as a rename by similarity\n',
+  });
+  fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
+  git(dir, 'mv', 'plugin/skills/s/orphan.md', 'docs/orphan.md');
+  git(dir, 'commit', '-q', '-m', 'move orphan.md out of the skills tree');
+  // Default rename detection would report only the new path (docs/orphan.md)
+  // for a pure rename, hiding that a skills/ file disappeared; --no-renames
+  // reports both the old and new path, so this is never silently outcome 1.
   assert.strictEqual(call([], dir).stdout, 'Skill load delta: skill files changed, no entry point\'s load moved\n');
 });
 
