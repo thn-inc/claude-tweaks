@@ -4,7 +4,9 @@
 // gate and /claude-tweaks:review Step 1.5 both run, per
 // skills/_shared/pr-check-gate.md (which owns how each state is routed).
 // Classification rules: _shared/pr-first-merge.md Step 2.5, via
-// lib/pr-checks/classify.js; the merge gate keeps its own read.
+// lib/pr-checks/classify.js; the merge gate keeps its own read. It also lists
+// the workflow runs for the head sha (`gh run list --commit`, #3405), so a
+// workflow the rollup has not registered yet reads pending, not green.
 //
 //   node bin/pr-checks.js --run <run-dir> [--help]
 //
@@ -91,11 +93,28 @@ function run(argv, overrides = {}) {
   try { view = JSON.parse(deps.gh(['pr', 'view', String(n), '--json', 'headRefOid,statusCheckRollup'])); } catch (e) {
     return report(deps, { state: 'read-failed', pr: n, localHead, reason: `gh pr view failed: ${errText(e)}` });
   }
+  // The full 40-char sha: an abbreviated --commit lists no runs (#3405).
+  const headRefOid = view && view.headRefOid;
+  let headRuns;
+  let runsFailure = null;
+  // A stale head skips the runs read: the classifier concludes nothing from it,
+  // so a transient runs-read failure must not turn `stale` into `read-failed`.
+  if (typeof headRefOid === 'string' && headRefOid && headRefOid === localHead) {
+    try {
+      const rows = JSON.parse(deps.gh(['run', 'list', '--commit', headRefOid, '--limit', '100', '--json', 'name,workflowName,status,conclusion,url']));
+      if (!Array.isArray(rows)) throw new Error('not a JSON array');
+      headRuns = rows;
+    } catch (e) {
+      runsFailure = `gh run list failed: ${errText(e)}`;
+    }
+  }
   let repoRoot = deps.cwd();
   try { repoRoot = String(deps.git(['rev-parse', '--show-toplevel'])).trim(); } catch { repoRoot = deps.cwd(); }
   let hasPrCi = false;
   try { hasPrCi = Boolean(deps.hasPullRequestCi(repoRoot)); } catch { hasPrCi = false; }
-  const verdict = classifyRollup({ rollup: view && view.statusCheckRollup, headRefOid: view && view.headRefOid, localHead, hasPrCi });
+  const verdict = classifyRollup({ rollup: view && view.statusCheckRollup, headRefOid, localHead, hasPrCi, headRuns });
+  // A failed runs read cannot conclude green/pending, but a rollup that is already red is conclusive on its own.
+  if (runsFailure && verdict.state !== 'red') return report(deps, { state: 'read-failed', pr: n, localHead, reason: runsFailure });
   return report(deps, { ...verdict, localHead, pr: n });
 }
 

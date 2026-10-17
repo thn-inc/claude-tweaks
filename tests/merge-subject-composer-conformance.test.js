@@ -22,8 +22,9 @@ const LOCAL_SITES = [
 
 // AC 6, re-baselined by #2320: 30,804 bytes as of 8409ec468 (#2251, landed after
 // #2002 per that spec's Gotchas so this figure is already post-#2002); net-small
-// means at most +500.
-const PR_FIRST_BYTE_CEILING = 31304;
+// means at most +500. Re-baselined by #3405 (head-run cross-check in Step 2.5):
+// 33,522 bytes, so the ceiling is 34,022.
+const PR_FIRST_BYTE_CEILING = 34022;
 
 // Frozen pre-change excerpts (byte-for-byte from the pre-#2251 files).
 const PRE_PR_FIRST_SITE = `gh pr merge {pr-number} --repo {owner}/{repo} --auto --merge \\

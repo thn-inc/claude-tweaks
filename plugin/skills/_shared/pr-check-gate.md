@@ -16,7 +16,10 @@ already treats every failing check as red). This read adds two things the merge 
 normalization, which makes a failed StatusContext entry read as `red` here; the merge gate's literal
 rule, with no such normalization, would hold that same entry `pending` forever (it never carries a
 `status`/`conclusion` pair to complete). The merge gate keeps its own read and stays the final
-authority; this gate never replaces it.
+authority; this gate never replaces it. The reader also lists the workflow runs for the PR head
+(`gh run list --commit {headRefOid}`) and classifies them by the head-run cross-check in
+`_shared/pr-first-merge.md`'s Step 2.5 (a run not yet completed is pending, a failing one red), and a
+failed runs read is `read-failed` unless the rollup is already red (#3405).
 
 ## When it runs
 
