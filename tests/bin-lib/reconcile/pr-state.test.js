@@ -516,6 +516,10 @@ test('resolvePrStateByNumberAsync: malformed/misordered call -> invalid-argument
 // hands it through on the returned PR object (pickGoverningPr passes PR
 // objects through untouched). The fixed-output gh wrapper ignores argv, so
 // the argv.log match is the discriminating assertion.
+const MERGED_PR_WITH_CLOSING_REFS = {
+  number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', closingIssuesReferences: [{ number: 3412, repository: { name: 'w', owner: { login: 'acme' } } }],
+};
+
 function installArgvLoggingGhWrapper(json) {
   const argvLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-closing-')), 'argv.log');
   const { restore } = installGhWrapper(`#!/bin/sh\necho "$@" > "${argvLog}"\ncat <<'EOF'\n${JSON.stringify(json)}\nEOF\n`);
@@ -523,10 +527,7 @@ function installArgvLoggingGhWrapper(json) {
 }
 
 test('resolvePrState/resolvePrStateAsync: request closingIssuesReferences in the --json field list (#3412)', async () => {
-  const pr = {
-    number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', closingIssuesReferences: [{ number: 3412, repository: { name: 'w', owner: { login: 'acme' } } }],
-  };
-  const wrapper = installArgvLoggingGhWrapper([pr]);
+  const wrapper = installArgvLoggingGhWrapper([MERGED_PR_WITH_CLOSING_REFS]);
   try {
     assert.equal(resolvePrState('/tmp', 'b').closingIssuesReferences[0].number, 3412);
     assert.match(fs.readFileSync(wrapper.argvLog, 'utf8'), /closingIssuesReferences/);
@@ -539,10 +540,7 @@ test('resolvePrState/resolvePrStateAsync: request closingIssuesReferences in the
 });
 
 test('resolvePrStateByNumber/resolvePrStateByNumberAsync: request closingIssuesReferences (#3412)', async () => {
-  const pr = {
-    number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', closingIssuesReferences: [{ number: 3412, repository: { name: 'w', owner: { login: 'acme' } } }],
-  };
-  const wrapper = installArgvLoggingGhWrapper(pr);
+  const wrapper = installArgvLoggingGhWrapper(MERGED_PR_WITH_CLOSING_REFS);
   try {
     assert.equal(resolvePrStateByNumber('/tmp', 9).closingIssuesReferences[0].number, 3412);
     assert.match(fs.readFileSync(wrapper.argvLog, 'utf8'), /closingIssuesReferences/);

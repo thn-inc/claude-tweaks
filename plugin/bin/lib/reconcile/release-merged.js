@@ -53,11 +53,12 @@ const CLOSING_KEYWORD_RE = new RegExp('^[ \\t]*' + CLOSING_KEYWORD_ALTERNATION +
 function prClosesIssue(prState, issueNumber, repoSlug, mergeCommitMessage) {
   if (!prState || !Array.isArray(prState.closingIssuesReferences)) return undefined;
   const slug = String(repoSlug).toLowerCase();
-  if (prState.closingIssuesReferences.some((entry) => {
+  const referencesIssue = prState.closingIssuesReferences.some((entry) => {
     const owner = entry && entry.repository && entry.repository.owner;
     return Boolean(owner) && Number(entry.number) === issueNumber
       && `${owner.login}/${entry.repository.name}`.toLowerCase() === slug;
-  })) return true;
+  });
+  if (referencesIssue) return true;
   if (typeof mergeCommitMessage === 'string') {
     for (const m of mergeCommitMessage.matchAll(CLOSING_KEYWORD_RE)) {
       if (Number(m[1]) === issueNumber) return true;

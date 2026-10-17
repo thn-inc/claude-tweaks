@@ -12,6 +12,12 @@ const { readCache, writeCache } = require('../../../plugin/bin/lib/reconcile/cac
 const { GRANT_LABELS } = require('../../../plugin/bin/lib/release-claim/release');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../../../plugin/bin/lib/issue-branch-tracking');
 
+// The label a `gh api -X DELETE .../labels/{name}` fake call removes: the last argv entry, URL-encoded.
+function deletedLabelName(args) {
+  const labelPath = args[args.length - 1];
+  return decodeURIComponent(labelPath.slice(labelPath.lastIndexOf('/') + 1));
+}
+
 // AC1: open PR always wins over issue-closed evidence
 test('decideRelease: live claim + open PR + closed issue -> skip pr-open', () => {
   assert.deepStrictEqual(
@@ -396,8 +402,7 @@ test('releaseMerged: the by-number fallback keeps the claim when the merged PR d
       return { stdout: JSON.stringify({ content: liveContent, sha: 'live-sha' }), failure: null, status: null };
     }
     if (args.some((a) => a.includes('/labels/'))) {
-      const labelPath = args[args.length - 1];
-      labelDeletes.push(decodeURIComponent(labelPath.slice(labelPath.lastIndexOf('/') + 1)));
+      labelDeletes.push(deletedLabelName(args));
       return { stdout: '', failure: null, status: null };
     }
     if (args[0].includes('/commits/')) throw new Error('no mergeCommit field: the commit fetch must not be reached');
@@ -666,8 +671,7 @@ test('releaseMerged: a merged: release strips every GRANT_LABELS entry and logs 
       return { stdout: JSON.stringify({ content: liveContent, sha: 'live-sha' }), failure: null, status: null };
     }
     if (args.some((a) => a.includes('/labels/'))) {
-      const labelPath = args[args.length - 1];
-      labelDeletes.push(decodeURIComponent(labelPath.slice(labelPath.lastIndexOf('/') + 1)));
+      labelDeletes.push(deletedLabelName(args));
       return { stdout: '', failure: null, status: null };
     }
     throw new Error(`unexpected ${args.join(' ')}`);
@@ -728,8 +732,7 @@ test('releaseMerged: an issue-closed release does not touch grant labels', async
       return { stdout: 'CLOSED\n', failure: null, status: null };
     }
     if (args.some((a) => a.includes('/labels/'))) {
-      const labelPath = args[args.length - 1];
-      labelDeletes.push(decodeURIComponent(labelPath.slice(labelPath.lastIndexOf('/') + 1)));
+      labelDeletes.push(deletedLabelName(args));
       return { stdout: '', failure: null, status: null };
     }
     throw new Error(`unexpected ${args.join(' ')}`);
@@ -890,8 +893,7 @@ async function run3348Scenario({ refs, commit, issueState, putExit, withMergeCom
       return { stdout: JSON.stringify({ content: liveContent, sha: 'live-sha' }), failure: null, status: null };
     }
     if (args.some((a) => a.includes('/labels/'))) {
-      const labelPath = args[args.length - 1];
-      labelDeletes.push(decodeURIComponent(labelPath.slice(labelPath.lastIndexOf('/') + 1)));
+      labelDeletes.push(deletedLabelName(args));
       return { stdout: '', failure: null, status: null };
     }
     if (args[0].includes('/commits/a39cd61')) {
@@ -1066,8 +1068,7 @@ async function runTwoCandidateScenario({ issueA, issueB, messageForOidA, message
       if (args[0].includes(suffix)) return { stdout, failure: null, status: null };
     }
     if (args.some((a) => a.includes('/labels/'))) {
-      const labelPath = args[args.length - 1];
-      labelDeletes.push(decodeURIComponent(labelPath.slice(labelPath.lastIndexOf('/') + 1)));
+      labelDeletes.push(deletedLabelName(args));
       return { stdout: '', failure: null, status: null };
     }
     const commitMatch = /\/commits\/([0-9a-f]+)/.exec(args[0]);
