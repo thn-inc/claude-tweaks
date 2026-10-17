@@ -33,8 +33,9 @@ const {
   changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
 } = require('./lib/verify/changed-files');
 const { selectScope } = require('./lib/verify/scope');
-const { resolveTarget } = require('./lib/stage-item/write');
+const { resolveTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { appendEvent } = require('./lib/hooks/context');
+const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
 
 const KNOWN_SCOPES = new Set(['full', 'scoped', 'none', 'static-only', 'tool-scoped']);
 
@@ -538,15 +539,22 @@ async function main() {
     // allowlist is empty" (parse-signal discipline), so nextFlakyHits gets
     // null rather than [] and carries every prior hit count forward as-is.
     const allowlist = decl ? decl.flaky.files : null;
-    const hits = nextFlakyHits(previousCount, retriedFiles, allowlist);
-    flakyEscalation = flakyEscalations(hits);
+    // #3062: a baseline-adjudicated flaky file counts toward flakyHits
+    // exactly as a retried allowlisted file does — adjudication is eligible
+    // only on a failing raw run (parsed.baseline && !rawPass, above), so
+    // flakyPassed is only ever non-empty there.
+    const baselineFlakyPassed = (baselineAdjudicated && baselineAdjudicated.eligible && Array.isArray(baselineAdjudicated.flakyPassed))
+      ? baselineAdjudicated.flakyPassed : [];
+    const flaggedFiles = [...new Set([...retriedFiles, ...baselineFlakyPassed])];
+    const hits = nextFlakyHits(previousCount, flaggedFiles, allowlist);
+    flakyEscalation = flakyEscalations(hits, allowlist);
     let toWrite = null;
     if (fullMode && currentCount !== null) toWrite = { ...currentCount, flakyHits: hits };
     // Deliberately NOT gated on `!fullMode`: a full run with a retry but an
     // unparseable count (currentCount === null) still persists the hit
     // under the previous baseline (H3-safe), and gating it here would make
     // the escalation counter lossy exactly when suite output stops parsing.
-    else if (retriedFiles.length > 0 && previousCount !== null) toWrite = { ...previousCount, flakyHits: hits };
+    else if (flaggedFiles.length > 0 && previousCount !== null) toWrite = { ...previousCount, flakyHits: hits };
     if (toWrite !== null) {
       // Fail-toward-absence on the write side too (readStamp already does
       // this on read): a stamp-write failure (ENOSPC, EACCES, a
@@ -607,6 +615,48 @@ async function main() {
         flakyRetried: retriedFiles,
         reportPath: jsonPath,
       });
+      // #3062: a baseline-flaky file that reaches the escalation threshold
+      // without being on flaky.files never joins the allowlist silently —
+      // stage a proposal for the Review Console instead (the same
+      // writeStagedItem seam materialize.js and dream-scan.js already use
+      // for a self-staged bin/ CLI proposal), logged as a STAGED decision so
+      // it surfaces there. Best-effort: a staging failure never fails the run.
+      for (const e of flakyEscalation.filter((x) => !x.onAllowlist)) {
+        try {
+          const suite = baselineAdjudicated && baselineAdjudicated.failingByCheck
+            ? Object.keys(baselineAdjudicated.failingByCheck).find((name) => baselineAdjudicated.failingByCheck[name].includes(e.file))
+            : null;
+          const retryNote = suite
+            ? (decl && decl.retry && decl.retry[suite]
+              ? ` Suite \`${suite}\` already has a retry command template.`
+              : ` Suite \`${suite}\` has no retry command template yet — add one alongside the \`flaky.files\` entry.`)
+            : '';
+          const slug = e.file.replace(/\//g, '-');
+          const note = `# Staged: add ${e.file} to .claude-tweaks/verify-scope.json's flaky.files\n\n`
+            + `\`${e.file}\` has been baseline-flaky ${e.hits} time(s) (failed in the full run, passed in isolation at HEAD) `
+            + 'without being listed in `flaky.files` — reached the escalation threshold. Proposed action: add it to '
+            + `\`.claude-tweaks/verify-scope.json\`'s \`flaky.files\`.${retryNote} Never applied automatically — review and apply by hand.\n`;
+          writeStagedItem({
+            runDir: target.dir, id: `flaky-allowlist-${slug}`, sourcePath: 'note.md', content: note,
+          });
+          const decisionTarget = resolveDecisionTarget({ runDir: parsed.run });
+          if (decisionTarget.ok) {
+            appendEntry({
+              runDir: parsed.run,
+              section: undefined,
+              entry: formatEntry({
+                status: 'STAGED',
+                now: Date.now(),
+                step: 'verify',
+                text: `Flaky-allowlist proposal: ${e.file} baseline-flaky ${e.hits} times — not on flaky.files. Stage path: staged/flaky-allowlist-${slug}.md.`,
+                reversibility: 'high',
+              }),
+            });
+          }
+        } catch (err) {
+          process.stderr.write(`verify.js: could not stage the flaky-allowlist proposal for ${e.file} (${err && err.message ? err.message : String(err)})\n`);
+        }
+      }
     }
   }
 

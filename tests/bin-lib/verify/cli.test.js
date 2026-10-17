@@ -1421,7 +1421,7 @@ test('flaky retry: a pre-seeded flakyHits of 4 escalates on the fifth retry — 
   assert.match(stdout, /^CAVEAT: flaky-retried: tests\/flaky\.test\.js — passed on isolated rerun/m);
   assert.match(stdout, /^CAVEAT: flaky-allowlist: tests\/flaky\.test\.js retried 5 times — file a fix or remove it from the allowlist$/m);
   const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
-  assert.deepStrictEqual(report.flakyEscalation, [{ file: 'tests/flaky.test.js', hits: 5 }]);
+  assert.deepStrictEqual(report.flakyEscalation, [{ file: 'tests/flaky.test.js', hits: 5, onAllowlist: true }]);
   const stamp = JSON.parse(fs.readFileSync(countStampPath, 'utf8'));
   assert.deepStrictEqual(stamp.flakyHits, { 'tests/flaky.test.js': 5 });
   assert.strictEqual(stamp.tests, 1);
@@ -1797,6 +1797,63 @@ test('--baseline: a file failing only in the full run is flaky — exit 0 with a
   assert.strictEqual(code, 0, stdout);
   assert.ok(stdout.includes(`| tests | pass (baseline-adjudicated vs ${baseSha}: 1 baseline, 1 flaky) |`), stdout);
   assert.match(stdout, /^CAVEAT: baseline-flaky: tests\/flaky\.test\.js — failed in the full run, passed in isolation at HEAD; see .*tests-isolated-tests\+flaky\.test\.js\.log$/m);
+});
+
+test('--baseline: a repeatedly baseline-flaky file not on flaky.files accumulates flakyHits across runs and, at the escalation threshold, stages a flaky-allowlist proposal rather than applying one (#3062)', async () => {
+  const r = baselineRepo();
+  const marker = path.join(tmpDir(), 'flake-repeat-3062');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'flaky.test.js'), `const fs = require('fs');\nrequire('node:test')('flaky', () => { if (fs.existsSync(${JSON.stringify(marker)})) { fs.unlinkSync(${JSON.stringify(marker)}); throw new Error('flake'); } });\n`);
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'add flaky');
+  const baseSha = r.git('rev-parse', 'HEAD').trim();
+  headCommit(r);
+  const runDir = anchoredRunDir(r.repo);
+  // Only the flaky file is in this --cmd (unlike the #3043 fixtures above,
+  // which pair it with the always-failing tests/env.test.js) -- this run's
+  // sole concern is the flaky-escalation counting path, so the only failing
+  // file must be the one that is flaky: attributable.length === 0 makes
+  // the adjudication a clean pass on its own, with nothing else to classify.
+  const args = ['--run', runDir, '--cmd', 'tests=node --test --test-reporter=tap tests/flaky.test.js', '--baseline', baseSha, '--baseline-cmd', PER_FILE];
+  const countStampPath = path.join(r.gitDir, 'claude-tweaks-test-count.json');
+
+  // No `flaky.files` declaration exists for this file at all (no --scope
+  // passed) -- the hit count must still accumulate run over run (#3062
+  // AC1), not reset to 1 every time the way a pruned-to-the-allowlist
+  // counter would.
+  for (let i = 1; i <= 4; i++) {
+    fs.writeFileSync(marker, '');
+    const { code, stdout } = await runCli(args, r.opts);
+    assert.strictEqual(code, 0, stdout);
+    assert.doesNotMatch(stdout, /flaky-allowlist/, `run ${i} of 4 must not escalate yet`);
+  }
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(countStampPath, 'utf8')).flakyHits, { 'tests/flaky.test.js': 4 });
+
+  fs.writeFileSync(marker, '');
+  const fifth = await runCli(args, r.opts);
+  assert.strictEqual(fifth.code, 0, fifth.stdout);
+  assert.match(
+    fifth.stdout,
+    /^CAVEAT: flaky-allowlist: tests\/flaky\.test\.js baseline-flaky 5 times — not on flaky\.files; a staged proposal to add it is pending review$/m,
+  );
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.flakyEscalation, [{ file: 'tests/flaky.test.js', hits: 5, onAllowlist: false }]);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(countStampPath, 'utf8')).flakyHits, { 'tests/flaky.test.js': 5 });
+
+  // AC2: a staged proposal names the file and its hit count, and
+  // verify-scope.json itself is never touched -- the add is never applied
+  // silently.
+  const stagedPath = path.join(runDir, 'staged', 'flaky-allowlist-tests-flaky.test.js.md');
+  assert.ok(fs.existsSync(stagedPath), 'a staged proposal file is written at the escalation threshold');
+  const staged = fs.readFileSync(stagedPath, 'utf8');
+  assert.match(staged, /tests\/flaky\.test\.js/);
+  assert.match(staged, /5 time/);
+  assert.match(staged, /flaky\.files/);
+
+  const decisions = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.match(decisions, /STAGED/);
+  assert.match(decisions, /Flaky-allowlist proposal: tests\/flaky\.test\.js baseline-flaky 5 times/);
+
+  assert.ok(!fs.existsSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json')), 'verify-scope.json is never written by the runner');
 });
 
 test('--baseline: a file failing beyond its base tests only in the full run is baseline — exit 0 with a baseline-in-isolation CAVEAT (#3043)', async () => {

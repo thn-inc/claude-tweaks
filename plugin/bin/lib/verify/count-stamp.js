@@ -17,6 +17,7 @@
 'use strict';
 
 const fs = require('fs');
+const { globToRegExp } = require('../issues/blast-radius');
 
 // Read-side only: the stamp is written by bin/verify.js via atomic-write.js.
 function readStamp(stampPath, fsImpl = fs) {
@@ -72,27 +73,51 @@ const FLAKY_ESCALATION_HITS = 5;
 // signal discipline). null carries every finite positive prior count forward
 // untouched before applying this run's increments; only a real array prunes
 // entries whose file has left the allowlist.
-function nextFlakyHits(previous, retriedFiles, allowlist) {
+//
+// flaggedFiles (#3062) is every file this run flagged as flaky by either
+// mechanism the runner has: a retried allowlisted file (always already on
+// `allowlist` — planRetry only retries when every failing file matches it)
+// and a baseline-adjudicated `flakyPassed` file (which may not be on
+// `allowlist` at all — that is the whole point of the escalation-to-proposal
+// path below). A flagged file that is NOT on `allowlist` would otherwise be
+// pruned back to zero at the top of the very next run (it is never in
+// `allowlist`'s own set), permanently capping its count at 1 and making the
+// escalation threshold unreachable — so the keep-set below is `allowlist`
+// UNION this run's flagged files, not `allowlist` alone.
+function nextFlakyHits(previous, flaggedFiles, allowlist) {
   const prior = previous && previous.flakyHits && typeof previous.flakyHits === 'object' && !Array.isArray(previous.flakyHits)
     ? previous.flakyHits : {};
   const next = {};
-  for (const file of allowlist === null ? Object.keys(prior) : allowlist) {
+  const flagged = [...new Set(flaggedFiles)];
+  const keep = allowlist === null ? Object.keys(prior) : [...new Set([...allowlist, ...flagged])];
+  for (const file of keep) {
     const n = prior[file];
     if (typeof n === 'number' && Number.isFinite(n) && n > 0) next[file] = n;
   }
-  for (const file of retriedFiles) next[file] = (next[file] || 0) + 1;
+  for (const file of flagged) next[file] = (next[file] || 0) + 1;
   return next;
 }
 
-function flakyEscalations(hits) {
+// allowlist here is the same declaration array nextFlakyHits took (or null —
+// treated as "nothing is declared allowlisted", never as "everything is").
+// `onAllowlist` (#3062) tells the caller which of the two escalation paths
+// applies: true is the pre-existing "already on flaky.files" case (fix or
+// remove the entry); false is a file the baseline adjudicator has caught
+// going flaky `hits` times without ever being declared — that path stages a
+// proposal to add it, never applies one silently (escalationCaveatLine and
+// verify.js's own staged-item write both key off this field).
+function flakyEscalations(hits, allowlist) {
+  const patterns = Array.isArray(allowlist) ? allowlist : [];
   return Object.entries(hits)
     .filter(([, n]) => n >= FLAKY_ESCALATION_HITS)
-    .map(([file, n]) => ({ file, hits: n }))
+    .map(([file, n]) => ({ file, hits: n, onAllowlist: patterns.some((entry) => globToRegExp(entry).test(file)) }))
     .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 }
 
-function escalationCaveatLine({ file, hits }) {
-  return `CAVEAT: flaky-allowlist: ${file} retried ${hits} times — file a fix or remove it from the allowlist`;
+function escalationCaveatLine({ file, hits, onAllowlist }) {
+  return onAllowlist
+    ? `CAVEAT: flaky-allowlist: ${file} retried ${hits} times — file a fix or remove it from the allowlist`
+    : `CAVEAT: flaky-allowlist: ${file} baseline-flaky ${hits} times — not on flaky.files; a staged proposal to add it is pending review`;
 }
 
 module.exports = {
