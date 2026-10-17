@@ -163,6 +163,55 @@ test('checkA missingDetail names the nearest existing ancestor for a still-missi
   }
 });
 
+// Ledger row 4: a Modify: bullet for a path an EARLIER task's Create:
+// bullet names passes even though the path doesn't exist on disk yet — a
+// module created in Task N and extended in Task N+1 is a normal plan shape
+// (#3307's plan had to relabel those bullets Extends: to pass). "Earlier"
+// is the bullet's position in the entries array, which — since
+// extractFileEntries walks the plan top to bottom and each task's Files:
+// section is contiguous — tracks task order.
+test('checkA passes a Modify bullet whose path an EARLIER task Create:s (ledger row 4)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const result = checkA([
+      { type: 'Create', path: 'x.js' },
+      { type: 'Modify', path: 'x.js' },
+    ], repo);
+    assert.strictEqual(result.ok, true);
+    assert.deepStrictEqual(result.missing, []);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('checkA still fails a Modify bullet whose path only a LATER task Create:s (ledger row 4)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const result = checkA([
+      { type: 'Modify', path: 'x.js' },
+      { type: 'Create', path: 'x.js' },
+    ], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missing, ['x.js']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('checkA still fails a Modify bullet whose path no task Create:s (ledger row 4)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const result = checkA([
+      { type: 'Create', path: 'other.js' },
+      { type: 'Modify', path: 'x.js' },
+    ], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missing, ['x.js']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 // ── Check B ──────────────────────────────────────────────────────────────
 
 test('checkB is a no-op (ok, empty) when the plan declares no Scope keywords', () => {

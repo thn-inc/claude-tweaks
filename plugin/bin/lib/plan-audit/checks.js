@@ -87,6 +87,23 @@ function checkA(entries, repoRoot) {
         nearestExistingAncestor: path.relative(repoRoot, nearestExistingAncestor(parentAbs)) || '.',
       });
     } else if (!fs.existsSync(abs)) {
+      // Ledger row 4: a Modify: bullet naming a path absent on disk still
+      // passes when an EARLIER task's Create: bullet names that same
+      // path — a module created in Task N and extended in Task N+1 is a
+      // normal plan shape (#3307's plan had to relabel those bullets
+      // Extends: to pass). "Earlier" is read off `entries`' own order:
+      // extractFileEntries walks the plan top to bottom and every task's
+      // Files: section is a contiguous block in that walk, so a bullet's
+      // index tracks task order without this function needing a separate
+      // task-number field. Only entries *before* this one (`entries.slice(0,
+      // i)`) are eligible — a Create: bullet from the SAME or a LATER task
+      // (at or after index i), or no Create: bullet for this path at all,
+      // still falls through and fails exactly as today. Delete: is
+      // untouched: deleting a path the plan itself only just created is not
+      // the shape this fallback exists for.
+      if (type === 'Modify' && entries.slice(0, i).some(
+        (e) => e.type === 'Create' && path.resolve(repoRoot, e.path) === abs,
+      )) continue;
       missing.push(relPath);
       missingDetail.push({
         path: relPath,
