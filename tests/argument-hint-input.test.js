@@ -204,7 +204,7 @@ test('AC2.1: docs/skill-authoring.md argument-hint bullet names every exemption 
   const bullet = doc.split('\n').find((l) => l.startsWith('- **`argument-hint`**'));
   assert.ok(bullet, 'argument-hint bullet not found');
   for (const marker of EXEMPT_MARKERS) {
-    assert.ok(bullet.includes('`' + marker + '`'), `bullet does not name ${marker}`);
+    assert.ok(bullet.includes(`\`${marker}\``), `bullet does not name ${marker}`);
   }
 });
 
@@ -234,9 +234,8 @@ function undocumentedHintFlags(content) {
       flagText = bullet[1];
     }
     for (const flag of flagText.match(/--[a-z][a-z0-9-]*/g) || []) {
-      if (found.includes(flag)) continue;
-      if (new RegExp(flag + '(?![a-z0-9-])').test(hint)) continue;
-      found.push(flag);
+      const inHint = new RegExp(flag + '(?![a-z0-9-])').test(hint);
+      if (!inHint && !found.includes(flag)) found.push(flag);
     }
   }
   return found;
