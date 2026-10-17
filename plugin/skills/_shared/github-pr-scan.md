@@ -376,6 +376,7 @@ Three cheap counts for the dashboard's Triage Queue section. This scope exists s
    commit is never headless; `[manifesto-authorized]` (`wrap-up/manifesto-authorized-merge.md`,
    the `merge-authorization` lever) is likewise never headless — it requires a live Manifesto
    `confirm`/`hybrid` override, the same interactive precondition as `[fast-lane]`.
+   `[human-approved]` (close-out's confirmed merge) is excluded — a human decided it.
 
    ```bash
    SINCE=$(node -e "console.log(new Date(Date.now() - 7*24*60*60*1000).toISOString())")

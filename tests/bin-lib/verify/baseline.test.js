@@ -27,7 +27,7 @@ const FILE_LEVEL = (f) => ['ℹ tests 1', 'ℹ pass 0', 'ℹ fail 1', 'ℹ cance
 // overrides the text per `${kind}:${file}`.
 const PASS_LOG = ['✔ x (1ms)', 'ℹ tests 1', 'ℹ pass 1', 'ℹ fail 0', 'ℹ cancelled 0'].join('\n');
 
-function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, throwOn = null, logs = {}, repoRoot = '/repo' }) {
+function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, inCheckout = () => true, throwOn = null, logs = {}, repoRoot = '/repo' }) {
   const calls = { runs: [], added: [], removed: [], batchBaseInfo: [] };
   const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-fake-runs-'));
   const git = {
@@ -41,6 +41,7 @@ function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, t
       files.forEach((f) => { const exists = existsAtBase(f); m.set(f, { exists, same: exists && sameAtBase(f) }); });
       return m;
     },
+    inCheckout: (dir, rel) => inCheckout(dir, rel),
     addWorktree: (sha) => { calls.added.push(sha); return '/scratch'; },
     removeWorktree: (dir) => { calls.removed.push(dir); },
   };
@@ -119,6 +120,7 @@ test('#3063 AC2: an isolated run that times out is no evidence — the file stay
   const git = {
     repoRoot: () => '/repo',
     batchBaseInfo: (sha, files) => new Map(files.map((f) => [f, { exists: true, same: true }])),
+    inCheckout: () => true,
     addWorktree: () => '/scratch',
     removeWorktree: () => {},
   };
@@ -914,4 +916,102 @@ test('realGit.listWorktrees reads real `git worktree list` output, and findStale
 test('realGit.listWorktrees returns an empty list rather than throwing outside a git repository (#3064)', () => {
   const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-not-a-repo-'));
   assert.deepStrictEqual(realGit(notARepo).listWorktrees(), []);
+});
+
+// #3153: the full-run failure of a meta-test that quotes its spawned child's
+// TAP (temp-dir paths and all) in its assertion message.
+const META_TAP = (root) => ['TAP version 13', 'not ok 1 - meta', '  ---', `  location: '${root}/tests/meta.test.js:9:1'`, '  error: |-',
+  '    not ok 1 - env', '      ---', "      location: '/private/var/folders/x/T/verify-cli-test-abc/tests/env.test.js:1:40'", '      ...',
+  '  stack: |-', `    TestContext.<anonymous> (${root}/tests/meta.test.js:17:10)`, '  ...', '1..1', '# tests 1', '# pass 0', '# fail 1', '# cancelled 0'].join('\n');
+
+test('#3153 AC1: a meta-test quoting its child\'s temp-dir TAP adjudicates on its own file only — baseline, never a phantom attributable', async () => {
+  const { p, dir } = logFile(META_TAP('/repo'));
+  const { git, runOne } = fakes({
+    outcomes: { 'baseline:tests/meta.test.js': 1, 'isolated:tests/meta.test.js': 1 },
+    logs: { 'baseline:tests/meta.test.js': META_TAP('/scratch'), 'isolated:tests/meta.test.js': META_TAP('/repo') },
+  });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.deepStrictEqual(r.failingFiles, ['tests/meta.test.js']);
+  assert.deepStrictEqual(r.attributable, []);
+  assert.deepStrictEqual(r.baselineFailing, ['tests/meta.test.js']);
+  assert.strictEqual(r.verdict, 'pass');
+});
+
+test('#3153 AC3: a failing-file path absent from the checkout never reaches attributable — dropped beside a real file, unclassified alone', async () => {
+  const present = (dir, rel) => rel === 'tests/a.test.js';
+  const beside = ['not ok 1 - a', "  location: '/repo/tests/a.test.js:1:1'", '  at /tmp/sandbox/tests/env.test.js:2:1',
+    '# tests 1', '# pass 0', '# fail 1', '# cancelled 0'].join('\n');
+  const { p, dir } = logFile(beside);
+  const one = fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 0 }, inCheckout: present });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne: one.runOne, git: one.git });
+  assert.deepStrictEqual(r.failingFiles, ['tests/a.test.js']);
+  assert.ok(!r.attributable.some((f) => f !== 'tests/a.test.js'), JSON.stringify(r.attributable));
+
+  const alone = ['not ok 1 - env', '  at tests/env.test.js:2:1', '# tests 1', '# pass 0', '# fail 1', '# cancelled 0'].join('\n');
+  const { p: p2, dir: dir2 } = logFile(alone);
+  const two = fakes({ outcomes: {}, inCheckout: present });
+  const r2 = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p2 }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir2, runOne: two.runOne, git: two.git });
+  assert.strictEqual(r2.eligible, false);
+  assert.match(r2.reason, /^absent-from-checkout: 1 failing entry names only paths absent from the checkout in tests$/);
+  assert.deepStrictEqual(two.calls.runs, []);
+});
+
+// Final-review finding 2: the ineligible reason for the unmatched-entries
+// branch (~baseline.js line 240) must say "absent from the checkout", not
+// "no test file", when the only reason an entry's file was dropped is that
+// `exists` rejected it — the entry DID name a test file, just one absent
+// from this checkout.
+test('#3153 finding 2: an unmatched entry naming only a path absent from the checkout is reported as absent-from-checkout, not unclassified', async () => {
+  const tap = ['not ok 1 - a', "  location: '/repo/tests/a.test.js:1:1'",
+    'not ok 2 - b', '  at tests/gone.test.js:2:1',
+    '# tests 2', '# pass 0', '# fail 2', '# cancelled 0'].join('\n');
+  const { p, dir } = logFile(tap);
+  const present = (d, rel) => rel === 'tests/a.test.js';
+  const { git, runOne, calls } = fakes({ outcomes: {}, inCheckout: present });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.strictEqual(r.eligible, false);
+  assert.strictEqual(r.reason, 'absent-from-checkout: 1 failing entry names only paths absent from the checkout in tests');
+  assert.deepStrictEqual(calls.runs, []);
+});
+
+test('#3153: realGit().inCheckout is true only for a relative path present under the given directory', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-incheckout-'));
+  fs.mkdirSync(path.join(root, 'tests'));
+  fs.writeFileSync(path.join(root, 'tests', 'a.test.js'), '');
+  const g = realGit(root);
+  assert.strictEqual(g.inCheckout(root, 'tests/a.test.js'), true);
+  assert.strictEqual(g.inCheckout(root, 'tests/gone.test.js'), false);
+  assert.strictEqual(g.inCheckout(root, `${root.replace(/\\/g, '/')}/tests/a.test.js`), false, 'an absolute path is never inside');
+  assert.strictEqual(g.inCheckout(path.join(root, 'tests'), '../tests/a.test.js'), false, 'a path climbing out is never inside');
+  assert.strictEqual(g.inCheckout(path.join(root, 'tests'), 'x/../../tests/a.test.js'), false, 'an embedded `..` climbing out is never inside');
+  assert.strictEqual(g.inCheckout(root, 'C:/repo/tests/a.test.js'), false);
+});
+
+// Final-review finding 3: `at(dir)` (adjudicate's own helper) must read each
+// log against its OWN checkout — the base log against the scratch worktree,
+// the HEAD log against the real checkout — never one dir for both. Pin both
+// halves: the dirs an `inCheckout` predicate is actually called with, and
+// that a predicate scoped to only one of the two dirs blocks classification.
+test('#3153: each log is read against its own checkout — a predicate scoped to only one dir blocks classification', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  const dirsSeen = new Set();
+  const bothDirs = (d, rel) => { dirsSeen.add(d); return (d === '/repo' || d === '/scratch') && rel === 'tests/a.test.js'; };
+  const { git, runOne } = fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 }, inCheckout: bothDirs });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
+  assert.ok(dirsSeen.has('/repo'), 'the HEAD log must be read against /repo');
+  assert.ok(dirsSeen.has('/scratch'), 'the base log must be read against /scratch');
+  assert.deepStrictEqual(r.baselineFailing, ['tests/a.test.js']);
+
+  // A predicate scoped only to /repo would drop the base log's own entries
+  // against /scratch — no base evidence — were `at(baseDir)` ever called as
+  // `at(headDir)`. (Demonstrated by reasoning, per the brief, rather than by
+  // editing baseline.js to prove it: `at(headDir)`'s `exists` always resolves
+  // `/repo`, so the base run's `tests/a.test.js` would still pass `exists`
+  // even though this predicate rejects `/scratch` — masking the very bug
+  // this test pins.)
+  const { p: p2, dir: dir2 } = logFile(SPEC(['tests/a.test.js']));
+  const onlyRepo = (d, rel) => d === '/repo' && rel === 'tests/a.test.js';
+  const { git: git2, runOne: runOne2 } = fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 }, inCheckout: onlyRepo });
+  const r2 = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p2 }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir2, runOne: runOne2, git: git2 });
+  assert.deepStrictEqual(r2.baselineFailing, []);
 });

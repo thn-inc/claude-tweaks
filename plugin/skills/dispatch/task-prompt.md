@@ -402,7 +402,9 @@ Same mechanical status-line check applies to this call. The Auto-merge gate's `m
 clause this call runs (`settle-and-merge.md`'s Content judgment step) is backed by its own
 mechanical check too (#2429): a verdict is logged to `decisions.md` whether it passes or falls
 back, and the merge action that follows re-reads that log rather than proceeding on having just
-run the loop — see that step's own "Mechanically verify every member's entry" paragraph. Keep
-both current if either clause's wording changes.
+run the loop — see that step's own "Mechanically verify every member's entry" paragraph. A
+dispatched **singleton**'s merge decision runs this same re-check through
+`wrap-up/auto-merge-short-circuit.md`'s Verdict backstop instead (#2941) — both are backed by
+`bin/lib/dispatch/merge-verdict.js`. Keep both current if either clause's wording changes.
 
 None of Templates A/B/C (A in `_shared/subagent-dispatch-core.md`; B/C in `_shared/subagent-output-contract.md`) fit an agent that executes pipeline stages rather than returning findings/locations/a yes-no, so these are their own minimal templates, inlined verbatim at every dispatch site. The universal parts of the contract still apply: the four-value status line, minimal input, and literal (not referenced) output format.

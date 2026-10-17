@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
-  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, resolveIssueStateByNumber, BULK_CHUNK,
+  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, resolveIssueStateByNumber, resolvePrStateByNumberAsync, BULK_CHUNK,
 } = require('../../../plugin/bin/lib/reconcile/pr-state');
 
 // resolvePrState/resolvePrStateAsync both shell to `gh pr list` — neither is
@@ -466,4 +466,46 @@ test('resolvePrStatesBulk: unresolvable repo slug classifies network-failure (fa
   const r = resolvePrStatesBulk('/tmp/definitely-not-a-repo-xyz', ['a'], { runner: () => { spawned += 1; return '{}'; } });
   assert.equal(r, 'network-failure');
   assert.equal(spawned, 0);
+});
+
+test('resolvePrStateByNumberAsync: no number -> null, no gh call', async () => {
+  assert.equal(await resolvePrStateByNumberAsync('/tmp', null), null);
+  assert.equal(await resolvePrStateByNumberAsync('/tmp', undefined), null);
+});
+
+test('resolvePrStateByNumberAsync: resolves the single PR by number (no tie-break needed)', async () => {
+  const pr = { number: 42, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', mergeCommit: { oid: 'a'.repeat(40) } };
+  const wrapper = installGhWrapper(pr);
+  try {
+    const result = await resolvePrStateByNumberAsync('/tmp', 42);
+    assert.equal(result.number, 42);
+    assert.equal(result.state, 'MERGED');
+  } finally {
+    wrapper.restore();
+  }
+});
+
+test('resolvePrStateByNumberAsync: gh absent -> gh-absent, no throw', async () => {
+  const originalPath = process.env.PATH;
+  process.env.PATH = '/nonexistent-path-with-no-gh';
+  try {
+    assert.equal(await resolvePrStateByNumberAsync('/tmp', 42), 'gh-absent');
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
+test('resolvePrStateByNumberAsync: malformed gh output -> network-failure, no throw', async () => {
+  const wrapper = installGhWrapper('#!/bin/sh\necho "not json"\n');
+  try {
+    assert.equal(await resolvePrStateByNumberAsync('/tmp', 42), 'network-failure');
+  } finally {
+    wrapper.restore();
+  }
+});
+
+test('resolvePrStateByNumberAsync: malformed/misordered call -> invalid-arguments, no gh call (#3029 shape)', async () => {
+  assert.equal(await resolvePrStateByNumberAsync(4242, { cwd: '/tmp' }), 'invalid-arguments');
+  assert.equal(await resolvePrStateByNumberAsync('/tmp', -1), 'invalid-arguments');
+  assert.equal(await resolvePrStateByNumberAsync('/tmp', '4.2'), 'invalid-arguments');
 });

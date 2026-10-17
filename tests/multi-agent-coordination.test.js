@@ -439,6 +439,77 @@ test('reproduction (#2955): with no wide twin, a ±2 different-substance neighbo
   assert.strictEqual(unconfirmed.length, 3);
 });
 
+// #2907: pairing must not depend on the order agent A reported its findings.
+// Fixture from #2628's review (lens 3b): both agents reported the symlink
+// containment gap at one path:line, and agent A also reported a size-cap issue there.
+const SIZE_CAP_A = { path: 'plugin/bin/lib/code-health/candidates-app-store-readiness.js', line: 308, severity: 'high', text: 'Bundle size cap is not enforced before reading the archive into memory, so an oversized upload exhausts memory' };
+const SYMLINK_A = { path: 'plugin/bin/lib/code-health/candidates-app-store-readiness.js', line: 308, severity: 'high', text: 'Symlink containment gap: a symlink inside the bundle can point outside the extraction root and be read' };
+const SYMLINK_B = { path: 'plugin/bin/lib/code-health/candidates-app-store-readiness.js', line: 308, severity: 'high', text: 'Symlink containment gap: a symlink inside the bundle can point outside the extraction root and is read' };
+
+test('AC1.1 reproduction (#2907): a same-substance pair at one location is confirmed whichever order agent A reported it in', () => {
+  for (const a of [[SIZE_CAP_A, SYMLINK_A], [SYMLINK_A, SIZE_CAP_A]]) {
+    const { confirmed, unconfirmed } = c.categoriseReproduction(a, [SYMLINK_B]);
+    assert.deepStrictEqual(confirmed.map((f) => f.text), [SYMLINK_A.text]);
+    assert.strictEqual(unconfirmed.length, 1);
+    assert.strictEqual(unconfirmed[0].source, 'A');
+    assert.strictEqual(unconfirmed[0].text, SIZE_CAP_A.text);
+    // B was paired, so it is no coincidence partner for the size-cap finding.
+    assert.strictEqual(unconfirmed[0].nearLocation, undefined);
+  }
+});
+
+test('reproduction (#2907): two A findings that both match one B finding pair it with the closer match, in either A order', () => {
+  const loose = { path: 'src/api.js', line: 40, severity: 'low', text: LOOSE_A };
+  const exact = { path: 'src/api.js', line: 40, severity: 'low', text: LOOSE_B };
+  const b = [{ path: 'src/api.js', line: 40, severity: 'low', text: LOOSE_B }];
+  for (const a of [[loose, exact], [exact, loose]]) {
+    const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+    assert.deepStrictEqual(confirmed.map((f) => f.text), [LOOSE_B]);
+    assert.deepStrictEqual(unconfirmed.map((f) => `${f.source}:${f.text}`), [`A:${LOOSE_A}`]);
+  }
+});
+
+test('reproduction (#2907): a different-substance ±2 neighbour is not reserved from another A finding\'s wide-band twin', () => {
+  const unrelated = { path: 'src/run.js', line: 100, severity: 'high', text: WIDE_DIFFERENT };
+  const twin = { path: 'src/run.js', line: 104, severity: 'high', text: WIDE_SAME_A };
+  const b = [{ path: 'src/run.js', line: 101, severity: 'high', text: WIDE_SAME_B }];
+  for (const a of [[unrelated, twin], [twin, unrelated]]) {
+    const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+    assert.deepStrictEqual(confirmed.map((f) => f.line), [104]);
+    assert.deepStrictEqual(unconfirmed.map((f) => `${f.source}:${f.line}`), ['A:100']);
+    assert.strictEqual(unconfirmed[0].nearLocation, undefined);
+  }
+});
+
+test('reproduction (#2907): when the best pair would strand a finding both agents reported, the pairing re-routes so both confirm', () => {
+  // A1 matches B1 best (a prefix) and B2 too; A2 matches only B1. Taking A1-B1
+  // first would leave A2 unconfirmed beside a B finding it reproduces.
+  const a1 = { path: 'src/token.js', line: 10, severity: 'high', text: 'token cache refresh race lets stale token through to the upstream api call' };
+  const a2 = { path: 'src/token.js', line: 10, severity: 'high', text: 'token cache refresh race stale token' };
+  const b = [
+    { path: 'src/token.js', line: 10, severity: 'high', text: 'token cache refresh race lets stale token through' },
+    { path: 'src/token.js', line: 10, severity: 'high', text: 'stale token through to the upstream api call without retry backoff' },
+  ];
+  for (const a of [[a1, a2], [a2, a1]]) {
+    const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+    assert.strictEqual(confirmed.length, 2);
+    assert.deepStrictEqual(unconfirmed, []);
+    const byText = Object.fromEntries(confirmed.map((f) => [f.text, f]));
+    assert.ok(byText[a1.text] && byText[a2.text], 'both A findings confirmed');
+  }
+});
+
+test('reproduction (#2907): a ±2 score tie pairs with the nearer B finding', () => {
+  const a = [{ path: 'src/run.js', line: 100, severity: 'high', text: WIDE_SAME_A }];
+  const b = [
+    { path: 'src/run.js', line: 102, severity: 'high', text: WIDE_SAME_A },
+    { path: 'src/run.js', line: 100, severity: 'high', text: WIDE_SAME_A },
+  ];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.strictEqual(confirmed.length, 1);
+  assert.deepStrictEqual(unconfirmed.map((f) => `${f.source}:${f.line}`), ['B:102']);
+});
+
 test('reproduction: one-side-only finding → unconfirmed with STAGED entry matching the documented schema', () => {
   const a = [{ path: 'src/auth.ts', line: 42, severity: 'critical', text: 'only-A' }];
   const b = [];

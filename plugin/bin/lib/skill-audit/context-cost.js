@@ -30,6 +30,7 @@ const { listSkillDirs } = require('./skill-catalog');
 const {
   stripMarkers, MarkerError, parseMarkers, compose, KEYS, VOCAB, UNRESOLVED,
 } = require('../compose-context/compose');
+const { toPosix } = require('../shared-primitives');
 
 const CEILING_BYTES = 50 * 1024;
 
@@ -162,7 +163,7 @@ function measureSubFiles(repoRoot) {
     if (!fs.statSync(sd).isDirectory()) continue;
     for (const p of walkMarkdown(sd)) {
       if (path.basename(p) === 'SKILL.md') continue;
-      out.push({ skill: name, file: path.relative(dir, p), ...measuredBytes(p) });
+      out.push({ skill: name, file: toPosix(path.relative(dir, p)), ...measuredBytes(p) });
     }
   }
   return out.sort((a, b) => b.bytes - a.bytes);
@@ -222,7 +223,7 @@ function measureComposed(repoRoot, callSite) {
   const { step, file, line, sources: sourcePaths } = callSite;
   let sources;
   try {
-    sources = sourcePaths.map((p) => ({ path: path.relative(repoRoot, p), content: fs.readFileSync(p, 'utf8') }));
+    sources = sourcePaths.map((p) => ({ path: toPosix(path.relative(repoRoot, p)), content: fs.readFileSync(p, 'utf8') }));
   } catch (err) {
     if (err.code === 'ENOENT') {
       return {
@@ -357,7 +358,7 @@ function findComposeCallSites(repoRoot) {
   const dir = corpusDir(repoRoot);
   const out = [];
   for (const p of walkMarkdown(dir)) {
-    const file = path.relative(dir, p);
+    const file = toPosix(path.relative(dir, p));
     const lines = fs.readFileSync(p, 'utf8').split('\n');
     for (const [i, line] of lines.entries()) {
       if (!line.includes('compose-context.js')) continue;

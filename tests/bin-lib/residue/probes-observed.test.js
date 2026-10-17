@@ -52,16 +52,17 @@ test('a buffer-overflowed suite run does not run, rather than reporting a fabric
 // the current-manifest-version pointwise check — now a bootstrap-anchored
 // sweep over every v* tag and CHANGELOG heading, with no manifest.name
 // dependency at all. `mockRun(opts)` composes a fake `run(argv)` answering
-// the four git calls the probe makes, in argv order: the bootstrap add-commit
-// log, the manifest content at that commit, CHANGELOG.md at HEAD, and the v*
-// tag list.
-function mockRun({ addLog = 'deadbeef', manifestAtBootstrap = '{".": "1.0.0"}', changelog = '', tags = '' } = {}) {
+// the five git calls the probe makes, in argv order: the bootstrap add-commit
+// log, the manifest content at that commit, CHANGELOG.md at HEAD, the v*
+// tag list, and the remote tag list from ls-remote.
+function mockRun({ addLog = 'deadbeef', manifestAtBootstrap = '{".": "1.0.0"}', changelog = '', tags = '', remoteTags = null } = {}) {
   return (argv) => {
     const joined = argv.join(' ');
     if (joined.includes('log --diff-filter=A')) return addLog;
     if (/show \S+:\.release-please-manifest\.json/.test(joined)) return manifestAtBootstrap;
     if (joined.includes('CHANGELOG.md')) return changelog;
     if (joined.includes('tag -l')) return tags;
+    if (joined.includes('ls-remote')) return remoteTags;
     return null;
   };
 }
@@ -186,4 +187,64 @@ test('a release-please-generated heading with no tag is reported, in both URL an
     findings.some((f) => f.evidence.includes('no matching v1.1.0 tag')),
     `the untagged bare-form heading must be named, got ${JSON.stringify(findings.map((f) => f.evidence))}`,
   );
+});
+
+test('the remote tag read is bounded by a timeout so an unreachable origin cannot hang the sweep (#2882)', () => {
+  const base = mockRun({ tags: 'v1.0.0\n', changelog: '# Changelog\n\n## v1.0.0 — old\n', remoteTags: '' });
+  let lsRemoteOpts;
+  const run = (argv, opts) => {
+    if (argv.includes('ls-remote')) lsRemoteOpts = opts;
+    return base(argv);
+  };
+  probeRelease({ scope: SCOPE, run });
+  assert.ok(lsRemoteOpts && Number.isInteger(lsRemoteOpts.timeout) && lsRemoteOpts.timeout > 0, `ls-remote must pass a positive timeout, got ${JSON.stringify(lsRemoteOpts)}`);
+});
+
+test('AC1: a tag on remote but not local is not reported as missing', () => {
+  const run = mockRun({
+    manifestAtBootstrap: '{".": "1.0.0"}',
+    changelog: '# Changelog\n\n## v1.0.0 — old\n\n## v6.130.0 — new\n',
+    tags: 'v1.0.0\n',
+    remoteTags: 'abc123\trefs/tags/v1.0.0\nabc124\trefs/tags/v6.130.0\nabc124\trefs/tags/v6.130.0^{}\n',
+  });
+  const { findings } = probeRelease({ scope: SCOPE, run });
+  const missingTagFindings = findings.filter((f) => f.evidence.includes('no matching v6.130.0 tag'));
+  assert.deepStrictEqual(missingTagFindings, [], 'v6.130.0 should not be reported as missing since it exists on remote');
+});
+
+test('AC2: a tag absent from both local and remote is reported with remedy record', () => {
+  const run = mockRun({
+    manifestAtBootstrap: '{".": "1.0.0"}',
+    changelog: '# Changelog\n\n## v1.0.0 — old\n\n## v1.1.0 — untagged\n',
+    tags: 'v1.0.0\n',
+    remoteTags: 'abc123\trefs/tags/v1.0.0\n',
+  });
+  const { findings } = probeRelease({ scope: SCOPE, run });
+  assert.ok(findings.some((f) => f.evidence.includes('no matching v1.1.0 tag')), 'untagged heading must be reported');
+  const untaggedFinding = findings.find((f) => f.evidence.includes('no matching v1.1.0 tag'));
+  assert.strictEqual(untaggedFinding.remedy, 'record', 'missing tag finding should have remedy record');
+});
+
+test('a remote-only tag newer than HEAD\'s CHANGELOG is not reported as a missing heading (#2882)', () => {
+  const run = mockRun({
+    manifestAtBootstrap: '{".": "1.0.0"}',
+    changelog: '# Changelog\n\n## v1.0.0 — old\n',
+    tags: 'v1.0.0\n',
+    remoteTags: 'abc123\trefs/tags/v1.0.0\nabc125\trefs/tags/v1.2.0\n',
+  });
+  const { findings } = probeRelease({ scope: SCOPE, run });
+  assert.deepStrictEqual(findings, [], 'a tag this checkout never fetched cannot demand a CHANGELOG heading it has not merged yet');
+});
+
+test('AC3: when remote read fails, probe runs on local tags with reason naming the fallback', () => {
+  const run = mockRun({
+    manifestAtBootstrap: '{".": "1.0.0"}',
+    changelog: '# Changelog\n\n## v1.0.0 — old\n\n## v1.1.0 — untagged\n',
+    tags: 'v1.0.0\n',
+    remoteTags: null,
+  });
+  const { ran, reason, findings } = probeRelease({ scope: SCOPE, run });
+  assert.strictEqual(ran, true, 'probe should still run when remote read fails');
+  assert.ok(reason && reason.length > 0, 'reason should name the fallback');
+  assert.ok(findings.some((f) => f.evidence.includes('no matching v1.1.0 tag')), 'probe should still report missing tags using local list');
 });

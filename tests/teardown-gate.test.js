@@ -736,6 +736,8 @@ test('#2282: CT_HOOKS_TEST_MODE tags the own-cwd wd-guard-refusal event, exclude
     cwd: () => wt,
     readEvents: frictionEvents.readEvents,
     findRunsByWorktreePath: () => [],
+    sessionId: () => null,
+    findAdHocRunsBySessionId: () => [],
     stdout: (s) => { captured += s; },
     stderr: () => {},
   });
@@ -744,4 +746,64 @@ test('#2282: CT_HOOKS_TEST_MODE tags the own-cwd wd-guard-refusal event, exclude
     filtered.some((e) => e.type === 'wd-guard-refusal'), false,
     'a test-tagged wd-guard-refusal event must be excluded from friction-events.js aggregation, mirroring gate-denial',
   );
+});
+
+// --- #2783: an ad-hoc dir never makes a worktree "assigned" ----------------
+// An `-adhoc-standalone` dir holds only friction events — no pipeline state
+// this gate protects — so the session's own ExitWorktree(remove) must pass,
+// and the ad-hoc dir must stay non-terminal so friction-events.js still reads it.
+function makeNamedRun(root, name, state) {
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', name);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
+  return runDir;
+}
+
+test('#2783: ExitWorktree(remove) is allowed when the only run bound to the worktree is the session\'s own ad-hoc dir', () => {
+  const root = fixtureRoot();
+  const wt = addWorktree(root);
+  const adhoc = makeNamedRun(root, '2026-10-02T000000-adhoc-standalone', { status: 'active', worktree: wt, sessionId: 'sess-2783-a' });
+  const payload = JSON.stringify({ tool_name: 'ExitWorktree', tool_input: { action: 'remove' }, cwd: wt, session_id: 'sess-2783-a' });
+  const r = runHook(['pre-tool-use'], { input: payload, cwd: wt });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.stdout.trim(), '', 'an ad-hoc dir must never deny teardown');
+  assert.strictEqual(readRunState(adhoc).status, 'active', 'the ad-hoc dir stays non-terminal for the friction read side');
+});
+
+test('#2783 /flow shape: formal run closed via close-run + active ad-hoc twin, both bound to the worktree -> ExitWorktree(remove) allowed', () => {
+  const root = fixtureRoot();
+  const wt = addWorktree(root);
+  const formal = makeNamedRun(root, '2026-10-01T100000-spec-42', { status: 'active', worktree: wt, sessionId: 'sess-2783-b' });
+  makeNamedRun(root, '2026-10-01T100100-adhoc-standalone', { status: 'active', worktree: wt, sessionId: 'sess-2783-b' });
+  const closed = runHook(['close-run', '--run', formal], { cwd: root, env: { CLAUDE_CODE_SESSION_ID: 'sess-2783-b' } });
+  assert.strictEqual(closed.code, 0, closed.stdout);
+  assert.strictEqual(readRunState(formal).status, 'clean');
+  const payload = JSON.stringify({ tool_name: 'ExitWorktree', tool_input: { action: 'remove' }, cwd: wt, session_id: 'sess-2783-b' });
+  const r = runHook(['pre-tool-use'], { input: payload, cwd: wt });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.stdout.trim(), '', 'the still-active ad-hoc twin must not re-assign the worktree');
+});
+
+test('#2783: the Bash `git worktree remove <path>` branch of the same gate also ignores an ad-hoc-only binding', () => {
+  const root = fixtureRoot();
+  const wt = addWorktree(root);
+  makeNamedRun(root, '2026-10-02T000000-adhoc-standalone', { status: 'active', worktree: wt, sessionId: 'sess-2783-d' });
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: `git worktree remove ${wt}` }, cwd: root, session_id: 'sess-2783-d' });
+  const r = runHook(['pre-tool-use'], { input: payload, cwd: root });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.stdout.trim(), '');
+});
+
+test('#2783 control: a NON-ad-hoc active run of the same session bound to the worktree still denies, even with a newer ad-hoc twin', () => {
+  const root = fixtureRoot();
+  const wt = addWorktree(root);
+  const formal = makeNamedRun(root, '2026-10-01T100000-spec-43', { status: 'active', worktree: wt, sessionId: 'sess-2783-c' });
+  const adhoc = makeNamedRun(root, '2026-10-01T100100-adhoc-standalone', { status: 'active', worktree: wt, sessionId: 'sess-2783-c' });
+  const payload = JSON.stringify({ tool_name: 'ExitWorktree', tool_input: { action: 'remove' }, cwd: wt, session_id: 'sess-2783-c' });
+  const r = runHook(['pre-tool-use'], { input: payload, cwd: wt });
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
+  const reason = out.hookSpecificOutput.permissionDecisionReason;
+  assert.ok(reason.includes(formal), 'the deny names the formal run');
+  assert.ok(!reason.includes(adhoc), 'the deny never names the ad-hoc twin');
 });

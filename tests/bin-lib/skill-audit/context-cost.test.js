@@ -402,8 +402,8 @@ test('parseComposeCallLine: the production merge call parses to step + two plugi
   assert.deepStrictEqual(parseComposeCallLine(line, '/r'), {
     step: 'merge',
     sources: [
-      '/r/skills/_shared/pr-first-merge.md',
-      '/r/skills/_shared/pr-checklist-refresh.md',
+      path.resolve('/r', 'skills/_shared/pr-first-merge.md'),
+      path.resolve('/r', 'skills/_shared/pr-checklist-refresh.md'),
     ],
   });
 });
@@ -514,7 +514,7 @@ test('parseComposeCallLine: a source token that escapes the plugin root is an un
   assert.strictEqual(parsed.unparsed, true);
   assert.ok(/escapes the plugin root/.test(parsed.reason), `expected the escape reason, got: ${parsed.reason}`);
   const contained = 'node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/a.md"';
-  assert.deepStrictEqual(parseComposeCallLine(contained, '/r/plugin').sources, ['/r/plugin/skills/_shared/a.md']);
+  assert.deepStrictEqual(parseComposeCallLine(contained, '/r/plugin').sources, [path.resolve('/r/plugin', 'skills/_shared/a.md')]);
 });
 
 test('a root with no skills/ directory beneath it fails every corpus entry point with the plugin-root rule, not a raw scandir error', () => {

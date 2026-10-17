@@ -31,9 +31,49 @@ change the unit of acceptance.
 produced by a `/specify` decomposition) — run the **Oversight-floor gate** below, then Steps 1-4,
 applying `demo:pending` to the record itself only when the gate says the record clears the floor.
 
+**Before either branch, on every record-holding entry** (a no-parent record, or a sub-issue-side
+entry into the Parent-Gate Procedure — not the parent-side `/claude-tweaks:tidy` entry below,
+which holds no delivering record of its own): compose this record's Try it block — the next section. Neither the Parent-Gate Procedure nor the Oversight-floor gate gates it (#2821); they decide only where it lands.
+
 A caller that already holds a **parent** number is inside the Parent-Gate Procedure by
 construction — there is no sub-issue to resolve, so it starts at **Enumerate the parent's
 sub-issues**.
+
+## Try it block (every record, before either branch)
+
+Compose this record's `### Try it` block per `_shared/try-it.md` (shape, sources, rules — cited, not
+restated here) now, before the Parent-Gate Procedure or the Oversight-floor gate runs, and write it
+to the session-scoped file that `/claude-tweaks:flow`'s Pipeline Summary reads back:
+
+```bash
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" TRY_IT=try-it-{N}.md)"
+```
+
+Write the composed block to `"$TRY_IT"`. Shell variables do not survive between calls, so any
+later step that uses `$TRY_IT` — the posting fence below, the parent gate's append in
+`verification-brief-parent-gate.md`, and Step 4's template read — re-runs that resolve line first. Where it lands is the branch's decision: a record with no
+resolvable parent that clears the floor embeds it in its brief (Step 4's template); every other
+record posts it alone, below.
+
+**Posting it alone** — a record below the floor (`exceeds: false`), or any parent-linked sub-issue
+(post that one after the Parent-Gate Procedure returns, so an end-to-end variant it appended rides
+along). Under `_shared/pr-run-comments.md`'s gate (`run-state.json` carries a `pr` object), post it
+as the `try-it` kind, marker `<!-- run-comment: try-it -->` in a single-spec run, or, when
+`$MULTISPEC_PARENT_DIR` is set (a multi-spec `/claude-tweaks:flow` run sharing one PR across
+specs), the `try-it:{N}` kind, marker `<!-- run-comment: try-it:{N} -->` — the same spec
+qualification the `verdict` kind uses (`_shared/pr-run-comments.md`'s "Multi-spec verdict
+comments" section):
+
+```bash
+eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" TRY_IT=try-it-{N}.md)"
+KIND=try-it; [ -n "$MULTISPEC_PARENT_DIR" ] && KIND="try-it:{N}"
+printf '<!-- run-comment: %s -->\n\n' "$KIND" | cat - "$TRY_IT" > "$TRY_IT.pr"
+# find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=$KIND, against {pr-number}
+```
+
+No `pr` object (`local-merge`, or a degraded `pr-first` run): post nothing — the
+Pipeline Summary carries it. A below-floor record gets no comment on the issue; the floor still
+means no ceremony there.
 
 ## Parent-Gate Procedure (parent-linked sub-issues)
 
@@ -69,7 +109,8 @@ Call `exceedsOversightFloor({ risk: facets.risk, size: facets.size }, { riskFloo
 
 - **`exceeds: false`** — this record does not clear the oversight floor. **Skip Step 1 through
   Step 4 entirely** — no `demo:pending` bootstrap, no observation plan, no brief composed or
-  posted. The record closes with no `demo:*` label and no ceremony (this is the *not required*
+  posted. The walkthrough is not skipped: the Try it block composed above posts alone
+  (**Posting it alone**), and the Pipeline Summary renders it. The record closes with no `demo:*` label and no ceremony (this is the *not required*
   outcome, not a `demo:exempt` marker — see the design's Non-Goals). It stays demoable later on
   request: `/claude-tweaks:demo #N`'s existing closing-commit-reconstruction fallback already
   resolves a record carrying no `demo:pending` label, unchanged by this gate.
@@ -245,6 +286,8 @@ checklist; a human returning days later needs to remember *why*, not just *what 
 ### What shipped
 {one-paragraph summary from the record body + diff}
 
+{the Try it block composed in **Try it block** above — re-run the **Try it block** resolve line, read the file at the path `$TRY_IT` names, and insert its content verbatim, its own `### Try it` heading included}
+
 ### Confirmed
 {app-route/rendered-page, walk completed:}
 Visual review walked {journey/page name} — {clean | "found and fixed: {N} issues — {one line each}"}.
@@ -298,21 +341,29 @@ gh issue edit {issue} --add-label demo:pending
 ```
 
 **`pr` object present:** the full brief moves to the PR; the issue keeps a one-line pointer
-instead of the whole template.
+instead of the whole template. **Multi-spec marker (#2970):** when `$MULTISPEC_PARENT_DIR` is
+set (a multi-spec `/claude-tweaks:flow` run sharing one PR across specs —
+`flow/multi-spec.md`), the marker is spec-qualified, `<!-- run-comment: brief:{spec} -->`, where
+`{spec}` is this spec's record id (the numeric suffix of `basename($PIPELINE_RUN_DIR)`, the same
+derivation `review/code-mode-steps.md`'s verdict comment uses) — per
+`_shared/pr-run-comments.md`'s "Multi-spec brief and timing comments" section. A single-spec run
+keeps the plain `<!-- run-comment: brief -->` marker unchanged.
 
 ```bash
 printf '<!-- run-comment: brief -->\n\n' | cat - /tmp/verification-brief-{issue}.md > /tmp/pr-brief-{issue}.md
-# find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=brief, against {pr-number}
+# $MULTISPEC_PARENT_DIR set: printf '<!-- run-comment: brief:{spec} -->\n\n' instead, {spec} = basename($PIPELINE_RUN_DIR)'s numeric suffix
+# find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=brief (or brief:{spec} under multi-spec), against {pr-number}
 gh issue comment {issue} --body "Verification Brief posted to PR #{pr-number}: {pr-url}"
 gh issue edit {issue} --add-label demo:pending
 ```
 
-Then post the run's Timing table as the `timing` kind, under the same gate (#1928); a `tokens: transcript not found (...)` line, when present, is posted verbatim with the table:
+Then post the run's Timing table as the `timing` kind, under the same gate (#1928); a `tokens: transcript not found (...)` line, when present, is posted verbatim with the table. The same multi-spec marker rule applies: `<!-- run-comment: timing:{spec} -->` when `$MULTISPEC_PARENT_DIR` is set, the plain `<!-- run-comment: timing -->` marker otherwise:
 
 ```bash
 printf '<!-- run-comment: timing -->\n\n' > /tmp/pr-timing-{issue}.md
+# $MULTISPEC_PARENT_DIR set: printf '<!-- run-comment: timing:{spec} -->\n\n' instead, {spec} = basename($PIPELINE_RUN_DIR)'s numeric suffix
 node "${CLAUDE_PLUGIN_ROOT}/bin/phase-timing.js" --run "$PIPELINE_RUN_DIR" --markdown --auto-transcript >> /tmp/pr-timing-{issue}.md
-# find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=timing, against {pr-number}
+# find-or-create per _shared/pr-run-comments.md's post-or-update procedure, kind=timing (or timing:{spec} under multi-spec), against {pr-number}
 ```
 
 When wrap-up's cleanup item 8 has already archived the run directory (`cleanup-procedures.md`), pass `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` as `--run` instead — the events and manifest travel with the archive.

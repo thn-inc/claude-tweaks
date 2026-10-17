@@ -8,16 +8,21 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { run } = require('../plugin/bin/friction-events');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { run, readEvents } = require('../plugin/bin/friction-events');
 
 function fakeDeps(overrides = {}) {
-  const calls = { findRunsByWorktreePath: [], stdout: [], stderr: [] };
+  const calls = { findRunsByWorktreePath: [], findAdHocRunsBySessionId: [], stdout: [], stderr: [] };
   return {
     calls,
     isDirectory: () => true,
     cwd: () => '/wt/current',
     readEvents: (runDir, source) => (runDir === '/run/primary' ? [{ type: 'gate-denial', ts: 't1', _tag: 'primary-fixture' }] : []),
     findRunsByWorktreePath: (cwd, target, excludeDir) => { calls.findRunsByWorktreePath.push({ cwd, target, excludeDir }); return []; },
+    sessionId: () => null,
+    findAdHocRunsBySessionId: (cwd, sessionId, excludeDir) => { calls.findAdHocRunsBySessionId.push({ cwd, sessionId, excludeDir }); return []; },
     stdout: (s) => calls.stdout.push(s),
     stderr: (s) => calls.stderr.push(s),
     ...overrides,
@@ -132,10 +137,6 @@ test('unions events from more than one sibling ad-hoc run dir', () => {
 // --- real readEvents behavior (against the actual filesystem-reading impl) ---
 
 test('the real readEvents helper parses events.jsonl, skips malformed lines, returns [] on a missing file', () => {
-  const fs = require('fs');
-  const os = require('os');
-  const path = require('path');
-  const { readEvents } = require('../plugin/bin/friction-events');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-events-'));
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
@@ -155,10 +156,6 @@ test('the real readEvents helper parses events.jsonl, skips malformed lines, ret
 // other event type, even one that happens to carry `test: true`) still comes
 // through unfiltered.
 test('#1337: readEvents drops a test-tagged gate-denial event but keeps a real one', () => {
-  const fs = require('fs');
-  const os = require('os');
-  const path = require('path');
-  const { readEvents } = require('../plugin/bin/friction-events');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-events-'));
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
@@ -184,10 +181,6 @@ test('#1337: readEvents drops a test-tagged gate-denial event but keeps a real o
 // unattributed event (or any event on the `adhoc` source, already
 // worktree-validated by findRunsByWorktreePath) still comes through.
 test('#1402: readEvents drops a primary fallback-attributed event but keeps a real one and an adhoc fallback one', () => {
-  const fs = require('fs');
-  const os = require('os');
-  const path = require('path');
-  const { readEvents } = require('../plugin/bin/friction-events');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-events-'));
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
@@ -209,10 +202,6 @@ test('#1402: readEvents drops a primary fallback-attributed event but keeps a re
 // visibility only) — it must never inflate the Friction lens's count the
 // same way a genuine violation does.
 test('#2350: readEvents drops a lenient-variant contract-violation event but keeps a genuine violation', () => {
-  const fs = require('fs');
-  const os = require('os');
-  const path = require('path');
-  const { readEvents } = require('../plugin/bin/friction-events');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-events-'));
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
@@ -226,6 +215,73 @@ test('#2350: readEvents drops a lenient-variant contract-violation event but kee
   assert.equal(events[0].firstLine, 'The call site is compatible.');
 });
 
+// --- pre-claim window exclusion (#2989) -------------------------------------
+//
+// A run directory can be mkdir-only minted well before the pipeline that
+// owns it ever claims it. These tests reproduce that window — a canonical
+// `{ISO-timestamp}-{slug}` run-id directory name plus a decisions.md whose
+// first entry logs the real claim time — and assert readEvents excludes any
+// events.jsonl line timestamped earlier than that claim.
+
+test('#2989: readEvents excludes an event timestamped before the run dir\'s first decisions.md entry', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  // Minted at 12:00:00Z; claimed (decisions.md's first entry) at 12:02:00Z.
+  const dir = path.join(parent, '2026-01-01T120000-record-999');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(
+    path.join(dir, 'events.jsonl'),
+    [
+      '{"type":"ask-user-question","ts":"2026-01-01T12:01:00.000Z"}',
+      '{"type":"ask-user-question","ts":"2026-01-01T12:03:00.000Z"}',
+    ].join('\n') + '\n',
+  );
+  fs.writeFileSync(
+    path.join(dir, 'decisions.md'),
+    '## /flow\n- AUTO 12:02:00 — Step 2.8: claimed #999. Reversibility: high.\n',
+  );
+  const events = readEvents(dir, 'primary');
+  assert.equal(events.length, 1, 'only the post-claim event should survive');
+  assert.equal(events[0].ts, '2026-01-01T12:03:00.000Z');
+});
+
+test('#2989: readEvents applies no pre-claim filtering when the run dir has no decisions.md yet', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const dir = path.join(parent, '2026-01-01T120000-record-999');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"ask-user-question","ts":"2026-01-01T12:00:30.000Z"}\n');
+  const events = readEvents(dir, 'primary');
+  assert.equal(events.length, 1, 'no decisions.md yet — fail open, no exclusion');
+});
+
+test('#2989: readEvents applies no pre-claim filtering on a non-canonical directory name', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-noncanonical-'));
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"ask-user-question","ts":"2026-01-01T12:00:30.000Z"}\n');
+  const events = readEvents(dir, 'primary');
+  assert.equal(events.length, 1, 'no run-id-shaped name — mint time can\'t be established, so no exclusion');
+});
+
+test('#2989: readEvents handles a mint/claim pair that straddles a UTC midnight rollover', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  // Minted at 23:59:00Z on 2026-01-01; decisions.md's first entry logs only
+  // HH:MM:SS (00:00:30), which is actually the next calendar day.
+  const dir = path.join(parent, '2026-01-01T235900-record-999');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(
+    path.join(dir, 'events.jsonl'),
+    [
+      '{"type":"ask-user-question","ts":"2026-01-01T23:59:30.000Z"}',
+      '{"type":"ask-user-question","ts":"2026-01-02T00:01:00.000Z"}',
+    ].join('\n') + '\n',
+  );
+  fs.writeFileSync(
+    path.join(dir, 'decisions.md'),
+    '## /flow\n- AUTO 00:00:30 — Step 2.8: claimed #999. Reversibility: high.\n',
+  );
+  const events = readEvents(dir, 'primary');
+  assert.equal(events.length, 1, 'the pre-claim event (23:59:30) must be excluded even across the midnight rollover');
+  assert.equal(events[0].ts, '2026-01-02T00:01:00.000Z');
+});
+
 // --- friction-lens vocabulary filter (#2016) --------------------------------
 //
 // readEvents itself stays general-purpose (the #1337/#1402 filters above are
@@ -235,10 +291,6 @@ test('#2350: readEvents drops a lenient-variant contract-violation event but kee
 // `session-end`, `skill_invoked`, …) never reaches stdout.
 
 test('#2016: run() filters the merged event stream to only the five Friction Lens vocabulary types', () => {
-  const fs = require('fs');
-  const os = require('os');
-  const path = require('path');
-  const { readEvents: realReadEvents } = require('../plugin/bin/friction-events');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-vocab-'));
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
@@ -255,7 +307,7 @@ test('#2016: run() filters the merged event stream to only the five Friction Len
       '{"type":"ask-user-question","ts":"t10"}',
     ].join('\n') + '\n',
   );
-  const deps = fakeDeps({ readEvents: (runDir, source) => (runDir === dir ? realReadEvents(runDir, source) : []) });
+  const deps = fakeDeps({ readEvents: (runDir, source) => (runDir === dir ? readEvents(runDir, source) : []) });
   const code = run(['--run', dir], deps);
   assert.equal(code, 0);
   const out = JSON.parse(deps.calls.stdout[0]);
@@ -266,17 +318,56 @@ test('#2016: run() filters the merged event stream to only the five Friction Len
 });
 
 test('#2016: a run dir whose events.jsonl holds only commit rows prints []', () => {
-  const fs = require('fs');
-  const os = require('os');
-  const path = require('path');
-  const { readEvents: realReadEvents } = require('../plugin/bin/friction-events');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-vocab-commits-'));
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
     ['{"type":"commit","ts":"t1"}', '{"type":"commit","ts":"t2"}'].join('\n') + '\n',
   );
-  const deps = fakeDeps({ readEvents: (runDir, source) => (runDir === dir ? realReadEvents(runDir, source) : []) });
+  const deps = fakeDeps({ readEvents: (runDir, source) => (runDir === dir ? readEvents(runDir, source) : []) });
   const code = run(['--run', dir], deps);
   assert.equal(code, 0);
   assert.deepEqual(JSON.parse(deps.calls.stdout[0]), []);
+});
+
+// --- #2783: union ad-hoc dirs owned by the current session -----------------
+
+test('--session unions this session\'s ad-hoc dirs even when the worktree path no longer matches (#2783)', () => {
+  const deps = fakeDeps({
+    readEvents: (runDir, source) => (runDir === '/run/adhoc-1' ? [{ type: 'wd-guard-refusal', reason: 'harness-worktree-isolation', _source: source, _runDir: runDir }] : []),
+    findAdHocRunsBySessionId: () => [{ runDir: '/run/adhoc-1', state: { sessionId: 'S1' } }],
+  });
+  assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1'], deps), 0);
+  const out = JSON.parse(deps.calls.stdout.join(''));
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0]._source, 'adhoc');
+  assert.strictEqual(out[0].type, 'wd-guard-refusal');
+});
+
+test('session id defaults to deps.sessionId() (CLAUDE_CODE_SESSION_ID) and excludes the primary run', () => {
+  const deps = fakeDeps({ sessionId: () => 'S-env' });
+  run(['--run', '/run/primary'], deps);
+  assert.deepStrictEqual(deps.calls.findAdHocRunsBySessionId.map((c) => c.sessionId), ['S-env']);
+  assert.strictEqual(deps.calls.findAdHocRunsBySessionId[0].excludeDir, '/run/primary');
+});
+
+test('no session id at all: the session lookup is not attempted', () => {
+  const deps = fakeDeps();
+  run(['--run', '/run/primary'], deps);
+  assert.deepStrictEqual(deps.calls.findAdHocRunsBySessionId, []);
+});
+
+test('an ad-hoc dir found by BOTH the worktree and the session lookup is read once', () => {
+  let reads = 0;
+  const deps = fakeDeps({
+    readEvents: (runDir, source) => {
+      if (runDir !== '/run/adhoc-1') return [];
+      reads += 1;
+      return [{ type: 'gate-denial', _source: source, _runDir: runDir }];
+    },
+    findRunsByWorktreePath: () => [{ runDir: '/run/adhoc-1' }],
+    findAdHocRunsBySessionId: () => [{ runDir: '/run/adhoc-1' }],
+  });
+  run(['--run', '/run/primary', '--session', 'S1'], deps);
+  assert.strictEqual(reads, 1);
+  assert.strictEqual(JSON.parse(deps.calls.stdout.join('')).length, 1);
 });
