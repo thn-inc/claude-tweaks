@@ -55,10 +55,18 @@ function isOlder(a, b) {
   return false;
 }
 
+// A marketplace name is rendered into a runnable command, and a projectPath
+// into the same model-directed line: either one malformed means no notice.
+const MARKETPLACE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const CONTROL_CHAR_RE = /[\u0000-\u001f\u007f]/;
+
 function defaultDeps() {
   return {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
-    realpath: fs.realpathSync,
+    // The native realpath canonicalizes case on a case-insensitive volume (the
+    // JS one echoes the input's casing), so a mis-cased cwd or projectPath still
+    // compares equal to the home directory and to its own project.
+    realpath: fs.realpathSync.native,
     homedir: os.homedir,
     env: process.env,
   };
@@ -77,10 +85,11 @@ function effectiveSuperpowersVersion(projectDir, overrides = {}) {
     const flat = [];
     for (const key of Object.keys(plugins)) {
       const m = /^superpowers@(.+)$/.exec(key);
-      if (!m || !Array.isArray(plugins[key])) continue;
+      if (!m || !MARKETPLACE_RE.test(m[1]) || !Array.isArray(plugins[key])) continue;
       for (const e of plugins[key]) {
         if (!e || typeof e !== 'object') continue;
         if (e.scope !== 'user' && e.scope !== 'project') continue;
+        if (typeof e.projectPath === 'string' && CONTROL_CHAR_RE.test(e.projectPath)) continue;
         flat.push({ ...e, marketplace: m[1] });
       }
     }
@@ -111,7 +120,7 @@ function superpowersNotice({ effective, floor, projectDir }) {
   if (!effective || !isOlder(effective.version, floor)) return null;
   let suffix = '';
   if (effective.scope === 'project' && typeof effective.projectPath === 'string') {
-    const deps = { realpath: fs.realpathSync };
+    const deps = { realpath: fs.realpathSync.native };
     if (safeRealpath(effective.projectPath, deps) !== safeRealpath(projectDir, deps)) {
       suffix = ` (run from ${effective.projectPath}, the project this install belongs to)`;
     }
