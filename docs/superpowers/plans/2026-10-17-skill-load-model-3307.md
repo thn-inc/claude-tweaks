@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ (CommonJS, zero runtime deps), `node --test`, git CLI.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-17T062549-spec-3307-3308-3306-3309-3310-3311/spec-3307/work/3307-spec.md` (record #3307)
+**Spec:** `.claude-tweaks/pipelines/2026-10-17T062549-spec-3307-3308-3306-3309-3310-3311/spec-3307/work/3307-spec.md` (record #3307) _(Spec file deleted at the series close-out in PR #3433; the GitHub record, with its As-built notes, is the durable spec.)_
 
 ## Global Constraints
 
