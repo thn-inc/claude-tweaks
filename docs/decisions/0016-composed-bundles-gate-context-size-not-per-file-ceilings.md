@@ -1,6 +1,6 @@
 # 0016. Composed per-run bundles gate context size, not per-file ceilings
 
-- **Status:** accepted
+- **Status:** accepted — ceiling numbers superseded by [0024](0024-skill-size-limits-guard-platform-limits-only.md)
 - **Date:** 2026-09-07
 - **Context:** #1987 (skill context composer decomposition, sub-issues #1988–#1997); the design doc that reasoned this through was deleted at decomposition (`4c6e76733`), so the trade-off is recorded here
 

@@ -1419,6 +1419,8 @@ real resolveRun" test reproduces record-769/#815's exact shape end-to-end (a rea
 
 ## IL-153 — Per-file 40 KB test pins retired in favour of composed-bytes gates
 
+> Superseded: [decision 0024](decisions/0024-skill-size-limits-guard-platform-limits-only.md) (#3310) — size limits now block only at the Read rail.
+
 Fourteen ad-hoc per-file `<= 40960`-byte assertions had accreted across thirteen `tests/*.test.js`
 files between 2026-05 and 2026-09, each one added by a record that happened to touch a skill file
 near the ceiling and pinned that one file's raw size defensively at the point of the split. #1990
