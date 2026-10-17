@@ -28,7 +28,8 @@ test('AC1.1: build/worktree-setup.md Step 4.6 creates the ledger after the workt
   assert.match(text, /only when `\$PIPELINE_RUN_DIR` is already set/);
   assert.match(text, /`MULTISPEC_SHARED_WORKTREE` is not set/);
   assert.match(text, /AUTO \{time\} — flow: created open-items ledger \{path\}\. Reversibility: n\/a\./);
-  assert.match(text, /Right after creating it, append any ledger-bound note `\/flow` Step 2 held/);
+  assert.match(text, /Either way — created now or found — append any ledger-bound note `\/flow` Step 2 held/);
+  assert.match(text, /then commit a `docs\/plans\/` ledger by its explicit path/);
   assert.match(text, /When this run's active ledger already exists \(a resumed run — resolved per `_shared\/ledger-format\.md`'s resolution rule/);
   assert.ok(text.indexOf('4.5. **Record the assignment**') < text.indexOf('4.6. **Create the open-items ledger'));
 });
@@ -77,6 +78,7 @@ test('AC1.1: multi-spec creates one shared ledger at Shared worktree step 1, par
   assert.match(section, /spec-\{N1\}-\{N2\}/);
   assert.match(section, /AUTO \{time\} — flow: created open-items ledger \{path\}\. Reversibility: n\/a\./);
   assert.match(section, /When the run's active ledger already exists \(resume\), Create is a no-op/);
+  assert.match(section, /Either way, append any ledger-bound note Step 2 held as `ops` rows right after, then commit a `docs\/plans\/` ledger by its explicit path/);
 });
 
 test('AC4.1: the QA Ledger Check finds the creation line on both the single-spec and multi-spec paths', () => {
@@ -92,7 +94,7 @@ test('AC4.1: the QA Ledger Check finds the creation line on both the single-spec
 test('flow/validation.md holds Step 2.5/2.6 ledger-bound notes until the ledger exists', () => {
   const text = read('flow/validation.md');
   assert.match(text, /Under the `worktree` strategy the open-items ledger does not exist yet at this step/);
-  assert.match(text, /appended to the ledger as an `ops` row by whichever step creates it/);
+  assert.match(text, /appended to the ledger as an `ops` row by whichever step creates it \(`build\/worktree-setup\.md` Step 4\.6, or `multi-spec\.md`'s "Shared worktree" step 1/);
   assert.doesNotMatch(text, /Continued and added ops ledger entry/);
 });
 

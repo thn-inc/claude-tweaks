@@ -4,7 +4,7 @@ Loaded by /flow Step 2 when performing pre-flight checks. Each substep returns O
 
 Run substeps 2.5, 2.6, and 2.7 in order. Any hard fail or rejection stops the pipeline before the Config Manifesto runs.
 
-**Ledger-bound notes (#3036).** Under the `worktree` strategy the open-items ledger does not exist yet at this step — every "ops ledger entry" below is logged to `decisions.md` now and appended to the ledger as an `ops` row by whichever step creates it (`SKILL.md` Step 1 item 8). Under `current-branch`, Step 1 already created the ledger — write the entry directly.
+**Ledger-bound notes (#3036).** Under the `worktree` strategy the open-items ledger does not exist yet at this step — every "ops ledger entry" below is logged to `decisions.md` now and appended to the ledger as an `ops` row by whichever step creates it (`build/worktree-setup.md` Step 4.6, or `multi-spec.md`'s "Shared worktree" step 1 — the creation points `SKILL.md` Step 1 item 8 names). Under `current-branch`, Step 1 already created the ledger — write the entry directly.
 
 > **Parallel execution (conditional):** 2.5's fetch + ahead-count and 2.6/2.7's content scans of the plan file have no cross-dependency in the common all-pass path. When git strategy resolves to `worktree` (so 2.5 applies), dispatch the three substeps' underlying reads as parallel tool calls, then evaluate pass/fail in the documented 2.5→2.7 priority order once all reads return. When git strategy resolves to `current-branch` (2.5 is skipped), run 2.6 and 2.7 sequentially — two reads are not worth parallelizing.
 
