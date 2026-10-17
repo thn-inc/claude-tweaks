@@ -34,15 +34,28 @@ node plugin/bin/phase-timing.js --run <scratch> --markdown --transcript <main tr
 `<scratch>` was `$TMPDIR/dispatch-baseline-3316` (`os.tmpdir()`), a fresh directory holding copies of
 the run's `events.jsonl`, `run-state.json` and `config.yml` (the run has no `manifest.yml`). The
 CLI writes `timing.json` into `--run`, so the archived run directory was never passed to it.
-`<main transcript>` was
-`~/.claude/projects/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-flow-record-3316/bfb315de-981e-4d1a-8cdc-15688ef61019.jsonl`.
-The exit code was 0.
+`<main transcript>` is, as of this file's last verification,
+`~/.claude/projects/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks/bfb315de-981e-4d1a-8cdc-15688ef61019.jsonl`.
+This is the path that reproduces the table below. The exit code was 0.
+
+The session is not at the path it was captured from. Claude Code's transcript directory is a slug
+of the session's cwd, so a session that moves between a worktree and the main checkout changes
+directory. At capture time the same session lived under the worktree slug
+`~/.claude/projects/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-flow-record-3316/`;
+that directory is now empty. If the transcript moves again, locate it by the session id.
+
+The session is still live. Its transcript keeps growing (2,734 rows and 17.6 MB at capture,
+17.9 MB at re-verification), so a re-run's phase table drifts: the `merge` row read 71 minutes and
+the `total` 212 at capture, and 80 and 221 at re-verification (a reviewer saw 79 and 220). Only the
+Dispatches block below is stable. It is clipped to the run's event window, and a re-run against
+the relocated transcript reproduced it byte for byte.
 
 ## Transcript sources
 
-- Main transcript: the path above (2,734 rows, 17.6 MB).
-- Subagents directory: `~/.claude/projects/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-flow-record-3316/bfb315de-981e-4d1a-8cdc-15688ef61019/subagents/`
-  holding 35 `agent-*.jsonl` transcripts with 35 `.meta.json` files. The CLI read all 35.
+- Main transcript: the current path above.
+- Subagents directory: `~/.claude/projects/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks/bfb315de-981e-4d1a-8cdc-15688ef61019/subagents/`
+  holding 35 `agent-*.jsonl` transcripts with 35 `.meta.json` files. The CLI read all 35 (at
+  capture they sat in the worktree-slug directory's `bfb315de-…/subagents/`).
 
 ## Plugin version
 
@@ -85,6 +98,33 @@ test-runner glob fix`). `unlabelled` holds descriptions with no role pattern, wh
 itself here: fix waves, the curation-row judges, the two simplifier passes and reviews named
 without a `Task N`. The `whole-branch review` row is a single Capable dispatch.
 
+Role-pattern misses sit inside `unlabelled`, so the `task review` and `re-review` rows are lower
+bounds, not counts. Three review-shaped dispatches were not matched and are counted as
+`unlabelled`: `Review the Windows glob runner task`, `Review adjudication and excerpt fixes` and
+`Scoped re-review of review fixes` (the first is a task review, the last a re-review). Add them
+back and the true task-review and re-review counts are higher than the 2 and 2 shown. A later run
+must be read the same way, or compare the `unlabelled` row alongside them.
+
+## Tier policy in effect
+
+Tier comes from the dispatch's meta `model` alias: `haiku` is fast, `sonnet` is standard, `opus`
+is capable (24 `sonnet`, 5 `haiku`, 6 `opus`; no `inherit`, absent or unmapped model). Who
+landed where, from the per-item data in `timing.json`:
+
+- Fast (5): lens reviewers 3a convention (A, B) and 3f test quality (A, B), plus `Re-review Task 2
+  fix round 1`.
+- Standard (24): every other lens reviewer (3b security, 3c errors, 3d performance, 3e
+  architecture, 3g ownability, each A and B), `Implement Task 1`, `Implement Task 2`, the ad-hoc
+  glob implementer, `Review Task 1` and `Review Task 2`, `Re-review final fix wave`, the fix waves,
+  both simplifier passes and the three unmatched reviews above.
+- Capable (6): `Whole-branch review of #3316`, the four curation-row judges (Skills, Docs,
+  Journeys, Decision records) and `Fix nine ledger minors in filer and launcher`.
+
+So the lens fan-out split two ways, 3a and 3f on fast and the other five lenses on standard, and
+implementers and task reviewers were all standard. A later run has "the same tier policy" only if
+its dispatches map the same way: if a record moves implementers, task reviewers or lenses to a
+different tier, the run is not comparable on tier columns and the comparison is by role instead.
+
 ## Completeness statement
 
 - Single session. Every `sessionId` and `session` value in the run's `events.jsonl` is
@@ -112,7 +152,11 @@ reported as not comparable rather than adjusted:
    tier column means the same model family in both runs.
 2. A plan task count within +-50% of this run's 4, that is 2 to 6 tasks per `plan-audit.js
    --count-tasks`.
-3. SDD per-task dispatch (`Implement Task N` and `Review Task N` in the subagent descriptions).
+3. SDD per-task dispatch (`Implement Task N` and `Review Task N` in the subagent descriptions),
+   and the same ratio of dispatched tasks to plan tasks. This run dispatched 2 of its 4 plan
+   tasks through SDD (Tasks 3 and 4 were main-session tasks by plan design), so a comparison
+   states its own dispatched-over-plan ratio. A run that dispatches all of a 4-task plan is not
+   like for like, even though its task count is within range.
 
 Also compare like with like on `ceremony-profile` (`standard` here) and read both runs through
 the same CLI build; a record that changes the dispatch shape changes the role rows by design, which
