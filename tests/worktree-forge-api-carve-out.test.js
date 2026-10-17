@@ -74,7 +74,7 @@ function note(text, label) {
   return text.slice(start === -1 ? 0 : start, end === -1 ? undefined : end);
 }
 
-test('backlog refine-headless.md: whole firing is covered (gh + run dir; local-files already stops)', () => {
+test('backlog refine-headless.md: carve-out scoped to the grant chain, labeling lanes keep the unsynced and local-files exceptions', () => {
   const n = note(skill('backlog', 'refine-headless.md'), 'refine-headless.md');
   assert.match(n, /worktree-setup\.md/);
   assert.match(n, /local-files/);
