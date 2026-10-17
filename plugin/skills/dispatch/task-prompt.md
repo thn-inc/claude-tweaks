@@ -234,7 +234,7 @@ turn sequence resumes, distinct from the backgrounded-with-nothing-pending stall
 This call's prompt names ONLY the record number(s) and the `PIPELINE_RUN_DIR` path above — never a summary of the first call's outcome. Both are resolution targets, not findings; that is what keeps the no-echo rule intact while the run itself is handed over. It is a fresh Task-tool dispatch with zero conversation history from the first call, and its own review step must re-derive its verdict from raw artifacts (the actual diff, the actual test-output artifact — via the same shape `bin/lib/dispatch/artifact-verdict.js`'s `deriveTestVerdict` pins as a testable invariant) rather than trusting any claim the first call made, including claims written to `decisions.md`, ledger entries, or staged proposals the first call produced. File-based state is readable across the two calls even though conversation history is not — the instruction below states this explicitly because that distinction is easy to lose.
 
 ```
-Task scope: Execute claude-tweaks review+polish+wrap-up for this already-claimed file-overlap
+Task scope: Execute claude-tweaks review+polish+wrap-up for this already-claimed dispatch
 group of GitHub records: {issue list}. Singleton -> run
 `PIPELINE_RUN_DIR="{minted-run-dir}" /claude-tweaks:flow #{issue}
 review,polish,wrap-up auto`. Bundle -> run `PIPELINE_RUN_DIR="{minted-run-dir}"

@@ -1,6 +1,6 @@
 # Dispatch — Accepted Design Positions
 
-Referenced by `skills/dispatch/SKILL.md`'s "When to Use" section and its Concurrency note, and by `skills/backlog/dependency-mismatch-detection.md`'s #418/#419 worked example. Each entry answers the same shape of question — "why doesn't dispatch do X?" — where X looks like a gap but is a deliberate, accepted position. Neither is procedure: nothing here changes what a firing does, so a normal run never needs to load this file. Kept out of `SKILL.md` to stay under its size ceiling.
+Referenced by `skills/dispatch/SKILL.md`'s "When to Use" section and its Concurrency note, and by `skills/backlog/dependency-mismatch-detection.md`'s #418/#419 worked example. Each entry answers the same shape of question — "why doesn't dispatch do X?" — where X looks like a gap but is a deliberate, accepted position. None of them is procedure: nothing here changes what a firing does, so a normal run never needs to load this file. Kept out of `SKILL.md` to stay under its size ceiling.
 
 Step and section references below (`Step 4`, `Step 5`, "Reporting") resolve against this skill's `SKILL.md`, not against this file.
 

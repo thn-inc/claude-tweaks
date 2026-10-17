@@ -131,7 +131,7 @@ function partitionGroupsBySizeGuard(groups, options = {}) {
   return { withinGuard, oversized, threshold };
 }
 
-// Fast-lane bundling (#1910): merges up to `bundleCap` singleton file-overlap
+// Fast-lane bundling (#1910): merges up to `bundleCap` singleton
 // groups into one multi-spec group when every member carries
 // `ceremony:fast-lane`, so a dispatch firing shares one preflight/wrap-up
 // tail across several small records instead of paying it once per record
@@ -169,7 +169,7 @@ function partitionGroupsBySizeGuard(groups, options = {}) {
 // bundle; `bundles` lists only the groups this pass actually created,
 // `{ records: number[] }[]`, oldest-first within each, for a caller
 // (queue-pull-script.md) that wants to report which groups are fast-lane
-// bundles versus ordinary file-overlap groups.
+// bundles versus ordinary unbundled groups.
 const FASTLANE_BUNDLE_CAP_DEFAULT = 3;
 
 function bundleFastLaneSingletons(groups, options = {}) {

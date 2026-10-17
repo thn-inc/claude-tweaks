@@ -102,6 +102,7 @@ test('AC8.2 (shared/help/docs): no prose says a record pulls its whole file-over
     path.join(SHARED, 'issue-claims.md'),
     path.join(ROOT, 'plugin', 'skills', 'help', 'reference-card.md'),
     path.join(ROOT, 'docs', 'getting-started.md'),
+    path.join(ROOT, 'README.md'),
   ];
   for (const file of files) {
     const text = readText(file);
