@@ -174,3 +174,9 @@ refs #3005"
 ---
 
 Waived AC5.1: `npm test` passing is covered by `/build` Common Step 5's full-suite verification, not by a task's test step.
+
+## As-built deviations (Common Step 4.5)
+
+- **Beneficial — two cases ahead of the classification** (`c5e13b23e`, from the whole-branch review): a root-relative `target` joins to `APP_URL` (`new URL(target, APP_URL)`), and an absolute origin already equal to `APP_URL`'s stays unchanged — both never flagged. The spec's four cases covered absolute origins only, while Task 2's schema prose recommends root-relative `target`s; without these the recommended form was undefined, and an already-rewritten shared `setup.steps` URL could be re-classified as "other loopback".
+- **Beneficial — `plugin/skills/test/qa-reporting.md`** (`c5e13b23e`): the report's Skipped section names the new `unresolved-secondary-origin: {origin}` reason, matching how `unacknowledged-remote-target` was added. Not in the spec's Key Files; the reason token would otherwise never reach the report's Skipped table.
+- **Spec premise reversed — skip cascade** (`c5e13b23e`): the spec's Technical Approach says a skipped story's dependents "follow the existing dependency rule (`qa-procedures.md:89`)", but that rule fires only on a **failed** dependency. The prose instead states "its dependents cascade as `SKIPPED` (as with `missing-auth-vault`)". Staged for the Review Console as an "Update the spec" row.
