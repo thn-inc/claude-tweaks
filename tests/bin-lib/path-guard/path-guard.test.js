@@ -215,6 +215,11 @@ test('resolveLeaf treats a missing realpathSync like a realpath failure and fall
   assert.deepEqual(resolveLeaf(target, { fsImpl }), { state: 'unreadable', code: 'EUNKNOWN' });
 });
 
+test('resolveWithin returns the resolved path for a real file inside the root, and for the root itself', () => {
+  assert.equal(resolveWithin(target, inDir), fs.realpathSync.native(target));
+  assert.equal(resolveWithin(inDir, inDir), fs.realpathSync.native(inDir));
+});
+
 test('resolveWithin is null when the root itself does not resolve', () => {
   assert.equal(resolveWithin(target, path.join(root, 'no-such-root')), null);
 });

@@ -84,6 +84,16 @@ test('transcript: readDispatches names an entry that vanishes between readdir an
   assert.equal(r.items[0].description, 'Implement Task 2');
 });
 
+test('transcript: readDispatches names an entry whose lstat fails with EACCES by that code (unreadable is not missing)', async () => {
+  const dir = fresh();
+  fs.writeFileSync(path.join(dir, 'agent-u1.meta.json'), JSON.stringify({ description: 'Implement Task 3' }));
+  fs.writeFileSync(path.join(dir, 'agent-u1.jsonl'), '{}\n');
+  const fsImpl = { ...fs, lstatSync: (p, ...a) => { if (p.endsWith('agent-u1.jsonl')) throw Object.assign(new Error('denied'), { code: 'EACCES' }); return fs.lstatSync(p, ...a); } };
+  const r = await readDispatches(dir, { fsImpl });
+  assert.equal(r.items[0].notFound, 'transcript not readable (EACCES)');
+  assert.equal(r.items[0].description, 'Implement Task 3');
+});
+
 test('transcript: readDispatches reads a directory-typed agent entry as before (not skipped; the read itself reports EISDIR)', async () => {
   const dir = fresh();
   fs.mkdirSync(path.join(dir, 'agent-d1.jsonl'));
@@ -161,6 +171,20 @@ test('realTarget: a leaf whose realpath AND lstat fail with a non-ENOENT code ta
   } finally {
     fs.realpathSync = realReal;
     fs.lstatSync = realLstat;
+  }
+});
+
+test('realTarget: a leaf that lstat reports as present but whose realpath fails with a non-ENOENT code takes the parent-only fallback', () => {
+  const { root, policy } = policyRepo();
+  fs.writeFileSync(policy, 'x: 1\n');
+  const realReal = fs.realpathSync;
+  const patchedReal = (p, ...a) => { if (p === policy) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); return realReal(p, ...a); };
+  patchedReal.native = realReal.native;
+  fs.realpathSync = patchedReal;
+  try {
+    assert.equal(isPolicyFile(root, policy), true);
+  } finally {
+    fs.realpathSync = realReal;
   }
 });
 
