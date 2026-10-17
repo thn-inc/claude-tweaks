@@ -123,7 +123,7 @@ test('review-console.md step 1 points an sdd-ruling-* write-back at the appendix
 
 test('review #3401: the carry-forward names the stage-item.js failure branch, the Item-cell rewrite rule, and the no-dedupe rule for ruling rows', () => {
   assert.match(DISPATCH, /If `stage-item\.js` exits non-zero, write no `STAGED` line: rewrite the row's Item text without its `\(staged\/…\)` suffix/);
-  assert.match(DISPATCH, /SKIP \{time\} — SDD ruling carry-forward: stage-item\.js exited \{code\} for sdd-ruling-\{N\} \(\{first stderr line\}\) → fallback: ledger row #\{item\} left open with no staged file/);
+  assert.match(DISPATCH, /SKIP \{time\} — SDD ruling carry-forward \(degraded\): condition: stage-item\.js exited \{code\} for sdd-ruling-\{N\} \(\{first stderr line\}\) → fallback: ledger row #\{item\} left open with no staged file/);
   assert.match(DISPATCH, /the same operation, not an Update Item/);
   assert.match(DISPATCH, /De-duplication on Append never skips a ruling row/);
   assert.match(DISPATCH, /takes the staged extension from the source; the file opens with a header block `Title:`/);
