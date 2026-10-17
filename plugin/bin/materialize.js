@@ -100,7 +100,9 @@ function computeDrift(sha, deps) {
 // "no premise check" — never a hard stop, matching this feature's existing
 // fail-open posture (computePremise's own degrade-to-null on a throwing
 // runner).
-const TRUSTED_AUTHOR_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+// The set itself lives in lib/issues/comment-trust.js (#3358), shared with
+// every marker-comment reader.
+const { TRUSTED_AUTHOR_ASSOCIATIONS } = require('./lib/issues/comment-trust');
 // #2567: both bounds below are the shared GH_TIMEOUT_MS, not a local
 // re-derivation of its 5000 default — a project's `gh-timeout-ms` policy
 // override (or CLAUDE_TWEAKS_GH_TIMEOUT_MS env override) reaches these two
