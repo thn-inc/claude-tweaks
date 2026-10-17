@@ -174,3 +174,13 @@ test('summaryLine: one Template-A-ready line, or null when nothing matched', () 
   const line = summaryLine([{ verdict: 'release-note-only' }, { verdict: 'scan-error' }], '/tmp/c.json');
   assert.equal(line, '—\t[release-note] 1 ready record(s) missing only a Release Note, 1 scan error(s) — Fill Release Note (candidates: /tmp/c.json)');
 });
+
+test('summaryLine: names each candidate\'s passed-over untrusted decision comment on the same single row (#3358)', () => {
+  const note = 'skipped marker comment https://x/c1 by eve (NONE) — not an owner, member, or collaborator';
+  const line = summaryLine([
+    { ref: '#7', verdict: 'release-note-only', skippedUntrusted: [note] },
+    { ref: '#8', verdict: 'release-note-only', skippedUntrusted: [] },
+  ], '/tmp/c.json');
+  assert.equal(line, `—\t[release-note] 2 ready record(s) missing only a Release Note, 0 scan error(s) — ignored untrusted decision comment(s): #7: ${note} — Fill Release Note (candidates: /tmp/c.json)`);
+  assert.ok(!line.includes('\n'));
+});

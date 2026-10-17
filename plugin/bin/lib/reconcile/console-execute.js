@@ -27,7 +27,7 @@ const { promisify } = require('util');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { iterRunDirsWithState } = require('../hooks/context');
 const { runWithConcurrency } = require('./gh-pool');
-const { evaluateMaturation, extractPendingGrantedAt, PENDING_GRANT_MARKER_RE } = require('../issues/grant-maturation');
+const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('../issues/grant-maturation');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { resolvePolicyConfig } = require('../policy-schema');
 
@@ -167,10 +167,6 @@ function parseFixesMembers(body) {
   return out;
 }
 
-// Non-global twin of the /g PENDING_GRANT_MARKER_RE literal: `.test` on a /g
-// regex carries lastIndex between calls.
-const PENDING_GRANT_MARKER_TEST_RE = new RegExp(PENDING_GRANT_MARKER_RE.source);
-
 // gh issue view {n} --json labels,comments -> {labels, pendingSince,
 // skippedUntrusted} the same shape console-resolve.js's own ghReadGrants
 // builds, for evaluateMaturation. #3358: a `grant-mode-audit` marker is
@@ -182,13 +178,7 @@ async function fetchIssueGrant(repoRoot, issueNumber) {
   if (!res.ok) return res;
   const { json } = res;
   const labels = (json.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
-  const bodies = [];
-  const skippedUntrusted = [];
-  for (const c of json.comments || []) {
-    const body = c && typeof c.body === 'string' ? c.body : '';
-    if (isTrustedComment(c)) bodies.push(body);
-    else if (PENDING_GRANT_MARKER_TEST_RE.test(body)) skippedUntrusted.push(untrustedSkipNote(c));
-  }
+  const { bodies, skippedUntrusted } = partitionGrantComments(json.comments);
   return { ok: true, labels, pendingSince: extractPendingGrantedAt(bodies), skippedUntrusted };
 }
 
@@ -234,7 +224,7 @@ function preFetchSkipReason(consoleJson, now) {
 // merge-grant check below) -> a detection verdict. No I/O, so the
 // race/claim/idempotence logic is unit-testable without gh.
 //   { action: 'ready', prNumber, commentIds, items } | { action: 'skip', reason }
-// ctx: { prBody?, memberGrants?: {[issueNumber]: {labels, pendingSince}}, vetoWindowHours?, now? }
+// ctx: { prBody?, memberGrants?: {[issueNumber]: {labels, pendingSince, skippedUntrusted?}}, vetoWindowHours?, now? }
 // — all optional; omitted entirely (the pre-#1802 call shape) always yields
 // mergeGrantGap: null, unchanged from before.
 function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
@@ -304,7 +294,14 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
           vetoWindowHours: ctx.vetoWindowHours,
           now: ctx.now !== undefined ? ctx.now : now,
         });
-        if (!mat.mature) { mergeGrantGap = { member: n, reason: mat.reason }; break; }
+        if (!mat.mature) {
+          // #3358: a grant left unmatured while untrusted marker comments were
+          // passed over names them, so the withhold is not mistaken for "nobody
+          // ever granted" -- the planted comment is what the operator should see.
+          const passedOver = Array.isArray(grant.skippedUntrusted) ? grant.skippedUntrusted : [];
+          mergeGrantGap = { member: n, reason: passedOver.length ? `${mat.reason} — ${passedOver.join('; ')}` : mat.reason };
+          break;
+        }
       }
     }
   }
@@ -368,7 +365,7 @@ async function consoleExecuteDetect(opts = {}) {
   grantJobs.forEach((job, i) => {
     const g = grantResults[i] instanceof Error ? { ok: false } : grantResults[i];
     if (!g.ok) return;
-    memberGrantsByCandidate.get(job.candidateIndex)[job.member] = { labels: g.labels, pendingSince: g.pendingSince };
+    memberGrantsByCandidate.get(job.candidateIndex)[job.member] = { labels: g.labels, pendingSince: g.pendingSince, skippedUntrusted: g.skippedUntrusted };
   });
 
   candidates.forEach((c, i) => {
@@ -542,6 +539,20 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = 
   };
 }
 
+// The `hooks.js resolve-console` success output for an `executed` result: the
+// summary line, then (#3358) one line per untrusted executed-reply comment the
+// verb passed over -- so the operator sees what was ignored instead of a reply
+// silently created next to a planted one. Newline-terminated, ready to write.
+function renderExecutedLines(result, runId) {
+  const summary = result.outcomes.map((o) => `${o.id}:${o.outcome}`).join(', ');
+  const lines = [
+    `claude-tweaks: console resolved for ${runId} (PR #${result.prNumber}) — ${summary}`
+    + `${result.resolved ? '' : ' — Resolve left unticked (not every item cleared)'}`,
+    ...(result.skippedUntrusted || []).map((note) => `claude-tweaks: ${note}`),
+  ];
+  return `${lines.join('\n')}\n`;
+}
+
 // Same shape as bin/lib/feedback/file-feedback.js's errorText — a thrown
 // value from an injected fake (or a real gh failure) may not be a plain
 // Error; never let the reported reason come back empty.
@@ -590,5 +601,6 @@ module.exports = {
   parseFixesMembers,
   fetchIssueGrant,
   resolveConsoleExecution,
+  renderExecutedLines,
   RECLAIM_STALE_MS,
 };

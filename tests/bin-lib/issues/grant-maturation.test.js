@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { evaluateMaturation, extractPendingGrantedAt } = require('../../../plugin/bin/lib/issues/grant-maturation.js');
+const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('../../../plugin/bin/lib/issues/grant-maturation.js');
 
 const NOW = new Date('2026-08-23T12:00:00Z');
 
@@ -100,4 +100,50 @@ test('extractPendingGrantedAt: returns the latest when multiple pending markers 
   ];
   const result = extractPendingGrantedAt(bodies);
   assert.strictEqual(result.toISOString(), '2026-08-22T00:00:00.000Z');
+});
+
+// --- partitionGrantComments (#3358): the trust boundary for the pending-grant timestamp ---
+
+const MARKER = (date) => `<!-- grant-mode-audit: date=${date} auto-merge=pending -->`;
+const NOTE = (ref, login, assoc) => `skipped marker comment ${ref} by ${login} (${assoc}) — not an owner, member, or collaborator`;
+
+test('partitionGrantComments: trusted bodies are returned, in order, for every trusted association', () => {
+  const { bodies, skippedUntrusted } = partitionGrantComments([
+    { body: 'a', authorAssociation: 'OWNER' },
+    { body: 'b', author_association: 'MEMBER' },
+    { body: 'c', authorAssociation: 'COLLABORATOR' },
+  ]);
+  assert.deepStrictEqual(bodies, ['a', 'b', 'c']);
+  assert.deepStrictEqual(skippedUntrusted, []);
+});
+
+test('partitionGrantComments: an untrusted marker comment is dropped from bodies and named; a backdated one cannot mature a grant', () => {
+  const { bodies, skippedUntrusted } = partitionGrantComments([
+    { body: MARKER('2020-01-01T00:00:00Z'), url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'NONE' },
+  ]);
+  assert.deepStrictEqual(bodies, []);
+  assert.strictEqual(extractPendingGrantedAt(bodies), null);
+  assert.deepStrictEqual(skippedUntrusted, [NOTE('https://x/c1', 'eve', 'NONE')]);
+});
+
+test('partitionGrantComments: two consecutive untrusted marker comments are BOTH named (the /g lastIndex hazard)', () => {
+  const { skippedUntrusted } = partitionGrantComments([
+    { body: MARKER('2020-01-01T00:00:00Z'), url: 'https://x/c1', author: { login: 'eve' }, authorAssociation: 'NONE' },
+    { body: MARKER('2020-01-02T00:00:00Z'), url: 'https://x/c2', author: { login: 'mallory' }, authorAssociation: 'CONTRIBUTOR' },
+  ]);
+  assert.deepStrictEqual(skippedUntrusted, [NOTE('https://x/c1', 'eve', 'NONE'), NOTE('https://x/c2', 'mallory', 'CONTRIBUTOR')]);
+});
+
+test('partitionGrantComments: an untrusted non-marker comment is silent; a missing association fails closed and is named', () => {
+  const { bodies, skippedUntrusted } = partitionGrantComments([
+    { body: 'just chatting', url: 'https://x/c3', author: { login: 'eve' }, authorAssociation: 'NONE' },
+    { body: MARKER('2020-01-01T00:00:00Z'), url: 'https://x/c4', author: { login: 'eve' } },
+  ]);
+  assert.deepStrictEqual(bodies, []);
+  assert.deepStrictEqual(skippedUntrusted, [NOTE('https://x/c4', 'eve', 'no association')]);
+});
+
+test('partitionGrantComments: non-array, null entries, and bare strings never throw and trust nothing', () => {
+  assert.deepStrictEqual(partitionGrantComments(undefined), { bodies: [], skippedUntrusted: [] });
+  assert.deepStrictEqual(partitionGrantComments([null, 'a plain string', { authorAssociation: 'NONE' }]), { bodies: [], skippedUntrusted: [] });
 });

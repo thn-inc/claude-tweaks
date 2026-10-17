@@ -139,7 +139,11 @@ function scanRecords(records, { driver, checkCli } = {}) {
 function summaryLine(candidates, outPath) {
   if (!candidates.length) return null;
   const matches = candidates.filter((c) => c.verdict === 'release-note-only').length;
-  return `—\t[release-note] ${matches} ready record(s) missing only a Release Note, ${candidates.length - matches} scan error(s) — Fill Release Note (candidates: ${outPath})`;
+  // #3358: an untrusted tidy-decision comment passed over is the reason a record is on the
+  // worklist at all -- name each one (with its record) on the same single row.
+  const passedOver = candidates.flatMap((c) => (c.skippedUntrusted || []).map((note) => `${c.ref}: ${note}`));
+  const notes = passedOver.length ? ` — ignored untrusted decision comment(s): ${passedOver.join('; ')}` : '';
+  return `—\t[release-note] ${matches} ready record(s) missing only a Release Note, ${candidates.length - matches} scan error(s)${notes} — Fill Release Note (candidates: ${outPath})`;
 }
 
 module.exports = {

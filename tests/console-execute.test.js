@@ -16,6 +16,7 @@ const {
   consoleExecuteDetect,
   parseFixesMembers,
   fetchIssueGrant,
+  renderExecutedLines,
   RECLAIM_STALE_MS,
 } = require('../plugin/bin/lib/reconcile/console-execute');
 const { reconcile } = require('../plugin/bin/lib/reconcile');
@@ -320,6 +321,51 @@ test('decideConsoleExecute: a matured auto:merge-pending clears the gap', () => 
   assert.strictEqual(result.mergeGrantGap, null);
 });
 
+test('decideConsoleExecute: an unmatured grant whose untrusted marker comment was passed over names that comment in the gap reason (#3358)', () => {
+  const note = 'skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator';
+  const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
+    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [note] } },
+  });
+  assert.strictEqual(result.mergeGrantGap.member, 7);
+  assert.match(result.mergeGrantGap.reason, /could not be determined from the audit trail/);
+  assert.ok(result.mergeGrantGap.reason.endsWith(` — ${note}`), result.mergeGrantGap.reason);
+});
+
+test('decideConsoleExecute: an empty or absent skippedUntrusted leaves the gap reason exactly the maturation reason (#3358)', () => {
+  const run = (grant) => decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
+    prBody: 'Fixes #7', memberGrants: { 7: grant },
+  }).mergeGrantGap.reason;
+  const bare = run({ labels: ['auto:merge-pending'], pendingSince: null });
+  assert.strictEqual(run({ labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [] }), bare);
+  assert.ok(!bare.includes('skipped marker comment'));
+});
+
+// --- renderExecutedLines: the `hooks.js resolve-console` success output ---
+
+test('renderExecutedLines: the summary line is unchanged when nothing was passed over (characterization)', () => {
+  const result = { outcomes: [{ id: '1', outcome: 'executed' }, { id: '2', outcome: 'declined' }], resolved: false, prNumber: 42, skippedUntrusted: [] };
+  assert.strictEqual(
+    renderExecutedLines(result, 'run-x'),
+    'claude-tweaks: console resolved for run-x (PR #42) — 1:executed, 2:declined — Resolve left unticked (not every item cleared)\n',
+  );
+  assert.strictEqual(
+    renderExecutedLines({ ...result, resolved: true, outcomes: [{ id: '1', outcome: 'executed' }] }, 'run-x'),
+    'claude-tweaks: console resolved for run-x (PR #42) — 1:executed\n',
+  );
+});
+
+test('renderExecutedLines: each passed-over untrusted reply comment gets its own line after the summary (#3358)', () => {
+  const n1 = 'skipped marker comment https://x/c9 by eve (NONE) — not an owner, member, or collaborator';
+  const n2 = 'skipped marker comment https://x/c10 by mallory (CONTRIBUTOR) — not an owner, member, or collaborator';
+  const out = renderExecutedLines({ outcomes: [{ id: '1', outcome: 'executed' }], resolved: true, prNumber: 42, skippedUntrusted: [n1, n2] }, 'run-x');
+  assert.deepStrictEqual(out.split('\n'), [
+    'claude-tweaks: console resolved for run-x (PR #42) — 1:executed',
+    `claude-tweaks: ${n1}`,
+    `claude-tweaks: ${n2}`,
+    '',
+  ]);
+});
+
 test('decideConsoleExecute: an auto:merge-pending still inside the veto window withholds', () => {
   const pendingSince = new Date(Date.now() - 1 * 60 * 60 * 1000); // 1h ago
   const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
@@ -420,6 +466,41 @@ test('fetchIssueGrant: a non-marker comment authored NONE is silent -- skippedUn
   }, () => fetchIssueGrant(process.cwd(), 7));
   assert.strictEqual(res.pendingSince, null);
   assert.deepStrictEqual(res.skippedUntrusted, []);
+});
+
+// consoleExecuteDetect carries fetchIssueGrant's skippedUntrusted into the decision (#3358): a pending
+// grant whose only marker comment is untrusted stays withheld, and the ready entry's mergeGrantGap
+// reason names the passed-over comment. Real git repo + run dir; `gh` is a PATH wrapper that answers
+// `pr view` and `issue view` with fixed JSON.
+test('consoleExecuteDetect: a withheld merge grant names the untrusted pending-grant comment it passed over', { skip: process.platform === 'win32' }, async () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-grant-')));
+  git(['init', '-q', '--initial-branch=main'], dir);
+  git(['config', 'user.email', 'test@example.com'], dir);
+  git(['config', 'user.name', 'Test'], dir);
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
+  git(['add', 'a.txt'], dir);
+  git(['commit', '-q', '-m', 'seed'], dir);
+  const runDir = path.join(dir, '.claude-tweaks', 'pipelines', '2026-01-01T000000-test');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify(mergeRowConsoleJson()));
+
+  const pr = { comments: RESOLVED_COMMENTS, body: 'Fixes #7' };
+  const issue = {
+    labels: [{ name: 'auto:merge-pending' }],
+    comments: [{ body: GRANT_MARKER, url: 'https://x/issues/7#c1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
+  };
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-ghwrap-'));
+  fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/bin/sh\ncase "$1" in\n  pr) cat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n  ;;\n  issue) cat <<'EOF'\n${JSON.stringify(issue)}\nEOF\n  ;;\nesac\n`);
+  fs.chmodSync(path.join(wrapperDir, 'gh'), 0o755); // makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  let result;
+  try { result = await consoleExecuteDetect({ cwd: dir }); } finally { process.env.PATH = originalPath; }
+  assert.strictEqual(result.ready.length, 1, JSON.stringify(result));
+  const gap = result.ready[0].mergeGrantGap;
+  assert.strictEqual(gap.member, 7);
+  assert.ok(gap.reason.endsWith(' — skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator'), gap.reason);
 });
 
 // --- readConsoleJson: real temp files, matching archive-merged.js's own convention ---

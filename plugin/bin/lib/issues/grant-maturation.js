@@ -1,5 +1,7 @@
 'use strict';
 
+const { isTrustedComment, untrustedSkipNote } = require('./comment-trust');
+
 // Pure: decides whether a record's `auto:merge-pending` grant (#309) has
 // matured into `auto:merge`, is still inside its veto window, or was never
 // pending in the first place (including a permanent veto — a human removing
@@ -16,6 +18,11 @@
 // `pending` variant and capturing its date. `fleet-counters.js`'s
 // GRANT_AUDIT_RE matches the same marker family for a different purpose.
 const PENDING_GRANT_MARKER_RE = /<!--\s*grant-mode-audit:\s*date=(\S+)\s+auto-merge=pending\s*-->/g;
+
+// Non-global twin of the /g literal above: `.test` on a /g regex carries
+// lastIndex from one call to the next, so two consecutive matching comments
+// would see the second one missed.
+const PENDING_GRANT_MARKER_TEST_RE = new RegExp(PENDING_GRANT_MARKER_RE.source);
 
 // The `grant-veto-window-hours` schema default (`bin/lib/policy-schema.js`),
 // restated here only as a belt-and-braces fallback for a caller that passes an
@@ -43,6 +50,25 @@ function extractPendingGrantedAt(commentBodies) {
     }
   }
   return latest;
+}
+
+// comments: an issue's fetched comment objects (`gh issue view --json comments`
+// shape). The grant timestamp is a trust decision (#3358) -- a `grant-mode-audit`
+// marker is plantable by anyone who can comment, and a backdated one would mature
+// a pending grant -- so only an owner/member/collaborator comment's body may reach
+// extractPendingGrantedAt. Returns { bodies, skippedUntrusted }: bodies are the
+// trusted comments' bodies (feed them to extractPendingGrantedAt); skippedUntrusted
+// holds one note per untrusted comment whose body carries the pending-grant marker
+// (a non-marker untrusted comment is irrelevant and stays silent).
+function partitionGrantComments(comments) {
+  const bodies = [];
+  const skippedUntrusted = [];
+  for (const c of Array.isArray(comments) ? comments : []) {
+    const body = c && typeof c.body === 'string' ? c.body : '';
+    if (isTrustedComment(c)) bodies.push(body);
+    else if (PENDING_GRANT_MARKER_TEST_RE.test(body)) skippedUntrusted.push(untrustedSkipNote(c));
+  }
+  return { bodies, skippedUntrusted };
 }
 
 // hasPendingLabel/hasMergeLabel: booleans from a fresh `gh issue view
@@ -87,4 +113,4 @@ function evaluateMaturation({ hasPendingLabel, hasMergeLabel, pendingSince, veto
   return { mature: true, state: 'matured', reason: `pending grant is ${ageHours.toFixed(1)}h old, past the ${windowHours}h veto window`, ageHours, windowHours };
 }
 
-module.exports = { evaluateMaturation, extractPendingGrantedAt, PENDING_GRANT_MARKER_RE };
+module.exports = { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments, PENDING_GRANT_MARKER_RE };

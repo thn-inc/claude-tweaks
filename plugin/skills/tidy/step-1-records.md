@@ -144,7 +144,7 @@ candidate there — this agent's 15-row table cap never truncates the repair lis
 most one summary line. Exit 2 (an unusable records file or `--out`): report one
 `[release-note] scan failed` row, severity `medium`.
 
-→ Collect the summary line as one row, Path:Line `—`, severity `info`. Composing and writing the
+→ Collect the summary line as one row, Path:Line `—`, severity `info`; when it names `ignored untrusted decision comment(s)` (a lookalike `needs-decision: tidy` comment from a non-owner/member/collaborator, #3358), keep that text verbatim — it is why the record is still on the worklist. Composing and writing the
 Release Note are the main thread's (`release-note-repair.md`), never this agent's.
 
 ### Shape 5 — `bot:blocked` needing re-triage
