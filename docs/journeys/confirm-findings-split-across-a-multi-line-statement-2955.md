@@ -18,7 +18,7 @@ files:
 - **URL:** `/claude-tweaks:review #{n}` at `review-effort` `medium` or above
 - **Action:** let Step 3 dispatch a lens as a reproduction pair, and both agents flag the same issue. One anchors it on the statement's first line, the other on a later line 3-5 lines below.
 - **Should feel:** nothing different during the run. The change is in how `categorise-reproduction` pairs the two reports, not in what the agents are asked or how long the review takes.
-- **Should understand:** two findings on the same path pair at line ±2 as before. Beyond that, up to ±5, they pair only when both carry text and their substance similarity is at least 0.6, stricter than the check inside ±2. Every ±2 pairing is settled first, so a wide-band pair never takes a finding another report placed on the same line.
+- **Should understand:** two findings on the same path pair at line ±2 as before. Beyond that, up to ±5, they pair only when both carry text and their substance similarity is at least 0.2, the same threshold as within ±2 (#3418). Every ±2 pairing is settled first, so a wide-band pair never takes a finding another report placed on the same line.
 - **Red flags:** the pair is still split into two `unconfirmed` entries although their text says the same thing. A finding with no text pairs across the wider band.
 
 ### 2. Read the confirmed findings — the review summary
