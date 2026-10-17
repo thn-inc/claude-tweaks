@@ -181,6 +181,7 @@ test("multispec-review-console.md Shared teardown step 7 passes --remote-ref-onl
   const step7 = MULTISPEC_CONSOLE.slice(start, end);
   assert.match(step7, /teardown-run --run "\$MULTISPEC_PARENT_DIR"[\s\\]*--merged --remote-ref-only/);
   assert.match(step7, /On approval" step 9/);
+  assert.match(MULTISPEC_CONSOLE, /^9\. Archive the parent run dir/m, 'the "On approval" step 9 that step 7 points at must be the archive action');
 });
 
 test('multispec-review-console.md "When to run" step 6 no longer routes archival through step 7\'s teardown-run (#3192)', () => {
