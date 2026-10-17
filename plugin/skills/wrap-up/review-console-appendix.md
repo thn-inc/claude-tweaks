@@ -81,6 +81,9 @@ procedure — no row is left unrouted:
   writes the row back to `deferred`, Resolution `reversed → #{new record}`. The console
   cannot change code for a reversal — the fix wave is closed — so filing is the only
   reverse action.
+  Outside Approve all, and for every `reverse` on any path, write the row directly at step 1
+  per `_shared/staged-patch.md`'s Write-back to the ledger — the same per-item write that
+  step already performs for a `.patch`.
 - `apply` on a `Q#` item — step 7 (record creation), whose `refused-proposals.md` check still
   runs first; on an `M#` item — step 8 (the `_shared/learning-routing.md` memory write plus its
   `MEMORY.md` index line).

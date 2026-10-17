@@ -44,9 +44,9 @@ test('AC2.2: the classification rule — a first-match Ruling: line is load-bear
 
 test('AC2.3: the run-directory branch stages staged/sdd-ruling-{N}.md via stage-item.js --allocate, ledger first then the file, and logs STAGED', () => {
   assert.match(DISPATCH, /Item `SDD ruling — \{one-liner\}: ratify or reverse at the Review Console \(staged\/sdd-ruling-\{N\}\.md\)`/);
-  assert.match(DISPATCH, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/stage-item\.js" --run "\$PIPELINE_RUN_DIR" --id "sdd-ruling-\{N\}" --file \{tmp\} --allocate/);
+  assert.match(DISPATCH, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/stage-item\.js" --run "\$PIPELINE_RUN_DIR" --id "sdd-ruling-\{N\}" --file \{tmp\}\.md --allocate/);
   assert.match(DISPATCH, /`Title:`.*?`Kind: sdd-ruling`.*?`Ruling:`.*?`Staged-at:`.*?`Ledger: \{ledger path\}#\{item-number\}`/);
-  assert.match(DISPATCH, /STAGED \{time\} — SDD ruling carried forward: staged\/sdd-ruling-\{N\}\.md — "\{one-liner\}"\. Reversibility: high\./);
+  assert.match(DISPATCH, /STAGED \{time\} — SDD ruling carried forward: "\{one-liner\}"\. Stage path: staged\/sdd-ruling-\{N\}\.md\. Reversibility: high\./);
   const ledgerIdx = DISPATCH.indexOf('(1) append the ledger row — phase `build`, status `open`');
   const fileIdx = DISPATCH.indexOf('(2) write the staged file via');
   assert.ok(ledgerIdx > 0 && fileIdx > ledgerIdx, 'ledger row (1) must precede the staged-file write (2)');
@@ -76,6 +76,13 @@ test('dispatch.md: the directive fires before workspace deletion, not after', ()
   assert.match(DISPATCH, /before deleting the plan's workspace \(`rm -rf <workspace>`\), it must copy/);
 });
 
+const HANDOFF = read('plugin', 'skills', 'build', 'handoff-template.md');
+
+test('handoff-template.md carries the standalone-build SDD rulings slot dispatch.md points at', () => {
+  assert.match(HANDOFF, /### SDD rulings \(standalone build, if any\)/);
+  assert.match(HANDOFF, /`Accept` = ratify, `Keep`\/`Defer` = reverse at a standalone `\/claude-tweaks:wrap-up`/);
+});
+
 test('SKILL.md Common Step 2 still points the subagent strategy at dispatch.md (the file that composes this directive)', () => {
   assert.match(
     BUILD_SKILL,
@@ -100,6 +107,7 @@ test('AC5.1: the appendix maps apply on an sdd-ruling-* item to ratify (ledger a
   assert.match(APPENDIX, /stages it as `staged\/ledger-record-sdd-ruling-\{N\}\.md`,/);
   assert.match(APPENDIX, /routes it through step 7 in the same pass, and/);
   assert.match(APPENDIX, /writes the row back to `deferred`, Resolution `reversed → #\{new record\}`/);
+  assert.match(APPENDIX, /Outside Approve all, and for every `reverse` on any path, write the row directly at step 1/);
 });
 
 test('AC5.2: the interactive console names ratify/reverse as the Override vocabulary for a ruling row and refuses a bare skip', () => {
