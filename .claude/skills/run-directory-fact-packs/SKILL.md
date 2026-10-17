@@ -53,7 +53,11 @@ Read them before writing a fourth.
   regardless"), since `/flow`'s second call always needs the full set. An empty list after
   filtering (`--only ,`) is a usage error (exit 2) on both CLIs that accept the flag — it asks for
   zero probes, and gathering every probe instead would silently answer a different question than
-  the one asked.
+  the one asked. A subset pack produced as a stand-in for a skipped phase (a `cleanup-only` run
+  skips Phase 3) must name the probes its later readers consume: a present pack with a missing key
+  reads as that reader's failure path, not as an absent file. `cleanup-procedures-execution.md`'s
+  production step therefore runs `--only claim` (item 7's `pack.claim`), not `--only ledger`
+  (#3399's final review).
 - **`--print <probe>`** (`wrap-up-pack.js` only, #2544/#2546) is `--only` narrowed to one probe with
   a different stdout: just that probe's `{ok, value | error}` envelope, so a prose step reads one
   field without dumping the whole pack and extracting it by hand
@@ -157,7 +161,13 @@ planned, and give each one a test fixture that holds its output (`tests/bin-lib/
   step 2, `review-console.md`'s step 11); review found `execution-and-verification.md`'s
   current-branch `Fixes` set reading the field without it. Before adding a reader of a conditional
   field, check whether the pack exposes the filtered value; if it does not, add that field rather
-  than restate the condition.
+  than restate the condition. #3399 did so: `inputs.closingRecords` (`pack.js`'s `closingRecords`,
+  empty on a manifest rung) is now what `engine-verify.js` and the prose readers cite, and
+  `HEADER_SOURCES` and the hand-written clauses are gone. Its sibling `inputs.parkedAtShaping`
+  (record number to boolean, `{}` on a manifest rung) answers the location-teardown question above:
+  the pack reads the header while the worktree mirror still exists, so Section E's late restore
+  reads no file. `tests/wrap-up-record-resolution-conformance.test.js` pins that no
+  `plugin/skills/wrap-up/*.md` file restates the gate.
 
 ## When to use
 
