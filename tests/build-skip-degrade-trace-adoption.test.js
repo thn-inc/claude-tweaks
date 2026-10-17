@@ -92,7 +92,14 @@ function assertFoldRule(text) {
   assert.match(text, /writes `SKIP \{time\} — \{plan task\} step "\{step\}" \(skipped\): \{condition\} → not run by \/build; surfaced for \/review\. Reversibility: n\/a\.` via `log-decision\.js --status SKIP --section "\/build"`/,
     'dispatch.md must name the SKIP entry for a step that cannot run (AC1.1)');
   assert.match(text, /Skipped steps/, 'standalone /build must route the skip to the handoff Skipped steps section');
-  assert.match(text, /A step that ran is never logged as `SKIP`/);
+  assert.match(text, /A step that ran in full is never logged as `SKIP`; one that ran only in part[^\n]*?logs `\(degraded\)` in place of `\(skipped\)`/,
+    'dispatch.md must route a partly-run step to the (degraded) tag, not (skipped) and not silence');
+  assert.match(text, /fix it, commit, re-run that step to confirm the fix, and re-run Step 5 before the handoff, never defer it to `\/review`/,
+    'dispatch.md must keep the defect path: fix, commit, re-run the step, re-run Step 5, never defer to /review');
+  assert.match(text, /The rule keys on the steps the folded task names, not on the record's `surface:`/,
+    'dispatch.md must keep the trigger keyed on named steps, not on surface');
+  assert.match(text, /\*\*Folded verification task \(#3118\)\.\*\*/,
+    'dispatch.md must define the label build/SKILL.md Common Step 5 points at');
   const anchor = text.indexOf('Common Step 5 runs the full suite once');
   const rule = text.indexOf('A plan task folded into Common Step 5');
   assert.ok(anchor !== -1 && rule > anchor, 'the fold rule must follow the "runs the full suite once" sentence');

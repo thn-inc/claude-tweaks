@@ -26,7 +26,7 @@ files:
 - **URL:** between Common Step 5 passing and Common Step 7's handoff
 - **Action:** run each non-runner step the folded task names: a browser check through `/claude-tweaks:browse`, a script by running it.
 - **Should feel:** like part of the build. A layout defect found here, such as a sentence pushed off-screen at phone width, is fixed before any code review reads the diff.
-- **Should understand:** a defect found here is a Step 5-class failure. Fix it, commit, and re-run Step 5 so the pass stamp matches HEAD again. It is never deferred to `/review`. The rule keys on the steps the folded task names, not on the record's `surface:`, so a web record whose plan names no browser step gets no extra step.
+- **Should understand:** a defect found here is a Step 5-class failure. Fix it, commit, re-run that step to confirm the fix, and re-run Step 5 so the pass stamp matches HEAD again. It is never deferred to `/review`. A step that ran only in part (a dev server dying mid-pass) is logged `(degraded)` instead of `(skipped)`. The rule keys on the steps the folded task names, not on the record's `surface:`, so a web record whose plan names no browser step gets no extra step.
 - **Red flags:** a defect found by the folded browser step is handed to `/review` instead of fixed. A step that ran is logged as `SKIP`. A fix lands after Step 5 without a re-run.
 
 ### 3. Trace a step that could not run — `decisions.md` or the handoff
