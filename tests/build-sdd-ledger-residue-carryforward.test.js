@@ -51,10 +51,12 @@ test('AC2.3: the run-directory branch stages staged/sdd-ruling-{N}.md via stage-
   const fileIdx = DISPATCH.indexOf('(2) write the staged file via');
   assert.ok(ledgerIdx > 0 && fileIdx > ledgerIdx, 'ledger row (1) must precede the staged-file write (2)');
   assert.match(DISPATCH, /ledger first, then the file/);
+  assert.match(DISPATCH, /The path named by step \(3\)'s `STAGED` line and by the row's Item text is the path `stage-item\.js` actually wrote \(its first stdout line\)/);
+  assert.match(DISPATCH, /`--id \{requested\} already exists in staged\/ — wrote \{actual\} instead`\), update the just-appended row's Item text to the actual path before writing the `STAGED` line/);
 });
 
 test('the no-run-directory branch keeps the row open, stages nothing, and hands the ruling to the Step 7 handoff', () => {
-  assert.match(DISPATCH, /\*\*No run directory\*\* \(standalone `\/claude-tweaks:build`, no `\$PIPELINE_RUN_DIR`\): no console will read `staged\/`, so append the ledger row with status `open` and the same Item text minus the staged path, stage nothing, and list each ruling in the Step 7 handoff/);
+  assert.match(DISPATCH, /\*\*No run directory\*\* \(standalone `\/claude-tweaks:build`, no `\$PIPELINE_RUN_DIR`\): no console will read `staged\/`, so append the ledger row with status `open` and the same Item text minus the staged path, stage nothing, and list each ruling in the Step 7 handoff's `### SDD rulings` section \(`build\/handoff-template\.md`\)/);
   assert.match(DISPATCH, /`Accept` = ratify, `Keep`\/`Defer` = reverse as a follow-up, `Fix anyway` = reverse now/);
   assert.match(DISPATCH, /a ruling's text states a decision, not a defect, so it does not qualify on its own/);
 });
