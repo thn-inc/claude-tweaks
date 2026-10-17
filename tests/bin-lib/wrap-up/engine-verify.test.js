@@ -948,8 +948,14 @@ test('carrier-commit check prefers a materialized header over expectations issue
 // dir under a real `.claude-tweaks/pipelines/{run-id}` path (worktreeMirror
 // keys on that segment) and the header only under the worktree's mirror.
 
+const mirrorRoots = [];
+test.after(() => {
+  for (const root of mirrorRoots) fs.rmSync(root, { recursive: true, force: true });
+});
+
 function mirrorFixture({ runId = '2026-10-17T075913-spec-3337', specSubdir = null, record = 3337, state }) {
   const root = makeTmpDir('verify-mirror-');
+  mirrorRoots.push(root);
   const parentDir = path.join(root, 'main', '.claude-tweaks', 'pipelines', runId);
   const runDir = specSubdir ? path.join(parentDir, specSubdir) : parentDir;
   fs.mkdirSync(runDir, { recursive: true });
