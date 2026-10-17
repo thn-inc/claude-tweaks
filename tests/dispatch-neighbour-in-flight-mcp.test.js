@@ -52,8 +52,9 @@ function rec(number, files) {
   };
 }
 
-function fixture({ groups = [[rec(1, ['a.js'])]], inFlight = [rec(9, ['a.js'])], claims }) {
+function fixture(t, { groups = [[rec(1, ['a.js'])]], inFlight = [rec(9, ['a.js'])], claims }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-nif-mcp-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const files = {
     DISPATCH_GROUPS: path.join(dir, 'groups.json'),
     DISPATCH_IN_FLIGHT_RAW: path.join(dir, 'in-flight-raw.json'),
@@ -77,8 +78,8 @@ function run(code, files) {
 
 const liveClaim = () => JSON.stringify({ runId: 'r', claimedAt: new Date().toISOString(), ttlHours: 72 });
 
-test('AC1.1: the MCP claim-target snippet prints [9] and the MCP exclusion snippet writes a neighbour-in-flight exclusion for a live MCP-read claim', () => {
-  const files = fixture({ claims: { 9: liveClaim() } });
+test('AC1.1: the MCP claim-target snippet prints [9] and the MCP exclusion snippet writes a neighbour-in-flight exclusion for a live MCP-read claim', (t) => {
+  const files = fixture(t, { claims: { 9: liveClaim() } });
   const targets = run(snippet(0), files);
   assert.deepStrictEqual(JSON.parse(targets.stdout), [9]);
   run(snippet(1), files);
@@ -87,14 +88,16 @@ test('AC1.1: the MCP claim-target snippet prints [9] and the MCP exclusion snipp
   ]);
 });
 
-test('AC2.1: a tombstone claim read over MCP writes no exclusion', () => {
-  const files = fixture({ claims: { 9: '{"released":true}' } });
-  run(snippet(1), files);
-  assert.deepStrictEqual(readExclusions(files.DISPATCH_EXCLUSIONS), []);
+test('AC2.1: a stale label with no live claim (a tombstone, or no claim file) read over MCP writes no exclusion', (t) => {
+  for (const claim of ['{"released":true}', null]) {
+    const files = fixture(t, { claims: { 9: claim } });
+    run(snippet(1), files);
+    assert.deepStrictEqual(readExclusions(files.DISPATCH_EXCLUSIONS), []);
+  }
 });
 
-test('AC3.1: a failed MCP claim read prints the AUTO line and writes no exclusion', () => {
-  const files = fixture({ claims: { 9: { failure: 'HTTP 500' } } });
+test('AC3.1: a failed MCP claim read prints the AUTO line and writes no exclusion', (t) => {
+  const files = fixture(t, { claims: { 9: { failure: 'HTTP 500' } } });
   const result = run(snippet(1), files);
   assert.deepStrictEqual(readExclusions(files.DISPATCH_EXCLUSIONS), []);
   assert.ok(
@@ -103,11 +106,10 @@ test('AC3.1: a failed MCP claim read prints the AUTO line and writes no exclusio
   );
 });
 
-test('AC3.1: a failed MCP pool list is documented to print the existing AUTO line and write []', () => {
+test('AC3.1: a failed MCP pool list is documented to write [] and print the existing AUTO line; an empty pool writes no exclusion', (t) => {
   const text = section();
-  assert.ok(text.includes('AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull'));
-  assert.ok(text.includes('[]'));
-  const files = fixture({ inFlight: [], claims: {} });
+  assert.ok(text.includes('write `[]` there and print `AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull`'));
+  const files = fixture(t, { inFlight: [], claims: {} });
   assert.deepStrictEqual(JSON.parse(run(snippet(0), files).stdout), []);
   run(snippet(1), files);
   assert.deepStrictEqual(readExclusions(files.DISPATCH_EXCLUSIONS), []);

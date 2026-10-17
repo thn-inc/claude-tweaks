@@ -84,12 +84,39 @@ test('an object-valued live claim (the parsed blob embedded in the map) produces
 });
 
 test('claimReaderFromMap maps each entry shape', () => {
-  const read = claimReaderFromMap({ 1: null, 2: 'x', 3: { failure: 'boom' }, 4: 7, 6: { runId: 'r' }, 7: [1] });
-  assert.deepStrictEqual(read(6), { content: JSON.stringify({ runId: 'r' }) });
+  const claim = { runId: 'r', claimedAt: new Date(NOW).toISOString() };
+  const read = claimReaderFromMap({ 1: null, 2: 'x', 3: { failure: 'boom' }, 4: 7, 6: claim, 7: [1] });
+  assert.deepStrictEqual(read(6), { content: JSON.stringify(claim) });
   assert.deepStrictEqual(read(7), { failure: 'malformed-claim-entry' });
   assert.deepStrictEqual(read(1), { content: null });
   assert.deepStrictEqual(read(2), { content: 'x' });
   assert.deepStrictEqual(read(3), { failure: 'boom' });
   assert.deepStrictEqual(read(4), { failure: 'malformed-claim-entry' });
   assert.deepStrictEqual(read(5), { failure: 'claim-not-read' });
+});
+
+test('a JSON entry that is neither a claim nor a tombstone is a failed read, never a live claim', () => {
+  // classifyClaimBlob calls any JSON object without `released` live, so these would otherwise exclude.
+  const shapes = [{ message: 'Not Found' }, { error: 'boom' }, {}, { content: live, sha: 'abc' }];
+  for (const shape of shapes) {
+    for (const entry of [shape, JSON.stringify(shape)]) {
+      assert.deepStrictEqual(run(claimReaderFromMap({ 9: entry })), { exclusions: [], unreadable: [9] });
+    }
+  }
+});
+
+test('a missing map reads as an empty one: every entry unread, nothing excluded', () => {
+  for (const map of [null, undefined]) {
+    assert.deepStrictEqual(run(claimReaderFromMap(map)), { exclusions: [], unreadable: [9] });
+  }
+});
+
+test('neighbourClaimTargets names exactly the numbers neighbourInFlightExclusions reads', () => {
+  const candidates = [rec(1, ['a.js']), rec(2, ['b.js']), rec(3, ['c.js'])];
+  const inFlight = [rec(9, ['a.js', 'b.js']), rec(8, ['c.js']), rec(7, ['z.js'])];
+  const read = [];
+  neighbourInFlightExclusions({
+    candidates, inFlight, now: NOW, readClaimContent: (n) => { read.push(n); return { content: null }; },
+  });
+  assert.deepStrictEqual(neighbourClaimTargets({ candidates, inFlight }), [...new Set(read)].sort((a, b) => a - b));
 });
