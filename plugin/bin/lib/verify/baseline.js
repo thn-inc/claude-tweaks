@@ -217,8 +217,9 @@ function accountedFamily(text, scope) {
 
 // A single-file log with every run-specific detail removed: the checkout
 // root (each spelling — forward slashes, backslashes, YAML-doubled
-// backslashes) and every duration. Two runs of the same file that fail the
-// same way produce the same text.
+// backslashes) and every duration, including the run summary's own (spec
+// `ℹ duration_ms`, TAP `# duration_ms`). Two runs of the same file that fail
+// the same way produce the same text.
 function normalizeLog(text, roots) {
   let out = text.replace(/\r$/gm, '');
   for (const root of roots) {
@@ -226,7 +227,7 @@ function normalizeLog(text, roots) {
     const back = fwd.replace(/\//g, '\\');
     for (const spelling of [back.replace(/\\/g, '\\\\'), back, fwd]) out = out.split(spelling).join('<ROOT>');
   }
-  return out.replace(/\(\d[\d.]*ms\)/g, '(ms)').replace(/^ℹ duration_ms .*$/gm, '').replace(/duration_ms: .*$/gm, '');
+  return out.replace(/\(\d[\d.]*ms\)/g, '(ms)').replace(/^ℹ duration_ms .*$/gm, '').replace(/^# duration_ms .*$/gm, '').replace(/duration_ms: .*$/gm, '');
 }
 
 function readLog(logPath) {

@@ -93,6 +93,12 @@ jobs:
       - name: Verify against the base commit
         id: verify
         continue-on-error: true
+        # The base scratch worktree is created under os.tmpdir(); on windows-latest that is on C: while the
+        # checkout is on D:, so tests resolving a drive-less path see different drives at HEAD and base —
+        # keep both on the checkout's drive.
+        env:
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
         run: >-
           node plugin/bin/verify.js
           --cmd tests="npm test"
