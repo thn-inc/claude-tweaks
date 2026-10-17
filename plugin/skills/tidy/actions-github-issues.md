@@ -91,7 +91,8 @@ This action never touches Step 1 (Acceptance labeling) or Step 2 (Mark the PR re
 `_shared/pr-first-merge.md` — by construction, item 9 only ever selects PRs that are already not
 draft and already green, so both preconditions already hold by the time this action runs. Step 2.5
 (Merge-verification gate) is satisfied the same way: this action's candidate is green *by
-construction* — item 9's green-only selection plus the immediate re-verify above — so the gate's
+construction* — item 9's green-only selection plus the immediate re-verify above (which includes
+Step 2.5's head-run `gh run list` read — a not-yet-completed head run is not green) — so the gate's
 state read has already happened here and the lever never needs resolving. Should Step 3's arm be
 unavailable, item 1's degrade branch that applies is the `off` one (an immediate merge of an
 already-green PR), never the `wait` row.

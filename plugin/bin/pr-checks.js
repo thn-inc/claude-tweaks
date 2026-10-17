@@ -96,7 +96,9 @@ function run(argv, overrides = {}) {
   // The full 40-char sha: an abbreviated --commit lists no runs (#3405).
   const headRefOid = view && view.headRefOid;
   let headRuns;
-  if (typeof headRefOid === 'string' && headRefOid) {
+  // A stale head skips the runs read: the classifier concludes nothing from it,
+  // so a transient runs-read failure must not turn `stale` into `read-failed`.
+  if (typeof headRefOid === 'string' && headRefOid && headRefOid === localHead) {
     try {
       const rows = JSON.parse(deps.gh(['run', 'list', '--commit', headRefOid, '--limit', '100', '--json', 'name,workflowName,status,conclusion,url']));
       if (!Array.isArray(rows)) throw new Error('not a JSON array');

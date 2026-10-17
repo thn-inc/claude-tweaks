@@ -200,7 +200,7 @@ while :; do
   gh pr checks {pr-number} --repo {owner}/{repo} > /tmp/pr-checks-{n}.txt 2>&1; RC=$?
   case "$RC" in
     0) PENDING_RUNS=$(gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json status --jq '[.[] | select(.status != "completed")] | length') || { RC=2; break; }
-       [ "$PENDING_RUNS" -eq 0 ] && break                    # all green — no head run still in progress
+       [ "${PENDING_RUNS:-x}" = 0 ] && break                 # all green — no head run still in progress
        [ "$(date +%s)" -ge "$DEADLINE" ] && RC=124 && break  # rollup green, a head run still pending at the bound
        sleep 30 ;;
     1) break ;;                                              # a check failed — red, stop watching

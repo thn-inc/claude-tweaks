@@ -218,3 +218,32 @@ test('a non-array gh run list output is read-failed, never green (#3405)', () =>
   assert.equal(j.state, 'read-failed');
   assert.match(j.reason, /^gh run list failed:/);
 });
+
+test('a stale head skips gh run list, so a runs-read failure cannot turn stale into read-failed (#3405)', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const ghCalls = [];
+  const h = makeDeps(main, {
+    gh: (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'pr') return JSON.stringify({ headRefOid: 'd'.repeat(40), statusCheckRollup: [{ __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' }] });
+      throw new Error('HTTP 503');
+    },
+  });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  assert.equal(h.json().state, 'stale');
+  assert.equal(ghCalls.some((a) => a[0] === 'run'), false);
+});
+
+test('a green rollup plus a completed failing head run is red, naming that run (#3405)', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    gh: (args) => {
+      if (args[0] === 'pr') return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [{ __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' }] });
+      return JSON.stringify([{ name: 'lint', workflowName: 'lint', status: 'completed', conclusion: 'failure', url: 'https://ci.example/r/2' }]);
+    },
+  });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'red');
+  assert.deepEqual(j.failing, [{ name: 'lint', url: 'https://ci.example/r/2' }]);
+});
