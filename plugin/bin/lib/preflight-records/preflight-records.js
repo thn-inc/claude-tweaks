@@ -66,6 +66,37 @@ function fetchIssues({
   return { ok, failed };
 }
 
+// #3351: the gh-free input — the caller (a gh-absent cloud sandbox) fetched
+// the records through another transport and hands them over as parsed JSON.
+// raw: unknown (the JSON.parse output), numbers: number[] (the requested
+// records) -> { ok: Map<number, issue> } | { error: string } — `ok` is the
+// same Map shape fetchIssues returns, so everything downstream is shared.
+// Strict by design: a record the file lacks, repeats, or adds beyond the
+// request is a caller bug, never silently reconciled (a missing record would
+// otherwise shrink the cross-spec checks without a trace).
+function issuesFromRecordsJson(raw, numbers) {
+  if (!Array.isArray(raw)) return { error: '--records-json must be a JSON array' };
+  const ok = new Map();
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (!entry || typeof entry !== 'object' || !Number.isInteger(entry.number)) {
+      return { error: `--records-json entry ${i} is missing a numeric "number"` };
+    }
+    if (typeof entry.body !== 'string') {
+      return { error: `--records-json entry #${entry.number} is missing a string "body"` };
+    }
+    if (ok.has(entry.number)) return { error: `--records-json lists #${entry.number} more than once` };
+    ok.set(entry.number, entry);
+  }
+  for (const n of numbers) {
+    if (!ok.has(n)) return { error: `--records-json is missing requested #${n}` };
+  }
+  for (const n of ok.keys()) {
+    if (!numbers.includes(n)) return { error: `--records-json lists #${n}, which was not requested` };
+  }
+  return { ok };
+}
+
 // fetchNativeDependencies({ numbers, owner, repo, runner }) -> Map<number,
 // {blockedBy: number[], openBlocker: boolean, openBlockerIds: number[]}>.
 // Executes the batched, aliased GraphQL call (bin/lib/issues/record.js's
@@ -119,5 +150,5 @@ function buildOverlapGroups(records) {
 }
 
 module.exports = {
-  defaultRunner, errorText, fetchIssues, fetchNativeDependencies, buildRecords, buildOverlapGroups,
+  defaultRunner, errorText, fetchIssues, issuesFromRecordsJson, fetchNativeDependencies, buildRecords, buildOverlapGroups,
 };
