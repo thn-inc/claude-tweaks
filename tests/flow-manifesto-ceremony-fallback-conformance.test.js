@@ -82,17 +82,11 @@ const gapPinsMissing = (para, approval) => {
   if (!para.includes('which stands in for the label')) missing.push('verdict stands in for the label');
   return missing;
 };
-const approvalTail = (rel) => {
-  const raw = read(rel);
-  const start = raw.indexOf('Initialize `decisions.md` in the same directory');
-  if (start === -1) return null;
-  const end = raw.indexOf('\n\n', start);
-  return collapse(end === -1 ? raw.slice(start) : raw.slice(start, end));
-};
+const APPROVAL_LEAD = 'Initialize `decisions.md` in the same directory';
 
 test('AC2.1: the verdict is held in memory and logged after the Approval flow write; a case-1 adoption neither re-judges nor re-logs', () => {
   const p = paragraph(MANIFESTO, LEAD);
-  const a = approvalTail(MANIFESTO);
+  const a = paragraph(MANIFESTO, APPROVAL_LEAD);
   assert.ok(p, 'Ceremony profile computation paragraph missing');
   assert.ok(a, 'Approval flow decisions.md initialization paragraph missing');
   assert.deepStrictEqual(gapPinsMissing(p, a), []);
