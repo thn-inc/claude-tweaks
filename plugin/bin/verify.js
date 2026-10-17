@@ -6,6 +6,10 @@
 // report.json. It never reads .claude-tweaks/policy.yml or CLAUDE.md —
 // command resolution stays caller-side (spec: Option A boundary). Reading
 // git and its own artifacts (the #1921 pass stamp) stays inside that boundary.
+// A relative --scope path resolves against the checkout root (--cwd when
+// given, else this process's own git toplevel), never against process.cwd()
+// alone (#3017) — run this from any subdirectory and --scope still finds
+// the real declaration.
 'use strict';
 
 const fs = require('fs');
@@ -282,9 +286,34 @@ async function main() {
       process.exitCode = 2;
     }
 
-    const read = readDeclaration(parsed.scope);
+    // #3017: resolve a relative --scope path against the checkout root —
+    // --cwd when given, else this process's own git toplevel from its cwd —
+    // never the bare process.cwd() alone. A relative path resolved against
+    // the wrong cwd (the shell sitting in a subdirectory of the checkout)
+    // used to miss a real declaration file and silently fall back to an
+    // unscoped full run; it now resolves to the same absolute path a
+    // root-run invocation would reach.
+    const scopeCwd = parsed.cwd || process.cwd();
+    let scopeRoot = scopeCwd;
+    try {
+      scopeRoot = realGit(scopeCwd).repoRoot();
+    } catch {
+      // Not inside a git work tree from scopeCwd — fall back to scopeCwd
+      // itself; every other git call this block makes fails the same way.
+    }
+    const resolvedScopePath = path.isAbsolute(parsed.scope) ? parsed.scope : path.join(scopeRoot, parsed.scope);
+
+    const read = readDeclaration(resolvedScopePath);
     if (!read.ok) {
       scopeUsageExit(read.errors.join('\n'));
+      return;
+    }
+    if (read.missing) {
+      // #3017: a --scope path that still does not exist after resolving
+      // against the checkout root is a usage error, not "no declaration" —
+      // the prior silent full-run fallback is exactly how a cwd/typo
+      // mismatch went unnoticed until an unscoped run had already run.
+      scopeUsageExit(`--scope: no declaration at ${resolvedScopePath} (resolved from ${parsed.scope})`);
       return;
     }
     decl = read.decl;
@@ -354,12 +383,36 @@ async function main() {
       if (narrowing) files = narrowing.files;
     }
     sel = selectScope({ decl, files, stamp: anchorSha ? priorStamp : null });
+    // #3022: a map-form checks.tests (and checks.types/checks.lint, same
+    // rule) declares its own per-suite command — a selected name now runs
+    // that command unless a --cmd of the same name overrides it (command-
+    // line always wins, so a one-off override never needs touching the
+    // file). The single-string tests form is untouched: declaredCommandFor
+    // only ever reads a map, so a non-map-form 'tests' suite still requires
+    // an explicit --cmd exactly as before (the tool-scoped {base} form below
+    // already covers that case its own way).
+    const declaredTestsMap = decl && decl.checks.tests && typeof decl.checks.tests === 'object' ? decl.checks.tests : null;
+    const declaredCommandFor = (name) => {
+      if (!decl) return null;
+      if (name === 'types' || name === 'lint') return decl.checks[name];
+      return declaredTestsMap ? (declaredTestsMap[name] || null) : null;
+    };
     if (decl) {
-      cmds = parsed.cmds.filter((c) => {
-        if (c.name === 'types' || c.name === 'lint') return sel.static;
-        if (sel.mode === 'tool-scoped') return false;
-        return sel.suites === '*' || sel.suites.includes(c.name);
-      });
+      const haveCmd = new Set(parsed.cmds.map((c) => c.name));
+      const requiredNames = [];
+      if (sel.static) requiredNames.push('types', 'lint');
+      if (sel.mode !== 'tool-scoped') requiredNames.push(...(sel.suites === '*' ? decl.suites : sel.suites));
+      cmds = requiredNames
+        .filter((n) => haveCmd.has(n) || declaredCommandFor(n) !== null)
+        .map((n) => {
+          if (haveCmd.has(n)) return parsed.cmds.find((c) => c.name === n);
+          // Declared-only (no --cmd): build a fresh entry from the
+          // declaration's own command, picking up any --cmd-env bound to
+          // this name even though no --cmd named it (#3022 deliverable 3).
+          const envEntries = (parsed.cmdEnvs || []).filter((e) => e.name === n);
+          const env = envEntries.length ? Object.fromEntries(envEntries.map((e) => [e.key, e.value])) : null;
+          return { name: n, command: declaredCommandFor(n), ...(env ? { env } : {}) };
+        });
       if (sel.mode === 'tool-scoped') {
         const testsEnv = envOf('tests');
         cmds = cmds.concat([{
@@ -368,22 +421,37 @@ async function main() {
       }
     }
 
-    // H2 (review): a filtered check set that leaves out a name the selection
-    // itself requires is a usage error, not a silently-partial run — every
-    // suite/static check the selection says must run has to be among the
-    // caller's --cmd names (minus `tests` under tool-scoped, which is
-    // synthesized from decl.checks.tests rather than passed via --cmd).
+    // H2 (review, narrowed #3022): a check set that leaves out a name the
+    // selection itself requires is a usage error, not a silently-partial
+    // run — every suite/static check the selection says must run has to
+    // come from one source or the other: a declared command (map-form
+    // tests, or checks.types/checks.lint) or a --cmd of the same name
+    // (minus `tests` under tool-scoped, which is synthesized from
+    // decl.checks.tests rather than either source above).
     if (decl && sel.mode !== 'none') {
       const suiteNames = sel.suites === '*' ? decl.suites : sel.suites;
+      // Unchanged from before #3022: types/lint are only ever required when
+      // the declaration itself declares a command for them — a project with
+      // no checks.types/checks.lint at all simply has no static check in
+      // its suite, --scope or not, regardless of sel.static.
       const staticNames = sel.static ? ['types', 'lint'].filter((k) => decl.checks[k] !== null) : [];
       let required = [...suiteNames, ...staticNames];
       if (sel.mode === 'tool-scoped') required = required.filter((n) => n !== 'tests');
       const have = new Set(parsed.cmds.map((c) => c.name));
-      const missing = required.filter((n) => !have.has(n));
+      const missing = required.filter((n) => !have.has(n) && declaredCommandFor(n) === null);
       if (missing.length) {
         scopeUsageExit(`--scope: mode ${sel.mode} requires --cmd for: ${missing.join(', ')}`);
         return;
       }
+    }
+    // #3022: a --cmd-env naming neither a --cmd nor a declared suite is a
+    // usage error args.js couldn't rule out on its own (no fs access to
+    // read the declaration) — now that decl is loaded, name it the same way
+    // args.js already names the --cmd-only case.
+    const unboundCmdEnv = (parsed.cmdEnvs || []).find((e) => !cmds.some((c) => c.name === e.name));
+    if (unboundCmdEnv) {
+      scopeUsageExit(`--scope: --cmd-env "${unboundCmdEnv.name}" names no check (declared or --cmd: ${cmds.map((c) => c.name).join(', ') || 'none'})`);
+      return;
     }
   }
 
@@ -540,10 +608,11 @@ async function main() {
     const fullMode = !sel || sel.mode === 'full';
     const previousCount = readCountStamp(countStampPath);
     if (fullMode) testCountRegression = detectRegression(previousCount, currentCount);
-    // decl === null means no declaration was read at all (no --scope, or
-    // --scope with a missing file) — that is not the same as "the
-    // allowlist is empty" (parse-signal discipline), so nextFlakyHits gets
-    // null rather than [] and carries every prior hit count forward as-is.
+    // decl === null means no declaration was read at all (no --scope — a
+    // --scope with a missing file is now a hard usage error, #3017, so it
+    // never reaches here) — that is not the same as "the allowlist is
+    // empty" (parse-signal discipline), so nextFlakyHits gets null rather
+    // than [] and carries every prior hit count forward as-is.
     const allowlist = decl ? decl.flaky.files : null;
     // #3062: a baseline-adjudicated flaky file counts toward flakyHits
     // exactly as a retried allowlisted file does — adjudication is eligible
@@ -757,10 +826,10 @@ async function main() {
     else if (sel.suites.length) suiteList = sel.suites.join(', ');
     const shortBase = String(resolvedBase).slice(0, 9);
     const sinceClause = `${files.length} changed file(s) since ${shortBase}`;
-    // L10 (review): decl === null means "no declaration on disk" — name the
-    // path so the caller can tell that apart from a genuine full-mode
-    // selection outcome, while keeping the same trailing fields.
-    const lead = decl === null ? `Scope: full — no declaration at ${parsed.scope}; ${sinceClause}` : `Scope: ${sel.mode} — ${sinceClause}`;
+    // #3017: a missing declaration is now a hard usage error above (never
+    // reaches here), so decl is always a real declaration object whenever
+    // sel is set — no more "no declaration" branch to render.
+    const lead = `Scope: ${sel.mode} — ${sinceClause}`;
     lines.push(`${lead}; suites: ${suiteList}; static: ${sel.static ? 'yes' : 'no'}; unmatched: ${sel.unmatched.length}`);
     if (narrowing) lines.push(`merge-narrowed: ${narrowing.excluded.length} merge-identical path(s) excluded (identical to ${narrowing.ref})`);
     if (sel.mode === 'none') {

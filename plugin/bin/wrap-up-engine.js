@@ -22,6 +22,10 @@
 // missing, so the hole is visible AND fatal. `verify` has its own additional
 // exit code, 3, on any `fail` row (or a run dir that couldn't be located at
 // all) — 0/1/2 keep their meanings above unchanged.
+//
+// Repo-relative facts (docs/journeys/, CLAUDE.md, the skills/rules budget
+// scan) resolve against the checkout root — resolveRepoRoot(), below — never
+// against the bare process.cwd() a subcommand happens to run from (#3017).
 'use strict';
 
 const { execFileSync } = require('node:child_process');
@@ -125,6 +129,12 @@ function resolveRepoRoot(cwd) {
   }
 }
 
+// #3017: every caller of this function may pass a raw, possibly-subdirectory
+// process.cwd() as-is — it resolves the repo root itself via resolveRepoRoot
+// before joining anything, so a subdirectory cwd and the checkout root
+// produce the identical telemetry path. runRecord/runRecordBatch's own
+// `const cwd = process.cwd()` sites are correct unconverted for exactly this
+// reason: they feed only this function, never a raw filesystem join.
 function resolveTelemetryPath(cwd) {
   return path.join(resolveRepoRoot(cwd), '.claude-tweaks', 'wrap-up-outcomes.tsv');
 }
@@ -195,8 +205,16 @@ function runPlan(args) {
   }
 
   const cwd = process.cwd();
-  const facts = gatherFacts({ cwd, base: args.base });
-  const journeyFrontmatter = buildJourneyFrontmatter(cwd, facts.journeyFiles);
+  // #3017: gatherFacts() resolves filesystem facts (docs/journeys/,
+  // CLAUDE.md) as paths under the cwd it's given — the raw process cwd is
+  // wrong whenever the shell sits in a subdirectory of the checkout (e.g. an
+  // app in `<worktree>/web`), since those paths live at the repo root, not
+  // the subdirectory. Resolve the repo root once (the same resolveRepoRoot
+  // already used by resolveTelemetryPath/runVerifyVerb below) and pass that,
+  // never the bare cwd, into every repo-fact read.
+  const repoRoot = resolveRepoRoot(cwd);
+  const facts = gatherFacts({ cwd: repoRoot, base: args.base });
+  const journeyFrontmatter = buildJourneyFrontmatter(repoRoot, facts.journeyFiles);
 
   const budgets = {};
   if (args.skillBudget !== null) budgets['skill-budget'] = Number(args.skillBudget);
@@ -490,6 +508,12 @@ function runRender(args) {
 
 function runVerifyVerb(args) {
   if (!args.runDir || !args.base) { usageExit(); return; }
+  // #3017: already correct — repoRoot and cwd are threaded through
+  // separately on purpose. Each check function (engine-verify.js's CHECKS)
+  // picks whichever one its own fact needs: repoRoot for anything resolved
+  // against the checkout (archived-run lookups), the raw cwd for a check
+  // that legitimately runs relative to wherever the caller invoked from
+  // (e.g. a `gh` call, which works from any subdirectory).
   const repoRoot = resolveRepoRoot(process.cwd());
   const cwd = process.cwd();
   const resolvedDir = resolveArchivedRunDir(args.runDir, repoRoot);
@@ -607,6 +631,12 @@ function runFinishConsole(args) {
   // Step 3: ledger flips — skipped entirely (not an error) when the payload
   // named no ledger updates.
   if (ledgerUpdates.length > 0) {
+    // #3017: process.cwd() here is an intentional fallback, not a repo-facts
+    // read — readRunState's own worktree field is already the right root
+    // when present (the run's worktree, which may differ from the main
+    // checkout), and the raw cwd is the correct substitute only for the rare
+    // case that field is absent. Overriding it with resolveRepoRoot's main
+    // checkout would resolve the ledger against the wrong worktree.
     const worktree = readRunState(args.runDir)?.worktree || process.cwd();
     const resolved = resolveLedgerPath({ runDir: args.runDir, worktree, explicit: args.ledger || null });
     if (!resolved.ok) {
@@ -657,6 +687,11 @@ function main() {
   // fs.mkdirSync(args.runDir) means the target often doesn't exist yet, and
   // isAnchoredUnderRoot already walks up to whichever ancestor does.
   if (args.runDir) {
+    // #3017: intentionally the raw cwd, not a repo-facts read — this check
+    // is about run-dir anchoring ([IL-127], the main checkout vs. a linked
+    // worktree), a different root entirely from the repo-facts root
+    // resolveRepoRoot resolves elsewhere in this file. mainCheckoutRoot
+    // already does its own worktree-aware resolution from wherever cwd is.
     const cwd = process.cwd();
     const mainRoot = wtDetect.mainCheckoutRoot(cwd);
     if (!mainRoot) {

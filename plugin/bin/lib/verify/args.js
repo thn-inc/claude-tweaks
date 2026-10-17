@@ -24,7 +24,11 @@ const USAGE =
   + '(alongside "lint"); a monorepo with several independent typecheck commands should '
   + 'combine them (--cmd types="tsc -p a && tsc -p b") or run each through its own '
   + 'verify.js invocation — a differently-named check (types-a, types-b, …) runs in the '
-  + '"any other name" tier, serially after tests, and is skipped on an unrelated tests failure.';
+  + '"any other name" tier, serially after tests, and is skipped on an unrelated tests failure.'
+  + '\nnote: a relative --scope path resolves against the checkout root (--cwd when given, '
+  + 'else this process\'s own git toplevel) — never against process.cwd() alone (#3017). A '
+  + '--scope path that still does not exist after that resolution is a usage error (exit 2), '
+  + 'not a silent full-run fallback.';
 
 const VALUE_FLAGS = new Set(['--cmd', '--cmd-env', '--cmd-timeout', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run', '--cwd', '--baseline', '--baseline-cmd']);
 
@@ -154,16 +158,25 @@ function attachCmdEnvAndTimeout(raw) {
   // invocation parses to exactly the shape it did before the flag existed.
   // Object.fromEntries defines own properties, so a variable literally named
   // __proto__ stays data rather than touching the prototype.
-  for (const c of raw.cmds) {
-    const mine = raw.cmdEnvs.filter((e) => e.name === c.name);
-    if (mine.length === 0) continue;
+  // #3022: the duplicate-variable check runs over every distinct --cmd-env
+  // name, not just ones with a matching --cmd — a declared-only suite (no
+  // --cmd, map-form --scope) can carry duplicate --cmd-env variables too.
+  for (const name of new Set(raw.cmdEnvs.map((e) => e.name))) {
+    const mine = raw.cmdEnvs.filter((e) => e.name === name);
     const keys = mine.map((e) => e.key);
     const dup = keys.find((k, i) => keys.indexOf(k) !== i);
-    if (dup !== undefined) throw new UsageError(`duplicate --cmd-env variable for ${c.name}: ${dup}`);
-    c.env = Object.fromEntries(mine.map((e) => [e.key, e.value]));
+    if (dup !== undefined) throw new UsageError(`duplicate --cmd-env variable for ${name}: ${dup}`);
+    const c = raw.cmds.find((cc) => cc.name === name);
+    if (c) c.env = Object.fromEntries(mine.map((e) => [e.key, e.value]));
   }
+  // #3022: a --cmd-env naming neither a --cmd nor a declared suite is still
+  // a mistake, but this parser has no fs access to read the declaration —
+  // under --scope it only rules out the --cmd side here; verify.js's own
+  // scope-aware check (once the declaration is read) rules out the rest and
+  // raises the same "names no check" message for a name that is genuinely
+  // neither declared nor passed.
   const undeclaredEnv = raw.cmdEnvs.find((e) => !raw.cmds.some((c) => c.name === e.name));
-  if (undeclaredEnv) {
+  if (undeclaredEnv && !raw.scope) {
     throw new UsageError(`--cmd-env "${undeclaredEnv.name}" names no declared --cmd (declared: ${declared()})`);
   }
   // #3063: resolved the same way as --cmd-env above, but scalar per check —
@@ -180,18 +193,24 @@ function attachCmdEnvAndTimeout(raw) {
   }
 }
 
-// cmdEnvs/cmdTimeouts are intermediate tokenizer buckets only — by the time
-// a mode validator returns, their contents are either attached onto the
-// matching `cmds` entry (as `.env`/`.timeout`) or have already thrown, so
-// the public result never carries them as top-level keys.
+// cmdTimeouts is an intermediate tokenizer bucket only — by the time a mode
+// validator returns, its contents are either attached onto the matching
+// `cmds` entry (as `.timeout`) or have already thrown, so the public result
+// never carries it as a top-level key. cmdEnvs is the one exception (#3022).
 function toResult(raw) {
   const {
     cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run,
-    cwd, baseline, baselineCmds,
+    cwd, baseline, baselineCmds, cmdEnvs,
   } = raw;
   return {
     cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run,
     cwd, baseline, baselineCmds,
+    // #3022: every --cmd-env entry, matched or not — verify.js's own
+    // --scope block uses the unmatched ones to bind env vars onto a
+    // declared-only suite (no --cmd) once it has read the declaration.
+    // Entries already attached to a `cmds[].env` above are included too;
+    // callers that only need the unmatched ones filter by cmds name.
+    cmdEnvs,
   };
 }
 
@@ -247,7 +266,14 @@ function rejectBothReadOnlyModes(raw) {
 // --baseline/--scope — none of which mean anything in the two read-only
 // modes above, so they're validated only here.
 function validateCheckRun(raw) {
-  if (raw.cmds.length === 0) throw new UsageError('at least one --cmd <name>=<command> is required');
+  // #3022: a --scope declaration can supply every check's command itself
+  // (map-form checks.tests, plus checks.types/checks.lint) — verify.js's own
+  // H2 check, once the declaration is read, is what actually enforces that
+  // every selection-required name has a command from one source or the
+  // other; this parser has no fs access and cannot read the declaration to
+  // know whether it does, so it only relaxes the blanket "give me at least
+  // one" floor, never replaces H2's real check.
+  if (raw.cmds.length === 0 && !raw.scope) throw new UsageError('at least one --cmd <name>=<command> is required');
   attachCmdEnvAndTimeout(raw);
   if (raw.baseline !== null && raw.baselineCmds.length === 0) throw new UsageError('--baseline requires at least one --baseline-cmd');
   if (raw.baseline === null && raw.baselineCmds.length) throw new UsageError('--baseline-cmd requires --baseline');

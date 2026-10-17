@@ -66,7 +66,7 @@ See `flags.md`, this skill's directory, for `--dry-run`, `cleanup-only`, `--skil
 
 1. Check recent git commits and the current branch name for record references
 2. Review conversation for references to records or features
-3. Check whether a materialized header exists for this run (`${RUN_DIR}/work/*-spec.md`) — record mode
+3. Check for a materialized header (`work/*-spec.md` in the run dir or its worktree mirror) — record mode
 
 | Type | Characteristics | Primary Focus |
 |------|----------------|---------------|
@@ -243,7 +243,7 @@ Empty-console fast path: skip the console entirely and proceed to the report whe
 **Gate the read.** Read `review-console.md` (`wrap-up-engine.js render --section procedure:review-console`) — for the run-directory resolution sequence, the multi-spec defer protocol, and the Auto-merge short-circuit's applicability check — when **either** holds. Once a real stop will actually render (i.e. neither the Auto-resolution short-circuit nor the Empty-console fast path resolved and returned), also read `review-console-interactive.md` for the full console template with every section table (including the conditionally-rendered Low-confidence, Contested findings, and Reference repairs sections), override/stop semantics, and the sort-order requirement:
 
 - The console runs: a run directory exists (always, after Phase 1), `MULTISPEC_REVIEW_DEFER` is unset, and the empty-console fast path above does not apply; **or**
-- This run has a materialized header (`${RUN_DIR}/work/*-spec.md`) whose issue carries a live `auto:merge` or `auto:merge-pending` label (re-fetch via `gh issue view --json labels`) — the pending case exists so a still-maturing grant reaches the short-circuit's own maturation check instead of being silently skipped (#309).
+- This run resolves a materialized header (`inputs.records`) whose issue carries a live `auto:merge` or `auto:merge-pending` label (re-fetch via `gh issue view --json labels`) — the pending case exists so a still-maturing grant reaches the short-circuit's own maturation check instead of being silently skipped (#309).
 
 The second condition exists because the **Auto-merge short-circuit**'s applicability check lives in `review-console.md`, not in this file — it is not part of the console rendering it precedes. Without it, a run that qualified for the empty-console fast path would silently skip its authorized auto-merge. In practice the fast path cannot fire on such a run — it requires "no cleanup actions apply," and a run with a materialized header is a pipeline run whose worktree row always applies — so this is a belt-and-braces guard against a latent ordering hazard, not a live bug. The full procedure itself is a further lazy-load, one level deeper: `review-console.md`'s Auto-merge short-circuit heading only points at `auto-merge-short-circuit.md` — that file loads only for the run that actually clears the condition above, not for every run that clears the fast path.
 
