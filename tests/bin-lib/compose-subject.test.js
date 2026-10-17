@@ -23,7 +23,7 @@ const RECORDS = {
 
 function fakeDeps({
   records = RECORDS, ghAvailable = () => true, remoteUrl = () => 'git@github.com:acme/repo.git', failView = false,
-  commitScope = null, commitScopePaths = [], changedFiles = null,
+  commitScope = null, commitScopePaths = [], changedFiles = null, prFiles = null,
 } = {}) {
   const out = { stdout: '', stderr: '', calls: [], gitCalls: [] };
   const deps = {
@@ -31,6 +31,12 @@ function fakeDeps({
     remoteUrl,
     runner: (args) => {
       out.calls.push(args);
+      if (args[0] === 'pr') {
+        assert.deepEqual(args.slice(0, 2), ['pr', 'diff']);
+        if (prFiles instanceof Error) throw prFiles;
+        if (prFiles === null) throw new Error('gh pr diff must not be called');
+        return prFiles;
+      }
       if (failView) throw new Error('boom: gh exploded');
       assert.equal(args[0], 'issue'); assert.equal(args[1], 'view');
       const n = Number(args[2]);
@@ -506,7 +512,7 @@ test('AC2.3: paths spanning two scopes with no commit-scope leave the subject un
   assert.match(out.stderr, /span scopes bin, skills — subject left unscoped/);
 });
 
-test('AC3.1: commit-scope-paths set with no --range exits 1 naming the flag', () => {
+test('AC3.1: commit-scope-paths set with no --range (and no --pr) exits 1 naming the flag', () => {
   const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'] });
   assert.equal(run(['2251'], deps), 1);
   assert.match(out.stderr, /pass --range \{base\}\.\.\.\{head\}/);
@@ -542,6 +548,50 @@ test('parseArgs and USAGE: --range parsed; trailing --range is an error; USAGE a
   assert.equal(parseArgs(['2251', '--range', 'main...feat']).range, 'main...feat');
   assert.equal(parseArgs(['2251']).range, null);
   assert.ok(parseArgs(['2251', '--range']).error);
+  assert.equal(parseArgs(['2251', '--pr', '3430']).pr, '3430');
+  assert.ok(parseArgs(['2251', '--pr']).error);
+  assert.ok(parseArgs(['2251', '--pr', 'x']).error);
   const { USAGE } = require('../../plugin/bin/lib/compose-subject.js');
   assert.match(USAGE, /\[--range <base>\.\.\.<head>\]/);
+  assert.match(USAGE, /\[--pr <n>\]/);
+});
+
+test('--pr (#3298 final review): commit-scope-paths resolves over gh pr diff --name-only, no git call', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], prFiles: 'plugin/bin/x.js\n' });
+  assert.equal(run(['2251', '--pr', '3430', '--shell'], deps), 0, out.stderr);
+  assert.match(out.stdout, /\(bin\)/);
+  assert.equal(out.gitCalls.length, 0);
+  const prCalls = out.calls.filter((c) => c[0] === 'pr');
+  assert.deepEqual(prCalls, [['pr', 'diff', '3430', '--repo', 'acme/repo', '--name-only']]);
+});
+
+test('--pr with no commit-scope-paths never calls gh pr diff', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2251', '--pr', '3430'], deps), 0, out.stderr);
+  assert.equal(out.calls.filter((c) => c[0] === 'pr').length, 0);
+});
+
+test('--pr: a failing gh pr diff exits 3 naming the PR', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], prFiles: new Error('boom') });
+  assert.equal(run(['2251', '--pr', '3430'], deps), 3);
+  assert.match(out.stderr, /gh pr diff 3430 --name-only failed: .*boom/);
+});
+
+test('--range and --pr together is a usage error, exit 1', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2251', '--range', 'main...feat', '--pr', '3430'], deps), 1);
+  assert.match(out.stderr, /mutually exclusive/);
+});
+
+test('commit-scope-paths set with neither --range nor --pr names both flags', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'] });
+  assert.equal(run(['2251'], deps), 1);
+  assert.match(out.stderr, /neither --range nor --pr/);
+  assert.match(out.stderr, /pass --range \{base\}\.\.\.\{head\}/);
+});
+
+test('a whitespace-bearing commit-scope policy value exits 1 loudly (never a silent unscoped subject)', () => {
+  const { deps, out } = fakeDeps({ commitScope: 'web app' });
+  assert.equal(run(['2251'], deps), 1);
+  assert.ok(out.stderr.length > 0);
 });

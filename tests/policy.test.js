@@ -186,10 +186,10 @@ test('AC10.1: readCommitScope: key present -> the token; absent or blank -> null
   assert.strictEqual(readCommitScope(tmpRepo()), null);
 });
 
-test('AC10.1: readCommitScope: a whitespace-bearing value fails string validation and resolves null', () => {
+test('readCommitScope (#3298 final review): a whitespace-bearing value is returned raw, so the composer rejects it loudly', () => {
   const repo = tmpRepo();
-  writePolicy(repo, 'commit-scope: two words\n');
-  assert.strictEqual(readCommitScope(repo), null);
+  writePolicy(repo, 'commit-scope: web app\n');
+  assert.strictEqual(readCommitScope(repo), 'web app');
 });
 
 test('readListKey: a single value with no commas -> a one-element array', () => {

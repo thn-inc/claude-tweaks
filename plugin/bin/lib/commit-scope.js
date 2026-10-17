@@ -20,12 +20,12 @@ class CommitScopeError extends Error {
 }
 
 // entries: readListKey's already-split, trimmed `commit-scope-paths` list.
-// Each is {path-prefix}={token}, split on the first `=`.
+// Each is {path-prefix}={token}, split on the first `=`, both sides trimmed.
 function parseScopePaths(entries) {
   return entries.map((entry) => {
     const eq = entry.indexOf('=');
-    const prefix = eq === -1 ? '' : entry.slice(0, eq);
-    const token = eq === -1 ? '' : entry.slice(eq + 1);
+    const prefix = eq === -1 ? '' : entry.slice(0, eq).trim();
+    const token = eq === -1 ? '' : entry.slice(eq + 1).trim();
     if (!prefix || !token) {
       throw new CommitScopeError(`commit-scope-paths entry ${JSON.stringify(entry)} is not {path-prefix}={token}`);
     }

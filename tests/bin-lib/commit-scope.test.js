@@ -16,6 +16,14 @@ test('parseScopePaths: no =, empty prefix, or empty token throws CommitScopeErro
   }
 });
 
+test('parseScopePaths trims whitespace around = (a spaced entry is not a silent never-match)', () => {
+  assert.deepEqual(parseScopePaths(['plugin/bin/ = bin', ' plugin/skills/=skills ']), [
+    { prefix: 'plugin/bin/', token: 'bin' }, { prefix: 'plugin/skills/', token: 'skills' }]);
+  assert.equal(resolveCommitScope({
+    explicit: null, constant: null, pairs: parseScopePaths(['plugin/bin/ = bin']), changedPaths: ['plugin/bin/x.js'],
+  }).scope, 'bin');
+});
+
 test('resolveCommitScope: explicit wins over paths and constant', () => {
   const pairs = parseScopePaths(['plugin/bin/=bin']);
   assert.deepEqual(resolveCommitScope({ explicit: 'api', constant: 'web', pairs, changedPaths: ['plugin/bin/x.js'] }), { scope: 'api', source: 'explicit', note: null });

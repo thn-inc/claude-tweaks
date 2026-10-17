@@ -95,11 +95,14 @@ function readListKey(repoRoot, key) {
 }
 
 // `commit-scope` (#3298): the constant Conventional-Commits scope token
-// bin/compose-subject.js falls back to. resolveValue applies the schema's
-// string validation (non-blank, whitespace-free) — anything else resolves
-// to the schema default, which this key leaves unset, hence null.
+// bin/compose-subject.js falls back to. Read raw (trimmed; blank -> null),
+// deliberately not through resolveValue — that would silently turn a bad
+// value like `web app` into null, an unscoped subject with no signal. The
+// composer's own composeSubject token check (`[A-Za-z0-9._/-]+`) is what
+// rejects a bad value, loudly, exit 1.
 function readCommitScope(repoRoot) {
-  return resolveValue('commit-scope', parsePolicy(repoRoot)['commit-scope']) ?? null;
+  const v = parsePolicy(repoRoot)['commit-scope'];
+  return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
 }
 
 // `gh-timeout-ms` (#2567) — the one integer-typed lever bin/lib/shared-

@@ -274,7 +274,7 @@ merge (capture (a)), so the confirmation itself carries the choice: wait for gre
 **Creation-time caller:** `tidy/SKILL.md`'s Step 7.5 `pr-first` branch invokes only this step's initial `gh pr merge --auto` call at PR-creation time, with the degrade chain below replaced by leave-unarmed + report — see that step's own text for the full routing.
 
 ```bash
-SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --range {integration-branch}...{branch} --shell) || exit 1
+SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --shell) || exit 1
 eval "$SUBJECT_EXPORTS"
 gh pr merge {pr-number} --repo {owner}/{repo} --auto --squash \
   -t "$SUBJECT_TITLE" -b "$SUBJECT_BODY"
@@ -289,7 +289,7 @@ auto-merged-this-week metric (`_shared/github-pr-scan.md` `triage-queue` item 3)
 three. `{issue-list}` is the record numbers — the manifest's `complete` specs only for a bundle
 (#2015; rest release via their own `never-started:`/`abandoned:` reason). `human-approved`:
 `dispatch/close-out.md`'s human-confirmed merge (that metric excludes it). `{scope}`
-resolves inside the composer from the `commit-scope`/`commit-scope-paths` policy keys (`_shared/policy-schema.md`) over the `--range` above — the run's branch is present locally in the session holding its worktree; an explicit `--scope {scope}` overrides both. The composer writes
+resolves inside the composer from the `commit-scope`/`commit-scope-paths` policy keys (`_shared/policy-schema.md`) over the PR's own changed files (`gh pr diff --name-only` behind the `--pr` above — no local branch or checkout needed, so `dispatch/close-out.md`'s and `tidy`'s later-session callers compose the same subject); an explicit `--scope {scope}` overrides both. The composer writes
 the Conventional-Commits subject and one `Fixes #{n}` line per record. Same set the
 PR body's own `Fixes` lines already carry (`_shared/pr-checklist-refresh.md`'s pre-merge
 refresh), restated here because the merge commit's own message is what GitHub scans for
@@ -312,7 +312,7 @@ the result:
      behavior):
 
      ```bash
-     SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --range {integration-branch}...{branch} --shell) || exit 1
+     SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --shell) || exit 1
      eval "$SUBJECT_EXPORTS"
      gh pr merge {pr-number} --repo {owner}/{repo} --squash \
        -t "$SUBJECT_TITLE" -b "$SUBJECT_BODY"
