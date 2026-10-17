@@ -4,6 +4,7 @@
 // carries a hidden fingerprint marker the dedup step re-extracts.
 const { recordPayload, specShapedBody } = require('../issues/record');
 const { buildRelatedBlocks } = require('../issues/related-blocks');
+const nodePath = require('node:path');
 
 // legacy: v1, frozen. Not called by bin/code-health.js (which uses toIssuePayloadV2
 // exclusively) — kept only so its own test file can assert this historical shape
@@ -52,6 +53,17 @@ function toIssuePayload(finding) {
 // threaded through here — never resolved inside this function. See
 // specShapedBody's own verifiedAsOf doc in record.js for why.
 function toIssuePayloadV2(finding, verifiedAsOf) {
+  // validateFindingV2 only requires anchor to be a non-empty string, so a
+  // malformed LLM anchor must degrade to "no Key Files section", never make
+  // specShapedBody throw and abort the whole validate-findings run.
+  function anchorKeyFiles(anchor) {
+    const filePath = String(anchor).split('#')[0].trim();
+    if (filePath === '' || /[\n`]/.test(filePath)) return undefined;
+    if (nodePath.posix.isAbsolute(filePath) || nodePath.win32.isAbsolute(filePath)) return undefined;
+    if (filePath.split(/[\\/]/).includes('..')) return undefined;
+    return [{ path: filePath, change: 'address the finding at this anchor' }];
+  }
+
   // Same "Also affects: ..." bundler the other three health producers use — this
   // file's finding vocabulary names the bundled items relatedAnchors rather than
   // relatedSections, but the rendered block is identical.
@@ -70,7 +82,7 @@ function toIssuePayloadV2(finding, verifiedAsOf) {
     // keyFiles (#2975): the anchor's file path (any `#symbol` suffix stripped —
     // the same split grouping.js's ANCHOR_RE applies) renders under
     // `### Key Files` so grouping can read the target off a structured section.
-    keyFiles: [{ path: finding.anchor.split('#')[0].trim(), change: 'address the finding at this anchor' }],
+    keyFiles: anchorKeyFiles(finding.anchor),
     filedBy: '/claude-tweaks:code-health',
     verifiedAsOf,
   });

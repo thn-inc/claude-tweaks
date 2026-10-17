@@ -206,3 +206,11 @@ test('AC4.1: toIssuePayloadV2 lists the anchor path under ### Key Files', () => 
   assert.ok(body.includes('### Key Files\n\n- `src/api/user.js` — address the finding at this anchor'));
   assert.deepStrictEqual(extractKeyFilesSection(body), ['src/api/user.js']);
 });
+
+test('toIssuePayloadV2 with a malformed anchor still produces a payload, omitting Technical Approach', () => {
+  for (const anchor of ['#Sym', '`src/a.js`#foo', '../x.js', 'src/../x.js#foo', '/abs/x.js#foo', 'C:\\abs\\x.js']) {
+    const payload = toIssuePayloadV2({ ...V2_FINDING, anchor });
+    assert.ok(payload.body.includes('## Current State'), `payload missing for anchor ${anchor}`);
+    assert.ok(!payload.body.includes('## Technical Approach'), `Technical Approach present for anchor ${anchor}`);
+  }
+});
