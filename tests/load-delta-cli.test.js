@@ -206,6 +206,18 @@ test('F5: --plugin-root outside the repository (with a real skills/ beneath it) 
   assert.match(r.stderr, /is outside the repository/);
 });
 
+test('a cited symlink to a file outside the repository is never read into the closure', () => {
+  const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'Read `x.md` in this skill\'s directory.\n' });
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'load-delta-outside-'));
+  write(outside, 'secret.md', 'o'.repeat(5000));
+  fs.symlinkSync(path.join(outside, 'secret.md'), path.join(dir, 'plugin/skills/s/x.md'));
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-q', '-m', 'symlink');
+  const r = call(['--json'], dir);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.deepStrictEqual(JSON.parse(r.stdout).roots[0].entries, []);
+});
+
 test('text outcome 1: a diff touching no skill file', () => {
   const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'x\n', 'README.md': 'r\n' });
   write(dir, 'README.md', 'changed\n');

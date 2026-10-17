@@ -93,17 +93,29 @@ function firstNameableParent(files) {
 }
 
 function headSide(repoRoot, root) {
+  // A citation that passed withinRoot's textual check can still be a committed
+  // symlink to a file outside the repository, or to a device (/dev/zero) that
+  // never reaches EOF — so resolve the real path and read only a regular file
+  // inside the repository; anything else is absent.
+  const realRoot = fs.realpathSync(repoRoot);
   const readFile = (p) => {
-    try { return fs.readFileSync(path.join(repoRoot, p), 'utf8'); } catch (err) {
-      if (err.code === 'ENOENT' || err.code === 'EISDIR' || err.code === 'ENOTDIR') return null;
+    try {
+      const real = fs.realpathSync(path.join(repoRoot, p));
+      const rel = path.relative(realRoot, real);
+      if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
+      if (!fs.statSync(real).isFile()) return null;
+      return fs.readFileSync(real, 'utf8');
+    } catch (err) {
+      if (['ENOENT', 'EISDIR', 'ENOTDIR', 'ELOOP'].includes(err.code)) return null;
       throw err;
     }
   };
   const listSkillMds = () => {
     const dir = path.join(repoRoot, root, 'skills');
     return fs.readdirSync(dir, { withFileTypes: true })
-      .filter((d) => d.isDirectory() && fs.existsSync(path.join(dir, d.name, 'SKILL.md')))
-      .map((d) => `${skillsPrefix(root)}${d.name}/SKILL.md`);
+      .filter((d) => d.isDirectory())
+      .map((d) => `${skillsPrefix(root)}${d.name}/SKILL.md`)
+      .filter((p) => readFile(p) !== null);
   };
   return { readFile, listSkillMds };
 }
