@@ -10,6 +10,7 @@ const {
 } = require('../../../plugin/bin/lib/reconcile/release-merged');
 const { readCache, writeCache } = require('../../../plugin/bin/lib/reconcile/cache');
 const { GRANT_LABELS } = require('../../../plugin/bin/lib/release-claim/release');
+const { CLOSING_KEYWORD_ALTERNATION } = require('../../../plugin/bin/lib/issue-branch-tracking');
 
 // AC1: open PR always wins over issue-closed evidence
 test('decideRelease: live claim + open PR + closed issue -> skip pr-open', () => {
@@ -362,6 +363,74 @@ test('releaseMerged: releases a live claim via the by-number fallback when the w
     assert.equal(result.released.length, 1, `expected the by-number fallback to release the claim, got ${JSON.stringify(result)}`);
     assert.equal(result.released[0].issueNumber, 61);
     assert.equal(result.released[0].prNumber, 3249001);
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
+// #3412: the same by-number path (worktree AND branch gone) must run through the
+// closes-this-issue gate: the PR is MERGED but its closingIssuesReferences name
+// issue 62, not the claim's issue 61, and there is no mergeCommit field, so no
+// commit fetch is attempted — the claim is kept.
+test('releaseMerged: the by-number fallback keeps the claim when the merged PR does not close the issue (#3412)', async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-notclosing-')));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-gone-3412');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'already-reaped'),
+    pr: { number: 3249001, branch: 'already-deleted-branch' },
+  }));
+  const liveContent = JSON.stringify({
+    runId: 'run-gone-3412', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
+  });
+  const labelDeletes = [];
+  const ghApi = (args) => {
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-61.json', sha: 'live-sha' }] }), failure: null, status: null };
+    }
+    if (args[0].includes('/contents/claims/issue-61.json')) {
+      return { stdout: JSON.stringify({ content: liveContent, sha: 'live-sha' }), failure: null, status: null };
+    }
+    if (args.some((a) => a.includes('/labels/'))) {
+      const labelPath = args[args.length - 1];
+      labelDeletes.push(decodeURIComponent(labelPath.slice(labelPath.lastIndexOf('/') + 1)));
+      return { stdout: '', failure: null, status: null };
+    }
+    if (args[0].includes('/commits/')) throw new Error('no mergeCommit field: the commit fetch must not be reached');
+    if (args[0].includes('/issues/61')) return { stdout: 'OPEN\n', failure: null, status: null };
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-notclosing-ghwrap-'));
+  const marker = path.join(wrapperDir, 'pr-view-called');
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  fs.writeFileSync(
+    wrapperPath,
+    '#!/bin/sh\n'
+    + 'case "$*" in\n'
+    + `  *"pr view 3249001"*) touch '${marker}'; cat <<'EOF'\n`
+    + '{"number":3249001,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","closingIssuesReferences":[{"number":62,"repository":{"name":"w","owner":{"login":"acme"}}}]}\n'
+    + 'EOF\n'
+    + '    ;;\n'
+    + '  *"pr list"*) echo "pr list must never be called when no branch resolved" >&2; exit 1 ;;\n'
+    + '  *"api --method PUT"*) exit 0 ;;\n' // a wrongly attempted release would succeed, so the no-release assertions are real
+    + '  *) exit 1 ;;\n'
+    + 'esac\n',
+  );
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+
+  try {
+    const result = await releaseMerged({ cwd: root, ghApi });
+    assert.ok(fs.existsSync(marker), 'the by-number `gh pr view 3249001` must have been called');
+    assert.equal(result.released.length, 0, `merged-not-closing must not release, got ${JSON.stringify(result)}`);
+    assert.ok(result.skipped.some((x) => x.issueNumber === 61 && x.reason === 'pr-merged-not-closing'), JSON.stringify(result.skipped));
+    assert.equal(labelDeletes.length, 0, 'no label may be removed');
   } finally {
     process.env.PATH = originalPath;
   }
@@ -777,6 +846,17 @@ test('prClosesIssue: the repo slug compares case-insensitively', () => {
   assert.equal(prClosesIssue({ closingIssuesReferences: [ref(3311)] }, 3311, 'ACME/W'), true);
 });
 
+// The keyword SET is shared with issue-branch-tracking.js (CLOSING_KEYWORD_ALTERNATION);
+// CLOSING_KEYWORD_RE is module-private, so pin it through behavior.
+test('prClosesIssue: every shared closing-keyword form matches; Refs and a trailing-garbage #N do not', () => {
+  assert.ok(CLOSING_KEYWORD_ALTERNATION.includes('close'), 'the shared vocabulary must be the one imported from issue-branch-tracking');
+  for (const kw of ['close', 'closes', 'closed', 'fix', 'fixes', 'fixed', 'resolve', 'resolves', 'resolved', 'Fixes:', 'CLOSED']) {
+    assert.equal(prClosesIssue({ closingIssuesReferences: [] }, 7, 'acme/w', `${kw} #7`), true, `${kw} #7`);
+  }
+  assert.equal(prClosesIssue({ closingIssuesReferences: [] }, 7, 'acme/w', 'Refs #7'), false);
+  assert.equal(prClosesIssue({ closingIssuesReferences: [] }, 7, 'acme/w', 'Fixed  #7x'), false);
+});
+
 // #3412: end-to-end — a MERGED PR is release evidence only when it closes THIS
 // issue. The scenario mirrors PR #3348 (closed #3306-#3310 while the run's
 // claim on #3311 stayed live): a live worktree on 'run-3348-branch', a live
@@ -946,5 +1026,115 @@ test('releaseMerged: merged-not-closing references and no mergeCommit field -> p
   assert.equal(result.released.length, 0, JSON.stringify(result));
   assert.ok(result.skipped.some((s) => s.issueNumber === 3311 && s.reason === 'pr-merged-not-closing'), JSON.stringify(result.skipped));
   assert.equal(reads.commit, 0);
+  assert.equal(labelDeletes.length, 0);
+});
+
+// #3412: Phase 1.75 fans out over every merged candidate; with two live claims
+// the per-candidate commit fetch must be keyed back to the right claim. Each
+// PR's closingIssuesReferences names some OTHER issue (9001 / 9002), so only
+// the merge-commit message can decide — and A's oid must answer A's claim.
+async function runTwoCandidateScenario({ issueA, issueB, messageForOidA, messageForOidB }) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-twocand-')));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
+  const oids = { A: 'aaaa111', B: 'bbbb222' };
+  const issues = { A: issueA, B: issueB };
+  const claimEntries = [];
+  const contents = new Map();
+  for (const key of ['A', 'B']) {
+    const runId = `run-two-${key}`;
+    const wtPath = path.join(root, '.worktrees', `wt-${runId}`);
+    execFileSync('git', ['worktree', 'add', '-q', '-b', `${runId}-branch`, wtPath], { cwd: root });
+    const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wtPath }));
+    claimEntries.push({ name: `issue-${issues[key]}.json`, sha: `sha-${key}` });
+    contents.set(`/contents/claims/issue-${issues[key]}.json`, JSON.stringify({
+      content: JSON.stringify({ runId, sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h' }),
+      sha: `sha-${key}`,
+    }));
+  }
+  const labelDeletes = [];
+  const commitFetches = [];
+  const messages = { [oids.A]: messageForOidA, [oids.B]: messageForOidB };
+  const ghApi = (args) => {
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: claimEntries }), failure: null, status: null };
+    }
+    for (const [suffix, stdout] of contents) {
+      if (args[0].includes(suffix)) return { stdout, failure: null, status: null };
+    }
+    if (args.some((a) => a.includes('/labels/'))) {
+      const labelPath = args[args.length - 1];
+      labelDeletes.push(decodeURIComponent(labelPath.slice(labelPath.lastIndexOf('/') + 1)));
+      return { stdout: '', failure: null, status: null };
+    }
+    const commitMatch = /\/commits\/([0-9a-f]+)/.exec(args[0]);
+    if (commitMatch) {
+      commitFetches.push(commitMatch[1]);
+      return { stdout: messages[commitMatch[1]], failure: null, status: null };
+    }
+    if (/\/issues\/\d+/.test(args[0])) return { stdout: 'OPEN\n', failure: null, status: null };
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+
+  const prFor = (key, number, otherIssue) => JSON.stringify([{
+    number, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+    mergeCommit: { oid: oids[key] }, closingIssuesReferences: [ref(otherIssue)],
+  }]);
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-twocand-ghwrap-'));
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  fs.writeFileSync(
+    wrapperPath,
+    '#!/bin/sh\n'
+    + 'case "$*" in\n'
+    + '  *"pr list --head run-two-A-branch"*) cat <<\'EOF\'\n'
+    + `${prFor('A', 7001, 9001)}\n`
+    + 'EOF\n'
+    + '    ;;\n'
+    + '  *"pr list --head run-two-B-branch"*) cat <<\'EOF\'\n'
+    + `${prFor('B', 7002, 9002)}\n`
+    + 'EOF\n'
+    + '    ;;\n'
+    + '  *"api --method PUT"*) exit 0 ;;\n'
+    + '  *) exit 1 ;;\n'
+    + 'esac\n',
+  );
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  try {
+    const result = await releaseMerged({ cwd: root, ghApi });
+    return { result, labelDeletes, commitFetches, oids };
+  } finally {
+    process.env.PATH = originalPath;
+  }
+}
+
+test('releaseMerged: two live claims each resolve through their own merge commit (Phase 1.75 keyed per candidate) (#3412)', async () => {
+  const { result, labelDeletes, commitFetches, oids } = await runTwoCandidateScenario({
+    issueA: 3401, issueB: 3402, messageForOidA: 'feat: a\n\nFixes #3401\n', messageForOidB: 'feat: b\n\nFixes #3402\n',
+  });
+  assert.equal(result.released.length, 2, JSON.stringify(result));
+  assert.deepEqual(result.released.map((r) => r.issueNumber).sort(), [3401, 3402]);
+  assert.deepEqual(result.released.map((r) => r.prNumber).sort(), [7001, 7002]);
+  // The merged: path (unlike issue-closed) strips the grant labels; both issues are OPEN here.
+  for (const label of GRANT_LABELS) {
+    assert.ok(labelDeletes.includes(label), `merged: path must strip ${label}, got ${JSON.stringify(labelDeletes)}`);
+  }
+  assert.equal(commitFetches.filter((o) => o === oids.A).length, 1, JSON.stringify(commitFetches));
+  assert.equal(commitFetches.filter((o) => o === oids.B).length, 1, JSON.stringify(commitFetches));
+  assert.equal(commitFetches.length, 2, JSON.stringify(commitFetches));
+});
+
+test('releaseMerged: two live claims with the commit messages swapped release neither — a mis-keyed fan-out would release both (#3412)', async () => {
+  const { result, labelDeletes } = await runTwoCandidateScenario({
+    issueA: 3401, issueB: 3402, messageForOidA: 'feat: a\n\nFixes #3402\n', messageForOidB: 'feat: b\n\nFixes #3401\n',
+  });
+  assert.equal(result.released.length, 0, JSON.stringify(result));
+  for (const n of [3401, 3402]) {
+    assert.ok(result.skipped.some((x) => x.issueNumber === n && x.reason === 'pr-merged-not-closing'), JSON.stringify(result.skipped));
+  }
   assert.equal(labelDeletes.length, 0);
 });

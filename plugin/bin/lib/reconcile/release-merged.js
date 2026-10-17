@@ -24,6 +24,7 @@ const { writeTombstone: writeTombstoneShared, GRANT_LABELS } = require('../relea
 const { resolveTarget, appendEntry, formatEntry } = require('../log-decision/append');
 const { readCache, writeCache } = require('./cache');
 const { runWithConcurrency } = require('./gh-pool');
+const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
 const { GH_TIMEOUT_MS, runClassified, runClassifiedAsync } = require('../shared-primitives');
 
 const execFileAsync = promisify(execFile);
@@ -43,7 +44,11 @@ const execFileAsync = promisify(execFile);
 // the shared instance, whose stale `lastIndex` would make results order-dependent.
 // Whitespace is `[ \t]`, never `\s`: under `/m` `\s` crosses newlines, which is
 // quadratic on blank-line runs and lets `Fixes\n#N` match.
-const CLOSING_KEYWORD_RE = /^[ \t]*(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved):?[ \t]+#(\d+)\b/gim;
+// Only the keyword SET is shared with issue-branch-tracking.js's
+// ISSUE_REF_SOURCE (CLOSING_KEYWORD_ALTERNATION); the grammar around it
+// deliberately differs: line-anchored `^[ \t]*` (the squash body carries one
+// `Fixes #n` line per record), an optional `:`, and `[ \t]+` instead of `\s+`.
+const CLOSING_KEYWORD_RE = new RegExp('^[ \\t]*' + CLOSING_KEYWORD_ALTERNATION + ':?[ \\t]+#(\\d+)\\b', 'gim');
 
 function prClosesIssue(prState, issueNumber, repoSlug, mergeCommitMessage) {
   if (!prState || !Array.isArray(prState.closingIssuesReferences)) return undefined;
