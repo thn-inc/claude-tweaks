@@ -40,9 +40,8 @@ test('the pack keeps exactly the eight probe names the skill prose enumerates (#
   for (const n of PROBE_NAMES) assert.ok(skill.includes(`\`${n}\``), `SKILL.md names probe ${n}`);
   assert.strictEqual(PROBE_NAMES.length, 8);
   assert.ok(!PROBE_NAMES.includes('release'), 'the release probe was removed (#1930 review I5)');
-  // The merge-size step fetches origin/{integration-branch} immediately before
-  // measuring; a Phase 3 pack value would be the stale prediction that step's
-  // own text forbids, so the probe is gone (#1930 fix round 4).
+  // The probe is gone (#1930 fix round 4), and #3310 removed its only
+  // consumer, the pre-merge merge-size step.
   assert.ok(!PROBE_NAMES.includes('mergeSize'), 'the mergeSize probe was removed (#1930 fix round 4)');
   assert.ok(!skill.includes('`mergeSize`'), 'SKILL.md no longer enumerates mergeSize');
 });

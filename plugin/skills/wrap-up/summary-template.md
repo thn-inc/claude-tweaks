@@ -62,8 +62,7 @@ State block's fields as `unknown` and say so; never omit the block.
 
 **Snapshot staleness note (#2550).** The pasted block is a Phase 3 snapshot —
 `wrap-up-pack.js` gathers every probe once, concurrently, before Phase 4's own
-curation commits land (the same single-gather-point design that keeps the
-merge-size probe out of the pack entirely, per that file's own comment).
+curation commits land.
 Before finalizing this section, compare the pasted block's own commit count /
 push status / branch position against what Phase 4 and the Verdict line above
 already know happened since (a curation commit landed, the branch was pushed,
