@@ -375,6 +375,21 @@ function extractTemplateStamp(body) {
   return m ? { path: m[1], version: m[2] } : null;
 }
 
+// The one specShapedBody keyFiles-path predicate (#2975): specShapedBody throws on it, and
+// the health-sweep composers call isRepoRelativeKeyFilePath to omit keyFiles instead of
+// aborting a whole sweep run on an LLM-supplied path. keyFilePathProblem returns null
+// (valid), 'shape' (not a non-empty single-line string without a backtick), or 'relative'
+// (absolute posix/win32 path or a ".." segment).
+function keyFilePathProblem(filePath) {
+  if (typeof filePath !== 'string' || filePath === '' || /[\n`]/.test(filePath)) return 'shape';
+  if (nodePath.posix.isAbsolute(filePath) || nodePath.win32.isAbsolute(filePath) || filePath.split(/[\\/]/).includes('..')) return 'relative';
+  return null;
+}
+
+function isRepoRelativeKeyFilePath(filePath) {
+  return keyFilePathProblem(filePath) === null;
+}
+
 // Accepts either bare label-name strings or {name} objects (gh's own shape).
 function normalizeLabelNames(labels) {
   return (labels || []).map((l) => (typeof l === 'string' ? l : l && l.name)).filter(Boolean);
@@ -889,10 +904,11 @@ function specShapedBody({
       throw new Error(`specShapedBody: keyFiles[${i}] must be an object with a path`);
     }
     const { path: filePath, change = 'modify' } = entry;
-    if (typeof filePath !== 'string' || filePath === '' || /[\n`]/.test(filePath)) {
+    const pathProblem = keyFilePathProblem(filePath);
+    if (pathProblem === 'shape') {
       throw new Error(`specShapedBody: keyFiles[${i}].path must be a non-empty single-line string with no backtick (got ${JSON.stringify(filePath)})`);
     }
-    if (nodePath.posix.isAbsolute(filePath) || nodePath.win32.isAbsolute(filePath) || filePath.split(/[\\/]/).includes('..')) {
+    if (pathProblem === 'relative') {
       throw new Error(`specShapedBody: keyFiles[${i}].path must be repo-relative — no absolute path or ".." segment (got "${filePath}")`);
     }
     if (typeof change !== 'string' || change === '' || /\n/.test(change)) {
@@ -902,7 +918,7 @@ function specShapedBody({
   });
   const { origin, deferReason } = provenance || {};
   if (deferReason !== undefined) oneOf('deferReason', deferReason, DEFER_REASONS);
-  const block =(v) => (Array.isArray(v) ? v.join('\n\n') : v);
+  const block = (v) => (Array.isArray(v) ? v.join('\n\n') : v);
   const parts = [];
   if (!isEmpty(header)) parts.push(header);
   if (!isEmpty(verifiedAsOf)) parts.push(`Verified-as-of: ${verifiedAsOf.toLowerCase()}`);
@@ -924,7 +940,7 @@ function specShapedBody({
 }
 
 module.exports = {
-  ORIGINS, TYPES, TIERS, PRIORITIES, DEFER_REASONS, LABELS, TYPE_LABELS, recordPayload, specShapedBody,
+  ORIGINS, TYPES, TIERS, PRIORITIES, DEFER_REASONS, LABELS, TYPE_LABELS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
   FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, normalizeLabelNames, parseRecordFacets,
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
   hasOpenNativeBlocker, CLASSIFICATION_SCORING, fenceFor, fencedBlock, parseSubIssues,

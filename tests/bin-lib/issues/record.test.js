@@ -1214,3 +1214,16 @@ test('specShapedBody: keyFiles rejects absolute, ..-escaping, empty, multi-line,
   assert.throws(call('a.js'), /keyFiles/);
   assert.throws(call(['a.js']), /keyFiles/);
 });
+
+test('isRepoRelativeKeyFilePath agrees with specShapedBody on every keyFiles path', () => {
+  const { isRepoRelativeKeyFilePath } = require('../../../plugin/bin/lib/issues/record');
+  const compose = (p) => () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', keyFiles: [{ path: p }] });
+  for (const p of ['/abs/x.js', 'C:\\x.js', '../x.js', 'a/../../x.js', 'a\\..\\x.js', '', 'a\nb.js', 'a`b.js', undefined, 42]) {
+    assert.strictEqual(isRepoRelativeKeyFilePath(p), false, `path ${JSON.stringify(p)}`);
+    assert.throws(compose(p), /keyFiles/);
+  }
+  for (const p of ['a.js', 'plugin/bin/x.js', 'docs/..foo/x.md']) {
+    assert.strictEqual(isRepoRelativeKeyFilePath(p), true, `path ${p}`);
+    assert.doesNotThrow(compose(p));
+  }
+});

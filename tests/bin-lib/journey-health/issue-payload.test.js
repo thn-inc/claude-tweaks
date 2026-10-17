@@ -227,3 +227,11 @@ test('AC4.1: toIssuePayload lists the journey document under ### Key Files', () 
   const payload = toIssuePayload(finding());
   assert.ok(payload.body.includes('### Key Files\n\n- `docs/journeys/checkout-flow.md` — fix the journey document'));
 });
+
+test('toIssuePayload with a malformed journey still produces a payload, omitting Technical Approach', () => {
+  for (const journey of ['../x', 'a`b']) {
+    const payload = toIssuePayload(finding({ journey }));
+    assert.ok(payload.body.includes('## Current State'), `payload missing for journey ${JSON.stringify(journey)}`);
+    assert.ok(!payload.body.includes('## Technical Approach'), `Technical Approach present for journey ${JSON.stringify(journey)}`);
+  }
+});

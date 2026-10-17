@@ -2,9 +2,8 @@
 // the network. The skill hands the payload to the gh CLI itself.
 // Body is /specify-shaped so promotion to a spec is near-zero translation, and
 // carries a hidden fingerprint marker the dedup step re-extracts.
-const { recordPayload, specShapedBody } = require('../issues/record');
+const { recordPayload, specShapedBody, isRepoRelativeKeyFilePath } = require('../issues/record');
 const { buildRelatedBlocks } = require('../issues/related-blocks');
-const nodePath = require('node:path');
 
 // legacy: v1, frozen. Not called by bin/code-health.js (which uses toIssuePayloadV2
 // exclusively) — kept only so its own test file can assert this historical shape
@@ -58,9 +57,7 @@ function toIssuePayloadV2(finding, verifiedAsOf) {
   // specShapedBody throw and abort the whole validate-findings run.
   function anchorKeyFiles(anchor) {
     const filePath = String(anchor).split('#')[0].trim();
-    if (filePath === '' || /[\n`]/.test(filePath)) return undefined;
-    if (nodePath.posix.isAbsolute(filePath) || nodePath.win32.isAbsolute(filePath)) return undefined;
-    if (filePath.split(/[\\/]/).includes('..')) return undefined;
+    if (!isRepoRelativeKeyFilePath(filePath)) return undefined;
     return [{ path: filePath, change: 'address the finding at this anchor' }];
   }
 
@@ -81,7 +78,9 @@ function toIssuePayloadV2(finding, verifiedAsOf) {
     releaseNote: 'No user-visible change — internal code-quality fix.',
     // keyFiles (#2975): the anchor's file path (any `#symbol` suffix stripped —
     // the same split grouping.js's ANCHOR_RE applies) renders under
-    // `### Key Files` so grouping can read the target off a structured section.
+    // `### Key Files`, which satisfies /build's micro-plan gate (condition 3: a
+    // Key Files list). grouping.js still reads code-health records' target off
+    // the Anchor: line (ANCHOR_RE), by design — it never reaches this section.
     keyFiles: anchorKeyFiles(finding.anchor),
     filedBy: '/claude-tweaks:code-health',
     verifiedAsOf,

@@ -496,3 +496,20 @@ test('harness payload omits Technical Approach for an out-of-repo target, a miss
   );
   assert.ok(!newSkill.body.includes('## Technical Approach'));
 });
+
+// A newline in finding.path is not covered here: it throws earlier, in buildPremiseCheck's
+// single-line premiseCheck guard (pre-existing at base, unrelated to keyFiles).
+test('harness payload with a backtick in finding.path still produces a payload, omitting Technical Approach', () => {
+  for (const bad of ['/repo/a`b.md']) {
+    const payload = toIssuePayload(patchFinding({ path: bad }), 'abc1234', undefined, { repoRoot: '/repo' });
+    assert.ok(payload.body.includes('## Current State'), `payload missing for path ${JSON.stringify(bad)}`);
+    assert.ok(!payload.body.includes('## Technical Approach'), `Technical Approach present for path ${JSON.stringify(bad)}`);
+  }
+});
+
+test('harness payload resolves a relative finding.path against repoRoot, not cwd', () => {
+  const payload = toIssuePayload(
+    patchFinding({ path: 'plugin/skills/foo/SKILL.md' }), 'abc1234', undefined, { repoRoot: '/repo' },
+  );
+  assert.ok(payload.body.includes('### Key Files\n\n- `plugin/skills/foo/SKILL.md` — apply the proposed change'));
+});

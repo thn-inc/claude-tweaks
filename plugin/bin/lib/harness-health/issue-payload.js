@@ -11,7 +11,7 @@
 // copy-pasted. kind: 'new-skill' never consults CLASSIFICATION_SCORING — it
 // stays deliberately unscored (see below).
 const {
-  recordPayload, specShapedBody, CLASSIFICATION_SCORING, fencedBlock,
+  recordPayload, specShapedBody, CLASSIFICATION_SCORING, fencedBlock, isRepoRelativeKeyFilePath,
 } = require('../issues/record');
 const { buildRelatedBlocks } = require('../issues/related-blocks');
 const nodePath = require('node:path');
@@ -143,13 +143,14 @@ function toIssuePayload(finding, verifiedAsOf, pluginVersion, options = {}) {
   }
 
   // keyFiles (#2975): the patched file, made repo-relative against
-  // options.repoRoot. Omitted (never passed absolute — specShapedBody throws on
-  // one) for a new-skill candidate, a missing path/repoRoot, or an out-of-repo
-  // target such as a memory file under --memory-dir.
+  // options.repoRoot (a relative finding.path resolves against it, not cwd).
+  // Omitted (specShapedBody throws on a bad path) for a new-skill candidate, a
+  // missing path/repoRoot, an out-of-repo target such as a memory file under
+  // --memory-dir, or a path with a backtick/newline.
   let keyFiles;
   if (!isNewSkill && finding.path && options.repoRoot) {
-    const rel = nodePath.relative(options.repoRoot, finding.path).split(nodePath.sep).join('/');
-    if (rel && rel !== '..' && !rel.startsWith('../') && !nodePath.isAbsolute(rel)) {
+    const rel = nodePath.relative(options.repoRoot, nodePath.resolve(options.repoRoot, finding.path)).split(nodePath.sep).join('/');
+    if (isRepoRelativeKeyFilePath(rel)) {
       keyFiles = [{ path: rel, change: isRemoval ? 'remove the named content' : 'apply the proposed change' }];
     }
   }
