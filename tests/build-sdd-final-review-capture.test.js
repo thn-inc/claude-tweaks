@@ -43,8 +43,7 @@ test('dispatch.md: the capture is evidence, not a gate', () => {
 });
 
 test('doctored control: removing the reviewed-commit item turns the AC1 assertion red (#3386 AC3)', () => {
-  const text = DISPATCH;
-  const doctored = text.replace(/the reviewed commit SHA \(HEAD when the final review's package was built\) and that package's base commit; /, '');
-  assert.notEqual(doctored, text, 'the doctoring replace did not hit — the control is vacuous');
+  const doctored = DISPATCH.replace(/the reviewed commit SHA \(HEAD when the final review's package was built\) and that package's base commit; /, '');
+  assert.notEqual(doctored, DISPATCH, 'the doctoring replace did not hit — the control is vacuous');
   assert.throws(() => assertFourItems(doctored), assert.AssertionError);
 });

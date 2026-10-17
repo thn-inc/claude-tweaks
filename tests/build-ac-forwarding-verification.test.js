@@ -25,7 +25,7 @@ test('#496: dispatch.md instructs SDD to preserve one composed per-task review p
 });
 
 test('#496 wording: dispatch.md never names a nonexistent SDD "Cleanup step"', () => {
-  assert.equal(/Cleanup step/.test(read('plugin/skills/build/dispatch.md')), false);
+  assert.doesNotMatch(read('plugin/skills/build/dispatch.md'), /Cleanup step/);
 });
 
 test('#496: the three verification outcomes (present / absent / no-sample) are each logged, never silently skipped', () => {
