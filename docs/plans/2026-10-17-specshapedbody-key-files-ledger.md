@@ -14,3 +14,4 @@
 | 10 | build | Ruling: AC6.1 whole-file keyFiles/repo-relative match (plan-mandated) kept — cost if wrong: a future removal of the instruction stays green until review notices | observation | final review agreed |
 | 11 | build | Ruling: AC5.1 omit-when-absent control kept — cost if wrong: one redundant test | observation | final review agreed |
 | 12 | build | Pre-existing: harness-health composer throws ("premiseCheck must be a single-line command") when an LLM finding.path contains a newline and buildPremiseCheck composes a command — one bad finding aborts validate-findings (independent of keyFiles; present at base) | open | — |
+| 13 | build/skill | [skill: NEW - shared-composer-validation] A shared body composer that throws on malformed input, fed by LLM-origin fields across several producers, should export its validation as one predicate so producers omit-on-failure instead of aborting a batch run (#2975 final review Important 1). | observation | — |
