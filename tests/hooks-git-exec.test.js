@@ -131,6 +131,19 @@ test('runGitAsync: a non-git directory is git-error — git ANSWERED, in the neg
   assert.strictEqual(typeof stderr, 'string', 'runGitAsync must surface stderr as a string, matching runGit\'s failure shape');
 });
 
+// #3023: execFileSync carries the exit status on `err.status`, execFile on
+// `err.code` (a number) — the shared buildFailure must read both, or the
+// async twin always reports `exitCode: null`.
+test('runGit and runGitAsync: a failing call reports git\'s numeric exit code', async () => {
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-ge-exitcode-'));
+  const sync = runGit(['rev-parse', '--show-toplevel'], dir);
+  const asyncResult = await runGitAsync(['rev-parse', '--show-toplevel'], dir);
+  assert.strictEqual(sync.failure, FAILURE.GIT_ERROR);
+  assert.strictEqual(asyncResult.failure, FAILURE.GIT_ERROR);
+  assert.strictEqual(sync.exitCode, 128);
+  assert.strictEqual(asyncResult.exitCode, 128);
+});
+
 test('runGitAsync: a blown budget is timeout, and timeout is indeterminate (#134)', async () => {
   // Unlike runGit's own version of this test above, a real `timeoutMs: 1`
   // race against a real `git rev-parse` is NOT reliable here: on a fast,

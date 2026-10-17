@@ -60,3 +60,10 @@ test('the Verdict carve-out defers to an existing multi-spec `skip` expectation 
   const verdict = section('### Verdict');
   assert.match(verdict, /a genuine multi-spec defer is unaffected — it already\s*\nreports `skip`/);
 });
+
+test('#3023: the Verdict carve-out applies to worktree-removed only for the "still listed" detail, and never for "unlisted but directory still present"', () => {
+  const verdict = section('### Verdict');
+  assert.match(verdict, /worktree still listed/);
+  assert.match(verdict, /worktree unlisted but directory still present/);
+  assert.match(verdict, /is never\s*\ncarved out/);
+});

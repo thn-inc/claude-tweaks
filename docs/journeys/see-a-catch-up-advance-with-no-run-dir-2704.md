@@ -7,9 +7,9 @@ files:
 
 # See a Catch-up Advance With No Run Directory
 
-**Persona:** A maintainer working in a `worktree-always` project who opens an interactive session to shape or decompose a record with `/claude-tweaks:specify`. The SessionStart instruction moves them into a fresh worktree whose post-creation catch-up merge pulls in commits from `origin/main`. No `/flow` or `/dispatch` pipeline is running, so no run directory exists yet.
+**Persona:** A maintainer working in a `worktree-always` project who opens an interactive session to decompose a design doc with `/claude-tweaks:specify` (its close-out removes the doc, a working-tree write), or to shape a record under `work-backend: local-files`. Shaping under `github-issues` writes only through `gh` and never gets here — `_shared/worktree-setup.md`'s forge-API-only carve-out (#2727) skips the worktree entirely. The SessionStart instruction moves them into a fresh worktree whose post-creation catch-up merge pulls in commits from `origin/main`. No `/flow` or `/dispatch` pipeline is running, so no run directory exists yet.
 **Goal:** Learn that the catch-up actually moved their branch, and by how much, without a `decisions.md` to read and without the advance being silently dropped.
-**Entry point:** A session started in the main checkout, where the SessionStart hook prints `claude-tweaks: worktree-always: ON (...)` and the instruction to invoke `/superpowers:using-git-worktrees`, then `/claude-tweaks:specify` asked to shape or decompose a record.
+**Entry point:** A session started in the main checkout, where the SessionStart hook prints `claude-tweaks: worktree-always: ON (...)` and the instruction to invoke `/superpowers:using-git-worktrees`, then `/claude-tweaks:specify` asked to decompose a design doc or shape a `local-files` record.
 **Success state:** A branch-advancing catch-up shows its `Post-creation catch-up: worktree branch advanced from …` line in the next reply and again in `/claude-tweaks:specify`'s Next Actions (or its `--chained` returned output); a no-op merge reports nothing; no run directory or log file was created to hold the line.
 
 ## Steps
@@ -18,7 +18,7 @@ files:
    - **Action:** The SessionStart `worktree-always` notice (`bin/lib/hooks/session-start.js`) sends the session through `/superpowers:using-git-worktrees`, then `_shared/worktree-setup.md`'s Post-creation catch-up (`git fetch origin {integration-branch}`, then `git merge origin/{integration-branch}`).
    - **Should feel:** Routine. The worktree appears and the session carries on with the task.
    - **Should understand:** When the merge changes nothing (tip unchanged), nothing is reported. Silence here means "checked, clean".
-   - **Red flags:** The session says the catch-up "belongs to a run directory that will be created later", and then never mentions it again.
+   - **Red flags:** The session says the catch-up "belongs to a run directory that will be created later", and then never mentions it again. Or a worktree, and its catch-up merge, is created for a `github-issues` shaping run whose every write goes through `gh`.
 
 2. **Read the advance line in the reply** — The catch-up merge actually advanced the branch.
    - **Action:** No run directory resolves (`_shared/run-dir-resolution.md` steps 1-4 miss), so the session follows `_shared/worktree-catchup-no-run-dir.md`. It reports `Post-creation catch-up: worktree branch advanced from {before} to {after} ({N} commit(s) from {ref})` in its next reply.

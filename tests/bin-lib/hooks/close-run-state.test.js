@@ -183,6 +183,39 @@ test('closeRunState: a genuinely active (non-clean) run with no wrapup event sti
   }
 });
 
+// #3023: the close nulls `worktree`, so the prior path is kept as
+// `worktreeAtClose` for wrap-up verify's on-disk check — and a second close
+// (#2553's already-clean double-close) must never erase it.
+test('closeRunState: records the prior worktree as worktreeAtClose, and a second close preserves it', () => {
+  const dir = makeTmpRunDir();
+  const worktree = path.join(os.tmpdir(), 'close-run-state-test-wt-' + Date.now());
+  try {
+    fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ sessionId: 's1', status: 'active', worktree }));
+    closeRunState(dir, { explicit: true, callerIdentity: { sessionId: 's1' } });
+    const first = JSON.parse(fs.readFileSync(path.join(dir, 'run-state.json'), 'utf8'));
+    assert.strictEqual(first.worktree, null);
+    assert.strictEqual(first.worktreeAtClose, worktree);
+    closeRunState(dir, { explicit: true, callerIdentity: { sessionId: 's1' } });
+    const second = JSON.parse(fs.readFileSync(path.join(dir, 'run-state.json'), 'utf8'));
+    assert.strictEqual(second.worktree, null);
+    assert.strictEqual(second.worktreeAtClose, worktree);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('closeRunState: writes no worktreeAtClose when no worktree was ever recorded', () => {
+  const dir = makeTmpRunDir();
+  try {
+    fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ sessionId: 's1', status: 'active' }));
+    closeRunState(dir, { explicit: true, callerIdentity: { sessionId: 's1' } });
+    const after = JSON.parse(fs.readFileSync(path.join(dir, 'run-state.json'), 'utf8'));
+    assert.strictEqual('worktreeAtClose' in after, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // No run-state.json at all (never recorded any status) must behave like the
 // pre-fix default — status isn't provably "clean", so the signal still fires.
 test('closeRunState: missing run-state.json (no status to compare) still logs close-without-wrapup', () => {

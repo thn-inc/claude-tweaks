@@ -255,6 +255,14 @@ test('worktree-always nudge appears when policy is on and session is not yet iso
   const out = await sessionStart.run({ input: {}, runDir: null, runState: null, cwd: project });
   assert.match(out.json.hookSpecificOutput.additionalContext, /worktree-always/);
   assert.match(out.json.hookSpecificOutput.additionalContext, /using-git-worktrees/);
+  // #2727: the nudge scopes itself to repository edits and names the
+  // forge-API-only carve-out, so a gh-only skill isn't pushed into a worktree.
+  const ctx = out.json.hookSpecificOutput.additionalContext;
+  assert.match(ctx, /Before editing repository files/);
+  assert.doesNotMatch(ctx, /Before making any edits/);
+  assert.doesNotMatch(ctx, /isolated worktree for all work/);
+  assert.match(ctx, /forge-API call/);
+  assert.match(ctx, /Adopt-or-create/);
 });
 
 // --- #137: resolved-build line, complementing (not replacing) the routine preamble ---

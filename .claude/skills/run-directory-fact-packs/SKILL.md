@@ -91,6 +91,10 @@ proposed field, answer three questions against the code, at plan-authoring time:
      `pr-bookkeeping/precondition.js` all read through it, so do not hand-roll another copy. The
      parent's PR-early degrade line in `decisions.md` is not part of the helper:
      `precondition.js` reads it itself from the returned `parentRunDir`.
+   - **A stamp the close clears.** `closeRunState` nulls `worktree` and keeps the prior path as
+     `worktreeAtClose` (#3023). A reader that runs after close-run, such as `engine-verify.js`'s
+     `worktree-removed`, falls back to `worktreeAtClose`, its own and then the parent's. Reading
+     `worktree` alone there sees `null` and skips the check.
    - **Why it matters.** #2664's first trace got this wrong by following the writers alone.
 2. **Does the consumer mandate a freshness step first?** `mergeSize` was dropped from the wrap-up
    pack because its consumer must measure *after its own fetch* — a pre-gathered value is stale by

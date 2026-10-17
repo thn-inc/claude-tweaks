@@ -197,7 +197,9 @@ These steps appear as visible, numbered Cleanup actions rows in the console temp
    still locked to this session at that point) — harmless either way, but the local branch delete
    would fail outright if attempted while the branch is still checked out in the (not-yet-removed)
    worktree, since git refuses to delete a checked-out branch. Skip when step 6 itself skipped
-   (work left pending).
+   (work left pending). A `worktree: registration pruned but directory still present at {path}`
+   line is not a completed removal: surface the path in the report and leave the directory for
+   manual removal — never retry-delete it.
 
 ### Per-issue label cleanup
 

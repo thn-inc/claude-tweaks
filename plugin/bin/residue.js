@@ -130,6 +130,7 @@ function main() {
   // executable — so it gets the raw `run`, like probeForge.
   // Passing `git` here yields `git git show …`, and the probe then reports
   // ran:false on every invocation of a perfectly healthy repo.
+  // probeRelease adapts its own bare-args call to resolveRemoteRef internally (#3023).
   const results = filterResultsByScope([
     probeWorktrees({ scope }),
     probeBranches({ scope, integrationBranch: opts.integrationBranch, run: git }),
@@ -137,7 +138,7 @@ function main() {
     suiteResult,
     // #2257: generalized past a manifest.name gate — runs on any project
     // whose repo ever bootstrapped .release-please-manifest.json.
-    probeRelease({ scope, run }),
+    probeRelease({ scope, run, integrationBranch: opts.integrationBranch }),
     probePipelineRuns({
       cwd,
       // The invoking run's identity, when one is threaded (wrap-up runs

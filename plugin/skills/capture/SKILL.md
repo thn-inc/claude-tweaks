@@ -45,6 +45,11 @@ When `$ARGUMENTS` is empty, prompt the user for the idea body.
 | 2 | Route per `--route` arg, or via the Routing Prompt below. |
 | 3 | Commit (when this is a standalone invocation; component-skill callers commit themselves). `work-backend: local-files` captures always have something to commit — the new record file, or, under route `absorb:N`, the edited/deleted target record file. `work-backend: github-issues` captures have nothing new to commit unless the failure fallback wrote a local `specs/{id}-{slug}.md` record — its `absorb:N` route edits the target issue via `gh` CLI only (see Route execution below), so no local file is touched. |
 
+**Worktree.** A `work-backend: github-issues` capture routed `keep` or `absorb:N` writes only
+through `gh`, so `_shared/worktree-setup.md`'s "Forge-API-only invocations need no worktree"
+carve-out applies. It does not cover the `local-files` driver, the gh-failure fallback (a local
+`specs/` record), or the `brainstorm` route (a design doc) — each needs a worktree before that write.
+
 ## Batch Mode
 
 Reached only when `--batch <path>` is supplied — files multiple entries from one JSON file through the same per-entry pipeline Workflow Step 1 runs for a single invocation, with one routing/confirmation pass and one summary table for the whole set. Read `batch-mode.md` in this skill's directory for the full procedure: the entry-file shape, the per-entry loop and its fail-safe batching, over-cap entry handling, batch-level routing, and the Batch Summary template.

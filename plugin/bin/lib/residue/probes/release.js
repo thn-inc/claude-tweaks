@@ -7,6 +7,7 @@
 'use strict';
 
 const { makeFinding } = require('../finding');
+const { resolveRemoteRef } = require('./branches');
 
 const RP_MANIFEST_PATH = '.release-please-manifest.json';
 
@@ -57,7 +58,36 @@ function bootstrapVersion(run) {
   return { sha, version: null };
 }
 
-function probeRelease({ scope, run } = {}) {
+const BEHIND_REASON = 'local integration branch is behind its remote — CHANGELOG check skipped';
+
+// #3023: which ref's CHANGELOG.md to read. A main checkout whose local
+// integration branch lags its remote holds tags fetched from the remote whose
+// headings exist only on the remote ref — reading HEAD there reports entries
+// that already exist upstream. Use the remote-tracking ref when it exists and
+// contains the newest checked tag; otherwise (no integration branch given, no
+// remote, no remote-tracking ref, or a tag cut on a local-only commit) keep
+// reading HEAD, today's behavior.
+function changelogRef({ integrationBranch, run, newestTag }) {
+  if (!integrationBranch) return { ref: 'HEAD', remote: false };
+  // No local tag qualifies — there is nothing to check the remote ref's
+  // ancestry against, so trusting it unconditionally would read whatever
+  // CHANGELOG content exists upstream and flag its headings as having no
+  // matching local tag. Reading HEAD keeps today's (silent) behavior instead.
+  if (!newestTag) return { ref: 'HEAD', remote: false };
+  const remoteRef = resolveRemoteRef(integrationBranch, (args) => run(['git', ...args]));
+  const sha = run(['git', 'rev-parse', '--verify', '--quiet', '--end-of-options', `${remoteRef}^{commit}`]);
+  if (!sha) return { ref: 'HEAD', remote: false };
+  if (run(['git', 'merge-base', '--is-ancestor', '--end-of-options', `v${newestTag}`, remoteRef]) === null) {
+    return { ref: 'HEAD', remote: false };
+  }
+  return { ref: remoteRef, remote: true };
+}
+
+function newestVersion(versions) {
+  return versions.reduce((best, v) => (best === null || !versionGte(best, v) ? v : best), null);
+}
+
+function probeRelease({ scope, run, integrationBranch } = {}) {
   if (!scope || !scope.ran) {
     return { ran: false, reason: (scope && scope.reason) || 'scope unresolved', findings: [] };
   }
@@ -70,9 +100,8 @@ function probeRelease({ scope, run } = {}) {
     return { ran: false, reason: `could not read a single package version from ${RP_MANIFEST_PATH} at its bootstrap commit ${sha}`, findings: [] };
   }
 
-  const changelog = run(['git', 'show', 'HEAD:CHANGELOG.md']);
   const tagList = run(['git', 'tag', '-l', 'v*']);
-  if (changelog === null || tagList === null) {
+  if (tagList === null) {
     return { ran: false, reason: 'could not read CHANGELOG.md or the v* tag list at HEAD', findings: [] };
   }
 
@@ -99,6 +128,19 @@ function probeRelease({ scope, run } = {}) {
   const tags = localTags.filter(inRange);
   const knownTags = [...new Set([...localTags, ...remoteTags])].filter(inRange);
 
+  const source = changelogRef({ integrationBranch, run, newestTag: newestVersion(tags) });
+  let changelogAt = source.ref;
+  let changelog = run(['git', 'show', `${changelogAt}:CHANGELOG.md`]);
+  if (changelog === null && source.remote) {
+    const behind = run(['git', 'rev-list', '--count', `HEAD..${source.ref}`]);
+    if (behind !== null && Number(behind) > 0) return { ran: false, reason: BEHIND_REASON, findings: [] };
+    changelogAt = 'HEAD';
+    changelog = run(['git', 'show', 'HEAD:CHANGELOG.md']);
+  }
+  if (changelog === null) {
+    return { ran: false, reason: `could not read CHANGELOG.md or the v* tag list at ${changelogAt}`, findings: [] };
+  }
+
   // Both heading grammars a post-bootstrap CHANGELOG can hold, since the very
   // entries this probe checks straddle the boundary: the pre-migration
   // `## vX.Y.Z — {summary}` form, and release-please's own
@@ -121,7 +163,7 @@ function probeRelease({ scope, run } = {}) {
     if (!headingSet.has(v)) {
       findings.push(makeFinding({
         kind: 'release', scope: 'blast-radius', subject: `CHANGELOG entry for v${v}`, remedy: 'auto',
-        evidence: `tag v${v} exists (at or after bootstrap v${anchor}) but CHANGELOG.md at HEAD has no version heading for ${v} in either grammar`,
+        evidence: `tag v${v} exists (at or after bootstrap v${anchor}) but CHANGELOG.md at ${changelogAt} has no version heading for ${v} in either grammar`,
       }));
     }
   }
@@ -129,7 +171,7 @@ function probeRelease({ scope, run } = {}) {
     if (!tagSet.has(v)) {
       findings.push(makeFinding({
         kind: 'release', scope: 'blast-radius', subject: `tag for CHANGELOG entry v${v}`, remedy: 'record',
-        evidence: `CHANGELOG.md has a version heading for ${v} (at or after bootstrap v${anchor}) but no matching v${v} tag exists`,
+        evidence: `CHANGELOG.md at ${changelogAt} has a version heading for ${v} (at or after bootstrap v${anchor}) but no matching v${v} tag exists`,
       }));
     }
   }

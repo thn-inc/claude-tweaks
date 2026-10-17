@@ -2,6 +2,12 @@
 
 The comprehensive "ensure every issue has the right labels" sweep: `priority:*`/`**Related:**` suggestions plus `auto:build`/`auto:merge` grants, presented together and confirmed once.
 
+**Worktree.** Under `work-backend: github-issues` every write is a `gh` call, a run-dir line, a
+session temp file, or the `health-state` ref `bin/lib/issues/merge-lane-breaker.js` pushes, so
+`_shared/worktree-setup.md`'s "Forge-API-only invocations need no worktree" carve-out
+applies — except a `facets.unsynced === true` record and the `local-files` driver, whose
+`writeRecord` + `git commit` needs a worktree first.
+
 **`#N[,#M...]` filter (#1887).** When `SKILL.md`'s Input resolved a named record list, every
 population computed below (Resolve, the priority/Related/grant fetches, `.blocked`) narrows to
 just those numbers before Step 4 renders — one procedure, never a second mode. Bare `refine`
