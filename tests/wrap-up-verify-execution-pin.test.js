@@ -31,6 +31,12 @@ test('Verify execution section carries the four-part shape: expectations write, 
   assert.match(sec, /exit(s|\s)?\s*3|exit code 3/i, 'must name exit code 3 specifically, not just "non-zero"');
 });
 
+test('Verify execution section tells the reader to pass --run-dir the original pre-archive path (#3222)', () => {
+  const sec = section();
+  assert.match(sec, /`--run-dir` takes the run's original \(pre-archive\) `\$PIPELINE_RUN_DIR` path/, 'must state the pre-archive --run-dir requirement');
+  assert.match(sec, /`run-dir-archived` report `original path still present`/, 'must name the failure an archive path outside the archive root trips');
+});
+
 test('the shape pin rejects a paraphrased hand-run instruction (negative control)', () => {
   // Same shape assertions the positive test above requires, run against a
   // hypothetical paraphrase that avoids the banned substrings but still

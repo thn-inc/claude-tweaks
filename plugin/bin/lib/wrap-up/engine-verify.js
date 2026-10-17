@@ -726,15 +726,13 @@ function enumerateSubIssues(parent, deps, cwd) {
 }
 
 // #3222: the risk-floor policy key, from the repo root's own policy.yml (a
-// missing file falls back to the schema default). An error entry returns
-// undefined, which exceedsOversightFloor treats as its fail-safe 'high'.
+// missing file, or a set-but-invalid value, falls back to the schema default).
 function resolveRiskFloor(repoRoot) {
   let policyRaw = null;
   try {
     policyRaw = fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
   } catch { /* no policy.yml -- resolvePolicyKeys' schema default applies */ }
-  const entry = resolvePolicyKeys(['risk-floor'], { policyRaw })['risk-floor'];
-  return entry && !entry.error ? entry.value : undefined;
+  return resolvePolicyKeys(['risk-floor'], { policyRaw })['risk-floor'].value;
 }
 
 // `verify`'s --run-dir may be the parent pipeline run directory, or (in a

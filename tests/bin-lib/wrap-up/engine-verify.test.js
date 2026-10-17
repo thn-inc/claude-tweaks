@@ -1682,8 +1682,13 @@ test('acceptance-labeling check queries a shared parent exactly once for two sub
 // #3222: a resolvable-parent record's gate is read from the parent's sub-issues
 // (parentGateState) and the oversight floor, not from the parent's demo:pending
 // label alone. Every case resolves its parent to #898.
-function parentGateRow({ records, subIssues, parentLabels = [], subIssuesReply }) {
+function parentGateRow({ records, subIssues, parentLabels = [], subIssuesReply, policyRaw }) {
   const runDir = makeTmpDir('verify-acceptance-parentgate-');
+  const repoRoot = makeCleanRepoRoot();
+  if (policyRaw !== undefined) {
+    fs.mkdirSync(path.join(repoRoot, '.claude-tweaks'));
+    fs.writeFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), policyRaw);
+  }
   for (const n of records) writeSpecFile(runDir, String(n), n);
   const calls = [];
   const fakeGh = (args) => {
@@ -1694,7 +1699,7 @@ function parentGateRow({ records, subIssues, parentLabels = [], subIssuesReply }
     if (args.includes('labels,comments')) return JSON.stringify({ labels: parentLabels.map((name) => ({ name })), comments: [] });
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', repoRoot: makeCleanRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', repoRoot, deps: { git: fakeOriginGit(), gh: fakeGh } });
   return { row: result.rows.find((r) => r.check === 'acceptance-labeling'), calls };
 }
 
@@ -1776,6 +1781,45 @@ test('acceptance-labeling fails closed on an unscored sibling when the parent ga
   });
   assert.strictEqual(row.result, 'fail', row.detail);
   assert.match(row.detail, /#898: missing demo:pending label/);
+});
+
+test('acceptance-labeling reads the parent floor as the highest sub-issue risk tier, not the first or last valid one', () => {
+  const { row } = parentGateRow({
+    records: [900],
+    subIssues: [
+      { number: 900, state: 'open', labels: ['risk:low'] },
+      { number: 901, state: 'closed', labels: ['risk:high'] },
+      { number: 902, state: 'closed', labels: ['risk:low'] },
+    ],
+  });
+  assert.strictEqual(row.result, 'fail', row.detail);
+  assert.match(row.detail, /#898: missing demo:pending label/);
+});
+
+test('acceptance-labeling takes the oversight floor from policy.yml: risk-floor medium requires a due risk:medium parent to carry demo:pending', () => {
+  const { row } = parentGateRow({
+    records: [900],
+    policyRaw: 'risk-floor: medium\n',
+    subIssues: [
+      { number: 900, state: 'open', labels: ['risk:medium'] },
+      { number: 901, state: 'closed', labels: ['risk:medium'] },
+    ],
+  });
+  assert.strictEqual(row.result, 'fail', row.detail);
+  assert.match(row.detail, /#898: missing demo:pending label/);
+});
+
+test('acceptance-labeling falls back to the default high floor when policy.yml sets an invalid risk-floor', () => {
+  const { row } = parentGateRow({
+    records: [900],
+    policyRaw: 'risk-floor: bogus\n',
+    subIssues: [
+      { number: 900, state: 'open', labels: ['risk:medium'] },
+      { number: 901, state: 'closed', labels: ['risk:medium'] },
+    ],
+  });
+  assert.strictEqual(row.result, 'skip', row.detail);
+  assert.match(row.detail, /parent #898 below oversight floor/);
 });
 
 // Two run records under different parents: #898 stays incomplete (open
