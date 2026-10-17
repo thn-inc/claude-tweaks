@@ -42,8 +42,8 @@ const GIT_TIMEOUT_MS = 10000;
 // on PATH, a real environment problem) -- never for a bug in this module's
 // own parsing logic, which must propagate as a raw Error/TypeError and
 // crash loud rather than being misreported as "the walk failed" (refs
-// #2014 review). Same shape as bin/lib/merge-size-probe.js's
-// MergeSizeProbeError.
+// #2014 review). Same shape as the named error class the
+// gh-api-module-pattern project skill describes for a probe seam.
 class ArtifactOverwriteCheckError extends Error {
   constructor(...args) {
     super(...args);

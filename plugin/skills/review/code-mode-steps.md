@@ -329,7 +329,7 @@ See `_shared/design-wrapper-handling.md` for the canonical return-shape contract
 
 ## Steps 6.6, 6.65, 6.66: Focus-Criterion Component Passes
 
-Read `focus-criterion-passes.md` in this skill's directory now and follow its three steps in order: Step 6.6 (Security Hardening Pass, #2624), Step 6.65 (Agent Trust Scope Pass, #2749), and Step 6.66 (App Store Readiness Pass, #2628) — split into that file to keep this one under its byte ceiling. Each is a `code-health` focus-criterion reused directly as a component skill (own pre-check, own result-handling table, own optional routing into Step 6.7 below); step numbering is unaffected by the split.
+Read `focus-criterion-passes.md` in this skill's directory now and follow its three steps in order: Step 6.6 (Security Hardening Pass, #2624), Step 6.65 (Agent Trust Scope Pass, #2749), and Step 6.66 (App Store Readiness Pass, #2628), kept in that file. Each is a `code-health` focus-criterion reused directly as a component skill (own pre-check, own result-handling table, own optional routing into Step 6.7 below); step numbering is unaffected by the split.
 
 ## Step 6.7: Late Findings Routing (design + visual + security + agent-trust-scope + app-store-readiness, consolidated)
 

@@ -169,8 +169,8 @@ since it needs a commit to inspect: a git-native `(cherry picked from commit {sh
 that stops the build (not a silenceable auto-mode lever) when the cherry-picked source is also
 reachable from another record's branch backing a still-open PR (#1821's incident; #1944 is the
 separate specify-time near-duplicate-record check, out of scope here). Read
-`build/cherry-pick-provenance-check.md` in this skill's directory and follow it now — extracted
-to stay under the composed-bytes ceiling.
+`build/cherry-pick-provenance-check.md` in this skill's directory and follow it now — kept in its
+own file, outside the composed `worktree-setup` bundle, since only a cherry-picked commit needs it.
 
 ## Consent prompt (v5.1.0+)
 

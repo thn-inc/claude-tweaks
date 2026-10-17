@@ -59,5 +59,5 @@ files:
   - Shrinking a file the failing test did not name.
 
 ## Origin
-- Created during build of #3306 (the Read-limit rail and `budgets.js`, the expand step of parent #3305's strangler-fig rollout). The rail runs alongside the older `CEILING_BYTES` and description-ceiling gates until #3310 cuts consumers over and #3311 removes the old gates.
+- Created during build of #3306 (the Read-limit rail and `budgets.js`, the expand step of parent #3305's strangler-fig rollout). The rail ran alongside the older size and description-ceiling gates until #3310 (cuts every size consumer over to the rail); #3311 removes the old gates.
 - Related: `measure-composed-bytes-per-call-site-1990.md` (the composed-bytes gate whose enumeration the composed rail reuses), `read-a-size-outlier-in-the-bloat-scan-3308.md` (the advisory size signal, which never blocks).

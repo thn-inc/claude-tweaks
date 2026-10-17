@@ -9,9 +9,9 @@ files:
 # Measure Composed Bytes Per Compose Call Site
 
 **Persona:** claude-tweaks maintainer who has just fenced a `_shared/*.md` contract with `when:` markers, or added a compose call site to a skill step, and wants to know what the reader of that step actually pays — and why the suite is red or green about it.
-**Goal:** Run the composed-bytes measurement the hard gate uses, read one row per call site and one column per condition combination, and understand the per-step exception map and the per-file warning tier the gate replaced.
+**Goal:** Run the composed-bytes measurement the hard gate uses, read one row per call site and one column per condition combination, and understand how the Read rail judges each row and what the per-file warning tier still reports.
 **Entry point:** A terminal at this repo's checkout root; `plugin/` is the plugin root (the directory with `skills/` directly beneath it) — every call below takes that, never the repo root.
-**Success state:** A table of composed bytes for every call site under every combination its sources branch on, plus the `unresolved` both-branches row; a clear reading of `overComposedCeiling`'s output; and a per-file warning list that no longer fails anything.
+**Success state:** A table of composed bytes for every call site under every combination its sources branch on, plus the `unresolved` both-branches row; a clear reading of `rail.js`'s `composedRailViolations` output; and a per-file warning list that no longer fails anything.
 
 ## Steps
 
@@ -22,12 +22,12 @@ files:
 - **Should understand:** Each row names the skill file and line the call sits on, the step, and `combinations` — one entry per combination of only the keys the sources actually use (today `integration-model` × `transport` for the `merge` bundle: four rows), plus a final row with every used key `unresolved`: that is what a standalone run with no `config.yml` reads, both branches kept, and it is the row `max` comes from. A source with no markers yields a single combination with empty conditions. Unused keys never appear — they cannot change the output.
 - **Red flags:** A row with `error` (a malformed marker names its file and line; an unreadable source names its path and code; an `unparsed` call names the flag or the repo-relative path that stopped the scanner) — the gate fails on every one of these, never skips them; a combination count that is not `Π |VOCAB[key]| + 1` for the used keys; `max` below any listed row; a row's `file` containing `\` — it is a repo-display ID, `/`-separated on every platform since #2767, so a backslash means a producer bypassed `toPosix` (a row's `sources` are native absolute paths and legitimately carry `\` on Windows).
 
-### 2. Ask the gate what is over its ceiling
-- **URL:** `node -e 'const c=require("./plugin/bin/lib/skill-audit/context-cost.js");console.log(JSON.stringify(c.overComposedCeiling(c.composedBytesReport("plugin"))))'`
+### 2. Ask the rail what is over it
+- **URL:** `node -e 'console.log(JSON.stringify(require("./plugin/bin/lib/skill-audit/rail.js").composedRailViolations("plugin")))'`
 - **Action:** Run it; today it prints `[]`.
 - **Should feel:** The same question the suite's hard gate asks, answered without running the suite.
-- **Should understand:** Every combination is compared against `CEILING_BYTES` (51,200 — `50 * 1024` since an interim raise on 2026-10-16 while #3230 reconsiders ceilings; 46,080 from #2316, 40,960 before that) unless the step carries an entry in `COMPOSED_STEP_EXCEPTIONS` — today none: the map is `{}`. The `merge` step carried its own exception (`59 * 1024`) from this gate's own landing until #2002 restructured its two sources and removed the entry — the worked example of how an exception is meant to end; the `claims` step's `45 * 1024` stopgap ended when the raised ceiling made it redundant (its #2289 restructuring is moot unless the step regresses back over). An exception is provisional: the stale-exception test fails the moment the step fits under `CEILING_BYTES` (remove the entry) or the exception sits more than 4 KiB above the measured maximum (shrink it), so the map can never become a blank cheque. Fence or restructure the sources rather than raising `CEILING_BYTES` — the 2026-10-16 raise to 50 KB was a maintainer decision to unblock a red `main`, and #3230 owns whether the single global ceiling stays at all.
-- **Red flags:** An empty array while Step 1 showed a row over `CEILING_BYTES` with no exception entry; an exception whose step name is not a real call site (the stale-exception test catches it); a `toString`-style step name silently passing (the lookup is own-property only).
+- **Should understand:** Each row's `max` is compared against `RAIL_BYTES` (52,500 B, in `plugin/bin/lib/skill-audit/budgets.js` — the Read tool's 25,000-token cap at a calibrated 2.1 B/token), the same bound every raw skill file meets, with no per-step exceptions. `rail.js` is the only reader of composed rows: never call `budgets.js`'s `overRail` on them directly, since they carry `max`, not `bytes`, and `overRail` fails closed. An `error` row comes back as a violation too, so an unmeasured bundle never passes. The `merge` step once carried its own exception until #2002 restructured its two sources — the worked example of the standing response: fence or restructure the sources, never raise the bound.
+- **Red flags:** An empty array while Step 1 showed a row over `RAIL_BYTES`; an `error` row from Step 1 missing here; every row reported as a violation — the sign that composed rows went to `overRail` by hand.
 
 ### 3. Read the per-file warning tier
 - **URL:** `node -e 'const c=require("./plugin/bin/lib/skill-audit/context-cost.js");const s=[...c.measureSkills("plugin"),...c.measureSubFiles("plugin")];console.log(JSON.stringify({files:s.length,over:c.overCeilingWarnings(s),near:c.nearCeiling(s).length,markerErrors:s.filter(e=>e.markerError).length}))'`
@@ -41,8 +41,8 @@ files:
 - **Action:** Re-run Step 1 and Step 2.
 - **Should feel:** The scanner found the new site with no registration anywhere — the call line is the registration.
 - **Should understand:** `findComposeCallSites` scans every `plugin/skills/**/*.md` for the single-line call form: `--run <value>` may precede `--step`, the sources are the tokens after the step name, and each must be the install-safe `"${CLAUDE_PLUGIN_ROOT}/…"` form. A call wrapped across lines is not found (keep it on one line — `docs/skill-authoring.md`'s call-site form says so); a line with `{files}`-style placeholders is documentation and is skipped; any other unknown flag or a bare repo-relative source becomes an `unparsed` row that fails the gate rather than a silently unmeasured site.
-- **Red flags:** The demo step absent from Step 1's output; an over-ceiling demo bundle absent from Step 2's output; a repo-relative source resolving instead of failing.
+- **Red flags:** The demo step absent from Step 1's output; an over-rail demo bundle absent from Step 2's output; a repo-relative source resolving instead of failing.
 
 ## Origin
 - Created during build of #1990 (per-step composed-bytes measurement — Phase 1 of #1987's decomposition, U3); steps 1-4 built in this session.
-- Related specs: #1987 (parent design; promise F4 carries the merge bundle's byte figures), #1988 (the composer these measurements call), #1989 (the first real call site, `merge`), #1997 (retires the remaining per-file pins in `merge-size-probe.js` and `plan-audit/checks.js`), and #2002 (brings the merge bundle under the ceiling and removes its exception).
+- Related specs: #1987 (parent design; promise F4 carries the merge bundle's byte figures), #1988 (the composer these measurements call), #1989 (the first real call site, `merge`), #1997 (retires the remaining per-file pins), #2002 (restructures the merge bundle's sources and removes its exception), and #3310 (cuts every size consumer over to the rail).
