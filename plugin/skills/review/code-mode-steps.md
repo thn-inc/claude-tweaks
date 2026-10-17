@@ -84,9 +84,10 @@ After confirming `TEST_PASSED`, read the open items ledger (`docs/plans/*-ledger
 - If any QA ledger entries have status `open` (failures that were not resolved), include them in the test gate report alongside the `TEST_PASSED` status. These represent QA failures that `/claude-tweaks:test` surfaced and that still need resolution.
 - If all QA entries have status `observation` or `fixed`, note: "QA observations present — see findings table in Step 3 Routing."
 - **No ledger file found for the spec's `{feature}`** (#1800) — soft, never a deny, never a stop.
-  Check `decisions.md` first for a line matching `ledger` creation (`/flow`'s Step 1.8 log line,
-  below) or an explicit skip; if one is present, the absence is already explained and this branch
-  is a no-op. Otherwise append one line to `decisions.md`:
+  Check `decisions.md` first for a line matching `ledger` creation (#3036: `/flow`'s Step 1.8 or
+  `build/worktree-setup.md` Step 4.6 write it there; under a multi-spec run, check
+  `$MULTISPEC_PARENT_DIR/decisions.md` instead) or an explicit skip; if one is present, the absence
+  is already explained and this branch is a no-op. Otherwise append one line to `decisions.md`:
 
   `SKIP {time} — review: no open-items ledger found for {feature} and no logged creation/skip; QA entries could not be merged. Reversibility: n/a.`
 

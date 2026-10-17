@@ -59,3 +59,28 @@ test('go-red proof: the pre-#3036 exception sentence fails the AC2.1 negative as
   const old = 'A run with no worktree at all — `run-state.json` carries no `worktree` field, or no `run-state.json` exists yet';
   assert.throws(() => assert.doesNotMatch(old, OLD_CONDITION));
 });
+
+test('AC1.1: multi-spec creates one shared ledger at Shared worktree step 1, parent scope', () => {
+  const text = read('flow/multi-spec.md');
+  const start = text.indexOf('### Shared worktree');
+  assert.ok(start !== -1, 'Shared worktree section must exist');
+  const section = text.slice(start, text.indexOf('2. **Per-record builds skip creation**', start));
+  assert.match(section, /Create the open-items ledger here \(#3036\)/);
+  assert.match(section, /\$MULTISPEC_PARENT_DIR/);
+  assert.match(section, /AUTO \{time\} — flow: created open-items ledger \{path\}\. Reversibility: n\/a\./);
+});
+
+test('AC4.1: the QA Ledger Check finds the creation line on both the single-spec and multi-spec paths', () => {
+  const text = read('review/code-mode-steps.md');
+  const start = text.indexOf('### QA Ledger Check');
+  assert.ok(start !== -1);
+  const section = text.slice(start, start + 2500);
+  assert.match(section, /`build\/worktree-setup\.md` Step 4\.6/);
+  assert.match(section, /\$MULTISPEC_PARENT_DIR\/decisions\.md/);
+  assert.doesNotMatch(section, /\(`\/flow`'s Step 1\.8 log line,/);
+});
+
+test('multi-spec.md stays under its 20,480-byte raw budget', () => {
+  const bytes = fs.statSync(path.join(SKILLS, 'flow', 'multi-spec.md')).size;
+  assert.ok(bytes < 20480, `multi-spec.md is ${bytes} bytes`);
+});
