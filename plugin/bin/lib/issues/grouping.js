@@ -145,7 +145,7 @@ function partitionGroupsBySizeGuard(groups, options = {}) {
 // bundling records that agree on `auto:merge` presence — a merge-authorization
 // grant a bundle must not silently mix across.
 //
-// `groups`: groupByFileOverlap(...)'s output mapped to full issue objects
+// `groups`: dispatch groups (single records, from buildDispatchGroups) as full issue objects
 // (each carrying `.number`, `.labels`, `.createdAt` — the shape
 // queue-pull-script.md already builds before calling this). A group that
 // already has two or more members is never touched — only singletons are
