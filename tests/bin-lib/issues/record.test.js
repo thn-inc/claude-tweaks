@@ -1216,8 +1216,13 @@ test('specShapedBody: keyFiles rejects absolute, ..-escaping, empty, multi-line,
   assert.throws(call([{ path: 'a.js', change: 'one\ntwo' }]), /keyFiles/);
   assert.throws(call([{ path: 'a.js', change: 'one\rtwo' }]), /keyFiles/);
   assert.throws(call([{ path: 'a.js', change: '' }]), /keyFiles/);
-  assert.throws(call('a.js'), /keyFiles/);
-  assert.throws(call(['a.js']), /keyFiles/);
+  assert.throws(call([{ path: 'a.js', change: 42 }]), /keyFiles\[0\]\.change/);
+  assert.throws(call('a.js'), /keyFiles must be an array/);
+  assert.throws(call(['a.js']), /keyFiles\[0\] must be an object/);
+  assert.throws(call([null]), /keyFiles\[0\] must be an object/);
+  assert.throws(call([['a.js']]), /keyFiles\[0\] must be an object/);
+  assert.throws(call([{ path: 'tests/' }]), /trailing slash/);
+  assert.throws(call([{ path: '../x.js' }]), /repo-relative/);
 });
 
 test('isRepoRelativeKeyFilePath agrees with specShapedBody on every keyFiles path', () => {

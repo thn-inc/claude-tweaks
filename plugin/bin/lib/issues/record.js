@@ -804,8 +804,8 @@ function parseDependencyAssumptions(body) {
 }
 
 // { header?, currentState, deliverables, acceptanceCriteria?, openQuestion?, filedBy,
-//   provenance?: { origin?, deferReason? }, footer?: string | null, verifiedAsOf?: string }
-//   -> body string.
+//   provenance?: { origin?, deferReason? }, footer?: string | null, verifiedAsOf?: string,
+//   keyFiles?: Array<{ path, change? }> } -> body string.
 // Additive over the original shape: a call passing none of provenance/footer/openQuestion/
 // verifiedAsOf (and a non-empty header) composes byte-identical output — the four health-suite
 // builders are the regression oracle (tests/health-filing-parity.test.js). Exactly one

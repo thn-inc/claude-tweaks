@@ -14,7 +14,7 @@ const {
   recordPayload, specShapedBody, CLASSIFICATION_SCORING, fencedBlock, isRepoRelativeKeyFilePath,
 } = require('../issues/record');
 const { buildRelatedBlocks } = require('../issues/related-blocks');
-const nodePath = require('node:path');
+const path = require('path');
 
 const ASSET_TYPE_LABELS = { skill: 'Skill', rule: 'Rule', 'claude-md': 'CLAUDE.md', 'design-artifact': 'Design Context', memory: 'Memory' };
 const CATEGORY_LABELS = { drift: 'drift', 'template-conformance': 'structure', 'best-practice': 'best-practice' };
@@ -66,6 +66,9 @@ const MAX_PREMISE_ANCHOR_LENGTH = 400;
 // that polarity, with no change needed.
 function buildPremiseCheck(finding, targetPath) {
   if (finding.kind !== 'patch' || !targetPath) return undefined;
+  // specShapedBody rejects a multi-line premiseCheck, so a newline in an LLM-supplied
+  // path would abort the whole validate-findings run; omit the line instead (#2975).
+  if (/\n/.test(targetPath)) return undefined;
   const isRemoval = finding.intent === 'remove';
   const anchor = isRemoval ? finding.oldString : finding.newString;
   if (!anchor || anchor.includes('\n') || anchor.length > MAX_PREMISE_ANCHOR_LENGTH) return undefined;
@@ -149,8 +152,8 @@ function toIssuePayload(finding, verifiedAsOf, pluginVersion, options = {}) {
   // --memory-dir, or a path with a backtick/newline.
   let keyFiles;
   if (!isNewSkill && finding.path && options.repoRoot) {
-    const absolutePath = nodePath.resolve(options.repoRoot, finding.path);
-    const rel = nodePath.relative(options.repoRoot, absolutePath).split(nodePath.sep).join('/');
+    const absolutePath = path.resolve(options.repoRoot, finding.path);
+    const rel = path.relative(options.repoRoot, absolutePath).split(path.sep).join('/');
     if (isRepoRelativeKeyFilePath(rel)) {
       keyFiles = [{ path: rel, change: isRemoval ? 'remove the named content' : 'apply the proposed change' }];
     }
