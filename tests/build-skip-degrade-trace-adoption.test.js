@@ -105,7 +105,7 @@ test('AC1.1: build/dispatch.md states the fold rule — runner checks only; ever
 test('AC3.1: go-red — the fold-rule assertions fail when the fold sentence is removed from dispatch.md', () => {
   const doctored = BUILD_DISPATCH.replace(/A plan task folded into Common Step 5[\s\S]*?(?=Every other step it names)/, '');
   assert.notEqual(doctored, BUILD_DISPATCH, 'doctoring must actually remove the fold sentence');
-  assert.throws(() => assertFoldRule(doctored));
+  assert.throws(() => assertFoldRule(doctored), assert.AssertionError);
 });
 
 test('AC2.1: build/SKILL.md Common Step 5 points at the dispatch.md fold rule, including under batched', () => {
