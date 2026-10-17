@@ -40,6 +40,17 @@ leave this one before creating a new worktree."), so any call site that skips th
 invokes it anyway from inside an existing worktree fails every time it runs under a
 `worktree-always` project (`docs/incident-log.md`).
 
+**Forge-API-only invocations need no worktree.** When every write an invocation makes is a
+forge-API call (`gh issue`/`gh pr`/`gh api`, or their MCP equivalents), lands on a gitignored path
+or the run dir (paths the `worktree-always` gate exempts per `_shared/policy-schema-coverage.md`'s
+gate-coverage block — merely untracked is not exempt), touches only a git ref and never the working tree
+(a `bin/lib` module's ref push), or lands outside the repository (a session temp file), skip this
+whole decision:
+no `EnterWorktree`, no catch-up merge, nothing to tear down — the gate guards repository files and
+none are touched. The carve-out ends at the first working-tree write (a local record file, a design
+doc, a commit): run this section at that point, the way `/claude-tweaks:tidy` provisions Step 7.5's
+scratch worktree only for Step 7's mutations. Each qualifying skill states its own exceptions.
+
 **Already isolated:** do not call `EnterWorktree(name=...)` — it will refuse. First run a
 clean-tree precondition check: `git status --porcelain`. Non-empty (dirty) → do not adopt; fall
 through to **Not isolated** below, but via `ExitWorktree(action: "keep")` first (leave the dirty
@@ -108,6 +119,9 @@ still needs a worktree.
 
 ## Post-creation catch-up
 
+An invocation Adopt-or-create's forge-API-only carve-out covers never reaches this section — it
+creates no worktree, so there is no catch-up merge to run or later discard.
+
 For the rest of this session's lifetime inside the new worktree, the harness's Bash-shape guard
 stays in effect (see the "## 7. Shell constraint" pointer above) — default to one plain command
 per call rather than rediscovering the boundary through refusals; see `docs/donts.md` for the
@@ -116,8 +130,19 @@ gets refused. Diagnosing the *main checkout's* state from inside this worktree s
 same guard — `git -C <main-checkout> ...` is refused as git-adjacent and too complex to verify;
 use plain filesystem reads (`ls`, `cat`) against the main checkout's path instead (`docs/donts.md`).
 
+**Resolve plugin-supplied values to literals once.** `CLAUDE_PLUGIN_ROOT` is not
+set in the Bash tool environment, and inside a worktree session the same guard
+refuses a command that passes `"${CLAUDE_PLUGIN_ROOT}"` or `"$CLAUDE_CODE_SESSION_ID"`
+as a runtime value (`_shared/scratch-worktree.md` §7's runtime-computed-variable
+entries). The first time a later command needs either value, resolve it once: the
+plugin root is the invoking claude-tweaks skill's `Base directory for this skill:`
+line minus its trailing `skills/{name}` (no Skill invocation — the read file's own
+path, cut before its `skills/` segment); the session id is one plain `printenv
+CLAUDE_CODE_SESSION_ID` call. Substitute both as literal paths/strings into every
+later command, and into any prompt handed to a subagent.
+
 Unconditionally, before anything else runs in the new worktree — as two separate single-command
-Bash calls, per the shell constraint just above; never combined into one:
+Bash calls, per the shell constraint two paragraphs above; never combined into one:
 
 ```bash
 git fetch origin {integration-branch}

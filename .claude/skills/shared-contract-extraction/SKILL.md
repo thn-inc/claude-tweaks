@@ -47,6 +47,7 @@ The steps above describe a first extraction. The shape this repo now runs more o
   mutation M4, an added "on `web`, Layer 3 must also match" line, passed all 9 original tests. Fixed in `7020bc28e`, pinned by
   `tests/visual-review-recommendation-surface-gate.test.js`'s "a declared web/mobile/desktop surface is enough without a
   Layer 3 match".
+- **A carve-out that delegates its exceptions to consumers owes one exception list per posture, not per file.** When the contract grants an exemption and says each consumer states its own exceptions (`_shared/worktree-setup.md`'s "Forge-API-only invocations need no worktree"), enumerate every write each posture the citing file runs actually makes before writing its note — one file can host several postures with different write sets. #2727's first `backlog/refine-headless.md` note claimed the carve-out covered "the whole firing", but that file also runs the labeling lanes, which inherit `refine-mode.md`'s `facets.unsynced === true` and `local-files` `writeRecord` exceptions; `refine-mode.md`'s note listed only Step 5's writes, missing the session temp files and the `health-state` ref `merge-lane-breaker.js` pushes. Review caught both (`b65a38b0d`), and the pinning test's description (`tests/worktree-forge-api-carve-out.test.js`'s `'…whole firing is covered…'`) kept the retired claim after the note was narrowed — sweep it with the note.
 
 ## Variant: consolidating runtime sidecar files, not prose
 
