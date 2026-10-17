@@ -6,7 +6,7 @@ argument-hint: "[#<n>|<design-doc-path>|<topic>] [subagent|batched] [auto] [work
 
 # Build — Implement a spec end-to-end with worktree, plan audit, and lifecycle tracking
 
-Implement a spec or design doc end-to-end: plan it, build it, simplify it, verify it, and capture the journeys it enables. Part of the workflow lifecycle:
+Implement a spec or design doc end-to-end: plan it, build it, simplify it, capture the journeys it enables, and verify it. Part of the workflow lifecycle:
 
 ```
 /claude-tweaks:init → /claude-tweaks:capture → /superpowers:brainstorming → /claude-tweaks:specify → [ /claude-tweaks:build ] → /claude-tweaks:stories → /claude-tweaks:test → /claude-tweaks:review → /claude-tweaks:wrap-up
@@ -230,7 +230,7 @@ If the execution skill (or `/superpowers:writing-plans` in Step 3) fails, read `
 
 ### Common Steps 3 + 4.5: Simplification and Alignment
 
-Common Step 3 (Code Simplification) and Common Step 4.5 (Architecture Alignment Check) operate on independent concerns, but both can independently commit (Step 3's simplifier changes; Step 4.5's Beneficial-classification spec updates) — running them concurrently risks the same shared-worktree git-index race CLAUDE.md's own Don'ts section warns against (a `git add`/`git commit` from one step sweeping in the other's concurrently-staged files). Run them sequentially instead: complete Common Step 3 (including its own commit, if any) before starting Common Step 4.5. Common Step 5 (Final Verification) gates after both are done.
+Common Step 3 (Code Simplification) and Common Step 4.5 (Architecture Alignment Check) operate on independent concerns, but both can independently commit (Step 3's simplifier changes; Step 4.5's Beneficial-classification spec updates) — running them concurrently risks the same shared-worktree git-index race CLAUDE.md's own Don'ts section warns against (a `git add`/`git commit` from one step sweeping in the other's concurrently-staged files). Run them sequentially instead: complete Common Step 3 (including its own commit, if any) before starting Common Step 4.5. Common Steps 6 and 6.5, then Common Step 5 (Final Verification), follow once both are done.
 
 ### Common Step 3: Code Simplification
 
@@ -285,7 +285,7 @@ After Common Steps 6 and 6.5, so the verified tree is the final one (journeys an
 
 **Note:** `/build` always runs verification (it is the *producer* of `VERIFICATION_PASSED` and of the runner-written pass stamp, #1921). The skip-if-recent rule in `test/verification.md` applies only to `/test` callers — never to this step. On a pass (runner exit 0 — a baseline-adjudicated pass included), read `VERIFICATION_SHA` from `report.json`'s `sha` and pass it forward with `VERIFICATION_PASSED=true`, so `/test`'s skip-if-recent check can detect a tree change between this step and its own invocation instead of trusting a bare boolean.
 
-If anything fails, fix it and commit the fix. If a fix changes behavior, re-check any journey or doc Common Steps 6/6.5 wrote that the fix now contradicts. **When a failure is a behavioral bug — not a mechanical type/lint error — follow the reproduce-first discipline in `_shared/reproduce-first-discipline.md` before changing code** (reproduce on command, fix the confirmed cause, escalate rather than guess if it can't be reproduced; once green, walk the causal-depth chain per the discipline's step 3) — see `failure-recovery.md` for the fuller recovery table this step falls back to.
+If anything fails, fix it and commit the fix. If a fix changes behavior, re-check, before re-running verification, any journey or doc Common Steps 6/6.5 wrote that the fix now contradicts. **When a failure is a behavioral bug — not a mechanical type/lint error — follow the reproduce-first discipline in `_shared/reproduce-first-discipline.md` before changing code** (reproduce on command, fix the confirmed cause, escalate rather than guess if it can't be reproduced; once green, walk the causal-depth chain per the discipline's step 3) — see `failure-recovery.md` for the fuller recovery table this step falls back to.
 
 ### Common Step 5.5: Operational Checklist
 
