@@ -70,3 +70,30 @@ test('Section E names the current-branch header read (no worktree, item 4 never 
   const flat = collapse(read('plugin/skills/wrap-up/cleanup-procedures-execution.md'));
   assert.match(flat, /`current-branch` run has no worktree and item 4 never runs, so the run dir's own `work\/\{issue\}-spec\.md` holds the header/);
 });
+
+// Corpus-wide: no file under plugin/skills/wrap-up/ reads the main-checkout run dir's work/.
+const WRAPUP_DIR = 'plugin/skills/wrap-up';
+const WRAPUP_FILES = fs.readdirSync(path.join(ROOT, WRAPUP_DIR)).filter((f) => f.endsWith('.md'));
+
+test('the wrap-up corpus is non-empty (the sweep below is not vacuous)', () => {
+  assert.ok(WRAPUP_FILES.length > 10, `only ${WRAPUP_FILES.length} files found under ${WRAPUP_DIR}`);
+});
+
+for (const name of WRAPUP_FILES) {
+  test(`${WRAPUP_DIR}/${name} has no main-checkout work/ read`, () => {
+    assert.deepStrictEqual(globHits(read(`${WRAPUP_DIR}/${name}`)), []);
+  });
+}
+
+test('Review Console step 11 always records issues from inputs.records (Ruling R3)', () => {
+  const flat = collapse(read('plugin/skills/wrap-up/review-console.md'));
+  const start = flat.indexOf('11. Write `verify-expectations.json`');
+  assert.ok(start !== -1, 'step 11 anchor vanished');
+  const step11 = flat.slice(start, start + 2500);
+  assert.match(step11, /`issues` array of this run's record number\(s\) — `\{run-dir\}\/wrap-up-pack\.json`'s `inputs\.records`/);
+  assert.doesNotMatch(step11, /omit `issues` entirely/);
+});
+
+test('the auto-merge short-circuit applicability reads inputs.records', () => {
+  assert.match(collapse(read('plugin/skills/wrap-up/auto-merge-short-circuit.md')), /wrap-up-pack\.json`'s `inputs\.records` is non-empty/);
+});
