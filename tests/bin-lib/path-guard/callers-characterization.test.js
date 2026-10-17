@@ -91,3 +91,52 @@ test('transcript: readDispatches reads a directory-typed agent entry as before (
   assert.equal(r.items.length, 1);
   assert.equal(r.items[0].notFound, 'meta not found; transcript not readable (EISDIR)');
 });
+
+// ---- installed-plugins.js ---------------------------------------------------
+
+const { selectEntry, safeRealpath } = require('../../../plugin/bin/lib/installed-plugins');
+
+const ident = (p) => p;
+const entryAt = (projectPath, tag) => ({ scope: 'project', projectPath, tag });
+
+test('installed-plugins: safeRealpath returns the input when the injected realpath throws', () => {
+  const boom = () => { throw Object.assign(new Error('gone'), { code: 'ENOENT' }); };
+  assert.equal(safeRealpath('/stale/project', { realpath: boom }), '/stale/project');
+  assert.equal(safeRealpath('/a/b', { realpath: () => '/real/b' }), '/real/b');
+});
+
+test('installed-plugins: a stale projectPath whose realpath fails still compares lexically', () => {
+  const boom = () => { throw new Error('gone'); };
+  const e = entryAt('/stale', 'stale');
+  assert.equal(selectEntry([e], '/stale/sub', { realpath: boom }), e);
+  assert.equal(selectEntry([e], '/other', { realpath: boom }), null);
+});
+
+test('installed-plugins: ancestor, self, longest-wins, sibling-prefix and parent are decided as before', () => {
+  const outer = entryAt('/work', 'outer');
+  const inner = entryAt('/work/app', 'inner');
+  const deps = { realpath: ident };
+  assert.equal(selectEntry([outer, inner], '/work/app/src', deps), inner);
+  assert.equal(selectEntry([inner, outer], '/work/app', deps), inner);
+  assert.equal(selectEntry([outer], '/work', deps), outer);
+  assert.equal(selectEntry([inner], '/work', deps), null, 'a descendant projectPath does not contain its parent');
+  assert.equal(selectEntry([inner], '/work/app-two', deps), null, 'a sibling that shares a name prefix is not contained');
+});
+
+test('installed-plugins: excludeHome skips an entry at the realpathed home, and the user-scope entry is the fallback', () => {
+  const home = entryAt('/home/u', 'home');
+  const user = { scope: 'user', tag: 'user' };
+  const deps = { realpath: ident, homedir: () => '/home/u' };
+  assert.equal(selectEntry([home, user], '/home/u/proj', deps, { excludeHome: true }), user);
+  assert.equal(selectEntry([home, user], '/home/u/proj', deps), home);
+});
+
+// The one intended difference of the #3417 migration: the old inline test
+// treated any relative path starting with '..' as outside the candidate, so a
+// session path whose first component under the candidate is named '..foo' was
+// wrongly excluded. isAncestorOrSelf matches '..' as a whole component only.
+test('installed-plugins: a child component named like "..foo" counts as contained (#3417)', () => {
+  const outer = entryAt('/work', 'outer');
+  assert.equal(selectEntry([outer], '/work/..foo/src', { realpath: ident }), outer);
+  assert.equal(selectEntry([outer], '/other/..foo', { realpath: ident }), null);
+});
