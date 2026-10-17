@@ -97,6 +97,14 @@ test('Review Console step 11 always records issues from inputs.records (Ruling R
   const step11 = flat.slice(start, start + 2500);
   assert.match(step11, /`issues` array of this run's record number\(s\) — `\{run-dir\}\/wrap-up-pack\.json`'s `inputs\.records`/);
   assert.doesNotMatch(step11, /omit `issues` entirely/);
+  assert.match(step11, /Under Approve all: `printf '%s' '\{"memory":\[\.\.\.\],"upstream":\[\.\.\.\],"issues":\[\.\.\.\],"ledger":\[\.\.\.\]\}'/);
+  const approveStart = step11.indexOf('Under Approve all:');
+  const approveEnd = step11.indexOf('On any other resolution path');
+  assert.ok(approveStart !== -1, 'Approve-all anchor vanished');
+  assert.ok(approveEnd > approveStart, 'other-resolution-path anchor vanished');
+  const approveSentence = step11.slice(approveStart, approveEnd);
+  assert.match(approveSentence, /`issues` .*sourced exactly as/);
+  assert.match(approveSentence, /omitted when no record resolves/);
 });
 
 test('the auto-merge short-circuit applicability reads inputs.records', () => {
