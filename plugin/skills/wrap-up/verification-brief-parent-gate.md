@@ -41,13 +41,15 @@ Every step from **Enumerate the parent's sub-issues** onward is shared, unchange
 `incomplete`, `gated`/`resolved`, `exceeds: false`, or `exceeds: true` after **Apply the gate** —
 returns to `verification-brief.md`'s **Posting it alone** and posts this sub-issue's Try it block
 (with any end-to-end variant appended to `"$TRY_IT"`). The one exception is the fail-open fallback
-below, which runs Steps 1-4 on this record and so embeds the block in its own brief (Step 4's
-template). The parent-side (`/claude-tweaks:tidy`) entry does not post one.
+below, which hands this record to the no-parent path, so the block lands where that path's
+Oversight-floor gate puts it: embedded in the record's own brief (Step 4's template) when it clears
+the floor, posted alone (**Posting it alone**) when it does not. The parent-side
+(`/claude-tweaks:tidy`) entry does not post one.
 
 **Fail open on every `gh` call in this section.** If `gh` is unavailable, unauthenticated, the
 repo has no GitHub remote, or any parent-gate `gh` call below fails: a **sub-issue-side** entry
-skips the Parent-Gate Procedure entirely and falls back to today's behavior (apply `demo:pending`
-to this record itself via Steps 1-4 in `verification-brief.md`) — never blocking the wrap-up, the
+skips the Parent-Gate Procedure entirely and falls back to the no-parent path (`verification-brief.md`'s
+Oversight-floor gate, then Steps 1-4 on this record itself when it clears the floor) — never blocking the wrap-up, the
 auto-merge short-circuit, or the dispatched group's merge gate. The **parent-side** entry skips
 this one parent for this run, leaving its `[parent-gate]` finding surfaced and unmutated — never
 failing the whole `/tidy` run over one parent's `gh` call. This paragraph is moot under

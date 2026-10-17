@@ -18,7 +18,7 @@ Observation plan` / `### Try it`):
   manual checks), described plainly, including what wasn't checked — not a checklist pretending
   completeness.
 - **Observation plan** — compose the `### Observation plan` section directly from recall, per
-  `../_shared/observation-plan.md`'s schema, grammar, and per-kind semantics — picking the
+  `_shared/observation-plan.md`'s schema, grammar, and per-kind semantics — picking the
   Surface kind by builder judgment from what this session actually did, never from a classifier.
   First recall which paths this unit of work actually touched this session — unlike the
   record-backed path there is no `{base}...HEAD` range to diff here (session-recall work rarely
@@ -151,9 +151,9 @@ same shape as the no-arguments path, sourced like this:
   checked, never a checklist pretending completeness.
 - **Observation plan** — run the commit's changed-path list through `verificationSurface`
   (`bin/lib/issues/acceptance.js`) as the floor classification, then compose the `### Observation
-  plan` section per `../_shared/observation-plan.md`'s schema from what it returns: `interactive`
+  plan` section per `_shared/observation-plan.md`'s schema from what it returns: `interactive`
   → compose a best-effort `app-route` plan, resolving the entry point via
-  `skills/_shared/dev-url-detection.md`. `non-interactive` → compose the manual steps exactly as
+  `_shared/dev-url-detection.md`. `non-interactive` → compose the manual steps exactly as
   before — concrete commands, file paths, or behavior the commit's own message or path list
   evidences — presented as a `cli` plan when those steps name a runnable command, else a `diff`
   plan (Entry point: `{sha}^..{sha}`). That changed-path list is a real `git` result here, so the
