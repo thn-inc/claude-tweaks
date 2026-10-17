@@ -395,6 +395,31 @@ test('claim-log-only decisions.md beside a non-empty events.jsonl is still case 
   assert.strictEqual(withConfig.hasOtherContent, false);
 });
 
+// Ledger row 1: a sibling session's fallback-attributed skill_invoked write
+// landing in a freshly minted dir's events.jsonl must not flip adoption to
+// case 3 on its own.
+test('events.jsonl holding only fallback-attributed lines does not count as other-run content → case 2 (ledger row 1)', () => {
+  const fallbackOnly = '{"type":"skill_invoked","skill":"claude-tweaks:build","ts":"2026-09-06T12:01:00.000Z","attribution":"fallback"}\n';
+  const { fx, a } = adoptionFor(null, { 'events.jsonl': fallbackOnly });
+  assert.strictEqual(a.case, 2, `expected case 2, got case ${a.case}`);
+  assert.strictEqual(a.hasOtherContent, false);
+  assert.strictEqual(a.note, ADOPTION_NOTES[2].replace('{path}', fs.realpathSync(fx.runDir)));
+});
+
+test('events.jsonl mixing a fallback-attributed line with one non-fallback line still counts as other-run content → case 3 (unchanged)', () => {
+  const mixed = '{"type":"skill_invoked","skill":"claude-tweaks:build","ts":"2026-09-06T12:01:00.000Z","attribution":"fallback"}\n'
+    + '{"type":"skill_invoked","skill":"claude-tweaks:test","ts":"2026-09-06T12:02:00.000Z"}\n';
+  const { a } = adoptionFor(null, { 'events.jsonl': mixed });
+  assert.strictEqual(a.case, 3, `expected case 3, got case ${a.case}`);
+  assert.strictEqual(a.hasOtherContent, true);
+});
+
+test('an unparseable events.jsonl line counts as other-run content → case 3 (fail toward the cautious case)', () => {
+  const { a } = adoptionFor(null, { 'events.jsonl': 'not json\n' });
+  assert.strictEqual(a.case, 3, `expected case 3, got case ${a.case}`);
+  assert.strictEqual(a.hasOtherContent, true);
+});
+
 test('AC 2: dispatched call 1 (dispatched: true, no pr, no config) with Step 1.8 ledger line → case 2', () => {
   const fx = mainRoot();
   fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), CLAIM_AND_LEDGER);
