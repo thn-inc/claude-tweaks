@@ -49,7 +49,7 @@ test('tidy/scan-procedures.md does not grow past its pre-#2257 byte count (AC6)'
   const size = byteSize('plugin', 'skills', 'tidy', 'scan-procedures.md');
   assert.ok(
     size <= SCAN_PROCEDURES_BASELINE,
-    `tidy/scan-procedures.md is ${size} bytes, over its ${SCAN_PROCEDURES_BASELINE}-byte pre-#2257 baseline — this file is already past the 40 KB warning tier (docs/plugin-structure.md), so a later edit must trim elsewhere to stay net-zero-or-shrink, not silently grow it further`,
+    `tidy/scan-procedures.md is ${size} bytes, over its ${SCAN_PROCEDURES_BASELINE}-byte pre-#2257 baseline — this file is already large, so a later edit must trim elsewhere to stay net-zero-or-shrink, not silently grow it further`,
   );
 });
 

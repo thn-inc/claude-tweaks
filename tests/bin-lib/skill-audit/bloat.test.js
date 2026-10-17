@@ -37,7 +37,7 @@ const skillWith = (rows) => [
 
 const SHORT_ROW = '| Skipping the test gate | `TEST_PASSED=true` is the contract |';
 
-// ── Signal 2: over-long rows ────────────────────────────────────────────────
+// ── Signal 1: over-long rows ────────────────────────────────────────────────
 
 test('median handles both parities', () => {
   assert.strictEqual(median([1, 2, 3]), 2);
@@ -101,7 +101,7 @@ test('no baseline means no over-long-row findings, not zero findings by accident
   assert.deepStrictEqual(overLongRows(skillWith([inflated]), null), []);
 });
 
-// ── Signal 3: provenance narration ──────────────────────────────────────────
+// ── Signal 2: provenance narration ──────────────────────────────────────────
 //
 // Each case pairs the bloat form with a legitimate counterexample taken from
 // this repo's own prose. The counterexample is the point: single-word patterns
@@ -178,7 +178,7 @@ test('does not flag /build\'s legitimate "pre-existing behavior" instructions', 
   );
 });
 
-// ── Signal 4: degenerate tables ─────────────────────────────────────────────
+// ── Signal 3: degenerate tables ─────────────────────────────────────────────
 
 test('extractTables separates header from body and drops separator rows', () => {
   const tables = extractTables(skillWith([SHORT_ROW, SHORT_ROW]));
@@ -275,7 +275,7 @@ test('bloatReport reports only the target and dedupes it out of its own corpus',
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// ── Signal 5: size outliers ────────────────────────────────────────────────
+// ── Signal 4: size outliers ────────────────────────────────────────────────
 
 test('size outlier: p95 tier baseline with 20 files', () => {
   const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'size-'));
