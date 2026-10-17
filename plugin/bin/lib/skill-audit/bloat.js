@@ -102,8 +102,8 @@ function corpusSizeBaseline(files) {
   const sizes = files.map((f) => f.bytes);
   const sample = sizes.length;
   if (sample >= SIZE_PERCENTILE_MIN_SAMPLE) {
-    // Nearest-rank p95, floored at the small-corpus tier's 3x median: a
-    // uniform corpus flags nothing, and the 19->20-file edge cannot flip a
+    // Nearest-rank p95, floored at the small-corpus tier's 3× median: a
+    // uniform corpus flags nothing, and the 19→20-file edge cannot flip a
     // verdict (#3305 F1)
     const sorted = [...sizes].sort((a, b) => a - b);
     const p95 = sorted[Math.ceil(SIZE_OUTLIER_PERCENTILE * sample) - 1];

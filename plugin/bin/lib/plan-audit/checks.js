@@ -407,13 +407,13 @@ function isGovernedMdPath(relPath) {
 // call site under `<repoRoot>/plugin` whose `sources` intersect this plan's
 // touched governed entries, report the composed max across every combination
 // the sources branch on, alongside `ceiling` (the Read-limit rail,
-// `RAIL_BYTES` — no per-step exceptions) and `over` — regardless of which spec in a
-// multi-spec run happens to touch which source first, since the intersection
-// test is against the call site's full source list, not just the one entry
-// that triggered it. A missing `plugin/` dir (the documented no-corpus case
-// — a repo with governed paths but no payload subtree) or an unparsed
-// call-site row (no `sources` to intersect against — parsing never reached a
-// source list) never throws and contributes no composed row.
+// `RAIL_BYTES` — no per-step exceptions) and `over` — regardless of which
+// spec in a multi-spec run happens to touch which source first, since the
+// intersection test is against the call site's full source list, not just
+// the one entry that triggered it. A missing `plugin/` dir (the documented
+// no-corpus case — a repo with governed paths but no payload subtree) or an
+// unparsed call-site row (no `sources` to intersect against — parsing never
+// reached a source list) never throws and contributes no composed row.
 //
 // A row that DOES have `sources` but also carries `error` (missing source,
 // unreadable source, malformed marker — #1997) is a call site this plan
@@ -453,13 +453,12 @@ function composedHeadroom(governedPaths, repoRoot, { report = composedBytesRepor
       });
       continue;
     }
-    const ceiling = RAIL_BYTES;
-    const over = Math.max(0, row.max - ceiling);
+    const over = Math.max(0, row.max - RAIL_BYTES);
     const entry = {
-      step: row.step, file: row.file, line: row.line, max: row.max, ceiling, over,
+      step: row.step, file: row.file, line: row.line, max: row.max, ceiling: RAIL_BYTES, over,
     };
     composed.push(entry);
-    if (over === 0 && row.max >= ceiling * 0.9) composedNearCeiling.push(entry);
+    if (over === 0 && row.max >= RAIL_BYTES * 0.9) composedNearCeiling.push(entry);
   }
   return { composed, composedNearCeiling, composedErrors };
 }
