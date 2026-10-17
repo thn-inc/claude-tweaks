@@ -55,7 +55,7 @@ files:
   - The run is in `auto` even when the project sets `auto-mode: default-off`: both of dispatch's Task-call commands end their step list with `auto` (`… build,test auto`, `… review,polish,wrap-up auto`), and an explicit mode argument outranks the policy. Without it, `/flow` Step 1's dispatch-binding rung (#3372) still resolves the run to `auto`, because its `run-state.json` carries `dispatched: true`.
 - **Red flags:**
   - a Step 3 that writes `config.yml` somewhere other than `$GROUP_RUN_DIR`, such as a worktree-local shadow. The gate keeps denying in that case, and the fix belongs in run-dir anchoring, not here;
-  - a dispatched call that still resolves to `interactive`. Only an explicit `interactive` token can do that now (#3372); it skips the Manifesto, and every commit stays denied.
+  - a dispatched call that still resolves to `interactive`. Now only an explicit `interactive` token, or a call that also lost `PIPELINE_RUN_DIR`, can do that (#3372); it skips the Manifesto, and every commit stays denied.
 
 ### 5. Retry the same commit — same agent
 - **URL:** the exact command from Step 2

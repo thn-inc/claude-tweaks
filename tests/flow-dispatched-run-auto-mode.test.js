@@ -8,10 +8,12 @@
 // (skill-prose-conformance-tests' declared-contract carve-out). Synthetic fixtures prove the
 // extractors can go red.
 
-const { test } = require('node:test');
+const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
+const { execFileSync } = require('node:child_process');
 
 function read(...parts) {
   return fs.readFileSync(path.join(__dirname, '..', ...parts), 'utf8').replace(/\r\n/g, '\n');
@@ -128,7 +130,7 @@ test('auto-mode-contract.md interactive row and Default note state the dispatche
   assert.match(row, /an explicit `interactive` arg still wins/);
   const notes = text.split('\n').filter((l) => l.startsWith('**Default note:**'));
   assert.strictEqual(notes.length, 1, 'expected exactly one **Default note:** line');
-  assert.match(notes[0], /`default-off`/);
+  assert.match(notes[0], /Exception \(#3372\): `default-off` does not lower/);
   assert.match(notes[0], /`dispatched: true`/);
   assert.match(notes[0], /an explicit mode keyword still outranks the binding/);
 });
@@ -143,4 +145,86 @@ test('policy-schema.md auto-mode meaning cell states the exception', () => {
   const meaning = row.split(/(?<!\\)\|/)[5];
   assert.match(meaning, /`dispatched: true`/);
   assert.match(meaning, /`default-off`\s*→\s*`interactive`/);
+});
+
+// --- The rung's `node -e` one-liner, extracted from the live prose and executed ---
+
+const SNIPPET_RE = /`node -e '([^']+)' "\$\{CLAUDE_PLUGIN_ROOT\}" "\$PIPELINE_RUN_DIR"`/;
+
+// The JS between `node -e '` and `' "${CLAUDE_PLUGIN_ROOT}" "$PIPELINE_RUN_DIR"` in rung 2. Fails
+// loudly when the span is absent so a reworded rung cannot turn the run tests into silent no-ops.
+function rungSnippet(rung2Text) {
+  const m = rung2Text.match(SNIPPET_RE);
+  assert.ok(m, 'rung 2 no longer carries the node -e span ending in "${CLAUDE_PLUGIN_ROOT}" "$PIPELINE_RUN_DIR"');
+  return m[1];
+}
+
+function liveSnippet() {
+  const rung2 = rungs(step1(read('plugin', 'skills', 'flow', 'SKILL.md'))).find((r) => r.n === '2');
+  assert.ok(rung2, 'no rung 2 in Step 1 mode resolution');
+  return rungSnippet(rung2.text);
+}
+
+test('synthetic: the snippet extractor fails on a rung with no one-liner and returns the JS otherwise', () => {
+  assert.throws(() => rungSnippet('**Dispatch binding → `auto`** (#3372). Reworded.'), /no longer carries/);
+  const ok = 'x `node -e \'console.log(1)\' "${CLAUDE_PLUGIN_ROOT}" "$PIPELINE_RUN_DIR"` y';
+  assert.strictEqual(rungSnippet(ok), 'console.log(1)');
+});
+
+const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
+
+function git(cwd, ...args) {
+  return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd, stdio: 'pipe' });
+}
+
+let tmp;
+let mainCheckout;
+let linkedWorktree;
+let seq = 0;
+
+before(() => {
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-dispatch-rung-'));
+  mainCheckout = path.join(tmp, 'main');
+  linkedWorktree = path.join(tmp, 'linked');
+  fs.mkdirSync(mainCheckout);
+  git(mainCheckout, 'init', '-q');
+  fs.writeFileSync(path.join(mainCheckout, 'f.txt'), 'x\n');
+  git(mainCheckout, 'add', 'f.txt');
+  git(mainCheckout, 'commit', '-q', '-m', 'init');
+  git(mainCheckout, 'worktree', 'add', '-q', '-b', 'wt', linkedWorktree);
+});
+
+after(() => {
+  if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+// A run dir under `<root>/.claude-tweaks/pipelines/`; `state` is the run-state.json text, or null for none.
+function runDir(root, state) {
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', `2026-10-17T00000${seq++}-case`);
+  fs.mkdirSync(dir, { recursive: true });
+  if (state !== null) fs.writeFileSync(path.join(dir, 'run-state.json'), state);
+  return dir;
+}
+
+function runSnippet(dir, cwd) {
+  return execFileSync(process.execPath, ['-e', liveSnippet(), PLUGIN_ROOT, dir], { cwd, encoding: 'utf8', stdio: 'pipe' });
+}
+
+test('rung 2 snippet prints `dispatched` for an anchored dispatched run dir', () => {
+  const dir = runDir(mainCheckout, '{"dispatched":true}');
+  assert.strictEqual(runSnippet(dir, linkedWorktree), 'dispatched\n');
+  assert.strictEqual(runSnippet(dir, mainCheckout), 'dispatched\n');
+});
+
+test('rung 2 snippet prints nothing for a worktree-local shadow run dir carrying dispatched: true', () => {
+  const dir = runDir(linkedWorktree, '{"dispatched":true}');
+  assert.strictEqual(runSnippet(dir, linkedWorktree), '');
+});
+
+test('rung 2 snippet prints nothing for a non-dispatched, unparseable, missing, or empty run state', () => {
+  assert.strictEqual(runSnippet(runDir(mainCheckout, '{"dispatched":false}'), linkedWorktree), '', 'dispatched: false');
+  assert.strictEqual(runSnippet(runDir(mainCheckout, '{"dispatched":"true"}'), linkedWorktree), '', 'dispatched: "true" string');
+  assert.strictEqual(runSnippet(runDir(mainCheckout, '{not json'), linkedWorktree), '', 'unparseable run-state.json');
+  assert.strictEqual(runSnippet(runDir(mainCheckout, null), linkedWorktree), '', 'missing run-state.json');
+  assert.strictEqual(runSnippet('', linkedWorktree), '', 'empty PIPELINE_RUN_DIR');
 });
