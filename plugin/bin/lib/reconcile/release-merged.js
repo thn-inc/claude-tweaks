@@ -446,7 +446,7 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
     // the `!isActive` cache-write above draws for exactly the same reason.
     candidates.push({
       issueNumber, runId, name: entry.name, sha: claim.sha, classifiedState: classified.state, prState: null, joinFailure, branch, prNumber, runDir,
-      mergeCommitMessage: undefined, closesIssue: undefined,
+      closesIssue: undefined,
     });
   }
 
@@ -520,9 +520,9 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
   const commitByIssue = resultsByIssue(needCommit, commitReads);
   for (const c of candidates) {
     const r = commitByIssue.get(c.issueNumber);
-    c.mergeCommitMessage = r && typeof r === 'object' && !r.failure && typeof r.stdout === 'string' ? r.stdout : undefined;
+    const mergeCommitMessage = r && typeof r === 'object' && !r.failure && typeof r.stdout === 'string' ? r.stdout : undefined;
     c.closesIssue = isMerged(c)
-      ? prClosesIssue(c.prState, c.issueNumber, repoSlug, c.mergeCommitMessage)
+      ? prClosesIssue(c.prState, c.issueNumber, repoSlug, mergeCommitMessage)
       : undefined;
   }
 

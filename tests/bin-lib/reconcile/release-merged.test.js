@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
-  decideRelease, releasedEntry, writeTombstone, releaseMerged, shouldSkipClaimRead, prClosesIssue,
+  decideRelease, releasedEntry, writeTombstone, releaseMerged, shouldSkipClaimRead, prClosesIssue, needsIssueEvidence,
 } = require('../../../plugin/bin/lib/reconcile/release-merged');
 const { readCache, writeCache } = require('../../../plugin/bin/lib/reconcile/cache');
 const { GRANT_LABELS } = require('../../../plugin/bin/lib/release-claim/release');
@@ -44,7 +44,6 @@ test('decideRelease: merged PR that closes the issue releases regardless of issu
   assert.strictEqual(decideRelease('live', { number: 7, state: 'MERGED' }, 'OPEN', true).action, 'release');
 });
 
-const { needsIssueEvidence } = require('../../../plugin/bin/lib/reconcile/release-merged');
 const merged = { number: 3348, state: 'MERGED' };
 
 test('decideRelease: AC1.1 live claim + MERGED PR not closing the issue + open issue -> skip pr-merged-not-closing', () => {
