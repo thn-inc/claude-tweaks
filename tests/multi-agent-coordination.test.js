@@ -316,23 +316,21 @@ const WIDE_SAME_A = 'result.id is read inside the multi-line createIssue call ar
 const WIDE_SAME_B = 'result.id read inside the multi-line createIssue argument after the external gh api side effect — a throw from the side effect skips the read and the error is swallowed';
 // A different issue inside the same statement.
 const WIDE_DIFFERENT = 'The labels array passed to createIssue is not deduplicated, so a repeated label produces a 422 from the API';
-// The same issue, loosely worded: clears SUBSTANCE_SIMILARITY_MIN but not the wide floor.
+// loosely worded; clears the substance threshold.
 const LOOSE_A = 'Error from the gh api call is swallowed because the catch returns null without logging';
 const LOOSE_B = 'The catch block around the gh api call returns null and drops the error silently';
 
 test('reproduction (#2955): wide-band constants are exported with their own names and the calibrated values', () => {
   assert.strictEqual(c.LINE_TOLERANCE_REPRODUCTION_WIDE, 5);
-  assert.strictEqual(c.SUBSTANCE_SIMILARITY_WIDE_MIN, 0.6);
   assert.ok(c.LINE_TOLERANCE_REPRODUCTION_WIDE > c.LINE_TOLERANCE_REPRODUCTION);
-  assert.ok(c.SUBSTANCE_SIMILARITY_WIDE_MIN > c.SUBSTANCE_SIMILARITY_MIN);
 });
 
-test('reproduction (#2955): calibration fixtures sit on the intended side of the wide floor', () => {
+test('reproduction (#2955): calibration fixtures sit on the intended side of the substance threshold', () => {
   const at = (text, line) => c.normalizeFinding({ path: 'src/run.js', line, text });
-  assert.ok(c.substanceSimilarity(at(WIDE_SAME_A, 120), at(WIDE_SAME_B, 123)) >= c.SUBSTANCE_SIMILARITY_WIDE_MIN);
+  assert.ok(c.substanceSimilarity(at(WIDE_SAME_A, 120), at(WIDE_SAME_B, 123)) >= c.SUBSTANCE_SIMILARITY_MIN);
   assert.ok(c.substanceSimilarity(at(WIDE_SAME_A, 120), at(WIDE_DIFFERENT, 123)) < c.SUBSTANCE_SIMILARITY_MIN);
   const loose = c.substanceSimilarity(at(LOOSE_A, 120), at(LOOSE_B, 123));
-  assert.ok(loose >= c.SUBSTANCE_SIMILARITY_MIN && loose < c.SUBSTANCE_SIMILARITY_WIDE_MIN, `loose pair scored ${loose}`);
+  assert.ok(loose >= c.SUBSTANCE_SIMILARITY_MIN, `loose pair scored ${loose}`);
 });
 
 test('AC1.1 AC1.2 reproduction (#2955): same path, 3 lines apart, near-identical text, same bucket → one confirmed, zero unconfirmed', () => {
@@ -373,13 +371,13 @@ test('reproduction (#2955): band edges — 5 lines apart confirms, 6 lines apart
   assert.strictEqual(atSix.unconfirmed.length, 2);
 });
 
-test('reproduction (#2955): loose same-issue pair confirms within ±2 but not at 3 lines (±2 path unchanged)', () => {
+test('reproduction (#2955): loose same-issue pair confirms within ±2 and at 3 lines (#3418: one threshold across the band)', () => {
   const a = [{ path: 'src/run.js', line: 120, severity: 'low', text: LOOSE_A }];
   const near = c.categoriseReproduction(a, [{ path: 'src/run.js', line: 122, severity: 'low', text: LOOSE_B }]);
   assert.strictEqual(near.confirmed.length, 1);
   const wide = c.categoriseReproduction(a, [{ path: 'src/run.js', line: 123, severity: 'low', text: LOOSE_B }]);
-  assert.strictEqual(wide.confirmed.length, 0);
-  assert.strictEqual(wide.unconfirmed.length, 2);
+  assert.strictEqual(wide.confirmed.length, 1);
+  assert.strictEqual(wide.unconfirmed.length, 0);
 });
 
 test('reproduction (#2955): mixed — different-substance neighbour within ±2 plus a same-substance twin 4 lines away → pairs with the twin', () => {
@@ -437,6 +435,55 @@ test('reproduction (#2955): with no wide twin, a ±2 different-substance neighbo
   const far = unconfirmed.find((f) => f.source === 'B' && f.line === 124);
   assert.strictEqual(far.nearLocation, undefined);
   assert.strictEqual(unconfirmed.length, 3);
+});
+
+// #3418: real #3375 lens-pair paraphrases (review run 2026-10-17T144508-spec-3375-3380).
+const READDIR_A = 'readdirSync failure reason discarded: EACCES/ENOTDIR reported as no subagents/ directory';
+const READDIR_B = 'readdirSync catch folds every failure into no subagents/ directory; error code dropped';
+const UNGUARDED_A = 'await collectDispatches unguarded in main; exit-0 contract rests on readDispatches never throwing';
+const UNGUARDED_B = 'await collectDispatches unguarded in main; an unexpected throw exits 2 and skips timing.json write';
+// Two different defects one archived pair reported on the same line (scan.js:124, scored 0.12).
+const NO_CACHE = 'No caching/watermark: every run fully re-reads and re-parses every transcript in the 14-day window even if already scanned';
+const NO_SIZE_CAP = 'Whole transcript files read fully into memory with no size cap across a date-bounded but size-unbounded window';
+
+test('AC1.1 reproduction (#3418): one defect cited at its definition and use lines, paraphrased → confirmed', () => {
+  for (const [textA, textB, lineA, lineB] of [
+    [READDIR_A, READDIR_B, 234, 238], // definition / use, 4 lines apart (wide band)
+    [UNGUARDED_A, UNGUARDED_B, 299, 300], // ±2
+  ]) {
+    const { confirmed, unconfirmed } = c.categoriseReproduction(
+      [{ path: 'src/t.js', line: lineA, severity: 'medium', text: textA }],
+      [{ path: 'src/t.js', line: lineB, severity: 'medium', text: textB }],
+    );
+    assert.strictEqual(confirmed.length, 1, `${lineA}/${lineB} should reproduce`);
+    assert.strictEqual(unconfirmed.length, 0);
+  }
+});
+
+test('AC2.1 reproduction (#3418): same location, two different defects → both unconfirmed with nearLocation', () => {
+  const { confirmed, unconfirmed } = c.categoriseReproduction(
+    [{ path: 'src/scan.js', line: 124, severity: 'medium', text: NO_CACHE }],
+    [{ path: 'src/scan.js', line: 124, severity: 'medium', text: NO_SIZE_CAP }],
+  );
+  assert.strictEqual(confirmed.length, 0);
+  assert.strictEqual(unconfirmed.length, 2);
+  assert.ok(unconfirmed.every((f) => f.nearLocation !== undefined));
+});
+
+test('reproduction (#3418): one named substance threshold, calibrated at 0.2, the wide floor retired', () => {
+  assert.strictEqual(c.SUBSTANCE_SIMILARITY_MIN, 0.2);
+  assert.strictEqual(c.SUBSTANCE_SIMILARITY_WIDE_MIN, undefined);
+});
+
+test('reproduction (#3418): a paraphrased wide-band twin never takes a B finding another A finding reported on the same line', () => {
+  const a = [
+    { path: 'src/t.js', line: 234, severity: 'medium', text: READDIR_A },
+    { path: 'src/t.js', line: 238, severity: 'medium', text: READDIR_B },
+  ];
+  const b = [{ path: 'src/t.js', line: 238, severity: 'medium', text: READDIR_B }];
+  const { confirmed, unconfirmed } = c.categoriseReproduction(a, b);
+  assert.deepStrictEqual(confirmed.map((f) => f.line), [238]);
+  assert.deepStrictEqual(unconfirmed.map((f) => `${f.source}:${f.line}`), ['A:234']);
 });
 
 // #2907: pairing must not depend on the order agent A reported its findings.
@@ -1272,7 +1319,7 @@ test('review-summary-template.md has a Fan-out leftovers slot, full and compact 
 test('prose twins state the two-tier line rule with the code\'s own values (#2955)', () => {
   const near = `±${c.LINE_TOLERANCE_REPRODUCTION}`;
   const wide = `±${c.LINE_TOLERANCE_REPRODUCTION_WIDE}`;
-  const floor = String(c.SUBSTANCE_SIMILARITY_WIDE_MIN);
+  const floor = String(c.SUBSTANCE_SIMILARITY_MIN);
 
   // Finds the line starting with `prefix` in `text` and asserts it exists and
   // states every value in `values` — the same two checks the four prose
