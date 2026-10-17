@@ -22,11 +22,16 @@ test('dispatch.md: SDD invocation directs the final-review capture before Finish
   );
 });
 
+// The four-item check, factored out so the doctored control can run the real assertion on mutated text.
+function assertFourItems(text) {
+  assert.match(text, /the final reviewer's findings verbatim with their severities/);
+  assert.match(text, /the reviewed commit SHA \(HEAD when the final review's package was built\)/);
+  assert.match(text, /the fix wave's commit range \(`FIX_BASE\.\.HEAD`\), or "no fix wave"/);
+  assert.match(text, /the scoped re-review's per-finding verdicts verbatim/);
+}
+
 test('dispatch.md: the capture names the four items (#3386 AC1)', () => {
-  assert.match(DISPATCH, /the final reviewer's findings verbatim with their severities/);
-  assert.match(DISPATCH, /the reviewed commit SHA \(HEAD when the final review's package was built\)/);
-  assert.match(DISPATCH, /the fix wave's commit range \(`FIX_BASE\.\.HEAD`\), or "no fix wave"/);
-  assert.match(DISPATCH, /the scoped re-review's per-finding verdicts verbatim/);
+  assertFourItems(DISPATCH);
 });
 
 test('dispatch.md: nothing is written for standalone /build or a skipped whole-branch review (#3386 AC2)', () => {
@@ -41,8 +46,5 @@ test('doctored control: removing the reviewed-commit item turns the AC1 assertio
   const text = DISPATCH;
   const doctored = text.replace(/the reviewed commit SHA \(HEAD when the final review's package was built\); /, '');
   assert.notEqual(doctored, text, 'the doctoring replace did not hit — the control is vacuous');
-  assert.equal(
-    /the reviewed commit SHA \(HEAD when the final review's package was built\)/.test(doctored),
-    false
-  );
+  assert.throws(() => assertFourItems(doctored), assert.AssertionError);
 });
