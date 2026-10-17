@@ -272,7 +272,7 @@ test('releaseMerged: Phase 1.5 resolves prState via the pool and reaches a merge
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(
     wrapperPath,
-    '#!/bin/sh\ncat <<\'EOF\'\n[{"number":42,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}]\nEOF\n',
+    '#!/bin/sh\ncat <<\'EOF\'\n[{"number":42,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","closingIssuesReferences":[{"number":11,"repository":{"name":"w","owner":{"login":"acme"}}}]}]\nEOF\n',
   );
   fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
@@ -342,7 +342,7 @@ test('releaseMerged: releases a live claim via the by-number fallback when the w
     '#!/bin/sh\n'
     + 'case "$*" in\n'
     + '  *"pr view 3249001"*) cat <<\'EOF\'\n'
-    + '{"number":3249001,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","mergeCommit":{"oid":"deadbeef"}}\n'
+    + '{"number":3249001,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","mergeCommit":{"oid":"deadbeef"},"closingIssuesReferences":[{"number":61,"repository":{"name":"w","owner":{"login":"acme"}}}]}\n'
     + 'EOF\n'
     + '    ;;\n'
     + '  *"pr list"*) echo "pr list must never be called when no branch resolved" >&2; exit 1 ;;\n'
@@ -409,7 +409,7 @@ test('releaseMerged: does not invoke the by-number fallback when the live-worktr
     '#!/bin/sh\n'
     + 'case "$*" in\n'
     + '  *"pr list --head live-branch"*) cat <<\'EOF\'\n'
-    + '[{"number":77,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}]\n'
+    + '[{"number":77,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","closingIssuesReferences":[{"number":62,"repository":{"name":"w","owner":{"login":"acme"}}}]}]\n'
     + 'EOF\n'
     + '    ;;\n'
     + '  *"pr view 999999"*) echo "by-number must never be called when the branch already resolved" >&2; exit 1 ;;\n'
@@ -546,7 +546,7 @@ test('releaseMerged: an unstamped worktree with a fallbackBranch-recovered branc
     '#!/bin/sh\n'
     + 'case "$*" in\n'
     + '  *"pr list --head unstamped-branch"*) cat <<\'EOF\'\n'
-    + '[{"number":88,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}]\n'
+    + '[{"number":88,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","closingIssuesReferences":[{"number":64,"repository":{"name":"w","owner":{"login":"acme"}}}]}]\n'
     + 'EOF\n'
     + '    ;;\n'
     + '  *"api --method PUT"*) exit 0 ;;\n'
@@ -609,7 +609,7 @@ test('releaseMerged: a merged: release strips every GRANT_LABELS entry and logs 
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(
     wrapperPath,
-    '#!/bin/sh\ncat <<\'EOF\'\n[{"number":55,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}]\nEOF\n',
+    '#!/bin/sh\ncat <<\'EOF\'\n[{"number":55,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","closingIssuesReferences":[{"number":21,"repository":{"name":"w","owner":{"login":"acme"}}}]}]\nEOF\n',
   );
   fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
@@ -757,4 +757,147 @@ test('prClosesIssue: a closing keyword must start its line (prose mention never 
 test('prClosesIssue: no closingIssuesReferences array -> undefined unless the commit message closes it (AC4.1)', () => {
   assert.equal(prClosesIssue({ state: 'MERGED', number: 7 }, 7, 'acme/w'), undefined);
   assert.equal(prClosesIssue({ state: 'MERGED', number: 7 }, 7, 'acme/w', 'Fixes #7'), true);
+});
+
+// #3412: end-to-end — a MERGED PR is release evidence only when it closes THIS
+// issue. The scenario mirrors PR #3348 (closed #3306-#3310 while the run's
+// claim on #3311 stayed live): a live worktree on 'run-3348-branch', a live
+// claim issue-3311.json, and a `gh` wrapper answering `pr list` with the
+// merged PR. `commit` is the ghApi fake's answer for '/commits/a39cd61' (a
+// function that throws marks the fetch as unreachable); `putExit` is the
+// tombstone PUT's exit code (1 = no release must happen).
+async function run3348Scenario({ refs, commit, issueState, putExit }) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-3348-')));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
+  const wtPath = path.join(root, '.worktrees', 'wt-run-3348');
+  execFileSync('git', ['worktree', 'add', '-q', '-b', 'run-3348-branch', wtPath], { cwd: root });
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-3348');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wtPath }));
+
+  const liveContent = JSON.stringify({
+    runId: 'run-3348', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
+  });
+  const labelDeletes = [];
+  const reads = { commit: 0, issue: 0 };
+  const ghApi = (args) => {
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-3311.json', sha: 'live-sha' }] }), failure: null, status: null };
+    }
+    if (args[0].includes('/contents/claims/issue-3311.json')) {
+      return { stdout: JSON.stringify({ content: liveContent, sha: 'live-sha' }), failure: null, status: null };
+    }
+    if (args.some((a) => a.includes('/labels/'))) {
+      const labelPath = args[args.length - 1];
+      labelDeletes.push(decodeURIComponent(labelPath.slice(labelPath.lastIndexOf('/') + 1)));
+      return { stdout: '', failure: null, status: null };
+    }
+    if (args[0].includes('/commits/a39cd61')) {
+      reads.commit += 1;
+      return commit();
+    }
+    if (args[0].includes('/issues/3311')) {
+      reads.issue += 1;
+      return { stdout: issueState, failure: null, status: null };
+    }
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+
+  const prJson = JSON.stringify([{
+    number: 3348, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+    mergeCommit: { oid: 'a39cd61' }, closingIssuesReferences: refs,
+  }]);
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-3348-ghwrap-'));
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  fs.writeFileSync(
+    wrapperPath,
+    '#!/bin/sh\n'
+    + 'case "$*" in\n'
+    + '  *"pr list --head run-3348-branch"*) cat <<\'EOF\'\n'
+    + `${prJson}\n`
+    + 'EOF\n'
+    + '    ;;\n'
+    + `  *"api --method PUT"*) exit ${putExit} ;;\n`
+    + '  *) exit 1 ;;\n'
+    + 'esac\n',
+  );
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  try {
+    const result = await releaseMerged({ cwd: root, ghApi });
+    return { result, labelDeletes, reads };
+  } finally {
+    process.env.PATH = originalPath;
+  }
+}
+
+const commitBody = (stdout) => () => ({ stdout, failure: null, status: null });
+
+test('releaseMerged: AC1.1 AC5.1 the #3348 shape — merged PR closing other records keeps this record\'s claim and labels', async () => {
+  const { result, labelDeletes, reads } = await run3348Scenario({
+    refs: [ref(3306), ref(3307)],
+    commit: commitBody('feat: x (#3306)\n\nFixes #3306\nFixes #3307\n'),
+    issueState: 'OPEN\n',
+    putExit: 1, // a tombstone write must never be attempted
+  });
+  assert.equal(result.released.length, 0, `merged-not-closing must not release, got ${JSON.stringify(result)}`);
+  assert.ok(result.skipped.some((s) => s.issueNumber === 3311 && s.reason === 'pr-merged-not-closing'), JSON.stringify(result.skipped));
+  assert.equal(labelDeletes.length, 0, 'no label (bot:in-progress or grant) may be removed');
+  assert.equal(reads.commit, 1);
+  assert.equal(reads.issue, 1);
+});
+
+test('releaseMerged: AC3.1 merged-not-closing PR whose issue is now CLOSED releases via issue-closed', async () => {
+  const { result, labelDeletes } = await run3348Scenario({
+    refs: [ref(3306), ref(3307)],
+    commit: commitBody('feat: x (#3306)\n\nFixes #3306\nFixes #3307\n'),
+    issueState: 'CLOSED\n',
+    putExit: 0,
+  });
+  assert.equal(result.released.length, 1, JSON.stringify(result));
+  assert.equal(result.released[0].issueNumber, 3311);
+  assert.equal(result.released[0].prNumber, 3348);
+  assert.deepEqual(labelDeletes, ['bot:in-progress'], 'issue-closed release strips no grant labels');
+});
+
+test('releaseMerged: references present, commit fetch fails -> still decided from references (not unknown)', async () => {
+  const { result } = await run3348Scenario({
+    refs: [ref(3306), ref(3307)],
+    commit: () => ({ stdout: null, failure: 'network-failure' }),
+    issueState: 'OPEN\n',
+    putExit: 1,
+  });
+  assert.equal(result.released.length, 0);
+  const skip = result.skipped.find((s) => s.issueNumber === 3311);
+  assert.ok(skip, JSON.stringify(result));
+  assert.equal(skip.reason, 'pr-merged-not-closing');
+});
+
+test('releaseMerged: a merge commit closing keyword releases when references do not name the issue', async () => {
+  const { result, labelDeletes, reads } = await run3348Scenario({
+    refs: [ref(3306)],
+    commit: commitBody('feat: x\n\nFixes #3306\nFixes #3311\n'),
+    issueState: 'OPEN\n',
+    putExit: 0,
+  });
+  assert.equal(result.released.length, 1, JSON.stringify(result));
+  assert.equal(result.released[0].issueNumber, 3311);
+  for (const label of GRANT_LABELS) {
+    assert.ok(labelDeletes.includes(label), `merged: path must strip ${label}, got ${JSON.stringify(labelDeletes)}`);
+  }
+  assert.equal(reads.issue, 0, 'a confirmed close needs no issue-state fetch');
+});
+
+test('releaseMerged: references already naming the issue skip the commit fetch entirely', async () => {
+  const { result, reads } = await run3348Scenario({
+    refs: [ref(3311)],
+    commit: () => { throw new Error('the commit fetch must not be reached'); },
+    issueState: 'OPEN\n',
+    putExit: 0,
+  });
+  assert.equal(result.released.length, 1, JSON.stringify(result));
+  assert.equal(reads.commit, 0);
 });

@@ -299,7 +299,7 @@ function logGrantRemoval(runDir, root, reason) {
 // removal), mirroring claim-store.js's seam, so tests never shell to the
 // real `gh` binary. Defaults to the module-level `ghApi` above.
 //
-// Runs in four phases (#820, D5 — parallelizing every per-active-claim gh
+// Runs in five phases (#820, D5 — parallelizing every per-active-claim gh
 // call, PR-state AND issue-state reads, through gh-pool's concurrency-capped
 // `runWithConcurrency`; PR-state was left serial in an earlier pass of this
 // diff — #820 review — since it fires for every active claim with a
@@ -311,10 +311,14 @@ function logGrantRemoval(runDir, root, reason) {
 //     (PR-state deferred to Phase 1.5).
 //   Phase 1.5 (parallel) — one runWithConcurrency batch resolving every
 //     joinable candidate's PR-state fetch.
+//   Phase 1.75 (parallel, #3412) — one runWithConcurrency batch fetching the
+//     merge commit message of each MERGED candidate whose PR references don't
+//     already name its issue, then each candidate's closesIssue verdict
+//     (prClosesIssue: references and/or a closing keyword in that message).
 //   Phase 2 (parallel) — one runWithConcurrency batch resolving every
 //     candidate's issue-state fetch (only for candidates PR evidence alone
 //     can't decide — see needsIssueEvidence, now evaluated against Phase
-//     1.5's resolved prState).
+//     1.5's resolved prState and Phase 1.75's closesIssue).
 //   Phase 3 (sync) — decide + write. Writes stay serial: each is its own
 //     conditional-update with its own sha, so there's no benefit to
 //     parallelizing them, and serial writes keep this module's existing
@@ -435,6 +439,7 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
     // the `!isActive` cache-write above draws for exactly the same reason.
     candidates.push({
       issueNumber, runId, name: entry.name, sha: claim.sha, classifiedState: classified.state, prState: null, joinFailure, branch, prNumber, runDir,
+      mergeCommitMessage: undefined, closesIssue: undefined,
     });
   }
 
@@ -489,10 +494,34 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
     // would make needsIssueEvidence false and block that path.
   }
 
+  // Phase 1.75 (#3412): the merge commit's message, fetched only where the PR's
+  // closingIssuesReferences don't already settle that it closes this issue (a
+  // squash body's `Fixes #N` line is the second closing signal prClosesIssue
+  // reads). A failed or empty fetch leaves mergeCommitMessage undefined — the
+  // verdict then rests on the references alone, never on a guess. closesIssue
+  // is computed for EVERY candidate here, before Phase 2: needsIssueEvidence
+  // gates the issue-state fetch on it.
+  const isMerged = (c) => c.prState && typeof c.prState === 'object' && c.prState.state === 'MERGED';
+  const needCommit = candidates.filter((c) => isMerged(c)
+    && prClosesIssue(c.prState, c.issueNumber, repoSlug) !== true
+    && c.prState.mergeCommit && c.prState.mergeCommit.oid);
+  const commitReads = await runWithConcurrency(
+    needCommit,
+    (c) => apiAsync([`repos/${repoSlug}/commits/${c.prState.mergeCommit.oid}`, '-q', '.commit.message']),
+  );
+  const commitByIssue = resultsByIssue(needCommit, commitReads);
+  for (const c of candidates) {
+    const r = commitByIssue.get(c.issueNumber);
+    c.mergeCommitMessage = r && typeof r === 'object' && !r.failure && typeof r.stdout === 'string' ? r.stdout : undefined;
+    c.closesIssue = isMerged(c)
+      ? prClosesIssue(c.prState, c.issueNumber, repoSlug, c.mergeCommitMessage)
+      : undefined;
+  }
+
   // Phase 2: parallel issue-state fetches, capped, only for candidates that
   // need one (needsIssueEvidence) — gated the same way the prior serial
   // loop gated its per-candidate fetch, so non-candidates cost nothing.
-  const needIssue = candidates.filter((c) => needsIssueEvidence(c.prState));
+  const needIssue = candidates.filter((c) => needsIssueEvidence(c.prState, c.closesIssue));
   const issueStates = await runWithConcurrency(
     needIssue,
     (c) => readIssueStateAsync(repoSlug, c.issueNumber, apiAsync),
@@ -504,7 +533,7 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
   // Phase 3: decide + write, synchronous (writes stay serial — see header comment).
   for (const c of candidates) {
     const issueState = issueStateByIssue.get(c.issueNumber);
-    const decision = decideRelease(c.classifiedState, c.prState, issueState);
+    const decision = decideRelease(c.classifiedState, c.prState, issueState, c.closesIssue);
     if (decision.action === 'skip') {
       // No nextClaimShas write here: an active (live/stale) claim's PR/issue
       // join can change pass-to-pass even when its content hasn't, so it
