@@ -19,6 +19,7 @@
 // and degraded 200-with-errors responses (classification fails closed on any
 // incomplete response by construction).
 'use strict';
+const fs = require('fs');
 const { execFileSync, execFile } = require('child_process');
 const { promisify } = require('util');
 const { classifyGhApiError } = require('../issues/claim-store');
@@ -111,6 +112,39 @@ function resolvePrState(repoRoot, branch, opts) {
   );
 }
 
+// #3029: caller-contract guard for the two by-number resolvers below. A
+// misordered or object-shaped call (`resolvePrStateByNumber(4242, { cwd, repo })`)
+// used to reach execFileSync, throw ERR_INVALID_ARG_TYPE, and be reported by
+// classifyExecError as 'network-failure' — indistinguishable from a real outage.
+// Returns 'invalid-arguments' rather than throwing: both resolvers feed the
+// never-throwing SessionStart reconcile sweep (archive-merged.js) and
+// github-pr-scan.md's per-PR forEach, where a throw would abort every
+// remaining entry. Accepts a positive-integer string ('42') — callers pass
+// JSON-parsed numbers.
+const POSITIVE_INTEGER_RE = /^[1-9]\d*$/;
+function byNumberArgsValid(repoRoot, number) {
+  return typeof repoRoot === 'string'
+    && (typeof number === 'number' || typeof number === 'string')
+    && POSITIVE_INTEGER_RE.test(String(number));
+}
+
+// A string repoRoot that names no directory passes the guard above, and
+// execFileSync then fails with ENOENT — the same code a missing gh binary
+// produces — so classifyExecError alone would report it as 'gh-absent'.
+// Checked only after a gh-absent classification, so a successful call pays
+// no extra filesystem probe.
+function classifyByNumberError(repoRoot) {
+  return (e) => {
+    const failure = classifyExecError(e);
+    if (failure !== 'gh-absent') return failure;
+    try {
+      return fs.statSync(repoRoot).isDirectory() ? failure : 'invalid-arguments';
+    } catch {
+      return 'invalid-arguments';
+    }
+  };
+}
+
 // #1962: archive-merged.js's main sweep derives a branch name to query by
 // (`resolvePrState` above needs one), but a run dir whose worktree is
 // confirmably gone AND whose branch has since been deleted has no branch
@@ -124,9 +158,15 @@ function resolvePrState(repoRoot, branch, opts) {
 // added fields, since JSON.parse keeps every key regardless of which ones a
 // given caller reads): `{number, state, mergedAt, updatedAt, mergeCommit,
 // mergeable, mergeStateStatus}` — no tie-break needed, since a PR number
-// resolves to at most one PR.
+// resolves to at most one PR. Positional signature: (repoRoot, number) —
+// repoRoot is the checkout whose `origin` gives gh its host and repo. Returns
+// that object, null for a falsy number, or one of the strings 'gh-absent' /
+// 'network-failure' (transport) / 'invalid-arguments' (#3029: a non-string
+// repoRoot or a number that is not a positive integer, no gh call made; or a
+// repoRoot that names no directory).
 function resolvePrStateByNumber(repoRoot, number) {
   if (!number) return null;
+  if (!byNumberArgsValid(repoRoot, number)) return 'invalid-arguments';
   return runClassified(
     () => {
       const stdout = execFileSync(
@@ -136,7 +176,7 @@ function resolvePrStateByNumber(repoRoot, number) {
       );
       return JSON.parse(stdout);
     },
-    classifyExecError,
+    classifyByNumberError(repoRoot),
     { retryOnTimeout: true },
   );
 }
@@ -149,9 +189,12 @@ function resolvePrStateByNumber(repoRoot, number) {
 // number resolves to. Returns null for a falsy number, matching
 // resolvePrStateByNumber's own null convention; a transport failure returns
 // 'gh-absent'/'network-failure' like every other resolver in this module,
-// via the same classifyExecError/runClassified pair.
+// via the same classifyExecError/runClassified pair, and 'invalid-arguments'
+// for a misordered/malformed call or a repoRoot that names no directory
+// (#3029 — same guard as resolvePrStateByNumber).
 function resolveIssueStateByNumber(repoRoot, number) {
   if (!number) return null;
+  if (!byNumberArgsValid(repoRoot, number)) return 'invalid-arguments';
   return runClassified(
     () => {
       const stdout = execFileSync(
@@ -161,7 +204,7 @@ function resolveIssueStateByNumber(repoRoot, number) {
       );
       return JSON.parse(stdout);
     },
-    classifyExecError,
+    classifyByNumberError(repoRoot),
     { retryOnTimeout: true },
   );
 }
@@ -186,6 +229,29 @@ async function resolvePrStateAsync(repoRoot, branch) {
       return buildSuccess(JSON.parse(stdout));
     },
     classifyExecError,
+    { retryOnTimeout: true },
+  );
+}
+
+// Async twin of resolvePrStateByNumber — mirrors resolvePrStateAsync's
+// non-blocking execFile shape (#3249) so release-merged.js's by-number
+// fallback can run through gh-pool's runWithConcurrency the same way its
+// branch-based Phase 1.5 probe already does, rather than blocking the
+// event loop once per candidate. Same argument validation, same return
+// shape, same classifyByNumberError mapping as the sync version.
+async function resolvePrStateByNumberAsync(repoRoot, number) {
+  if (!number) return null;
+  if (!byNumberArgsValid(repoRoot, number)) return 'invalid-arguments';
+  return runClassifiedAsync(
+    async () => {
+      const { stdout } = await execFileAsync(
+        'gh',
+        ['pr', 'view', String(number), '--json', 'number,state,mergedAt,updatedAt,mergeCommit,mergeable,mergeStateStatus'],
+        { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
+      );
+      return JSON.parse(stdout);
+    },
+    classifyByNumberError(repoRoot),
     { retryOnTimeout: true },
   );
 }
@@ -257,6 +323,6 @@ function resolvePrStatesBulk(repoRoot, branches, opts = {}) {
 }
 
 module.exports = {
-  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, resolveIssueStateByNumber,
+  resolvePrState, resolvePrStateAsync, resolvePrStatesBulk, resolvePrStateByNumber, resolveIssueStateByNumber, resolvePrStateByNumberAsync,
   FETCH_TIMEOUT_MS, BULK_CHUNK,
 };

@@ -9,8 +9,6 @@ files:
   - tests/bin-lib/flow/preflight.test.js
   - tests/bin-lib/flow/preflight-cli.test.js
   - tests/flow-preflight-conformance.test.js
-  - docs/plugin-structure.md
-  - docs/skill-graph.md
 ---
 
 # Adopt a Run Directory From One Preflight Pack

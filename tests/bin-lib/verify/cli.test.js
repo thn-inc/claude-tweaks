@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { execFile, spawnSync, execFileSync } = require('child_process');
+const { execFile, spawn, spawnSync, execFileSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 
@@ -283,6 +283,28 @@ test('a failing run, a fail-fast skip, and --no-stamp write neither stamp file (
     assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')), `json stamp written for ${JSON.stringify(args)}`);
     assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass')), `bare stamp written for ${JSON.stringify(args)}`);
   }
+});
+
+test('#3063 AC1: a check that sleeps past its --cmd-timeout ends the run with exit 1, a timedOut report entry, and no stamp', async () => {
+  const { repo, gitDir } = tmpGitRepo();
+  const { code, stdout } = await runCli([
+    '--cmd', 'tests=node -e "setInterval(() => {}, 1000)"', '--cmd-timeout', 'tests=300',
+  ], { cwd: repo });
+  assert.strictEqual(code, 1);
+  const report = JSON.parse(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.pass, false);
+  assert.strictEqual(report.checks.tests.exitCode, null);
+  assert.strictEqual(report.checks.tests.timedOut, true);
+  assert.match(stdout, /\| tests \| fail \| .* \| timed out after [\d.]+s \|/);
+  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp for a timed-out run');
+  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass')), 'no legacy stamp either');
+});
+
+test('#3063: a check that finishes well inside its --cmd-timeout is unaffected', async () => {
+  const { repo, gitDir } = tmpGitRepo();
+  const { code } = await runCli(['--cmd', 'tests=node -e 0', '--cmd-timeout', 'tests=5000'], { cwd: repo });
+  assert.strictEqual(code, 0);
+  assert.ok(fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')));
 });
 
 // #2341: only one --cmd name ("types") gets the fail-fast-before-tests
@@ -775,6 +797,8 @@ test('--scope: --base that contradicts the stamp anchor is a usage error, and wr
   const run = await runCli(['--scope', r.declPath, '--base', c1, '--cmd', `unit=${r.unitCmd}`], { cwd: r.repo });
   assert.strictEqual(run.code, 2);
   assert.match(run.stderr, /--scope: --base .* conflicts with the stamp anchor/);
+  assert.doesNotMatch(run.stderr, /pass --integration-branch instead/, '#3072 AC5: the refusal must not imply --integration-branch overrides the anchor');
+  assert.match(run.stderr, /after an integration-branch merge, --integration-branch narrows the scoped set to this branch's own delta/);
   assert.deepStrictEqual(stampOf(r.gitDir), baseline, 'a rejected --base must never touch the existing stamp');
 });
 
@@ -1795,4 +1819,134 @@ test('--baseline: the scratch worktree is gone after the run (#3043)', async () 
   assert.match(stdout, /Baseline: adjudicated against/, 'a scratch worktree was actually created');
   const list = r.git('worktree', 'list', '--porcelain');
   assert.strictEqual((list.match(/^worktree /gm) || []).length, 1, list);
+});
+
+// #3072: scopedRepo on its init branch (the integration branch), a feature
+// branch cut from it carrying the full-pass anchor, then a --no-ff merge of the
+// integration branch bringing in N `ui/**` files plus one own-work `src/**` commit.
+function mergedScopedRepo() {
+  const r = scopedRepo([
+    { match: 'src/**', suites: ['unit'], static: true },
+    { match: 'ui/**', suites: ['other'], static: true },
+  ]);
+  const trunk = r.branch;
+  r.git('checkout', '-q', '-b', 'feat');
+  return { ...r, trunk };
+}
+
+async function anchorFullPass(r, extraArgs = []) {
+  const args = ['--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0', ...extraArgs];
+  const run = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.match(run.stdout, /^Scope: full/m);
+  if (fs.existsSync(r.marker)) fs.unlinkSync(r.marker);
+  return stampOf(r.gitDir).fullSha;
+}
+
+function mergeTrunk(r, rels) {
+  r.git('checkout', '-q', r.trunk);
+  for (const rel of rels) commitFile(r, rel, rel);
+  r.git('checkout', '-q', 'feat');
+  r.git('merge', '-q', '--no-ff', '--no-edit', r.trunk);
+}
+
+test('--scope --integration-branch: after an integration-branch merge, only the own-work path selects suites and report.json counts the merge-identical ones (#3072 AC1)', async () => {
+  const r = mergedScopedRepo();
+  const anchor = await anchorFullPass(r);
+  mergeTrunk(r, ['ui/a.js', 'ui/b.js', 'ui/c.js']);
+  commitFile(r, 'src/own.js', 'own');
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.match(run.stdout, /^Scope: scoped — 1 changed file\(s\) since/m);
+  assert.match(run.stdout, /^merge-narrowed: 3 merge-identical path\(s\) excluded \(identical to /m);
+  const s = stampOf(r.gitDir);
+  assert.strictEqual(s.fullSha, anchor, 'the anchor is untouched — narrowing filters, it never re-bases');
+  assert.deepStrictEqual(s.changedFiles, ['src/own.js']);
+  assert.deepStrictEqual(s.suitesRun, ['unit']);
+  const report = JSON.parse(fs.readFileSync(s.reportPath, 'utf8'));
+  assert.strictEqual(report.scope.base, anchor);
+  assert.deepStrictEqual(report.scope.changedFiles, ['src/own.js']);
+  assert.deepStrictEqual(report.scope.mergeNarrowing, { ref: r.trunk, excluded: 3, excludedFiles: ['ui/a.js', 'ui/b.js', 'ui/c.js'] });
+});
+
+test('--scope: without --integration-branch the same merged fixture selects every anchor..HEAD path, unnarrowed (#3072 AC4)', async () => {
+  const r = mergedScopedRepo();
+  await anchorFullPass(r);
+  mergeTrunk(r, ['ui/a.js', 'ui/b.js']);
+  commitFile(r, 'src/own.js', 'own');
+  const run = await runCli(['--scope', r.declPath, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.doesNotMatch(run.stdout, /merge-narrowed/);
+  const report = JSON.parse(fs.readFileSync(stampOf(r.gitDir).reportPath, 'utf8'));
+  assert.deepStrictEqual(report.scope.changedFiles, ['src/own.js', 'ui/a.js', 'ui/b.js']);
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+});
+
+test('--scope --integration-branch: with no integration-branch merge after the anchor, the set equals anchor..HEAD (#3072 AC2)', async () => {
+  const r = mergedScopedRepo();
+  await anchorFullPass(r);
+  commitFile(r, 'src/own.js', 'own');
+  commitFile(r, 'ui/a.js', 'a');
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const report = JSON.parse(fs.readFileSync(stampOf(r.gitDir).reportPath, 'utf8'));
+  assert.deepStrictEqual(report.scope.changedFiles, ['src/own.js', 'ui/a.js']);
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+});
+
+test('--scope --integration-branch: a merged-in file the branch then edited stays selected (#3072 AC3)', async () => {
+  const r = mergedScopedRepo();
+  await anchorFullPass(r);
+  mergeTrunk(r, ['ui/a.js', 'ui/b.js']);
+  commitFile(r, 'ui/a.js', 'edited on the branch');
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const report = JSON.parse(fs.readFileSync(stampOf(r.gitDir).reportPath, 'utf8'));
+  assert.deepStrictEqual(report.scope.changedFiles, ['ui/a.js']);
+  assert.deepStrictEqual(report.scope.mergeNarrowing, { ref: r.trunk, excluded: 1, excludedFiles: ['ui/b.js'] });
+});
+
+test('--baseline: a stale ct-verify-base-* scratch worktree from an earlier interrupted run is named on stderr, and left alone (#3064)', async () => {
+  // Detection runs as soon as --baseline resolves to a commit — before any
+  // check executes and before adjudication is even attempted — so a trivial
+  // passing repo is enough; this test does not need a real baseline mismatch.
+  const r = tmpGitRepo();
+  const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
+  const staleWt = path.join(staleParent, 'wt');
+  r.git('worktree', 'add', '--detach', staleWt, 'HEAD');
+  const { stderr } = await runCli(['--cmd', 'tests=node -e "process.exit(0)"', '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}'], { cwd: r.repo });
+  assert.ok(
+    stderr.includes(`verify.js: a stale baseline scratch worktree is registered at ${staleWt} from an earlier interrupted run — remove it manually: git worktree remove --force ${staleWt}`),
+    stderr,
+  );
+  assert.ok(fs.existsSync(staleWt), 'never swept automatically — a sibling session\'s own live scratch would look identical');
+  const list = r.git('worktree', 'list', '--porcelain');
+  // Nothing else ever creates a scratch worktree here (the run passes outright); the stale one is the only extra entry.
+  assert.strictEqual((list.match(/^worktree /gm) || []).length, 2, list);
+});
+
+test('--baseline: a SIGINT mid-run removes the scratch worktree and exits 130, leaving nothing registered behind (#3064 AC1)', { skip: process.platform === 'win32' && 'POSIX signal delivery only' }, async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  // {file} is appended but unused by the sleeping script — just needs to
+  // still be running when SIGINT arrives.
+  const SLOW_PER_FILE = 'tests=node -e "setTimeout(() => {}, 8000)" {file}';
+  const child = spawn(process.execPath, [CLI, '--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', SLOW_PER_FILE], {
+    cwd: r.repo, env: r.opts.env, stdio: ['ignore', 'ignore', 'ignore'],
+  });
+  const deadline = Date.now() + 10000;
+  let worktreeCount = 1;
+  while (Date.now() < deadline) {
+    const list = r.git('worktree', 'list', '--porcelain');
+    worktreeCount = (list.match(/^worktree /gm) || []).length;
+    if (worktreeCount >= 2) break;
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
+  }
+  assert.strictEqual(worktreeCount, 2, 'the scratch worktree must exist before sending SIGINT');
+  child.kill('SIGINT');
+  const [code, signal] = await new Promise((resolve) => { child.on('exit', (c, s) => resolve([c, s])); });
+  assert.strictEqual(signal, null, 'the process exits via process.exit() itself, never killed outright by the signal');
+  assert.strictEqual(code, 130);
+  const list = r.git('worktree', 'list', '--porcelain');
+  assert.strictEqual((list.match(/^worktree /gm) || []).length, 1, 'no registered scratch worktree afterwards');
 });

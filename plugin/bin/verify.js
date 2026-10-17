@@ -15,7 +15,7 @@ const { spawn } = require('child_process');
 
 const { parseArgs, UsageError, USAGE } = require('./lib/verify/args');
 const { runChecks, runOne } = require('./lib/verify/run');
-const { adjudicate, realGit } = require('./lib/verify/baseline');
+const { adjudicate, realGit, findStaleBaselineWorktrees } = require('./lib/verify/baseline');
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine, extractFailingFiles, stripAnsi, unattributedFailureCount,
 } = require('./lib/verify/extract');
@@ -30,7 +30,7 @@ const { writeFileAtomic } = require('./lib/atomic-write');
 const { composeStamp, writeStamp, readStamp: readVerifyStamp, anchorOf } = require('./lib/verify/stamp');
 const { readDeclaration } = require('./lib/verify/declaration');
 const {
-  changedFiles, resolveBase, usableAnchor, ChangedFilesError,
+  changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
 } = require('./lib/verify/changed-files');
 const { selectScope } = require('./lib/verify/scope');
 const { resolveTarget } = require('./lib/stage-item/write');
@@ -71,9 +71,12 @@ function enrich(result) {
   const family = sniffFamily(plain);
   const failed = result.exitCode !== 0;
   const counts = parseCounts(plain, family);
+  // #3063: a hung check's own output rarely has a parseable summary line —
+  // name the timeout explicitly rather than leaving the Summary column blank.
+  const timeoutNote = result.timedOut ? `timed out after ${(result.durationMs / 1000).toFixed(1)}s` : null;
   return {
     ...result,
-    summary: result.spawnError || summaryLine(plain, family) || null,
+    summary: result.spawnError || timeoutNote || summaryLine(plain, family) || null,
     failingRegion: failed ? extractFailingRegion(plain, family) : null,
     counts,
     // A tests check whose counts didn't parse — surfaced on the report entry
@@ -237,6 +240,10 @@ async function main() {
       process.exitCode = 2;
       return;
     }
+    // Named, never swept — see findStaleBaselineWorktrees (#3064).
+    for (const dir of findStaleBaselineWorktrees(bgit.listWorktrees)) {
+      process.stderr.write(`verify.js: a stale baseline scratch worktree is registered at ${dir} from an earlier interrupted run — remove it manually: git worktree remove --force ${dir}\n`);
+    }
   }
   const jsonPath = parsed.json || path.join(logDir, 'report.json');
   const countStampPath = parsed.countStamp || (gitDir ? path.join(gitDir, 'claude-tweaks-test-count.json') : null);
@@ -250,6 +257,7 @@ async function main() {
   let cmds = parsed.cmds;
   let decl = null;
   let priorStamp = null;
+  let narrowing = null;
   // #2779: a check's --cmd-env variables, by check name — for the two spawns
   // that are not a parsed --cmd entry itself (tool-scoped's synthesized
   // `tests`, and a flaky retry of a check), so they run in the same
@@ -257,6 +265,12 @@ async function main() {
   const envOf = (name) => {
     const declared = parsed.cmds.find((c) => c.name === name);
     return declared && declared.env ? declared.env : null;
+  };
+  // #3063: a check's own --cmd-timeout, reused as the bounded default for
+  // its per-file --baseline base/isolated runs (baseline.js's `run()`).
+  const timeoutOf = (name) => {
+    const declared = parsed.cmds.find((c) => c.name === name);
+    return declared && typeof declared.timeout === 'number' ? declared.timeout : null;
   };
   if (parsed.scope) {
     // Every --scope usage error below shares this exit shape (message, then
@@ -324,12 +338,20 @@ async function main() {
     const anchorSha = usableAnchor({ stamp: priorStamp });
     if (parsed.base) {
       if (anchorSha && resolvedBase !== anchorSha) {
-        scopeUsageExit(`--scope: --base ${parsed.base} conflicts with the stamp anchor ${anchorSha.slice(0, 9)}; omit --base (pass --integration-branch instead) or clear the stamp`);
+        scopeUsageExit(`--scope: --base ${parsed.base} conflicts with the stamp anchor ${anchorSha.slice(0, 9)}; omit --base or clear the stamp (after an integration-branch merge, --integration-branch narrows the scoped set to this branch's own delta)`);
         return;
       }
     }
 
     files = changedFiles({ base: resolvedBase }).files;
+    // #3072: anchored on a full pass and asked about an integration branch the
+    // run has since merged — narrow to the branch's own delta. Only when the
+    // resolved base IS the usable anchor; with no anchor, resolveBase already
+    // returned the merge-base, which excludes merged-in files by construction.
+    if (parsed.integrationBranch && anchorSha && resolvedBase === anchorSha) {
+      narrowing = mergeNarrowing({ anchor: anchorSha, integrationBranch: parsed.integrationBranch, files });
+      if (narrowing) files = narrowing.files;
+    }
     sel = selectScope({ decl, files, stamp: anchorSha ? priorStamp : null });
     if (decl) {
       cmds = parsed.cmds.filter((c) => {
@@ -441,6 +463,7 @@ async function main() {
           runOne,
           spawnImpl: spawn,
           envOf,
+          timeoutOf,
           git: bgit,
         });
       }
@@ -553,7 +576,7 @@ async function main() {
 
   const report = composeReport({
     checks: results, startedAt, durationMs: Date.now() - startMs, git, testCountRegression,
-    scope: sel ? { mode: sel.mode, suites: scopeSuites, static: sel.static, base: resolvedBase, unmatched: sel.unmatched, changedFiles: files, matched: sel.matched } : null,
+    scope: sel ? { mode: sel.mode, suites: scopeSuites, static: sel.static, base: resolvedBase, unmatched: sel.unmatched, changedFiles: files, matched: sel.matched, mergeNarrowing: narrowing ? { ref: narrowing.ref, excluded: narrowing.excluded.length, excludedFiles: narrowing.excluded } : null } : null,
     flakyEscalation, baselineAdjudicated, preExistingAdjudicated,
   });
   writeReportAtomic(report, jsonPath);
@@ -659,6 +682,7 @@ async function main() {
     // selection outcome, while keeping the same trailing fields.
     const lead = decl === null ? `Scope: full — no declaration at ${parsed.scope}; ${sinceClause}` : `Scope: ${sel.mode} — ${sinceClause}`;
     lines.push(`${lead}; suites: ${suiteList}; static: ${sel.static ? 'yes' : 'no'}; unmatched: ${sel.unmatched.length}`);
+    if (narrowing) lines.push(`merge-narrowed: ${narrowing.excluded.length} merge-identical path(s) excluded (identical to ${narrowing.ref})`);
     if (sel.mode === 'none') {
       // Nit (re-review): an unchanged-HEAD re-run (M6's own scenario) has
       // zero changed files — "bookkeeping-only delta ()" reads as broken
@@ -710,7 +734,13 @@ async function main() {
     if (baselineAdjudicated.eligible) {
       const b = baselineAdjudicated;
       lines.push('', `Baseline: adjudicated against ${b.base} (${String(b.baseSha).slice(0, 9)}) — ${b.failingFiles.length} failing file(s): ${b.baselineFailing.length} also fail at base, ${b.flakyPassed.length} flaky (passed in isolation), ${b.attributable.length} attributable`);
-      for (const file of b.attributable) lines.push(`ATTRIBUTABLE: ${file}`);
+      for (const file of b.attributable) {
+        // #3063 AC2: a timed-out base/isolated run is no evidence either
+        // way — the file stays attributable, but naming the timeout here
+        // (rather than a bare file list) says why it has none.
+        const note = b.timedOut && b.timedOut.includes(file) ? ' (timed out — base/isolated run exceeded its --cmd-timeout bound)' : '';
+        lines.push(`ATTRIBUTABLE: ${file}${note}`);
+      }
       for (const file of b.flakyPassed) {
         lines.push('', `CAVEAT: baseline-flaky: ${file} — failed in the full run, passed in isolation at HEAD; see ${b.flakyLogs[file]}`);
       }

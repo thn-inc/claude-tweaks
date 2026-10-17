@@ -78,7 +78,14 @@ function fetchLinkedPRs({
     // non-empty connection is exactly the "closing commit/PR reference"
     // signal engine-verify.js's registerCheck('carrier-commit', ...) needs
     // to trust a CLOSED issue state on its own.
-    result.set(n, { openPR: openPR ? openPR.number : null, mentions, hasClosingPRReference: nodes.length > 0 });
+    // #2934: the issue's own `state` (distinct from `mentions[].state`/the
+    // `openPR` connection's own state, both PR states) — passed through so
+    // wrap-up's carrier-commit fallback can read it from this one batched
+    // call instead of one `gh issue view` per issue. `null` when the
+    // batched response doesn't carry it (an older query shape, or a fixture
+    // that predates #2934) — never coerced to a truthy-looking default.
+    const issueState = node.state || null;
+    result.set(n, { openPR: openPR ? openPR.number : null, mentions, hasClosingPRReference: nodes.length > 0, issueState });
   }
   return result;
 }

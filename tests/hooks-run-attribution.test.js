@@ -361,3 +361,42 @@ test('includeWorktreeForeign lets an unknown-session fallback still find a candi
   );
   assert.strictEqual(ctxLib.resolveRunDir(callerWt, {}, null, { includeWorktreeForeign: true }), foreign);
 });
+
+// ─── ad-hoc dirs are never a fallback guess (#2783) ───────────────────────────
+//
+// An `-adhoc-standalone` dir holds only one session's friction events and is
+// always session-stamped, so it is that session's via the 'session' arm or not
+// at all. As a fallback guess it became ctx.runDir (E1, the stamps gate) and the
+// implicit target of every no-`--run` verb for every OTHER caller.
+
+test('#2783: an unknown-session fallback skips a newer ad-hoc dir in favor of an older formal run', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const formal = mkRun(main, '2026-10-01T000000-spec-5', { status: 'active' });
+  mkRun(main, '2026-10-02T000000-adhoc-standalone', { status: 'active', sessionId: 'someone', worktree: wt });
+  assert.deepStrictEqual(ctxLib.resolveRun(main, {}, null), { dir: formal, attribution: 'fallback' });
+});
+
+test('#2783: an unknown-session fallback resolves null when the only non-terminal dirs are ad-hoc', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  mkRun(main, '2026-10-02T000000-adhoc-standalone', { status: 'active', sessionId: 'someone', worktree: wt });
+  assert.deepStrictEqual(ctxLib.resolveRun(main, {}, null), { dir: null, attribution: null });
+});
+
+test('#2783: a known-session caller never guesses into an unowned ad-hoc dir', () => {
+  const main = gitRepo();
+  mkRun(main, '2026-10-02T000000-adhoc-standalone', { status: 'active', worktree: '/gone/w' });
+  assert.deepStrictEqual(ctxLib.resolveRun(main, {}, 'me'), { dir: null, attribution: null });
+});
+
+test('#2783 e2e: a commit from the main checkout is not E1-denied because some session holds an ad-hoc dir bound to a live worktree', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  mkRun(main, '2026-10-02T000000-adhoc-standalone', { status: 'active', sessionId: 'sess-e1', worktree: wt });
+  const hooks = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
+  const input = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, cwd: main, session_id: 'sess-e1' });
+  const out = require('node:child_process').execFileSync('node', [hooks, 'pre-tool-use'], { input, cwd: main, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '' } });
+  assert.doesNotMatch(out, /"permissionDecision":"deny"/, out);
+  assert.doesNotMatch(out, /adhoc-standalone/, out);
+});

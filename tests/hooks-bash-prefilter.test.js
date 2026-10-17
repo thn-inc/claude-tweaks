@@ -173,7 +173,7 @@ test('never skips a non-Bash tool', () => {
   }
 });
 
-test('earlyGate reads stdin only for the two tool-use events', () => {
+test('earlyGate reads stdin only for the governed tool-use events', () => {
   let reads = 0;
   const reader = (raw) => () => { reads += 1; return raw; };
   assert.strictEqual(earlyGate('session-start', reader('{}')), null);
@@ -183,6 +183,19 @@ test('earlyGate reads stdin only for the two tool-use events', () => {
   assert.deepStrictEqual(earlyGate('pre-tool-use', reader(raw)), { raw, skip: true });
   assert.deepStrictEqual(earlyGate('pre-tool-use', reader('not json')), { raw: 'not json', skip: false });
   assert.deepStrictEqual(earlyGate('post-tool-use', () => { throw new Error('EAGAIN'); }), { raw: '', skip: false });
+});
+
+// #2783 M3: every failing Bash call fires PostToolUseFailure, but the handler
+// only ever acts on the harness worktree-isolation refusal text.
+const REFUSAL = 'This session is isolated in the worktree /w, but this command cannot be shown not to be git. Refusing to run it — a worktree-isolated session\'s git operations must target its own worktree.';
+test('#2783: earlyGate skips a post-tool-use-failure payload unless it carries the harness refusal text', () => {
+  const failed = JSON.stringify({ ...bash('git status'), error: 'Command failed with exit code 1' });
+  assert.deepStrictEqual(earlyGate('post-tool-use-failure', () => failed), { raw: failed, skip: true });
+  const refused = JSON.stringify({ ...bash('echo hi'), error: REFUSAL });
+  assert.deepStrictEqual(earlyGate('post-tool-use-failure', () => refused), { raw: refused, skip: false });
+  const escaped = refused.replace('Refusing', '\\u0052efusing');
+  assert.strictEqual(earlyGate('post-tool-use-failure', () => escaped).skip, false, 'a JSON-escaped spelling still reaches the handler');
+  assert.deepStrictEqual(earlyGate('post-tool-use-failure', () => 'not json'), { raw: 'not json', skip: true });
 });
 
 // ── e2e: bin/hooks.js's early exit (#3074) ───────────────────────────────────
@@ -245,6 +258,16 @@ test('e2e #3080 (probe discriminates): a bare redirection write DOES load the ev
   const { loaded } = spawnHook('pre-tool-use', { ...bash('echo x > f.js'), cwd: SANDBOX });
   assert.ok(loadedModule(loaded, 'lib/hooks/pre-tool-use.js'));
   assert.ok(loadedModule(loaded, 'lib/hooks/context.js'));
+});
+
+test('e2e #2783: an ordinary failed Bash call never loads post-tool-use-failure.js; a harness refusal does', () => {
+  const plain = spawnHook('post-tool-use-failure', { ...bash('git status'), error: 'Command failed with exit code 1', cwd: SANDBOX });
+  assert.strictEqual(plain.stdout, '');
+  assert.ok(!loadedModule(plain.loaded, 'lib/hooks/context.js'), 'context.js loaded on the skip path');
+  assert.ok(!loadedModule(plain.loaded, 'lib/hooks/post-tool-use-failure.js'), 'event module loaded on the skip path');
+  const refused = spawnHook('post-tool-use-failure', { ...bash('echo hi'), error: REFUSAL, cwd: SANDBOX });
+  assert.strictEqual(refused.stdout, '');
+  assert.ok(loadedModule(refused.loaded, 'lib/hooks/post-tool-use-failure.js'), 'a refusal must reach the full handler');
 });
 
 test('e2e: malformed stdin still reaches the full handler and exits 0', () => {

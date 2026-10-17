@@ -268,20 +268,18 @@ function resolveCreatedWorktreePath(ctx) {
 // appendEvent starts working from the very next hook call in this session.
 // skills/reflect/full-mode.md's Friction Lens documents the read side.
 //
-// Fires only when this session owns NO run dir yet (`ctx.ownedRun.dir` is
-// null) — a formal pipeline invocation that already resolved or minted its
-// own run dir before creating the worktree (`PIPELINE_RUN_DIR` set, or an
-// earlier `record-worktree` call in this same session) is left alone; this
-// never creates a second, competing run dir for a session that already has
-// one. Collision avoidance relies entirely on `resolveRun`'s own
-// newest-first, session-scoped selection (context.js) — no explicit
-// hand-off code is needed here: once a LATER formal run dir is stamped for
-// this same session (`record-worktree`, run by a formal skill that starts
-// after this ad-hoc mint), it sorts newer and wins every subsequent
-// resolution for the rest of the session, exactly as if this ad-hoc stamp
-// had never happened. The ad-hoc dir itself is left behind, unowned by
-// nobody currently active — the Friction Lens's fallback read (`worktree`
-// field match, not session-id match) is what finds it again later.
+// Fires only when this session owns NO run dir yet — `ctx.ownedRun` is null
+// or only resolveRun's 'fallback' GUESS (an unowned run that is routinely a
+// sibling session's; trusting it is what left #2783's ad-hoc sessions with no
+// dir at all). A session that genuinely owns one (`PIPELINE_RUN_DIR`, or an
+// earlier `record-worktree` stamp) is left alone. When a formal skill later
+// stamps its own run dir for this session, resolveRun's session arm prefers
+// it over this ad-hoc dir once that formal run is bound to the caller's own
+// worktree (classifyOwnership 'mine') — an older formal run whose binding is
+// merely unprovable never displaces the ad-hoc dir (#2783 — /flow mints its
+// dir before EnterWorktree, so the ad-hoc dir sorts newer). The ad-hoc dir is
+// left behind; the Friction Lens's read side (friction-events.js) finds it
+// again by `worktree` path or by owning session id.
 //
 // Trigger (#1333): fires either on an `EnterWorktree` call (the original path, unchanged) OR
 // the first time this session's `ctx.cwd` is observed resolving to a worktree entry that isn't
@@ -295,7 +293,7 @@ function resolveCreatedWorktreePath(ctx) {
 const ADHOC_WORKTREE_CHECKED_MARKER = 'adhoc-worktree-checked';
 
 function stampAdHocRunDir(ctx) {
-  if (ctx.ownedRun && ctx.ownedRun.dir) return; // this session already owns a run dir — nothing to stamp
+  if (ctxLib.isTrustedOwnedRun(ctx.ownedRun)) return; // this session genuinely owns a run dir — a 'fallback' guess does not count (#2783)
   const sessionId = ctx.input.session_id;
   if (typeof sessionId !== 'string' || !sessionId) return; // no identity to stamp ownership against
   const isEnterWorktree = ctx.input.tool_name === 'EnterWorktree';

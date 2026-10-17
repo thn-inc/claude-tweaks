@@ -919,6 +919,157 @@ test('reconcile: no network / no remote resolves to no-remote, never crashes (AC
   assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-remote' }]);
 });
 
+// #3132: a fresh clone in a cloud/Routine sandbox has no local
+// refs/remotes/origin/HEAD. A plain `git clone` normally sets it, so the
+// fixture deletes it explicitly — a fixture that merely clones would pass
+// vacuously.
+function freshCloneWithoutOriginHead() {
+  const { originDir, mainDir } = pairedFixture();
+  git(['remote', 'set-head', 'origin', '--delete'], mainDir);
+  fs.mkdirSync(path.join(mainDir, '.claude-tweaks'), { recursive: true });
+  // local-merge + checks:['mirror'] keeps the pass fully offline once the
+  // branch resolves (no gh preflight), while still proving resolution: a
+  // resolved branch reaches the local-merge-model skip, an unresolved one
+  // returns no-remote first.
+  fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: local-merge\n');
+  return { originDir, mainDir };
+}
+
+test('reconcile: fresh clone with no origin/HEAD repairs it and resolves the integration branch (#3132)', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  assert.throws(() => git(['symbolic-ref', 'refs/remotes/origin/HEAD'], mainDir), 'fixture must start without origin/HEAD');
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'] });
+
+  assert.ok(!r.skipped.some((s) => s.reason === 'no-remote'), `expected no no-remote skip, got ${JSON.stringify(r.skipped)}`);
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,console', reason: 'local-merge-model' }]);
+  assert.deepStrictEqual(r.originHeadRepair, { outcome: 'repaired', branch: 'main' });
+  assert.strictEqual(git(['symbolic-ref', 'refs/remotes/origin/HEAD'], mainDir).trim(), 'refs/remotes/origin/main');
+});
+
+test('reconcile: origin/HEAD repair discards a cached null for the root before re-resolving (#3132)', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  const { mainCheckoutRoot } = require('../plugin/bin/lib/hooks/worktree-detect');
+  const cache = { worktreeList: new Map(), integrationBranch: new Map([[mainCheckoutRoot(mainDir), null]]) };
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'], cache });
+
+  assert.deepStrictEqual(r.originHeadRepair, { outcome: 'repaired', branch: 'main' });
+  assert.strictEqual(cache.integrationBranch.get(mainCheckoutRoot(mainDir)), 'main');
+});
+
+test('reconcile: origin configured but unreachable degrades to no-remote with a failed repair, never throws (#3132)', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  git(['remote', 'set-url', 'origin', path.join(os.tmpdir(), 'ct-recon-missing-origin-does-not-exist')], mainDir);
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'] });
+
+  assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-remote' }]);
+  assert.strictEqual(r.originHeadRepair.outcome, 'failed');
+  // git's own first stderr line, not just git-exec's coarse `git-error` class.
+  assert.match(r.originHeadRepair.reason, /^fatal: /);
+});
+
+test('repairOriginHead: a thrown failure is remembered the same as a classified one (#3132)', () => {
+  const { repairOriginHead } = require('../plugin/bin/lib/reconcile/origin-head');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-oh-throw-'));
+  let setHeadCalls = 0;
+  const runGit = (args) => {
+    if (args[1] === 'get-url') return { stdout: 'https://example.invalid/r.git', failure: null, stderr: null };
+    setHeadCalls += 1;
+    throw new Error('simulated throw');
+  };
+
+  const first = repairOriginHead(root, { runGit, now: 1000 });
+  assert.deepStrictEqual(first, { outcome: 'failed', reason: 'simulated throw' });
+  const second = repairOriginHead(root, { runGit, now: 2000 });
+  assert.deepStrictEqual(second, { outcome: 'skipped', reason: 'recent-failure' });
+  assert.strictEqual(setHeadCalls, 1, 'a thrown set-head must not be retried within the TTL');
+});
+
+test('reconcile: an unreachable origin remembers the failure and skips retrying on the next pass (#3132)', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  git(['remote', 'set-url', 'origin', path.join(os.tmpdir(), 'ct-recon-missing-origin-does-not-exist-retry')], mainDir);
+  const { readCache } = require('../plugin/bin/lib/reconcile/cache');
+  const { mainCheckoutRoot } = require('../plugin/bin/lib/hooks/worktree-detect');
+  const root = mainCheckoutRoot(mainDir);
+
+  const first = await reconcile({ cwd: mainDir, checks: ['mirror'] });
+  assert.strictEqual(first.originHeadRepair.outcome, 'failed');
+  assert.strictEqual(typeof readCache(root).lastOriginHeadRepairFailedAt, 'number');
+
+  const second = await reconcile({ cwd: mainDir, checks: ['mirror'] });
+  assert.deepStrictEqual(second.originHeadRepair, { outcome: 'skipped', reason: 'recent-failure' });
+  assert.deepStrictEqual(second.skipped, [{ check: 'all', reason: 'no-remote' }]);
+});
+
+test('reconcile: the failure stamp survives an unrelated cache write (#3132)', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  git(['remote', 'set-url', 'origin', path.join(os.tmpdir(), 'ct-recon-missing-origin-does-not-exist-survive')], mainDir);
+  const { readCache, writeCache } = require('../plugin/bin/lib/reconcile/cache');
+  const { mainCheckoutRoot } = require('../plugin/bin/lib/hooks/worktree-detect');
+  const root = mainCheckoutRoot(mainDir);
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'] });
+  assert.strictEqual(r.originHeadRepair.outcome, 'failed');
+  assert.strictEqual(typeof readCache(root).lastOriginHeadRepairFailedAt, 'number');
+
+  writeCache(root, { ...readCache(root), claimShas: { 1: 'x' } });
+
+  assert.strictEqual(typeof readCache(root).lastOriginHeadRepairFailedAt, 'number');
+});
+
+test('reconcile: a concurrent-winner origin/HEAD still resolves even under a recent-failure skip (#3132)', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  const { writeCache } = require('../plugin/bin/lib/reconcile/cache');
+  const { mainCheckoutRoot } = require('../plugin/bin/lib/hooks/worktree-detect');
+  const root = mainCheckoutRoot(mainDir);
+  writeCache(root, { lastOriginHeadRepairFailedAt: Date.now() });
+  // Simulate the caller's resolver cache still holding this root's null
+  // from an earlier call in the same process — the gap a real concurrent
+  // winner fills between that earlier resolve and this one's repair.
+  const cache = { worktreeList: new Map(), integrationBranch: new Map([[root, null]]) };
+  git(['remote', 'set-head', 'origin', 'main'], mainDir);
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'], cache });
+
+  assert.deepStrictEqual(r.originHeadRepair, { outcome: 'skipped', reason: 'recent-failure', branch: 'main' });
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,console', reason: 'local-merge-model' }]);
+});
+
+test('reconcile: no origin remote keeps the no-remote skip unchanged and attempts no repair (#3132)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-noorigin-'));
+  git(['init', '-q'], dir);
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
+
+  const r = await reconcile({ cwd: dir });
+
+  assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-remote' }]);
+  assert.ok(!('originHeadRepair' in r), 'no origin remote must not attempt (or report) a repair');
+});
+
+test('reconcile: a policy-configured integration branch never triggers the origin/HEAD repair (#3132)', async () => {
+  const { mainDir } = freshCloneWithoutOriginHead();
+  fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: local-merge\nintegration-branch: main\n');
+
+  const r = await reconcile({ cwd: mainDir, checks: ['mirror'] });
+
+  assert.ok(!('originHeadRepair' in r));
+  assert.throws(() => git(['symbolic-ref', 'refs/remotes/origin/HEAD'], mainDir), 'repair must not run when policy already resolves the branch');
+});
+
+test('resolveIntegrationBranch stays offline: no fetch, ls-remote, or remote set-head in worktree-reap.js (#3132)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'worktree-reap.js'), 'utf8');
+  const start = src.indexOf('function resolveIntegrationBranch(');
+  assert.ok(start >= 0, 'resolveIntegrationBranch not found');
+  const end = src.indexOf('\n}\n', start);
+  const body = src.slice(start, end);
+  for (const verb of ["'fetch'", "'ls-remote'", "'set-head'"]) {
+    assert.ok(!body.includes(verb), `resolveIntegrationBranch must stay offline — found ${verb}`);
+  }
+});
+
 test('reconcile: outside any repo resolves to no-repo, never crashes', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-norepo-'));
   const r = await reconcile({ cwd: dir });
@@ -1121,6 +1272,32 @@ test('formatSummary: a skipped entry carrying names (non-canonical-run-dir, #848
   };
   const summary = formatSummary(result);
   assert.strictEqual(summary, 'skipped: all — non-canonical-run-dir: 20260817T173343-spec-764');
+});
+
+test('formatSummary: a repaired origin/HEAD renders inline (#3132)', () => {
+  const result = {
+    mirror: null, redTip: null, worktrees: null, claims: null, runs: null,
+    branches: null, remoteBranches: null, console: null, skipped: null,
+    originHeadRepair: { outcome: 'repaired', branch: 'main' },
+  };
+  assert.strictEqual(formatSummary(result), 'origin/HEAD repaired (main)');
+});
+
+test('formatSummary: a failed origin/HEAD repair renders its reason (#3132)', () => {
+  const result = {
+    mirror: null, redTip: null, worktrees: null, claims: null, runs: null,
+    branches: null, remoteBranches: null, console: null, skipped: null,
+    originHeadRepair: { outcome: 'failed', reason: 'git-error' },
+  };
+  assert.strictEqual(formatSummary(result), 'origin/HEAD repair: failed (git-error)');
+});
+
+test('formatSummary: no origin/HEAD repair attempted renders no origin/HEAD line (#3132)', () => {
+  const result = {
+    mirror: null, redTip: null, worktrees: null, claims: null, runs: null,
+    branches: null, remoteBranches: null, console: null, skipped: null,
+  };
+  assert.ok(!formatSummary(result).includes('origin/HEAD'), formatSummary(result));
 });
 
 test('reconcile verb: compact default separates branch entries from archive-branches.js\'s interleaved tag-aging entries in result.branches (#638)', () => {

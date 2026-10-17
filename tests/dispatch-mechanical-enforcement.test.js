@@ -31,7 +31,11 @@ test('#2429 AC2: settle-and-merge.md logs a passing merge-check verdict (not jus
   // #2484: batched to one read of decisions.md checked against every member in
   // memory, replacing the old per-member `grep -c` subprocess.
   assert.match(t, /one read of the file, checked against\s*\n\s*every group member in memory, not one `grep -c` subprocess per member/);
-  assert.match(t, /marker = 'Auto-merge gate: #' \+ n \+ ' assess-agent-autonomy verdict auto-merge'/);
+  // #2941: the marker and the check moved into one shared module, so the singleton
+  // short-circuit and this bundle path cannot drift apart on the marker text.
+  assert.match(t, /require\('\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/lib\/dispatch\/merge-verdict\.js'\)/);
+  assert.match(t, /confirmFromFile\(process\.argv\[1\], process\.argv\.slice\(2\)\)/);
+  assert.doesNotMatch(t, /marker = 'Auto-merge gate: #' \+ n/);
   assert.doesNotMatch(t, /grep -c "Auto-merge gate: #\{n\} assess-agent-autonomy verdict auto-merge"/);
   // The local-merge dispatching-session path is a separate execution thread from
   // the Task call that logged the verdict -- it must re-verify too, not trust
@@ -40,6 +44,7 @@ test('#2429 AC2: settle-and-merge.md logs a passing merge-check verdict (not jus
   assert.match(localMergeSection, /re-run the Content judgment step's own mechanical check/);
   assert.match(localMergeSection, /not evidence Content judgment ran/);
   assert.match(localMergeSection, /one-read-per-group, checked-in-memory-per-member check above/);
+  assert.match(localMergeSection, /accepts the singleton short-circuit's `Auto-merge short-circuit:` marker too/);
 });
 
 test('#2429 AC3: both mechanical checks are cross-referenced at the call site they gate (task-prompt.md), so a future edit cannot silently regress to prose-only enforcement', () => {
@@ -54,6 +59,23 @@ test('#2429 AC3: both mechanical checks are cross-referenced at the call site th
   const firstFence = t.slice(t.indexOf('## First call'), firstCallEnd);
   const fenceBody = firstFence.slice(firstFence.indexOf('```') + 3, firstFence.lastIndexOf('```'));
   assert.ok(!fenceBody.includes('#2429'), 'the #2429 cross-reference must stay outside the dispatched template');
+});
+
+test('#2941: the second-call cross-reference also names the singleton path\'s Verdict backstop as the #2429 check\'s equivalent, backed by the same module', () => {
+  const t = read('plugin/skills/dispatch/task-prompt.md');
+  // Frozen pre-#2941 ending of that paragraph -- proves the pattern below can actually go red.
+  const PRE_EDIT = 'run the loop — see that step\'s own "Mechanically verify every member\'s entry" paragraph. Keep\n'
+    + 'both current if either clause\'s wording changes.';
+  const pattern = /wrap-up\/auto-merge-short-circuit\.md`'s Verdict backstop instead \(#2941\)[\s\S]{0,120}?`bin\/lib\/dispatch\/merge-verdict\.js`/;
+  assert.match(t, pattern, 'singleton cross-reference missing from task-prompt.md');
+  assert.doesNotMatch(PRE_EDIT, pattern, 'pattern matches the pre-edit text -- cannot go red');
+  // Still outside the dispatched template, same discipline as the #2429 cross-reference above —
+  // bounded to the one fenced block under "## Second call", not the rest of the file.
+  const secondCallSection = t.slice(t.indexOf('## Second call'));
+  const fenceOpen = secondCallSection.indexOf('```');
+  const fenceClose = secondCallSection.indexOf('```', fenceOpen + 3);
+  const fenceBody = secondCallSection.slice(fenceOpen + 3, fenceClose);
+  assert.ok(!fenceBody.includes('#2941'), 'the #2941 cross-reference must stay outside the dispatched template');
 });
 
 test('#2488: task-prompt.md hardens the missing-claim fallback into a HARD-GATE, non-negotiable regardless of the dispatched call\'s own risk judgment', () => {
