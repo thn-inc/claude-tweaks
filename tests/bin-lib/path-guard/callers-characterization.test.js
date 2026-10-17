@@ -195,6 +195,11 @@ test('installed-plugins: safeRealpath returns the input when the injected realpa
   assert.equal(safeRealpath('/a/b', { realpath: () => '/real/b' }), '/real/b');
 });
 
+test('installed-plugins: safeRealpath returns the input unchanged when deps has no realpath function', () => {
+  assert.equal(safeRealpath('/some/path', {}), '/some/path');
+  assert.equal(safeRealpath('/some/path', undefined), '/some/path');
+});
+
 test('installed-plugins: a stale projectPath whose realpath fails still compares lexically', () => {
   const boom = () => { throw new Error('gone'); };
   const e = entryAt('/stale', 'stale');

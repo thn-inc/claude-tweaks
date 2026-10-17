@@ -48,8 +48,8 @@ function defaultRealpath(fsImpl) {
 
 // Canonical (symlink-resolved, OS-cased) path, or null on any failure.
 function canonicalRealpath(p, { fsImpl = fs, realpath } = {}) {
-  const resolve = realpath || defaultRealpath(fsImpl);
   try {
+    const resolve = realpath || defaultRealpath(fsImpl);
     return resolve(p);
   } catch (_err) {
     return null;
@@ -60,9 +60,9 @@ function canonicalRealpath(p, { fsImpl = fs, realpath } = {}) {
 // cannot resolve (dangling, looping, or unreadable target) is `dangling`; a
 // leaf that exists but will not resolve is `unreadable`.
 function resolveLeaf(p, { fsImpl = fs, realpath } = {}) {
-  const resolve = realpath || defaultRealpath(fsImpl);
   let realpathError;
   try {
+    const resolve = realpath || defaultRealpath(fsImpl);
     return { state: 'resolved', path: resolve(p) };
   } catch (err) {
     realpathError = err;

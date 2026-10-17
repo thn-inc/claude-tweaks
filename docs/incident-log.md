@@ -1743,12 +1743,14 @@ Cost on this build: one review round across two findings, both fixed in the same
 grep-based lint, or a shared `lstat`-backed helper new filesystem-check code is required to route
 through) flags a name-keyed or existence-only check with no accompanying type check.
 
-**Removal condition met, narrowed rather than retired (2026-10-18, #3417).** Both halves of the
-condition above now exist: the shared lstat-backed helper (`plugin/bin/lib/path-guard/`, with
+**Removal condition met, narrowed rather than retired (2026-10-18, #3417).** Both mechanisms the
+condition above names now exist: the shared lstat-backed helper (`plugin/bin/lib/path-guard/`, with
 `lstatType()` and `resolveWithin()`) and the grep-based lint (`tests/path-guard-conformance.test.js`,
-which flags any new `realpathSync`/`existsSync` token outside the module). The rule is narrowed,
-not retired, because the lint enforces only *routing* for new call sites; it does not make a
-legacy caller's check correct. The allowlisted legacy callers are judged one by one in the
+which flags a change in any file's `realpathSync`/`existsSync` token count outside the module —
+the allowlist is count-based, so a same-file swap is invisible). The lint covers existence-only
+checks and realpath tokens only; it does not flag a name-keyed check such as a directory listing,
+which is the first reason the rule is narrowed rather than retired. The second is that the lint
+enforces only *routing* for new call sites; it does not make a legacy caller's check correct. The allowlisted legacy callers are judged one by one in the
 allowlist's reasons; an entry marked `UNSAFE —` is a known hazard, not an endorsement, and the
 allowlist is the list of them. One is open today, tracked in #3493.
 

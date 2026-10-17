@@ -206,6 +206,19 @@ test('canonicalRealpath calls an injected realpath', () => {
   assert.deepEqual(seen, ['/x']);
 });
 
+test('canonicalRealpath fails closed (null) when fsImpl has no realpathSync at all', () => {
+  assert.equal(canonicalRealpath('/x', { fsImpl: {} }), null);
+});
+
+test('resolveLeaf treats a missing realpathSync like a realpath failure and falls through to lstat classification', () => {
+  const fsImpl = { lstatSync: fs.lstatSync };
+  assert.deepEqual(resolveLeaf(target, { fsImpl }), { state: 'unreadable', code: 'EUNKNOWN' });
+});
+
+test('resolveWithin is null when the root itself does not resolve', () => {
+  assert.equal(resolveWithin(target, path.join(root, 'no-such-root')), null);
+});
+
 test('isAncestorOrSelf lexical cases (posix)', () => {
   const opts = { pathImpl: path.posix };
   assert.equal(isAncestorOrSelf('/a/b', '/a/b', opts), true);

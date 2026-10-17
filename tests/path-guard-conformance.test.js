@@ -45,7 +45,8 @@ const DONTS = path.join(__dirname, '..', 'docs', 'donts.md');
 // plugin/bin/ trips this today: when this was written, the tree's counts were
 // cross-checked once against an independent whole-line-comment filter and
 // agreed for every file. That was a one-time audit, not an enforced guard — a
-// future file that trips it can hide tokens from the lint.
+// future file that trips it can hide tokens from the lint. Computed member
+// access (`fs['realpath' + 'Sync']`, `fs[name]`) is likewise not seen.
 const TOKEN = /\/\/[^\n]*|\/\*[\s\S]*?\*\/|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\[\s\S]|[^`\\])*`/g;
 function stripComments(src) {
   return src.replace(TOKEN, (m) => (m[0] === '/' ? m.replace(/[^\n]/g, ' ') : m));
@@ -131,7 +132,7 @@ const ALLOWLIST = {
   'lib/hooks/sweep-shadow.js': { realpathSync: 3, reason: 'canonicalizes the run root and the worktree shadow with the same JS realpath that realDir() applies to the run dir it is compared against; a throw means the path is absent and is handled as such (no sweep / not-same-path).' },
   'lib/hooks/teardown-run.js': { existsSync: 1, reason: 'post-prune report line: is the worktree directory still on disk after git removed its registration; presence, not type, picks the message.' },
   'lib/hooks/worktree-detect.js': { realpathSync: 1, existsSync: 2, reason: 'safeReal is the shared JS-realpath helper (exported and used on both sides of every comparison in this module); existsSync at 29 walks up to the nearest existing ancestor after the leaf-is-a-file case is handled by statSync, and at 151 finds the nearest dir holding .claude-tweaks/policy.yml.' },
-  'lib/impeccable-engine/index.js': { realpathSync: 1, existsSync: 1, reason: 'default deps for injectable tests: `exists` backs the installed_plugins.json and launcher presence checks (a non-executable occupant fails at spawn and is reported as a probe failure), and `realpath` is a deps-injected default that this module does not currently call.' },
+  'lib/impeccable-engine/index.js': { realpathSync: 1, existsSync: 1, reason: 'default deps for injectable tests: `exists` backs the installed_plugins.json and launcher presence checks (a non-executable occupant fails at spawn and is reported as a probe failure), and `realpath` is a deps-injected default that this module does call: it passes `deps` to `installed-plugins.selectEntry`, which calls `deps.realpath` through `safeRealpath` on every comparison. The JS form is deliberate; Impeccable\'s resolution rule is a separate decision (see the `installed-plugins.js` header).' },
   'lib/init/release-bootstrap.js': { realpathSync: 2, reason: 'realpaths the project root and the just-created parent directory of each bootstrap file, then isPathContained() rejects any write that resolves outside the root, after assertSafeWriteTarget has run.' },
   'lib/init/verify-scope-starter.js': { existsSync: 1, reason: 'detection helper for project marker files (package.json, ...) through an injectable fs, wrapped in try/catch so a throw reads as absent; file contents come from the separate read-and-catch readText().' },
   'lib/journey-health/scope.js': { existsSync: 1, reason: 'journey-health "does this referenced path exist" check for a non-glob reference; existence is exactly the finding.' },

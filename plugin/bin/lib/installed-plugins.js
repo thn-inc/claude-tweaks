@@ -19,6 +19,7 @@ const { canonicalRealpath, isAncestorOrSelf } = require('./path-guard');
 // failure falls back to the input so a stale projectPath still compares
 // lexically.
 function safeRealpath(p, deps) {
+  if (!deps || typeof deps.realpath !== 'function') return p;
   const r = canonicalRealpath(p, { realpath: deps.realpath });
   return r === null ? p : r;
 }

@@ -191,7 +191,7 @@ function realTarget(targetPath) {
   // canonicalRepoPath and safeReal resolve the other side of isPolicyFile's
   // equality with the JS form, so switching only this side to .native would
   // turn a mis-cased allow into a deny. Moving both sides together is a
-  // separate change (#3417 follow-up).
+  // separate change (#3495).
   const leaf = resolveLeaf(resolved, { realpath: fs.realpathSync });
   if (leaf.state === 'resolved') return leaf.path;
   if (leaf.state === 'dangling') return null;
