@@ -281,7 +281,6 @@ test('#3375 AC5.1: a transcript-requested run with no subagent data gains exactl
   const json = readTiming(dir);
   // the #1929 key set for this run
   const before = ['runDir', 'generatedAt', 'phases', 'totals', 'unattributed', 'transcripts'];
-  if (json.notes) before.push('notes');
   assert.deepEqual(Object.keys(json).filter((k) => k !== 'dispatches').sort(), before.sort());
   assert.deepEqual(Object.keys(json).filter((k) => !before.includes(k)), ['dispatches']);
   assert.match(json.dispatches.notFound, /^no subagents\/ directory at /);
@@ -341,4 +340,15 @@ test('#3375 R1: a run whose events all sit outside the dispatches reports them e
   assert.equal(d.scope, 'run-window');
   assert.equal(d.excludedOutsideWindow, 3);
   assert.deepEqual(d.items, []);
+});
+
+test('#3375: a late worktree-reaped event does not stretch the run window over the idle gap', () => {
+  // the session ends at 10:03; a3 (10:05-10:07) ran after it, the reap fires at 12:00
+  const s = subagentRun({ events: SUB_EVENTS.replace('10:10:00', '10:03:00') + '{"ts":"2026-10-17T12:00:00.000Z","type":"worktree-reaped"}\n' });
+  const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--transcript', s.transcript], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const d = readTiming(s.dir).dispatches;
+  assert.equal(d.excludedOutsideWindow, 1);
+  assert.deepEqual(d.items.map((i) => i.agentId), ['a1', 'a2']);
+  assert.match(r.stdout, /^dispatches: 1 outside the run window excluded$/m);
 });

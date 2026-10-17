@@ -42,14 +42,14 @@ files:
 ### 3. Read the lines that say what is missing
 - **URL:** the lines after the tables
 - **Action:** Check for:
-  - `dispatches: subagent transcripts not found (…)` (no `subagents/` directory beside the transcript);
-  - `dispatch agent-{id}: transcript not found ({code})`;
+  - `dispatches: subagent transcripts not found (…)` (no `subagents/` directory beside the transcript, or one that cannot be listed — the error code is named);
+  - `dispatch agent-{id}: transcript not found ({code})` (`symlink` when the file is a symlink, which is never followed);
   - `dispatch agent-{id}: transcript has no usage rows`;
-  - `dispatch agent-{id}: meta not found (description null)`;
+  - `dispatch agent-{id}: meta not found (description null)`, or `meta not readable ({code|malformed|symlink}) (description null)` for a meta file that exists but cannot be used;
   - `dispatches: {n} outside the run window excluded`.
 - **Should feel:** Every dispatch is either counted or named, with nothing quietly dropped.
 - **Should understand:**
-  - The run window runs from the run's first to its last `events.jsonl` timestamp. Dispatches entirely outside it belong to other work in the same session and are excluded.
+  - The run window runs from the run's first to its last `events.jsonl` timestamp, not counting a `worktree-reaped` event (it fires hours after the session ends). Dispatches entirely outside it belong to other work in the same session and are excluded.
   - A run with no events reports the whole session and says `whole session — no run events`.
   - A not-found dispatch carries no numbers in any bucket. An orphan transcript (no meta) still counts, under `unlabelled`.
 - **Red flags:** A dispatch that you know ran, appearing in neither a table nor a line.

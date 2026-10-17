@@ -340,6 +340,9 @@ function countGuardEvents(events) {
 // transcript's own `message.model`; otherwise `unmapped`, carrying the raw name
 // so a new model family surfaces instead of being silently folded into a tier.
 const TIER_BY_ALIAS = Object.freeze(Object.fromEntries(Object.entries(PROFILES).map(([tier, p]) => [p.model, tier])));
+// Every tier resolveTier can return, in render order: a profile added to
+// PROFILES gets a Tier row without a second list to keep in step.
+const TIERS = Object.freeze([...Object.keys(PROFILES), 'unmapped']);
 const MODEL_FAMILY_RE = new RegExp(`^claude-(${Object.keys(TIER_BY_ALIAS).join('|')})`);
 
 // ({ metaModel, transcriptModel }) -> { tier, rawModel }. `rawModel` is the
@@ -374,7 +377,7 @@ function roleOf(description) {
 
 // (items) -> { items, byTier, byRole }. Items whose transcript could not be
 // read carry no numbers (tokens null): they stay in `items`, count in no
-// bucket. An orphan (meta not found) has numbers, so it counts — as
+// bucket. An orphan (meta not found or not readable) has numbers, so it counts — as
 // `unlabelled`, with its tier from the transcript model.
 function aggregateDispatches(items) {
   const list = (Array.isArray(items) ? items : []).map((d) => {
@@ -417,5 +420,5 @@ function aggregateDispatches(items) {
 
 module.exports = {
   derivePhases, PHASES, NESTED_PARENT, joinTokens, countGuardEvents,
-  unionMinutes, resolveTier, ROLE_PATTERNS, roleOf, aggregateDispatches,
+  unionMinutes, resolveTier, TIERS, ROLE_PATTERNS, roleOf, aggregateDispatches,
 };

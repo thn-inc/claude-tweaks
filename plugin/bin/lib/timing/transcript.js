@@ -203,11 +203,23 @@ function subagentsDirFor(mainTranscriptPath) {
   return path.join(String(mainTranscriptPath).replace(/\.jsonl$/, ''), 'subagents');
 }
 
+// -> { meta, reason }: reason is null when meta parsed, else the notFound text.
+// A meta that exists but cannot be used is named apart from an absent one, so
+// a corrupt file never reads as an orphan transcript. (Not json-store's
+// readJsonFile: its fallback discards the error this distinction needs.)
 function readMeta(fsImpl, file) {
+  let raw;
   try {
-    const m = JSON.parse(fsImpl.readFileSync(file, 'utf8'));
-    return m && typeof m === 'object' && !Array.isArray(m) ? m : null;
-  } catch { return null; }
+    raw = fsImpl.readFileSync(file, 'utf8');
+  } catch (err) {
+    const code = (err && err.code) || 'EUNKNOWN';
+    return { meta: null, reason: code === 'ENOENT' ? 'meta not found' : `meta not readable (${code})` };
+  }
+  try {
+    const m = JSON.parse(raw);
+    if (m && typeof m === 'object' && !Array.isArray(m)) return { meta: m, reason: null };
+  } catch { /* falls through to malformed */ }
+  return { meta: null, reason: 'meta not readable (malformed)' };
 }
 
 const strOrNull = (v) => (typeof v === 'string' ? v : null);
@@ -234,26 +246,38 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
   let names;
   try {
     names = fsImpl.readdirSync(subagentsDir);
-  } catch {
-    return { items: [], notFound: `no subagents/ directory at ${subagentsDir}`, excludedOutsideWindow: 0 };
+  } catch (err) {
+    const code = (err && err.code) || 'EUNKNOWN';
+    const notFound = code === 'ENOENT' || code === 'ENOTDIR'
+      ? `no subagents/ directory at ${subagentsDir}`
+      : `subagents/ directory not readable (${code}) at ${subagentsDir}`;
+    return { items: [], notFound, excludedOutsideWindow: 0 };
   }
   // A symlinked agent file could point outside ~/.claude/projects, so it is
   // never followed (the lstat twin of locateTranscripts' realpath containment,
-  // IL-150): symlinked names are left out of the id set and never read.
-  const symlinked = new Set();
+  // IL-150), and an entry lstat cannot prove regular is treated the same way
+  // (fail closed). Skipped files are never read, but their agent id is still
+  // listed, so the dispatch is named in a notFound line rather than vanishing.
+  const skipped = new Map(); // file name -> reason ('symlink' or the lstat error code)
   const ids = new Set();
   for (const n of names) {
     const m = /^agent-(.+?)(\.meta\.json|\.jsonl)$/.exec(n);
     if (!m) continue;
-    let isLink = false;
-    try { isLink = fsImpl.lstatSync(path.join(subagentsDir, n)).isSymbolicLink(); } catch { /* unreadable entry: left to the normal read path */ }
-    if (isLink) symlinked.add(n);
-    else ids.add(m[1]);
+    ids.add(m[1]);
+    try {
+      if (fsImpl.lstatSync(path.join(subagentsDir, n)).isSymbolicLink()) skipped.set(n, 'symlink');
+    } catch (err) {
+      skipped.set(n, (err && err.code) || 'EUNKNOWN');
+    }
   }
   const built = [];
   let excludedOutsideWindow = 0;
   for (const agentId of ids) {
-    const meta = symlinked.has(`agent-${agentId}.meta.json`) ? null : readMeta(fsImpl, path.join(subagentsDir, `agent-${agentId}.meta.json`));
+    const metaName = `agent-${agentId}.meta.json`;
+    const jsonlName = `agent-${agentId}.jsonl`;
+    const { meta, reason: metaReason } = skipped.has(metaName)
+      ? { meta: null, reason: `meta not readable (${skipped.get(metaName)})` }
+      : readMeta(fsImpl, path.join(subagentsDir, metaName));
     const d = {
       agentId,
       description: meta ? strOrNull(meta.description) : null,
@@ -263,15 +287,15 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
       parentAgentId: meta ? strOrNull(meta.parentAgentId) : null,
       spawnDepth: meta ? numOrNull(meta.spawnDepth) : null,
       startTs: null, endTs: null, wallClockMs: null, tokens: null,
-      notFound: meta ? null : 'meta not found',
+      notFound: metaReason,
     };
     let startMs = null;
     let rows = null;
-    if (symlinked.has(`agent-${agentId}.jsonl`)) {
-      d.notFound = 'transcript not readable (symlink)';
+    if (skipped.has(jsonlName)) {
+      d.notFound = `transcript not readable (${skipped.get(jsonlName)})`;
     } else {
       try {
-        rows = await readUsage(path.join(subagentsDir, `agent-${agentId}.jsonl`), { fsImpl });
+        rows = await readUsage(path.join(subagentsDir, jsonlName), { fsImpl });
       } catch (err) {
         d.notFound = `transcript not readable (${(err && err.code) || 'EUNKNOWN'})`;
       }

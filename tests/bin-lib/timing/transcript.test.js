@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { slugForCwd, locateTranscripts, readUsage, isProcedurePath, subagentsDirFor, readDispatches, TRANSCRIPT_SLUG_RULE } = require('../../../plugin/bin/lib/timing/transcript');
+const { aggregateDispatches } = require('../../../plugin/bin/lib/timing/derive');
 
 const FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'transcript-small.jsonl');
 
@@ -121,7 +122,7 @@ test('#1929: readUsage on a directory path rejects with EISDIR', async () => {
 
 // ---- #3375: per-subagent-dispatch enumeration --------------------------
 
-// sess-1.jsonl (the main transcript) is read by no test; it anchors the {sessionId}/ sibling path layout that subagentsDirFor derives.
+// sess-1.jsonl (the main transcript) is not read in this file — cli.test.js passes it as --transcript; here it anchors the {sessionId}/ sibling path layout that subagentsDirFor derives.
 const SESS = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'subagents-session');
 const SUBDIR = subagentsDirFor(path.join(SESS, 'sess-1.jsonl'));
 
@@ -211,13 +212,13 @@ test('AC4.1: a transcript with no meta file is an orphan — description null, n
   assert.deepEqual(it.tokens, { input: 1, output: 2, cacheRead: 3, cacheCreate: 4 });
 });
 
-test('#3375 review focus 2: malformed meta JSON degrades to an orphan, never throws', async () => {
+test('#3375 review focus 2: malformed meta JSON degrades to an orphan named "meta not readable (malformed)", never throws', async () => {
   const dir = tmpSubagents();
   fs.writeFileSync(path.join(dir, 'agent-m1.meta.json'), '{not json');
   fs.writeFileSync(path.join(dir, 'agent-m1.jsonl'), aLine('assistant', '2026-10-17T10:00:00.000Z', 'mm', 'claude-opus-5-5', [1, 1, 1, 1]) + '\n');
   const r = await readDispatches(dir);
   assert.equal(r.items.length, 1);
-  assert.equal(r.items[0].notFound, 'meta not found');
+  assert.equal(r.items[0].notFound, 'meta not readable (malformed)');
   assert.equal(r.items[0].description, null);
   assert.equal(r.items[0].metaModel, null);
   assert.deepEqual(r.items[0].tokens, { input: 1, output: 1, cacheRead: 1, cacheCreate: 1 });
@@ -305,7 +306,7 @@ test('#3375 M2 [IL-150]: readDispatches skips symlinked agent transcripts and me
   const outside = tmpSubagents();
   fs.writeFileSync(path.join(outside, 'secret.jsonl'), aLine('assistant', '2026-10-17T10:00:00.000Z', 'ms', 'claude-opus-5-5', [9, 9, 9, 9]) + '\n');
   fs.writeFileSync(path.join(outside, 'secret.meta.json'), JSON.stringify({ description: 'Implement leaked', model: 'opus' }));
-  // fully symlinked agent: neither file may be followed, so no dispatch appears
+  // fully symlinked agent: neither file may be followed, but the dispatch is still named
   fs.symlinkSync(path.join(outside, 'secret.jsonl'), path.join(dir, 'agent-l1.jsonl'));
   fs.symlinkSync(path.join(outside, 'secret.meta.json'), path.join(dir, 'agent-l1.meta.json'));
   // regular meta + symlinked transcript: listed, but the transcript is not read
@@ -316,13 +317,56 @@ test('#3375 M2 [IL-150]: readDispatches skips symlinked agent transcripts and me
   fs.symlinkSync(path.join(outside, 'secret.meta.json'), path.join(dir, 'agent-l3.meta.json'));
   const r = await readDispatches(dir);
   const by = Object.fromEntries(r.items.map((i) => [i.agentId, i]));
-  assert.equal(by.l1, undefined);
+  assert.equal(by.l1.notFound, 'transcript not readable (symlink)');
+  assert.equal(by.l1.tokens, null);
+  assert.equal(by.l1.description, null);
   assert.equal(by.l2.tokens, null);
   assert.match(by.l2.notFound, /^transcript not readable \(symlink\)$/);
   assert.equal(by.l2.description, 'Implement Task 2');
   assert.equal(by.l3.description, null);
-  assert.equal(by.l3.notFound, 'meta not found');
+  assert.equal(by.l3.notFound, 'meta not readable (symlink)');
   assert.deepEqual(by.l3.tokens, { input: 1, output: 1, cacheRead: 1, cacheCreate: 1 });
+});
+
+test('#3375 [IL-150]: an entry lstat cannot prove regular is never read (fail closed) and is named with the lstat code', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-e1.meta.json'), JSON.stringify({ description: 'Implement Task 1', model: 'sonnet' }));
+  fs.writeFileSync(path.join(dir, 'agent-e1.jsonl'), aLine('assistant', '2026-10-17T10:00:00.000Z', 'me', 'claude-sonnet-5', [1, 1, 1, 1]) + '\n');
+  const fsImpl = { ...fs, lstatSync: (p, ...a) => { if (p.endsWith('agent-e1.jsonl')) throw Object.assign(new Error('io'), { code: 'EIO' }); return fs.lstatSync(p, ...a); } };
+  const r = await readDispatches(dir, { fsImpl });
+  assert.equal(r.items.length, 1);
+  assert.equal(r.items[0].notFound, 'transcript not readable (EIO)');
+  assert.equal(r.items[0].tokens, null);
+  assert.equal(r.items[0].description, 'Implement Task 1');
+});
+
+test('#3375: a subagents/ directory that exists but cannot be listed names the error code, not "no subagents/ directory"', async () => {
+  const fsImpl = { ...fs, readdirSync: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); } };
+  const r = await readDispatches('/x/sess/subagents', { fsImpl });
+  assert.equal(r.notFound, 'subagents/ directory not readable (EACCES) at /x/sess/subagents');
+  assert.deepEqual(r.items, []);
+});
+
+test('#3375: a meta file that exists but cannot be read names the error code, not "meta not found"', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-p1.meta.json'), '{}');
+  fs.writeFileSync(path.join(dir, 'agent-p1.jsonl'), aLine('assistant', '2026-10-17T10:00:00.000Z', 'mp', 'claude-haiku-5', [1, 1, 1, 1]) + '\n');
+  const fsImpl = { ...fs, readFileSync: (p, ...a) => { if (String(p).endsWith('.meta.json')) throw Object.assign(new Error('denied'), { code: 'EACCES' }); return fs.readFileSync(p, ...a); } };
+  const r = await readDispatches(dir, { fsImpl });
+  assert.equal(r.items[0].notFound, 'meta not readable (EACCES)');
+  assert.deepEqual(r.items[0].tokens, { input: 1, output: 1, cacheRead: 1, cacheCreate: 1 });
+});
+
+test('AC2.2: fixture metas with model "inherit" and with no model key resolve through the transcript model to capable', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-i1.meta.json'), JSON.stringify({ agentType: 'fork', description: 'Implement Task 3', model: 'inherit' }));
+  fs.writeFileSync(path.join(dir, 'agent-i1.jsonl'), aLine('assistant', '2026-10-17T10:00:00.000Z', 'mi1', 'claude-opus-5-5', [1, 1, 1, 1]) + '\n');
+  fs.writeFileSync(path.join(dir, 'agent-i2.meta.json'), JSON.stringify({ agentType: 'general-purpose', description: 'Review Task 3 (spec + quality)' }));
+  fs.writeFileSync(path.join(dir, 'agent-i2.jsonl'), aLine('assistant', '2026-10-17T10:01:00.000Z', 'mi2', 'claude-opus-5-5', [1, 1, 1, 1]) + '\n');
+  const agg = aggregateDispatches((await readDispatches(dir)).items);
+  assert.deepEqual(agg.items.map((i) => [i.agentId, i.metaModel, i.tier]), [['i1', 'inherit', 'capable'], ['i2', null, 'capable']]);
+  assert.equal(agg.byTier.capable.dispatches, 2);
+  assert.equal(agg.byTier.unmapped, undefined);
 });
 
 // ---- #3375 final review C1: streaming snapshots in subagent transcripts ----

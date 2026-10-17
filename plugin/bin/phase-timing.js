@@ -33,7 +33,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches, ROLE_PATTERNS } = require('./lib/timing/derive');
+const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches, TIERS, ROLE_PATTERNS } = require('./lib/timing/derive');
 const { locateTranscripts, readUsage, subagentsDirFor, readDispatches } = require('./lib/timing/transcript');
 const { readManifest } = require('./lib/flow/manifest');
 
@@ -150,7 +150,6 @@ function renderMarkdown(out, tokens = null, guard = null, notes = []) {
   return lines.join('\n') + '\n';
 }
 
-const TIER_ORDER = ['fast', 'standard', 'capable', 'frontier', 'unmapped'];
 const ROLE_ORDER = [...ROLE_PATTERNS.map((p) => p.role), 'unlabelled'];
 
 function dispatchRow(label, b) {
@@ -158,12 +157,13 @@ function dispatchRow(label, b) {
   return `| ${label} | ${b.dispatches} | ${b.agentSeconds} | ${b.elapsedMinutes} | ${t.input}/${t.output} | ${t.cacheRead}/${t.cacheCreate} |`;
 }
 
-// One line per item whose transcript or meta was not found: the three non-null
-// notFound forms readDispatches produces, then a verbatim fallback.
+// One line per item whose transcript or meta was not found: the notFound forms
+// readDispatches produces (a meta form — not found or not readable — always
+// leaves the description null), then a verbatim fallback.
 function dispatchItemLine(d) {
   const code = /^transcript not readable \((.*)\)$/.exec(d.notFound);
   if (code) return `dispatch agent-${d.agentId}: transcript not found (${code[1]})`;
-  if (d.notFound === 'meta not found') return `dispatch agent-${d.agentId}: meta not found (description null)`;
+  if (/^meta not /.test(d.notFound)) return `dispatch agent-${d.agentId}: ${d.notFound} (description null)`;
   return `dispatch agent-${d.agentId}: ${d.notFound}`;
 }
 
@@ -173,7 +173,7 @@ function renderDispatches(dispatches) {
   if (!dispatches) return '';
   if (dispatches.notFound) return `\ndispatches: subagent transcripts not found (${dispatches.notFound})\n`;
   const lines = [''];
-  const tiers = TIER_ORDER.filter((t) => dispatches.byTier[t]);
+  const tiers = TIERS.filter((t) => dispatches.byTier[t]);
   if (tiers.length > 0) {
     const scope = dispatches.scope === 'run-window' ? 'run window' : 'whole session — no run events';
     lines.push(`Dispatches (${scope}; agent-seconds sum spans with overlap kept, elapsed is their union — not comparable to phase minutes):`);
@@ -195,11 +195,13 @@ function renderDispatches(dispatches) {
 
 // paths: the resolved transcript paths; events: parsed events.jsonl rows. The
 // window is the earliest..latest event ts (no event with a ts -> the whole
-// session). Subagents dirs are deduped by fs.realpathSync (path.resolve when
+// session), leaving out worktree-reaped: it fires hours after the session
+// ends, so its ts would stretch the window over the idle gap (derive.js's
+// endOfRun rule, #1928). Subagents dirs are deduped by fs.realpathSync (path.resolve when
 // the dir does not resolve) so a transcript passed twice, or reached through a
 // symlinked alias, is not double-counted. -> the timing.json `dispatches` value.
 async function collectDispatches(paths, events) {
-  const stamps = events.map((e) => Date.parse(e && e.ts)).filter(Number.isFinite);
+  const stamps = events.filter((e) => !(e && e.type === 'worktree-reaped')).map((e) => Date.parse(e && e.ts)).filter(Number.isFinite);
   // reduce, not Math.min(...stamps): a spread of a very large array can throw RangeError.
   const window = stamps.length
     ? { start: stamps.reduce((a, b) => Math.min(a, b)), end: stamps.reduce((a, b) => Math.max(a, b)) }
