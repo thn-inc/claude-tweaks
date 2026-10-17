@@ -65,7 +65,12 @@ test('AC9.1: the waves fallback is step 3\'s single retry', () => {
     /2 malformed, or a `--waves` dependency cycle\), `parallel` falls back/,
     'the re-run without --waves is for exit 1 only; exit 2 (malformed or a --waves cycle) is step 3\'s STOP',
   );
-  assert.match(para[0], /exit 2|2 malformed/i, 'names exit 2 as following step 3\'s STOP');
+  assert.doesNotMatch(
+    para[0],
+    /exits? (non-zero|2)[^.]*without `--waves`/i,
+    'no wording may tie the re-run without --waves to a non-zero or exit-2 call',
+  );
+  assert.match(para[0], /exit 2|2 malformed/i,'names exit 2 as following step 3\'s STOP');
   assert.match(para[0], /STOP/, 'exit 2 routes to step 3\'s STOP');
 });
 
