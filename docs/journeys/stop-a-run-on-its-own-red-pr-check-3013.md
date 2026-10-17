@@ -34,8 +34,8 @@ files:
 - **URL:** `plugin/skills/_shared/pr-check-gate.md` `pending`/`stale` and fail-open bullets
 - **Action:** `pending`/`stale` → the gate passes with an `AUTO` decision line naming the pending checks (or the unpushed HEAD); `no-pr`, `gh-absent`, `no-ci`, `read-failed` → the gate passes on the local result with one `SKIP` decision line naming the condition.
 - **Should feel:** Quiet — nothing changes for a `local-merge` run except one audit line.
-- **Should understand:** `read-failed` means the gate could not tell, never that CI is green; the merge gate's own read stays the final authority before anything merges. A rollup that is all green while a head-sha workflow run is still in progress — a sibling workflow not yet registered in the rollup — reads `pending`, not `green` (#3405).
-- **Red flags:** A `local-merge` run stopping on this gate; a `read-failed` result logged as a pass with no `SKIP` line; `green` reported while `gh run list --commit {headRefOid}` still lists a run that has not completed.
+- **Should understand:** `read-failed` means the gate could not tell, never that CI is green; the merge gate's own read stays the final authority before anything merges. A rollup that is all green while a head-sha workflow run is still in progress — a sibling workflow not yet registered in the rollup — reads `pending`, not `green` (#3405). A failed head-run read (`gh run list`) is `read-failed` too — unless the rollup is already red, which is conclusive on its own and stops the run as in step 2.
+- **Red flags:** A `local-merge` run stopping on this gate; a `read-failed` result logged as a pass with no `SKIP` line; `green` reported while `gh run list --commit {headRefOid}` still lists a run that has not completed; a red rollup reported as `read-failed` because the head-run read failed.
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #3013 (2026-10-16): `/test`'s pipeline gate and `/review` Step 1.5 read the run PR's checks at HEAD through `bin/pr-checks.js`; red fails the gate.
