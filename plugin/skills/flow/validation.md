@@ -4,6 +4,8 @@ Loaded by /flow Step 2 when performing pre-flight checks. Each substep returns O
 
 Run substeps 2.5, 2.6, and 2.7 in order. Any hard fail or rejection stops the pipeline before the Config Manifesto runs.
 
+**Ledger-bound notes (#3036).** Under the `worktree` strategy the open-items ledger does not exist yet at this step — every "ops ledger entry" below is logged to `decisions.md` now and appended to the ledger as an `ops` row by whichever step creates it (`SKILL.md` Step 1 item 8). Under `current-branch`, Step 1 already created the ledger — write the entry directly.
+
 > **Parallel execution (conditional):** 2.5's fetch + ahead-count and 2.6/2.7's content scans of the plan file have no cross-dependency in the common all-pass path. When git strategy resolves to `worktree` (so 2.5 applies), dispatch the three substeps' underlying reads as parallel tool calls, then evaluate pass/fail in the documented 2.5→2.7 priority order once all reads return. When git strategy resolves to `current-branch` (2.5 is skipped), run 2.6 and 2.7 sequentially — two reads are not worth parallelizing.
 
 **Bookend note (hybrid mode):** Pre-flight stops at 2.5 and 2.6 may surface in hybrid mode because their decisions have `reversibility: low` (worktree divergence persists, tangled-task risk persists) which fails the hybrid floor. These pre-flight stops are exempt from the "two stops" bookend count — they fire before the Manifesto and protect against starting a pipeline that would otherwise corrupt downstream state. See `_shared/auto-mode-contract.md` for the HARD-GATE exemption list.
@@ -13,7 +15,7 @@ Run substeps 2.5, 2.6, and 2.7 in order. Any hard fail or rejection stops the pi
 Resolve the `branch-divergence-check` setting — `BRANCH_DIVERGENCE_CHECK=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values branch-divergence-check)`. When enabled and worktree strategy resolves to `worktree`, run `_shared/worktree-setup.md`'s `## Pre-flight divergence check` — the canonical resolution + fetch + `ahead`-count procedure, consolidated out of what were two byte-identical copies here and in `skills/build/worktree-setup.md` (`[IL-32]`). That section's `AskUserQuestion` and auto-mode handling apply as written there; this step's own log line reads:
 
 ```
-AUTO {time} — Step 2.5: pre-flight branch-divergence-check — {UPSTREAM} is {N} ahead. Continued and added ops ledger entry. Reversibility: low (divergence persists).
+AUTO {time} — Step 2.5: pre-flight branch-divergence-check — {UPSTREAM} is {N} ahead. Continued; ops entry held for the open-items ledger. Reversibility: low (divergence persists).
 ```
 
 > **Base ref:** `/flow` worktrees branch from the current local HEAD via `worktree.baseRef: "head"` (settings.json), and `/build` Common Step 1 unconditionally catches the resulting worktree up with the integration branch after creation regardless of the actual base. See `skills/build/worktree-setup.md` ("Base ref" + Step 4) and `_shared/worktree-setup.md`'s `## Post-creation catch-up` — the harness default `fresh` branches from a possibly-stale `origin/<default-branch>` and the plugin cannot override it through `EnterWorktree`.

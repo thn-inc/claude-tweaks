@@ -89,6 +89,13 @@ test('AC4.1: the QA Ledger Check finds the creation line on both the single-spec
   assert.doesNotMatch(section, /\(`\/flow`'s Step 1\.8 log line,/);
 });
 
+test('flow/validation.md holds Step 2.5/2.6 ledger-bound notes until the ledger exists', () => {
+  const text = read('flow/validation.md');
+  assert.match(text, /Under the `worktree` strategy the open-items ledger does not exist yet at this step/);
+  assert.match(text, /appended to the ledger as an `ops` row by whichever step creates it/);
+  assert.doesNotMatch(text, /Continued and added ops ledger entry/);
+});
+
 test('multi-spec.md stays under its 20,480-byte raw budget', () => {
   const bytes = fs.statSync(path.join(SKILLS, 'flow', 'multi-spec.md')).size;
   assert.ok(bytes < 20480, `multi-spec.md is ${bytes} bytes`);
