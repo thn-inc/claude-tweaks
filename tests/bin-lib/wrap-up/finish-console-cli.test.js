@@ -218,6 +218,8 @@ test('AC1.1: finish-console writes an issues array into verify-expectations.json
   assert.deepStrictEqual(expectations.issues, [3394]);
   assert.deepStrictEqual(expectations.oversightExempt, [42]);
   assert.deepStrictEqual(expectations.deferred, ['worktree']);
+  assert.match(r.stdout, /issues: \[3394\]/);
+  assert.match(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), /issues: \[3394\]/);
 });
 
 test('finish-console without an issues key leaves a stored issues array untouched', () => {
@@ -227,6 +229,18 @@ test('finish-console without an issues key leaves a stored issues array untouche
     JSON.stringify({ version: 1, memory: [], upstream: [], issues: [77] }),
   );
   const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: '{}' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const expectations = JSON.parse(fs.readFileSync(path.join(runDir, 'verify-expectations.json'), 'utf8'));
+  assert.deepStrictEqual(expectations.issues, [77]);
+});
+
+test('finish-console treats a null issues key like an absent one (stored array untouched)', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(
+    path.join(runDir, 'verify-expectations.json'),
+    JSON.stringify({ version: 1, memory: [], upstream: [], issues: [77] }),
+  );
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: '{"issues":null}' });
   assert.strictEqual(r.status, 0, r.stderr);
   const expectations = JSON.parse(fs.readFileSync(path.join(runDir, 'verify-expectations.json'), 'utf8'));
   assert.deepStrictEqual(expectations.issues, [77]);

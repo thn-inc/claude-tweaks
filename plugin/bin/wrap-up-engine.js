@@ -541,7 +541,7 @@ function runVerifyVerb(args) {
 //
 // Payload shape (all arrays optional; memory/upstream default to [] and
 // overwrite the stored array, while `issues` is written only when the key is
-// present, so an absent key leaves a stored issues array untouched):
+// present and non-null, so an absent/null key leaves a stored issues array untouched):
 //   { "memory": [{ "file": "...", "indexFile": "..." }, ...],
 //     "upstream": [{ "url": "..." }, ...],
 //     "issues": [3394, ...],
@@ -568,9 +568,9 @@ function validateFinishConsolePayload(payload) {
   const ledger = payload.ledger ?? [];
   // memory/upstream/issues shape is the writer library's own check — one rule
   // for both writers of verify-expectations.json (#2764). `issues` is included
-  // only when the payload names it, so an absent key validates nothing.
+  // only when the payload names it (non-null), so an absent/null key validates nothing.
   const fieldsError = validateFields({
-    memory, upstream, ...(payload.issues !== undefined ? { issues: payload.issues } : {}),
+    memory, upstream, ...(payload.issues != null ? { issues: payload.issues } : {}),
   });
   if (fieldsError) return fieldsError;
   if (!Array.isArray(ledger)) return '"ledger" must be an array';
@@ -596,6 +596,7 @@ function runFinishConsole(args) {
   const memory = payload.memory ?? [];
   const upstream = payload.upstream ?? [];
   const ledgerUpdates = payload.ledger ?? [];
+  const issuesNote = payload.issues != null ? `, issues: [${payload.issues.join(', ')}]` : '';
 
   // Step 1: verify-expectations.json (read-modify-write — preserve every
   // field this verb doesn't itself own, same discipline
@@ -603,7 +604,7 @@ function runFinishConsole(args) {
   try {
     writeExpectations({
       runDir: args.runDir,
-      fields: { memory, upstream, ...(payload.issues !== undefined ? { issues: payload.issues } : {}) },
+      fields: { memory, upstream, ...(payload.issues != null ? { issues: payload.issues } : {}) },
     });
   } catch (e) {
     process.stderr.write(`wrap-up-engine.js finish-console: step 1 (verify-expectations.json) failed: ${e.message}\n`);
@@ -616,7 +617,7 @@ function runFinishConsole(args) {
   try {
     const header = formatEntry({
       status: 'AUTO', now, step: 'Review Console',
-      text: `Approved via finish-console --approve-all. ${memory.length} memory, ${upstream.length} upstream, ${ledgerUpdates.length} ledger update(s)`,
+      text: `Approved via finish-console --approve-all. ${memory.length} memory, ${upstream.length} upstream, ${ledgerUpdates.length} ledger update(s)${issuesNote}`,
       reversibility: 'per item',
     });
     const lines = [
@@ -684,7 +685,7 @@ function runFinishConsole(args) {
     }
   }
 
-  process.stdout.write(`finish-console: approved — ${memory.length} memory, ${upstream.length} upstream, ${ledgerUpdates.length} ledger update(s) written.\n`);
+  process.stdout.write(`finish-console: approved — ${memory.length} memory, ${upstream.length} upstream, ${ledgerUpdates.length} ledger update(s) written${issuesNote}.\n`);
 }
 
 function main() {
