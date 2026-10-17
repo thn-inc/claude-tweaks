@@ -148,7 +148,7 @@ for (const rel of SCOPE_FILES) {
   });
 }
 
-const CAPTURE_ANCHOR = "**Before step 1 — capture each spec's header fields.**";
+const CAPTURE_ANCHOR = "**Before any step below — capture each spec's header fields.**";
 function assertCaptureBeforeTeardown(text) {
   const start = text.indexOf('### Shared teardown');
   const end = text.indexOf('### Per-issue label cleanup', start);
@@ -173,9 +173,10 @@ test('AC3.1: assertCaptureBeforeTeardown goes red when the capture is removed or
   const i = live.indexOf(CAPTURE_ANCHOR);
   const j = live.indexOf('\n\n', i);
   const para = live.slice(i, j);
-  assert.throws(() => assertCaptureBeforeTeardown(live.replace(para, '')));
+  assert.throws(() => assertCaptureBeforeTeardown(live.replace(para, '')), /no header capture paragraph/);
   const moved = live.replace(para + '\n\n', '').replace('7. **Branch + remote-ref cleanup', para + '\n\n7. **Branch + remote-ref cleanup');
-  assert.throws(() => assertCaptureBeforeTeardown(moved));
+  assert.notStrictEqual(moved, live.replace(para + '\n\n', ''), 'step-7 anchor drifted — the moved control would degrade to the removed control');
+  assert.throws(() => assertCaptureBeforeTeardown(moved), /capture must precede/);
 });
 
 test('Per-issue label cleanup uses the captured value, not a fresh header read', () => {
