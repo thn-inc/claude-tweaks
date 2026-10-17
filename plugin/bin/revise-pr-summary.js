@@ -13,8 +13,15 @@
 // bin/lib/flow/pr-body.js's reviseSpecSummary; the procedure that calls this
 // is _shared/pr-checklist-refresh.md's Phase-checklist update.
 // Exit 0 = reported or applied (stdout: one JSON line); 2 = malformed
-// invocation, a --run-dir that is not a directory, an unreadable
-// --body-file/--summary-file, or an unwritable --out.
+// invocation, a --run-dir that is not a directory or is a worktree-local
+// shadow of the run dir, an unreadable --body-file/--summary-file, or an
+// unwritable --out.
+// --run-dir takes the anchored-or-outside posture (run-dir-guard.js, the
+// resolver family's rule): a path inside a checkout must be the main
+// checkout's run dir, so a shadow never yields a confident `no-reversals`
+// (IL-127); a path outside every checkout is accepted, which the subprocess
+// test's temp run dir relies on. Every caller treats any non-zero exit the
+// same way (log a warning, write the checklist-only body), so exit 2 suffices.
 'use strict';
 
 const fs = require('fs');
@@ -22,6 +29,7 @@ const path = require('path');
 const { parsePremiseReversals, reviseSpecSummary } = require('./lib/flow/pr-body');
 const { readManifest } = require('./lib/flow/manifest');
 const { writeFileAtomic } = require('./lib/atomic-write');
+const { anchoredOrOutsideMessage } = require('./lib/run-dir-guard');
 
 const USAGE = 'usage: revise-pr-summary.js --run-dir <dir> --body-file <file> [--summary-file <file> --out <file>] [--help]\n';
 
@@ -46,6 +54,8 @@ const realDeps = {
   writeFile: (p, s) => writeFileAtomic(p, s),
   readManifest,
   isDirectory: (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } },
+  cwd: () => process.cwd(),
+  anchoredOrOutsideMessage,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -74,6 +84,11 @@ function run(argv, deps = realDeps) {
     if (!o[FLAGS[flag]]) return usageError(`${flag} is required`);
   }
   if (!deps.isDirectory(o.runDir)) return usageError(`--run-dir is not a directory: ${o.runDir}`);
+  let rejection;
+  try { rejection = deps.anchoredOrOutsideMessage(o.runDir, deps.cwd(), '--run-dir'); } catch (err) {
+    return usageError(`could not check --run-dir anchoring: ${err && err.message}`);
+  }
+  if (rejection) { deps.stderr(`revise-pr-summary.js: ${rejection}\n`); return 2; }
   if (Boolean(o.summaryFile) !== Boolean(o.out)) return usageError('--summary-file and --out go together');
 
   let body;

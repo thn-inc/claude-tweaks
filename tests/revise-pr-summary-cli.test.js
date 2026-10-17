@@ -23,6 +23,8 @@ function fakeDeps(files, manifest = null, isDir = true) {
     writeFile: (p, s) => { files[p] = s; },
     readManifest: () => manifest,
     isDirectory: () => isDir,
+    cwd: () => '/wt',
+    anchoredOrOutsideMessage: () => null,
     stdout: (s) => calls.stdout.push(s),
     stderr: (s) => calls.stderr.push(s),
   };
@@ -93,6 +95,17 @@ test('a non-directory --run-dir exits 2, prints the message to stderr, and write
   assert.equal(run(['--run-dir', '/not-a-dir', '--body-file', '/b.md'], deps), 2);
   assert.equal(deps.calls.stdout.length, 0);
   assert.match(deps.calls.stderr[0], /--run-dir is not a directory: \/not-a-dir/);
+  assert.equal('/o.md' in deps.files, false);
+});
+
+test('a worktree-local shadow --run-dir is refused (exit 2), never read as no-reversals', () => {
+  const deps = fakeDeps({ '/rd/decisions.md': REV, '/b.md': BODY, '/s.md': 'x' });
+  const seen = [];
+  deps.anchoredOrOutsideMessage = (dir, cwd, flag) => { seen.push([dir, cwd, flag]); return '--run-dir resolves to a worktree shadow'; };
+  assert.equal(run(['--run-dir', '/rd', '--body-file', '/b.md', '--summary-file', '/s.md', '--out', '/o.md'], deps), 2);
+  assert.deepEqual(seen, [['/rd', '/wt', '--run-dir']]);
+  assert.match(deps.calls.stderr[0], /worktree shadow/);
+  assert.deepEqual(deps.calls.stdout, []);
   assert.equal('/o.md' in deps.files, false);
 });
 
