@@ -149,6 +149,8 @@ A multi-spec run can have a spec B implemented outside the pipeline — `superpo
 
 **Never close the parent first.** Every spec that ran under `MULTISPEC_CURATION_DEFER=1` and `MULTISPEC_REVIEW_DEFER=1` skipped its per-spec Reflect, curation engine and Review Console (`wrap-up/SKILL.md`'s Multi-spec defer branches), and nothing but the consolidated pass performs them. `close-run` on the parent before that pass forfeits all three for every such spec, and nothing in `close-run` checks whether the pass ran.
 
+**Already closed?** Nothing re-runs a forfeited consolidated pass. Fall back to `/claude-tweaks:wrap-up #{n}` once per record — it is record-scoped, so it recovers each record's own Reflect, curation and Review Console, never the run-level batch pass.
+
 ## Artifact-overwrite completion check (#786)
 
 `journeys/SKILL.md` and `stories/SKILL.md` namespace their generated artifact filenames by spec

@@ -57,6 +57,7 @@ const TOKENS = [
   { name: 'MULTISPEC_CURATION_DEFER variable', s: 'MULTISPEC_CURATION_DEFER' },
   { name: 'close-run on the parent', s: 'close-run' },
   { name: 'by-hand close of B record', re: /close it by hand/i },
+  { name: 'already-closed record-scoped wrap-up fallback', s: '/claude-tweaks:wrap-up #{n}' },
 ];
 
 for (const tok of TOKENS) {
