@@ -2326,20 +2326,21 @@ test('upstream-feedback check runs its gh probe and issue view (via ghAvailable)
 });
 
 test('#3388: probe checks registered by earlier tests do not leak -- a clean fixture at the end of the file exits 0', () => {
-  const names = runVerify({ runDir: null, base: 'main', deps: {} }).rows.map((r) => r.check);
+  const registeredNames = () => runVerify({ runDir: null, base: 'main', deps: {} }).rows.map((r) => r.check);
+  const names = registeredNames();
   for (const probe of ['__test-exitcode-probe__', '__test-throwing-check__', '__test-null-guard-probe__']) {
     assert.ok(!names.includes(probe), `${probe} leaked into later runVerify calls`);
   }
   // unregister is identity-scoped and idempotent
-  const before = runVerify({ runDir: null, base: 'main', deps: {} }).rows.map((r) => r.check);
+  const before = registeredNames();
   const unregA = registerCheck('__test-dup__', () => ({ result: 'pass', detail: 'a' }));
   const unregB = registerCheck('__test-dup__', () => ({ result: 'pass', detail: 'b' }));
   unregA();
   unregA();
-  const mid = runVerify({ runDir: null, base: 'main', deps: {} }).rows.map((r) => r.check);
+  const mid = registeredNames();
   assert.deepStrictEqual(mid, [...before, '__test-dup__']);
   unregB();
-  assert.deepStrictEqual(runVerify({ runDir: null, base: 'main', deps: {} }).rows.map((r) => r.check), before);
+  assert.deepStrictEqual(registeredNames(), before);
 
   const runId = 'test-3388-clean-tail';
   const repoRoot = makeCleanRepoRoot();
