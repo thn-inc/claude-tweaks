@@ -35,10 +35,11 @@ files:
 - **URL:** `/claude-tweaks:demo #N`
 - **Action:** Run demo on the record; the Try it block renders before anything else. See `accept-built-work-via-demo.md` for the walkthrough and verdict that follow.
 - **Should feel:** Like the same note, found again, with nothing new to learn.
-- **Should understand:** Under `pr-first`, demo reads the walkthrough back from the PR: either through the issue's `Verification Brief posted to PR #…` pointer, or for a below-floor record through the PR that closed it. It composes a fresh block from the record's ACs only when no posted block can be found.
+- **Should understand:** Under `pr-first`, demo reads the walkthrough back from the PR: either through the issue's `Verification Brief posted to PR #…` pointer, or for a below-floor record through the PR that closed it. It composes a fresh block from the record's ACs only when no posted block can be found. Only a comment from an owner, member or collaborator counts as posted. A stranger's lookalike is skipped and named in one line (`ignore-a-planted-marker-comment-3358.md`).
 - **Red flags:** Demo composing a different walkthrough while the PR still carries one. A walkthrough shown twice (once first, again inside the rendered brief).
 
 ## Origin
 - Created during build of #2821 (a finished feature run never tells the human how to use or verify what was built)
 - Steps 1-3 built in this session
 - Related specs: #2821, #367 (the oversight floor whose gating this narrows to the label and ceremony)
+- Step 3 updated during build of #3358 (demo reads back only trusted-author comments)

@@ -9,6 +9,8 @@ highest-priority (then oldest) member as its representative. Also reads this run
 excludes any group with a member matching a `reason: 'oversized'` entry's `records` — a headless
 firing has nobody present to see the Oversized-group report's surfaced line, so the bare drain
 (and its `next` alias) is the form that must not auto-select an oversized group at all (#1228).
+A headless firing likewise skips a group with a member under `reason: 'neighbour-in-flight'` for
+that queue pull, because a direct file-sharing neighbour holds a live claim (#3278).
 Writes the picked group (or `null`, when no candidate remains) to `dispatch-next-pick.json`.
 
 **Also filters on `reason: 'firing'` entries in the same `dispatch-exclusions.json`** — every
@@ -21,8 +23,8 @@ A group with any member excluded under `reason: 'firing'` is excluded from the c
 the rest of the firing, exactly like an oversized group — the record's labels alone (`auto:build`
 present, no `bot:blocked`) do not change on a claim-contest/in-flight stop or a pre-retry-ceiling
 build/test failure, so without this the same firing's very next iteration re-selects the identical
-group and reproduces the identical stop. Both reasons are checked together, via one
-`groupIsExcluded(g, entries, ['oversized', 'firing'])` call — no separate key derivation for each.
+group and reproduces the identical stop. All three reasons are checked together, via one
+`groupIsExcluded(g, entries, ['oversized', 'firing', 'neighbour-in-flight'])` call — no separate key derivation for each.
 
 ```bash
 eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" <<NODE_EVAL_EOF
@@ -49,7 +51,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$PRIORITY_FILTER" "$DISPATCH
   // iteration, and 'next''s single-iteration alias never needs the firing
   // reason at all.
   const entries = readExclusions(process.argv[3]);
-  const eligibleGroups = groups.filter((g) => !groupIsExcluded(g, entries, ['oversized', 'firing']));
+  const eligibleGroups = groups.filter((g) => !groupIsExcluded(g, entries, ['oversized', 'firing', 'neighbour-in-flight']));
   const representative = (g) => g.slice().sort((a, b) =>
     bandOf(a) - bandOf(b) || new Date(a.createdAt) - new Date(b.createdAt))[0];
   const priorityFilter = process.argv[1] || null; // '--priority' value, or unset

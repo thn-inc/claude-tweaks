@@ -311,7 +311,7 @@ implemented by the composer and is retired; the runtime decision tree, not creat
 whether polish runs.
 
 **One `Fixes #{n}` line per record.** A single-record run gets one line. A dispatch bundle
-(`dispatch/SKILL.md`'s file-overlap grouping) enumerates every record from the parent
+(`dispatch/SKILL.md`'s fast-lane bundling) enumerates every record from the parent
 `manifest.yml`'s `specs[].id` list and lists one `Fixes #{m}` line per record — provisional
 (#2015). Unlike the retired
 dispatch-only durability procedure this file replaced (`docs/incident-log.md`'s `[IL-128]`),

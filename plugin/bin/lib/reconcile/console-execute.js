@@ -27,7 +27,8 @@ const { promisify } = require('util');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { iterRunDirsWithState } = require('../hooks/context');
 const { runWithConcurrency } = require('./gh-pool');
-const { evaluateMaturation, extractPendingGrantedAt } = require('../issues/grant-maturation');
+const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('../issues/grant-maturation');
+const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { resolvePolicyConfig } = require('../policy-schema');
 
 const execFileAsync = promisify(execFile);
@@ -45,6 +46,9 @@ const RECLAIM_STALE_MS = 30 * 60 * 1000;
 // GraphQL mutation rather than a REST PATCH to `issues/comments/{id}` (that
 // file's own rationale, verbatim).
 const UPDATE_ISSUE_COMMENT_MUTATION = 'query=mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id}}}';
+
+// First line of the reply comment resolveConsoleExecution posts (and finds again on a retry).
+const EXECUTED_REPLY_MARKER = '<!-- console-item: executed -->';
 
 // null = no console.json at all; undefined = present but unparseable (fails
 // closed, distinct from absent, mirroring archive-merged.js's readConsoleState).
@@ -163,15 +167,19 @@ function parseFixesMembers(body) {
   return out;
 }
 
-// gh issue view {n} --json labels,comments -> {labels, pendingSince} the same
-// shape console-resolve.js's own ghReadGrants builds, for evaluateMaturation.
+// gh issue view {n} --json labels,comments -> {labels, pendingSince,
+// skippedUntrusted} the same shape console-resolve.js's own ghReadGrants
+// builds, for evaluateMaturation. #3358: a `grant-mode-audit` marker is
+// plantable by anyone who can comment, and a backdated one would mature a
+// pending grant -- so pendingSince reads trusted comments only, and each
+// untrusted comment carrying the marker is named in skippedUntrusted.
 async function fetchIssueGrant(repoRoot, issueNumber) {
   const res = await ghJson(repoRoot, ['issue', 'view', String(issueNumber), '--json', 'labels,comments']);
   if (!res.ok) return res;
   const { json } = res;
   const labels = (json.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
-  const bodies = (json.comments || []).map((c) => (typeof c === 'string' ? c : c.body || ''));
-  return { ok: true, labels, pendingSince: extractPendingGrantedAt(bodies) };
+  const { bodies, skippedUntrusted } = partitionGrantComments(json.comments);
+  return { ok: true, labels, pendingSince: extractPendingGrantedAt(bodies), skippedUntrusted };
 }
 
 // The `grant-veto-window-hours` policy value for this run dir, resolved
@@ -216,7 +224,7 @@ function preFetchSkipReason(consoleJson, now) {
 // merge-grant check below) -> a detection verdict. No I/O, so the
 // race/claim/idempotence logic is unit-testable without gh.
 //   { action: 'ready', prNumber, commentIds, items } | { action: 'skip', reason }
-// ctx: { prBody?, memberGrants?: {[issueNumber]: {labels, pendingSince}}, vetoWindowHours?, now? }
+// ctx: { prBody?, memberGrants?: {[issueNumber]: {labels, pendingSince, skippedUntrusted?}}, vetoWindowHours?, now? }
 // — all optional; omitted entirely (the pre-#1802 call shape) always yields
 // mergeGrantGap: null, unchanged from before.
 function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
@@ -286,7 +294,14 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
           vetoWindowHours: ctx.vetoWindowHours,
           now: ctx.now !== undefined ? ctx.now : now,
         });
-        if (!mat.mature) { mergeGrantGap = { member: n, reason: mat.reason }; break; }
+        if (!mat.mature) {
+          // #3358: a grant left unmatured while untrusted marker comments were
+          // passed over names them, so the withhold is not mistaken for "nobody
+          // ever granted" -- the planted comment is what the operator should see.
+          const passedOver = Array.isArray(grant.skippedUntrusted) ? grant.skippedUntrusted : [];
+          mergeGrantGap = { member: n, reason: passedOver.length ? `${mat.reason} — ${passedOver.join('; ')}` : mat.reason };
+          break;
+        }
       }
     }
   }
@@ -350,7 +365,7 @@ async function consoleExecuteDetect(opts = {}) {
   grantJobs.forEach((job, i) => {
     const g = grantResults[i] instanceof Error ? { ok: false } : grantResults[i];
     if (!g.ok) return;
-    memberGrantsByCandidate.get(job.candidateIndex)[job.member] = { labels: g.labels, pendingSince: g.pendingSince };
+    memberGrantsByCandidate.get(job.candidateIndex)[job.member] = { labels: g.labels, pendingSince: g.pendingSince, skippedUntrusted: g.skippedUntrusted };
   });
 
   candidates.forEach((c, i) => {
@@ -475,7 +490,17 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = 
   // and updating it in place keeps a retry a no-op on this step regardless
   // of whether the outcome content changed between runs.
   const replyBody = buildExecutedReplyBody(outcomes);
-  const existingReply = comments.find((c) => typeof c.body === 'string' && c.body.startsWith('<!-- console-item: executed -->'));
+  // #3358: the marker is plantable by anyone who can comment on the PR, so only
+  // an owner/member/collaborator comment is updated in place; an untrusted match
+  // takes the "no such comment" path (a fresh reply is created) and is named in
+  // skippedUntrusted instead of passing silently.
+  const skippedUntrusted = [];
+  let existingReply;
+  for (const c of comments) {
+    if (!c || typeof c.body !== 'string' || !c.body.startsWith(EXECUTED_REPLY_MARKER)) continue;
+    if (!isTrustedComment(c)) skippedUntrusted.push(untrustedSkipNote(c));
+    else if (!existingReply) existingReply = c;
+  }
   try {
     if (existingReply) {
       await deps.gh(['api', 'graphql', '-f', UPDATE_ISSUE_COMMENT_MUTATION, '-f', `id=${existingReply.id}`, '-f', `body=${replyBody}`]);
@@ -511,8 +536,22 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = 
   }
 
   return {
-    status: 'executed', outcomes, resolved: allExecuted, prNumber: consoleJson.prNumber,
+    status: 'executed', outcomes, resolved: allExecuted, prNumber: consoleJson.prNumber, skippedUntrusted,
   };
+}
+
+// The `hooks.js resolve-console` success output for an `executed` result: the
+// summary line, then (#3358) one line per untrusted executed-reply comment the
+// verb passed over -- so the operator sees what was ignored instead of a reply
+// silently created next to a planted one. Newline-terminated, ready to write.
+function renderExecutedLines(result, runId) {
+  const summary = result.outcomes.map((o) => `${o.id}:${o.outcome}`).join(', ');
+  const lines = [
+    `claude-tweaks: console resolved for ${runId} (PR #${result.prNumber}) — ${summary}`
+    + `${result.resolved ? '' : ' — Resolve left unticked (not every item cleared)'}`,
+    ...(result.skippedUntrusted || []).map((note) => `claude-tweaks: ${note}`),
+  ];
+  return `${lines.join('\n')}\n`;
 }
 
 // Same shape as bin/lib/feedback/file-feedback.js's errorText — a thrown
@@ -531,7 +570,7 @@ function buildExecutedReplyBody(outcomes) {
   const lines = outcomes.map((o) => (o.outcome === 'executed'
     ? `- \`${o.id}\`: executed`
     : `- \`${o.id}\`: ${o.note}`));
-  return `<!-- console-item: executed -->\n${lines.join('\n')}`;
+  return `${EXECUTED_REPLY_MARKER}\n${lines.join('\n')}`;
 }
 
 // Ticks the Resolve checkbox row (isResolveTicked's own row shape, in
@@ -561,6 +600,8 @@ module.exports = {
   isClaimReclaimable,
   readConsoleJson,
   parseFixesMembers,
+  fetchIssueGrant,
   resolveConsoleExecution,
+  renderExecutedLines,
   RECLAIM_STALE_MS,
 };

@@ -46,13 +46,14 @@ function group(number, { priority = null, createdAt = '2026-01-01T00:00:00Z' } =
 // vocabulary (unchanged from before the unification) -- only how they reach
 // the snippet changed, from two separate files to one dispatch-exclusions.json
 // composed of {reason, records, detail} entries.
-function runRanking({ groups, oversizedExcluded = [], firingExcluded, priorityFilter = '' }) {
+function runRanking({ groups, oversizedExcluded = [], firingExcluded, extraEntries = [], priorityFilter = '' }) {
   const sessionId = `dispatch-firing-excl-test-${crypto.randomBytes(6).toString('hex')}`;
   fs.writeFileSync(sessionTmpPath(sessionId, 'dispatch-groups.json'), JSON.stringify(groups));
   const entries = oversizedExcluded.map((o) => ({ reason: 'oversized', records: o.records, detail: { size: o.size, threshold: o.threshold } }));
   if (firingExcluded !== undefined) {
     entries.push(...firingExcluded.map((n) => ({ reason: 'firing', records: [n], detail: null })));
   }
+  entries.push(...extraEntries);
   fs.writeFileSync(sessionTmpPath(sessionId, 'dispatch-exclusions.json'), JSON.stringify(entries));
   execFileSync('bash', ['-c', SNIPPET], {
     env: {
@@ -123,4 +124,13 @@ test('firing-exclusion and the oversized-group guard compose -- both filters app
   });
   assert.ok(pick, 'expected a pick, got null');
   assert.strictEqual(pick[0].number, 300, '#100 excluded as oversized, #200 excluded as this-firing-excluded -- only #300 remains');
+});
+
+test('AC5.1: bare-drain ranking never selects a group with a neighbour-in-flight member (#3278)', () => {
+  const pick = runRanking({
+    groups: [group(100, { priority: 'high' }), group(300, { priority: 'low' })],
+    extraEntries: [{ reason: 'neighbour-in-flight', records: [100], detail: { neighbours: [{ number: 9, files: ['a.js'] }] } }],
+  });
+  assert.ok(pick, 'expected a pick');
+  assert.strictEqual(pick[0].number, 300);
 });

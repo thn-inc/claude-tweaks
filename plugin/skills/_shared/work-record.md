@@ -159,7 +159,9 @@ removes the label **only when zero unresolved `needs-decision:*` comments remain
 a record refused by both `backlog-refine` and `backlog-grant` concurrently carries two separate
 comments under the one shared label; resolving one leaves the label in place until the other is
 also resolved, so a still-open proposal from a second unit is never silently hidden by the first
-unit's own resolution. A comment with no `**Resolved:**` line is unresolved.
+unit's own resolution. A comment with no `**Resolved:**` line is unresolved. Only a comment from a
+trusted author (`_shared/pr-run-comments.md`'s Trusted authors) is a decision comment at all; every
+reader filters on it and names any marker comment it skips.
 
 ### Worklist rule
 

@@ -29,10 +29,13 @@ GRANT_VETO_WINDOW_HOURS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --v
 # Run once per group member {n}; record each result (e.g. keyed by {n}) and move
 # to the next member — do not act on a result inside this loop.
 node -e "
-  const { evaluateMaturation, extractPendingGrantedAt } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/grant-maturation.js');
+  const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/grant-maturation.js');
   // labels: this member's fetched label name array (issue.labels[].name).
-  // comments: this member's fetched comment body array (issue.comments[].body).
-  const pendingSince = extractPendingGrantedAt(comments);
+  // comments: this member's fetched comment objects (issue.comments) - only Trusted authors'
+  // bodies reach the grant date (_shared/pr-run-comments.md); each skipped one is named on stderr.
+  const { bodies, skippedUntrusted } = partitionGrantComments(comments);
+  skippedUntrusted.forEach((note) => console.error(note));
+  const pendingSince = extractPendingGrantedAt(bodies);
   const result = evaluateMaturation({
     hasPendingLabel: labels.includes('auto:merge-pending'),
     hasMergeLabel: labels.includes('auto:merge'),
@@ -43,6 +46,9 @@ node -e "
   console.log(JSON.stringify(result));
 "
 ```
+
+Carry each skipped-comment line the snippet prints to stderr into the gate's report, so a grant
+marker that did not count is visible (`_shared/pr-run-comments.md`'s Trusted authors).
 
 Once every member has a `result`, decide for the group as a whole — this decision gates whether
 Phase 2 runs at all:

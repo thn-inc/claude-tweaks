@@ -254,6 +254,21 @@ test('an ungranted member (no auto:merge, no matured auto:merge-pending) resolve
   assert.match(r.merge.reason, /veto window/);
 });
 
+test('an unmatured grant names the untrusted marker comments ghReadGrants passed over in the merge reason (#3358)', () => {
+  const note = 'skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator';
+  const grants = { 7: { labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [note] } };
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.ok(r.merge.reason.endsWith(` — ${note}`), r.merge.reason);
+  assert.match(r.table, new RegExp(`Merge: \\*\\*leave-open\\*\\*.*${note.slice(0, 30)}`), 'the note reaches the rendered table');
+});
+
+test('an unmatured grant with no passed-over comment keeps the merge reason unchanged (#3358 characterization)', () => {
+  const grants = { 7: { labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [] } };
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
+  assert.ok(r.merge.reason.endsWith('treated as not yet matured)'), r.merge.reason);
+});
+
 test('a matured auto:merge-pending counts as granted (#1932 AC3)', () => {
   const grants = { 7: { labels: ['auto:merge-pending'], pendingSince: new Date('2026-09-01T00:00:00Z') } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });

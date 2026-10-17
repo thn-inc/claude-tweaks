@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const {
-  readOrder, writeOrder, buildFreshnessSignal, signalsMatch, composeOrderBlob,
+  readOrder, writeOrder, buildFreshnessSignal, signalsMatch, composeOrderBlob, cacheUsable, GROUPING_MODE,
 } = require('../../../plugin/bin/lib/dispatch/queue-order.js');
 
 // Same minimal fake git runner shape as merge-lane-breaker.test.js's own
@@ -109,7 +109,7 @@ test('composeOrderBlob: states the blob field list once', () => {
     computedAt: '2026-08-30T00:00:00Z', runId: 'spec-1571', freshnessSignal: { issues: [] }, groups: [], excluded: [],
   });
   assert.deepStrictEqual(blob, {
-    computedAt: '2026-08-30T00:00:00Z', runId: 'spec-1571', freshnessSignal: { issues: [] }, groups: [], excluded: [],
+    computedAt: '2026-08-30T00:00:00Z', runId: 'spec-1571', freshnessSignal: { issues: [] }, groups: [], excluded: [], grouping: 'per-record',
   });
 });
 
@@ -118,8 +118,53 @@ test('composeOrderBlob: carries an optional bundles field through unchanged', ()
     computedAt: '2026-09-11T00:00:00Z', runId: 'spec-2066', freshnessSignal: { issues: [] }, groups: [], excluded: [], bundles: [{ records: [10, 11] }],
   });
   assert.deepStrictEqual(blob, {
-    computedAt: '2026-09-11T00:00:00Z', runId: 'spec-2066', freshnessSignal: { issues: [] }, groups: [], excluded: [], bundles: [{ records: [10, 11] }],
+    computedAt: '2026-09-11T00:00:00Z', runId: 'spec-2066', freshnessSignal: { issues: [] }, groups: [], excluded: [], bundles: [{ records: [10, 11] }], grouping: 'per-record',
   });
+});
+
+test('composeOrderBlob carries grouping: per-record', () => {
+  const blob = composeOrderBlob({
+    computedAt: '2026-10-17T00:00:00Z', runId: 'spec-3278', freshnessSignal: { issues: [] }, groups: [], excluded: [],
+  });
+  assert.equal(blob.grouping, 'per-record');
+  assert.equal(GROUPING_MODE, 'per-record');
+});
+
+// --- cacheUsable ---
+
+const SIGNAL = { issues: [{ number: 1, updatedAt: 'a', state: 'OPEN' }] };
+
+test('Review Focus 1: cacheUsable rejects a blob with no grouping field even when signals match', () => {
+  const legacy = { computedAt: 'x', runId: 'y', freshnessSignal: SIGNAL, groups: [], excluded: [] };
+  assert.equal(signalsMatch(legacy.freshnessSignal, SIGNAL), true);
+  assert.equal(cacheUsable(legacy, SIGNAL), false);
+});
+
+test('cacheUsable accepts a per-record blob whose signals match', () => {
+  const blob = composeOrderBlob({
+    computedAt: 'x', runId: 'y', freshnessSignal: SIGNAL, groups: [], excluded: [],
+  });
+  assert.equal(cacheUsable(blob, SIGNAL), true);
+});
+
+test('cacheUsable rejects mismatched signals', () => {
+  const blob = composeOrderBlob({
+    computedAt: 'x', runId: 'y', freshnessSignal: SIGNAL, groups: [], excluded: [],
+  });
+  const changed = { issues: [{ number: 1, updatedAt: 'b', state: 'OPEN' }] };
+  assert.equal(cacheUsable(blob, changed), false);
+});
+
+test('cacheUsable rejects a blob stamped with any other grouping value', () => {
+  const blob = { freshnessSignal: SIGNAL, grouping: 'transitive' };
+  assert.equal(cacheUsable(blob, SIGNAL), false);
+});
+
+test('cacheUsable(null, x) is false and never throws on malformed input', () => {
+  assert.equal(cacheUsable(null, SIGNAL), false);
+  assert.equal(cacheUsable(undefined, SIGNAL), false);
+  assert.equal(cacheUsable({ grouping: 'per-record' }, SIGNAL), false);
+  assert.equal(cacheUsable({ grouping: 'per-record', freshnessSignal: SIGNAL }, null), false);
 });
 
 // --- readOrder / writeOrder wiring ---
