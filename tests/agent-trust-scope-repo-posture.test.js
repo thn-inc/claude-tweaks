@@ -18,23 +18,18 @@ function kindsOf(dir) {
   return scanAgentTrustScope(dir).candidates.map((c) => c.kind);
 }
 
-function assertRegistryAndCredentialClosed(kinds) {
-  assert.ok(!kinds.includes('registry-access'), `registry-access still reported: ${kinds}`);
-  assert.ok(!kinds.includes('credential-scope'), `credential-scope still reported: ${kinds}`);
-}
-
-test('the committed deny list closes registry-access and credential-scope', () => {
-  assertRegistryAndCredentialClosed(kindsOf(ROOT));
-});
-
-test('the committed deny list closes registry-access and credential-scope independent of this repo\'s own autonomy setting', (t) => {
+// Scans a copy of the committed settings under a forced `autonomy: unattended`, so the check
+// holds whatever this repo's own autonomy is (the generator reports nothing when it isn't elevated).
+test('the committed deny list closes registry-access and credential-scope', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-trust-scope-fixture-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'autonomy: unattended\n');
   fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
   fs.copyFileSync(path.join(ROOT, '.claude', 'settings.json'), path.join(dir, '.claude', 'settings.json'));
-  assertRegistryAndCredentialClosed(kindsOf(dir));
+  const kinds = kindsOf(dir);
+  assert.ok(!kinds.includes('registry-access'), `registry-access still reported: ${kinds}`);
+  assert.ok(!kinds.includes('credential-scope'), `credential-scope still reported: ${kinds}`);
 });
 
 test('network-egress stays reported while autonomy is elevated (accepted risk, ADR 0022)', (t) => {
