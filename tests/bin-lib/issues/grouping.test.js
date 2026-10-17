@@ -2,7 +2,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, detectCrossPRFileOverlap } = require('../../../plugin/bin/lib/issues/grouping');
+const { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, detectCrossPRFileOverlap, directOverlaps, findInFlightNeighbours, buildDispatchGroups } = require('../../../plugin/bin/lib/issues/grouping');
 
 // ── groupByFileOverlap ──────────────────────────────────────────────────────
 
@@ -1017,4 +1017,179 @@ test('a mixed pool of pre-drain (untagged) and drain-tagged PRs attributes each 
   const drain = overlaps.find((o) => o.pr === 123);
   assert.strictEqual('source' in preDrain, false);
   assert.strictEqual(drain.source, 'drain');
+});
+
+// ── per-record dispatch groups (#3278) ──────────────────────────────────────
+
+function rec(number, files, { fastLane = false, createdAt } = {}) {
+  const labels = [{ name: 'priority:medium' }];
+  if (fastLane) labels.unshift({ name: 'ceremony:fast-lane' });
+  const issue = {
+    number,
+    labels,
+    body: '## Technical Approach\n\n### Key Files\n\n' + files.map((f) => `- \`${f}\` — x`).join('\n') + '\n',
+  };
+  if (createdAt !== undefined) issue.createdAt = createdAt;
+  return issue;
+}
+
+test('AC1.1-AC1.3: the 2026-10-17 18-record chained shape yields single-record groups and no oversized group', () => {
+  const EDGES = [[3289,3035,['plugin/skills/flow/multi-spec.md']],[3289,3018,['plugin/skills/flow/manifesto.md']],[3289,2734,['plugin/skills/flow/manifesto.md']],[3266,3015,['plugin/skills/_shared/subagent-output-contract.md']],[3226,3018,['plugin/bin/lib/policy-schema.js']],[3226,3014,['plugin/skills/flow/steps-and-gates.md','plugin/bin/lib/flow/preflight.js']],[3079,3047,['plugin/skills/review/code-mode-steps.md']],[3079,3021,['plugin/skills/review/code-mode-steps.md']],[3079,3004,['plugin/skills/build/SKILL.md']],[3079,2977,['plugin/skills/review/code-mode-steps.md']],[3047,3021,['plugin/skills/review/code-mode-steps.md']],[3047,2977,['plugin/skills/review/code-mode-steps.md']],[3035,3030,['plugin/bin/hooks.js']],[3035,3026,['plugin/bin/hooks.js']],[3035,3015,['docs/hooks.md']],[3035,2986,['plugin/bin/hooks.js','docs/hooks.md']],[3030,3026,['plugin/bin/hooks.js']],[3030,2986,['plugin/bin/hooks.js']],[3026,2986,['plugin/bin/hooks.js']],[3021,2977,['plugin/skills/review/code-mode-steps.md']],[3018,2734,['plugin/skills/flow/manifesto.md']],[3015,2986,['docs/hooks.md']],[3004,2887,['plugin/bin/lib/wrap-up/pack.js']],[3004,2869,['plugin/skills/build/dispatch.md']],[3004,2734,['plugin/bin/lib/issues/autonomy.js']]];
+  const filesById = new Map();
+  for (const [a, b, files] of EDGES) {
+    for (const id of [a, b]) {
+      if (!filesById.has(id)) filesById.set(id, []);
+      for (const f of files) if (!filesById.get(id).includes(f)) filesById.get(id).push(f);
+    }
+  }
+  for (let n = 5001; n <= 5043; n++) filesById.set(n, [`pad/unique-${n}.js`]);
+  assert.strictEqual(filesById.size, 61);
+
+  const issues = [...filesById].map(([number, files]) => rec(number, files));
+  const items = issues.map((issue) => ({ id: issue.number, keyFiles: extractKeyFiles(issue) }));
+
+  const chained = groupByFileOverlap(items);
+  assert.strictEqual(Math.max(...chained.map((g) => g.length)), 18);
+
+  const { groups, bundles } = buildDispatchGroups(issues, { bundleCap: 3 });
+  assert.strictEqual(groups.length, 61);
+  for (const g of groups) assert.strictEqual(g.length, 1);
+  assert.deepStrictEqual(bundles, []);
+  assert.deepStrictEqual(partitionGroupsBySizeGuard(groups).oversized, []);
+});
+
+test('AC2.1: bundleCap <= 1 gives exactly one single-record group per candidate', () => {
+  const issues = [
+    rec(1, ['a.js'], { fastLane: true, createdAt: '2026-01-01T00:00:00Z' }),
+    rec(2, ['a.js'], { fastLane: true, createdAt: '2026-01-02T00:00:00Z' }),
+    rec(3, ['c.js'], { fastLane: true, createdAt: '2026-01-03T00:00:00Z' }),
+    rec(4, ['d.js'], { fastLane: true, createdAt: '2026-01-04T00:00:00Z' }),
+    rec(5, ['e.js'], { fastLane: true, createdAt: '2026-01-05T00:00:00Z' }),
+  ];
+  for (const bundleCap of [1, 0]) {
+    const { groups } = buildDispatchGroups(issues, { bundleCap });
+    assert.strictEqual(groups.length, 5);
+    for (const g of groups) assert.strictEqual(g.length, 1);
+    assert.deepStrictEqual(groups.flat().map((i) => i.number).sort(), [1, 2, 3, 4, 5]);
+  }
+});
+
+test('AC3.1: findInFlightNeighbours reports a live neighbour sharing a specific file, with that file', () => {
+  const result = findInFlightNeighbours(
+    [{ id: 1, keyFiles: ['a.js', 'b.js'] }],
+    [{ id: 9, keyFiles: ['b.js'] }],
+  );
+  assert.deepStrictEqual(result.get(1), [{ number: 9, files: ['b.js'] }]);
+});
+
+test('AC3.2: sharing only a bare-directory entry is not reported', () => {
+  const result = findInFlightNeighbours(
+    [{ id: 1, keyFiles: ['tests/'] }],
+    [{ id: 9, keyFiles: ['tests/'] }],
+  );
+  assert.deepStrictEqual(result.get(1), []);
+});
+
+test('AC3.3: sharing only a path at or above the hub threshold is not reported', () => {
+  const result = findInFlightNeighbours(
+    [{ id: 1, keyFiles: ['hub.js'] }, { id: 2, keyFiles: ['hub.js'] }, { id: 3, keyFiles: ['hub.js'] }],
+    [{ id: 9, keyFiles: ['hub.js'] }],
+  );
+  for (const id of [1, 2, 3]) assert.deepStrictEqual(result.get(id), []);
+});
+
+test('AC3.4: a candidate with no in-flight records returns an empty list', () => {
+  const result = findInFlightNeighbours([{ id: 1, keyFiles: ['a.js'] }], []);
+  assert.deepStrictEqual(result.get(1), []);
+});
+
+test('Review Focus 2: a candidate that also appears in inFlight is not reported as anyone\'s in-flight neighbour', () => {
+  const result = findInFlightNeighbours(
+    [{ id: 4, keyFiles: ['x.js'] }, { id: 5, keyFiles: ['x.js'] }],
+    [{ id: 5, keyFiles: ['x.js'] }],
+    { hubPathMinCount: Infinity },
+  );
+  assert.deepStrictEqual(result.get(4), []);
+  assert.deepStrictEqual(result.get(5), []);
+});
+
+test('directOverlaps is symmetric and omits pairs with no linking file', () => {
+  const result = directOverlaps([
+    { id: 1, keyFiles: ['a.js'] },
+    { id: 2, keyFiles: ['a.js', 'b.js'] },
+    { id: 3, keyFiles: ['c.js'] },
+  ]);
+  assert.deepStrictEqual(result.get(1), [{ id: 2, files: ['a.js'] }]);
+  assert.deepStrictEqual(result.get(2), [{ id: 1, files: ['a.js'] }]);
+  assert.strictEqual(result.has(3), false);
+});
+
+function fastLaneSingleton(n) {
+  return [{ number: n, labels: [{ name: 'ceremony:fast-lane' }, { name: 'priority:medium' }], createdAt: `2026-01-${String(n).padStart(2, '0')}T00:00:00Z` }];
+}
+
+test('AC6.1: bundleFastLaneSingletons never bundles two conflicting fast-lane singletons', () => {
+  const [A, B, C] = [1, 2, 3].map(fastLaneSingleton);
+  const conflicts = (x, y) => (x === 1 && y === 2) || (x === 2 && y === 1);
+  const { groups, bundles } = bundleFastLaneSingletons([A, B, C], { bundleCap: 3, conflicts });
+  assert.deepStrictEqual(bundles, [{ records: [1, 3] }]);
+  assert.deepStrictEqual(groups, [B, [A[0], C[0]]]);
+});
+
+test('AC6.2: with no conflicts option the output is byte-identical to the pre-change slicing', () => {
+  const result = bundleFastLaneSingletons([1, 2, 3, 4, 5, 6, 7].map(fastLaneSingleton), { bundleCap: 3 });
+  assert.strictEqual(JSON.stringify(result), '{"groups":[[{"number":7,"labels":[{"name":"ceremony:fast-lane"},{"name":"priority:medium"}],"createdAt":"2026-01-07T00:00:00Z"}],[{"number":1,"labels":[{"name":"ceremony:fast-lane"},{"name":"priority:medium"}],"createdAt":"2026-01-01T00:00:00Z"},{"number":2,"labels":[{"name":"ceremony:fast-lane"},{"name":"priority:medium"}],"createdAt":"2026-01-02T00:00:00Z"},{"number":3,"labels":[{"name":"ceremony:fast-lane"},{"name":"priority:medium"}],"createdAt":"2026-01-03T00:00:00Z"}],[{"number":4,"labels":[{"name":"ceremony:fast-lane"},{"name":"priority:medium"}],"createdAt":"2026-01-04T00:00:00Z"},{"number":5,"labels":[{"name":"ceremony:fast-lane"},{"name":"priority:medium"}],"createdAt":"2026-01-05T00:00:00Z"},{"number":6,"labels":[{"name":"ceremony:fast-lane"},{"name":"priority:medium"}],"createdAt":"2026-01-06T00:00:00Z"}]],"bundles":[{"records":[1,2,3]},{"records":[4,5,6]}]}');
+});
+
+test('Review Focus 4: conflicting pair is split deterministically under first-fit', () => {
+  const groups = [1, 2, 3, 4].map(fastLaneSingleton);
+  const conflicts = (x, y) => (x === 1 && y === 2) || (x === 2 && y === 1);
+  const { groups: out, bundles } = bundleFastLaneSingletons(groups, { bundleCap: 3, conflicts });
+  assert.deepStrictEqual(bundles, [{ records: [1, 3, 4] }]);
+  assert.deepStrictEqual(out[0], groups[1]);
+});
+
+test('bundleFastLaneSingletons honours a conflicts predicate that is true in only one argument order', () => {
+  for (const [first, second] of [[1, 2], [2, 1]]) {
+    const groups = [1, 2, 3].map(fastLaneSingleton);
+    const { bundles } = bundleFastLaneSingletons(groups, { bundleCap: 3, conflicts: (x, y) => x === first && y === second });
+    assert.deepStrictEqual(bundles, [{ records: [1, 3] }]);
+  }
+});
+
+test('directOverlaps lists shared files sorted, and neighbours in input order', () => {
+  const result = directOverlaps([
+    { id: 1, keyFiles: ['b.js', 'a.js'] },
+    { id: 2, keyFiles: ['b.js', 'a.js'] },
+    { id: 3, keyFiles: ['a.js'] },
+  ], { hubPathMinCount: 10 });
+  assert.deepStrictEqual(result.get(1), [{ id: 2, files: ['a.js', 'b.js'] }, { id: 3, files: ['a.js'] }]);
+});
+
+test('findInFlightNeighbours omits candidate-to-candidate edges', () => {
+  const result = findInFlightNeighbours(
+    [{ id: 1, keyFiles: ['a.js'] }, { id: 2, keyFiles: ['a.js'] }],
+    [],
+  );
+  assert.deepStrictEqual(result.get(1), []);
+  assert.deepStrictEqual(result.get(2), []);
+});
+
+test('findInFlightNeighbours drops an in-flight duplicate of a candidate before judging hubs', () => {
+  const result = findInFlightNeighbours(
+    [{ id: 5, keyFiles: ['x.js'] }],
+    [{ id: 5, keyFiles: ['x.js'] }, { id: 9, keyFiles: ['x.js'] }],
+  );
+  assert.deepStrictEqual(result.get(5), [{ number: 9, files: ['x.js'] }]);
+});
+
+test('buildDispatchGroups keeps two fast-lane records that share a file out of one bundle', () => {
+  const issues = [
+    rec(1, ['a.js'], { fastLane: true, createdAt: '2026-01-01T00:00:00Z' }),
+    rec(2, ['a.js'], { fastLane: true, createdAt: '2026-01-02T00:00:00Z' }),
+    rec(3, ['c.js'], { fastLane: true, createdAt: '2026-01-03T00:00:00Z' }),
+  ];
+  const { groups, bundles } = buildDispatchGroups(issues, { bundleCap: 3 });
+  assert.deepStrictEqual(bundles, [{ records: [1, 3] }]);
+  assert.deepStrictEqual(groups.map((g) => g.map((i) => i.number)), [[2], [1, 3]]);
 });

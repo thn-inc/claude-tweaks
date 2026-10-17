@@ -6,9 +6,11 @@
 // either from the body (work-links: body-text, no extra call) or one batched
 // GraphQL call (work-links: native — the deps-resolved policy value unless
 // --work-links overrides it), and groups records sharing key files
-// (groupByFileOverlap). Mechanizes skills/flow/materialize.md's Resolution +
-// blocked-by bullet and skills/flow/multi-spec.md's Validation steps 1-5.
-// Prints one JSON envelope: { records, overlapGroups, workLinks }.
+// (groupByFileOverlap, transitive) and lists each directly-overlapping pair
+// with its shared files (directOverlaps, #3278). Mechanizes
+// skills/flow/materialize.md's Resolution + blocked-by bullet and
+// skills/flow/multi-spec.md's Validation steps 1-5.
+// Prints one JSON envelope: { records, overlapGroups, directOverlaps, workLinks }.
 // --merge-gate (#2733) treats the positional numbers as one /flow run's
 // targets and adds mergeGate {gates, deferred, kept, rerun}
 // (bin/lib/preflight-records/merge-gate.js). --integration-branch <name>
@@ -160,7 +162,8 @@ function run(argv, deps = realDeps) {
 
   const records = preflight.buildRecords({ issues, dependencies });
   const overlapGroups = preflight.buildOverlapGroups(records);
-  const envelope = { records, overlapGroups, workLinks };
+  const directOverlaps = preflight.buildDirectOverlaps(records);
+  const envelope = { records, overlapGroups, directOverlaps, workLinks };
   if (opts.mergeGate) envelope.mergeGate = planMergeGateSplit({ issues, records, numbers, integrationBranch: opts.integrationBranch || 'main' });
   if (opts.waves) {
     try {

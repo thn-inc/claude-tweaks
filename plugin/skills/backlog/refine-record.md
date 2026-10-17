@@ -47,7 +47,8 @@ for n in {N...}; do gh issue view "$n" --json number,title,labels,body,comments;
 
 For each fetched record, collect:
 
-**(a) Every unresolved decision comment.** A comment whose body matches
+**(a) Every unresolved decision comment.** A comment from a trusted author
+(`_shared/pr-run-comments.md`'s Trusted authors; name any skipped marker comment in the run's output) whose body matches
 `^<!-- needs-decision: (\S+) -->` with no `**Resolved:**` line anywhere in its body is unresolved
 (`_shared/work-record.md`'s Decision-comment template + Resolution rule — cited, never restated).
 Group by the captured `{unit}`; the newest unresolved comment per unit is that unit's live

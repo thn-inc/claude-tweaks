@@ -29,6 +29,7 @@ const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
 const { resolveRecords } = require('./pack');
+const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -663,6 +664,23 @@ function resolvePrNumber(runDir) {
   return state && state.pr && state.pr.number ? state.pr.number : null;
 }
 
+// #3358: a brief/pointer marker only counts when its comment's author is an
+// owner, member, or collaborator (`comment-trust.js`) -- anyone who can
+// comment could otherwise plant a `### Confirmed` brief and satisfy the
+// check. Scans every comment the marker test matches: trusted matches count,
+// untrusted ones take the "no such comment" path and come back as skip notes
+// the row names, so the operator sees what was passed over.
+function scanMarkerComments(comments, hasMarker) {
+  let trusted = false;
+  const ignored = [];
+  for (const c of comments) {
+    if (!c || !hasMarker(c)) continue;
+    if (isTrustedComment(c)) trusted = true;
+    else ignored.push(untrustedSkipNote(c));
+  }
+  return { trusted, ignored };
+}
+
 // ---- acceptance labeling ---------------------------------------------------
 //
 // Reproduces execution-and-verification.md's existing per-backend,
@@ -703,6 +721,7 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
     return { result: 'skip', detail: `oversight floor not cleared for #${issues.join(', #')}` };
   }
   const failing = [];
+  const passedNotes = []; // {target, ignored[]} for targets that pass but skipped untrusted comments (#3358)
 
   // Resolve each issue's target (its parent, when resolvable; itself
   // otherwise), deduping by target -- two sub-issues sharing one parent
@@ -754,42 +773,65 @@ registerCheck('acceptance-labeling', ({ runDir, deps, cwd, expectations }) => {
       continue;
     }
     const comments = issueData.comments || [];
-    const hasFullBrief = comments.some((c) => c.body && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed'));
-    if (hasFullBrief) continue;
+    // Skip notes for this target's untrusted marker comments; appended to its
+    // failing line, or to `passedNotes` when the target passes.
+    const ignored = [];
+    const fail = (line) => failing.push(ignored.length ? `${line}; ignored: ${ignored.join('; ')}` : line);
+    const fullBrief = scanMarkerComments(
+      comments,
+      (c) => c.body && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed')
+    );
+    ignored.push(...fullBrief.ignored);
+    if (fullBrief.trusted) {
+      if (ignored.length) passedNotes.push({ target, ignored });
+      continue;
+    }
 
     // No full brief on the issue itself -- under pr-first (run-state.json
     // carries a `pr` object), verification-brief.md's "`pr` object present"
     // branch posts the full brief on the PR instead, leaving only a
     // one-line pointer on the issue. Check for that form before failing.
     if (prNumber) {
-      const hasPointer = comments.some((c) => c.body && c.body.includes('Verification Brief posted to PR #'));
-      if (hasPointer) {
+      const pointer = scanMarkerComments(comments, (c) => c.body && c.body.includes('Verification Brief posted to PR #'));
+      ignored.push(...pointer.ignored);
+      if (pointer.trusted) {
         let prCommentsRaw;
         try {
           prCommentsRaw = deps.gh(['pr', 'view', String(prNumber), '--json', 'comments'], cwd);
         } catch (err) {
-          failing.push(`#${target}: gh pr view failed for PR #${prNumber} (${err.message})`);
+          fail(`#${target}: gh pr view failed for PR #${prNumber} (${err.message})`);
           continue;
         }
         let prComments;
         try {
           prComments = JSON.parse(prCommentsRaw).comments || [];
         } catch {
-          failing.push(`#${target}: could not parse PR #${prNumber} comments JSON`);
+          fail(`#${target}: could not parse PR #${prNumber} comments JSON`);
           continue;
         }
-        const hasPrBrief = prComments.some(
+        const prBrief = scanMarkerComments(
+          prComments,
           (c) => c.body && c.body.includes('<!-- run-comment: brief -->') && c.body.includes('### Confirmed')
         );
-        if (hasPrBrief) continue;
-        failing.push(`#${target}: pointer to PR #${prNumber} found but no confirmed Verification Brief on PR #${prNumber}`);
+        ignored.push(...prBrief.ignored);
+        if (prBrief.trusted) {
+          if (ignored.length) passedNotes.push({ target, ignored });
+          continue;
+        }
+        fail(`#${target}: pointer to PR #${prNumber} found but no confirmed Verification Brief on PR #${prNumber}`);
         continue;
       }
     }
-    failing.push(`#${target}: no comment carries a confirmed Verification Brief`);
+    fail(`#${target}: no comment carries a confirmed Verification Brief`);
   }
-  if (failing.length) return { result: 'fail', detail: failing.join('; ') };
-  return { result: 'pass', detail: '' };
+  // Notes are never dropped: a failing row carries each passing target's skipped
+  // comments after the failing lines; an all-pass row's detail is the notes.
+  if (failing.length) {
+    const passingNotes = passedNotes.flatMap((p) => p.ignored.map((note) => `ignored (#${p.target}): ${note}`));
+    return { result: 'fail', detail: [...failing, ...passingNotes].join('; ') };
+  }
+  const notes = passedNotes.flatMap((p) => p.ignored);
+  return { result: 'pass', detail: notes.length ? `ignored: ${notes.join('; ')}` : '' };
 });
 
 // ---- memory updates -----------------------------------------------------------
@@ -895,7 +937,9 @@ function renderVerifyTable(rows) {
     const resultCell = (row.result === 'skip' || row.result === 'unknown') && row.detail
       ? `${row.result} (${sanitizeCell(row.detail)})`
       : row.result;
-    const detailCell = row.result === 'fail' ? sanitizeCell(row.detail) : '';
+    // A pass row's detail is empty except for #3358's `ignored: ...` skip notes,
+    // which must reach the human; skip/unknown fold theirs into the Result cell.
+    const detailCell = row.result === 'fail' || (row.result === 'pass' && row.detail) ? sanitizeCell(row.detail) : '';
     lines.push(`| ${row.check} | ${resultCell} | ${detailCell} |`);
   }
   return lines.join('\n');
