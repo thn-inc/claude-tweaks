@@ -45,8 +45,8 @@ Not for: granting authorization (`/claude-tweaks:backlog refine`'s job), derivin
 |---|---|
 | *(none)* | Bare — headless drain: repeat the select-and-dispatch procedure (Step 3's ranking + Steps 4-6) over ranked authorized groups until `--budget <n\|all>` groups have been attempted or the ranked set is empty. Each iteration re-fetches the authorized queue fresh (Step 2) — dispatched groups leave it by claim, a Settle-failed group's records carry `bot:blocked`/claim markers, and a group parked by the merge-verification gate carries `bot:parked` (grants intact) — either way it is never re-selected, while still counting as one attempted budget unit. **No `AskUserQuestion` fires, full stop — not for a detected repo-wide infra outage** (#2365, see the Repo-wide infra outage stop paragraph below), **and not for queue size, an unusually large `--budget`, or any other reason this table doesn't name** (#2424): a bare invocation drains immediately, identically to a headless firing, whether a human is present or not. If you are about to render one anyway, that is not a judgment call this table left open — stop and re-read this row instead. |
 | `next` (deprecated alias) | Deprecated alias for `--budget 1` — identical effect (one group selected by priority-then-age ranking), one warn-tier notice. Removal condition: `deprecated-aliases.md`. |
-| `#N` | Direct — select + dispatch record `#N`'s whole file-overlap group |
-| `#N,#M,...` | Explicit list — select + dispatch each named record's whole file-overlap group, deduplicated; skips ranking/selection entirely since the set is already named |
+| `#N` | Direct — select + dispatch record `#N`'s group (the record itself, or the fast-lane bundle it was folded into) |
+| `#N,#M,...` | Explicit list — select + dispatch each named record's group (the record itself, or its fast-lane bundle), deduplicated; skips ranking/selection entirely since the set is already named |
 | `--budget <n\|all>` (modifier) | Suffix bare drain only — per-firing override of `dispatch-batch-size` (canonical `n`/`all` semantics: `_shared/record-batch-input.md`'s `--budget` section). Combined with `next`/`#N,#M,...`: **rejected** (bare-drain-only; `next` already means `--budget 1`). Highest-precedence per `_shared/auto-mode-card.md`. |
 | `--batch-size <n>` (deprecated alias) | Deprecated alias for `--budget <n>` — same effect, one warn-tier notice. Removal condition: `deprecated-aliases.md`. The old suffix `#N,#M,...` use is no longer accepted — rejected like `--budget` on an explicit list; explicit-list firings are capped by `dispatch-batch-size` alone. |
 | `--concurrent <n>` (deprecated alias) | Two-hop deprecated alias for `--batch-size <n>` — same effect, one warn-tier notice. Removal condition: `deprecated-aliases.md`. |
@@ -155,18 +155,20 @@ same convention as the reports above (weak-tier: see above).
 
 **Oversized-group report (refs #1228).** See `oversized-group-report.md`, this skill's directory (groups over the size guard stay selectable via `#N`/`#N,#M,...`; not a gate).
 
+**Neighbour-in-flight report (refs #3278).** See `neighbour-in-flight-report.md`, this skill's directory (bare drain skips the record this firing; `#N`/`#N,#M,...` print the line and still dispatch).
+
 **Cross-PR root-cause overlap report (refs #1579).** See `cross-pr-overlap-report.md`, this skill's directory (warning only, never a gate).
 
 **Near-duplicate candidate warning (refs #1944).** `queue-pull-script.md`'s final step runs
 `bin/lib/issues/near-duplicate.js`'s `findNearDuplicates` pairwise across every pair of records
 landing in *different* file-overlap groups, logging one `AUTO — dispatch: near-duplicate
 candidates across groups: #A / #B ({signals})` line per firing pair to stderr. Same-group pairs
-are already co-built together by Step 2's grouping and have nothing new to warn about. Warning
+(a fast-lane bundle's members) are already co-built together and have nothing new to warn about. Warning
 only, never a gate — no selection change.
 
 **Bare (drain)** `/dispatch` — headless, no `AskUserQuestion` (skip this and the rest of Step 3 if the zero-groups case above applies). Resolve `{budget}`: `--budget <n|all>` if present (or its deprecated `--batch-size <n>`/`--concurrent <n>` aliases, each with its own notice), else `dispatch-batch-size` (or its deprecated `dispatch-pick-max-concurrent` key, same notice) — CLI arg beats project policy per `_shared/auto-mode-card.md`. `n` = attempt count; `all` drains to empty. `--budget` + `next`/`#N,#M,...`: **rejected with one notice** (bare-drain-only; `next` already means `--budget 1`).
 
-Loop: run the `next` ranking below (`next-ranking.md` verbatim, oversized and this-firing-excluded groups excluded via the unified `dispatch-exclusions.json` — maintain per `firing-exclusion.md`, this skill's dir) → dispatch the pick through Steps 4-6 → re-run Step 2's queue pull → repeat until `{budget}` attempts or the ranking returns `null`. Report each iteration as it completes, plus a final line naming groups still eligible but undispatched at budget exhaustion.
+Loop: run the `next` ranking below (`next-ranking.md` verbatim, oversized, neighbour-in-flight, and this-firing-excluded groups excluded via the unified `dispatch-exclusions.json` — maintain per `firing-exclusion.md`, this skill's dir) → dispatch the pick through Steps 4-6 → re-run Step 2's queue pull → repeat until `{budget}` attempts or the ranking returns `null`. Report each iteration as it completes, plus a final line naming groups still eligible but undispatched at budget exhaustion.
 
 **At loop termination (`{budget}` attempts spent, or the ranking returns `null`), close this firing's own bookkeeping (#2430)** — logged, non-interactive, never an `AskUserQuestion` (`CLAUDE.md`'s Auto-Mode Contract):
 
@@ -175,9 +177,9 @@ Loop: run the `next` ranking below (`next-ranking.md` verbatim, oversized and th
 
 **`next` (deprecated alias for `--budget 1`)** — one warn-tier notice (removal condition: `deprecated-aliases.md`); no human decision. Pick exactly ONE group by this ordering: `priority:high` > `priority:medium` > `priority:low` > unprioritized, oldest-first within each band — **a group's rank is its highest-priority (then oldest) member**, taken as its representative. `--priority <band>` (Input table above), when present, filters to matching-band representatives before ranking, letting differently-scheduled Routines each own a queue slice. Also excludes oversized groups (#1228) outright — a headless firing can't see that report, so this ranking must never auto-select one. Read `next-ranking.md` and run it verbatim; it writes the pick (or `null`) to `dispatch-next-pick.json`. The drain loop reuses this ranking each iteration; a Routine now fires bare `--budget 1` (Routine Configuration below), not `next`.
 
-**`#N`** — direct. Fetch issue `#N`, confirm it currently carries `auto:build` and no `bot:*` label (re-verify against Step 2's live queue); if it doesn't qualify, report why (no grant, already claimed, or blocked) and stop. A record that clears those checks but is absent from Step 2's `dispatch-groups.json` was dropped by a removing exclusion in `queue-pull-script.md`: report its reason from this run's `dispatch-exclusions.json` by name, and stop — `not-spec-shaped` as `not-spec-shaped-exclusion-report.md`'s line and remedy, never as an open PR; `blocked`/`open-pr`/`target-missing`/`shipped` as their Step 3 report lines; no entry at all as absent from this firing's queue, after `exclusions-unreadable-report.md` rules out an unreadable file. Otherwise pull its **whole file-overlap group** from Step 2's output — claiming a single member alone is forbidden; all of that record's overlap partners come along, named or not.
+**`#N`** — direct. Fetch issue `#N`, confirm it currently carries `auto:build` and no `bot:*` label (re-verify against Step 2's live queue); if it doesn't qualify, report why (no grant, already claimed, or blocked) and stop. A record that clears those checks but is absent from Step 2's `dispatch-groups.json` was dropped by a removing exclusion in `queue-pull-script.md`: report its reason from this run's `dispatch-exclusions.json` by name, and stop — `not-spec-shaped` as `not-spec-shaped-exclusion-report.md`'s line and remedy, never as an open PR; `blocked`/`open-pr`/`target-missing`/`shipped` as their Step 3 report lines; no entry at all as absent from this firing's queue, after `exclusions-unreadable-report.md` rules out an unreadable file. Otherwise take its group from Step 2's output — the record itself, or the fast-lane bundle it was folded into; when this run's `dispatch-exclusions.json` carries a `neighbour-in-flight` entry for it, print `neighbour-in-flight-report.md`'s line first and dispatch anyway.
 
-**`#N[,#M,#O...]`** — explicit list (grammar: `_shared/record-batch-input.md`). Parse via `parseExplicitIssueList` (`bin/lib/issues/grouping.js`) → `{ numbers, invalid }` (report `invalid` in one message; proceed with `numbers`, never aborting over one bad element). Call `selectGroupsForExplicitList(numbers, groups)` (same file) against Step 2's already-computed `groups` array. Report every entry in the returned `notFound` list with why it's excluded — no `auto:build` grant, already claimed, `bot:blocked`, `bot:parked` (merge-verification gate parked it; grants stay intact), or dropped by a removing exclusion (`blocked`, `open-pr`, `not-spec-shaped`, `target-missing`, `shipped`), named as the `#N` bullet above names it — but do not abort the rest of the named set over one excluded entry. Every group in the returned `selectedGroups` proceeds to Step 4, still bound by `dispatch-batch-size` (extra groups remain unclaimed in the queue for a later firing to select). The selection is already explicit — Step 3's ranking never runs for this form.
+**`#N[,#M,#O...]`** — explicit list (grammar: `_shared/record-batch-input.md`). Parse via `parseExplicitIssueList` (`bin/lib/issues/grouping.js`) → `{ numbers, invalid }` (report `invalid` in one message; proceed with `numbers`, never aborting over one bad element). Call `selectGroupsForExplicitList(numbers, groups)` (same file) against Step 2's already-computed `groups` array. Report every entry in the returned `notFound` list with why it's excluded — no `auto:build` grant, already claimed, `bot:blocked`, `bot:parked` (merge-verification gate parked it; grants stay intact), or dropped by a removing exclusion (`blocked`, `open-pr`, `not-spec-shaped`, `target-missing`, `shipped`), named as the `#N` bullet above names it — but do not abort the rest of the named set over one excluded entry. Every group in the returned `selectedGroups` proceeds to Step 4, still bound by `dispatch-batch-size` (extra groups remain unclaimed in the queue for a later firing to select). A selected record with a `neighbour-in-flight` entry prints that report's line and still dispatches. The selection is already explicit — Step 3's ranking never runs for this form.
 
 ### Step 4: Mint the selected group's run directory
 
@@ -208,11 +210,9 @@ comment all live in `/claude-tweaks:flow`'s Step 2.8 (`flow/claim-targets.md`), 
 call reaches under the identity this mint establishes — handing both Task calls the same
 directory to claim under is this step's whole purpose. Proceed to Step 5.
 
-This group's own file-overlap membership was already fixed by Step 2's `groupByFileOverlap` queue
-pull (`queue-pull-script.md`) — the same primitive `bin/preflight-records.js`'s `overlapGroups`
-field derives, for a caller needing that grouping outside dispatch's own queue-pull path (e.g.
-`/claude-tweaks:flow`'s own multi-spec pre-flight, `multi-spec.md`'s Validation step 3). This step re-derives
-nothing; it only mints a directory for the group Step 2 already computed.
+This group's membership (one record, or one fast-lane bundle) was already fixed by Step 2's queue
+pull (`queue-pull-script.md`, `grouping.js`'s `buildDispatchGroups`). This step re-derives nothing;
+it only mints a directory for the group Step 2 already computed.
 
 ### Concurrency note (Preflight reads, not claim correctness)
 
@@ -300,7 +300,7 @@ Render only when a human is present to answer — bare / `next` / `#N` / `#N,#M,
 | Pattern | Why It Fails |
 |---------|--------------|
 | Originating a fresh `auto:build`, `auto:merge`, or `ready` grant from inside dispatch | Machinery may only remove or downgrade grants, never originate them — the permission matrix's hard line (`_shared/work-record.md`). The Auto-merge gate's promotion of an already-`auto:merge-pending` record to `auto:merge` is the one exception, and it is maturation of an existing grant, not origination — nothing is added that wasn't already there |
-| Claiming a single member of a file-overlap group without its partners | The branch and its overlap partners would race — `_shared/issue-claims.md`'s group-claim rule requires the whole group before starting any |
+| Claiming one member of a fast-lane bundle without the rest | The bundle shares one branch and PR — `_shared/issue-claims.md`'s group-claim rule requires every member before starting any |
 | Letting a group auto-merge on a retry after a prior `correctness`-classified failure | A `correctness` or `ambiguous` classification unconditionally revokes `auto:merge` before the next retry; only `transient` preserves it |
 | Treating a clean review as sufficient for auto-merge on its own | `merge-check` weighs diff content, review findings, and blast radius as one judgment — a large or structurally sensitive diff can verdict `needs-human` with zero findings, never `auto-merge` |
 | Retrying a failed record indefinitely with no ceiling | Burns routine cycles on something stuck and never surfaces it — the retry ceiling forces a checkpoint |

@@ -1,0 +1,83 @@
+// tests/dispatch-per-record-groups-prose.test.js — #3278.
+//
+// Prose-conformance: dispatch/SKILL.md describes per-record groups (one record, or one fast-lane
+// bundle) and the non-removing `neighbour-in-flight` exclusion, not the retired transitive
+// "whole file-overlap group" selection. Siblings: tests/dispatch-named-form-exclusion-reasons.test.js
+// (the removing reasons the named forms report) and the queue-pull behaviour tests under
+// tests/bin-lib/dispatch/.
+'use strict';
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
+const { CEILING_BYTES } = require('../plugin/bin/lib/skill-audit/context-cost');
+
+const DISPATCH = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch');
+const SKILL = readText(path.join(DISPATCH, 'SKILL.md'));
+const QUEUE_PULL = readText(path.join(DISPATCH, 'queue-pull-script.md'));
+const REPORT_PATH = path.join(DISPATCH, 'neighbour-in-flight-report.md');
+
+function line(anchor) {
+  const found = SKILL.split('\n').find((l) => l.startsWith(anchor));
+  assert.ok(found, `${anchor} not found in dispatch/SKILL.md -- anchor out of sync with the live file`);
+  return found;
+}
+
+test('AC5.2: the #N bullet prints the neighbour-in-flight report line and dispatches anyway', () => {
+  const single = line('**`#N`** — direct.');
+  assert.ok(single.includes('neighbour-in-flight-report.md'), '#N bullet must cite neighbour-in-flight-report.md');
+  assert.ok(single.includes('dispatch anyway'), '#N bullet must say the record still dispatches');
+});
+
+test('AC5.2: the #N,#M bullet prints the report line and still dispatches a neighbour-in-flight record', () => {
+  const list = line('**`#N[,#M,#O...]`**');
+  assert.ok(list.includes('`neighbour-in-flight`'), '#N,#M bullet must name the neighbour-in-flight entry');
+  assert.ok(list.includes('still dispatches'), '#N,#M bullet must say the record still dispatches');
+});
+
+test('AC8.2: dispatch/SKILL.md never says a record pulls its whole file-overlap group', () => {
+  assert.ok(!SKILL.includes('whole file-overlap group'), 'dispatch/SKILL.md still carries "whole file-overlap group"');
+  assert.ok(!SKILL.includes('overlap partners would race'), 'the Anti-Patterns row still describes overlap partners');
+});
+
+test('a group is one record or one fast-lane bundle, fixed by Step 2 and re-derived nowhere', () => {
+  assert.ok(SKILL.includes('one record, or one fast-lane bundle'), 'Step 4 must state what a group is');
+  assert.ok(SKILL.includes('buildDispatchGroups'), 'Step 4 must name the grouping function');
+  assert.ok(SKILL.includes('re-derives nothing'), 'Step 4 must keep the re-derives-nothing rule');
+  assert.ok(!SKILL.includes('groupByFileOverlap'), 'groupByFileOverlap is no longer the queue-pull primitive');
+});
+
+test('the bare-drain Loop excludes neighbour-in-flight groups', () => {
+  const loop = line('Loop: run the `next` ranking below');
+  assert.ok(loop.includes('neighbour-in-flight'), 'the drain Loop must name neighbour-in-flight groups as excluded');
+});
+
+test('AC9.1: dispatch SKILL.md and queue-pull-script.md stay within CEILING_BYTES', () => {
+  for (const [name, text] of [['SKILL.md', SKILL], ['queue-pull-script.md', QUEUE_PULL]]) {
+    const bytes = Buffer.byteLength(text, 'utf8');
+    assert.ok(bytes <= CEILING_BYTES, `dispatch/${name} is ${bytes} B -- must stay within ${CEILING_BYTES}`);
+  }
+});
+
+test('neighbour-in-flight-report.md exists, mirrors the other Step 3 reports, and is cited from SKILL.md Step 3', () => {
+  assert.ok(fs.existsSync(REPORT_PATH), 'neighbour-in-flight-report.md is missing');
+  const report = readText(REPORT_PATH);
+  assert.ok(report.startsWith('# Dispatch Step 3 — Neighbour-in-Flight Report'), 'report header out of shape');
+  assert.ok(report.includes('Referenced by `skills/dispatch/SKILL.md` Step 3'), 'report must carry a Referenced-by line');
+  assert.ok(report.includes("`reason: 'neighbour-in-flight'`"), 'report must filter dispatch-exclusions.json to its reason');
+  assert.ok(report.includes('waits — direct neighbour(s) in flight'), 'report must carry the per-record line');
+  assert.ok(report.includes('bare drain skips it this firing'), 'report line must say bare drain skips it');
+  const step3 = SKILL.slice(SKILL.indexOf('### Step 3'), SKILL.indexOf('### Step 4'));
+  assert.ok(step3.includes('**Neighbour-in-flight report (refs #3278).**'), 'SKILL.md Step 3 must carry the report pointer');
+  assert.ok(step3.includes('`neighbour-in-flight-report.md`'), 'SKILL.md Step 3 pointer must name the file');
+});
+
+test('oversized-group-report.md says a group over the guard needs a bundle cap above it (#3278)', () => {
+  const oversized = readText(path.join(DISPATCH, 'oversized-group-report.md'));
+  assert.ok(
+    oversized.includes('`dispatch-fastlane-bundle-cap` is set above `dispatch-group-size-guard`'),
+    'oversized-group-report.md must explain when the report can still fire',
+  );
+});
