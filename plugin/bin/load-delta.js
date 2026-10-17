@@ -5,13 +5,21 @@
 // the base and at the working tree, and prints the change. Review step 3j
 // (skills/review/step3-skill-load-delta.md) runs it; it never gates.
 //
-// Usage: load-delta.js [--plugin-root <dir>]... [--base <ref>] [--json] [--help]
+// Usage: load-delta.js [--plugin-root <dir>]... [--base <ref>]
+//                       [--integration-branch <name>] [--json] [--help]
 //   --plugin-root  repeatable; the directory holding skills/ (default: every
 //                  tracked skills/*/SKILL.md root at the repo root or one
 //                  directory down — discoverPluginRoots)
 //   --base         base commit-ish (default: merge-base of HEAD with
-//                  origin/{integration-branch}: policy `integration-branch`,
-//                  else origin/HEAD, else main — _shared/integration-branch.md)
+//                  origin/{integration-branch})
+//   --integration-branch  the branch review Step 2 already resolved (`dev`
+//                  or `origin/dev`); base = merge-base of HEAD with
+//                  origin/{name}. Without it (and without --base), base is
+//                  resolved via the shared resolver (worktree-reap.js's
+//                  resolveIntegrationBranch: policy `integration-branch`,
+//                  else origin/HEAD). If that resolves nothing, the result
+//                  is no-baseline — never a guessed `main`
+//                  (_shared/integration-branch.md).
 //   --json         one JSON line instead of the rendered outcome
 // Base content comes from `git show <sha>:<path>`; nothing is checked out.
 // Exit: 0 success (including status no-baseline); 2 malformed invocation or
@@ -23,21 +31,23 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { discoverPluginRoots, entryPointLoads, loadDelta } = require('./lib/skill-audit/load');
 const { corpusDir } = require('./lib/skill-audit/context-cost');
-const { readIntegrationBranch } = require('./lib/policy');
+const { resolveIntegrationBranch, bareIntegrationName } = require('./lib/hooks/worktree-reap');
 const { toPosix, escapeRegExp } = require('./lib/shared-primitives');
 
-const USAGE = 'usage: load-delta.js [--plugin-root <dir>]... [--base <ref>] [--json] [--help]\n';
+const USAGE = 'usage: load-delta.js [--plugin-root <dir>]... [--base <ref>] [--integration-branch <name>] [--json] [--help]\n';
 
 function parseArgs(argv) {
-  const o = { pluginRoots: [], base: null, json: false, help: false };
+  const o = { pluginRoots: [], base: null, integrationBranch: null, json: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') o.help = true;
     else if (a === '--json') o.json = true;
-    else if (a === '--plugin-root' || a === '--base') {
+    else if (a === '--plugin-root' || a === '--base' || a === '--integration-branch') {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) return { error: `${a} needs a value` };
-      if (a === '--base') o.base = v; else o.pluginRoots.push(v);
+      if (a === '--base') o.base = v;
+      else if (a === '--integration-branch') o.integrationBranch = v;
+      else o.pluginRoots.push(v);
     } else return { error: `unknown argument: ${a}` };
   }
   return o;
@@ -55,8 +65,32 @@ const realDeps = {
   cwd: process.cwd(),
 };
 
+// git without -z C-quotes non-ASCII paths ("caf\303\251.md") and NUL is never
+// a valid path byte, so -z + split on it is lossless where plain newline
+// splitting is not (#3307 F3/F4).
+const splitZ = (s) => s.split('\0').filter(Boolean);
+
 const skillsPrefix = (root) => (root === '.' ? 'skills/' : `${root}/skills/`);
 const SKILL_MD_UNDER = (root) => new RegExp(`^${escapeRegExp(skillsPrefix(root))}[^/]+/SKILL\\.md$`);
+
+// The path segment(s) before "/skills/{name}/" in a changed-file path, for
+// naming which directory holds skill files discovery/the touched-check could
+// not account for. Returns '' for a bare repo-root "skills/{name}/..." path
+// (no nameable parent — that path is already the "." root), or null when the
+// path has no "skills/{name}/" segment at all.
+function skillFileParent(f) {
+  const nested = /^(.+?)\/skills\/[^/]+\//.exec(f);
+  if (nested) return nested[1];
+  return /^skills\/[^/]+\//.test(f) ? '' : null;
+}
+
+function firstNameableParent(files) {
+  for (const f of files) {
+    const p = skillFileParent(f);
+    if (p) return p;
+  }
+  return null;
+}
 
 function headSide(repoRoot, root) {
   const readFile = (p) => {
@@ -87,19 +121,40 @@ function baseSide(git, sha, baseFiles, root) {
 const fmt = (n) => n.toLocaleString('en-US');
 const signed = (n) => (n > 0 ? `+${fmt(n)}` : fmt(n));
 
-function renderText(result, changedFiles) {
+function renderText(result, changedFiles, { pluginRootsGiven = false } = {}) {
+  if (result.roots.length === 0 && !pluginRootsGiven) {
+    let line = 'Skill load delta: no plugin roots discovered — skipped (pass --plugin-root <dir>)';
+    const parent = firstNameableParent(changedFiles);
+    if (parent) line += ` — skill files changed under ${parent}`;
+    return `${line}\n`;
+  }
   if (result.status === 'no-baseline') {
+    if (result.branchUnresolved) {
+      return 'Skill load delta: no baseline (integration branch unresolved — pass --integration-branch) — skipped\n';
+    }
     return `Skill load delta: no baseline (merge-base with ${result.baseRef} unresolved) — skipped\n`;
   }
   const rows = result.roots.flatMap((r) => r.entries);
   if (rows.length === 0) {
-    const touched = changedFiles.some((f) => result.roots.some((r) => f.startsWith(skillsPrefix(r.pluginRoot))));
-    return touched
-      ? 'Skill load delta: skill files changed, no entry point\'s load moved\n'
-      : 'Skill load delta: no skill files changed — skipped\n';
+    const rootSet = new Set(result.roots.map((r) => r.pluginRoot));
+    const outsideFiles = changedFiles.filter((f) => {
+      const p = skillFileParent(f);
+      const root = p === null ? null : (p === '' ? '.' : p);
+      return root !== null && !rootSet.has(root);
+    });
+    const touchedInside = changedFiles.some((f) => result.roots.some((r) => f.startsWith(skillsPrefix(r.pluginRoot))));
+    if (!touchedInside && outsideFiles.length === 0) return 'Skill load delta: no skill files changed — skipped\n';
+    let line = 'Skill load delta: skill files changed, no entry point\'s load moved';
+    const outsideParent = firstNameableParent(outsideFiles);
+    if (outsideParent) line += ` (also changed outside discovered roots: ${outsideParent}; pass --plugin-root to measure)`;
+    return `${line}\n`;
   }
+  const headerBase = result.base.slice(0, 7);
+  const header = result.baseKind === 'base'
+    ? `Skill load delta (base ${headerBase} = --base ${result.baseLabel}):`
+    : `Skill load delta (base ${headerBase} = merge-base with origin/${result.baseLabel}):`;
   const lines = [
-    `Skill load delta (base ${result.base.slice(0, 7)}):`,
+    header,
     '',
     '| Entry | Floor | ΔFloor | Closure | ΔClosure | New unresolved |',
     '|---|---|---|---|---|---|',
@@ -120,7 +175,7 @@ function run(argv, deps = realDeps) {
   if (o.help) { deps.stdout(USAGE); return 0; }
   const cwd = deps.cwd || process.cwd();
   const rawGit = deps.git || defaultGit(cwd);
-  const readBranch = deps.readIntegrationBranch || readIntegrationBranch;
+  const resolveBranch = deps.resolveIntegrationBranch || resolveIntegrationBranch;
   try {
     let repoRoot;
     try { repoRoot = rawGit(['-C', cwd, 'rev-parse', '--show-toplevel']).trim(); } catch {
@@ -129,7 +184,8 @@ function run(argv, deps = realDeps) {
     const git = (args) => rawGit(['-C', repoRoot, ...args]);
 
     let roots;
-    if (o.pluginRoots.length) {
+    const pluginRootsGiven = o.pluginRoots.length > 0;
+    if (pluginRootsGiven) {
       roots = [];
       for (const r of o.pluginRoots) {
         const abs = path.resolve(cwd, r);
@@ -137,52 +193,74 @@ function run(argv, deps = realDeps) {
         // realpath: git prints the resolved toplevel, so a symlinked cwd
         // (macOS /var -> /private/var) must be resolved before comparing.
         const rel = toPosix(path.relative(repoRoot, fs.realpathSync(abs))) || '.';
-        if (rel.startsWith('..') || path.isAbsolute(rel)) { deps.stderr(`load-delta.js: --plugin-root ${r} is outside the repository\n`); return 2; }
+        if (rel === '..' || rel.startsWith('../') || path.isAbsolute(rel)) { deps.stderr(`load-delta.js: --plugin-root ${r} is outside the repository\n`); return 2; }
         roots.push(rel);
       }
       roots = [...new Set(roots)].sort();
     } else {
-      const listed = git(['ls-files', '--', ':(glob)skills/*/SKILL.md', ':(glob)*/skills/*/SKILL.md']);
-      roots = discoverPluginRoots(() => listed.split('\n').filter(Boolean));
+      const listed = splitZ(git(['ls-files', '-z', '--', ':(glob)skills/*/SKILL.md', ':(glob)*/skills/*/SKILL.md']));
+      roots = discoverPluginRoots(() => listed);
     }
 
     let base = null;
-    let baseRef;
+    let baseRef = null;
+    let baseKind;
+    let baseLabel;
+    let branchUnresolved = false;
     if (o.base) {
+      baseKind = 'base';
+      baseLabel = o.base;
       baseRef = o.base;
       try { base = git(['rev-parse', '--verify', '--quiet', '--end-of-options', `${o.base}^{commit}`]).trim(); } catch { base = ''; }
       if (!base) { deps.stderr(`load-delta.js: --base ${o.base} does not resolve to a commit\n`); return 2; }
     } else {
-      let branch = readBranch(repoRoot);
-      if (!branch) {
-        try { branch = git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']).trim().replace(/^origin\//, ''); } catch { branch = ''; }
+      baseKind = 'branch';
+      let branchName;
+      if (o.integrationBranch) {
+        branchName = bareIntegrationName(o.integrationBranch);
+      } else {
+        const resolved = resolveBranch(repoRoot);
+        branchName = resolved ? bareIntegrationName(resolved) : null;
       }
-      baseRef = `origin/${branch || 'main'}`;
-      try { base = git(['merge-base', 'HEAD', baseRef]).trim() || null; } catch { base = null; }
+      if (!branchName) {
+        branchUnresolved = true;
+      } else {
+        baseLabel = branchName;
+        baseRef = `origin/${branchName}`;
+        try { base = git(['merge-base', '--end-of-options', 'HEAD', baseRef]).trim() || null; } catch { base = null; }
+      }
     }
 
     const heads = roots.map((root) => ({ root, rows: entryPointLoads(root, headSide(repoRoot, root)) }));
     let result;
     let changedFiles = [];
     if (!base) {
-      result = { status: 'no-baseline', base: null, baseRef, roots: heads.map((h) => ({ pluginRoot: h.root, entries: h.rows })) };
+      result = {
+        status: 'no-baseline', base: null, baseRef, baseKind, baseLabel, branchUnresolved,
+        roots: heads.map((h) => ({ pluginRoot: h.root, entries: h.rows })),
+      };
     } else {
-      const baseFiles = new Set(git(['ls-tree', '-r', '--name-only', '--full-tree', base]).split('\n').filter(Boolean));
+      const baseFiles = new Set(splitZ(git(['ls-tree', '-r', '-z', '--name-only', '--full-tree', base])));
       result = {
         status: 'ok',
         base,
+        baseKind,
+        baseLabel,
         roots: heads.map((h) => ({
           pluginRoot: h.root,
           entries: loadDelta(entryPointLoads(h.root, baseSide(git, base, baseFiles, h.root)), h.rows),
         })),
       };
-      changedFiles = git(['diff', '--name-only', '--end-of-options', base]).split('\n').filter(Boolean);
+      changedFiles = [
+        ...splitZ(git(['diff', '--name-only', '-z', '--no-renames', '--end-of-options', base])),
+        ...splitZ(git(['ls-files', '--others', '--exclude-standard', '-z'])),
+      ];
     }
     if (o.json) {
-      const { baseRef: _omit, ...json } = result;
+      const { baseRef: _baseRef, baseKind: _baseKind, baseLabel: _baseLabel, branchUnresolved: _branchUnresolved, ...json } = result;
       deps.stdout(`${JSON.stringify(json)}\n`);
     } else {
-      deps.stdout(renderText(result, changedFiles));
+      deps.stdout(renderText(result, changedFiles, { pluginRootsGiven }));
     }
     return 0;
   } catch (err) {

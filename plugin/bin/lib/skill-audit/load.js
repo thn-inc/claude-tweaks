@@ -160,6 +160,14 @@ function entryPointLoads(pluginRoot, { readFile, listSkillMds }) {
 
 const unresolvedKey = (u) => `${u.citingFile}\u0000${u.token}`;
 
+// A placeholder/glob token (`skills/*/SKILL.md`, `{n}-spec.md`, `<x>.md`) is
+// not a citation to a real file — the citation grammar correctly leaves it
+// unresolved, but it has no bytes to ever be "missing" from a closure, so it
+// must never surface in newUnresolved (it still stays in `unresolved`, which
+// every unresolved token is required to list).
+const PLACEHOLDER_TOKEN = /[*{}<>]/;
+const notPlaceholder = (u) => !PLACEHOLDER_TOKEN.test(u.token);
+
 function loadDelta(baseRows, headRows) {
   const base = new Map(baseRows.map((r) => [r.entry, r]));
   const head = new Map(headRows.map((r) => [r.entry, r]));
@@ -169,7 +177,7 @@ function loadDelta(baseRows, headRows) {
     const b = base.get(entry);
     const h = head.get(entry);
     if (!b) {
-      out.push({ entry, floor: h.floor, dFloor: h.floor, closure: h.closure, dClosure: h.closure, newUnresolved: h.unresolved, added: true });
+      out.push({ entry, floor: h.floor, dFloor: h.floor, closure: h.closure, dClosure: h.closure, newUnresolved: h.unresolved.filter(notPlaceholder), added: true });
       continue;
     }
     if (!h) {
@@ -180,7 +188,10 @@ function loadDelta(baseRows, headRows) {
     const dClosure = h.closure - b.closure;
     if (dFloor === 0 && dClosure === 0) continue;
     const known = new Set(b.unresolved.map(unresolvedKey));
-    out.push({ entry, floor: h.floor, dFloor, closure: h.closure, dClosure, newUnresolved: h.unresolved.filter((u) => !known.has(unresolvedKey(u))) });
+    out.push({
+      entry, floor: h.floor, dFloor, closure: h.closure, dClosure,
+      newUnresolved: h.unresolved.filter((u) => !known.has(unresolvedKey(u))).filter(notPlaceholder),
+    });
   }
   return out;
 }

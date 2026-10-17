@@ -38,13 +38,19 @@ function makeRepo(baseFiles, { origin = true } = {}) {
   return dir;
 }
 
-function call(argv, cwd) {
+// Default mock resolver matches the branch every makeRepo() repo records as
+// origin/main (resolveIntegrationBranch's real default would spawn
+// `git rev-parse --abbrev-ref origin/HEAD`, which these throwaway repos never
+// set up). A test exercising the genuinely-unresolved or a different-branch
+// path overrides it via `extra`.
+function call(argv, cwd, extra = {}) {
   const out = { stdout: '', stderr: '' };
   const code = run(argv, {
     stdout: (s) => { out.stdout += s; },
     stderr: (s) => { out.stderr += s; },
     cwd,
-    readIntegrationBranch: () => null,
+    resolveIntegrationBranch: () => 'main',
+    ...extra,
   });
   return { code, ...out };
 }
@@ -69,17 +75,35 @@ test('ok: a committed move-not-cut split reports one changed entry against the m
   assert.strictEqual(row.dClosure, Buffer.byteLength(POINTER) + 1);
 });
 
-test('no-baseline: no origin ref still exits 0 with absolute loads, never a zero delta', () => {
+test('no-baseline: integration branch unresolved still exits 0 with absolute loads, never a zero delta or a guessed main (F2)', () => {
   const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'hello\n' }, { origin: false });
-  const r = call(['--json'], dir);
+  const r = call(['--json'], dir, { resolveIntegrationBranch: () => null });
   assert.strictEqual(r.code, 0, r.stderr);
   const j = JSON.parse(r.stdout);
   assert.deepStrictEqual([j.status, j.base], ['no-baseline', null]);
   const [row] = j.roots[0].entries;
   assert.deepStrictEqual([row.entry, row.floor, row.closure], ['plugin:s', 6, 6]);
   assert.strictEqual('dFloor' in row, false);
-  const text = call([], dir);
-  assert.match(text.stdout, /^Skill load delta: no baseline \(merge-base with origin\/main unresolved\) — skipped\n$/);
+  const text = call([], dir, { resolveIntegrationBranch: () => null });
+  assert.strictEqual(text.stdout, 'Skill load delta: no baseline (integration branch unresolved — pass --integration-branch) — skipped\n');
+});
+
+test('no-baseline: a branch resolved but merge-base fails keeps the existing "{ref} unresolved" line (F2)', () => {
+  const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'hello\n' }); // only origin/main exists
+  const text = call([], dir, { resolveIntegrationBranch: () => 'release' });
+  assert.strictEqual(text.stdout, 'Skill load delta: no baseline (merge-base with origin/release unresolved) — skipped\n');
+});
+
+test('--integration-branch overrides the resolver, accepting both "name" and "origin/name" (F2)', () => {
+  const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'x\n' });
+  const baseSha = git(dir, 'rev-parse', 'HEAD').trim();
+  write(dir, 'plugin/skills/s/SKILL.md', 'xyz\n');
+  for (const branchArg of ['main', 'origin/main']) {
+    const j = JSON.parse(call(['--integration-branch', branchArg, '--json'], dir, { resolveIntegrationBranch: () => { throw new Error('must not be called'); } }).stdout);
+    assert.deepStrictEqual([j.status, j.base], ['ok', baseSha]);
+  }
+  const text = call(['--integration-branch', 'main'], dir, { resolveIntegrationBranch: () => { throw new Error('must not be called'); } }).stdout;
+  assert.match(text, /^Skill load delta \(base [0-9a-f]{7} = merge-base with origin\/main\):\n/);
 });
 
 test('an explicit --base that does not resolve exits 2 naming the ref', () => {
@@ -96,6 +120,8 @@ test('an explicit --base is used as given', () => {
   write(dir, 'plugin/skills/s/SKILL.md', 'xyz\n');
   const j = JSON.parse(call(['--base', baseSha, '--json'], dir).stdout);
   assert.deepStrictEqual([j.status, j.base, j.roots[0].entries[0].dFloor], ['ok', baseSha, 2]);
+  const text = call(['--base', baseSha], dir).stdout;
+  assert.match(text, new RegExp(`^Skill load delta \\(base ${baseSha.slice(0, 7)} = --base ${baseSha}\\):\\n`));
 });
 
 test('a --plugin-root with no skills/ exits 3 with corpusDir\'s message', () => {
@@ -122,6 +148,64 @@ test('discovery skips fixture trees deeper than one directory', () => {
   assert.deepStrictEqual(j.roots.map((x) => x.pluginRoot), ['.claude', 'plugin']);
 });
 
+test('F1: no plugin roots discovered (deep skill layout) names the parent and --plugin-root still measures it', () => {
+  const dir = makeRepo({
+    'plugins/foo/skills/s/SKILL.md': 'Read `part.md` in this skill\'s directory.\n',
+    'plugins/foo/skills/s/part.md': 'old\n',
+  });
+  write(dir, 'plugins/foo/skills/s/part.md', 'new, longer than old\n');
+  const j = JSON.parse(call(['--json'], dir).stdout);
+  assert.deepStrictEqual(j.roots, []);
+  assert.strictEqual(j.status, 'ok');
+  const text = call([], dir).stdout;
+  assert.strictEqual(
+    text,
+    'Skill load delta: no plugin roots discovered — skipped (pass --plugin-root <dir>) — skill files changed under plugins/foo\n'
+  );
+  const scoped = call(['--plugin-root', 'plugins/foo'], dir).stdout;
+  assert.match(scoped, /^Skill load delta \(base [0-9a-f]{7} = merge-base with origin\/main\):\n/);
+  assert.match(scoped, /\| foo:s \|/);
+});
+
+test('F1: roots discovered but none moved, with a changed skill file outside any discovered root, routes to outcome 2 with a suffix', () => {
+  const dir = makeRepo({
+    'plugin/skills/s/SKILL.md': 'x\n',
+    'plugins/foo/skills/t/SKILL.md': 'y\n',
+    'plugins/foo/skills/t/orphan.md': 'o\n',
+  });
+  write(dir, 'plugins/foo/skills/t/orphan.md', 'orphan, uncited, changed\n');
+  const out = call([], dir).stdout;
+  assert.strictEqual(
+    out,
+    'Skill load delta: skill files changed, no entry point\'s load moved (also changed outside discovered roots: plugins/foo; pass --plugin-root to measure)\n'
+  );
+});
+
+test('F3: a non-ASCII path cited at base and unchanged at head produces no phantom delta', () => {
+  const dir = makeRepo({
+    'plugin/skills/s/SKILL.md': 'Read `café.md` in this skill\'s directory.\n',
+    'plugin/skills/s/café.md': 'accent\n',
+  });
+  const out = call([], dir).stdout;
+  assert.strictEqual(out, 'Skill load delta: no skill files changed — skipped\n');
+});
+
+test('F4: an untracked uncited skill file routes to outcome 2, not outcome 1', () => {
+  const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'x\n' });
+  write(dir, 'plugin/skills/s/new-orphan.md', 'never committed, never cited\n');
+  const out = call([], dir).stdout;
+  assert.strictEqual(out, 'Skill load delta: skill files changed, no entry point\'s load moved\n');
+});
+
+test('F5: --plugin-root outside the repository (with a real skills/ beneath it) exits 2 naming the reason', () => {
+  const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'x\n' });
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'load-delta-outside-'));
+  write(outside, 'skills/t/SKILL.md', 'z\n');
+  const r = call(['--plugin-root', outside], dir);
+  assert.strictEqual(r.code, 2);
+  assert.match(r.stderr, /is outside the repository/);
+});
+
 test('text outcome 1: a diff touching no skill file', () => {
   const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'x\n', 'README.md': 'r\n' });
   write(dir, 'README.md', 'changed\n');
@@ -139,7 +223,7 @@ test('text outcome 3: a table with added/removed markers and signed deltas', () 
   write(dir, 'plugin/skills/s/SKILL.md', 'x\n`missing.md`\n');
   fs.rmSync(path.join(dir, 'plugin/skills/gone'), { recursive: true });
   const out = call([], dir).stdout;
-  assert.match(out, /^Skill load delta \(base [0-9a-f]{7}\):\n/);
+  assert.match(out, /^Skill load delta \(base [0-9a-f]{7} = merge-base with origin\/main\):\n/);
   assert.match(out, /\| Entry \| Floor \| ΔFloor \| Closure \| ΔClosure \| New unresolved \|/);
   assert.match(out, /\| plugin:gone \(removed\) \| 0 \| -4 \| 0 \| -4 \| — \|/);
   assert.match(out, /\| plugin:s \| 15 \| \+13 \| 15 \| \+13 \| 1: `missing\.md` \|/);
@@ -168,11 +252,18 @@ test('review 3j pointer: at most 4 lines, cites step3-skill-load-delta.md', () =
 test('step3-skill-load-delta.md quotes every outcome line the CLI prints, verbatim', () => {
   const doc = fs.readFileSync(path.join(REVIEW, 'step3-skill-load-delta.md'), 'utf8');
   for (const line of [
+    'Skill load delta: no plugin roots discovered — skipped (pass --plugin-root <dir>)',
+    '— skill files changed under {parent}',
     'Skill load delta: no skill files changed — skipped',
     'Skill load delta: skill files changed, no entry point\'s load moved',
+    '(also changed outside discovered roots: {parent}; pass --plugin-root to measure)',
     '| Entry | Floor | ΔFloor | Closure | ΔClosure | New unresolved |',
-    'Skill load delta: no baseline (',
+    'Skill load delta (base {sha} = merge-base with origin/{name}):',
+    'Skill load delta (base {sha} = --base {ref}):',
+    'Skill load delta: no baseline (integration branch unresolved — pass --integration-branch) — skipped',
+    'Skill load delta: no baseline (merge-base with {ref} unresolved) — skipped',
     'Skill load delta: not run — ',
+    '--integration-branch',
   ]) assert.ok(doc.includes(line), `missing: ${line}`);
   assert.match(doc, /\/bin\/load-delta\.js/);
   assert.match(doc, /never changes the verdict/i);

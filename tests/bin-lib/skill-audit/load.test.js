@@ -229,6 +229,14 @@ test('loadDelta: a _shared change fans out to exactly the entry points whose clo
   }
 });
 
+test('loadDelta: an added entry point also excludes placeholder tokens from newUnresolved (F6)', () => {
+  const base = load.entryPointLoads('plugin', tree({}));
+  const head = load.entryPointLoads('plugin', tree({ 'plugin/skills/new/SKILL.md': '`{n}-spec.md`\n`real-miss.md`\n' }));
+  const [row] = load.loadDelta(base, head);
+  assert.strictEqual(row.entry, 'plugin:new');
+  assert.deepStrictEqual(row.newUnresolved.map((u) => u.token), ['real-miss.md']);
+});
+
 test('loadDelta: added and removed entry points', () => {
   const base = load.entryPointLoads('plugin', tree({ 'plugin/skills/old/SKILL.md': 'old\n' }));
   const head = load.entryPointLoads('plugin', tree({ 'plugin/skills/new/SKILL.md': 'brand new\n' }));
@@ -245,6 +253,16 @@ test('loadDelta: CRLF base content measures the same as LF head — no phantom d
   }));
   const head = load.entryPointLoads('plugin', tree({ 'plugin/skills/s/SKILL.md': lf, 'plugin/skills/s/a.md': 'x\n' }));
   assert.deepStrictEqual(load.loadDelta(base, head), []);
+});
+
+test('loadDelta: placeholder/glob tokens are excluded from newUnresolved but stay in unresolved (F6)', () => {
+  const base = load.entryPointLoads('plugin', tree({ 'plugin/skills/s/SKILL.md': 'nothing\n' }));
+  const head = load.entryPointLoads('plugin', tree({
+    'plugin/skills/s/SKILL.md': '`skills/*/SKILL.md`\n`{n}-spec.md`\n`<x>.md`\n`real-miss.md`\n',
+  }));
+  assert.deepStrictEqual(head[0].unresolved.map((u) => u.token), ['skills/*/SKILL.md', '{n}-spec.md', '<x>.md', 'real-miss.md']);
+  const [row] = load.loadDelta(base, head);
+  assert.deepStrictEqual(row.newUnresolved.map((u) => u.token), ['real-miss.md']);
 });
 
 test('loadDelta: newUnresolved lists only citations unresolved at head and not at base, ignoring line moves', () => {
