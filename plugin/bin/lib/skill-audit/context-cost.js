@@ -90,7 +90,7 @@ function* walkMarkdown(dir) {
 }
 
 // Sub-files are not free either: a stub that cites one costs the whole file when
-// read, so a sub-file over the ceiling is the same defect one level down. This is
+// read, so a sub-file over the rail is the same defect one level down. This is
 // the shape that let init/bootstrap-steps.md reach 86 KB behind 18 stubs (IL-70).
 function measureSubFiles(repoRoot) {
   const dir = corpusDir(repoRoot);
@@ -276,7 +276,7 @@ function parseComposeCallLine(line, repoRoot) {
 }
 
 // Every compose call site in the shipped skill prose — the producer set the
-// composed-bytes hard gate (Task 4) runs over. Single-line call form only,
+// composed-bytes hard gate (`rail.js`'s `composedRailViolations`) runs over. Single-line call form only,
 // by construction of this decomposition's call sites: every call site this
 // decomposition produces sits on one line; a wrapped call is not found. A
 // line that has the invocation form but doesn't parse is emitted as an
@@ -360,7 +360,7 @@ function findDescriptionHashHazards(repoRoot) {
 
 // Every SKILL.md's description length, in characters (not bytes — an em dash
 // or accented letter is one character but multiple UTF-8 bytes, and this
-// ceiling is about how much a human/LLM reads, not disk usage).
+// limit is about how much a human/LLM reads, not disk usage).
 function measureDescriptions(repoRoot) {
   const dir = skillsDir(repoRoot);
   return listSkillDirs(repoRoot).map((name) => {

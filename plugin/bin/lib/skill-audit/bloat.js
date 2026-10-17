@@ -20,7 +20,7 @@
 const fs = require('node:fs');
 const { extractAntiPatternRows } = require('./anti-patterns.js');
 
-// ── Signal 2: over-long table rows ──────────────────────────────────────────
+// ── Signal 1: over-long table rows ──────────────────────────────────────────
 //
 // An Anti-Pattern row is a two-cell table row; the table form exists so the
 // rows can be scanned. A row that has grown into a paragraph has stopped being
@@ -44,7 +44,7 @@ const ROW_LENGTH_MULTIPLE = 2;
 // posture the eval cost check takes with a thin history.
 const MIN_ROW_SAMPLE = 20;
 
-// ── Signal 5: skill file size outliers ─────────────────────────────────────
+// ── Signal 4: skill file size outliers ─────────────────────────────────────
 //
 // A skill file much larger than its siblings — real when it holds several
 // independent procedures. Legitimate form: an entry point that is legitimately
@@ -117,7 +117,7 @@ function corpusSizeBaseline(files) {
   return { usable: false, sample, method: null, threshold: null };
 }
 
-// ── Signal 3: provenance narration ──────────────────────────────────────────
+// ── Signal 2: provenance narration ──────────────────────────────────────────
 //
 // Text addressed to whoever edited the file rather than to the model running
 // it. It reads as informative and survives review precisely because it is true;
@@ -209,7 +209,7 @@ function findProvenance(text, patterns = PROVENANCE_PATTERNS) {
   return out;
 }
 
-// ── Signal 4: degenerate tables ─────────────────────────────────────────────
+// ── Signal 3: degenerate tables ─────────────────────────────────────────────
 //
 // Adjacent rows whose right-hand cell says the same thing: the table is paying
 // N rows to carry one fact, and the left-hand column is the only content.
