@@ -7,7 +7,7 @@ description: Use when writing or reviewing code that reads `node --test` spec or
 
 ## Overview
 
-`plugin/bin/verify.js --baseline <ref>` (#3043) turns a failing test run into a pass when every failure also fails at the base commit. That verdict is only as sound as the parser behind it: `testTree`, `failingTestsByFile`, `specEntryCount`, `cancelledCount` and `countUnmatchedFailures` in `plugin/bin/lib/verify/extract.js`, consumed by `plugin/bin/lib/verify/baseline.js`. The flaky-retry hook (#3066) trusts the same failing-file list: `plugin/bin/verify.js` re-runs only the named files, so `unattributedFailureCount` must report 0 before `plugin/bin/lib/verify/flaky.js`'s `planRetry` will retry. Each rule below was a fail-open hole in that parser, reproduced by a reviewer with a real Node v24 log before it was closed. A display-only reader can afford a misread. A reader whose output gates a pass cannot.
+`plugin/bin/verify.js --baseline <ref>` (#3043) turns a failing test run into a pass when every failure also fails at the base commit. That verdict is only as sound as the parser behind it: `testTree`, `failingTestsByFile`, `specEntryCount`, `cancelledCount` and `countUnmatchedFailures` in `plugin/bin/lib/verify/extract.js`, consumed by `plugin/bin/lib/verify/baseline.js`. The flaky-retry hook (#3066) trusts the same failing-file list: `plugin/bin/verify.js` re-runs only the named files, so `unattributedFailureCount` must report 0 before `plugin/bin/lib/verify/flaky.js`'s `planRetry` will retry (only spec and TAP logs can; every other family reports `null` and `planRetry` refuses it). Each rule below was a fail-open hole in that parser, reproduced by a reviewer with a real Node v24 log before it was closed. A display-only reader can afford a misread. A reader whose output gates a pass cannot.
 
 The general principle — a parse that cannot be trusted must say so — is `parse-signal-discipline`. This skill holds the Node-specific facts that principle needs.
 
@@ -53,7 +53,7 @@ The listing and `ℹ fail` do not count the same things — a cancelled test, fo
 The flaky-retry hook applies this accounting too, through `unattributedFailureCount` (#3066). A retry re-runs only the named files, so an undercounted list would let a retried pass clear a failure nothing re-ran. A positive count makes `planRetry` refuse with `unattributed-failures: {N}`. Its checks differ from `adjudicate`'s in two ways:
 
 - TAP gets an entry check as well: `tapBlockCount` must equal `# fail` + `# cancelled`, as spec entries must equal `ℹ fail` + `ℹ cancelled`.
-- Any family other than spec or tap returns 0. A `summary` log keeps the retry eligibility it already had, with no accounting guard.
+- Any family other than spec or tap returns `null` (#3204) — no accounting guard exists, so a caller must never read it as accounted. `planRetry` refuses with `no-accounting-guard: {family}` (`baseline.js`'s `adjudicate` applies the same refusal).
 
 ### Node's runner-level diagnostics are visible only in the log
 
