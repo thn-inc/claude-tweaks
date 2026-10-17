@@ -111,7 +111,7 @@ function run(argv, overrides = {}) {
   try { repoRoot = String(deps.git(['rev-parse', '--show-toplevel'])).trim(); } catch { repoRoot = deps.cwd(); }
   let hasPrCi = false;
   try { hasPrCi = Boolean(deps.hasPullRequestCi(repoRoot)); } catch { hasPrCi = false; }
-  const verdict = classifyRollup({ rollup: view && view.statusCheckRollup, headRefOid: view && view.headRefOid, localHead, hasPrCi, headRuns });
+  const verdict = classifyRollup({ rollup: view && view.statusCheckRollup, headRefOid, localHead, hasPrCi, headRuns });
   return report(deps, { ...verdict, localHead, pr: n });
 }
 
