@@ -25,9 +25,9 @@ test('dispatch.md: SDD invocation directs the final-review capture before Finish
 // The four-item check, factored out so the doctored control can run the real assertion on mutated text.
 function assertFourItems(text) {
   assert.match(text, /the final reviewer's findings verbatim with their severities/);
-  assert.match(text, /the reviewed commit SHA \(HEAD when the final review's package was built\)/);
+  assert.match(text, /the reviewed commit SHA \(HEAD when the final review's package was built\) and that package's base commit/);
   assert.match(text, /the fix wave's commit range \(`FIX_BASE\.\.HEAD`\), or "no fix wave"/);
-  assert.match(text, /the scoped re-review's per-finding verdicts verbatim/);
+  assert.match(text, /the scoped re-review's per-finding verdicts verbatim, or "no re-review" when there was no fix wave/);
 }
 
 test('dispatch.md: the capture names the four items (#3386 AC1)', () => {
@@ -44,7 +44,7 @@ test('dispatch.md: the capture is evidence, not a gate', () => {
 
 test('doctored control: removing the reviewed-commit item turns the AC1 assertion red (#3386 AC3)', () => {
   const text = DISPATCH;
-  const doctored = text.replace(/the reviewed commit SHA \(HEAD when the final review's package was built\); /, '');
+  const doctored = text.replace(/the reviewed commit SHA \(HEAD when the final review's package was built\) and that package's base commit; /, '');
   assert.notEqual(doctored, text, 'the doctoring replace did not hit — the control is vacuous');
   assert.throws(() => assertFourItems(doctored), assert.AssertionError);
 });

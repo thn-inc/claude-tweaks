@@ -302,6 +302,18 @@ dependencies:
         claims: "will rely on (record #3378): a task whose plan gives only signatures and tests is an integration task, not transcription — line first appeared in superpowers 7.0.0"
         upstream-path: "skills/writing-plans/SKILL.md"
         must-match: "writes the body. A body appears only for an algorithm the signature and"
+      - file: "plugin/skills/build/dispatch.md"
+        claims: "will rely on (record #3386): SDD has a step named Finish — the step the carry-forward (#496) and final-review-capture (#3386) directives anchor to, before it deletes the plan's workspace — heading first appeared in superpowers 6.2.0 or earlier"
+        upstream-path: "skills/subagent-driven-development/SKILL.md"
+        must-match: "## Finish"
+      - file: "plugin/skills/build/dispatch.md"
+        claims: "will rely on (record #3386): SDD's Finish step collects every ledger line containing Ruling: before deleting the workspace — the collection the carry-forward directive copies from first; line first appeared in superpowers 6.3.0 (6.2.0 had no Ruling: ledger)"
+        upstream-path: "skills/subagent-driven-development/SKILL.md"
+        must-match: "Before you delete anything, collect every ledger line containing `Ruling:`"
+      - file: "plugin/skills/build/dispatch.md"
+        claims: "will rely on (record #3386): the final-review capture records the fix wave as FIX_BASE..HEAD, the name SDD gives the head the previous review saw — line first appeared in superpowers 6.2.0 or earlier"
+        upstream-path: "skills/subagent-driven-development/SKILL.md"
+        must-match: "where FIX_BASE is the head the previous review saw"
     # fixtures: [] — frozen-artifact rationale: an installed plugin cache dir is
     # immutable post-install, so version movement is the only mechanical change
     # signal; there is no runtime surface to replay (the impeccable-plugin

@@ -39,10 +39,10 @@ test('dispatch.md: a line carrying two markers is copied once, under its first m
   assert.match(DISPATCH, /a line matching more than one marker is copied once, under its first match in that order/);
 });
 
-test('dispatch.md: the carry-forward states why Ruling: lines matter under SDD 7.0.0', () => {
+test('dispatch.md: the carry-forward states why Ruling: lines matter under SDD 6.3.0+', () => {
   assert.match(
     DISPATCH,
-    /SDD 7\.0\.0 ledgers its pre-flight, fix-loop breaker and final-review decisions as `Ruling:` lines instead of stopping for the human/
+    /SDD 6\.3\.0\+ ledgers its pre-flight, fix-loop breaker and final-review decisions as `Ruling:` lines instead of stopping for the human/
   );
 });
 
