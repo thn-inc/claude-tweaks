@@ -66,7 +66,7 @@ prefix of another once `-->` closes the tag.
 The same overwrite hazard #2592 fixed for `verdict` was still open for `brief` and `timing`:
 `wrap-up/verification-brief.md`'s Routing section sends every record with no resolvable GitHub
 parent through its Steps 1-4 independently, per record — and a multi-spec `/claude-tweaks:flow`
-run (direct `/flow #A,#B`, or a dispatch file-overlap bundle, which is the identical multi-spec
+run (direct `/flow #A,#B`, or a dispatch fast-lane bundle, which is the identical multi-spec
 `/flow` invocation under the hood, not a separate implementation) reaches that Acceptance-labeling
 bullet once per spec, against the one shared PR. `wrap-up/execution-and-verification.md`'s
 `MULTISPEC_REVIEW_DEFER` skip list (items 3/4/6/7/8) does not cover acceptance labeling, so this
