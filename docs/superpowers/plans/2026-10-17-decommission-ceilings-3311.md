@@ -12,7 +12,9 @@
 
 **Spec:** `.claude-tweaks/pipelines/2026-10-17T062549-spec-3307-3308-3306-3309-3310-3311/spec-3311/work/3311-spec.md`. Its "Boundary amendments" section supersedes the body above it.
 
-**Execution:** batched (Task 3 bundles 23 same-shape test-file edits into one dispatch).
+**Execution:** batched
+
+Task 3 bundles 23 same-shape test-file edits into one dispatch.
 
 ## Global Constraints
 
@@ -199,7 +201,7 @@ git commit -F <msgfile>   # "Delete merge-size-probe — CLI, module, both suite
 
 ---
 
-### Task 3 [batch]: Remove every per-file size pin from `tests/`
+### Task 3: Remove every per-file size pin from `tests/` [batch]
 
 **Files (Modify):**
 - `tests/backlog-refine-resolve-lane.test.js`
