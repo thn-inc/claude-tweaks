@@ -57,21 +57,10 @@ phase-exit push, `_shared/git-discipline.md`), check `run-state.json`'s `pr` fie
   including the *other* delimiter pair, which this read may not even show — untouched, then
   write back through the same transport that did the read, to
   `/tmp/pr-checklist-{run-id}-{n}.md` — scoped by `{run-id}`, same reason as `_shared/pr-early-run-lifecycle.md`'s
-  Step 3 path. Re-read that file's first line back before `gh pr edit` and confirm it still names
-  this run's `{run-id}`; hard-stop this update on a mismatch rather than push a wrong body:
+  Step 3 path.
 
-  ```bash
-  gh pr edit {number} --repo {host}/{owner}/{repo} --body-file /tmp/pr-checklist-{run-id}-{n}.md
-  ```
-
-<!-- when: transport=mcp -->
-  `gh`-absent: `mcp__github__update_pull_request` with the same composed body — this write is
-  unsanitized (`_shared/pr-early-run-lifecycle.md`'s Root cause section), so it carries both
-  delimiter pairs through untouched regardless of which one was used to locate the span.
-<!-- /when -->
-
-  **Refresh the Spec summary after a premise reversal (#3050).** After composing the file above
-  and before its run-id re-read and `gh pr edit` (or the MCP write), run `node
+  **Refresh the Spec summary after a premise reversal (#3050).** After writing that file and
+  before the run-id re-read and `gh pr edit` (or the MCP write) below, run `node
   "${CLAUDE_PLUGIN_ROOT}/bin/revise-pr-summary.js" --run-dir "{run-dir}" --body-file
   /tmp/pr-checklist-{run-id}-{n}.md`. It reads this run's `premise reversed:` entries
   ("Premise-reversal decisions" below) and prints which ones the body's `### Spec summary` note
@@ -87,6 +76,19 @@ phase-exit push, `_shared/git-discipline.md`), check `run-state.json`'s `pr` fie
   sibling-spec entries are never dropped. Best-effort, like the checklist edit: a non-zero exit
   logs a warning to `decisions.md`, and the update writes the checklist-only body. It is never a
   phase-exit or merge blocker.
+
+  Re-read that file's first line back before `gh pr edit` and confirm it still names
+  this run's `{run-id}`; hard-stop this update on a mismatch rather than push a wrong body:
+
+  ```bash
+  gh pr edit {number} --repo {host}/{owner}/{repo} --body-file /tmp/pr-checklist-{run-id}-{n}.md
+  ```
+
+<!-- when: transport=mcp -->
+  `gh`-absent: `mcp__github__update_pull_request` with the same composed body — this write is
+  unsanitized (`_shared/pr-early-run-lifecycle.md`'s Root cause section), so it carries both
+  delimiter pairs through untouched regardless of which one was used to locate the span.
+<!-- /when -->
 
   Compose-then-write-once — read, patch the checklist section in memory, write the whole body
   back in one call. Never a partial/streaming edit.
