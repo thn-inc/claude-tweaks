@@ -29,15 +29,15 @@ files:
 - **URL:** `plugin/skills/flow/validation.md` "Ledger-bound notes (#3036)"
 - **Action:** Step 2.5's divergence note and Step 2.6's shape-check warnings are logged to `decisions.md` as they occur (the 2.5 line reads "ops entry held for the open-items ledger").
 - **Should feel:** Like nothing is pending — the notes are on disk in the audit log.
-- **Should understand:** The ledger does not exist yet for a `worktree` run; whichever step creates it appends these as `ops` rows. Under `current-branch` the ledger already exists and the note is written straight in.
+- **Should understand:** The ledger does not exist yet for a `worktree` run; the post-worktree creation point (`build/worktree-setup.md` Step 4.6, or multi-spec's "Shared worktree" step 1) appends these as `ops` rows — whether it created the ledger or, on a resume, found it already there. Under `current-branch` the ledger already exists and the note is written straight in.
 - **Red flags:** a pre-flight divergence or shape warning in `decisions.md` with no matching `ops` row in the final ledger.
 
 ### 3. The ledger is created once the worktree exists
-- **URL:** `plugin/skills/build/worktree-setup.md` Step 4.6; `plugin/skills/flow/multi-spec.md` "Shared worktree" step 1
-- **Action:** Right after the worktree is created or adopted (and stamped), the ledger is created at `docs/plans/…-ledger.md` inside it, the held notes are appended, and the creation line is logged. Multi-spec runs create one shared ledger, `{feature}` = the shared `spec-{N1}-{N2}…` slug, logged to the parent run dir's `decisions.md`.
+- **URL:** `plugin/skills/build/worktree-setup.md` Step 4.6; `plugin/skills/flow/multi-spec.md` "Shared worktree" step 1; `plugin/skills/ledger/SKILL.md` "Create" (resume no-op)
+- **Action:** Right after the worktree is created or adopted (and stamped), the ledger is created at `docs/plans/…-ledger.md` inside it, the creation line is logged, the held notes are appended, and the ledger is committed by its explicit path. Multi-spec runs create one shared ledger, `{feature}` = the shared `spec-{N1}-{N2}…` slug, logged to the parent run dir's `decisions.md`.
 - **Should feel:** Like it was always there by the time build's first task runs.
-- **Should understand:** A resumed run whose active ledger already exists creates nothing and logs no second creation line; standalone `/claude-tweaks:build` (no `$PIPELINE_RUN_DIR`) never creates one here. An older run dir already holding a pre-#3036 `{run-dir}/ledger.md` keeps using it — the run-dir-first resolution rule finds it.
-- **Red flags:** two creation lines in one run's `decisions.md`; a `{run-dir}/ledger.md` at the end of a run that created a worktree.
+- **Should understand:** A resumed run whose active ledger already exists creates nothing and logs no second creation line, but still appends any held notes and commits the ledger — an untracked `docs/plans/` ledger reads as dirty to a later Adopt-or-create re-check (`git status --porcelain`), which would abandon this worktree. Standalone `/claude-tweaks:build` (no `$PIPELINE_RUN_DIR`) never creates one here. An older run dir already holding a pre-#3036 `{run-dir}/ledger.md` keeps using it — the run-dir-first resolution rule finds it.
+- **Red flags:** two creation lines in one run's `decisions.md`; a `{run-dir}/ledger.md` at the end of a run that created a worktree; `git status --porcelain` in the worktree showing the ledger untracked after Step 4.6 (or multi-spec step 1); a resumed run's held pre-flight note missing from its ledger.
 
 ### 4. Review's QA Ledger Check explains a missing ledger
 - **URL:** `plugin/skills/review/code-mode-steps.md` "QA Ledger Check"
@@ -48,4 +48,5 @@ files:
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #3036 (2026-10-17): `/flow` ledger creation moved behind the worktree; Step 1.8 kept for `current-branch` only; pre-flight ledger-bound notes held until creation.
+- Updated during wrap-up of record #3036 (2026-10-17): Steps 2–3 brought in line with the review fixes in bbe06ba26 — held notes are appended on a resume too, and the ledger is committed by its explicit path at the creation point.
 - Related: `docs/journeys/recover-from-a-bookkeeping-stamp-deny.md` (the worktree stamp Step 4.6 follows)
