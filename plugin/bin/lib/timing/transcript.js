@@ -172,14 +172,10 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
             // (stop_reason null, a tiny output_tokens) and close it with the
             // settled count; keep the max per field on the first row and
             // zero this one (#3375 final review C1).
-            firstRow.inputTokens = Math.max(firstRow.inputTokens, row.inputTokens);
-            firstRow.outputTokens = Math.max(firstRow.outputTokens, row.outputTokens);
-            firstRow.cacheRead = Math.max(firstRow.cacheRead, row.cacheRead);
-            firstRow.cacheCreate = Math.max(firstRow.cacheCreate, row.cacheCreate);
-            row.inputTokens = 0;
-            row.outputTokens = 0;
-            row.cacheRead = 0;
-            row.cacheCreate = 0;
+            for (const field of ['inputTokens', 'outputTokens', 'cacheRead', 'cacheCreate']) {
+              firstRow[field] = Math.max(firstRow[field], row[field]);
+              row[field] = 0;
+            }
           } else {
             firstRowById.set(msg.id, row);
           }

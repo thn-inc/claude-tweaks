@@ -175,7 +175,7 @@ test('AC4.1: a meta file whose transcript is unreadable yields notFound and null
   const r = await readDispatches(dir);
   assert.equal(r.items.length, 1);
   const it = r.items[0];
-  assert.match(it.notFound, /^transcript not readable \(ENOENT\)$/);
+  assert.equal(it.notFound, 'transcript not readable (ENOENT)');
   assert.equal(it.tokens, null);
   assert.equal(it.wallClockMs, null);
   assert.equal(it.startTs, null);
@@ -207,7 +207,6 @@ test('AC4.1: a transcript with no meta file is an orphan — description null, n
   assert.equal(it.metaModel, null);
   assert.equal(it.agentType, null);
   assert.equal(it.notFound, 'meta not found');
-  assert.equal(typeof it.wallClockMs, 'number');
   assert.equal(it.wallClockMs, 10000);
   assert.deepEqual(it.tokens, { input: 1, output: 2, cacheRead: 3, cacheCreate: 4 });
 });
@@ -321,7 +320,7 @@ test('#3375 M2 [IL-150]: readDispatches skips symlinked agent transcripts and me
   assert.equal(by.l1.tokens, null);
   assert.equal(by.l1.description, null);
   assert.equal(by.l2.tokens, null);
-  assert.match(by.l2.notFound, /^transcript not readable \(symlink\)$/);
+  assert.equal(by.l2.notFound, 'transcript not readable (symlink)');
   assert.equal(by.l2.description, 'Implement Task 2');
   assert.equal(by.l3.description, null);
   assert.equal(by.l3.notFound, 'meta not readable (symlink)');

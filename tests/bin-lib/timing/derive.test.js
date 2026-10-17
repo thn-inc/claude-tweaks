@@ -288,7 +288,6 @@ test('AC2.1: tier aggregation reports standard 2 and capable 1 for the three-dis
 });
 
 test('AC2.2: inherit and absent meta models resolve through the transcript model', () => {
-  assert.equal(resolveTier({ metaModel: 'inherit', transcriptModel: 'claude-opus-5-5' }).tier, 'capable');
   assert.equal(resolveTier({ metaModel: null, transcriptModel: 'claude-opus-5-5' }).tier, 'capable');
   assert.deepEqual(resolveTier({ metaModel: 'inherit', transcriptModel: 'claude-opus-5-5' }), { tier: 'capable', rawModel: 'claude-opus-5-5' });
 });
