@@ -11,10 +11,14 @@
 // multi-line object literals and `for…of` bindings. Taint also seeds from a
 // call to a skill-audit measurement export (`composedBytesReport`,
 // `measureSkills`, …), so a size read through that API — with no literal
-// skill path in sight — taints its result the same way. A size comparison whose
-// operand is a named value the scanner cannot resolve (an UPPER_CASE constant,
-// or a name containing ceiling/budget/cap) is reported as `unclassified` —
-// distinct from a violation, and never silently passed.
+// skill path in sight — taints its result the same way. A comparison operand
+// naming a plain identifier declared with a numeric literal of 1024 or more
+// (or `N * 1024`) — `const maxBytes = 40960;` — resolves as that number too,
+// so a lowercase, non-CEILING/BUDGET-named variable cannot launder a size
+// limit past the guard. A size comparison whose operand is a named value the
+// scanner still cannot resolve (an UPPER_CASE constant, or a name containing
+// ceiling/budget/cap) is reported as `unclassified` — distinct from a
+// violation, and never silently passed.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -34,9 +38,16 @@ const RAIL_NAMES = new Set(['RAIL_BYTES', 'RAIL_LINES', 'RAIL_TOKENS', 'DESCRIPT
 const RULE_A = /\b(?:const|let|var)\s+([A-Z0-9_]*(?:CEILING|BUDGET)[A-Z0-9_]*_(?:BYTES|CHARS)|[A-Z0-9_]*_(?:BYTE|CHAR)S?_(?:CEILING|BUDGET)[A-Z0-9_]*)\s*=\s*([^;\n]*)/;
 const SKILL_PATH = /plugin\/skills\b|['"`]skills\/|['"]skills['"]/;
 const MEASURE_API = /\b(?:measuredTextBytes|measuredBytes|measureSkills|measureSubFiles|measureComposed|composedBytesReport|measureDescriptions|totalBytes|totalDescriptionChars|auditCorpus|auditText|bloatReport)\s*\(/;
-const SIZE_MEASURE = /\bBuffer\.byteLength\b|\bmeasuredBytes\b|\.bytes\b|\.size\b|\.max\b|\bbytes\b/;
+const SIZE_MEASURE = /\bBuffer\.byteLength\b|\bmeasuredBytes\b|\.bytes\b|\.size\b|\.max\b|\bbytes\b|\.length\b/;
 const COMPARISON = /(<=|>=|<|>)\s*(\(?\s*\d[\d_]*(?:\s*\*\s*1024)?\s*\)?|[A-Za-z_$][\w$.]*(?:\[[^\]]*\])?)/g;
 const NUMERIC = /^\(?\s*(\d[\d_]*)(\s*\*\s*1024)?\s*\)?$/;
+// A plain (not ALL_CAPS, not ceiling/budget/cap-named) identifier declared
+// with a numeric literal of 1024 or more (or `N * 1024`) is itself a
+// size-limit value, even though its own name gives no hint — `const
+// maxBytes = 40960` reads the same as the literal everywhere it is later
+// compared against a tainted size. Resolved forward, line by line, the same
+// direction taint already propagates.
+const NUM_LITERAL_DECL = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(\(?\s*\d[\d_]*(?:\s*\*\s*1024)?\s*\)?)\s*;?\s*$/;
 
 function escapeName(name) {
   return name.replace(/\$/g, '\\$');
@@ -47,6 +58,7 @@ function scanText(text) {
   const violations = [];
   const unclassified = [];
   const tainted = new Set();
+  const numericLiterals = new Set();
   let openLiteral = null;
   text.split('\n').forEach((raw, i) => {
     const n = i + 1;
@@ -56,6 +68,11 @@ function scanText(text) {
     const code = line.replace(/`(?:[^`\\]|\\.)*`|'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, '""');
     const a = code.match(RULE_A);
     if (a && /\d/.test(a[2])) violations.push({ line: n, rule: 'a', text: raw.trim() });
+    const numDecl = code.match(NUM_LITERAL_DECL);
+    if (numDecl) {
+      const val = numDecl[2].match(NUMERIC);
+      if (val && (val[2] || Number(val[1].replace(/_/g, '')) >= 1024)) numericLiterals.add(numDecl[1]);
+    }
     const refsTainted = [...tainted].some((t) => new RegExp(`(^|[^\\w$])${escapeName(t)}([^\\w$]|$)`).test(line));
     const refsSkill = SKILL_PATH.test(line) || MEASURE_API.test(line) || refsTainted;
     if (openLiteral) {
@@ -81,6 +98,7 @@ function scanText(text) {
       }
       const last = op.split('.').pop().replace(/\[.*$/, '');
       if (RAIL_NAMES.has(last)) continue;
+      if (numericLiterals.has(last)) { flagged = true; continue; }
       if (/^[A-Z][A-Z0-9_]*$/.test(last) || /ceiling|budget|cap\b/i.test(last)) {
         unclassified.push({ line: n, operand: op, text: raw.trim() });
       }
@@ -132,6 +150,26 @@ test('AC3.1: self-test — rule (b) goes red on a skill-path size compared to a 
   assert.equal(scanText(fixture).violations[0].rule, 'b');
   const plain = "assert.ok(Buffer.byteLength(read('plugin/skills/x.md'), 'utf8') <= 40893);";
   assert.equal(scanText(plain).violations[0].rule, 'b');
+});
+
+test('AC3.1: self-test — rule (b) resolves a lowercase literal-holding identifier used as the comparison operand', () => {
+  const fixture = [
+    "const p = path.join(ROOT, 'plugin', 'skills', 'x.md');",
+    'const md = readText(p);',
+    "const bytes = Buffer.byteLength(md, 'utf8');",
+    'const maxBytes = 40960;',
+    'assert.ok(bytes <= maxBytes);',
+  ].join('\n');
+  assert.equal(scanText(fixture).violations[0].rule, 'b');
+});
+
+test('AC3.1: self-test — rule (b) catches a tainted .length compared to a literal', () => {
+  const fixture = [
+    "const p = path.join(ROOT, 'plugin', 'skills', 'x.md');",
+    'const md = readText(p);',
+    'assert.ok(md.length <= 40960);',
+  ].join('\n');
+  assert.equal(scanText(fixture).violations[0].rule, 'b');
 });
 
 test('self-test: rule (b) follows a skill path through variables, literals, and for...of bindings', () => {

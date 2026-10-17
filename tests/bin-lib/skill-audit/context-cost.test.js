@@ -136,7 +136,7 @@ test('reports the payload total and the tightest rail headroom', () => {
 
 // ── Description budget (#394). Descriptions load into every session of every
 // project with the plugin enabled, regardless of whether the skill ever
-// fires — a corpus-wide cost the per-SKILL.md ceiling above doesn't cover.
+// fires — a corpus-wide cost the per-SKILL.md rail above doesn't cover.
 
 test('extractDescription reads a plain-scalar description', () => {
   const content = '---\nname: x\ndescription: Use when doing a thing. Keywords - a, b.\nargument-hint: "[x]"\n---\nbody\n';
@@ -200,11 +200,12 @@ test('measureDescriptions finds every shipped skill', () => {
   assert.ok(descriptions.every((d) => d.chars > 0), 'every shipped skill must carry a non-empty description');
 });
 
-// ── findComposeCallSites (#1990 Task 2). The hard gate moves from "no single
-// file exceeds 40 KB" to "no compose call site's composed bytes exceed the
-// ceiling" — this is the scanner that finds every such call site in the
-// shipped skill prose. Single-line call form only, by construction of this
-// decomposition's call sites (the function's own comment says so).
+// ── findComposeCallSites (#1990 Task 2). This is the scanner that finds
+// every compose call site in the shipped skill prose, which the rail's
+// `composedRailViolations` check then judges against `RAIL_BYTES` — the
+// same bound a raw file meets, with no per-step exceptions. Single-line
+// call form only, by construction of this decomposition's call sites (the
+// function's own comment says so).
 
 test('parseComposeCallLine: the production merge call parses to step + two plugin-root sources', () => {
   // Copied verbatim from plugin/skills/wrap-up/auto-merge-short-circuit.md line 156.
@@ -303,7 +304,7 @@ test('findComposeCallSites: an unparsed line is emitted as { step: null, unparse
 // under every combination of the `when:` keys those sources actually branch
 // on — unused keys pinned to `VOCAB[key][0]` (a marker-free key can't change
 // the output). `unresolved` is not a combination — it is the standalone-run
-// both-branches read the per-file warnings already show.
+// both-branches read: what a run with no `config.yml` actually pays.
 
 function makeComposeFixture() {
   const { root, sharedDir } = tmpCorpus('composed');
@@ -478,6 +479,18 @@ test('rail: every compose call site\'s max composed bytes fit one Read call', ()
     [],
     `a composed bundle is consumed by a single Read — fence or restructure its sources to fit ${RAIL_BYTES} B (budgets.js)`,
   );
+});
+
+test('the manifesto and pr-scan compose call sites are present and parse (#3311)', () => {
+  const report = composedBytesReport(REPO);
+  for (const step of ['manifesto', 'pr-scan']) {
+    const rows = report.filter((r) => r.step === step);
+    assert.ok(rows.length > 0, `expected a measured ${step} compose call site — it is missing or unparsed`);
+    for (const row of rows) {
+      assert.equal(row.unparsed, undefined, `${step} row is unparsed: ${row.reason}`);
+      assert.equal(row.error, undefined, `${step} row carries an error: ${row.error}`);
+    }
+  }
 });
 
 test('rail: every skill description fits the CLI listing max', () => {
