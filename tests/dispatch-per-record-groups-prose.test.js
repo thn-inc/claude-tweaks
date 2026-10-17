@@ -110,7 +110,7 @@ test('AC8.2 (shared/help/docs): no prose says a record pulls its whole file-over
   }
 });
 
-test('design-notes.md records the per-record decision with its three rejected alternatives', () => {
+test('design-notes.md records the per-record decision and names the hub-exclusion, weakest-edge and bare-drain alternatives', () => {
   const notes = readText(path.join(DISPATCH, 'design-notes.md'));
   const heading = '## Why per-record groups, not transitive file-overlap groups';
   const start = notes.indexOf(heading);

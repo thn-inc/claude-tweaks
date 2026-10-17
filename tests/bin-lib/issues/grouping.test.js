@@ -1103,11 +1103,13 @@ test('AC3.4: a candidate with no in-flight records returns an empty list', () =>
   assert.deepStrictEqual(result.get(1), []);
 });
 
-test('Review Focus 2: a candidate id repeated in inFlight is never its own neighbour', () => {
+test('Review Focus 2: a candidate that also appears in inFlight is not reported as anyone\'s in-flight neighbour', () => {
   const result = findInFlightNeighbours(
+    [{ id: 4, keyFiles: ['x.js'] }, { id: 5, keyFiles: ['x.js'] }],
     [{ id: 5, keyFiles: ['x.js'] }],
-    [{ id: 5, keyFiles: ['x.js'] }],
+    { hubPathMinCount: Infinity },
   );
+  assert.deepStrictEqual(result.get(4), []);
   assert.deepStrictEqual(result.get(5), []);
 });
 
@@ -1123,7 +1125,7 @@ test('directOverlaps is symmetric and omits pairs with no linking file', () => {
 });
 
 function fastLaneSingleton(n) {
-  return [{ number: n, labels: [{ name: 'ceremony:fast-lane' }, { name: 'priority:medium' }], createdAt: '2026-01-0' + n + 'T00:00:00Z' }];
+  return [{ number: n, labels: [{ name: 'ceremony:fast-lane' }, { name: 'priority:medium' }], createdAt: '2026-01-' + String(n).padStart(2, '0') + 'T00:00:00Z' }];
 }
 
 test('AC6.1: bundleFastLaneSingletons never bundles two conflicting fast-lane singletons', () => {

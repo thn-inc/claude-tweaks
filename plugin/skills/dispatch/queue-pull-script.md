@@ -628,6 +628,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
   let tip = null;
   const readClaimContent = (n) => {
     const r = readClaimBlob({ gitRunner: defaultRunner, ghApi: defaultGhApi }, slug, n, tip);
+    if (!slug && r.via !== 'git') return { failure: 'repo-slug-unresolved' };
     if (r.failure) return { failure: r.failure };
     if (r.via === 'git') tip = r.sha;
     return { content: r.absent ? null : r.content };
