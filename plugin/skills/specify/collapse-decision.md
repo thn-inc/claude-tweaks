@@ -8,7 +8,7 @@ With Step 2's work-unit list final and Implicit Dependency Detection's overlap/d
 
 **1 work unit — always collapses.** No parent is created. The single unit becomes a standalone ready record (or, when `$ORIGIN_RECORD_NUM` is set, the origin record is shaped in place as that unit's create — see Step 3, `record-creation-subissues.md`'s Sub-issues section, #1346's split of `record-creation.md`).
 
-**2 work units — collapses only when independent.** Read Implicit Dependency Detection's own outputs for these two units (never re-derive dependency-ness from prose, and never read the adjacent Ceiling-headroom flag, which is a byte-budget annotation from the same grouping pass, not a dependency signal):
+**2 work units — collapses only when independent.** Read Implicit Dependency Detection's own outputs for these two units (never re-derive dependency-ness from prose, and never read the adjacent Rail-headroom flag, which is a byte-budget annotation from the same grouping pass, not a dependency signal):
 
 - A `Blocked by #N` flag between the two units (from Overlap Analysis or the Implicit Dependency Detection table) → **dependency-ordered — keep the parent.**
 - An internal-conflict row (Overlap-Type table: "grouped with another new work unit from this decomposition") between the two units → **dependency-ordered — keep the parent.**
