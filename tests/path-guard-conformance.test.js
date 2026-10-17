@@ -14,13 +14,18 @@ const path = require('node:path');
 // misses on case-insensitive and symlinked checkouts (#3417; the IL-150 and
 // IL-161 classes).
 //
-// `existsSync` cannot be classified lexically as "used as a type check", so
-// every call counts. Every existing file with a non-zero count sits on the
-// exact per-file ALLOWLIST below, with a `reason` an author judged by reading
-// the call site. A count that drifts either way (a new call, or one migrated
-// away) fails until the entry is updated — the allowlist is an audit record,
-// not a ceiling. Entries whose reason starts `UNSAFE —` are known hazards
-// recorded for follow-up, not endorsements.
+// The lint counts TOKENS, not call shapes: every `realpathSync` and every
+// `existsSync` occurrence outside a comment. A call-shape regex misses
+// `{ realpath = fs.realpathSync }` (a default later called as `realpath(p)`),
+// `fs['realpathSync'](p)`, `fs.realpathSync?.(p)` and
+// `const { existsSync: ex } = fs`; counting the identifier closes all of them
+// at once. `existsSync` cannot be classified lexically as "used as a type
+// check", so every occurrence counts. Every existing file with a non-zero
+// count sits on the exact per-file ALLOWLIST below, with a `reason` an author
+// judged by reading the site. A count that drifts either way (a new
+// occurrence, or one migrated away) fails until the entry is updated — the
+// allowlist is an audit record, not a ceiling. Entries whose reason starts
+// `UNSAFE —` are known hazards recorded for follow-up, not endorsements.
 const BIN_ROOT = path.join(__dirname, '..', 'plugin', 'bin');
 const DONTS = path.join(__dirname, '..', 'docs', 'donts.md');
 
@@ -30,32 +35,50 @@ const DONTS = path.join(__dirname, '..', 'docs', 'donts.md');
 // ("work/*-spec.md", "docs/*.md") open a "block comment" that runs to the next
 // real `*/` anywhere later in the file and blanks live code in between; four
 // plugin/bin files were undercounted that way. Strings are kept verbatim, so
-// a call inside generated source text (statusline-wrapper-source.js) still
-// counts.
+// a token inside generated source text (statusline-wrapper-source.js) and a
+// bracket-string form (`fs['realpathSync']`) still count.
+//
+// Regex literals are NOT modeled. A regex containing `//` or `/*`
+// (`/^https?:\/\//` reads `\//` as a line comment; `/src\/*.js/` opens a
+// phantom block comment) can blank live code after it, and a quote inside a
+// regex can pair with a later quote and hide a trailing comment. Nothing under
+// plugin/bin/ trips this today: when this was written, the tree's counts were
+// cross-checked once against an independent whole-line-comment filter and
+// agreed for every file. That was a one-time audit, not an enforced guard — a
+// future file that trips it can hide tokens from the lint.
 const TOKEN = /\/\/[^\n]*|\/\*[\s\S]*?\*\/|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\[\s\S]|[^`\\])*`/g;
 function stripComments(src) {
   return src.replace(TOKEN, (m) => (m[0] === '/' ? m.replace(/[^\n]/g, ' ') : m));
 }
 
-// -> { realpathSync, existsSync } call counts in `src`, comments excluded.
-// A bare reference (`{ realpath: fs.realpathSync.native }`) is not a call.
-function countGuardedCalls(src) {
+// -> { realpathSync, existsSync } token counts in `src`, comments excluded.
+// Calls, references (`{ realpath: fs.realpathSync.native }`), defaults
+// (`{ realpath = fs.realpathSync }`), destructured aliases, bracket-string
+// forms and optional chaining all count.
+function countGuardedTokens(src) {
   const s = stripComments(src);
   return {
-    realpathSync: (s.match(/\brealpathSync(?:\.native)?\s*\(/g) || []).length,
-    existsSync: (s.match(/\bexistsSync\s*\(/g) || []).length,
+    realpathSync: (s.match(/\brealpathSync\b/g) || []).length,
+    existsSync: (s.match(/\bexistsSync\b/g) || []).length,
   };
 }
 
 const KEYS = ['realpathSync', 'existsSync'];
 
 // files: { relPosixPath: source }; allowlist: { relPosixPath: { realpathSync?,
-// existsSync?, reason } } -> one offender line per count mismatch, and one per
-// allowlist entry whose file is gone.
+// existsSync?, reason } } -> one offender line per count mismatch, one per
+// allowlist entry whose file is gone, and one per entry without a non-empty
+// `reason` (the reason is the audit record; an entry without one is a bare
+// count).
 function evaluate(files, allowlist) {
   const offenders = [];
+  for (const [rel, entry] of Object.entries(allowlist)) {
+    if (!entry || typeof entry.reason !== 'string' || entry.reason.trim() === '') {
+      offenders.push(`${rel}: allowlist entry has no reason`);
+    }
+  }
   for (const [rel, src] of Object.entries(files)) {
-    const actual = countGuardedCalls(src);
+    const actual = countGuardedTokens(src);
     const allowed = allowlist[rel] || {};
     for (const key of KEYS) {
       const want = allowed[key] || 0;
@@ -100,7 +123,7 @@ const ALLOWLIST = {
   'lib/hooks/close-run-state.js': { existsSync: 4, reason: 'work/ presence marks a run as holding unarchived work (two sites), runDir existence decides the "missing" status, and prev.worktree existence is a liveness probe for a recorded worktree; none acts on the occupant type.' },
   'lib/hooks/context.js': { realpathSync: 7, existsSync: 3, reason: 'realpathSync sites canonicalize the compared worktree / exclude-dir / run-dir values with the same JS fs.realpathSync on both sides of every comparison, each falling back to the as-given path on throw; existsSync at 56-57 probes run-state.json / decisions.md for mint adoption and at 544 whether a recorded worktree still exists.' },
   'lib/hooks/post-tool-use.js': { existsSync: 2, reason: 'rate-limit marker presence (306) and a guard that ctx.cwd still exists before shelling out to git worktree list (316); both are presence questions whose wrong answer only costs a skipped or repeated best-effort check.' },
-  'lib/hooks/pre-tool-use.js': { realpathSync: 1, existsSync: 1, reason: 'safeReal is the deliberate JS-realpath helper (see the comment at ~190: both sides of isPolicyFile resolve with it, resolveLeaf covers the leaf); the existsSync at 1970 asks only whether the run dir already has a config.yml, any occupant counting as present.' },
+  'lib/hooks/pre-tool-use.js': { realpathSync: 2, existsSync: 1, reason: 'both realpathSync tokens are the deliberate JS form: realTarget (~195) injects fs.realpathSync into path-guard\'s resolveLeaf, and safeReal (423) wraps it; the comment at ~190 explains that both sides of isPolicyFile\'s equality must stay JS-form together, so no pair is resolved two ways. The existsSync at 1970 asks only whether the run dir already has a config.yml, any occupant counting as present.' },
   'lib/hooks/resume-freshness.js': { existsSync: 1, reason: 'a recorded worktree path that no longer exists is the "worktree-gone" safe verdict; the type of whatever is there is irrelevant to that verdict.' },
   'lib/hooks/run-dir-resolve.js': { realpathSync: 1, existsSync: 1, reason: 'safeReal canonicalizes PIPELINE_RUN_DIR before the anchored-under-root check against wtDetect.safeReal (the same JS realpath); existsSync at 88 is the staleness liveness probe for a recorded worktree.' },
   'lib/hooks/run-integrity.js': { realpathSync: 1, existsSync: 2, reason: 'realpathOrSelf resolves both the target and every `git worktree list` entry with the same JS realpath before comparing; existsSync on <entry>/.git deliberately accepts a file or a directory (a linked worktree\'s .git is a file) to spot a dangling prunable entry.' },
@@ -118,15 +141,17 @@ const ALLOWLIST = {
   'lib/ports/registry.js': { realpathSync: 3, existsSync: 2, reason: 'allocate / reallocate / release key leases by the JS fs.realpathSync of the checkout (release falls back to the as-given path on throw), the single canonical form every reader compares with; existsSync distinguishes a fresh registry from a corrupt one (59) and prunes leases whose checkout is gone (84).' },
   'lib/reconcile/archive-merged.js': { existsSync: 19, reason: 'run-dir archival moves: every site asks whether a source or destination entry (config.yml, work/, decisions.md, archive dir, spec dirs, stragglers) is present before a rename, content-hash comparison or readdir; presence/absence is what steers each branch (skip, already-archived, twin comparison), and the moves themselves run in try/catch with a typed outcome.' },
   'lib/reconcile/cache.js': { existsSync: 1, reason: 'prunes failure-cache keys whose target path is gone; a path that still exists as any type keeps its entry.' },
-  'lib/reconcile/reap-merged.js': { existsSync: 1, reason: 'post-rmSync verification that the worktree directory is really gone; any surviving occupant is a failure regardless of type.' },
+  'lib/reconcile/reap-merged.js': { realpathSync: 1, existsSync: 1, reason: 'realpathSync (123) is the default of gitCommittedToRemoval\'s injectable `realpath`, applied to each `git worktree list` path and compared with `real`, which the caller produced with worktree-detect\'s safeReal, the same JS fs.realpathSync, so both sides of the comparison resolve alike (ENOENT skips the entry, any other failure fails closed); existsSync (156) is the post-rmSync verification that the worktree directory is really gone, any surviving occupant being a failure regardless of type.' },
   'lib/residue/detect-test-script.js': { realpathSync: 1, existsSync: 1, reason: 'realpath of cwd is only the walk-up start (fallback path.resolve on throw); existsSync on <dir>/.git deliberately accepts a file or directory as the repo boundary (a linked worktree\'s .git is a file).' },
   'lib/skill-audit/skill-catalog.js': { existsSync: 1, reason: 'lists skill directories that contain a SKILL.md; presence is the filter.' },
   'lib/statusline-wrapper-source.js': { existsSync: 1, reason: 'inside the generated wrapper source text: exits 0 when the resolved statusline target is absent so a statusline failure never breaks the host session; the wrapper then requires or spawns it under its own error handling.' },
+  'lib/superpowers-version.js': { realpathSync: 2, reason: 'both tokens are `fs.realpathSync.native`: the default dep (69) and the notice-time dep (123); installed-plugins.js\'s selectEntry/safeRealpath and the projectPath vs projectDir comparison at 124 all go through that one injected .native form, so a pair is never resolved two ways and a mis-cased cwd still matches.' },
+  'lib/timing/transcript.js': { realpathSync: 2, reason: 'both tokens inject `fsImpl.realpathSync` (the JS form this reader has always used) into path-guard\'s canonicalRealpath / resolveLeaf, so the projects root and each transcript leaf compared by isAncestorOrSelf resolve with the same function; the isFile check follows on the resolved path.' },
   'lib/verify/baseline.js': { realpathSync: 1, existsSync: 3, reason: 'tryRealpath canonicalizes cwd, the git repo root and the scratch worktree with the same JS realpath before path.relative compares them (falling back to the given path on throw); existsSync gates whether a failing test file exists on disk / in a checkout (the file is then hashed or run, and a miss makes the entry ineligible) and verifies the scratch worktree was removed.' },
   'lib/visual-decide/cli.js': { existsSync: 2, reason: 'polls for and reads the daemon\'s server-stopped marker file (stopped vs crashed); presence of the marker is the entire signal.' },
   'lib/wrap-up/engine-verify.js': { existsSync: 13, reason: 'wrap-up verification checks: each asks whether a run artifact (verify-expectations.json, manifest.yml, engine-state.json, archive path, work/, .superpowers/sdd, docs/plans, recorded worktree) is present; absence or presence is the check result, and the reads that follow (expectations, engine-state, console.json) sit in try/catch.' },
   'lib/wrap-up/facts.js': { existsSync: 1, reason: 'records whether .claude/skills exists as a boolean fact for the wrap-up report; the directory is not read from here.' },
-  'lib/wrap-up/ledger-write.js': { realpathSync: 1, existsSync: 2, reason: 'an explicit ledger path must exist (36) and then, realpath-resolved with the same JS realpath as the run-dir and worktree roots it is tested against (37), sit under one of them; 47 is presence of the run-dir ledger.md fast path.' },
+  'lib/wrap-up/ledger-write.js': { realpathSync: 4, existsSync: 5, reason: 'lines 27 and 29 each hold three tokens (the `const` name, `deps.` override, `fs.` default) for the injectable existsSync/realpathSync seams; an explicit ledger path must exist (36) and then, realpath-resolved by the same injected realpathSync as the run-dir and worktree roots it is tested against (37), sit under one of them; 47 is presence of the run-dir ledger.md fast path.' },
   'load-delta.js': { realpathSync: 4, reason: 'both sides of every containment check are resolved with the same JS fs.realpathSync (repo root and file or plugin root), isPathContained decides, and the read path additionally requires statSync(real).isFile().' },
   'phase-timing.js': { realpathSync: 1, reason: 'canonical() lstat-checks for a symlink first and keeps the literal path in that case, realpathing only a real directory; used to dedupe subagent dirs, with the literal path as fallback on throw.' },
   'release-local.js': { realpathSync: 2, reason: 'writeInsideRoot realpaths the root and the target\'s parent directory with the same JS realpath and refuses a parent outside the root; the leaf is then opened with O_NOFOLLOW so a symlinked leaf is refused by the kernel.' },
@@ -137,18 +162,22 @@ const ALLOWLIST = {
   'wrap-up-engine.js': { existsSync: 1, reason: 'requireEngineState: presence of engine-state.json in the run dir, else usage error "run plan first"; a wrong-type occupant fails the read that follows.' },
 };
 
-test('scanner counts calls, not comments or references', () => {
+test('scanner counts tokens — calls, references, defaults, aliases, bracket and optional forms — not comments', () => {
   const fixture = [
     "const fs = require('fs');",
-    'fs.realpathSync(a);',
-    'fs.realpathSync.native(b);',
-    'fsImpl.realpathSync(c);',
-    'fs.existsSync(d);',
-    '// fs.realpathSync(e)',
-    '/* existsSync(f) */',
-    'const deps = { realpath: fs.realpathSync.native };',
+    'fs.realpathSync(a);', // 1 realpathSync
+    'fs.realpathSync.native(b);', // 2
+    'fsImpl.realpathSync(c);', // 3
+    'fs.existsSync(d);', // 1 existsSync
+    '// fs.realpathSync(e)', // comment: 0
+    '/* existsSync(f) */', // comment: 0
+    'const deps = { realpath: fs.realpathSync.native };', // 4 (a reference)
+    'function reap(real, { realpath = fs.realpathSync } = {}) { return realpath(real); }', // 5 (a default, called as realpath())
+    "fs['realpathSync'](g);", // 6 (bracket-string form)
+    'fs.realpathSync?.(h);', // 7 (optional chaining)
+    'const { existsSync: ex } = fs; ex(i);', // 2 existsSync (destructured alias)
   ].join('\n');
-  assert.deepEqual(countGuardedCalls(fixture), { realpathSync: 3, existsSync: 1 });
+  assert.deepEqual(countGuardedTokens(fixture), { realpathSync: 7, existsSync: 2 });
 });
 
 test('scanner does not let a /* inside a line comment swallow live code (proves the single-pass stripper)', () => {
@@ -162,7 +191,7 @@ test('scanner does not let a /* inside a line comment swallow live code (proves 
     "const note = 'http://example.test/x'; fs.realpathSync(q);",
     "const gen = `if (!fs.existsSync(t)) process.exit(0);`;",
   ].join('\n');
-  assert.deepEqual(countGuardedCalls(fixture), { realpathSync: 1, existsSync: 2 });
+  assert.deepEqual(countGuardedTokens(fixture), { realpathSync: 1, existsSync: 2 });
 });
 
 test('AC3.1: a bare fs.realpathSync( in a new plugin/bin/lib/ file is flagged', () => {
@@ -175,9 +204,25 @@ test('AC3.1: a bare fs.realpathSync( in a new plugin/bin/lib/ file is flagged', 
   assert.equal(offenders.length, 1);
   assert.match(offenders[0], /lib\/new-reader\.js/);
   assert.match(offenders[0], /realpathSync/);
-  // Allowlisting the exact count clears it; one more call trips it again.
+  // Allowlisting the exact count clears it.
   assert.deepEqual(evaluate(files, { 'lib/new-reader.js': { realpathSync: 1, reason: 'x' } }), []);
-  assert.equal(evaluate(files, { 'lib/new-reader.js': { reason: 'x' } }).length, 1);
+});
+
+test('an allowlisted count ABOVE the actual count is flagged (a migrated-away call must shrink its entry)', () => {
+  const files = { 'lib/a.js': 'module.exports = (p) => fs.realpathSync(p);\n' };
+  const offenders = evaluate(files, { 'lib/a.js': { realpathSync: 2, reason: 'x' } });
+  assert.equal(offenders.length, 1);
+  assert.match(offenders[0], /lib\/a\.js: realpathSync x1 \(allowlisted: 2\)/);
+});
+
+test('an allowlist entry with a missing, empty or blank reason is flagged', () => {
+  const files = { 'lib/a.js': 'module.exports = (p) => fs.existsSync(p);\n' };
+  for (const entry of [{ existsSync: 1 }, { existsSync: 1, reason: '' }, { existsSync: 1, reason: '   ' }]) {
+    const offenders = evaluate(files, { 'lib/a.js': entry });
+    assert.equal(offenders.length, 1, JSON.stringify(entry));
+    assert.match(offenders[0], /lib\/a\.js: allowlist entry has no reason/);
+  }
+  assert.deepEqual(evaluate(files, { 'lib/a.js': { existsSync: 1, reason: 'x' } }), []);
 });
 
 test('a stale allowlist entry is flagged', () => {
@@ -190,7 +235,7 @@ test('AC3.1: passes on the current tree', () => {
   assert.deepEqual(
     evaluate(readTree(), ALLOWLIST),
     [],
-    'a bare fs.realpathSync( / fs.existsSync( under plugin/bin/ is new or its count changed — route it through plugin/bin/lib/path-guard (lstatType / resolveLeaf / canonicalRealpath / resolveWithin), or, when existence alone really is the question, add or update the file\'s ALLOWLIST entry in this test with a reason specific to that file',
+    'a realpathSync / existsSync token under plugin/bin/ is new or its count changed — route it through plugin/bin/lib/path-guard (lstatType / resolveLeaf / canonicalRealpath / resolveWithin), or, when existence alone really is the question, add or update the file\'s ALLOWLIST entry in this test with a reason specific to that file',
   );
 });
 
