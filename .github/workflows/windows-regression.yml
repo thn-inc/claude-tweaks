@@ -2,19 +2,27 @@
 #
 # Runs on pushes to main only, never on PRs: the pr-first merge gate waits on
 # every check in a PR's rollup, so a slow Windows job there would delay every
-# merge. HEAD^1 is the right comparison base because merges to main are squashed
-# (linear history), so the previous commit is exactly the state before this one.
+# merge. The comparison base is the previous origin/main tip from the push event
+# (github.event.before) — exactly the state this push introduced a change to,
+# whether it was one squash commit, a merge commit or a multi-commit push. It
+# falls back to HEAD^1 for workflow_dispatch and a force-push, where there is no
+# usable `before` commit. main's history is not linear, so HEAD^1 alone would
+# mis-base a direct multi-commit push.
 #
-# verify.js runs the suite on this commit and, for each failing test file, on
-# HEAD^1 — only failures that are new on this commit count. The filer step reads
-# its report and files one type:bug issue on main; the filer's exit code is the
-# job's result (0 = clean, 1 = new failures or an unreadable report).
+# Two jobs, split for least privilege. `windows` runs the whole test suite — the
+# repo's own code — with a read-only token. verify.js runs the suite on this
+# commit and, for each failing test file, on the base — only failures that are
+# new on this commit count — and uploads its report and logs as an artifact.
+# `file` runs on ubuntu, never executes the suite, and is the only job granted
+# issue-write permission: the filer reads the artifact and files one type:bug issue on
+# main (or comments on the open one). The filer's exit code is the workflow's
+# result (0 = clean, 1 = new failures or an unreadable report).
 #
 # The concurrency group is keyed on the commit sha, not the ref: GitHub keeps at
 # most one pending run per group and replaces it with a newer one even when
 # in-progress runs are never cancelled, so a per-ref group would skip
 # intermediate commits and let a skipped commit's regression become the next
-# run's HEAD^1 baseline.
+# run's baseline.
 name: windows-regression
 
 on:
@@ -28,13 +36,15 @@ concurrency:
 
 permissions:
   contents: read
-  issues: write
-  pull-requests: read
 
 jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      base: ${{ steps.base.outputs.base }}
     env:
       # Several suites build git fixtures that commit; CI runners have no git identity.
       GIT_AUTHOR_NAME: ci
@@ -56,7 +66,7 @@ jobs:
         run: git config --global core.longpaths true
       - uses: actions/checkout@v4
         with:
-          # Full history: HEAD^1 must exist for the baseline run.
+          # Full history: the base commit must exist for the baseline run.
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -65,13 +75,28 @@ jobs:
         run: |
           git config core.autocrlf || true
           git ls-files --eol -- README.md
-      - name: Verify against the previous commit
+      - name: Resolve the comparison base
+        id: base
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          B="$PUSH_BEFORE"
+          SOURCE="push event before"
+          if [ -z "$B" ] || [[ "$B" =~ ^0+$ ]] || ! git cat-file -e "$B^{commit}" 2>/dev/null; then
+            B=$(git rev-parse HEAD^1)
+            SOURCE="HEAD^1 fallback"
+          fi
+          echo "Comparison base: $B ($SOURCE)"
+          echo "BASE=$B" >> "$GITHUB_ENV"
+          echo "base=$B" >> "$GITHUB_OUTPUT"
+      - name: Verify against the base commit
         id: verify
         continue-on-error: true
         run: >-
           node plugin/bin/verify.js
           --cmd tests="npm test"
-          --baseline HEAD^1
+          --cmd-timeout tests=2700000
+          --baseline "$BASE"
           --baseline-cmd tests="node --test {file}"
           --json "$RUNNER_TEMP/verify-report.json"
           --log-dir "$RUNNER_TEMP/verify-logs"
@@ -84,11 +109,37 @@ jobs:
             ${{ runner.temp }}/verify-report.json
             ${{ runner.temp }}/verify-logs
           if-no-files-found: warn
+
+  file:
+    needs: windows
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BASE_SHA: ${{ needs.windows.outputs.base }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # A missing artifact (the windows job died before uploading) must still reach
+      # the filer, which then exits 1 on the unreadable report.
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: verify-report
+          path: ${{ runner.temp }}/verify
       - name: File an issue for new failures
-        if: always()
         run: >-
           node tools/windows-regression/file-issue.js
-          --report "$RUNNER_TEMP/verify-report.json"
+          --report "$RUNNER_TEMP/verify/verify-report.json"
+          --log "$RUNNER_TEMP/verify/verify-logs/tests.log"
+          ${BASE_SHA:+--base "$BASE_SHA"}
           --ref "$GITHUB_REF"
           --sha "$GITHUB_SHA"
           --repo "$GITHUB_REPOSITORY"
