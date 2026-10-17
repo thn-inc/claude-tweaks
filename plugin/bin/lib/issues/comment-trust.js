@@ -29,11 +29,8 @@ const TRUSTED_AUTHOR_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR'])
 // string.
 function commentAssociation(comment) {
   if (!comment || typeof comment !== 'object') return null;
-  if (typeof comment.authorAssociation === 'string' && comment.authorAssociation !== '') {
-    return comment.authorAssociation;
-  }
-  if (typeof comment.author_association === 'string' && comment.author_association !== '') {
-    return comment.author_association;
+  for (const value of [comment.authorAssociation, comment.author_association]) {
+    if (typeof value === 'string' && value !== '') return value;
   }
   return null;
 }

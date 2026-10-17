@@ -52,6 +52,12 @@ function extractPendingGrantedAt(commentBodies) {
   return latest;
 }
 
+// A comment's text: a bare string is its own body; anything without a string body is ''.
+function commentBody(comment) {
+  if (typeof comment === 'string') return comment;
+  return comment && typeof comment.body === 'string' ? comment.body : '';
+}
+
 // comments: an issue's fetched comment objects (`gh issue view --json comments`
 // shape). The grant timestamp is a trust decision (#3358) -- a `grant-mode-audit`
 // marker is plantable by anyone who can comment, and a backdated one would mature
@@ -66,7 +72,7 @@ function partitionGrantComments(comments) {
   const bodies = [];
   const skippedUntrusted = [];
   for (const c of Array.isArray(comments) ? comments : []) {
-    const body = typeof c === 'string' ? c : (c && typeof c.body === 'string' ? c.body : '');
+    const body = commentBody(c);
     if (isTrustedComment(c)) bodies.push(body);
     else if (PENDING_GRANT_MARKER_TEST_RE.test(body)) skippedUntrusted.push(untrustedSkipNote(c));
   }

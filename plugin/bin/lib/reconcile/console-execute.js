@@ -498,7 +498,8 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = 
   let existingReply;
   for (const c of comments) {
     if (!c || typeof c.body !== 'string' || !c.body.startsWith(EXECUTED_REPLY_MARKER)) continue;
-    if (isTrustedComment(c)) { if (!existingReply) existingReply = c; } else skippedUntrusted.push(untrustedSkipNote(c));
+    if (!isTrustedComment(c)) skippedUntrusted.push(untrustedSkipNote(c));
+    else if (!existingReply) existingReply = c;
   }
   try {
     if (existingReply) {

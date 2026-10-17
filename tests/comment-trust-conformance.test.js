@@ -16,12 +16,16 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const {
   TRUSTED_AUTHOR_ASSOCIATIONS,
+  isTrustedComment,
   trustedJqSelect,
   untrustedJqNote,
+  untrustedSkipNote,
 } = require('../plugin/bin/lib/issues/comment-trust.js');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
@@ -153,9 +157,6 @@ test("tidy's tombstone check filters by association", () => {
 });
 
 // ---- Task 5: demo, parent-gate and grant-maturation readers (#3358) ----
-
-const { spawnSync } = require('node:child_process');
-const { isTrustedComment, untrustedSkipNote } = require('../plugin/bin/lib/issues/comment-trust.js');
 
 const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
 const ENTRY_PATHS = fs.readFileSync(path.join(SKILLS, 'demo', 'entry-paths.md'), 'utf8');
@@ -307,8 +308,6 @@ test('the snippet extractor can go red: no node -e body, or two fences, yield nu
 });
 
 // ---- Task 6: needs-decision readers (#3358) ----
-
-const os = require('node:os');
 
 const WORK_RECORD = fs.readFileSync(path.join(SKILLS, '_shared', 'work-record.md'), 'utf8');
 const GRANT_LANE = fs.readFileSync(path.join(SKILLS, 'backlog', 'grant-lane-decision.md'), 'utf8');
