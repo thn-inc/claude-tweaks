@@ -110,9 +110,15 @@ Note: #{target} overlaps open #{other} (untracked file overlap: {files}) — con
 ```
 
 Proceed with only the named target(s) regardless — this is a warning, never a gate, and never
-auto-expands the human's explicitly named list. No new grouping computation is added to flow:
-this reuses the `bin/preflight-records.js` primitive that `multi-spec.md`'s pre-flight already
-calls; flow gains no queue-wide knowledge beyond this one warning check.
+auto-expands the human's explicitly named list. With `gh` unavailable, or on any non-zero exit,
+skip the warning — no retry, no stop — and write one `SKIP`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status SKIP --step "Step 2.8 file-overlap warning (skipped)" --text "condition: preflight-records.js exited non-zero or gh unavailable → fallback: overlap warning not computed; claim proceeds on the named targets only." --reversibility n/a
+```
+No new grouping computation is added to flow: this reuses the `bin/preflight-records.js`
+primitive that `multi-spec.md`'s pre-flight already calls; flow gains no queue-wide knowledge
+beyond this one warning check.
 
 ## Claim every named target, all-or-abort
 

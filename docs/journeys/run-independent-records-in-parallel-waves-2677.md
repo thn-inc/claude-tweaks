@@ -3,6 +3,7 @@ files:
   - plugin/bin/lib/preflight-records/waves.js
   - plugin/bin/preflight-records.js
   - plugin/skills/flow/multispec-parallel-waves.md
+  - plugin/skills/flow/multispec-preflight-failure.md
   - plugin/skills/flow/multi-spec.md
   - plugin/skills/flow/multispec-failure-handling.md
   - plugin/skills/build/worktree-setup.md
@@ -28,8 +29,8 @@ files:
 - **URL:** `plugin/skills/flow/multispec-parallel-waves.md` "Waves"
 - **Action:** `/flow` adds `--waves` to the existing `preflight-records.js` call. The envelope's `waves.waves` gives ordered waves: longest-path levels over the in-run `blocked-by` DAG, each split so that no two records sharing a Key Files path share a wave. The plan is then intersected with the merge-gate's `kept` records.
 - **Should feel:** Invisible — the plan rides the pre-flight call that already ran, and needs no question.
-- **Should understand:** A strict linear chain plans only singleton waves, so the run is unchanged. A record with no Key Files, or with a bare-directory entry like `tests/`, gets a wave of its own because its independence can't be proven. If the call exits non-zero (including a `--waves` dependency cycle), the run falls back to sequential and logs one `SKIP` line.
-- **Red flags:** Two records sharing a Key Files file in one wave. A dependent in the same wave as, or earlier than, its blocker. A pre-flight failure with no `SKIP` line.
+- **Should understand:** A strict linear chain plans only singleton waves, so the run is unchanged. A record with no Key Files, or with a bare-directory entry like `tests/`, gets a wave of its own because its independence can't be proven. If the call exits 1, the run re-runs it once without `--waves` (that is step 3's single retry), falls back to sequential, and logs one `SKIP` line. Exit 2, a `--waves` dependency cycle included, is a STOP before claiming, never a sequential fallback (`multispec-preflight-failure.md`). Under `work-links: native` with no `gh`, the wave plan is built from body-text `blocked-by` only, so a native-only link can't keep two records out of the same wave; Step 3's `SKIP` line says so.
+- **Red flags:** Two records sharing a Key Files file in one wave. A dependent in the same wave as, or earlier than, its blocker. An exit-1 fallback with no `SKIP` line. A `--waves` cycle that drops to a sequential run instead of stopping.
 
 ### 3. A multi-member wave builds and tests concurrently
 - **URL:** `plugin/skills/flow/multispec-parallel-waves.md` "Procedure, per wave", step 2 and "Member prompt"; the `MULTISPEC_PARALLEL_WAVE` skips in `plugin/skills/build/worktree-setup.md` (Step 4.5 and Step 6)
@@ -63,3 +64,4 @@ files:
 - Created during #2677's build (multi-spec run 2026-10-16T172750-spec-2775-2733-2677): `waves.js`, `preflight-records.js --waves`, `multispec-parallel-waves.md`, and the `MULTISPEC_PARALLEL_WAVE` consumers in build/test/ledger-format.
 - Evidence: the controller's concurrency repro (`spec-2677/decisions.md`, "AC2 concurrency repro"). Two isolated agents dispatched in one message overlapped by 5.58s on branches from the shared tip, and their branches merged cleanly.
 - Related: `run-a-batch-whose-record-needs-a-merged-prerequisite-2733.md` (the merge-state gate whose `kept` set the waves are intersected with).
+- Updated during #3351's build (run 2026-10-17T095806-spec-3351): step 2's fallback now covers exit 1 only; exit 2 and a `--waves` cycle stop at Step 3 (`multispec-preflight-failure.md`, `handle-a-failed-multispec-preflight-3351.md`).
