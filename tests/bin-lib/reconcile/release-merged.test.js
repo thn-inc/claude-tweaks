@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
-  decideRelease, releasedEntry, writeTombstone, releaseMerged, shouldSkipClaimRead,
+  decideRelease, releasedEntry, writeTombstone, releaseMerged, shouldSkipClaimRead, prClosesIssue,
 } = require('../../../plugin/bin/lib/reconcile/release-merged');
 const { readCache, writeCache } = require('../../../plugin/bin/lib/reconcile/cache');
 const { GRANT_LABELS } = require('../../../plugin/bin/lib/release-claim/release');
@@ -702,4 +702,34 @@ test('releaseMerged: does not revert a concurrent process\'s cache write made du
     CONCURRENT_LAST_RUN_AT,
     'the concurrent write must survive — a stale entry-time snapshot must not overwrite it',
   );
+});
+
+const ref = (number, login = 'acme', name = 'w') => ({ number, repository: { name, owner: { login } } });
+
+test('prClosesIssue: closing reference naming the issue in this repo -> true', () => {
+  assert.equal(prClosesIssue({ state: 'MERGED', closingIssuesReferences: [ref(3306), ref(3311)] }, 3311, 'acme/w'), true);
+});
+test('prClosesIssue: references present, none match -> false (the #3348 shape)', () => {
+  assert.equal(prClosesIssue({ state: 'MERGED', closingIssuesReferences: [ref(3306), ref(3310)] }, 3311, 'acme/w'), false);
+});
+test('prClosesIssue: cross-repo and malformed entries never match', () => {
+  assert.equal(prClosesIssue({ closingIssuesReferences: [ref(3311, 'other', 'repo')] }, 3311, 'acme/w'), false);
+  assert.equal(prClosesIssue({ closingIssuesReferences: [{ number: 3311 }] }, 3311, 'acme/w'), false);
+});
+test('prClosesIssue: merge commit closing keyword line -> true; Refs never matches', () => {
+  const noRefs = { closingIssuesReferences: [ref(3306)] };
+  assert.equal(prClosesIssue(noRefs, 3311, 'acme/w', 'feat: x (#3306)\n\nFixes #3306\nFixes #3311\n'), true);
+  assert.equal(prClosesIssue(noRefs, 3311, 'acme/w', 'feat: x\n\ncloses: #3311'), true);
+  assert.equal(prClosesIssue(noRefs, 3311, 'acme/w', 'feat: x\n\nRefs #3311\n'), false);
+});
+test('prClosesIssue: #N is matched on a word boundary', () => {
+  assert.equal(prClosesIssue({ closingIssuesReferences: [] }, 3412, 'acme/w', 'Fixes #34120\n'), false);
+  assert.equal(prClosesIssue({ closingIssuesReferences: [] }, 34, 'acme/w', 'Fixes #34abc\n'), false);
+});
+test('prClosesIssue: a closing keyword must start its line (prose mention never matches)', () => {
+  assert.equal(prClosesIssue({ closingIssuesReferences: [] }, 3311, 'acme/w', 'this change fixes #3311 partially\n'), false);
+});
+test('prClosesIssue: no closingIssuesReferences array -> undefined unless the commit message closes it (AC4.1)', () => {
+  assert.equal(prClosesIssue({ state: 'MERGED', number: 7 }, 7, 'acme/w'), undefined);
+  assert.equal(prClosesIssue({ state: 'MERGED', number: 7 }, 7, 'acme/w', 'Fixes #7'), true);
 });

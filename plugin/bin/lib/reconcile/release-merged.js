@@ -25,6 +25,35 @@ const { GH_TIMEOUT_MS, runClassified, runClassifiedAsync } = require('../shared-
 
 const execFileAsync = promisify(execFile);
 
+// Does a MERGED PR actually close issue `issueNumber` in `repoSlug`? Pure.
+// Signals: the PR's `closingIssuesReferences` (matched on number AND
+// `owner/name`, so a cross-repo reference never counts), or a closing-keyword
+// line in the merge commit message (the squash/merge body GitHub reads).
+//   true      — a closing reference or a closing-keyword line names the issue
+//   false     — the references array is present and neither signal matches
+//   undefined — no references array (field unavailable) and no keyword match:
+//               "unknown", never "does not close" (#3412)
+// The regex carries the `g` flag, so iterate `matchAll` — never `.test()` on
+// the shared instance, whose stale `lastIndex` would make results order-dependent.
+const CLOSING_KEYWORD_RE = /^\s*(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved):?\s+#(\d+)\b/gim;
+
+function prClosesIssue(prState, issueNumber, repoSlug, mergeCommitMessage) {
+  const refs = prState && Array.isArray(prState.closingIssuesReferences)
+    ? prState.closingIssuesReferences
+    : null;
+  if (refs && refs.some((entry) => {
+    const owner = entry && entry.repository && entry.repository.owner;
+    return Boolean(owner) && Number(entry.number) === issueNumber
+      && `${owner.login}/${entry.repository.name}` === repoSlug;
+  })) return true;
+  if (typeof mergeCommitMessage === 'string') {
+    for (const m of mergeCommitMessage.matchAll(CLOSING_KEYWORD_RE)) {
+      if (Number(m[1]) === issueNumber) return true;
+    }
+  }
+  return refs ? false : undefined;
+}
+
 // One claim's classified state + the branch's PR state (+ optionally the
 // issue's own state) -> what to do. Pure — no I/O — so the whole decision
 // table is unit-testable without a real gh call. `classifiedState` is
@@ -500,4 +529,5 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
 
 module.exports = {
   releaseMerged, decideRelease, releasedEntry, repoSlugOf, writeTombstone, shouldSkipClaimRead,
+  prClosesIssue, CLOSING_KEYWORD_RE,
 };
