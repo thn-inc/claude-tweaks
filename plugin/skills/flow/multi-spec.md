@@ -92,13 +92,7 @@ The slug convention, the per-spec `config.yml` copy, and `manifest.yml`'s field-
 
 ### Pre-flight Verify Sweep (once, before spec 1)
 
-Before spec 1's pipeline begins — after the shared worktree exists and is checked out (`worktree` mode), or in the current checkout otherwise — run `test/verification.md` Steps 1-2 (type check, lint, tests) **once** against the unmodified base, before any spec's build touches the code.
-
-Why: without this, each of N specs independently re-diagnoses the same pre-existing failure from scratch — every spec's own `/test` step re-derives the same root cause, with no shared record since the only trace lives in gitignored report files.
-
-Record any failures as ledger items in the **parent** run directory (not a per-spec subdir): phase `test`, status `open`, description naming the failing check and its root cause if apparent. If the sweep finds zero failures, skip the ledger write and proceed silently — do not add a "sweep clean" entry.
-
-This does not replace each spec's own `/test` gate — every spec still runs verification normally. It establishes the baseline so a spec whose `/test` run hits a failure already recorded here cites the existing ledger entry (`Pre-existing — see ledger #{N}, batch pre-flight sweep`) instead of re-diagnosing it, per `test/verification.md`'s "Pre-existing failures (multi-spec batches)" note.
+Before spec 1's pipeline begins, run `test/verification.md` Steps 1-2 **once** against the unmodified base and record any failures to the **parent** run directory's ledger — read `multispec-preflight-sweep.md` in this skill's directory for the procedure, the silent-on-clean rule, and how later specs cite it.
 
 Run each spec's full pipeline in order. Each spec completes its pipeline (build → test → review → wrap-up) before the next begins.
 
@@ -172,7 +166,7 @@ Why shared, not per-record: sequential records in one run are one logical unit o
 
 ## PR phase-checklist convention (shared PR)
 
-A multi-spec run shares one PR (`_shared/pr-early-run-lifecycle.md`); its checklist rows are **cumulative and run-level, never reset per spec**. The `polish` row in particular is decided at the run level, not from the first spec alone — present if any record in the run can run polish, checked by whichever spec first runs it for real, removed only if the whole run never ran polish (#1712). Read `multispec-pr-checklist.md` in this skill's directory for the rationale and the per-spec status source.
+A multi-spec run shares one PR (`_shared/pr-early-run-lifecycle.md`); its checklist rows are **cumulative and run-level, never reset per spec**. The `polish` row in particular is decided at the run level, not from the first spec alone — present from PR creation (#3319), checked by whichever spec first runs it for real, removed only if the whole run never ran polish (#1712). Read `multispec-pr-checklist.md` in this skill's directory for the rationale and the per-spec status source.
 
 ## Failure handling (default vs `keep-going`)
 
