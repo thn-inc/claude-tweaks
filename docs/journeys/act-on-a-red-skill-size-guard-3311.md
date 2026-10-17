@@ -7,7 +7,7 @@ files:
 
 # Act on a Red Skill-Size Single-Source Guard
 
-**Persona:** A claude-tweaks plugin maintainer. They write a test that pins a skill file's size (`assert.ok(bytes < 20480)`, or a `const FOO_CEILING_BYTES = …`), and `npm test` goes red on `tests/skill-size-single-source.test.js`.
+**Persona:** A claude-tweaks plugin maintainer. They write a test that pins a skill file's size (`assert.ok(bytes < 20480)`, or a `const FOO_BYTE_BUDGET = …`), and `npm test` goes red on `tests/skill-size-single-source.test.js`.
 **Goal:** See which line the guard flagged and why a per-file size number is not allowed, then keep the test's content assertions without the size check.
 **Entry point:** `npm test` (or `node --test tests/skill-size-single-source.test.js`) reports `not ok … AC3.1: no file under tests/ or plugin/bin/ other than budgets.js defines or compares a skill-size number, and none is unclassified`.
 **Success state:** The flagged size check is deleted, or the number moved into `plugin/bin/lib/skill-audit/budgets.js` when it really is a new platform limit. The guard passes, and the test's other assertions still run.
@@ -40,7 +40,7 @@ files:
 
 ### 3. Remove the size check and keep the content
 - **URL:** the flagged test file.
-- **Action:** Delete the size assertion and anything only it used: the `const bytes = …` line, the `CEILING_BYTES` import, the constant. Leave every content assertion in place. If the size check was the test's only assertion, delete the test. Then re-run `node --test tests/skill-size-single-source.test.js` and the edited file.
+- **Action:** Delete the size assertion and anything only it used: the `const bytes = …` line, the constant, and any import that only the size check read. Leave every content assertion in place. If the size check was the test's only assertion, delete the test. Then re-run `node --test tests/skill-size-single-source.test.js` and the edited file.
 - **Should feel:** Small and safe. The test still proves what the skill says; it just no longer argues about how big the file is.
 - **Should understand:** When a file is genuinely near the rail, the remedy is the rail's own: cut bytes, or move a genuinely lazy section into its own file (`act-on-a-red-read-limit-rail-3306.md` Step 3). A pin never was a remedy.
 - **Red flags:**
@@ -49,5 +49,5 @@ files:
   - The guard passing because the check was rewritten across several lines. The scanner is line-based, so that hides the pin rather than removing it.
 
 ## Origin
-- Created during build of #3311 (decommissioned `CEILING_BYTES`, the composed ceiling, the description ceilings, `merge-size-probe` and every per-file byte pin in `tests/`; added the single-source guard), the contract step of parent #3305's strangler-fig rollout.
+- Created during build of #3311 (decommissioned the per-file byte ceiling, the composed ceiling, the description ceilings, the merge-time size probe and every per-file byte pin in `tests/`; added the single-source guard), the contract step of parent #3305's strangler-fig rollout.
 - Related: `act-on-a-red-read-limit-rail-3306.md` (the one size limit left), `read-a-skill-load-delta-at-review-3307.md` (how growth below the rail is shown instead of gated).
