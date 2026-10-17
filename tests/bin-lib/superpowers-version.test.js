@@ -325,7 +325,7 @@ test('a throwing homedir gives null rather than throwing', () => {
   const proj = w.dir('proj');
   w.plugins({ [`superpowers@${MK}`]: [entry('user', w.artifact('u', '6.3.0'))] });
   const homedir = () => { throw new Error('no home'); };
-  assert.equal(effectiveSuperpowersVersion(proj, w.deps({ env: { CLAUDE_CONFIG_DIR: w.config }, homedir })), null);
+  assert.equal(effectiveSuperpowersVersion(proj, w.deps({ homedir })), null);
 });
 
 // ---- AC4: numeric, strict comparison -------------------------------------------

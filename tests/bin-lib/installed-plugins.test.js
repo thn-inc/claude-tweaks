@@ -109,9 +109,9 @@ test('selectEntry: excludeHome matches home through a symlink and still keeps a 
   mkdirs(proj);
   fs.symlinkSync(home, path.join(root, 'homelink'));
   const deeper = project(proj);
-  const entries = [project(path.join(root, 'homelink')), deeper, user];
-  assert.equal(selectEntry(entries, proj, depsFor(home), { excludeHome: true }), deeper);
-  assert.equal(selectEntry(entries.slice(0, 1).concat(user), path.join(proj), depsFor(home), { excludeHome: true }), user);
+  const homeLinkEntry = project(path.join(root, 'homelink'));
+  assert.equal(selectEntry([homeLinkEntry, deeper, user], proj, depsFor(home), { excludeHome: true }), deeper);
+  assert.equal(selectEntry([homeLinkEntry, user], proj, depsFor(home), { excludeHome: true }), user);
 });
 
 test('selectEntry: excludeHome realpaths a symlinked homedir() too', () => {
