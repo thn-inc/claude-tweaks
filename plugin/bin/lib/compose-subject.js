@@ -92,7 +92,7 @@ function parseArgs(argv) {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) return { error: `missing value for ${a}` };
       if (a === '--pr' && !/^\d+$/.test(v)) return { error: `invalid --pr value: ${v}` };
-      if (a === '--repo') opts.repo = v; else if (a === '--tag') opts.tag = v; else if (a === '--range') opts.range = v; else if (a === '--pr') opts.pr = v; else opts.scope = v;
+      opts[a.slice(2)] = v;
       i++;
       continue;
     }
@@ -311,21 +311,15 @@ function run(argv, deps = realDeps) {
         deps.stderr('compose-subject.js: commit-scope-paths is set but neither --range nor --pr was given — pass --range {base}...{head} (local-merge fences) or --pr {n} (pr-first fences)\n');
         return 1;
       }
+      const command = opts.range ? `git diff --name-only ${opts.range}` : `gh pr diff ${opts.pr} --name-only`;
       let rawPaths;
-      if (opts.range) {
-        try {
-          rawPaths = deps.gitRunner(['diff', '--name-only', opts.range]);
-        } catch (err) {
-          deps.stderr(`compose-subject.js: git diff --name-only ${opts.range} failed: ${errMessage(err)}\n`);
-          return 3;
-        }
-      } else {
-        try {
-          rawPaths = deps.runner(['pr', 'diff', String(opts.pr), '--repo', slug, '--name-only']);
-        } catch (err) {
-          deps.stderr(`compose-subject.js: gh pr diff ${opts.pr} --name-only failed: ${errMessage(err)}\n`);
-          return 3;
-        }
+      try {
+        rawPaths = opts.range
+          ? deps.gitRunner(['diff', '--name-only', opts.range])
+          : deps.runner(['pr', 'diff', String(opts.pr), '--repo', slug, '--name-only']);
+      } catch (err) {
+        deps.stderr(`compose-subject.js: ${command} failed: ${errMessage(err)}\n`);
+        return 3;
       }
       changedPaths = rawPaths.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     }
