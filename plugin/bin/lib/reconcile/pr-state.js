@@ -36,7 +36,7 @@ function classifyExecError(e) {
 }
 
 const FETCH_TIMEOUT_MS = 5000;
-const PR_LIST_ARGS = ['pr', 'list', '--state', 'all', '--json', 'number,state,mergedAt,updatedAt,mergeCommit'];
+const PR_LIST_ARGS = ['pr', 'list', '--state', 'all', '--json', 'number,state,mergedAt,updatedAt,mergeCommit,closingIssuesReferences'];
 
 // #2567: every runClassified/runClassifiedAsync call below opts in to
 // retryOnTimeout — a single slow cold `gh` call is retried once, at this
@@ -157,7 +157,7 @@ function classifyByNumberError(repoRoot) {
 // PR-state-reading code path; archive-merged.js's own caller ignores the two
 // added fields, since JSON.parse keeps every key regardless of which ones a
 // given caller reads): `{number, state, mergedAt, updatedAt, mergeCommit,
-// mergeable, mergeStateStatus}` — no tie-break needed, since a PR number
+// mergeable, mergeStateStatus, closingIssuesReferences}` — no tie-break needed, since a PR number
 // resolves to at most one PR. Positional signature: (repoRoot, number) —
 // repoRoot is the checkout whose `origin` gives gh its host and repo. Returns
 // that object, null for a falsy number, or one of the strings 'gh-absent' /
@@ -171,7 +171,7 @@ function resolvePrStateByNumber(repoRoot, number) {
     () => {
       const stdout = execFileSync(
         'gh',
-        ['pr', 'view', String(number), '--json', 'number,state,mergedAt,updatedAt,mergeCommit,mergeable,mergeStateStatus'],
+        ['pr', 'view', String(number), '--json', 'number,state,mergedAt,updatedAt,mergeCommit,mergeable,mergeStateStatus,closingIssuesReferences'],
         { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true },
       );
       return JSON.parse(stdout);
@@ -246,7 +246,7 @@ async function resolvePrStateByNumberAsync(repoRoot, number) {
     async () => {
       const { stdout } = await execFileAsync(
         'gh',
-        ['pr', 'view', String(number), '--json', 'number,state,mergedAt,updatedAt,mergeCommit,mergeable,mergeStateStatus'],
+        ['pr', 'view', String(number), '--json', 'number,state,mergedAt,updatedAt,mergeCommit,mergeable,mergeStateStatus,closingIssuesReferences'],
         { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
       );
       return JSON.parse(stdout);

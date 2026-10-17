@@ -337,6 +337,7 @@ test('resolvePrStateByNumber: requests and returns mergeable/mergeStateStatus (#
     const argv = fs.readFileSync(argvLog, 'utf8');
     assert.match(argv, /mergeable/);
     assert.match(argv, /mergeStateStatus/);
+    assert.match(argv, /closingIssuesReferences/);
   } finally {
     process.env.PATH = originalPath;
   }
@@ -508,4 +509,52 @@ test('resolvePrStateByNumberAsync: malformed/misordered call -> invalid-argument
   assert.equal(await resolvePrStateByNumberAsync(4242, { cwd: '/tmp' }), 'invalid-arguments');
   assert.equal(await resolvePrStateByNumberAsync('/tmp', -1), 'invalid-arguments');
   assert.equal(await resolvePrStateByNumberAsync('/tmp', '4.2'), 'invalid-arguments');
+});
+
+// #3412: release-merged must decide whether a MERGED PR actually closes the
+// record's issue, so every resolver requests `closingIssuesReferences` and
+// hands it through on the returned PR object (pickGoverningPr passes PR
+// objects through untouched). The fixed-output gh wrapper ignores argv, so
+// the argv.log match is the discriminating assertion.
+function installArgvLoggingGhWrapper(json) {
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-ghwrap-closing-'));
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  const argvLog = path.join(wrapperDir, 'argv.log');
+  fs.writeFileSync(wrapperPath, `#!/bin/sh\necho "$@" > "${argvLog}"\ncat <<'EOF'\n${JSON.stringify(json)}\nEOF\n`);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  return { argvLog, restore: () => { process.env.PATH = originalPath; } };
+}
+
+test('resolvePrState/resolvePrStateAsync: request closingIssuesReferences in the --json field list (#3412)', async () => {
+  const pr = {
+    number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', closingIssuesReferences: [{ number: 3412, repository: { name: 'w', owner: { login: 'acme' } } }],
+  };
+  const wrapper = installArgvLoggingGhWrapper([pr]);
+  try {
+    assert.equal(resolvePrState('/tmp', 'b').closingIssuesReferences[0].number, 3412);
+    assert.match(fs.readFileSync(wrapper.argvLog, 'utf8'), /closingIssuesReferences/);
+    fs.rmSync(wrapper.argvLog);
+    assert.equal((await resolvePrStateAsync('/tmp', 'b')).closingIssuesReferences[0].number, 3412);
+    assert.match(fs.readFileSync(wrapper.argvLog, 'utf8'), /closingIssuesReferences/);
+  } finally {
+    wrapper.restore();
+  }
+});
+
+test('resolvePrStateByNumber/resolvePrStateByNumberAsync: request closingIssuesReferences (#3412)', async () => {
+  const pr = {
+    number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', closingIssuesReferences: [{ number: 3412, repository: { name: 'w', owner: { login: 'acme' } } }],
+  };
+  const wrapper = installArgvLoggingGhWrapper(pr);
+  try {
+    assert.equal(resolvePrStateByNumber('/tmp', 9).closingIssuesReferences[0].number, 3412);
+    assert.match(fs.readFileSync(wrapper.argvLog, 'utf8'), /closingIssuesReferences/);
+    fs.rmSync(wrapper.argvLog);
+    assert.equal((await resolvePrStateByNumberAsync('/tmp', 9)).closingIssuesReferences[0].number, 3412);
+    assert.match(fs.readFileSync(wrapper.argvLog, 'utf8'), /closingIssuesReferences/);
+  } finally {
+    wrapper.restore();
+  }
 });
