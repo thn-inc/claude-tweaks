@@ -150,6 +150,9 @@ test('AC3.1 go-red: the restore check fails on the pre-change step 7, and on a w
   assert.notStrictEqual(mutated, current, 'mutation anchor vanished — the control would be vacuous');
   assert.throws(() => assertRestoreReadsPack(mutated));
 });
+test('the cleanup ordering rule names inputs.closingRecords for the carrier-commit check (#3399)', () => {
+  assert.match(collapse(read('plugin/skills/wrap-up/cleanup-procedures.md')), /carrier-commit check reads the run's records from `\$\{RUN_DIR\}\/wrap-up-pack\.json` \(`inputs\.closingRecords`\)/);
+});
 test('Section E produces the pack before item 4 on a cleanup-only run (Review Focus 4)', () => {
   assert.match(collapse(read('plugin/skills/wrap-up/cleanup-procedures-execution.md')), /A `cleanup-only` run skips Phase 3: when the pack is absent, produce it at the very start of this execution step, before item 4 removes the worktree — `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/wrap-up-pack\.js" --run "\$PIPELINE_RUN_DIR" --only ledger`/);
 });
