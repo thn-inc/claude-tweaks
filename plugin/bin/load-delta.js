@@ -121,6 +121,19 @@ function baseSide(git, sha, baseFiles, root) {
 const fmt = (n) => n.toLocaleString('en-US');
 const signed = (n) => (n > 0 ? `+${fmt(n)}` : fmt(n));
 
+function entryMark(r) {
+  if (r.added) return ' (added)';
+  if (r.removed) return ' (removed)';
+  return '';
+}
+
+function newUnresolvedCell(list) {
+  if (list.length === 0) return '—';
+  const shown = list.slice(0, 3).map((u) => `\`${u.token}\``).join(', ');
+  const ellipsis = list.length > 3 ? ', …' : '';
+  return `${list.length}: ${shown}${ellipsis}`;
+}
+
 function renderText(result, changedFiles, { pluginRootsGiven = false } = {}) {
   if (result.roots.length === 0 && !pluginRootsGiven) {
     let line = 'Skill load delta: no plugin roots discovered — skipped (pass --plugin-root <dir>)';
@@ -139,8 +152,9 @@ function renderText(result, changedFiles, { pluginRootsGiven = false } = {}) {
     const rootSet = new Set(result.roots.map((r) => r.pluginRoot));
     const outsideFiles = changedFiles.filter((f) => {
       const p = skillFileParent(f);
-      const root = p === null ? null : (p === '' ? '.' : p);
-      return root !== null && !rootSet.has(root);
+      if (p === null) return false;
+      const root = p === '' ? '.' : p;
+      return !rootSet.has(root);
     });
     const touchedInside = changedFiles.some((f) => result.roots.some((r) => f.startsWith(skillsPrefix(r.pluginRoot))));
     if (!touchedInside && outsideFiles.length === 0) return 'Skill load delta: no skill files changed — skipped\n';
@@ -160,10 +174,8 @@ function renderText(result, changedFiles, { pluginRootsGiven = false } = {}) {
     '|---|---|---|---|---|---|',
   ];
   for (const r of rows) {
-    const mark = r.added ? ' (added)' : r.removed ? ' (removed)' : '';
-    const miss = r.newUnresolved.length
-      ? `${r.newUnresolved.length}: ${r.newUnresolved.slice(0, 3).map((u) => `\`${u.token}\``).join(', ')}${r.newUnresolved.length > 3 ? ', …' : ''}`
-      : '—';
+    const mark = entryMark(r);
+    const miss = newUnresolvedCell(r.newUnresolved);
     lines.push(`| ${r.entry}${mark} | ${fmt(r.floor)} | ${signed(r.dFloor)} | ${fmt(r.closure)} | ${signed(r.dClosure)} | ${miss} |`);
   }
   return `${lines.join('\n')}\n`;
