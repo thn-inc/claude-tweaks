@@ -59,6 +59,7 @@ Lines that pair `fast-lane` with `skip` without skipping a step. The conformance
 | `flow/polish-execution.md` | `A skipped polish phase` | This file's own load-condition list — the skip itself is the tagged `polish` row |
 | `flow/SKILL.md` | `Treating polish skip as a flow failure` | The anti-pattern table's skip-reason enumeration — the skip itself is the tagged `polish` row |
 | `flow/summary-template.md` | `Skipped — fast-lane` | The Pipeline Summary's rendering of the tagged `polish` row |
+| `build/dispatch.md` | `the Single-task fast-lane skip below` | A pointer from the #3386 final-review capture to the whole-branch-review skip row above — the capture is written only when that review ran |
 | `build/SKILL.md` | `check the applicability gate in \`micro-plan.md\`` | Points at build's own #1911 micro-plan skip of `/superpowers:writing-plans` — a build-time plan-authoring choice, not one of this roster's ceremony-gate skips |
 | `build/micro-plan.md` | `single-file fast-lane records skip` | Title heading naming the #1911 build-time skip, not a roster tag |
 | `build/micro-plan.md` | `a hand-authored record, or one that skipped` | Describes a record that skipped `/specify` — unrelated to ceremony-gate skips |

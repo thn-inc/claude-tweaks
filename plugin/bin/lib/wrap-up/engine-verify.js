@@ -130,6 +130,35 @@ function readExpectations(runDir) {
   return { ok: true, data };
 }
 
+// #3373: the Review Console records its merge decision in console.json as
+// `merge.resolution`. `leave-open` is the designed resting state for a PR
+// awaiting a human merge -- Section C forbids removing an unmerged PR's
+// worktree, and the reconciler archives the run dir after that merge -- so
+// run-dir-archived and worktree-removed render this skip instead of a fail.
+// Fail-open toward the existing checks: any missing, unreadable, malformed, or
+// differently-shaped console.json reads as null and the checks fail as before.
+// A multi-spec parent run dir (manifest.yml present) also reads as null: its
+// console.json always says leave-open (members-unresolved), which
+// flow/multispec-review-console.md calls expected and discarded -- never the
+// bundle's real merge decision.
+const PENDING_REVIEW_SKIP = { result: 'skip', detail: 'pending-review — teardown follows the human merge' };
+
+function consoleMergeResolution(runDir) {
+  try {
+    if (fs.existsSync(path.join(runDir, 'manifest.yml'))) return null;
+    const data = JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8'));
+    return data && data.merge && typeof data.merge.resolution === 'string' ? data.merge.resolution : null;
+  } catch {
+    return null;
+  }
+}
+
+// Wraps a would-be teardown `fail`: a leave-open console downgrades it to the
+// pending-review skip, anything else keeps the fail.
+function teardownFail(runDir, detail) {
+  return consoleMergeResolution(runDir) === 'leave-open' ? { ...PENDING_REVIEW_SKIP } : { result: 'fail', detail };
+}
+
 function deferredSet(expectations) {
   return expectations.ok ? new Set(expectations.data.deferred || []) : new Set();
 }
@@ -291,7 +320,7 @@ function isUnderArchiveRoot(repoRoot, candidate) {
   return rel !== '' && rel !== '.' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
-registerCheck('run-dir-archived', ({ originalRunDir, repoRoot, expectations, deps }) => {
+registerCheck('run-dir-archived', ({ runDir, originalRunDir, repoRoot, expectations, deps }) => {
   const deferred = deferredSet(expectations);
   if (deferred.has('run-dir-archival')) return { result: 'skip', detail: 'deferred to parent console' };
   const givenPath = path.resolve(originalRunDir);
@@ -311,7 +340,10 @@ registerCheck('run-dir-archived', ({ originalRunDir, repoRoot, expectations, dep
     originalPath = givenPath;
     archivePath = path.join(pipelinesArchiveRoot(repoRoot), archiveRelativeId(originalRunDir));
   }
-  if (fs.existsSync(originalPath)) return { result: 'fail', detail: `original path still present: ${originalPath}` };
+  // #3373: only the "still present" fail is the pending-review state; the
+  // archive-missing and untracked-archive fails below are genuine archival
+  // faults that a leave-open console does not excuse.
+  if (fs.existsSync(originalPath)) return teardownFail(runDir, `original path still present: ${originalPath}`);
   if (!fs.existsSync(archivePath)) return { result: 'fail', detail: `archive path missing: ${archivePath}` };
   const archivedWork = path.join(archivePath, 'work');
   if (fs.existsSync(archivedWork)) {
@@ -358,14 +390,14 @@ registerCheck('worktree-removed', ({ runDir, expectations, deps, cwd }) => {
   }
   const list = parseWorktreeList(porcelain);
   const match = list.find((wt) => wt.path.includes(slug) || (wt.branch && wt.branch.includes(slug)));
-  if (match) return { result: 'fail', detail: `worktree still listed: ${match.path}` };
+  if (match) return teardownFail(runDir, `worktree still listed: ${match.path}`);
   // #3023: `git worktree prune` drops the registration but can leave the
   // directory behind, so an unlisted worktree is not proof of removal. The
   // exact path comes from run-state.json's `worktree` stamp, never guessed
   // from the slug -- see recordedWorktree above.
   const recorded = recordedWorktree(runDir);
   if (recorded && fs.existsSync(recorded)) {
-    return { result: 'fail', detail: `worktree unlisted but directory still present: ${recorded}` };
+    return teardownFail(runDir, `worktree unlisted but directory still present: ${recorded}`);
   }
   return { result: 'pass', detail: '' };
 });

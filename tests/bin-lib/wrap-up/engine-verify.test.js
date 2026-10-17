@@ -204,6 +204,151 @@ test('AC1: fixture run-dir with one unexecuted approved action exits 3 naming th
   }
 });
 
+// #3373: a console that resolved the merge as `leave-open` leaves the PR open
+// for a human, so the run dir and worktree legitimately remain -- both teardown
+// checks render the pending-review skip instead of a fail. Placed before the
+// forced-fail probe below for the same reason as AC1/AC2 above (the AC1 test
+// needs a real, input-driven exitCode 0).
+const PENDING_REVIEW_DETAIL = 'pending-review — teardown follows the human merge';
+
+function writeConsole(runDir, resolution) {
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true, merge: { resolution, reason: 'test' } }));
+}
+
+// Shared setup for the "teardown missing" cases: run dir present and the
+// worktree still listed, with `prepare` deciding what console.json holds.
+function verifyWithTeardownMissing(prepare) {
+  const repoRoot = makeCleanRepoRoot();
+  const runDir = path.join(repoRoot, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-3373');
+  fs.mkdirSync(runDir, { recursive: true });
+  prepare(runDir);
+  const fakeGit = (args) => {
+    if (args[0] === 'worktree') {
+      return 'worktree /repo/.claude/worktrees/flow-spec-3373\nbranch refs/heads/worktree-flow-spec-3373\n\n';
+    }
+    return '';
+  };
+  try {
+    return runVerify({ runDir, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: fakeGit, gh: () => '' } });
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+}
+
+test('#3373: run-dir-archived skips with the pending-review reason when console.json records leave-open and the original path is still present', () => {
+  const result = verifyWithTeardownMissing((runDir) => writeConsole(runDir, 'leave-open'));
+  const row = result.rows.find((r) => r.check === 'run-dir-archived');
+  assert.strictEqual(row.result, 'skip');
+  assert.strictEqual(row.detail, PENDING_REVIEW_DETAIL);
+});
+
+test('#3373: worktree-removed skips with the pending-review reason when console.json records leave-open and the worktree is still listed', () => {
+  const result = verifyWithTeardownMissing((runDir) => writeConsole(runDir, 'leave-open'));
+  const row = result.rows.find((r) => r.check === 'worktree-removed');
+  assert.strictEqual(row.result, 'skip');
+  assert.strictEqual(row.detail, PENDING_REVIEW_DETAIL);
+});
+
+test('#3373: leave-open still passes when teardown already happened', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const runId = '2026-01-01T000000-spec-3373';
+  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  const archivePath = path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive', runId);
+  fs.mkdirSync(archivePath, { recursive: true });
+  writeConsole(archivePath, 'leave-open');
+  try {
+    const result = runVerify({ runDir: archivePath, originalRunDir: originalPath, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+    assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'pass');
+    assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'pass');
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('#3373: merge resolution keeps run-dir-archived and worktree-removed failing when teardown is missing', () => {
+  const result = verifyWithTeardownMissing((runDir) => writeConsole(runDir, 'merge'));
+  assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'fail');
+  assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
+  assert.strictEqual(result.exitCode, 3);
+});
+
+test('#3373: no console.json keeps both checks failing when teardown is missing', () => {
+  const result = verifyWithTeardownMissing(() => {});
+  assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'fail');
+  assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
+});
+
+test('#3373: malformed console.json keeps both checks failing', () => {
+  const result = verifyWithTeardownMissing((runDir) => fs.writeFileSync(path.join(runDir, 'console.json'), '{not json'));
+  assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'fail');
+  assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
+});
+
+test('#3373: a multi-spec parent run dir with a leave-open console.json keeps both checks failing', () => {
+  const result = verifyWithTeardownMissing((runDir) => {
+    writeConsole(runDir, 'leave-open');
+    fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  specs: []\n');
+  });
+  assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'fail');
+  assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'fail');
+});
+
+test('#3373: leave-open does not excuse a missing archive path', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const runId = '2026-01-01T000000-spec-3373';
+  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  const consoleDir = makeTmpDir('verify-leave-open-archive-missing-');
+  writeConsole(consoleDir, 'leave-open');
+  try {
+    const result = runVerify({ runDir: consoleDir, originalRunDir: originalPath, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'run-dir-archived');
+    assert.strictEqual(row.result, 'fail');
+    assert.match(row.detail, /archive path missing/);
+  } finally {
+    fs.rmSync(consoleDir, { recursive: true, force: true });
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('#3373: leave-open does not excuse an archived work/ dir that is not git-tracked', () => {
+  const repoRoot = makeCleanRepoRoot();
+  const runId = '2026-01-01T000000-spec-3373';
+  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  const archivePath = path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive', runId);
+  fs.mkdirSync(path.join(archivePath, 'work'), { recursive: true });
+  writeConsole(archivePath, 'leave-open');
+  try {
+    const result = runVerify({ runDir: archivePath, originalRunDir: originalPath, base: 'main', repoRoot, cwd: makeCleanRepoRoot(), deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'run-dir-archived');
+    assert.strictEqual(row.result, 'fail');
+    assert.match(row.detail, /is not git-tracked/);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('#3373 AC1: leave-open run exits 0 when every other check passes', () => {
+  const runId = 'test-ac1-leave-open-3373';
+  const repoRoot = makeCleanRepoRoot();
+  const originalPath = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(originalPath, { recursive: true });
+  writeExpectations(originalPath, { version: 1, memory: [], upstream: [] });
+  writeConsole(originalPath, 'leave-open');
+  try {
+    const fakeGitDirty = (args) => {
+      if (args[0] === 'worktree') return `worktree /repo/.claude/worktrees/flow-${runId}\nbranch refs/heads/worktree-flow-${runId}\n\n`;
+      return '';
+    };
+    const result = runVerify({ runDir: originalPath, base: 'main', repoRoot, cwd: repoRoot, deps: { git: fakeGitDirty, gh: () => 'gh version 2.0.0' } });
+    assert.strictEqual(result.exitCode, 0, `failing rows: ${result.rows.filter((r) => r.result === 'fail').map((r) => r.check).join(', ')}`);
+    assert.strictEqual(result.rows.filter((r) => r.result === 'fail').length, 0);
+    assert.strictEqual(result.rows.find((r) => r.check === 'run-dir-archived').result, 'skip');
+    assert.strictEqual(result.rows.find((r) => r.check === 'worktree-removed').result, 'skip');
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test('AC2: gh absent renders acceptance-labeling unknown, exit code reflects only checks that ran', () => {
   const runId = 'test-ac2-fixture-900';
   const originalPath = path.join(process.cwd(), '.claude-tweaks', 'pipelines', runId);

@@ -13,11 +13,11 @@ Before starting, validate the list:
 
 > **Parallel execution:** frontmatter/record reads across N targets (step 3) are independent — run concurrently.
 
-3. **Pre-flight** — collect each target's set from `materialize.md`'s Resolution (facets + body, read-only): `blocked-by:` dependencies, `surface:`/`design-intent:` via the lift rule, and key files from the body's `### Key Files` subsection. These feed the ordering check, Pipeline Preview, conflict detection (Step 5), and Step 4a's merge-state gate. `bin/preflight-records.js {targets in run order} [--work-links native|body-text] [--repo owner/name] --merge-gate --integration-branch "$INTEGRATION_BRANCH"` mechanizes this step — and Step 5's conflict detection and Step 4a's gate, in one call, never a second invocation — printing `{records, overlapGroups, directOverlaps, workLinks, mergeGate}` (exit 0 success, 1 any fetch failed with every failing record named, 2 malformed or a `--waves` dependency cycle); `$INTEGRATION_BRANCH` resolves per `_shared/integration-branch.md`; see its `--help` for details.
-4. **Dependency-aware ordering** — see "Dependency-aware ordering" below. Topologically sort and reconcile with the user's order.
+3. **Pre-flight** — collect each target's set from `materialize.md`'s Resolution (facets + body, read-only): `blocked-by:` dependencies, `surface:`/`design-intent:` via the lift rule, and key files from the body's `### Key Files` subsection. These feed the ordering check, Pipeline Preview, conflict detection (Step 5), and Step 4a's merge-state gate. `bin/preflight-records.js {targets in run order} [--work-links native|body-text] [--repo owner/name] --merge-gate --integration-branch "$INTEGRATION_BRANCH"` mechanizes this step — and Step 5's conflict detection and Step 4a's gate, in one call, never a second invocation — printing `{records, overlapGroups, directOverlaps, workLinks, mergeGate}` (exit 0 success, 1 any fetch failed with every failing record named, 2 malformed or a `--waves` dependency cycle); `$INTEGRATION_BRANCH` resolves per `_shared/integration-branch.md`; see its `--help` for details. On a non-zero exit, or with no `gh`, follow `multispec-preflight-failure.md` in this skill's directory.
+4. **Dependency-aware ordering** — Exit-0 envelope only — see "Dependency-aware ordering" below. Topologically sort and reconcile with the user's order.
 4a. **Merge-state gate** — a target demanding an in-run prerequisite already be merged to the integration branch is split out before claiming, never asked; see `multispec-merge-gate.md` in this skill's directory.
 4b. **Parallel waves (`parallel` only)** — add `--waves` to step 3's call and plan independent-record waves from this DAG; see `multispec-parallel-waves.md`.
-5. **Conflict detection** — see "Cross-spec conflict detection" below. Warn on overlapping key files (`### Key Files` in each record body).
+5. **Conflict detection** — Exit-0 envelope only — see "Cross-spec conflict detection" below. Warn on overlapping key files (`### Key Files` in each record body).
 
 ## Dependency-aware ordering
 
@@ -89,6 +89,8 @@ $RUN_ROOT/.claude-tweaks/pipelines/{ISO-timestamp}-spec-{N1}-{N2}-{N3}/
 The slug convention, the per-spec `config.yml` copy, and `manifest.yml`'s field-by-field description — including the `phase`/`phases[]` transition log `spec-status` writes (#1928) — are in `multispec-run-dir-layout.md` in this skill's directory.
 
 ## Execution
+
+**Create `manifest.yml` once, before spec 1's first `spec-status` call** (parent dir and Manifesto `config.yml` exist): `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" manifest-init --run "{parent}" --specs {N1},{N2},{N3}` — a resume re-run keeps every spec's status and `phases[]` (#3035).
 
 ### Pre-flight Verify Sweep (once, before spec 1)
 

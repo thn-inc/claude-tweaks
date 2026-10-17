@@ -112,20 +112,45 @@ test('quantize: an adversarial high-distinct-colour-count 8-frame 1280x720 walkt
 
   // Sanity-check the fixture itself actually lands in the slow band this test targets, so a
   // future change to the fixture's own generator can't silently stop exercising it.
-  const seen = new Set();
-  for (const frame of rgbaFrames) {
-    for (let p = 0; p < frame.length; p += 4) seen.add((frame[p] << 16) | (frame[p + 1] << 8) | frame[p + 2]);
-  }
-  assert.ok(seen.size > 150000, `expected fixture to exceed the pre-bucket threshold, got ${seen.size} distinct colours`);
+  const collectDistinct = () => {
+    const set = new Set();
+    for (const frame of rgbaFrames) {
+      for (let p = 0; p < frame.length; p += 4) set.add((frame[p] << 16) | (frame[p + 1] << 8) | frame[p + 2]);
+    }
+    return set;
+  };
+  const distinctCount = collectDistinct().size;
+  assert.ok(distinctCount > 150000, `expected fixture to exceed the pre-bucket threshold, got ${distinctCount} distinct colours`);
 
-  const start = Date.now();
-  const { palette, index } = quantize(rgbaFrames, 256);
-  const elapsedMs = Date.now() - start;
+  // Timing (#3246/#3176): an absolute wall-clock bound flaked at 5-8.7s under concurrent CPU load
+  // (sibling `npm test` runs), so the bound is load-relative. Each attempt times quantize against a
+  // same-input full-pixel distinct-colour pass (collectDistinct above) — the unavoidable
+  // collectDistinctColors work — so CPU contention scales both sides alike, while a missing
+  // pre-bucket step (#2769) adds an unbounded medianCut on top of that collection cost. Measured
+  // quantize/baseline: ~1.3-2.2 with the fix (idle and with 16 CPU burners on 12 cores; 3.4 once
+  // against a cold baseline, 9.5 once from a transient spike that the next attempt cleared),
+  // 6.8-36 with pre-bucketing reverted; MAX_RATIO sits between. Load can shift between the two
+  // timings, so the check passes if any of MAX_ATTEMPTS paired measurements is within the ratio —
+  // a real regression is slow in every attempt, a load spike is not.
+  const MAX_RATIO = 4, MAX_ATTEMPTS = 3;
+  const ms = (since) => Number(process.hrtime.bigint() - since) / 1e6;
+  let result, best = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    let t = process.hrtime.bigint();
+    collectDistinct();
+    const baselineMs = ms(t);
+    t = process.hrtime.bigint();
+    result = quantize(rgbaFrames, 256);
+    const elapsedMs = ms(t);
+    if (best === null || elapsedMs / baselineMs < best.elapsedMs / best.baselineMs) best = { baselineMs, elapsedMs };
+    if (elapsedMs < MAX_RATIO * baselineMs) break;
+  }
+  const { palette, index } = result;
   assert.ok(palette.length / 3 <= 256);
   const idx = index(rgbaFrames[0]);
   assert.equal(idx.length, w * h);
   assert.ok(
-    elapsedMs < 3000,
-    `expected quantize on an adversarial ${w}x${h}x${frameCount}-frame walkthrough (${seen.size} distinct colours) to complete in under 3s (bounded, regardless of distinct-colour count), took ${elapsedMs}ms`
+    best.elapsedMs < MAX_RATIO * best.baselineMs,
+    `expected quantize on an adversarial ${w}x${h}x${frameCount}-frame walkthrough (${distinctCount} distinct colours) to stay within ${MAX_RATIO}x the same-input distinct-colour collection pass (bounded, regardless of distinct-colour count) in at least one of ${MAX_ATTEMPTS} attempts; best attempt: ${best.elapsedMs.toFixed(0)}ms vs ${best.baselineMs.toFixed(0)}ms baseline (${(best.elapsedMs / best.baselineMs).toFixed(2)}x)`
   );
 });

@@ -18,10 +18,14 @@ function tmpCheckout(home, name) {
   fs.mkdirSync(p, { recursive: true });
   return p;
 }
+// Every caller only needs `port` bound while ensure() probes it. The pool's
+// first block (20000) is shared with real dev servers and concurrently
+// running test files, so EADDRINUSE means the precondition already holds:
+// resolve null (nothing of ours to close) rather than failing the test.
 function listenOn(port) {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
-    server.once('error', reject);
+    server.once('error', (err) => (err.code === 'EADDRINUSE' ? resolve(null) : reject(err)));
     server.listen(port, '127.0.0.1', () => resolve(server));
   });
 }
@@ -70,7 +74,7 @@ test('ensure: a bound port with a current region keeps the lease (assumed to be 
     assert.equal(second.reallocated, null);
     assert.equal(second.base, first.base);
   } finally {
-    server.close();
+    if (server) server.close();
   }
 });
 
@@ -115,7 +119,7 @@ test('ensure: reads .env.local at most once for the managed-region check on the 
     assert.equal(envLocalReads, 2, '.env.local should be read exactly twice: once for the managed-region check (regionBefore), once inside writeEnvFiles\'s pre-write comparison — never a third, redundant read for the check itself');
   } finally {
     fs.readFileSync = originalReadFileSync;
-    server.close();
+    if (server) server.close();
   }
 });
 
@@ -134,7 +138,7 @@ test('ensure: a bound port with no managed region reallocates to a fresh block',
     const envLocal = fs.readFileSync(path.join(checkout, '.env.local'), 'utf8');
     assert.match(envLocal, new RegExp(`PORT=${second.base}`));
   } finally {
-    server.close();
+    if (server) server.close();
   }
 });
 
@@ -149,7 +153,7 @@ test('ensure: a bound port with a region for a DIFFERENT service list reallocate
     const second = await ensure(checkout, { home, policyServices: ['web', 'api'], resolveRoot: () => checkout });
     assert.deepEqual(second.reallocated, { from: first.base, to: second.base });
   } finally {
-    server.close();
+    if (server) server.close();
   }
 });
 
@@ -198,7 +202,7 @@ test('ensure: a non-current region still takes the reallocation path (leaseLineA
     const second = await ensure(checkout, { home, policyServices: ['web'], resolveRoot: () => checkout });
     assert.ok(second.reallocated && second.reallocated.from === first.base);
     assert.equal(second.leaseLineAdded, false);
-  } finally { server.close(); }
+  } finally { if (server) server.close(); }
 });
 
 // #1927 fix round 1: an orphaned region (no matching registry lease — a
