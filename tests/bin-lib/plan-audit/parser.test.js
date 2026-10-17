@@ -266,6 +266,30 @@ test('countTasks ignores an **Execution:** batched line inside a fenced code blo
   assert.deepStrictEqual(countTasks(tilde), { tasks: 1, batched: false });
 });
 
+const FOUR_TASKS = ['### Task 1: A', '', '### Task 2: B', '', '### Task 3: C', '', '### Task 4: D', ''];
+
+test('AC1.1: countTasks reads the marker plus a separate batch-instruction line as batched (#3123)', () => {
+  const text = [
+    '# Plan', '',
+    '**Execution:** batched',
+    '**Batch:** send every task to one implementer as a single brief; review the combined diff once.',
+    '',
+    ...FOUR_TASKS,
+  ].join('\n');
+  assert.deepStrictEqual(countTasks(text), { tasks: 4, batched: true });
+});
+
+test('AC2.1: an instruction appended to the marker line reads batched: false — the two lines must stay separate (#3123)', () => {
+  // The marker regex anchors at end of line; trailing text silently drops the marker.
+  const text = [
+    '# Plan', '',
+    '**Execution:** batched — send every task to one implementer as a single brief; review the combined diff once.',
+    '',
+    ...FOUR_TASKS,
+  ].join('\n');
+  assert.deepStrictEqual(countTasks(text), { tasks: 4, batched: false });
+});
+
 // ── #3099 Check E — acceptance-criterion clause splitter ────────────────────
 const { extractAcceptanceClauses, splitClauses } = require('../../../plugin/bin/lib/plan-audit/parser');
 
