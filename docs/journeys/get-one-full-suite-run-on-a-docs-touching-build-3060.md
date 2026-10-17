@@ -15,7 +15,7 @@ files:
 ## Steps
 
 ### 1. Journeys and docs sync run right after simplification and alignment
-- **URL:** `plugin/skills/build/SKILL.md` Common Step 6, then Common Step 6.5 (both now sit between Common Step 4.5 and Common Step 5; the Workflow diagram's note says "6 and 6.5 precede 5")
+- **URL:** `plugin/skills/build/SKILL.md` Common Step 6, then Common Step 6.5 (both now sit between Common Step 4.5 and Common Step 5; the Workflow diagram's note says "6 and 6.5 precede 5"); the order is pinned by `tests/build-verify-after-doc-steps.test.js`
 - **Action:** `/claude-tweaks:journeys` creates or updates journey files and commits them; when `docs/REGISTRY.md` exists, Step 6.5 updates the registered docs the change touched.
 - **Should feel:** Like the build is finishing its own paperwork before it signs off — no extra prompt, no extra suite launch.
 - **Should understand:** Step numbers did not change — 6 and 6.5 still carry their old numbers, and every `Common Step 6.5 (skipped)` trace keeps its old wording. Only their position moved. A skipped Step 6.5 (no `docs/REGISTRY.md`) still writes its `SKIP` entry.
