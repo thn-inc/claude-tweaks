@@ -16,6 +16,8 @@
 // pins this against the corpus.
 'use strict';
 
+const { PROFILES } = require('../model-profiles/profiles');
+
 const PHASES = ['call-1', 'call-2', 'build', 'plan', 'tasks', 'test', 'review', 'polish', 'wrap-up', 'merge'];
 
 const NESTED_PARENT = Object.freeze({
@@ -314,4 +316,87 @@ function countGuardEvents(events) {
   return out;
 }
 
-module.exports = { derivePhases, PHASES, NESTED_PARENT, joinTokens, countGuardEvents };
+// --- Dispatch cost attribution (#3375) ---------------------------------------
+// Tier order: a meta `model` that is a PROFILES alias wins; otherwise the
+// transcript's own `message.model`; otherwise `unmapped`, carrying the raw name
+// so a new model family surfaces instead of being silently folded into a tier.
+const TIER_BY_ALIAS = Object.freeze(Object.fromEntries(Object.entries(PROFILES).map(([tier, p]) => [p.model, tier])));
+const MODEL_FAMILY_RE = new RegExp(`^claude-(${Object.keys(TIER_BY_ALIAS).join('|')})`);
+
+// ({ metaModel, transcriptModel }) -> { tier, rawModel }. `rawModel` is the
+// value the tier came from; on `unmapped` it is the transcript model, else
+// the meta model, else null.
+function resolveTier({ metaModel = null, transcriptModel = null } = {}) {
+  if (typeof metaModel === 'string' && Object.hasOwn(TIER_BY_ALIAS, metaModel)) {
+    return { tier: TIER_BY_ALIAS[metaModel], rawModel: metaModel };
+  }
+  const family = typeof transcriptModel === 'string' ? MODEL_FAMILY_RE.exec(transcriptModel) : null;
+  if (family) return { tier: TIER_BY_ALIAS[family[1]], rawModel: transcriptModel };
+  return { tier: 'unmapped', rawModel: transcriptModel ?? metaModel ?? null };
+}
+
+// Ordered, first match wins. Patterns come from captured dispatch descriptions
+// (tests/fixtures/timing/dispatch-descriptions.json); the SDD-composed ones are
+// best-effort, so growth in `unlabelled` is the drift signal.
+const ROLE_PATTERNS = Object.freeze([
+  { role: 're-review', re: /^re-review\b/i },
+  { role: 'whole-branch review', re: /\bwhole-branch review\b/i },
+  { role: 'plan review', re: /\bplan review\b/i },
+  { role: 'task review', re: /^review task \d+/i },
+  { role: 'lens reviewer', re: /^review lens\b/i },
+  { role: 'implementer', re: /^implement\b/i },
+].map((p) => Object.freeze(p)));
+
+function roleOf(description) {
+  if (typeof description !== 'string') return 'unlabelled';
+  const hit = ROLE_PATTERNS.find((p) => p.re.test(description));
+  return hit ? hit.role : 'unlabelled';
+}
+
+// (items) -> { items, byTier, byRole }. Items whose transcript could not be
+// read carry no numbers (tokens null): they stay in `items`, count in no
+// bucket. An orphan (meta not found) has numbers, so it counts — as
+// `unlabelled`, with its tier from the transcript model.
+function aggregateDispatches(items) {
+  const list = (Array.isArray(items) ? items : []).map((d) => {
+    const { tier, rawModel } = resolveTier(d);
+    return { ...d, tier, rawModel, role: roleOf(d.description) };
+  });
+  const byTier = {};
+  const byRole = {};
+  const spansOf = new Map();
+  const bucketFor = (map, key) => {
+    if (!map[key]) {
+      map[key] = { dispatches: 0, agentSeconds: 0, elapsedMinutes: 0, tokens: ZERO_TOKENS() };
+      spansOf.set(map[key], { ms: 0, spans: [] });
+    }
+    return map[key];
+  };
+  for (const d of list) {
+    if (!d.tokens) continue;
+    const start = ms(d.startTs);
+    const end = ms(d.endTs);
+    const own = Number(d.wallClockMs) || 0;
+    for (const [map, key] of [[byTier, d.tier], [byRole, d.role]]) {
+      const b = bucketFor(map, key);
+      b.dispatches += 1;
+      for (const k of Object.keys(b.tokens)) b.tokens[k] += Number(d.tokens[k]) || 0;
+      const acc = spansOf.get(b);
+      acc.ms += own;
+      if (start !== null && end !== null) acc.spans.push({ start, end });
+    }
+  }
+  for (const b of [...Object.values(byTier), ...Object.values(byRole)]) {
+    const acc = spansOf.get(b);
+    b.agentSeconds = Math.round(acc.ms / 1000);
+    b.elapsedMinutes = unionMinutes(acc.spans);
+  }
+  const unmapped = list.filter((d) => d.tokens && d.tier === 'unmapped');
+  if (byTier.unmapped) byTier.unmapped.rawModels = [...new Set(unmapped.map((d) => d.rawModel ?? 'null'))].sort();
+  return { items: list, byTier, byRole };
+}
+
+module.exports = {
+  derivePhases, PHASES, NESTED_PARENT, joinTokens, countGuardEvents,
+  unionMinutes, resolveTier, ROLE_PATTERNS, roleOf, aggregateDispatches,
+};
