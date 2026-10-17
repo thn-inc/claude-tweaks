@@ -1345,6 +1345,14 @@ restored (44/44 green). The recurring-pattern cost is that this project's own `p
 already has one hardened precedent (`realTarget()`) for exactly this bypass class, and it still had
 to be independently rediscovered rather than reused when a new exemption was authored nearby.
 
+**Narrowed 2026-10-18 (#3417).** The rule no longer tells an author to copy `realTarget()`'s
+three-way shape (resolved / dangling-and-unprovable / missing-passes-through); it points at
+`plugin/bin/lib/path-guard`'s `resolveLeaf()`, which now returns that shape as a state, and
+`realTarget()` in `pre-tool-use.js` routes through it as the gate-side caller. IL-150 carries no
+removal condition of its own, so nothing is retired — the copy-the-shape instruction is replaced by
+a shared primitive. `realTarget()` still passes the JS `fs.realpathSync` rather than the module's
+`.native` default, so `isPolicyFile`'s equality with `canonicalRepoPath` is unchanged.
+
 ## IL-151 — Working Directory Discipline sanctioned a `cd` form that trips the harness's own permission checker
 
 Reported by the user as recurring, unexpected permission prompts from dispatched subagents even
@@ -1734,6 +1742,15 @@ Cost on this build: one review round across two findings, both fixed in the same
 **Removal condition:** retire this entry and its `docs/donts.md` rule once a mechanical check (a
 grep-based lint, or a shared `lstat`-backed helper new filesystem-check code is required to route
 through) flags a name-keyed or existence-only check with no accompanying type check.
+
+**Removal condition met, narrowed rather than retired (2026-10-18, #3417).** Both halves of the
+condition above now exist: the shared lstat-backed helper (`plugin/bin/lib/path-guard/`, with
+`lstatType()` and `resolveWithin()`) and the grep-based lint (`tests/path-guard-conformance.test.js`,
+which flags any new `realpathSync`/`existsSync` token outside the module). The rule is narrowed,
+not retired, because the lint enforces only *routing* for new call sites; it does not make a
+legacy caller's check correct. The allowlisted legacy callers are judged one by one in the
+allowlist's reasons, and any marked `UNSAFE —` (currently `lib/plan-audit/checks.js`) are tracked as
+follow-up records rather than treated as endorsed.
 
 ## IL-162 — Redaction regexes run over uncapped transcript tool output
 
