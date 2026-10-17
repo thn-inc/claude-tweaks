@@ -47,6 +47,8 @@
 - **Uncapped log excerpt.** The filer reads `--log` (the uploaded `tests.log`), not the 100-line `failingRegion`, and starts each excerpt at the nearest `not ok` line so the failing test's name shows.
 - **AC3 via push probes.** See the `workflow_dispatch` bullet above.
 - **Windows needs Node 22 and root globs.** `npm test` could not launch on `windows-latest`: `tools/run-tests.js` passed ~782 paths as argv and hit Windows' 32,767-char command line (`spawnSync … ENAMETOOLONG`, probe runs 39030139345 / 39030144149). On win32 + Node >= 22 it now passes the root globs; Linux and Node 20 keep the explicit list (#407). The `windows` job pins Node 22.
+- **Like-for-like baseline on Windows.** The first runs that launched called 6 base-failing files attributable: `verify.js`'s `normalizeLog` did not strip TAP's `# duration_ms` summary (any platform), and the base scratch worktree ran on `C:` (`os.tmpdir()`) while the checkout is on `D:`. `normalizeLog` now strips it; the verify step sets `TMP`/`TEMP` to `runner.temp`.
+- **Crashed-file excerpts.** A file that throws at load prints its stderr before its own `not ok`; the excerpt now opens at that stderr instead of the previous file's failure.
 
 ## Review Focus
 
