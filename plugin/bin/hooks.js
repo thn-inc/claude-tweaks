@@ -90,7 +90,7 @@ function pluginRoot() {
 
 // #1143: usage strings for every documented `hooks.js` subcommand (the
 // dispatch table's own record-worktree/close-run/teardown-run/archive-run/
-// resolve-run-dir/record-pr/spec-status/check-resume-freshness/check-staged-
+// resolve-run-dir/record-pr/spec-status/seed-manifest/check-resume-freshness/check-staged-
 // inventory/check-sibling-sessions/sweep-shadow/adopt-run-dir/reconcile/
 // reconcile-background/reconcile-summary set — see docs/plugin-structure.md's
 // hooks.js line). Doubles as the membership table for the `--help`/`-h` intercept
@@ -107,6 +107,7 @@ const USAGE = {
   'adopt-run-dir': 'adopt-run-dir --run <main-checkout-run-dir> --worktree <worktree-path>',
   'record-pr': 'record-pr [--run <dir>] <number> <url>',
   'spec-status': 'spec-status --run <parent-dir> --spec <n> --status <pending|running|complete|failed|not-run> --phase <phase>',
+  'seed-manifest': 'seed-manifest --run <parent-dir> --specs <n,n,...> [--base-sha <sha>]',
   'close-run': 'close-run [--run <dir>]',
   'delete-ledger': 'delete-ledger --run <dir> [--ledger <path>]',
   'teardown-run': 'teardown-run [--run <dir>] [--merged|--abandoned] [--remote-ref-only]',
@@ -138,6 +139,7 @@ const KNOWN_FLAGS = {
   'record-worktree': ['--run', '--dispatch'],
   'record-pr': ['--run'],
   'spec-status': ['--run', '--spec', '--status', '--phase', '--now'],
+  'seed-manifest': ['--run', '--specs', '--base-sha'],
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
   'resolve-console': ['--run', '--approve', '--decline'],
 };
@@ -145,7 +147,7 @@ const KNOWN_FLAGS = {
 // Declared flags that consume the following token as a value — the
 // unknown-flag scan below must skip that token rather than risk misreading
 // it as a flag itself (an argument value could itself start with "--").
-const VALUE_FLAGS = new Set(['--run', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--ledger']);
+const VALUE_FLAGS = new Set(['--run', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--ledger', '--specs', '--base-sha']);
 
 // First `--*`-shaped token in `args` that isn't declared for this verb, or
 // null when every `--*` token is declared (or there are none). Scans the
@@ -953,6 +955,66 @@ async function main(argv) {
         if (result.summaryLine) process.stdout.write(result.summaryLine + '\n');
       }
     }
+    return 0;
+  }
+  if (cmd === 'seed-manifest') {
+    // #3307 ledger row 2: multispec-run-dir-layout.md documents manifest.yml
+    // as written exclusively through spec-status, but spec-status's own
+    // transitionSpec refuses with 'no-manifest' until the file already
+    // exists — nothing created it before this verb. This is the sanctioned
+    // first write: one call, from multi-spec.md's Execution section, after
+    // the shared worktree exists (or in the current checkout otherwise) and
+    // before spec-status's first call for spec 1. Mirrors resolve-console's
+    // --run-required discipline (#2568) — no implicit "newest non-terminal
+    // run" fallback, since a guessed run dir here would seed the WRONG run's
+    // manifest.
+    const {
+      runDir, invalidRunArg, rest, worktreeLocalFallback, explicit,
+    } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
+    if (!explicit) {
+      process.stdout.write(`claude-tweaks: usage: ${USAGE['seed-manifest']} — --run is required, manifest not seeded\n`);
+      return 1;
+    }
+    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+    if (invalidRunArg) {
+      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — manifest not seeded\n`);
+      return 1;
+    }
+    if (!runDir) {
+      process.stdout.write('claude-tweaks: no pipeline run dir found — manifest not seeded\n');
+      return 1;
+    }
+    const specsArg = flagVal(rest, '--specs');
+    const baseShaArg = flagVal(rest, '--base-sha');
+    const rawIds = specsArg ? specsArg.split(',').map((s) => s.trim()) : [];
+    // Record ids are numeric under both work backends; a sha is hex.
+    if (!specsArg || rawIds.some((id) => !/^\d+$/.test(id)) || (baseShaArg && !/^[0-9a-f]{7,40}$/i.test(baseShaArg))) {
+      process.stdout.write(`claude-tweaks: usage: ${USAGE['seed-manifest']} — manifest not seeded\n`);
+      return 2;
+    }
+    if (fs.existsSync(path.join(runDir, 'manifest.yml'))) {
+      process.stdout.write(`claude-tweaks: manifest.yml already exists for ${path.basename(runDir)} — refusing to overwrite; nothing seeded\n`);
+      return 1;
+    }
+    // multispec.parent is docs-only provenance (never read back by any
+    // parser above) — a repo-relative path from the main checkout, matching
+    // multispec-run-dir-layout.md's own worked example.
+    const mainRoot = wtDetect.mainCheckoutRoot(process.cwd());
+    const parent = mainRoot
+      ? `${path.relative(mainRoot, runDir).split(path.sep).join('/')}/`
+      : `${path.basename(runDir)}/`;
+    const manifest = {
+      multispec: {
+        parent,
+        specs: rawIds.map((id) => ({ id, status: 'pending', subdir: `spec-${id}/` })),
+      },
+    };
+    if (baseShaArg) manifest.multispec.baseSha = baseShaArg;
+    if (!specStatusLib.writeManifest(runDir, manifest)) {
+      process.stdout.write(`claude-tweaks: failed to seed manifest.yml for ${path.basename(runDir)} — write failed\n`);
+      return 1;
+    }
+    process.stdout.write(`claude-tweaks: manifest.yml seeded for ${path.basename(runDir)} (${rawIds.length} spec${rawIds.length === 1 ? '' : 's'}: ${rawIds.join(', ')})\n`);
     return 0;
   }
   if (cmd === 'close-run') {
