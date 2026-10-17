@@ -23,6 +23,12 @@
 // `run-tests.js` grew an optional `roots` override (CLI positional args, or
 // `listTestFiles(cwd, roots)`) so `test:perf` can invoke it as
 // `node tools/run-tests.js perf` instead of shell `find`.
+//
+// #3316: on windows-latest the explicit file list (~780 paths) overflows the 32,767-char
+// command line (spawnSync ENAMETOOLONG), so `buildTestArgs` passes the root globs there
+// instead. Glob args only work on Node >= 22 (the #407 incident above), so win32 + older Node
+// throws and every other platform keeps the explicit list. `platform`/`nodeMajor` are
+// parameters, pinned with exact arrays below — never a stubbed `process.platform`.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -31,7 +37,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-const { listTestFiles } = require(path.join(ROOT, 'tools', 'run-tests.js'));
+const { listTestFiles, buildTestArgs } = require(path.join(ROOT, 'tools', 'run-tests.js'));
 
 test('package.json test/test:perf scripts never pass a raw glob string to `node --test` directly', () => {
   // The exact anti-pattern that broke CI: a quoted glob positional arg,
@@ -132,4 +138,39 @@ test('run-tests.js\'s listTestFiles(cwd, ["perf"]) is exactly what an independen
   expected.sort();
 
   assert.deepStrictEqual(listTestFiles(ROOT, ['perf']), expected);
+});
+
+const FILES = ['tests/a.test.js', 'tests/b.test.js'];
+const ROOTS = ['tests', 'tools\\upstream-drift\\tests'];
+
+test('buildTestArgs passes the explicit file list on linux, Node 20 and Node 22 alike (#3316 — Linux never globs)', () => {
+  const expected = ['--test', 'tests/a.test.js', 'tests/b.test.js'];
+  assert.deepStrictEqual(buildTestArgs(FILES, ROOTS, { platform: 'linux', nodeMajor: 20 }), expected);
+  assert.deepStrictEqual(buildTestArgs(FILES, ROOTS, { platform: 'linux', nodeMajor: 22 }), expected);
+});
+
+test('buildTestArgs passes the explicit file list on darwin, Node 22', () => {
+  assert.deepStrictEqual(
+    buildTestArgs(FILES, ROOTS, { platform: 'darwin', nodeMajor: 22 }),
+    ['--test', 'tests/a.test.js', 'tests/b.test.js'],
+  );
+});
+
+test('buildTestArgs passes forward-slash root globs on win32, Node 22 (#3316 — the file list overflows the command line)', () => {
+  assert.deepStrictEqual(
+    buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 22 }),
+    ['--test', 'tests/**/*.test.js', 'tools/upstream-drift/tests/**/*.test.js'],
+  );
+});
+
+test('buildTestArgs globs on win32 for any Node >= 22, not only Node 22', () => {
+  assert.deepStrictEqual(
+    buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 24 }),
+    ['--test', 'tests/**/*.test.js', 'tools/upstream-drift/tests/**/*.test.js'],
+  );
+});
+
+test('buildTestArgs throws on win32 with Node < 22, naming the running major', () => {
+  assert.throws(() => buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 20 }), /Node >= 22/);
+  assert.throws(() => buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 20 }), /Node 20/);
 });

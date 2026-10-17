@@ -70,7 +70,8 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # run-tests.js passes root globs on win32 (the file list overflows the command line), which needs Node >= 22
+          node-version: 22
       - name: Line-ending diagnostics
         run: |
           git config core.autocrlf || true
