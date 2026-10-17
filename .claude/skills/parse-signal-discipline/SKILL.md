@@ -219,6 +219,19 @@ When mechanizing a prose heuristic into a deterministic check:
    test that builds the state through the real `closeRunState`. When a terminal transition clears
    a field your check reads, keep a copy at that transition, and produce the check's input in at
    least one test by calling the real writer, never by hand-writing its JSON.
+13. **A not-found answer means "absent" only when every input to the request resolved.** A
+    lookup built from an input that failed to resolve asks about a resource that cannot exist,
+    and its 404 is identical to the benign one. `plugin/bin/lib/issues/claim-store.js`'s
+    `readClaimBlobContentsApi` builds `` `repos/${repoSlug}/contents/…` `` and maps a 404 to
+    `absent: true`. In #3278's neighbour-in-flight pass (`plugin/skills/dispatch/queue-pull-script.md`),
+    a failed `gh repo view` left `slug` null behind a bare `catch {}`, the git read failed too, and
+    the fallback asked GitHub for `repos/null/…`. The 404 read as `absent`, so a record holding a
+    live claim counted as not in flight. Review caught it, and the reader now returns
+    `{ failure: 'repo-slug-unresolved' }` for an unset slug on any answer that did not come from
+    git, so the record lands in `unreadable` and the AUTO line names it. Check every interpolated
+    input before trusting a not-found status, and route an unresolved one to the could-not-tell
+    branch. A reader copied from a sibling call site carries the sibling's gap, so grep for the
+    other copies before fixing one (`grep -rn 'readClaimBlob(' plugin/skills/`).
 
 ## When to use
 
