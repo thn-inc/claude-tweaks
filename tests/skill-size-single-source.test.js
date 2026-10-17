@@ -8,7 +8,10 @@
 // `N * 1024` expression). A skill path reaches a comparison through variables
 // (`const p = path.join(ROOT, 'plugin', 'skills', …)`, then `read(p)`, then
 // `bytes`), so references are tainted forward line by line, including into
-// multi-line object literals and `for…of` bindings. A size comparison whose
+// multi-line object literals and `for…of` bindings. Taint also seeds from a
+// call to a skill-audit measurement export (`composedBytesReport`,
+// `measureSkills`, …), so a size read through that API — with no literal
+// skill path in sight — taints its result the same way. A size comparison whose
 // operand is a named value the scanner cannot resolve (an UPPER_CASE constant,
 // or a name containing ceiling/budget/cap) is reported as `unclassified` —
 // distinct from a violation, and never silently passed.
@@ -30,6 +33,7 @@ const RAIL_NAMES = new Set(['RAIL_BYTES', 'RAIL_LINES', 'RAIL_TOKENS', 'DESCRIPT
 
 const RULE_A = /\b(?:const|let|var)\s+([A-Z0-9_]*(?:CEILING|BUDGET)[A-Z0-9_]*_(?:BYTES|CHARS)|[A-Z0-9_]*_(?:BYTE|CHAR)S?_(?:CEILING|BUDGET)[A-Z0-9_]*)\s*=\s*([^;\n]*)/;
 const SKILL_PATH = /plugin\/skills\b|['"`]skills\/|['"]skills['"]/;
+const MEASURE_API = /\b(?:measuredTextBytes|measuredBytes|measureSkills|measureSubFiles|measureComposed|composedBytesReport|measureDescriptions|totalBytes|totalDescriptionChars|auditCorpus|auditText|bloatReport)\s*\(/;
 const SIZE_MEASURE = /\bBuffer\.byteLength\b|\bmeasuredBytes\b|\.bytes\b|\.size\b|\.max\b|\bbytes\b/;
 const COMPARISON = /(<=|>=|<|>)\s*(\(?\s*\d[\d_]*(?:\s*\*\s*1024)?\s*\)?|[A-Za-z_$][\w$.]*(?:\[[^\]]*\])?)/g;
 const NUMERIC = /^\(?\s*(\d[\d_]*)(\s*\*\s*1024)?\s*\)?$/;
@@ -53,7 +57,7 @@ function scanText(text) {
     const a = code.match(RULE_A);
     if (a && /\d/.test(a[2])) violations.push({ line: n, rule: 'a', text: raw.trim() });
     const refsTainted = [...tainted].some((t) => new RegExp(`(^|[^\\w$])${escapeName(t)}([^\\w$]|$)`).test(line));
-    const refsSkill = SKILL_PATH.test(line) || refsTainted;
+    const refsSkill = SKILL_PATH.test(line) || MEASURE_API.test(line) || refsTainted;
     if (openLiteral) {
       if (refsSkill) tainted.add(openLiteral);
       if (/^\s*[}\]]/.test(line)) openLiteral = null;
@@ -148,6 +152,23 @@ test('self-test: rule (b) follows a skill path through variables, literals, and 
     '}',
   ].join('\n');
   assert.deepStrictEqual(scanText(mapped).unclassified.map((u) => u.line), [6]);
+});
+
+test('self-test: rule (b) follows a size read through the skill-audit API', () => {
+  const viol = [
+    'const rows = composedBytesReport(PLUGIN_ROOT);',
+    'for (const row of rows) {',
+    '  assert.ok(row.max < 40000);',
+    '}',
+  ].join('\n');
+  assert.deepStrictEqual(scanText(viol).violations.map((v) => v.line), [3]);
+  const unclass = [
+    'const rows = composedBytesReport(PLUGIN_ROOT);',
+    'for (const row of rows) {',
+    '  assert.ok(row.max < SOME_LIMIT);',
+    '}',
+  ].join('\n');
+  assert.deepStrictEqual(scanText(unclass).unclassified.map((u) => u.line), [3]);
 });
 
 test('self-test: what the scanner must not flag', () => {
