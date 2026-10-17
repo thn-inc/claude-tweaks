@@ -211,8 +211,8 @@ test('AC2.1: docs/skill-authoring.md argument-hint bullet names every exemption 
 // omits, in first-seen order, deduplicated. A row whose first cell carries an
 // EXEMPT_MARKERS entry is skipped. Cells split only on unescaped pipes, so a
 // `\|` inside a first cell (capture's `--risk=<low\|medium\|high>`) stays put.
-// A flag matches the hint only as a whole token: `--batch` in the hint does not
-// cover `--batch-size` in a row.
+// A flag matches the hint only as a whole token: `--batch-size` in the hint does
+// not cover `--batch` in a row.
 function undocumentedHintFlags(content) {
   const hint = extractArgumentHint(content);
   const body = inputSectionBody(content);
@@ -247,7 +247,7 @@ test('marker outside the first cell does not exempt the row', () => {
   assert.deepStrictEqual(undocumentedHintFlags(c), ['--b']);
 });
 
-test('prefix flag in hint does not cover a longer flag', () => {
-  const c = "---\nargument-hint: '[--batch]'\n---\n## Input\n\n| Argument | Behavior |\n|---|---|\n| `--batch-size <n>` | x |\n";
-  assert.deepStrictEqual(undocumentedHintFlags(c), ['--batch-size']);
+test('longer flag in hint does not cover a shorter prefix flag', () => {
+  const c = "---\nargument-hint: '[--batch-size]'\n---\n## Input\n\n| Argument | Behavior |\n|---|---|\n| `--batch` | x |\n";
+  assert.deepStrictEqual(undocumentedHintFlags(c), ['--batch']);
 });
