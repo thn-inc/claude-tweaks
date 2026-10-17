@@ -1,0 +1,1 @@
+[{"tag":"sizing","record":3402,"title":"console-resolve.js labels engine-row findings as {r…","action":"Absorb into #3389 (duplicate scope; close not planned)","command":"gh issue edit 3389 … && gh issue comment 3402 … && gh issue close 3402 --reason \"not planned\""}]

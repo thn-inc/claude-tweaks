@@ -1,0 +1,65 @@
+
+## /tidy (sweep Step 1)
+- AUTO 19:26:26 — Archival: 55 aged non-active run dirs eligible; compacted 0 — every one already has an archive/{run-id} twin (top-level copy re-created by late writes; some carry a late decisions.md fragment). Left in place; not merged into the archive copies. Reversibility: n/a (no write).
+- AUTO 19:28:01 — Step 4.5: reconcile --json ran (saved reconcile-tidy.json): mirror dirty → action none; 9 claims + all runs skipped; console.ready empty. Reversibility: n/a (no write).
+- AUTO 19:28:01 — Step 6 Delete (plans): deleted 3 orphaned ~/.claude/plans smoke-test plans (write-a-two-line-plan-{effervescent-reddy,pure-knuth,woolly-stearns}.md) after re-verifying no citation. Reversibility: low (untracked, outside repo; 55-107 byte two-line smoke plans).
+- AUTO 19:28:01 — Step 6 Keep (plans): 15 docs/superpowers/plans/*.md kept — 14 back closed records (table says Delete), but ADR-0007 + superpowers-plans-retention keep-forever exclude docs from the last ~week and require explicit user direction to prune; project policy outranks the skill default. Reversibility: n/a (no write).
+- AUTO 19:28:01 — Step 6 Keep (parked): 8 stale parked records (#2448 #1597 #986 #794 #279 #159 #127 #126) kept — prose watch-triggers, none evidenced as fired; Shape 2's prose-only row (judge live; Keep) governs over Re-evaluate-or-delete. Reversibility: n/a (no write).
+- AUTO 19:28:01 — Step 5.6: digest docs cluster (4 entries, #1426) not proposed — all 4 cite ledgers already deleted from docs/plans/; promotion would file a record for resolved residue. Reversibility: n/a (no write).
+- STAGED 19:28:01 — Step 6 Absorb (github-issues): absorb #3402 into #3389 (duplicate resolve.js target/targetPath defect). Stage path: staged/tidy-absorb-3402.md; needs:decision marker posted. Reversibility: n/a.
+- STAGED 19:28:01 — Step 6 Absorb (github-issues): absorb #2939 into #3175 (same CHANGELOG tag backfill). Stage path: staged/tidy-absorb-2939.md; needs:decision marker posted. Reversibility: n/a.
+- AUTO 19:29:17 — Sweep Step 1 tidy complete: applied 1 / staged 2 / yours 25 / clean 8. Snapshot invalidated before Step 2. Reversibility: n/a.
+- AUTO 19:30:43 — /specify drain: claimed #3330 (run 2026-10-17T171933-sweep-standalone, git transport). Reversibility: high.
+## /specify
+- AUTO 19:32:41 — Release: released claim on #3330 (shaped: #3330); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:32:41 — /specify drain #3330: Framing Guard open; shaped (Surface: backend; risk:low size:low ceremony:fast-lane; framing open; near-dup candidates #2869 #3026 #3380 → Related, no refusal); read-back verified. Reversibility: high.
+- AUTO 19:33:13 — /specify drain: claimed #3214 (run 2026-10-17T171933-sweep-standalone). Reversibility: high.
+- AUTO 19:35:05 — Release: released claim on #3214 (shaped: #3214); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:35:05 — /specify drain #3214: Framing Guard open; shaped: #3214 (ceremony:fast-lane; framing open; read-back ok=1). Reversibility: high.
+- AUTO 19:35:22 — /specify drain: claimed #3215 (run 2026-10-17T171933-sweep-standalone). Reversibility: high.
+- AUTO 19:36:15 — Release: released claim on #3215 (shaped: #3215); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:36:15 — /specify drain #3215: Framing Guard open; shaped: #3215 (ceremony:fast-lane; framing open; read-back ok=1). Reversibility: high.
+- AUTO 19:36:24 — /specify drain: claimed #3216 (run 2026-10-17T171933-sweep-standalone). Reversibility: high.
+- AUTO 19:37:13 — Release: released claim on #3216 (shaped: #3216); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:37:13 — /specify drain #3216: Framing Guard open; shaped: #3216 (ceremony:fast-lane; framing open; read-back ok=1). Reversibility: high.
+- AUTO 19:37:23 — /specify drain: claimed #3217 (run 2026-10-17T171933-sweep-standalone). Reversibility: high.
+- AUTO 19:38:32 — Release: released claim on #3217 (shaped: #3217); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:38:32 — /specify drain #3217: Framing Guard open; shaped: #3217 (ceremony:standard; framing open; read-back ok=1). Reversibility: high.
+- AUTO 19:38:47 — /specify drain: claimed #3218 (run 2026-10-17T171933-sweep-standalone). Reversibility: high.
+- AUTO 19:40:08 — Release: released claim on #3218 (failed: shaping); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:40:08 — /specify drain #3218: Framing Guard open; refused (not shaped): premise check contradicted — #3023 (5c8e2a2e0) changelogRef reads origin/{integration-branch} CHANGELOG; residue.js passes integrationBranch; probes-release-remote.test.js:60 pins the exact scenario. Posted needs:decision proposing close as completed; released failed: shaping. Headless self-report not filed: deliberate premise refusal with its own durable decision comment, not a tooling failure (same posture as #3171/#3178). Reversibility: high.
+- AUTO 19:40:27 — /specify drain: claimed #3295 (run 2026-10-17T171933-sweep-standalone). Reversibility: high.
+- AUTO 19:41:19 — Release: released claim on #3295 (shaped: #3295); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:41:19 — /specify drain #3295: Framing Guard open; shaped: #3295 (ceremony:fast-lane; framing open; read-back ok=1). Reversibility: high.
+- AUTO 19:41:30 — /specify drain: claimed #3362 (run 2026-10-17T171933-sweep-standalone). Reversibility: high.
+- AUTO 19:42:24 — Release: released claim on #3362 (failed: shaping); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 19:42:24 — /specify drain #3362: Framing Guard open; refused (not shaped): premise check contradicted — subagent-output-contract.md:81 (#2714, 2026-10-03) documents INTERIM_STATUS for interim turns, subagent-stop.js:168 isInterimProgressReply enforces it. Posted needs:decision proposing close as completed; released failed: shaping. Headless self-report not filed: deliberate premise refusal with its own durable decision comment. Reversibility: high.
+- AUTO 19:42:36 — Sweep Step 2 specify drain (--budget all) complete: {shaped: 6, routed: 0, failed: 2} — shaped #3330 #3214 #3215 #3216 #3217 #3295; failed #3218 #3362 (premise refusals, needs:decision posted). Snapshot invalidated before Step 3. Reversibility: n/a.
+- AUTO 19:45:11 — Backlog grant: zero-eligible short-circuit — 14 candidate(s), 0 needing grant-check: trust: 13, needs-label: 1. Merge-lane breaker not tripped; watched.json empty (Step 0.5 no-op). Reversibility: n/a.
+- AUTO 19:46:24 — Backlog refine Dependency repair: 7 prose flags (#3374 #3372 #3306 #3305 #3212 #3033 #2826), 0 repairs — #3372/#3033 blockers natively wired and CLOSED (detector filters native blockers to OPEN, so a resolved link reads as unwired); #3306 negated prose ('Not blocked by'); #3374/#3305/#3212/#2826 parents whose prose describes sub-issue chains. Reversibility: n/a (no write).
+## /backlog
+- AUTO 19:46:38 — apply-refine-labels: #3399: applied +priority:low. Reversibility: high.
+- AUTO 19:46:42 — apply-refine-labels: #3388: applied +priority:low. Reversibility: high.
+- AUTO 19:46:45 — apply-refine-labels: #3366: applied +priority:medium. Reversibility: high.
+- AUTO 19:46:48 — apply-refine-labels: #3400: applied +priority:low. Reversibility: high.
+- AUTO 19:46:51 — apply-refine-labels: #3389: applied +priority:low. Reversibility: high.
+- AUTO 19:46:54 — apply-refine-labels: #3367: applied +priority:low. Reversibility: high.
+- AUTO 19:46:57 — apply-refine-labels: #3401: applied +priority:low. Reversibility: high.
+- AUTO 19:47:00 — apply-refine-labels: #3402: applied +priority:low. Reversibility: high.
+- AUTO 19:47:03 — apply-refine-labels: #3404: applied +priority:low. Reversibility: high.
+- AUTO 19:47:06 — apply-refine-labels: #3405: applied +priority:high. Reversibility: high.
+- AUTO 19:47:09 — apply-refine-labels: #3370: applied +priority:high. Reversibility: high.
+- AUTO 19:47:12 — apply-refine-labels: #3394: applied +priority:medium. Reversibility: high.
+- AUTO 19:47:16 — apply-refine-labels: #3372: applied +priority:medium. Reversibility: high.
+- AUTO 19:47:19 — apply-refine-labels: #3395: applied +priority:medium. Reversibility: high.
+- AUTO 19:47:22 — apply-refine-labels: #3374: applied +priority:medium. Reversibility: high.
+- AUTO 19:47:40 — Backlog refine Related: #3389 gained **Related:** #3402 (same-defect / same wrap-up-pack inputs.records reader class). Reversibility: high.
+- AUTO 19:47:42 — Backlog refine Related: #3402 gained **Related:** #3389 (same-defect / same wrap-up-pack inputs.records reader class). Reversibility: high.
+- AUTO 19:47:44 — Backlog refine Related: #3395 gained **Related:** #3399 (same-defect / same wrap-up-pack inputs.records reader class). Reversibility: high.
+- AUTO 19:47:45 — Backlog refine Related: #3399 gained **Related:** #3395 (same-defect / same wrap-up-pack inputs.records reader class). Reversibility: high.
+- AUTO 19:47:59 — Backlog refine Priority rationale: high #3370 (unattended-console pending/contested items vanish unreviewed), #3405 (partial check rollup reads green → merge before CI completes); medium #3366 #3372 #3374 #3394 #3395 (false absorb refusals; dispatch auto backstop; build cost-shape parent; carrier-commit skip after pr-first; multi-spec main-checkout reads); low #3367 #3388 #3389 #3399 #3400 #3401 #3402 #3404 (doc/test/refactor/duplicate). Reversibility: high.
+- AUTO 19:47:59 — Sweep Step 3 backlog refine (headless, --source sweep) complete: granted 0 / re-authorized 0 / needs-decision 0 / skipped 14 (trust: 13, needs-label: 1); labeling: priority 15 applied, related 4 edits (2 pairs), dependency-repair 0 of 7 flags. Resolve lane not run (human decision only): 6 open record(s) carry needs:decision. Reversibility: n/a.
+- AUTO 19:48:50 — Sweep close-out: tidy applied 1 / staged 2 / yours 25 / clean 8; specify {shaped: 6, routed: 0, failed: 2}; refine granted 0 / re-authorized 0 / needs-decision 0 / skipped 14 + priority 15, related 4, dependency-repair 0. Attention: 18 rows, breaker clear. Reversibility: n/a.
+## /tidy --approve
+- AUTO 19:56:39 — --approve: resolved newest staged run (no-arg default); re-verified both staged items fresh. #2939→#3175 absorb stale — skipped: CHANGELOG.md on main and origin/main already carries `## [6.134.1]` (release commit 95dfdf992, 2026-10-03, before #2939 was filed) and its v6.136.0 follow-up is already inside #3175's range, so there is nothing to integrate; #2939 left open with its needs:decision marker for a human close. Reversibility: n/a (no write).
+- AUTO 19:56:39 — --approve: Step 7 Absorb (github-issues) #3402 → #3389 applied on human approval (fleet question 80bb3cca, 'Approve all'): #3389 body rewritten with #3402's f.target fallback, proven-red test requirement, and CLI-level AC integrated first-class (compose-record.js --check exit 0; labels unchanged); #3402 commented 'Absorbed into #3389' and closed not planned (re-queried CLOSED/NOT_PLANNED). Reversibility: medium (gh issue reopen 3402; prior #3389 body in GitHub edit history).
