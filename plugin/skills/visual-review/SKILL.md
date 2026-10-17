@@ -83,12 +83,17 @@ When the resolved mode is `recommendation` (typically invoked as `--mode=recomme
 Procedure:
 
 1. **Resolve scope** — accept the changed-files list from the parent (preferred) or fall back to `git diff --name-only` against the base branch.
-2. **Cross-reference with journeys** — read `docs/journeys/*.md` and match the changed files against each journey's `files:` frontmatter. A journey is **affected** when at least one of its `files:` entries appears in the changed-file set.
-3. **Score severity** — for each affected journey:
+2. **Cross-reference with journeys** — read `docs/journeys/*.md` and match the changed files against each journey's `files:` frontmatter. A journey **overlaps** the diff when at least one of its `files:` entries appears in the changed-file set.
+3. **Require a frontend surface** — an overlapping journey is **affected** only when this run carries a frontend-surface signal, resolved in `design-wrapper/frontend-detection.md`'s Layer 2 → Layer 3 order (that file owns the trigger rules; this step does not restate them):
+   - **Layer 2** — read the `surface:` field of this run's materialized header: `work/{n}-spec.md` at `$PIPELINE_RUN_DIR`'s path in the checkout under review (the worktree's copy — `_shared/pipeline-run-dir.md`'s Anchoring section keeps `work/` out of `$RUN_ROOT`), the same field `/claude-tweaks:review` Step 6.5 passes as `--surface`. `web`, `mobile`, or `desktop` is a signal; any other declared value (`backend`, `infra`, `terminal`) is not, and Layer 3 does not run.
+   - **Layer 3** — when no header resolves (a standalone run) or it carries no `surface:`, the signal is a UI trigger file among step 1's changed files.
+
+   Layer 1, the design-integration flag, does not apply: a browser walk does not depend on Impeccable being configured.
+4. **Score severity** — for each affected journey:
    - `high` — primary flow step files (page entry, primary action component) changed
    - `medium` — supporting components or non-primary steps changed
    - `low` — peripheral files (helpers, styles only) changed
-4. **Return structured recommendation:**
+5. **Return structured recommendation:**
 
 ```markdown
 ### Visual Review Recommendation (no browser)
@@ -100,9 +105,11 @@ Procedure:
 > Recommended follow-up: `/claude-tweaks:visual-review journey:{top-severity-journey-name}`
 ```
 
-If no journeys are affected, return: `No documented journeys affected by the diff. Visual review not recommended.`
+If no journeys overlap, return: `No documented journeys affected by the diff. Visual review not recommended.`
 
-5. **Return control** — skip the remaining Steps (1-4). Do not open the browser, do not run a survey, do not append a Creative Opportunities block.
+If journeys overlap but step 3 found no frontend-surface signal, return this line instead of the table and the `Recommended follow-up` line: `No frontend surface in this run ({Surface: {value} | no UI trigger file in the diff}) — visual review not recommended. Journeys whose files: overlap the diff: {journey-name}, {journey-name}.` The parent's summary records it as `Skipped — no UI changes`.
+
+6. **Return control** — skip the remaining Steps (1-4). Do not open the browser, do not run a survey, do not append a Creative Opportunities block.
 
 Recommendation mode is **read-only and browser-free** — it produces a routing signal, nothing else.
 
