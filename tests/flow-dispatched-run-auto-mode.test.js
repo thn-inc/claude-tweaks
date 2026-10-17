@@ -50,6 +50,13 @@ function kind(t) {
   return null;
 }
 
+// The one table row whose first cell is `cell`; asserts it is unique so a duplicate can't hide a stale copy.
+function tableRow(text, cell) {
+  const rows = text.split('\n').filter((l) => l.startsWith(`| \`${cell}\` | `));
+  assert.strictEqual(rows.length, 1, `expected exactly one | \`${cell}\` | row`);
+  return rows[0];
+}
+
 const EXPECTED_ORDER = ['keyword', 'dispatch', 'policy', 'intrinsic'];
 
 // Rung 2 (the dispatch binding) of the live flow/SKILL.md Step 1 mode resolution.
@@ -112,22 +119,12 @@ test('the dispatch-binding rung names its source, anchoring, and every fall-thro
 });
 
 test('manifesto.md names the dispatch binding as the Mode source', () => {
-  const rows = read('plugin', 'skills', 'flow', 'manifesto.md')
-    .split('\n')
-    .filter((l) => l.startsWith('| `dispatch` | '));
-  assert.strictEqual(rows.length, 1, 'expected exactly one `dispatch` Source values row');
-  assert.match(rows[0], /auto \(dispatched run\)/);
-  assert.match(rows[0], /source: dispatch binding/);
+  const row = tableRow(read('plugin', 'skills', 'flow', 'manifesto.md'), 'dispatch');
+  assert.match(row, /auto \(dispatched run\)/);
+  assert.match(row, /source: dispatch binding/);
 });
 
 // --- #3372: the dispatched-run auto exception, carried through the contract, card and policy row ---
-
-// The one table row whose first cell is `cell`; asserts it is unique so a duplicate can't hide a stale copy.
-function tableRow(text, cell) {
-  const rows = text.split('\n').filter((l) => l.startsWith(`| \`${cell}\` | `));
-  assert.strictEqual(rows.length, 1, `expected exactly one | \`${cell}\` | row`);
-  return rows[0];
-}
 
 test('auto-mode-contract.md interactive row and Default note state the dispatched-run exception', () => {
   const text = read('plugin', 'skills', '_shared', 'auto-mode-contract.md');
