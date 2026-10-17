@@ -52,6 +52,13 @@ function kind(t) {
 
 const EXPECTED_ORDER = ['keyword', 'dispatch', 'policy', 'intrinsic'];
 
+// Rung 2 (the dispatch binding) of the live flow/SKILL.md Step 1 mode resolution.
+function liveRung2() {
+  const rung2 = rungs(step1(read('plugin', 'skills', 'flow', 'SKILL.md'))).find((r) => r.n === '2');
+  assert.ok(rung2, 'no rung 2 in Step 1 mode resolution');
+  return rung2;
+}
+
 // --- Proof the extractors can go red (synthetic fixtures) ---
 
 test('synthetic: kind order flags a missing or misplaced dispatch rung', () => {
@@ -87,8 +94,7 @@ test('flow/SKILL.md Step 1 lists the four mode rungs in order', () => {
 });
 
 test('the dispatch-binding rung names its source, anchoring, and every fall-through case', () => {
-  const rung2 = rungs(step1(read('plugin', 'skills', 'flow', 'SKILL.md'))).find((r) => r.n === '2');
-  assert.ok(rung2, 'no rung 2 in Step 1 mode resolution');
+  const rung2 = liveRung2();
   const required = [
     /`run-state\.json`/,
     /`dispatched: true`/,
@@ -160,9 +166,7 @@ function rungSnippet(rung2Text) {
 }
 
 function liveSnippet() {
-  const rung2 = rungs(step1(read('plugin', 'skills', 'flow', 'SKILL.md'))).find((r) => r.n === '2');
-  assert.ok(rung2, 'no rung 2 in Step 1 mode resolution');
-  return rungSnippet(rung2.text);
+  return rungSnippet(liveRung2().text);
 }
 
 test('synthetic: the snippet extractor fails on a rung with no one-liner and returns the JS otherwise', () => {
