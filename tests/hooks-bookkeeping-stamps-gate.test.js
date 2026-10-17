@@ -239,6 +239,35 @@ test('bookkeeping-stamps gate (#2526): claim missing after materialize -> deny, 
   assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'));
 });
 
+test('AC1.1 (#3012): a paraphrased claim line (flow: claimed issue #991 via MCP transport) -> falls through past the claim branch to the worktree deny, not a claim deny', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  fs.writeFileSync(path.join(run, 'decisions.md'), '# Auto-Decision Log\n\n## /flow\n- AUTO 06:31:43 — log-decision: flow: claimed issue #991 via MCP transport (gh CLI unavailable); tombstone reclaim from prior run. Reversibility: high.\n');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected the NEXT check (worktree stamp, still unsatisfied) to deny');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
+});
+
+test('AC1.1 (#3012): a negated paraphrase (… never itself claimed #991 …) -> still the claim deny naming #991', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  fs.writeFileSync(path.join(run, 'decisions.md'), '# Auto-Decision Log\n\n## /flow\n- AUTO 16:14:57 — log-decision: Wrap-up outcome: pending-review. Separately noted: this run never itself claimed #991 via claim-targets.js. Reversibility: n/a.\n');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  const spec = out.json.hookSpecificOutput;
+  assert.strictEqual(spec.permissionDecision, 'deny');
+  assert.match(spec.permissionDecisionReason, /Step 2\.8/);
+  assert.match(spec.permissionDecisionReason, /#991/);
+  assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'));
+});
+
 test('bookkeeping-stamps gate (#2526): decisions.md exists but names a DIFFERENT record\'s claim -> still deny (no cross-record false-satisfy)', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);

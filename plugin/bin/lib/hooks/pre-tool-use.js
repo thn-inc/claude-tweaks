@@ -1308,6 +1308,10 @@ function getMaterializedRecordNumbers(worktreeRoot, runDir) {
 // "Claim every named target, all-or-abort"), so a single exit-0 call either
 // claims every named target together or the run never reaches this log line
 // at all — there is no partial-batch state for this line to misrepresent.
+//
+// #3012: a model-worded claim line ("claimed issue #827 for this run") also
+// satisfies this — hasClaimLogFor's paraphrase fallback, see
+// bin/lib/log-decision/claim-log.js's paraphrasedClaimNumbers.
 function hasLoggedClaim(runDir, n) {
   try {
     return hasClaimLogFor(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), n);

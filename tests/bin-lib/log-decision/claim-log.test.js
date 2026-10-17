@@ -8,7 +8,7 @@ const ROOT = path.join(__dirname, '..', '..', '..');
 const LIB = path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision');
 const { formatEntry, parseEntry } = require(path.join(LIB, 'append'));
 const {
-  CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText, isClaimLogEntry, hasClaimLogFor, classifyDecisions,
+  CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText, isClaimLogEntry, hasClaimLogFor, classifyDecisions, paraphrasedClaimNumbers,
 } = require(path.join(LIB, 'claim-log'));
 
 const NOW = Date.parse('2026-10-04T12:00:00Z');
@@ -105,4 +105,49 @@ test('hasClaimLogFor keeps hasLoggedClaim\'s semantics: exact number with a word
   assert.strictEqual(hasClaimLogFor(REAL_BATCH, 1235), true);
   assert.strictEqual(hasClaimLogFor(REAL_BATCH, 9), true);
   assert.strictEqual(hasClaimLogFor('', 9), false);
+});
+
+test('AC1.1: hasClaimLogFor accepts paraphrased claim lines that name the number (#3012)', () => {
+  const cases = [
+    ['- AUTO 06:31:43 — log-decision: flow: claimed issue #2694 via MCP transport (gh CLI unavailable); tombstone reclaim from prior run. Reversibility: high.', 2694],
+    ['- AUTO 07:42:07 — spec #827 — flow/claim-targets: Claimed issue #827 for this run (claims-registry blob write, state: absent -> live). Reversibility: high.', 827],
+    ["- AUTO 01:03:28 — Step 2.8: claimed #517, #518, #519 on claims-registry (all classified 'absent'). Reversibility: high.", 517],
+    ["- AUTO 01:03:28 — Step 2.8: claimed #517, #518, #519 on claims-registry (all classified 'absent'). Reversibility: high.", 518],
+    ["- AUTO 01:03:28 — Step 2.8: claimed #517, #518, #519 on claims-registry (all classified 'absent'). Reversibility: high.", 519],
+    ['- AUTO 07:49:40 — Step 2.8: group-claimed #533,#534,#536 under run 2026-08-16T074746-spec-533-534-536. Reversibility: high.', 534],
+    ['- AUTO -- Step 2.8 claim: both #1447 and #1446 claimed successfully under runId 2026-08-29T232244-record-1446 (claim-targets.js exit 0). Reversibility: high.', 1446],
+    ['- AUTO -- Step 2.8 claim: both #1447 and #1446 claimed successfully under runId 2026-08-29T232244-record-1446 (claim-targets.js exit 0). Reversibility: high.', 1447],
+    ['- AUTO 07:27:52 — Step 2.8: claimed 2554,2745 (bin/claim-targets.js, transport: git). Reversibility: high.', 2745],
+    ['- AUTO 05:25:45 — Step 2.8 (claim targets): Claimed issue #2328 (create-only write). Reversibility: high.', 2328],
+  ];
+  for (const [line, n] of cases) assert.strictEqual(hasClaimLogFor(line, n), true, `${n} in ${line}`);
+});
+
+test('AC1.1: hasClaimLogFor still denies a claim that was never logged (#3012 Gotcha)', () => {
+  const cases = [
+    ['', 7],
+    ['## /flow\n', 7],
+    ['- AUTO 16:14:57 — log-decision: Wrap-up outcome: pending-review. Separately noted: this run never itself claimed #1786 via claim-targets.js. Reversibility: n/a.', 1786],
+    ['- AUTO 08:00:00 — Step 2.8: #3012 was not claimed (blob unreadable). Reversibility: n/a.', 3012],
+    ['- AUTO 21:08:27 — Step 2.8: claim contested: #3004 held live by run 2026-10-16T190307-record-2734 (claimed 19:07:35, ttl 72h). Reversibility: n/a.', 3004],
+    ['- AUTO 08:00:00 — Step 2.8: #3012 was claimed by run 2026-10-01T000000-record-3012 (another session). Reversibility: n/a.', 3012],
+    ['- AUTO 17:54:54 — log-decision: Group E abandoned before claiming: sibling-session claims (#1769 alone, host=vm, claimed 2026-09-14T14:29Z). Reversibility: n/a.', 2026],
+    ['- AUTO 17:54:54 — log-decision: Group E abandoned before claiming: sibling-session claims (#1769 alone, host=vm, claimed 2026-09-14T14:29Z). Reversibility: n/a.', 1769],
+    ['- AUTO 03:49:47 — Known drift: issue #614 claimed eight objectives. Reversibility: high.', 614],
+    ['- AUTO 08:00:00 — flow: claimed issue #700 via MCP.', 7],
+    ['- AUTO 08:00:00 — flow: #3012 left unclaimed. Reversibility: n/a.', 3012],
+  ];
+  for (const [body, n] of cases) assert.strictEqual(hasClaimLogFor(body, n), false, `${n} in ${JSON.stringify(body)}`);
+  assert.strictEqual(hasClaimLogFor('- STAGED 08:00:00 — Step 2.8: claimed #3012 (bin/claim-targets.js, transport: git).', 3012), true, 'the status-agnostic exact match is pinned, not changed');
+  assert.deepStrictEqual(paraphrasedClaimNumbers('- STAGED 08:00:00 — flow: claimed issue #3012.'), []);
+});
+
+test('AC1.1: paraphrasedClaimNumbers returns the numbers a single line positively records as claimed (#3012)', () => {
+  assert.deepStrictEqual(paraphrasedClaimNumbers("- AUTO 01:03:28 — Step 2.8: claimed #517, #518, #519 on claims-registry (all classified 'absent'). Reversibility: high."), [517, 518, 519]);
+  assert.deepStrictEqual(paraphrasedClaimNumbers('- AUTO -- Step 2.8 claim: both #1447 and #1446 claimed successfully under runId 2026-08-29T232244-record-1446 (claim-targets.js exit 0). Reversibility: high.'), [1447, 1446]);
+  assert.deepStrictEqual(paraphrasedClaimNumbers('- AUTO 07:27:52 — Step 2.8: claimed 2554,2745 (bin/claim-targets.js, transport: git). Reversibility: high.'), [2554, 2745]);
+  assert.deepStrictEqual(paraphrasedClaimNumbers('- AUTO 17:54:54 — log-decision: Group E abandoned before claiming: sibling-session claims (#1769 alone, host=vm, claimed 2026-09-14T14:29Z). Reversibility: n/a.'), []);
+  assert.deepStrictEqual(paraphrasedClaimNumbers('- AUTO 21:08:27 — Step 2.8: claim contested: #3004 held live by run 2026-10-16T190307-record-2734 (claimed 19:07:35, ttl 72h). Reversibility: n/a.'), []);
+  assert.deepStrictEqual(paraphrasedClaimNumbers(''), []);
+  assert.deepStrictEqual(paraphrasedClaimNumbers('## /flow'), []);
 });
