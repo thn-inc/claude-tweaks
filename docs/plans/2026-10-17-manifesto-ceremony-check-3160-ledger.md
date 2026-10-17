@@ -2,3 +2,18 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | SDD T1 minor: manifesto.md:33 cited a nonexistent failure-cards `ceremony-check` gate | fixed | cc2f05b0b — failure-cards.md:3/:11 routing row for the Step 3 Manifesto ceremony-check |
+| 2 | build | SDD T1 minor: Manifesto paragraph lacks an explicit untrusted-content wrap pointer | accepted | Final whole-branch review triage: the canonical pattern (`_shared/ceremony-check-invocation.md`) carries the wrap, and the contract's Consumers row covers ceremony-check call sites |
+| 3 | build | SDD T1 minor: materialize reader not told log-decision appends `.` + ` Reversibility: n/a.` after the verdict | accepted | Final review triage: `materialize.js:322` rejects `fast-lane.` with exit 2, so it cannot pass silently |
+| 4 | build | SDD T1 minor: decisions.md init ordering vs the Step 3 ceremony-check log line | fixed | cc2f05b0b — verdicts held in memory, logged after the Approval-flow write (manifesto.md:33/:188) |
+| 5 | build | SDD T1 minor: test control duplicated literals; AC1.3 lacked a frozen control | accepted | Final reviewer proved go-red against base-revision prose (all AC tests fail); fix wave added a frozen-paragraph control for the new pins |
+| 6 | build | SDD T1 minor: flow/SKILL.md Step 4 insertion leaves a dangling `—` clause; preview row wording | accepted | Final review triage: readability only, wording still accurate |
+| 7 | build | SDD T2 parked/minor: `ceremony-check.md` Step 1 snippet reads `/tmp/materialize-record-${N}.json`, which nothing writes (pre-existing; now cited by the Manifesto call site too) | open | — |
+| 8 | build | SDD T2 parked: plan doc's own sweep-scope lines match the Step 1 grep | observation | Expected — plan quotes the sweep terms; shipped files are 0 hits |
+| 9 | build | SDD T2 minor: "materialize judges only on a standalone build" enumeration incomplete | fixed | cc2f05b0b — interactive and pre-#3160 resumed runs added at every site |
+| 10 | build | SDD T2 minor: docs/getting-started.md:86 ambiguous comma list | fixed | cc2f05b0b |
+| 11 | build | SDD T2 minor: some edited lines exceed ~100-column wrap | accepted | Cosmetic; nothing pins line width |
+| 12 | build | Final review Minor 7: `steps-and-gates.md:76` case-3 backfill runs `bin/materialize.js` without `--ceremony` — exits 2 for an unlabeled record (pre-existing, now more reachable) | open | — |
+| 13 | build | SDD Ruling: deferred minors triaged per final reviewer (wrap pointer, trailing-period wording, test-control style, SKILL.md clause, line widths, plan-grep hits) — no action this run | observation | Cost if wrong: readability polish only |
+| 14 | build | Final re-review out-of-scope: manifesto.md:42 preview row has no verdict to read on a case-1 adoption | accepted | Cosmetic — the FYI preview only displays; the lever value comes from `preflight.levers` |
+| 15 | build | Final re-review out-of-scope: a case-3 recovery could log a duplicate CEREMONY line | accepted | Narrow edge; the duplicate line is idempotent for materialize's reader |
