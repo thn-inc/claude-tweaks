@@ -26,11 +26,12 @@
 //
 // The check runs in both directions. The leaf check above is hint -> Input.
 // undocumentedHintFlags (below) is the converse: every `--flag` in an `## Input`
-// table row's first cell must appear in the hint, unless that row's first cell
-// carries `(producer-only)` or `(deprecated alias)` (EXEMPT_MARKERS) -- a flag
-// a skill takes only from a parent skill, or a superseded alias, which the
-// user-facing hint deliberately leaves out. A marker in any other cell does not
-// exempt the row.
+// table row's first cell, or in a bullet's leading code span, must appear in the
+// hint, unless that entry carries `(producer-only)` or `(deprecated alias)`
+// (EXEMPT_MARKERS) -- in the row's first cell, or opening the bullet's text after
+// the code span -- a flag only an agent or another skill passes, or a superseded
+// alias, which the user-facing hint may leave out. A marker anywhere else does
+// not exempt the entry.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -219,10 +220,20 @@ function undocumentedHintFlags(content) {
   if (!hint || body === null) return [];
   const found = [];
   for (const line of body.split('\n')) {
-    if (!line.startsWith('|')) continue;
-    const firstCell = line.split(/(?<!\\)\|/)[1] || '';
-    if (EXEMPT_MARKERS.some((m) => firstCell.includes(m))) continue;
-    for (const flag of firstCell.match(/--[a-z][a-z0-9-]*/g) || []) {
+    let flagText;
+    if (line.startsWith('|')) {
+      const firstCell = line.split(/(?<!\\)\|/)[1] || '';
+      if (EXEMPT_MARKERS.some((m) => firstCell.includes(m))) continue;
+      flagText = firstCell;
+    } else {
+      // Bullet form: `- \`--flag\` <rest>` -- flags come from the leading code
+      // span only; the mark must open <rest>.
+      const bullet = line.match(/^\s*[-*]\s+`([^`]*)`(.*)$/);
+      if (!bullet) continue;
+      if (EXEMPT_MARKERS.some((m) => bullet[2].trimStart().startsWith(m))) continue;
+      flagText = bullet[1];
+    }
+    for (const flag of flagText.match(/--[a-z][a-z0-9-]*/g) || []) {
       if (found.includes(flag)) continue;
       if (new RegExp(flag + '(?![a-z0-9-])').test(hint)) continue;
       found.push(flag);
@@ -245,6 +256,12 @@ test('go-red control: capture with its markers stripped reports exactly its five
 test('marker outside the first cell does not exempt the row', () => {
   const c = "---\nargument-hint: '[--a]'\n---\n## Input\n\n| Argument | Behavior |\n|---|---|\n| `--b` | (producer-only) |\n";
   assert.deepStrictEqual(undocumentedHintFlags(c), ['--b']);
+});
+
+test('an ## Input bullet is read: its leading code span counts unless the mark opens the rest', () => {
+  const doc = (bullet) => "---\nargument-hint: '[--a]'\n---\n## Input\n\n" + bullet + "\n";
+  assert.deepStrictEqual(undocumentedHintFlags(doc('- `--b` → x')), ['--b']);
+  assert.deepStrictEqual(undocumentedHintFlags(doc('- `--b` (producer-only) → x')), []);
 });
 
 test('longer flag in hint does not cover a shorter prefix flag', () => {
