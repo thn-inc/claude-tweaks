@@ -17,6 +17,8 @@ Identical trigger to `multispec-review-console.md`'s "When to run the consolidat
 
 If the run aborted early (one spec hit a HARD-GATE, no `keep-going`), still run the batch pass against whatever specs completed — mirroring how the consolidated console already renders on partial completion with a Not-run footer.
 
+The shared open-items ledger is still on disk when this pass runs: `wrap-up/cleanup-procedures.md` item 2 defers its multi-spec deletion to `multispec-review-console.md`'s Shared teardown step 0, after this pass and the consolidated console (#3420).
+
 ## Batch-scope reflect pass
 
 Run once, against the union of every completed spec's changed files:
