@@ -53,6 +53,23 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.143.0](https://github.com/thn-inc/claude-tweaks/compare/v6.142.0...v6.143.0) (2026-10-17)
+
+
+### Features
+
+* flow: multi-spec mode has no option to build independent… ([#2677](https://github.com/thn-inc/claude-tweaks/issues/2677)) ([2e10d14](https://github.com/thn-inc/claude-tweaks/commit/2e10d142f8beb823fcfe56690fc46b2e2f5b0f93)), closes [#2733](https://github.com/thn-inc/claude-tweaks/issues/2733) [#2775](https://github.com/thn-inc/claude-tweaks/issues/2775)
+
+
+### Bug Fixes
+
+* Document one-shot literal resolution of… ([#2702](https://github.com/thn-inc/claude-tweaks/issues/2702)) ([2ac4007](https://github.com/thn-inc/claude-tweaks/commit/2ac40071fd37c3ce29132b23f6d7f314906b2960)), closes [#2727](https://github.com/thn-inc/claude-tweaks/issues/2727) [#2776](https://github.com/thn-inc/claude-tweaks/issues/2776)
+* flow preflight: a dispatched first call adopts as case 3… ([#3242](https://github.com/thn-inc/claude-tweaks/issues/3242)) ([3e3e063](https://github.com/thn-inc/claude-tweaks/commit/3e3e063058d04ca85a2728ab0b60e999932da31e))
+* materialize.js writes the spec header to a… ([#2601](https://github.com/thn-inc/claude-tweaks/issues/2601)) ([6c416f8](https://github.com/thn-inc/claude-tweaks/commit/6c416f84f9d2019f89ef29ea4d35a3f69f6c627f))
+* Multi-spec runs: brief and timing run-comments still… ([#2970](https://github.com/thn-inc/claude-tweaks/issues/2970)) ([c7b94b0](https://github.com/thn-inc/claude-tweaks/commit/c7b94b085fbbde6728c445b66a59d1c888d7bf6e))
+* teardown-run and residue.js: post-merge cleanup reports a… ([#3023](https://github.com/thn-inc/claude-tweaks/issues/3023)) ([5c8e2a2](https://github.com/thn-inc/claude-tweaks/commit/5c8e2a2e062601616ed38eddad9524901c4f9184))
+* verify.js --baseline ignores paths quoted from nested TAP and absent from the checkout ([#3153](https://github.com/thn-inc/claude-tweaks/issues/3153), [#3156](https://github.com/thn-inc/claude-tweaks/issues/3156)) ([584f71f](https://github.com/thn-inc/claude-tweaks/commit/584f71fb42bb63cd260bb971f4e2a00a2ad24b4e))
+
 ## [6.142.0](https://github.com/thn-inc/claude-tweaks/compare/v6.141.0...v6.142.0) (2026-10-17)
 
 
