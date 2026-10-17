@@ -14,7 +14,7 @@ files:
 **Success state:** one of four outcomes, each visible.
 - Exit 0: the run proceeds on real records, overlap groups and merge-gate data.
 - A one-off `gh` hiccup: absorbed by one retry.
-- A persistent failure: a STOP before claiming that quotes the CLI's stderr.
+- A persistent failure: a STOP before claiming that quotes the CLI's stderr, or, with no `gh`, names the record whose MCP fetch failed.
 - A gh-absent run: proceeds on records it fetched itself. Under `work-links: native` it also gets one `SKIP` line saying the native links were unchecked.
 
 ## Steps
@@ -42,10 +42,10 @@ files:
 
 ### 4. No `gh`: the skill fetches the records and hands them in
 - **URL:** `plugin/skills/flow/multispec-preflight-failure.md`, "Transport"; `plugin/bin/preflight-records.js` `--records-json`, validated by `issuesFromRecordsJson` in `plugin/bin/lib/preflight-records/preflight-records.js`
-- **Action:** With no `gh`, `/flow` fetches each target over MCP `issue_read` (get mode), reusing step 1's records where present. It reshapes each one to `gh issue view`'s `{number,title,body,labels,url}`, writes the array to a session-scoped temp file, and adds `--records-json {file}` to the same call. The CLI makes no `gh` call on this path, so it never exits 1. A bad file (missing, not JSON, wrong shape, a record missing or extra) is exit 2, naming the problem.
+- **Action:** With no `gh`, `/flow` fetches each target over MCP `issue_read` (get mode), reusing step 1's records where present. It reshapes each one to `gh issue view`'s `{number,title,body,labels,url}`, writes the array to a session-scoped temp file, and adds `--records-json {file}` to the same call. If any `issue_read` fetch fails, `/flow` STOPs before claiming, naming that record, and writes no partial file. The CLI makes no `gh` call on this path, so it never exits 1. A bad file (missing, not JSON, wrong shape, a record missing or extra) is exit 2, naming the problem.
 - **Should feel:** Like the normal run. Records, overlap groups and the merge gate are all real, just fetched another way.
 - **Should understand:** This mirrors `materialize.js --record-json` (#1459). The CLI never falls back to `gh` when the file is bad.
-- **Red flags:** A gh-absent multi-spec run that exits 1 at step 3. A `--records-json` run that still shells out to `gh`.
+- **Red flags:** A gh-absent multi-spec run that exits 1 at step 3. A `--records-json` run that still shells out to `gh`. A `--records-json` file written with records missing after an `issue_read` fetch failed, instead of a STOP.
 
 ### 5. Native links can't be read without `gh`, and the run says so
 - **URL:** `plugin/skills/flow/multispec-preflight-failure.md`, "`nativeLinksUnchecked: true`"; the parent run's `decisions.md` (`## /flow`)
