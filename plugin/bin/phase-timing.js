@@ -184,7 +184,8 @@ function renderDispatches(dispatches) {
       const raw = t === 'unmapped' && b.rawModels && b.rawModels.length ? ` (raw: ${b.rawModels.join(', ')})` : '';
       lines.push(dispatchRow(t + raw, b));
     }
-    lines.push(`| Role ${cols}`, '|---|---|---|---|---|---|');
+    // A blank line ends the tier table; without it markdown reads the Role header as one more tier row.
+    lines.push('', `| Role ${cols}`, '|---|---|---|---|---|---|');
     for (const r of ROLE_ORDER.filter((x) => dispatches.byRole[x])) lines.push(dispatchRow(r, dispatches.byRole[r]));
   }
   for (const d of dispatches.items) if (d.notFound) lines.push(dispatchItemLine(d));

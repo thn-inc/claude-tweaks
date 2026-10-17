@@ -150,8 +150,9 @@ test('#2550 (was #1929 whole-branch review fix 8): a run with no phase events bu
   fs.writeFileSync(early, '{"type":"assistant","timestamp":"2026-09-05T12:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"x"}],"usage":{"input_tokens":3,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n');
   const r = run(['--run', dir, '--transcript', early, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
-  // #3375: a transcript-requested run now also prints the dispatches not-found line (no subagents/ beside this transcript)
-  assert.match(r.stdout, /^no phase events; 0 tool round-trips, 3\/4 tokens\n\ndispatches: subagent transcripts not found \(no subagents\/ directory at [^\n]+\)\n$/);
+  // #3375: a transcript-requested run also prints the dispatches not-found line (no subagents/ beside this transcript)
+  const subDir = path.join(os.tmpdir(), 'ct-timing-notimes-transcript', 'subagents');
+  assert.equal(r.stdout, `no phase events; 0 tool round-trips, 3/4 tokens\n\ndispatches: subagent transcripts not found (no subagents/ directory at ${subDir})\n`);
 });
 
 test('#2550 review fix: the collapsed one-line summary still carries a Guard-denials line when the run recorded real denials', () => {
@@ -162,7 +163,8 @@ test('#2550 review fix: the collapsed one-line summary still carries a Guard-den
   const r = run(['--run', dir, '--transcript', early, '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   // #3375: followed by the dispatches not-found line (no subagents/ beside this transcript)
-  assert.match(r.stdout, /^no phase events; 0 tool round-trips, 3\/4 tokens\nGuard denials: 1 gate · 0 wd-ambiguous · 1 wd-deny\n\ndispatches: subagent transcripts not found \(no subagents\/ directory at [^\n]+\)\n$/);
+  const subDir = path.join(os.tmpdir(), 'ct-timing-guard-collapsed-transcript', 'subagents');
+  assert.equal(r.stdout, `no phase events; 0 tool round-trips, 3/4 tokens\nGuard denials: 1 gate · 0 wd-ambiguous · 1 wd-deny\n\ndispatches: subagent transcripts not found (no subagents/ directory at ${subDir})\n`);
 });
 
 test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds but whose read fails (mode 000) degrades to a note, exit 0', skipUnderRoot('root ignores file permissions'), () => {
@@ -218,6 +220,9 @@ test('#3375 AC3.1: with --auto-transcript the phase table is byte-identical to b
   assert.match(r.stdout, /^\| implementer \| 1 \| 65 \| 1 \| 13\/24 \| 100\/5 \|$/m);
   assert.match(r.stdout, /^\| task review \| 1 \| 30 \| 1 \| 7\/8 \| 50\/0 \|$/m);
   assert.match(r.stdout, /^\| whole-branch review \| 1 \| 120 \| 2 \| 20\/30 \| 0\/10 \|$/m);
+  // R7: exactly one blank line separates the tier table from the role table
+  assert.match(r.stdout, /\n\| capable \|[^\n]*\n\n\| Role \| Dispatches \|/);
+  assert.doesNotMatch(r.stdout, /\n\n\n/);
   assert.ok(r.stdout.indexOf('| whole-branch review |') < r.stdout.indexOf('| task review |') && r.stdout.indexOf('| task review |') < r.stdout.indexOf('| implementer |'), 'roles render in ROLE_PATTERNS order');
   assert.doesNotMatch(r.stdout, /^\| (fast|frontier|unmapped|unlabelled) \|/m);
   const d = readTiming(s.dir).dispatches;
