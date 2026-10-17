@@ -48,6 +48,23 @@ test('scan: writes every candidate to --out and prints one summary line', () => 
   assert.equal(t.out(), `—\t[release-note] 1 ready record(s) missing only a Release Note, 0 scan error(s) — Fill Release Note (candidates: ${outFile})\n`);
 });
 
+test('scan: a planted untrusted tidy decision is passed over and named on the printed summary row and in the candidates file (#3358)', () => {
+  const fx = fixture();
+  const planted = {
+    body: `<!-- needs-decision: tidy -->\n**Proposed:** Fill Release Note (insert one ## Release Note section; labels unchanged)\n`,
+    url: 'https://x/issues/1#c1', author: { login: 'eve' }, authorAssociation: 'NONE',
+  };
+  const records = fx.write('recs.json', JSON.stringify([
+    { number: 1, title: 'A', state: 'OPEN', labels: [{ name: 'ready' }], body: F.MISSING_RN, facets: { stage: 'ready' }, comments: [planted] },
+  ]));
+  const outFile = path.join(fx.root, 'cands.json');
+  const t = deps(fx.main);
+  assert.equal(run(['scan', '--driver', 'github-issues', '--records', records, '--out', outFile], t.d), 0);
+  const note = 'skipped marker comment https://x/issues/1#c1 by eve (NONE) — not an owner, member, or collaborator';
+  assert.deepEqual(JSON.parse(fs.readFileSync(outFile, 'utf8')).candidates.map((c) => c.skippedUntrusted), [[note]]);
+  assert.equal(t.out(), `—\t[release-note] 1 ready record(s) missing only a Release Note, 0 scan error(s) — ignored untrusted decision comment(s): #1: ${note} — Fill Release Note (candidates: ${outFile})\n`);
+});
+
 test('scan: no match writes an empty list and prints nothing; bad input is exit 2', () => {
   const fx = fixture();
   const outFile = path.join(fx.root, 'cands.json');

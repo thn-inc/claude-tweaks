@@ -1,0 +1,59 @@
+---
+files:
+  - plugin/bin/lib/issues/comment-trust.js
+  - plugin/skills/_shared/pr-run-comments.md
+  - plugin/skills/demo/entry-paths.md
+  - plugin/bin/lib/wrap-up/engine-verify.js
+  - plugin/bin/lib/reconcile/console-execute.js
+  - plugin/bin/lib/issues/grant-maturation.js
+  - plugin/skills/_shared/work-record.md
+---
+
+# Ignore a Planted Marker Comment
+
+**Persona:** A maintainer of a public repository where anyone with a GitHub account can comment on issues and PRs. A stranger has posted a comment that copies one of the plugin's markers, such as a `<!-- run-comment: try-it -->` walkthrough or a backdated `grant-mode-audit … auto-merge=pending` line.
+**Goal:** Have every plugin reader treat that comment as if it were absent, and see in one line that it was skipped, so a planted comment can never steer a demo, pass a check, or mature a merge grant.
+**Entry point:** Any plugin step that reads marker comments back from GitHub: `/claude-tweaks:demo #N`, wrap-up's acceptance-labeling check, `hooks.js resolve-console`, the auto-merge grant gate, or the backlog's `needs-decision` lane.
+**Success state:** Every reader took the "no such comment" path for the planted comment and printed `skipped marker comment {url} by {login} ({association}) — not an owner, member, or collaborator`. Comments from the maintainer and their collaborators still worked exactly as before.
+
+## Steps
+
+### 1. Demo a record whose PR carries a stranger's walkthrough — `/claude-tweaks:demo #N`
+- **URL:** `/claude-tweaks:demo #N`, for a record whose PR has a `<!-- run-comment: try-it -->` comment posted by an account with author association `NONE`
+- **Action:** Run demo. It reads the PR's run comments through `_shared/pr-run-comments.md`'s Find step, which keeps only comments whose `authorAssociation` is `OWNER`, `MEMBER` or `COLLABORATOR`.
+- **Should feel:** Uneventful. The walkthrough on screen is the run's own, or a fresh one composed from the record's acceptance criteria. The stranger's steps never appear.
+- **Should understand:** The skip line, printed one line above the verdict, names the planted comment's URL, its author and their association. Trust comes from GitHub's author association, not from which account is reading. Anyone with write access could already push to the branch, so a collaborator's comment is trusted, and another maintainer reading the same PR sees the same result.
+- **Red flags:** Steps from the planted comment shown as the walkthrough. A planted comment dropped with no skip line. A collaborator's legitimate walkthrough rejected because a different account ran demo.
+
+### 2. Close a run whose issue carries a planted Verification Brief — wrap-up's acceptance check
+- **URL:** wrap-up's verify table (`bin/lib/wrap-up/engine-verify.js` acceptance-labeling check) on a `demo:pending` record
+- **Action:** A stranger has posted a comment headed `## Verification Brief`, or the pointer line `Verification Brief posted to PR #…`, and it is the only brief on the record. Run wrap-up's verification.
+- **Should feel:** Strict in the right place. The check fails as if no brief were posted.
+- **Should understand:** The failing row's detail ends with `; ignored: skipped marker comment …`. When a run spans several records and some pass, each passing record's ignored comments still show as `; ignored (#N): …`, so none goes unmentioned. The same brief posted by a member passes.
+- **Red flags:** The check passing on the planted brief. A pass row that hides a skipped comment it ignored.
+
+### 3. Resolve a Review Console that has a planted "executed" reply — `hooks.js resolve-console`
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-console --run {run-dir}`
+- **Action:** Resolve the console after a stranger posted a reply starting `<!-- console-item: executed -->` under the console comment.
+- **Should feel:** Like the stranger's reply is not there. The run posts its own executed reply instead of editing theirs.
+- **Should understand:** The command's output lists each skipped reply on its own line. A reply from a trusted author is still updated in place on later runs.
+- **Red flags:** The stranger's reply edited by the plugin. Two executed replies from the run itself on a re-run.
+
+### 4. Let a pending merge grant age — the auto-merge grant gate
+- **URL:** dispatch's group gate (`dispatch/grant-maturation-gate.md`) or wrap-up's singleton short-circuit (`wrap-up/auto-merge-short-circuit.md`), on a record labelled `auto:merge-pending`
+- **Action:** A stranger has posted a `grant-mode-audit` marker dated weeks ago, and the record's real grant marker is missing. Reach the merge checkpoint.
+- **Should feel:** Safe. The grant is not matured, and nothing merges early.
+- **Should understand:** Only trusted comments are passed to `extractPendingGrantedAt`, so the backdated marker gives the grant no age, and it reads as not yet matured. The gate's report carries the skip line the snippet printed to stderr. `console-resolve` and the console-execute merge check name the skipped marker in their leave-open or merge reason.
+- **Red flags:** `auto:merge` promoted from a planted marker. A skip line printed to stderr but missing from the gate's report.
+
+### 5. Triage a record with an outsider's decision comment — the `needs-decision` lane
+- **URL:** `/claude-tweaks:backlog` attention/refine lanes, `/claude-tweaks:tidy`, or `/claude-tweaks:specify #N` shaping, on a record with a `<!-- needs-decision: … -->` comment
+- **Action:** A stranger has posted an unresolved `needs-decision` comment on a record. Run the lane that reads it.
+- **Should feel:** Like the record has no open decision. It is neither held for a decision nor kept labelled `needs:decision` because of that comment.
+- **Should understand:** `_shared/work-record.md`'s Resolution rule counts only a trusted author's comment as a decision comment, and every reader names any lookalike it skipped. A stranger's `needs-decision: tidy` comment also no longer keeps release-note repair from proposing its fix. The summary line lists the ignored comment.
+- **Red flags:** A record parked in the decision lane by a stranger's comment. A resolver editing the stranger's comment.
+
+## Origin
+- Created during build of #3358 (filter run-comment marker reads by the posting identity, not the marker alone)
+- Steps 1-5 built in this session
+- Related specs: #3358, #2821 (the try-it walkthrough demo reads back), #309 (pending-grant maturation)

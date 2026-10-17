@@ -282,7 +282,12 @@ function mergeResolution(snapshot, deps) {
       vetoWindowHours: deps.vetoWindowHours,
       now: deps.now(),
     });
-    if (!mat.mature) return { resolution: 'leave-open', reason: `#${n} lacks auto:merge and a matured auto:merge-pending (${mat.reason})` };
+    if (!mat.mature) {
+      // #3358: name the untrusted marker comments ghReadGrants passed over, so an
+      // unknown-age grant is not mistaken for "never granted".
+      const passedOver = Array.isArray(g.skippedUntrusted) && g.skippedUntrusted.length ? ` — ${g.skippedUntrusted.join('; ')}` : '';
+      return { resolution: 'leave-open', reason: `#${n} lacks auto:merge and a matured auto:merge-pending (${mat.reason})${passedOver}` };
+    }
   }
   return { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' };
 }

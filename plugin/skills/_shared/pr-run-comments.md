@@ -91,6 +91,31 @@ the plain `brief`/`timing` markers whenever it is running inside a multi-spec co
 completely unchanged — `{kind}` is simply `brief:{spec}` / `timing:{spec}` instead of the bare
 form for that spec's own find/update/create calls, exactly as `verdict:{spec}` already does.
 
+## Trusted authors
+
+A comment is writable by anyone who can comment on the PR or issue, so a marker in its body proves
+nothing about who wrote it. A marker or heading comment counts only when its author association is
+`OWNER`, `MEMBER`, or `COLLABORATOR`. `gh` returns it as `authorAssociation`; the REST and MCP
+transports return it as `author_association`. A missing field is untrusted — a comment with neither field is skipped. An untrusted
+marker comment takes the same path as no such comment — create fresh, fall back, or fail the check —
+never the trusted path.
+
+There is no viewer lookup. Anyone with write access can already push to the PR branch, so a narrower
+rule adds no protection, while matching the viewer rejects a comment read by a different maintainer or
+account.
+
+**Excluded on purpose.** Bots and one-time contributors carry `CONTRIBUTOR`, which is not trusted.
+
+Add the select after the marker match, and run the note filter alongside it so each skipped comment is
+named in one line in the reader's output:
+
+```
+select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")
+select((.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | not) | "skipped marker comment \(.url) by \(.author.login // "unknown") (\(.authorAssociation // "no association")) — not an owner, member, or collaborator"
+```
+
+Code readers use `bin/lib/issues/comment-trust.js`, which builds both filters above.
+
 ## Post-or-update procedure (per kind, per run — per kind per spec per run under multi-spec)
 
 **One comment per kind per run** (one per kind **per spec** per run, under multi-spec — see
@@ -108,7 +133,16 @@ plugin's PR-comment surface that edits rather than always-appends.
 
    ```bash
    gh pr view {pr-number} --repo {host}/{owner}/{repo} --json comments \
-     --jq '.comments[] | select(.body | startswith("<!-- run-comment: {kind} -->")) | .id'
+     --jq '.comments[] | select(.body | startswith("<!-- run-comment: {kind} -->")) | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | .id'
+   ```
+
+   Only a trusted author's comment is found (**Trusted authors** above); an untrusted marker comment
+   reads as not found. Run the skip-notice filter over the same comments and keep its lines in the
+   output:
+
+   ```bash
+   gh pr view {pr-number} --repo {host}/{owner}/{repo} --json comments \
+     --jq '.comments[] | select(.body | startswith("<!-- run-comment: {kind} -->")) | select((.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | not) | "skipped marker comment \(.url) by \(.author.login // "unknown") (\(.authorAssociation // "no association")) — not an owner, member, or collaborator"'
    ```
 
    `.id` here is the GraphQL node ID (e.g. `IC_kwDO...`), not a REST numeric ID — `gh pr view
@@ -139,7 +173,9 @@ plugin's PR-comment surface that edits rather than always-appends.
 **MCP transport (no `gh`, #3131).** The find and update steps above are `gh`-only, and there is no
 MCP comment-edit mapping — post a new comment with `add_issue_comment` on the PR's number instead
 of updating. Before posting, list the PR's comments (`issue_read`, `get_comments`) and look for a
-prior comment of this kind by its marker; when one is found, make the new body's second line
+prior comment of this kind by its marker, counting only a comment whose `author_association` is
+trusted (**Trusted authors** above; an untrusted marker comment is skipped with that section's note,
+not superseded); when one is found, make the new body's second line
 `Supersedes {prior comment URL} — this transport cannot edit comments.` so a reader knows which one
 is current, and log an `AUTO` line naming both comment ids. When the read cannot identify one (the
 read fails, or returns no marker), post without that line — never skip the post to avoid a duplicate. Compose

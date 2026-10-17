@@ -1205,14 +1205,10 @@ async function main(argv) {
         return stdout;
       },
     };
-    const { resolveConsoleExecution } = require('./lib/reconcile/console-execute');
+    const { resolveConsoleExecution, renderExecutedLines } = require('./lib/reconcile/console-execute');
     const result = await resolveConsoleExecution(runDir, { approve, decline }, deps);
     if (result.status === 'executed') {
-      const summary = result.outcomes.map((o) => `${o.id}:${o.outcome}`).join(', ');
-      process.stdout.write(
-        `claude-tweaks: console resolved for ${path.basename(runDir)} (PR #${result.prNumber}) — ${summary}`
-        + `${result.resolved ? '' : ' — Resolve left unticked (not every item cleared)'}\n`,
-      );
+      process.stdout.write(renderExecutedLines(result, path.basename(runDir)));
       return 0;
     }
     if (result.status === 'noop') {
