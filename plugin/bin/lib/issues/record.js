@@ -5,6 +5,7 @@
 // import from this file rather than re-declaring their own copies. No network.
 'use strict';
 
+const nodePath = require('node:path');
 const { sharedFacetDefaults } = require('./facet-shape');
 
 const ORIGINS = ['code-health', 'harness-health', 'journey-health', 'docs-health', 'capture', 'dispatch'];
@@ -839,9 +840,16 @@ function parseDependencyAssumptions(body) {
 // plain "No user-visible change." rather than omitting the parameter —
 // `spec-template.md`'s Release Note guidance treats that phrasing as valid
 // content, never as licence to skip the section.
+// keyFiles (#2975, optional): Array<{ path, change? }> — renders `## Technical Approach` /
+// `### Key Files` after `## Release Note` and before the footer, one `- \`{path}\` —
+// {change}` bullet per entry (change defaults to "modify"). It exists so an agent-composed
+// record satisfies /build's micro-plan condition 3 (a Key Files list) and so
+// grouping.js's extractKeyFilesSection can read it. Paths must be repo-relative: absolute
+// (posix or win32) and `..`-segment paths throw. Absent or [] composes byte-identical
+// output to the call without it.
 function specShapedBody({
   header, currentState, deliverables, acceptanceCriteria, openQuestion, releaseNote, filedBy, provenance, footer, verifiedAsOf, premiseCheck,
-  templateStamp,
+  templateStamp, keyFiles,
 } = {}) {
   const isEmpty = (value) => value === undefined || value === null || value === ''
     || (Array.isArray(value) && value.length === 0);
@@ -873,9 +881,28 @@ function specShapedBody({
   if (!isEmpty(templateStamp) && !TEMPLATE_STAMP_VALUE_RE.test(templateStamp)) {
     throw new Error(`specShapedBody: templateStamp must match "{path} @ {version}" with no whitespace in either token (got "${templateStamp}")`);
   }
+  if (keyFiles !== undefined && keyFiles !== null && !Array.isArray(keyFiles)) {
+    throw new Error(`specShapedBody: keyFiles must be an array (got ${typeof keyFiles})`);
+  }
+  const keyFileBullets = (keyFiles || []).map((entry, i) => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error(`specShapedBody: keyFiles[${i}] must be an object with a path`);
+    }
+    const { path: filePath, change = 'modify' } = entry;
+    if (typeof filePath !== 'string' || filePath === '' || /[\n`]/.test(filePath)) {
+      throw new Error(`specShapedBody: keyFiles[${i}].path must be a non-empty single-line string with no backtick (got ${JSON.stringify(filePath)})`);
+    }
+    if (nodePath.posix.isAbsolute(filePath) || nodePath.win32.isAbsolute(filePath) || filePath.split(/[\\/]/).includes('..')) {
+      throw new Error(`specShapedBody: keyFiles[${i}].path must be repo-relative — no absolute path or ".." segment (got "${filePath}")`);
+    }
+    if (typeof change !== 'string' || change === '' || /\n/.test(change)) {
+      throw new Error(`specShapedBody: keyFiles[${i}].change must be a non-empty single-line string`);
+    }
+    return `- \`${filePath}\` — ${change}`;
+  });
   const { origin, deferReason } = provenance || {};
   if (deferReason !== undefined) oneOf('deferReason', deferReason, DEFER_REASONS);
-  const block = (v) => (Array.isArray(v) ? v.join('\n\n') : v);
+  const block =(v) => (Array.isArray(v) ? v.join('\n\n') : v);
   const parts = [];
   if (!isEmpty(header)) parts.push(header);
   if (!isEmpty(verifiedAsOf)) parts.push(`Verified-as-of: ${verifiedAsOf.toLowerCase()}`);
@@ -887,6 +914,7 @@ function specShapedBody({
   if (hasOQ) parts.push('## Open Question', block(openQuestion));
   else parts.push('## Acceptance Criteria', block(acceptanceCriteria));
   parts.push('## Release Note', block(releaseNote));
+  if (keyFileBullets.length > 0) parts.push('## Technical Approach', '### Key Files', keyFileBullets.join('\n'));
   if (footer === undefined) {
     parts.push(`_Filed by \`${filedBy}\`. Close to resolve; label \`wontfix\` to suppress future reports of this finding._`);
   } else if (footer !== null && !isEmpty(footer)) {
