@@ -38,6 +38,22 @@ Fixtures under `tests/fixtures/impeccable-plugin/` are executed outputs, not han
 
 `.claude/skills/upstream-drift/judge-procedure.md` step 3 has a table of verified contract-root mappings. #2478 updated the `impeccable-cli` row when its contract path moved. Recheck the mapping against the new tag with `gh api "repos/{repo}/git/trees/{tag}?recursive=1"`.
 
+### An entry with no contract tests: re-verify every literal, then pin new ones
+
+The `superpowers` entry has one version site, its `pinned` value. It has no `upstream-pin` comment, no contract test and `fixtures: []`, so the drift checks are its only proof. `checkAssertions` reads only the cached copy whose version equals `pinned` (`resolveRoots`), and it matches each `must-match` with `content.includes` on raw bytes. For an entry like that:
+
+- Move the pin before adding assertions. A line that exists only in the new release cannot match while the old pin stands.
+- Count every existing `must-match` with `grep -cF` against the new copy of its `upstream-path`. A file that survives can still drop the literal. 7.0.0's brainstorming rewrite dropped `Invoke the writing-plans skill`, and #3376 retargeted the assertion to the surviving `invoke superpowers:writing-plans and no other skill`, with the reason in a manifest comment.
+- Use single-line fragments. A literal that wraps across two upstream lines never matches.
+- A new assertion's `claims:` names the record that will rely on the line and the release the line first appeared in, measured against the local caches. Write "6.2.0 or earlier" when the oldest cached copy already has it.
+- Prove a new assertion can fail without editing the manifest. Change its `must-match` in memory, then check that only that assertion comes back `unmatched`:
+
+```bash
+node -e "const{loadManifest}=require('./tools/upstream-drift/manifest.js');const{checkAssertions}=require('./tools/upstream-drift/checks.js');const d=structuredClone(loadManifest('./tools/upstream-drift/manifest.yml').dependencies.find(x=>x.name==='superpowers'));d.assertions.at(-1)['must-match']='zzz-not-upstream';console.log(checkAssertions(d).results.filter(x=>x.status!=='ok'))"
+```
+
+The re-pin is done when the drift run reports assertions `ok` with every assertion checked. `skipped` means no cached copy matched `pinned`, so nothing was checked.
+
 ## Verify
 
 ```bash
