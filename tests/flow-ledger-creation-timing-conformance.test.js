@@ -31,7 +31,11 @@ test('AC1.1: build/worktree-setup.md Step 4.6 creates the ledger after the workt
   assert.match(text, /Either way — created now or found — append any ledger-bound note `\/flow` Step 2 held/);
   assert.match(text, /then commit a `docs\/plans\/` ledger by its explicit path/);
   assert.match(text, /When this run's active ledger already exists \(a resumed run — resolved per `_shared\/ledger-format\.md`'s resolution rule/);
-  assert.ok(text.indexOf('4.5. **Record the assignment**') < text.indexOf('4.6. **Create the open-items ledger'));
+  const recordAt = text.indexOf('4.5. **Record the assignment**');
+  const createAt = text.indexOf('4.6. **Create the open-items ledger');
+  assert.notStrictEqual(recordAt, -1, 'Step 4.5 marker must exist');
+  assert.notStrictEqual(createAt, -1, 'Step 4.6 marker must exist');
+  assert.ok(recordAt < createAt, 'Step 4.6 must follow Step 4.5');
 });
 
 test('AC2.1: the No-worktree run exception is keyed on strategy/shape, not the momentary worktree field', () => {
@@ -72,7 +76,9 @@ test('AC1.1: multi-spec creates one shared ledger at Shared worktree step 1, par
   const text = read('flow/multi-spec.md');
   const start = text.indexOf('### Shared worktree');
   assert.ok(start !== -1, 'Shared worktree section must exist');
-  const section = text.slice(start, text.indexOf('2. **Per-record builds skip creation**', start));
+  const end = text.indexOf('2. **Per-record builds skip creation**', start);
+  assert.ok(end !== -1, 'Shared worktree step 2 end anchor must exist');
+  const section = text.slice(start, end);
   assert.match(section, /Create the open-items ledger here \(#3036\)/);
   assert.match(section, /the parent run dir `\{parent\}\/`, exported later as `\$MULTISPEC_PARENT_DIR`/);
   assert.match(section, /spec-\{N1\}-\{N2\}/);
