@@ -102,8 +102,11 @@ Using the facets already read in Resolve-the-input case 1/5 (`parseRecordFacets`
 present:**
 
 ```bash
-gh issue view {n} --json comments -q '.comments[] | select(.body | contains("<!-- needs-decision: ")) | select(.body | contains("**Resolved:**") | not) | .id'
+gh issue view {n} --json comments -q '.comments[] | select(.body | contains("<!-- needs-decision: ")) | select(.body | contains("**Resolved:**") | not) | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | .id'
+gh issue view {n} --json comments -q '.comments[] | select(.body | contains("<!-- needs-decision: ")) | select(.body | contains("**Resolved:**") | not) | select((.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | not) | "skipped marker comment \(.url) by \(.author.login) (\(.authorAssociation // "no association")) — not an owner, member, or collaborator"'
 ```
+
+Only a trusted author's comment is a decision comment (`_shared/pr-run-comments.md`'s Trusted authors); print the second command's lines — they name the skipped lookalikes.
 
 For each returned GraphQL node ID, fetch that comment's current body, prepend `**Resolved:**
 promoted via /specify — {date}\n\n` to it, write the result to this run's session-scoped temp file

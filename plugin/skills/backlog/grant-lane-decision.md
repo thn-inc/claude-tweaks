@@ -34,8 +34,12 @@ other `failedKey` at any phase stays a silent Skip row (`refine-headless.md` Ste
 Query whether this record already carries an *unresolved* decision comment from this unit:
 
 ```bash
-gh issue view "$ISSUE" --json comments -q '.comments[] | select(.body | contains("<!-- needs-decision: {unit} -->")) | select(.body | contains("**Resolved:**") | not) | .id'
+gh issue view "$ISSUE" --json comments -q '.comments[] | select(.body | contains("<!-- needs-decision: {unit} -->")) | select(.body | contains("**Resolved:**") | not) | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | .id'
+gh issue view "$ISSUE" --json comments -q '.comments[] | select(.body | contains("<!-- needs-decision: {unit} -->")) | select(.body | contains("**Resolved:**") | not) | select((.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | not) | "skipped marker comment \(.url) by \(.author.login) (\(.authorAssociation // "no association")) — not an owner, member, or collaborator"'
 ```
+
+Only a trusted author's comment counts (`_shared/pr-run-comments.md`'s Trusted authors); the second
+command names each skipped lookalike — keep its lines in this step's output.
 
 `{unit}` is `backlog-refine` or `backlog-grant`, per caller. A resolved comment's `**Resolved:**`
 line is prepended above the marker (`_shared/work-record.md`'s resolution rule), so a resolved
