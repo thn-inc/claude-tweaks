@@ -119,3 +119,81 @@ test('extractCitations works under a repo-root plugin root (".")', () => {
   const r = load.extractCitations('`_shared/foo.md`', 'skills/flow/SKILL.md', '.', { exists: existsIn(['skills/_shared/foo.md']) });
   assert.deepStrictEqual(r.resolved, ['skills/_shared/foo.md']);
 });
+
+function tree(files) {
+  const has = (p) => Object.prototype.hasOwnProperty.call(files, p);
+  return {
+    readFile: (p) => (has(p) ? files[p] : null),
+    listSkillMds: () => Object.keys(files).filter((p) => /(^|\/)skills\/[^/]+\/SKILL\.md$/.test(p)),
+  };
+}
+const B = (s) => Buffer.byteLength(s, 'utf8');
+
+test('entryPointLoads: floor is the SKILL.md bytes; closure sums the transitive set once each', () => {
+  const files = {
+    'plugin/skills/flow/SKILL.md': 'Read `a.md` in this skill\'s directory.\n',
+    'plugin/skills/flow/a.md': 'Then `b.md`.\n',
+    'plugin/skills/flow/b.md': 'leaf\n',
+    'plugin/skills/flow/orphan.md': 'never cited\n',
+  };
+  const [row] = load.entryPointLoads('plugin', tree(files));
+  assert.strictEqual(row.entry, 'plugin:flow');
+  assert.strictEqual(row.floor, B(files['plugin/skills/flow/SKILL.md']));
+  assert.deepStrictEqual(row.files, ['plugin/skills/flow/SKILL.md', 'plugin/skills/flow/a.md', 'plugin/skills/flow/b.md']);
+  assert.strictEqual(row.closure, row.files.reduce((s, f) => s + B(files[f]), 0));
+  assert.deepStrictEqual(row.unresolved, []);
+});
+
+test('entryPointLoads: entries are namespaced by root so same-named skills never collide', () => {
+  const a = load.entryPointLoads('plugin', tree({ 'plugin/skills/x/SKILL.md': 'p\n' }));
+  const b = load.entryPointLoads('.claude', tree({ '.claude/skills/x/SKILL.md': 'c\n' }));
+  assert.deepStrictEqual([a[0].entry, b[0].entry], ['plugin:x', '.claude:x']);
+});
+
+test('entryPointLoads: a citation cycle terminates and counts each file once', () => {
+  const files = {
+    'plugin/skills/s/SKILL.md': '`a.md`\n',
+    'plugin/skills/s/a.md': '`b.md`\n',
+    'plugin/skills/s/b.md': '`a.md` and `SKILL.md`\n',
+  };
+  const [row] = load.entryPointLoads('plugin', tree(files));
+  assert.deepStrictEqual(row.files, ['plugin/skills/s/SKILL.md', 'plugin/skills/s/a.md', 'plugin/skills/s/b.md']);
+  assert.strictEqual(row.closure, B('`a.md`\n') + B('`b.md`\n') + B('`a.md` and `SKILL.md`\n'));
+});
+
+test('entryPointLoads: compose sources join the closure and are walked transitively', () => {
+  const composeLine = 'Run `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step x "${CLAUDE_PLUGIN_ROOT}/skills/_shared/src.md"`.\n';
+  const files = {
+    'plugin/skills/s/SKILL.md': 'Read `step.md` in this skill\'s directory.\n',
+    'plugin/skills/s/step.md': composeLine,
+    'plugin/skills/_shared/src.md': 'see `deep.md`\n',
+    'plugin/skills/_shared/deep.md': 'deep\n',
+  };
+  const [row] = load.entryPointLoads('plugin', tree(files));
+  assert.deepStrictEqual(row.files, [
+    'plugin/skills/_shared/deep.md', 'plugin/skills/_shared/src.md',
+    'plugin/skills/s/SKILL.md', 'plugin/skills/s/step.md',
+  ]);
+});
+
+test('entryPointLoads: a file both cited and a compose source counts once', () => {
+  const files = {
+    'plugin/skills/s/SKILL.md': '`_shared/src.md` and `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --step x "${CLAUDE_PLUGIN_ROOT}/skills/_shared/src.md"`\n',
+    'plugin/skills/_shared/src.md': 'src\n',
+  };
+  const [row] = load.entryPointLoads('plugin', tree(files));
+  assert.deepStrictEqual(row.files, ['plugin/skills/_shared/src.md', 'plugin/skills/s/SKILL.md']);
+  assert.strictEqual(row.closure, B(files['plugin/skills/s/SKILL.md']) + B('src\n'));
+});
+
+test('entryPointLoads: unresolved citations and missing compose sources surface, at zero bytes', () => {
+  const files = {
+    'plugin/skills/s/SKILL.md': '`missing.md`\n`node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --step x "${CLAUDE_PLUGIN_ROOT}/skills/_shared/gone.md"`\n',
+  };
+  const [row] = load.entryPointLoads('plugin', tree(files));
+  assert.strictEqual(row.closure, row.floor);
+  assert.deepStrictEqual(row.unresolved.map((u) => [u.line, u.token]), [
+    [1, 'missing.md'],
+    [2, 'plugin/skills/_shared/gone.md'],
+  ]);
+});

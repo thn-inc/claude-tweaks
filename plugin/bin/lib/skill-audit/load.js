@@ -18,6 +18,11 @@
 
 const path = require('node:path');
 const { toPosix } = require('../shared-primitives');
+const { measuredTextBytes, parseComposeCallLine } = require('./context-cost');
+
+// parseComposeCallLine resolves `${CLAUDE_PLUGIN_ROOT}/x` against an absolute
+// root; a fixed sentinel root keeps this module free of the real filesystem.
+const SENTINEL_ROOT = path.resolve(path.sep, '__skill_load_model_root__');
 
 const posix = path.posix;
 const PLUGIN_ROOT_PREFIX = '${CLAUDE_PLUGIN_ROOT}/';
@@ -87,4 +92,70 @@ function extractCitations(text, citingFile, pluginRoot, { exists }) {
   return { resolved, unresolved };
 }
 
-module.exports = { discoverPluginRoots, extractCitations, withinRoot };
+function composeSources(text, citingFile, pluginRoot, { exists }) {
+  const resolved = [];
+  const unresolved = [];
+  text.replace(/\r\n/g, '\n').split('\n').forEach((line, i) => {
+    if (!line.includes('compose-context.js')) return;
+    const parsed = parseComposeCallLine(line, SENTINEL_ROOT);
+    if (!parsed) return;
+    if (parsed.unparsed) {
+      unresolved.push({ citingFile, line: i + 1, token: `compose-context.js: ${parsed.reason}` });
+      return;
+    }
+    for (const abs of parsed.sources) {
+      const p = posix.join(pluginRoot, toPosix(path.relative(SENTINEL_ROOT, abs)));
+      if (withinRoot(pluginRoot, p) && exists(p)) resolved.push(p);
+      else unresolved.push({ citingFile, line: i + 1, token: p });
+    }
+  });
+  return { resolved, unresolved };
+}
+
+function entryPointLoads(pluginRoot, { readFile, listSkillMds }) {
+  const texts = new Map();
+  const read = (p) => {
+    if (!texts.has(p)) texts.set(p, readFile(p));
+    return texts.get(p);
+  };
+  const exists = (p) => read(p) !== null;
+  const edges = new Map();
+  const edgesOf = (p) => {
+    if (!edges.has(p)) {
+      const text = read(p) || '';
+      const cites = extractCitations(text, p, pluginRoot, { exists });
+      const composed = composeSources(text, p, pluginRoot, { exists });
+      edges.set(p, {
+        next: [...new Set([...cites.resolved, ...composed.resolved])],
+        unresolved: [...cites.unresolved, ...composed.unresolved],
+      });
+    }
+    return edges.get(p);
+  };
+  const bytesOf = (p) => measuredTextBytes(read(p) || '', p).bytes;
+  const rootName = pluginRoot === '.' ? '.' : posix.basename(pluginRoot);
+
+  return listSkillMds().map((skillMd) => {
+    const seen = new Set([skillMd]);
+    const queue = [skillMd];
+    const unresolved = [];
+    while (queue.length) {
+      const p = queue.shift();
+      const e = edgesOf(p);
+      unresolved.push(...e.unresolved);
+      for (const n of e.next) {
+        if (!seen.has(n)) { seen.add(n); queue.push(n); }
+      }
+    }
+    const files = [...seen].sort();
+    return {
+      entry: `${rootName}:${posix.basename(posix.dirname(skillMd))}`,
+      floor: bytesOf(skillMd),
+      closure: files.reduce((sum, f) => sum + bytesOf(f), 0),
+      files,
+      unresolved,
+    };
+  }).sort((a, b) => (a.entry < b.entry ? -1 : a.entry > b.entry ? 1 : 0));
+}
+
+module.exports = { discoverPluginRoots, extractCitations, withinRoot, entryPointLoads };
