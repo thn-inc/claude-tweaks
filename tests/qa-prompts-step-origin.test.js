@@ -21,6 +21,12 @@ function between(text, startLiteral, endLiteral) {
   return text.slice(start, end);
 }
 
+// Each mutation must fail the one assertion it targets (matched by its message), not any assertion.
+function expectRed(assertFn, original, mutated, message) {
+  assert.notEqual(mutated, original, `mutation is not a no-op: ${message}`);
+  assert.throws(() => assertFn(mutated), { message }, `reverting did not fail "${message}"`);
+}
+
 function assertQaPromptsBlock(block) {
   assert.match(block, /`navigate`/, 'navigate action is named');
   assert.match(block, /`setup\.steps`/, 'setup.steps is in scope');
@@ -52,14 +58,16 @@ function assertQaPromptsBlock(block) {
   assert.match(block, /story ids/i, 'flag line names affected story ids');
 }
 
-const LIVE_BLOCK = () => between(read(QA_PROMPTS), BLOCK_START, BLOCK_END);
+function liveBlock() {
+  return between(read(QA_PROMPTS), BLOCK_START, BLOCK_END);
+}
 
 test('AC1.1, AC4.1, AC4.2: qa-prompts.md URL-resolution block states the navigate step-origin rule and its worked example', () => {
-  assertQaPromptsBlock(LIVE_BLOCK());
+  assertQaPromptsBlock(liveBlock());
 });
 
 test('AC3.1: each qa-prompts assertion goes red when its prose is reverted', () => {
-  const live = LIVE_BLOCK();
+  const live = liveBlock();
   const literals = [
     '`unresolved-secondary-origin`',
     '`teardown.steps`',
@@ -76,19 +84,17 @@ test('AC3.1: each qa-prompts assertion goes red when its prose is reverted', () 
 });
 
 test('AC3.1: loopback, never-flagged, and log-line assertions each go red on their own prose', () => {
-  const live = LIVE_BLOCK();
-  const expectRed = (mutated, message) => {
-    assert.notEqual(mutated, live, `mutation is not a no-op: ${message}`);
-    assert.throws(() => assertQaPromptsBlock(mutated), { message }, `reverting did not fail "${message}"`);
-  };
-
-  expectRed(live.replace(/\n  Loopback means[^\n]*\n/, '\n'), 'loopback host set is cited from qa-procedures.md');
+  const live = liveBlock();
+  const expectBlockRed = (mutated, message) => expectRed(assertQaPromptsBlock, live, mutated, message);
+  const neverFlaggedMessage = 'root-relative and APP_URL-equal targets are never flagged';
   const rootRelative = /\n  - \*\*Root-relative `target`\*\*[^\n]*/;
-  const apEqual = /\n  - \*\*Absolute origin already equal to `APP_URL`'s\*\*[^\n]*/;
-  expectRed(live.replace(rootRelative, ''), 'root-relative and APP_URL-equal targets are never flagged');
-  expectRed(live.replace(apEqual, ''), 'root-relative and APP_URL-equal targets are never flagged');
-  expectRed(live.replace('`QA: N navigate step origins rewritten to APP_URL`', ''), 'step-origin rewrite-count line');
-  expectRed(live.replace(/`QA: flagged secondary origins [^`]*`/, ''), 'flag line for secondary origins');
+  const appUrlEqual = /\n  - \*\*Absolute origin already equal to `APP_URL`'s\*\*[^\n]*/;
+
+  expectBlockRed(live.replace(/\n  Loopback means[^\n]*\n/, '\n'), 'loopback host set is cited from qa-procedures.md');
+  expectBlockRed(live.replace(rootRelative, ''), neverFlaggedMessage);
+  expectBlockRed(live.replace(appUrlEqual, ''), neverFlaggedMessage);
+  expectBlockRed(live.replace('`QA: N navigate step origins rewritten to APP_URL`', ''), 'step-origin rewrite-count line');
+  expectBlockRed(live.replace(/`QA: flagged secondary origins [^`]*`/, ''), 'flag line for secondary origins');
 });
 
 const STORIES_SKILL = 'plugin/skills/stories/SKILL.md';
@@ -125,11 +131,7 @@ test('AC2.1: qa-agent.md navigate bullet names the target field', () => {
 
 test('AC3.1: stories/qa-agent assertions go red when their prose is reverted', () => {
   const section = between(read(STORIES_SKILL), SCHEMA_START, SCHEMA_END);
-  // Each mutation must fail the one assertion it targets (matched by its message), not any assertion.
-  const expectSchemaRed = (mutated, message) => {
-    assert.notEqual(mutated, section, `mutation is not a no-op: ${message}`);
-    assert.throws(() => assertStoriesSchema(mutated), { message }, `reverting did not fail "${message}"`);
-  };
+  const expectSchemaRed = (mutated, message) => expectRed(assertStoriesSchema, section, mutated, message);
 
   expectSchemaRed(
     section.replace(/- action: navigate\n\s+target: [^\n]*\n/, ''),
@@ -153,10 +155,7 @@ test('AC3.1: stories/qa-agent assertions go red when their prose is reverted', (
   );
 
   const line = navigateBullet();
-  const expectAgentRed = (mutated, message) => {
-    assert.notEqual(mutated, line, `mutation is not a no-op: ${message}`);
-    assert.throws(() => assertAgentNavigateBullet(mutated), { message }, `reverting did not fail "${message}"`);
-  };
+  const expectAgentRed = (mutated, message) => expectRed(assertAgentNavigateBullet, line, mutated, message);
   expectAgentRed(line.replace('<target>', '<url>'), 'navigate maps goto to <target>');
   expectAgentRed(line.replace('`target` field', 'URL field'), 'target field is named');
 });
