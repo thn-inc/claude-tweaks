@@ -161,7 +161,7 @@ same convention as the reports above (weak-tier: see above).
 
 **Near-duplicate candidate warning (refs #1944).** `queue-pull-script.md`'s final step runs
 `bin/lib/issues/near-duplicate.js`'s `findNearDuplicates` pairwise across every pair of records
-landing in *different* file-overlap groups, logging one `AUTO — dispatch: near-duplicate
+landing in *different* dispatch groups, logging one `AUTO — dispatch: near-duplicate
 candidates across groups: #A / #B ({signals})` line per firing pair to stderr. Same-group pairs
 (a fast-lane bundle's members) are already co-built together and have nothing new to warn about. Warning
 only, never a gate — no selection change.

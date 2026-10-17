@@ -108,7 +108,7 @@ template applied.
 A dispatched call is headless and cannot answer `interactive` prompts, so both calls pass `auto` explicitly; an explicit mode argument outranks the project's `auto-mode` policy (`_shared/auto-mode-contract.md`'s precedence: CLI arg > pipeline config > project policy > skill default), and the `autonomy` ceiling still bounds what the run may do. The `auto` suffix after the step list is independent of the `DISPATCH_HEADLESS=1 ` prefix before `/claude-tweaks:flow`.
 
 ```
-Task scope: Execute claude-tweaks build+test for this file-overlap group of
+Task scope: Execute claude-tweaks build+test for this dispatch group of
 GitHub records: {issue list}. Singleton -> run
 `PIPELINE_RUN_DIR="{minted-run-dir}" /claude-tweaks:flow #{issue} build,test auto`.
 Bundle (2+ issues) -> run

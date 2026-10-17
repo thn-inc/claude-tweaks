@@ -81,3 +81,42 @@ test('oversized-group-report.md says a group over the guard needs a bundle cap a
     'oversized-group-report.md must explain when the report can still fire',
   );
 });
+
+const SHARED = path.join(__dirname, '..', 'plugin', 'skills', '_shared');
+const ROOT = path.join(__dirname, '..');
+
+test('AC8.1: issue-claims Group claiming says groups are single records or fast-lane bundles and all-members claiming applies to bundles', () => {
+  const claims = readText(path.join(SHARED, 'issue-claims.md'));
+  const start = claims.indexOf('### Group claiming');
+  assert.ok(start >= 0, 'issue-claims.md lost its "### Group claiming" heading');
+  const end = claims.indexOf('**Post-write verification', start);
+  assert.ok(end > start, 'issue-claims.md lost the "**Post-write verification" anchor after Group claiming');
+  const section = claims.slice(start, end);
+  assert.match(section, /single records? or (?:a |one )?fast-lane bundles?/i, 'Group claiming must say a group is a single record or a fast-lane bundle');
+  assert.match(section, /fast-lane bundle/, 'Group claiming must say all-members claiming applies to a fast-lane bundle');
+  assert.ok(section.includes('neighbour-in-flight'), 'Group claiming must name the neighbour-in-flight guard for cross-group overlap');
+});
+
+test('AC8.2 (shared/help/docs): no prose says a record pulls its whole file-overlap group', () => {
+  const files = [
+    path.join(SHARED, 'issue-claims.md'),
+    path.join(ROOT, 'plugin', 'skills', 'help', 'reference-card.md'),
+    path.join(ROOT, 'docs', 'getting-started.md'),
+  ];
+  for (const file of files) {
+    const text = readText(file);
+    assert.ok(!text.includes('whole file-overlap group'), `${path.relative(ROOT, file)} still carries "whole file-overlap group"`);
+  }
+});
+
+test('design-notes.md records the per-record decision with its three rejected alternatives', () => {
+  const notes = readText(path.join(DISPATCH, 'design-notes.md'));
+  const heading = '## Why per-record groups, not transitive file-overlap groups';
+  const start = notes.indexOf(heading);
+  assert.ok(start >= 0, `design-notes.md is missing "${heading}"`);
+  const next = notes.indexOf('\n## ', start + heading.length);
+  const section = notes.slice(start, next === -1 ? undefined : next);
+  for (const token of ['#1365', 'weakest', 'bare drain']) {
+    assert.ok(section.includes(token), `the per-record decision section must name ${token}`);
+  }
+});
