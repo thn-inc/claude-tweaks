@@ -35,7 +35,7 @@ After every spec's pipeline reaches `/wrap-up`'s Phase 4 execution step (or stop
    **If the call exits non-zero for any other reason** (a present-but-malformed `engine-state.json` for one spec aborts the whole invocation before producing any stdout, per `wrap-up-engine.js`'s own fail-loud contract — passing every spec's state in one call means one bad file blocks every spec's engine-rendered sections, not just the bad one's): do not silently omit the five engine-fed sections for the run. Drop only the offending spec's `--spec-state` flag and re-run the call with the remaining specs' flags — the same "engine failure is never permission to skip a row" principle `curation-engine.md` states for the single-spec engine path, applied per-spec here. Note the dropped spec in the console's Not run/Failed footer with the CLI's own error text as the reason.
 4. Render the consolidated console (template below): the prose-aggregated sections from step 2's reads, then the engine's verbatim output from step 3 in its own position (see the template), then the remaining prose-aggregated sections in the order "Numbering rules" below states.
 5. Apply the user's approval/override
-6. Archive the parent run dir — the inline archive action in "On approval" step 9 / "On override" step 7 below (Shared teardown carries no archive row of its own; it reaches archival only inside step 7's `teardown-run`, which calls the same `archiveRunDir` — a second pass is a harmless no-op, per `wrap-up/cleanup-procedures-execution.md` Section C step 5).
+6. Archive the parent run dir — the inline archive action in "On approval" step 9 / "On override" step 7 below (Shared teardown carries no archive row of its own, and its step 7 `teardown-run` passes `--remote-ref-only` so it never archives — this inline action is the run's only archival, and it runs after every Cleanup actions row.)
 
 In `interactive` mode (auto opted out), the per-spec consoles ran inline as usual — no consolidation step. Skip this entirely. (Default `auto`, `confirm`, and `hybrid` all consolidate.)
 
@@ -186,13 +186,13 @@ These steps appear as visible, numbered Cleanup actions rows in the console temp
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" teardown-run --run "$MULTISPEC_PARENT_DIR" \
-     --merged  # or --abandoned when the branch was discarded, not merged
+     --merged --remote-ref-only  # or --abandoned --remote-ref-only when the branch was discarded, not merged
    ```
 
-   `teardown-run` composes the archival + local-branch-delete + remote-branch-delete mechanics
+   `teardown-run` composes the local-branch-delete + remote-branch-delete mechanics
    `cleanup-procedures-execution.md` Section C uses for a single-spec run — target
    `$MULTISPEC_PARENT_DIR` (the run occupies exactly one worktree/branch for the whole multi-spec
-   run, recorded on the parent, never a per-spec `$PIPELINE_RUN_DIR`). Called after step 6 above,
+   run, recorded on the parent, never a per-spec `$PIPELINE_RUN_DIR`). `--remote-ref-only` skips its archival step (the same narrowing `cleanup-procedures-execution.md` Section C step 5.5 uses), so the parent run directory stays in place for the Cleanup actions rows still running (dev-server teardown may run "any time", "On approval" step 8) and for the run's own archival, "On approval" step 9 / "On override" step 7, which always runs last (`wrap-up/cleanup-procedures.md`'s Ordering rule). Called after step 6 above,
    not before: `teardown-run`'s own worktree-removal step would otherwise skip (the worktree is
    still locked to this session at that point) — harmless either way, but the local branch delete
    would fail outright if attempted while the branch is still checked out in the (not-yet-removed)
