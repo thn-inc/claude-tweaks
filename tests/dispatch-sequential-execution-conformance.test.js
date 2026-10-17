@@ -61,7 +61,9 @@ const collapse = (s) => s.replace(/\s+/g, ' ');
 
 test('AC1.1/AC1.2: sequential-execution.md names the direct wrap-up cleanup-only call as the first-call teardown (#3367)', () => {
   const t = read('plugin/skills/dispatch/sequential-execution.md');
-  const para = t.slice(t.indexOf('Where that teardown falls'));
+  const at = t.indexOf('Where that teardown falls');
+  assert.notStrictEqual(at, -1, 'teardown paragraph anchor "Where that teardown falls" is present');
+  const para = t.slice(at);
   assert.match(para.slice(0, para.indexOf('\n')), /`\/claude-tweaks:wrap-up \{target\} cleanup-only`[^\n]*`two-call-gate\.md` section 5/);
   assert.ok(!collapse(t).includes('/claude-tweaks:flow {target} wrap-up'), 'no /flow-routed teardown remains');
 });
