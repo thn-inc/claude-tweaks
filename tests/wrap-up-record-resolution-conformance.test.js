@@ -65,3 +65,8 @@ test('Section E reads parked-at-shaping at cleanup planning, before item 4 remov
   const flat = collapse(read('plugin/skills/wrap-up/cleanup-procedures-execution.md'));
   assert.match(flat, /parked-at-shaping: true`[\s\S]{0,120}?read during cleanup planning from the worktree mirror/);
 });
+
+test('Section E names the current-branch header read (no worktree, item 4 never runs)', () => {
+  const flat = collapse(read('plugin/skills/wrap-up/cleanup-procedures-execution.md'));
+  assert.match(flat, /`current-branch` run has no worktree and item 4 never runs, so the run dir's own `work\/\{issue\}-spec\.md` holds the header/);
+});

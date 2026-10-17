@@ -432,7 +432,9 @@ checks 1 or 3 fail.
    `parked-at-shaping: true` (`materialize.md`'s field for exactly this restore-on-abandon case —
    read during cleanup planning from the worktree mirror,
    `{worktree}/.claude-tweaks/pipelines/{run-id}/work/{issue}-spec.md` resolved as in Section C
-   step 2, while the worktree still exists, since item 4 removes it before this step runs):
+   step 2, while the worktree still exists, since item 4 removes it before this step runs; a
+   `current-branch` run has no worktree and item 4 never runs, so the run dir's own
+   `work/{issue}-spec.md` holds the header — read it there):
    restore `parked` — bootstrap the label if missing (per _shared/label-bootstrap.md, LABELS_JSON =
    [['parked', 'Deferred backlog entry, waiting on a trigger condition', '2EA44F']]), then
    `gh issue edit "$ISSUE" --add-label parked`. Skip restoration silently when no materialized
