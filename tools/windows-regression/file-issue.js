@@ -131,6 +131,9 @@ function namesFile(l, needle) {
   return false;
 }
 
+const TEST_POINT_KINDS = new Set(['ok', 'notOk']);
+const BOUNDARY_KINDS = new Set(['ok', 'notOk', 'subtest', 'yamlClose']);
+
 // The excerpt for `file`, read off `tap` (verify's tapLines classification of
 // `lines`, computed once per source): it opens at the owner of the first line
 // naming the file — the failing-test line whose block holds that line, so the
@@ -164,13 +167,13 @@ function excerptFor(file, { lines, normalized, tap }) {
     start = hit;
     for (let i = hit - 1; i >= 0; i--) {
       const t = tap[i];
-      if (ownerAt(i) !== -1 || t.kind === 'ok' || t.kind === 'notOk' || t.kind === 'subtest' || t.kind === 'yamlClose') { start = i + 1; break; }
+      if (ownerAt(i) !== -1 || BOUNDARY_KINDS.has(t.kind)) { start = i + 1; break; }
     }
   }
   const openIndent = tap[start].kind === 'notOk' ? tap[start].indent : 0;
   let end = Math.min(start + EXCERPT_MAX_LINES, lines.length);
   for (let i = start + 1; i < end; i++) {
-    if ((tap[i].kind === 'ok' || tap[i].kind === 'notOk') && tap[i].indent <= openIndent) { end = i; break; }
+    if (TEST_POINT_KINDS.has(tap[i].kind) && tap[i].indent <= openIndent) { end = i; break; }
   }
   return lines.slice(start, end).join('\n');
 }
