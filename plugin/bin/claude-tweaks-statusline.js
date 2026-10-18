@@ -183,7 +183,9 @@ function renderEffort(input) {
 // Header line shapes: "## main", "## main...origin/main [ahead 1]",
 // "## No commits yet on main" (fresh repo, no commits), "## HEAD (no
 // branch)" (detached HEAD — no branch to report, matching the old
-// symbolic-ref failure behavior).
+// symbolic-ref failure behavior). `--no-optional-locks` keeps this read-only
+// probe from rewriting the index under `index.lock`, which otherwise races the
+// session's own `git add`/`commit`.
 function parseStatusBranch(output) {
   const lines = output.split('\n').filter((l) => l.length > 0);
   if (!lines.length || !lines[0].startsWith('## ')) return { branch: null, dirty: false };
@@ -201,7 +203,7 @@ function parseStatusBranch(output) {
 
 function renderGit(cwd) {
   try {
-    const output = execSync('git status --porcelain -b', {
+    const output = execSync('git --no-optional-locks status --porcelain -b', {
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf8',
       cwd,

@@ -95,6 +95,63 @@ test('renderGit: uses the passed cwd rather than the process-wide cwd', () => {
   }
 });
 
+test('renderGit: does not rewrite the index on a stale-stat repo (AC1 — --no-optional-locks)', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-git-'));
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repoDir });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repoDir });
+    fs.writeFileSync(path.join(repoDir, 'file.txt'), 'hello\n');
+    execFileSync('git', ['add', 'file.txt'], { cwd: repoDir });
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repoDir });
+
+    // Content is unchanged but the stat cache no longer matches the index entry, so a plain
+    // `git status` refreshes the index and rewrites .git/index under index.lock.
+    const stale = new Date('2001-01-01T00:00:00Z');
+    fs.utimesSync(path.join(repoDir, 'file.txt'), stale, stale);
+    const indexPath = path.join(repoDir, '.git', 'index');
+    const before = fs.readFileSync(indexPath);
+    const beforeMtime = fs.statSync(indexPath).mtimeMs;
+
+    const orig = process.env.NO_COLOR;
+    process.env.NO_COLOR = '1';
+    try {
+      assert.strictEqual(sl.renderGit(repoDir), 'main');
+    } finally {
+      if (orig === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = orig;
+    }
+    assert.ok(fs.readFileSync(indexPath).equals(before), 'renderGit rewrote .git/index');
+    assert.strictEqual(fs.statSync(indexPath).mtimeMs, beforeMtime);
+  } finally {
+    fs.rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test('renderGit: dirty repo renders the dirty dot (AC2)', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-git-'));
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repoDir });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repoDir });
+    fs.writeFileSync(path.join(repoDir, 'file.txt'), 'hello\n');
+    execFileSync('git', ['add', 'file.txt'], { cwd: repoDir });
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repoDir });
+    fs.writeFileSync(path.join(repoDir, 'untracked.txt'), 'x\n');
+
+    const orig = process.env.NO_COLOR;
+    process.env.NO_COLOR = '1';
+    try {
+      assert.strictEqual(sl.renderGit(repoDir), 'main●');
+    } finally {
+      if (orig === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = orig;
+    }
+  } finally {
+    fs.rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
 test('readStdin: clears the 50ms fallback timeout once stdin ends (regression: dangling timer)', async () => {
   const { EventEmitter } = require('node:events');
   const fakeStdin = new EventEmitter();
