@@ -4,7 +4,7 @@
 > When code matching an Auto-detect pattern changes, the corresponding doc should be reviewed and updated.
 >
 > Auto-detect patterns are matched against the **current** run's `git diff --name-only`
-> (`plugin/skills/wrap-up/docs-health-integration.md` Step 2, via `plugin/bin/lib/issues/blast-radius.js`'s `classifyDiffFiles`),
+> (`plugin/skills/wrap-up/docs-health-integration.md`'s D0 step 2, via `plugin/bin/lib/issues/blast-radius.js`'s `classifyDiffFiles`),
 > never against history — so payload patterns carry only the post-#418 `plugin/` spelling.
 
 ## Tier: 3

@@ -13,7 +13,7 @@ files:
 **Persona:** A claude-tweaks maintainer reaching the Wrap-Up Review Console at the end of a `/flow` run whose build ran `/superpowers:subagent-driven-development`. During that build the SDD controller decided things in lieu of stopping — a plan-vs-review conflict, a breaker adjudication, a residual final-review finding — and wrote each as a `Ruling:` line. The maintainer never saw those decisions being made and wants to confirm or undo each one before the branch merges.
 **Goal:** See every load-bearing ruling as its own row at the console, ratify the ones that hold, and reverse the ones that don't by filing a born-ready record — without a new mid-pipeline stop and without a ruling silently disappearing into a terminal ledger row.
 **Entry point:** `/claude-tweaks:wrap-up`'s Review Console (single-spec chat console) for a run whose `staged/` holds one or more `sdd-ruling-{N}.md` files.
-**Success state:** Each ruling row is resolved as either `accepted` (ratified, with the ruling's own "— why" clause as the Resolution) or `deferred` (reversed, pointing at the new record `reversed → #{n}`) in the run ledger; the console archives with no `open` ruling row left, and the maintainer knows which decisions they confirmed and which they overturned.
+**Success state:** Each ruling row is resolved as either `accepted` (ratified, with the ruling's own "— why" clause — or the fixed fallback when the line carries none — as the Resolution) or `deferred` (reversed, pointing at the new record `reversed → #{n}`) in the run ledger; the console archives with no `open` ruling row left, and the maintainer knows which decisions they confirmed and which they overturned.
 
 ## Steps
 
@@ -40,10 +40,10 @@ files:
 
 ### 4. Confirm the write-back in the run ledger
 - **URL:** `docs/plans/{date}-{slug}-ledger.md`, the row the staged file's `Ledger:` header named
-- **Action:** Check the row flipped: ratify → `accepted` with Resolution `ratified at Review Console — {the ruling's own "— why" clause}`; reverse → `deferred` with Resolution `reversed → #{new record}`. Under Approve all the flip rides `wrap-up-engine.js finish-console`'s `ledger` array; outside Approve all, and for every reverse, the console writes the row directly at its step 1 per `_shared/staged-patch.md`'s Write-back to the ledger.
+- **Action:** Check the row flipped: ratify → `accepted` with Resolution `ratified at Review Console — {the ruling's own "— why" clause}` (`ratified at Review Console — no — why clause on the ruling line` when the line carries none); reverse → `deferred` with Resolution `reversed → #{new record}`. Under Approve all a ratify rides `wrap-up-engine.js finish-console`'s `ledger` array; outside Approve all a ratify is written directly at the console's step 1 per `_shared/staged-patch.md`'s Write-back to the ledger. A reverse is never written at step 1: it is written at step 7 (Queue writes), only once that step has created the reversal record.
 - **Should feel:** Closed-loop. The ledger file, not only `decisions.md`, says what state the ruling ended in.
-- **Should understand:** The row stayed `open` until this moment on purpose: a lost or unapplied staged file blocks completion loudly through the nothing-left-behind gate instead of passing as terminal.
-- **Red flags:** An `accepted` row with an empty Resolution. A ruling row still `open` after the console archived.
+- **Should understand:** The row stayed `open` until this moment on purpose: a lost or unapplied staged file blocks completion loudly through the nothing-left-behind gate instead of passing as terminal. The same holds for a reverse whose record step 7 declined (`refused-proposals.md`) or failed to create: the row stays `open` with the cause logged, because a terminal `deferred` with no record number could never be revisited.
+- **Red flags:** An `accepted` row with an empty Resolution. A ruling row still `open` after the console archived. A reversed row marked `deferred` with no `#{n}` in its Resolution.
 
 ### 5. Standalone build: find the ruling in the handoff instead
 - **URL:** `/claude-tweaks:build`'s Step 7 handoff, `### SDD rulings (standalone build, if any)`

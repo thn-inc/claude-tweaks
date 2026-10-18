@@ -38,8 +38,8 @@ plainly instead of reading like one.
 
 ## Worked examples
 
-Both instances below are the two records the originating reflect finding named — one code-to-code,
-one prose-to-code, so the check above covers both shapes.
+The first two instances below are the two records the originating reflect finding named — one
+code-to-code, one prose-to-code. The instances after them add twin shapes those two do not show.
 
 **Code-to-code instance (#2251):** `plugin/bin/lib/issues/record.js`'s `TYPES`
 (`['bug', 'feature', 'task']`, line 11) must stay in sync with `plugin/bin/lib/release/subject.js`'s
