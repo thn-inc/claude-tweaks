@@ -62,6 +62,9 @@ function isAlwaysStub(file) {
   return ALWAYS_STUB_BASENAMES.has(base) || base.endsWith('.jsonl');
 }
 
+// `-c` pair that keeps non-ASCII names unquoted in diff headers and `--name-only` output alike.
+const GIT_UNQUOTED_PATHS = ['-c', 'core.quotePath=false'];
+
 // The repo-relative path of a `diff --git a/P b/P` header line, or null when it is not the
 // plain same-path form (quoted path, rename, copy). `P` may contain spaces, so it is
 // recovered from the line length rather than by splitting on whitespace.
@@ -96,10 +99,12 @@ function elideDiff(diff) {
       // Renames and copies (non-symmetric header) and quoted paths come back null: kept whole.
       const file = diffHeaderPath(headerLine);
       if (file === null) return chunk;
-      const addedOrDeleted = /^(new|deleted) file mode /m.test(extended);
-      if (!isAlwaysStub(file) && !(addedOrDeleted && Buffer.byteLength(chunk) > PER_FILE_CAP_BYTES)) return chunk;
+      const isDeleted = /^deleted file mode /m.test(extended);
+      const isAddedOrDeleted = isDeleted || /^new file mode /m.test(extended);
+      const isOversizeAddedOrDeleted = isAddedOrDeleted && Buffer.byteLength(chunk) > PER_FILE_CAP_BYTES;
+      if (!isAlwaysStub(file) && !isOversizeAddedOrDeleted) return chunk;
       elided.push(file);
-      if (/^deleted file mode /m.test(extended)) deleted.push(file);
+      if (isDeleted) deleted.push(file);
       return `${headerLine}\n[${Buffer.byteLength(afterHeader)} bytes of diff elided for ${file} — see oversizeSections]\n`;
     })
     .join('');
@@ -128,12 +133,10 @@ function buildContext({
   if (!base || !branch) throw new Error('buildContext: base and branch are both required');
   if (!dir) throw new Error('buildContext: dir is required (resolve it via resolveDir first)');
   const range = `${base}...${branch}`;
-  // core.quotePath=false keeps non-ASCII names unquoted in headers and --name-only alike, and the
-  // explicit flags pin the `a/`/`b/` header form against diff.noprefix / diff.mnemonicPrefix /
+  // The explicit flags pin the `a/`/`b/` header form against diff.noprefix / diff.mnemonicPrefix /
   // external-diff config — elideDiff's header parsing depends on it.
   const diff = git([
-    '-c',
-    'core.quotePath=false',
+    ...GIT_UNQUOTED_PATHS,
     'diff',
     '--no-color',
     '--no-ext-diff',
@@ -144,7 +147,7 @@ function buildContext({
 
   const filesText = filesFrom
     ? readFile(filesFrom, 'utf8')
-    : git(['-c', 'core.quotePath=false', 'diff', range, '--name-only']);
+    : git([...GIT_UNQUOTED_PATHS, 'diff', range, '--name-only']);
   const files = filesText
     .split('\n')
     .map((s) => s.trim())
@@ -166,12 +169,15 @@ function buildContext({
   const elidedSet = new Set(elided);
   const deletedSet = new Set(deleted);
   // The pointer a stub gives for the file's content, by what is still true of it.
-  const whereToLook = (f) =>
-    deletedSet.has(f)
-      ? `the file is deleted and its diff was elided (see the marker line above) — run \`git show ${base}:${f}\` for its last content`
-      : elidedSet.has(f)
-        ? 'its diff was elided too (see the marker line above) — read the live file for full content'
-        : 'its change is in the diff above — read the live file for full content';
+  function whereToLook(f) {
+    if (deletedSet.has(f)) {
+      return `the file is deleted and its diff was elided (see the marker line above) — run \`git show ${base}:${f}\` for its last content`;
+    }
+    if (elidedSet.has(f)) {
+      return 'its diff was elided too (see the marker line above) — read the live file for full content';
+    }
+    return 'its change is in the diff above — read the live file for full content';
+  }
   let out = diffText;
   for (const f of files) {
     out += `\n===== ${f} =====\n`;
@@ -199,11 +205,10 @@ function buildContext({
   }
   // An elided diff chunk can belong to a path outside a --files-from scope; still report it.
   for (const f of elided) oversize.add(f);
-  const oversizeSections = [...oversize];
 
   const contextPath = path.join(dir, 'context.md');
   writeFile(contextPath, out);
-  return { dir, contextPath, bytes: Buffer.byteLength(out), files: files.length, emptySections, oversizeSections };
+  return { dir, contextPath, bytes: Buffer.byteLength(out), files: files.length, emptySections, oversizeSections: [...oversize] };
 }
 
 module.exports = { resolveDir, buildContext, MAX_BUFFER, PER_FILE_CAP_BYTES, isAlwaysStub, elideDiff };

@@ -177,14 +177,20 @@ function shortLines(total, first, marker, markerAt = 2000) {
 
 const LATE_MARKER = 'DISTINCTIVE-LATE-LINE-MARKER\n';
 
+// A fresh repo on `main` with a committer identity configured; `prefix` names the temp dir.
+function initRepo(prefix) {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  git(repo, ['init', '-q', '-b', 'main']);
+  git(repo, ['config', 'user.email', 'test@example.invalid']);
+  git(repo, ['config', 'user.name', 'Test']);
+  return repo;
+}
+
 // Real-git fixture for the cap: a modified file one byte over the cap, a modified file at
 // exactly the cap, added over-cap / jsonl / lockfile / spaced-name files, and two deletions
 // (a plain file and a lockfile).
 function makeOversizeFixtureRepo() {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-oversize-'));
-  git(repo, ['init', '-q', '-b', 'main']);
-  git(repo, ['config', 'user.email', 'test@example.invalid']);
-  git(repo, ['config', 'user.name', 'Test']);
+  const repo = initRepo('review-ctx-oversize-');
   fs.writeFileSync(path.join(repo, 'big-modified.txt'), shortLines(PER_FILE_CAP_BYTES, 'first\n', LATE_MARKER));
   fs.writeFileSync(path.join(repo, 'exact.txt'), 'small\n');
   fs.writeFileSync(path.join(repo, 'doomed.txt'), 'doomed content\n');
@@ -213,12 +219,17 @@ function getOversizeRepo() {
   return oversizeRepo;
 }
 
+// The diff part of a bundle: everything before the first `===== {file} =====` section.
+function diffPartOf(bundle) {
+  return bundle.slice(0, bundle.indexOf('\n===== '));
+}
+
 function buildOversize(extra = {}) {
   const repo = getOversizeRepo();
   const dir = resolveDir({});
   const result = buildContext({ base: 'main', branch: 'feature', dir, ...repoDeps(repo), ...extra });
   const bundle = fs.readFileSync(result.contextPath, 'utf8');
-  return { result, bundle, diffPart: bundle.slice(0, bundle.indexOf('\n===== ')) };
+  return { result, bundle, diffPart: diffPartOf(bundle) };
 }
 
 // The text of one `===== {name} =====` section: everything up to the blank-line separator
@@ -292,10 +303,7 @@ test('deleted lockfile is stubbed (matcher before read), not empty', () => {
 });
 
 test('a modified lockfile has its diff chunk elided (always-stub applies to every change type) and is listed once', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-modlock-'));
-  git(repo, ['init', '-q', '-b', 'main']);
-  git(repo, ['config', 'user.email', 'test@example.invalid']);
-  git(repo, ['config', 'user.name', 'Test']);
+  const repo = initRepo('review-ctx-modlock-');
   fs.writeFileSync(path.join(repo, 'yarn.lock'), 'v1\n');
   git(repo, ['add', '.']);
   git(repo, ['commit', '-q', '-m', 'base']);
@@ -331,10 +339,7 @@ test('--files-from scope still reports a diff-elided path outside the list', () 
 // A tiny repo whose feature branch adds one over-cap file named `name`; `config` pairs are
 // applied to the repo before the commits.
 function makeAddedOversizeRepo(name, config = []) {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-added-'));
-  git(repo, ['init', '-q', '-b', 'main']);
-  git(repo, ['config', 'user.email', 'test@example.invalid']);
-  git(repo, ['config', 'user.name', 'Test']);
+  const repo = initRepo('review-ctx-added-');
   for (const [k, v] of config) git(repo, ['config', k, v]);
   fs.writeFileSync(path.join(repo, 'seed.txt'), 'seed\n');
   git(repo, ['add', '.']);
@@ -352,7 +357,7 @@ test('F2: diff.noprefix=true in the repo config does not defeat header parsing �
   const result = buildContext({ base: 'main', branch: 'feature', dir, ...repoDeps(repo) });
   const bundle = fs.readFileSync(result.contextPath, 'utf8');
   assert.match(bundle, /^\[\d+ bytes of diff elided for noprefix-big\.txt — see oversizeSections\]$/m);
-  assert.ok(!bundle.slice(0, bundle.indexOf('\n===== ')).includes('n'.repeat(1000)), 'diff part holds no added content');
+  assert.ok(!diffPartOf(bundle).includes('n'.repeat(1000)), 'diff part holds no added content');
   assert.strictEqual(result.oversizeSections.filter((p) => p === 'noprefix-big.txt').length, 1);
 });
 
@@ -361,7 +366,7 @@ test('F2: a non-ASCII added over-cap name is elided, stubbed, listed once under 
   const dir = resolveDir({});
   const result = buildContext({ base: 'main', branch: 'feature', dir, ...repoDeps(repo) });
   const bundle = fs.readFileSync(result.contextPath, 'utf8');
-  const diffPart = bundle.slice(0, bundle.indexOf('\n===== '));
+  const diffPart = diffPartOf(bundle);
   assert.match(diffPart, /^\[\d+ bytes of diff elided for café\.txt — see oversizeSections\]$/m);
   assert.ok(!diffPart.includes('n'.repeat(1000)));
   assert.ok(sectionOf(bundle, 'café.txt').startsWith('[section omitted: café.txt is '));
@@ -378,7 +383,7 @@ test('F2: the git calls carry core.quotePath=false and explicit diff prefixes', 
     dir: resolveDir({}),
     git: (args) => {
       calls.push(args);
-      return args.includes('--name-only') ? '' : args.includes('rev-parse') ? '/x\n' : '';
+      return args.includes('rev-parse') ? '/x\n' : '';
     },
     readFile: () => '',
   });
@@ -409,8 +414,6 @@ test('F3: elideDiff splits only after a line feed — a CR inside a hunk line ne
     '+y\rdiff --git a/w.jsonl b/w.jsonl\n' +
     '+z\rnew file mode 100644\n';
   const { text, elided } = elideDiff(diff);
-  assert.ok(!elided.includes('z.jsonl'));
-  assert.ok(!elided.includes('w.jsonl'));
   assert.deepStrictEqual(elided, []);
   assert.strictEqual(text, diff, 'a modified file with no always-stub name rejoins byte-for-byte');
 });
