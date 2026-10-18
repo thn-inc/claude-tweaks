@@ -208,7 +208,7 @@ to `next-mode.md` for the next iteration.
 **Near-duplicate candidate check also runs headlessly (#1944).**
 `shaping-mode.md`'s Near-duplicate candidate check is part of the procedure
 this section already reads and follows — no separate invocation here. When
-it stops shaping (`shapingRefusal` found a title-similar, `ready` candidate
+it stops shaping (`shapingRefusal` found a title-similar, `ready` candidate scoring at least 2 signals
 with a live claim or an open linked PR), that is a deliberate refusal, not
 a shaping error: record this record in the `failed` bucket the same way
 the tier-2 refusal above does, with the candidate's number and its firing

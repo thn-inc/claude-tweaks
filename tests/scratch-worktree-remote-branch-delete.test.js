@@ -17,6 +17,7 @@ const MERGE = read('plugin', 'skills', '_shared', 'pr-first-merge.md');
 const MERGE_POST_MERGE = read('plugin', 'skills', '_shared', 'pr-first-merge-post-merge.md');
 const CLEANUP = read('plugin', 'skills', 'wrap-up', 'cleanup-procedures.md');
 const CLEANUP_PROCEDURES_EXECUTION = read('plugin', 'skills', 'wrap-up', 'cleanup-procedures-execution.md');
+const MULTISPEC_CONSOLE = read('plugin', 'skills', 'flow', 'multispec-review-console.md');
 
 // --- 1. scratch-worktree.md §6: ancestry check + both outcomes ---
 
@@ -171,4 +172,22 @@ test('cleanup-procedures-execution.md Section C has an own-worktree remote-branc
   assert.match(section, /pr\.branch/);
   assert.match(section, /--remote-ref-only/);
   assert.match(section, /Only when step 4 actually proceeded past its/);
+});
+
+test("multispec-review-console.md Shared teardown step 7 passes --remote-ref-only, leaving archival to the console's last step (#3192)", () => {
+  const start = MULTISPEC_CONSOLE.indexOf('**Branch + remote-ref cleanup, once the shared worktree is gone (#594).**');
+  const end = MULTISPEC_CONSOLE.indexOf('### Per-issue label cleanup');
+  assert.ok(start > 0 && end > start, 'Shared teardown step 7 must exist and precede Per-issue label cleanup');
+  const step7 = MULTISPEC_CONSOLE.slice(start, end);
+  assert.match(step7, /teardown-run --run "\$MULTISPEC_PARENT_DIR"[\s\\]*--merged --remote-ref-only/);
+  assert.match(step7, /On approval" step 9/);
+  assert.match(MULTISPEC_CONSOLE, /^9\. Archive the parent run dir/m, 'the "On approval" step 9 that step 7 points at must be the archive action');
+});
+
+test('multispec-review-console.md "When to run" step 6 no longer routes archival through step 7\'s teardown-run (#3192)', () => {
+  const start = MULTISPEC_CONSOLE.indexOf('## When to run the consolidated console');
+  const end = MULTISPEC_CONSOLE.indexOf('## Locating the parent run directory');
+  const section = MULTISPEC_CONSOLE.slice(start, end);
+  assert.doesNotMatch(section, /reaches archival only inside step 7's `teardown-run`/);
+  assert.match(section, /--remote-ref-only/);
 });

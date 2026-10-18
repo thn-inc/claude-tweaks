@@ -1345,7 +1345,15 @@ restored (44/44 green). The recurring-pattern cost is that this project's own `p
 already has one hardened precedent (`realTarget()`) for exactly this bypass class, and it still had
 to be independently rediscovered rather than reused when a new exemption was authored nearby.
 
-**Second instance — casing (#3380, run ledger row 48).** The #3380 review (lens 3b) found that `superpowers-version.js`'s home exclusion and ancestor match compared JS `fs.realpathSync` paths case-sensitively. The JS form echoes the input's casing on a case-insensitive volume, so a mis-cased home entry slipped past `excludeHome`. It was fixed in PR #3406 (squash-merged as `ffe20b982`) by switching to `fs.realpathSync.native`, which returns the canonical case. The rule now names that form. `realTarget()` in `pre-tool-use.js` still uses the JS form; #3417's shared helper is where that converges.
+**Second instance — casing (#3380, run ledger row 48).** The #3380 review (lens 3b) found that `superpowers-version.js`'s home exclusion and ancestor match compared JS `fs.realpathSync` paths case-sensitively. The JS form echoes the input's casing on a case-insensitive volume, so a mis-cased home entry slipped past `excludeHome`. It was fixed in PR #3406 (squash-merged as `ffe20b982`) by switching to `fs.realpathSync.native`, which returns the canonical case. The rule now names that form. `realTarget()` in `pre-tool-use.js` still uses the JS form, deliberately — see the #3417 narrowing below.
+
+**Narrowed 2026-10-18 (#3417).** The rule no longer tells an author to copy `realTarget()`'s
+three-way shape (resolved / dangling-and-unprovable / missing-passes-through); it points at
+`plugin/bin/lib/path-guard`'s `resolveLeaf()`, which now returns that shape as a state, and
+`realTarget()` in `pre-tool-use.js` routes through it as the gate-side caller. IL-150 carries no
+removal condition of its own, so nothing is retired — the copy-the-shape instruction is replaced by
+a shared primitive. `realTarget()` still passes the JS `fs.realpathSync` rather than the module's
+`.native` default, so `isPolicyFile`'s equality with `canonicalRepoPath` is unchanged.
 
 ## IL-151 — Working Directory Discipline sanctioned a `cd` form that trips the harness's own permission checker
 
@@ -1736,6 +1744,17 @@ Cost on this build: one review round across two findings, both fixed in the same
 **Removal condition:** retire this entry and its `docs/donts.md` rule once a mechanical check (a
 grep-based lint, or a shared `lstat`-backed helper new filesystem-check code is required to route
 through) flags a name-keyed or existence-only check with no accompanying type check.
+
+**Removal condition met, narrowed rather than retired (2026-10-18, #3417).** Both mechanisms the
+condition above names now exist: the shared lstat-backed helper (`plugin/bin/lib/path-guard/`, with
+`lstatType()` and `resolveWithin()`) and the grep-based lint (`tests/path-guard-conformance.test.js`,
+which flags a change in any file's `realpathSync`/`existsSync` token count outside the module —
+the allowlist is count-based, so a same-file swap is invisible). The lint covers existence-only
+checks and realpath tokens only; it does not flag a name-keyed check such as a directory listing,
+which is the first reason the rule is narrowed rather than retired. The second is that the lint
+enforces only *routing* for new call sites; it does not make a legacy caller's check correct. The allowlisted legacy callers are judged one by one in the
+allowlist's reasons; an entry marked `UNSAFE —` is a known hazard, not an endorsement, and the
+allowlist is the list of them. One is open today, tracked in #3493.
 
 ## IL-162 — Redaction regexes run over uncapped transcript tool output
 

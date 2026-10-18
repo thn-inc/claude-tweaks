@@ -35,6 +35,7 @@ const { runGit, FAILURE } = require('./git-exec');
 const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
 const { hasClaimLogFor } = require('../log-decision/claim-log');
+const { resolveLeaf } = require('../path-guard');
 
 function pluginRoot() {
   return process.env.CLAUDE_PLUGIN_ROOT || '${CLAUDE_PLUGIN_ROOT}';
@@ -186,11 +187,17 @@ function isPipelineBookkeeping(repoRoot, targetPath) {
 function realTarget(targetPath) {
   if (typeof targetPath !== 'string' || !targetPath || !path.isAbsolute(targetPath)) return null;
   const resolved = path.resolve(targetPath);
-  const real = safeReal(resolved);
-  if (real) return real;
-  let isSymlink = false;
-  try { isSymlink = fs.lstatSync(resolved).isSymbolicLink(); } catch { /* nothing at this path at all */ }
-  if (isSymlink) return null;
+  // realpath: fs.realpathSync (the JS form), not path-guard's .native default:
+  // canonicalRepoPath and safeReal resolve the other side of isPolicyFile's
+  // equality with the JS form, so switching only this side to .native would
+  // turn a mis-cased allow into a deny. Moving both sides together is a
+  // separate change (#3495).
+  const leaf = resolveLeaf(resolved, { realpath: fs.realpathSync });
+  if (leaf.state === 'resolved') return leaf.path;
+  if (leaf.state === 'dangling') return null;
+  // 'missing' and 'unreadable' both keep the parent-only path: the pre-#3417
+  // code treated every lstat failure as "nothing there yet". It is a write
+  // target, so the write itself fails on the same EACCES.
   const parentReal = safeReal(path.dirname(resolved));
   if (!parentReal) return null;
   return path.join(parentReal, path.basename(resolved));

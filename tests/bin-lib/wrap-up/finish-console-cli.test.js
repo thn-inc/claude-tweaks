@@ -13,6 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-engine.js');
+const { runVerify } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'engine-verify'));
 
 let repoDir;
 
@@ -203,4 +204,65 @@ test('finish-console without --approve-all exits 2 with usage', () => {
 test('finish-console without --run-dir exits 2 with usage', () => {
   const r = run(['finish-console', '--approve-all'], { input: '{}' });
   assert.strictEqual(r.status, 2);
+});
+
+test('AC1.1: finish-console writes an issues array into verify-expectations.json, preserving every other field', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(
+    path.join(runDir, 'verify-expectations.json'),
+    JSON.stringify({ version: 1, memory: [], upstream: [], oversightExempt: [42], deferred: ['worktree'] }),
+  );
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: '{"issues":[3394]}' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const expectations = JSON.parse(fs.readFileSync(path.join(runDir, 'verify-expectations.json'), 'utf8'));
+  assert.deepStrictEqual(expectations.issues, [3394]);
+  assert.deepStrictEqual(expectations.oversightExempt, [42]);
+  assert.deepStrictEqual(expectations.deferred, ['worktree']);
+  assert.match(r.stdout, /issues: \[3394\]/);
+  assert.match(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), /issues: \[3394\]/);
+});
+
+test('finish-console without an issues key leaves a stored issues array untouched', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(
+    path.join(runDir, 'verify-expectations.json'),
+    JSON.stringify({ version: 1, memory: [], upstream: [], issues: [77] }),
+  );
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: '{}' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const expectations = JSON.parse(fs.readFileSync(path.join(runDir, 'verify-expectations.json'), 'utf8'));
+  assert.deepStrictEqual(expectations.issues, [77]);
+});
+
+test('finish-console treats a null issues key like an absent one (stored array untouched)', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(
+    path.join(runDir, 'verify-expectations.json'),
+    JSON.stringify({ version: 1, memory: [], upstream: [], issues: [77] }),
+  );
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: '{"issues":null}' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const expectations = JSON.parse(fs.readFileSync(path.join(runDir, 'verify-expectations.json'), 'utf8'));
+  assert.deepStrictEqual(expectations.issues, [77]);
+});
+
+test('AC2.1: finish-console rejects a non-integer issues entry before any write', () => {
+  const runDir = makeRunDir();
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: '{"issues":[1,"2"]}' });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /issues\[1\] must be a positive integer/);
+  assert.ok(!fs.existsSync(path.join(runDir, 'verify-expectations.json')), 'validation failure must precede any write');
+});
+
+test('AC3.1: finish-console issues reach carrier-commit on a header-less run dir (never skip)', () => {
+  const runDir = makeRunDir();
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: '{"issues":[900]}' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const withCommit = (args) => (args[0] === 'log' ? 'x\n\nFixes #900\n' : '');
+  const passing = runVerify({ runDir, base: 'main', deps: { git: withCommit, gh: () => '' } });
+  assert.strictEqual(passing.rows.find((row) => row.check === 'carrier-commit').result, 'pass');
+  const failing = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: () => '' } });
+  const failRow = failing.rows.find((row) => row.check === 'carrier-commit');
+  assert.strictEqual(failRow.result, 'fail');
+  assert.match(failRow.detail, /900/);
 });

@@ -22,7 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const readline = require('readline');
-const { isPathContained } = require('../shared-primitives');
+const { lstatType, resolveLeaf, canonicalRealpath, isAncestorOrSelf } = require('../path-guard');
 
 const TRANSCRIPT_SLUG_RULE = 'replace every character not in [A-Za-z0-9-] with "-" (observed: "/", " ", and "." all become "-")';
 
@@ -45,12 +45,11 @@ function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), fsImpl = fs
   if (!cwd && !sid) return [];
   const projects = path.join(homeDir, '.claude', 'projects');
   const projectsResolved = path.resolve(projects) + path.sep;
-  let projectsRealResolved;
-  try {
-    projectsRealResolved = fsImpl.realpathSync(projects);
-  } catch {
-    return [];
-  }
+  // realpath: fsImpl.realpathSync pins the JS form this reader has always used
+  // (path-guard defaults to .native, which would change Windows short-name
+  // expansion), so routing through path-guard (#3417) changes no behavior.
+  const projectsRealResolved = canonicalRealpath(projects, { fsImpl, realpath: fsImpl.realpathSync });
+  if (projectsRealResolved === null) return [];
   const out = [];
   // Containment is decided on the REAL path (symlinks resolved at every
   // component, including the leaf) — statSync/createReadStream follow
@@ -60,15 +59,12 @@ function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), fsImpl = fs
   // rejects a literal ".." before any filesystem call.
   const push = (p) => {
     if (!path.resolve(p).startsWith(projectsResolved)) return;
-    let real;
-    try {
-      real = fsImpl.realpathSync(p);
-    } catch {
-      return; // missing file or dangling symlink — unprovable, skip (fail closed)
-    }
-    if (!isPathContained(real, projectsRealResolved)) return;
-    const st = statOrNull(fsImpl, real);
-    if (st && st.isFile()) out.push({ path: real, mtimeMs: st.mtimeMs });
+    const leaf = resolveLeaf(p, { fsImpl, realpath: fsImpl.realpathSync });
+    if (leaf.state !== 'resolved') return; // missing, dangling or unreadable — unprovable, skip (fail closed)
+    // Admits the root itself, which the isFile check below still rejects.
+    if (!isAncestorOrSelf(projectsRealResolved, leaf.path)) return;
+    const st = statOrNull(fsImpl, leaf.path);
+    if (st && st.isFile()) out.push({ path: leaf.path, mtimeMs: st.mtimeMs });
   };
   if (cwd && sid) {
     push(path.join(projects, slugForCwd(cwd), `${sid}.jsonl`));
@@ -247,11 +243,10 @@ function transcriptModelOf(rows) {
 // before clipping. A symlinked subagents/ directory is never followed, and one
 // with no agent-* files is notFound rather than an empty table. Never throws.
 async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {}) {
-  try {
-    if (fsImpl.lstatSync(subagentsDir).isSymbolicLink()) {
-      return { items: [], notFound: `subagents/ directory is a symlink (not followed) at ${subagentsDir}`, excludedOutsideWindow: 0 };
-    }
-  } catch { /* absent or unreadable: readdirSync below names the code */ }
+  // Absent or unreadable falls through: readdirSync below names the code.
+  if (lstatType(subagentsDir, { fsImpl }).type === 'symlink') {
+    return { items: [], notFound: `subagents/ directory is a symlink (not followed) at ${subagentsDir}`, excludedOutsideWindow: 0 };
+  }
   let names;
   try {
     names = fsImpl.readdirSync(subagentsDir);
@@ -273,11 +268,9 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
     const m = /^agent-(.+?)(\.meta\.json|\.jsonl)$/.exec(n);
     if (!m) continue;
     ids.add(m[1]);
-    try {
-      if (fsImpl.lstatSync(path.join(subagentsDir, n)).isSymbolicLink()) skipped.set(n, 'symlink');
-    } catch (err) {
-      skipped.set(n, (err && err.code) || 'EUNKNOWN');
-    }
+    const t = lstatType(path.join(subagentsDir, n), { fsImpl });
+    if (t.type === 'symlink') skipped.set(n, 'symlink');
+    else if (t.type === 'missing' || t.type === 'unreadable') skipped.set(n, t.code);
   }
   if (ids.size === 0) return { items: [], notFound: `no agent-* transcripts in ${subagentsDir}`, excludedOutsideWindow: 0 };
   const built = [];

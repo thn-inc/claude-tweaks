@@ -5,6 +5,7 @@ files:
   - plugin/bin/hooks.js
   - plugin/bin/lib/hooks/pre-tool-use.js
   - plugin/skills/flow/manifesto.md
+  - plugin/skills/flow/SKILL.md
 ---
 
 # Recover from a Dispatch Config Deny
@@ -52,10 +53,10 @@ files:
 - **Should feel:** like resuming the pipeline at the step that was skipped, not like a workaround.
 - **Should understand:**
   - `config.yml` existing is the only thing the gate checks, so once Step 3 lands, nothing else needs to change.
-  - The run is in `auto` even when the project sets `auto-mode: default-off`: both of dispatch's Task-call commands end their step list with `auto` (`… build,test auto`, `… review,polish,wrap-up auto`), and an explicit mode argument outranks the policy. Without it, the call would resolve to `interactive`, which skips Step 3 entirely, and the remedy above could never be satisfied.
+  - The run is in `auto` even when the project sets `auto-mode: default-off`: both of dispatch's Task-call commands end their step list with `auto` (`… build,test auto`, `… review,polish,wrap-up auto`), and an explicit mode argument outranks the policy. Without it, `/flow` Step 1's dispatch-binding rung (#3372) still resolves the run to `auto`, because its `run-state.json` carries `dispatched: true`.
 - **Red flags:**
   - a Step 3 that writes `config.yml` somewhere other than `$GROUP_RUN_DIR`, such as a worktree-local shadow. The gate keeps denying in that case, and the fix belongs in run-dir anchoring, not here;
-  - a dispatched call whose `/claude-tweaks:flow` command carries no `auto` token. Under `auto-mode: default-off` it resolves to `interactive`, skips the Manifesto, and every commit stays denied.
+  - a dispatched call that still resolves to `interactive`. Now only an explicit `interactive` token, or a call that also lost `PIPELINE_RUN_DIR`, can do that (#3372); it skips the Manifesto, and every commit stays denied.
 
 ### 5. Retry the same commit — same agent
 - **URL:** the exact command from Step 2
@@ -71,4 +72,5 @@ A cwd-pinned dispatching session (#447, `dispatch/sequential-execution.md`) stil
 ## Origin
 - Created during build of #3225: dispatch binds the minted run to the group's worktree before call 1 (`record-worktree --dispatch`), and `pre-tool-use.js`'s `checkDispatchConfigGate` denies git writes there until `/claude-tweaks:flow` Step 3 writes `config.yml`. The deny text was hardened during the whole-branch review: a re-stamp never clears it, it carries no retry-budget charge, and it gives an in-flow remedy.
 - Updated during build of #3335: dispatch's Task-call `/claude-tweaks:flow` commands now pass `auto` explicitly, so a project with `auto-mode: default-off` no longer resolves a dispatched call to `interactive`. That mode skipped Step 3 and left this deny with no satisfiable remedy. The pin is `tests/dispatch-flow-explicit-auto-mode.test.js`.
+- Updated during build of #3372: `/flow` Step 1 treats a run bound `dispatched: true` as `auto` regardless of `auto-mode`, so a dispatched agent that drops the `auto` token no longer lands here. Pinned by `tests/flow-dispatched-run-auto-mode.test.js`.
 - Related records: #2837 (post-hoc first-call artifact check, the backstop), #3212 (the dispatch firing whose first calls #3064 and #3066 committed before writing `config.yml`), #991 / IL-131 (the sibling bookkeeping-stamps gate, `recover-from-a-bookkeeping-stamp-deny.md`).

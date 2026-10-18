@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/skills/_shared/pr-first-merge.md
+  - plugin/skills/dispatch/resume-confirmation.md
   - plugin/skills/dispatch/SKILL.md
   - plugin/skills/backlog/refine-mode.md
   - plugin/skills/_shared/github-pr-scan.md
@@ -23,7 +24,7 @@ files:
 - **Red flags:** `bot:blocked` on the record instead of `bot:parked` (that is the retry ceiling — a different recovery, and `auto:*` will be gone alongside it); a park comment naming no check and no reason.
 
 ### 2. Fix or re-run the check — GitHub / the branch
-- **URL:** the failing check's run URL from `gh pr checks {pr}`
+- **URL:** the failing check's run URL from `gh pr checks {pr}` — or, for a head-sha workflow run the rollup has not registered, from `gh run list --commit {headRefOid}`
 - **Action:** Fix the cause on the run's branch (a new push), or re-run a flaky job.
 - **Should feel:** Ordinary CI hygiene.
 - **Should understand:** Nothing merges on its own while `bot:parked` is present — `_shared/github-pr-scan.md`'s `[pr-unarmed]` sweep skips records carrying it (as it does `bot:blocked`), so a check that goes green later does not silently un-park the run.
@@ -33,10 +34,11 @@ files:
 - **URL:** `/claude-tweaks:dispatch`'s "Confirm before resuming" (`Resume {target} toward merge? PR #{n} …, CI: {status} …`) — reached by asking the agent to resume the run
 - **Action:** Read the CI status in the question and confirm.
 - **Should feel:** Decided on evidence — the same status shown is the status acted on.
-- **Should understand:** One-shot per Step 2.5's resume rule: green → the run re-enters its Review Console and merges; red → the confirmation says so and the run stays parked; pending → `--auto` is armed only when `mergeStateStatus` is `BLOCKED` (the forge holds it), otherwise the confirmation carries the choice, because on an unprotected repository arming is an immediate merge. Remove `bot:parked` as part of that resume, not before.
-- **Red flags:** A resume merging a PR whose checks the question showed as pending or red; the agent running a 15-minute watch inside the confirmation.
+- **Should understand:** One-shot per Step 2.5's resume rule: green → the run re-enters its Review Console and merges; red → the confirmation says so and the run stays parked; pending → `--auto` is armed only when `mergeStateStatus` is `BLOCKED` (the forge holds it), otherwise the confirmation carries the choice, because on an unprotected repository arming is an immediate merge. Remove `bot:parked` as part of that resume, not before. "Green" means both of Step 2.5's reads agree: every rollup entry passed **and** every workflow run for the PR head (`gh run list --commit`) has completed without a failing conclusion (a failing head run reads red) — a partial rollup, where some workflows have not registered yet, reads pending (#3405).
+- **Red flags:** A resume merging a PR whose checks the question showed as pending or red; the agent running a 15-minute watch inside the confirmation; `CI: passing` shown while a head-sha workflow run is still in progress.
 
 ## Origin
 - Created during build of #560 (merge-verification: merge-site consumers gate on CI) — the gate's red path introduced the "parked with grants intact" state and its recovery.
 - Updated during build of #605 (distinct `bot:parked` label for merge-verification parks) — the state this journey covers now carries its own label instead of sharing `bot:blocked` with the retry ceiling, so it is legible at a glance rather than inferred from grant presence; `/claude-tweaks:tidy`'s Shape 5.6 replaces `/claude-tweaks:backlog refine`'s re-triage row as the surfacing lane.
+- Updated during build of #3405 (partial rollup read as green) — Step 2.5 and the resume confirmation now also read the head sha's workflow runs, so a park can come from a run that had not yet reached the rollup (`checks-pending-timeout`), or from a failing head run (`check-failed:{names}`, named by its `workflowName`).
 - Related specs: #558 (parent), #559, #560, #531 (the resume confirmation)

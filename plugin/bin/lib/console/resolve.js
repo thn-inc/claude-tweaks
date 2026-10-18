@@ -364,9 +364,11 @@ function stagedItems(snapshot) {
   });
 }
 
-// engine-state.json: { results: { <rowId>: { result, findings: [{target, action, commit?, stagePath?}] } } }
-// (engine-render.js's worklistRows/collectFindings shape). A staged finding
-// whose stagePath names a staged/ file is the same item as that file.
+// engine-state.json: { results: { <rowId>: { result, target?, findings: [{targetPath, action, commit?, stagePath?}] } } }
+// (engine-render.js's worklistRows/collectFindings shape). The id names the
+// finding's targetPath; legacy findings carry `target` instead, and a finding
+// with neither takes the row-level `target`. A staged finding whose stagePath
+// names a staged/ file is the same item as that file.
 function engineItems(snapshot, stagedIds) {
   const out = [];
   const results = (snapshot.engineState && snapshot.engineState.results) || {};
@@ -374,12 +376,13 @@ function engineItems(snapshot, stagedIds) {
     const entry = results[rowId];
     if (!entry || entry.result !== 'findings') continue;
     for (const f of entry.findings || []) {
+      const label = f.targetPath || f.target || entry.target;
       if (f.action === 'staged') {
         const base = f.stagePath ? path.basename(f.stagePath) : null;
         if (base && stagedIds.has(base)) continue; // already an item via staged/
-        out.push({ id: `${rowId}:${f.target}`, section, resolution: SECTION_STANCES[section].resolution, reason: SECTION_STANCES[section].reason });
+        out.push({ id: `${rowId}:${label}`, section, resolution: SECTION_STANCES[section].resolution, reason: SECTION_STANCES[section].reason });
       } else if (f.action === 'applied') {
-        out.push({ id: `${rowId}:${f.target}`, section, resolution: 'applied', reason: `applied (${f.commit || 'commit unknown'})` });
+        out.push({ id: `${rowId}:${label}`, section, resolution: 'applied', reason: `applied (${f.commit || 'commit unknown'})` });
       }
     }
   }

@@ -63,7 +63,7 @@ const USAGE = [
   '       wrap-up-engine.js render --section procedure:<name>   (no --run-dir, no --spec-state, no --strict)',
   '       wrap-up-engine.js render --section console --spec-state <id>=<path> [--spec-state <id>=<path> ...] [--start-at n] [--strict]   (no --run-dir)',
   '       wrap-up-engine.js verify --run-dir <dir> --base <ref>',
-  '       wrap-up-engine.js finish-console --run-dir <dir> --approve-all [--ledger <path>]   (JSON {memory?,upstream?,ledger?} on stdin)',
+  '       wrap-up-engine.js finish-console --run-dir <dir> --approve-all [--ledger <path>]   (JSON {memory?,upstream?,issues?,ledger?} on stdin)',
   '',
 ].join('\n');
 
@@ -524,6 +524,13 @@ function runVerifyVerb(args) {
   process.exitCode = exitCode;
 }
 
+// finish-console: `issues` participates only when the payload names it
+// (non-null); an absent or null key must neither validate nor overwrite a
+// stored issues array.
+function optionalIssuesField(payload) {
+  return payload.issues != null ? { issues: payload.issues } : {};
+}
+
 // #2546: consolidates the Review Console's three "outcome write" steps the
 // skill text previously hand-assembled separately — writing
 // verify-expectations.json, logging the terminal decision plus each M#/U#
@@ -539,9 +546,12 @@ function runVerifyVerb(args) {
 // site and to leave room for a future non-approve-all mode without a
 // breaking rename).
 //
-// Payload shape (all three arrays optional, default []):
+// Payload shape (all arrays optional; memory/upstream default to [] and
+// overwrite the stored array, while `issues` is written only when the key is
+// present and non-null, so an absent/null key leaves a stored issues array untouched):
 //   { "memory": [{ "file": "...", "indexFile": "..." }, ...],
 //     "upstream": [{ "url": "..." }, ...],
+//     "issues": [3394, ...],
 //     "ledger": [{ "item": 3, "status": "deferred", "resolution": "..." }, ...] }
 //
 // Atomicity (Gotchas, record #2544): the three writes are NOT transactional
@@ -558,14 +568,14 @@ function runVerifyVerb(args) {
 // recovery contract.
 function validateFinishConsolePayload(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return 'stdin JSON must be an object with optional "memory"/"upstream"/"ledger" array fields';
+    return 'stdin JSON must be an object with optional "memory"/"upstream"/"issues"/"ledger" array fields';
   }
   const memory = payload.memory ?? [];
   const upstream = payload.upstream ?? [];
   const ledger = payload.ledger ?? [];
-  // memory/upstream shape is the writer library's own check — one rule for
-  // both writers of verify-expectations.json (#2764).
-  const fieldsError = validateFields({ memory, upstream });
+  // memory/upstream/issues shape is the writer library's own check — one rule
+  // for both writers of verify-expectations.json (#2764).
+  const fieldsError = validateFields({ memory, upstream, ...optionalIssuesField(payload) });
   if (fieldsError) return fieldsError;
   if (!Array.isArray(ledger)) return '"ledger" must be an array';
   for (const [i, l] of ledger.entries()) {
@@ -590,12 +600,14 @@ function runFinishConsole(args) {
   const memory = payload.memory ?? [];
   const upstream = payload.upstream ?? [];
   const ledgerUpdates = payload.ledger ?? [];
+  const issuesField = optionalIssuesField(payload);
+  const issuesNote = issuesField.issues ? `, issues: [${issuesField.issues.join(', ')}]` : '';
 
   // Step 1: verify-expectations.json (read-modify-write — preserve every
   // field this verb doesn't itself own, same discipline
   // review-console.md's step 11 documents for oversightExempt/issues).
   try {
-    writeExpectations({ runDir: args.runDir, fields: { memory, upstream } });
+    writeExpectations({ runDir: args.runDir, fields: { memory, upstream, ...issuesField } });
   } catch (e) {
     process.stderr.write(`wrap-up-engine.js finish-console: step 1 (verify-expectations.json) failed: ${e.message}\n`);
     process.exitCode = 1;
@@ -607,7 +619,7 @@ function runFinishConsole(args) {
   try {
     const header = formatEntry({
       status: 'AUTO', now, step: 'Review Console',
-      text: `Approved via finish-console --approve-all. ${memory.length} memory, ${upstream.length} upstream, ${ledgerUpdates.length} ledger update(s)`,
+      text: `Approved via finish-console --approve-all. ${memory.length} memory, ${upstream.length} upstream, ${ledgerUpdates.length} ledger update(s)${issuesNote}`,
       reversibility: 'per item',
     });
     const lines = [
@@ -675,7 +687,7 @@ function runFinishConsole(args) {
     }
   }
 
-  process.stdout.write(`finish-console: approved — ${memory.length} memory, ${upstream.length} upstream, ${ledgerUpdates.length} ledger update(s) written.\n`);
+  process.stdout.write(`finish-console: approved — ${memory.length} memory, ${upstream.length} upstream, ${ledgerUpdates.length} ledger update(s) written${issuesNote}.\n`);
 }
 
 function main() {

@@ -16,7 +16,9 @@
 //   --deferred           replace `deferred` (the multi-spec defer protocol's
 //                        cleanup items).
 //   --issues             replace `issues` (step 11 writes it on every
-//                        non-Approve-all resolution, as verify's post-cleanup
+//                        resolution — via this flag on the non-Approve-all
+//                        paths, via the `issues` key of finish-console's
+//                        payload under Approve all — as verify's post-cleanup
 //                        fallback once the worktree mirror may already be
 //                        gone).
 //   --oversight-exempt   add record numbers to `oversightExempt` (a union —

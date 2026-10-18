@@ -12,9 +12,8 @@ const { spawnSync } = require('node:child_process');
 // (listTrackedSourceFiles, isGlobDiscoveredTestFile, extractModuleExports,
 // escapeRegExp bound to undefined in that process) — #2628 fixed this exact
 // shape in candidates-app-store-readiness.js. Scoped to this one generator,
-// not every candidates-*.js file: candidates-experiment-cleanup.js has the
-// same reversed order today (a separate, pre-existing hazard filed as its
-// own follow-up, not fixed here).
+// not every candidates-*.js file: candidates-experiment-cleanup.js had the
+// same reversed order and was fixed separately in #3330.
 
 const CODE_HEALTH_DIR = path.join(__dirname, '../../../plugin/bin/lib/code-health');
 const MODULE_PATH = path.join(CODE_HEALTH_DIR, 'candidates-security-hardening.js');

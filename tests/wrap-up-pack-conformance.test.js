@@ -1,6 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const { readText } = require('./helpers/read-skill');
@@ -52,4 +54,30 @@ test('every pack field the pack produces has a prose consumer that reads it (#19
     'plugin/skills/wrap-up/auto-merge-short-circuit.md', 'plugin/skills/wrap-up/summary-template.md',
   ].map(read).join('\n');
   for (const n of PROBE_NAMES) assert.ok(corpus.includes(`pack.${n}`), `no prose consumer reads pack.${n}`);
+});
+
+test('every inputs field a closing-keyword reader relies on is produced by resolveInputs and read by prose (#3399)', () => {
+  const { resolveInputs } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-3399-'));
+  let inputs;
+  try {
+    const runDir = path.join(tmp, '.claude-tweaks', 'pipelines', 'r1');
+    fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'work', '3399-spec.md'), '---\nrecord: 3399\n---\n');
+    const deps = {
+      readFile: (p) => fs.readFileSync(p, 'utf8'),
+      readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
+      resolvePolicy: () => ({}),
+      git: () => { throw new Error('no git'); },
+      ghSync: () => { throw new Error('no gh'); },
+    };
+    inputs = resolveInputs({ runDir, cwd: tmp, deps });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  assert.ok(Array.isArray(inputs.closingRecords));
+  assert.strictEqual(typeof inputs.parkedAtShaping, 'object');
+  const corpus = ['cleanup-procedures-execution', 'execution-and-verification', 'review-console', 'cleanup-procedures']
+    .map((f) => read(`plugin/skills/wrap-up/${f}.md`)).join('\n');
+  for (const f of ['closingRecords', 'parkedAtShaping']) assert.ok(corpus.includes(`inputs.${f}`), `no prose consumer reads inputs.${f}`);
 });

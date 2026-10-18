@@ -137,7 +137,15 @@ Never as `off`: an unreadable lever must not become the one value that skips the
 gh pr view {pr-number} --repo {owner}/{repo} --json state,mergeStateStatus,headRefOid,statusCheckRollup
 ```
 
-Classify from the JSON, in this order:
+Then read the workflow runs for the PR head. The rollup lists only the checks GitHub has registered so far, so a partial rollup — some workflows reported, others not yet registered — reads green while a sibling workflow is still pending. Pass the full 40-char sha (an abbreviated `--commit` returns `[]`):
+
+```bash
+gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json name,workflowName,status,conclusion,url
+```
+
+A failed or unparseable runs read is the `state-read-failed` report, same as the first bullet. An empty runs list adds nothing. The code twin is `bin/lib/pr-checks/classify.js`'s `classifyRollup` (with `headRuns`), which applies the same order.
+
+Classify from both reads, in this order:
 
 - The command failed, or its output is not parseable JSON with those four fields → report
   (`pending-review`, reason `state-read-failed`) and stop — never merge on a state this gate could
@@ -146,19 +154,19 @@ Classify from the JSON, in this order:
 - `state` not `OPEN` → report (`pending-review`, reason `pr-not-open`) and stop; never merge — and
   never *park* — a closed or already-merged PR, whatever stale conclusions its rollup still carries.
 - Any `statusCheckRollup[]` entry with `conclusion` in `FAILURE`, `TIMED_OUT`, `ERROR`, or `STARTUP_FAILURE`
-  → **red** (the *PR being merged* has a failing check — distinct from #561's red *tip*, which is
+  — or any head run whose `status` is `completed` and whose `conclusion`, compared case-insensitively (run conclusions are lowercase), is in that same list → **red** (the *PR being merged* has a failing check — distinct from #561's red *tip*, which is
   reconcile's concern). Take the **Red path** below now, before anything else. Under `off` this
   read still runs — `off` skips the *wait*, not the read — but the value `off` merges anyway
   (today's behavior); the red classification is logged and shown, not acted on.
-- Any entry with `status` not `COMPLETED` (or `conclusion` null while `status: IN_PROGRESS`/`QUEUED`/`PENDING`)
-  → **pending**.
+- Any entry with `status` not `COMPLETED` (or `conclusion` null while `status: IN_PROGRESS`/`QUEUED`/`PENDING`), or any head run whose `status` is not `completed`
+  → **pending**. A partial rollup (some workflows reported, others not yet registered) is not green.
 - An **empty rollup** → depends on the lever: under `merge-when-green` or `wait` the repo has PR CI
   by construction (`_shared/policy-schema-coverage.md`'s coverage block derives those values only when a
   `pull_request`-triggered workflow exists, and an explicit value is a statement that CI is
   expected), so an empty rollup means the checks have not *reported yet* — GitHub populates it
   seconds after a push, not instantly — and reads as **pending**, never green; under `off` it is
   simply "no CI" and proceeds as green.
-- Otherwise (every entry `SUCCESS`/`NEUTRAL`/`SKIPPED`) → **green**.
+- Otherwise (every entry `SUCCESS`/`NEUTRAL`/`SKIPPED`, and every head run `completed` without a failing conclusion) → **green**.
 
 Then, per resolved value:
 
@@ -191,7 +199,10 @@ DEADLINE=$(( $(date +%s) + 900 ))
 while :; do
   gh pr checks {pr-number} --repo {owner}/{repo} > /tmp/pr-checks-{n}.txt 2>&1; RC=$?
   case "$RC" in
-    0) break ;;                                              # all green
+    0) PENDING_RUNS=$(gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json status --jq '[.[] | select(.status != "completed")] | length') || { RC=2; break; }
+       [ "${PENDING_RUNS:-x}" = 0 ] && break                 # all green — no head run still in progress
+       [ "$(date +%s)" -ge "$DEADLINE" ] && RC=124 && break  # rollup green, a head run still pending at the bound
+       sleep 30 ;;
     1) break ;;                                              # a check failed — red, stop watching
     8) [ "$(date +%s)" -ge "$DEADLINE" ] && RC=124 && break  # still pending at the bound
        sleep 30 ;;
@@ -200,15 +211,18 @@ while :; do
 done
 ```
 
-- `RC=0` → **green**: re-read state (`gh pr view … --json state,mergeStateStatus,headRefOid`); if
+- `RC=0` → **green** — every reported check passed **and** every head run completed (the `0)` branch
+  breaks only at zero pending head runs). Re-read state (`gh pr view … --json state,mergeStateStatus,headRefOid`)
+  and the head runs (the same `gh run list` read as above): if
   `headRefOid` changed since the first read (a new push landed) or `state` is not `OPEN`, re-enter this
   step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`)
-  — never merge blind; otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) (outcome `merged`,
+  — never merge blind; a failing head run takes the Red path, reason `check-failed:{names}` (names from
+  its `workflowName`s); a head run not yet `completed` resumes the bounded watch at the same `DEADLINE`; otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) (outcome `merged`,
   then Step 4).
 - `RC=1` (a check failed during the watch) → **Red path**, reason `check-failed:{names}` (names from
   the `fail` rows of `/tmp/pr-checks-{n}.txt`).
 - `RC=124` (still pending at the bound) → **Red path** with reason `checks-pending-timeout` —
-  reserved strictly for checks still running at the bound, never for a check that failed.
+  reserved strictly for checks or head runs still running at the bound, never for a check that failed.
 - `RC=2` (unknown `gh` exit) → report `pending-review`, reason `checks-read-failed`; never merge on
   a state this gate could not read.
 
@@ -227,8 +241,8 @@ done
    printf 'Parked by merge-verification (%s): %s on PR #%s. Resume once green.\n' "$VALUE" "$REASON" "$PR" > /tmp/park-comment-{n}.md
    gh issue comment "$ISSUE" --repo {owner}/{repo} --body-file /tmp/park-comment-{n}.md
    ```
-   (`$REASON` holds the check names read from `/tmp/pr-checks-{n}.txt`'s `fail` rows, or the
-   pending-timeout phrase — passed as a `printf` argument, never expanded inside the format string.)
+   (`$REASON` holds the check names — from `/tmp/pr-checks-{n}.txt`'s `fail` rows, or the failing
+   head runs' `workflowName`s — or the pending-timeout phrase — passed as a `printf` argument, never expanded inside the format string.)
    **Verify the label landed** — re-read each record's labels (`gh issue view {n} --json labels`)
    after the add; a missing `bot:parked` is retried once. If it is still missing, the park has no
    lock the `[pr-unarmed]` sweep (`_shared/github-pr-scan.md`) would honor, so fall back to the one
@@ -260,10 +274,11 @@ never suggest bypassing protection.
 - (b) merge rejected by required checks: not captured — this repo has no branch protection or rulesets (`gh api repos/{owner}/{repo}/branches/main/protection` → HTTP 404 "Branch not protected"; `…/rules/branches/main` → `[]`); classification for this path rests on the state read (`mergeStateStatus: BLOCKED` with a green rollup), never on a stderr string.
 - (c) `gh pr checks {n} --watch --fail-fast` on a failing check: rows like `test	fail	35s	https://github.com/…/actions/runs/…` (each check name / `pass`|`fail`|`pending`|`skipping` / duration / URL), `exit=1`. (c2) `gh pr checks {n}` while a check is still running: `test	pending	0	https://…`, `exit=8`.
 - (d) `gh pr view {n} --json state,mergeStateStatus,statusCheckRollup` — green (open draft PR #588, read-only): `{"mergeStateStatus":"CLEAN","rollup":[{"conclusion":"SUCCESS","name":"label-fix-branch","status":"COMPLETED"},{"conclusion":"SUCCESS","name":"test","status":"COMPLETED"},{"conclusion":"SKIPPED","name":"cleanup-fix-labels","status":"COMPLETED"}],"state":"OPEN"}`; failing rollup entry: `{"conclusion":"FAILURE","name":"test","status":"COMPLETED"}` (observed on #591 after merge, `mergeStateStatus: UNKNOWN` — the value GitHub reports once a PR is `MERGED`); the `mergeStateStatus` value of an *open* PR with failing checks was not captured (the probe merged via (a) before its checks failed) — which is why red is classified from `statusCheckRollup[].conclusion`, not from `mergeStateStatus`.
+- (e) PR #3390 (#3316 wrap-up, 2026-10-17): right after a push the rollup and `gh pr checks` held only `label-fix-branch` (`SUCCESS`) and `cleanup-fix-labels` (`SKIPPED`), and `gh pr checks` exited `0`; the `pull_request` `test` run 39042323352 for the same head existed with status `pending` but was not yet in the rollup. Re-captured on PR #3425 (2026-10-17): the rollup listed `test` `IN_PROGRESS` beside those two, and `gh run list --commit {full sha}` listed the `test` run `in_progress` (its `conclusion` empty) next to the completed `push` run; the same command with the abbreviated sha `26d1037664` returned `[]`.
 - Also captured: `gh pr merge` against an already-merged PR: stderr `! Pull request {owner}/{repo}#{n} was already merged`, `exit=0` — a no-op, not an error; the state read (`state: MERGED`) catches it first.
 
 **Resume-to-merge is one-shot.** `dispatch/SKILL.md`'s "Confirm before resuming" confirmation applies
-this same lever as a single read-then-decide (green → proceed; red → surface in the confirmation;
+this same lever as a single read-then-decide over both of Step 2.5's reads (the state read and the head-run `gh run list` read; a not-yet-completed head run reads pending, a failing one red) (green → proceed; red → surface in the confirmation;
 pending with `mergeStateStatus: BLOCKED` → arm `--auto`, since the forge is what holds it; pending
 with any other `mergeStateStatus` → do **not** arm — on an unprotected repo arming *is* an immediate
 merge (capture (a)), so the confirmation itself carries the choice: wait for green, or leave parked)

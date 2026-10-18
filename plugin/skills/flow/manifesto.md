@@ -23,8 +23,10 @@ Walk the precedence chain (see `_shared/auto-mode-contract.md`):
 
 1. Explicit CLI args from `$ARGUMENTS` (e.g., `no-polish` sets `polish: skip`)
 2. Pipeline-config file from a previous run that's still active in this session (rare; usually skipped)
-3. Project policy — the resolved `auto-mode` value: `AUTO_MODE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values auto-mode)` (empty when `.claude-tweaks/policy.yml` leaves it unset — the key has no schema default)
+3. Project policy (`.claude-tweaks/policy.yml`)
 4. Hardcoded sensible defaults (last resort)
+
+Lever 1 (Mode) takes its value and source from `SKILL.md` Step 1's resolved mode and deciding rung (`arg` / `dispatch` / `policy` / `default`).
 
 For each lever, record both the recommended value AND its source.
 
@@ -130,6 +132,7 @@ I've pre-filled recommendations from project policy + sensible defaults. The Rec
 |---|---|
 | `arg` | Set by an explicit CLI argument in `$ARGUMENTS` |
 | `policy` | From `.claude-tweaks/policy.yml`'s `auto-mode:` key (resolver envelope `source: "policy"`) |
+| `dispatch` | Mode only: Step 1 rung 2 (`dispatched: true`) — render `auto (dispatched run)`; log `source: dispatch binding` |
 | `default` | Hardcoded sensible default |
 | `header` | Locked by the materialized header (`materialize.md`) — e.g. `surface:`/`design-intent:` — or, for `ceremony-profile`, by the record's `ceremony:*` label, else the Manifesto's ceremony-check verdict — or the record body's `Surface:`/`Design-intent:` metadata lines (e.g., `design-intent:` set on every record in the run) |
 | `preflight.json` | The pack, when adopted (#1931) |
@@ -138,7 +141,7 @@ I've pre-filled recommendations from project policy + sensible defaults. The Rec
 
 | Lever | Default | Why |
 |---|---|---|
-| Mode | `auto` | User invoked `/flow auto`; only here if they did |
+| Mode | `auto` | Step 1's resolved mode |
 | Scope-creep | `add-to-plan` | Never silently drops mentioned work |
 | Overlap | `companion` | Safest: never overwrite or silently extend; create a new spec |
 | Design intent | `none` | No creative direction unless user opts in |

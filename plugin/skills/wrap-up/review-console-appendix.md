@@ -122,11 +122,10 @@ session is refused — exit 3 from `set-verify-expectations.js` means the run di
 (re-resolve `$RUN_ROOT` per `_shared/pipeline-run-dir.md` and retry); exit 2 is a malformed call
 to fix, never a reason to fall back to a direct Write.
 
-**`--issues` form:** written on every non-Approve-all resolution (#3365) — `engine-verify.js`'s
+**`--issues` form:** written on every resolution path: the `--issues` call on each non-Approve-all resolution (#3365), and the `issues` key of `finish-console`'s stdin payload under Approve all (#3394) — `engine-verify.js`'s
 `resolvedIssueNumbers()` reads it only when no materialized header resolves (neither the run dir's
 own `work/` nor the worktree mirror, which cleanup may already have removed by the time verify
-runs), so it is harmless when a header resolves. `finish-console` drops an `issues` key from its
-stdin payload, so the Approve-all path does not write it.
+runs), so it is harmless when a header resolves.
 
 **`oversightExempt` preservation:** `verification-brief.md`'s Oversight-floor gate (#2383) may
 have already read-modify-written this file earlier in the same run, once per exempted record;
