@@ -131,8 +131,8 @@ function elideDiff(diff) {
 // file's section is a one-line stub, and an always-stub file's or an oversize added/deleted
 // file's diff chunk is a one-line marker; both are reported in `oversizeSections`. A stub
 // points at wherever the content still lives: the diff above (hunk kept), the live file (hunk
-// elided too), or `git diff {range} -- {path}` (elided or deleted). A modified non-always-stub file's hunks
-// stay whole, so the bundle as a whole is not strictly bounded.
+// elided too), or `git diff {range} -- {path}` (elided or deleted). A modified non-always-stub
+// file's hunks stay whole, so the bundle as a whole is not strictly bounded.
 function buildContext({
   base,
   branch,
@@ -230,7 +230,14 @@ function buildContext({
 
   const contextPath = path.join(dir, 'context.md');
   writeFile(contextPath, out);
-  return { dir, contextPath, bytes: Buffer.byteLength(out), files: files.length, emptySections, oversizeSections: [...oversize] };
+  return {
+    dir,
+    contextPath,
+    bytes: Buffer.byteLength(out),
+    files: files.length,
+    emptySections,
+    oversizeSections: [...oversize],
+  };
 }
 
 module.exports = { resolveDir, buildContext, MAX_BUFFER, PER_FILE_CAP_BYTES, isAlwaysStub, elideDiff };

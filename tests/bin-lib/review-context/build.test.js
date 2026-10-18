@@ -187,6 +187,17 @@ function initRepo(prefix) {
   return repo;
 }
 
+function commitAll(repo, message) {
+  git(repo, ['add', '-A']);
+  git(repo, ['commit', '-q', '-m', message]);
+}
+
+// Commit the working tree as the base on `main`, then switch to a new `feature` branch.
+function startFeatureBranch(repo) {
+  commitAll(repo, 'base');
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+}
+
 // Real-git fixture for the cap: a modified file one byte over the cap, a modified file at
 // exactly the cap, added over-cap / jsonl / lockfile / spaced-name files, and two deletions
 // (a plain file and a lockfile).
@@ -196,9 +207,7 @@ function makeOversizeFixtureRepo() {
   fs.writeFileSync(path.join(repo, 'exact.txt'), 'small\n');
   fs.writeFileSync(path.join(repo, 'doomed.txt'), 'doomed content\n');
   fs.writeFileSync(path.join(repo, 'yarn.lock'), '# yarn lockfile\n');
-  git(repo, ['add', '.']);
-  git(repo, ['commit', '-q', '-m', 'base']);
-  git(repo, ['checkout', '-q', '-b', 'feature']);
+  startFeatureBranch(repo);
   fs.writeFileSync(path.join(repo, 'big-modified.txt'), shortLines(PER_FILE_CAP_BYTES + 1, 'first!\n', LATE_MARKER));
   fs.writeFileSync(path.join(repo, 'exact.txt'), shortLines(PER_FILE_CAP_BYTES, 'exact first\n', 'exact marker\n'));
   fs.writeFileSync(path.join(repo, 'big-added.txt'), `${'b'.repeat(PER_FILE_CAP_BYTES)}\n`);
@@ -207,8 +216,7 @@ function makeOversizeFixtureRepo() {
   fs.writeFileSync(path.join(repo, 'has space.txt'), `${'s'.repeat(PER_FILE_CAP_BYTES)}\n`);
   fs.rmSync(path.join(repo, 'doomed.txt'));
   fs.rmSync(path.join(repo, 'yarn.lock'));
-  git(repo, ['add', '-A']);
-  git(repo, ['commit', '-q', '-m', 'feature work']);
+  commitAll(repo, 'feature work');
   return repo;
 }
 
@@ -225,12 +233,16 @@ function diffPartOf(bundle) {
   return bundle.slice(0, bundle.indexOf('\n===== '));
 }
 
-function buildOversize(extra = {}) {
-  const repo = getOversizeRepo();
+// Build the `main...feature` bundle of `repo` into a fresh output dir and read it back.
+function buildFrom(repo, extra = {}) {
   const dir = resolveDir({});
   const result = buildContext({ base: 'main', branch: 'feature', dir, ...repoDeps(repo), ...extra });
   const bundle = fs.readFileSync(result.contextPath, 'utf8');
   return { result, bundle, diffPart: diffPartOf(bundle) };
+}
+
+function buildOversize() {
+  return buildFrom(getOversizeRepo());
 }
 
 // The text of one `===== {name} =====` section: everything up to the blank-line separator
@@ -306,14 +318,10 @@ test('deleted lockfile is stubbed (matcher before read), not empty', () => {
 test('a modified lockfile has its diff chunk elided (always-stub applies to every change type) and is listed once', () => {
   const repo = initRepo('review-ctx-modlock-');
   fs.writeFileSync(path.join(repo, 'yarn.lock'), 'v1\n');
-  git(repo, ['add', '.']);
-  git(repo, ['commit', '-q', '-m', 'base']);
-  git(repo, ['checkout', '-q', '-b', 'feature']);
+  startFeatureBranch(repo);
   fs.writeFileSync(path.join(repo, 'yarn.lock'), 'v2\n');
-  git(repo, ['commit', '-q', '-am', 'bump']);
-  const dir = resolveDir({});
-  const result = buildContext({ base: 'main', branch: 'feature', dir, ...repoDeps(repo) });
-  const bundle = fs.readFileSync(result.contextPath, 'utf8');
+  commitAll(repo, 'bump');
+  const { result, bundle } = buildFrom(repo);
   assert.ok(!/^\+v2$/m.test(bundle), 'the lockfile hunk is replaced by the marker');
   assert.match(bundle, /^\[\d+ bytes of diff elided for yarn\.lock — see oversizeSections\]$/m);
   assert.match(bundle, /diff --git a\/yarn\.lock b\/yarn\.lock\n\[/);
@@ -343,31 +351,23 @@ function makeAddedOversizeRepo(name, config = []) {
   const repo = initRepo('review-ctx-added-');
   for (const [k, v] of config) git(repo, ['config', k, v]);
   fs.writeFileSync(path.join(repo, 'seed.txt'), 'seed\n');
-  git(repo, ['add', '.']);
-  git(repo, ['commit', '-q', '-m', 'base']);
-  git(repo, ['checkout', '-q', '-b', 'feature']);
+  startFeatureBranch(repo);
   fs.writeFileSync(path.join(repo, name), `${'n'.repeat(PER_FILE_CAP_BYTES)}\n`);
-  git(repo, ['add', '-A']);
-  git(repo, ['commit', '-q', '-m', 'feature work']);
+  commitAll(repo, 'feature work');
   return repo;
 }
 
 test('F2: diff.noprefix=true in the repo config does not defeat header parsing — added over-cap file is elided and listed once', () => {
   const repo = makeAddedOversizeRepo('noprefix-big.txt', [['diff.noprefix', 'true']]);
-  const dir = resolveDir({});
-  const result = buildContext({ base: 'main', branch: 'feature', dir, ...repoDeps(repo) });
-  const bundle = fs.readFileSync(result.contextPath, 'utf8');
+  const { result, bundle, diffPart } = buildFrom(repo);
   assert.match(bundle, /^\[\d+ bytes of diff elided for noprefix-big\.txt — see oversizeSections\]$/m);
-  assert.ok(!diffPartOf(bundle).includes('n'.repeat(1000)), 'diff part holds no added content');
+  assert.ok(!diffPart.includes('n'.repeat(1000)), 'diff part holds no added content');
   assert.strictEqual(result.oversizeSections.filter((p) => p === 'noprefix-big.txt').length, 1);
 });
 
 test('F2: a non-ASCII added over-cap name is elided, stubbed, listed once under the unquoted name, and not empty', () => {
   const repo = makeAddedOversizeRepo('café.txt');
-  const dir = resolveDir({});
-  const result = buildContext({ base: 'main', branch: 'feature', dir, ...repoDeps(repo) });
-  const bundle = fs.readFileSync(result.contextPath, 'utf8');
-  const diffPart = diffPartOf(bundle);
+  const { result, bundle, diffPart } = buildFrom(repo);
   assert.match(diffPart, /^\[\d+ bytes of diff elided for café\.txt — see oversizeSections\]$/m);
   assert.ok(!diffPart.includes('n'.repeat(1000)));
   assert.ok(sectionOf(bundle, 'café.txt').startsWith('[section omitted: café.txt is '));
@@ -455,17 +455,13 @@ test('F4: stub text says what is true for each stubbed path', () => {
 test('a deleted over-cap non-lockfile gets an in-bundle pointer: section stub and diff marker, listed in both lists', () => {
   const repo = initRepo('review-ctx-delbig-');
   fs.writeFileSync(path.join(repo, 'big-gone.txt'), `${'g'.repeat(PER_FILE_CAP_BYTES)}\n`);
-  git(repo, ['add', '.']);
-  git(repo, ['commit', '-q', '-m', 'base']);
-  git(repo, ['checkout', '-q', '-b', 'feature']);
+  startFeatureBranch(repo);
   fs.rmSync(path.join(repo, 'big-gone.txt'));
-  git(repo, ['add', '-A']);
-  git(repo, ['commit', '-q', '-m', 'drop it']);
-  const result = buildContext({ base: 'main', branch: 'feature', dir: resolveDir({}), ...repoDeps(repo) });
-  const bundle = fs.readFileSync(result.contextPath, 'utf8');
+  commitAll(repo, 'drop it');
+  const { result, bundle, diffPart } = buildFrom(repo);
   assert.deepStrictEqual(result.emptySections, ['big-gone.txt']);
   assert.deepStrictEqual(result.oversizeSections, ['big-gone.txt']);
-  assert.match(diffPartOf(bundle), /^\[\d+ bytes of diff elided for big-gone\.txt — see oversizeSections\]$/m);
+  assert.match(diffPart, /^\[\d+ bytes of diff elided for big-gone\.txt — see oversizeSections\]$/m);
   assert.strictEqual(
     sectionOf(bundle, 'big-gone.txt'),
     "[section omitted: big-gone.txt — the file is deleted and its diff was elided (see the marker line above) — run `git diff main...feature -- 'big-gone.txt'` for its last content]\n",
@@ -476,20 +472,16 @@ test('a renamed lockfile has its diff chunk elided (matched on the rename destin
   const repo = initRepo('review-ctx-renlock-');
   const lines = Array.from({ length: 200 }, (_, i) => `entry ${i}\n`);
   fs.writeFileSync(path.join(repo, 'yarn.lock'), lines.join(''));
-  git(repo, ['add', '.']);
-  git(repo, ['commit', '-q', '-m', 'base']);
-  git(repo, ['checkout', '-q', '-b', 'feature']);
+  startFeatureBranch(repo);
   fs.mkdirSync(path.join(repo, 'sub'));
   lines[100] = 'CHANGED-LOCK-LINE\n';
   fs.writeFileSync(path.join(repo, 'sub', 'yarn.lock'), lines.join(''));
   fs.rmSync(path.join(repo, 'yarn.lock'));
-  git(repo, ['add', '-A']);
-  git(repo, ['commit', '-q', '-m', 'move lockfile']);
-  const result = buildContext({ base: 'main', branch: 'feature', dir: resolveDir({}), ...repoDeps(repo) });
-  const bundle = fs.readFileSync(result.contextPath, 'utf8');
-  assert.match(diffPartOf(bundle), /^diff --git a\/yarn\.lock b\/sub\/yarn\.lock$/m, 'the fixture really is a rename chunk');
+  commitAll(repo, 'move lockfile');
+  const { result, bundle, diffPart } = buildFrom(repo);
+  assert.match(diffPart, /^diff --git a\/yarn\.lock b\/sub\/yarn\.lock$/m, 'the fixture really is a rename chunk');
   assert.ok(!bundle.includes('CHANGED-LOCK-LINE'), 'the renamed lockfile hunk is elided');
-  assert.match(diffPartOf(bundle), /^\[\d+ bytes of diff elided for sub\/yarn\.lock — see oversizeSections\]$/m);
+  assert.match(diffPart, /^\[\d+ bytes of diff elided for sub\/yarn\.lock — see oversizeSections\]$/m);
   assert.deepStrictEqual(result.oversizeSections, ['sub/yarn.lock']);
 });
 
@@ -497,18 +489,14 @@ test('a renamed ordinary file keeps its chunk whole (rename matching is by the d
   const repo = initRepo('review-ctx-renplain-');
   const lines = Array.from({ length: 200 }, (_, i) => `entry ${i}\n`);
   fs.writeFileSync(path.join(repo, 'old.txt'), lines.join(''));
-  git(repo, ['add', '.']);
-  git(repo, ['commit', '-q', '-m', 'base']);
-  git(repo, ['checkout', '-q', '-b', 'feature']);
+  startFeatureBranch(repo);
   lines[100] = 'CHANGED-PLAIN-LINE\n';
   fs.writeFileSync(path.join(repo, 'new.txt'), lines.join(''));
   fs.rmSync(path.join(repo, 'old.txt'));
-  git(repo, ['add', '-A']);
-  git(repo, ['commit', '-q', '-m', 'rename']);
-  const result = buildContext({ base: 'main', branch: 'feature', dir: resolveDir({}), ...repoDeps(repo) });
-  const bundle = fs.readFileSync(result.contextPath, 'utf8');
-  assert.match(diffPartOf(bundle), /^rename to new\.txt$/m, 'the fixture really is a rename chunk');
-  assert.match(diffPartOf(bundle), /^\+CHANGED-PLAIN-LINE$/m);
+  commitAll(repo, 'rename');
+  const { result, diffPart } = buildFrom(repo);
+  assert.match(diffPart, /^rename to new\.txt$/m, 'the fixture really is a rename chunk');
+  assert.match(diffPart, /^\+CHANGED-PLAIN-LINE$/m);
   assert.deepStrictEqual(result.oversizeSections, []);
 });
 
@@ -516,15 +504,12 @@ test('the command a stub suggests single-quotes a hostile path so it cannot end 
   const hostile = "it's $(x).jsonl";
   const repo = initRepo('review-ctx-quote-');
   fs.writeFileSync(path.join(repo, hostile), '{"a":1}\n');
-  git(repo, ['add', '.']);
-  git(repo, ['commit', '-q', '-m', 'base']);
-  git(repo, ['checkout', '-q', '-b', 'feature']);
+  startFeatureBranch(repo);
   fs.rmSync(path.join(repo, hostile));
-  git(repo, ['add', '-A']);
-  git(repo, ['commit', '-q', '-m', 'drop it']);
-  const result = buildContext({ base: 'main', branch: 'feature', dir: resolveDir({}), ...repoDeps(repo) });
-  const bundle = fs.readFileSync(result.contextPath, 'utf8');
-  assert.ok(sectionOf(bundle, hostile).includes("-- 'it'\\''s $(x).jsonl'`"), sectionOf(bundle, hostile));
+  commitAll(repo, 'drop it');
+  const { bundle } = buildFrom(repo);
+  const section = sectionOf(bundle, hostile);
+  assert.ok(section.includes("-- 'it'\\''s $(x).jsonl'`"), section);
 });
 
 test('isAlwaysStub: named lockfiles and .jsonl match on basename; near-misses do not', () => {
