@@ -6,12 +6,10 @@ const path = require('path');
 const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
 const read = (p) => readText(path.join(ROOT, p));
-const { CEILING_BYTES } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'skill-audit', 'context-cost'));
 
-test('#1928: multi-spec.md cites the run-dir layout sub-file and stays under its read budget', () => {
+test('#1928: multi-spec.md cites the run-dir layout sub-file', () => {
   const ms = read('plugin/skills/flow/multi-spec.md');
   assert.match(ms, /multispec-run-dir-layout\.md/);
-  assert.ok(Buffer.byteLength(ms, 'utf8') < 20480, `multi-spec.md is ${Buffer.byteLength(ms, 'utf8')} B`);
   assert.match(ms, /\$RUN_ROOT\/\.claude-tweaks\/pipelines\/\{ISO-timestamp\}-spec-\{N1\}-\{N2\}-\{N3\}\//, 'the anchoring diagram stays in multi-spec.md');
 });
 
@@ -21,8 +19,6 @@ test('#1928: the layout sub-file documents manifest.yml phases[] and the latest 
   assert.match(sub, /`phases\[\]`[^.]*append-only|append-only[^.]*`phases\[\]`/i);
   assert.match(sub, /spec-status/);
 });
-
-const CEILING = CEILING_BYTES;
 
 test('#1928 AC6: both summary templates carry a ### Timing section rendered from phase-timing.js', () => {
   for (const f of ['plugin/skills/flow/summary-template.md', 'plugin/skills/wrap-up/summary-template.md']) {
@@ -49,12 +45,10 @@ test('#1928 AC6: pr-run-comments.md has a timing comment kind with its producer'
   assert.match(read('plugin/skills/wrap-up/verification-brief.md'), /run-comment: timing/);
 });
 
-test('#1928 AC6: reporting.md prints the per-group timing line from timing.json, and SKILL.md stays under the ceiling', () => {
+test('#1928 AC6: reporting.md prints the per-group timing line from timing.json', () => {
   const t = read('plugin/skills/dispatch/reporting.md');
   assert.match(t, /`timing: call-1 \{m\}m · call-2 \{m\}m · verify \{n\} run\(s\) \(\{modes\}\)/, 'the #1929 token-clause extension keeps this literal as a prefix');
   assert.match(t, /timing\.json/);
-  const skill = read('plugin/skills/dispatch/SKILL.md');
-  assert.ok(Buffer.byteLength(skill, 'utf8') <= CEILING, `dispatch/SKILL.md is ${Buffer.byteLength(skill, 'utf8')} B`);
 });
 
 test('#1928: the canonical verify.js snippets pass --run "$PIPELINE_RUN_DIR"', () => {
@@ -88,12 +82,10 @@ test('#1929 AC5: the three summary Timing blocks, the PR timing command, and pr-
   }
 });
 
-test('#1929 AC5: reporting.md carries the token clause on its timing line, and SKILL.md stays under the ceiling', () => {
+test('#1929 AC5: reporting.md carries the token clause on its timing line', () => {
   const t = read('plugin/skills/dispatch/reporting.md');
   assert.match(t, /`timing: call-1 \{m\}m · call-2 \{m\}m · verify \{n\} run\(s\) \(\{modes\}\) · \{k\} tokens in \/ \{m\} out`/);
   assert.match(t, /--transcript/, 'dispatch passes both agent transcripts explicitly');
-  const skill = read('plugin/skills/dispatch/SKILL.md');
-  assert.ok(Buffer.byteLength(skill, 'utf8') <= CEILING, `dispatch/SKILL.md is ${Buffer.byteLength(skill, 'utf8')} B`);
 });
 
 test('#1929: docs name the transcript reader, the new flags, and the guard counts', () => {
@@ -101,4 +93,28 @@ test('#1929: docs name the transcript reader, the new flags, and the guard count
   assert.match(ps, /^plugin\/bin\/lib\/timing\/ [^\n]*transcript\.js/m);
   assert.match(ps, /^node plugin\/bin\/phase-timing\.js --run <dir> \[--json\] \[--markdown\] \[--transcript <path> \.\.\.\] \[--auto-transcript\]/m);
   assert.match(read('docs/hooks.md'), /timing\.json[^\n]*(gate-denial|guard)/);
+});
+
+test('#3375 AC10.1: every Timing template documents the Dispatches table and its not-found line', () => {
+  for (const f of ['plugin/skills/wrap-up/summary-template.md', 'plugin/skills/flow/summary-template.md', 'plugin/skills/flow/multispec-summary.md']) {
+    const t = read(f);
+    assert.match(t, /\| Tier \| Dispatches \| Agent-seconds \| Elapsed \(min\) \| Tokens \(in\/out\) \| Cache \(read\/create\) \|/, `${f} tier header`);
+    assert.match(t, /\| Role \| Dispatches \| Agent-seconds \| Elapsed \(min\) \| Tokens \(in\/out\) \| Cache \(read\/create\) \|/, `${f} role header`);
+    assert.match(t, /dispatches: subagent transcripts not found/, `${f} not-found line`);
+    assert.match(t, /`Dispatches \(\{run window \| whole session — no run events\}; …\):` line heads the tables/, `${f} scope line`);
+    assert.match(t, /`dispatch agent-\{id\}: ` followed by `transcript not found \(\.\.\.\)`/, `${f} per-dispatch line`);
+    assert.match(t, /`dispatches: \{n\} outside the run window excluded`/, `${f} excluded line`);
+    assert.match(t, /not comparable to phase minutes/, `${f} comparability (minutes)`);
+    assert.match(t, /never summed with the phase table/, `${f} comparability (tokens)`);
+    // #3375 M3: the CLI prints the Tokens (in/out) footnote between the Guard denials line and the Dispatches section.
+    assert.match(t, /rendered verbatim below the `Tokens \(in\/out\)` footnote that follows the Guard denials line/, `${f} placement`);
+    assert.doesNotMatch(t, /rendered verbatim below the Guard denials line/, `${f} stale placement`);
+  }
+});
+
+test('#3375 M3: docs and the verification brief name the Dispatches section', () => {
+  const ps = read('docs/plugin-structure.md');
+  assert.match(ps, /^plugin\/bin\/lib\/timing\/ [^\n]*readDispatches[^\n]*aggregateDispatches/m);
+  assert.match(ps, /^node plugin\/bin\/phase-timing\.js --run <dir>[^\n]*Dispatches/m);
+  assert.match(read('plugin/skills/wrap-up/verification-brief.md'), /`tokens: transcript not found \(\.\.\.\)` line[^\n]*Dispatches/);
 });

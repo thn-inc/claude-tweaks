@@ -72,10 +72,6 @@ test('contract Consumers table discharged the #1274 forward row into real ceremo
   assert.ok(FROZEN_FORWARD_ROW.includes('added by #1274'), 'control: frozen forward row must contain the discharged literal (proves the absence pin can go red)');
 });
 
-test('contract stays within its 6144-byte cap', () => {
-  assert.ok(Buffer.byteLength(CONTRACT, 'utf8') <= 6144, `contract is ${Buffer.byteLength(CONTRACT, 'utf8')} bytes, over the 6144 cap`);
-});
-
 const FROZEN_PRE_1276_SCOPE = collapse('Task-agent dispatches are out of scope — they get a fresh context (`_shared/subagent-output-contract.md`).');
 
 test('contract Scope declines Task-agent isolation with two-ground-only inheritance (#1276)', () => {
@@ -136,11 +132,6 @@ test('record-creation-subissues.md Framing paragraph wraps per the contract', ()
   assert.ok(RECORD_CREATION_FLAT_C.includes('passed wrapped per `_shared/untrusted-record-content.md`'), 'citation missing from record-creation-subissues.md Framing paragraph');
   assert.ok(!RECORD_CREATION_FLAT_C.includes('is the whole input; under the origin-set carve-out above, the preserved block is part of that input too, as in shaping mode'), 'retired sentence still present');
   assert.ok(FROZEN_RECORD_CREATION_SENTENCE.includes('is the whole input; under the origin-set carve-out above, the preserved block is part of that input too, as in shaping mode'), 'control: frozen sentence must contain the retired text (proves the absence pin can go red)');
-  // The original 40853-byte cap pinned a byte-neutral edit against the pre-#1346
-  // monolithic record-creation.md; #1346 split that file across three files under
-  // tests/bin-lib/skill-audit/context-cost.test.js's own 28KB per-sub-file ceiling,
-  // which is the current, superseding constraint on this file's size.
-  assert.ok(Buffer.byteLength(read('plugin/skills/specify/record-creation-subissues.md'), 'utf8') <= 28 * 1024, 'record-creation-subissues.md exceeds the 28KB /specify sub-file ceiling');
 });
 
 test('docs carry exactly one skill-graph row for the contract, under ## assess-agent-autonomy, and the re-pointed authoring example', () => {

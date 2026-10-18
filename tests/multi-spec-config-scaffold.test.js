@@ -10,8 +10,8 @@
 // performed it — Step 3 is the parent-level Manifesto, which never touches
 // a spec-{N}/ subdirectory. The concrete scaffolding step lives in the
 // extracted sub-file multispec-config-scaffold.md (multi-spec.md itself
-// sits at its ~20KB read budget — #724 — with no headroom for the full
-// explanation inline). Three things are pinned here: multi-spec.md cites
+// stays focused on orchestration, with the scaffolding step lazily-loaded
+// on its own). Three things are pinned here: multi-spec.md cites
 // the sub-file at the right ordering point, the sub-file itself states a
 // concrete scaffolding step (not just an assertion) and corrects the false
 // Step-3 attribution, and the underlying mechanism — resolve-policy.js

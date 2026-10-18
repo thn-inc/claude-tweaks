@@ -14,7 +14,6 @@ const path = require('node:path');
 const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
-const { CEILING_BYTES } = require('../plugin/bin/lib/skill-audit/context-cost');
 
 const DISPATCH = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch');
 const SKILL = readText(path.join(DISPATCH, 'SKILL.md'));
@@ -54,13 +53,6 @@ test('a group is one record or one fast-lane bundle, fixed by Step 2 and re-deri
 test('the bare-drain Loop excludes neighbour-in-flight groups', () => {
   const loop = line('Loop: run the `next` ranking below');
   assert.ok(loop.includes('neighbour-in-flight'), 'the drain Loop must name neighbour-in-flight groups as excluded');
-});
-
-test('AC9.1: dispatch SKILL.md and queue-pull-script.md stay within CEILING_BYTES', () => {
-  for (const [name, text] of [['SKILL.md', SKILL], ['queue-pull-script.md', QUEUE_PULL]]) {
-    const bytes = Buffer.byteLength(text, 'utf8');
-    assert.ok(bytes <= CEILING_BYTES, `dispatch/${name} is ${bytes} B -- must stay within ${CEILING_BYTES}`);
-  }
 });
 
 test('neighbour-in-flight-report.md exists, mirrors the other Step 3 reports, and is cited from SKILL.md Step 3', () => {

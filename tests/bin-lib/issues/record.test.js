@@ -7,7 +7,7 @@ const {
   buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
-  buildLinkedPRQuery, partitionByOpenLinkedPR,
+  buildLinkedPRQuery, partitionByOpenLinkedPR, extractSection, isRepoRelativeKeyFilePath,
 } = require('../../../plugin/bin/lib/issues/record');
 
 test('recordPayload assembles labels for a born-ready health record', () => {
@@ -1147,4 +1147,95 @@ test('parseRecordFacets: facets.breaking defaults to false, never undefined', ()
 
 test('LABELS.BREAKING is exported and matches the canonical bootstrap row', () => {
   assert.strictEqual(LABELS.BREAKING, 'breaking');
+});
+
+// --- specShapedBody keyFiles (#2975) ---
+
+const KF_FOOTER = '_Filed by `x`. Close to resolve; label `wontfix` to suppress future reports of this finding._';
+
+test('AC1.1: specShapedBody with keyFiles emits ## Technical Approach then ### Key Files after ## Release Note', () => {
+  const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a',
+    keyFiles: [{ path: 'plugin/bin/x.js', change: 'add the thing' }] });
+  assert.strictEqual(body, [
+    'H', '## Current State', 'c', '## Deliverables', 'd', '## Acceptance Criteria', 'a', '## Release Note', 'r',
+    '## Technical Approach', '### Key Files', '- `plugin/bin/x.js` — add the thing',
+    KF_FOOTER,
+  ].join('\n\n'));
+});
+
+test('AC1.1: multiple keyFiles render one bullet per entry, newline-joined; change defaults to "modify"', () => {
+  const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a',
+    keyFiles: [{ path: 'a.js' }, { path: 'tests/a.test.js', change: 'cover it' }] });
+  assert.ok(body.includes('### Key Files\n\n- `a.js` — modify\n- `tests/a.test.js` — cover it\n\n_Filed by'));
+});
+
+test('AC2.1: keyFiles absent or [] is byte-identical to the pre-change composition', () => {
+  const literal = [
+    'H', '## Current State', 'c', '## Deliverables', 'd', '## Acceptance Criteria', 'a', '## Release Note', 'r',
+    KF_FOOTER,
+  ].join('\n\n');
+  const args = { header: 'H', ...BASE, acceptanceCriteria: 'a' };
+  assert.strictEqual(specShapedBody(args), literal);
+  assert.strictEqual(specShapedBody({ ...args, keyFiles: [] }), literal);
+  assert.strictEqual(specShapedBody({ ...args, keyFiles: undefined }), literal);
+});
+
+test('AC3.1: a composed body with keyFiles passes compose-record.js --check', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { execFileSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'keyfiles-'));
+  try {
+    const file = path.join(dir, 'body.md');
+    const composed = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a',
+      keyFiles: [{ path: 'plugin/bin/x.js', change: 'add the thing' }] });
+    assert.ok(composed.includes('### Key Files'), 'the checked body must actually carry the Key Files section');
+    fs.writeFileSync(file, composed);
+    const script = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'compose-record.js');
+    assert.doesNotThrow(() => execFileSync(process.execPath, [script, '--check', file], { stdio: 'pipe' }));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('specShapedBody: keyFiles keeps the Release Note section clean and the footer last', () => {
+  const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a',
+    keyFiles: [{ path: 'plugin/bin/x.js', change: 'add the thing' }] });
+  assert.strictEqual(extractSection(body, 'Release Note', { trim: true }), 'r');
+  assert.ok(body.endsWith('wontfix` to suppress future reports of this finding._'));
+  const at = (needle) => body.indexOf(needle);
+  assert.ok(at('## Release Note') < at('## Technical Approach') && at('## Technical Approach') < at('### Key Files') && at('### Key Files') < at('_Filed by'),
+    'Technical Approach / Key Files sit between Release Note and the footer');
+});
+
+test('specShapedBody: keyFiles rejects absolute, ..-escaping, empty, multi-line, or backticked paths', () => {
+  const call = (keyFiles) => () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', keyFiles });
+  for (const p of ['/abs/x.js', 'C:\\x.js', '../x.js', 'a/../../x.js', 'a\\..\\x.js', '', 'a\nb.js', 'a`b.js',
+    'a\r## H', 'a\u2028b.js', ' a.js', 'a.js ', '   ', 'tests/', 'plugin\\skills\\', 'C:foo.js']) {
+    assert.throws(call([{ path: p }]), /keyFiles/, `path ${JSON.stringify(p)}`);
+  }
+  assert.throws(call([{ path: 'a.js', change: 'one\ntwo' }]), /keyFiles/);
+  assert.throws(call([{ path: 'a.js', change: 'one\rtwo' }]), /keyFiles/);
+  assert.throws(call([{ path: 'a.js', change: '' }]), /keyFiles/);
+  assert.throws(call([{ path: 'a.js', change: 42 }]), /keyFiles\[0\]\.change/);
+  assert.throws(call('a.js'), /keyFiles must be an array/);
+  assert.throws(call(['a.js']), /keyFiles\[0\] must be an object/);
+  assert.throws(call([null]), /keyFiles\[0\] must be an object/);
+  assert.throws(call([['a.js']]), /keyFiles\[0\] must be an object/);
+  assert.throws(call([{ path: 'tests/' }]), /trailing slash/);
+  assert.throws(call([{ path: '../x.js' }]), /repo-relative/);
+});
+
+test('isRepoRelativeKeyFilePath agrees with specShapedBody on every keyFiles path', () => {
+  const compose = (p) => () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', keyFiles: [{ path: p }] });
+  for (const p of ['/abs/x.js', 'C:\\x.js', '../x.js', 'a/../../x.js', 'a\\..\\x.js', '', 'a\nb.js', 'a`b.js',
+    'a\r## H', ' a.js', 'tests/', 'C:foo.js', undefined, 42]) {
+    assert.strictEqual(isRepoRelativeKeyFilePath(p), false, `path ${JSON.stringify(p)}`);
+    assert.throws(compose(p), /keyFiles/);
+  }
+  for (const p of ['a.js', 'plugin/bin/x.js', 'docs/..foo/x.md']) {
+    assert.strictEqual(isRepoRelativeKeyFilePath(p), true, `path ${p}`);
+    assert.doesNotThrow(compose(p));
+  }
 });

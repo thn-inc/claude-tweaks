@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ (CommonJS, zero runtime deps), `node --test`, git CLI.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-17T062549-spec-3307-3308-3306-3309-3310-3311/spec-3307/work/3307-spec.md` (record #3307)
+**Spec:** `.claude-tweaks/pipelines/2026-10-17T062549-spec-3307-3308-3306-3309-3310-3311/spec-3307/work/3307-spec.md` (record #3307) _(Spec file deleted at the series close-out in PR #3433; the GitHub record, with its As-built notes, is the durable spec.)_
 
 ## Global Constraints
 
@@ -1246,7 +1246,7 @@ git commit -m "Add review step 3j skill load delta — informational floor/closu
 
 ---
 
-The full suite runs centrally at `/claude-tweaks:build` Common Step 5, not inside a task. A lone `tests/bin-lib/gif/palette.test.js` wall-clock failure there is the pre-existing load flake in `docs/plans/2026-10-17-skill-size-limits-ledger.md` row 3.
+The full suite runs centrally at `/claude-tweaks:build` Common Step 5, not inside a task. A lone `tests/bin-lib/gif/palette.test.js` wall-clock failure there is the pre-existing load flake in `docs/plans/2026-10-17-skill-size-limits-ledger.md` row 3 _(ledger deleted at the series close-out in PR #3433)_.
 
 **Plan self-check (authoring time, 2026-10-17).** The inlined Task 1-5 code was assembled in a scratch copy of `plugin/` and the inlined tests run against it: `load.test.js` 25/25 pass, `load-delta-cli.test.js` 11/11 pass (AC12 run against this worktree, ~15 s). Real-corpus probe (scratch build, working tree at 06bce586): `plugin:flow` floor 43,199 = `measuredBytes` 43,199, closure 1,896,658 B over 143 files, 1,459 unresolved tokens; `plugin:review` floor 13,401 = 13,401, closure 1,450,635 B / 110 files; `plugin:build` floor 45,747 = 45,747, closure 1,746,147 B / 131 files; 39 entry points, floors summing to 985,540 B (spec: "39 `SKILL.md` files … ~960 KB"). The unresolved count is dominated by repo-relative `docs/…` tokens and `{placeholder}.md` tokens, which the grammar deliberately does not resolve; 3j shows only *new* unresolved tokens.
 

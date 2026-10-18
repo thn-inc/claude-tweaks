@@ -31,6 +31,7 @@ eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" <<NODE_EVAL_EOF
     DISPATCH_EXCLUSIONS: 'dispatch-exclusions.json',
     DISPATCH_FASTLANE_BUNDLES: 'dispatch-fastlane-bundles.json',
     DISPATCH_IN_FLIGHT_RAW: 'dispatch-in-flight-raw.json',
+    DISPATCH_IN_FLIGHT_CLAIMS: 'dispatch-in-flight-claims.json',
     DISPATCH_DEP_FRESHNESS: 'dispatch-dep-freshness.json',
     DISPATCH_OPEN_PRS: 'dispatch-open-prs.json',
     DISPATCH_CROSSPR_OVERLAP: 'dispatch-crosspr-overlap.json',
@@ -609,6 +610,7 @@ fi
 # #3278: neighbour-in-flight pass. Records stay in $DISPATCH_GROUPS; only bare
 # drain's ranking skips them. Fail open: an unreadable claim or a failed fetch
 # excludes nothing. Claim blobs chain one fetch via the first git-tip read.
+# MCP transport: mcp-transport.md's neighbour-in-flight section replaces this pass.
 if ! gh issue list --label bot:in-progress --state open --json number,body,labels --limit 200 > "$DISPATCH_IN_FLIGHT_RAW" 2>/dev/null; then
   echo '[]' > "$DISPATCH_IN_FLIGHT_RAW"
   echo "AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull" >&2

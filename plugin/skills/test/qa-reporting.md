@@ -209,13 +209,13 @@ Auto-recovered {N} locator(s) in {M} story file(s). Story YAML files have been u
 | 3   | {story.id}   | {story name} | {filename}  | FAIL              | {passed}/{total} | {N}s    |
 | 4   | {story.id}   | {story name} | {filename}  | SKIPPED           | —                | —       |
 
-## Skipped (dependency or auth-vault failures)
+## Skipped (dependency, auth-vault, target-environment, or step-origin skips)
 
 (Only include if there are skipped stories)
 
 | Story ID     | Story Name   | Reason                       |
 | ------------ | ------------ | ---------------------------- |
-| {story.id}   | {story name} | Blocked by {dep id} / missing-auth-vault: {vault name} / unacknowledged-remote-target: {host} |
+| {story.id}   | {story name} | Blocked by {dep id} / missing-auth-vault: {vault name} / unacknowledged-remote-target: {host} / unresolved-secondary-origin: {origin} |
 
 ## Story Hygiene
 

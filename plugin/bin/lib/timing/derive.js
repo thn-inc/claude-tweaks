@@ -16,6 +16,8 @@
 // pins this against the corpus.
 'use strict';
 
+const { PROFILES } = require('../model-profiles/profiles');
+
 const PHASES = ['call-1', 'call-2', 'build', 'plan', 'tasks', 'test', 'review', 'polish', 'wrap-up', 'merge'];
 
 const NESTED_PARENT = Object.freeze({
@@ -50,6 +52,25 @@ function unionMinutes(spans) {
     curStart = s.start; curEnd = s.end;
   }
   if (curStart !== null) total += minutesBetween(curStart, curEnd);
+  return total;
+}
+// Same merge as unionMinutes, but returns the exact covered milliseconds so a
+// caller can round once instead of rounding each disjoint cluster (#3375 M1).
+function unionMs(spans) {
+  const list = spans
+    .filter((s) => s && Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start)
+    .slice()
+    .sort((a, b) => a.start - b.start);
+  let total = 0;
+  let curStart = null;
+  let curEnd = null;
+  for (const s of list) {
+    if (curStart === null) { curStart = s.start; curEnd = s.end; continue; }
+    if (s.start <= curEnd) { curEnd = Math.max(curEnd, s.end); continue; }
+    total += curEnd - curStart;
+    curStart = s.start; curEnd = s.end;
+  }
+  if (curStart !== null) total += curEnd - curStart;
   return total;
 }
 function skillName(ev) { return typeof ev.skill === 'string' && ev.skill.startsWith(NS) ? ev.skill.slice(NS.length) : null; }
@@ -314,4 +335,91 @@ function countGuardEvents(events) {
   return out;
 }
 
-module.exports = { derivePhases, PHASES, NESTED_PARENT, joinTokens, countGuardEvents };
+// --- Dispatch cost attribution (#3375) ---------------------------------------
+// Tier order: a meta `model` that is a PROFILES alias wins; otherwise the
+// transcript's own `message.model`; otherwise `unmapped`, carrying the raw name
+// so a new model family surfaces instead of being silently folded into a tier.
+const TIER_BY_ALIAS = Object.freeze(Object.fromEntries(Object.entries(PROFILES).map(([tier, p]) => [p.model, tier])));
+// Every tier resolveTier can return, in render order: a profile added to
+// PROFILES gets a Tier row without a second list to keep in step.
+const TIERS = Object.freeze([...Object.keys(PROFILES), 'unmapped']);
+// The family must end at a hyphen or the id's end: claude-sonnetx is unmapped, not standard.
+const MODEL_FAMILY_RE = new RegExp(`^claude-(${Object.keys(TIER_BY_ALIAS).join('|')})(?:-|$)`);
+
+// ({ metaModel, transcriptModel }) -> { tier, rawModel }. `rawModel` is the
+// value the tier came from; on `unmapped` it is the transcript model, else
+// the meta model, else null.
+function resolveTier({ metaModel = null, transcriptModel = null } = {}) {
+  if (typeof metaModel === 'string' && Object.hasOwn(TIER_BY_ALIAS, metaModel)) {
+    return { tier: TIER_BY_ALIAS[metaModel], rawModel: metaModel };
+  }
+  const family = typeof transcriptModel === 'string' ? MODEL_FAMILY_RE.exec(transcriptModel) : null;
+  if (family) return { tier: TIER_BY_ALIAS[family[1]], rawModel: transcriptModel };
+  return { tier: 'unmapped', rawModel: transcriptModel ?? metaModel ?? null };
+}
+
+// Ordered, first match wins. Patterns come from captured dispatch descriptions
+// (tests/fixtures/timing/dispatch-descriptions.json); the SDD-composed ones are
+// best-effort, so growth in `unlabelled` is the drift signal.
+const ROLE_PATTERNS = Object.freeze([
+  { role: 're-review', re: /\bre-review\b/i },
+  { role: 'whole-branch review', re: /^(final )?whole-branch (code )?review\b/i },
+  { role: 'plan review', re: /\bplan review\b/i },
+  { role: 'task review', re: /^review task \d+/i },
+  { role: 'lens reviewer', re: /^((review|delta) )?lens \d/i },
+  { role: 'implementer', re: /^implement\b/i },
+].map((p) => Object.freeze(p)));
+
+function roleOf(description) {
+  if (typeof description !== 'string') return 'unlabelled';
+  const hit = ROLE_PATTERNS.find((p) => p.re.test(description));
+  return hit ? hit.role : 'unlabelled';
+}
+
+// (items) -> { items, byTier, byRole }. Items whose transcript could not be
+// read carry no numbers (tokens null): they stay in `items`, count in no
+// bucket. An orphan (meta not found or not readable) has numbers, so it counts — as
+// `unlabelled`, with its tier from the transcript model.
+function aggregateDispatches(items) {
+  const list = (Array.isArray(items) ? items : []).map((d) => {
+    const { tier, rawModel } = resolveTier(d);
+    return { ...d, tier, rawModel, role: roleOf(d.description) };
+  });
+  const byTier = {};
+  const byRole = {};
+  // Per-bucket running totals, keyed like the buckets: summed own wall-clock
+  // ms (agent-seconds) and the {start,end} spans whose union is the elapsed time.
+  const timeByTier = {};
+  const timeByRole = {};
+  function tally(buckets, times, key, d, span) {
+    buckets[key] ??= { dispatches: 0, agentSeconds: 0, elapsedMinutes: 0, tokens: ZERO_TOKENS() };
+    times[key] ??= { ms: 0, spans: [] };
+    const b = buckets[key];
+    b.dispatches += 1;
+    for (const k of Object.keys(b.tokens)) b.tokens[k] += Number(d.tokens[k]) || 0;
+    times[key].ms += Number(d.wallClockMs) || 0;
+    if (span) times[key].spans.push(span);
+  }
+  for (const d of list) {
+    if (!d.tokens) continue;
+    const start = ms(d.startTs);
+    const end = ms(d.endTs);
+    const span = start !== null && end !== null ? { start, end } : null;
+    tally(byTier, timeByTier, d.tier, d, span);
+    tally(byRole, timeByRole, d.role, d, span);
+  }
+  for (const [buckets, times] of [[byTier, timeByTier], [byRole, timeByRole]]) {
+    for (const [key, b] of Object.entries(buckets)) {
+      b.agentSeconds = Math.round(times[key].ms / 1000);
+      b.elapsedMinutes = Math.round(unionMs(times[key].spans) / 60000);
+    }
+  }
+  const unmapped = list.filter((d) => d.tokens && d.tier === 'unmapped');
+  if (byTier.unmapped) byTier.unmapped.rawModels = [...new Set(unmapped.map((d) => d.rawModel ?? 'null'))].sort();
+  return { items: list, byTier, byRole };
+}
+
+module.exports = {
+  derivePhases, PHASES, NESTED_PARENT, joinTokens, countGuardEvents,
+  unionMinutes, resolveTier, TIERS, ROLE_PATTERNS, roleOf, aggregateDispatches,
+};

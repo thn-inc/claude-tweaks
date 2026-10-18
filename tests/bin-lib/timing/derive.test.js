@@ -253,3 +253,144 @@ test('#1929: countGuardEvents counts the three guard event types and ignores the
   assert.deepEqual(countGuardEvents(events), { gateDenial: 2, wdAmbiguous: 1, wdDeny: 3 });
   assert.deepEqual(countGuardEvents([]), { gateDenial: 0, wdAmbiguous: 0, wdDeny: 0 });
 });
+
+// --- #3375 dispatch aggregation ---
+const { resolveTier, roleOf, aggregateDispatches, unionMinutes } = require('../../../plugin/bin/lib/timing/derive');
+
+const T0 = Date.parse('2026-10-17T10:00:00.000Z');
+const at = (min) => new Date(T0 + min * 60000).toISOString();
+function disp(over = {}) {
+  const startMin = over.startMin ?? 0;
+  const endMin = over.endMin ?? 1;
+  const { startMin: _s, endMin: _e, ...rest } = over;
+  return {
+    agentId: 'x', description: 'Implement Task 1: parser', agentType: 'general-purpose', metaModel: 'sonnet',
+    transcriptModel: 'claude-sonnet-5-5', parentAgentId: null, spawnDepth: 1,
+    startTs: at(startMin), endTs: at(endMin), wallClockMs: (endMin - startMin) * 60000,
+    tokens: { input: 1, output: 2, cacheRead: 3, cacheCreate: 4 }, notFound: null, ...rest,
+  };
+}
+
+test('AC2.1: tier aggregation reports standard 2 and capable 1 for the three-dispatch fixture', () => {
+  const items = [
+    disp({ agentId: 'a1', description: 'Implement Task 1: parser', metaModel: 'sonnet', transcriptModel: 'claude-sonnet-5-5' }),
+    disp({ agentId: 'a2', description: 'Review Task 1 (spec + quality)', metaModel: 'sonnet', transcriptModel: 'claude-sonnet-5-5' }),
+    disp({ agentId: 'a3', description: 'Final whole-branch review #3386', metaModel: 'opus', transcriptModel: 'claude-opus-5-5' }),
+  ];
+  const r = aggregateDispatches(items);
+  assert.equal(r.byTier.standard.dispatches, 2);
+  assert.equal(r.byTier.capable.dispatches, 1);
+  assert.equal(r.byTier.standard.tokens.cacheRead, 6);
+  assert.equal(r.byRole.implementer.dispatches, 1);
+  assert.equal(r.byRole['task review'].dispatches, 1);
+  assert.equal(r.byRole['whole-branch review'].dispatches, 1);
+  assert.deepEqual(r.items.map((i) => [i.tier, i.role]), [['standard', 'implementer'], ['standard', 'task review'], ['capable', 'whole-branch review']]);
+});
+
+test('AC2.2: inherit and absent meta models resolve through the transcript model', () => {
+  assert.equal(resolveTier({ metaModel: null, transcriptModel: 'claude-opus-5-5' }).tier, 'capable');
+  assert.deepEqual(resolveTier({ metaModel: 'inherit', transcriptModel: 'claude-opus-5-5' }), { tier: 'capable', rawModel: 'claude-opus-5-5' });
+});
+
+test('AC2.2: claude-opus-5-5 maps to capable', () => {
+  assert.equal(resolveTier({ metaModel: null, transcriptModel: 'claude-opus-5-5' }).tier, 'capable');
+  assert.equal(resolveTier({ metaModel: 'haiku', transcriptModel: null }).tier, 'fast');
+  assert.equal(resolveTier({ metaModel: 'fable', transcriptModel: null }).tier, 'frontier');
+  assert.equal(resolveTier({ metaModel: null, transcriptModel: 'claude-sonnet-5-5' }).tier, 'standard');
+});
+
+test('AC2.2: a PROFILES alias in meta wins over the transcript model', () => {
+  assert.deepEqual(resolveTier({ metaModel: 'haiku', transcriptModel: 'claude-opus-5-5' }), { tier: 'fast', rawModel: 'haiku' });
+});
+
+test('AC2.3: a model matching no family reports unmapped with its raw name', () => {
+  assert.deepEqual(resolveTier({ metaModel: 'inherit', transcriptModel: 'gpt-x' }), { tier: 'unmapped', rawModel: 'gpt-x' });
+  // the family must end at a hyphen or the id's end
+  assert.deepEqual(resolveTier({ metaModel: null, transcriptModel: 'claude-sonnetx-1' }), { tier: 'unmapped', rawModel: 'claude-sonnetx-1' });
+  assert.equal(resolveTier({ metaModel: null, transcriptModel: 'claude-haiku-4-5-20251001' }).tier, 'fast');
+  const r = aggregateDispatches([
+    disp({ agentId: 'u1', metaModel: 'inherit', transcriptModel: 'gpt-x' }),
+    disp({ agentId: 'u2', metaModel: 'inherit', transcriptModel: 'gpt-x' }),
+    disp({ agentId: 'u3', metaModel: null, transcriptModel: null }),
+  ]);
+  assert.equal(r.byTier.unmapped.dispatches, 3);
+  assert.deepEqual(r.byTier.unmapped.rawModels, ['gpt-x', 'null']);
+  assert.equal(r.byTier.standard, undefined);
+});
+
+test('AC6.1: overlapping spans — agent-seconds is the sum of spans', () => {
+  const r = aggregateDispatches([disp({ agentId: 'o1', startMin: 0, endMin: 2 }), disp({ agentId: 'o2', startMin: 1, endMin: 3 })]);
+  assert.equal(r.byTier.standard.agentSeconds, 240);
+});
+
+test('AC6.1: overlapping spans — elapsed is their union', () => {
+  const r = aggregateDispatches([disp({ agentId: 'o1', startMin: 0, endMin: 2 }), disp({ agentId: 'o2', startMin: 1, endMin: 3 })]);
+  assert.equal(r.byTier.standard.elapsedMinutes, 3);
+  assert.equal(r.byRole.implementer.elapsedMinutes, 3);
+  assert.equal(unionMinutes([{ start: 0, end: 120000 }, { start: 60000, end: 180000 }]), 3);
+});
+
+test('#3375 M1: elapsed never exceeds agent-seconds by more than rounding — it is the rounded union, not a sum of rounded clusters', () => {
+  const sec = (s) => new Date(T0 + s * 1000).toISOString();
+  // three disjoint 30 s spans: each cluster rounds to 1 min under the per-cluster rule (3 min) while agent-seconds is 90.
+  const items = [0, 120, 240].map((s, i) => disp({ agentId: `m${i}`, startTs: sec(s), endTs: sec(s + 30), wallClockMs: 30000 }));
+  const r = aggregateDispatches(items);
+  assert.equal(r.byTier.standard.agentSeconds, 90);
+  assert.equal(r.byTier.standard.elapsedMinutes, 2);
+  assert.ok(r.byTier.standard.elapsedMinutes * 60 <= r.byTier.standard.agentSeconds + 30);
+  // a single 30 s span: round(0.5) = 1 min, within the +30 s allowance.
+  const one = aggregateDispatches([disp({ agentId: 'm9', startTs: sec(0), endTs: sec(30), wallClockMs: 30000 })]);
+  assert.equal(one.byRole.implementer.agentSeconds, 30);
+  assert.equal(one.byRole.implementer.elapsedMinutes, 1);
+  assert.ok(one.byRole.implementer.elapsedMinutes * 60 <= one.byRole.implementer.agentSeconds + 30);
+});
+
+const DESCRIPTIONS = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'fixtures', 'timing', 'dispatch-descriptions.json'), 'utf8'));
+
+test('AC7.1: every captured description classifies to its intended role', () => {
+  assert.ok(DESCRIPTIONS.filter((d) => d.source === 'captured').length >= 19);
+  for (const d of DESCRIPTIONS) {
+    assert.equal(roleOf(d.description), d.role, `${d.source}: "${d.description}"`);
+  }
+  // precedence: a description matching both re-review and plan review is a re-review
+  assert.equal(roleOf('Re-review plan review fix round 1'), 're-review');
+});
+
+test('AC7.1: an unknown string classifies as unlabelled', () => {
+  assert.equal(roleOf('Zork the frobnicator'), 'unlabelled');
+  assert.equal(roleOf(null), 'unlabelled');
+  const r = aggregateDispatches([disp({ description: 'Zork the frobnicator' }), disp({ description: null, notFound: 'meta not found', metaModel: null })]);
+  assert.equal(r.byRole.unlabelled.dispatches, 2);
+});
+
+test('#3375 review focus 4: a dispatch with no assistant rows and no model anywhere is unmapped with raw null', () => {
+  const d = disp({ metaModel: null, transcriptModel: null, tokens: { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 } });
+  assert.deepEqual(resolveTier(d), { tier: 'unmapped', rawModel: null });
+  const r = aggregateDispatches([d]);
+  assert.equal(r.byTier.unmapped.dispatches, 1);
+  assert.deepEqual(r.byTier.unmapped.rawModels, ['null']);
+  assert.equal(r.items[0].rawModel, null);
+  assert.deepEqual(resolveTier({ metaModel: 'inherit', transcriptModel: null }), { tier: 'unmapped', rawModel: 'inherit' });
+});
+
+test('#3375: a transcript-not-readable item stays in items but counts in no bucket', () => {
+  const dead = disp({ agentId: 'dead', startTs: null, endTs: null, wallClockMs: null, tokens: null, notFound: 'transcript not readable (ENOENT)' });
+  const empty = disp({ agentId: 'empty', startTs: null, endTs: null, wallClockMs: null, tokens: null, notFound: 'transcript has no usage rows' });
+  const r = aggregateDispatches([dead, empty, disp({ agentId: 'ok' })]);
+  assert.equal(r.items.length, 3);
+  assert.equal(r.items[0].notFound, 'transcript not readable (ENOENT)');
+  assert.equal(r.byTier.standard.dispatches, 1);
+  assert.equal(r.byRole.implementer.dispatches, 1);
+  assert.deepEqual(aggregateDispatches([dead]).byTier, {});
+});
+
+test('#3375: an orphan (meta not found) counts, under unlabelled, with its tier from the transcript', () => {
+  const orphan = disp({ agentId: 'orph', description: null, metaModel: null, agentType: null, notFound: 'meta not found' });
+  const r = aggregateDispatches([orphan]);
+  assert.equal(r.byRole.unlabelled.dispatches, 1);
+  assert.equal(r.byTier.standard.dispatches, 1);
+});
+
+test('#3375: aggregateDispatches of nothing is empty', () => {
+  assert.deepEqual(aggregateDispatches([]), { items: [], byTier: {}, byRole: {} });
+});

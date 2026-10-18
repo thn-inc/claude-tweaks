@@ -902,7 +902,7 @@ test('no merge-size probe anywhere in the pre-merge refresh (#1930 fix round 4, 
   assert.ok(!PROBE_NAMES.includes('mergeSize'));
   const refresh = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-checklist-refresh.md'), 'utf8');
   assert.ok(!refresh.includes('pack.mergeSize'), 'the pre-merge step reads no pack-fed merge size');
-  assert.ok(!refresh.includes('merge-size-probe'), 'the pre-merge step no longer runs the probe CLI');
+  assert.doesNotMatch(refresh, /merge-size-probe/, 'the pre-merge step no longer runs the probe CLI');
   const section = refresh.slice(refresh.indexOf('## Pre-merge title/description refresh'), refresh.indexOf('## Merge-time gh-absent degrade'));
   const numbers = [...section.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
   assert.deepStrictEqual(numbers, numbers.map((_, i) => i + 1), 'items are numbered contiguously from 1');

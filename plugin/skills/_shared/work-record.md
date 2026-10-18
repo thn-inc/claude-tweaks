@@ -174,8 +174,8 @@ eligibility/candidate filter cites this rule rather than restating the label lis
 
 ## Permission matrix
 
-Who may add / remove which labels, per actor — extracted to keep this file under the 40 KB
-lazy-load ceiling. See `_shared/work-record-permission-matrix.md` for the full actor table
+Who may add / remove which labels, per actor — extracted to keep this file lean. See
+`_shared/work-record-permission-matrix.md` for the full actor table
 (every row exhaustive for its actor) and the driver-conditional enforceability note.
 
 ## Grant semantics
