@@ -157,6 +157,19 @@ the consumer, reproducing the full path the bad entry travelled. So before hand-
 input, ask which component produced it in the incident being pinned — if that component is the
 suspect, the fixture must be its real output, not your model of it.
 
+**The mirror case: a correct producer, and a consumer fixture typed from the consumer's guess.**
+When the consumer reads a field the producer never writes, the consumer's own fixtures come from
+the same wrong guess, so they agree with the bug. Record #3389 is the instance:
+`plugin/bin/lib/console/resolve.js`'s `engineItems` built console item ids from `f.target`, while
+the curation payload names that field `targetPath` (`plugin/skills/wrap-up/curation-engine.md`'s
+payload field table, and every finding fixture in `tests/bin-lib/wrap-up/engine-render.test.js`).
+Both engine-state fixtures in `tests/bin-lib/console/resolve.test.js` hand-built `target`, so the
+suite stayed green while the console printed `skills:undefined`. Before hand-building a fixture for
+a shape another in-repo module writes, grep each field name the consumer reads against the
+producer's contract and the producer's own tests (`grep -rn 'targetPath'
+plugin/skills/wrap-up/curation-engine.md tests/bin-lib/wrap-up/`). A field name that only the
+consumer's side uses is the drift.
+
 ## A plausible mechanism is a claim, not a cause
 
 The same gap one level further over: a root-cause explanation for an external system's
@@ -174,6 +187,19 @@ earlier read could have supplied. The whole-branch review refuted the claim (`8f
 the cause as not yet identified. So for each candidate cause, write down one thing it predicts
 that the alternatives do not, check it against real stored instances (`gh api`, an
 `issue_read` body), and ship "cause not yet identified" when nothing discriminates.
+
+## One transcript kind does not speak for another
+
+A shape observed in the main session transcript is a claim about a subagent transcript, not a
+fact. `readUsage` (`plugin/bin/lib/timing/transcript.js`, #1929) kept the first line per
+`message.id`, on a main-transcript observation that every content block of a turn repeats the
+same usage, and #3375 pointed it at subagent transcripts. Those
+(`{sessionId}/subagents/agent-{id}.jsonl`) open each turn with a streaming snapshot (`stop_reason`
+null, a small `output_tokens`) and close it with the settled count, so first-line dedupe
+undercounted subagent output 8-9x and the cost baseline had to be re-run (`a662004f9`). `6de93fc03` takes the max per `message.id` instead. When code reads more than one
+producer's transcripts, run step 2 against a real sample of each kind (the main transcript, a
+subagent transcript, and any path a caller passes with `--transcript`), and keep the observation
+date beside the rule, the way `transcript.js`'s header does for the subagent layout.
 
 ## When to use
 

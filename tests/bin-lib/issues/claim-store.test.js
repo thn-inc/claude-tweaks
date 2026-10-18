@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   listClaimNames, readClaimBlob, writeClaimBlob, defaultGhApi, classifyGhApiError, tombstoneInFlightPr,
-  isWellFormedClaimContent,
+  isWellFormedClaimContent, createClaimReader, resolveRepoSlug,
 } = require('../../../plugin/bin/lib/issues/claim-store');
 
 // Fake ghApi functions mirror release-merged.js's own ghApi shape: a
@@ -882,4 +882,62 @@ test('tombstoneInFlightPr: same-repo, well-formed, OPEN link -> { link }, one ru
   const result = tombstoneInFlightPr(content, runner, 'acme', 'w');
   assert.deepEqual(result, { link: 'https://github.com/acme/w/pull/304' });
   assert.equal(calls.length, 1);
+});
+
+test('createClaimReader: git hit returns content and chains the git tip (one fetch for two reads)', () => {
+  let fetches = 0;
+  const base = fakeGitRunnerAlwaysWorks('a'.repeat(40), '{"runId":"r1"}');
+  const gitRunner = (args) => { if (args[0] === 'fetch') fetches += 1; return base(args); };
+  const ghApi = () => { throw new Error('contents API must not be called on a git hit'); };
+  const { read } = createClaimReader({ gitRunner, ghApi, repoSlug: 'acme/w' });
+  assert.deepEqual(read(42), { content: '{"runId":"r1"}' });
+  assert.deepEqual(read(43), { content: '{"runId":"r1"}' });
+  assert.equal(fetches, 1);
+});
+
+test('createClaimReader: git hit with unresolved slug still returns the git answer', () => {
+  const gitRunner = fakeGitRunnerAlwaysWorks('a'.repeat(40), null);
+  const ghApi = () => { throw new Error('contents API must not be called on a git hit'); };
+  assert.deepEqual(createClaimReader({ gitRunner, ghApi, repoSlug: null }).read(42), { content: null });
+});
+
+test('createClaimReader: contents-API hit when git fails, and the blob sha never becomes the chained tip', () => {
+  let fetches = 0;
+  const failing = fakeGitRunnerAlwaysFails();
+  const gitRunner = (args) => { if (args[0] === 'fetch') fetches += 1; return failing(args); };
+  const ghApi = (args) => {
+    assert.equal(isRead(args, 'claims/issue-42.json'), true);
+    return { stdout: JSON.stringify({ content: '{"runId":"r2"}', sha: 'blobsha' }), failure: null, status: null };
+  };
+  const { read } = createClaimReader({ gitRunner, ghApi, repoSlug: 'acme/w' });
+  assert.deepEqual(read(42), { content: '{"runId":"r2"}' });
+  read(42);
+  assert.equal(fetches, 2);
+});
+
+test('createClaimReader: contents-API 404 reads as absent ({content: null})', () => {
+  const ghApi = (args) => { assert.equal(isRead(args, 'claims/issue-42.json'), true); return { stdout: null, failure: null, status: 404 }; };
+  assert.deepEqual(createClaimReader({ gitRunner: fakeGitRunnerAlwaysFails(), ghApi, repoSlug: 'acme/w' }).read(42), { content: null });
+});
+
+test('AC1.1: createClaimReader: unresolved slug with a failing git read is a failure, never absent, and never asks repos/null', () => {
+  const ghApi = (args) => { throw new Error(`contents API must not be called without a slug: ${args[0]}`); };
+  const reader = createClaimReader({ gitRunner: fakeGitRunnerAlwaysFails(), ghApi, repoSlug: null });
+  assert.equal(reader.repoSlug, null);
+  assert.deepEqual(reader.read(42), { failure: 'repo-slug-unresolved' });
+});
+
+test('createClaimReader: a contents-API transport failure propagates as {failure}', () => {
+  const ghApi = () => ({ stdout: null, failure: 'network-failure', status: null });
+  assert.deepEqual(createClaimReader({ gitRunner: fakeGitRunnerAlwaysFails(), ghApi, repoSlug: 'acme/w' }).read(42), { failure: 'network-failure' });
+});
+
+test('createClaimReader: resolves the slug through runGh when none is given', () => {
+  const runGh = (args) => { assert.deepEqual(args, ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner']); return 'acme/w\n'; };
+  assert.equal(createClaimReader({ gitRunner: fakeGitRunnerAlwaysFails(), runGh }).repoSlug, 'acme/w');
+});
+
+test('resolveRepoSlug: a thrown or empty gh answer resolves to null', () => {
+  assert.equal(resolveRepoSlug(() => { throw new Error('gh: not logged in'); }), null);
+  assert.equal(resolveRepoSlug(() => '\n'), null);
 });

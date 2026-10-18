@@ -30,6 +30,10 @@
 // stdout line is still the written path), but should not assume the id it
 // passed is the id that landed. See bin/lib/stage-item/write.js's
 // writeStagedItem for the full contract.
+// #3370: when the id that landed matches no Review Console SECTION_MAP prefix
+// (console/resolve.js), a warning naming the nearest canonical prefixes goes to
+// stderr after the write. It never changes the exit code; a canonical id prints
+// nothing.
 // The staged/ half of #637 ("no CLI writes decisions.md or staged/ items");
 // bin/log-decision.js is the decisions.md half, shipped under #686.
 // `--json` (#2612) is the machine-readable sidecar render-tidy-report.js
@@ -40,9 +44,11 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const {
   resolveTarget, sanitizeId, writeStagedItem, writeStagedSidecar, parseNumberedKind,
 } = require('./lib/stage-item/write');
+const { classifyStagedItem, nearestCanonicalPrefixes } = require('./lib/console/resolve');
 
 const USAGE = 'usage: stage-item.js --run <run-dir> --id <kind>-<n> --file <path> [--json <path>] [--allocate] [--help]\n';
 
@@ -140,6 +146,13 @@ function run(argv, deps = realDeps) {
       return 3;
     }
     deps.stdout(sidecar.file + '\n');
+  }
+
+  // #3370: warn (never fail) when the id that landed matches no SECTION_MAP
+  // prefix — a wrap-up Review Console resolving this run would park it in
+  // Pending review. Not every staging producer's run reaches that console.
+  if (classifyStagedItem(result.id + path.extname(o.file)).reason === 'unmapped-prefix') {
+    deps.stderr(`stage-item.js: warning: --id ${result.id} matches no Review Console SECTION_MAP prefix — if a wrap-up Review Console resolves this run, it routes this item to Pending review (unmapped-prefix), never auto-resolved. Nearest canonical prefixes: ${nearestCanonicalPrefixes(result.id).join(', ')}\n`);
   }
 
   return 0;

@@ -1,8 +1,8 @@
 # Tidy Step 4 — Plan Citation Check (#3101)
 
 Read by `scan-procedures.md` Step 4 before recommending any plan Delete, and re-run by
-`step-6-auto.md`'s pre-delete re-verify (both Delete rows). Split out of `scan-procedures.md`, which is
-byte-capped (`tests/release-lifecycle-byte-budget.test.js`). A third reader: `/wrap-up`'s
+`step-6-auto.md`'s pre-delete re-verify (both Delete rows). Split out of `scan-procedures.md` while that file
+carried a per-file byte cap (retired by #3311). A third reader: `/wrap-up`'s
 `cleanup-procedures.md` item 1 runs this same check before a `prune-after-wrapup` plan delete (#3109).
 
 A plan a repo file still cites is not orphaned, whatever `scan-procedures.md` Step 4's plan table concluded. Search tracked files only, excluding `docs/superpowers/plans/` and `.claude-tweaks/` (a plain recursive grep also hits `.git/`, gitignored `.superpowers/sdd/` scratch, and sibling worktrees under `.claude/worktrees/`, so every plan would read as cited): `git -C "{REPO_ROOT}" grep -lF -- '{basename}' -- ':!docs/superpowers/plans/' ':!.claude-tweaks/'`. Exit 1 means no citation. Any other non-zero exit means the check could not run: treat the plan as cited-unverified and keep it, the same Yours row with the error in place of the citing files, never a Delete on empty output. Any hit makes the recommendation `Keep (cited by {file})`, naming every citing file. A cited Keep is not a Clean-counted Keep: it is `Auto (no-op, always surfaced)` and renders in **Yours ({N})** as one row naming the plan, every citing file, and the paste-ready command `git grep -nF -- '{basename}'`, so the human can open each citing file. The human annotates the citation with the plan's current last commit (`git log -1 --format=%h -- {plan}`, in the form `` (deleted `{sha}`) ``) or deletes the citation, and the next /tidy run can then delete the plan; /tidy never deletes a cited plan itself. A record body naming the plan does not count here. That is the open-record check, and this check reads repo files only.

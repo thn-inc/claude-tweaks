@@ -16,7 +16,6 @@ const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 const { sessionTmpPath } = require('../plugin/bin/lib/session-tmp');
-const { CEILING_BYTES } = require('../plugin/bin/lib/skill-audit/context-cost');
 
 const DISPATCH = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch');
 const SKILL = readText(path.join(DISPATCH, 'SKILL.md'));
@@ -111,7 +110,7 @@ test('the #3084 journey names every removing exclusion reason, with a matching c
   }
 });
 
-test('dispatch #N reports an unreadable dispatch-exclusions.json as reason-unknown, never as absent, within the byte ceiling (#3104)', () => {
+test('dispatch #N reports an unreadable dispatch-exclusions.json as reason-unknown, never as absent (#3104)', () => {
   assert.ok(SINGLE.includes('exclusions-unreadable-report.md'), '#N bullet must cite exclusions-unreadable-report.md for the unreadable case');
   const report = readText(path.join(DISPATCH, 'exclusions-unreadable-report.md'));
   assert.ok(report.includes('readExclusionsStatus'), 'the report must probe readExclusionsStatus, not readExclusions');
@@ -120,8 +119,6 @@ test('dispatch #N reports an unreadable dispatch-exclusions.json as reason-unkno
   assert.ok(report.includes('Step 2'), 'the report must route the human to re-run the queue pull (Step 2)');
   const probe = report.split('\n').find((l) => l.includes('readExclusionsStatus') && l.trimStart().startsWith('node '));
   assert.ok(probe, 'the report must carry a one-line node probe');
-  const bytes = Buffer.byteLength(SKILL, 'utf8');
-  assert.ok(bytes < CEILING_BYTES, `dispatch/SKILL.md is ${bytes} B LF -- must stay under ${CEILING_BYTES}`);
 });
 
 // The report's probe must run in a fresh shell (Step 2 is its own Bash call, so `$DISPATCH_EXCLUSIONS` is

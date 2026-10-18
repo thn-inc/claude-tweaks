@@ -412,6 +412,22 @@ test('validate-findings: a patch finding against a real target file carries a Pr
   assert.ok(!result.stderr.includes('dropped Premise-check:'), `a kept line must not log a drop, got:\n${result.stderr}`);
 });
 
+test('validate-findings: a patch finding against a real target file carries that file, repo-relative, under ### Key Files (repoRoot is wired through)', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth\n\nSee `src/auth/login.js`.\n');
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
+
+  const result = runValidateFindings(root, findingsFile, ['--target', 'auth', '--kind', 'skill']);
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const [payload] = JSON.parse(result.stdout);
+  assert.ok(
+    payload.body.includes('### Key Files\n\n- `.claude/skills/auth.md` \u2014 apply the proposed change'),
+    `expected the repo-relative target under ### Key Files, got body:\n${payload.body}`,
+  );
+});
+
 test('validate-findings: a patch finding against an unresolvable target carries no Premise-check: line', () => {
   const root = tmp();
   // No .claude/skills/auth.md on disk — the target can't resolve to a path.

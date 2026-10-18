@@ -5,6 +5,10 @@
 // unfinished/in-progress pipeline runs and unapproved standalone staged
 // proposals, surfaced at SESSION start, not wrap-up's own close-time sweep.
 //
+// Three detections: unfinished runs, unapproved standalone staged proposals,
+// and (#3370) closed or archived runs whose unattended Review Console left
+// items no human has reviewed.
+//
 // Two consumers read this same detection: SessionStart's own advisory
 // banners (session-start.js) and `hooks.js check-session-residue`, the CLI
 // wrap-up's Review Console runs to re-surface any residue that was flagged
@@ -20,7 +24,10 @@ const fs = require('fs');
 const path = require('path');
 const ctxLib = require('./context');
 const runIntegrity = require('./run-integrity');
-const { safeReal } = require('./worktree-detect');
+const wtDetect = require('./worktree-detect');
+const { readRunResidue, formatResidueLines } = require('../console/residue');
+
+const { safeReal } = wtDetect;
 
 // Caps both lists at the same size SessionStart has always used — a long
 // tail of stale runs is exactly the noise MAX_REPORTED exists to avoid.
@@ -94,4 +101,80 @@ function collectApprovableStandalone(cwd, { exclude } = {}) {
   }));
 }
 
-module.exports = { MAX_REPORTED, collectStaleRuns, collectApprovableStandalone };
+// How many of the newest run names (top-level and archive/ merged) the
+// console-residue scan considers. Bounds SessionStart's cost once every
+// console is acknowledged and no early stop fires; a high-water-mark file was
+// rejected because it mis-skips runs still open when it was written.
+const SCAN_WINDOW = 200;
+
+function runIdNames(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && ctxLib.RUN_ID_RE.test(e.name))
+      .map((e) => e.name);
+  } catch { return []; }
+}
+
+// Closed (clean, top-level) and archived runs whose Review Console left
+// `pending` / `keep-staged` items no human has reviewed (#3370), newest first
+// by basename, capped at `limit` (default MAX_REPORTED). Candidates are the
+// newest `window` run-id names of the top level and archive/ merged, listed
+// without reading any state; a basename in both is kept once, top-level
+// preferred. A top-level candidate counts only when its run-state.json is
+// `clean` and its archive twin is neither clean nor freshly `archiving`
+// (iterRunDirsWithState's twin skip); otherwise its archive/ copy, when there
+// is one, stands in. Only consoles not yet acknowledged count — a run is kept
+// when at least one remains, and only those are listed. Reading stops as soon
+// as `limit` runs are kept. `more` is true when that stop or the window left
+// candidates unread. `readFile` is the readRunResidue test seam.
+function scanUnresolvedConsoles(cwd, { exclude, pluginRoot, limit = MAX_REPORTED, window = SCAN_WINDOW, readFile } = {}) {
+  const root = pluginRoot || '${CLAUDE_PLUGIN_ROOT}';
+  const base = path.join(wtDetect.mainCheckoutRoot(cwd) || cwd, '.claude-tweaks', 'pipelines');
+  const archiveBase = path.join(base, 'archive');
+  const top = new Set(runIdNames(base));
+  const archived = new Set(runIdNames(archiveBase));
+  const names = [...new Set([...top, ...archived])].sort().reverse();
+  const candidates = names.slice(0, window);
+  let more = candidates.length < names.length;
+
+  const candidateDir = (name) => {
+    if (top.has(name)) {
+      const twin = archived.has(name) ? ctxLib.readRunState(path.join(archiveBase, name)) : null;
+      const twinDone = Boolean(twin && (twin.status === 'clean' || (twin.status === 'archiving' && !ctxLib.isStaleClaim(twin))));
+      if (!twinDone) {
+        const state = ctxLib.readRunState(path.join(base, name));
+        if (state && state.status === 'clean') return path.join(base, name);
+      }
+    }
+    return archived.has(name) ? path.join(archiveBase, name) : null;
+  };
+
+  const runs = [];
+  for (const name of candidates) {
+    if (runs.length >= limit) { more = true; break; }
+    const dir = candidateDir(name);
+    if (!dir || sameDir(dir, exclude)) continue;
+    const found = readRunResidue(dir, readFile ? { readFile } : undefined);
+    const consoles = found.consoles.filter((c) => !c.acknowledged);
+    if (!consoles.length) continue;
+    runs.push({ dir, consoles, lines: formatResidueLines({ dir, consoles }, { pluginRoot: root }) });
+  }
+  return { runs, more };
+}
+
+function collectUnresolvedConsoles(cwd, opts) {
+  return scanUnresolvedConsoles(cwd, opts).runs;
+}
+
+// The two lines both renderers add around scanUnresolvedConsoles' runs: the
+// overflow line (only when `more`) and the bulk way out of a backlog.
+const CONSOLE_OVERFLOW_LINE = `- … more run(s) may have unreviewed console items (newest ${MAX_REPORTED} shown).`;
+function consoleAckAllLine(pluginRoot) {
+  return 'To dismiss every listed and older unreviewed item at once after reviewing (a human decision): ' +
+    `node "${pluginRoot || '${CLAUDE_PLUGIN_ROOT}'}/bin/console-residue.js" --ack-all`;
+}
+
+module.exports = {
+  MAX_REPORTED, SCAN_WINDOW, CONSOLE_OVERFLOW_LINE, collectStaleRuns, collectApprovableStandalone,
+  scanUnresolvedConsoles, collectUnresolvedConsoles, consoleAckAllLine,
+};

@@ -114,8 +114,7 @@ Then run the call below; its first line re-resolves the same two paths:
 eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" NEAR_DUP_HITS=specify-near-dup-hits.json NEAR_DUP_SNAPSHOT=specify-near-dup-snapshot.json)"
 node -e "
 const { shapingRefusal, buildShapingState } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
-const { readClaimBlob, defaultGhApi } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claim-store.js');
-const { defaultRunner } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims-git-cas.js');
+const { createClaimReader } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claim-store.js');
 const { buildLinkedPRQuery, normalizeLabelNames } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -123,17 +122,16 @@ const [hits, snapshot] = [JSON.parse(fs.readFileSync(process.argv[1], 'utf8')), 
 const labelsByNumber = Object.fromEntries(snapshot.map((r) => [r.number, r.labels]));
 const numbers = hits.filter((h) => Number.isInteger(h.number) && h.signals.includes('title-similarity') && normalizeLabelNames(labelsByNumber[h.number] || []).includes('ready')).map((h) => h.number);
 const claimContentByNumber = {};
+const unreadable = [];
 let linkedPRRepoData = null;
 if (numbers.length) {
-  let slug = null;
-  try { slug = execFileSync('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], { encoding: 'utf8' }).trim(); } catch {}
-  let tip = null;
+  const claims = createClaimReader();
   for (const n of numbers) {
-    const r = readClaimBlob({ gitRunner: defaultRunner, ghApi: defaultGhApi }, slug, n, tip);
-    if (!r.failure && r.via === 'git') tip = r.sha;
-    claimContentByNumber[n] = r.failure || r.absent ? null : r.content;
+    const r = claims.read(n);
+    if (r.failure) unreadable.push(n);
+    claimContentByNumber[n] = r.failure ? null : r.content;
   }
-  const [owner, repo] = (slug || '').split('/');
+  const [owner, repo] = (claims.repoSlug || '').split('/');
   if (owner && repo) {
     let out = null;
     try { out = execFileSync('gh', ['api', 'graphql', '-f', 'query=' + buildLinkedPRQuery(numbers), '-f', 'owner=' + owner, '-f', 'repo=' + repo], { encoding: 'utf8' }); } catch (e) { out = e.stdout || null; }
@@ -142,15 +140,19 @@ if (numbers.length) {
 }
 const state = buildShapingState({ numbers, labelsByNumber, claimContentByNumber, linkedPRRepoData, now: Date.now() });
 const hit = shapingRefusal(hits, state);
-console.log(JSON.stringify(hit ? { refuse: true, hit, evidence: state[hit.number] } : { refuse: false }));
+const result = hit ? { refuse: true, hit, evidence: state[hit.number] } : { refuse: false };
+if (unreadable.length) result.unreadable = unreadable;
+console.log(JSON.stringify(result));
 " "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"
 ```
 
 Only a title-similar `ready` candidate can refuse, so the call reads claims and linked PRs for those
 alone (one `git fetch` in total, chained through the first read's tip) and skips both reads when
-there are none. A failed claim read (the git read falls back to the contents API) or a failed
-linked-PR query leaves that candidate "not in flight" — never a refusal (a GraphQL error on one
-issue still keeps the partial `data` for the others). With no `gh` (MCP
+there are none. A failed claim read (the git read falls back to the contents API) — including an unresolved repo
+slug, which is never read as an absent claim — or a failed linked-PR query leaves that candidate
+"not in flight" — never a refusal (a GraphQL error on one issue still keeps the partial `data` for
+the others). A failed claim read also lands in the output's `unreadable` list; quote it beside
+the candidate table. With no `gh` (MCP
 transport), run the call unchanged: the git claim read still works wherever `git fetch` can read
 the remote, and the GraphQL call falls into its `catch` — the per-item PR-read degrade
 `_shared/github-write-transport.md` documents, since PR reads have no MCP equivalent. The screen

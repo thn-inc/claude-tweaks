@@ -9,7 +9,7 @@ The minimal facts a **child** skill needs to implement its own auto branch corre
 | `auto` | **`/flow`'s default**; also explicit `auto` arg or `auto-mode: default-on` in `.claude-tweaks/policy.yml` | Bookend architecture with the begin stop as a **read-only FYI** — the only user-facing stop is the end Review Console. Pure automation in the middle. HARD-GATEs and mandatory user-input items still fire. |
 | `confirm` | Explicit `confirm` arg | Same as `auto`, but the begin stop is a real **approval gate**. After approval, the rest of the pipeline runs as `auto`. |
 | `hybrid` | Explicit `hybrid` arg | Begin stop is an approval gate; downstream skills also auto-resolve only when reversibility:high AND confidence:high AND severity ≤ low — everything else asks. Review Console still runs at end. |
-| `interactive` | Explicit `interactive` arg, or `auto-mode: default-off` in `.claude-tweaks/policy.yml` | No Manifesto presented; skills present each decision in-flow as the standalone skills do. |
+| `interactive` | Explicit `interactive` arg, or `auto-mode: default-off` in `.claude-tweaks/policy.yml` — except a `/flow` run whose run dir is bound `dispatched: true` (`run-state.json`), which resolves `auto`; an explicit `interactive` arg still wins there | No Manifesto presented; skills present each decision in-flow as the standalone skills do. |
 
 ## Decision precedence
 

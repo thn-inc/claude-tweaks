@@ -14,6 +14,7 @@ const portsEnsure = require('../ports/ensure');
 const { BLOCK_SIZE: PORTS_BLOCK_SIZE } = require('../ports/registry');
 const { INTERACTION_STYLE_DIRECTIVE } = require('./interaction-style');
 const { resolvePluginVersion } = require('../plugin-version');
+const { SUPERPOWERS_FLOOR, effectiveSuperpowersVersion, superpowersNotice } = require('../superpowers-version');
 
 // #1738: the one banner-assembly shape both advisory scans below build by
 // hand today — a header sentence, the per-run "- name — detail" lines, and a
@@ -103,6 +104,24 @@ async function run(ctx) {
     if (buildLine) parts.push(buildLine);
   } catch { /* best-effort */ }
   try {
+    // #3380: inform-tier notice when the superpowers install this project
+    // resolves to is older than the version claude-tweaks is verified against
+    // (superpowers-version.js owns the resolution and the copy). Fires on
+    // `startup` or an absent `source` only — resume/clear/compact re-fire this
+    // hook in a session that already saw it. Silent on every no-install,
+    // malformed or at-or-above-floor outcome. `superpowersDeps` is a test-only
+    // seam; bin/hooks.js never sets it.
+    const source = ctx.input && typeof ctx.input === 'object' ? ctx.input.source : undefined;
+    if (typeof source !== 'string' || source === 'startup') {
+      const notice = superpowersNotice({
+        effective: effectiveSuperpowersVersion(ctx.cwd, ctx.superpowersDeps),
+        floor: SUPERPOWERS_FLOOR,
+        projectDir: ctx.cwd,
+      });
+      if (notice) parts.push(notice);
+    }
+  } catch { /* best-effort */ }
+  try {
     // #2736: detection lives in session-residue.js, shared with `hooks.js
     // check-session-residue` (wrap-up's Review Console resurfacing check) so
     // the two can never drift on what counts as residue or what resolution
@@ -151,6 +170,25 @@ async function run(ctx) {
         lines,
         'Review and apply with /claude-tweaks:tidy --approve <dir>, or clear staged/ to dismiss.\n' +
           'Relay this list once, in your first reply to the user, one line per run naming its tidy --approve command — do not proceed silently without mentioning it.',
+      ));
+    }
+  } catch { /* best-effort */ }
+  try {
+    // #3370: an `unattended` run's Review Console records items it deliberately
+    // left `pending` / `keep-staged`; once the run closes or archives nothing
+    // else re-surfaces them. Same designated-consumer relay directive as the
+    // two banners above — detection without a follow-through is #803's defect.
+    const pluginRoot = pluginRootEnv || '${CLAUDE_PLUGIN_ROOT}';
+    const { runs: consoleEntries, more } = sessionResidue.scanUnresolvedConsoles(ctx.cwd, { pluginRoot });
+    if (consoleEntries.length) {
+      const lines = consoleEntries.flatMap((e) => e.lines);
+      if (more) lines.push(sessionResidue.CONSOLE_OVERFLOW_LINE);
+      parts.push(advisoryBanner(
+        'claude-tweaks: closed or archived run(s) whose unattended Review Console left item(s) no human has reviewed:',
+        lines,
+        'Read each item, then act on it (apply it, file it with /claude-tweaks:capture, or drop it) and mark the run reviewed with its own command above.\n' +
+          `${sessionResidue.consoleAckAllLine(pluginRoot)}\n` +
+          'Relay this list once, in your first reply to the user, one line per item with its command — do not proceed silently without mentioning it.',
       ));
     }
   } catch { /* best-effort */ }

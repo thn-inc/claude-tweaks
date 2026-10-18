@@ -187,9 +187,8 @@ test('both consoles and the narrowing auto-file cite refused-proposals.md', () =
   ]) assert.ok(read(rel).includes('refused-proposals.md'), rel);
 });
 
-test('refused-proposals.md stays within its 3 KB budget and never hardcodes the vocabulary', () => {
+test('refused-proposals.md never hardcodes the vocabulary', () => {
   const content = read('plugin/skills/wrap-up/refused-proposals.md');
-  assert.ok(Buffer.byteLength(content, 'utf8') <= 3072, `size ${Buffer.byteLength(content, 'utf8')}`);
   assert.ok(content.includes('DEFER_REASONS'));
   for (const v of ['needs-human-decision', 'pre-existing-outside-diff', 'genuinely-larger', 'blocked-external', 'blocked-dependency']) {
     assert.ok(!content.includes(v), `hardcoded vocabulary value: ${v}`);

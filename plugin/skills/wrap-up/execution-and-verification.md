@@ -6,7 +6,7 @@ Loaded by `/claude-tweaks:wrap-up`'s Phase 4 execution step when at least one ap
 
 Execute the cleanup planned in Phase 4's cleanup-planning step (canonical list in `cleanup-procedures.md`) plus the configuration / skill updates approved at the Review Console — the console is the sole approval gate, in every mode. The 8 cleanup items, in execution order, are defined in `cleanup-procedures.md`'s canonical list — do not re-enumerate here. Filter rows by Condition.
 
-**MULTISPEC_REVIEW_DEFER branch:** When `$MULTISPEC_REVIEW_DEFER=1` is set, this step SKIPS the state-changing cleanups marked deferred in `cleanup-procedures.md` (items 3 Design caches, 4 Git worktree, 6 Ephemeral dev server, 7 Issue claim release, 8 Pipeline run dir archival). Those defer to `/flow`'s consolidated multi-spec Review Console at end-of-run, which has authority to apply or override them across all specs in the run. This step still executes the idempotent cleanups (items 1 Execution plans, 2 Open items ledger, 5 Record/spec lifecycle) — those do not interact with parent-orchestrated cleanup. The skip list covers those five cleanup items only; nothing else in this step is deferred by it. In particular, the **Acceptance labeling** bullet below still runs for every spec (its Try it block, the oversight-floor gate, `--oversight-exempt`); `_shared/pr-run-comments.md`'s "Multi-spec brief and timing comments (#2970)" section keys each spec's brief to its own marker on the shared PR. **Verify execution** still runs too: its `worktree-removed` and `run-dir-archived` rows read `skip (deferred to parent console)`, because the defer protocol (`review-console-appendix.md`) recorded those items in `verify-expectations.json`'s `deferred` list.
+**MULTISPEC_REVIEW_DEFER branch:** When `$MULTISPEC_REVIEW_DEFER=1` is set, this step SKIPS the state-changing cleanups marked deferred in `cleanup-procedures.md` (items 2 Open items ledger, 3 Design caches, 4 Git worktree, 6 Ephemeral dev server, 7 Issue claim release, 8 Pipeline run dir archival). Those defer to `/flow`'s consolidated multi-spec Review Console at end-of-run, which has authority to apply or override them across all specs in the run. This step still executes the idempotent cleanups (items 1 Execution plans, 5 Record/spec lifecycle) — those do not interact with parent-orchestrated cleanup. The skip list covers those six cleanup items only; nothing else in this step is deferred by it. In particular, the **Acceptance labeling** bullet below still runs for every spec (its Try it block, the oversight-floor gate, `--oversight-exempt`); `_shared/pr-run-comments.md`'s "Multi-spec brief and timing comments (#2970)" section keys each spec's brief to its own marker on the shared PR. **Verify execution** still runs too: its `worktree-removed` and `run-dir-archived` rows read `skip (deferred to parent console)`, because the defer protocol (`review-console-appendix.md`) recorded those items in `verify-expectations.json`'s `deferred` list.
 
 After the cleanup, also apply:
 
@@ -26,10 +26,9 @@ Commit with a message summarizing the wrap-up actions. When the run is `current-
 include one `Fixes #{issue}` line per resolved issue in this commit message — it is the
 closing-keyword carrier for current-branch runs (see `cleanup-procedures-execution.md` Section C); GitHub
 closes the issues when the commit reaches the default branch. Resolve the issue set from
-`{run-dir}/wrap-up-pack.json`'s `inputs.records` when non-empty and its `sources.records` is
-`headers` or `worktree-headers` (a multi-spec current-branch run can resolve more than one; a
-`manifest`/`worktree-manifest` source lists specs that never ran, whose line is `Refs`, so it
-never feeds `Fixes`), otherwise
+`{run-dir}/wrap-up-pack.json`'s `inputs.closingRecords` when non-empty (a multi-spec current-branch
+run can resolve more than one; which records a run may close is defined once, at
+`cleanup-procedures-execution.md`'s Section C step 2), otherwise
 fall back to this run's own identified record (Phase 1 — a `#`-prefixed argument, or a
 branch/commit reference) as the single issue resolved. A run with neither — conversation-based
 work — carries no closing keyword; there was never an issue to close.

@@ -1,8 +1,8 @@
 # Dispatch — Drain's Own In-Flight PR Overlap (refs #1985)
 
 Referenced by `skills/dispatch/SKILL.md` Step 4 (the re-check, before minting) and Step 5 (the
-list write, after a call returns). Extracted from `SKILL.md` to keep it under the 40 KB ceiling
-(`[IL-153]`). Read both sections below together — the list Step 5 writes is exactly what Step 4's
+list write, after a call returns). Extracted from `SKILL.md` so it stays lean (`[IL-153]`). Read
+both sections below together — the list Step 5 writes is exactly what Step 4's
 re-check reads.
 
 Background and the two invocation sites' relationship to Step 3's own (unchanged) pre-drain

@@ -23,14 +23,16 @@ Walk the precedence chain (see `_shared/auto-mode-contract.md`):
 
 1. Explicit CLI args from `$ARGUMENTS` (e.g., `no-polish` sets `polish: skip`)
 2. Pipeline-config file from a previous run that's still active in this session (rare; usually skipped)
-3. Project policy — the resolved `auto-mode` value: `AUTO_MODE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values auto-mode)` (empty when `.claude-tweaks/policy.yml` leaves it unset — the key has no schema default)
+3. Project policy (`.claude-tweaks/policy.yml`)
 4. Hardcoded sensible defaults (last resort)
+
+Lever 1 (Mode) takes its value and source from `SKILL.md` Step 1's resolved mode and deciding rung (`arg` / `dispatch` / `policy` / `default`).
 
 For each lever, record both the recommended value AND its source.
 
 **Git lever override.** When `.claude-tweaks/policy.yml` sets `worktree-always: true`, the Git lever is forced to `worktree` regardless of CLI args or defaults above — `current-branch` is never offered. This is enforced mechanically by a `PreToolUse` gate (`_shared/git-discipline.md`); the Manifesto short-circuits to `worktree`.
 
-**Ceremony profile computation.** Unlike the other levers (policy preferences resolved via the precedence chain above), `ceremony-profile`'s value is computed by folding every record's materialized `ceremony:` header field (`materialize.md`) with a logical AND: `fast-lane` only when every record in this run has `ceremony: fast-lane`; any record missing the field (defaults to `standard`) or carrying an explicit `standard` sends the whole run's `ceremony-profile` to `standard` — mirrors the auto-merge gate's existing "every member of the group must carry `auto:merge`" rule (`dispatch/SKILL.md`'s Auto-merge gate). Source is always `header`. The computed value still becomes this lever's Recommended value, overridable via the normal `9=value` mechanism below — unlike Design intent (locked in from `/specify`), `ceremony-check`'s verdict is a fresh automated judgment call, and this Manifesto is the first point a human sees it.
+**Ceremony profile computation.** Unlike the other levers (policy preferences resolved via the precedence chain above), `ceremony-profile`'s value is computed by folding every record's ceremony value with a logical AND — its `ceremony:*` label (`facets.ceremony`, from Step 1's resolution fetch), or, for a record with no label, the verdict judged below, which stands in for the label: `fast-lane` only when every record in this run has `ceremony:fast-lane`; any record carrying an explicit `standard` sends the whole run's `ceremony-profile` to `standard` — mirrors the auto-merge gate's existing "every member of the group must carry `auto:merge`" rule (`dispatch/SKILL.md`'s Auto-merge gate). A record that carries no `ceremony:*` label is judged here, before the fold: run the canonical pattern (`_shared/ceremony-check-invocation.md`) with `#{n}`, using Step 1's fetched body and labels, and hold each verdict in memory. The run directory and `decisions.md` may not exist yet, so log once per record only after the Approval flow section's write has created them (`config.yml` written, `decisions.md` initialized): `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status AUTO --step "Manifesto ceremony-check" --text "#{n} carries no ceremony:* label -> CEREMONY: {verdict}" --reversibility n/a`. On a case-1 adoption (`preflight.adoption.value.case === 1`) omit this judgment and its log line: the call that wrote `config.yml` already logged the verdict, and the lever value comes from `preflight.levers`. This is the run's only verdict for that record: Step 4's materialize passes it through as `--ceremony` (cite `materialize.md`'s `ceremony` bullet). Why here: the materialized header this lever used to read does not exist at Step 3, so `standard` was the only possible outcome for an unlabeled record (#3160). Output with no `CEREMONY:` line stops the pipeline before Step 4 with the generic failure card (`failure-cards.md`, gate `ceremony-check`); it is never defaulted to `standard`. Source is always `header`. The computed value still becomes this lever's Recommended value, overridable via the normal `9=value` mechanism below — unlike Design intent (locked in from `/specify`), `ceremony-check`'s verdict is a fresh automated judgment call, and this Manifesto is the first point a human sees it.
 
 ## Compute per-spec preview
 
@@ -39,7 +41,7 @@ Before rendering the Manifesto, derive a per-spec preview by reading each record
 | Field | Source | How to derive |
 |---|---|---|
 | Surface | Materialized header `surface:` (`materialize.md`) — or the record body's `Surface:` line when no run-dir header exists yet (or detect from Key Files extensions, using the same trigger-extension/trigger-path rules as `/claude-tweaks:design-wrapper`'s Layer 3 sniff — for the canonical list, read `frontend-detection.md` in that skill's directory) | `frontend` if trigger files present; else `backend` / `infra` per header or content |
-| Ceremony | Materialized header `ceremony:` (`materialize.md`) — always present | Read directly (`fast-lane` or `standard`) |
+| Ceremony | the record's `ceremony:*` label, else the Ceremony profile computation's ceremony-check verdict above | Read directly (`fast-lane` or `standard`) |
 | Polish | `surface` × materialized header `design-intent:` (or the body's `Design-intent:` line) × `no-polish` arg | `run` if frontend + design-intent != none + no-polish not set; `skip ({reason})` otherwise |
 | Stories | UI files in plan + `no-stories` arg | `auto-detect` if UI files in plan + no-stories not set; `skip` otherwise |
 | QA | `stories/*.yaml` exists for this record's surface | `run` if matching stories; `skip` if none |
@@ -108,7 +110,7 @@ I've pre-filled recommendations from project policy + sensible defaults. The Rec
 | 2 | Scope-creep | **add-to-plan** | **add-to-plan** / stop-and-ask / drop | Files outside plan auto-added; nothing dropped silently |
 | 5 | Leftover routing | **defer** | **defer** / backlog / drop | Unfinished sections → a new work record (parked), reversible at Review Console |
 | 6 | Auto-fix threshold | **lint+type** | lint-only / **lint+type** / lint+type+test | Lint + type errors auto-fixed; test failures still surface |
-| 7 | Review auto-apply ceiling | **{computed}** | none / low / medium | Ceiling-conditional (see Recommendation defaults below): `low` — LOW auto-applied, MED staged, HIGH prompts; `medium` — MED also auto-applies |
+| 7 | Review auto-apply ceiling | **{computed}** | none / low / medium | Ceiling-conditional (see Recommendation defaults below): `low` — LOW auto-applied, MED and HIGH staged, Critical prompts; `medium` — MED also auto-applies |
 | 9 | Ceremony profile | **{computed}** | **fast-lane** / standard | Fast-lane trims wrap-up ceremony depth (reflect light mode, narrower skill-curation scan, doc-scan pre-check); standard runs full depth |
 | 10 | Model stance | **default** | economy / **default** / max-rigor | Shifts every dispatch's resolved effort one notch (`economy` also degrades Frontier to Capable); never changes which profile a dispatch requests |
 | 11 | Merge verification | **{derived}** | **merge-when-green** / wait / off | How much CI verification the run's merge waits for — derived per `_shared/policy-schema-coverage.md`'s `merge-verification` coverage block; explicit `policy.yml` value wins |
@@ -130,31 +132,32 @@ I've pre-filled recommendations from project policy + sensible defaults. The Rec
 |---|---|
 | `arg` | Set by an explicit CLI argument in `$ARGUMENTS` |
 | `policy` | From `.claude-tweaks/policy.yml`'s `auto-mode:` key (resolver envelope `source: "policy"`) |
+| `dispatch` | Mode only: Step 1 rung 2 (`dispatched: true`) — render `auto (dispatched run)`; log `source: dispatch binding` |
 | `default` | Hardcoded sensible default |
-| `header` | Locked by the materialized header (`materialize.md`) — e.g. `surface:`/`design-intent:`/`ceremony:` — or the record body's `Surface:`/`Design-intent:` metadata lines (e.g., `design-intent:` set on every record in the run) |
+| `header` | Locked by the materialized header (`materialize.md`) — e.g. `surface:`/`design-intent:` — or, for `ceremony-profile`, by the record's `ceremony:*` label, else the Manifesto's ceremony-check verdict — or the record body's `Surface:`/`Design-intent:` metadata lines (e.g., `design-intent:` set on every record in the run) |
 | `preflight.json` | The pack, when adopted (#1931) |
 
 ## Recommendation defaults (when no arg and no policy)
 
 | Lever | Default | Why |
 |---|---|---|
-| Mode | `auto` | User invoked `/flow auto`; only here if they did |
+| Mode | `auto` | Step 1's resolved mode |
 | Scope-creep | `add-to-plan` | Never silently drops mentioned work |
 | Overlap | `companion` | Safest: never overwrite or silently extend; create a new spec |
 | Design intent | `none` | No creative direction unless user opts in |
 | Leftover routing | `defer` | Reversible at the Review Console |
 | Auto-fix threshold | `lint+type` | Mechanical fixes only; semantic failures need judgment |
-| Review auto-apply ceiling | ceiling-conditional: `medium` when the resolved `autonomy` ceiling is `unattended`, `low` otherwise (`_shared/autonomy-ceiling.md`) | Auto LOW, stage MED, prompt HIGH; an unattended run has nobody to answer staged MED, so the default raises there. Computed here, not only in `step3-routing.md` — writing it to `config.yml` resolves as `source: run-config` downstream, and a flat `low` here would make step3's ceiling branch (fires only on `source: default`) unreachable for the runs it targets |
+| Review auto-apply ceiling | ceiling-conditional: `medium` when the resolved `autonomy` ceiling is `unattended`, `low` otherwise (`_shared/autonomy-ceiling.md`) | Auto LOW, stage MED and HIGH, prompt Critical; an unattended run has nobody to answer staged MED, so the default raises there. Computed here, not only in `step3-routing.md` — writing it to `config.yml` resolves as `source: run-config` downstream, and a flat `low` here would make step3's ceiling branch (fires only on `source: default`) unreachable for the runs it targets |
 | Tidy aggressiveness | `moderate` | Reversible git-tracked cleanups auto-apply; outward GitHub writes stage (`conservative` opts down) |
 | Model stance | `default` | No effort shift or Frontier degrade; the resolver's table applies unmodified |
 | Merge verification | derived (`resolve-policy.js --run "$PIPELINE_RUN_DIR" --values merge-verification`) | `_shared/policy-schema-coverage.md`'s coverage-block ladder already encodes the safe answer per repo shape — no hardcoded literal |
 | Merge authorization | `ask` | Never a `policy.yml` default — only a live `confirm`/`hybrid` override sets it (`wrap-up/manifesto-authorized-merge.md`'s "Why policy.yml is excluded" section) |
 | Design critique | `auto` | Critics run when the project shows design investment (`DESIGN.md`) or the record asks (`Design-intent:`); `full`/`off` opt in/out explicitly |
 
-`ceremony-profile` (lever 9) has no row here — its source is always `header` (bundle-folded from each
-record's materialized `ceremony:` field), never `arg`/`policy`/`default`: `/claude-tweaks:specify`
-stamps `ceremony:*` on every record, so the header always has a value and there's nothing for a
-default to fill. From `docs/superpowers/specs/2026-07-20-lifecycle-ceremony-tiering-design.md`'s
+`ceremony-profile` (lever 9) has no row here — its source is always `header`, bundle-folded per the
+Ceremony profile computation above, never `arg`/`policy`/`default`. A labeled record carries its
+`/claude-tweaks:specify`-stamped value, and an unlabeled one is judged at that step, so there is
+nothing for a default to fill. From `docs/superpowers/specs/2026-07-20-lifecycle-ceremony-tiering-design.md`'s
 "Promoting `ceremony:` to an explicit, always-present label" — deleted `70849915`.
 
 ## Approval flow
@@ -185,7 +188,7 @@ created: 2026-05-15T143207
 
 Suppressed levers are still written to `config.yml` with default values — suppression is a UI affordance, not a semantic skip; downstream skills always have a value to read.
 
-Initialize `decisions.md` in the same directory with the config snapshot header (see `_shared/auto-decision-log.md`). Create the `staged/` subdirectory.
+Initialize `decisions.md` in the same directory with the config snapshot header (see `_shared/auto-decision-log.md`). Create the `staged/` subdirectory. Then log the held ceremony-check verdicts, one line per unlabeled record (the Ceremony profile computation above has the command); this applies in every mode that writes `config.yml`.
 
 **On override (option 2) / On cancel (option 3):** `confirm`/`hybrid` only — read `manifesto-confirm.md` in this skill's directory for both branches (override parsing/validation and the `config.yml` write, cancel handling).
 

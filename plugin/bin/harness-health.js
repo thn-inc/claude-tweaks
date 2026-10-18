@@ -283,6 +283,7 @@ function cmdValidateFindings(args) {
   // itself never spawns one. A drop is logged, like every other soft-drop in
   // this command, so a missing line is diagnosable from the sweep's stderr.
   const toIssuePayloadSelfChecked = (finding, v, p) => toIssuePayload(finding, v, p, {
+    repoRoot: root,
     premiseSelfCheck: (command) => {
       const keep = premiseReadsUnresolved(command, { root });
       if (!keep) {

@@ -43,8 +43,9 @@ test('the documented rule generalizes past the worktree\\/PR\\/merge example (sp
 });
 
 // Per-file 40 KB pin on _shared/auto-mode-contract.md retired by #1997 — the
-// per-file tier is a warning since #1990 and this file has no compose call
-// site; removal condition in docs/incident-log.md [IL-153].
+// per-file tier was a warning from #1990 until #3311 deleted the ceiling
+// model entirely, and this file has no compose call site; removal condition
+// in docs/incident-log.md [IL-153].
 
 test('ledger-format.md defines the live-verification reason-not-auto qualifier', () => {
   const section = requiredForOpsSection();

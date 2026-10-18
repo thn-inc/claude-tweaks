@@ -228,3 +228,16 @@ test('toIssuePayload threads verifiedAsOf through to the composed body', () => {
   const payload = toIssuePayload(finding(), 'abc1234');
   assert.strictEqual(extractVerifiedAsOf(payload.body), 'abc1234');
 });
+
+test('AC4.1: toIssuePayload lists the doc path under ### Key Files', () => {
+  const payload = toIssuePayload(finding());
+  assert.ok(payload.body.includes('### Key Files\n\n- `docs/decisions/0007-foo.md` — apply the proposed documentation edit'));
+});
+
+test('toIssuePayload with a malformed target still produces a payload, omitting Technical Approach', () => {
+  for (const target of ['../README', 'guides/`x`', 'a\nb']) {
+    const payload = toIssuePayload(finding({ target }));
+    assert.ok(payload.body.includes('## Current State'), `payload missing for target ${JSON.stringify(target)}`);
+    assert.ok(!payload.body.includes('## Technical Approach'), `Technical Approach present for target ${JSON.stringify(target)}`);
+  }
+});

@@ -115,7 +115,7 @@ it literally into the next call; never carry it in a shell variable across calls
    ends in an explicit, logged outcome.
 
    ```bash
-   SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --shell) || exit 1
+   SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --range {base-branch}...{feature-branch} --shell) || exit 1
    eval "$SUBJECT_EXPORTS"
    git merge --no-ff {feature-branch} -m "$SUBJECT_TITLE
 
@@ -127,8 +127,11 @@ $SUBJECT_BODY"
    the Park branch's `log-decision.js` call below, with `{conflict|failed verification}` replaced
    by `"composer failed: {first stderr line}"` — a record with no resolvable Type, or a `breaking`
    label with no `## Breaking Change` section, is a shaping defect to fix on the record, not a
-   merge problem; report `pending-review` to the caller, per this file's own invariant that every
-   run ends in an explicit, logged outcome.
+   merge problem; a malformed `commit-scope-paths` entry, a `commit-scope` token the composer
+   rejects, a failed `--range` diff, or this call passing no `--range` while `commit-scope-paths`
+   is set is a policy or invocation fault to fix in `policy.yml` or in this fence; report
+   `pending-review` to the caller, per this file's own invariant that every run ends in an
+   explicit, logged outcome.
 
    `--no-ff` guarantees a real merge commit exists to carry the composer's `Fixes #{issue}` closing keyword (`bin/compose-subject.js` — Conventional-Commits subject, `[auto-finish]` body tag) —
    the same reason `cleanup-procedures-execution.md` Section C step 2's own carrier commit exists.
