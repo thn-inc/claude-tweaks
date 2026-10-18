@@ -5,7 +5,12 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const { resolveDir, buildContext } = require('../../../plugin/bin/lib/review-context/build');
+const {
+  resolveDir,
+  buildContext,
+  PER_FILE_CAP_BYTES,
+  isAlwaysStub,
+} = require('../../../plugin/bin/lib/review-context/build');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'build-review-context.js');
 
@@ -87,6 +92,8 @@ test('buildContext: bundle carries the full diff, one section per changed file, 
   // Deleted file degrades to an empty section, reported — never a crash.
   assert.match(bundle, /===== doomed\.txt =====\n/);
   assert.deepStrictEqual(result.emptySections, ['doomed.txt']);
+  // AC4.1-AC4.2: a deleted file is an empty section only, never an oversize one.
+  assert.deepStrictEqual(result.oversizeSections, []);
   assert.strictEqual(result.files, 3);
   assert.strictEqual(result.bytes, Buffer.byteLength(bundle));
 });
@@ -127,6 +134,8 @@ test('CLI end-to-end: build from a fixture checkout writes the bundle and prints
   assert.ok(fs.existsSync(parsed.contextPath));
   assert.strictEqual(parsed.files, 3);
   assert.deepStrictEqual(parsed.emptySections, ['doomed.txt']);
+  // AC5.1: the printed line carries the new field.
+  assert.ok(Array.isArray(parsed.oversizeSections));
 });
 
 test('CLI end-to-end: build from a subdirectory of the checkout still reads real file content (#3017)', () => {
@@ -147,6 +156,186 @@ test('CLI end-to-end: build from a subdirectory of the checkout still reads real
   // Only the genuinely-deleted file is an empty section — not every file.
   assert.deepStrictEqual(parsed.emptySections, ['doomed.txt']);
   assert.strictEqual(parsed.files, 3);
+});
+
+// --- Per-file cap (#3020) ---------------------------------------------------------------
+
+// Text of exactly `total` bytes made of many short lines, so a one-line edit near the top
+// yields a hunk with only a few context lines. `marker` replaces line `markerAt` — a
+// distinctive late line the tests search the whole bundle for. `first` is line 0.
+function shortLines(total, first, marker, markerAt = 2000) {
+  let text = first;
+  for (let i = 1; total - Buffer.byteLength(text) >= 20; i++) {
+    text += i === markerAt ? marker : `line ${i}\n`;
+  }
+  const rest = total - Buffer.byteLength(text);
+  if (rest > 0) text += `${'p'.repeat(rest - 1)}\n`;
+  assert.strictEqual(Buffer.byteLength(text), total);
+  return text;
+}
+
+const LATE_MARKER = 'DISTINCTIVE-LATE-LINE-MARKER\n';
+
+// Real-git fixture for the cap: a modified file one byte over the cap, a modified file at
+// exactly the cap, added over-cap / jsonl / lockfile / spaced-name files, and two deletions
+// (a plain file and a lockfile).
+function makeOversizeFixtureRepo() {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-oversize-'));
+  git(repo, ['init', '-q', '-b', 'main']);
+  git(repo, ['config', 'user.email', 'test@example.invalid']);
+  git(repo, ['config', 'user.name', 'Test']);
+  fs.writeFileSync(path.join(repo, 'big-modified.txt'), shortLines(PER_FILE_CAP_BYTES, 'first\n', LATE_MARKER));
+  fs.writeFileSync(path.join(repo, 'exact.txt'), 'small\n');
+  fs.writeFileSync(path.join(repo, 'doomed.txt'), 'doomed content\n');
+  fs.writeFileSync(path.join(repo, 'yarn.lock'), '# yarn lockfile\n');
+  git(repo, ['add', '.']);
+  git(repo, ['commit', '-q', '-m', 'base']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  fs.writeFileSync(path.join(repo, 'big-modified.txt'), shortLines(PER_FILE_CAP_BYTES + 1, 'first!\n', LATE_MARKER));
+  fs.writeFileSync(path.join(repo, 'exact.txt'), shortLines(PER_FILE_CAP_BYTES, 'exact first\n', 'exact marker\n'));
+  fs.writeFileSync(path.join(repo, 'big-added.txt'), `${'b'.repeat(PER_FILE_CAP_BYTES)}\n`);
+  fs.writeFileSync(path.join(repo, 'fixture.jsonl'), '{"a":1}\n');
+  fs.writeFileSync(path.join(repo, 'package-lock.json'), '{}\n');
+  fs.writeFileSync(path.join(repo, 'has space.txt'), `${'s'.repeat(PER_FILE_CAP_BYTES)}\n`);
+  fs.rmSync(path.join(repo, 'doomed.txt'));
+  fs.rmSync(path.join(repo, 'yarn.lock'));
+  git(repo, ['add', '-A']);
+  git(repo, ['commit', '-q', '-m', 'feature work']);
+  return repo;
+}
+
+function buildOversize(extra = {}) {
+  const repo = makeOversizeFixtureRepo();
+  const dir = resolveDir({});
+  const result = buildContext({ base: 'main', branch: 'feature', dir, ...repoDeps(repo), ...extra });
+  const bundle = fs.readFileSync(result.contextPath, 'utf8');
+  return { result, bundle, diffPart: bundle.slice(0, bundle.indexOf('\n===== ')) };
+}
+
+// The text of one `===== {name} =====` section: everything up to the blank-line separator
+// before the next header (the section's own trailing newline is kept).
+function sectionOf(bundle, name) {
+  const head = `===== ${name} =====\n`;
+  const start = bundle.indexOf(head) + head.length;
+  const next = bundle.indexOf('\n=====', start);
+  return bundle.slice(start, next === -1 ? undefined : next);
+}
+
+function lineCount(text) {
+  return text.split('\n').filter(Boolean).length;
+}
+
+test('AC1.1, AC1.2: a modified file of PER_FILE_CAP_BYTES + 1 bytes gets a stub section, is listed, and keeps its hunk in the diff', () => {
+  const { result, bundle, diffPart } = buildOversize();
+  const section = sectionOf(bundle, 'big-modified.txt');
+  assert.strictEqual(lineCount(section), 1, 'stub is a single line');
+  assert.match(section, /^\[section omitted: big-modified\.txt is 65537 bytes/);
+  // Full content absent from the whole bundle: a distinctive late line appears nowhere.
+  assert.ok(!bundle.includes('DISTINCTIVE-LATE-LINE-MARKER'));
+  assert.ok(result.oversizeSections.includes('big-modified.txt'));
+  // Its hunk is still in the diff part, with no elision marker for that path.
+  assert.match(diffPart, /diff --git a\/big-modified\.txt b\/big-modified\.txt/);
+  assert.match(diffPart, /^@@ .* @@/m);
+  assert.match(diffPart, /^-first$/m);
+  assert.match(diffPart, /^\+first!$/m);
+  assert.ok(!diffPart.includes('diff elided for big-modified.txt'));
+});
+
+test('AC2.1-AC2.2: a file of exactly PER_FILE_CAP_BYTES bytes is inlined in full and not listed', () => {
+  const { result, bundle } = buildOversize();
+  const full = shortLines(PER_FILE_CAP_BYTES, 'exact first\n', 'exact marker\n');
+  assert.strictEqual(sectionOf(bundle, 'exact.txt'), full);
+  assert.ok(!result.oversizeSections.includes('exact.txt'));
+});
+
+test('AC3.1: small fixture.jsonl and package-lock.json are stubbed and listed despite being under the cap', () => {
+  const { result, bundle } = buildOversize();
+  for (const name of ['fixture.jsonl', 'package-lock.json']) {
+    const section = sectionOf(bundle, name);
+    assert.ok(section.startsWith(`[section omitted: ${name} — always stubbed`), `${name}: ${section}`);
+    assert.strictEqual(lineCount(section), 1, `${name} stub is a single line`);
+    assert.ok(result.oversizeSections.includes(name));
+  }
+});
+
+test('AC6.1, AC6.2: added over-cap and added small .jsonl get one elision marker each, listed once; modified over-cap keeps its hunk', () => {
+  const { result, bundle, diffPart } = buildOversize();
+  assert.match(diffPart, /^\[\d+ bytes of diff elided for big-added\.txt — see oversizeSections\]$/m);
+  assert.match(diffPart, /^\[\d+ bytes of diff elided for fixture\.jsonl — see oversizeSections\]$/m);
+  assert.ok(!bundle.includes('b'.repeat(1000)), 'added content appears nowhere in the bundle');
+  assert.strictEqual(result.oversizeSections.filter((p) => p === 'big-added.txt').length, 1);
+  assert.strictEqual(result.oversizeSections.filter((p) => p === 'fixture.jsonl').length, 1);
+  // The modified over-cap file's hunk is whole (shared with AC1.3).
+  assert.match(diffPart, /^\+first!$/m);
+  assert.ok(!diffPart.includes('diff elided for big-modified.txt'));
+  // The marker keeps the diff --git header so the chunk stays attributable.
+  assert.match(diffPart, /diff --git a\/big-added\.txt b\/big-added\.txt\n\[/);
+});
+
+test('deleted lockfile is stubbed (matcher before read), not empty', () => {
+  const { result, bundle, diffPart } = buildOversize();
+  assert.ok(result.oversizeSections.includes('yarn.lock'));
+  assert.ok(!result.emptySections.includes('yarn.lock'));
+  assert.deepStrictEqual(result.emptySections, ['doomed.txt']);
+  assert.ok(sectionOf(bundle, 'yarn.lock').startsWith('[section omitted: yarn.lock — always stubbed'));
+  assert.match(diffPart, /^\[\d+ bytes of diff elided for yarn\.lock — see oversizeSections\]$/m);
+  assert.ok(!diffPart.includes('# yarn lockfile'));
+});
+
+test('a modified lockfile keeps its full hunk (diff elision is added/deleted only)', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-modlock-'));
+  git(repo, ['init', '-q', '-b', 'main']);
+  git(repo, ['config', 'user.email', 'test@example.invalid']);
+  git(repo, ['config', 'user.name', 'Test']);
+  fs.writeFileSync(path.join(repo, 'yarn.lock'), 'v1\n');
+  git(repo, ['add', '.']);
+  git(repo, ['commit', '-q', '-m', 'base']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  fs.writeFileSync(path.join(repo, 'yarn.lock'), 'v2\n');
+  git(repo, ['commit', '-q', '-am', 'bump']);
+  const dir = resolveDir({});
+  const result = buildContext({ base: 'main', branch: 'feature', dir, ...repoDeps(repo) });
+  const bundle = fs.readFileSync(result.contextPath, 'utf8');
+  assert.match(bundle, /^\+v2$/m);
+  assert.ok(!bundle.includes('diff elided'));
+  assert.deepStrictEqual(result.oversizeSections, ['yarn.lock']);
+});
+
+test('added file with a space in its name is elided and listed once', () => {
+  const { result, diffPart } = buildOversize();
+  assert.match(diffPart, /^\[\d+ bytes of diff elided for has space\.txt — see oversizeSections\]$/m);
+  assert.strictEqual(result.oversizeSections.filter((p) => p === 'has space.txt').length, 1);
+});
+
+test('--files-from scope still reports a diff-elided path outside the list', () => {
+  const repo = makeOversizeFixtureRepo();
+  const dir = resolveDir({});
+  const listPath = path.join(dir, 'own-work.txt');
+  fs.writeFileSync(listPath, 'exact.txt\n');
+  const result = buildContext({ base: 'main', branch: 'feature', dir, filesFrom: listPath, ...repoDeps(repo) });
+  assert.ok(result.oversizeSections.includes('big-added.txt'));
+  assert.ok(!result.oversizeSections.includes('exact.txt'));
+  assert.strictEqual(result.oversizeSections.filter((p) => p === 'big-added.txt').length, 1);
+});
+
+test('isAlwaysStub: named lockfiles and .jsonl match on basename; near-misses do not', () => {
+  for (const f of [
+    'a/b/Cargo.lock',
+    'x.jsonl',
+    'poetry.lock',
+    'composer.lock',
+    'Gemfile.lock',
+    'npm-shrinkwrap.json',
+    'pnpm-lock.yaml',
+    'yarn.lock',
+    'package-lock.json',
+    'a\\b\\yarn.lock',
+  ]) {
+    assert.strictEqual(isAlwaysStub(f), true, f);
+  }
+  for (const f of ['package.json', 'x.json', 'jsonl.txt', 'my-yarn.lock', 'yarn.lock/readme.md']) {
+    assert.strictEqual(isAlwaysStub(f), false, f);
+  }
 });
 
 test('CLI: malformed invocations exit 2 with usage', () => {
