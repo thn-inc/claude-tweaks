@@ -236,6 +236,20 @@ test('formatOffsetClause: two subjects each get their own delimiter pair, never 
   assert.match(s, /«first subject»; «second subject»;/);
 });
 
+test('AC2.1: formatOffsetClause: a self-assessment watermark renders offset 0 (line 1) and keeps both dedup segments', () => {
+  const s = watermark.formatOffsetClause({
+    bytesAtDispatch: 900, line: 40, mode: 'self-assessment', filedRecords: ['#1'], dismissedSubjects: ['x'],
+  });
+  assert.ok(s.startsWith('Evaluate from byte offset 0 (line 1);'), s);
+  assert.match(s, /these records already exist: #1;/);
+  assert.match(s, /«x»/);
+});
+
+test('AC2.1: formatOffsetClause: a self-assessment watermark with no dedup lists still renders "none"', () => {
+  const s = watermark.formatOffsetClause({ bytesAtDispatch: 900, line: 40, mode: 'self-assessment' });
+  assert.ok(s.startsWith('Evaluate from byte offset 0 (line 1); these records already exist: none;'), s);
+});
+
 // ---- isTranscriptUnchanged (#701 skip-before-dispatch check) ---------------
 
 test('isTranscriptUnchanged: no watermark (null) -> false, nothing to skip against', () => {
@@ -256,4 +270,13 @@ test('isTranscriptUnchanged: current size larger than bytesAtDispatch -> false (
 
 test('isTranscriptUnchanged: malformed watermark (non-numeric bytesAtDispatch) -> false, degrade to dispatch', () => {
   assert.equal(watermark.isTranscriptUnchanged({ bytesAtDispatch: 'not-a-number' }, 500), false);
+});
+
+test('AC1.1: isTranscriptUnchanged: a self-assessment watermark never reports unchanged', () => {
+  assert.equal(watermark.isTranscriptUnchanged({ bytesAtDispatch: 500, mode: 'self-assessment' }, 500), false);
+  assert.equal(watermark.isTranscriptUnchanged({ bytesAtDispatch: 500, mode: 'self-assessment' }, 480), false);
+});
+
+test('AC1.2: isTranscriptUnchanged: an unknown mode keeps the byte comparison', () => {
+  assert.equal(watermark.isTranscriptUnchanged({ bytesAtDispatch: 500, mode: 'something-else' }, 500), true);
 });

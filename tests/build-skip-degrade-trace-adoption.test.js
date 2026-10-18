@@ -18,6 +18,7 @@ const read = (...p) => readText(path.join(ROOT, ...p));
 
 const AUTO_DECISION_LOG = read('plugin', 'skills', '_shared', 'auto-decision-log.md');
 const BUILD_SKILL = read('plugin', 'skills', 'build', 'SKILL.md');
+const BUILD_DISPATCH = read('plugin', 'skills', 'build', 'dispatch.md');
 const HANDOFF_TEMPLATE = read('plugin', 'skills', 'build', 'handoff-template.md');
 const DESIGN_PREBUILD = read('plugin', 'skills', 'build', 'design-prebuild.md');
 const ARCHITECTURE_ALIGNMENT = read('plugin', 'skills', 'build', 'architecture-alignment.md');
@@ -79,6 +80,47 @@ for (const site of BUILD_STEP_SKIP_SITES) {
 test('build/SKILL.md: every SKIP-write site cites the degrade-trace rule (directly or via a sub-file pointer)', () => {
   const onSkipCount = (BUILD_SKILL.match(/\*\*On skip\*\*/g) || []).length;
   assert.equal(onSkipCount, 6, 'expected 6 "**On skip**" sites in SKILL.md (Spec Step 1, Common Steps 1.7/4.5/5.5/6.5/7) — Spec Step 2.5 uses its own "(skip)" phrasing instead');
+});
+
+// --- #3118: folded plan verification task contributes only its runner checks ---
+
+function assertFoldRule(text) {
+  assert.match(text, /A plan task folded into Common Step 5[^\n]*?contributes only its runner checks/,
+    'dispatch.md must state a folded plan task contributes only its runner checks (AC1.1)');
+  assert.match(text, /Every other step it names runs after Step 5 passes and before Common Step 7's handoff/,
+    'dispatch.md must state every other named step runs before the handoff (AC1.1)');
+  assert.match(text, /writes `SKIP \{time\} — \{plan task\} step "\{step\}" \(skipped\): \{condition\} → not run by \/build; surfaced for \/review\. Reversibility: n\/a\.` via `log-decision\.js --status SKIP --section "\/build"`/,
+    'dispatch.md must name the SKIP entry for a step that cannot run (AC1.1)');
+  assert.match(text, /Skipped steps/, 'standalone /build must route the skip to the handoff Skipped steps section');
+  assert.match(text, /A step that ran in full is never logged as `SKIP`; one that ran only in part[^\n]*?logs `\(degraded\)` in place of `\(skipped\)`/,
+    'dispatch.md must route a partly-run step to the (degraded) tag, not (skipped) and not silence');
+  assert.match(text, /fix it, commit, re-run that step to confirm the fix, and re-run Step 5 before the handoff, never defer it to `\/review`/,
+    'dispatch.md must keep the defect path: fix, commit, re-run the step, re-run Step 5, never defer to /review');
+  assert.match(text, /The rule keys on the steps the folded task names, not on the record's `surface:`/,
+    'dispatch.md must keep the trigger keyed on named steps, not on surface');
+  assert.match(text, /\*\*Folded verification task \(#3118\)\.\*\*/,
+    'dispatch.md must define the label build/SKILL.md Common Step 5 points at');
+  const anchor = text.indexOf('Common Step 5 runs the full suite once');
+  const rule = text.indexOf('A plan task folded into Common Step 5');
+  assert.ok(anchor !== -1 && rule > anchor, 'the fold rule must follow the "runs the full suite once" sentence');
+}
+
+test('AC1.1: build/dispatch.md states the fold rule — runner checks only; every other named step runs or writes a SKIP entry', () => {
+  assertFoldRule(BUILD_DISPATCH);
+});
+
+test('AC3.1: go-red — the fold-rule assertions fail when the fold sentence is removed from dispatch.md', () => {
+  const doctored = BUILD_DISPATCH.replace(/A plan task folded into Common Step 5[\s\S]*?(?=Every other step it names)/, '');
+  assert.notEqual(doctored, BUILD_DISPATCH, 'doctoring must actually remove the fold sentence');
+  assert.throws(() => assertFoldRule(doctored), assert.AssertionError);
+});
+
+test('AC2.1: build/SKILL.md Common Step 5 points at the dispatch.md fold rule, including under batched', () => {
+  const step5 = BUILD_SKILL.split('### Common Step 5: Final Verification')[1].split('### Common Step 5.5')[0];
+  assert.match(step5, /a plan task folded into this step contributes only its runner checks/);
+  assert.match(step5, /`dispatch\.md`'s "Folded verification task" rule/);
+  assert.match(step5, /`batched`/);
+  assert.doesNotMatch(step5, /\*\*On skip\*\*/, 'AC4.1: the pointer avoids the **On skip** literal, so the count of 6 stays unchanged');
 });
 
 test('design-prebuild.md: On-skip subsection distinguishes surface-gate vs. its own conditions', () => {

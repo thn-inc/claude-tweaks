@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  run, parseArgs, shellQuote, extractSection, firstSentence, isUnknownIssueTypeField, fetchIssueTypeGraphQL,
+  run, parseArgs, shellQuote, extractSection, firstSentence, isUnknownIssueTypeField, fetchIssueTypeGraphQL, realDeps,
 } = require('../../plugin/bin/lib/compose-subject.js');
 const { ComposeSubjectError } = require('../../plugin/bin/lib/release/subject.js');
 
@@ -21,18 +21,35 @@ const RECORDS = {
   2290: { number: 2290, title: 'No release note', body: '## Overview\n\nSomething.\n', labels: [{ name: 'type:task' }], issueType: null },
 };
 
-function fakeDeps({ records = RECORDS, ghAvailable = () => true, remoteUrl = () => 'git@github.com:acme/repo.git', failView = false } = {}) {
-  const out = { stdout: '', stderr: '', calls: [] };
+function fakeDeps({
+  records = RECORDS, ghAvailable = () => true, remoteUrl = () => 'git@github.com:acme/repo.git', failView = false,
+  commitScope = null, commitScopePaths = [], changedFiles = null, prFiles = null,
+} = {}) {
+  const out = { stdout: '', stderr: '', calls: [], gitCalls: [] };
   const deps = {
     ghAvailable,
     remoteUrl,
     runner: (args) => {
       out.calls.push(args);
+      if (args[0] === 'pr') {
+        assert.deepEqual(args.slice(0, 2), ['pr', 'diff']);
+        if (prFiles instanceof Error) throw prFiles;
+        if (prFiles === null) throw new Error('gh pr diff must not be called');
+        return prFiles;
+      }
       if (failView) throw new Error('boom: gh exploded');
       assert.equal(args[0], 'issue'); assert.equal(args[1], 'view');
       const n = Number(args[2]);
       if (!records[n]) throw new Error('unexpected ' + args.join(' '));
       return JSON.stringify(records[n]);
+    },
+    readCommitScope: () => commitScope,
+    readCommitScopePaths: () => commitScopePaths,
+    gitRunner: (args) => {
+      out.gitCalls.push(args);
+      if (changedFiles instanceof Error) throw changedFiles;
+      if (changedFiles === null) throw new Error('gitRunner must not be called');
+      return changedFiles;
     },
     stdout: (s) => { out.stdout += s; },
     stderr: (s) => { out.stderr += s; },
@@ -346,6 +363,7 @@ test('run(): REST issueType rejection retries without the field, then still reso
       throw new Error('unexpected call: ' + args.join(' '));
     },
     fetchIssueType: () => { throw new Error('must not call GraphQL fallback when a type:* label already resolves the type'); },
+    readCommitScope: () => null, readCommitScopePaths: () => [],
     stdout: (s) => { out.stdout += s; },
     stderr: (s) => { out.stderr += s; },
   };
@@ -375,6 +393,7 @@ test('run(): REST issueType rejection + no type:* label falls back to the GraphQ
       assert.equal(repoSpec.owner, 'acme');
       return { name: 'Bug' };
     },
+    readCommitScope: () => null, readCommitScopePaths: () => [],
     stdout: (s) => { out.stdout += s; },
     stderr: (s) => { out.stderr += s; },
   };
@@ -399,6 +418,7 @@ test('run(): REST issueType rejection + no label + GraphQL fallback also finds n
       throw new Error('unexpected call: ' + args.join(' '));
     },
     fetchIssueType: () => null,
+    readCommitScope: () => null, readCommitScopePaths: () => [],
     stdout: (s) => { out.stdout += s; },
     stderr: (s) => { out.stderr += s; },
   };
@@ -462,4 +482,169 @@ test('realDeps.runner (#3028) pipes gh stderr instead of inheriting it, and keep
 test('USAGE (#3028) advertises --scope', () => {
   const { USAGE } = require('../../plugin/bin/lib/compose-subject.js');
   assert.match(USAGE, /\[--scope <scope>\]/);
+});
+
+test('AC1.1: explicit --scope beats a commit-scope policy value', () => {
+  const { deps, out } = fakeDeps({ commitScope: 'web' });
+  assert.equal(run(['2251', '--scope', 'api', '--shell'], deps), 0, out.stderr);
+  assert.match(out.stdout, /^SUBJECT_TITLE='feat\(api\): /);
+  assert.equal(out.gitCalls.length, 0);
+});
+
+test('AC2.1: commit-scope-paths with one matching scope across the diff scopes the subject', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/skills/=skills', 'plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\0plugin/bin/lib/y.js\0' });
+  assert.equal(run(['2251', '--range', 'main...feat', '--shell'], deps), 0, out.stderr);
+  assert.match(out.stdout, /^SUBJECT_TITLE='feat\(bin\): /);
+  assert.deepEqual(out.gitCalls, [['diff', '--name-only', '-z', '--end-of-options', 'main...feat']]);
+});
+
+test('AC2.2: paths spanning two scopes fall back to commit-scope with a stderr note', () => {
+  const { deps, out } = fakeDeps({ commitScope: 'plugin', commitScopePaths: ['plugin/skills/=skills', 'plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\0plugin/skills/a.md\0' });
+  assert.equal(run(['2251', '--range', 'main...feat', '--shell'], deps), 0, out.stderr);
+  assert.match(out.stdout, /^SUBJECT_TITLE='feat\(plugin\): /);
+  assert.match(out.stderr, /span scopes bin, skills — falling back to commit-scope "plugin"/);
+});
+
+test('AC2.3: paths spanning two scopes with no commit-scope leave the subject unscoped, with the note', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/skills/=skills', 'plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\0plugin/skills/a.md\0' });
+  assert.equal(run(['2251', '--range', 'main...feat', '--shell'], deps), 0, out.stderr);
+  assert.match(out.stdout, /^SUBJECT_TITLE='feat: /);
+  assert.match(out.stderr, /span scopes bin, skills — subject left unscoped/);
+});
+
+test('AC3.1: commit-scope-paths set with no --range (and no --pr) exits 1 naming the flag', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'] });
+  assert.equal(run(['2251'], deps), 1);
+  assert.match(out.stderr, /pass --range \{base\}\.\.\.\{head\}/);
+  assert.equal(out.gitCalls.length, 0);
+});
+
+test('AC3.2: --range with no commit-scope-paths never calls git and composes as before', () => {
+  const { deps, out } = fakeDeps({ commitScope: 'web' });
+  assert.equal(run(['2251', '--range', 'main...feat'], deps), 0, out.stderr);
+  assert.equal(JSON.parse(out.stdout).title, 'feat(web): Merge-time conventional subject (#2251)');
+  assert.equal(out.gitCalls.length, 0);
+});
+
+test('AC4.1: a throwing gitRunner exits 3 with the message on stderr', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], changedFiles: new Error('fatal: bad revision') });
+  assert.equal(run(['2251', '--range', 'main...feat'], deps), 3);
+  assert.match(out.stderr, /git diff --name-only main\.\.\.feat failed: fatal: bad revision/);
+});
+
+test('a malformed commit-scope-paths entry exits 1 naming the entry', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin'] });
+  assert.equal(run(['2251', '--range', 'main...feat'], deps), 1);
+  assert.match(out.stderr, /commit-scope-paths entry "plugin\/bin" is not \{path-prefix\}=\{token\}/);
+});
+
+test('a policy-sourced token with ( fails composeSubject\'s own validation, exit 1', () => {
+  const { deps, out } = fakeDeps({ commitScope: 'a(b' });
+  assert.equal(run(['2251'], deps), 1);
+  assert.match(out.stderr, /scope must be a single token/);
+});
+
+test('parseArgs and USAGE: --range parsed; trailing --range is an error; USAGE advertises it', () => {
+  assert.equal(parseArgs(['2251', '--range', 'main...feat']).range, 'main...feat');
+  assert.equal(parseArgs(['2251']).range, null);
+  assert.ok(parseArgs(['2251', '--range']).error);
+  assert.equal(parseArgs(['2251', '--pr', '3430']).pr, '3430');
+  assert.ok(parseArgs(['2251', '--pr']).error);
+  assert.ok(parseArgs(['2251', '--pr', 'x']).error);
+  const { USAGE } = require('../../plugin/bin/lib/compose-subject.js');
+  assert.match(USAGE, /\[--range <base>\.\.\.<head>\]/);
+  assert.match(USAGE, /\[--pr <n>\]/);
+});
+
+test('--pr (#3298 final review): commit-scope-paths resolves over gh pr diff --name-only, no git call', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], prFiles: 'plugin/bin/x.js\n' });
+  assert.equal(run(['2251', '--pr', '3430', '--shell'], deps), 0, out.stderr);
+  assert.match(out.stdout, /\(bin\)/);
+  assert.equal(out.gitCalls.length, 0);
+  const prCalls = out.calls.filter((c) => c[0] === 'pr');
+  assert.deepEqual(prCalls, [['pr', 'diff', '3430', '--repo', 'acme/repo', '--name-only']]);
+});
+
+test('--pr with no commit-scope-paths never calls gh pr diff', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2251', '--pr', '3430'], deps), 0, out.stderr);
+  assert.equal(out.calls.filter((c) => c[0] === 'pr').length, 0);
+});
+
+test('--pr: a failing gh pr diff exits 3 naming the PR', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], prFiles: new Error('boom') });
+  assert.equal(run(['2251', '--pr', '3430'], deps), 3);
+  assert.match(out.stderr, /gh pr diff 3430 --name-only failed: .*boom/);
+});
+
+test('--range and --pr together is a usage error, exit 1', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2251', '--range', 'main...feat', '--pr', '3430'], deps), 1);
+  assert.match(out.stderr, /mutually exclusive/);
+});
+
+test('commit-scope-paths set with neither --range nor --pr names both flags', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'] });
+  assert.equal(run(['2251'], deps), 1);
+  assert.match(out.stderr, /neither --range nor --pr/);
+  assert.match(out.stderr, /pass --range \{base\}\.\.\.\{head\}/);
+});
+
+test('a whitespace-bearing commit-scope policy value exits 1 loudly (never a silent unscoped subject)', () => {
+  const { deps, out } = fakeDeps({ commitScope: 'web app' });
+  assert.equal(run(['2251'], deps), 1);
+  assert.match(out.stderr, /scope must be a single token/);
+});
+
+test('--range argv pins -z and --end-of-options', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\0' });
+  assert.equal(run(['2251', '--range', 'main...feat'], deps), 0, out.stderr);
+  assert.deepEqual(out.gitCalls[0], ['diff', '--name-only', '-z', '--end-of-options', 'main...feat']);
+});
+
+test('--range must be <base>...<head>: a two-dot range, a bare ref, or a dash-leading value is a usage error', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\0' });
+  assert.equal(run(['2251', '--range', 'main..feat'], deps), 1);
+  assert.match(out.stderr, /invalid --range value: main\.\.feat/);
+  assert.equal(run(['2251', '--range', 'main'], deps), 1);
+  assert.equal(run(['2251', '--range', '-Ofile'], deps), 1);
+  assert.equal(out.gitCalls.length, 0);
+});
+
+test('a non-ASCII changed path still matches its prefix because -z output is not C-quoted', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['docs/=docs', 'plugin/bin/=bin'], changedFiles: 'docs/café.md\0docs/a b.md\0' });
+  assert.equal(run(['2251', '--range', 'main...feat', '--shell'], deps), 0, out.stderr);
+  assert.match(out.stdout, /\(docs\)/);
+});
+
+test('explicit --scope skips path resolution entirely even when commit-scope-paths is set', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], changedFiles: null });
+  assert.equal(run(['2251', '--scope', 'api', '--shell'], deps), 0, out.stderr);
+  assert.match(out.stdout, /feat\(api\)/);
+  assert.equal(out.gitCalls.length, 0);
+  assert.equal(out.calls.filter((c) => c[0] === 'pr').length, 0);
+});
+
+test('an empty changed-file list with commit-scope-paths set falls through to commit-scope silently', () => {
+  const { deps, out } = fakeDeps({ commitScope: 'plugin', commitScopePaths: ['plugin/bin/=bin'], changedFiles: '' });
+  assert.equal(run(['2251', '--range', 'main...feat', '--shell'], deps), 0, out.stderr);
+  assert.match(out.stdout, /\(plugin\)/);
+  assert.equal(out.stderr, '');
+});
+
+test('realDeps reads commit-scope and commit-scope-paths from the cwd policy', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-subject-policy-'));
+  const prev = process.cwd();
+  try {
+    fs.mkdirSync(path.join(dir, '.claude-tweaks'));
+    fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'commit-scope: web\ncommit-scope-paths: plugin/bin/=bin, plugin/skills/=skills\n');
+    process.chdir(dir);
+    try {
+      assert.equal(realDeps.readCommitScope(), 'web');
+      assert.deepEqual(realDeps.readCommitScopePaths(), ['plugin/bin/=bin', 'plugin/skills/=skills']);
+    } finally { process.chdir(prev); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

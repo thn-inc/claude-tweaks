@@ -439,21 +439,27 @@ function specEntryCount(text) { return specEntries(stripAnsi(text).split('\n')).
 // spawned (#3153) — its paths are that child's, never this point's.
 const TAP_FRAME_KEYS = new Set(['location', 'stack']);
 
-// Every TAP `not ok` block, at any indentation (a failing subtest nests under
-// its suite), in log order: {line: the `not ok` line, body: the lines after
-// it up to the next test point or `# ` line at any indentation, frames: the
-// body lines that can name this point's own file — every line outside its
-// YAML block, and inside it only the `location:`/`stack:` keys; keys: its own
-// top-level YAML key lines, never their continuation lines}.
-function tapBlocks(lines) {
-  const blocks = [];
-  let current = null;
+// The shared TAP line classifier (#3404): one entry per input line, in order,
+// {kind: 'notOk' | 'ok' | 'subtest' | 'comment' | 'yamlOpen' | 'yaml' |
+// 'yamlClose' | 'other', indent: the CR-stripped line's leading-whitespace
+// length, owner: the index of the `not ok` line whose block holds this line
+// (itself, its body, its YAML block included) or -1 — ownership continues past
+// the block's yamlClose until the next test point or `# ` line, because
+// tapBlocks' body and frames include those lines, key: on a 'yaml' line the
+// top-level YAML key in force, else null, keyStart: true on a 'yaml' line that
+// starts a `name:` key}. A block ends at the next test point or `# ` line at
+// any indentation.
+function tapLines(lines) {
+  const entries = [];
+  let owner = -1;
   let pointPad = null;
   let yamlPad = null;
   let keyPad = null;
   let yamlKey = null;
-  for (const raw of lines) {
+  lines.forEach((raw, index) => {
     const line = raw.replace(/\r$/, '');
+    const entry = { kind: 'other', indent: line.match(/^\s*/)[0].length, owner, key: null, keyStart: false };
+    entries.push(entry);
     // A point's YAML block (`---` … `...`, two spaces deeper) is its body,
     // never a new point — an assertion's expected/actual text can hold
     // `not ok …` lines. The `...` terminator is always matched at `yamlPad`
@@ -464,8 +470,8 @@ function tapBlocks(lines) {
     // `yamlPad` when the block closes before any non-blank line) — a line at
     // exactly that indent starts a key; deeper lines continue it.
     if (yamlPad !== null) {
-      if (current) current.body.push(raw);
-      if (line === `${yamlPad}...`) { yamlPad = null; keyPad = null; continue; }
+      if (line === `${yamlPad}...`) { entry.kind = 'yamlClose'; yamlPad = null; keyPad = null; return; }
+      entry.kind = 'yaml';
       if (keyPad === null) {
         const firstNonBlank = line.match(/^(\s*)\S/);
         if (firstNonBlank) keyPad = firstNonBlank[1];
@@ -473,25 +479,54 @@ function tapBlocks(lines) {
       if (keyPad !== null && line.startsWith(keyPad) && line.length > keyPad.length && line[keyPad.length] !== ' ') {
         const key = line.slice(keyPad.length).match(/^([A-Za-z_]+):/);
         yamlKey = key ? key[1] : null;
-        if (current && key) current.keys.push(raw);
+        entry.keyStart = key !== null;
       }
-      if (current && TAP_FRAME_KEYS.has(yamlKey)) current.frames.push(raw);
-      continue;
+      entry.key = yamlKey;
+      return;
     }
     if (pointPad !== null && line === `${pointPad}  ---`) {
+      entry.kind = 'yamlOpen';
       yamlPad = `${pointPad}  `;
       keyPad = null;
       yamlKey = null;
-      if (current) current.body.push(raw);
-      continue;
+      return;
     }
     const notOk = line.match(/^(\s*)not ok\b/);
-    if (notOk) { current = { line: raw, body: [], frames: [], keys: [] }; blocks.push(current); pointPad = notOk[1]; continue; }
+    if (notOk) { entry.kind = 'notOk'; owner = index; entry.owner = index; pointPad = notOk[1]; return; }
     const ok = line.match(/^(\s*)ok \d/);
-    if (ok) { current = null; pointPad = ok[1]; continue; }
-    if (/^\s*# /.test(line)) { current = null; pointPad = null; continue; }
-    if (current) { current.body.push(raw); current.frames.push(raw); }
-  }
+    if (ok) { entry.kind = 'ok'; owner = -1; entry.owner = -1; pointPad = ok[1]; return; }
+    if (/^\s*# /.test(line)) {
+      entry.kind = /^\s*# Subtest:/.test(line) ? 'subtest' : 'comment';
+      owner = -1;
+      entry.owner = -1;
+      pointPad = null;
+    }
+  });
+  return entries;
+}
+
+// Every TAP `not ok` block, at any indentation (a failing subtest nests under
+// its suite), in log order: {line: the `not ok` line, body: the lines after
+// it up to the next test point or `# ` line at any indentation, frames: the
+// body lines that can name this point's own file — every line outside its
+// YAML block, and inside it only the `location:`/`stack:` keys; keys: its own
+// top-level YAML key lines, never their continuation lines}.
+function tapBlocks(lines) {
+  const blocks = [];
+  const byLine = new Map();
+  tapLines(lines).forEach((entry, i) => {
+    if (entry.kind === 'notOk') {
+      const block = { line: lines[i], body: [], frames: [], keys: [] };
+      blocks.push(block);
+      byLine.set(i, block);
+      return;
+    }
+    const block = byLine.get(entry.owner);
+    if (!block) return;
+    block.body.push(lines[i]);
+    if (entry.kind === 'other' || (entry.kind === 'yaml' && TAP_FRAME_KEYS.has(entry.key))) block.frames.push(lines[i]);
+    if (entry.keyStart) block.keys.push(lines[i]);
+  });
   return blocks;
 }
 
@@ -580,6 +615,6 @@ function extractFailingFiles(text, family, { cwd = process.cwd(), exists } = {})
 module.exports = {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
   stripAnsi, extractFailingFiles, countUnmatchedFailures, unattributedFailureCount, fileLevelFailures, failingTestsByFile, specEntryCount,
-  cancelledCount, testTree, TEST_FILE_RE,
+  cancelledCount, testTree, tapLines, TEST_FILE_RE,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, MAX_LINE_CHARS,
 };

@@ -190,6 +190,10 @@ node -e "const fs=require('fs');
 **Cross-reference forward/backward Key Files (record #490).** Once every sub-issue in the batch has been accumulated above, scan for a genuine cross-sub-issue forward/backward reference — a Gotchas or Prerequisites sentence naming a sibling sub-issue *and* a specific facet/property/function that sibling must touch (the #473/#475 pattern: "soon `facets.solutionUnjustified`, per the companion rename sub-issue") — and resolve the named identifier into the file(s) it actually lives in via a repo-wide grep, adding them to that sibling's own Key Files list. `bin/lib/issues/decomposition-crossref.js`'s `crossReferenceKeyFiles(units, grep)` is the mechanical half of this (identifier → file resolution via grep, dedup against the sibling's existing Key Files, test-file exclusion) — deciding *which* sentences are genuine forward-references, versus a casual mention, is judgment this step still applies itself before calling it, exactly as it already judges Ceremony/Framing verdicts per sub-issue:
 
 ```bash
+SPECIFY_DECOMP_MANIFEST=$(node -e "
+  const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
+  console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-decomp-manifest.json') || require('path').join(require('os').tmpdir(), 'specify-decomp-manifest.json'))
+")
 node -e "const {crossReferenceKeyFiles}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/decomposition-crossref.js');
   const { execFileSync } = require('child_process');
   const units = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));

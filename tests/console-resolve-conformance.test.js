@@ -84,3 +84,19 @@ test('multispec-review-console.md fans console-resolve.js out over each spec dir
   // The bundle-level merge decision is never wired from any per-call merge.resolution field.
   assert.match(body, /bundle-level branch-finish\/merge decision is never read from any individual call's own `merge\.resolution` field/, 'must state the bundle merge decision is independent of any single call\'s merge field');
 });
+
+// #3370 Deliverable 1: pending/keep-staged items an unattended console left must reach the
+// run's final human stop. The carry is prose a model follows, so deleting it is silent in
+// every other suite.
+test('the Needs a human carry reaches the console, the single-spec summary, and the multi-spec summary (#3370)', () => {
+  const consoleProse = read('plugin/skills/wrap-up/review-console.md');
+  assert.match(consoleProse, /ends its output with a `Needs a human` block/, 'review-console.md must say the CLI prints the block');
+  assert.match(consoleProse, /console-residue\.js" --ack --run/, 'review-console.md must name the ack command the block carries');
+  assert.match(consoleProse, /never only `console\.json`/, 'review-console.md must forbid leaving the items only in console.json');
+  for (const rel of ['plugin/skills/flow/summary-template.md', 'plugin/skills/flow/multispec-summary.md']) {
+    const t = read(rel);
+    assert.match(t, /console-residue\.js" --run "\$(PIPELINE_RUN_DIR|MULTISPEC_PARENT_DIR)"/, `${rel} must run console-residue.js against the run dir`);
+    assert.match(t, /### Needs a human/, `${rel} must render a Needs a human section`);
+    assert.match(t, /on any non-zero exit, render the CLI's stderr verbatim/, `${rel} must not let a failed scan read as no residue`);
+  }
+});

@@ -28,9 +28,9 @@ files:
 
 ### 2a. The run merges itself — terminal, no interaction
 - **URL:** none — this happens inside `/claude-tweaks:wrap-up`'s Review Console step, unattended
-- **Action:** Once the last HARD-GATE clears and the full suite has just passed, the Auto-merge short-circuit (`wrap-up/review-console.md`, `wrap-up/manifesto-authorized-merge.md`) fires the same merge call the terminal one-click path uses (`_shared/pr-first-merge.md` Step 3: `bin/compose-subject.js … --tag manifesto-authorized --shell`, then `gh pr merge --squash -t "$SUBJECT_TITLE" -b "$SUBJECT_BODY"`), and logs the decision.
+- **Action:** Once the last HARD-GATE clears and the full suite has just passed, the Auto-merge short-circuit (`wrap-up/review-console.md`, `wrap-up/manifesto-authorized-merge.md`) fires the same merge call the terminal one-click path uses (`_shared/pr-first-merge.md` Step 3: `bin/compose-subject.js … --tag manifesto-authorized --pr {pr-number} --shell`, then `gh pr merge --squash -t "$SUBJECT_TITLE" -b "$SUBJECT_BODY"`), and logs the decision.
 - **Should feel:** Invisible — the maintainer notices only that the PR is already merged when they check back.
-- **Should understand:** The content-judgment safety net (`assess-agent-autonomy merge-check`) still runs — the lever authorizes the merge decision, it doesn't skip the judgment that decides whether merging is safe. The squash commit's subject is Conventional-Commits shaped (`feat|fix|chore[!]: {title} (#N)`, #2251); the `manifesto-authorized` tag now rides as a `[manifesto-authorized]` body paragraph rather than a subject prefix, which is still what `/help`'s auto-merged metric matches.
+- **Should understand:** The content-judgment safety net (`assess-agent-autonomy merge-check`) still runs — the lever authorizes the merge decision, it doesn't skip the judgment that decides whether merging is safe. The squash commit's subject is Conventional-Commits shaped (`feat|fix|chore[(scope)][!]: {title} (#N)`, #2251 — the `(scope)` resolved by the composer from the `commit-scope`/`commit-scope-paths` policy keys over the PR's changed files, #3298); the `manifesto-authorized` tag now rides as a `[manifesto-authorized]` body paragraph rather than a subject prefix, which is still what `/help`'s auto-merged metric matches.
 - **Red flags:** A merge commit tagged `manifesto-authorized` with no corresponding `decisions.md` entry naming the lever; a pr-first merge that produced a merge commit instead of a single squash commit.
 
 ### 2b. Decline or leave it unanswered — terminal Review Console
@@ -49,4 +49,5 @@ files:
 
 ## Origin
 - Created during build of #715 (Merge authorization at unattended: Manifesto-time lever, or one-click Recommended at the terminal summary?)
+- Updated during wrap-up of #3298 (merge-subject scope source): step 2a's composer call carries `--pr {pr-number}`, and the subject grammar gained the optional policy-resolved `(scope)`
 - Related specs: #688/6626896c (shipped the pre-existing terminal one-click Recommended merge option this journey's step 2b covers)

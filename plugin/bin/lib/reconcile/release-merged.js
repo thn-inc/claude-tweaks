@@ -1,5 +1,8 @@
 // bin/lib/reconcile/release-merged.js — convergence check 3: release claims
-// and remove the `bot:in-progress` label on merged-PR evidence. Iterates the
+// and remove the `bot:in-progress` label when the run's PR merged AND closes
+// the claimed issue (a closing reference or a merge-commit closing keyword) or
+// the issue itself is closed; a merged PR that does not close it keeps the
+// claim until the issue closes or the TTL lapses (#3412). Iterates the
 // open claim blobs themselves — `claims/issue-{n}.json` names its issue
 // number and `runId`, and `runId` -> this repo's own run-state.json -> branch
 // -> PR state IS the branch<->issue join, no naming convention needed (see
@@ -21,26 +24,76 @@ const { writeTombstone: writeTombstoneShared, GRANT_LABELS } = require('../relea
 const { resolveTarget, appendEntry, formatEntry } = require('../log-decision/append');
 const { readCache, writeCache } = require('./cache');
 const { runWithConcurrency } = require('./gh-pool');
+const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
 const { GH_TIMEOUT_MS, runClassified, runClassifiedAsync } = require('../shared-primitives');
 
 const execFileAsync = promisify(execFile);
 
+// Does a MERGED PR actually close issue `issueNumber` in `repoSlug`? Pure.
+// Signals: the PR's `closingIssuesReferences` (matched on number AND
+// `owner/name`, case-insensitively as GitHub names are, so a cross-repo
+// reference never counts), or a closing-keyword line in the merge commit
+// message (the squash/merge body GitHub reads).
+//   true      — a closing reference or a closing-keyword line names the issue
+//   false     — the references array is present and neither signal matches
+//   undefined — no references array (field unavailable): "unknown", never
+//               "does not close" and never "closes" — the commit message is
+//               not consulted, since without the array the verdict must fail
+//               closed (#3412, AC4)
+// The regex carries the `g` flag, so iterate `matchAll` — never `.test()` on
+// the shared instance, whose stale `lastIndex` would make results order-dependent.
+// Whitespace is `[ \t]`, never `\s`: under `/m` `\s` crosses newlines, which is
+// quadratic on blank-line runs and lets `Fixes\n#N` match.
+// Only the keyword SET is shared with issue-branch-tracking.js's
+// ISSUE_REF_SOURCE (CLOSING_KEYWORD_ALTERNATION); the grammar around it
+// deliberately differs: line-anchored `^[ \t]*` (the squash body carries one
+// `Fixes #n` line per record), an optional `:`, and `[ \t]+` instead of `\s+`.
+const CLOSING_KEYWORD_RE = new RegExp('^[ \\t]*' + CLOSING_KEYWORD_ALTERNATION + ':?[ \\t]+#(\\d+)\\b', 'gim');
+
+function prClosesIssue(prState, issueNumber, repoSlug, mergeCommitMessage) {
+  if (!prState || !Array.isArray(prState.closingIssuesReferences)) return undefined;
+  const slug = String(repoSlug).toLowerCase();
+  const referencesIssue = prState.closingIssuesReferences.some((entry) => {
+    const owner = entry && entry.repository && entry.repository.owner;
+    return Boolean(owner) && Number(entry.number) === issueNumber
+      && `${owner.login}/${entry.repository.name}`.toLowerCase() === slug;
+  });
+  if (referencesIssue) return true;
+  if (typeof mergeCommitMessage === 'string') {
+    for (const m of mergeCommitMessage.matchAll(CLOSING_KEYWORD_RE)) {
+      if (Number(m[1]) === issueNumber) return true;
+    }
+  }
+  return false;
+}
+
 // One claim's classified state + the branch's PR state (+ optionally the
-// issue's own state) -> what to do. Pure — no I/O — so the whole decision
-// table is unit-testable without a real gh call. `classifiedState` is
-// `classifyClaimBlob(content, now).state`. `issueState` is `'OPEN' | 'CLOSED'
-// | undefined` — when the PR join alone can't release (no-pr or
-// pr-closed-unmerged), a closed issue is independent release evidence: a
-// closed record cannot legitimately still be in progress.
+// issue's own state and whether a merged PR closes the issue) -> what to do.
+// Pure — no I/O — so the whole decision table is unit-testable without a real
+// gh call. `classifiedState` is `classifyClaimBlob(content, now).state`.
+// `issueState` is `'OPEN' | 'CLOSED' | undefined`. `closesIssue` is
+// `prClosesIssue`'s `true | false | undefined` for a MERGED PR.
+//   MERGED + closesIssue true        -> release (merged evidence)
+//   MERGED + issue CLOSED            -> release issue-closed — a closed record
+//                                       cannot legitimately still be in progress
+//   MERGED + closesIssue false       -> skip pr-merged-not-closing
+//   MERGED + closesIssue undefined   -> skip pr-merged-closing-unknown
+// A merged PR is release evidence only when it closes THIS issue: a PR that
+// merely touches the branch's work (a sibling, a partial) leaves the record
+// open, and unknown closing data fails closed — never "does not close" and
+// never "closes" (#3412). When the PR join alone can't release (no-pr or
+// pr-closed-unmerged), a closed issue is likewise independent release evidence.
 //   { action: 'release', reason } | { action: 'skip', reason }
-function decideRelease(classifiedState, prState, issueState) {
+function decideRelease(classifiedState, prState, issueState, closesIssue) {
   if (classifiedState !== 'live' && classifiedState !== 'stale') {
     return { action: 'skip', reason: classifiedState }; // absent/tombstone/unreadable — nothing to release
   }
   if (prState === 'gh-absent') return { action: 'skip', reason: 'gh-absent' };
   if (prState === 'network-failure') return { action: 'skip', reason: 'network-failure' };
   if (prState && prState.state === 'MERGED') {
-    return { action: 'release', reason: `merged: reconciled from PR #${prState.number}` };
+    if (closesIssue === true) return { action: 'release', reason: `merged: reconciled from PR #${prState.number}` };
+    if (issueState === 'CLOSED') return { action: 'release', reason: 'issue-closed' };
+    return { action: 'skip', reason: closesIssue === false ? 'pr-merged-not-closing' : 'pr-merged-closing-unknown' };
   }
   if (prState && prState.state === 'OPEN') {
     return { action: 'skip', reason: 'pr-open' }; // open PR means work may be landing — issue-closed evidence never overrides
@@ -53,13 +106,17 @@ function decideRelease(classifiedState, prState, issueState) {
   return { action: 'skip', reason: prState ? 'pr-closed-unmerged' : 'no-pr' };
 }
 
-// The two joins `decideRelease` cannot settle from PR evidence alone — no PR at
-// all, or a PR closed unmerged. Everything else (MERGED, OPEN, gh-absent,
-// network-failure) is decided without an issue lookup, so this is what gates the
-// extra gh api call at the call site.
-function needsIssueEvidence(prState) {
+// The joins `decideRelease` cannot settle from PR evidence alone — no PR at
+// all, a PR closed unmerged, or a MERGED PR not confirmed to close the issue
+// (`closesIssue` false or unknown: the issue's own state is the only remaining
+// release evidence, #3412). Everything else (OPEN, MERGED + closesIssue true,
+// gh-absent, network-failure) is decided without an issue lookup, so this is
+// what gates the extra gh api call at the call site.
+function needsIssueEvidence(prState, closesIssue) {
   if (prState === null) return true;
-  return typeof prState === 'object' && prState.state === 'CLOSED';
+  if (typeof prState !== 'object') return false;
+  if (prState.state === 'CLOSED') return true;
+  return prState.state === 'MERGED' && closesIssue !== true;
 }
 
 // Shared by Phase 1.5 and the #3249 by-number fallback below: pairs each
@@ -255,7 +312,7 @@ function logGrantRemoval(runDir, root, reason) {
 // removal), mirroring claim-store.js's seam, so tests never shell to the
 // real `gh` binary. Defaults to the module-level `ghApi` above.
 //
-// Runs in four phases (#820, D5 — parallelizing every per-active-claim gh
+// Runs in five phases (#820, D5 — parallelizing every per-active-claim gh
 // call, PR-state AND issue-state reads, through gh-pool's concurrency-capped
 // `runWithConcurrency`; PR-state was left serial in an earlier pass of this
 // diff — #820 review — since it fires for every active claim with a
@@ -267,10 +324,14 @@ function logGrantRemoval(runDir, root, reason) {
 //     (PR-state deferred to Phase 1.5).
 //   Phase 1.5 (parallel) — one runWithConcurrency batch resolving every
 //     joinable candidate's PR-state fetch.
+//   Phase 1.75 (parallel, #3412) — one runWithConcurrency batch fetching the
+//     merge commit message of each MERGED candidate whose PR references don't
+//     already name its issue, then each candidate's closesIssue verdict
+//     (prClosesIssue: references and/or a closing keyword in that message).
 //   Phase 2 (parallel) — one runWithConcurrency batch resolving every
 //     candidate's issue-state fetch (only for candidates PR evidence alone
 //     can't decide — see needsIssueEvidence, now evaluated against Phase
-//     1.5's resolved prState).
+//     1.5's resolved prState and Phase 1.75's closesIssue).
 //   Phase 3 (sync) — decide + write. Writes stay serial: each is its own
 //     conditional-update with its own sha, so there's no benefit to
 //     parallelizing them, and serial writes keep this module's existing
@@ -391,6 +452,7 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
     // the `!isActive` cache-write above draws for exactly the same reason.
     candidates.push({
       issueNumber, runId, name: entry.name, sha: claim.sha, classifiedState: classified.state, prState: null, joinFailure, branch, prNumber, runDir,
+      closesIssue: undefined,
     });
   }
 
@@ -445,10 +507,35 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
     // would make needsIssueEvidence false and block that path.
   }
 
+  // Phase 1.75 (#3412): the merge commit's message, fetched only where the PR's
+  // closingIssuesReferences don't already settle that it closes this issue (a
+  // squash body's `Fixes #N` line is the second closing signal prClosesIssue
+  // reads). A failed or empty fetch leaves mergeCommitMessage undefined — the
+  // verdict then rests on the references alone, never on a guess. closesIssue
+  // is computed for EVERY candidate here, before Phase 2: needsIssueEvidence
+  // gates the issue-state fetch on it.
+  const isMerged = (c) => c.prState && typeof c.prState === 'object' && c.prState.state === 'MERGED';
+  const needCommit = candidates.filter((c) => isMerged(c)
+    && Array.isArray(c.prState.closingIssuesReferences)
+    && prClosesIssue(c.prState, c.issueNumber, repoSlug) !== true
+    && c.prState.mergeCommit && c.prState.mergeCommit.oid);
+  const commitReads = await runWithConcurrency(
+    needCommit,
+    (c) => apiAsync([`repos/${repoSlug}/commits/${c.prState.mergeCommit.oid}`, '-q', '.commit.message']),
+  );
+  const commitByIssue = resultsByIssue(needCommit, commitReads);
+  for (const c of candidates) {
+    const r = commitByIssue.get(c.issueNumber);
+    const mergeCommitMessage = r && typeof r === 'object' && !r.failure && typeof r.stdout === 'string' ? r.stdout : undefined;
+    c.closesIssue = isMerged(c)
+      ? prClosesIssue(c.prState, c.issueNumber, repoSlug, mergeCommitMessage)
+      : undefined;
+  }
+
   // Phase 2: parallel issue-state fetches, capped, only for candidates that
   // need one (needsIssueEvidence) — gated the same way the prior serial
   // loop gated its per-candidate fetch, so non-candidates cost nothing.
-  const needIssue = candidates.filter((c) => needsIssueEvidence(c.prState));
+  const needIssue = candidates.filter((c) => needsIssueEvidence(c.prState, c.closesIssue));
   const issueStates = await runWithConcurrency(
     needIssue,
     (c) => readIssueStateAsync(repoSlug, c.issueNumber, apiAsync),
@@ -460,7 +547,7 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
   // Phase 3: decide + write, synchronous (writes stay serial — see header comment).
   for (const c of candidates) {
     const issueState = issueStateByIssue.get(c.issueNumber);
-    const decision = decideRelease(c.classifiedState, c.prState, issueState);
+    const decision = decideRelease(c.classifiedState, c.prState, issueState, c.closesIssue);
     if (decision.action === 'skip') {
       // No nextClaimShas write here: an active (live/stale) claim's PR/issue
       // join can change pass-to-pass even when its content hasn't, so it
@@ -500,4 +587,5 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
 
 module.exports = {
   releaseMerged, decideRelease, releasedEntry, repoSlugOf, writeTombstone, shouldSkipClaimRead,
+  prClosesIssue, needsIssueEvidence,
 };

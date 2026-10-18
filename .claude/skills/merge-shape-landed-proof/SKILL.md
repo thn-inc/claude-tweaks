@@ -52,6 +52,40 @@ A branch that was discarded without ever merging (no recorded PR) is a third cas
 - `git merge-tree --write-tree` needs git 2.38 or later. On older git it fails, and the
   failure must land in the unproven branch.
 
+## Landed is not closed
+
+A merged PR proves the branch's work landed. It does not prove the PR closes any one record the
+run claimed: a multi-record run's PR can merge with only some of its records shipped. A check
+that releases a claim, drops `bot:in-progress`, or reports a record shipped needs closing
+evidence for that record, not merge evidence.
+
+- **Two signals, in order.**
+  1. The PR's `closingIssuesReferences`, matched on the issue number and on `owner/name`
+     compared case-insensitively. A reference into another repo never counts.
+  2. A line-anchored closing keyword `#N` in the merge commit's message (the squash body GitHub
+     reads). Fetch the message only when the references are present, don't already name the
+     issue, and `mergeCommit.oid` exists.
+- **Three-valued verdict.** `true` when either signal names the issue. `false` when the
+  references array is present and neither signal names it. `undefined` when the array is
+  absent: unknown, never "closes" and never "does not close", and the commit message is not
+  consulted. A failed or empty commit-message fetch leaves the verdict on the references alone.
+- **Fail closed.** Only `true` releases on the PR's evidence. `false` and `undefined` keep the
+  claim and fall back to the issue's own state, since a closed issue is still release evidence.
+  Each keeps under its own skip reason (`pr-merged-not-closing`, `pr-merged-closing-unknown`),
+  so a missing answer stays distinct from a negative one, as the failure discipline above
+  requires.
+- **Reuse.** `prClosesIssue(prState, issueNumber, repoSlug, mergeCommitMessage)` in
+  `plugin/bin/lib/reconcile/release-merged.js` is pure. Call it rather than re-deriving it. The
+  PR read must request `closingIssuesReferences`, as `plugin/bin/lib/reconcile/pr-state.js`'s
+  `PR_LIST_ARGS` and `PR_VIEW_JSON_FIELDS` do. A new keyword matcher takes its keyword set from
+  `CLOSING_KEYWORD_ALTERNATION` in `plugin/bin/lib/issue-branch-tracking.js` and never retypes
+  it. Only the grammar around the set may differ: `prClosesIssue` anchors at line start and
+  uses `[ \t]`, not `\s`, so `Fixes` and `#N` on separate lines never match.
+- **Recurrence.** #3412: PR #3348 was squash-merged while its run was still building #3311,
+  with the body edited from `Fixes #3311` to `Refs #3311`. One second later the reconciler
+  released #3311's claim on `merged: reconciled from PR #3348` and removed `bot:in-progress`,
+  leaving an open record mid-build unclaimed.
+
 ## Recurrences this skill exists to stop
 
 - #2251 switched `pr-first` to `--squash`. After that, the `git cherry` checks read every
