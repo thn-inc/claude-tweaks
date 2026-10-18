@@ -53,6 +53,48 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.145.0](https://github.com/thn-inc/claude-tweaks/compare/v6.144.0...v6.145.0) (2026-10-18)
+
+
+### Features
+
+* Add the skill-size rail: budgets.js plus read-limit… ([#3306](https://github.com/thn-inc/claude-tweaks/issues/3306)) ([a39cd61](https://github.com/thn-inc/claude-tweaks/commit/a39cd61fad9d8bac2dc855216489b65286fe92e2)), closes [#3307](https://github.com/thn-inc/claude-tweaks/issues/3307) [#3308](https://github.com/thn-inc/claude-tweaks/issues/3308) [#3309](https://github.com/thn-inc/claude-tweaks/issues/3309) [#3310](https://github.com/thn-inc/claude-tweaks/issues/3310)
+* Attribute agent cost to individual subagent dispatches… ([#3375](https://github.com/thn-inc/claude-tweaks/issues/3375)) ([ffe20b9](https://github.com/thn-inc/claude-tweaks/commit/ffe20b982feda6ee34d34a3865426207f46be036)), closes [#3380](https://github.com/thn-inc/claude-tweaks/issues/3380)
+* build / subagent-driven-development dispatch: fast-lane… ([#3123](https://github.com/thn-inc/claude-tweaks/issues/3123)) ([6efdf68](https://github.com/thn-inc/claude-tweaks/commit/6efdf68648c50bc04f45f1f4a24827eb9da5fd57))
+* build: Common Step 5 has no rendered check for a… ([#3118](https://github.com/thn-inc/claude-tweaks/issues/3118)) ([f62eb46](https://github.com/thn-inc/claude-tweaks/commit/f62eb46b29157a89daf058d0c02a270a0ba2c133))
+* Decommission CEILING_BYTES, merge-size-probe, and every… ([#3311](https://github.com/thn-inc/claude-tweaks/issues/3311)) ([f492770](https://github.com/thn-inc/claude-tweaks/commit/f49277005147f302d3703c22ba1be0a84d1e8200))
+* Derive reader inventories from read call sites in /build… ([#3397](https://github.com/thn-inc/claude-tweaks/issues/3397)) ([ac7ba93](https://github.com/thn-inc/claude-tweaks/commit/ac7ba9360da85e37467548a7e98ce9dd53496ccf))
+* dispatch: give the neighbour-in-flight pass an… ([#3392](https://github.com/thn-inc/claude-tweaks/issues/3392)) ([c65b3fd](https://github.com/thn-inc/claude-tweaks/commit/c65b3fdbb29eb298f26be628859b2f0d65d444e8))
+* Merge-subject --scope: define where the scope comes from… ([#3298](https://github.com/thn-inc/claude-tweaks/issues/3298)) ([349682c](https://github.com/thn-inc/claude-tweaks/commit/349682c9404e0327cca8878fd006e582dcaef69b))
+* Surface load-bearing SDD Ruling: lines to a human at… ([#3401](https://github.com/thn-inc/claude-tweaks/issues/3401)) ([e82b0f2](https://github.com/thn-inc/claude-tweaks/commit/e82b0f2c569506991344e03ff623d51ef5f0cfcc))
+
+
+### Bug Fixes
+
+* build-review-context.js: the shared review bundle has no… ([#3020](https://github.com/thn-inc/claude-tweaks/issues/3020)) ([7ca1b5d](https://github.com/thn-inc/claude-tweaks/commit/7ca1b5df071ac319494c2b346a7df285ec0c82ed))
+* claims: extract one chained claim-reader shared by… ([#3393](https://github.com/thn-inc/claude-tweaks/issues/3393)) ([f6e30ca](https://github.com/thn-inc/claude-tweaks/commit/f6e30ca842199444560ae9a497b3ed97d49eb1e6))
+* engine-verify.js: acceptance-labeling false-fails a… ([#3222](https://github.com/thn-inc/claude-tweaks/issues/3222)) ([3267fd7](https://github.com/thn-inc/claude-tweaks/commit/3267fd7e571105d774a4217e9e8917461dc5b6d7))
+* Flaky-retry's unattributedFailureCount has no accounting… ([#3204](https://github.com/thn-inc/claude-tweaks/issues/3204)) ([3084b18](https://github.com/thn-inc/claude-tweaks/commit/3084b18301ac8395309a1c7f8cd106bd9c5b7949))
+* flow Manifesto's ceremony-profile fold defaults to… ([#3160](https://github.com/thn-inc/claude-tweaks/issues/3160)) ([32f74a8](https://github.com/thn-inc/claude-tweaks/commit/32f74a87f42248e79ccec7db8d569d537c1d67af))
+* Give build's AC-forwarding sample a sanctioned writer… ([#3044](https://github.com/thn-inc/claude-tweaks/issues/3044)) ([a43ff45](https://github.com/thn-inc/claude-tweaks/commit/a43ff45095bcb21a5079255742f16e5fc909358a))
+* Manifesto override row says review ceiling `none`… ([#3166](https://github.com/thn-inc/claude-tweaks/issues/3166)) ([a62e273](https://github.com/thn-inc/claude-tweaks/commit/a62e27344c4cc658950b6f52b283d2805dfb07fd))
+* Merge-verification reads a partial check rollup as green… ([#3405](https://github.com/thn-inc/claude-tweaks/issues/3405)) ([c32f012](https://github.com/thn-inc/claude-tweaks/commit/c32f0121f6d9f7f964ef1d17bac88bcbcfc16432))
+* Micro-plan gate is unreachable for… ([#2975](https://github.com/thn-inc/claude-tweaks/issues/2975)) ([0903591](https://github.com/thn-inc/claude-tweaks/commit/090359172bea91127ce09266e9a3cbe9c13401f2))
+* Multi-spec ledger deletion runs before the batch curation… ([#3420](https://github.com/thn-inc/claude-tweaks/issues/3420)) ([7a64906](https://github.com/thn-inc/claude-tweaks/commit/7a649060eeef6d9f5253800825c5d73479a7bdef))
+* Multi-spec parent console and design-wrapper still read… ([#3395](https://github.com/thn-inc/claude-tweaks/issues/3395)) ([12828a9](https://github.com/thn-inc/claude-tweaks/commit/12828a9ba36f540ab8d83c0df01543684ab042c6))
+* Multispec pr-first teardown archives the run directory… ([#3192](https://github.com/thn-inc/claude-tweaks/issues/3192)) ([119f444](https://github.com/thn-inc/claude-tweaks/commit/119f444941004d6c01305262bf12784d1ce445c6))
+* near-duplicate finder: generic skill-name anchors (/flow… ([#3366](https://github.com/thn-inc/claude-tweaks/issues/3366)) ([3b4e0a7](https://github.com/thn-inc/claude-tweaks/commit/3b4e0a712a51f6e6b95e74bf5ee427cf67e3ba20))
+* Reconcile capture's argument-hint with its Input table… ([#2964](https://github.com/thn-inc/claude-tweaks/issues/2964)) ([1693917](https://github.com/thn-inc/claude-tweaks/commit/169391711f9f3fbd79a5139a7f4990c122919831))
+* Reconciler releases a run's unfinished record when the… ([#3412](https://github.com/thn-inc/claude-tweaks/issues/3412)) ([5cf9073](https://github.com/thn-inc/claude-tweaks/commit/5cf9073d3b43cab7a222a3d11e8f7b1adf55b4b0))
+* Review Console Approve-all drops verify-expectations… ([#3394](https://github.com/thn-inc/claude-tweaks/issues/3394)) ([1171200](https://github.com/thn-inc/claude-tweaks/commit/11712008093c8aba4c305a19c1fc7a8de8276205))
+* Review Console renders every curation-engine finding as… ([#3389](https://github.com/thn-inc/claude-tweaks/issues/3389)) ([e3a4e3b](https://github.com/thn-inc/claude-tweaks/commit/e3a4e3beec2a9525f1fbc4fe4d9d24737000b462))
+* review lens anchor rule: weak-assertion findings split… ([#3398](https://github.com/thn-inc/claude-tweaks/issues/3398)) ([8113043](https://github.com/thn-inc/claude-tweaks/commit/8113043afe234a188bcdca119abcbff883e1e2b7))
+* review Step 6.7 + design-wrapper polish Step 5: an audit… ([#2977](https://github.com/thn-inc/claude-tweaks/issues/2977)) ([469e56a](https://github.com/thn-inc/claude-tweaks/commit/469e56a0ba681742c36661a074c31f1ff9885bca)), closes [#3330](https://github.com/thn-inc/claude-tweaks/issues/3330)
+* specify crossReferenceKeyFiles fence depends on a shell… ([#3161](https://github.com/thn-inc/claude-tweaks/issues/3161)) ([5fe0d53](https://github.com/thn-inc/claude-tweaks/commit/5fe0d532902beecac9fc337a7a86820640d27840))
+* test: QA dispatch rewrites a story's url origin but not… ([#3005](https://github.com/thn-inc/claude-tweaks/issues/3005)) ([9f164ed](https://github.com/thn-inc/claude-tweaks/commit/9f164ed4665780cd9778b50ea4881c9d44c0765c))
+* transcript-judge: a self-assessment watermark can claim… ([#2916](https://github.com/thn-inc/claude-tweaks/issues/2916)) ([b3aa5ac](https://github.com/thn-inc/claude-tweaks/commit/b3aa5ac071f79f3390e99522468caa8e7590a32a))
+* Unattended Review Console: pending and contested items… ([#3370](https://github.com/thn-inc/claude-tweaks/issues/3370)) ([2a0b7f6](https://github.com/thn-inc/claude-tweaks/commit/2a0b7f65af882264c89f61b66fe8337eb20c6394))
+
 ## [6.144.0](https://github.com/thn-inc/claude-tweaks/compare/v6.143.0...v6.144.0) (2026-10-17)
 
 
