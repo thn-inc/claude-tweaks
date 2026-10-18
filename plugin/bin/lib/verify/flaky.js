@@ -9,8 +9,11 @@
 
 const { globToRegExp } = require('../issues/blast-radius');
 
-function planRetry({ failingFiles, flaky, retry, suite, unattributedCount = 0 }) {
+function planRetry({ failingFiles, flaky, retry, suite, unattributedCount = 0, family = 'unknown' }) {
   if (!Array.isArray(failingFiles) || failingFiles.length === 0) return { retry: false, reason: 'no-parse' };
+  // #3204: a family with no failure-accounting guard (`unattributedFailureCount`
+  // returns null) cannot prove the named file list is complete, so refuse.
+  if (unattributedCount === null) return { retry: false, reason: `no-accounting-guard: ${family}` };
   // #3066: a failure the log carries but `extractFailingFiles` could not
   // attribute to a test file (caller computes this via `unattributedFailureCount`,
   // the same accounting `baseline.js` already applies) means the file list

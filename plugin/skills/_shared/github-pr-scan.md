@@ -390,7 +390,7 @@ Render as three lines: `Pending authorization: **{N}** records awaiting your dec
 
 ## Scope: `acceptance-queue` (consumed by /help Stage 4.7)
 
-Extracted to `_shared/github-pr-scan-acceptance.md` (#204 — this file was approaching the 40 KB
+Extracted to `_shared/github-pr-scan-acceptance.md` (#204 — this file was approaching the then-40 KB
 ceiling). This heading stays as a stub so existing section references still resolve in one hop.
 Read that file's own `acceptance-queue` scope section — it runs behind this file's Detection
 Ladder and Transport rule (above) and reports per this file's Output Contract below, exactly as

@@ -11,8 +11,9 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
+const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
-const { CEILING_BYTES } = require('../plugin/bin/lib/skill-audit/context-cost');
 
 const DISPATCH = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch');
 const SKILL = readText(path.join(DISPATCH, 'SKILL.md'));
@@ -52,13 +53,6 @@ test('a group is one record or one fast-lane bundle, fixed by Step 2 and re-deri
 test('the bare-drain Loop excludes neighbour-in-flight groups', () => {
   const loop = line('Loop: run the `next` ranking below');
   assert.ok(loop.includes('neighbour-in-flight'), 'the drain Loop must name neighbour-in-flight groups as excluded');
-});
-
-test('AC9.1: dispatch SKILL.md and queue-pull-script.md stay within CEILING_BYTES', () => {
-  for (const [name, text] of [['SKILL.md', SKILL], ['queue-pull-script.md', QUEUE_PULL]]) {
-    const bytes = Buffer.byteLength(text, 'utf8');
-    assert.ok(bytes <= CEILING_BYTES, `dispatch/${name} is ${bytes} B -- must stay within ${CEILING_BYTES}`);
-  }
 });
 
 test('neighbour-in-flight-report.md exists, mirrors the other Step 3 reports, and is cited from SKILL.md Step 3', () => {
@@ -120,4 +114,61 @@ test('design-notes.md records the per-record decision and names the hub-exclusio
   for (const token of ['#1365', 'weakest', 'bare drain']) {
     assert.ok(section.includes(token), `the per-record decision section must name ${token}`);
   }
+});
+
+test('AC1.1: the neighbour-in-flight pass reads claims through createClaimReader (#3393)', () => {
+  const start = QUEUE_PULL.indexOf('# #3278: neighbour-in-flight pass');
+  assert.ok(start !== -1, 'neighbour-in-flight anchor must exist');
+  const block = QUEUE_PULL.slice(start, QUEUE_PULL.indexOf('NEIGHBOUR_RC=$?', start));
+  assert.match(block, /readClaimContent: createClaimReader\(\)\.read/);
+  assert.doesNotMatch(block, /readClaimBlob\(/);
+  assert.doesNotMatch(block, /'repo', 'view'/);
+});
+
+function neighbourHeredocCode() {
+  const open = 'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF\n';
+  const close = '\nNODE_EVAL_EOF\nNEIGHBOUR_RC';
+  const start = QUEUE_PULL.indexOf(open);
+  const end = QUEUE_PULL.indexOf(close, start);
+  assert.ok(start !== -1 && end !== -1, 'neighbour-in-flight heredoc anchors must exist');
+  return QUEUE_PULL.slice(start + open.length, end).split('${CLAUDE_PLUGIN_ROOT}').join(path.join(ROOT, 'plugin'));
+}
+
+// Runs the heredoc with PATH pointing at an empty dir, so gh and git are unavailable and nothing
+// reaches the network. Returns the process result and the neighbour-in-flight exclusions written.
+function runNeighbourPass(groups, inFlight) {
+  const code = neighbourHeredocCode();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neighbour-pass-'));
+  const groupsPath = path.join(dir, 'groups.json');
+  const inFlightPath = path.join(dir, 'in-flight.json');
+  const exclusionsPath = path.join(dir, 'exclusions.json');
+  try {
+    fs.writeFileSync(groupsPath, JSON.stringify(groups));
+    fs.writeFileSync(inFlightPath, JSON.stringify(inFlight));
+    const result = spawnSync(process.execPath, ['-e', code, groupsPath, inFlightPath, exclusionsPath], { encoding: 'utf8', env: { ...process.env, PATH: dir } });
+    const exclusions = fs.existsSync(exclusionsPath) ? JSON.parse(fs.readFileSync(exclusionsPath, 'utf8')) : [];
+    return { result, neighbourExclusions: exclusions.filter((e) => e.reason === 'neighbour-in-flight') };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const CANDIDATE_GROUPS = [[{ number: 1, body: '### Key Files\n\n- `a.js`\n', labels: [] }]];
+
+test('AC2.1: the neighbour-in-flight heredoc runs offline and excludes nothing when no in-flight record neighbours a candidate (#3393)', () => {
+  // No neighbour means no claim read.
+  const { result, neighbourExclusions } = runNeighbourPass(CANDIDATE_GROUPS, []);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(neighbourExclusions, []);
+});
+
+test('AC1.1: the neighbour-in-flight heredoc reports a failed claim read and writes no exclusion when the repo slug is unresolved (#3393)', () => {
+  // Candidate #1 and in-flight #2 share a Key File, so the pass reads #2's claim. With gh and git
+  // unavailable the slug is unresolved and the git leg fails, so the read is a failure
+  // (repo-slug-unresolved), never an absent claim, and #2 is treated as not in flight.
+  const inFlight = [{ number: 2, body: '### Key Files\n\n- `a.js`\n', labels: [{ name: 'bot:in-progress' }] }];
+  const { result, neighbourExclusions } = runNeighbourPass(CANDIDATE_GROUPS, inFlight);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /neighbour-in-flight claim read failed for #2/);
+  assert.deepEqual(neighbourExclusions, []);
 });

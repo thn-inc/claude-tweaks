@@ -11,7 +11,7 @@
 // record.js — shared with harness-health/issue-payload.js rather than
 // copy-pasted.
 const {
-  recordPayload, specShapedBody, CLASSIFICATION_SCORING, fencedBlock,
+  recordPayload, specShapedBody, CLASSIFICATION_SCORING, fencedBlock, isRepoRelativeKeyFilePath,
 } = require('../issues/record');
 const { buildRelatedBlocks } = require('../issues/related-blocks');
 
@@ -62,6 +62,12 @@ function toIssuePayload(finding, verifiedAsOf) {
     // "no user-visible change" phrasing (#2660) rather than a per-finding
     // derivation the judge output doesn't carry data for.
     releaseNote: 'No user-visible change — documentation accuracy fix.',
+    // keyFiles (#2975): the doc being edited renders under `### Key Files`
+    // (/build's micro-plan condition 3). finding.target is LLM-supplied, so a
+    // malformed one omits the section rather than aborting the sweep run.
+    keyFiles: isRepoRelativeKeyFilePath(docPath)
+      ? [{ path: docPath, change: 'apply the proposed documentation edit' }]
+      : undefined,
     filedBy: '/claude-tweaks:docs-health',
     verifiedAsOf,
   });

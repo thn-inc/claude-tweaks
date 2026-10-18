@@ -4,7 +4,7 @@
 //   node bin/build-review-context.js mint [--run <run-dir>] [--print-dir]
 //   node bin/build-review-context.js build --base <ref> --branch <ref> [--dir <dir>|--run <run-dir>] [--files-from <path>]
 // Prints a one-line JSON result on stdout ({dir} for mint; {dir, contextPath, bytes, files,
-// emptySections} for build) by default. `mint --print-dir` instead prints the bare directory
+// emptySections, oversizeSections} for build) by default. `mint --print-dir` instead prints the bare directory
 // path followed by a newline and nothing else — a shell-substitution convenience; `--print-dir`
 // is mint-only and rejected on build. Exit 0 ok; 2 malformed invocation; 1 git/filesystem failure.
 // Single plain command by design — the compound-shell recipe it replaces is refused by the

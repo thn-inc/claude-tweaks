@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
-const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS } = require(MOD);
+const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes } = require(MOD);
 const ROOT = path.join(__dirname, '..', '..', '..');
 
 function fixture({
@@ -47,6 +47,7 @@ const EVERY_SECTION = {
   'review-unconfirmed-3.md': 'unconfirmed',
   'review-contested-4.md': 'contested',
   'polish-suggestion-1.md': 'polish',
+  'sdd-ruling-1.md': 'Title: ruling\nKind: sdd-ruling\nRuling: Task 2: Ruling: keep the guard — cheaper than the alternative — costs a re-read if wrong\nStaged-at: abc123\nLedger: docs/plans/x-ledger.md#5\n\nratify / reverse\n',
   'wrap-up-skill-1.md': 'skill',
   'wrap-up-doc-1.md': 'doc',
   'wrap-up-claude-md-1.md': 'claude-md',
@@ -63,13 +64,13 @@ test('classifyStagedItem maps every known prefix to its console section and unkn
   const expect = {
     'review-2.patch': 'Pending review', 'test-fix-1.patch': 'Pending review', 'deepen-collapse-1.patch': 'Pending review', 'simplify-1.patch': 'Pending review',
     'review-unconfirmed-3.md': 'Low-confidence findings', 'review-contested-4.md': 'Contested findings', 'review-debate-1.md': 'Contested findings',
-    'polish-suggestion-1.md': 'Pending review', 'visual-review-skipped.md': 'Pending review', 'design-decision-2.md': 'Pending review', 'build-deviation-1.md': 'Pending review',
+    'polish-suggestion-1.md': 'Pending review', 'visual-review-skipped.md': 'Pending review', 'design-decision-2.md': 'Pending review', 'build-deviation-1.md': 'Pending review', 'sdd-ruling-1.md': 'Pending review',
     'wrap-up-skill-1.md': 'Skill updates', 'wrap-up-skill-new-auth.md': 'Skill updates', 'wrap-up-skill-restructure.md': 'Skill updates',
     'wrap-up-doc-1.md': 'Documentation updates', 'tidy-doc-1.md': 'Documentation updates',
     'wrap-up-claude-md-1.md': 'Configuration updates', 'wrap-up-adr-1.md': 'Configuration updates',
     'wrap-up-journey-1.md': 'Journey updates', 'journeys-convention.md': 'Journey updates',
     'tidy-claude-md-rule-1.md': 'Queue writes',
-    'reflect-1.md': 'Queue writes', 'digest-promotion-1.md': 'Queue writes', 'leftover-add-oauth.md': 'Queue writes', 'ledger-record-1.md': 'Queue writes',
+    'reflect-1.md': 'Queue writes', 'digest-promotion-1.md': 'Queue writes', 'leftover-add-oauth.md': 'Queue writes', 'ledger-record-1.md': 'Queue writes', 'ledger-record-sdd-ruling-1.md': 'Queue writes',
     'upstream-unfiled-1.md': 'Queue writes', 'red-team-1.md': 'Queue writes', 'specify-overlap-1.md': 'Queue writes', 'flaky-allowlist-x.md': 'Queue writes',
     'tidy-parked-1.md': 'Queue writes', 'plan-retention-1.md': 'Queue writes', 'feedback-drafts.md': 'Queue writes',
     'wrap-up-memory-1.md': 'Memory updates', 'wrap-up-upstream-1.md': 'Upstream feedback',
@@ -96,6 +97,7 @@ test('resolveAll resolves one item per section per the short-circuit stances and
   assert.strictEqual(by['review-unconfirmed-3.md'].resolution, 'keep-staged');
   assert.strictEqual(by['review-contested-4.md'].resolution, 'keep-staged');
   assert.strictEqual(by['polish-suggestion-1.md'].resolution, 'apply');
+  assert.strictEqual(by['sdd-ruling-1.md'].resolution, 'apply');
   assert.strictEqual(by['wrap-up-skill-1.md'].resolution, 'approve');
   assert.strictEqual(by['wrap-up-doc-1.md'].resolution, 'approve');
   assert.strictEqual(by['wrap-up-claude-md-1.md'].resolution, 'approve');
@@ -485,6 +487,28 @@ test('engine-state.json staged findings classify into their curation sections; a
   assert.strictEqual(r.items.filter((i) => i.id === 'wrap-up-skill-1.md').length, 1, 'a staged engine finding and its staged file are one item');
 });
 
+test('engine findings take their console id from targetPath, fall back to the row target, and two findings on one row stay distinct (#3389)', () => {
+  const engineState = { results: {
+    skills: { result: 'findings', target: 'Skills', findings: [
+      { targetPath: '.claude/skills/x/SKILL.md', action: 'applied', commit: 'abc1234', kind: 'update', summary: 's' },
+      { targetPath: '.claude/skills/y/SKILL.md', action: 'applied', commit: 'def5678', kind: 'update', summary: 's' },
+    ] },
+    docs: { result: 'findings', target: 'Docs', findings: [
+      { targetPath: 'docs/guide.md', action: 'staged', kind: 'update', summary: 's' },
+      { targetPath: 'docs/both.md', target: 'docs/legacy.md', action: 'staged', kind: 'update', summary: 's' },
+      { action: 'applied', commit: 'aaa0000', kind: 'update', summary: 's' },
+    ] },
+  } };
+  const r = resolveAll({ runDir: fixture({ engineState, headers: [7] }), policy: 'console-auto', deps: deps() });
+  const appliedSkillIds = r.items.filter((i) => i.section === 'Skill updates' && i.resolution === 'applied').map((i) => i.id);
+  assert.deepStrictEqual(appliedSkillIds, ['skills:.claude/skills/x/SKILL.md', 'skills:.claude/skills/y/SKILL.md']);
+  assert.ok(r.items.some((i) => i.id === 'docs:docs/guide.md'));
+  assert.ok(r.items.some((i) => i.id === 'docs:docs/both.md'), 'targetPath wins when a finding also carries a legacy target');
+  assert.ok(!r.items.some((i) => i.id === 'docs:docs/legacy.md'));
+  assert.ok(r.items.some((i) => i.id === 'docs:Docs'), 'a finding with no targetPath falls back to the row target');
+  assert.ok(!r.items.some((i) => /:undefined$/.test(i.id)));
+});
+
 test('decisions.md STAGED coordination entries render as Low-confidence / Contested items (#1932)', () => {
   const decisions = '## /review\n- STAGED 10:00:00 — Single-read (low tier): lens "3b" finding src/a.js:4 not directly verified. Staged to Review Console as low-confidence. Reversibility: high.\n- STAGED 10:00:01 — Cross-lens debate inconclusive on src/b.js:9: staged/review-contested-1.md. Reversibility: high.\n';
   const r = resolveAll({ runDir: fixture({ decisions, staged: { 'review-contested-1.md': 'c' }, headers: [7] }), policy: 'console-auto', deps: deps() });
@@ -508,4 +532,100 @@ test('SECTION_STANCES names a stance for every section the console renders (#193
   for (const s of ['Auto-applied', 'Pending review', 'Low-confidence findings', 'Contested findings', 'Skill updates', 'Documentation updates', 'Journey updates', 'Configuration updates', 'Reference repairs', 'Cleanup actions', 'Queue writes', 'Memory updates', 'Upstream feedback', 'Refused — no defer reason']) {
     assert.ok(SECTION_STANCES[s] && typeof SECTION_STANCES[s].resolution === 'string', s);
   }
+});
+
+// Prose-code twin pin (#3401): resolve.js's Pending-review `.md` prefix
+// alternation and review-console-appendix.md's prose prefix list name the
+// same closed set. Both directions, so a prefix added to one side alone
+// goes red; the two negative controls below run the same assertion the
+// positive test runs, against a mutated input.
+const APPENDIX = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'review-console-appendix.md'), 'utf8');
+
+function isPendingMdPrefixRow([re, section]) {
+  return section === 'Pending review' && /^\^\(.*\)-$/.test(re.source);
+}
+
+function pendingMdPrefixesFromCode(map = SECTION_MAP) {
+  const rows = map.filter(isPendingMdPrefixRow);
+  assert.strictEqual(rows.length, 1, 'exactly one Pending-review .md prefix alternation in SECTION_MAP');
+  return rows[0][0].source.slice(2, -2).split('|').sort();
+}
+
+function pendingMdPrefixesFromProse(text = APPENDIX) {
+  const m = /- `apply` on a \*\*Pending review\*\* item[\s\S]*?a staged `\.md` proposal \(([^)]*)\)/.exec(text);
+  assert.ok(m, 'the appendix `apply` on Pending review bullet with its parenthesized `.md` prefix list is present');
+  const prefixes = [...m[1].matchAll(/`([a-z-]+)-\*`/g)].map((x) => x[1]).sort();
+  assert.ok(prefixes.length > 0, 'the prose list names at least one prefix');
+  return prefixes;
+}
+
+function assertPendingPrefixTwin(codeSet, proseSet) {
+  assert.deepStrictEqual(codeSet, proseSet, 'SECTION_MAP Pending-review .md prefixes and review-console-appendix.md prose list must name the same set');
+}
+
+test('AC4.1: the Pending-review .md prefix alternation and the appendix prose list name the same set, both ways (#3401 twin pin)', () => {
+  const code = pendingMdPrefixesFromCode();
+  const prose = pendingMdPrefixesFromProse();
+  assert.ok(code.includes('sdd-ruling'), 'sdd-ruling is in the regex');
+  assert.ok(prose.includes('sdd-ruling'), 'sdd-ruling is in the prose list');
+  assertPendingPrefixTwin(code, prose);
+});
+
+test('AC4.2 (control): removing sdd-ruling from the regex alone makes the twin pin fail', () => {
+  const mutated = SECTION_MAP.map((row) => (isPendingMdPrefixRow(row)
+    ? [new RegExp(row[0].source.replace('|sdd-ruling', '').replace('sdd-ruling|', '')), row[1]]
+    : row));
+  assert.throws(() => assertPendingPrefixTwin(pendingMdPrefixesFromCode(mutated), pendingMdPrefixesFromProse()));
+});
+
+test('AC4.2 (control): removing sdd-ruling-* from the appendix prose alone makes the twin pin fail', () => {
+  const mutated = APPENDIX.replace(/,?\s*`sdd-ruling-\*`/, '');
+  assert.notStrictEqual(mutated, APPENDIX, 'the mutation removed the prose entry');
+  assert.throws(() => assertPendingPrefixTwin(pendingMdPrefixesFromCode(), pendingMdPrefixesFromProse(mutated)));
+});
+
+test('every CANONICAL_PREFIXES entry classifies without unmapped-prefix (#3370)', () => {
+  assert.ok(CANONICAL_PREFIXES.length > 0);
+  for (const p of CANONICAL_PREFIXES) {
+    assert.notStrictEqual(classifyStagedItem(p + '1.md').reason, 'unmapped-prefix', p);
+  }
+});
+
+test('every SECTION_MAP row except .patch is covered by some CANONICAL_PREFIXES entry (#3370)', () => {
+  const rows = SECTION_MAP.filter(([re]) => re.source !== '\\.patch$');
+  assert.ok(rows.length > 0 && rows.length < SECTION_MAP.length, 'the .patch row is the only exclusion');
+  for (const [re] of rows) {
+    assert.ok(CANONICAL_PREFIXES.some((p) => re.test(p + '1.md')), `no CANONICAL_PREFIXES entry matches ${re}`);
+  }
+});
+
+// Expands a SECTION_MAP row's regex source into the literal prefixes it accepts:
+// `^a-`, `^a(-|\b)`, `^(a|b)-`, `^x-(c|d)-` style rows (every row but the .patch one).
+function rowPrefixes(re) {
+  // A `(-|\b)` tail still lists the `-` form (resolve.js's CANONICAL_PREFIXES comment).
+  const src = re.source.replace('(-|\\b)', '-');
+  const m = /^\^([^(]*)(?:\(([^)]*)\))?(-?)$/.exec(src);
+  assert.ok(m, `unrecognised SECTION_MAP row shape ${re.source}`);
+  const [, head, alts, tail] = m;
+  return (alts === undefined ? [''] : alts.split('|')).map((a) => `${head}${a}${tail}`);
+}
+
+test('every alternative of every SECTION_MAP row except .patch is a CANONICAL_PREFIXES entry (#3370)', () => {
+  const rows = SECTION_MAP.filter(([re]) => re.source !== '\\.patch$');
+  const expected = rows.flatMap(([re]) => rowPrefixes(re));
+  assert.ok(expected.length >= rows.length);
+  for (const p of expected) {
+    assert.ok(CANONICAL_PREFIXES.includes(p), `CANONICAL_PREFIXES is missing ${p}`);
+  }
+});
+
+test('nearestCanonicalPrefixes(review-13-record) includes a review-* prefix (#3370)', () => {
+  const near = nearestCanonicalPrefixes('review-13-record');
+  assert.strictEqual(near.length, 3);
+  assert.ok(near.some((p) => p.startsWith('review-')), near.join(', '));
+});
+
+test('nearestCanonicalPrefixes ranks an exact head match first and honors n (#3370)', () => {
+  assert.deepStrictEqual(nearestCanonicalPrefixes('review-unconfirmed-9', 1), ['review-unconfirmed-']);
+  assert.strictEqual(nearestCanonicalPrefixes('zzz', 5).length, 5);
 });

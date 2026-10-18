@@ -1457,6 +1457,43 @@ test('flaky retry: a TAP failure with no attributable file refuses retry even wh
   assert.strictEqual('flakyRetried' in report.checks.tests, false);
 });
 
+test('flaky retry: a summary-family failure refuses retry even when every named file is allowlisted, through the real CLI wiring (#3204)', async () => {
+  // Same wiring as the #3066 TAP test above, on a jest summary log: the
+  // allowlisted tests/flaky.test.js is named, and src/setup.js is a failing
+  // suite no test file accounts for. Without an accounting guard for the
+  // summary family this used to retry, pass the named file, and clear the check.
+  const r = tmpGitRepo();
+  const JEST_UNATTRIBUTED = [
+    'FAIL tests/flaky.test.js',
+    '  ● flaky › sometimes fails',
+    'FAIL src/setup.js',
+    '  ● Test suite failed to run',
+    'Tests:       2 failed, 3 passed, 5 total',
+  ].join('\n');
+  fs.writeFileSync(path.join(r.repo, 'fail.js'), `process.stdout.write(${JSON.stringify(JEST_UNATTRIBUTED)} + '\\n'); process.exit(1);\n`);
+  fs.writeFileSync(path.join(r.repo, 'retry.js'), "require('fs').writeFileSync('retry.marker', process.argv[2]); process.exit(0);\n");
+  const decl = {
+    checks: { tests: 'node fail.js' },
+    retry: { tests: 'node retry.js {file}' },
+    rules: [{ match: 'src/**', suites: ['tests'], static: true }],
+    flaky: { files: ['tests/flaky.test.js'] },
+  };
+  fs.mkdirSync(path.join(r.repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(r.repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'summary-family unattributed fixture');
+  const branch = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  const args = ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', branch, '--cmd', 'tests=node fail.js'];
+  const { code, stdout } = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(code, 1);
+  assert.match(stdout, /\| tests \| fail \|/);
+  assert.doesNotMatch(stdout, /flaky-retried/);
+  assert.ok(!fs.existsSync(path.join(r.repo, 'retry.marker')), 'no retry command may run without a failure-accounting guard');
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.checks.tests.retryDecision, { retry: false, reason: 'no-accounting-guard: summary' });
+  assert.strictEqual('flakyRetried' in report.checks.tests, false);
+});
+
 // Shared by the no-parse test below: writes a verify-scope.json declaring
 // `testsCmd` (with a flaky allowlist that never matches this fixture) and
 // commits it, returning the --scope args to run it under.

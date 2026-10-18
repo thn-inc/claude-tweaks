@@ -48,6 +48,10 @@ test('generateWorkflowYaml embeds both jobs and the default-branch comparison', 
   ));
 });
 
+test('ISSUE_REF_SOURCE keeps its exact value after composing the shared keyword alternation', () => {
+  assert.strictEqual(ISSUE_REF_SOURCE, '\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+#([0-9]+)');
+});
+
 test('generateWorkflowYaml embeds the exact tested regex pattern (single source of truth)', () => {
   const yaml = generateWorkflowYaml();
   const needle = `PATTERN='${ISSUE_REF_SOURCE}'`;

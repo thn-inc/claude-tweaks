@@ -108,8 +108,3 @@ test('flow/validation.md holds Step 2.5/2.6 ledger-bound notes until the ledger 
   assert.match(text, /appended to the ledger as an `ops` row by whichever step creates it \(`build\/worktree-setup\.md` Step 4\.6, or `multi-spec\.md`'s "Shared worktree" step 1/);
   assert.doesNotMatch(text, /Continued and added ops ledger entry/);
 });
-
-test('multi-spec.md stays under its 20,480-byte raw budget', () => {
-  const bytes = fs.statSync(path.join(SKILLS, 'flow', 'multi-spec.md')).size;
-  assert.ok(bytes < 20480, `multi-spec.md is ${bytes} bytes`);
-});

@@ -12,14 +12,16 @@
 // really runs must skip it. Impeccable keeps today's rule (the option defaults
 // off) — changing it there is a separate decision.
 
-const path = require('path');
+const { canonicalRealpath, isAncestorOrSelf } = require('./path-guard');
 
+// The injected deps.realpath is passed through unchanged (superpowers-version
+// injects the native form, impeccable-engine and the tests the JS form), and a
+// failure falls back to the input so a stale projectPath still compares
+// lexically.
 function safeRealpath(p, deps) {
-  try {
-    return deps.realpath(p);
-  } catch {
-    return p;
-  }
+  if (!deps || typeof deps.realpath !== 'function') return p;
+  const r = canonicalRealpath(p, { realpath: deps.realpath });
+  return r === null ? p : r;
 }
 
 // Project-scope entries whose projectPath is an ancestor of (or equal to)
@@ -38,9 +40,11 @@ function selectEntry(entries, projectPath, deps, opts = {}) {
     if (entry.scope !== 'project' || typeof entry.projectPath !== 'string') continue;
     const candidate = safeRealpath(entry.projectPath, deps);
     if (home !== null && candidate === home) continue;
-    const rel = path.relative(candidate, target);
-    const isAncestorOrSelf = rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-    if (isAncestorOrSelf && candidate.length > bestLen) {
+    // One intended difference from the former inline test (#3417): that test
+    // excluded any relative path starting with '..', so a child component named
+    // like '..foo' was wrongly treated as outside the candidate. It now counts
+    // as contained; only a whole '..' component is a parent escape.
+    if (isAncestorOrSelf(candidate, target) && candidate.length > bestLen) {
       best = entry;
       bestLen = candidate.length;
     }

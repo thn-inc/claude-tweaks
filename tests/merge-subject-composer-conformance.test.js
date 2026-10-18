@@ -20,11 +20,6 @@ const LOCAL_SITES = [
   'plugin/skills/flow/worktree-merge.md',
 ];
 
-// AC 6, re-baselined by #2320: 30,804 bytes as of 8409ec468 (#2251, landed after
-// #2002 per that spec's Gotchas so this figure is already post-#2002); net-small
-// means at most +500.
-const PR_FIRST_BYTE_CEILING = 31304;
-
 // Frozen pre-change excerpts (byte-for-byte from the pre-#2251 files).
 const PRE_PR_FIRST_SITE = `gh pr merge {pr-number} --repo {owner}/{repo} --auto --merge \\
   -t "[{tag}] {one-line summary}" \\
@@ -37,8 +32,17 @@ const PRE_WORKTREE_MERGE_SITE = `   git merge --no-ff {branch} -m "Merge {branch
 
    Fixes #{issue}
    Fixes #{second-issue}"`;
+// The pre-#3298 composer call — no changed-paths source (neither --range nor --pr).
+const PRE_RANGELESS_CALL = `SUBJECT_EXPORTS=$(node "\${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --shell) || exit 1
+   eval "$SUBJECT_EXPORTS"`;
+// The pre-#3298 worktree-merge.md call (two-issue form, no changed-paths source).
+const PRE_WORKTREE_RANGELESS_CALL = `   SUBJECT_EXPORTS=$(node "\${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --shell) || exit 1
+   eval "$SUBJECT_EXPORTS"`;
 
-const COMPOSER_CALL = /SUBJECT_EXPORTS=\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/compose-subject\.js" [^\n]*--shell\) \|\| exit 1\n[ \t]*eval "\$SUBJECT_EXPORTS"/;
+// local-merge fences read the changed paths from a local `--range {base}...{head}` diff;
+// pr-first fences read them from the PR itself via `--pr {pr-number}` (#3298 final review).
+const LOCAL_COMPOSER_CALL = /SUBJECT_EXPORTS=\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/compose-subject\.js" [^\n]*--range \{[a-z-]+\}\.\.\.\{[a-z-]+\} --shell\) \|\| exit 1\n[ \t]*eval "\$SUBJECT_EXPORTS"/;
+const PR_FIRST_COMPOSER_CALL = /SUBJECT_EXPORTS=\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/compose-subject\.js" [^\n]*--pr \{pr-number\} --shell\) \|\| exit 1\n[ \t]*eval "\$SUBJECT_EXPORTS"/;
 const LOCAL_MERGE_FORM = /git merge --no-ff \{[a-z-]+\} -m "\$SUBJECT_TITLE\n\n\$SUBJECT_BODY"/;
 const STALE_LOCAL_FORM = /git merge --no-ff \{[a-z-]+\} -m "(\[|Merge \{branch\})/;
 const STALE_PR_FIRST_FORM = /gh pr merge \{pr-number\}[^\n]*--merge \\/;
@@ -47,28 +51,24 @@ test('pr-first-merge.md: both gh pr merge sites squash and take the composer out
   const text = read(PR_FIRST);
   const squashSites = text.match(/gh pr merge \{pr-number\} --repo \{owner\}\/\{repo\} (--auto )?--squash \\\n\s+-t "\$SUBJECT_TITLE" -b "\$SUBJECT_BODY"/g) || [];
   assert.equal(squashSites.length, 2, 'expected exactly two squash merge sites');
-  assert.match(text, COMPOSER_CALL);
+  assert.match(text, PR_FIRST_COMPOSER_CALL);
+  assert.doesNotMatch(text, /--range \{/, 'pr-first fences carry no --range');
   // F1: the degrade fence (the `--squash` site under `merge-verification: off`) no longer relies
   // on the first fence's shell state surviving into its own, separate Bash call — it guards its
   // own composer call, same as the first fence.
-  const composerCalls = text.match(new RegExp(COMPOSER_CALL.source, 'g')) || [];
+  const composerCalls = text.match(new RegExp(PR_FIRST_COMPOSER_CALL.source, 'g')) || [];
   assert.equal(composerCalls.length, 2, 'expected both squash sites to run their own guarded composer call');
   assert.doesNotMatch(text, STALE_PR_FIRST_FORM);
   assert.doesNotMatch(text, /-t "\[\{tag\}\] \{one-line summary\}"/);
   // go-red proof
   assert.match(PRE_PR_FIRST_SITE, STALE_PR_FIRST_FORM);
-  assert.doesNotMatch(PRE_PR_FIRST_SITE, COMPOSER_CALL);
-});
-
-test('pr-first-merge.md stays net-small (AC 6 byte ceiling)', () => {
-  const bytes = Buffer.byteLength(read(PR_FIRST), 'utf8');
-  assert.ok(bytes <= PR_FIRST_BYTE_CEILING, `${PR_FIRST} is ${bytes} bytes, over the ${PR_FIRST_BYTE_CEILING}-byte ceiling (#2251 AC 6)`);
+  assert.doesNotMatch(PRE_PR_FIRST_SITE, PR_FIRST_COMPOSER_CALL);
 });
 
 for (const rel of LOCAL_SITES) {
   test(`${path.basename(rel)}: the --no-ff merge sources -m from the composer`, () => {
     const text = read(rel);
-    assert.match(text, COMPOSER_CALL, 'composer eval line present');
+    assert.match(text, LOCAL_COMPOSER_CALL, 'composer eval line present');
     assert.match(text, LOCAL_MERGE_FORM, 'merge takes $SUBJECT_TITLE / $SUBJECT_BODY');
     assert.doesNotMatch(text, STALE_LOCAL_FORM, 'no free-form -m subject remains');
   });
@@ -78,6 +78,10 @@ test('go-red proof: the frozen pre-change local-merge forms match the stale patt
   for (const pre of [PRE_LOCAL_SITE, PRE_WORKTREE_MERGE_SITE]) {
     assert.match(pre, STALE_LOCAL_FORM);
     assert.doesNotMatch(pre, LOCAL_MERGE_FORM);
-    assert.doesNotMatch(pre, COMPOSER_CALL);
+    assert.doesNotMatch(pre, LOCAL_COMPOSER_CALL);
   }
+  assert.doesNotMatch(PRE_RANGELESS_CALL, LOCAL_COMPOSER_CALL);
+  assert.doesNotMatch(PRE_RANGELESS_CALL, PR_FIRST_COMPOSER_CALL);
+  assert.doesNotMatch(PRE_WORKTREE_RANGELESS_CALL, LOCAL_COMPOSER_CALL);
+  assert.doesNotMatch(PRE_WORKTREE_RANGELESS_CALL, PR_FIRST_COMPOSER_CALL);
 });

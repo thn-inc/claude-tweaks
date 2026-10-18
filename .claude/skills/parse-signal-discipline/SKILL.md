@@ -230,8 +230,27 @@ When mechanizing a prose heuristic into a deterministic check:
     `{ failure: 'repo-slug-unresolved' }` for an unset slug on any answer that did not come from
     git, so the record lands in `unreadable` and the AUTO line names it. Check every interpolated
     input before trusting a not-found status, and route an unresolved one to the could-not-tell
-    branch. A reader copied from a sibling call site carries the sibling's gap, so grep for the
-    other copies before fixing one (`grep -rn 'readClaimBlob(' plugin/skills/`).
+    branch. #3393 then moved both skill heredocs (`specify/shaping-mode.md` and
+    `dispatch/queue-pull-script.md`) onto `claim-store.js`'s `createClaimReader`, which owns the slug
+    resolution, so a new claim read calls it rather than hand-building the chain, and
+    `grep -rn 'readClaimBlob(' plugin/skills/` should stay empty. A reader copied from a sibling
+    call site still carries the sibling's gap, so grep for other copies before fixing one.
+14. **A lenient reader in front of a strict validator turns "couldn't parse" into "not
+    configured".** A free-form policy value can go wrong in two ways before it reaches the check
+    that would reject it loudly. The parser can keep whitespace the writer never meant, so a
+    well-formed entry matches nothing. Or a schema resolver can map an invalid value to its
+    default, so a typo reads as "key unset". #3298 shipped both. `plugin/bin/lib/commit-scope.js`'s
+    `parseScopePaths` split each `commit-scope-paths` entry on its first `=` without trimming, so
+    `plugin/bin/ = bin` produced the prefix `plugin/bin/ `, which no changed path starts with: zero
+    matches, a silent fall-through to the constant. `plugin/bin/lib/policy.js`'s `readCommitScope`
+    first read `commit-scope` through `resolveValue`, which returns the key's default (unset) for a
+    whitespace-bearing value, so `web app` became `null` and the merge subject went out unscoped
+    with no signal. Whole-branch review caught both. `parseScopePaths` now trims both sides of the
+    `=`, and `readCommitScope` returns the raw trimmed value so `composeSubject`'s token check
+    rejects a bad one with exit 1. Normalize at the parser, hand the raw value to the validator
+    that fails loudly, and pin each with its own test: a spaced `prefix = token` entry that must
+    match, and a whitespace-bearing value that must exit non-zero. A schema resolver that falls
+    back to a default on an invalid value is not the hard error "When not to use" exempts.
 
 ## When to use
 

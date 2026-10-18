@@ -132,11 +132,12 @@ override pushed, PR not re-rendered — release-please has not re-rendered PR #{
 
 The summary's outcome slot reads `failed`, not `PARTIAL`: `PARTIAL` asserts a release exists, and none does here. The `Release-As:` commit **is** on the integration branch, which is why the state is named rather than reported as a clean no-op — a second run must not push a second override commit.
 
-**The PR-check gate — `_shared/pr-first-merge.md`'s Merge-verification gate, not a second implementation.** The console's `CI on tip` row does **not** cover this: `ciTip` is the integration branch's tip, and the console *renders* CI, it does not gate on it. The checks that matter here are the release PR's own. Resolve the lever and read the PR exactly as that gate's Step 2.5 does — its four-field read, its ordered classification, its bounded watch, its green-exit re-entry check — and apply only the four deltas below. The classification itself is not restated here; read it there:
+**The PR-check gate — `_shared/pr-first-merge.md`'s Merge-verification gate, not a second implementation.** The console's `CI on tip` row does **not** cover this: `ciTip` is the integration branch's tip, and the console *renders* CI, it does not gate on it. The checks that matter here are the release PR's own. Resolve the lever and read the PR exactly as that gate's Step 2.5 does — its four-field read, its head-run `gh run list --commit {headRefOid}` read, its ordered classification, its bounded watch, its green-exit re-entry check — and apply only the five deltas below. The classification itself is not restated here; read it there:
 
 ```bash
 MERGE_VERIFICATION=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "{run-dir}" --values merge-verification)
 gh pr view {releasePr.value.number} --repo {owner}/{repo} --json state,mergeStateStatus,headRefOid,statusCheckRollup,title
+gh run list --repo {owner}/{repo} --commit {headRefOid from the read above} --limit 100 --json name,workflowName,status,conclusion,url
 ```
 
 An unreadable state is Step 2.5's own first row, unchanged in substance: never merge on a state this gate could not read — a read failure is not "no CI" — reported here as `failed`, reason `state-read-failed`. The five deltas, each a deliberate narrowing, substitution or addition for the release path:

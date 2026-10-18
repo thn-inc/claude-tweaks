@@ -3,25 +3,16 @@
 // Context-cost measurement for the shipped skill payload.
 //
 // A SKILL.md loads in full on every invocation, and once per dispatched subagent.
-// Bloat here is invisible until someone measures it by hand — which is how the
-// corpus reached 931 KB before anyone looked. Phases 1-3 removed ~150 KB; this
-// module exists so the next 150 KB does not accumulate unnoticed.
+// Bloat here is invisible until someone measures it, which is how the corpus
+// reached 931 KB before anyone looked. This module measures; it sets no limit.
+// The one size limit in force is the Read-limit rail — RAIL_BYTES, RAIL_LINES
+// and DESCRIPTION_MAX_CHARS in ./budgets.js, applied through ./rail.js and the
+// `rail:` suite (decision 0024).
 //
-// The ceiling is a 50 KB soft ceiling per SKILL.md (raised from 40 KB to
-// 45 KB — see docs/donts.md — then to 50 KB on 2026-10-16 as an interim
-// unblock while #3230 reconsiders how ceilings are set at all, after
-// concurrent merges tipped dispatch/SKILL.md 58 B over 45 KB). After the
-// Phase 3 extraction several files sat within a kilobyte of the old ceiling,
-// so a regression is one added paragraph away — which is
-// precisely when an automated check earns its keep over periodic manual
-// measurement.
-//
-// Since #1990, the per-file ceiling is a warning tier, not a hard gate: the
-// number a reader actually pays is the composed bundle at a compose call
-// site (`composedBytesReport`, Task 4), not any one source file in isolation.
-// Per-file bytes are CRLF-normalized and marker-stripped (`measuredBytes`) so
-// a `core.autocrlf=true` checkout or an unrendered `<!-- when: ... -->` marker
-// never inflates a count that nobody actually reads.
+// Per-file bytes are CRLF-normalized and marker-stripped (`measuredBytes`) so a
+// `core.autocrlf=true` checkout or an unrendered `<!-- when: ... -->` marker
+// never inflates a count. The number a reader actually pays at a compose call
+// site is the composed bundle (`composedBytesReport`), not any one source file.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -31,64 +22,6 @@ const {
   stripMarkers, MarkerError, parseMarkers, compose, KEYS, VOCAB, UNRESOLVED,
 } = require('../compose-context/compose');
 const { toPosix } = require('../shared-primitives');
-
-const CEILING_BYTES = 50 * 1024;
-
-// Frontmatter `description:` budget (#394). Every description loads into every
-// session of every project with the plugin enabled, regardless of whether that
-// skill ever fires — unlike SKILL.md bytes above (paid once per invocation),
-// this is paid every session. A #394 audit found the 33 descriptions totaling
-// 10,455 chars, 13 of them carrying body content (procedure summaries,
-// enumerations, negative-scope clauses) that belongs in the SKILL.md body
-// instead. Per-description ceiling is a hard, mechanically-checked line: the
-// corpus ceiling is deliberately looser, since trimming the last chars off an
-// already-tight description means dropping a Keywords token — the one thing
-// this ceiling must never cost (a lost keyword can stop a skill from firing).
-const DESCRIPTION_CEILING_CHARS = 260;
-// 7500 -> 7700, #1704 (new `/claude-tweaks:intake` skill, 116 chars). By the
-// time this landed the corpus had already grown to 7497/7500 (recent
-// unrelated merges — #1489/#1490/#1492/#1494's sweep orchestrator and
-// friends), leaving 3 chars of headroom — not enough for a legitimate new
-// skill's description, and every existing description was already near its
-// own 260-char per-skill ceiling (per this file's own comment above: trimming
-// an already-tight description costs a Keywords token, the one thing this
-// looser corpus ceiling exists to avoid). Raising the ceiling, not shaving
-// unrelated skills' tuned trigger phrases, is the correct fix here. Bumped
-// to 7700 (not the bare 7613 minimum) to leave the next legitimate addition
-// some room too.
-//
-// 7700 -> 7900, #44 (new `/claude-tweaks:pipeline-smoke-test` skill, 251
-// chars). Corpus was at 7864/7700 once this description was added -- the
-// same shape as the #1704 bump above: an already-tight per-skill description
-// (Keywords tokens for a genuinely new trigger vocabulary — "smoke test",
-// "integration test", "claim race", "cross-session" — nothing spare to trim
-// without weakening skill selection). Bumped to 7900, not the bare 7864
-// minimum, for the same next-legitimate-addition headroom reason.
-//
-// 7900 -> 8200, #2256 (new `/claude-tweaks:release` skill, 260 chars).
-// Corpus was at 8131/7900 once this description was added -- the same shape
-// as the two bumps above: an already-tight per-skill description (Keywords
-// tokens for a genuinely new trigger vocabulary — "release", "tag",
-// "changelog", "release-please", "release train", "Release-As" — nothing
-// spare to trim without weakening skill selection). Bumped to 8200, not the
-// bare 8131 minimum, for the same next-legitimate-addition headroom reason.
-//
-// 8200 -> 8400, #2757 (new `/claude-tweaks:activity` skill, 246 chars).
-// Corpus was at 8380/8200 once this description was added -- the same shape
-// as the three bumps above: an already-tight per-skill description (Keywords
-// tokens for a genuinely new trigger vocabulary — "activity report", "what
-// did I ship", "last week", "retro", "standup" — nothing spare to trim
-// without weakening skill selection). Bumped to 8400, not the bare 8380
-// minimum, for the same next-legitimate-addition headroom reason.
-//
-// 8400 -> 8700, #2758 (new `/claude-tweaks:walkthrough` skill, 236 chars).
-// Corpus was at 8616/8400 once this description was added — the same shape
-// as the four bumps above: an already-tight per-skill description (Keywords
-// tokens for a genuinely new trigger vocabulary — "walkthrough", "GIF",
-// "animated demo", "screen recording", "share", "caption" — nothing spare
-// to trim without weakening skill selection). Bumped to 8700, not the bare
-// 8616 minimum, for the same next-legitimate-addition headroom reason.
-const DESCRIPTION_TOTAL_CEILING_CHARS = 8700;
 
 function skillsDir(repoRoot) {
   return path.join(repoRoot, 'skills');
@@ -157,7 +90,7 @@ function* walkMarkdown(dir) {
 }
 
 // Sub-files are not free either: a stub that cites one costs the whole file when
-// read, so a sub-file over the ceiling is the same defect one level down. This is
+// read, so a sub-file over the rail is the same defect one level down. This is
 // the shape that let init/bootstrap-steps.md reach 86 KB behind 18 stubs (IL-70).
 function measureSubFiles(repoRoot) {
   const dir = corpusDir(repoRoot);
@@ -171,16 +104,6 @@ function measureSubFiles(repoRoot) {
     }
   }
   return out.sort((a, b) => b.bytes - a.bytes);
-}
-
-function overCeiling(entries) {
-  return entries.filter((e) => e.bytes > CEILING_BYTES);
-}
-
-// The per-file ceiling is a warning tier since #1990 — the hard gate is
-// composed bytes per compose call site (`overComposedCeiling`, Task 4).
-function overCeilingWarnings(entries) {
-  return overCeiling(entries).map((e) => `${e.name || e.file} ${(e.bytes / 1024).toFixed(1)} KB`);
 }
 
 // The `when:` keys a set of sources actually branch on, in `KEYS` canonical
@@ -353,11 +276,12 @@ function parseComposeCallLine(line, repoRoot) {
 }
 
 // Every compose call site in the shipped skill prose — the producer set the
-// composed-bytes hard gate (Task 4) runs over. Single-line call form only,
-// by construction of this decomposition's call sites: every call site this
-// decomposition produces sits on one line; a wrapped call is not found. A
-// line that has the invocation form but doesn't parse is emitted as an
-// `unparsed` row rather than silently dropped (parse-signal discipline).
+// composed-bytes hard gate (`rail.js`'s `composedRailViolations`) runs over.
+// Single-line call form only, by construction of this decomposition's call
+// sites: every call site this decomposition produces sits on one line; a
+// wrapped call is not found. A line that has the invocation form but doesn't
+// parse is emitted as an `unparsed` row rather than silently dropped
+// (parse-signal discipline).
 function findComposeCallSites(repoRoot) {
   const dir = corpusDir(repoRoot);
   const out = [];
@@ -380,75 +304,9 @@ function findComposeCallSites(repoRoot) {
   return out;
 }
 
-// #2002 removed the `merge` exception: the reader-need split of
-// `_shared/pr-early-run-lifecycle.md` (run-start-only Steps 1-4/Root
-// cause/Resume kept there; the merge-time content — Phase-checklist update,
-// Pre-merge title/description refresh, and the merge-time gh-absent degrade
-// row — moved to the new `_shared/pr-checklist-refresh.md`) brought the
-// `merge` step's real max to 39,917 B, under CEILING_BYTES on its own. See
-// `_shared/pr-checklist-refresh.md` and the two updated compose call sites
-// (`wrap-up/auto-merge-short-circuit.md`, `wrap-up/review-console.md`).
-//
-// scan-procedures.md's expanded transport-fallback paragraph had pushed the
-// `claims` step's measured max to 42,506 B, over the old 40 KB CEILING_BYTES
-// — a `claims: 45 * 1024` stopgap exception (#2289's predecessor) unblocked
-// #2073's PR rather than blocking it on a prose-restructuring pass. The
-// ceiling was raised to 45 KB afterward, and 42,506 B now fits under it on
-// its own — per this file's own stale-exception rule, the entry is removed
-// rather than carried forward at a now-redundant value (#2289 is moot unless
-// a later edit pushes the step back over the raised ceiling). No entry
-// remains: this evaluates to `{}` until a real regression adds one back.
-const COMPOSED_STEP_EXCEPTIONS = {};
-
-// One row per compose call site in the shipped skill prose — the producer
-// set the composed-bytes hard gate (`overComposedCeiling`) runs over.
+// One row per compose call site in the shipped skill prose.
 function composedBytesReport(repoRoot) {
   return findComposeCallSites(repoRoot).map((c) => measureComposed(repoRoot, c));
-}
-
-// The hard gate: every combination (or error) over its step's ceiling.
-// `COMPOSED_STEP_EXCEPTIONS` raises one step's ceiling above `CEILING_BYTES`
-// where the real corpus already exceeds it; every other step uses
-// `CEILING_BYTES` unchanged. This replaces the former per-file hard
-// assertions — the number a reader actually pays is the composed bundle at a
-// call site, not any one source file in isolation (`overCeilingWarnings`,
-// the per-file warning tier, above).
-function overComposedCeiling(rows, { exceptions = COMPOSED_STEP_EXCEPTIONS } = {}) {
-  const out = [];
-  for (const row of rows) {
-    if (row.error) {
-      out.push({
-        step: row.step, file: row.file, line: row.line, error: row.error,
-      });
-      continue;
-    }
-    const ceiling = Object.prototype.hasOwnProperty.call(exceptions, row.step) ? exceptions[row.step] : CEILING_BYTES;
-    for (const combo of row.combinations) {
-      if (combo.bytes > ceiling) {
-        out.push({
-          step: row.step, file: row.file, line: row.line, conditions: combo.conditions, bytes: combo.bytes, ceiling,
-        });
-      }
-    }
-  }
-  return out;
-}
-
-// Headroom is the story the raw size does not tell: a file at 39.9 KB is one
-// paragraph from breaching, and reporting it as "under the ceiling" hides that.
-function headroom(entry) {
-  return CEILING_BYTES - entry.bytes;
-}
-
-// Early-warning tier (#336): the ceiling above is a binary pass/fail exactly at
-// the limit, with no signal as a file approaches it. WARN_RATIO marks the
-// half-open band [90%, 100%) of CEILING_BYTES — a file already at or over the
-// ceiling is the hard-fail tests' job, never also flagged here.
-const WARN_RATIO = 0.9;
-
-function nearCeiling(entries) {
-  const threshold = CEILING_BYTES * WARN_RATIO;
-  return entries.filter((e) => e.bytes >= threshold && e.bytes < CEILING_BYTES);
 }
 
 // Pulls the single-line `description:` frontmatter value out of a SKILL.md,
@@ -503,7 +361,7 @@ function findDescriptionHashHazards(repoRoot) {
 
 // Every SKILL.md's description length, in characters (not bytes — an em dash
 // or accented letter is one character but multiple UTF-8 bytes, and this
-// ceiling is about how much a human/LLM reads, not disk usage).
+// limit is about how much a human/LLM reads, not disk usage).
 function measureDescriptions(repoRoot) {
   const dir = skillsDir(repoRoot);
   return listSkillDirs(repoRoot).map((name) => {
@@ -514,42 +372,27 @@ function measureDescriptions(repoRoot) {
   });
 }
 
-function overDescriptionCeiling(entries) {
-  return entries.filter((e) => e.chars > DESCRIPTION_CEILING_CHARS);
-}
-
 function totalDescriptionChars(entries) {
   return entries.reduce((sum, e) => sum + e.chars, 0);
 }
 
 module.exports = {
-  CEILING_BYTES,
-  DESCRIPTION_CEILING_CHARS,
-  DESCRIPTION_TOTAL_CEILING_CHARS,
   corpusDir,
   measuredTextBytes,
   measuredBytes,
   walkMarkdown,
   measureSkills,
   measureSubFiles,
-  overCeiling,
-  overCeilingWarnings,
   parseComposeCallLine,
   findComposeCallSites,
   usedConditionKeys,
   conditionCombinations,
   measureComposed,
-  COMPOSED_STEP_EXCEPTIONS,
   composedBytesReport,
-  overComposedCeiling,
   totalBytes,
-  headroom,
-  nearCeiling,
-  WARN_RATIO,
   extractDescription,
   descriptionHashHazard,
   findDescriptionHashHazards,
   measureDescriptions,
-  overDescriptionCeiling,
   totalDescriptionChars,
 };

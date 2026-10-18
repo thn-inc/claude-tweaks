@@ -46,5 +46,6 @@ test('backlog hand-off and reference card cite --budget, not dispatch next', () 
 });
 
 // Per-file 40 KB pin on dispatch/SKILL.md retired by #1997 — the per-file
-// tier is a warning since #1990 and this file has no compose call site;
-// removal condition in docs/incident-log.md [IL-153].
+// tier was a warning from #1990 until #3311 deleted the ceiling model
+// entirely, and this file has no compose call site; removal condition in
+// docs/incident-log.md [IL-153].
