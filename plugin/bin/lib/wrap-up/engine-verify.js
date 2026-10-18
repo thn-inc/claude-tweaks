@@ -852,7 +852,8 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
   if (gatherFailures.length) return { result: 'unknown', detail: gatherFailures.join('; ') };
 
   const prNumber = resolvePrNumber(runDir);
-  const riskFloor = resolveRiskFloor(repoRoot); // once per check run, not per parent target
+  // Once per check run, not per parent target -- and only when a parent target exists.
+  const riskFloor = targets.some((t) => t.parent) ? resolveRiskFloor(repoRoot) : undefined;
 
   for (const { target, parent } of targets) {
     let issueRaw;
