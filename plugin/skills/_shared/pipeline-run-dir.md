@@ -101,7 +101,8 @@ writes a `config.yml` policy lever (`--run <run-dir> --key <lever> --value <valu
 `--run <run-dir> --set <key1>=<value1>,...` batch form that writes every lever in one call,
 refs #1376/#1580) the same way, and `bin/set-verify-expectations.js` writes or updates
 `verify-expectations.json` (`--run <run-dir>` plus `--deferred`/`--issues`/`--oversight-exempt`/`--file`,
-refs #2764) — none of the four are
+refs #2764), and `bin/write-run-artifact.js` writes an allowlisted top-level run-dir artifact
+(`--run <run-dir> --name <artifact> --file <src>`, or `--delete`, refs #3044) — none of the five are
 subject to this tool-level pinning, and all work identically from a worktree session or the
 main checkout. Reach for `bin/set-config.js` rather than a hand-rolled `sed -i` on `config.yml`
 even from a Bash call: a `sed -i` target built from a shell variable set in an earlier command
@@ -230,14 +231,14 @@ argument still holds there.
   exit 2.
 
 - **Sanctioned-write CLIs** — `bin/log-decision.js`, `bin/stage-item.js`, `bin/set-config.js`
-  (`--run`, refs #1376), and `bin/set-verify-expectations.js` (`--run`, refs #2764) — the run-dir writers a worktree-isolated session invokes when tool-level
+  (`--run`, refs #1376), `bin/set-verify-expectations.js` (`--run`, refs #2764), and `bin/write-run-artifact.js` (`--run`, refs #3044) — the run-dir writers a worktree-isolated session invokes when tool-level
   pinning refuses the run dir (see the tool-level pinning note above). Each applies the same
   strict anchored-under-the-main-checkout rule, but through `bin/lib/stage-item/write.js`'s
   exported `resolveTarget` rather than `worktree-detect.js` directly, and refuses with exit **3**
   — their documented run-dir-failure code, kept distinct from their exit 2 (malformed
   invocation), with its own two messages ("run dir does not exist" versus "not anchored under
   the main checkout (a worktree-local shadow)"). A further writer imports that `resolveTarget`
-  rather than re-deriving the predicate, as the third and fourth did.
+  rather than re-deriving the predicate, as the third, fourth and fifth did.
 
 - **The composer CLI** — `bin/compose-context.js` (`--run`, #1988) — writes
   `{run}/context/{step}.md` yet takes the resolver family's anchored-or-outside rule
@@ -247,7 +248,7 @@ argument still holds there.
   fallback on any non-zero exit is to read the named source files directly
   (`docs/skill-authoring.md`'s "Conditional blocks and the composer") — and its tests run the real
   binary against tmp-root fixtures outside any checkout, the same documented outside-repo use the
-  two resolver CLIs have. A fifth writer copying it inherits that reasoning only if its own callers
+  two resolver CLIs have. A further writer copying it inherits that reasoning only if its own callers
   share it; otherwise the sanctioned-writer family above is the default.
 
 The first two rules keep the two failure modes distinct in the message — "resolves outside the main

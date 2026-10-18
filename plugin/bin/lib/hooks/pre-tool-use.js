@@ -1213,7 +1213,8 @@ function hasLoggedPrDegrade(runDir) {
 // exemption let the push through anyway, and it collided with a leftover PR
 // Step 1 would have found and reused/reopened. Step 1 always logs one of
 // three outcome lines before Step 2's push (no-match / reuse-open / reopen —
-// pr-early-run-lifecycle.md's Step 1) — this reads decisions.md for any of
+// pr-early-run-lifecycle.md's Step 1; since #3012 a paraphrase of one of them
+// counts too, see below) — this reads decisions.md for any of
 // them, scoped to THIS branch so a Step 1 line from a *previous* attempt
 // (decisions.md is reused across retries on the same branch name) can't
 // satisfy a fresh attempt's precondition. Read-only, best-effort: a missing
@@ -1241,20 +1242,53 @@ function hasLoggedPrDegrade(runDir) {
 // hand-verified terminator instead (`pr-early-run-lifecycle.md` Step 1's
 // three logged line shapes), so the match can only ever end the branch
 // mention at the real delimiter each shape actually uses.
+//
+// #3012: the three exact shapes above are no longer the only accepted Step 1
+// outcome. A model that logs Step 1 in its own words (e.g. "no existing PR found
+// for `{branch}`, creating") still recorded the outcome, so
+// hasPrEarlyStep1LineFor also accepts one AUTO line that names the branch as a
+// whole token and states the outcome before its Reversibility suffix. FAILED
+// lines never count, and the exact shapes still match first, so every line this
+// accepted before is still accepted.
+const STEP1_OUTCOME_RE = /\bno\s+(?:(?:existing|open|prior|matching|draft)\s+)*PRs?\s+(?:found|exists?|existed|for|on)\b|\bfound\s+no\s+(?:(?:existing|open|prior|matching|draft)\s+)*PRs?\b|\breus(?:e|ed|ing)\b|\breopen(?:ed|ing)?\b/i;
+const STEP1_AUTO_LINE_RE = /^\s*-\s+AUTO\b/;
+const STEP1_PR_EARLY_RE = /\bPR[- ]early\b/i;
+const STEP1_FAILED_RE = /\bFAILED\b/;
+const STEP1_REVERSIBILITY_RE = /\sReversibility:/;
+
 function hasLoggedPrEarlyStep1(runDir, branch) {
   try {
     const body = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
-    const b = escapeRegExp(branch);
-    const re = new RegExp(
-      `PR-early run lifecycle: (?:no existing PR for ${b};`
-        + `|reusing open PR #\\d+ for ${b}\\.`
-        + `|reopened PR #\\d+ for ${b} \\(retry\\))`,
-      'i',
-    );
-    return re.test(body);
+    return hasPrEarlyStep1LineFor(body, branch);
   } catch {
     return false;
   }
+}
+
+// #3012: pure form of hasLoggedPrEarlyStep1's check over a decisions.md body.
+// True when the exact three-shape regex matches, or when a single AUTO line
+// (no FAILED) mentions PR-early, states a Step 1 outcome before its Reversibility
+// suffix, and carries `branch` as a whole token: bounded by start/whitespace/
+// quote/backtick/paren on the left and end/whitespace/punctuation on the right.
+// The branch's right-hand bound excludes `-`, `+` and word characters, so a
+// longer branch sharing the prefix never satisfies it.
+function hasPrEarlyStep1LineFor(body, branch) {
+  const text = String(body || '');
+  const b = escapeRegExp(branch);
+  const exact = new RegExp(
+    `PR-early run lifecycle: (?:no existing PR for ${b};`
+      + `|reusing open PR #\\d+ for ${b}\\.`
+      + `|reopened PR #\\d+ for ${b} \\(retry\\))`,
+    'i',
+  );
+  if (exact.test(text)) return true;
+  const token = new RegExp(`(?:^|[\\s\`'"(])${b}(?=$|[\\s;,\`'")]|\\.(?:\\s|$))`);
+  return text.split(/\r?\n/).some((line) => {
+    if (!STEP1_AUTO_LINE_RE.test(line) || !STEP1_PR_EARLY_RE.test(line) || STEP1_FAILED_RE.test(line)) return false;
+    const cut = line.search(STEP1_REVERSIBILITY_RE);
+    const head = cut === -1 ? line : line.slice(0, cut);
+    return STEP1_OUTCOME_RE.test(head) && token.test(head);
+  });
 }
 
 // #2526: this run's own materialized record numbers, read straight off the
@@ -1308,6 +1342,10 @@ function getMaterializedRecordNumbers(worktreeRoot, runDir) {
 // "Claim every named target, all-or-abort"), so a single exit-0 call either
 // claims every named target together or the run never reaches this log line
 // at all — there is no partial-batch state for this line to misrepresent.
+//
+// #3012: a model-worded claim line ("claimed issue #827 for this run") also
+// satisfies this — hasClaimLogFor's paraphrase fallback, see
+// bin/lib/log-decision/claim-log.js's paraphrasedClaimNumbers.
 function hasLoggedClaim(runDir, n) {
   try {
     return hasClaimLogFor(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), n);
@@ -2198,6 +2236,7 @@ module.exports = {
   checkBookkeepingStampsGate,
   checkDispatchConfigGate,
   hasLoggedPrDegrade,
+  hasPrEarlyStep1LineFor,
   // Exported for check-pr-bookkeeping.js's phase-boundary precondition check
   // (#2472) to reuse rather than reimplement — the same integration-model
   // resolution checkBookkeepingStampsGate's own PR-stamp branch already uses.

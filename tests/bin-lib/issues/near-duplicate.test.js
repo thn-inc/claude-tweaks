@@ -12,6 +12,7 @@ const {
   isGenericAnchor,
   shapingRefusal,
   buildShapingState,
+  MIN_REFUSAL_SCORE,
 } = require('../../../plugin/bin/lib/issues/near-duplicate');
 
 function withKeyFiles(files) {
@@ -222,10 +223,10 @@ test('extractCurrentStateAnchors keeps file paths, symbols and file:line locatio
 });
 
 test('isGenericAnchor classifies each shape', () => {
-  for (const g of ['--run-dir', '-x', '--run <dir>', '--key=value', '/claude-tweaks:dispatch', '/claude-tweaks:flow #3124 build', 'bot:in-progress', 'needs:decision', 'ready', 'parked']) {
+  for (const g of ['--run-dir', '-x', '--run <dir>', '--key=value', '/claude-tweaks:dispatch', '/claude-tweaks:flow #3124 build', '/flow', '/specify', '/tmp', 'bot:in-progress', 'needs:decision', 'ready', 'parked']) {
     assert.strictEqual(isGenericAnchor(g), true, g);
   }
-  for (const k of ['plugin/bin/lib/issues/claims.js', 'classifyClaimBlob', 'near-duplicate.js:92', 'origin/main:claims/issue-1.json', 'readiness', 'c:\\Users\\x', '--run path rejected']) {
+  for (const k of ['plugin/bin/lib/issues/claims.js', 'classifyClaimBlob', 'near-duplicate.js:92', 'origin/main:claims/issue-1.json', 'readiness', 'c:\\Users\\x', '--run path rejected', '/usr/bin/node', '/settings page 500', 'plugin/bin/lib/issues/near-duplicate.js']) {
     assert.strictEqual(isGenericAnchor(k), false, k);
   }
 });
@@ -236,6 +237,37 @@ test('a flag-only shared anchor no longer fires body-anchor-overlap; a shared fi
   const fileToo = { number: 3, title: 'Unrelated title words', labels: [], body: '## Current State\n\nEdits `bin/lib/x.js`.\n' };
   const hits = findNearDuplicates(subject, [flagOnly, fileToo]);
   assert.deepStrictEqual(hits.map((h) => [h.number, h.signals]), [[3, ['body-anchor-overlap']]]);
+});
+
+// ── #3366: slash-command anchors are generic, repo file paths are not ───────
+
+test('AC1.1: a pair sharing only /flow and /claude-tweaks:dispatch anchors fires no body-anchor-overlap', () => {
+  const subject = {
+    number: 1,
+    title: 'Grapefruit orchard survey plan',
+    body: '## Current State\n\nRuns `/flow` then `/claude-tweaks:dispatch`.\n',
+  };
+  const record = {
+    number: 2,
+    title: 'Winter hiking boot review notes',
+    body: '## Current State\n\nAlso runs `/flow` and `/claude-tweaks:dispatch`.\n',
+  };
+  assert.deepStrictEqual(findNearDuplicates(subject, [record]), []);
+});
+
+test('AC2.1: a pair sharing a repo file-path anchor still fires body-anchor-overlap', () => {
+  const subject = {
+    number: 1,
+    title: 'Grapefruit orchard survey plan',
+    body: '## Current State\n\nRuns `/flow`, edits `plugin/skills/dispatch/task-prompt.md`.\n',
+  };
+  const record = {
+    number: 2,
+    title: 'Winter hiking boot review notes',
+    body: '## Current State\n\nAlso runs `/flow`, edits `plugin/skills/dispatch/task-prompt.md`.\n',
+  };
+  const hits = findNearDuplicates(subject, [record]);
+  assert.deepStrictEqual(hits.map((h) => [h.number, h.signals]), [[2, ['body-anchor-overlap']]]);
 });
 
 // ── #3141: shapingRefusal ───────────────────────────────────────────────────
@@ -256,8 +288,13 @@ test('the four 2026-10-15 refusals are not refused (no title-similarity)', () =>
 });
 
 test('a true duplicate (title-similarity, ready, live claim) is refused', () => {
-  const hit = { number: 9, signals: ['title-similarity'] };
+  const hit = { number: 9, signals: ['title-similarity', 'key-files-overlap'] };
   assert.strictEqual(shapingRefusal([hit], { 9: LIVE }), hit);
+});
+
+test('a score-1 title-similarity duplicate is surfaced, not refused (#3366)', () => {
+  assert.strictEqual(shapingRefusal([{ number: 9, signals: ['title-similarity'] }], { 9: LIVE }), null);
+  assert.strictEqual(MIN_REFUSAL_SCORE, 2);
 });
 
 test('the same duplicate with only bot:in-progress (stale claim) is not refused', () => {
@@ -266,22 +303,22 @@ test('the same duplicate with only bot:in-progress (stale claim) is not refused'
 });
 
 test('an open linked PR with no live claim is refused', () => {
-  const hit = { number: 9, signals: ['title-similarity'] };
+  const hit = { number: 9, signals: ['title-similarity', 'key-files-overlap'] };
   assert.strictEqual(shapingRefusal([hit], { 9: { ...IDLE, openLinkedPR: 77 } }), hit);
 });
 
 test('a non-ready candidate is not refused even with a live claim', () => {
-  const hit = { number: 9, signals: ['title-similarity'] };
+  const hit = { number: 9, signals: ['title-similarity', 'key-files-overlap'] };
   assert.strictEqual(shapingRefusal([hit], { 9: { ...LIVE, ready: false } }), null);
 });
 
 test('a candidate missing from stateByNumber is not refused', () => {
-  assert.strictEqual(shapingRefusal([{ number: 9, signals: ['title-similarity'] }], {}), null);
+  assert.strictEqual(shapingRefusal([{ number: 9, signals: ['title-similarity', 'key-files-overlap'] }], {}), null);
 });
 
 test('shapingRefusal returns the first qualifying hit in the given order', () => {
   const a = { number: 1, signals: ['key-files-overlap', 'body-anchor-overlap', 'title-similarity'] };
-  const b = { number: 2, signals: ['title-similarity'] };
+  const b = { number: 2, signals: ['title-similarity', 'key-files-overlap'] };
   assert.strictEqual(shapingRefusal([a, b], { 1: IDLE, 2: LIVE }), b);
   assert.strictEqual(shapingRefusal([], {}), null);
   assert.strictEqual(shapingRefusal(null, {}), null);

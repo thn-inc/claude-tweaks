@@ -1253,6 +1253,55 @@ test('check-session-residue: reports a clean standalone run with unapproved stag
   assert.match(result.stdout, /2026-08-01T000000-tidy-standalone.*tidy --approve/);
 });
 
+test('check-session-residue: reports an archived run\'s unreviewed console items', () => {
+  const project = gitRepo();
+  const own = path.join(project, '.claude-tweaks', 'pipelines', '2026-10-17T000000-record-9');
+  fs.mkdirSync(own, { recursive: true });
+  fs.writeFileSync(path.join(own, 'decisions.md'), '');
+  fs.writeFileSync(path.join(own, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  const archived = path.join(project, '.claude-tweaks', 'pipelines', 'archive', '2026-10-16T210949-spec-2821');
+  fs.mkdirSync(path.join(archived, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(archived, 'staged', 'review-13-record.md'), 'x');
+  fs.writeFileSync(path.join(archived, 'console.json'), JSON.stringify({
+    resolved: true,
+    items: [{ id: 'review-13-record.md', section: 'Pending review', resolution: 'pending', reason: 'unmapped-prefix' }],
+  }));
+  const result = runHook(['check-session-residue', '--run', own], { cwd: project });
+  assert.strictEqual(result.code, 0);
+  assert.match(result.stdout, /pending residue from session start still unresolved/);
+  assert.match(result.stdout, /review-13-record\.md/);
+  assert.match(result.stdout, /console-residue\.js" --ack --run/);
+  assert.doesNotMatch(result.stdout, /no pending residue/);
+});
+
+test('check-session-residue: an unreviewed-console backlog past MAX_REPORTED adds the overflow line and --ack-all (#3370 I3)', () => {
+  const project = gitRepo();
+  const own = path.join(project, '.claude-tweaks', 'pipelines', '2026-10-17T000000-record-9');
+  fs.mkdirSync(own, { recursive: true });
+  fs.writeFileSync(path.join(own, 'decisions.md'), '');
+  fs.writeFileSync(path.join(own, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  const mkResidue = (i) => {
+    const dir = path.join(project, '.claude-tweaks', 'pipelines', 'archive', `2026-10-0${i}T000000-spec-${i}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({
+      resolved: true,
+      items: [{ id: `review-${i}-x.md`, section: 'Pending review', resolution: 'pending', reason: 'unmapped-prefix' }],
+    }));
+  };
+  const overflow = /^- … more run\(s\) may have unreviewed console items \(newest 3 shown\)\.$/m;
+  const ackAll = /^To dismiss every listed and older unreviewed item at once after reviewing \(a human decision\): node ".*\/bin\/console-residue\.js" --ack-all$/m;
+  for (const i of [1, 2, 3]) mkResidue(i);
+  const three = runHook(['check-session-residue', '--run', own], { cwd: project });
+  assert.strictEqual(three.code, 0);
+  assert.match(three.stdout, ackAll);
+  assert.doesNotMatch(three.stdout, overflow);
+  mkResidue(4);
+  const four = runHook(['check-session-residue', '--run', own], { cwd: project });
+  assert.strictEqual(four.code, 0);
+  assert.match(four.stdout, overflow);
+  assert.match(four.stdout, ackAll);
+});
+
 test('check-session-residue: no resolvable --run path reports the not-found line', () => {
   const project = tmpProject();
   const result = runHook(['check-session-residue', '--run', path.join(project, 'nope')], { cwd: project });

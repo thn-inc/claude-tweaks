@@ -45,7 +45,7 @@ Supports both recurring and one-off (single-fire, auto-disabling) cadences for a
 | `--branch <name>` (combine with `create`/`update`) | Pin the branch the routine audits — substituted into the kernel's `{{TARGET_BRANCH}}` placeholder, skipping every other source in CREATE Step 5.5's precedence. Use it when the repo's active development branch isn't its GitHub default (a `dev` → `staging` → `main` model), which is otherwise the case a routine gets wrong; `integration-branch` in `.claude-tweaks/policy.yml` is the durable form of the same answer. |
 | `--environment <id>` (combine with `--defaults`, or standalone) | Use this environment ID directly in Step 4, skipping every other resolution source. |
 | `--refresh-environment` (combine with `create`/`update`) | Bypass the environment cache and Step 4's `RemoteTrigger`-backed lookups (both source (a) and source (b)) — go straight to asking the user directly which environment to use, then overwrite `.claude-tweaks/routine-environment-cache.yml` with the freshly chosen value. Use this to correct a stale or wrongly-inferred cached/inferred environment without already knowing its raw ID. Mutually exclusive in effect with `--environment <id>` — if both are passed, `--environment` wins (it already skips every other source, including this one) and no prompt occurs. |
-| `--source <parent-skill>` | Used by a parent skill (e.g. `/claude-tweaks:init`) to identify itself as the caller; see Component-Skill Contract below. |
+| `--source <parent-skill>` (producer-only) | Used by a parent skill (e.g. `/claude-tweaks:init`) to identify itself as the caller; see Component-Skill Contract below. |
 
 ## Workflow
 

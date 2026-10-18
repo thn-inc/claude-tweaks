@@ -68,6 +68,8 @@ See `flags.md`, this skill's directory, for `--dry-run`, `cleanup-only`, `--skil
 2. Review conversation for references to records or features
 3. Check for a materialized header (`work/*-spec.md` in the run dir or its worktree mirror) — record mode
 
+Two records sharing one branch, or a record whose multi-spec run was closed before its consolidated pass, may mean a spec built outside `/flow` — check `skills/flow/multi-spec.md`'s "Mixed execution" section before inferring the work from the conversation.
+
 | Type | Characteristics | Primary Focus |
 |------|----------------|---------------|
 | **Record-based** | A record is identified for this run — a `#`-prefixed argument, a git commit/branch reference, or (fallback) a materialized header | Full lifecycle: record completion + plans + all assessments |

@@ -18,7 +18,7 @@ files:
 
 ### 1. Local verification passes; the gate reads the PR
 - **URL:** `plugin/skills/test/SKILL.md` Step 2 Report; `plugin/skills/_shared/pr-check-gate.md` "When it runs"
-- **Action:** After the full suite passes, `/test` runs `bin/pr-checks.js --run "$PIPELINE_RUN_DIR"`. It reads `run-state.json`'s `pr.number`, fetches the PR's `statusCheckRollup` and `headRefOid`, and prints one JSON line with a `state`.
+- **Action:** After the full suite passes, `/test` runs `bin/pr-checks.js --run "$PIPELINE_RUN_DIR"`. It reads `run-state.json`'s `pr.number`, fetches the PR's `statusCheckRollup` and `headRefOid` and the head sha's workflow runs (`gh run list --commit`), and prints one JSON line with a `state`.
 - **Should feel:** Automatic — one extra line in the run, no prompt.
 - **Should understand:** The read only concludes anything when the PR's `headRefOid` is local HEAD; otherwise it is `stale` (the newest commit is not pushed or not yet checked). The classification rules are the merge gate's own (`_shared/pr-first-merge.md` Step 2.5, applied by `bin/lib/pr-checks/classify.js`) with one deliberate divergence: a failed commit-status (StatusContext) entry reads `red` here, while the merge gate's literal rule holds that same entry `pending` — so a red here can show as a pending wait at merge time, and the merge gate's read stays the final authority.
 - **Red flags:** `TEST_PASSED` set before the read ran; a `stale` result treated as green evidence; a skip path setting `TEST_PASSED` with no read — the gate applies before every `/test` pipeline bullet that sets it, including the QA pass stamp skip (`QA: skipped — stories already passed at {short-sha}`, #3003), not only after a full-suite run.
@@ -34,9 +34,10 @@ files:
 - **URL:** `plugin/skills/_shared/pr-check-gate.md` `pending`/`stale` and fail-open bullets
 - **Action:** `pending`/`stale` → the gate passes with an `AUTO` decision line naming the pending checks (or the unpushed HEAD); `no-pr`, `gh-absent`, `no-ci`, `read-failed` → the gate passes on the local result with one `SKIP` decision line naming the condition.
 - **Should feel:** Quiet — nothing changes for a `local-merge` run except one audit line.
-- **Should understand:** `read-failed` means the gate could not tell, never that CI is green; the merge gate's own read stays the final authority before anything merges.
-- **Red flags:** A `local-merge` run stopping on this gate; a `read-failed` result logged as a pass with no `SKIP` line.
+- **Should understand:** `read-failed` means the gate could not tell, never that CI is green; the merge gate's own read stays the final authority before anything merges. A rollup that is all green while a head-sha workflow run is still in progress — a sibling workflow not yet registered in the rollup — reads `pending`, not `green` (#3405). A failed head-run read (`gh run list`) is `read-failed` too — unless the rollup is already red, which is conclusive on its own and stops the run as in step 2.
+- **Red flags:** A `local-merge` run stopping on this gate; a `read-failed` result logged as a pass with no `SKIP` line; `green` reported while `gh run list --commit {headRefOid}` still lists a run that has not completed; a red rollup reported as `read-failed` because the head-run read failed.
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #3013 (2026-10-16): `/test`'s pipeline gate and `/review` Step 1.5 read the run PR's checks at HEAD through `bin/pr-checks.js`; red fails the gate.
+- Updated during `/claude-tweaks:build` of record #3405 (2026-10-17): the reader also lists the head sha's workflow runs, so a partial rollup reads `pending`; a stale head skips that read.
 - Related: `docs/journeys/recover-a-ci-parked-run.md` (the merge gate's own red path, after review)

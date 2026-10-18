@@ -239,6 +239,35 @@ test('bookkeeping-stamps gate (#2526): claim missing after materialize -> deny, 
   assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'));
 });
 
+test('AC1.1 (#3012): a paraphrased claim line (flow: claimed issue #991 via MCP transport) -> falls through past the claim branch to the worktree deny, not a claim deny', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  fs.writeFileSync(path.join(run, 'decisions.md'), '# Auto-Decision Log\n\n## /flow\n- AUTO 06:31:43 — log-decision: flow: claimed issue #991 via MCP transport (gh CLI unavailable); tombstone reclaim from prior run. Reversibility: high.\n');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected the NEXT check (worktree stamp, still unsatisfied) to deny');
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
+});
+
+test('AC1.1 (#3012): a negated paraphrase (… never itself claimed #991 …) -> still the claim deny naming #991', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  fs.writeFileSync(path.join(run, 'decisions.md'), '# Auto-Decision Log\n\n## /flow\n- AUTO 16:14:57 — log-decision: Wrap-up outcome: pending-review. Separately noted: this run never itself claimed #991 via claim-targets.js. Reversibility: n/a.\n');
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  const spec = out.json.hookSpecificOutput;
+  assert.strictEqual(spec.permissionDecision, 'deny');
+  assert.match(spec.permissionDecisionReason, /Step 2\.8/);
+  assert.match(spec.permissionDecisionReason, /#991/);
+  assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'));
+});
+
 test('bookkeeping-stamps gate (#2526): decisions.md exists but names a DIFFERENT record\'s claim -> still deny (no cross-record false-satisfy)', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
@@ -623,6 +652,86 @@ test('bookkeeping-stamps gate (#1800): Step 1\'s reopen line satisfies the #989 
     { resolveIntegrationModel: () => 'pr-first' },
   );
   assert.deepStrictEqual(out, {}, 'a logged reopen line for this branch must satisfy the precondition');
+});
+
+test('AC1.1: hasPrEarlyStep1LineFor accepts the three canonical lines and paraphrased Step 1 outcomes naming the branch (#3012)', () => {
+  const B = 'worktree-dispatch-record-3012';
+  for (const line of [
+    `- AUTO 09:00:00 — PR-early run lifecycle: no existing PR for ${B}; creating. Reversibility: n/a.`,
+    `- AUTO 09:00:00 — PR-early run lifecycle: reusing open PR #42 for ${B}. Reversibility: high.`,
+    `- AUTO 09:00:00 — PR-early run lifecycle: reopened PR #42 for ${B} (retry). Reversibility: high.`,
+    `- AUTO 21:52:00 — PR-early run lifecycle: no existing PR found for \`${B}\`. Pushed branch, opened draft PR #443. Reversibility: high.`,
+    `- AUTO 08:42:07 — log-decision: PR-early run lifecycle: no PR existed for ${B} (checked via gh pr list --state all, no match); pushing. Reversibility: n/a.`,
+    `- AUTO 22:03:52 — log-decision: PR-early run lifecycle: reused existing OPEN PR #2535 for branch ${B}. Reversibility: high.`,
+  ]) {
+    assert.strictEqual(pre.hasPrEarlyStep1LineFor(line, B), true, `expected accept: ${line}`);
+  }
+});
+
+test('AC1.1: hasPrEarlyStep1LineFor still rejects a Step 1 that never ran (#3012 Gotcha)', () => {
+  const B = 'worktree-dispatch-record-3012';
+  assert.strictEqual(pre.hasPrEarlyStep1LineFor('', B), false);
+  for (const line of [
+    `- AUTO 03:50:57 — PR-early run lifecycle Step 2 (push): pushed ${B} to origin and opened draft PR #2393. Reversibility: high.`,
+    `- AUTO 09:00:00 — PR-early run lifecycle: push of ${B} to origin FAILED (network); run proceeds local-only, no PR opened. Reversibility: n/a.`,
+    `- AUTO 20:31 — Pushed ${B} to origin per pr-early-run-lifecycle.md and opened PR #432. Reversibility: high (PR can be closed/reopened; branch already existed).`,
+    `- AUTO 09:00:00 — PR-early run lifecycle: no existing PR found for ${B}-retry; creating. Reversibility: n/a.`,
+    `- SKIP 09:00:00 — PR-early run lifecycle: no existing PR found for ${B}. Reversibility: n/a.`,
+  ]) {
+    assert.strictEqual(pre.hasPrEarlyStep1LineFor(line, B), false, `expected reject: ${line}`);
+  }
+  assert.strictEqual(
+    pre.hasPrEarlyStep1LineFor('- AUTO 19:34:01 — PR-early run lifecycle: no existing PR found for worktree-flow+spec-3153-3156, creating. Reversibility: n/a.', 'worktree-flow'),
+    false,
+  );
+});
+
+test('AC1.1 (#3012): a paraphrased Step 1 line satisfies the #989 exemption precondition -> allow', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, wt, undefined);
+  const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(
+    path.join(run, 'decisions.md'),
+    `## /build\n- AUTO 09:00:00 — PR-early run lifecycle: no existing PR found for \`${branch}\`, creating. Reversibility: n/a.\n`,
+  );
+  const out = pre.run(
+    { input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.deepStrictEqual(out, {}, 'a paraphrased Step 1 line naming this branch must satisfy the precondition');
+});
+
+test('AC1.1: hasPrEarlyStep1LineFor accepts "found no PR" and "reopening", skips a FAILED line for another branch, and tolerates CRLF (#3012)', () => {
+  const B = 'worktree-dispatch-record-3012';
+  assert.strictEqual(pre.hasPrEarlyStep1LineFor(`- AUTO 09:00:00 — PR-early run lifecycle: found no PR for ${B}; creating. Reversibility: n/a.`, B), true);
+  assert.strictEqual(pre.hasPrEarlyStep1LineFor(`- AUTO 09:00:00 — PR-early run lifecycle: reopening closed PR #42 for ${B}. Reversibility: high.`, B), true);
+  const failedOther = '- AUTO 09:00:00 — PR-early run lifecycle: push of other-branch to origin FAILED (network). Reversibility: n/a.';
+  const own = `- AUTO 09:00:01 — PR-early run lifecycle: no existing PR found for ${B}, creating. Reversibility: n/a.`;
+  assert.strictEqual(pre.hasPrEarlyStep1LineFor([failedOther, own].join('\r\n'), B), true, "a FAILED line for another branch must not veto this branch's own Step 1 line, and CRLF must not hide it");
+  assert.strictEqual(pre.hasPrEarlyStep1LineFor([failedOther, own.replace(', creating', ' FAILED, creating')].join('\r\n'), B), false);
+});
+
+test('AC1.1 (#3012): a push-only PR-early line (Step 2, no Step 1 outcome) does NOT satisfy the #989 exemption precondition -> deny naming Step 1', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, wt, undefined);
+  const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(
+    path.join(run, 'decisions.md'),
+    `## /build\n- AUTO 03:50:57 — PR-early run lifecycle Step 2 (push): pushed ${branch} to origin and opened draft PR #2393. Reversibility: high.\n`,
+  );
+  const out = pre.run(
+    { input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.ok(out.json, "expected a deny -- the line records the push, not Step 1's outcome");
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /Step 1/);
 });
 
 test('bookkeeping-stamps gate (#1860): a worktree branch created via `-b {branch} origin/main` (worktree.baseRef: fresh\'s own form) inherits tracking to origin/main before any push -> still allow the first publish push', () => {

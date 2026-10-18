@@ -123,6 +123,13 @@ test('session-evaluation.md no longer claims no stamp is written on a failed Gat
   assert.match(SESSION_EVAL, /The one true no-stamp case is the no-transcript-resolves route/);
 });
 
+// --- 2d. #2916: the self-assessment watermark exception is cited from the shared contract, not restated ---
+
+test('AC4.1: session-evaluation.md cites the shared Self-assessment watermark exception rather than restating it', () => {
+  assert.match(SESSION_EVAL, /_shared\/transcript-judge\.md`'s Self-assessment watermark exception/);
+  assert.doesNotMatch(SESSION_EVAL, /\*\*Self-assessment watermark exception — readers ignore its byte offset\.\*\*/);
+});
+
 test('bare-invocation.md Gather 2 paragraph points to the Skip check before describing dispatch', () => {
   assert.match(BARE_INVOCATION, /its \*\*Skip check\*\* runs first/);
 });

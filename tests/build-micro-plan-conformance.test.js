@@ -92,3 +92,41 @@ test('materialize.md: size and ceremony reader rows name micro-plan.md as a seco
   assert.match(MATERIALIZE.slice(sizeRowIdx, sizeRowIdx + 900), /build\/micro-plan\.md/);
   assert.match(MATERIALIZE.slice(ceremonyRowIdx, ceremonyRowIdx + 500), /build\/micro-plan\.md/);
 });
+
+// #2975 — specShapedBody `keyFiles` makes a composed record readable by micro-plan condition 3
+// (and dispatch's file-overlap grouping); the three prose producers must name it.
+const { specShapedBody } = require('../plugin/bin/lib/issues/record');
+const { extractKeyFilesSection } = require('../plugin/bin/lib/issues/grouping');
+const { computeDiffFacts } = require('../plugin/bin/lib/dispatch/ceremony-derive');
+
+const KEYFILES_COMPOSE = {
+  currentState: 'c', deliverables: 'd', acceptanceCriteria: 'a', releaseNote: 'r', filedBy: 'capture',
+  footer: '_Filed by `capture` via specShapedBody._',
+};
+
+test('AC5.1: a record composed with one implementation file in keyFiles satisfies micro-plan condition 3', () => {
+  const body = specShapedBody({
+    ...KEYFILES_COMPOSE,
+    keyFiles: [
+      { path: 'plugin/bin/lib/dream/scan.js', change: 'fix' },
+      { path: 'tests/bin-lib/dream/scan.test.js', change: 'cover' },
+    ],
+  });
+  const files = extractKeyFilesSection(body);
+  assert.deepEqual(files, ['plugin/bin/lib/dream/scan.js', 'tests/bin-lib/dream/scan.test.js']);
+  assert.equal(computeDiffFacts(files.map((p) => ({ path: p, additions: 1, deletions: 0 }))).implFiles, 1);
+});
+
+test('AC5.1 control: a specShapedBody record without keyFiles yields no parseable Key Files (falls through)', () => {
+  const body = specShapedBody(KEYFILES_COMPOSE);
+  assert.deepEqual(extractKeyFilesSection(body), []);
+  assert.ok(!body.includes('### Key Files'));
+});
+
+for (const rel of ['plugin/skills/capture/SKILL.md', 'plugin/skills/reflect/SKILL.md', 'plugin/skills/wrap-up/leftover-routing.md']) {
+  test(`AC6.1: ${rel} instructs passing keyFiles when the composer knows the affected files`, () => {
+    const text = readText(path.join(ROOT, rel));
+    assert.match(text, /keyFiles: \[\{ path, change \}\]/);
+    assert.match(text, /repo-relative/);
+  });
+}

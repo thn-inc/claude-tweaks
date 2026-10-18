@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 
 function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-expcleanup-'));
@@ -355,4 +355,23 @@ test('policy.yml integration: experiment-flag-patterns and experiment-flag-exclu
   const result = scanExperimentCleanup(root);
   assert.strictEqual(result.noIdiomConfigured, false);
   assert.deepStrictEqual(result.candidates.map((c) => c.flag), ['newCheckout']);
+});
+
+// ── fresh-process load (refs #3330) ─────────────────────────────────────────
+// candidates-experiment-cleanup.js must require './focus-generators' before
+// './candidates-dead-code' (same hazard as candidates-security-hardening.js,
+// refs #2908). An in-process require hits the module cache, so the check runs
+// in a child process.
+
+const MODULE_PATH = path.join(__dirname, '../../../plugin/bin/lib/code-health/candidates-experiment-cleanup.js');
+
+test('candidates-experiment-cleanup.js loads in a fresh process with no circular-dependency warning', () => {
+  const result = spawnSync(process.execPath, ['-e', `require(${JSON.stringify(MODULE_PATH)})`], {
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, `load exited non-zero: ${result.stderr}`);
+  assert.ok(
+    !/inside circular dependency/i.test(result.stderr || ''),
+    `candidates-experiment-cleanup.js emitted a circular-dependency warning on load:\n${result.stderr}`
+  );
 });

@@ -33,7 +33,8 @@ touching shared state runs one member at a time.
 
 1. **Re-verify CI is currently green — never trust the parked state (AC1).** Read fresh via `gh pr
    checks {number}` (or `gh pr view {number} --json statusCheckRollup`), summarized as
-   `passing`/`failing`/`pending` — the identical read `resume-confirmation.md`'s own live-value-
+   `passing`/`failing`/`pending`, plus `_shared/pr-first-merge.md` Step 2.5's head-run `gh run list`
+   read (a not-yet-completed head run is `pending`, not green) — the identical read `resume-confirmation.md`'s own live-value-
    sourcing paragraph already performs for its confirmation, reused rather than re-implemented.
    `failing`: report the failure and stop for this candidate — do not treat a stale prior green as
    current. `pending`: report and stop for this candidate too; a headless close-out that waited on

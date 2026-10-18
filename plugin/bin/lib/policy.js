@@ -94,6 +94,17 @@ function readListKey(repoRoot, key) {
   return value.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+// `commit-scope` (#3298): the constant Conventional-Commits scope token
+// bin/compose-subject.js falls back to. Read raw (trimmed; blank -> null),
+// deliberately not through resolveValue — that would silently turn a bad
+// value like `web app` into null, an unscoped subject with no signal. The
+// composer's own composeSubject token check (`[A-Za-z0-9._/-]+`) is what
+// rejects a bad value, loudly, exit 1.
+function readCommitScope(repoRoot) {
+  const v = parsePolicy(repoRoot)['commit-scope'];
+  return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
+}
+
 // `gh-timeout-ms` (#2567) — the one integer-typed lever bin/lib/shared-
 // primitives.js reads through this module rather than re-implementing
 // policy-schema.js's own validation/default logic. resolveValue already
@@ -147,6 +158,6 @@ function resolvePortServices(repoRoot) {
 }
 
 module.exports = {
-  isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, resolvePortServices, readGhTimeoutMs,
+  isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, resolvePortServices, readGhTimeoutMs,
   readGitTimeoutMs,
 };

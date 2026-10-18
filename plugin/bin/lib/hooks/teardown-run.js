@@ -233,12 +233,13 @@ function teardownRun(runDir, opts = {}) {
 
   // Step 2 (archive) — reuse archive-merged.js's git-mv-and-commit sequence verbatim rather than
   // a second, divergent archival path. #3088: skipped entirely under --remote-ref-only — that
-  // mode is for Section C step 5.5's own-worktree remote-ref cleanup, which runs BEFORE
-  // cleanup-procedures.md's item 8 (archival, always last) — archiving here would move the run
+  // mode is for Section C step 5.5's own-worktree remote-ref cleanup and multispec-review-console.md
+  // Shared teardown step 7 (#3192), both of which run BEFORE the caller's own archival
+  // (cleanup-procedures.md's item 8, always last) — archiving here would move the run
   // directory out from under the later cleanup items (ephemeral dev server teardown, issue claim
   // release) that still need $RUN_DIR to resolve.
   if (opts.remoteRefOnly) {
-    lines.push('archive: skipped — --remote-ref-only (archival handled separately by Section B)');
+    lines.push("archive: skipped — --remote-ref-only (archival is the caller's own last cleanup step)");
   } else {
     const archived = archiveRunDir(root, runDir);
     if (archived.ok) {
