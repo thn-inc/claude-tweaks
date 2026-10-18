@@ -178,8 +178,9 @@ function renderEffort(input) {
   return `eff: ${level}`;
 }
 
-// `git status --porcelain -b` returns the branch and dirty status in one
-// call instead of two separate `symbolic-ref` + `status --porcelain` spawns.
+// `git --no-optional-locks status --porcelain -b` returns the branch and dirty
+// status in one call instead of two separate `symbolic-ref` + `status
+// --porcelain` spawns.
 // Header line shapes: "## main", "## main...origin/main [ahead 1]",
 // "## No commits yet on main" (fresh repo, no commits), "## HEAD (no
 // branch)" (detached HEAD — no branch to report, matching the old
