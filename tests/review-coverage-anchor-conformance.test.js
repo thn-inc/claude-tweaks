@@ -109,3 +109,75 @@ test('the 3f: Test Quality section contains exactly one bullet restating the cov
   assert.match(testDefectHalf, /anchor.*at.*test line|test line/i, 'test-defect half must name test line');
   assert.doesNotMatch(testDefectHalf, /production line|code.*under test/i, 'test-defect half must NOT mention production line');
 });
+
+// #3398: the dispatch-prompt paragraph and lens 3f's bullet each split test-related findings
+// into a production-line list and a test-line list. A weak or non-discriminating assertion is
+// one finding, so it must sit on one side only — otherwise the two agents of a reproduction
+// pair anchor it on different files and `categorise-reproduction`'s exact-path pairing drops it.
+function anchorLists(d) {
+  const para = between(d, '> **Coverage findings anchor at the code under test.**', '> **Scratch path');
+  const bullet = between(d, '### 3f: Test Quality', '### 3g:')
+    .split('\n')
+    .find((l) => /\*\*Coverage findings anchor at the code under test:\*\*/.test(l));
+  assert.ok(bullet, 'lens 3f anchor-rule bullet not found');
+  return {
+    dispatch: {
+      whole: para,
+      production: between(para, 'when reporting a coverage gap', 'never at the test file itself'),
+      test: between(para, 'When reporting a test-quality defect', 'anchor that finding at the test line'),
+    },
+    lens3f: {
+      whole: bullet,
+      production: between(bullet, 'When a finding is a coverage gap', 'anchor it at the production line'),
+      test: between(bullet, "when it's a test-quality defect", 'anchor at the test line'),
+    },
+  };
+}
+
+const PRODUCTION_LINE_TERMS = [/weak/i, /assertion/i, /non-discriminating/i, /cannot catch the regression/i];
+const TEST_LINE_TERMS = [/refactor-coupled/i, /polluting/i];
+
+function assertDisjointAnchorRule(d) {
+  for (const [name, r] of Object.entries(anchorLists(d))) {
+    for (const t of PRODUCTION_LINE_TERMS) {
+      assert.match(r.production, t, `${name}: ${t} must be in the production-line list`);
+      assert.doesNotMatch(r.test, t, `${name}: ${t} must not be in the test-line list`);
+    }
+    for (const t of TEST_LINE_TERMS) {
+      assert.match(r.test, t, `${name}: ${t} must be in the test-line list`);
+      assert.doesNotMatch(r.production, t, `${name}: ${t} must not be in the production-line list`);
+    }
+    assert.match(r.whole, /a finding that fits both readings is a coverage gap/i, `${name}: must state the tie-break`);
+  }
+}
+
+test('AC1.1 AC1.2 AC2.1: the production-line and test-line anchor lists share no term, in both restatements', () => {
+  assertDisjointAnchorRule(read('review', 'step3-lens-dispatch.md'));
+});
+
+test('AC1.2 AC2.1: a weak-assertion finding names one anchor — the production line — in the dispatch prompt and lens 3f alike', () => {
+  for (const [name, r] of Object.entries(anchorLists(read('review', 'step3-lens-dispatch.md')))) {
+    assert.match(r.production, /an existing test whose assertions cannot catch the regression it guards/i, `${name}: weak-assertion case must sit in the production-line list`);
+    assert.doesNotMatch(r.test, /assertion|weak|non-discriminating/i, `${name}: weak-assertion case must not sit in the test-line list`);
+  }
+});
+
+test('go-red control: re-adding non-discriminating to the test-line list fails the disjointness check', () => {
+  const d = read('review', 'step3-lens-dispatch.md');
+  const mutated = d.replace(
+    'a test that is refactor-coupled or polluting shared state',
+    'a test that is refactor-coupled, non-discriminating, or polluting shared state',
+  );
+  assert.notEqual(mutated, d, 'mutation anchor not found — the control would be vacuous');
+  assert.throws(() => assertDisjointAnchorRule(mutated), /dispatch: .*non-discriminating.* must not be in the test-line list/);
+});
+
+test('go-red control: re-adding non-discriminating to lens 3f\'s test-line list fails the disjointness check', () => {
+  const d = read('review', 'step3-lens-dispatch.md');
+  const mutated = d.replace(
+    '(refactor-coupled, or polluting shared state)',
+    '(refactor-coupled, non-discriminating, or polluting shared state)',
+  );
+  assert.notEqual(mutated, d, 'mutation anchor not found — the control would be vacuous');
+  assert.throws(() => assertDisjointAnchorRule(mutated), /lens3f: .*non-discriminating.* must not be in the test-line list/);
+});

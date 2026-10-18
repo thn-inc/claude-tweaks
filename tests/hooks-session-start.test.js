@@ -109,6 +109,72 @@ test('#1493 I4: the tidy --approve banner names a designated consumer — relay 
   assert.match(ctx, /Relay this list once, in your first reply to the user/);
 });
 
+test('#3370: an archived run with unreviewed console items gets its own banner naming both items', async () => {
+  const project = tmpProject();
+  const archived = path.join(project, '.claude-tweaks', 'pipelines', 'archive', '2026-10-16T210949-spec-2821');
+  fs.mkdirSync(archived, { recursive: true });
+  fs.writeFileSync(path.join(archived, 'console.json'), JSON.stringify({
+    resolved: true,
+    items: [
+      { id: 'review-13-record.md', section: 'Pending review', resolution: 'pending', reason: 'unmapped-prefix' },
+      { id: 'review-debate-deviation.md', section: 'Contested findings', resolution: 'keep-staged', reason: 'debate inconclusive' },
+    ],
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  const ctx = out.json.hookSpecificOutput.additionalContext;
+  assert.match(ctx, /claude-tweaks: closed or archived run\(s\) whose unattended Review Console left item\(s\) no human has reviewed:/);
+  assert.match(ctx, /review-13-record\.md/);
+  assert.match(ctx, /review-debate-deviation\.md/);
+  assert.match(ctx, /console-residue\.js" --ack --run/);
+  assert.match(ctx, /Relay this list once, in your first reply to the user, one line per item with its command/);
+});
+
+test('#3370: SessionStart renders no console-residue banner when every console is acknowledged', async () => {
+  const project = tmpProject();
+  const archived = path.join(project, '.claude-tweaks', 'pipelines', 'archive', '2026-10-16T210949-spec-2821');
+  fs.mkdirSync(archived, { recursive: true });
+  fs.writeFileSync(path.join(archived, 'console.json'), JSON.stringify({
+    resolved: true,
+    residueAcknowledgedAt: '2026-10-17T00:00:00.000Z',
+    items: [{ id: 'review-13-record.md', section: 'Pending review', resolution: 'pending', reason: 'unmapped-prefix' }],
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /no human has reviewed/);
+});
+
+// #3370 I3: a visible way out of a backlog of unreviewed consoles.
+function mkArchivedResidue(project, n) {
+  for (let i = 1; i <= n; i++) {
+    const dir = path.join(project, '.claude-tweaks', 'pipelines', 'archive', `2026-10-0${i}T000000-spec-${i}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({
+      resolved: true,
+      items: [{ id: `review-${i}-x.md`, section: 'Pending review', resolution: 'pending', reason: 'unmapped-prefix' }],
+    }));
+  }
+}
+const OVERFLOW = /^- … more run\(s\) may have unreviewed console items \(newest 3 shown\)\.$/m;
+const ACK_ALL = /^To dismiss every listed and older unreviewed item at once after reviewing \(a human decision\): node ".*\/bin\/console-residue\.js" --ack-all$/m;
+
+test('#3370: more than MAX_REPORTED runs with residue adds the overflow line and the --ack-all command', async () => {
+  const project = tmpProject();
+  mkArchivedResidue(project, 4);
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  const ctx = out.json.hookSpecificOutput.additionalContext;
+  assert.match(ctx, OVERFLOW);
+  assert.match(ctx, ACK_ALL);
+  assert.doesNotMatch(ctx, /review-1-x\.md/, 'the oldest run is past MAX_REPORTED');
+});
+
+test('#3370: at most MAX_REPORTED runs with residue carries --ack-all but no overflow line', async () => {
+  const project = tmpProject();
+  mkArchivedResidue(project, 3);
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  const ctx = out.json.hookSpecificOutput.additionalContext;
+  assert.doesNotMatch(ctx, OVERFLOW);
+  assert.match(ctx, ACK_ALL);
+});
+
 test('#1493: the standalone-approvable list is capped at MAX_REPORTED, newest-first, no overflow line', async () => {
   const project = tmpProject();
   const names = [

@@ -157,7 +157,7 @@ prepend a 4-line header above the `# Reflect —` line, the same shape `wrap-up/
 step 3 writes for `leftover-{slug}.md`. The body below the header is composed via `specShapedBody`
 (the finding → Current State, the proposed change → Deliverables, the observable outcome →
 Acceptance Criteria; `header: ''`; `filedBy: 'reflect'`; `provenance: { origin: 'reflect {mode} from #{n}', deferReason:
-'tangential' }`; footer `_Filed by \`reflect\` via specShapedBody._`) — with the `# Reflect —
+'tangential' }`; footer `_Filed by \`reflect\` via specShapedBody._`; `keyFiles: [{ path, change }]` = the files the finding names, repo-relative file paths (no directories; drop any out-of-repo file) and omitted when none are named, so build's micro-plan gate and dispatch's file-overlap grouping can read the record) — with the `# Reflect —
 staged finding {n}` title line and `**Category:**` line kept above it; a finding whose own text
 names an open choice uses the composer's `openQuestion` variant and lands `needs:definition` (no
 `ready`, no scoring). Labels: scored + `ready` (born-ready) on the AC path, per
@@ -173,7 +173,7 @@ Defer-reason: tangential
 
 **Category:** tangential
 
-{specShapedBody output — Origin:/Defer-reason: provenance lines, then ## Current State / ## Deliverables / (## Acceptance Criteria | ## Open Question), then the _Filed by `reflect` via specShapedBody._ footer}
+{specShapedBody output — Origin:/Defer-reason: provenance lines, then ## Current State / ## Deliverables / (## Acceptance Criteria | ## Open Question), ## Release Note, then, when `keyFiles` is passed, ## Technical Approach / ### Key Files, then the _Filed by `reflect` via specShapedBody._ footer}
 ```
 
 The non-tangential format's `Severity:`/`Reversibility:`/`Source:`/`Files:`/`Decision-log reference` fields are dropped on the tangential variant — the composed sections carry that content, and nothing downstream reads those fields off a queue-write proposal.

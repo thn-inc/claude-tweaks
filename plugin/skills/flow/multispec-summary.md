@@ -4,6 +4,8 @@ Loaded at summary-render time by `/flow`'s consolidated close-out.
 
 After all specs complete (or one fails), present a consolidated summary:
 
+**Needs-a-human residue (#3370).** Run `node "{pluginRoot}/bin/console-residue.js" --run "$MULTISPEC_PARENT_DIR"` once against the parent run dir (the archive path when already archived, as for Timing) — it covers every `spec-*/console.json` — and render its stdout verbatim under a `### Needs a human` heading. Omit the section only when the command exits 0 with empty stdout; on any non-zero exit, render the CLI's stderr verbatim under the heading, so a failed scan never reads as "no residue".
+
 ```markdown
 ## Flow: Multi-Spec Pipeline Complete  {— keep-going if applicable}
 
@@ -17,6 +19,10 @@ After all specs complete (or one fails), present a consolidated summary:
 | {N} | — | — | — | — | — | Not run (previous spec failed) |
 
 **Release status:** {one line for the run's single shared branch, from `_shared/pr-first-merge-post-merge.md` Step 4.1, verbatim — same vocabulary as `summary-template.md`'s line; `n/a — not merged in this run (outcome: {armed | pending-review})` when the bundle PR did not merge in this run}
+
+### Needs a human
+
+{stdout of `node "{pluginRoot}/bin/console-residue.js" --run "$MULTISPEC_PARENT_DIR"`, verbatim, per the Needs-a-human residue rule above — omit this whole section only on exit 0 with empty stdout; on any non-zero exit, the CLI's stderr verbatim instead}
 
 ### Try it
 
