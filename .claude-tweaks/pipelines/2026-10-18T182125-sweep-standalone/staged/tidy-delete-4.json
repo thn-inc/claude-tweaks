@@ -1,0 +1,9 @@
+[
+  {
+    "tag": "parked",
+    "record": 794,
+    "title": "GitHub App installation identity for the fleet",
+    "action": "Close as not planned — parked 62d, stale, trigger not met",
+    "command": "gh issue comment 794 --body \"Closed by /claude-tweaks:tidy: parked 62d with its trigger unmet; reopen if it fires.\" && gh issue close 794 --reason \"not planned\""
+  }
+]

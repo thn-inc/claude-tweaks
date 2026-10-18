@@ -1,0 +1,9 @@
+[
+  {
+    "tag": "parked",
+    "record": 159,
+    "title": "Decide whether work-backend / work-types / record…",
+    "action": "Close as not planned — parked 70d, stale, trigger not met",
+    "command": "gh issue comment 159 --body \"Closed by /claude-tweaks:tidy: parked 70d with its trigger unmet; reopen if it fires.\" && gh issue close 159 --reason \"not planned\""
+  }
+]
