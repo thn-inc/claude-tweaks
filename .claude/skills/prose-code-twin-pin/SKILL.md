@@ -87,6 +87,29 @@ is absent). And the copy list is hand-written, so derive it by grepping the gene
 `plugin/skills/` (`grep -rlF 'select(.authorAssociation == "OWNER"' plugin/skills/` returns the same
 four files today), not from the files the change touched.
 
+**Regex-alternation-to-prose-list instance on a router (#3401):** `plugin/bin/lib/console/resolve.js`'s
+`SECTION_MAP` routes staged `.md` proposals to Pending review through one prefix alternation
+(`/^(polish-suggestion|visual-review|design-decision|build-deviation|simplify|deepen|sdd-ruling)-/`),
+and `plugin/skills/wrap-up/review-console-appendix.md`'s "`apply` on a **Pending review** item"
+bullet lists the same prefixes in parentheses as `` `{prefix}-*` ``. `SECTION_MAP` is the
+superset router that the one-direction Anti-Patterns row exempts from equality, but that exemption
+covers pinning the router against one *producer's* vocabulary. This prose list documents the router
+row itself, so it is pinned equal both ways. `tests/bin-lib/console/resolve.test.js` splits the pin
+into two extractors and one assertion. `pendingMdPrefixesFromCode(map = SECTION_MAP)` keeps the
+Pending-review rows whose source has the `^(...)-` shape, asserts there is exactly one, and splits
+its alternation. `pendingMdPrefixesFromProse(text = APPENDIX)` locates the bullet, asserts it was
+found and that its list is non-empty, and collects the backticked prefixes.
+`assertPendingPrefixTwin` then `deepStrictEqual`s the two sorted arrays. Each go-red control removes
+`sdd-ruling` from one side only (a `RegExp` rebuilt from the mutated `source`, or the appendix text
+minus `` `sdd-ruling-*` ``) and passes that input through the same extractor and the same
+assertion, through the default parameter. The control therefore proves the pin the positive test
+runs, not a retyped copy of it. The extractors' own found-exactly-one and found-the-bullet
+assertions stop a reworded bullet or a split alternation from producing two empty arrays that
+compare equal, which is `parse-signal-discipline`'s couldn't-parse case inside a test. Derive the
+prose side by grep, as the closing-tally row below says: `grep -rn -F 'build-deviation-' plugin/skills/`
+finds the full list only in the appendix. The other hits name the single `build-deviation-{N}` id
+while staging it.
+
 **Candidate instance (a live, currently-unpinned gap this check surfaces today):**
 `plugin/bin/lib/compose-subject.js:69`'s `TYPE_PRECEDENCE = ['feature', 'bug', 'task']` is a
 *third* copy of the same closed vocabulary `TYPES`/`TYPE_PREFIX` above already key off — used to
