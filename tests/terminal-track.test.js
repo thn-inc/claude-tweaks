@@ -37,12 +37,10 @@ test('every Surface enumeration site lists terminal', () => {
   assert.deepStrictEqual(offenders, [], `enum sites still carrying the five-value spelling: ${offenders.join(', ')}`);
 });
 
-test('terminal-ux.md exists, stays under its 8 KB inline budget, and carries the six sections', () => {
+test('terminal-ux.md exists and carries the six sections', () => {
   const p = path.join(ROOT, 'plugin', 'skills', '_shared', 'terminal-ux.md');
   assert.ok(fs.existsSync(p), 'skills/_shared/terminal-ux.md is missing');
   const md = readText(p);
-  const bytes = Buffer.byteLength(md, 'utf8');
-  assert.ok(bytes < 8192, `terminal-ux.md is ${bytes} B -- it is inlined whole into dispatch prompts; 8192 is the gate`);
   assert.strictEqual((md.match(/^## /gm) || []).length, 6, 'terminal-ux.md must carry exactly its six principle sections');
 });
 

@@ -2,7 +2,7 @@
 // the network. The skill hands the payload to the gh CLI itself.
 // Body is /specify-shaped so promotion to a spec is near-zero translation, and
 // carries a hidden fingerprint marker the dedup step re-extracts.
-const { recordPayload, specShapedBody } = require('../issues/record');
+const { recordPayload, specShapedBody, isRepoRelativeKeyFilePath } = require('../issues/record');
 const { buildRelatedBlocks } = require('../issues/related-blocks');
 
 // legacy: v1, frozen. Not called by bin/code-health.js (which uses toIssuePayloadV2
@@ -52,6 +52,15 @@ function toIssuePayload(finding) {
 // threaded through here — never resolved inside this function. See
 // specShapedBody's own verifiedAsOf doc in record.js for why.
 function toIssuePayloadV2(finding, verifiedAsOf) {
+  // validateFindingV2 only requires anchor to be a non-empty string, so a
+  // malformed LLM anchor must degrade to "no Key Files section", never make
+  // specShapedBody throw and abort the whole validate-findings run.
+  function anchorKeyFiles(anchor) {
+    const filePath = String(anchor).split('#')[0].trim();
+    if (!isRepoRelativeKeyFilePath(filePath)) return undefined;
+    return [{ path: filePath, change: 'address the finding at this anchor' }];
+  }
+
   // Same "Also affects: ..." bundler the other three health producers use — this
   // file's finding vocabulary names the bundled items relatedAnchors rather than
   // relatedSections, but the rendered block is identical.
@@ -67,6 +76,12 @@ function toIssuePayloadV2(finding, verifiedAsOf) {
     // (#2660) rather than a per-finding derivation the judge output doesn't
     // carry data for.
     releaseNote: 'No user-visible change — internal code-quality fix.',
+    // keyFiles (#2975): the anchor's file path (any `#symbol` suffix stripped —
+    // the same split grouping.js's ANCHOR_RE applies) renders under
+    // `### Key Files`, which satisfies /build's micro-plan gate (condition 3: a
+    // Key Files list). grouping.js still reads code-health records' target off
+    // the Anchor: line (ANCHOR_RE), by design — it never reaches this section.
+    keyFiles: anchorKeyFiles(finding.anchor),
     filedBy: '/claude-tweaks:code-health',
     verifiedAsOf,
   });

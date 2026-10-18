@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readGhTimeoutMs } = require('../plugin/bin/lib/policy');
+const { isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, readGhTimeoutMs } = require('../plugin/bin/lib/policy');
 
 function tmpRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-policy-'));
@@ -174,6 +174,22 @@ test('readListKey: key present but empty -> []', () => {
 
 test('readListKey: no policy file at all -> []', () => {
   assert.deepStrictEqual(readListKey(tmpRepo(), 'experiment-flag-patterns'), []);
+});
+
+test('AC10.1: readCommitScope: key present -> the token; absent or blank -> null', () => {
+  const repo = tmpRepo();
+  writePolicy(repo, 'commit-scope: api\n');
+  assert.strictEqual(readCommitScope(repo), 'api');
+  const blank = tmpRepo();
+  writePolicy(blank, 'commit-scope: \n');
+  assert.strictEqual(readCommitScope(blank), null);
+  assert.strictEqual(readCommitScope(tmpRepo()), null);
+});
+
+test("readCommitScope returns the trimmed value without schema validation — a whitespace-bearing token reaches the composer's own check", () => {
+  const repo = tmpRepo();
+  writePolicy(repo, 'commit-scope: web app\n');
+  assert.strictEqual(readCommitScope(repo), 'web app');
 });
 
 test('readListKey: a single value with no commas -> a one-element array', () => {

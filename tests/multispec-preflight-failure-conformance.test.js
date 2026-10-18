@@ -76,10 +76,6 @@ test('AC6.3: steps 4 and 5 state the exit-0 precondition', () => {
   }
 });
 
-test('AC7.1: multi-spec.md stays under its 20,480-byte read budget', () => {
-  assert.ok(Buffer.byteLength(read(MULTI_SPEC), 'utf8') < 20480);
-});
-
 test('AC8.1: the merge gate no longer proceeds unsplit on a non-zero exit', () => {
   const text = read(MERGE_GATE);
   assert.doesNotMatch(text, /proceed unsplit with the full target list/);

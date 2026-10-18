@@ -184,8 +184,9 @@ test('capture/routing.md appends under the exact "## Absorbed: {YYYY-MM-DD} — 
 // --- byte ceiling ---
 
 // Per-file 40 KB pin on capture/SKILL.md (raw ceiling and the 4 KB-margin
-// headroom variant below) retired by #1997 — the per-file tier is a warning
-// since #1990 and this file has no compose call site; removal condition in
+// headroom variant below) retired by #1997 — the per-file tier was a
+// warning from #1990 until #3311 deleted the ceiling model entirely, and
+// this file has no compose call site; removal condition in
 // docs/incident-log.md [IL-153].
 
 // --- #1295: local-files driver mapping (Deliverables 1 + 2) ---

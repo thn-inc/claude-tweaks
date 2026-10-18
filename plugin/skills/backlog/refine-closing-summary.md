@@ -3,8 +3,7 @@
 Referenced by `refine-mode.md`'s Step 5 (every write type in that section logs through this
 procedure once its own writes are attempted) after Step 5's per-lane write mechanics (Priority/
 Related rows, Grant rows, Dependency-repair rows, Flag-back rows, Needs-decision rows) have all
-been applied. Split out to keep `refine-mode.md` under the 40 KB per-file lazy-load ceiling
-(`tests/bin-lib/skill-audit/context-cost.test.js`) rather than growing the same section further
+been applied. Split out to keep `refine-mode.md` lean rather than growing the same section further
 inline (#1512; #1488's own Task 7 already split the `RECOMMEND_BUILD: false` branch out to
 `grant-lane-decision.md` for the identical reason).
 

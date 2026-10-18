@@ -60,7 +60,7 @@ For each completed branch (in order):
    issue (see "Close-via-merge" in `_shared/issue-claims.md`):
 
    ```bash
-   SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --shell) || exit 1
+   SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --range {base-branch}...{branch} --shell) || exit 1
    eval "$SUBJECT_EXPORTS"
    git merge --no-ff {branch} -m "$SUBJECT_TITLE
 
@@ -69,7 +69,7 @@ $SUBJECT_BODY"
 
    Otherwise a plain `git merge {branch}` is fine. The issues close when the user pushes the
    base branch to the default remote branch.
-2. **If the composer call fails** (`|| exit 1`, before any merge): nothing has been merged; record the composer's stderr and stop the reconciliation for this branch — a record with no resolvable Type or a `breaking` label with no `## Breaking Change` section is a shaping defect to fix on the record, not a merge problem.
+2. **If the composer call fails** (`|| exit 1`, before any merge): nothing has been merged; record the composer's stderr and stop the reconciliation for this branch — a record with no resolvable Type or a `breaking` label with no `## Breaking Change` section is a shaping defect to fix on the record, not a merge problem; a malformed `commit-scope-paths` entry, a `commit-scope` token the composer rejects, a failed `--range` diff, or this fence passing no `--range` while `commit-scope-paths` is set is a policy or invocation fault to fix in `policy.yml` or in this fence.
 3. **If merge succeeds** — record the merge commit (`git rev-parse {integration-branch}`) and continue to the next branch. Once every branch is merged and the base branch has been pushed (the separate push the paragraph above describes), run `_shared/pr-first-merge-post-merge.md` Step 4.1 against each recorded merge commit with `--ref {integration-branch}` — same outcomes and staged file, closing-report line only (no PR to comment on).
 4. **If merge conflicts** — present the conflicts:
    ```

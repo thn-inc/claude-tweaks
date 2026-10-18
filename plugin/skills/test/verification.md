@@ -103,7 +103,7 @@ failing test's **source file path** — node's test runner prints one in the sta
 are files this build's diff changes or adds, never by grepping the failure summary text for a
 component-name or path-fragment substring. A test's assertion message has no obligation to
 mention the file or component it protects: a real CI-visible regression from record #1579
-(`dispatch/SKILL.md` exceeding the 40 KB per-invocation ceiling) surfaced in local output as
+(`dispatch/SKILL.md` exceeding the then-40 KB per-invocation ceiling) surfaced in local output as
 `no SKILL.md exceeds the 40 KB per-invocation ceiling` with an actual array entry
 `['dispatch 41.4 KB']` — a keyword grep for `dispatch-SKILL` (a plausible-looking but wrong
 guess at the failure's own vocabulary) found zero hits and let the regression through a run that

@@ -62,8 +62,8 @@ registerRequiredTokenTests(test, assert, read, [
 // ── filing.md (Step 7, lazy-loaded) ─────────────────────────────────────────
 // Step 7's filing procedure lives in its own sub-file: it is ~10.5 KB of
 // mechanical reference a firing only needs once it actually has surviving
-// findings to file, and keeping it inline pushed SKILL.md past CLAUDE.md's
-// 40 KB soft ceiling. The tokens below moved with it — assert them against the
+// findings to file, so it is lazy-loaded rather than paid for on every run.
+// The tokens below moved with it — assert them against the
 // file that now owns them, not against SKILL.md.
 
 const FILING = path.resolve(__dirname, '..', '..', '..', 'plugin', 'skills', 'harness-health', 'filing.md');
@@ -93,8 +93,9 @@ test('filing.md states the classification -> scoring fold table literally', () =
 
 // The reason the extraction happened at all — guard the regression directly.
 // Per-file 40 KB pin on this SKILL.md retired by #1997 — the per-file tier
-// is a warning since #1990 and this file has no compose call site; removal
-// condition in docs/incident-log.md [IL-153].
+// was a warning from #1990 until #3311 deleted the ceiling model entirely,
+// and this file has no compose call site; removal condition in
+// docs/incident-log.md [IL-153].
 
 test('states the born-ready rule explicitly', () => {
   assert.ok(read().includes('born-`ready`'), 'missing an explicit born-ready statement');

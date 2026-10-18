@@ -461,3 +461,58 @@ test('toIssuePayload: no Template: line for a new-skill finding (no templateSour
   const payload = toIssuePayload(newSkillFinding(), 'abc1234', '6.114.1');
   assert.strictEqual(extractTemplateStamp(payload.body), null);
 });
+
+// ── keyFiles (#2975) ────────────────────────────────────────────────────────
+
+test('AC4.1: harness payload lists the repo-relative target under ### Key Files', () => {
+  const nodePath = require('node:path');
+  const payload = toIssuePayload(
+    patchFinding({ path: nodePath.join('/repo', 'plugin/skills/foo/SKILL.md') }),
+    'abc1234', undefined, { repoRoot: '/repo' },
+  );
+  assert.ok(payload.body.includes('### Key Files\n\n- `plugin/skills/foo/SKILL.md` — apply the proposed change'));
+});
+
+test('AC4.1: harness removal finding names the removal in the Key Files change', () => {
+  const nodePath = require('node:path');
+  const payload = toIssuePayload(
+    patchFinding({ intent: 'remove', newString: '', path: nodePath.join('/repo', 'CLAUDE.md') }),
+    'abc1234', undefined, { repoRoot: '/repo' },
+  );
+  assert.ok(payload.body.includes('- `CLAUDE.md` — remove the named content'));
+});
+
+test('harness payload omits Technical Approach for an out-of-repo target, a missing repoRoot, or a new-skill candidate', () => {
+  const outOfRepo = toIssuePayload(
+    patchFinding({ path: '/home/u/.claude/memory/x.md' }), 'abc1234', undefined, { repoRoot: '/repo' },
+  );
+  assert.ok(!outOfRepo.body.includes('## Technical Approach'));
+  const noRoot = toIssuePayload(patchFinding({ path: '/repo/plugin/skills/foo/SKILL.md' }), 'abc1234');
+  assert.ok(!noRoot.body.includes('## Technical Approach'));
+  const noPath = toIssuePayload(patchFinding({ path: undefined }), 'abc1234', undefined, { repoRoot: '/repo' });
+  assert.ok(!noPath.body.includes('## Technical Approach'));
+  const newSkill = toIssuePayload(
+    newSkillFinding({ path: '/repo/plugin/skills/foo/SKILL.md' }), 'abc1234', undefined, { repoRoot: '/repo' },
+  );
+  assert.ok(!newSkill.body.includes('## Technical Approach'));
+});
+
+test('harness payload with a newline in finding.path still produces a payload, omitting the Premise-check line and Technical Approach', () => {
+  const payload = toIssuePayload(patchFinding({ path: '/repo/a\nb.md' }), 'abc1234', undefined, { repoRoot: '/repo' });
+  assert.ok(payload.body.includes('## Current State'));
+  assert.ok(!payload.body.includes('Premise-check:'));
+  assert.ok(!payload.body.includes('## Technical Approach'));
+});
+
+test('harness payload with a backtick in finding.path still produces a payload, omitting Technical Approach', () => {
+  const payload = toIssuePayload(patchFinding({ path: '/repo/a`b.md' }), 'abc1234', undefined, { repoRoot: '/repo' });
+  assert.ok(payload.body.includes('## Current State'));
+  assert.ok(!payload.body.includes('## Technical Approach'));
+});
+
+test('harness payload resolves a relative finding.path against repoRoot, not cwd', () => {
+  const payload = toIssuePayload(
+    patchFinding({ path: 'plugin/skills/foo/SKILL.md' }), 'abc1234', undefined, { repoRoot: '/repo' },
+  );
+  assert.ok(payload.body.includes('### Key Files\n\n- `plugin/skills/foo/SKILL.md` — apply the proposed change'));
+});

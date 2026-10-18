@@ -139,7 +139,7 @@ Every artifact that a skill produces must be consumed by a downstream skill or e
 - A build's materialized spec file is kept by `/wrap-up` as committed audit trail
 - Design docs are deleted by `/specify` after absorption into the surviving records
 - Plans are deleted by `/wrap-up` after the work is done
-- Ledger files are deleted by `/wrap-up` after all items are resolved
+- Ledger files are deleted by `/wrap-up` after all items are resolved (a multi-spec `auto`/`hybrid` run's shared ledger: by `/flow`'s Shared teardown, #3420)
 - Backlog work records are promoted, absorbed, or explicitly kept by `/tidy`
 - Parked records have triggers that re-activate (wake) them when conditions are met
 

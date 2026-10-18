@@ -1345,6 +1345,8 @@ restored (44/44 green). The recurring-pattern cost is that this project's own `p
 already has one hardened precedent (`realTarget()`) for exactly this bypass class, and it still had
 to be independently rediscovered rather than reused when a new exemption was authored nearby.
 
+**Second instance — casing (#3380, run ledger row 48).** The #3380 review (lens 3b) found that `superpowers-version.js`'s home exclusion and ancestor match compared JS `fs.realpathSync` paths case-sensitively. The JS form echoes the input's casing on a case-insensitive volume, so a mis-cased home entry slipped past `excludeHome`. It was fixed in PR #3406 (squash-merged as `ffe20b982`) by switching to `fs.realpathSync.native`, which returns the canonical case. The rule now names that form. `realTarget()` in `pre-tool-use.js` still uses the JS form; #3417's shared helper is where that converges.
+
 ## IL-151 — Working Directory Discipline sanctioned a `cd` form that trips the harness's own permission checker
 
 Reported by the user as recurring, unexpected permission prompts from dispatched subagents even
