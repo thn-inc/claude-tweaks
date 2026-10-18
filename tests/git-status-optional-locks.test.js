@@ -32,16 +32,23 @@ function walk(dir) {
 }
 
 // Blank out comments (preserving offsets and newlines) so a comment that
-// mentions a call shape never counts either way.
+// mentions a call shape never counts either way. One left-to-right pass: a
+// string or template literal is matched first and returned verbatim, so a `/*`
+// or `//` inside a literal (`'/*'`, `` `${dir}/spec-*/work/*` ``) or inside a
+// `//` comment can never open a fake comment that blanks real code. A mis-parse
+// can therefore only leave comment text in (a loud false positive), never hide code.
 function stripComments(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-    .replace(/(^|[^:'"`\\])\/\/[^\n]*/g, (m, lead) => lead + ' '.repeat(m.length - lead.length));
+  return src.replace(
+    /'(?:\\[\s\S]|[^'\\\n])*'|"(?:\\[\s\S]|[^"\\\n])*"|`(?:\\[\s\S]|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,
+    (m) => (/^['"`]/.test(m) ? m : m.replace(/[^\n]/g, ' ')),
+  );
 }
 
 // 'status' as the subcommand element: first in the array, after an optional
-// `'-C', <expr>,` pair and any top-level `'--…'` options.
-const ARGV_STATUS = /\[\s*((?:'-C'\s*,\s*[\w.$]+\s*,\s*)?(?:'--[\w-]+'\s*,\s*)*)'status'/g;
+// `'-C', <expr>,` pair and any top-level `'--…'` options. The -C operand is a
+// non-greedy run up to the next comma, so `path.join(a, b)` (one comma inside
+// parentheses) still reaches `'status'` rather than going unseen.
+const ARGV_STATUS = /\[\s*((?:'-C'\s*,\s*(?:[^,[\]()]|\([^()]*\))+?\s*,\s*)?(?:'--[\w-]+'\s*,\s*)*)'status'/g;
 // A quoted literal; `status` must be followed by a flag or the end of the
 // string, so the message `git status failed: ${…}` is not a command.
 const QUOTED = /(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g;
@@ -77,8 +84,22 @@ test('scanner flags an unflagged status call and ignores non-git status (proves 
     "execFileSync('git', ['-C', wtPath, 'status'], opts);",
     "execSync('git status --porcelain -b');",
     "x(['status', '--no-optional-locks']);",
+    "execFileSync('git', ['-C', path.join(a, b), 'status'], o);",
   ].join('\n'));
-  assert.deepEqual(flagged.offenders.map((o) => o.line), [1, 2, 3, 4]);
+  assert.deepEqual(flagged.offenders.map((o) => o.line), [1, 2, 3, 4, 5]);
+
+  // A `/*` inside a // comment or a string literal must not open a fake block
+  // comment that blanks the real call after it.
+  const afterFakeOpeners = unflaggedStatusCalls([
+    '// see staged/** here',
+    "runGit(['status']);",
+    '// */',
+    "const g = '/*';",
+    "runGit(['status']);",
+    'const t = `${dir}/spec-*/work/*`;',
+    "runGit(['status']);",
+  ].join('\n'));
+  assert.deepEqual(afterFakeOpeners.offenders.map((o) => o.line), [2, 5, 7]);
 
   const clean = unflaggedStatusCalls([
     "runGit(['--no-optional-locks', 'status', '--porcelain'], cwd);",

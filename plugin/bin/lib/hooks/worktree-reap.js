@@ -141,10 +141,10 @@ function lockVerdict(entry) {
 }
 
 // Skipped wholesale. `.git` is git's own bookkeeping — its mtimes track git
-// operations, the reaper's own probes included, so an admin-dir signal would
-// make every candidate look freshly touched. (hasLocalOnlyContent() below runs
-// `git status` with --no-optional-locks, so it no longer rewrites the index,
-// but other git activity still moves those mtimes.) `node_modules` is enormous
+// operations, so an admin-dir signal would make every candidate look freshly
+// touched. (hasLocalOnlyContent() below runs `git status` with
+// --no-optional-locks, so that probe no longer rewrites the index, but other
+// git activity still moves those mtimes.) `node_modules` is enormous
 // and is never evidence of a human being present.
 const MTIME_SCAN_SKIP = new Set(['.git', 'node_modules']);
 
