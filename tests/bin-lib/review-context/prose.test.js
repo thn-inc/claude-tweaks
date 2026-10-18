@@ -43,3 +43,10 @@ test('step3-lens-dispatch.md defines {ctx-dir} before using it as a bare path in
     '{ctx-dir} must be defined before the --dir {ctx-dir} reuse call that follows it',
   );
 });
+
+test('AC7.1-AC7.2: step3-lens-dispatch.md and docs/plugin-structure.md both name oversizeSections', () => {
+  const plugStructure = fs.readFileSync(path.join(ROOT, 'docs', 'plugin-structure.md'), 'utf8');
+  assert.ok(LENS_DISPATCH.includes('oversizeSections'), 'step3-lens-dispatch.md must name oversizeSections');
+  assert.ok(plugStructure.includes('oversizeSections'), 'docs/plugin-structure.md must name oversizeSections');
+  assert.match(LENS_DISPATCH, /\{dir, contextPath, bytes, files, emptySections, oversizeSections\}/);
+});
