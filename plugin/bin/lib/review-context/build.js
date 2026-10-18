@@ -65,6 +65,12 @@ function isAlwaysStub(file) {
 // `-c` pair that keeps non-ASCII names unquoted in diff headers and `--name-only` output alike.
 const GIT_UNQUOTED_PATHS = ['-c', 'core.quotePath=false'];
 
+// POSIX single-quote a path for a command a stub suggests running — the path is branch content,
+// so it must never be able to end the argument or start a substitution.
+function shellQuote(s) {
+  return `'${String(s).replace(/'/g, `'\\''`)}'`;
+}
+
 // The repo-relative path of a `diff --git a/P b/P` header line, or null when it is not the
 // plain same-path form (quoted path, rename, copy). `P` may contain spaces, so it is
 // recovered from the line length rather than by splitting on whitespace.
@@ -96,8 +102,14 @@ function elideDiff(diff) {
       // Extended header = the lines before the first hunk / file-marker / binary line.
       const bodyAt = afterHeader.search(/^(@@|---|Binary files|GIT binary patch)/m);
       const extended = bodyAt === -1 ? afterHeader : afterHeader.slice(0, bodyAt);
-      // Renames and copies (non-symmetric header) and quoted paths come back null: kept whole.
-      const file = diffHeaderPath(headerLine);
+      // A rename or copy header names two paths; its `rename to` / `copy to` extended-header line
+      // names the destination, which is the path `--name-only` reports and the one to match.
+      // Quoted paths and anything else unparseable come back null: kept whole.
+      let file = diffHeaderPath(headerLine);
+      if (file === null) {
+        const destination = /^(?:rename|copy) to (.+)$/m.exec(extended);
+        file = destination ? destination[1] : null;
+      }
       if (file === null) return chunk;
       const isDeleted = /^deleted file mode /m.test(extended);
       const isAddedOrDeleted = isDeleted || /^new file mode /m.test(extended);
@@ -119,7 +131,7 @@ function elideDiff(diff) {
 // file's section is a one-line stub, and an always-stub file's or an oversize added/deleted
 // file's diff chunk is a one-line marker; both are reported in `oversizeSections`. A stub
 // points at wherever the content still lives: the diff above (hunk kept), the live file (hunk
-// elided too), or `git show {base}:{path}` (deleted). A modified non-always-stub file's hunks
+// elided too), or `git diff {range} -- {path}` (elided or deleted). A modified non-always-stub file's hunks
 // stay whole, so the bundle as a whole is not strictly bounded.
 function buildContext({
   base,
@@ -168,13 +180,16 @@ function buildContext({
   const { text: diffText, elided, deleted } = elideDiff(diff);
   const elidedSet = new Set(elided);
   const deletedSet = new Set(deleted);
-  // The pointer a stub gives for the file's content, by what is still true of it.
+  // The pointer a stub gives for the file's content, by what is still true of it. The command is
+  // the same three-dot range the bundle's own diff used (so it shows exactly the elided change,
+  // merge-base included), with the path single-quoted: it comes from the branch under review.
   function whereToLook(f) {
+    const showDiff = `\`git diff ${range} -- ${shellQuote(f)}\``;
     if (deletedSet.has(f)) {
-      return `the file is deleted and its diff was elided (see the marker line above) — run \`git show ${base}:${f}\` for its last content`;
+      return `the file is deleted and its diff was elided (see the marker line above) — run ${showDiff} for its last content`;
     }
     if (elidedSet.has(f)) {
-      return 'its diff was elided too (see the marker line above) — read the live file for full content';
+      return `its diff was elided too (see the marker line above) — run ${showDiff} for the change, or read the live file for full content`;
     }
     return 'its change is in the diff above — read the live file for full content';
   }
@@ -193,6 +208,13 @@ function buildContext({
       content = readFile(path.join(root, f), 'utf8');
     } catch {
       emptySections.push(f);
+      // A deleted over-cap file has no content to inline and no hunk in the diff either: leave
+      // the one-line pointer here, since the marker line above only says "see oversizeSections".
+      if (elidedSet.has(f)) {
+        oversize.add(f);
+        out += `[section omitted: ${f} — ${whereToLook(f)}]\n`;
+        continue;
+      }
     }
     // Size comes from the content just read — readFile stays the only file seam (no stat).
     const bytes = Buffer.byteLength(content);

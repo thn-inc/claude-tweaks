@@ -93,7 +93,8 @@ test('buildContext: bundle carries the full diff, one section per changed file, 
   // Deleted file degrades to an empty section, reported — never a crash.
   assert.match(bundle, /===== doomed\.txt =====\n/);
   assert.deepStrictEqual(result.emptySections, ['doomed.txt']);
-  // AC4.1-AC4.2: a deleted file is an empty section only, never an oversize one.
+  // AC4.1-AC4.2: a small deleted file is an empty section only; only a deleted file whose diff
+  // chunk is elided (over the cap, or a lockfile/.jsonl) is also listed as oversize.
   assert.deepStrictEqual(result.oversizeSections, []);
   assert.strictEqual(result.files, 3);
   assert.strictEqual(result.bytes, Buffer.byteLength(bundle));
@@ -437,15 +438,93 @@ test('F4: stub text says what is true for each stubbed path', () => {
   // Added over-cap file: its diff chunk WAS elided too.
   const added = sectionOf(bundle, 'big-added.txt');
   assert.ok(added.startsWith('[section omitted: big-added.txt is '), added);
-  assert.match(added, /its diff was elided too \(see the marker line above\) — read the live file for full content\]\n$/);
+  assert.match(
+    added,
+    /its diff was elided too \(see the marker line above\) — run `git diff main\.\.\.feature -- 'big-added\.txt'` for the change, or read the live file for full content\]\n$/,
+  );
   assert.ok(!added.includes('change is in the diff above'));
-  // Deleted lockfile: nothing live to read — point at the base ref.
+  // Deleted lockfile: nothing live to read — point at the same range the bundle's diff used.
   const deleted = sectionOf(bundle, 'yarn.lock');
   assert.ok(deleted.startsWith('[section omitted: yarn.lock — always stubbed'), deleted);
-  assert.ok(deleted.includes('`git show main:yarn.lock`'), deleted);
+  assert.ok(deleted.includes("`git diff main...feature -- 'yarn.lock'`"), deleted);
   assert.ok(!deleted.includes('read the live file'));
   assert.ok(!deleted.includes('change is in the diff above'));
   for (const s of [added, deleted]) assert.strictEqual(lineCount(s), 1, 'stub stays one line');
+});
+
+test('a deleted over-cap non-lockfile gets an in-bundle pointer: section stub and diff marker, listed in both lists', () => {
+  const repo = initRepo('review-ctx-delbig-');
+  fs.writeFileSync(path.join(repo, 'big-gone.txt'), `${'g'.repeat(PER_FILE_CAP_BYTES)}\n`);
+  git(repo, ['add', '.']);
+  git(repo, ['commit', '-q', '-m', 'base']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  fs.rmSync(path.join(repo, 'big-gone.txt'));
+  git(repo, ['add', '-A']);
+  git(repo, ['commit', '-q', '-m', 'drop it']);
+  const result = buildContext({ base: 'main', branch: 'feature', dir: resolveDir({}), ...repoDeps(repo) });
+  const bundle = fs.readFileSync(result.contextPath, 'utf8');
+  assert.deepStrictEqual(result.emptySections, ['big-gone.txt']);
+  assert.deepStrictEqual(result.oversizeSections, ['big-gone.txt']);
+  assert.match(diffPartOf(bundle), /^\[\d+ bytes of diff elided for big-gone\.txt — see oversizeSections\]$/m);
+  assert.strictEqual(
+    sectionOf(bundle, 'big-gone.txt'),
+    "[section omitted: big-gone.txt — the file is deleted and its diff was elided (see the marker line above) — run `git diff main...feature -- 'big-gone.txt'` for its last content]\n",
+  );
+});
+
+test('a renamed lockfile has its diff chunk elided (matched on the rename destination) and is listed once', () => {
+  const repo = initRepo('review-ctx-renlock-');
+  const lines = Array.from({ length: 200 }, (_, i) => `entry ${i}\n`);
+  fs.writeFileSync(path.join(repo, 'yarn.lock'), lines.join(''));
+  git(repo, ['add', '.']);
+  git(repo, ['commit', '-q', '-m', 'base']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  fs.mkdirSync(path.join(repo, 'sub'));
+  lines[100] = 'CHANGED-LOCK-LINE\n';
+  fs.writeFileSync(path.join(repo, 'sub', 'yarn.lock'), lines.join(''));
+  fs.rmSync(path.join(repo, 'yarn.lock'));
+  git(repo, ['add', '-A']);
+  git(repo, ['commit', '-q', '-m', 'move lockfile']);
+  const result = buildContext({ base: 'main', branch: 'feature', dir: resolveDir({}), ...repoDeps(repo) });
+  const bundle = fs.readFileSync(result.contextPath, 'utf8');
+  assert.match(diffPartOf(bundle), /^diff --git a\/yarn\.lock b\/sub\/yarn\.lock$/m, 'the fixture really is a rename chunk');
+  assert.ok(!bundle.includes('CHANGED-LOCK-LINE'), 'the renamed lockfile hunk is elided');
+  assert.match(diffPartOf(bundle), /^\[\d+ bytes of diff elided for sub\/yarn\.lock — see oversizeSections\]$/m);
+  assert.deepStrictEqual(result.oversizeSections, ['sub/yarn.lock']);
+});
+
+test('a renamed ordinary file keeps its chunk whole (rename matching is by the destination name)', () => {
+  const repo = initRepo('review-ctx-renplain-');
+  const lines = Array.from({ length: 200 }, (_, i) => `entry ${i}\n`);
+  fs.writeFileSync(path.join(repo, 'old.txt'), lines.join(''));
+  git(repo, ['add', '.']);
+  git(repo, ['commit', '-q', '-m', 'base']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  lines[100] = 'CHANGED-PLAIN-LINE\n';
+  fs.writeFileSync(path.join(repo, 'new.txt'), lines.join(''));
+  fs.rmSync(path.join(repo, 'old.txt'));
+  git(repo, ['add', '-A']);
+  git(repo, ['commit', '-q', '-m', 'rename']);
+  const result = buildContext({ base: 'main', branch: 'feature', dir: resolveDir({}), ...repoDeps(repo) });
+  const bundle = fs.readFileSync(result.contextPath, 'utf8');
+  assert.match(diffPartOf(bundle), /^rename to new\.txt$/m, 'the fixture really is a rename chunk');
+  assert.match(diffPartOf(bundle), /^\+CHANGED-PLAIN-LINE$/m);
+  assert.deepStrictEqual(result.oversizeSections, []);
+});
+
+test('the command a stub suggests single-quotes a hostile path so it cannot end the argument or substitute', () => {
+  const hostile = "it's $(x).jsonl";
+  const repo = initRepo('review-ctx-quote-');
+  fs.writeFileSync(path.join(repo, hostile), '{"a":1}\n');
+  git(repo, ['add', '.']);
+  git(repo, ['commit', '-q', '-m', 'base']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  fs.rmSync(path.join(repo, hostile));
+  git(repo, ['add', '-A']);
+  git(repo, ['commit', '-q', '-m', 'drop it']);
+  const result = buildContext({ base: 'main', branch: 'feature', dir: resolveDir({}), ...repoDeps(repo) });
+  const bundle = fs.readFileSync(result.contextPath, 'utf8');
+  assert.ok(sectionOf(bundle, hostile).includes("-- 'it'\\''s $(x).jsonl'`"), sectionOf(bundle, hostile));
 });
 
 test('isAlwaysStub: named lockfiles and .jsonl match on basename; near-misses do not', () => {

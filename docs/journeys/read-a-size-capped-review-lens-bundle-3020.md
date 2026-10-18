@@ -38,8 +38,8 @@ files:
 - **Should feel:** Clearly a marker, never mistakable for file content. Lens findings cite `Path:Line` from the live file, and a stub line has no line numbers to confuse that.
 - **Should understand:** The stub says exactly what is still available:
   - "its change is in the diff above": the hunk is still inline.
-  - "its diff was elided too": read the live file.
-  - "the file is deleted and its diff was elided": run `git show {base}:{path}` for its last content.
+  - "its diff was elided too": run the quoted `git diff {base}...{branch} -- '{path}'` for the change, or read the live file.
+  - "the file is deleted and its diff was elided": run that same `git diff` command for its last content. A deleted file over the cap gets this stub too, so the empty section is never a dead end.
 - **Red flags:**
   - A stub that points at "the diff above" when that file's hunk is itself the elision marker.
   - A lockfile or `.jsonl` file inlined in full.
@@ -47,7 +47,7 @@ files:
 ### 4. Lens agent meets an elided diff hunk
 - **URL:** the diff part of `context.md`, before the first `=====` section
 - **Action:** **Lens agent** finds `diff --git a/{path} b/{path}` followed by `[{N} bytes of diff elided for {path} — see oversizeSections]` in place of the hunk.
-- **Should feel:** Predictable. Only added or deleted files over the cap, and lockfiles or `.jsonl` of any change type, are elided. A modified source file's hunk is never cut.
+- **Should feel:** Predictable. Only added or deleted files over the cap, and lockfiles or `.jsonl` of any change type (a renamed lockfile included, matched on its destination name), are elided. A modified source file's hunk is never cut.
 - **Should understand:** Elision does not depend on the user's git config. `diff.noprefix` and non-ASCII file names (under the default `core.quotePath`) still parse, because the CLI forces `a/`/`b/` prefixes and unquoted paths.
 - **Red flags:**
   - A modified hand-written source file whose hunk was replaced by the marker.
