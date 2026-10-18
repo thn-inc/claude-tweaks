@@ -230,8 +230,11 @@ When mechanizing a prose heuristic into a deterministic check:
     `{ failure: 'repo-slug-unresolved' }` for an unset slug on any answer that did not come from
     git, so the record lands in `unreadable` and the AUTO line names it. Check every interpolated
     input before trusting a not-found status, and route an unresolved one to the could-not-tell
-    branch. A reader copied from a sibling call site carries the sibling's gap, so grep for the
-    other copies before fixing one (`grep -rn 'readClaimBlob(' plugin/skills/`).
+    branch. #3393 then moved both skill heredocs (`specify/shaping-mode.md` and
+    `dispatch/queue-pull-script.md`) onto `claim-store.js`'s `createClaimReader`, which owns the slug
+    resolution, so a new claim read calls it rather than hand-building the chain, and
+    `grep -rn 'readClaimBlob(' plugin/skills/` should stay empty. A reader copied from a sibling
+    call site still carries the sibling's gap, so grep for other copies before fixing one.
 14. **A lenient reader in front of a strict validator turns "couldn't parse" into "not
     configured".** A free-form policy value can go wrong in two ways before it reaches the check
     that would reject it loudly. The parser can keep whitespace the writer never meant, so a

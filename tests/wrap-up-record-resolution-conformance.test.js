@@ -184,3 +184,91 @@ test('two-call-gate.md names inputs.closingRecords for item 4 and does not call 
 test('two-call-gate go-red: the check fails on the pre-fix inputs.records text', () => {
   assert.throws(() => assertTwoCallGateNamesClosingRecords(PRE_FIX_TWO_CALL_GATE));
 });
+
+// #3395 — readers of the materialized header outside wrap-up/ must name the worktree mirror too.
+// A block (paragraph or list item) that names a `work/*-spec.md` / `work/{n}-spec.md` header path
+// without the mirror token reads the main-checkout run dir only, which holds no header until merge.
+const HEADER_PATH = /work\/(?:\*|\{[^}]+\})-spec\.md/;
+const MIRROR = '{worktree}/.claude-tweaks/pipelines/{run-id}/';
+function blocks(text) {
+  return text.split(/\n\s*\n|\n(?=\s*(?:\d+\.|-) )/).map(collapse);
+}
+function unmirroredHeaderReads(text) {
+  return blocks(text).filter((b) => HEADER_PATH.test(b) && !b.includes(MIRROR));
+}
+const MULTISPEC_DIR = 'plugin/skills/flow';
+const SCOPE_FILES = [
+  ...fs.readdirSync(path.join(ROOT, MULTISPEC_DIR))
+    .filter((f) => f.startsWith('multispec-') && f.endsWith('.md'))
+    .map((f) => `${MULTISPEC_DIR}/${f}`),
+  'plugin/skills/_shared/design-wrapper-handling.md',
+  'plugin/skills/design-wrapper/modes/pre-build.md',
+  'plugin/skills/design-wrapper/modes/review-seed-capture.md',
+];
+
+// Frozen pre-change excerpts (at d3c7fd26b) — the three directives #3395 retires.
+const PRE_SURFACE = "- `--surface` — the record's materialized header `surface:` field (`flow/materialize.md`), when exactly one record is in scope (read from `$PIPELINE_RUN_DIR/work/*-spec.md`'s frontmatter).";
+const PRE_STEP3 = 'For each `id` whose `spec-{id}/work/{id}-spec.md` exists (materialized from a record via `materialize.md`), read its header `record:` field to confirm the issue number. The materialized file is never deleted before this point — only archived once the run dir is archived — so it\'s read directly here; there is no separate pre-deletion capture.';
+const PRE_PARKED = "AND that record's materialized header (`spec-{spec}/work/{issue}-spec.md` — read directly; per the release item above, the file is never deleted before this point) carries `parked-at-shaping: true`";
+
+test('AC3.1: unmirroredHeaderReads flags each pre-change directive (the AC1 pin can go red)', () => {
+  for (const pre of [PRE_SURFACE, PRE_STEP3, PRE_PARKED]) assert.equal(unmirroredHeaderReads(pre).length, 1, pre);
+  assert.deepStrictEqual(unmirroredHeaderReads('read `{worktree}/.claude-tweaks/pipelines/{run-id}/work/*-spec.md`, else the run dir\'s own `work/*-spec.md`'), []);
+});
+
+test('the #3395 scope corpus is non-empty (the sweep below is not vacuous)', () => {
+  assert.ok(SCOPE_FILES.length > 10, `only ${SCOPE_FILES.length} scope files`);
+  assert.ok(SCOPE_FILES.includes('plugin/skills/_shared/design-wrapper-handling.md'));
+});
+
+for (const rel of SCOPE_FILES) {
+  test(`AC1.1: ${rel} never reads a main-checkout work/*-spec.md as its only source`, () => {
+    assert.deepStrictEqual(unmirroredHeaderReads(read(rel)), []);
+  });
+}
+
+const REVIEW_CONSOLE = 'plugin/skills/flow/multispec-review-console.md';
+const CAPTURE_ANCHOR = "**Before any step below — capture each spec's header fields.**";
+function assertCaptureBeforeTeardown(text) {
+  const start = text.indexOf('### Shared teardown');
+  const end = text.indexOf('### Per-issue label cleanup', start);
+  assert.ok(start !== -1 && end !== -1, 'Shared teardown section anchors vanished');
+  const section = text.slice(start, end);
+  const capture = section.indexOf(CAPTURE_ANCHOR);
+  assert.ok(capture !== -1, 'no header capture paragraph in Shared teardown');
+  const block = blocks(section.slice(capture)).find((b) => b.includes(collapse(CAPTURE_ANCHOR)));
+  assert.ok(block, 'capture paragraph block not found after its anchor');
+  assert.ok(block.includes('parked-at-shaping') && block.includes(MIRROR), 'capture must read parked-at-shaping from the worktree mirror');
+  for (const fallback of ['worktreeAtClose', '`current-branch` run', 'SKIP']) {
+    assert.ok(block.includes(fallback), `capture paragraph lost its ${fallback} fallback`);
+  }
+  const finish = section.indexOf('2. **Finish the shared branch.**');
+  const removal = section.indexOf('6. **Remove the shared worktree**');
+  assert.ok(finish !== -1 && removal !== -1, 'step 2/6 anchors vanished');
+  assert.ok(capture < finish && finish < removal, 'capture must precede step 2 (merge) and step 6 (worktree removal)');
+}
+
+test('AC2.1: the multi-spec teardown captures parked-at-shaping before the step that removes the shared worktree', () => {
+  assertCaptureBeforeTeardown(read(REVIEW_CONSOLE));
+});
+
+test('AC3.2: assertCaptureBeforeTeardown goes red when the capture is removed or moved after step 6', () => {
+  const live = read(REVIEW_CONSOLE).replace(/\r\n/g, '\n'); // the '\n\n' paragraph search below needs LF (core.autocrlf checkouts)
+  const i = live.indexOf(CAPTURE_ANCHOR);
+  const j = live.indexOf('\n\n', i);
+  const para = live.slice(i, j);
+  assert.throws(() => assertCaptureBeforeTeardown(live.replace(para, '')), /no header capture paragraph/);
+  const removed = live.replace(para + '\n\n', '');
+  const moved = removed.replace('7. **Branch + remote-ref cleanup', para + '\n\n7. **Branch + remote-ref cleanup');
+  assert.notStrictEqual(moved, removed, 'step-7 anchor drifted — the moved control would degrade to the removed control');
+  assert.throws(() => assertCaptureBeforeTeardown(moved), /capture must precede/);
+});
+
+test('Per-issue label cleanup uses the captured value, not a fresh header read', () => {
+  const flat = collapse(read(REVIEW_CONSOLE));
+  const at = flat.indexOf('### Per-issue label cleanup');
+  assert.notStrictEqual(at, -1, 'Per-issue label cleanup heading vanished');
+  const head = flat.slice(at, at + 1500);
+  assert.match(head, /captured/);
+  assert.doesNotMatch(head, /read directly/);
+});

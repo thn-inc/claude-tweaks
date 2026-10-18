@@ -620,23 +620,11 @@ if [ "$IN_FLIGHT_COUNT" -ge 200 ]; then
   echo "Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch." >&2
 fi
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_IN_FLIGHT_RAW" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF
-  const { execFileSync } = require('child_process');
   const { neighbourInFlightExclusions } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/in-flight-neighbours.js');
-  const { readClaimBlob, defaultGhApi } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claim-store.js');
-  const { defaultRunner } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims-git-cas.js');
+  const { createClaimReader } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claim-store.js');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
-  let slug = null;
-  try { slug = execFileSync('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], { encoding: 'utf8' }).trim(); } catch {}
-  let tip = null;
-  const readClaimContent = (n) => {
-    const r = readClaimBlob({ gitRunner: defaultRunner, ghApi: defaultGhApi }, slug, n, tip);
-    if (!slug && r.via !== 'git') return { failure: 'repo-slug-unresolved' };
-    if (r.failure) return { failure: r.failure };
-    if (r.via === 'git') tip = r.sha;
-    return { content: r.absent ? null : r.content };
-  };
   const { exclusions, unreadable } = neighbourInFlightExclusions({
-    candidates: require(process.argv[1]).flat(), inFlight: require(process.argv[2]), readClaimContent, now: Date.now(),
+    candidates: require(process.argv[1]).flat(), inFlight: require(process.argv[2]), readClaimContent: createClaimReader().read, now: Date.now(),
   });
   for (const e of exclusions) appendExclusion(process.argv[3], e);
   if (unreadable.length) console.error('AUTO — dispatch: neighbour-in-flight claim read failed for #' + unreadable.join(', #') + '; treated as not in flight');

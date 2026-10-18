@@ -124,3 +124,44 @@ test('next-mode-shape.md describes the same refusal condition (#3141)', () => {
   assert.match(section, /shapingRefusal/);
   assert.match(section, /title-similar/);
 });
+
+function refusalFenceBody() {
+  const open = 'node -e "\n';
+  const close = '" "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"\n';
+  const start = SHAPING_MODE.indexOf(open);
+  const end = SHAPING_MODE.indexOf(close, start);
+  assert.ok(start !== -1 && end !== -1, 'refusal fence anchors must exist');
+  return { fence: SHAPING_MODE.slice(start + open.length, end), end };
+}
+
+test('AC1.1: the shaping-mode refusal fence reads claims through createClaimReader and reports failed reads as unreadable (#3393)', () => {
+  const { fence, end } = refusalFenceBody();
+  assert.match(fence, /createClaimReader\(\)/);
+  assert.doesNotMatch(fence, /readClaimBlob\(/);
+  assert.doesNotMatch(fence, /'repo', 'view'/);
+  assert.match(fence, /unreadable/);
+  assert.doesNotMatch(fence, /"/, 'the fence body sits inside a double-quoted shell string');
+  assert.doesNotMatch(fence.split('${CLAUDE_PLUGIN_ROOT}').join(''), /\$/, 'the fence body must not contain $ beyond ${CLAUDE_PLUGIN_ROOT}');
+  assert.doesNotMatch(fence, /`/, 'the fence body must not contain a backtick');
+  assert.match(SHAPING_MODE.slice(end, end + 1500), /`unreadable`/);
+});
+
+test('AC1.1: an unreadable claim is reported on the output and the happy path stays { refuse: false } (#3393)', () => {
+  const { execFileSync } = require('node:child_process');
+  const os = require('node:os');
+  const code = refusalFenceBody().fence.split('${CLAUDE_PLUGIN_ROOT}').join(path.join(ROOT, 'plugin'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'near-dup-unreadable-'));
+  const hits = path.join(dir, 'hits.json');
+  const snapshot = path.join(dir, 'snapshot.json');
+  // #7 is title-similar and ready, so the fence reads its claim. An empty PATH makes gh and git
+  // unavailable: the slug is unresolved and the git leg fails, so the read is a failure, never an
+  // absent claim, and #7 is reported as unreadable while staying not in flight.
+  try {
+    fs.writeFileSync(hits, JSON.stringify([{ number: 7, title: 'Similar', signals: ['title-similarity'] }]));
+    fs.writeFileSync(snapshot, JSON.stringify([{ number: 7, labels: ['ready'] }]));
+    const out = execFileSync(process.execPath, ['-e', code, hits, snapshot], { encoding: 'utf8', env: { ...process.env, PATH: dir } });
+    assert.deepStrictEqual(JSON.parse(out.trim()), { refuse: false, unreadable: [7] });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
