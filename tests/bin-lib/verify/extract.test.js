@@ -6,7 +6,7 @@ const path = require('path');
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles, countUnmatchedFailures, unattributedFailureCount, fileLevelFailures, specEntryCount,
-  failingTestsByFile, cancelledCount, testTree,
+  failingTestsByFile, cancelledCount, testTree, tapLines,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'extract.js'));
 
 const TAP_FIXTURE = [
@@ -846,4 +846,43 @@ test('tapBlocks: a YAML key indented deeper than its own `---` line is still rec
   ].join('\n');
   assert.deepStrictEqual(extractFailingFiles(log, 'tap', { cwd: '/repo' }), ['tests/deep.test.js']);
   assert.strictEqual(countUnmatchedFailures(log, 'tap', { cwd: '/repo' }), 0);
+});
+
+const kinds = (text) => tapLines(text.split('\n')).map((e) => e.kind);
+const owners = (text) => tapLines(text.split('\n')).map((e) => e.owner);
+
+test('AC2.1: tapLines classifies a node TAP failure block, its YAML terminator, and the points around it', () => {
+  const text = ['# Subtest: s', 'ok 1 - a', 'not ok 2 - b', '  ---', "  location: 'tests/a.test.js:1:1'", '  error: |-', '    boom', '  ...', '# tests 2'].join('\n');
+  assert.deepStrictEqual(kinds(text), ['subtest', 'ok', 'notOk', 'yamlOpen', 'yaml', 'yaml', 'yaml', 'yamlClose', 'comment']);
+  assert.deepStrictEqual(owners(text), [-1, -1, 2, 2, 2, 2, 2, 2, -1]);
+  const entries = tapLines(text.split('\n'));
+  const loc = entries[4];
+  assert.deepStrictEqual([loc.key, loc.keyStart, loc.indent], ['location', true, 2]);
+  const continuation = entries[6];
+  assert.deepStrictEqual([continuation.key, continuation.keyStart], ['error', false], 'a continuation line carries its key but does not start one');
+});
+
+test('AC2.1: a deeper "..." and "not ok"/"ok 1" lines inside YAML error text stay yaml, owned by the block', () => {
+  const text = ['not ok 1 - x', '  ---', '  error: |-', '    ...', '    not ok 9 - quoted', '    ok 1 - quoted', '  ...', 'ok 2 - next'].join('\n');
+  assert.deepStrictEqual(kinds(text), ['notOk', 'yamlOpen', 'yaml', 'yaml', 'yaml', 'yaml', 'yamlClose', 'ok']);
+  assert.deepStrictEqual(owners(text), [0, 0, 0, 0, 0, 0, 0, -1]);
+});
+
+test('AC2.1: a passing point\'s YAML is classified but owned by no block', () => {
+  const text = ['ok 1 - a', '  ---', '  duration_ms: 1', '  ...'].join('\n');
+  assert.deepStrictEqual(kinds(text), ['ok', 'yamlOpen', 'yaml', 'yamlClose']);
+  assert.deepStrictEqual(owners(text), [-1, -1, -1, -1]);
+});
+
+test('AC2.1: a # line ends a block, and a deeper ok N with no YAML is an ok point at its own indent', () => {
+  const text = ['    not ok 2 - nested', "      location: 'tests/a.test.js:5:5'", '        ok 1 - quoted', '        tail', '# Error: crashed', '  ---'].join('\n');
+  const entries = tapLines(text.split('\n'));
+  assert.deepStrictEqual(entries.map((e) => e.kind), ['notOk', 'other', 'ok', 'other', 'comment', 'other']);
+  assert.deepStrictEqual(entries.map((e) => e.owner), [0, 0, -1, -1, -1, -1]);
+  assert.deepStrictEqual([entries[0].indent, entries[2].indent], [4, 8]);
+});
+
+test('AC2.1: CRLF lines classify exactly like LF lines', () => {
+  const lf = ['not ok 1 - x', '  ---', '  error: boom', '  ...', 'ok 2 - y'];
+  assert.deepStrictEqual(tapLines(lf.map((l) => `${l}\r`)), tapLines(lf));
 });

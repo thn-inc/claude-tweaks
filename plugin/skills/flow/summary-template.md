@@ -4,6 +4,8 @@ Loaded by `/claude-tweaks:flow` Step 5 **only on successful completion of all st
 
 **Reconcile residue line (#644).** Immediately before rendering the template below, run `node "{pluginRoot}/bin/hooks.js" reconcile-summary` and capture its one stdout line verbatim for the **Reconcile:** field — never hand-compose this line or re-derive its counts, and never skip the call: this is the only place in the pipeline that surfaces reconcile's stuck/declined residue (`bin/lib/reconcile`'s own convergence checks run silently off the SessionStart hot path and a detached background process; nothing else in `/flow` reads their output). The command always succeeds and always prints exactly one line — a background pass that hasn't completed yet reads as `0 archived`, an unreachable mirror reads as `mirror ff n/a` — so there is no failure mode here to branch on.
 
+**Needs-a-human residue (#3370).** Immediately before rendering the template below, run `node "{pluginRoot}/bin/console-residue.js" --run "$PIPELINE_RUN_DIR"` — with `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` as `--run` when wrap-up's cleanup has already archived the run directory (the Timing section's rule) — and render its stdout verbatim under `### Needs a human`, never hand-composing it. Omit the section only when the command exits 0 with empty stdout; on any non-zero exit, render the CLI's stderr verbatim under the heading, so a failed scan never reads as "no residue". An unattended console's pending/contested items are never auto-applied, so this is the run's own final human stop for them.
+
 **Try it is mandatory (#2821).** Render the `### Try it` section on every successful run, including a record below the oversight floor — the floor gates `demo:pending` and the sign-off ceremony, and never gates this section. Its body is the block `wrap-up/verification-brief.md` composed for this record, per `_shared/try-it.md`, read verbatim from the session-scoped file: `eval "$(node "{pluginRoot}/bin/session-tmp-resolve.js" TRY_IT=try-it-{number}.md)"`, which sets `$TRY_IT` to the file's path, not its content — then read the file at that path (Read tool, or `cat "$TRY_IT"`) and render its body verbatim, minus its own heading line. When the file cannot be used, compose it per `_shared/try-it.md`'s Rules — never omit the section.
 
 On successful completion of all steps (`wrap-up` in the step list):
@@ -25,6 +27,10 @@ On successful completion of all steps (`wrap-up` in the step list):
 **Release status:** {the one-line human form from `_shared/pr-first-merge-post-merge.md` Step 4.1, verbatim — `already carried by {tag}` | `not yet in a release — bump pending` | `release status unavailable — {reason}` | `n/a — not merged in this run (outcome: {armed | pending-review})`}
 
 **Reconcile:** {one line from `node "{pluginRoot}/bin/hooks.js" reconcile-summary`, run once here and printed verbatim — `reconcile: {archived} archived, {stuck} stuck (oldest {age}), mirror ff {ok | declined — {reason} | anomaly — {state} | skipped — {reason} | failed — {reason} | n/a}`}
+
+### Needs a human
+
+{stdout of `node "{pluginRoot}/bin/console-residue.js" --run "$PIPELINE_RUN_DIR"`, verbatim — omit this whole section only on exit 0 with empty stdout; on any non-zero exit, the CLI's stderr verbatim instead}
 
 ### Try it
 

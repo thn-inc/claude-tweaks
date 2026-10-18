@@ -363,3 +363,83 @@ test('multi-spec fan-out isolation: one spec dir\'s unparseable console.json doe
   // successful call — each call only ever writes its own `--run` directory.
   assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), '{ not json');
 });
+
+// --- #3370: unresolved items survive the run's own final stop ---------------
+// The 'Needs a human' block follows the table (never inside it), so the
+// per-row AUTO-RESOLVED counts above stay valid.
+const NEEDS = { 'review-13-record.md': 'x', 'review-debate-deviation.md': 'y', 'wrap-up-memory-1.md': 'm' };
+
+test('unattended: an unmapped-prefix item and a contested item print a Needs a human block naming both (#3370)', async () => {
+  const fx = mainCheckoutWithRun({ staged: NEEDS });
+  const { d, out } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  assert.match(out(), /Needs a human — 2 item\(s\)/);
+  const after = out().slice(out().indexOf('Needs a human'));
+  assert.ok(after.includes('review-13-record.md'), after);
+  assert.ok(after.includes('review-debate-deviation.md'), after);
+  assert.ok(after.includes('--ack --run'), after);
+  const tail = after.trimEnd().split('\n');
+  assert.match(tail[tail.length - 1], new RegExp(`^  paths move when the run is archived; current paths: node "/.+/bin/console-residue\\.js" --run "/.+/${path.basename(fx.runDir)}"$`));
+  assert.ok(tail[tail.length - 2].includes('--ack --run'), 'the paths line follows the formatter lines');
+  assert.ok(!after.includes('wrap-up-memory-1.md'), 'a resolved item is not residue');
+  const tableOnly = out().slice(0, out().indexOf('Needs a human'));
+  assert.ok(tableOnly.includes('wrap-up-memory-1.md'), 'the table still lists every item');
+});
+
+test('unattended: nothing is applied — pending/keep-staged stay, staged files are byte-identical (#3370 AC3.1)', async () => {
+  const fx = mainCheckoutWithRun({ staged: NEEDS });
+  const { d } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  const cj = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
+  assert.strictEqual(cj.items.find((i) => i.id === 'review-13-record.md').resolution, 'pending');
+  assert.strictEqual(cj.items.find((i) => i.id === 'review-debate-deviation.md').resolution, 'keep-staged');
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'staged', 'review-13-record.md'), 'utf8'), 'x');
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'staged', 'review-debate-deviation.md'), 'utf8'), 'y');
+});
+
+test('unattended: no unresolved items prints no Needs a human block (#3370)', async () => {
+  const fx = mainCheckoutWithRun({ staged: THREE });
+  const { d, out } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  assert.ok(!/Needs a human/.test(out()), out());
+});
+
+test('--dry-run prints the Needs a human block too and writes nothing (#3370)', async () => {
+  const fx = mainCheckoutWithRun({ staged: NEEDS });
+  const { d, out } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto', '--dry-run'], d), 0);
+  assert.match(out(), /Needs a human — 2 item\(s\)/);
+  assert.ok(!fs.existsSync(path.join(fx.runDir, 'console.json')));
+});
+
+test('--json carries unresolved: the two items when present, [] when none (#3370)', async () => {
+  const withResidue = mainCheckoutWithRun({ staged: NEEDS });
+  const a = baseDeps(withResidue, []);
+  assert.strictEqual(await run(['--run', withResidue.runDir, '--policy', 'console-auto', '--json'], a.d), 0);
+  assert.deepStrictEqual(JSON.parse(a.out()).unresolved.map((i) => i.id).sort(), ['review-13-record.md', 'review-debate-deviation.md']);
+  const clean = mainCheckoutWithRun({ staged: THREE });
+  const b = baseDeps(clean, []);
+  assert.strictEqual(await run(['--run', clean.runDir, '--policy', 'console-auto', '--json'], b.d), 0);
+  assert.deepStrictEqual(JSON.parse(b.out()).unresolved, []);
+});
+
+test('an already-resolved console.json re-renders the Needs a human block too, and only for unresolved items (#3370)', async () => {
+  const stored = {
+    resolved: true, mode: 'auto-resolve', at: '2026-09-06T11:00:00.000Z', ceiling: 'unattended',
+    items: [
+      { id: 'wrap-up-memory-1.md', section: 'Memory updates', resolution: 'apply', reason: 'pre-checked Apply default (batched-item-drill.md)' },
+      { id: 'review-13-record.md', section: 'Pending review', resolution: 'pending', reason: 'unmapped-prefix' },
+    ],
+    merge: { resolution: 'leave-open', reason: 'lacks auto:merge' },
+  };
+  const fx = mainCheckoutWithRun({ staged: NEEDS, consoleJson: `${JSON.stringify(stored, null, 2)}\n` });
+  const rawBefore = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
+  const { d, out } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  assert.match(out(), /already records a resolved console/);
+  assert.match(out(), /Needs a human — 1 item\(s\)/);
+  const after = out().slice(out().indexOf('Needs a human'));
+  assert.ok(after.includes('review-13-record.md') && after.includes('--ack --run'), after);
+  assert.ok(!after.includes('wrap-up-memory-1.md'), 'a resolved item is not residue');
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), rawBefore, 'console.json is not rewritten');
+});

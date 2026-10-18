@@ -23,6 +23,15 @@
 // a compact pointer that quotes the whole hint verbatim (build/flow/
 // visual-review/wrap-up, where every leaf is trivially present because the
 // entire hint string is embedded character-for-character).
+//
+// The check runs in both directions. The leaf check above is hint -> Input.
+// undocumentedHintFlags (below) is the converse: every `--flag` in an `## Input`
+// table row's first cell, or in a bullet's leading code span, must appear in the
+// hint, unless that entry carries `(producer-only)` or `(deprecated alias)`
+// (EXEMPT_MARKERS) -- in the row's first cell, or opening the bullet's text after
+// the code span -- a flag only an agent or another skill passes, or a superseded
+// alias, which the user-facing hint may leave out. A marker anywhere else does
+// not exempt the entry.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -37,6 +46,8 @@ const SKILLS_DIR = path.join(ROOT, 'plugin', 'skills');
 const SKILLS = listSkillDirs(path.join(ROOT, 'plugin'));
 
 const read = (name) => fs.readFileSync(path.join(SKILLS_DIR, name, 'SKILL.md'), 'utf8');
+
+const EXEMPT_MARKERS = ['(producer-only)', '(deprecated alias)'];
 
 // Split `group` on `|` characters that are not nested inside `<...>` or
 // `[...]` -- e.g. `tier=<fast|standard|capable>` stays one leaf (the pipes
@@ -186,4 +197,73 @@ test('every bracketed leaf in argument-hint appears in ## Input', () => {
       );
     }
   }
+});
+
+test('AC2.1: docs/skill-authoring.md argument-hint bullet names every exemption marker', () => {
+  const doc = fs.readFileSync(path.join(ROOT, 'docs', 'skill-authoring.md'), 'utf8');
+  const bullet = doc.split('\n').find((l) => l.startsWith('- **`argument-hint`**'));
+  assert.ok(bullet, 'argument-hint bullet not found');
+  for (const marker of EXEMPT_MARKERS) {
+    assert.ok(bullet.includes(`\`${marker}\``), `bullet does not name ${marker}`);
+  }
+});
+
+// Every `--flag` in an ## Input table row's first cell that the skill's hint
+// omits, in first-seen order, deduplicated. A row whose first cell carries an
+// EXEMPT_MARKERS entry is skipped. Cells split only on unescaped pipes, so a
+// `\|` inside a first cell (capture's `--risk=<low\|medium\|high>`) stays put.
+// A flag matches the hint only as a whole token: `--batch-size` in the hint does
+// not cover `--batch` in a row.
+function undocumentedHintFlags(content) {
+  const hint = extractArgumentHint(content);
+  const body = inputSectionBody(content);
+  if (!hint || body === null) return [];
+  const found = [];
+  for (const line of body.split('\n')) {
+    let flagText;
+    if (line.startsWith('|')) {
+      const firstCell = line.split(/(?<!\\)\|/)[1] || '';
+      if (EXEMPT_MARKERS.some((m) => firstCell.includes(m))) continue;
+      flagText = firstCell;
+    } else {
+      // Bullet form: `- \`--flag\` <rest>` -- flags come from the leading code
+      // span only; the mark must open <rest>.
+      const bullet = line.match(/^\s*[-*]\s+`([^`]*)`(.*)$/);
+      if (!bullet) continue;
+      if (EXEMPT_MARKERS.some((m) => bullet[2].trimStart().startsWith(m))) continue;
+      flagText = bullet[1];
+    }
+    for (const flag of flagText.match(/--[a-z][a-z0-9-]*/g) || []) {
+      const inHint = new RegExp(flag + '(?![a-z0-9-])').test(hint);
+      if (!inHint && !found.includes(flag)) found.push(flag);
+    }
+  }
+  return found;
+}
+
+test('AC1.1: every --flag an ## Input table row documents is in argument-hint unless marked', () => {
+  for (const name of SKILLS) {
+    assert.deepStrictEqual(undocumentedHintFlags(read(name)), [], `skills/${name}/SKILL.md: ## Input documents flags missing from argument-hint — add them to the hint or mark the row ${EXEMPT_MARKERS.join(' / ')}`);
+  }
+});
+
+test('go-red control: capture with its markers stripped reports exactly its five producer flags', () => {
+  const stripped = read('capture').split(' (producer-only)').join('');
+  assert.deepStrictEqual(undocumentedHintFlags(stripped), ['--defer-reason', '--risk', '--size', '--origin', '--source']);
+});
+
+test('marker outside the first cell does not exempt the row', () => {
+  const c = "---\nargument-hint: '[--a]'\n---\n## Input\n\n| Argument | Behavior |\n|---|---|\n| `--b` | (producer-only) |\n";
+  assert.deepStrictEqual(undocumentedHintFlags(c), ['--b']);
+});
+
+test('an ## Input bullet is read: its leading code span counts unless the mark opens the rest', () => {
+  const doc = (bullet) => "---\nargument-hint: '[--a]'\n---\n## Input\n\n" + bullet + "\n";
+  assert.deepStrictEqual(undocumentedHintFlags(doc('- `--b` → x')), ['--b']);
+  assert.deepStrictEqual(undocumentedHintFlags(doc('- `--b` (producer-only) → x')), []);
+});
+
+test('longer flag in hint does not cover a shorter prefix flag', () => {
+  const c = "---\nargument-hint: '[--batch-size]'\n---\n## Input\n\n| Argument | Behavior |\n|---|---|\n| `--batch` | x |\n";
+  assert.deepStrictEqual(undocumentedHintFlags(c), ['--batch']);
 });
