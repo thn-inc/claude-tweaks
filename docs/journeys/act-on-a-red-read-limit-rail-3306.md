@@ -60,4 +60,5 @@ files:
 
 ## Origin
 - Created during build of #3306 (the Read-limit rail and `budgets.js`, the expand step of parent #3305's strangler-fig rollout). #3310 cuts every size consumer over to the rail; the older size and description-ceiling gates still run alongside it until #3311 removes them.
+- Updated during build of #3311: the older gates are gone, so the rail is the only size limit. `tests/skill-size-single-source.test.js` now fails on any per-file size pin (`act-on-a-red-skill-size-guard-3311.md`).
 - Related: `measure-composed-bytes-per-call-site-1990.md` (the composed-bytes gate whose enumeration the composed rail reuses), `read-a-size-outlier-in-the-bloat-scan-3308.md` (the advisory size signal, which never blocks).

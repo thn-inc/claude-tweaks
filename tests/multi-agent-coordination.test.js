@@ -997,7 +997,7 @@ test('/review summary assembly: confirmed flow to summary; unconfirmed + contest
 
   // Verify the wrap-up Review Console template documents the two new subsections.
   // The template itself lives in console-template.md — review-console.md's "Present
-  // the console" section points readers there rather than inlining it (40 KB ceiling).
+  // the console" section points readers there rather than inlining it (so review-console.md stays lean).
   const REVIEW_CONSOLE = readSkillFile('wrap-up', 'console-template.md');
   assert.ok(
     REVIEW_CONSOLE.includes('Low-confidence findings (not reproduced)'),

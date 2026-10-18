@@ -6,12 +6,10 @@ const path = require('path');
 const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
 const read = (p) => readText(path.join(ROOT, p));
-const { CEILING_BYTES } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'skill-audit', 'context-cost'));
 
-test('#1928: multi-spec.md cites the run-dir layout sub-file and stays under its read budget', () => {
+test('#1928: multi-spec.md cites the run-dir layout sub-file', () => {
   const ms = read('plugin/skills/flow/multi-spec.md');
   assert.match(ms, /multispec-run-dir-layout\.md/);
-  assert.ok(Buffer.byteLength(ms, 'utf8') < 20480, `multi-spec.md is ${Buffer.byteLength(ms, 'utf8')} B`);
   assert.match(ms, /\$RUN_ROOT\/\.claude-tweaks\/pipelines\/\{ISO-timestamp\}-spec-\{N1\}-\{N2\}-\{N3\}\//, 'the anchoring diagram stays in multi-spec.md');
 });
 
@@ -21,8 +19,6 @@ test('#1928: the layout sub-file documents manifest.yml phases[] and the latest 
   assert.match(sub, /`phases\[\]`[^.]*append-only|append-only[^.]*`phases\[\]`/i);
   assert.match(sub, /spec-status/);
 });
-
-const CEILING = CEILING_BYTES;
 
 test('#1928 AC6: both summary templates carry a ### Timing section rendered from phase-timing.js', () => {
   for (const f of ['plugin/skills/flow/summary-template.md', 'plugin/skills/wrap-up/summary-template.md']) {
@@ -49,12 +45,10 @@ test('#1928 AC6: pr-run-comments.md has a timing comment kind with its producer'
   assert.match(read('plugin/skills/wrap-up/verification-brief.md'), /run-comment: timing/);
 });
 
-test('#1928 AC6: reporting.md prints the per-group timing line from timing.json, and SKILL.md stays under the ceiling', () => {
+test('#1928 AC6: reporting.md prints the per-group timing line from timing.json', () => {
   const t = read('plugin/skills/dispatch/reporting.md');
   assert.match(t, /`timing: call-1 \{m\}m · call-2 \{m\}m · verify \{n\} run\(s\) \(\{modes\}\)/, 'the #1929 token-clause extension keeps this literal as a prefix');
   assert.match(t, /timing\.json/);
-  const skill = read('plugin/skills/dispatch/SKILL.md');
-  assert.ok(Buffer.byteLength(skill, 'utf8') <= CEILING, `dispatch/SKILL.md is ${Buffer.byteLength(skill, 'utf8')} B`);
 });
 
 test('#1928: the canonical verify.js snippets pass --run "$PIPELINE_RUN_DIR"', () => {
@@ -88,12 +82,10 @@ test('#1929 AC5: the three summary Timing blocks, the PR timing command, and pr-
   }
 });
 
-test('#1929 AC5: reporting.md carries the token clause on its timing line, and SKILL.md stays under the ceiling', () => {
+test('#1929 AC5: reporting.md carries the token clause on its timing line', () => {
   const t = read('plugin/skills/dispatch/reporting.md');
   assert.match(t, /`timing: call-1 \{m\}m · call-2 \{m\}m · verify \{n\} run\(s\) \(\{modes\}\) · \{k\} tokens in \/ \{m\} out`/);
   assert.match(t, /--transcript/, 'dispatch passes both agent transcripts explicitly');
-  const skill = read('plugin/skills/dispatch/SKILL.md');
-  assert.ok(Buffer.byteLength(skill, 'utf8') <= CEILING, `dispatch/SKILL.md is ${Buffer.byteLength(skill, 'utf8')} B`);
 });
 
 test('#1929: docs name the transcript reader, the new flags, and the guard counts', () => {

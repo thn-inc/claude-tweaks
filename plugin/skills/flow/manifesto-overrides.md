@@ -12,8 +12,9 @@ This Override semantics table is loaded only when the Manifesto runs as an appro
 | Leftover routing | `drop` | Unfinished sections are noted in `decisions.md` but no work record staged |
 | Auto-fix threshold | `lint-only` | Type errors surface as prompts; tests always surface |
 | Auto-fix threshold | `lint+type+test` | Mechanical test failures also auto-fixed (rare; risky — semantic changes hidden) |
-| Review auto-apply ceiling | `none` | All findings auto-applied (lowest friction, highest revert load) |
-| Review auto-apply ceiling | `medium` | LOW + MED auto-applied; only HIGH prompts |
+| Review auto-apply ceiling | `none` | Every non-critical finding staged for the Review Console, nothing auto-applied (highest friction, lowest revert load); Critical still prompts. One exception: with `review-auto-apply-prose-exempt` on (the default), a Low fix touching only prose files routes at `low` and auto-applies |
+| Review auto-apply ceiling | `low` | LOW auto-applied; MED and HIGH staged; only Critical prompts |
+| Review auto-apply ceiling | `medium` | LOW + MED auto-applied; HIGH staged; only Critical prompts |
 | Ceremony profile | `standard` | Forces full-depth wrap-up ceremony (reflect full mode, unrestricted skill-curation scan, doc/CLAUDE.md/ADR sub-scans) even though `ceremony-check` verdicted `fast-lane` for every record |
 | Ceremony profile | `fast-lane` | Forces the fast-lane shape even if a record's `ceremony:` header was `standard` (or one member of a bundle was) — an active, informed human override, not the automated default |
 | Model stance | `economy` | Every profile's resolved effort drops one notch on `EFFORT_SCALE`; a Frontier resolution additionally degrades to Capable — lower cost, lower rigor |

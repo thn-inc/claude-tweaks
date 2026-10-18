@@ -9,9 +9,9 @@ files:
 # Measure Composed Bytes Per Compose Call Site
 
 **Persona:** claude-tweaks maintainer who has just fenced a `_shared/*.md` contract with `when:` markers, or added a compose call site to a skill step, and wants to know what the reader of that step actually pays — and why the suite is red or green about it.
-**Goal:** Run the composed-bytes measurement the hard gate uses, read one row per call site and one column per condition combination, and understand how the Read rail judges each row and what the per-file warning tier still reports.
+**Goal:** Run the composed-bytes measurement the hard gate uses, read one row per call site and one column per condition combination, and understand how the Read rail judges each row.
 **Entry point:** A terminal at this repo's checkout root; `plugin/` is the plugin root (the directory with `skills/` directly beneath it) — every call below takes that, never the repo root.
-**Success state:** A table of composed bytes for every call site under every combination its sources branch on, plus the `unresolved` both-branches row; a clear reading of `rail.js`'s `composedRailViolations` output; and a per-file warning list that no longer fails anything.
+**Success state:** A table of composed bytes for every call site under every combination its sources branch on, plus the `unresolved` both-branches row; and a clear reading of `rail.js`'s `composedRailViolations` output.
 
 ## Steps
 
@@ -29,12 +29,12 @@ files:
 - **Should understand:** Each row's `max` is compared against `RAIL_BYTES` (52,500 B, in `plugin/bin/lib/skill-audit/budgets.js` — the Read tool's 25,000-token cap at a calibrated 2.1 B/token), the same bound every raw skill file meets, with no per-step exceptions. `rail.js` is the only reader of composed rows: never call `budgets.js`'s `overRail` on them directly, since they carry `max`, not `bytes`, and `overRail` fails closed. An `error` row comes back as a violation too, so an unmeasured bundle never passes. The `merge` step once carried its own exception until #2002 restructured its two sources — the worked example of the standing response: fence or restructure the sources, never raise the bound.
 - **Red flags:** An empty array while Step 1 showed a row over `RAIL_BYTES`; an `error` row from Step 1 missing here; every row reported as a violation — the sign that composed rows went to `overRail` by hand.
 
-### 3. Read the per-file warning tier
-- **URL:** `node -e 'const c=require("./plugin/bin/lib/skill-audit/context-cost.js");const s=[...c.measureSkills("plugin"),...c.measureSubFiles("plugin")];console.log(JSON.stringify({files:s.length,over:c.overCeilingWarnings(s),near:c.nearCeiling(s).length,markerErrors:s.filter(e=>e.markerError).length}))'`
-- **Action:** Run it and compare with `node --test tests/bin-lib/skill-audit/context-cost.test.js`'s `WARNING:` lines.
-- **Should feel:** The old per-file 40 KB test is still telling you about headroom — it just no longer blocks a merge.
-- **Should understand:** Since #1990 the per-file ceiling is a warning tier (`overCeilingWarnings`, plus the 90 % band `nearCeiling`), because a file that carries both branches of a condition is not what a reader pays — the composed bundle is. Bytes are counted after CRLF → LF normalization and with `when:` marker lines stripped, so a `core.autocrlf` checkout and an unrendered marker never inflate the number (#1880). A malformed marker is reported on the entry as `markerError`, never thrown. The `/specify` 28 KB single-read pin and the description budgets are separate concerns and stay hard.
-- **Red flags:** `markerErrors > 0` (the conformance suite will say the same); a warning line treated as a reason to trim prose that a `when:` fence would remove from the bundle instead; a raw `wc -c` used to argue with these numbers on a Windows checkout.
+### 3. Read the per-file rail check
+- **URL:** `node -e 'const r=require("./plugin/bin/lib/skill-audit/rail.js");const c=require("./plugin/bin/lib/skill-audit/context-cost.js");const s=[...c.measureSkills("plugin"),...c.measureSubFiles("plugin")];console.log(JSON.stringify({files:s.length,overRail:r.skillFileRailViolations("plugin"),markerErrors:s.filter(e=>e.markerError).length}))'`
+- **Action:** Run it and compare with `node --test tests/bin-lib/skill-audit/context-cost.test.js`'s `rail:` results.
+- **Should feel:** One number to watch per file, the Read rail, with nothing below it that can tip a merge red.
+- **Should understand:** There is no per-file ceiling or warning tier anymore (decision 0024). A raw file fails only when it cannot be read in one Read call: over `RAIL_BYTES` (52,500 measured bytes) or `RAIL_LINES` (2,000). Bytes are counted after CRLF → LF normalization and with `when:` marker lines stripped, so a `core.autocrlf` checkout and an unrendered marker never inflate them. A file near the rail is cut, or has a genuinely lazy section moved out. Fencing does not shrink a raw file.
+- **Red flags:** `markerErrors > 0` (the conformance suite will say the same); a non-empty `overRail` array on a tree whose `rail:` suite passes; a raw `wc -c` used to argue with these numbers on a Windows checkout.
 
 ### 4. Add a call site and watch the gate see it
 - **URL:** a scratch skill file `plugin/skills/demo/SKILL.md` containing one line: `` Read it as one bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step demo "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md"` `` (delete the directory afterwards).

@@ -20,11 +20,6 @@ const LOCAL_SITES = [
   'plugin/skills/flow/worktree-merge.md',
 ];
 
-// AC 6, re-baselined by #2320: 30,804 bytes as of 8409ec468 (#2251, landed after
-// #2002 per that spec's Gotchas so this figure is already post-#2002); net-small
-// means at most +500.
-const PR_FIRST_BYTE_CEILING = 31304;
-
 // Frozen pre-change excerpts (byte-for-byte from the pre-#2251 files).
 const PRE_PR_FIRST_SITE = `gh pr merge {pr-number} --repo {owner}/{repo} --auto --merge \\
   -t "[{tag}] {one-line summary}" \\
@@ -58,11 +53,6 @@ test('pr-first-merge.md: both gh pr merge sites squash and take the composer out
   // go-red proof
   assert.match(PRE_PR_FIRST_SITE, STALE_PR_FIRST_FORM);
   assert.doesNotMatch(PRE_PR_FIRST_SITE, COMPOSER_CALL);
-});
-
-test('pr-first-merge.md stays net-small (AC 6 byte ceiling)', () => {
-  const bytes = Buffer.byteLength(read(PR_FIRST), 'utf8');
-  assert.ok(bytes <= PR_FIRST_BYTE_CEILING, `${PR_FIRST} is ${bytes} bytes, over the ${PR_FIRST_BYTE_CEILING}-byte ceiling (#2251 AC 6)`);
 });
 
 for (const rel of LOCAL_SITES) {

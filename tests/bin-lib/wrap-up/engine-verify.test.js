@@ -147,18 +147,8 @@ test('runVerify returns one row per registered check, each with a valid result',
 });
 
 // AC1/AC2 fixture-level integration tests (record #900, Task 7). These call
-// runVerify() with a real run-dir and assert on the literal exitCode, so
-// they are placed HERE -- immediately after the structural test above, and
-// deliberately BEFORE 'runVerify sets exitCode 3 ... (forced-fail probe)'
-// below -- rather than at the file's tail near __test-null-guard-probe__.
-// That forced-fail probe permanently registers a check (via the module-level
-// CHECKS array, which persists for this file's whole process) that always
-// returns 'fail' with no input-dependent guard, so every runVerify() call
-// with a non-null runDir anywhere later in this file's execution order would
-// unconditionally report exitCode 3 -- these fixtures need a real,
-// input-driven exitCode 0 for their "fixing it passes" / "no fail rows"
-// assertions, so they must run before that contamination exists. Helper fns
-// writeSpecFile/writeExpectations (defined further down this file) are
+// runVerify() with a real run-dir and assert on the literal exitCode. Helper
+// fns writeSpecFile/writeExpectations (defined further down this file) are
 // ordinary function declarations, hence hoisted, and are callable here.
 //
 // The brief's own transcribed AC1/AC2 code (task-7-brief.md) writes
@@ -206,9 +196,7 @@ test('AC1: fixture run-dir with one unexecuted approved action exits 3 naming th
 
 // #3373: a console that resolved the merge as `leave-open` leaves the PR open
 // for a human, so the run dir and worktree legitimately remain -- both teardown
-// checks render the pending-review skip instead of a fail. Placed before the
-// forced-fail probe below for the same reason as AC1/AC2 above (the AC1 test
-// needs a real, input-driven exitCode 0).
+// checks render the pending-review skip instead of a fail.
 const PENDING_REVIEW_DETAIL = 'pending-review — teardown follows the human merge';
 
 function writeConsole(runDir, resolution) {
@@ -382,10 +370,7 @@ test('AC2: gh absent renders acceptance-labeling unknown, exit code reflects onl
 // mismatch -- it must render 'unknown', matching this file's other
 // could-not-gather rows, and must never trip the overall exit-3 gate on its
 // own (execution-and-verification.md's exit-3 rule only withholds closure on
-// a real 'fail'). Placed here, before the forced-fail probe test below
-// permanently registers a fail-producing check into the shared CHECKS
-// registry, so this is the last point in the file where an exitCode === 0
-// assertion is still meaningful (mirrors the AC2 fixture immediately above).
+// a real 'fail').
 test('acceptance-labeling check renders unknown -- not fail -- when a parent-resolution gh call throws', () => {
   const runDir = makeTmpDir('verify-acceptance-parenterr-');
   const repoRoot = makeCleanRepoRoot();
@@ -420,17 +405,21 @@ test('acceptance-labeling check renders unknown -- not fail -- when a parent-res
 });
 
 // The 'runVerify returns one row per registered check' test further above
-// (immediately before the AC1/AC2 fixtures) re-derives its expected exitCode
+// re-derives its expected exitCode
 // from the same rows array runVerify just returned, so it can't distinguish
 // a bug in the exitCode derivation from correct behavior. This test pins the
 // literal value: force
 // one check to fail and assert exitCode === 3 as a hardcoded constant, proving
 // the derivation actually produces 3 for a real fail case.
 test('runVerify sets exitCode 3 when any check fails (forced-fail probe)', () => {
-  registerCheck('__test-exitcode-probe__', () => ({ result: 'fail', detail: 'forced' }));
-  const runDir = makeTmpDir('verify-exitcode-probe-');
-  const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: () => '' } });
-  assert.strictEqual(result.exitCode, 3);
+  const unregister = registerCheck('__test-exitcode-probe__', () => ({ result: 'fail', detail: 'forced' }));
+  try {
+    const runDir = makeTmpDir('verify-exitcode-probe-');
+    const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: () => '' } });
+    assert.strictEqual(result.exitCode, 3);
+  } finally {
+    unregister();
+  }
 });
 
 // plans-ledger/design-caches now scan `git status --porcelain` for untracked
@@ -2027,13 +2016,17 @@ test('carrier-commit resolves no issue numbers (not throws) when work/ contains 
 });
 
 test('runVerify contains a check function that throws as a fail row, never an uncaught exception', () => {
-  registerCheck('__test-throwing-check__', () => { throw new Error('boom'); });
-  const runDir = makeTmpDir('verify-throwing-check-');
-  const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: () => '' } });
-  const row = result.rows.find((r) => r.check === '__test-throwing-check__');
-  assert.strictEqual(row.result, 'fail');
-  assert.match(row.detail, /check threw: boom/);
-  assert.strictEqual(result.exitCode, 3);
+  const unregister = registerCheck('__test-throwing-check__', () => { throw new Error('boom'); });
+  try {
+    const runDir = makeTmpDir('verify-throwing-check-');
+    const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: () => '' } });
+    const row = result.rows.find((r) => r.check === '__test-throwing-check__');
+    assert.strictEqual(row.result, 'fail');
+    assert.match(row.detail, /check threw: boom/);
+    assert.strictEqual(result.exitCode, 3);
+  } finally {
+    unregister();
+  }
 });
 
 test('expectations checks render unknown-unsupported-version for a bad version field', () => {
@@ -2086,25 +2079,24 @@ test('runVerify short-circuits to an all-unknown row set when runDir is null, ne
   // Throwaway check scoped to this one test — name chosen so it can't collide
   // with a real check name Tasks 2-6 register ('plans-ledger', etc). Its fn
   // throws if called, proving the null-runDir guard short-circuits before
-  // reaching any registered check function. This registration is cumulative
-  // within this process for the remainder of the file's test run (module-
-  // level CHECKS array), so this test is placed LAST among the tests that
-  // call runVerify directly with a non-null runDir in this file — anything
-  // after it would otherwise hit this permanently-throwing probe.
-  registerCheck('__test-null-guard-probe__', () => {
+  // reaching any registered check function.
+  const unregister = registerCheck('__test-null-guard-probe__', () => {
     throw new Error('check fn must not be called when runDir is null');
   });
-
-  const result = runVerify({ runDir: null, base: 'main', deps: {} });
-  // A run that could not be located at all is not a clean pass -- exit 3,
-  // same as any other failing check (record #900 fix round, I3).
-  assert.strictEqual(result.exitCode, 3);
-  const probeRow = result.rows.find((r) => r.check === '__test-null-guard-probe__');
-  assert.deepStrictEqual(probeRow, {
-    check: '__test-null-guard-probe__',
-    result: 'unknown',
-    detail: 'run dir not found at original or archive path',
-  });
+  try {
+    const result = runVerify({ runDir: null, base: 'main', deps: {} });
+    // A run that could not be located at all is not a clean pass -- exit 3,
+    // same as any other failing check (record #900 fix round, I3).
+    assert.strictEqual(result.exitCode, 3);
+    const probeRow = result.rows.find((r) => r.check === '__test-null-guard-probe__');
+    assert.deepStrictEqual(probeRow, {
+      check: '__test-null-guard-probe__',
+      result: 'unknown',
+      detail: 'run dir not found at original or archive path',
+    });
+  } finally {
+    unregister();
+  }
 });
 
 // #790/[IL-127]: wrap-up-engine.js's main() rejects any --run-dir that doesn't
@@ -2116,8 +2108,6 @@ test('runVerify short-circuits to an all-unknown row set when runDir is null, ne
 // makeRunDir() convention, so the CLI actually reaches runVerifyVerb rather
 // than failing the anchoring gate first.
 //
-// This test spawns a fresh subprocess, so it is immune to the null-guard
-// probe registered above (module state does not cross process boundaries).
 // It only asserts the CLI's plumbing (table header renders); it does not
 // assert exitCode 0, because real checks run here against a synthetic,
 // non-pipeline run dir — e.g. 'run-dir-archived' legitimately fails (the
@@ -2332,5 +2322,40 @@ test('upstream-feedback check runs its gh probe and issue view (via ghAvailable)
   } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });
     fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('#3388: probe checks registered by earlier tests do not leak -- a clean fixture at the end of the file exits 0', () => {
+  const registeredNames = () => runVerify({ runDir: null, base: 'main', deps: {} }).rows.map((r) => r.check);
+  const names = registeredNames();
+  for (const probe of ['__test-exitcode-probe__', '__test-throwing-check__', '__test-null-guard-probe__']) {
+    assert.ok(!names.includes(probe), `${probe} leaked into later runVerify calls`);
+  }
+  // unregister is identity-scoped and idempotent
+  const before = registeredNames();
+  const unregA = registerCheck('__test-dup__', () => ({ result: 'pass', detail: 'a' }));
+  const unregB = registerCheck('__test-dup__', () => ({ result: 'pass', detail: 'b' }));
+  try {
+    unregA();
+    unregA();
+    const mid = registeredNames();
+    assert.deepStrictEqual(mid, [...before, '__test-dup__']);
+  } finally {
+    unregA();
+    unregB();
+  }
+  assert.deepStrictEqual(registeredNames(), before);
+
+  const runId = 'test-3388-clean-tail';
+  const repoRoot = makeCleanRepoRoot();
+  const runDir = path.join(repoRoot, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  writeExpectations(runDir, { version: 1, memory: [], upstream: [], deferred: ['run-dir-archival'] });
+  try {
+    const result = runVerify({ runDir, base: 'main', repoRoot, cwd: repoRoot, deps: { git: () => '', gh: () => 'gh version 2.0.0' } });
+    assert.deepStrictEqual(result.rows.filter((r) => r.result === 'fail'), []);
+    assert.strictEqual(result.exitCode, 0);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
   }
 });

@@ -4,11 +4,9 @@
 // together must actually produce every section review/step3-lens-dispatch.md,
 // step3-routing.md, and step3-debate-and-refutation.md cite (Working Directory Discipline,
 // Model Selection, Template A, Failed-agent retrieval, the fan-out section, Resolution order,
-// Bash snippet), and the composed result must stay under the shared byte ceiling with no
-// COMPOSED_STEP_EXCEPTIONS entry — the reason this record split the two sources in the first
-// place. Neither source carries `when:` markers, so there is no mode-branch to pin the way
+// Bash snippet). Its composed size is the rail suite's job (decision 0024). Neither source carries `when:` markers, so there is no mode-branch to pin the way
 // flow-manifesto-composition.test.js does; the composed-behavior surface here is instead
-// "the real call site's sources actually compose to the expected content, under the gate."
+// "the real call site's sources actually compose to the expected content."
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -16,7 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { compose } = require('../plugin/bin/lib/compose-context/compose');
 const {
-  findComposeCallSites, composedBytesReport, overComposedCeiling, CEILING_BYTES, COMPOSED_STEP_EXCEPTIONS,
+  findComposeCallSites, composedBytesReport,
 } = require('../plugin/bin/lib/skill-audit/context-cost.js');
 
 const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
@@ -68,16 +66,12 @@ test('composing the review-dispatch sources produces every section the three rev
   }
 });
 
-test('the review-dispatch composed bundle stays under CEILING_BYTES with no exception entry needed', () => {
+test('the review-dispatch call site is measured with no error row', () => {
   const rows = composedBytesReport(PLUGIN_ROOT).filter((r) => r.step === 'review-dispatch');
   assert.ok(rows.length > 0, 'expected a measured review-dispatch row — the call site is gone or unparsed');
   for (const row of rows) {
     assert.equal(row.error, undefined, `review-dispatch row carries an error: ${row.error}`);
-    assert.ok(row.max < CEILING_BYTES, `review-dispatch bundle measured ${row.max} B — must stay under CEILING_BYTES (${CEILING_BYTES} B)`);
   }
-  assert.ok(!Object.prototype.hasOwnProperty.call(COMPOSED_STEP_EXCEPTIONS, 'review-dispatch'), 'review-dispatch must not need a COMPOSED_STEP_EXCEPTIONS entry — it fits under the plain ceiling by construction of this split');
-  const overCeiling = overComposedCeiling(composedBytesReport(PLUGIN_ROOT)).filter((r) => r.step === 'review-dispatch');
-  assert.deepStrictEqual(overCeiling, [], `review-dispatch composed bundle over ceiling: ${JSON.stringify(overCeiling)}`);
 });
 
 test('discrimination: composing only one source is missing the other source\'s sections (the composition actually matters, not just file existence)', () => {
