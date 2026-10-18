@@ -5,6 +5,7 @@
 // import from this file rather than re-declaring their own copies. No network.
 'use strict';
 
+const nodePath = require('node:path');
 const { sharedFacetDefaults } = require('./facet-shape');
 
 const ORIGINS = ['code-health', 'harness-health', 'journey-health', 'docs-health', 'capture', 'dispatch'];
@@ -372,6 +373,26 @@ function extractTemplateStamp(body) {
   if (typeof body !== 'string' || !body) return null;
   const m = TEMPLATE_STAMP_RE.exec(body);
   return m ? { path: m[1], version: m[2] } : null;
+}
+
+// The one specShapedBody keyFiles-path predicate (#2975): specShapedBody throws on it, and
+// the health-sweep composers call isRepoRelativeKeyFilePath to omit keyFiles instead of
+// aborting a whole sweep run on an LLM-supplied path. keyFilePathProblem returns null
+// (valid), 'shape' (not a non-empty single-line file path: no backtick, no line terminator
+// incl. a lone CR, no surrounding whitespace, no trailing slash — grouping.js skips a
+// directory entry without a warning), or 'relative' (absolute posix/win32 path, a drive
+// prefix such as "C:foo", or a ".." segment).
+const KEY_FILE_LINE_BREAK_RE = /[\r\n\u0085\u2028\u2029]/;
+function keyFilePathProblem(filePath) {
+  if (typeof filePath !== 'string' || filePath === '' || filePath !== filePath.trim()
+    || KEY_FILE_LINE_BREAK_RE.test(filePath) || filePath.includes('`') || /[\\/]$/.test(filePath)) return 'shape';
+  if (nodePath.posix.isAbsolute(filePath) || nodePath.win32.isAbsolute(filePath) || /^[A-Za-z]:/.test(filePath)
+    || filePath.split(/[\\/]/).includes('..')) return 'relative';
+  return null;
+}
+
+function isRepoRelativeKeyFilePath(filePath) {
+  return keyFilePathProblem(filePath) === null;
 }
 
 // Accepts either bare label-name strings or {name} objects (gh's own shape).
@@ -784,8 +805,8 @@ function parseDependencyAssumptions(body) {
 }
 
 // { header?, currentState, deliverables, acceptanceCriteria?, openQuestion?, filedBy,
-//   provenance?: { origin?, deferReason? }, footer?: string | null, verifiedAsOf?: string }
-//   -> body string.
+//   provenance?: { origin?, deferReason? }, footer?: string | null, verifiedAsOf?: string,
+//   keyFiles?: Array<{ path, change? }> } -> body string.
 // Additive over the original shape: a call passing none of provenance/footer/openQuestion/
 // verifiedAsOf (and a non-empty header) composes byte-identical output — the four health-suite
 // builders are the regression oracle (tests/health-filing-parity.test.js). Exactly one
@@ -839,9 +860,16 @@ function parseDependencyAssumptions(body) {
 // plain "No user-visible change." rather than omitting the parameter —
 // `spec-template.md`'s Release Note guidance treats that phrasing as valid
 // content, never as licence to skip the section.
+// keyFiles (#2975, optional): Array<{ path, change? }> — renders `## Technical Approach` /
+// `### Key Files` after `## Release Note` and before the footer, one `- \`{path}\` —
+// {change}` bullet per entry (change defaults to "modify"). It exists so an agent-composed
+// record satisfies /build's micro-plan condition 3 (a Key Files list) and so
+// grouping.js's extractKeyFilesSection can read it. Paths must be repo-relative: absolute
+// (posix or win32) and `..`-segment paths throw. Absent or [] composes byte-identical
+// output to the call without it.
 function specShapedBody({
   header, currentState, deliverables, acceptanceCriteria, openQuestion, releaseNote, filedBy, provenance, footer, verifiedAsOf, premiseCheck,
-  templateStamp,
+  templateStamp, keyFiles,
 } = {}) {
   const isEmpty = (value) => value === undefined || value === null || value === ''
     || (Array.isArray(value) && value.length === 0);
@@ -873,6 +901,26 @@ function specShapedBody({
   if (!isEmpty(templateStamp) && !TEMPLATE_STAMP_VALUE_RE.test(templateStamp)) {
     throw new Error(`specShapedBody: templateStamp must match "{path} @ {version}" with no whitespace in either token (got "${templateStamp}")`);
   }
+  if (keyFiles !== undefined && keyFiles !== null && !Array.isArray(keyFiles)) {
+    throw new Error(`specShapedBody: keyFiles must be an array (got ${typeof keyFiles})`);
+  }
+  const keyFileBullets = (keyFiles || []).map((entry, i) => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error(`specShapedBody: keyFiles[${i}] must be an object with a path`);
+    }
+    const { path: filePath, change = 'modify' } = entry;
+    const pathProblem = keyFilePathProblem(filePath);
+    if (pathProblem === 'shape') {
+      throw new Error(`specShapedBody: keyFiles[${i}].path must be a non-empty single-line file path — no backtick, surrounding whitespace, or trailing slash (got ${JSON.stringify(filePath)})`);
+    }
+    if (pathProblem === 'relative') {
+      throw new Error(`specShapedBody: keyFiles[${i}].path must be repo-relative — no absolute path or ".." segment (got "${filePath}")`);
+    }
+    if (typeof change !== 'string' || change === '' || KEY_FILE_LINE_BREAK_RE.test(change)) {
+      throw new Error(`specShapedBody: keyFiles[${i}].change must be a non-empty single-line string`);
+    }
+    return `- \`${filePath}\` — ${change}`;
+  });
   const { origin, deferReason } = provenance || {};
   if (deferReason !== undefined) oneOf('deferReason', deferReason, DEFER_REASONS);
   const block = (v) => (Array.isArray(v) ? v.join('\n\n') : v);
@@ -887,6 +935,7 @@ function specShapedBody({
   if (hasOQ) parts.push('## Open Question', block(openQuestion));
   else parts.push('## Acceptance Criteria', block(acceptanceCriteria));
   parts.push('## Release Note', block(releaseNote));
+  if (keyFileBullets.length > 0) parts.push('## Technical Approach', '### Key Files', keyFileBullets.join('\n'));
   if (footer === undefined) {
     parts.push(`_Filed by \`${filedBy}\`. Close to resolve; label \`wontfix\` to suppress future reports of this finding._`);
   } else if (footer !== null && !isEmpty(footer)) {
@@ -896,7 +945,7 @@ function specShapedBody({
 }
 
 module.exports = {
-  ORIGINS, TYPES, TIERS, PRIORITIES, DEFER_REASONS, LABELS, TYPE_LABELS, recordPayload, specShapedBody,
+  ORIGINS, TYPES, TIERS, PRIORITIES, DEFER_REASONS, LABELS, TYPE_LABELS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
   FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, normalizeLabelNames, parseRecordFacets,
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
   hasOpenNativeBlocker, CLASSIFICATION_SCORING, fenceFor, fencedBlock, parseSubIssues,

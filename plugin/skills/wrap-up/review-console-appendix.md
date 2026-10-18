@@ -53,7 +53,11 @@ The CLI also computes the merge half with both carve-outs (`merge.resolution` = 
 (`AUTO {time} — Review Console: Console auto-resolved {n} item(s) at unattended
 (console-resolve.js). Reversibility: per item.` plus one line per item), and writes
 `{run-dir}/console.json` (`{resolved: true, mode: 'auto-resolve', at, ceiling, items, merge}` —
-the write the reconciler's archival needs, #1854).
+the write the reconciler's archival needs, #1854). That file may later gain an optional
+`residueAcknowledgedAt`, written only by `console-residue.js --ack`/`--ack-all` (#3370); and
+`console-resolve.js --json` on a fresh resolution carries an `unresolved` array (the
+`pending`/`keep-staged` items, `[]` when none); the idempotent re-render of an already-resolved
+console prints the stored table and the `Needs a human` block as text whatever the flags.
 
 ### Resolution-to-step mapping
 

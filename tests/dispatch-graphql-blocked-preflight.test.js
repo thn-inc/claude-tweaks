@@ -6,7 +6,6 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-const { CEILING_BYTES } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'skill-audit', 'context-cost'));
 
 // #2868: a sandbox can have `gh` present and authenticated via REST while its
 // outbound proxy blocks GitHub's GraphQL API specifically, so every
@@ -20,9 +19,8 @@ const { CEILING_BYTES } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'skill
 // from the others.
 const SIGNATURE = 'GitHub GraphQL is not available';
 
-test('dispatch/SKILL.md Preflight documents the gh-present-but-GraphQL-blocked branch and stays under the context-cost ceiling', () => {
+test('dispatch/SKILL.md Preflight documents the gh-present-but-GraphQL-blocked branch', () => {
   const skill = read('plugin/skills/dispatch/SKILL.md');
-  assert.ok(Buffer.byteLength(skill, 'utf8') <= CEILING_BYTES, `dispatch/SKILL.md is ${Buffer.byteLength(skill, 'utf8')} B`);
   const preflight = skill.slice(skill.indexOf('## Preflight'), skill.indexOf('## Workflow'));
   assert.match(preflight, /GraphQL-blocked/);
   assert.match(preflight, /mcp-transport\.md/);

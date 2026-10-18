@@ -10,7 +10,7 @@
 
 **Tech Stack:** Node 18+, CommonJS, `node --test`. No new dependencies.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-17T062549-spec-3307-3308-3306-3309-3310-3311/spec-3311/work/3311-spec.md`. Its "Boundary amendments" section supersedes the body above it.
+**Spec:** `.claude-tweaks/pipelines/2026-10-17T062549-spec-3307-3308-3306-3309-3310-3311/spec-3311/work/3311-spec.md`. Its "Boundary amendments" section supersedes the body above it. _(Spec file deleted at the series close-out in PR #3433; the GitHub record, with its As-built notes, is the durable spec.)_
 
 **Execution:** batched
 

@@ -1,7 +1,7 @@
 'use strict';
 // tests/policy-schema-metadata.test.js — pins the human-facing metadata
 // contract on POLICY_KEYS (summary/category/tier) and its prose twin in
-// skills/_shared/policy-schema.md (and, for the 40 KB ceiling, its
+// skills/_shared/policy-schema.md (and, for file size, its
 // policy-schema-coverage.md sibling — #635). Same prose<->constant pattern as
 // tests/hooks-gate-coverage.test.js.
 const { test } = require('node:test');
@@ -49,11 +49,11 @@ test('no summary string is duplicated verbatim into policy-schema.md', () => {
   }
 });
 
-// --- 40 KB ceiling — policy-schema.md and its coverage sibling (#635) ---
+// --- former 40 KB ceiling — policy-schema.md and its coverage sibling (#635) ---
 // Per-file 40 KB pins on policy-schema.md and policy-schema-coverage.md
-// retired by #1997 — the per-file tier is a warning since #1990 and these
-// files have no compose call site; removal condition in
-// docs/incident-log.md [IL-153].
+// retired by #1997 — the per-file tier was a warning from #1990 until #3311
+// deleted the ceiling model entirely, and these files have no compose call
+// site; removal condition in docs/incident-log.md [IL-153].
 
 // #2253 (unit 3 of #2250): release-hook / release-train are schema
 // scaffolding — consumed by the local engine (unit 4) and /claude-tweaks:release

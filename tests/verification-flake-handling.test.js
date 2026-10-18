@@ -28,6 +28,7 @@ test('verification.md: the isolate-and-rerun-once rule names two paths — named
   assert.ok(text.includes("an `unlisted: […]` reason selects **named-file isolation**"));
   assert.ok(text.includes("a `no-parse` reason"));
   assert.ok(text.includes('an `unattributed-failures: {N}` reason (#3066'), 'the third retryDecision.reason value is documented and routed');
+  assert.ok(text.includes('a `no-accounting-guard: {family}` reason (#3204'), 'the fourth retryDecision.reason value is documented and routed to the whole-suite re-run');
   assert.ok(text.includes('(retry: no-parse — whole-suite re-run applies)'), 'the stdout clause is documented');
   assert.ok(text.includes('One re-run, never more'), 'the whole-suite path states the single-re-run cap');
   assert.ok(text.includes('node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --cmd tests="{command}"'), 'the whole-suite re-run command is documented');

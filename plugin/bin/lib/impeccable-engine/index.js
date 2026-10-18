@@ -26,6 +26,7 @@
 // or one keyed to the main checkout that the worktree sits under).
 
 const path = require('path');
+const { selectEntry } = require('../installed-plugins');
 
 // Frozen contract — sibling sub-issues of #2979 document and test against
 // these exact strings. Treat any rename or addition as a breaking change.
@@ -104,14 +105,6 @@ function launchSpec(launcher, args, platform, env = {}) {
   };
 }
 
-function safeRealpath(p, deps) {
-  try {
-    return deps.realpath(p);
-  } catch {
-    return p;
-  }
-}
-
 function readInstalledPlugins(deps) {
   const file = path.join(deps.homedir(), '.claude', 'plugins', 'installed_plugins.json');
   if (!deps.exists(file)) return { ok: false, detail: `not found: ${file}` };
@@ -126,27 +119,6 @@ function readInstalledPlugins(deps) {
   } catch (err) {
     return { ok: false, detail: `malformed JSON (${err.message})` };
   }
-}
-
-// Project-scope entries whose projectPath is an ancestor of (or equal to)
-// `projectPath`, longest `projectPath` wins; falls back to the user-scope
-// entry; absent either, null.
-function selectEntry(entries, projectPath, deps) {
-  const target = safeRealpath(projectPath, deps);
-  let best = null;
-  let bestLen = -1;
-  for (const entry of entries) {
-    if (entry.scope !== 'project' || typeof entry.projectPath !== 'string') continue;
-    const candidate = safeRealpath(entry.projectPath, deps);
-    const rel = path.relative(candidate, target);
-    const isAncestorOrSelf = rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-    if (isAncestorOrSelf && candidate.length > bestLen) {
-      best = entry;
-      bestLen = candidate.length;
-    }
-  }
-  if (best) return best;
-  return entries.find((e) => e.scope === 'user') || null;
 }
 
 function launcherPath(installPath) {

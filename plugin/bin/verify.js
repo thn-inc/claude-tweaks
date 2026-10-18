@@ -481,7 +481,7 @@ async function main() {
     const failingFiles = extractFailingFiles(plain, family);
     const unattributedCount = unattributedFailureCount(plain, family);
     const plan = planRetry({
-      failingFiles, flaky: decl.flaky, retry: decl.retry, suite: result.name, unattributedCount,
+      failingFiles, flaky: decl.flaky, retry: decl.retry, suite: result.name, unattributedCount, family,
     });
     const decision = plan.retry ? { retry: true, files: plan.files } : { retry: false, reason: plan.reason };
     if (!plan.retry) return { ...result, retryDecision: decision };

@@ -249,7 +249,7 @@ When a qualifying group's `/flow` run reaches `/wrap-up`'s Review Console, check
 
 **Drain-overlap hold, before `merge-check`.** Read `drain-pr-overlap.md`'s "Step 6 (Auto-merge
 gate)" section, this skill's directory, and follow it before Authorization/Content judgment below
-— extracted to keep this file under the 40 KB ceiling (`[IL-153]`).
+— extracted so this file stays lean (`[IL-153]`).
 
 1. **Authorization** — a two-phase check: evaluate every group member first (fresh labels +
    comments, `evaluateMaturation` per member), act only if every one cleared. A member already
@@ -397,7 +397,7 @@ if [ "$CURRENT" != "{integration-branch}" ]; then
   echo "Main checkout is on '$CURRENT', not '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
   exit 1
 fi
-SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --tag auto-merge --shell) || exit 1
+SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --tag auto-merge --range {integration-branch}...{branch} --shell) || exit 1
 eval "$SUBJECT_EXPORTS"
 git merge --no-ff {branch} -m "$SUBJECT_TITLE
 
