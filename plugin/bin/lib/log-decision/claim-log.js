@@ -38,7 +38,7 @@ const NUM_LIST_SRC = String.raw`#?\d+(?:(?:\s*,\s*|\s+and\s+|\s+)#?\d+)*`;
 const HASH_LIST_SRC = String.raw`#\d+(?:(?:\s*,\s*|\s+and\s+|\s+)#\d+)*`;
 const LIST_END_SRC = String.raw`(?![\w#/:-]|\.\d)`;
 // "claimed [both|group|the] [issue(s)|target(s)|record(s)] <list>"
-const FORWARD_RE = new RegExp(`${NEGATED_SRC}\\bclaimed\\s+(?:(?:both|group|the)\\s+)?(?:(?:issues?|targets?|records?)\\s+)?(${NUM_LIST_SRC})${LIST_END_SRC}(?!\\s*(?:targets?|issues?|records?|members?)\\b)`, 'gi');
+const FORWARD_RE = new RegExp(`${NEGATED_SRC}\\bclaimed\\s+(?:(?:both|group|the)\\s+)?(?:(?:issues?|targets?|records?)\\s+)?(${NUM_LIST_SRC})${LIST_END_SRC}(?!\\s*(?:targets?|issues?|records?|members?|of)\\b)`, 'gi');
 // "<#list> [were|was|both|all|each|successfully] claimed" — never "claimed by"
 const BACKWARD_RE = new RegExp(`(${HASH_LIST_SRC})${LIST_END_SRC}\\s+(?:(?:were|was|both|all|each|successfully)\\s+)*claimed\\b(?!\\s+by\\b)`, 'gi');
 

@@ -169,3 +169,14 @@ test('AC1.1: paraphrasedClaimNumbers returns the numbers a single line positivel
   assert.deepStrictEqual(paraphrasedClaimNumbers(''), []);
   assert.deepStrictEqual(paraphrasedClaimNumbers('## /flow'), []);
 });
+
+test('AC1.1: paraphrasedClaimNumbers only reads the text before Reversibility (anchor after the suffix does not count) (#3012)', () => {
+  assert.deepStrictEqual(paraphrasedClaimNumbers('- AUTO 08:00:00 — flow: claimed 2554. Reversibility: high (Step 2.8 claim).'), []);
+  assert.deepStrictEqual(paraphrasedClaimNumbers('- AUTO 08:00:00 — Step 2.8: claimed 2554. Reversibility: high.'), [2554]);
+});
+
+test('AC1.1: paraphrasedClaimNumbers does not read a count ("claimed 5 of 7") as a record number (#3012)', () => {
+  assert.deepStrictEqual(paraphrasedClaimNumbers('- AUTO 08:00:00 — Step 2.8: claimed 5 of 7 targets. Reversibility: n/a.'), []);
+  assert.deepStrictEqual(paraphrasedClaimNumbers('- AUTO 08:00:00 — Step 2.8: claimed 5 of 7. Reversibility: n/a.'), []);
+  assert.deepStrictEqual(paraphrasedClaimNumbers('- AUTO 08:00:00 — Step 2.8: claimed #5 for this run. Reversibility: n/a.'), [5]);
+});

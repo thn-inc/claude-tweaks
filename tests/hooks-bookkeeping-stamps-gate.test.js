@@ -704,6 +704,36 @@ test('AC1.1 (#3012): a paraphrased Step 1 line satisfies the #989 exemption prec
   assert.deepStrictEqual(out, {}, 'a paraphrased Step 1 line naming this branch must satisfy the precondition');
 });
 
+test('AC1.1: hasPrEarlyStep1LineFor accepts "found no PR" and "reopening", skips a FAILED line for another branch, and tolerates CRLF (#3012)', () => {
+  const B = 'worktree-dispatch-record-3012';
+  assert.strictEqual(pre.hasPrEarlyStep1LineFor(`- AUTO 09:00:00 — PR-early run lifecycle: found no PR for ${B}; creating. Reversibility: n/a.`, B), true);
+  assert.strictEqual(pre.hasPrEarlyStep1LineFor(`- AUTO 09:00:00 — PR-early run lifecycle: reopening closed PR #42 for ${B}. Reversibility: high.`, B), true);
+  const failedOther = '- AUTO 09:00:00 — PR-early run lifecycle: push of other-branch to origin FAILED (network). Reversibility: n/a.';
+  const own = `- AUTO 09:00:01 — PR-early run lifecycle: no existing PR found for ${B}, creating. Reversibility: n/a.`;
+  assert.strictEqual(pre.hasPrEarlyStep1LineFor([failedOther, own].join('\r\n'), B), true, "a FAILED line for another branch must not veto this branch's own Step 1 line, and CRLF must not hide it");
+  assert.strictEqual(pre.hasPrEarlyStep1LineFor([failedOther, own.replace(', creating', ' FAILED, creating')].join('\r\n'), B), false);
+});
+
+test('AC1.1 (#3012): a push-only PR-early line (Step 2, no Step 1 outcome) does NOT satisfy the #989 exemption precondition -> deny naming Step 1', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, wt, undefined);
+  const branch = execFileSync('git', ['-C', wt, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(
+    path.join(run, 'decisions.md'),
+    `## /build\n- AUTO 03:50:57 — PR-early run lifecycle Step 2 (push): pushed ${branch} to origin and opened draft PR #2393. Reversibility: high.\n`,
+  );
+  const out = pre.run(
+    { input: bashInput(`git push origin ${branch}`, wt), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { resolveIntegrationModel: () => 'pr-first' },
+  );
+  assert.ok(out.json, "expected a deny -- the line records the push, not Step 1's outcome");
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /Step 1/);
+});
+
 test('bookkeeping-stamps gate (#1860): a worktree branch created via `-b {branch} origin/main` (worktree.baseRef: fresh\'s own form) inherits tracking to origin/main before any push -> still allow the first publish push', () => {
   const main = gitRepo();
   // Give `main` a real self-remote so `origin/main` exists as an actual

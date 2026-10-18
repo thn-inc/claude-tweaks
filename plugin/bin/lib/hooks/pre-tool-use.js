@@ -1213,7 +1213,8 @@ function hasLoggedPrDegrade(runDir) {
 // exemption let the push through anyway, and it collided with a leftover PR
 // Step 1 would have found and reused/reopened. Step 1 always logs one of
 // three outcome lines before Step 2's push (no-match / reuse-open / reopen —
-// pr-early-run-lifecycle.md's Step 1) — this reads decisions.md for any of
+// pr-early-run-lifecycle.md's Step 1; since #3012 a paraphrase of one of them
+// counts too, see below) — this reads decisions.md for any of
 // them, scoped to THIS branch so a Step 1 line from a *previous* attempt
 // (decisions.md is reused across retries on the same branch name) can't
 // satisfy a fresh attempt's precondition. Read-only, best-effort: a missing
