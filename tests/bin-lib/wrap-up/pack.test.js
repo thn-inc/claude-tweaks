@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 
 const {
-  gatherPack, resolveInputs, PROBE_NAMES, resolveRecords, headerRecords,
+  gatherPack, resolveInputs, PROBE_NAMES, resolveRecords, headerRecords, closingRecords,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
 
 // A fixture run dir: run-state.json (pr + worktree), one materialized header, config.yml.
@@ -1027,4 +1027,93 @@ test('gatherPack: state probe refuses to run with an unresolved merge-base rathe
   assert.strictEqual(pack.state.ok, false);
   assert.match(pack.state.error, /base unresolved/);
   assert.strictEqual(calls.length, 0);
+});
+
+// ---- #3399: closingRecords + parkedAtShaping ---------------------------------
+
+// A worktree-mirror run dir (the real pr-first shape) whose 1930 header text is
+// caller-supplied, so a frontmatter flag can be placed in or out of the block.
+function mirrorWithHeader(headerText) {
+  const { tree, runDir } = mirrorFixture();
+  fs.writeFileSync(path.join(tree, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-1930', 'work', '1930-spec.md'), headerText);
+  return runDir;
+}
+
+test('AC1.1: a pack built from a manifest-only parent run dir has inputs.records non-empty and inputs.closingRecords empty', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-closing-manifest-'));
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree' }));
+  fs.writeFileSync(path.join(dir, 'manifest.yml'), [
+    'multispec:', '  parent: 1904', '  specs:',
+    '    - id: 1930', '      status: complete', '      subdir: spec-1930',
+    '    - id: 1931', '      status: pending', '      subdir: spec-1931',
+    '',
+  ].join('\n'));
+  fs.mkdirSync(path.join(dir, 'spec-1932', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'spec-1932', 'work', '1932-spec.md'), '---\nrecord: 1932\n---\n');
+  const inputs = resolveInputs({ runDir: dir, cwd: '/w/tree', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [1930, 1931, 1932]);
+  assert.strictEqual(inputs.sources.records, 'manifest');
+  assert.deepStrictEqual(inputs.closingRecords, []);
+  assert.deepStrictEqual(inputs.parkedAtShaping, {});
+});
+
+test('AC1.2: a header-resolved pack has inputs.closingRecords equal to inputs.records (rung a and rung b)', () => {
+  const own = resolveInputs({ runDir: fixtureRunDir(), cwd: '/w/tree', deps: okDeps() });
+  assert.strictEqual(own.sources.records, 'headers');
+  assert.deepStrictEqual(own.closingRecords, own.records);
+  assert.deepStrictEqual(own.closingRecords, [1535]);
+  const { runDir } = mirrorFixture();
+  const mirrored = resolveInputs({ runDir, cwd: '/nowhere', deps: okDeps() });
+  assert.strictEqual(mirrored.sources.records, 'worktree-headers');
+  assert.deepStrictEqual(mirrored.closingRecords, [1930]);
+});
+
+test('closingRecords keeps records only for the two header rungs (Ruling R1, decided once)', () => {
+  for (const source of ['headers', 'worktree-headers']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), [7, 8]);
+  for (const source of ['manifest', 'worktree-manifest', 'unavailable']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), []);
+});
+
+test('#3399: a worktree-manifest rung yields an empty closing set', () => {
+  // The #2391 fixture shape: spec-2283/spec-2338 headers exist only in the worktree mirror.
+  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-closing-wm-main-'));
+  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-closing-wm-tree-'));
+  const rel = path.join('.claude-tweaks', 'pipelines', '2026-09-14T000308-record-2283-2338');
+  const runDir = path.join(main, rel);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: tree, status: 'active', pr: { number: 1901 } }));
+  for (const n of [2283, 2338]) {
+    fs.mkdirSync(path.join(tree, rel, `spec-${n}`, 'work'), { recursive: true });
+    fs.writeFileSync(path.join(tree, rel, `spec-${n}`, 'work', `${n}-spec.md`), `---\nrecord: ${n}\n---\n`);
+  }
+  const inputs = resolveInputs({ runDir, cwd: tree, deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [2283, 2338]);
+  assert.strictEqual(inputs.sources.records, 'worktree-manifest');
+  assert.deepStrictEqual(inputs.closingRecords, []);
+  assert.deepStrictEqual(inputs.parkedAtShaping, {});
+});
+
+test('#3399: parkedAtShaping reads each closing record\'s frontmatter flag, keyed by record number through JSON', () => {
+  const runDir = mirrorWithHeader('---\nrecord: 1930\nparked-at-shaping: true\n---\n# 1930\n');
+  const round = JSON.parse(JSON.stringify(resolveInputs({ runDir, cwd: '/nowhere', deps: okDeps() })));
+  assert.strictEqual(round.parkedAtShaping['1930'], true);
+  const plain = resolveInputs({ runDir: fixtureRunDir(), cwd: '/w/tree', deps: okDeps() });
+  assert.deepStrictEqual(plain.parkedAtShaping, { 1535: false });
+});
+
+test('#3399: a parked-at-shaping line in the record body below the frontmatter does not count', () => {
+  const runDir = mirrorWithHeader('---\nrecord: 1930\n---\n# 1930\n\nparked-at-shaping: true\n');
+  const inputs = resolveInputs({ runDir, cwd: '/nowhere', deps: okDeps() });
+  assert.strictEqual(inputs.parkedAtShaping[1930], false);
+});
+
+test('#3399: parkedAtShaping is true for a record when any of its header files carries the flag, one entry per record', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-closing-dup-'));
+  fs.mkdirSync(path.join(dir, 'work'));
+  // The flagged file sorts first (CRLF frontmatter), so a last-file-wins read would lose it; the `record:` line wins over the filename, so 6-spec.md is record 5 too.
+  fs.writeFileSync(path.join(dir, 'work', '5-spec.md'), '---\r\nrecord: 5\r\nparked-at-shaping: true\r\n---\r\n');
+  fs.writeFileSync(path.join(dir, 'work', '6-spec.md'), '---\nrecord: 5\n---\n');
+  const deps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p).sort(); } catch { return []; } } };
+  const res = resolveRecords(deps, dir, null);
+  assert.deepStrictEqual(res.records, [5]);
+  assert.deepStrictEqual(res.parkedAtShaping, { 5: true });
 });

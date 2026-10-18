@@ -391,8 +391,10 @@ test('L13: a file no readable --log line names takes its excerpt from the failin
   assert.ok(!body.includes('another file'), 'the log, which names no file, contributes nothing');
 });
 
-// A crashed file's stderr whose nearest boundary above is `boundary` — after
-// another file's closed failure block, so its own `...` is the fallback boundary.
+// A crashed file's stderr whose nearest boundary above is `boundary`, placed
+// after another file's closed failure block. The tests that follow this loop
+// cover the case with no such line, where the block's own YAML terminator is
+// the boundary.
 const crashAfter = (boundary) => [
   winBlock(70, 'an earlier failure in another file', 'tests/apply-refine-labels.test.js', 'detail-for-other-file'),
   boundary,
@@ -412,6 +414,77 @@ for (const [name, boundary] of [['an `ok N` line', 'ok 83 - a passing test'], ['
     assert.ok(!body.includes('detail-for-other-file'));
   });
 }
+
+test("L21: a crashed file's non-comment stderr directly after another file's closed failure block opens on the first stderr line", () => {
+  const log = [
+    winBlock(70, 'an earlier failure in another file', 'tests/apply-refine-labels.test.js', 'detail-for-other-file'),
+    'Error: crashed at load',
+    '    at parse (D:\\\\a\\\\repo\\\\repo\\\\tests\\\\argument-hint-mirrors.test.js:51:29)',
+    'not ok 11 - tests\\\\argument-hint-mirrors.test.js',
+  ].join('\n');
+  const deps = fakeDeps({ ...adjudicated('tests/argument-hint-mirrors.test.js'), checks: { tests: { failingRegion: log } } });
+  assert.equal(run(argv(), deps), 1);
+  const body = created(deps).input;
+  assert.match(body, /\n```\nError: crashed at load\n/, 'the fence opens on the first stderr line');
+  assert.ok(!body.includes('an earlier failure in another file'), "the other test's name is not in the excerpt");
+  assert.ok(!body.includes('detail-for-other-file'));
+});
+
+test("L21: a crashed file's non-comment stderr line, followed by `#` stderr naming the file, still opens on that first stderr line", () => {
+  const log = [
+    winBlock(70, 'an earlier failure in another file', 'tests/apply-refine-labels.test.js', 'detail-for-other-file'),
+    'Error: crashed at load',
+    '# node:internal/test_runner/harness:99',
+    '#     at parse (D:\\\\a\\\\repo\\\\repo\\\\tests\\\\argument-hint-mirrors.test.js:51:29)',
+    'not ok 11 - tests\\\\argument-hint-mirrors.test.js',
+  ].join('\n');
+  const deps = fakeDeps({ ...adjudicated('tests/argument-hint-mirrors.test.js'), checks: { tests: { failingRegion: log } } });
+  assert.equal(run(argv(), deps), 1);
+  const body = created(deps).input;
+  assert.match(body, /\n```\nError: crashed at load\n/, 'the fence opens on the un-prefixed Error: line, not on the # line below it');
+  assert.ok(!body.includes('an earlier failure in another file'), "the other test's name is not in the excerpt");
+  assert.ok(!body.includes('detail-for-other-file'));
+});
+
+test("F1: the first line naming the file in a block's stack: key opens at that block's not-ok, not at a not-ok quoted in its error: text", () => {
+  const log = [
+    'ok 1 - fine',
+    'not ok 2 - the real parent',
+    '  ---',
+    '  duration_ms: 1.2',
+    "  failureType: 'testCodeFailure'",
+    '  error: |-',
+    '    child output follows:',
+    '    not ok 1 - quoted child failure',
+    '  stack: |-',
+    '    at run (D:\\\\a\\\\repo\\\\tests\\\\a.test.js:5:1)',
+    '  ...',
+    'ok 3 - next',
+  ].join('\n');
+  const deps = fakeDeps({ ...adjudicated('tests/a.test.js'), checks: { tests: { failingRegion: log } } });
+  assert.equal(run(argv(), deps), 1);
+  const body = created(deps).input;
+  assert.match(body, /\n```\nnot ok 2 - the real parent\n/, 'the fence opens at the real parent');
+  assert.ok(!body.includes('ok 3 - next'));
+});
+
+test("L21: a crash's stderr after another test's not-ok with no YAML block opens at the stderr, not at that not-ok", () => {
+  const log = [
+    'ok 1 - fine',
+    'not ok 2 - other test without a yaml block',
+    '  plain-body-of-other-test',
+    '# node:internal/test_runner/harness:99',
+    '# Error: crashed at load',
+    '#     at parse (D:\\\\a\\\\repo\\\\repo\\\\tests\\\\argument-hint-mirrors.test.js:51:29)',
+    'not ok 3 - tests\\\\argument-hint-mirrors.test.js',
+  ].join('\n');
+  const deps = fakeDeps({ ...adjudicated('tests/argument-hint-mirrors.test.js'), checks: { tests: { failingRegion: log } } });
+  assert.equal(run(argv(), deps), 1);
+  const body = created(deps).input;
+  assert.match(body, /\n```\n# node:internal\/test_runner\/harness:99\n# Error: crashed at load\n/, 'the fence opens on the first stderr line');
+  assert.ok(!body.includes('other test without a yaml block'));
+  assert.ok(!body.includes('plain-body-of-other-test'));
+});
 
 test('unreadable report on main exits 1 and files a "no verify report" issue naming the commit and run', () => {
   for (const report of ['null', '[]', '3', undefined]) {

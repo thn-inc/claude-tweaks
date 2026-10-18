@@ -1152,7 +1152,7 @@ test('#3365: a parent run dir with only a manifest does not treat manifest ids a
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [900] });
   // Precondition: this fixture must actually reach the manifest rung of
   // resolveRecords — otherwise the assertion below would pass regardless of
-  // whether resolvedIssueNumbers' HEADER_SOURCES filter is even present
+  // whether resolvedIssueNumbers' closingRecords call is even present
   // (a manifest with no `parent:` line fails to parse and resolveRecords
   // never gets past 'unavailable', making the whole test non-discriminating).
   const precondition = resolveRecords(

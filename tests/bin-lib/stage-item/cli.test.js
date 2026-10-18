@@ -183,3 +183,31 @@ test('cli: --help prints usage and exits 0 without touching the filesystem', () 
   assert.equal(code, 0);
   assert.match(out.join(''), /usage: stage-item\.js/);
 });
+
+test('cli: --id review-13-record (.md file) warns naming the unmapped prefix and nearest canonical prefixes; exit 0, file still written (#3370)', () => {
+  const { main, runDir } = fixture();
+  const md = path.join(path.dirname(main), 'proposal.md');
+  fs.writeFileSync(md, 'a finding\n');
+  const { deps, out, err } = fakeDeps(main);
+  const code = run(['--run', runDir, '--id', 'review-13-record', '--file', md], deps);
+  assert.equal(code, 0);
+  assert.ok(fs.existsSync(path.join(fs.realpathSync(runDir), 'staged', 'review-13-record.md')));
+  assert.equal(out.length, 1);
+  const stderr = err.join('');
+  assert.match(stderr, /--id review-13-record matches no Review Console SECTION_MAP prefix/);
+  assert.match(stderr, /Nearest canonical prefixes: .*review-/);
+  // F3: conditional on a wrap-up console — not every producer's run reaches one.
+  assert.match(stderr, / — if a wrap-up Review Console resolves this run, it routes this item to Pending review \(unmapped-prefix\), never auto-resolved\. /);
+});
+
+test('cli: a canonical id prints nothing to stderr (#3370)', () => {
+  const { main, runDir, sourceFile } = fixture();
+  const md = path.join(path.dirname(main), 'proposal.md');
+  fs.writeFileSync(md, 'a suggestion\n');
+  const a = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--id', 'polish-suggestion-1', '--file', md], a.deps), 0);
+  assert.equal(a.err.join(''), '');
+  const b = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--id', 'review-2', '--file', sourceFile], b.deps), 0);
+  assert.equal(b.err.join(''), '');
+});

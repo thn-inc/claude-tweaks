@@ -5,7 +5,7 @@
 // Label/marker/type assembly delegates to recordPayload (bin/lib/issues/record.js) — the
 // shared work-record taxonomy (skills/_shared/work-record.md): origin by:journey-health,
 // colon-form risk:*/size:medium scoring, born-ready, Type bug|task, work-fingerprint marker.
-const { recordPayload, specShapedBody } = require('../issues/record');
+const { recordPayload, specShapedBody, isRepoRelativeKeyFilePath } = require('../issues/record');
 const { buildRelatedBlocks } = require('../issues/related-blocks');
 
 const CATEGORY_LABELS = { drift: 'drift', coverage: 'coverage', 'regression-suspected': 'regression' };
@@ -40,12 +40,21 @@ function toIssuePayload(finding, verifiedAsOf) {
     ? `Fixed a broken user journey: ${finding.journey}.`
     : 'No user-visible change — journey documentation/coverage maintenance.';
 
+  const journeyDocPath = `docs/journeys/${finding.journey}.md`;
+
   const body = specShapedBody({
     header: `**Journey:** ${finding.journey} | **Section:** ${finding.section} | **Category:** ${finding.category} | **Severity:** ${finding.severity} | **Confidence:** ${finding.confidence}`,
     currentState: [...relatedBlocks, finding.description, finding.reason],
     deliverables: finding.recommendation,
     acceptanceCriteria: `The condition described above is resolved: a fresh \`/claude-tweaks:journey-health\` audit of journey '${finding.journey}' files no finding with this fingerprint.`,
     releaseNote,
+    // keyFiles (#2975): the journey document (the path scope.js's listJourneys
+    // reads) renders under `### Key Files` (/build's micro-plan condition 3).
+    // finding.journey is LLM-supplied, so a malformed one omits the section
+    // rather than aborting the sweep run.
+    keyFiles: isRepoRelativeKeyFilePath(journeyDocPath)
+      ? [{ path: journeyDocPath, change: 'fix the journey document' }]
+      : undefined,
     filedBy: '/claude-tweaks:journey-health',
     verifiedAsOf,
   });

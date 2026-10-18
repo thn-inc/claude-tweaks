@@ -46,6 +46,8 @@ stories:
     steps:
       - action: click
         locator: { role: button, name: "Add to cart" }
+      - action: navigate
+        target: "/checkout"
       - action: fill
         locator: { testid: "email-input" }
         value: "user@example.com"
@@ -55,13 +57,15 @@ stories:
 
 Locators are always semantic (one of: ARIA role, `data-testid`, visible text, form label, input placeholder) — never CSS, XPath, or `@eN`/ref values stored directly. At runtime, a locator and its step's action execute as a **two-step** sequence: `snapshot` first to resolve the locator to an `eN` ref, then a separate `click <eN>`/`fill <eN> "<text>"` (Playwright CLI's `find` is read-only and text-only, so it cannot resolve role/testid/css locators or perform an action in one call — it is never used as an existence probe or an action). Refs are NEVER stored in the YAML — they regenerate each snapshot. See `playwright-cli-reference.md` in the `/claude-tweaks:browse` skill directory for the full operation vocabulary.
 
+A `navigate` step takes no locator; its URL goes in the `target` field (the canonical name, as in `story-examples.md`). Older stories that wrote the URL in `value` are still read as a fallback when `target` is absent.
+
 An optional per-step field, `caption: "<one line>"`, exists purely for `/claude-tweaks:walkthrough` — a one-line human-readable description shown beside that step's frame in a generated GIF's caption list. It is expand-only (no existing story's meaning changes) and is never read by QA execution: `qa-agent.md`'s step mapping does not reference it.
 
 See locator types and preference order in `story-examples.md`.
 
 A file may also carry file-level blocks alongside `stories`: `setup` (viewport, shared auth, pre-steps), `teardown` (post-run steps), and `target_env` (the Target Environment Guard's recorded classification — see Step 2). Complete worked examples of every block live in `story-examples.md`; this schema section is canonical for field semantics and is not restated elsewhere in this file.
 
-**The `url:` field.** Prefer a root-relative path (e.g. `/dashboard`) joined to the resolved dev-server `APP_URL` at dispatch time (`_shared/dev-url-detection.md`) — this is the convention that survives worktree isolation, since `APP_URL` is re-resolved per worktree run while a pinned absolute origin is not. An absolute origin (scheme+host+port), if present, is not followed literally: `qa-prompts.md`'s dispatch step rewrites its origin to `APP_URL`'s own origin whenever the two differ, preserving path/query/fragment — a story targeting the app under test on `http://127.0.0.1:9999/dashboard` still navigates to whatever port this run's `APP_URL` actually resolved to, never the pinned one. The one case an absolute origin is genuinely appropriate is a story that deliberately exercises a different host on purpose (e.g. a public site, as in Example 1 of `story-examples.md`) — that rewrite has no way to distinguish that intent from a stale pinned origin, so it is a known limitation, not a bug: a story with real cross-host intent should say so in its `description`.
+**The `url:` field.** Prefer a root-relative path (e.g. `/dashboard`) joined to the resolved dev-server `APP_URL` at dispatch time (`_shared/dev-url-detection.md`) — this is the convention that survives worktree isolation, since `APP_URL` is re-resolved per worktree run while a pinned absolute origin is not. An absolute origin (scheme+host+port), if present, is not followed literally: `qa-prompts.md`'s dispatch step rewrites its origin to `APP_URL`'s own origin whenever the two differ, preserving path/query/fragment — a story targeting the app under test on `http://127.0.0.1:9999/dashboard` still navigates to whatever port this run's `APP_URL` actually resolved to, never the pinned one. The one case an absolute origin is genuinely appropriate is a story that deliberately exercises a different host on purpose (e.g. a public site, as in Example 1 of `story-examples.md`) — that rewrite has no way to distinguish that intent from a stale pinned origin, so it is a known limitation, not a bug: a story with real cross-host intent should say so in its `description`. The same rule covers `navigate` steps: an absolute origin inside a `navigate` step that equals the story's own origin is rewritten to `APP_URL`'s origin the same way; any other loopback origin is flagged, and on a worktree run the story is skipped as `unresolved-secondary-origin` — see `qa-prompts.md`'s dispatch step. Prefer root-relative `target`s.
 
 ## Auth Vault
 
