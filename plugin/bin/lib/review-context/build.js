@@ -39,8 +39,9 @@ function resolveDir({ dir, run, tmpdir = os.tmpdir(), mkdtemp = fs.mkdtempSync, 
 }
 
 // A file's content is inlined in its section only up to this many bytes (#3020); larger
-// files get a one-line stub section, and an added/deleted file's oversize diff chunk is
-// elided the same way. Both are reported in `oversizeSections`.
+// files get a one-line stub section, an added/deleted file's oversize diff chunk is elided
+// the same way, and an always-stub file's diff chunk is elided whatever its change type. All
+// are reported in `oversizeSections`.
 const PER_FILE_CAP_BYTES = 64 * 1024;
 
 // Generated files whose content is never worth inlining, matched on basename.
@@ -71,14 +72,18 @@ function diffHeaderPath(line) {
   return s === `a/${p} b/${p}` ? p : null;
 }
 
-// Replace the hunk of each added or deleted file whose chunk is over the per-file cap, or
-// that is always-stub, with one marker line. A modified file's hunks are never touched —
-// they are the review's subject. Splitting on `diff --git` headers (which only ever start a
-// line outside a hunk, since hunk lines begin with `+`, `-` or a space) rejoins losslessly.
+// Replace the diff chunk of each always-stub file (any change type) and of each added or
+// deleted file over the per-file cap with one marker line. A modified non-always-stub file's
+// hunks are never touched — they are the review's subject. Chunks split only at a `diff --git `
+// header that follows a line feed: hunk lines begin with `+`, `-` or a space, so a header never
+// starts a line inside a hunk, and a CR inside a hunk line (which a multiline `^` would treat as
+// a line start) is not a break. The split is lossless — rejoining the chunks reproduces the input.
+// `elided` lists every elided path; `deleted` the subset whose chunk was a deletion.
 function elideDiff(diff) {
   const elided = [];
+  const deleted = [];
   const text = diff
-    .split(/^(?=diff --git )/m)
+    .split(/(?<=\n)(?=diff --git )/)
     .map((chunk) => {
       if (!chunk.startsWith('diff --git ')) return chunk;
       const nl = chunk.indexOf('\n');
@@ -88,15 +93,17 @@ function elideDiff(diff) {
       // Extended header = the lines before the first hunk / file-marker / binary line.
       const bodyAt = afterHeader.search(/^(@@|---|Binary files|GIT binary patch)/m);
       const extended = bodyAt === -1 ? afterHeader : afterHeader.slice(0, bodyAt);
-      if (!/^(new|deleted) file mode /m.test(extended)) return chunk;
+      // Renames and copies (non-symmetric header) and quoted paths come back null: kept whole.
       const file = diffHeaderPath(headerLine);
       if (file === null) return chunk;
-      if (Buffer.byteLength(chunk) <= PER_FILE_CAP_BYTES && !isAlwaysStub(file)) return chunk;
+      const addedOrDeleted = /^(new|deleted) file mode /m.test(extended);
+      if (!isAlwaysStub(file) && !(addedOrDeleted && Buffer.byteLength(chunk) > PER_FILE_CAP_BYTES)) return chunk;
       elided.push(file);
+      if (/^deleted file mode /m.test(extended)) deleted.push(file);
       return `${headerLine}\n[${Buffer.byteLength(afterHeader)} bytes of diff elided for ${file} — see oversizeSections]\n`;
     })
     .join('');
-  return { text, elided };
+  return { text, elided, deleted };
 }
 
 // Bundle shape (unchanged from the shell recipe it replaces): the full diff first, then a
@@ -104,10 +111,11 @@ function elideDiff(diff) {
 // A section can legitimately come out empty — a deleted file, or an unreadable path — and
 // that degrades safely rather than silently: the full diff at the top still carries that
 // file's change, and the section is reported in `emptySections`. An oversize or always-stub
-// file's section is a one-line stub and an oversize added/deleted file's diff chunk is a
-// one-line marker; both degrade the same way (the live file / the diff still carries the
-// change) and are reported in `oversizeSections`. A modified file's hunks stay whole, so the
-// bundle as a whole is not strictly bounded.
+// file's section is a one-line stub, and an always-stub file's or an oversize added/deleted
+// file's diff chunk is a one-line marker; both are reported in `oversizeSections`. A stub
+// points at wherever the content still lives: the diff above (hunk kept), the live file (hunk
+// elided too), or `git show {base}:{path}` (deleted). A modified non-always-stub file's hunks
+// stay whole, so the bundle as a whole is not strictly bounded.
 function buildContext({
   base,
   branch,
@@ -120,9 +128,23 @@ function buildContext({
   if (!base || !branch) throw new Error('buildContext: base and branch are both required');
   if (!dir) throw new Error('buildContext: dir is required (resolve it via resolveDir first)');
   const range = `${base}...${branch}`;
-  const diff = git(['diff', range]);
+  // core.quotePath=false keeps non-ASCII names unquoted in headers and --name-only alike, and the
+  // explicit flags pin the `a/`/`b/` header form against diff.noprefix / diff.mnemonicPrefix /
+  // external-diff config — elideDiff's header parsing depends on it.
+  const diff = git([
+    '-c',
+    'core.quotePath=false',
+    'diff',
+    '--no-color',
+    '--no-ext-diff',
+    '--src-prefix=a/',
+    '--dst-prefix=b/',
+    range,
+  ]);
 
-  const filesText = filesFrom ? readFile(filesFrom, 'utf8') : git(['diff', range, '--name-only']);
+  const filesText = filesFrom
+    ? readFile(filesFrom, 'utf8')
+    : git(['-c', 'core.quotePath=false', 'diff', range, '--name-only']);
   const files = filesText
     .split('\n')
     .map((s) => s.trim())
@@ -140,7 +162,16 @@ function buildContext({
 
   const emptySections = [];
   const oversize = new Set();
-  const { text: diffText, elided } = elideDiff(diff);
+  const { text: diffText, elided, deleted } = elideDiff(diff);
+  const elidedSet = new Set(elided);
+  const deletedSet = new Set(deleted);
+  // The pointer a stub gives for the file's content, by what is still true of it.
+  const whereToLook = (f) =>
+    deletedSet.has(f)
+      ? `the file is deleted and its diff was elided (see the marker line above) — run \`git show ${base}:${f}\` for its last content`
+      : elidedSet.has(f)
+        ? 'its diff was elided too (see the marker line above) — read the live file for full content'
+        : 'its change is in the diff above — read the live file for full content';
   let out = diffText;
   for (const f of files) {
     out += `\n===== ${f} =====\n`;
@@ -148,7 +179,7 @@ function buildContext({
     // (oversizeSections) rather than empty (emptySections), and a stubbed file is never read.
     if (isAlwaysStub(f)) {
       oversize.add(f);
-      out += `[section omitted: ${f} — always stubbed (lockfile or .jsonl); its change is in the diff above — read the live file for full content]\n`;
+      out += `[section omitted: ${f} — always stubbed (lockfile or .jsonl); ${whereToLook(f)}]\n`;
       continue;
     }
     let content = '';
@@ -161,7 +192,7 @@ function buildContext({
     const bytes = Buffer.byteLength(content);
     if (bytes > PER_FILE_CAP_BYTES) {
       oversize.add(f);
-      out += `[section omitted: ${f} is ${bytes} bytes, over the ${PER_FILE_CAP_BYTES}-byte per-file cap; its change is in the diff above — read the live file for full content]\n`;
+      out += `[section omitted: ${f} is ${bytes} bytes, over the ${PER_FILE_CAP_BYTES}-byte per-file cap; ${whereToLook(f)}]\n`;
     } else {
       out += content;
     }
@@ -175,4 +206,4 @@ function buildContext({
   return { dir, contextPath, bytes: Buffer.byteLength(out), files: files.length, emptySections, oversizeSections };
 }
 
-module.exports = { resolveDir, buildContext, MAX_BUFFER, PER_FILE_CAP_BYTES, isAlwaysStub };
+module.exports = { resolveDir, buildContext, MAX_BUFFER, PER_FILE_CAP_BYTES, isAlwaysStub, elideDiff };

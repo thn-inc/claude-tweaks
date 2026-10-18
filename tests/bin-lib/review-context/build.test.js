@@ -10,6 +10,7 @@ const {
   buildContext,
   PER_FILE_CAP_BYTES,
   isAlwaysStub,
+  elideDiff,
 } = require('../../../plugin/bin/lib/review-context/build');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'build-review-context.js');
@@ -204,8 +205,16 @@ function makeOversizeFixtureRepo() {
   return repo;
 }
 
+// Built once and shared: every test reading it is read-only on the repo (each builds its own
+// output dir), and the real-git build is the slow part.
+let oversizeRepo;
+function getOversizeRepo() {
+  if (!oversizeRepo) oversizeRepo = makeOversizeFixtureRepo();
+  return oversizeRepo;
+}
+
 function buildOversize(extra = {}) {
-  const repo = makeOversizeFixtureRepo();
+  const repo = getOversizeRepo();
   const dir = resolveDir({});
   const result = buildContext({ base: 'main', branch: 'feature', dir, ...repoDeps(repo), ...extra });
   const bundle = fs.readFileSync(result.contextPath, 'utf8');
@@ -282,7 +291,7 @@ test('deleted lockfile is stubbed (matcher before read), not empty', () => {
   assert.ok(!diffPart.includes('# yarn lockfile'));
 });
 
-test('a modified lockfile keeps its full hunk (diff elision is added/deleted only)', () => {
+test('a modified lockfile has its diff chunk elided (always-stub applies to every change type) and is listed once', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-modlock-'));
   git(repo, ['init', '-q', '-b', 'main']);
   git(repo, ['config', 'user.email', 'test@example.invalid']);
@@ -296,8 +305,9 @@ test('a modified lockfile keeps its full hunk (diff elision is added/deleted onl
   const dir = resolveDir({});
   const result = buildContext({ base: 'main', branch: 'feature', dir, ...repoDeps(repo) });
   const bundle = fs.readFileSync(result.contextPath, 'utf8');
-  assert.match(bundle, /^\+v2$/m);
-  assert.ok(!bundle.includes('diff elided'));
+  assert.ok(!/^\+v2$/m.test(bundle), 'the lockfile hunk is replaced by the marker');
+  assert.match(bundle, /^\[\d+ bytes of diff elided for yarn\.lock — see oversizeSections\]$/m);
+  assert.match(bundle, /diff --git a\/yarn\.lock b\/yarn\.lock\n\[/);
   assert.deepStrictEqual(result.oversizeSections, ['yarn.lock']);
 });
 
@@ -308,7 +318,7 @@ test('added file with a space in its name is elided and listed once', () => {
 });
 
 test('--files-from scope still reports a diff-elided path outside the list', () => {
-  const repo = makeOversizeFixtureRepo();
+  const repo = getOversizeRepo();
   const dir = resolveDir({});
   const listPath = path.join(dir, 'own-work.txt');
   fs.writeFileSync(listPath, 'exact.txt\n');
@@ -316,6 +326,123 @@ test('--files-from scope still reports a diff-elided path outside the list', () 
   assert.ok(result.oversizeSections.includes('big-added.txt'));
   assert.ok(!result.oversizeSections.includes('exact.txt'));
   assert.strictEqual(result.oversizeSections.filter((p) => p === 'big-added.txt').length, 1);
+});
+
+// A tiny repo whose feature branch adds one over-cap file named `name`; `config` pairs are
+// applied to the repo before the commits.
+function makeAddedOversizeRepo(name, config = []) {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-added-'));
+  git(repo, ['init', '-q', '-b', 'main']);
+  git(repo, ['config', 'user.email', 'test@example.invalid']);
+  git(repo, ['config', 'user.name', 'Test']);
+  for (const [k, v] of config) git(repo, ['config', k, v]);
+  fs.writeFileSync(path.join(repo, 'seed.txt'), 'seed\n');
+  git(repo, ['add', '.']);
+  git(repo, ['commit', '-q', '-m', 'base']);
+  git(repo, ['checkout', '-q', '-b', 'feature']);
+  fs.writeFileSync(path.join(repo, name), `${'n'.repeat(PER_FILE_CAP_BYTES)}\n`);
+  git(repo, ['add', '-A']);
+  git(repo, ['commit', '-q', '-m', 'feature work']);
+  return repo;
+}
+
+test('F2: diff.noprefix=true in the repo config does not defeat header parsing — added over-cap file is elided and listed once', () => {
+  const repo = makeAddedOversizeRepo('noprefix-big.txt', [['diff.noprefix', 'true']]);
+  const dir = resolveDir({});
+  const result = buildContext({ base: 'main', branch: 'feature', dir, ...repoDeps(repo) });
+  const bundle = fs.readFileSync(result.contextPath, 'utf8');
+  assert.match(bundle, /^\[\d+ bytes of diff elided for noprefix-big\.txt — see oversizeSections\]$/m);
+  assert.ok(!bundle.slice(0, bundle.indexOf('\n===== ')).includes('n'.repeat(1000)), 'diff part holds no added content');
+  assert.strictEqual(result.oversizeSections.filter((p) => p === 'noprefix-big.txt').length, 1);
+});
+
+test('F2: a non-ASCII added over-cap name is elided, stubbed, listed once under the unquoted name, and not empty', () => {
+  const repo = makeAddedOversizeRepo('café.txt');
+  const dir = resolveDir({});
+  const result = buildContext({ base: 'main', branch: 'feature', dir, ...repoDeps(repo) });
+  const bundle = fs.readFileSync(result.contextPath, 'utf8');
+  const diffPart = bundle.slice(0, bundle.indexOf('\n===== '));
+  assert.match(diffPart, /^\[\d+ bytes of diff elided for café\.txt — see oversizeSections\]$/m);
+  assert.ok(!diffPart.includes('n'.repeat(1000)));
+  assert.ok(sectionOf(bundle, 'café.txt').startsWith('[section omitted: café.txt is '));
+  assert.deepStrictEqual(result.oversizeSections, ['café.txt']);
+  assert.ok(!result.emptySections.includes('café.txt'));
+  assert.deepStrictEqual(result.emptySections, []);
+});
+
+test('F2: the git calls carry core.quotePath=false and explicit diff prefixes', () => {
+  const calls = [];
+  buildContext({
+    base: 'main',
+    branch: 'feature',
+    dir: resolveDir({}),
+    git: (args) => {
+      calls.push(args);
+      return args.includes('--name-only') ? '' : args.includes('rev-parse') ? '/x\n' : '';
+    },
+    readFile: () => '',
+  });
+  const diffCall = calls.find((a) => a.includes('diff') && !a.includes('--name-only'));
+  assert.deepStrictEqual(diffCall, [
+    '-c',
+    'core.quotePath=false',
+    'diff',
+    '--no-color',
+    '--no-ext-diff',
+    '--src-prefix=a/',
+    '--dst-prefix=b/',
+    'main...feature',
+  ]);
+  const namesCall = calls.find((a) => a.includes('--name-only'));
+  assert.deepStrictEqual(namesCall, ['-c', 'core.quotePath=false', 'diff', 'main...feature', '--name-only']);
+});
+
+test('F3: elideDiff splits only after a line feed — a CR inside a hunk line never starts a chunk', () => {
+  const diff =
+    'diff --git a/a.txt b/a.txt\n' +
+    'index 1111111..2222222 100644\n' +
+    '--- a/a.txt\n' +
+    '+++ b/a.txt\n' +
+    '@@ -1 +1,3 @@\n' +
+    ' ctx\n' +
+    '+x\rdiff --git a/z.jsonl b/z.jsonl\rnew file mode 100644\n' +
+    '+y\rdiff --git a/w.jsonl b/w.jsonl\n' +
+    '+z\rnew file mode 100644\n';
+  const { text, elided } = elideDiff(diff);
+  assert.ok(!elided.includes('z.jsonl'));
+  assert.ok(!elided.includes('w.jsonl'));
+  assert.deepStrictEqual(elided, []);
+  assert.strictEqual(text, diff, 'a modified file with no always-stub name rejoins byte-for-byte');
+});
+
+test('F3: elideDiff keeps a diff that begins with a header intact and rejoins losslessly', () => {
+  const diff =
+    'diff --git a/a.txt b/a.txt\nindex 1..2 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+b\n' +
+    'diff --git a/c.txt b/c.txt\nindex 3..4 100644\n--- a/c.txt\n+++ b/c.txt\n@@ -1 +1 @@\n-c\n+d\n';
+  const { text, elided } = elideDiff(diff);
+  assert.strictEqual(text, diff);
+  assert.deepStrictEqual(elided, []);
+});
+
+test('F4: stub text says what is true for each stubbed path', () => {
+  const { bundle } = buildOversize();
+  // Modified over-cap file: its hunk was NOT elided, so the diff above carries the change.
+  assert.strictEqual(
+    sectionOf(bundle, 'big-modified.txt'),
+    '[section omitted: big-modified.txt is 65537 bytes, over the 65536-byte per-file cap; its change is in the diff above — read the live file for full content]\n',
+  );
+  // Added over-cap file: its diff chunk WAS elided too.
+  const added = sectionOf(bundle, 'big-added.txt');
+  assert.ok(added.startsWith('[section omitted: big-added.txt is '), added);
+  assert.match(added, /its diff was elided too \(see the marker line above\) — read the live file for full content\]\n$/);
+  assert.ok(!added.includes('change is in the diff above'));
+  // Deleted lockfile: nothing live to read — point at the base ref.
+  const deleted = sectionOf(bundle, 'yarn.lock');
+  assert.ok(deleted.startsWith('[section omitted: yarn.lock — always stubbed'), deleted);
+  assert.ok(deleted.includes('`git show main:yarn.lock`'), deleted);
+  assert.ok(!deleted.includes('read the live file'));
+  assert.ok(!deleted.includes('change is in the diff above'));
+  for (const s of [added, deleted]) assert.strictEqual(lineCount(s), 1, 'stub stays one line');
 });
 
 test('isAlwaysStub: named lockfiles and .jsonl match on basename; near-misses do not', () => {

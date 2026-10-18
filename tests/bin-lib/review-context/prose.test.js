@@ -10,6 +10,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { PER_FILE_CAP_BYTES } = require('../../../plugin/bin/lib/review-context/build');
+
 const ROOT = path.join(__dirname, '..', '..', '..');
 
 const EFFORT_DERIVATION = fs.readFileSync(
@@ -49,4 +51,11 @@ test('AC7.1-AC7.2: step3-lens-dispatch.md and docs/plugin-structure.md both name
   assert.ok(LENS_DISPATCH.includes('oversizeSections'), 'step3-lens-dispatch.md must name oversizeSections');
   assert.ok(plugStructure.includes('oversizeSections'), 'docs/plugin-structure.md must name oversizeSections');
   assert.match(LENS_DISPATCH, /\{dir, contextPath, bytes, files, emptySections, oversizeSections\}/);
+});
+
+test('F5: step3-lens-dispatch.md names the per-file cap as the build.js constant in KB', () => {
+  assert.ok(
+    LENS_DISPATCH.includes(`${PER_FILE_CAP_BYTES / 1024} KB`),
+    `step3-lens-dispatch.md must name the cap as ${PER_FILE_CAP_BYTES / 1024} KB`,
+  );
 });
