@@ -6,7 +6,7 @@ argument-hint: "[#<n>|<design-doc-path>|<topic>] [subagent|batched] [auto] [work
 
 # Build — Implement a spec end-to-end with worktree, plan audit, and lifecycle tracking
 
-Implement a spec or design doc end-to-end: plan it, build it, simplify it, verify it, and capture the journeys it enables. Part of the workflow lifecycle:
+Implement a spec or design doc end-to-end: plan it, build it, simplify it, capture the journeys it enables, and verify it. Part of the workflow lifecycle:
 
 ```
 /claude-tweaks:init → /claude-tweaks:capture → /superpowers:brainstorming → /claude-tweaks:specify → [ /claude-tweaks:build ] → /claude-tweaks:stories → /claude-tweaks:test → /claude-tweaks:review → /claude-tweaks:wrap-up
@@ -58,6 +58,8 @@ Spec/record mode? ──yes──→ [Spec Steps 1, 2, 2.5 (Manual Steps classif
                 ↓
         [Common Steps 1-7]
 ```
+
+Common Steps run in file order: 6 and 6.5 precede 5, so the final verification covers journeys and synced docs.
 
 ---
 
@@ -228,7 +230,7 @@ If the execution skill (or `/superpowers:writing-plans` in Step 3) fails, read `
 
 ### Common Steps 3 + 4.5: Simplification and Alignment
 
-Common Step 3 (Code Simplification) and Common Step 4.5 (Architecture Alignment Check) operate on independent concerns, but both can independently commit (Step 3's simplifier changes; Step 4.5's Beneficial-classification spec updates) — running them concurrently risks the same shared-worktree git-index race CLAUDE.md's own Don'ts section warns against (a `git add`/`git commit` from one step sweeping in the other's concurrently-staged files). Run them sequentially instead: complete Common Step 3 (including its own commit, if any) before starting Common Step 4.5. Common Step 5 (Final Verification) gates after both are done.
+Common Step 3 (Code Simplification) and Common Step 4.5 (Architecture Alignment Check) operate on independent concerns, but both can independently commit (Step 3's simplifier changes; Step 4.5's Beneficial-classification spec updates) — running them concurrently risks the same shared-worktree git-index race CLAUDE.md's own Don'ts section warns against (a `git add`/`git commit` from one step sweeping in the other's concurrently-staged files). Run them sequentially instead: complete Common Step 3 (including its own commit, if any) before starting Common Step 4.5. Common Steps 6 and 6.5, then Common Step 5 (Final Verification), follow once both are done.
 
 ### Common Step 3: Code Simplification
 
@@ -263,25 +265,9 @@ Architecture-alignment learnings that outlive this project route via `skills/_sh
 
 When a mismatch is an architectural deviation at module level — a boundary in the wrong place, an interface nearly as complex as what it wraps — route it to `/claude-tweaks:deepen` for a dedicated module-depth pass rather than to Common Step 3's `/claude-tweaks:simplify`, whose scope is line-level cleanup.
 
-### Common Step 5: Final Verification
-
-After code simplification, run the shared verification procedure (`skills/test/verification.md`). This runs type checking, linting, and tests using the project's commands from CLAUDE.md.
-
-**Note:** `/build` always runs verification (it is the *producer* of `VERIFICATION_PASSED` and of the runner-written pass stamp, #1921). The skip-if-recent rule in `test/verification.md` applies only to `/test` callers — never to this step. On a pass (runner exit 0 — a baseline-adjudicated pass included), read `VERIFICATION_SHA` from `report.json`'s `sha` and pass it forward with `VERIFICATION_PASSED=true`, so `/test`'s skip-if-recent check can detect a tree change between this step and its own invocation instead of trusting a bare boolean.
-
-If anything fails, fix it and commit the fix. **When a failure is a behavioral bug — not a mechanical type/lint error — follow the reproduce-first discipline in `_shared/reproduce-first-discipline.md` before changing code** (reproduce on command, fix the confirmed cause, escalate rather than guess if it can't be reproduced; once green, walk the causal-depth chain per the discipline's step 3) — see `failure-recovery.md` for the fuller recovery table this step falls back to.
-
-### Common Step 5.5: Operational Checklist
-
-After verification passes, check for operational tasks that are easy to forget — deployment and environment concerns that slip through code review (schema/migration files, env access patterns, IaC, CI/CD, container configs).
-
-If your build's diff matches schema/env/IaC/CI/platform-config files, read `operational-checklist.md` in this skill's directory for the full Category A/B trigger lists, check tables, probe-then-classify procedure, and ledger format. Otherwise skip this step entirely. **On skip**, write a `SKIP` entry per the degrade-trace rule (condition: no schema/env/IaC/CI/platform-config files in diff); standalone: list in the handoff.
-
-> **Parallel execution:** Use parallel tool calls — all checks are independent Grep/Glob operations.
-
 ### Common Step 6: User Journey Capture
 
-After verification passes, run `/claude-tweaks:journeys`. Pass:
+After simplification and alignment (Common Steps 3 + 4.5), run `/claude-tweaks:journeys`. Pass:
 - **Changed files** — files modified during this build session
 - **Spec or design doc context** — what was built and why
 
@@ -292,6 +278,22 @@ This is not optional and does not require user input — if you built a feature 
 ### Common Step 6.5: Documentation Sync
 
 If `docs/REGISTRY.md` exists, read `docs-sync.md` in this skill's directory for the full procedure (read registry, match changed files against registered patterns, update inline or defer to wrap-up per doc type). If `docs/REGISTRY.md` does not exist, skip this step entirely. **On skip**, write a `SKIP` entry per the degrade-trace rule (condition: no `docs/REGISTRY.md`); standalone: list in the handoff.
+
+### Common Step 5: Final Verification
+
+After Common Steps 6 and 6.5, so the verified tree includes the journeys and synced docs, run the shared verification procedure (`skills/test/verification.md`). This runs type checking, linting, and tests using the project's commands from CLAUDE.md. **Folded plan tasks:** a plan task folded into this step contributes only its runner checks — every other step it names runs before Common Step 7 or writes a `SKIP` entry — read `dispatch.md`'s "Folded verification task" rule for the exact entry; it applies under `batched` too.
+
+**Note:** `/build` always runs verification (it is the *producer* of `VERIFICATION_PASSED` and of the runner-written pass stamp, #1921). The skip-if-recent rule in `test/verification.md` applies only to `/test` callers — never to this step. On a pass (runner exit 0 — a baseline-adjudicated pass included), read `VERIFICATION_SHA` from `report.json`'s `sha` and pass it forward with `VERIFICATION_PASSED=true`, so `/test`'s skip-if-recent check can detect a tree change between this step and its own invocation instead of trusting a bare boolean.
+
+If anything fails, fix it and commit the fix. If a fix changes behavior, re-check, before re-running verification, any journey or doc Common Steps 6/6.5 wrote that the fix now contradicts. **When a failure is a behavioral bug — not a mechanical type/lint error — follow the reproduce-first discipline in `_shared/reproduce-first-discipline.md` before changing code** (reproduce on command, fix the confirmed cause, escalate rather than guess if it can't be reproduced; once green, walk the causal-depth chain per the discipline's step 3) — see `failure-recovery.md` for the fuller recovery table this step falls back to.
+
+### Common Step 5.5: Operational Checklist
+
+After verification passes, check for operational tasks that are easy to forget — deployment and environment concerns that slip through code review (schema/migration files, env access patterns, IaC, CI/CD, container configs).
+
+If your build's diff matches schema/env/IaC/CI/platform-config files, read `operational-checklist.md` in this skill's directory for the full Category A/B trigger lists, check tables, probe-then-classify procedure, and ledger format. Otherwise skip this step entirely. **On skip**, write a `SKIP` entry per the degrade-trace rule (condition: no schema/env/IaC/CI/platform-config files in diff); standalone: list in the handoff.
+
+> **Parallel execution:** Use parallel tool calls — all checks are independent Grep/Glob operations.
 
 ### Common Step 7: Handoff
 

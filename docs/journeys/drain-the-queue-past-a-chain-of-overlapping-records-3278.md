@@ -4,6 +4,7 @@ files:
   - plugin/bin/lib/dispatch/in-flight-neighbours.js
   - plugin/bin/lib/dispatch/queue-order.js
   - plugin/skills/dispatch/queue-pull-script.md
+  - plugin/skills/dispatch/mcp-transport.md
   - plugin/skills/dispatch/next-ranking.md
   - plugin/skills/dispatch/neighbour-in-flight-report.md
   - plugin/skills/dispatch/SKILL.md
@@ -26,11 +27,11 @@ files:
 - **Red flags:** A group of more than one record that is not a fast-lane bundle. An `oversized` exclusion on a non-bundle group. A stale cached order reused after upgrade (groups of the old transitive shape).
 
 ### 2. Hold back records whose neighbour is mid-build
-- **URL:** `plugin/skills/dispatch/queue-pull-script.md` (neighbour-in-flight pass); `plugin/bin/lib/dispatch/in-flight-neighbours.js`
-- **Action:** The pass fetches the open `bot:in-progress` records. For each one that shares a linking file with a candidate, it reads the claim blob once and counts the record as in flight only when the blob reads `live`. Each candidate with a live neighbour gets a `neighbour-in-flight` exclusion naming the neighbour and the shared files. The candidate stays in `dispatch-groups.json`.
+- **URL:** `plugin/skills/dispatch/queue-pull-script.md` (neighbour-in-flight pass); `plugin/skills/dispatch/mcp-transport.md` (its MCP branch); `plugin/bin/lib/dispatch/in-flight-neighbours.js`
+- **Action:** The pass fetches the open `bot:in-progress` records. For each one that shares a linking file with a candidate, it reads the claim blob once and counts the record as in flight only when the blob reads `live`. Each candidate with a live neighbour gets a `neighbour-in-flight` exclusion naming the neighbour and the shared files. The candidate stays in `dispatch-groups.json`. On the MCP transport the agent does the fetching instead: it lists the pool through `list_issues` and reads only the neighbours' claim blobs from `claims-registry`. Node then computes the same exclusions over the claim map the agent wrote (`claimReaderFromMap`).
 - **Should feel:** Conservative only where it matters. A leftover `bot:in-progress` label or an expired claim never blocks anything.
-- **Should understand:** The guard fails open. An unreadable claim prints `AUTO — dispatch: neighbour-in-flight claim read failed …`, and a failed pool fetch prints `AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull`. Either way the records build, and any real conflict resolves at merge. On a `gh`-absent firing the guard is off by design (`dispatch/mcp-transport.md`).
-- **Red flags:** A record held back by a neighbour whose claim is expired or absent. A silent pool-fetch failure with no AUTO line. A bare-directory or hub path reported as the shared file.
+- **Should understand:** The guard fails open. An unreadable claim prints `AUTO — dispatch: neighbour-in-flight claim read failed …`, and a failed pool fetch prints `AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull`. Either way the records build, and any real conflict resolves at merge. On a `gh`-absent firing the same guard runs over the MCP transport (`dispatch/mcp-transport.md`, #3392).
+- **Red flags:** A record held back by a neighbour whose claim is expired or absent. A silent pool-fetch failure with no AUTO line. A bare-directory or hub path reported as the shared file. A `gh`-absent firing that builds a candidate alongside a live-claimed neighbour with no `neighbour-in-flight` exclusion and no AUTO line.
 
 ### 3. Rank, dispatch, and re-pull
 - **URL:** `plugin/skills/dispatch/next-ranking.md`; `plugin/skills/dispatch/SKILL.md` Step 3 Loop
@@ -48,4 +49,5 @@ files:
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #3278 (2026-10-17). Dispatch builds each record as its own group instead of the transitive file-overlap closure. On 2026-10-17 that closure fused 18 of 61 eligible records into one oversized, never-dispatched group.
+- Updated during `/claude-tweaks:build` of record #3392 (2026-10-17): the step 2 guard now also runs on the gh-absent MCP transport.
 - Related specs: #1365 (hub-path exclusion), #1420 (bare-directory exclusion), #2066 (fast-lane bundles), #1228 (oversized guard in bare drain)

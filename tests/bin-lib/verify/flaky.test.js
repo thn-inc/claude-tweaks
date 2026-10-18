@@ -12,6 +12,13 @@ const {
 
 const FLAKY = { files: ['tests/a.test.js', 'tests/b.test.js'], maxRetries: 1 };
 const RETRY = { tests: 'node --test {file}' };
+const JEST_UNATTRIBUTED = [
+  'FAIL tests/flaky.test.js',
+  '  ● flaky › sometimes fails',
+  'FAIL src/setup.js',
+  '  ● Test suite failed to run',
+  'Tests:       2 failed, 3 passed, 5 total',
+].join('\n');
 
 test('planRetry: every failing file listed + a template → retry with one command per file, log order kept (AC2)', () => {
   const plan = planRetry({ failingFiles: ['tests/b.test.js', 'tests/a.test.js'], flaky: FLAKY, retry: RETRY, suite: 'tests' });
@@ -44,6 +51,31 @@ test('planRetry: an unattributed failure refuses retry even when every named fai
     failingFiles, flaky: { files: ['tests/a.test.js'], maxRetries: 1 }, retry: RETRY, suite: 'tests', unattributedCount,
   });
   assert.deepStrictEqual(plan, { retry: false, reason: 'unattributed-failures: 1' });
+});
+
+test('planRetry: a summary-family log with an allowlisted failing file plus an unattributed failure refuses retry — no-accounting-guard (#3204 AC)', () => {
+  const family = sniffFamily(JEST_UNATTRIBUTED);
+  assert.strictEqual(family, 'summary');
+  const failingFiles = extractFailingFiles(JEST_UNATTRIBUTED, family);
+  assert.deepStrictEqual(failingFiles, ['tests/flaky.test.js']);
+  const unattributedCount = unattributedFailureCount(JEST_UNATTRIBUTED, family);
+  assert.strictEqual(unattributedCount, null);
+  const plan = planRetry({
+    failingFiles, flaky: { files: ['tests/flaky.test.js'], maxRetries: 1 }, retry: RETRY, suite: 'tests', unattributedCount, family,
+  });
+  assert.deepStrictEqual(plan, { retry: false, reason: 'no-accounting-guard: summary' });
+});
+
+test('planRetry: no-parse still wins over no-accounting-guard when no failing file is named (#3204)', () => {
+  assert.deepStrictEqual(
+    planRetry({ failingFiles: [], flaky: FLAKY, retry: RETRY, suite: 'tests', unattributedCount: null, family: 'summary' }),
+    { retry: false, reason: 'no-parse' });
+});
+
+test('planRetry: a caller passing unattributedCount null without family renders no-accounting-guard: unknown, never undefined (#3204)', () => {
+  assert.deepStrictEqual(
+    planRetry({ failingFiles: ['tests/a.test.js'], flaky: FLAKY, retry: RETRY, suite: 'tests', unattributedCount: null }),
+    { retry: false, reason: 'no-accounting-guard: unknown' });
 });
 
 test('planRetry: a spec log whose every failure is an allowlisted file still retries and passes as today (#3066 AC2)', () => {

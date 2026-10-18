@@ -69,13 +69,15 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    not a solo worktree run) — that merge stamps its own `Fixes #{issue}` lines directly
    (`--no-ff`, per "Close-via-merge" in `_shared/issue-claims.md`), and a carrier commit here
    would double-stamp the closing reference. Otherwise, take the issue set from
-   `{run-dir}/wrap-up-pack.json`'s `inputs.records` (Phase 3's fact pack — `pack.js`'s
-   `resolveRecords`, which already reads the worktree's mirror of the run dir, since the header
-   reaches the main checkout only by merge) — but only when the pack's `inputs.sources.records`
-   reads `headers` or `worktree-headers`; a `manifest`/`worktree-manifest` source carries a parent
-   multi-spec run's sibling ids, including `not-run`/`failed` specs with no closing keyword to
-   stamp, so treat the issue set as empty in that case (Ruling R1). Only when the pack is absent (a
-   `cleanup-only` run skips Phase 3), glob the worktree mirror instead —
+   `{run-dir}/wrap-up-pack.json`'s `inputs.closingRecords` (Phase 3's fact pack). That field is the
+   one place wrap-up decides which records a run may close (Ruling R1, `pack.js`'s
+   `closingRecords`): it equals `inputs.records` when `inputs.sources.records` is `headers` or
+   `worktree-headers` — a materialized header, read from the worktree's mirror of the run dir until
+   the header reaches the main checkout by merge — and is empty on a `manifest`/`worktree-manifest`
+   rung, whose ids include `not-run`/`failed` specs with no closing keyword to stamp. Every other
+   closing-keyword reader cites this field rather than restating the rule. Only when the pack
+   could not be produced (Section E's production step failed) or lacks that field, glob the
+   worktree mirror instead —
    `{worktree}/.claude-tweaks/pipelines/{run-id}/work/*-spec.md`, where `{worktree}` is
    `run-state.json`'s `worktree` (else `worktreeAtClose`) and `{run-id}` is the run dir's path
    after its `.claude-tweaks/pipelines/` segment (for a per-spec dir, `{run-id}/spec-{N}`) — and
@@ -85,8 +87,8 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    ISSUES=()
    PACK="${RUN_DIR}/wrap-up-pack.json"
    MIRROR="{worktree}/.claude-tweaks/pipelines/{run-id}"
-   if [ -f "$PACK" ]; then
-     ISSUES=($(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const s=(p.inputs&&p.inputs.sources&&p.inputs.sources.records)||"";if(["headers","worktree-headers"].includes(s))console.log((p.inputs.records||[]).join(" "))' "$PACK"))
+   if [ -f "$PACK" ] && CLOSING=$(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const c=p.inputs&&p.inputs.closingRecords;if(!Array.isArray(c))process.exit(1);console.log(c.join(" "))' "$PACK" 2>/dev/null); then
+     ISSUES=($CLOSING)
    else
      for f in "${MIRROR}"/work/*-spec.md; do
        [ -e "$f" ] || continue
@@ -329,10 +331,15 @@ branch/commit reference, or, when `skills/flow/materialize.md` wrote one, a mate
 through `/claude-tweaks:dispatch` never held a claim either: step 3's CLI exits `3` (already
 released / never claimed) or `4` (held by another run) there without touching the blob. Release it
 only after the branch outcome is known (item 4, Git
-Worktree, completes first — the execution order of the canonical list guarantees this). The one
-exception: step 7's `parked-at-shaping` read happens at the very start of this execution step,
-before item 4 runs — item 4 removes the worktree that field is read from, and nothing else in the
-canonical list reads it earlier.
+Worktree, completes first — the execution order of the canonical list guarantees this). Step 7's
+`parked-at-shaping` value comes from `{run-dir}/wrap-up-pack.json`'s `inputs.parkedAtShaping`, which
+Phase 3 read from the materialized header while the worktree still existed, so the read has no
+ordering constraint of its own. A `cleanup-only` run skips Phase 3, and Phase 3's pack run can
+fail: whenever `{run-dir}/wrap-up-pack.json` is absent at the start of this execution step,
+produce it before item 4 removes the worktree — `node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-pack.js"
+--run "$PIPELINE_RUN_DIR" --only claim` (`inputs` resolves in full whichever probe `--only` names;
+`claim` is the one probe a `cleanup-only` reader consumes — `cleanup-procedures.md` item 7's
+`pack.claim`).
 
 Before any step below runs a `gh` command, run the Detection Ladder from
 `_shared/forge-detection.md` (checks 1-3). Checks 1 (GitHub remote) and 3 (repo reachable) are
@@ -435,20 +442,22 @@ checks 1 or 3 fail.
 7. **Remove `bot:in-progress`; restore `parked` if applicable.** `--remove-in-progress` (always
    passed) removes `bot:in-progress` — best-effort, the CLI logs a warning and continues on
    failure. Then, only when the outcome reason is `abandoned: spec {spec}` (i.e. NOT
-   `merged:`/`pr-opened:`) AND the materialized header carries
-   `parked-at-shaping: true` (`materialize.md`'s field for exactly this restore-on-abandon case —
-   read at the start of Phase 4's execution step, before item 4 runs, from the worktree mirror,
-   `{worktree}/.claude-tweaks/pipelines/{run-id}/work/{issue}-spec.md` resolved as in Section C
-   step 2, while the worktree still exists, since item 4 removes it before this step runs; a
-   `current-branch` run has no worktree and item 4 never runs, so the run dir's own
-   `work/{issue}-spec.md` holds the header — read it there):
+   `merged:`/`pr-opened:`) AND `{run-dir}/wrap-up-pack.json`'s `inputs.parkedAtShaping["{issue}"]`
+   is `true` (the materialized header's `parked-at-shaping` field, `materialize.md`'s field for
+   exactly this restore-on-abandon case — the pack resolved it from the run dir's own `work/` or the
+   worktree's mirror, so this step reads no header file itself):
    restore `parked` — bootstrap the label if missing (per _shared/label-bootstrap.md, LABELS_JSON =
    [['parked', 'Deferred backlog entry, waiting on a trigger condition', '2EA44F']]), then
-   `gh issue edit "$ISSUE" --add-label parked`. Skip restoration silently when no materialized
-   header exists or `parked-at-shaping` is absent, or when the outcome was `merged:`/`pr-opened:`
-   (the record shipped or is under review — it should stay unparked). Best-effort — on failure, log
-   a warning and continue; `/tidy` Step 4.7's backstop check catches a restoration that silently
-   failed.
+   `gh issue edit "$ISSUE" --add-label parked`. Skip restoration silently when the pack holds no
+   `true` entry for this issue (no materialized header, or `parked-at-shaping` absent), or when the
+   outcome was `merged:`/`pr-opened:` (the record shipped or is under review — it should stay
+   unparked). When the pack is still absent after the preamble's production step, or lacks
+   `inputs.parkedAtShaping`, do not skip silently — "could not determine" is not "not parked": log
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP
+   --section "/wrap-up" --step "Section E" --text "condition: wrap-up-pack.json absent or lacks
+   inputs.parkedAtShaping → fallback: parked restore unverified for #{issue}; /tidy Step 4.7's
+   backstop re-checks" --reversibility n/a`. Best-effort — on failure, log a warning and continue;
+   `/tidy` Step 4.7's backstop check catches a restoration that silently failed.
 8. The CLI logs the release (or ownership skip) and every label removal to `decisions.md` (status
    `AUTO`, reason string as detail). Log the `parked` restoration yourself:
    `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO

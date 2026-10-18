@@ -11,9 +11,10 @@
 // copy-pasted. kind: 'new-skill' never consults CLASSIFICATION_SCORING — it
 // stays deliberately unscored (see below).
 const {
-  recordPayload, specShapedBody, CLASSIFICATION_SCORING, fencedBlock,
+  recordPayload, specShapedBody, CLASSIFICATION_SCORING, fencedBlock, isRepoRelativeKeyFilePath,
 } = require('../issues/record');
 const { buildRelatedBlocks } = require('../issues/related-blocks');
+const path = require('path');
 
 const ASSET_TYPE_LABELS = { skill: 'Skill', rule: 'Rule', 'claude-md': 'CLAUDE.md', 'design-artifact': 'Design Context', memory: 'Memory' };
 const CATEGORY_LABELS = { drift: 'drift', 'template-conformance': 'structure', 'best-practice': 'best-practice' };
@@ -65,6 +66,9 @@ const MAX_PREMISE_ANCHOR_LENGTH = 400;
 // that polarity, with no change needed.
 function buildPremiseCheck(finding, targetPath) {
   if (finding.kind !== 'patch' || !targetPath) return undefined;
+  // specShapedBody rejects a multi-line premiseCheck, so a newline in an LLM-supplied
+  // path would abort the whole validate-findings run; omit the line instead (#2975).
+  if (/\n/.test(targetPath)) return undefined;
   const isRemoval = finding.intent === 'remove';
   const anchor = isRemoval ? finding.oldString : finding.newString;
   if (!anchor || anchor.includes('\n') || anchor.length > MAX_PREMISE_ANCHOR_LENGTH) return undefined;
@@ -92,6 +96,8 @@ function buildPremiseCheck(finding, targetPath) {
 // the record at its first materialize). Absent, the line is kept exactly as
 // composed — this module never spawns a shell itself, so its own unit tests
 // stay shell-free.
+// options.repoRoot (#2975, optional): the repo root finding.path is made
+// relative to for the `### Key Files` entry (see keyFiles below).
 function toIssuePayload(finding, verifiedAsOf, pluginVersion, options = {}) {
   const isNewSkill = finding.kind === 'new-skill';
   const assetLabel = ASSET_TYPE_LABELS[finding.assetType] || finding.assetType;
@@ -139,6 +145,20 @@ function toIssuePayload(finding, verifiedAsOf, pluginVersion, options = {}) {
     premiseCheck = undefined;
   }
 
+  // keyFiles (#2975): the patched file, made repo-relative against
+  // options.repoRoot (a relative finding.path resolves against it, not cwd).
+  // Omitted (specShapedBody throws on a bad path) for a new-skill candidate, a
+  // missing path/repoRoot, an out-of-repo target such as a memory file under
+  // --memory-dir, or a path with a backtick/newline.
+  let keyFiles;
+  if (!isNewSkill && finding.path && options.repoRoot) {
+    const absolutePath = path.resolve(options.repoRoot, finding.path);
+    const rel = path.relative(options.repoRoot, absolutePath).split(path.sep).join('/');
+    if (isRepoRelativeKeyFilePath(rel)) {
+      keyFiles = [{ path: rel, change: isRemoval ? 'remove the named content' : 'apply the proposed change' }];
+    }
+  }
+
   const body = specShapedBody({
     header: kindLine,
     currentState: [...relatedBlocks, finding.reason],
@@ -152,6 +172,7 @@ function toIssuePayload(finding, verifiedAsOf, pluginVersion, options = {}) {
     // carry data for.
     releaseNote: 'No user-visible change — agent harness reliability fix.',
     filedBy: '/claude-tweaks:harness-health',
+    keyFiles,
     verifiedAsOf,
     premiseCheck,
     templateStamp,

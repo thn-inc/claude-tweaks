@@ -28,7 +28,7 @@ const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve')
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
-const { resolveRecords } = require('./pack');
+const { resolveRecords, closingRecords } = require('./pack');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
@@ -418,21 +418,19 @@ registerCheck('worktree-removed', ({ runDir, expectations, deps, cwd }) => {
 // committed in the worktree only and reaches the main checkout by merge).
 // The worktree comes from run-state.json via readRunStateWithParent (a
 // multi-spec spec-{N}/ dir inherits the parent's), falling back to
-// worktreeAtClose for a closed run. Only the header rungs count: manifest
-// ids include not-run/failed specs whose PR-body line is `Refs`, not
-// `Fixes`, so a manifest-only resolution falls through to the expectations
-// fallback below, exactly as before. readdir degrades to [] and headerRecords
-// skips an unreadable file, so a concurrent reconcile/archive prune reads as
-// "no headers found" rather than throwing.
+// worktreeAtClose for a closed run. Which rungs may close a record is pack.js's
+// closingRecords; a resolution it empties falls through to the expectations
+// fallback below. readdir degrades to [] and headerEntries skips an
+// unreadable file, so a concurrent reconcile/archive prune reads as "no
+// headers found" rather than throwing.
 const RECORD_DEPS = {
   readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
   readFile: (p) => fs.readFileSync(p, 'utf8'),
 };
-const HEADER_SOURCES = new Set(['headers', 'worktree-headers']);
 
 function resolvedIssueNumbers(runDir) {
-  const { records, source } = resolveRecords(RECORD_DEPS, runDir, recordedWorktree(runDir));
-  if (HEADER_SOURCES.has(source) && records.length) return records;
+  const closing = closingRecords(resolveRecords(RECORD_DEPS, runDir, recordedWorktree(runDir)));
+  if (closing.length) return closing;
   const expPath = path.join(runDir, 'verify-expectations.json');
   if (fs.existsSync(expPath)) {
     try {

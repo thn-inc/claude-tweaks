@@ -12,7 +12,12 @@
 // more than that will miss references in the truncated commits — the same
 // limitation GitHub's own native keyword parsing already has.
 
-const ISSUE_REF_SOURCE = '\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+#([0-9]+)';
+// The closing-keyword vocabulary on its own, exported so a caller with a
+// different grammar (line-anchored, `[ \t]` whitespace) shares the keyword set
+// instead of hand-rolling a second copy that could silently drift.
+const CLOSING_KEYWORD_ALTERNATION = '(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)';
+
+const ISSUE_REF_SOURCE = '\\b' + CLOSING_KEYWORD_ALTERNATION + '\\s+#([0-9]+)';
 
 function extractIssueNumbers(commitMessages) {
   const found = new Set();
@@ -154,4 +159,4 @@ function generateWorkflowYaml() {
   return lines.join('\n');
 }
 
-module.exports = { ISSUE_REF_SOURCE, extractIssueNumbers, generateWorkflowYaml };
+module.exports = { ISSUE_REF_SOURCE, CLOSING_KEYWORD_ALTERNATION, extractIssueNumbers, generateWorkflowYaml };

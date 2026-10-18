@@ -315,12 +315,12 @@ test('decideRelease: only live/stale claims are ever candidates for release', ()
   assert.strictEqual(decideRelease('unreadable', { number: 1, state: 'MERGED' }).action, 'skip');
 });
 test('decideRelease: live claim + merged PR -> release', () => {
-  const r = decideRelease('live', { number: 7, state: 'MERGED' });
+  const r = decideRelease('live', { number: 7, state: 'MERGED' }, undefined, true);
   assert.strictEqual(r.action, 'release');
   assert.match(r.reason, /#7/);
 });
 test('decideRelease: stale claim + merged PR -> release (idempotence path)', () => {
-  assert.strictEqual(decideRelease('stale', { number: 7, state: 'MERGED' }).action, 'release');
+  assert.strictEqual(decideRelease('stale', { number: 7, state: 'MERGED' }, undefined, true).action, 'release');
 });
 test('decideRelease: live claim + open PR -> skip, never released', () => {
   assert.deepStrictEqual(decideRelease('live', { number: 7, state: 'OPEN' }), { action: 'skip', reason: 'pr-open' });
