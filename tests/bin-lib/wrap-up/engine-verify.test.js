@@ -459,7 +459,7 @@ test('plans-ledger check fails when git status reports an untracked plan file, n
   const calls = [];
   const fakeGit = (args, cwd) => {
     calls.push({ args, cwd });
-    if (args[0] === 'status') return '?? docs/superpowers/plans/2099-01-01-some-topic.md\n';
+    if (args[1] === 'status') return '?? docs/superpowers/plans/2099-01-01-some-topic.md\n';
     return '';
   };
   try {
@@ -467,12 +467,12 @@ test('plans-ledger check fails when git status reports an untracked plan file, n
     const row = result.rows.find((r) => r.check === 'plans-ledger');
     assert.strictEqual(row.result, 'fail');
     assert.match(row.detail, /2099-01-01-some-topic\.md/);
-    const statusCall = calls.find((c) => c.args[0] === 'status');
+    const statusCall = calls.find((c) => c.args[1] === 'status');
     // '-uall' (not the default '-uno'): a wholly-untracked directory must
     // report each file individually, never collapse to one '?? {dir}/' line
     // the suffix/name filters could never match (record #900 whole-branch
     // re-review, finding #2).
-    assert.deepStrictEqual(statusCall.args, ['status', '--porcelain=v1', '-uall', '--', 'docs/superpowers/plans', 'docs/plans']);
+    assert.deepStrictEqual(statusCall.args, ['--no-optional-locks', 'status', '--porcelain=v1', '-uall', '--', 'docs/superpowers/plans', 'docs/plans']);
     assert.strictEqual(statusCall.cwd, repoRoot, 'git status must run against cwd (the isolated fixture), not process.cwd()');
   } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -558,7 +558,7 @@ test('design-caches check fails when an untracked *-audit.json cache file remain
   const repoRoot = makeCleanRepoRoot();
   fs.mkdirSync(path.join(repoRoot, 'docs', 'plans'), { recursive: true });
   const fakeGit = (args) => {
-    if (args[0] === 'status') return '?? docs/plans/some-topic-audit.json\n';
+    if (args[1] === 'status') return '?? docs/plans/some-topic-audit.json\n';
     return '';
   };
   try {
@@ -578,7 +578,7 @@ test('design-caches check does not fail on a TRACKED file matching a cache suffi
   // git status --porcelain never reports a clean, committed file at all --
   // so an empty status output (no '??' line) is exactly what a tracked
   // cache-suffixed file looks like to this check.
-  const fakeGit = (args) => (args[0] === 'status' ? '' : '');
+  const fakeGit = (args) => (args[1] === 'status' ? '' : '');
   try {
     const result = runVerify({ runDir, base: 'main', repoRoot, cwd: repoRoot, deps: { git: fakeGit, gh: () => '' } });
     const row = result.rows.find((r) => r.check === 'design-caches');
@@ -959,14 +959,14 @@ test('plans-ledger check scans `cwd`, not `repoRoot`, for untracked plan-file le
   const calls = [];
   const fakeGit = (args, dir) => {
     calls.push({ args, dir });
-    if (args[0] === 'status' && dir === repoRoot) return '?? docs/superpowers/plans/leftover-at-reporoot.md\n';
+    if (args[1] === 'status' && dir === repoRoot) return '?? docs/superpowers/plans/leftover-at-reporoot.md\n';
     return '';
   };
   try {
     const result = runVerify({ runDir: '/tmp/verify-cwd-scoping-does-not-matter', base: 'main', repoRoot, cwd, deps: { git: fakeGit, gh: () => '' } });
     const row = result.rows.find((r) => r.check === 'plans-ledger');
     assert.strictEqual(row.result, 'pass', row.detail);
-    const statusCall = calls.find((c) => c.args[0] === 'status');
+    const statusCall = calls.find((c) => c.args[1] === 'status');
     assert.strictEqual(statusCall.dir, cwd, 'plans-ledger must scan cwd, not repoRoot');
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });
@@ -981,7 +981,7 @@ test('design-caches check scans `cwd`, not `repoRoot`, for untracked cache-file 
   const calls = [];
   const fakeGit = (args, dir) => {
     calls.push({ args, dir });
-    if (args[0] === 'status' && dir === cwd) return '?? docs/plans/some-topic-audit.json\n';
+    if (args[1] === 'status' && dir === cwd) return '?? docs/plans/some-topic-audit.json\n';
     return '';
   };
   try {
@@ -990,11 +990,11 @@ test('design-caches check scans `cwd`, not `repoRoot`, for untracked cache-file 
     assert.strictEqual(row.result, 'fail', row.detail);
     assert.match(row.detail, /some-topic-audit\.json/);
     // plans-ledger (registered before design-caches) also issues a `status`
-    // call in this same runVerify(), so a bare args[0] === 'status' find()
+    // call in this same runVerify(), so a bare args[1] === 'status' find()
     // would silently grab its call instead -- design-caches's own status
-    // call has a single `docs/plans` pathspec (5 args); plans-ledger's has
-    // two pathspecs (6 args). Match on length to target design-caches alone.
-    const statusCall = calls.find((c) => c.args[0] === 'status' && c.args.length === 5);
+    // call has a single `docs/plans` pathspec (6 args); plans-ledger's has
+    // two pathspecs (7 args). Match on length to target design-caches alone.
+    const statusCall = calls.find((c) => c.args[1] === 'status' && c.args.length === 6);
     assert.strictEqual(statusCall.dir, cwd, 'design-caches must scan cwd, not repoRoot');
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });

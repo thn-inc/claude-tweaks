@@ -35,7 +35,7 @@ test('changedFiles unions the committed diff (-z) and the working tree (-z), map
   const statusZ = [' M src/a.js', '?? scratch.txt', 'R  y.js', 'x.js', ' D removed.js', ''].join('\0');
   const exec = fakeExec({
     [`diff --name-status -z --end-of-options ${FULL}..HEAD`]: diffZ,
-    'status --porcelain -z --untracked-files=all': statusZ,
+    '--no-optional-locks status --porcelain -z --untracked-files=all': statusZ,
   });
   const r = changedFiles({ base: FULL, execImpl: exec });
   assert.strictEqual(r.base, FULL);
@@ -48,7 +48,7 @@ test('changedFiles unions the committed diff (-z) and the working tree (-z), map
 test('changedFiles with a clean tree and no commits since base is an empty set, not an error', () => {
   const exec = fakeExec({
     [`diff --name-status -z --end-of-options ${FULL}..HEAD`]: '',
-    'status --porcelain -z --untracked-files=all': '',
+    '--no-optional-locks status --porcelain -z --untracked-files=all': '',
   });
   assert.deepStrictEqual(changedFiles({ base: FULL, execImpl: exec }), { base: FULL, files: [] });
 });
@@ -57,7 +57,7 @@ test('changedFiles reports each file in a new untracked directory individually, 
   const statusZ = ['?? new/x.js', '?? new/y.js', ''].join('\0');
   const exec = fakeExec({
     [`diff --name-status -z --end-of-options ${FULL}..HEAD`]: '',
-    'status --porcelain -z --untracked-files=all': statusZ,
+    '--no-optional-locks status --porcelain -z --untracked-files=all': statusZ,
   });
   const r = changedFiles({ base: FULL, execImpl: exec });
   assert.deepStrictEqual(r.files, ['new/x.js', 'new/y.js']);
@@ -321,7 +321,7 @@ test('mergeNarrowing: a failing working-tree status read degrades to null, never
   mergeTrunkWith(r, [['ui/a.js', 'a']]);
   const files = changedSince(r, r.anchor);
   const statusFails = (cmd, args, opts) => {
-    if (args[0] === 'status') { const e = new Error('index.lock: File exists'); e.status = 128; throw e; }
+    if (args[1] === 'status') { const e = new Error('index.lock: File exists'); e.status = 128; throw e; }
     return r.exec(cmd, args, opts);
   };
   assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: statusFails }), null);

@@ -139,7 +139,7 @@ function changedFiles({ base, execImpl = execFileSync }) {
   for (const f of parseDiffNameStatusZ(diff)) set.add(f);
   // --untracked-files=all: an untracked directory reports each file inside
   // it individually rather than collapsing to the directory name.
-  const status = git(execImpl, ['status', '--porcelain', '-z', '--untracked-files=all']);
+  const status = git(execImpl, ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
   for (const f of parseStatusPorcelainZ(status)) set.add(f);
   return { base, files: [...set].sort() };
 }
@@ -179,7 +179,7 @@ function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileS
   const differs = tryGit(execImpl, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', ref, 'HEAD']);
   if (differs === null) return null;
   const own = new Set(parseNameOnlyZ(differs));
-  const status = tryGit(execImpl, ['status', '--porcelain', '-z', '--untracked-files=all']);
+  const status = tryGit(execImpl, ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
   if (status === null) return null;
   for (const f of parseStatusPorcelainZ(status)) own.add(f);
   const mb = tryGit(execImpl, ['merge-base', '--end-of-options', anchor, ref]);

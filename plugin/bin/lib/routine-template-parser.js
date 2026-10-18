@@ -335,7 +335,7 @@ function compareRoutineRecords({
   // One status call for the whole directory, not one per record: git process
   // startup dominates this comparison's cost, and the per-record form made it
   // scale with the number of routines a project has.
-  const dirtyLocally = parsePorcelainNames(tryGit(['status', '--porcelain', '--', dir], cwd, timeoutMs).out);
+  const dirtyLocally = parsePorcelainNames(tryGit(['--no-optional-locks', 'status', '--porcelain', '--', dir], cwd, timeoutMs).out);
 
   for (const filename of names) {
     const local = localByName.get(filename) || null;
