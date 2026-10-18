@@ -5,6 +5,7 @@ files:
   - plugin/skills/flow/multispec-console-template.md
   - plugin/skills/wrap-up/console-template.md
   - plugin/skills/wrap-up/cleanup-procedures.md
+  - plugin/skills/wrap-up/execution-and-verification.md
   - plugin/skills/_shared/auto-mode-contract.md
   - plugin/skills/_shared/staged-patch.md
   - plugin/skills/wrap-up/curation-engine.md
@@ -33,8 +34,8 @@ files:
 - **URL:** the "Cleanup actions" section of the same rendered console.
 - **Action:** Look at the numbered rows — one dev-server-teardown row and one branch-finish row with no `Spec` value, plus three rows per spec (claim release, grant removal, label cleanup) with a populated `Spec` value.
 - **Should feel:** In control of teardown, not just informed about it after the fact — these rows are visible before they run and can be individually skipped in the next step, rather than executing unconditionally on batch approval.
-- **Should understand:** The three per-spec rows depend on the branch-finish row completing first (claim release needs branch-finish's outcome — the merge commit sha or PR URL — to release each issue correctly); the dev-server-teardown row has no such dependency and can be skipped on its own.
-- **Red flags:** A per-spec claim-release row with no visible branch-finish row above it in the same batch (the dependency would be invisible); the section missing entirely when a worktree strategy was used (it should always render for a multi-spec worktree run).
+- **Should understand:** The three per-spec rows depend on the branch-finish row completing first (claim release needs branch-finish's outcome — the merge commit sha or PR URL — to release each issue correctly); the dev-server-teardown row has no such dependency and can be skipped on its own. The run's shared open-items ledger has no row here. Like the parent run-dir archive there is nothing to decide, so `/flow` deletes it once in Shared teardown step 0 (`flow/multispec-review-console.md`). That runs after the batch curation pass and this console have read and written the ledger, and before the branch-finish row. No per-spec wrap-up deletes it, the final spec's included (#3420).
+- **Red flags:** A per-spec claim-release row with no visible branch-finish row above it in the same batch (the dependency would be invisible). The section missing entirely when a worktree strategy was used (it should always render for a multi-spec worktree run). The shared ledger already gone when the batch curation pass runs, which is the pre-#3420 final-spec deletion. A merged shared branch that still carries the ledger even though it has zero `open` rows (step 0 never ran or never committed and pushed).
 
 ### 3. Answer the terminal batch decision — `AskUserQuestion`
 - **URL:** the "How do you want to handle the Multi-Spec Review Console items?" prompt.
@@ -68,4 +69,5 @@ files:
 - Updated during build of #906 ("Review Console: tier staged-diff display by reversibility") — Step 1's red flags now cover the reversibility-tiered patch display; `flow/multispec-console-template.md` and `wrap-up/console-template.md` (the canonical rule this journey's console cites) added to `files:`.
 - Updated during build of #1179 ("Needs-human carve-out (merge-check precedence)") — Step 3's list of what makes the dependent cleanup rows auto-skip now also covers the `consoleAutoResolve` path resolving the merge half to leave-PR-open when a `merge-check` verdict of `needs-human` exists for the run.
 - Updated during build of #2299 ("Give console-resolve.js's mergeResolution a live drain-overlap-hold carve-out") — a third carve-out mirrored into `flow/multispec-review-console.md`'s Auto-resolution short-circuit: when `dispatch/drain-pr-overlap.md`'s own Auto-merge-gate hold (#1985) logged a group (or, for a bundle, any member group) as overlapping a still-open PR from earlier in the same drain firing, the merge half resolves to leave-PR-open while that PR is still genuinely open (re-checked live, never trusted as a persisted hold) and resolves normally once it merges or closes — this is the case the bundle path exists to protect, since the drain hold's own `group [{issues}]` wording targets exactly a dispatched group.
-- Related specs: #286 (Engine: multi-spec console section merging — the CLI call Step 1 references), #287, #350, #674, #675, #688, #693, #716, #906, #1179, #1985, #2299
+- Updated during build of #3420 ("Multi-spec ledger deletion runs before the batch curation pass that reads and writes the ledger"). Step 2 now covers the shared open-items ledger. Under `MULTISPEC_REVIEW_DEFER=1`, cleanup item 2 is deferred, and `/flow` deletes the ledger once in Shared teardown step 0, after the batch pass and the console and before branch finish. `wrap-up/execution-and-verification.md` (its MULTISPEC skip list) was added to `files:`.
+- Related specs: #286 (Engine: multi-spec console section merging — the CLI call Step 1 references), #287, #350, #674, #675, #688, #693, #716, #906, #1179, #1985, #2299, #3420

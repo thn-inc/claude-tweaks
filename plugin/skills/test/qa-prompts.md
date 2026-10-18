@@ -70,7 +70,24 @@ This phase dispatches qa-agent subagents in parallel — one per story, bounded 
 
 Use `resolved_url` everywhere below — the `**URL:**` field and the `open` command in both templates.
 
-**Log the rewrite once per run, not once per story.** If at least one story needed its origin rewritten this run, emit exactly one line naming the original and resolved origins (e.g. `QA: N stories had an embedded origin rewritten to APP_URL ({old-origin} -> {new-origin})`) — to this run's decision log (`log-decision.js`) when a pipeline run dir is active, otherwise directly in the QA report per `qa-reporting.md`'s existing output conventions. Never log per-story; a large story suite would otherwise drown the report in repeated identical lines.
+**Resolve every `navigate` step's URL the same way.** The same origin rewrite applies to URLs inside steps, not only to `story.url`:
+- Scope: every step with `action: navigate` in `setup.steps`, `story.steps`, and `teardown.steps`; its URL is `target`, falling back to `value` for older stories. Only `navigate` — a `fill` value that happens to be a URL is test input and reaches the form verbatim. Resolution happens before the step blocks are serialized, so the YAML the templates embed already carries resolved URLs.
+- "The story's own origin" is `new URL(story.url).origin`. When `story.url` is root-relative, the story's own origin is `APP_URL`'s.
+- Classify each `navigate` URL against the story's own origin:
+  - **Root-relative `target`** (no scheme+host) → `new URL(target, APP_URL).toString()`, never flagged.
+  - **Absolute origin already equal to `APP_URL`'s** → unchanged, never flagged.
+  - **Protocol-relative `//host/path`** → has a host, so it is not root-relative: resolve it with `new URL(target, APP_URL)` (it borrows `APP_URL`'s scheme) and classify the resolved URL as an absolute origin by the rules above and below.
+  - **Matches the story's own origin** → rewrite to `APP_URL`'s origin, preserving the step's path/query/fragment (the same rule as `story.url`).
+  - **Other loopback origin, worktree run** (`repoInfo(process.cwd()).isLinkedWorktree`) → mark the story `SKIPPED` with reason `unresolved-secondary-origin`, naming the origin; its dependents cascade as `SKIPPED` (as with `missing-auth-vault`).
+  - **Other loopback origin, primary-checkout run** → dispatch unchanged and include the origin in the flag line.
+  - **Non-loopback origin** → dispatch unchanged.
+
+  Loopback means the host set in `qa-procedures.md`'s Target environment check (`localhost`, `127.0.0.1`, `::1`, `*.localhost`).
+- Why the worktree skip: a secondary server's port can't be assumed in a worktree, so its origin can't be resolved safely there. Revisit when #3082 ships secondary-server resolution.
+- Coverage limit: legacy `workflow`-string stories are free text and are not parsed, so their URLs are not covered.
+- Worked example: story `url: http://127.0.0.1:9999/app`, `APP_URL=http://localhost:54321`. A `navigate` step `target: http://127.0.0.1:9999/reset` resolves to `http://localhost:54321/reset`. A step `target: http://127.0.0.1:4010/__reset` is flagged (and the story is skipped with `unresolved-secondary-origin` on a worktree run).
+
+**Log the rewrite once per run, not once per story.** If at least one story needed its origin rewritten this run, emit exactly one line naming the original and resolved origins (e.g. `QA: N stories had an embedded origin rewritten to APP_URL ({old-origin} -> {new-origin})`) — to this run's decision log (`log-decision.js`) when a pipeline run dir is active, otherwise directly in the QA report per `qa-reporting.md`'s existing output conventions. Never log per-story; a large story suite would otherwise drown the report in repeated identical lines. Step origins follow the same once-per-run rule: when at least one `navigate` step needed its origin rewritten, emit one step-origin rewrite-count line (`QA: N navigate step origins rewritten to APP_URL`); when at least one origin was flagged, emit one flag line listing the distinct flagged origins and the affected story ids (`QA: flagged secondary origins {origin, …} in stories {id, …}`) — same destination rule as above.
 
 **Canonical schema.** Both templates below inline the `REPORT_JSON` envelope's nested `page_inventories` shape (`interactive_elements`/`forms`/`navigation`/`accessibility`/`layout`) verbatim rather than referencing it — required by this file's own no-sibling-file-references contract (line 7), since each template is copied wholesale into a dispatched Task agent's prompt and that agent never sees another file. `agents/qa-agent.md`'s `## Report` section declares this same shape canonical for the agent's structured output. Any future change to the schema must be mirrored byte-for-byte across all four locations: `agents/qa-agent.md`, both templates below, and `skills/test/qa-reporting.md`'s aggregated `report.json` schema.
 

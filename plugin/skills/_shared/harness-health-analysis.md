@@ -155,7 +155,7 @@ Before forming any finding, run these mechanical checks and treat their output a
    node -e "
    const { bloatReport } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/skill-audit/bloat.js');
    const [kind, target, ...corpus] = process.argv.slice(1);
-   const opts = kind === 'skill' ? { ceiling: Infinity } : { ceiling: Infinity, sizeOutlier: false };
+   const opts = kind === 'skill' ? {} : { sizeOutlier: false };
    console.log(bloatReport(target, corpus, opts));
    " "<kind>" "<target-path>" "<root>"/.claude/skills/*.md "<root>"/.claude/skills/*/*.md
    ```

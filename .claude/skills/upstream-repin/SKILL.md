@@ -21,6 +21,7 @@ Prior re-pins: `impeccable-cli` 3.6.0 to 4.1.0 (#2478, with #2321 for its contra
 | `tools/upstream-drift/manifest.yml` → `pinned-engine` (`impeccable-plugin` only) | Only the parity test. No check compares it with the installed engine |
 | `<!-- upstream-pin: impeccable-cli@X -->` in `plugin/skills/design-wrapper/impeccable-cli.md` | The parity test in `tests/impeccable-cli-contract.test.js` |
 | `<!-- upstream-pin: impeccable-plugin@X impeccable-engine@Y -->` in `plugin/skills/design-wrapper/impeccable-plugin.md` | The parity test in `tests/impeccable-plugin-contract.test.js` |
+| `SUPERPOWERS_FLOOR` in `plugin/bin/lib/superpowers-version.js` (`superpowers` only) | The parity test in `tests/bin-lib/superpowers-version.test.js`, and the SessionStart notice threshold (#3380) |
 
 Read each value from the installed artifact, never from release notes. Plugin and engine: `node plugin/bin/impeccable-engine.js resolve` (`pluginVersion`, `engineVersion`). Record both pins from the **same** install.
 
@@ -40,7 +41,7 @@ Fixtures under `tests/fixtures/impeccable-plugin/` are executed outputs, not han
 
 ### An entry with no contract tests: re-verify every literal, then pin new ones
 
-The `superpowers` entry has one version site, its `pinned` value. It has no `upstream-pin` comment, no contract test and `fixtures: []`, so the drift checks are its only proof. `checkAssertions` reads only the cached copy whose version equals `pinned` (`resolveRoots`), and it matches each `must-match` with `content.includes` on raw bytes. For an entry like that:
+The `superpowers` entry has two version sites: its `pinned` value and `SUPERPOWERS_FLOOR` in `plugin/bin/lib/superpowers-version.js` (#3380). The parity test in `tests/bin-lib/superpowers-version.test.js` fails until both move, and moving the floor deliberately raises the SessionStart notice threshold for every project still on the previous version. The entry has no `upstream-pin` comment, no contract test over upstream content and `fixtures: []`, so the drift checks are its only proof of upstream behaviour. `checkAssertions` reads only the cached copy whose version equals `pinned` (`resolveRoots`), and it matches each `must-match` with `content.includes` on raw bytes. For an entry like that:
 
 - Move the pin before adding assertions. A line that exists only in the new release cannot match while the old pin stands.
 - Count every existing `must-match` with `grep -cF` against the new copy of its `upstream-path`. A file that survives can still drop the literal. 7.0.0's brainstorming rewrite dropped `Invoke the writing-plans skill`, and #3376 retargeted the assertion to the surviving `invoke superpowers:writing-plans and no other skill`, with the reason in a manifest comment.
@@ -61,7 +62,7 @@ A `must-match` proves that a line survived. It does not show that the behaviour 
 ## Verify
 
 ```bash
-node --test tests/impeccable-plugin-contract.test.js tests/impeccable-cli-contract.test.js tests/impeccable-retired-scripts-sweep.test.js tools/upstream-drift/tests/run.test.js
+node --test tests/impeccable-plugin-contract.test.js tests/impeccable-cli-contract.test.js tests/impeccable-retired-scripts-sweep.test.js tests/bin-lib/superpowers-version.test.js tools/upstream-drift/tests/run.test.js
 ```
 
 Then run `/upstream-drift --dep <name> --drift-only`. A contract-test skip reason that reads "installed version(s) do not match the pin" means the re-pin is not done. Neither check reads behaviour, so the re-pin is also not done until every `contract-paths` diff has been read and each behaviour change is fixed or filed.

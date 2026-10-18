@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
-const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS } = require(MOD);
+const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes } = require(MOD);
 const ROOT = path.join(__dirname, '..', '..', '..');
 
 function fixture({
@@ -560,4 +560,50 @@ test('AC4.2 (control): removing sdd-ruling-* from the appendix prose alone makes
   const mutated = APPENDIX.replace(/,?\s*`sdd-ruling-\*`/, '');
   assert.notStrictEqual(mutated, APPENDIX, 'the mutation removed the prose entry');
   assert.throws(() => assertPendingPrefixTwin(pendingMdPrefixesFromCode(), pendingMdPrefixesFromProse(mutated)));
+});
+
+test('every CANONICAL_PREFIXES entry classifies without unmapped-prefix (#3370)', () => {
+  assert.ok(CANONICAL_PREFIXES.length > 0);
+  for (const p of CANONICAL_PREFIXES) {
+    assert.notStrictEqual(classifyStagedItem(p + '1.md').reason, 'unmapped-prefix', p);
+  }
+});
+
+test('every SECTION_MAP row except .patch is covered by some CANONICAL_PREFIXES entry (#3370)', () => {
+  const rows = SECTION_MAP.filter(([re]) => re.source !== '\\.patch$');
+  assert.ok(rows.length > 0 && rows.length < SECTION_MAP.length, 'the .patch row is the only exclusion');
+  for (const [re] of rows) {
+    assert.ok(CANONICAL_PREFIXES.some((p) => re.test(p + '1.md')), `no CANONICAL_PREFIXES entry matches ${re}`);
+  }
+});
+
+// Expands a SECTION_MAP row's regex source into the literal prefixes it accepts:
+// `^a-`, `^a(-|\b)`, `^(a|b)-`, `^x-(c|d)-` style rows (every row but the .patch one).
+function rowPrefixes(re) {
+  // A `(-|\b)` tail still lists the `-` form (resolve.js's CANONICAL_PREFIXES comment).
+  const src = re.source.replace('(-|\\b)', '-');
+  const m = /^\^([^(]*)(?:\(([^)]*)\))?(-?)$/.exec(src);
+  assert.ok(m, `unrecognised SECTION_MAP row shape ${re.source}`);
+  const [, head, alts, tail] = m;
+  return (alts === undefined ? [''] : alts.split('|')).map((a) => `${head}${a}${tail}`);
+}
+
+test('every alternative of every SECTION_MAP row except .patch is a CANONICAL_PREFIXES entry (#3370)', () => {
+  const rows = SECTION_MAP.filter(([re]) => re.source !== '\\.patch$');
+  const expected = rows.flatMap(([re]) => rowPrefixes(re));
+  assert.ok(expected.length >= rows.length);
+  for (const p of expected) {
+    assert.ok(CANONICAL_PREFIXES.includes(p), `CANONICAL_PREFIXES is missing ${p}`);
+  }
+});
+
+test('nearestCanonicalPrefixes(review-13-record) includes a review-* prefix (#3370)', () => {
+  const near = nearestCanonicalPrefixes('review-13-record');
+  assert.strictEqual(near.length, 3);
+  assert.ok(near.some((p) => p.startsWith('review-')), near.join(', '));
+});
+
+test('nearestCanonicalPrefixes ranks an exact head match first and honors n (#3370)', () => {
+  assert.deepStrictEqual(nearestCanonicalPrefixes('review-unconfirmed-9', 1), ['review-unconfirmed-']);
+  assert.strictEqual(nearestCanonicalPrefixes('zzz', 5).length, 5);
 });

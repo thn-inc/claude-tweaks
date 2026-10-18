@@ -17,7 +17,7 @@ A new decision record states the model. #3311 then deletes the leftovers (`CEILI
 
 **Tech Stack:** Node 18+, `node:test`, `node:assert`. Markdown skill prose. No dependencies.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-17T062549-spec-3307-3308-3306-3309-3310-3311/spec-3310/work/3310-spec.md` (materialized from GitHub issue #3310). Its **Boundary amendments** section supersedes the issue body wherever the two conflict. The values below are the amended ones.
+**Spec:** `.claude-tweaks/pipelines/2026-10-17T062549-spec-3307-3308-3306-3309-3310-3311/spec-3310/work/3310-spec.md` (materialized from GitHub issue #3310). Its **Boundary amendments** section supersedes the issue body wherever the two conflict. The values below are the amended ones. _(Spec file deleted at the series close-out in PR #3433; the GitHub record, with its As-built notes, is the durable spec.)_
 
 ## Build-time facts that supersede the issue body
 

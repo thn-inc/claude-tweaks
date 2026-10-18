@@ -130,14 +130,13 @@ test('step-6-interactive.md: template mirrors the fenced shape and still cites s
   assert.doesNotMatch(INTERACTIVE, /\*\*Clean:\*\* \{comma list/);
 });
 
-// --- Task 4: SKILL.md Next Actions derives from Yours groups, under the ceiling ---
+// --- Task 4: SKILL.md Next Actions derives from Yours groups ---
 
 const TIDY_SKILL = read('plugin', 'skills', 'tidy', 'SKILL.md');
 
 // The ceiling assertion this test used to carry alongside these four content
-// assertions is retired by #1997 — the per-file tier is a warning since
-// #1990 and tidy/SKILL.md has no compose call site; removal condition in
-// docs/incident-log.md [IL-153].
+// assertions was retired by #1997, and #3311 removed the per-file tier
+// entirely — the Read-limit rail is the only size limit (decision 0024).
 test('tidy/SKILL.md: Next Actions derives one option per Yours group', () => {
   const na = section(TIDY_SKILL, '## Next Actions', '## Component-Skill Contract');
   assert.match(na, /Then take Yours \*\*groups\*\* \(`step-6-auto\.md`'s Yours grouping\)/);

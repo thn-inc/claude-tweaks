@@ -2,7 +2,7 @@
 
 **Goal:** Add a two-tier corpus-relative `sizeOutlier` signal to `bloat.js` beside the existing `overCeiling`/`headroom` fields, report it, let callers suppress it, and teach both harness-health judging procedures to weigh it as dimension-9 evidence.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-17T062549-spec-3307-3308-3306-3309-3310-3311/spec-3308/work/3308-spec.md` (materialized from GitHub issue #3308)
+**Spec:** `.claude-tweaks/pipelines/2026-10-17T062549-spec-3307-3308-3306-3309-3310-3311/spec-3308/work/3308-spec.md` (materialized from GitHub issue #3308) _(Spec file deleted at the series close-out in PR #3433; the GitHub record, with its As-built notes, is the durable spec.)_
 
 ---
 

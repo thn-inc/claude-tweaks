@@ -1,8 +1,8 @@
 # Multi-Spec — Scaffold the Per-Spec Subdirectory
 
-Loaded by `multi-spec.md`'s "Execution" section — it lives here rather than inline because
-`multi-spec.md` sits at its ~20KB read budget (`tests/run-dir-timestamp-utc.test.js`'s `#724`
-pin).
+Loaded by `multi-spec.md`'s "Execution" section — it lives here rather than inline so
+`multi-spec.md` stays focused on orchestration, with this scaffolding step lazily-loaded on its
+own.
 
 ## The gap this closes
 

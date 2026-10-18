@@ -45,7 +45,8 @@ current size, read the watermark (consumer key `feedback`), and call
 `isTranscriptUnchanged(watermark, currentBytes)` (`bin/lib/transcript-judge/watermark.js`) — on
 the branch where a transcript path actually resolved, before the judge dispatch. Self-assessment
 is exempted from the shared procedure's own check; see `_shared/transcript-judge.md`'s
-"Self-assessment is exempted" paragraph, not restated here.
+"Self-assessment is exempted" paragraph, not restated here. A `mode: "self-assessment"` watermark
+never skips, per `_shared/transcript-judge.md`'s Self-assessment watermark exception.
 
 **When `true` (unchanged) and `--full` was not passed:** skip the judge dispatch entirely, per the
 shared procedure — no Task agent, no self-assessment. Gather 2 contributes nothing new to this
@@ -59,7 +60,7 @@ treat absent the same as empty rather than surfacing `undefined`.
 exactly as today — feedback's own full-reset override, per `_shared/transcript-judge.md`'s
 parameterization note.
 
-**When `false` (grown, or no watermark exists):** proceed to the judge dispatch as today, per the
+**When `false` (grown, no watermark exists, or a self-assessment watermark):** proceed to the judge dispatch as today, per the
 shared procedure.
 
 ## Watermark payload
@@ -76,7 +77,9 @@ a terminal judge-dispatch failure (`_shared/transcript-judge.md`'s Degradation s
   mode,                    // "self-assessment" when this payload was written from the
                            // terminal-dispatch-failure self-assessment route above; omitted
                            // (undefined) on an ordinary dispatched-judge write — a reader treats
-                           // an absent field as the pre-existing dispatched case
+                           // an absent field as the pre-existing dispatched case; readers
+                           // ignore its byte offset (_shared/transcript-judge.md's
+                           // Self-assessment watermark exception)
   sessionId,               // $CLAUDE_CODE_SESSION_ID at dispatch time — the transcript path
                            // is the load-bearing lookup key (per _shared/transcript-judge.md's
                            // Watermark key note), but a human or a future consumer reading the

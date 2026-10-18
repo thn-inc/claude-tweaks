@@ -275,8 +275,9 @@ test('spec-template.md\'s canonical `Parent:` field reference is conditional on 
 // Per-file 40 KB pin on the seven specify files (DECOMPOSITION_MODE,
 // DECOMPOSITION_CLOSEOUT, COLLAPSE_DECISION, RECORD_CREATION,
 // RECORD_CREATION_SUBISSUES, RECORD_CREATION_LINKING, SKILL) retired by
-// #1997 — the per-file tier is a warning since #1990 and these files have no
-// compose call site; removal condition in docs/incident-log.md [IL-153].
+// #1997 — the per-file tier was a warning from #1990 until #3311 deleted the
+// ceiling model entirely, and these files have no compose call site;
+// removal condition in docs/incident-log.md [IL-153].
 
 test('decomposition-mode names a rail-headroom flag measured against RAIL_BYTES, and collapse-decision follows the rename (#3310)', () => {
   const decomp = read('plugin/skills/specify/decomposition-mode.md');
