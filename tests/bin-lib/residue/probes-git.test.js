@@ -392,3 +392,26 @@ test('readPorcelainStatus: a clean fixture worktree reads an empty array, not nu
 test('readPorcelainStatus: a nonexistent path reads null (could not confirm), not an empty array', () => {
   assert.strictEqual(readPorcelainStatus('/does/not/exist/anywhere'), null);
 });
+
+// #3464 — a plain `git status` refreshes the stat cache and rewrites
+// `.git/index` under `index.lock`, which makes a sibling session's
+// `git add`/`commit` fail. `--no-optional-locks` (a top-level option) makes the
+// read-only probe leave the index untouched.
+test('AC3.1: defaultIsDirty: a stale-stat clean worktree reads false without rewriting the index (#3464 — --no-optional-locks)', () => {
+  const dir = tmpGitRepo();
+  try {
+    fs.writeFileSync(path.join(dir, 'file.txt'), 'x\n');
+    execFileSync('git', ['-C', dir, 'add', 'file.txt']);
+    execFileSync('git', ['-C', dir, 'commit', '-q', '-m', 'add']);
+    const past = new Date('2001-01-01T00:00:00Z');
+    fs.utimesSync(path.join(dir, 'file.txt'), past, past); // stale stat data: content unchanged, mtime differs from the index entry
+    const indexPath = path.join(dir, '.git', 'index');
+    const before = fs.readFileSync(indexPath);
+    const beforeMtime = fs.statSync(indexPath).mtimeMs;
+    assert.strictEqual(defaultIsDirty(dir), false);
+    assert.ok(fs.readFileSync(indexPath).equals(before), 'the dirty probe rewrote .git/index');
+    assert.strictEqual(fs.statSync(indexPath).mtimeMs, beforeMtime);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
