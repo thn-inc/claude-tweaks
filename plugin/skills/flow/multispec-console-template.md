@@ -113,8 +113,8 @@ Render 2 run-level rows (no `Spec` value, rendered as `—`) plus 3 rows per spe
 | 23 | 157 | #84 | `Fixes #84` in the reconciliation merge commit (worktree) or the spec's wrap-up commit (current-branch) — fires on push to the default branch |
 
 Issues resolved without a merge (wontfix/duplicate) list a manual `gh issue close` command
-instead — a user action. Omit this section entirely for runs without any record-derived
-specs in the batch (no materialized header present).
+instead — a user action. Omit this section entirely when `manifest.yml`'s `specs[].id`
+list is empty (every spec `/flow` runs is materialized from a record).
 
 #### Translated briefs (freeform issues — what the model inferred)
 

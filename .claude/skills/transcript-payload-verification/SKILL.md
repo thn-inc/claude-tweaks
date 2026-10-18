@@ -157,6 +157,19 @@ the consumer, reproducing the full path the bad entry travelled. So before hand-
 input, ask which component produced it in the incident being pinned — if that component is the
 suspect, the fixture must be its real output, not your model of it.
 
+**The mirror case: a correct producer, and a consumer fixture typed from the consumer's guess.**
+When the consumer reads a field the producer never writes, the consumer's own fixtures come from
+the same wrong guess, so they agree with the bug. Record #3389 is the instance:
+`plugin/bin/lib/console/resolve.js`'s `engineItems` built console item ids from `f.target`, while
+the curation payload names that field `targetPath` (`plugin/skills/wrap-up/curation-engine.md`'s
+payload field table, and every finding fixture in `tests/bin-lib/wrap-up/engine-render.test.js`).
+Both engine-state fixtures in `tests/bin-lib/console/resolve.test.js` hand-built `target`, so the
+suite stayed green while the console printed `skills:undefined`. Before hand-building a fixture for
+a shape another in-repo module writes, grep each field name the consumer reads against the
+producer's contract and the producer's own tests (`grep -rn 'targetPath'
+plugin/skills/wrap-up/curation-engine.md tests/bin-lib/wrap-up/`). A field name that only the
+consumer's side uses is the drift.
+
 ## A plausible mechanism is a claim, not a cause
 
 The same gap one level further over: a root-cause explanation for an external system's

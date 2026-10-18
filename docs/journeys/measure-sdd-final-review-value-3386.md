@@ -41,10 +41,10 @@ files:
 - **Red flags:** Counting severity mismatches as misses. Scoring from memory rather than from the file.
 
 ### 5. Cross-check the build's SDD rulings in the run ledger
-- **URL:** `docs/plans/{date}-{slug}-ledger.md`, phase `build` rows with status `observation` (SDD rulings and parked findings) or `deferred` (SDD deferred minors). `/build`'s carry-forward writes the text after the marker as the Item, so a carried row does not start with `SDD ruling` or `SDD minor (deferred)` unless the controller added that prefix by hand
+- **URL:** `docs/plans/{date}-{slug}-ledger.md`, phase `build` rows with status `observation` (SDD parked findings), `deferred` (SDD deferred minors), or — since #3401 — the ruling rows themselves: `open` until the Review Console ratifies (`accepted`) or reverses (`deferred`, `reversed → #{n}`) them, each with a `staged/sdd-ruling-{N}.md` back-reference. `/build`'s carry-forward writes the text after the marker as the Item for minors and parked lines; a ruling row's Item reads `SDD ruling — {one-liner}: ratify or reverse at the Review Console (staged/sdd-ruling-{N}.md)`
 - **Action:** Read the rulings the controller made instead of stopping, such as fix-wave scope, deferred-minor triage and ranges reviewed, next to the findings they settle.
 - **Should feel:** Like reading the reviewer's margin notes: why a finding was accepted, deferred or folded into one wave.
-- **Should understand:** Since #3386, `/build` copies SDD 6.3.0+ `Ruling:` lines into the run ledger as `observation`. They are durable, but the Review Console does not show them; whether load-bearing rulings should reach a human is #3401.
+- **Should understand:** Since #3386, `/build` copies SDD 6.3.0+ `Ruling:` lines into the run ledger; since #3401 a line whose first marker match is `Ruling:` lands as an `open` row plus a staged `sdd-ruling-{N}.md` the Review Console surfaces for ratify or reverse (`docs/journeys/ratify-or-reverse-an-sdd-ruling-at-the-review-console-3401.md`), so the console's disposition is part of the evidence here too.
 - **Red flags:** A final-review finding with no matching ruling or fix commit, meaning it was dropped silently. Ledger rows still citing SDD's "Cleanup step", which is `## Finish`.
 
 ## Origin

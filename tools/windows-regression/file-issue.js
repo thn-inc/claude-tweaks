@@ -33,6 +33,7 @@
 
 const fs = require('fs');
 const { execFileSync } = require('child_process');
+const { tapLines } = require('../../plugin/bin/lib/verify/extract.js');
 
 const TOOL = 'windows-regression';
 const MAIN_REF = 'refs/heads/main';
@@ -130,39 +131,49 @@ function namesFile(l, needle) {
   return false;
 }
 
-// The excerpt for `file`: from the nearest `not ok` line at or before the first
-// line naming the file (so the test's name is shown), through the next ok/not ok
-// line at or above the opening line's indent (a deeper `ok N` is the failure's own
-// error text) or EXCERPT_MAX_LINES. A match past that `not ok`'s own YAML terminator (`...`
-// at its indent + 2) sits outside any failure block — a crashed file's stderr,
-// printed before its own `not ok` — so the excerpt opens just after the last test
-// boundary (`ok N`, `# Subtest:`, a YAML `...`) above the match, where the stderr
-// (and its `Error:` line) begins; there the end indent is 0. null when no line
-// names the file. `normalized` is `lines` mapped through slashes(), computed once
-// per issue rather than per file.
-function excerptFor(file, lines, normalized) {
+const TEST_POINT_KINDS = new Set(['ok', 'notOk']);
+const BOUNDARY_KINDS = new Set(['ok', 'notOk', 'subtest', 'yamlClose']);
+
+// The excerpt for `file`, read off `tap` (verify's tapLines classification of
+// `lines`, computed once per source): it opens at the owner of the first line
+// naming the file — the failing-test line whose block holds that line, so the
+// test's name is shown — and runs to the next pass/fail line at or above the
+// opening line's indent (a deeper one is the failure's own error text) or
+// EXCERPT_MAX_LINES. One effective-owner rule serves the match and the walk
+// back: a line past its block's YAML-close line (ownership outlives the close)
+// is owned by no one. A match no block owns is a crashed file's stderr, printed
+// before its own failing-test line: the excerpt opens just after the nearest
+// boundary above the match (a pass/fail, subtest or YAML-close line, or an
+// owned line), where the stderr (and its `Error:` line) begins; there the end
+// indent is 0. null when no line names the file. `normalized` is `lines`
+// mapped through slashes(), computed once per issue rather than per file.
+function excerptFor(file, { lines, normalized, tap }) {
   const needle = slashes(file);
   const hit = normalized.findIndex((l) => namesFile(l, needle));
   if (hit === -1) return null;
-  let notOk = -1;
-  for (let i = hit; i >= 0; i--) if (/^\s*not ok\b/.test(lines[i])) { notOk = i; break; }
-  let close = -1;
-  if (notOk !== -1) {
-    const terminator = `${' '.repeat(lines[notOk].search(/\S/) + 2)}...`;
-    close = lines.findIndex((l, i) => i > notOk && l.trimEnd() === terminator);
-  }
-  let start = hit;
-  if (notOk !== -1 && (close === -1 || hit <= close)) {
-    start = notOk;
-  } else {
-    for (let i = hit - 1; i >= Math.max(close, 0); i--) {
-      if (/^\s*(ok \d|# Subtest:|\.\.\.\s*$)/.test(lines[i])) { start = i + 1; break; }
+  const closes = new Map();
+  const closeOf = (o) => {
+    if (!closes.has(o)) closes.set(o, tap.findIndex((t, i) => i > o && t.owner === o && t.kind === 'yamlClose'));
+    return closes.get(o);
+  };
+  const ownerAt = (i) => {
+    const o = tap[i].owner;
+    if (o === -1) return -1;
+    const c = closeOf(o);
+    return c !== -1 && i > c ? -1 : o;
+  };
+  let start = ownerAt(hit);
+  if (start === -1) {
+    start = hit;
+    for (let i = hit - 1; i >= 0; i--) {
+      const t = tap[i];
+      if (ownerAt(i) !== -1 || BOUNDARY_KINDS.has(t.kind)) { start = i + 1; break; }
     }
   }
-  const openIndent = /^\s*not ok\b/.test(lines[start]) ? lines[start].search(/\S/) : 0;
+  const openIndent = tap[start].kind === 'notOk' ? tap[start].indent : 0;
   let end = Math.min(start + EXCERPT_MAX_LINES, lines.length);
   for (let i = start + 1; i < end; i++) {
-    if (/^\s*(not )?ok \d/.test(lines[i]) && lines[i].search(/\S/) <= openIndent) { end = i; break; }
+    if (TEST_POINT_KINDS.has(tap[i].kind) && tap[i].indent <= openIndent) { end = i; break; }
   }
   return lines.slice(start, end).join('\n');
 }
@@ -230,13 +241,13 @@ function composeIssue({ report, verdict, sha, base, pr, runUrl, logText }) {
     // The uncapped log first when readable; a file no log line names retries on
     // the report's failing region before going without an excerpt.
     const sources = (typeof logText === 'string' ? [logText.split(/\r?\n/), regionLines] : [regionLines])
-      .map((lines) => ({ lines, normalized: lines.map(slashes) }));
+      .map((lines) => ({ lines, normalized: lines.map(slashes), tap: tapLines(lines) }));
     const bullets = verdict.attributable.map((f) => `- \`${f}\`${timedOut.has(f) ? ' (timed out — no evidence)' : ''}`);
     parts.push(['### Newly failing test files', ...bullets].join('\n'));
     const excerpts = [];
     for (const file of verdict.attributable) {
       let excerpt = null;
-      for (const s of sources) if (excerpt === null) excerpt = excerptFor(file, s.lines, s.normalized);
+      for (const s of sources) if (excerpt === null) excerpt = excerptFor(file, s);
       if (excerpt !== null) excerpts.push(`#### \`${file}\`\n\n${fence(excerpt)}`);
     }
     if (excerpts.length) parts.push(['### Failure excerpts', ...excerpts].join('\n\n'));

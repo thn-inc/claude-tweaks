@@ -40,7 +40,7 @@
 
 const { execFileSync } = require('child_process');
 const { CLAIMS_BRANCH } = require('./claims');
-const { readClaimBlobGit, writeClaimBlobGit } = require('./claims-git-cas');
+const { readClaimBlobGit, writeClaimBlobGit, defaultRunner } = require('./claims-git-cas');
 const { GH_TIMEOUT_MS, escapeRegExp } = require('../shared-primitives');
 
 // How many times `writeClaimBlob` re-leases and re-pushes a git-CAS write
@@ -268,6 +268,54 @@ function readClaimBlobContentsApi(ghApi, repoSlug, issueNumber) {
   }
 }
 
+function defaultRunGh(args) {
+  return execFileSync('gh', args, {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
+    windowsHide: true,
+  });
+}
+
+// (runGh?) -> string|null. `runGh(args)` returns stdout or throws; a thrown
+// or empty answer resolves to null (the unresolved-slug case).
+function resolveRepoSlug(runGh = defaultRunGh) {
+  try {
+    const slug = String(runGh(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'])).trim();
+    return slug || null;
+  } catch {
+    return null;
+  }
+}
+
+function unresolvedSlugGhApi() {
+  return { stdout: null, failure: 'repo-slug-unresolved', status: null };
+}
+
+// (#3393) `repos/null/contents/...` is never a valid request: an unresolved
+// repo slug used to reach the contents API as the literal `null` and 404,
+// which read as "claim absent" — a false "no claim" for a claim that may
+// exist. `createClaimReader` is the one chained claim reader the skills
+// build on: an unresolved slug makes the contents-API leg a `repo-slug-
+// unresolved` failure instead of a request, so the git leg's answer stands
+// and a git failure stays a failure, never absent.
+// ({gitRunner?, ghApi?, repoSlug?, runGh?}) -> {repoSlug, read(issueNumber)}
+// `repoSlug` is used as given when the key is present (including `null`);
+// otherwise it is resolved through `runGh`. `read` returns `{content}` (null
+// content = absent) or `{failure}`, and chains the git tip across calls so a
+// batch of reads costs one fetch.
+function createClaimReader(opts = {}) {
+  const { gitRunner = defaultRunner, ghApi = defaultGhApi, runGh } = opts;
+  const slug = Object.prototype.hasOwnProperty.call(opts, 'repoSlug') ? opts.repoSlug : resolveRepoSlug(runGh);
+  const deps = { gitRunner, ghApi: slug ? ghApi : unresolvedSlugGhApi };
+  let tip = null;
+  function read(issueNumber) {
+    const r = readClaimBlob(deps, slug, issueNumber, tip);
+    if (r.failure) return { failure: r.failure };
+    if (r.via === 'git') tip = r.sha;
+    return { content: r.absent ? null : r.content };
+  }
+  return { repoSlug: slug, read };
+}
+
 // (deps: {ghApi, gitRunner?}, repoSlug, issueNumber,
 //  {content, sha, createOnly, expectedContent, message})
 // -> { ok, conflict?, secondaryRateLimit?, failure }
@@ -481,4 +529,6 @@ module.exports = {
   casBackoffMs,
   defaultSleep,
   isWellFormedClaimContent,
+  resolveRepoSlug,
+  createClaimReader,
 };

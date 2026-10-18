@@ -53,7 +53,11 @@ The CLI also computes the merge half with both carve-outs (`merge.resolution` = 
 (`AUTO {time} — Review Console: Console auto-resolved {n} item(s) at unattended
 (console-resolve.js). Reversibility: per item.` plus one line per item), and writes
 `{run-dir}/console.json` (`{resolved: true, mode: 'auto-resolve', at, ceiling, items, merge}` —
-the write the reconciler's archival needs, #1854).
+the write the reconciler's archival needs, #1854). That file may later gain an optional
+`residueAcknowledgedAt`, written only by `console-residue.js --ack`/`--ack-all` (#3370); and
+`console-resolve.js --json` on a fresh resolution carries an `unresolved` array (the
+`pending`/`keep-staged` items, `[]` when none); the idempotent re-render of an already-resolved
+console prints the stored table and the `Needs a human` block as text whatever the flags.
 
 ### Resolution-to-step mapping
 
@@ -65,8 +69,31 @@ procedure — no row is left unrouted:
 - `apply` on a **Pending review** item — step 1, which covers every staged item 5–7, not only the
   patches: a `.patch` via `_shared/staged-patch.md`'s `git apply` (a stale one takes the
   `Invariant:` re-derivation below), and a staged `.md` proposal (`polish-suggestion-*`,
-  `visual-review-*`, `design-decision-*`, `build-deviation-*`, `simplify-*`, `deepen-*`) applied
+  `visual-review-*`, `design-decision-*`, `build-deviation-*`, `simplify-*`, `deepen-*`, `sdd-ruling-*`) applied
   as that step already describes for a non-patch item.
+- `apply` on an `sdd-ruling-*` item — still step 1, but it executes no code change: it
+  writes the item's `Ledger:` row back to `accepted`, Resolution
+  `ratified at Review Console — {the ruling's own "— why" clause, or "no — why clause on the ruling line" when it carries none}`
+  — never an empty clause: `finish-console` rejects an `accepted` entry with no resolution text
+  before writing anything (under Approve all,
+  through `finish-console`'s existing `ledger` array — `review-console.md` step 11).
+  `reverse` (the Override vocabulary for a ruling row, `review-console-interactive.md`)
+  composes a born-ready record proposal exactly as
+  `_shared/ledger-format.md`'s Phase 3 `Keep` does (`specShapedBody`; Current State = the
+  ruling and the finding it ruled on; Deliverables = the reversal;
+  `Origin: SDD ruling reversed at Review Console`; `Defer-reason: genuinely-larger`),
+  stages it as `staged/ledger-record-sdd-ruling-{N}.md`,
+  routes it through step 7 in the same pass, and — once step 7 has created the record —
+  writes the row back to `deferred`, Resolution `reversed → #{new record}`; when step 7
+  declines or fails to create it (`refused-proposals.md`, a `gh` failure), the row stays
+  `open` with the cause logged, so the nothing-left-behind gate surfaces it — never
+  `deferred` without a record number, since terminal statuses are final. The console
+  cannot change code for a reversal — the fix wave is closed — so filing is the only
+  reverse action.
+  Outside Approve all, a ratify writes the row directly at step 1
+  per `_shared/staged-patch.md`'s Write-back to the ledger — the same per-item write that
+  step already performs for a `.patch`; a `reverse` on any path writes it at step 7, as
+  above, never at step 1.
 - `apply` on a `Q#` item — step 7 (record creation), whose `refused-proposals.md` check still
   runs first; on an `M#` item — step 8 (the `_shared/learning-routing.md` memory write plus its
   `MEMORY.md` index line).
@@ -95,11 +122,10 @@ session is refused — exit 3 from `set-verify-expectations.js` means the run di
 (re-resolve `$RUN_ROOT` per `_shared/pipeline-run-dir.md` and retry); exit 2 is a malformed call
 to fix, never a reason to fall back to a direct Write.
 
-**`--issues` form:** written on every non-Approve-all resolution (#3365) — `engine-verify.js`'s
+**`--issues` form:** written on every resolution path: the `--issues` call on each non-Approve-all resolution (#3365), and the `issues` key of `finish-console`'s stdin payload under Approve all (#3394) — `engine-verify.js`'s
 `resolvedIssueNumbers()` reads it only when no materialized header resolves (neither the run dir's
 own `work/` nor the worktree mirror, which cleanup may already have removed by the time verify
-runs), so it is harmless when a header resolves. `finish-console` drops an `issues` key from its
-stdin payload, so the Approve-all path does not write it.
+runs), so it is harmless when a header resolves.
 
 **`oversightExempt` preservation:** `verification-brief.md`'s Oversight-floor gate (#2383) may
 have already read-modify-written this file earlier in the same run, once per exempted record;

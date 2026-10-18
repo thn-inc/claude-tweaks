@@ -4,8 +4,7 @@ Referenced by `refine-mode.md`'s Step 3 (the branch this file documents) and Ste
 two outcomes below also needs body-shape re-verification) and Step 5 (the write mechanics), by
 `refine-lanes.md`'s Needs-decision lane (the rendered row + annotation template), and by
 `refine-headless.md`'s Step 4 (the headless gate-4 refusal that reaches the identical `needs:decision`
-outcome). Split out to keep `refine-mode.md` under the 40 KB per-file lazy-load ceiling
-(`tests/bin-lib/skill-audit/context-cost.test.js`) rather than duplicating this branch and its
+outcome). Split out to keep `refine-mode.md` lean rather than duplicating this branch and its
 bash snippets inline at every call site.
 
 ## The branch

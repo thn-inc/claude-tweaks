@@ -4,7 +4,7 @@
 > When code matching an Auto-detect pattern changes, the corresponding doc should be reviewed and updated.
 >
 > Auto-detect patterns are matched against the **current** run's `git diff --name-only`
-> (`plugin/skills/wrap-up/docs-health-integration.md` Step 2, via `plugin/bin/lib/issues/blast-radius.js`'s `classifyDiffFiles`),
+> (`plugin/skills/wrap-up/docs-health-integration.md`'s D0 step 2, via `plugin/bin/lib/issues/blast-radius.js`'s `classifyDiffFiles`),
 > never against history — so payload patterns carry only the post-#418 `plugin/` spelling.
 
 ## Tier: 3
@@ -16,7 +16,7 @@
 | docs/getting-started.md | Full skill reference — every `/claude-tweaks:*` command with its behavior | `plugin/skills/**/*.md` |
 | docs/plugin-structure.md | Directory tree, per-skill sub-file table, command reference | `plugin/skills/**/*.md`, `plugin/skills/**/*.yml`, `plugin/skills/**/*.html`, `plugin/skills/**/*.mjs`, `plugin/bin/**/*.js`, `tools/**/*.js` |
 | docs/skill-graph.md | Every skill-to-skill relationship/edge (single source of truth) | `plugin/skills/**/*.md`, `plugin/skills/**/routine-template.yml` |
-| docs/donts.md | Full Don'ts rule list (extracted from CLAUDE.md's `## Don'ts`, which now holds only a pointer) | CLAUDE.md `## Don'ts`, `plugin/bin/lib/hooks/**` |
+| docs/donts.md | Full Don'ts rule list (extracted from CLAUDE.md's `## Don'ts`, which now holds only a pointer) | CLAUDE.md `## Don'ts`, `plugin/bin/lib/hooks/**`, `plugin/bin/lib/path-guard/**` |
 | docs/hooks.md | Hook dispatcher contract — tiered posture, run-dir resolution and ownership, never-break-a-session invariant, consumers (extracted from CLAUDE.md's `### Hooks`, which now holds only a pointer) | `plugin/bin/hooks.js`, `plugin/bin/lib/hooks/**`, `plugin/hooks/hooks.json`, `plugin/bin/lib/reconcile/**` |
 | docs/reconcile-checks.md | Reconcile dispatcher contract — dispatch order and why it's significant, the fast/background check split, the full "adding a new check" registration procedure (extracted from `docs/hooks.md`'s inventory-only reconcile coverage; `CLAUDE.md`'s `### Reconcile` pointer) | `plugin/bin/lib/reconcile/**` |
 | docs/incident-log.md | Post-mortems behind each `[IL-nn]`-tagged Don't in CLAUDE.md | CLAUDE.md `## Don'ts`, docs/donts.md |

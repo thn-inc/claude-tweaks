@@ -2,7 +2,7 @@
 // bin/session-tmp-resolve.js, the byte-cheap eval-ready CLI wrapper over
 // lib/session-tmp.js#sessionTmpPath (#266's follow-up to shrink the
 // per-fence inline `node -e` preamble that pushed backlog/overview-mode.md
-// over the 40 KB skill-file ceiling).
+// over the then-40 KB skill-file ceiling).
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');

@@ -4,16 +4,17 @@ files:
   - plugin/bin/plan-audit.js
   - plugin/bin/lib/plan-audit/parser.js
   - plugin/skills/build/dispatch.md
+  - plugin/skills/build/plan-authoring-checks.md
   - plugin/skills/flow/steps-and-gates.md
   - tests/ceremony-profile-roster.test.js
 ---
 
 # Add a Fast-Lane Skip Without Drifting the Roster
 
-**Persona:** A claude-tweaks skill author who wants a `ceremony-profile: fast-lane` record to skip one more step — and a maintainer reading a fast-lane run's decision log who wants to know exactly what was skipped and why that was safe.
+**Persona:** A claude-tweaks skill author who wants a `ceremony-profile: fast-lane` record to skip one more step, a plan author writing a fast-lane plan who wants it to pay as little review ceremony as is safe — and a maintainer reading a fast-lane run's decision log who wants to know exactly what was skipped and why that was safe.
 **Goal:** Land a new skip so that every consumer cites one roster row instead of restating the rule, the conformance test proves nothing restates it, and a fast-lane run's `decisions.md` names each skip with its writer.
 **Entry point:** A checkout of this repo; `plugin/skills/_shared/ceremony-profile.md` open; a plan file to count.
-**Success state:** The roster has a new tagged row (or a new "Mentions" row for a line that only renders a skip), every skill line pairing `fast-lane` with `skip` carries a tag or a rostered mention, `node --test tests/ceremony-profile-roster.test.js` is green, and `plan-audit.js --count-tasks` answers the single-task question from the plan file alone.
+**Success state:** The roster has a new tagged row (or a new "Mentions" row for a line that only renders a skip), every skill line pairing `fast-lane` with `skip` carries a tag or a rostered mention, `node --test tests/ceremony-profile-roster.test.js` is green, and `plan-audit.js --count-tasks` answers the single-task question from the plan file alone — reporting `"batched": true` for a fast-lane transcription plan written as one batch.
 
 ## Steps
 
@@ -31,14 +32,21 @@ files:
 - **Should understand:** `{"tasks": n, "batched": boolean}`; exit 2 for an unreadable plan or one with no `### Task N:` heading. `batched` is true only for a plan whose header carries `**Execution:** batched` (outside fenced code) or whose task title carries `[batch]` — the plan author's marker per `build/plan-authoring-checks.md`; `false` means "no marker present". `build/dispatch.md` skips SDD's final whole-branch review only when the profile is fast-lane **and** `tasks` is 1 **and** `batched` is false; a standalone `/claude-tweaks:build` with no `config.yml` never skips.
 - **Red flags:** Reading the task count from the diff or from an agent's narration; a batch bundled into one `### Task` with no marker (it would qualify for the skip).
 
-### 3. Add the skip, cite the tag, watch the test enforce it
+### 3. Author a fast-lane transcription plan as one batch
+- **URL:** `plugin/skills/build/plan-authoring-checks.md`'s **Batched-plan marker** paragraph, then the plan header being written
+- **Action:** For a `ceremony: fast-lane` + `size: low` record whose every task inlines its complete code, put `**Execution:** batched` on its own header line and, on the next line, `**Batch:** send every task to one implementer as a single brief; review the combined diff once.`; then run `--count-tasks` on the plan.
+- **Should feel:** One implementer and one batch review instead of an implementer plus a task reviewer per task — with the whole-branch review still the gate.
+- **Should understand:** The marker alone only keeps the whole-branch review (`batched: true`); it is the separate `**Batch:**` line that tells SDD's controller to send every task in one brief. The marker match is anchored at end of line, so any text appended to `**Execution:** batched` reads `batched: false` — and a fast-lane single-task plan would then qualify for the whole-branch review skip. A plan where any task leaves code for the implementer to write, or needs its own tests or review surface, stays per-task. Plans written before #3123 are not re-steered.
+- **Red flags:** `--count-tasks` printing `"batched": false` for a plan you marked; the instruction written on the marker line; a batch applied to tasks that still need implementer judgment.
+
+### 4. Add the skip, cite the tag, watch the test enforce it
 - **URL:** the skill file gaining the skip, then `node --test tests/ceremony-profile-roster.test.js`
 - **Action:** Add a roster row with a new tag; write the skip sentence in the consumer with `roster tag \`{tag}\`` on the same line as `fast-lane` and `skip`; run the test. Then, deliberately, add a line `Under fast-lane this step is skipped.` to any skill file and run it again.
 - **Should feel:** The test names the offending file and line; remove the line and it is green again.
 - **Should understand:** The check is per physical line and case-insensitive on `fast-lane` + `skip`; a line that only renders a skip (a summary template cell, the decision tree's entry line, the escape hatch's own gate) goes in the Mentions table with a `Line contains` substring instead of a tag. A wrapped sentence whose two words land on different lines is invisible to the test — keep them together.
 - **Red flags:** Widening the test to make a line pass; a Mentions substring so short it would exempt an unrelated future skip in the same file.
 
-### 4. Read a fast-lane run's decision log
+### 5. Read a fast-lane run's decision log
 - **URL:** `{run-dir}/decisions.md` after a fast-lane single-task run
 - **Action:** Find the two new entries.
 - **Should feel:** Each skip is named, once, with its writer — never silent.
@@ -47,4 +55,5 @@ files:
 
 ## Origin
 - Created during build of #1926 (fast lane that sheds cost: the ceremony-profile skip roster, the single-task whole-branch review skip, the polish skip) — the developer-facing half of the parent's ceremony-cost work (#1920).
+- Updated during build of #3123: added step 3 (author a fast-lane transcription plan as one batch — the `**Execution:** batched` marker plus a separate `**Batch:**` instruction line).
 - Related journeys: `pre-authorize-a-flow-runs-merge.md` (the auto-merge path a fast-lane record may take after these skips).

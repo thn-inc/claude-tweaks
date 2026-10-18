@@ -13,24 +13,6 @@ const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => readText(path.join(ROOT, rel));
 
-// Byte ceiling both routing stubs must stay under after the split. Pre-split they were
-// 35,407 (demo) and 35,525 (feedback) bytes; the five extractions remove 6.7 KB (demo:
-// 35,407 → 28,676, three extractions) and 5.9 KB (feedback: 35,525 → 29,624, two
-// extractions). These are regression guards against the bodies silently drifting back
-// inline, not a tuned budget — the per-file warning tier is 40 KB (docs/skill-authoring.md).
-//
-// Per-skill, not shared (#2765): feedback's accretion since the split (29,624 → 30,718,
-// landing within 2 B of a shared 30 KB guard) repeatedly re-collided with this ceiling on
-// ordinary content growth having nothing to do with the split regression this guard exists
-// to catch (the SPLITS assertions above, which are the actual structural check and are
-// unchanged here). A further split was considered and rejected: feedback's next-largest
-// self-contained sections (Step 4 Dedup, Step 6 Scrub) are pinned live in SKILL.md by
-// tests/feedback-dedup-search-scrub-conformance.test.js's regexes, so extracting either
-// would require rewriting that suite's assertions too — more churn than the problem
-// warrants. Raising feedback's own ceiling restores real headroom without loosening
-// demo's guard, which has not had this problem (28,368 B, comfortably under 30 KB).
-const STUB_CEILING_BYTES = { demo: 30 * 1024, feedback: 34 * 1024 };
-
 const SPLITS = [
   {
     skill: 'demo',
@@ -74,13 +56,5 @@ for (const s of SPLITS) {
     assert.ok(sub.includes(s.bodyLiteral), `${subPath} must carry the moved body (literal ${JSON.stringify(s.bodyLiteral)})`);
     assert.ok(skill.includes(`\`${s.sub}\``), `${skillPath} must cite \`${s.sub}\` so the branch is loaded by file name`);
     assert.equal(skill.includes(s.bodyLiteral), false, `${skillPath} still carries the moved body — the extraction is a move, not a copy`);
-  });
-}
-
-for (const skill of ['demo', 'feedback']) {
-  test(`${skill}/SKILL.md stays under the post-split stub ceiling`, () => {
-    const ceiling = STUB_CEILING_BYTES[skill];
-    const bytes = Buffer.byteLength(read(`plugin/skills/${skill}/SKILL.md`), 'utf8');
-    assert.ok(bytes < ceiling, `plugin/skills/${skill}/SKILL.md is ${bytes} bytes — expected under ${ceiling}`);
   });
 }

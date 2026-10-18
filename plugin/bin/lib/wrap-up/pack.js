@@ -138,17 +138,36 @@ function toSummary(r) {
 
 // One directory of materialized headers: work/{n}-spec.md, one per record.
 // The frontmatter `record:` line wins over the filename when both exist.
-function headerRecords(deps, dir) {
-  const nums = [];
+// `parkedAtShaping` is true when any file for that record carries the flag —
+// read only from the leading frontmatter block, so a body line quoting the key
+// never counts (#3399).
+function headerEntries(deps, dir) {
+  const byRecord = new Map();
   for (const name of deps.readdir(dir)) {
     const m = /^(\d+)-spec\.md$/.exec(name);
     if (!m) continue;
     let text = '';
     try { text = deps.readFile(path.join(dir, name)); } catch { continue; }
     const rec = /^record:\s*(\d+)\s*$/m.exec(text);
-    nums.push(Number(rec ? rec[1] : m[1]));
+    const n = Number(rec ? rec[1] : m[1]);
+    const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+    const parked = front !== null && /^parked-at-shaping:\s*true\s*$/m.test(front[1]);
+    byRecord.set(n, byRecord.get(n) === true || parked);
   }
-  return sortedUnique(nums);
+  return [...byRecord.keys()].sort((a, b) => a - b).map((record) => ({ record, parkedAtShaping: byRecord.get(record) }));
+}
+
+function headerRecords(deps, dir) {
+  return headerEntries(deps, dir).map((e) => e.record);
+}
+
+// Which resolveRecords rungs may receive a closing keyword (Ruling R1): only
+// the header rungs. Manifest ids include not-run/failed specs, whose PR-body
+// line is `Refs`, not `Fixes`. Decided here once; consumers read the result.
+const CLOSING_RECORD_SOURCES = new Set(['headers', 'worktree-headers']);
+
+function closingRecords({ records, source }) {
+  return CLOSING_RECORD_SOURCES.has(source) ? records : [];
 }
 
 // The worktree's own mirror of a run dir: everything from the
@@ -192,24 +211,32 @@ function manifestRecords(deps, dir) {
 // the main-checkout run dir --run anchors to, same reason rung (b) mirrors
 // rung (a)); else none.
 function resolveRecords(deps, runDir, worktree) {
-  const own = headerRecords(deps, path.join(runDir, 'work'));
-  if (own.length) return { records: own, source: 'headers' };
+  // `parkedAtShaping` (record number -> boolean) is populated for the two
+  // header rungs only; the manifest rungs and `unavailable` carry `{}`.
+  const fromHeaders = (entries, source) => ({
+    records: entries.map((e) => e.record),
+    source,
+    parkedAtShaping: Object.fromEntries(entries.map((e) => [e.record, e.parkedAtShaping])),
+  });
+
+  const own = headerEntries(deps, path.join(runDir, 'work'));
+  if (own.length) return fromHeaders(own, 'headers');
 
   const mirror = worktreeMirror(runDir, worktree);
   if (mirror && path.resolve(mirror) !== path.resolve(runDir)) {
-    const mirrored = headerRecords(deps, path.join(mirror, 'work'));
-    if (mirrored.length) return { records: mirrored, source: 'worktree-headers' };
+    const mirrored = headerEntries(deps, path.join(mirror, 'work'));
+    if (mirrored.length) return fromHeaders(mirrored, 'worktree-headers');
   }
 
   const own2 = manifestRecords(deps, runDir);
-  if (own2.length) return { records: own2, source: 'manifest' };
+  if (own2.length) return { records: own2, source: 'manifest', parkedAtShaping: {} };
 
   if (mirror && path.resolve(mirror) !== path.resolve(runDir)) {
     const mirrored2 = manifestRecords(deps, mirror);
-    if (mirrored2.length) return { records: mirrored2, source: 'worktree-manifest' };
+    if (mirrored2.length) return { records: mirrored2, source: 'worktree-manifest', parkedAtShaping: {} };
   }
 
-  return { records: [], source: 'unavailable' };
+  return { records: [], source: 'unavailable', parkedAtShaping: {} };
 }
 
 function hasPrNumber(state) {
@@ -275,8 +302,9 @@ function resolveInputs({ runDir, cwd, deps }) {
   const hasWorktree = state && typeof state.worktree === 'string';
   const worktree = hasWorktree ? state.worktree : cwd;
   sources.worktree = hasWorktree ? 'run-state.json' : 'cwd';
-  const { records, source: recordSource } = resolveRecords(deps, runDir, worktree);
-  sources.records = recordSource;
+  const resolution = resolveRecords(deps, runDir, worktree);
+  const { records, parkedAtShaping } = resolution;
+  sources.records = resolution.source;
   const pr = hasPrNumber(state) ? state.pr.number : null;
   sources.pr = pr === null ? 'unavailable' : 'run-state.json';
   const values = deps.resolvePolicy(POLICY_KEYS, worktree) || {};
@@ -296,7 +324,7 @@ function resolveInputs({ runDir, cwd, deps }) {
   // record-scoped questions ("what did closing it unblock?") have no single
   // answer — null rather than a silently-picked first element.
   const record = records.length === 1 ? records[0] : null;
-  return { records, record, pr, base: mb.base, baseRef: mb.ref, integrationBranch, worktree, policy, sources, runDir };
+  return { records, closingRecords: closingRecords(resolution), parkedAtShaping, record, pr, base: mb.base, baseRef: mb.ref, integrationBranch, worktree, policy, sources, runDir };
 }
 
 async function wrapProbe(name, fn, now) {
@@ -600,5 +628,5 @@ async function gatherPack({ runDir, cwd = process.cwd(), only = null, deps: over
 }
 
 module.exports = {
-  gatherPack, resolveInputs, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords, worktreeMirror,
+  gatherPack, resolveInputs, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, worktreeMirror,
 };

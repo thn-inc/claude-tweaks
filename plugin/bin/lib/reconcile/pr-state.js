@@ -36,7 +36,8 @@ function classifyExecError(e) {
 }
 
 const FETCH_TIMEOUT_MS = 5000;
-const PR_LIST_ARGS = ['pr', 'list', '--state', 'all', '--json', 'number,state,mergedAt,updatedAt,mergeCommit'];
+const PR_LIST_ARGS = ['pr', 'list', '--state', 'all', '--json', 'number,state,mergedAt,updatedAt,mergeCommit,closingIssuesReferences'];
+const PR_VIEW_JSON_FIELDS = 'number,state,mergedAt,updatedAt,mergeCommit,mergeable,mergeStateStatus,closingIssuesReferences';
 
 // #2567: every runClassified/runClassifiedAsync call below opts in to
 // retryOnTimeout — a single slow cold `gh` call is retried once, at this
@@ -154,16 +155,17 @@ function classifyByNumberError(repoRoot) {
 // instead of giving up. Same JSON shape as `resolvePrState`'s governing PR,
 // widened by `mergeable`/`mergeStateStatus` (#2367 — the pending-review
 // staleness check reuses this function rather than adding a third
-// PR-state-reading code path; archive-merged.js's own caller ignores the two
-// added fields, since JSON.parse keeps every key regardless of which ones a
+// PR-state-reading code path; archive-merged.js's own caller ignores the
+// fields it does not read — those two and #3412's closingIssuesReferences —
+// since JSON.parse keeps every key regardless of which ones a
 // given caller reads): `{number, state, mergedAt, updatedAt, mergeCommit,
-// mergeable, mergeStateStatus}` — no tie-break needed, since a PR number
-// resolves to at most one PR. Positional signature: (repoRoot, number) —
-// repoRoot is the checkout whose `origin` gives gh its host and repo. Returns
-// that object, null for a falsy number, or one of the strings 'gh-absent' /
-// 'network-failure' (transport) / 'invalid-arguments' (#3029: a non-string
-// repoRoot or a number that is not a positive integer, no gh call made; or a
-// repoRoot that names no directory).
+// mergeable, mergeStateStatus, closingIssuesReferences}` — no tie-break
+// needed, since a PR number resolves to at most one PR. Positional signature:
+// (repoRoot, number) — repoRoot is the checkout whose `origin` gives gh its
+// host and repo. Returns that object, null for a falsy number, or one of the
+// strings 'gh-absent' / 'network-failure' (transport) / 'invalid-arguments'
+// (#3029: a non-string repoRoot or a number that is not a positive integer, no
+// gh call made; or a repoRoot that names no directory).
 function resolvePrStateByNumber(repoRoot, number) {
   if (!number) return null;
   if (!byNumberArgsValid(repoRoot, number)) return 'invalid-arguments';
@@ -171,7 +173,7 @@ function resolvePrStateByNumber(repoRoot, number) {
     () => {
       const stdout = execFileSync(
         'gh',
-        ['pr', 'view', String(number), '--json', 'number,state,mergedAt,updatedAt,mergeCommit,mergeable,mergeStateStatus'],
+        ['pr', 'view', String(number), '--json', PR_VIEW_JSON_FIELDS],
         { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true },
       );
       return JSON.parse(stdout);
@@ -246,7 +248,7 @@ async function resolvePrStateByNumberAsync(repoRoot, number) {
     async () => {
       const { stdout } = await execFileAsync(
         'gh',
-        ['pr', 'view', String(number), '--json', 'number,state,mergedAt,updatedAt,mergeCommit,mergeable,mergeStateStatus'],
+        ['pr', 'view', String(number), '--json', PR_VIEW_JSON_FIELDS],
         { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
       );
       return JSON.parse(stdout);

@@ -48,7 +48,7 @@ const SECTION_MAP = [
   [/^review-unconfirmed-/, SECTIONS.LOW],
   [/^review-(contested|debate)-/, SECTIONS.CONTESTED],
   [/\.patch$/, SECTIONS.PENDING],
-  [/^(polish-suggestion|visual-review|design-decision|build-deviation|simplify|deepen)-/, SECTIONS.PENDING],
+  [/^(polish-suggestion|visual-review|design-decision|build-deviation|simplify|deepen|sdd-ruling)-/, SECTIONS.PENDING],
   [/^wrap-up-skill(-|\b)/, SECTIONS.SKILL],
   // release-backfill- retired #2257 (git describe --contains replaced the
   // staged-backfill mechanism entirely — nothing stages that prefix anymore).
@@ -65,6 +65,52 @@ const SECTION_MAP = [
   [/^wrap-up-memory-/, SECTIONS.MEMORY],
   [/^wrap-up-upstream-/, SECTIONS.UPSTREAM],
 ];
+
+// One literal string per alternative of every non-`.patch` SECTION_MAP row,
+// each with the trailing `-` its regex requires (a `(-|\b)` row still lists
+// the `-` form). stage-item.js's unmapped-prefix warning (#3370) suggests the
+// nearest of these. MUST list every alternative of every non-`.patch` row.
+// resolve.test.js expands each row's regex source into its alternatives and
+// fails when one is missing here; a new row shape its parser does not
+// recognise fails loudly there too.
+const CANONICAL_PREFIXES = [
+  'review-unconfirmed-',
+  'review-contested-', 'review-debate-',
+  'polish-suggestion-', 'visual-review-', 'design-decision-', 'build-deviation-', 'simplify-', 'deepen-', 'sdd-ruling-',
+  'wrap-up-skill-',
+  'wrap-up-doc-', 'tidy-doc-',
+  'wrap-up-claude-md-', 'wrap-up-adr-',
+  'wrap-up-journey-', 'journeys-',
+  'reflect-', 'digest-promotion-', 'leftover-', 'ledger-record-', 'upstream-unfiled-', 'red-team-',
+  'specify-overlap-', 'specify-redteam-', 'flaky-allowlist-', 'tidy-', 'plan-retention-', 'feedback-drafts-',
+  'wrap-up-memory-',
+  'wrap-up-upstream-',
+];
+
+function levenshtein(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+// The `n` canonical prefixes closest to the start of `id`: Levenshtein
+// distance between the prefix and the same-length head of `id`, divided by the
+// prefix length. Raw distance would rank 5-7 character prefixes (`tidy-`,
+// `deepen-`) above a long prefix that shares a long stem with a typo'd id
+// (`review-13-record` vs `review-debate-`). Ties keep CANONICAL_PREFIXES order.
+function nearestCanonicalPrefixes(id, n = 3) {
+  return CANONICAL_PREFIXES
+    .map((prefix, i) => ({ prefix, i, d: levenshtein(prefix, id.slice(0, prefix.length)) / prefix.length }))
+    .sort((x, y) => x.d - y.d || x.i - y.i)
+    .slice(0, n)
+    .map((x) => x.prefix);
+}
 
 // `{preferred}.shadow-dup` / `{preferred}.shadow-dup-{n}` — bin/lib/hooks/
 // sweep-shadow.js's name for a collision copy when the preferred destination
@@ -318,9 +364,11 @@ function stagedItems(snapshot) {
   });
 }
 
-// engine-state.json: { results: { <rowId>: { result, findings: [{target, action, commit?, stagePath?}] } } }
-// (engine-render.js's worklistRows/collectFindings shape). A staged finding
-// whose stagePath names a staged/ file is the same item as that file.
+// engine-state.json: { results: { <rowId>: { result, target?, findings: [{targetPath, action, commit?, stagePath?}] } } }
+// (engine-render.js's worklistRows/collectFindings shape). The id names the
+// finding's targetPath; legacy findings carry `target` instead, and a finding
+// with neither takes the row-level `target`. A staged finding whose stagePath
+// names a staged/ file is the same item as that file.
 function engineItems(snapshot, stagedIds) {
   const out = [];
   const results = (snapshot.engineState && snapshot.engineState.results) || {};
@@ -328,12 +376,13 @@ function engineItems(snapshot, stagedIds) {
     const entry = results[rowId];
     if (!entry || entry.result !== 'findings') continue;
     for (const f of entry.findings || []) {
+      const label = f.targetPath || f.target || entry.target;
       if (f.action === 'staged') {
         const base = f.stagePath ? path.basename(f.stagePath) : null;
         if (base && stagedIds.has(base)) continue; // already an item via staged/
-        out.push({ id: `${rowId}:${f.target}`, section, resolution: SECTION_STANCES[section].resolution, reason: SECTION_STANCES[section].reason });
+        out.push({ id: `${rowId}:${label}`, section, resolution: SECTION_STANCES[section].resolution, reason: SECTION_STANCES[section].reason });
       } else if (f.action === 'applied') {
-        out.push({ id: `${rowId}:${f.target}`, section, resolution: 'applied', reason: `applied (${f.commit || 'commit unknown'})` });
+        out.push({ id: `${rowId}:${label}`, section, resolution: 'applied', reason: `applied (${f.commit || 'commit unknown'})` });
       }
     }
   }
@@ -414,4 +463,4 @@ function resolveAll({ runDir, policy, deps }) {
   return result;
 }
 
-module.exports = { SECTIONS, SECTION_MAP, SECTION_STANCES, ENGINE_ROW_SECTIONS, classifyStagedItem, readSnapshot, resolveAll, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { SECTIONS, SECTION_MAP, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, classifyStagedItem, readSnapshot, resolveAll, renderTable, renderStoredTable, drainOverlapHoldPrs };

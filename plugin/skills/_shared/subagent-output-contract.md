@@ -7,7 +7,7 @@ This file is the single source of truth. Skills include the relevant template **
 Five sections — Working Directory Discipline, Model Selection, Template A, Failed-agent
 retrieval, and the fan-out section ("How to integrate at a dispatch site") — moved to
 `_shared/subagent-dispatch-core.md` (#2019), so a call site that needs only those can compose a
-bundle under the 40 KB ceiling without also paying for everything below. Both files together are
+lean bundle without also paying for everything below. Both files together are
 the one contract; this file cites the companion rather than restating it.
 
 ## Why this exists
@@ -58,7 +58,7 @@ When in doubt, give less context. If the agent comes back with `NEEDS_CONTEXT`, 
 
 Moved to `_shared/subagent-dispatch-core.md`'s "Working Directory Discipline" section (#2019),
 alongside Model Selection, Template A, Failed-agent retrieval, and the fan-out section — the five
-dispatch-facing sections a review/test call site needs to compose under the 40 KB ceiling without
+dispatch-facing sections a review/test call site needs to compose as a lean bundle without
 also paying for this file's remaining content. Read there.
 
 ## Waiting for Dispatched Agents

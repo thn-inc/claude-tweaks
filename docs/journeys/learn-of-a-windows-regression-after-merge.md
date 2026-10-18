@@ -2,6 +2,7 @@
 files:
   - .github/workflows/windows-regression.yml
   - tools/windows-regression/file-issue.js
+  - plugin/bin/lib/verify/extract.js
   - tools/run-tests.js
   - plugin/bin/verify.js
 ---
@@ -36,7 +37,7 @@ files:
 - **Action:** Open the `type:bug` issue the `file` job created, or the comment it added to the open issue already naming this commit (a "(not adjudicated)" run comments on any open "(not adjudicated)" issue).
 - **Should feel:** Actionable at a glance — which test files, which PR, where the log is — without opening the run.
 - **Should understand:** Every attributable file is listed first, marked `(timed out — no evidence)` when its per-file run hit the timeout. Then each gets an excerpt of at most 12 lines. It starts at the file's `not ok` line (the failing test's name and assertion), or, for a file that crashed before its tests ran, at the stderr printed above that `not ok`. The body is capped at 60,000 characters, so a long one loses excerpts, never file names. The PR is the one merged with that commit, or "unknown". A "(not adjudicated)" title means the baseline comparison could not run, refused, or named no file, so the run failed closed with the raw failing output.
-- **Red flags:** Two issues for one sha; an excerpt that omits the failing test's name; an issue filed from a non-`main` ref; a red run with no issue and no comment.
+- **Red flags:** Two issues for one sha; an excerpt that omits the failing test's name; an excerpt that opens on another file's failing test instead of this file's own failure or stderr; an issue filed from a non-`main` ref; a red run with no issue and no comment.
 
 ### 4. Route it like any defect — `/claude-tweaks:specify #{issue}`
 - **Action:** The issue carries `type:bug`, not `ready`, so it is shaped through `/claude-tweaks:specify` and built with `/claude-tweaks:flow`.
@@ -45,4 +46,4 @@ files:
 
 ## Origin
 
-Record #3316 — post-merge Windows regression guard (PR #3390).
+Record #3316 — post-merge Windows regression guard (PR #3390). Record #3404 — excerpts now read TAP structure from verify's shared `tapLines` classifier (`plugin/bin/lib/verify/extract.js`) instead of the filer's own boundary rules.
