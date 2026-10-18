@@ -32,11 +32,19 @@ function walk(dir) {
 }
 
 // Blank out comments (preserving offsets and newlines) so a comment that
-// mentions windowsHide — or a call shape — never counts either way.
+// mentions windowsHide — or a call shape — never counts either way. One
+// left-to-right pass: a string or template literal is matched first and returned
+// verbatim, so a `/*` or `//` inside a literal or inside a `//` comment can never
+// open a fake comment that blanks real code up to the next `*/`. Both comment
+// openers carry a `(?<!\\)` guard: a slash right after a backslash is an escaped
+// slash (a regex literal like `/^origin\//` ends in one), never a comment. A
+// mis-parse can therefore only leave comment text in (a loud false positive),
+// never hide code.
 function stripComments(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-    .replace(/(^|[^:'"`\\])\/\/[^\n]*/g, (m, lead) => lead + ' '.repeat(m.length - lead.length));
+  return src.replace(
+    /'(?:\\[\s\S]|[^'\\\n])*'|"(?:\\[\s\S]|[^"\\\n])*"|`(?:\\[\s\S]|[^`\\])*`|(?<!\\)\/\*[\s\S]*?\*\/|(?<!\\)\/\/[^\n]*/g,
+    (m) => (/^['"`]/.test(m) ? m : m.replace(/[^\n]/g, ' ')),
+  );
 }
 
 // Text between the paren at `open` and its matching close paren.
@@ -103,6 +111,20 @@ test('scanner flags an unhidden call and accepts the hidden shapes (proves it ca
     "sp(process.execPath, [f], { detached: true, stdio: 'ignore' }); // windowsHide mentioned only in a comment",
   ].join('\n'));
   assert.deepEqual(flagged.map((f) => f.line), [2, 3]);
+
+  // A `/*` inside a string literal or a // comment must not open a fake block
+  // comment that blanks the unhidden call after it; nor may a regex literal
+  // ending in an escaped slash blank the rest of its line.
+  const afterFakeOpeners = unhiddenCalls([
+    "const cp = require('child_process');",
+    '// see staged/** here',
+    "cp.execFileSync('git', ['a'], { encoding: 'utf8' });",
+    '// */',
+    "const g = '/*';",
+    "cp.execFileSync('git', ['x'], { encoding: 'utf8' });",
+    "const n = ref.replace(/^origin\\//, ''); cp.execFileSync('git', ['y'], {});",
+  ].join('\n'));
+  assert.deepEqual(afterFakeOpeners.map((f) => f.line), [3, 6, 7]);
 
   assert.deepEqual(unhiddenCalls([
     "const cp = require('child_process');",

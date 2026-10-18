@@ -35,11 +35,14 @@ function walk(dir) {
 // mentions a call shape never counts either way. One left-to-right pass: a
 // string or template literal is matched first and returned verbatim, so a `/*`
 // or `//` inside a literal (`'/*'`, `` `${dir}/spec-*/work/*` ``) or inside a
-// `//` comment can never open a fake comment that blanks real code. A mis-parse
-// can therefore only leave comment text in (a loud false positive), never hide code.
+// `//` comment can never open a fake comment that blanks real code. Both comment
+// openers carry a `(?<!\\)` guard: a slash right after a backslash is an escaped
+// slash, never a comment — a regex literal such as `/^origin\//` ends in one, and
+// read as `//` it would blank the rest of its line. A mis-parse can therefore only
+// leave comment text in (a loud false positive), never hide code.
 function stripComments(src) {
   return src.replace(
-    /'(?:\\[\s\S]|[^'\\\n])*'|"(?:\\[\s\S]|[^"\\\n])*"|`(?:\\[\s\S]|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,
+    /'(?:\\[\s\S]|[^'\\\n])*'|"(?:\\[\s\S]|[^"\\\n])*"|`(?:\\[\s\S]|[^`\\])*`|(?<!\\)\/\*[\s\S]*?\*\/|(?<!\\)\/\/[^\n]*/g,
     (m) => (/^['"`]/.test(m) ? m : m.replace(/[^\n]/g, ' ')),
   );
 }
@@ -100,6 +103,13 @@ test('scanner flags an unflagged status call and ignores non-git status (proves 
     "runGit(['status']);",
   ].join('\n'));
   assert.deepEqual(afterFakeOpeners.offenders.map((o) => o.line), [2, 5, 7]);
+
+  // A regex literal ending in an escaped slash is not a `//` comment: the call
+  // after it on the same line must still be seen.
+  const afterEscapedSlash = unflaggedStatusCalls(
+    "const n = ref.replace(/^origin\\//, ''); runGit(['status']);",
+  );
+  assert.deepEqual(afterEscapedSlash.offenders.map((o) => o.line), [1]);
 
   const clean = unflaggedStatusCalls([
     "runGit(['--no-optional-locks', 'status', '--porcelain'], cwd);",

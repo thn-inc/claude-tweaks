@@ -59,6 +59,7 @@ function defaultGit(args, cwd) {
       encoding: 'utf8',
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: 64 * 1024 * 1024,
+      windowsHide: true,
     });
   } catch (err) {
     throw new ArtifactOverwriteCheckError(`git ${args.join(' ')} failed: ${err.message}`);
