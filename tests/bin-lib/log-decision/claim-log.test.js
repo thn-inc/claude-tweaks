@@ -142,6 +142,24 @@ test('AC1.1: hasClaimLogFor still denies a claim that was never logged (#3012 Go
   assert.deepStrictEqual(paraphrasedClaimNumbers('- STAGED 08:00:00 — flow: claimed issue #3012.'), []);
 });
 
+test('AC1.1: hasClaimLogFor rejects hypothetical and other-actor claim wording (#3012 final review)', () => {
+  const cases = [
+    '- AUTO 08:00:00 — Step 2.8: would have claimed #3012 but blob unreadable. Reversibility: n/a.',
+    '- AUTO 08:00:00 — Step 2.8: another run claimed #3012 first; aborting. Reversibility: n/a.',
+    '- AUTO 08:00:00 — Step 2.8: should be claimed #3012 next. Reversibility: n/a.',
+  ];
+  for (const line of cases) {
+    assert.deepStrictEqual(paraphrasedClaimNumbers(line), [], line);
+    assert.strictEqual(hasClaimLogFor(line, 3012), false, line);
+  }
+});
+
+test('AC1.1: paraphrasedClaimNumbers rejects a FAILED claim line (#3012 final review)', () => {
+  assert.deepStrictEqual(paraphrasedClaimNumbers('- AUTO 08:00:00 — Step 2.8: claimed #3012 — FAILED (exit 4). Reversibility: n/a.'), []);
+  const line = '- AUTO 08:00:00 — flow: claimed issue #3012 — FAILED (exit 4). Reversibility: n/a.';
+  assert.strictEqual(hasClaimLogFor(line, 3012), false);
+});
+
 test('AC1.1: paraphrasedClaimNumbers returns the numbers a single line positively records as claimed (#3012)', () => {
   assert.deepStrictEqual(paraphrasedClaimNumbers("- AUTO 01:03:28 — Step 2.8: claimed #517, #518, #519 on claims-registry (all classified 'absent'). Reversibility: high."), [517, 518, 519]);
   assert.deepStrictEqual(paraphrasedClaimNumbers('- AUTO -- Step 2.8 claim: both #1447 and #1446 claimed successfully under runId 2026-08-29T232244-record-1446 (claim-targets.js exit 0). Reversibility: high.'), [1447, 1446]);

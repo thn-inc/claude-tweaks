@@ -30,9 +30,10 @@ const SECTION_HEADING = `## ${CLAIM_LOG_SECTION}`;
 // does not, and a bare number needs the line to name the claim step.
 const AUTO_LINE_RE = /^\s*-\s+AUTO\b/;
 const CONTESTED_RE = /\bcontested\b/i;
+const FAILED_RE = /\bFAILED\b/;
 const REVERSIBILITY_SPLIT_RE = /\sReversibility:/;
 const CLAIM_ANCHOR_RE = /\bStep 2\.8\b|\bclaim-targets\b|\bclaims-registry\b|\bissue-claims\b/i;
-const NEGATED_SRC = String.raw`(?<!(?:\b(?:not|never|no)\b|n't)(?:\s+[\w'-]+){0,2}\s+)`;
+const NEGATED_SRC = String.raw`(?<!(?:\b(?:not|never|no|would|could|should|might|another|other|sibling)\b|n't)(?:\s+[\w'-]+){0,2}\s+)`;
 const NUM_LIST_SRC = String.raw`#?\d+(?:(?:\s*,\s*|\s+and\s+|\s+)#?\d+)*`;
 const HASH_LIST_SRC = String.raw`#\d+(?:(?:\s*,\s*|\s+and\s+|\s+)#\d+)*`;
 const LIST_END_SRC = String.raw`(?![\w#/:-]|\.\d)`;
@@ -57,7 +58,7 @@ function isClaimLogEntry(line) {
 // (empty when none). Only the text before the `Reversibility:` suffix counts.
 function paraphrasedClaimNumbers(line) {
   const text = String(line || '');
-  if (!AUTO_LINE_RE.test(text) || CONTESTED_RE.test(text)) return [];
+  if (!AUTO_LINE_RE.test(text) || CONTESTED_RE.test(text) || FAILED_RE.test(text)) return [];
   const cut = text.search(REVERSIBILITY_SPLIT_RE);
   const head = cut === -1 ? text : text.slice(0, cut);
   const anchored = CLAIM_ANCHOR_RE.test(head);
