@@ -22,7 +22,7 @@ files:
 - **Action:** After SDD's Finish step, read the `STAGED {time} — SDD ruling carried forward: "{one-liner}". Stage path: staged/sdd-ruling-{N}.md.` line and open the staged file. Its header carries `Kind: sdd-ruling`, the `progress.md` line verbatim under `Ruling:`, and `Ledger: {ledger path}#{item}` naming the `open` ledger row appended just before it.
 - **Should feel:** Like a decision was logged for you, not hidden from you. The one-liner and the verbatim ruling are both there; nothing has been paraphrased.
 - **Should understand:** Only a line whose first marker match is `Ruling:` is load-bearing. A `parked —` line (first match `parked —`) stays an `observation`; a `minor (deferred):` line stays `deferred`. The ledger row was written first so the staged file can name its item number, and the path in the STAGED line is the one `stage-item.js` actually wrote even when `--allocate` had to renumber it.
-- **Red flags:** A ruling row with status `observation` (the pre-#3401 silent form). A `Ledger:` header naming an item that does not exist. A `staged/sdd-ruling-{N}` file with no `.md` extension.
+- **Red flags:** A ruling row with status `observation` (the pre-#3401 silent form). A `Ledger:` header naming an item that does not exist. A `staged/sdd-ruling-{N}` file with no `.md` extension. A `SKIP {time} — SDD ruling carry-forward (degraded): …` line under `## /build`: `stage-item.js` failed, so that ruling has no staged file and will not reach the console — its ledger row stays `open` with no `(staged/…)` suffix, and the resolve gate drills it instead.
 
 ### 2. Find the row in the console's Pending review section
 - **URL:** the Review Console's Pending review section
