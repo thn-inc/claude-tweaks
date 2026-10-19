@@ -629,6 +629,13 @@ test('findOpenLedger counts open rows in a single ledger', () => {
   );
 });
 
+test('findOpenLedger counts an open row whose Item holds an escaped pipe (#3353)', () => {
+  withLedgers(
+    { 'a-ledger.md': `${LEDGER_HEADER}| 1 | build | a\\|b | open | — |\n` },
+    (cwd) => assert.match(sl.findOpenLedger(cwd), /ledger: 1 open/),
+  );
+});
+
 test('findOpenLedger sums open rows across all ledgers in cwd', () => {
   withLedgers(
     {

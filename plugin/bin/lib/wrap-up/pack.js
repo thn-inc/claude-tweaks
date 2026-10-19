@@ -19,6 +19,7 @@ const { parseDependencies, DEFER_REASONS } = require('../issues/record');
 const { runWithConcurrency } = require('../reconcile/gh-pool');
 const { parseRepo, repoSlug } = require('../repo-resolve');
 const { readRunStateWithParent } = require('../hooks/context');
+const { splitLedgerRow } = require('./ledger-cells');
 
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
 const BIN = path.join(__dirname, '..', '..');
@@ -409,7 +410,7 @@ function parseLedger(text, { excludeRecords = [] } = {}) {
   const deferredUnstagedItems = [];
   const missingDeferReasonItems = [];
   for (const row of rows) {
-    const cells = row.split('|').slice(1, -1).map((c) => c.trim());
+    const cells = splitLedgerRow(row).slice(1, -1).map((c) => c.trim());
     const phase = cells[1] || 'unknown';
     const status = (cells[3] || '').toLowerCase();
     byPhase[phase] = byPhase[phase] || { open: 0, total: 0, unrecognized: 0 };

@@ -814,6 +814,18 @@ test("AC1.1: a pipe inside a deferred row's Resolution stays in the Resolution c
   assert.deepStrictEqual(one.deferredUnstagedItems, ['2']);
 });
 
+test('parseLedger counts an open row whose Item holds an escaped pipe as open (#3353)', () => {
+  const text = [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | build | a\\|b | open | — |',
+    '| 12 | review | Quoted Surface: web\\|mobile\\|desktop | open | — |',
+  ].join('\n');
+  const r = parseLedger(text);
+  assert.strictEqual(r.open, 2);
+  assert.strictEqual(r.unrecognized, 0);
+  assert.deepStrictEqual(r.unrecognizedValues, []);
+});
+
 test('AC1.1: deferredUnstagedItems are qualified by the counted file across multiple ledgers (#3327)', async () => {
   const { pack } = await probeLedgers({
     '2026-09-05-a-ledger.md': ['| 2 | build | a | deferred | — |', '| 3 | build | b | deferred | → #900 |'],
