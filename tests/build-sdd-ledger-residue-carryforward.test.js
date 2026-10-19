@@ -147,3 +147,11 @@ test('AC1.1 #3513: console-execution.md — an unticked or --decline sdd-ruling-
   assert.match(CONSOLE_EXECUTION, ws('`reverse {#}` to `--decline`'));
   assert.match(CONSOLE_EXECUTION, ws('the `decisions.md` `reversed` line is the authoritative record'));
 });
+
+const MULTISPEC_CONSOLE = read('plugin', 'skills', 'flow', 'multispec-review-console.md');
+
+test('AC1.1 #3513: multispec-review-console.md — step 1 ratifies a ruling, Override offers ratify/reverse and refuses skip/modify/revert on one', () => {
+  assert.match(MULTISPEC_CONSOLE, ws("an `sdd-ruling-*` file is no patch — Approve all ratifies it per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet (reverse is Override's `reverse {#}`)"));
+  assert.match(MULTISPEC_CONSOLE, ws('ratify/reverse {#} for an SDD ruling row'));
+  assert.match(MULTISPEC_CONSOLE, ws("an `sdd-ruling-*` row takes only `ratify {#}`/`reverse {#}` (the appendix bullet); `skip`/`modify`/`revert` on one is refused as `wrap-up/review-console-interactive.md` refuses it"));
+});
