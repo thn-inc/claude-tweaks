@@ -24,6 +24,7 @@ const fs = require('fs');
 const path = require('path');
 const ctxLib = require('./context');
 const runIntegrity = require('./run-integrity');
+const passReentry = require('../flow/consolidated-pass');
 const wtDetect = require('./worktree-detect');
 const { readRunResidue, formatResidueLines } = require('../console/residue');
 
@@ -77,6 +78,22 @@ function collectStaleRuns(cwd, { cache, exclude, pluginRoot } = {}) {
         };
       }
     } catch { /* integrity check is advisory — never break the scan */ }
+    // #3497: a multi-spec run whose consolidated Review Console pass never ran
+    // names its re-entry command. Offline only (no `online`) — SessionStart must
+    // stay network-free; a squash-merged multi-commit branch can therefore still
+    // read as unmerged here, and the review-console skill's online check is what
+    // refuses it at invocation.
+    try {
+      const pass = passReentry.checkPassReentry(dir, { cache });
+      if (pass.eligible) {
+        const ids = pass.specIds.map((id) => '#' + id).join(',');
+        return {
+          dir,
+          state,
+          line: `${base} — consolidated pass never ran: /claude-tweaks:flow ${ids} review-console`,
+        };
+      }
+    } catch { /* re-entry check is advisory — never break the scan */ }
     return { dir, state, line: base };
   });
 }

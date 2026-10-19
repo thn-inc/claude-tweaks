@@ -1301,3 +1301,53 @@ test('#3380: the notice is inform-only — no permissionDecision, no exit code',
   assert.ok(!('permissionDecision' in out.json.hookSpecificOutput));
   assert.strictEqual(out.exitCode, undefined);
 });
+
+// #3497: an unfinished multi-spec run whose consolidated pass never ran names
+// its re-entry command in the banner. Real git fixture modeled on
+// tests/run-integrity.test.js's fixtureRepo: `trunk` integration branch, a
+// linked worktree whose `feat-branch` commit is dated after the run's prefix.
+const { fixtureGit } = require('./helpers/git-fixtures');
+
+function reentryGit(cwd, ...args) {
+  return fixtureGit(['-C', cwd, ...args], {
+    env: { ...process.env, GIT_AUTHOR_DATE: '2026-08-01T10:00:00Z', GIT_COMMITTER_DATE: '2026-08-01T10:00:00Z' },
+  }).toString();
+}
+
+function reentryFixture() {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-reentry-')));
+  fixtureGit(['init', '-q', '-b', 'trunk', root]);
+  reentryGit(root, 'config', 'user.email', 't@example.com');
+  reentryGit(root, 'config', 'user.name', 'T');
+  fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
+  reentryGit(root, 'add', 'a.txt');
+  reentryGit(root, 'commit', '-q', '-m', 'base');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: trunk\n');
+  const wt = path.join(root, '.claude', 'worktrees', 'feat');
+  reentryGit(root, 'worktree', 'add', '-q', '-b', 'feat-branch', wt);
+  fs.writeFileSync(path.join(wt, 'b.txt'), 'feature\n');
+  reentryGit(wt, 'add', 'b.txt');
+  reentryGit(wt, 'commit', '-q', '-m', 'feature work');
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-08-01T090000-spec-11-12');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wt }));
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), [
+    'multispec:', '  parent: .claude-tweaks/pipelines/2026-08-01T090000-spec-11-12/', '  specs:',
+    '    - id: 11', '      status: complete', '      subdir: spec-11/',
+    '    - id: 12', '      status: complete', '      subdir: spec-12/',
+  ].join('\n') + '\n');
+  fs.writeFileSync(path.join(runDir, 'events.jsonl'), [
+    '{"skill":"claude-tweaks:build","ts":"2026-08-01T09:05:00.000Z","type":"skill_invoked"}',
+    '{"skill":"claude-tweaks:wrap-up","ts":"2026-08-01T09:50:00.000Z","type":"skill_invoked"}',
+  ].join('\n') + '\n');
+  return root;
+}
+
+test('AC6.1 SessionStart banner carries the review-console suffix for an eligible multi-spec run', async () => {
+  const root = reentryFixture();
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: root });
+  const ctx = out.json.hookSpecificOutput.additionalContext;
+  assert.ok(ctx.includes('/claude-tweaks:flow #11,#12 review-console'), ctx);
+});

@@ -325,3 +325,92 @@ test('scanUnresolvedConsoles: window Infinity with limit Infinity reaches runs b
   assert.strictEqual(runs.length, 205);
   assert.strictEqual(more, false);
 });
+
+// #3497: a multi-spec run whose consolidated Review Console pass never ran
+// names its re-entry command in the banner line. The fixture is a real git repo
+// (modeled on tests/run-integrity.test.js's fixtureRepo): `trunk` integration
+// branch, a linked worktree on `feat-branch` with one commit dated after the
+// run dir's own start prefix, and a multi-spec run dir recording that worktree.
+const { fixtureGit } = require('../../helpers/git-fixtures');
+
+const REENTRY_SUFFIX = ' — consolidated pass never ran: /claude-tweaks:flow #11,#12 review-console';
+const EV_BUILD = '{"skill":"claude-tweaks:build","ts":"2026-08-01T09:05:00.000Z","type":"skill_invoked"}';
+const EV_WRAPUP = '{"skill":"claude-tweaks:wrap-up","ts":"2026-08-01T09:50:00.000Z","type":"skill_invoked"}';
+
+function reentryGit(cwd, ...args) {
+  return fixtureGit(['-C', cwd, ...args], {
+    env: { ...process.env, GIT_AUTHOR_DATE: '2026-08-01T10:00:00Z', GIT_COMMITTER_DATE: '2026-08-01T10:00:00Z' },
+  }).toString();
+}
+
+function writeReentryManifest(runDir, statuses) {
+  const ids = [11, 12];
+  const lines = ['multispec:', '  parent: .claude-tweaks/pipelines/2026-08-01T090000-spec-11-12/', '  specs:'];
+  statuses.forEach((status, i) => lines.push(`    - id: ${ids[i]}`, `      status: ${status}`, `      subdir: spec-${ids[i]}/`));
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), lines.join('\n') + '\n');
+}
+
+function reentryFixture({ events = [EV_BUILD, EV_WRAPUP] } = {}) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-residue-reentry-')));
+  fixtureGit(['init', '-q', '-b', 'trunk', root]);
+  reentryGit(root, 'config', 'user.email', 't@example.com');
+  reentryGit(root, 'config', 'user.name', 'T');
+  fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
+  reentryGit(root, 'add', 'a.txt');
+  reentryGit(root, 'commit', '-q', '-m', 'base');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: trunk\n');
+  const wt = path.join(root, '.claude', 'worktrees', 'feat');
+  reentryGit(root, 'worktree', 'add', '-q', '-b', 'feat-branch', wt);
+  fs.writeFileSync(path.join(wt, 'b.txt'), 'feature\n');
+  reentryGit(wt, 'add', 'b.txt');
+  reentryGit(wt, 'commit', '-q', '-m', 'feature work');
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-08-01T090000-spec-11-12');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wt }));
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
+  writeReentryManifest(runDir, ['complete', 'complete']);
+  fs.writeFileSync(path.join(runDir, 'events.jsonl'), events.join('\n') + '\n');
+  return { root, wt, runDir };
+}
+
+test('AC5.1 eligible multi-spec parent line ends with the review-console command', () => {
+  const { root } = reentryFixture();
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.ok(entries[0].line.startsWith('- 2026-08-01T090000-spec-11-12 (status: active)'), entries[0].line);
+  assert.ok(entries[0].line.endsWith(REENTRY_SUFFIX), entries[0].line);
+});
+
+test('AC5.1 ineligible variants carry no suffix', () => {
+  const mutations = {
+    'console.json written': (runDir) => fs.writeFileSync(path.join(runDir, 'console.json'), '{}'),
+    'spec 12 running': (runDir) => writeReentryManifest(runDir, ['complete', 'running']),
+    'mode interactive': (runDir) => fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: interactive\n'),
+  };
+  for (const [label, mutate] of Object.entries(mutations)) {
+    const { root, runDir } = reentryFixture();
+    mutate(runDir);
+    const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+    assert.strictEqual(entries.length, 1, label);
+    assert.doesNotMatch(entries[0].line, /review-console/, label);
+  }
+});
+
+test('AC5.1 merged branch -> no suffix and no shipped line', () => {
+  const { root } = reentryFixture();
+  reentryGit(root, 'merge', '-q', '--no-edit', 'feat-branch');
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.doesNotMatch(entries[0].line, /review-console/);
+  assert.doesNotMatch(entries[0].line, /appears shipped/);
+});
+
+test('AC5.1 shipped-unclosed keeps the shipped line, no suffix', () => {
+  const { root } = reentryFixture({ events: [EV_BUILD] });
+  reentryGit(root, 'merge', '-q', '--no-edit', 'feat-branch');
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.match(entries[0].line, /appears shipped/);
+  assert.doesNotMatch(entries[0].line, /review-console/);
+});
