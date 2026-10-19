@@ -124,12 +124,6 @@ function defaultAppendClaimLog({ runDir, issue, transport }) {
   });
 }
 
-function repoSlugOf(gh) {
-  const out = gh(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner']);
-  const slug = String(out || '').trim();
-  return slug || null;
-}
-
 // Best-effort bootstrap-then-add for `bot:in-progress`, per
 // `_shared/label-bootstrap.md`'s check-then-create convention. Throws are the
 // caller's problem to catch (per contract, this never aborts a claim).
@@ -266,7 +260,7 @@ function run(argv, deps) {
   // absent, auth, a real 404) still falls through to exit 2, but without the
   // USAGE text, which describes argv and is irrelevant to either cause.
   const slugResult = runClassified(
-    () => ({ ok: true, slug: repoSlugOf(deps.gh) }),
+    () => ({ ok: true, slug: claimStore.resolveRepoSlugOrThrow(deps.gh) }),
     (e) => ({ ok: false, timedOut: isTimeoutError(e), error: errText(e) }),
     { retryOnTimeout: true },
   );
