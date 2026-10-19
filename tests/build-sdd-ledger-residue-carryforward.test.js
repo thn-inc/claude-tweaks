@@ -12,6 +12,7 @@ const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
 const read = (...p) => readText(path.join(ROOT, ...p));
+const ws = (s) => new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
 
 const DISPATCH = read('plugin', 'skills', 'build', 'dispatch.md');
 const BUILD_SKILL = read('plugin', 'skills', 'build', 'SKILL.md');
@@ -98,7 +99,6 @@ test('AC5.1: the appendix maps apply on an sdd-ruling-* item to ratify (ledger a
   assert.ok((APPENDIX.match(/sdd-ruling/g) || []).length >= 2, 'prefix list plus the Resolution-to-step bullet');
   // Wrap-tolerant pins: `\s+` wherever the hard-wrapped bullet may break a line, so a reflow
   // with no wording change stays green (review #3401, lens 3f).
-  const ws = (s) => new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
   assert.match(APPENDIX, ws('- `apply` on an `sdd-ruling-*` item — still step 1, but it executes no code change: it writes the item\'s `Ledger:` row back to `accepted`, Resolution `ratified at Review Console — {the ruling\'s own "— why" clause, or "no — why clause on the ruling line" when it carries none}`'));
   assert.match(APPENDIX, ws('never an empty clause: `finish-console` rejects an `accepted` entry with no resolution text before writing anything'));
   assert.match(APPENDIX, ws('through `finish-console`\'s existing `ledger` array'));
@@ -127,4 +127,23 @@ test('review #3401: the carry-forward names the stage-item.js failure branch, th
   assert.match(DISPATCH, /the same operation, not an Update Item/);
   assert.match(DISPATCH, /De-duplication on Append never skips a ruling row/);
   assert.match(DISPATCH, /takes the staged extension from the source; the file opens with a header block `Title:`/);
+});
+
+const CONSOLE_ON_PR = read('plugin', 'skills', '_shared', 'console-on-pr.md');
+const CONSOLE_EXECUTION = read('plugin', 'skills', '_shared', 'console-execution.md');
+
+test('AC1.1 #3513: console-on-pr.md — an sdd-ruling-* row label carries ratify/reverse, and the legend reads unticked = reverse, never a bare decline', () => {
+  assert.match(CONSOLE_ON_PR, ws('carries its two dispositions in its label'));
+  assert.match(CONSOLE_ON_PR, ws('`— tick = ratify · untick = reverse`'));
+  assert.match(CONSOLE_ON_PR, ws('unticked when Resolve console is ticked = **reverse** (a reversal record is filed), never a bare decline'));
+  assert.match(CONSOLE_ON_PR, ws("per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet"));
+  assert.match(CONSOLE_ON_PR, /\*\*Unticked when Resolve console is ticked\*\* = declined/, 'the general declined rule stays');
+});
+
+test('AC1.1 #3513: console-execution.md — an unticked or --decline sdd-ruling-* item routes to reverse, citing the appendix bullet', () => {
+  assert.match(CONSOLE_EXECUTION, ws('it routes to **reverse**, never to a plain decline'));
+  assert.match(CONSOLE_EXECUTION, ws("per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet"));
+  assert.match(CONSOLE_EXECUTION, ws('Log the item as `reversed`, not declined'));
+  assert.match(CONSOLE_EXECUTION, ws('`reverse {#}` to `--decline`'));
+  assert.match(CONSOLE_EXECUTION, ws('the `decisions.md` `reversed` line is the authoritative record'));
 });
