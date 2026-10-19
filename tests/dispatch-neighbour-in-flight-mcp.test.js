@@ -69,10 +69,14 @@ function fixture(t, { groups = [[rec(1, ['a.js'])]], inFlight = [rec(9, ['a.js']
   return files;
 }
 
+// The unquoted heredoc expands ${CLAUDE_PLUGIN_ROOT} into a JS string literal, where a Windows
+// backslash path would be read as escapes — pass it with forward slashes.
+const PLUGIN_ROOT = path.join(ROOT, 'plugin').split(path.sep).join('/');
+
 function run(code, files) {
   const result = spawnSync('bash', ['-c', code], {
     encoding: 'utf8',
-    env: { ...process.env, CLAUDE_PLUGIN_ROOT: path.join(ROOT, 'plugin'), ...files },
+    env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, ...files },
   });
   assert.strictEqual(result.status, 0, `snippet exited ${result.status}: ${result.stderr}`);
   return result;
