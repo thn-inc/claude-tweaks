@@ -1,6 +1,0 @@
-# Open Items — Windows regression: wrap-up defer CRLF test (#3523)
-
-| # | Phase | Item | Status | Resolution |
-|---|-------|------|--------|------------|
-| 1 | build | Ruling: 9 pre-existing raw-read `split('\n\n')`/`indexOf('\n\n'` sites in other test files are out of #3523's scope (unchanged since shaping base 7852fd8bf; Deliverable 3 scopes to new hits; Gotchas confine the record) — tests/review-vacuity-evidence-conformance.test.js:97, tests/working-approach-scope-discipline.test.js:88, tests/multi-agent-coordination.test.js:1316, tests/design-wrapper-review-surface-gate-prose.test.js:139, tests/ephemeral-server-handoff-conformance.test.js:53,:113, tests/flow-manifesto-ceremony-fallback-conformance.test.js:26, tests/try-it-contract-conformance.test.js:53, tests/skill-load-report-cli.test.js:217, tests/claim-mcp-projection-conformance.test.js:18 — latent CRLF-checkout weakness; route to a follow-up record at wrap-up | observation | — |
-| 2 | build | minor (deferred): tests/friction-main-checkout-denial-coverage.test.js `#2543 control` fails locally (full suite and in isolation) — it reads the real main checkout's ad-hoc run dir (`2026-10-19T045959-adhoc-standalone`, a sibling session's wd-guard refusal), a test-isolation leak unrelated to this diff | deferred | — |
