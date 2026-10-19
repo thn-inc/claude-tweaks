@@ -76,7 +76,7 @@ Append a row to the ledger table.
 - **Status** — typically `open` for new items, `observation` for informational QA caveats
 
 **Optional:**
-- **Resolution** — pre-filled for `observation` items, `—` for `open` items
+- **Resolution** — pre-filled for `observation` items, `—` for `open` items, except a `build`-phase `open` or `deferred` row, which carries its `Defer-reason:` here (`build/SKILL.md` Common Step 4, `_shared/deferral-gate.md`)
 
 **De-duplication:** per `_shared/ledger-format.md`'s De-duplication on Append rule — same phase + substantially similar description = skip the add and say so, never silently.
 

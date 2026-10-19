@@ -5,6 +5,7 @@ files:
   - plugin/bin/lib/log-decision/claim-log.js
   - plugin/skills/flow/claim-targets.md
   - plugin/skills/dispatch/two-call-gate.md
+  - plugin/skills/dispatch/sequential-execution.md
   - plugin/skills/dispatch/task-prompt.md
 ---
 
@@ -38,7 +39,21 @@ files:
 - **Should understand:** A `{ ok: false, reason: 'materialized-header-missing' }` names the unmaterialized member(s); it is gated exactly like a malformed status line — the second call is never dispatched and the group routes to §5's terminal path with one `REFUSED` decisions line.
 - **Red flags:** A second call dispatched on a self-report alone; a header whose `record:` frontmatter names a different number being counted.
 
+### 4. Dispatching session repairs a first call whose only defect is a missing config.yml
+- **URL:** `plugin/skills/dispatch/two-call-gate.md` §2 "Repair branch"; `plugin/skills/dispatch/sequential-execution.md` "Artifact check, first call only"; `plugin/bin/lib/dispatch/first-call-artifact-check.js`
+- **Action:** **Dispatching session**, on `{ ok: false, reason: 'missing-config', repairable: true }`, logs `AUTO {time} — Artifact check: config.yml missing, claim/PR intact — repairing via call 2's /flow case-3 adoption. Reversibility: high.` and dispatches the second call byte-identical to the normal one. That call's `/flow` adopts the run directory and rebuilds `config.yml` from `decisions.md`'s config snapshot.
+- **Should feel:** Like a self-healing hiccup. A tested, correct PR keeps moving through review instead of being abandoned to the §5 teardown.
+- **Should understand:**
+  - `repairable` is `true` only when every member's claim is live under this run's `runId` AND the PR evidence holds: a recorded PR whose branch is on `origin`. The PR evidence is required when `integration-model` in `policy.yml` is `pr-first` or unset. Under `local-merge` the claim alone suffices.
+  - Any other failure, `repairable: false`, or an unreadable/invalid policy still takes §5's teardown.
+  - A malformed status line is `BLOCKED` before the artifact check is ever consulted. `resolveFirstCallGate` encodes that ordering.
+- **Red flags:**
+  - A repair dispatched with a missing claim or an unpushed branch under `pr-first`.
+  - A repair flag or hint threaded into call 2's invocation.
+  - The repair line logged after a malformed status line.
+
 ## Origin
 - Created during #2775's build (multi-spec run 2026-10-16T172750-spec-2775-2733-2677): materialized-header check 5 in the two-call gate, and `claim-targets.js --run` writing the canonical Step 2.8 claim-log line.
 - Updated during build of #3012: the bookkeeping-stamps gate now accepts a semantically equivalent paraphrased claim line, so a first call that logged a real claim in different prose no longer gets the second call denied at its first push.
+- Updated during build of #3226: step 4. A `missing-config` result with intact claim/PR evidence is classified `repairable` and repaired via call 2's `/flow` adoption, not torn down.
 - Related: #2837 (introduced the first-call artifact check), #2861 (claim-log line parser), #2391 (worktree-mirror rung of the record-resolution ladder).

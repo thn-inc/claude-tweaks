@@ -673,6 +673,8 @@ test('gatherPack: the ledger probe counts rows by status and phase from the work
     unrecognizedValues: [],
     deferredUnstaged: 0,
     deferredUnstagedItems: [],
+    missingDeferReason: 0,
+    missingDeferReasonItems: [],
   });
 });
 
@@ -841,6 +843,78 @@ test('AC1.1: the run-dir ledger.md branch reports deferredUnstaged with ledger.m
   assert.strictEqual(pack.ledger.value.open, 1);
 });
 
+// #3004: /build must not park a review minor without a valid Defer-reason:. The
+// backstop flags build-phase deferred/open rows whose Resolution carries no
+// single in-vocabulary reason, and exempts rows whose reason lives elsewhere.
+test('AC2.1 AC2.2: parseLedger reports exactly the build rows lacking a valid Defer-reason (#3004)', () => {
+  const text = [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | build | a | deferred | Defer-reason: tangential — origin SDD Task 2 review; files: x.js; revisit when x.js next changes |',
+    '| 2 | build | b | deferred | SDD minor (deferred), triaged fine-to-defer by the whole-branch review. |',
+    '| 3 | build | c | open | — |',
+  ].join('\n');
+  const r = parseLedger(text);
+  assert.strictEqual(r.missingDeferReason, 2);
+  assert.deepStrictEqual(r.missingDeferReasonItems, ['2', '3']);
+});
+
+test('#3004 review focus: blocked reason ok, bad/duplicate reason flagged, other phases and staged rulings exempt', () => {
+  const text = [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | build | blocked on API | open | Defer-reason: blocked-dependency — unblocks when the API ships |',
+    '| 2 | build | d | deferred | Defer-reason: minor |',
+    '| 3 | build | e | Deferred | Defer-reason: tangential; Defer-reason: genuinely-larger |',
+    '| 4 | build | SDD ruling — x: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |',
+    '| 5 | build/skill | f | open | — |',
+    '| 6 | build/docs | g | open | — |',
+    '| 7 | review | h | open | — |',
+    '| 8 | build | i | fixed | abc1234 |',
+    '| 9 | build | j | deferred | filed as #77 |',
+    '| 10 | build | SDD ruling — chose X over Y: ratify or reverse at the Review Console | open | — |',
+    '| 11 | build | k | deferred | Defer-reason: tangential2 |',
+  ].join('\n');
+  const r = parseLedger(text);
+  assert.deepStrictEqual(r.missingDeferReasonItems, ['2', '3', '11']);
+  assert.strictEqual(r.missingDeferReason, 3);
+  // A record reference carries the reason in that record's own Defer-reason:, except
+  // the run's own record, which is not a carrying reference.
+  assert.deepStrictEqual(parseLedger(text, { excludeRecords: [77] }).missingDeferReasonItems, ['2', '3', '9', '11']);
+});
+
+test('AC2.1: gatherPack reports missingDeferReasonItems qualified by file, without changing open (#3004)', async () => {
+  const { pack } = await probeLedgers({ '2026-09-05-spec-1535-ledger.md': [
+    '| 1 | build | a | deferred | Defer-reason: tangential |',
+    '| 2 | build | b | open | — |',
+  ] });
+  assert.deepStrictEqual(pack.ledger.value.missingDeferReasonItems, ['docs/plans/2026-09-05-spec-1535-ledger.md#2']);
+  assert.strictEqual(pack.ledger.value.missingDeferReason, 1);
+  assert.strictEqual(pack.ledger.value.open, 1);
+});
+
+test('AC2.1: missingDeferReasonItems keeps both file-qualified ids when two ledgers flag the same row id (#3004)', async () => {
+  const { pack } = await probeLedgers({
+    '2026-09-05-a-ledger.md': ['| 2 | build | a | open | — |'],
+    '2026-09-05-b-ledger.md': ['| 2 | build | b | deferred | Defer-reason: tangential2 |'],
+  });
+  assert.strictEqual(pack.ledger.value.missingDeferReason, 2);
+  assert.deepStrictEqual(pack.ledger.value.missingDeferReasonItems.sort(), [
+    'docs/plans/2026-09-05-a-ledger.md#2',
+    'docs/plans/2026-09-05-b-ledger.md#2',
+  ]);
+});
+
+test('AC2.1: the run-dir ledger.md branch reports missingDeferReasonItems with ledger.md#N ids (#3004)', async () => {
+  const { runDir, tree } = await probeLedgers({});
+  fs.writeFileSync(path.join(runDir, 'ledger.md'), [
+    '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
+    '| 1 | build | a | deferred | Defer-reason: genuinely-larger |',
+    '| 2 | build | b | deferred | triaged fine |',
+  ].join('\n'));
+  const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps: okDeps() });
+  assert.deepStrictEqual(pack.ledger.value.missingDeferReasonItems, ['ledger.md#2']);
+  assert.strictEqual(pack.ledger.value.missingDeferReason, 1);
+});
+
 test('gatherPack: a ledger whose DATE prefix contains the record number is not this record\'s ledger (#1930 review M5)', async () => {
   const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
@@ -978,7 +1052,7 @@ test('no docs/plans ledgers reports zeros without consulting git', async () => {
   const base = ownedGit([]);
   const deps = okDeps({ git: (args, opts) => { gitCalls.push(args); return base(args, opts); } });
   const pack = await gatherPack({ runDir, cwd: tree, only: ['ledger'], deps });
-  assert.deepStrictEqual(pack.ledger.value, { open: 0, total: 0, byPhase: {}, files: [], unattributedFiles: [], unrecognized: 0, unrecognizedValues: [], deferredUnstaged: 0, deferredUnstagedItems: [] });
+  assert.deepStrictEqual(pack.ledger.value, { open: 0, total: 0, byPhase: {}, files: [], unattributedFiles: [], unrecognized: 0, unrecognizedValues: [], deferredUnstaged: 0, deferredUnstagedItems: [], missingDeferReason: 0, missingDeferReasonItems: [] });
   assert.ok(!gitCalls.some((a) => a[0] === 'diff' || a[0] === 'ls-files'), `no ownership git call: ${JSON.stringify(gitCalls)}`);
 });
 

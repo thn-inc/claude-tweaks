@@ -117,3 +117,44 @@ test('go-red control: a status line with extra trailing text, or the wrong last 
   assert.ok(!RE.test('status: done'));
   assert.ok(RE.test('STATUS: DONE_WITH_CONCERNS'));
 });
+
+// #3226: a missing-config first call whose claim/PR evidence is intact is repairable --
+// call 2's /flow adoption rebuilds config.yml. The repair branch sits after the
+// status-line check and the artifact check, and call 2's invocation does not change.
+const REPAIR_LINE = "AUTO {time} — Artifact check: config.yml missing, claim/PR intact — repairing via call 2's /flow case-3 adoption. Reversibility: high.";
+function section(text, start, end) {
+  const startIndex = text.indexOf(start);
+  const endIndex = text.indexOf(end, startIndex + 1);
+  assert.ok(startIndex > -1 && endIndex > startIndex, `section ${start} not found`);
+  return text.slice(startIndex, endIndex);
+}
+const gateSection = () => section(read('plugin/skills/dispatch/two-call-gate.md'), '## 2. The gate', '## 5.');
+const loopSection = () => section(read('plugin/skills/dispatch/sequential-execution.md'), '## The loop', '## No per-group timeout');
+function assertRepairBranch(text) {
+  assert.ok(text.includes(REPAIR_LINE), 'literal repair log line');
+  assert.match(text, /`repairable: true`/);
+  assert.match(text, /`repairable: false`/);
+  const status = text.search(/status line/i);
+  const artifact = text.indexOf('Artifact check');
+  const repair = text.indexOf(REPAIR_LINE);
+  assert.ok(status > -1 && status < artifact && artifact < repair, 'status-line check precedes the artifact check precedes the repair branch');
+}
+test('AC7.1: two-call-gate.md §2 carries the repair branch, its literal log line, and an unchanged call 2', () => {
+  const s = gateSection();
+  assertRepairBranch(s);
+  assert.match(s, /byte-identical/);
+  assert.match(s, /keeps section 5's teardown/);
+  assert.match(s, /resolveFirstCallGate/);
+});
+test('AC8.1: sequential-execution.md\'s loop mirrors the repair branch', () => {
+  assertRepairBranch(loopSection());
+});
+test('AC9.2: in both files a malformed status line stays BLOCKED regardless of a repairable artifact', () => {
+  assert.match(gateSection(), /malformed status line is `BLOCKED` regardless/);
+  assert.match(loopSection(), /malformed status line is `BLOCKED` regardless/);
+});
+test('go-red control: assertRepairBranch fails on §2 with the repair line removed, or moved before the status-line check', () => {
+  const s = gateSection();
+  assert.throws(() => assertRepairBranch(s.split(REPAIR_LINE).join('')));
+  assert.throws(() => assertRepairBranch(REPAIR_LINE + '\n' + s.split(REPAIR_LINE).join('')));
+});
