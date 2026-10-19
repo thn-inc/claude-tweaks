@@ -18,8 +18,7 @@ function splitLedgerRow(row) {
   while (i < row.length) {
     const ch = row[i];
     if (ch === '\\') {
-      current += ch;
-      if (i + 1 < row.length) current += row[i + 1];
+      current += row.slice(i, i + 2);
       i += 2;
     } else if (ch === '|') {
       segments.push(current);
