@@ -175,6 +175,11 @@ function prNotFoundProbeArgs(repoRoot, number) {
   const slug = repoSlugOf(repoRoot);
   if (!slug) return null;
   const [owner, name] = slug.split('/');
+  // owner/name come from `origin` (repoSlugOf) — the same origin-is-the-base-repo
+  // assumption resolvePrStatesBulk already makes — whereas `gh pr view` resolves
+  // its own base repo. In a checkout whose gh default repo is not origin, a
+  // confirm could target a different repo: worst case a false pr-not-found
+  // escalation, never a wrong archive or release.
   // -f for the String! variables, -F only for the Int! number (#610's shipped bug shape)
   return ['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${String(number)}`, '-f', `query=${PR_NOT_FOUND_QUERY}`];
 }

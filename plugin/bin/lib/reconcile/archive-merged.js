@@ -1907,8 +1907,12 @@ function archiveMerged({
       // is resolved; a MERGED PR reaches the same archive path, but only
       // once `localHasMerge` confirms the local checkout has actually caught
       // up on its merge commit — mirroring the general merged-PR path below.
+      let skipReason = reason;
       if (state && state.pr && state.pr.number) {
         const byNumber = resolvePrStateByNumber(root, state.pr.number);
+        // #3543: a stamped pr.number GitHub confirms names no PR is a stale
+        // stamp, not an absent branch/worktree — report the real cause.
+        if (byNumber === 'pr-not-found') skipReason = 'pr-not-found';
         if (byNumber && typeof byNumber === 'object' && (byNumber.state === 'CLOSED' || byNumber.state === 'MERGED')) {
           if (byNumber.state === 'MERGED') {
             const hasMerge = localHasMerge(root, byNumber.mergeCommit, integration);
@@ -1956,8 +1960,8 @@ function archiveMerged({
           continue;
         }
       }
-      skipped.push({ runDir: dir, reason });
-      trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner });
+      skipped.push({ runDir: dir, reason: skipReason });
+      trackStuckSkip(cacheBatch, repoSlug, dir, skipReason, { runner });
       continue;
     }
 

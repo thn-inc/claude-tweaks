@@ -2943,6 +2943,38 @@ test('AC5.1: a stamped pr.number resolving pr-not-found skips pr-not-found, neve
   assert.equal(entry.lastError, 'stuck at pr-not-found');
 });
 
+test('AC5.3: the no-branch by-number path skips pr-not-found (not no-branch/no-worktree) for a stale stamp and enters the stuck counter with "stuck at pr-not-found" (#3543)', () => {
+  const root = fs.realpathSync(makeRepo());
+  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  const runId = '2026-10-17T090000-record-3543-nobranch-stale-stamp';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'gone-record-3543'), // stamped, but never created here
+    pr: { number: 3406, branch: 'worktree-record-3543-gone' }, // branch does not exist in this repo
+  }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'auto-mode: true\n'); // adopted — keeps the blind orphaned-mint mtime sweep off this dir
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(runDir, backdated, backdated);
+
+  const wrapper = installGhPrWrapper({ list: [], view: {}, graphql: { body: NOT_FOUND_BODY, exit: 1 } });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(!result.archived.includes(runDir), `a nonexistent stamped PR must not archive, got ${JSON.stringify(result)}`);
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'pr-not-found');
+  const entry = listResidueFailures(root).find((f) => f.reason === 'structurally-stuck' && f.path === runDir);
+  assert.ok(entry, 'the no-branch stale-stamp run must enter the structurally-stuck counter');
+  assert.equal(entry.lastError, 'stuck at pr-not-found');
+});
+
 test('AC5.2: trackStuckSkip escalates pr-not-found exactly once past the TTL with "stuck at pr-not-found" (#3543)', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-notfound-'));
   const calls = [];

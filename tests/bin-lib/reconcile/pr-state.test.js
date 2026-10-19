@@ -627,7 +627,7 @@ test('AC2.1: pr view failure + GraphQL transport failure (exit 1, empty stdout) 
 
 for (const [label, body] of [
   ['a non-NOT_FOUND GraphQL error', '{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"FORBIDDEN","path":["repository","pullRequest"],"message":"x"}]}'],
-  ['NOT_FOUND with a null data.repository', '{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","path":["repository"]}]}'],
+  ['NOT_FOUND with a null data.repository', '{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","path":["repository","pullRequest"]}]}'],
   ['NOT_FOUND on a different path', '{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","path":["repository"],"message":"x"}]}'],
 ]) {
   test(`#3543: ${label} -> network-failure`, { skip: PATH_STUB_SKIP }, async () => {
