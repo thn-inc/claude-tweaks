@@ -7,6 +7,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'console-resolve.js');
+const PLUGIN_ROOT = path.resolve(__dirname, '..', '..', '..', 'plugin');
 const { run, ghReadGrants } = require(CLI);
 
 function mainCheckoutWithRun({ autonomy = 'unattended', staged = {}, decisions = '', policyExtra = '', writePolicy = true, runConfig = null, consoleJson = null } = {}) {
@@ -379,7 +380,7 @@ test('unattended: an unmapped-prefix item and a contested item print a Needs a h
   assert.ok(after.includes('review-debate-deviation.md'), after);
   assert.ok(after.includes('--ack --run'), after);
   const tail = after.trimEnd().split('\n');
-  assert.match(tail[tail.length - 1], new RegExp(`^  paths move when the run is archived; current paths: node "/.+/bin/console-residue\\.js" --run "/.+/${path.basename(fx.runDir)}"$`));
+  assert.strictEqual(tail[tail.length - 1], `  paths move when the run is archived; current paths: node "${PLUGIN_ROOT}/bin/console-residue.js" --run "${fx.runDir}"`);
   assert.ok(tail[tail.length - 2].includes('--ack --run'), 'the paths line follows the formatter lines');
   assert.ok(!after.includes('wrap-up-memory-1.md'), 'a resolved item is not residue');
   const tableOnly = out().slice(0, out().indexOf('Needs a human'));
