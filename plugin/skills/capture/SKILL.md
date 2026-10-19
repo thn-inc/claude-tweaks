@@ -198,6 +198,10 @@ toward the grant.
    **Open-PR overlap check.** Before any `gh issue create` below, screen the new title against open pull requests (#3191) — in-flight work a commit-only screen cannot see. Each step is its own plain Bash call:
 
    ```bash
+   rm -f "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-open-pr-match.json"
+   ```
+
+   ```bash
    gh pr list --state open --json number,title,url --limit 200 > "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-open-prs.json"
    ```
 
