@@ -20,6 +20,7 @@ const { resolvePolicyConfig } = require('../policy-schema');
 const { computeDerivedDefaults } = require('../policy-derived-defaults');
 const { resolveTarget } = require('../stage-item/write');
 const { classifyDecisions } = require('../log-decision/claim-log');
+const { splitNul } = require('../git-z');
 
 const BIN = path.join(__dirname, '..', '..');
 const VERIFY_JS = path.join(BIN, 'verify.js');
@@ -125,12 +126,12 @@ function specOnBranch(deps, { mainRoot, runDirReal, state }) {
   const ls = (pathspec, recursive) => {
     const args = ['ls-tree'];
     if (recursive) args.push('-r');
-    args.push('--name-only', branch, '--', pathspec);
+    args.push('--name-only', '-z', '--end-of-options', branch, '--', pathspec);
     try { return deps.git(args, { cwd: mainRoot }); } catch { return null; }
   };
   const direct = ls(`${rel}/work/`, false);
   if (direct === null) return null;
-  if (direct.split('\n').some((l) => /(^|\/)work\/\d+-spec\.md$/.test(l))) return true;
+  if (splitNul(direct).some((l) => /(^|\/)work\/\d+-spec\.md$/.test(l))) return true;
   // Multi-spec parent (#1931 I4): /dispatch hands both calls the PARENT run
   // dir, whose spec headers live under `spec-{N}/work/` — a `{rel}/work/`
   // listing is legitimately empty there. `-r` is required: without it a
@@ -138,7 +139,7 @@ function specOnBranch(deps, { mainRoot, runDirReal, state }) {
   // path the header regex could match.
   const nested = ls(`${rel}/`, true);
   if (nested === null) return null;
-  return nested.split('\n').some((l) => /(^|\/)(spec-\d+\/)?work\/\d+-spec\.md$/.test(l));
+  return splitNul(nested).some((l) => /(^|\/)(spec-\d+\/)?work\/\d+-spec\.md$/.test(l));
 }
 
 function computeAdoption({ runDir, mainRoot, cwd, deps }) {

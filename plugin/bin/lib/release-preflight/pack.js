@@ -14,6 +14,7 @@ const { conventionalHistory, lastTag } = require('../release-local/commits.js');
 const { bumpPart } = require('../release-local/bump.js');
 const { readConfig, readBumpFlags, resolveTargets, versionAtRef, MANIFEST_FILE } = require('../release-local/manifest.js');
 const { compareVersions, nextVersion } = require('../changelog.js');
+const { splitNul } = require('../git-z');
 const { resolvePolicyConfig } = require('../policy-schema.js');
 const { wrapProbe, withTimeout } = require('../wrap-up/pack.js');
 
@@ -230,7 +231,7 @@ function prepare({ deps, rootArg, runDir }) {
   const listRootAtTip = () => {
     if (rootAtTipCache) return rootAtTipCache;
     try {
-      rootAtTipCache = deps.git(['ls-tree', '--name-only', tipRef]).split('\n').filter(Boolean);
+      rootAtTipCache = splitNul(deps.git(['ls-tree', '--name-only', '-z', '--end-of-options', tipRef]));
     } catch {
       rootAtTipCache = [];
     }
