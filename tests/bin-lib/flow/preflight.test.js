@@ -398,8 +398,10 @@ test('a decisions.md that exists but cannot be read is content, never a fresh mi
   assert.strictEqual(a.hasOtherContent, true);
 });
 
-test('claim-log-only decisions.md beside a non-empty events.jsonl is still case 3; with config.yml it is still case 1 (#2861)', () => {
-  assert.strictEqual(adoptionFor(CLAIM_ONLY, { 'events.jsonl': '{"event":"x"}\n' }).a.case, 3);
+test('claim-log-only decisions.md beside an own-worktree events.jsonl line is still case 3; with config.yml it is still case 1 (#2861)', () => {
+  const own = '{"action":"commit","dir":"/w/own","hash":"abc","type":"commit"}\n';
+  const state = JSON.stringify({ worktree: '/w/own', status: 'active' });
+  assert.strictEqual(adoptionFor(CLAIM_ONLY, { 'events.jsonl': own, 'run-state.json': state }).a.case, 3);
   const withConfig = adoptionFor(CLAIM_ONLY, { 'config.yml': 'mode: auto\n' }).a;
   assert.strictEqual(withConfig.case, 1);
   assert.strictEqual(withConfig.hasOtherContent, false);
@@ -416,18 +418,77 @@ test('events.jsonl holding only fallback-attributed lines does not count as othe
   assert.strictEqual(a.note, ADOPTION_NOTES[2].replace('{path}', fs.realpathSync(fx.runDir)));
 });
 
-test('events.jsonl mixing a fallback-attributed line with one non-fallback line still counts as other-run content → case 3 (unchanged)', () => {
+test('events.jsonl mixing a fallback-attributed line with an unattributed locator-less line: neither is own evidence → case 2, both foreign (#3515)', () => {
   const mixed = '{"type":"skill_invoked","skill":"claude-tweaks:build","ts":"2026-09-06T12:01:00.000Z","attribution":"fallback"}\n'
     + '{"type":"skill_invoked","skill":"claude-tweaks:test","ts":"2026-09-06T12:02:00.000Z"}\n';
   const { a } = adoptionFor(null, { 'events.jsonl': mixed });
-  assert.strictEqual(a.case, 3, `expected case 3, got case ${a.case}`);
-  assert.strictEqual(a.hasOtherContent, true);
+  assert.strictEqual(a.case, 2, `expected case 2, got case ${a.case}`);
+  assert.strictEqual(a.hasOtherContent, false);
+  assert.strictEqual(a.eventsForeign, 2);
 });
 
 test('an unparseable events.jsonl line counts as other-run content → case 3 (fail toward the cautious case)', () => {
   const { a } = adoptionFor(null, { 'events.jsonl': 'not json\n' });
   assert.strictEqual(a.case, 3, `expected case 3, got case ${a.case}`);
   assert.strictEqual(a.hasOtherContent, true);
+  assert.strictEqual(a.eventsForeign, 0);
+});
+
+// #3515: run 2026-10-17T190411-spec-3401 was misclassified case 3 because two
+// events from a sibling worktree (dispatch-record-3405) landed in its fresh mint
+// without an attribution stamp. These are those two lines, verbatim.
+const FOREIGN_3401 = '{"tool":"Write","path":"/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/dispatch-record-3405/.superpowers/sdd/2026-10-17-partial-rollup-pending/task-3-report.md","ts":"2026-10-17T19:07:23.418Z","type":"gate-exempt-gitignored"}\n'
+  + '{"tool":"Edit","path":"/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/dispatch-record-3405/.superpowers/sdd/2026-10-17-partial-rollup-pending/task-3-report.md","ts":"2026-10-17T19:07:26.142Z","type":"gate-exempt-gitignored"}\n';
+const OWN_STATE = JSON.stringify({ worktree: '/w/own', status: 'active' });
+
+test('AC1.1: a fresh mint holding two events from another worktree classifies case 2 with eventsForeign 2', () => {
+  for (const extra of [{}, { 'run-state.json': JSON.stringify({ worktree: '/w/own', status: 'active', sessionId: 's-own' }) }]) {
+    const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': FOREIGN_3401, ...extra });
+    assert.strictEqual(a.case, 2, `expected case 2, got case ${a.case}`);
+    assert.strictEqual(a.eventsForeign, 2);
+    assert.strictEqual(a.hasOtherContent, false);
+  }
+});
+
+test('AC1.2: one own-worktree event among foreign ones classifies case 3', () => {
+  const own = '{"action":"commit","dir":"/w/own","hash":"abc","ts":"2026-10-17T19:08:00.000Z","type":"commit"}\n';
+  const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': FOREIGN_3401 + own, 'run-state.json': OWN_STATE });
+  assert.strictEqual(a.case, 3, `expected case 3, got case ${a.case}`);
+  assert.strictEqual(a.eventsForeign, 2);
+  assert.strictEqual(a.hasOtherContent, true);
+});
+
+test('AC1.2: an event under the run\'s own worktree (path inside it) counts as own; a sibling-prefix path is foreign', () => {
+  const inside = '{"type":"gate-exempt-gitignored","path":"/w/own/.superpowers/x.md"}\n';
+  const a = adoptionFor(CLAIM_ONLY, { 'events.jsonl': inside, 'run-state.json': OWN_STATE }).a;
+  assert.strictEqual(a.case, 3);
+  assert.strictEqual(a.eventsForeign, 0);
+  const sibling = '{"type":"gate-exempt-gitignored","path":"/w/own-other/x.md"}\n';
+  const b = adoptionFor(CLAIM_ONLY, { 'events.jsonl': sibling, 'run-state.json': OWN_STATE }).a;
+  assert.strictEqual(b.case, 2);
+  assert.strictEqual(b.eventsForeign, 1);
+});
+
+test('an event carrying this run\'s own sessionId counts as own → case 3; another session\'s id is foreign → case 2', () => {
+  const state = JSON.stringify({ status: 'active', sessionId: 's-own' });
+  const mine = adoptionFor(CLAIM_ONLY, { 'events.jsonl': '{"type":"pre-compact","trigger":"auto","sessionId":"s-own"}\n', 'run-state.json': state }).a;
+  assert.strictEqual(mine.case, 3);
+  const theirs = adoptionFor(CLAIM_ONLY, { 'events.jsonl': '{"type":"pre-compact","trigger":"auto","sessionId":"s-other"}\n', 'run-state.json': state }).a;
+  assert.strictEqual(theirs.case, 2);
+  assert.strictEqual(theirs.eventsForeign, 1);
+});
+
+test('a fallback-attributed line naming the own worktree is still foreign (attribution wins over locator)', () => {
+  const line = '{"type":"skill_invoked","dir":"/w/own","attribution":"fallback"}\n';
+  const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': line, 'run-state.json': OWN_STATE });
+  assert.strictEqual(a.case, 2);
+  assert.strictEqual(a.eventsForeign, 1);
+});
+
+test('a valid-JSON non-object events line counts as foreign, never throws', () => {
+  const { a } = adoptionFor(null, { 'events.jsonl': '"x"\n3\n' });
+  assert.strictEqual(a.case, 2);
+  assert.strictEqual(a.eventsForeign, 2);
 });
 
 test('AC 2: dispatched call 1 (dispatched: true, no pr, no config) with Step 1.8 ledger line → case 2', () => {

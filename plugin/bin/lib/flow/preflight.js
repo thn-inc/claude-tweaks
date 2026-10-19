@@ -94,22 +94,42 @@ function configValue(text, key) {
   return m ? m[1] : null;
 }
 
-// Ledger row 1: a freshly minted run dir can pick up ANOTHER session's
-// fallback-attributed events.jsonl line (context.js's resolveRun 'fallback'
-// arm is a guess at ownership, not evidence this run did any work) within
-// the mint-to-first-probe window. A line carrying that guess must not count
-// as other-run content on its own; any line without it, or one that fails
-// to parse, still does (fail toward the existing, more cautious case 3).
-function eventsHaveOwnContent(deps, file) {
+// A freshly minted run dir can pick up ANOTHER session's events.jsonl lines
+// within the mint-to-first-probe window (#3515). Own-evidence rule: a parsed
+// line is OWN only when it is a plain object, is not stamped
+// `attribution: "fallback"` (context.js's guess at ownership, not evidence),
+// and carries this run's own locator: a `dir`/`path`/`worktree`/`actual` equal
+// to or under run-state's `worktree`, or a `sessionId`/`session`/
+// `callerSessionId` equal to run-state's `sessionId`. Every other parsed line
+// is FOREIGN, including an unattributed one — pre-#2783 writes carried no
+// stamp, so a sibling session's unstamped line is as foreign as a stamped one.
+// A line that fails to parse is UNPARSEABLE and still counts as content (fail
+// toward the cautious case 3); blank lines are skipped.
+const EVENT_PATH_FIELDS = ['dir', 'path', 'worktree', 'actual'];
+const EVENT_SESSION_FIELDS = ['sessionId', 'session', 'callerSessionId'];
+
+function classifyEvents(deps, file, state) {
+  const out = { own: 0, foreign: 0, unparseable: 0 };
   const t = readText(deps, file);
-  if (t === null) return false;
+  if (t === null) return out;
+  const wt = state && typeof state.worktree === 'string' && state.worktree ? path.resolve(state.worktree) : null;
+  const sid = state && typeof state.sessionId === 'string' && state.sessionId ? state.sessionId : null;
+  const isOwn = (ev) => {
+    if (!ev || typeof ev !== 'object' || Array.isArray(ev) || ev.attribution === 'fallback') return false;
+    if (wt && EVENT_PATH_FIELDS.some((f) => {
+      if (typeof ev[f] !== 'string' || !ev[f]) return false;
+      const v = path.resolve(ev[f]);
+      return v === wt || v.startsWith(wt + path.sep);
+    })) return true;
+    return sid !== null && EVENT_SESSION_FIELDS.some((f) => ev[f] === sid);
+  };
   for (const line of t.split('\n')) {
     if (!line.trim()) continue;
     let ev;
-    try { ev = JSON.parse(line); } catch { return true; }
-    if (!ev || ev.attribution !== 'fallback') return true;
+    try { ev = JSON.parse(line); } catch { out.unparseable += 1; continue; }
+    if (isOwn(ev)) out.own += 1; else out.foreign += 1;
   }
-  return false;
+  return out;
 }
 
 // "work/{n}-spec.md committed on the run's branch", checked from the main
@@ -142,11 +162,11 @@ function specOnBranch(deps, { mainRoot, runDirReal, state }) {
 }
 
 function computeAdoption({ runDir, mainRoot, cwd, deps }) {
-  if (!runDir) return { case: 5, note: null, path: null, anchored: false, hasConfig: false, hasOtherContent: false, specMaterialized: null, backfills: [] };
+  if (!runDir) return { case: 5, note: null, path: null, anchored: false, hasConfig: false, hasOtherContent: false, eventsForeign: 0, specMaterialized: null, backfills: [] };
   const target = deps.resolveTarget({ runDir, cwd, mainRoot });
   if (!target.ok) {
     const why = target.reason === 'missing' ? 'does not exist' : 'is not anchored to the main checkout';
-    return { case: 4, note: ADOPTION_NOTES[4].replace('{path}', runDir).replace(CASE4_PLACEHOLDER, why), path: runDir, anchored: false, hasConfig: false, hasOtherContent: false, specMaterialized: null, backfills: [] };
+    return { case: 4, note: ADOPTION_NOTES[4].replace('{path}', runDir).replace(CASE4_PLACEHOLDER, why), path: runDir, anchored: false, hasConfig: false, hasOtherContent: false, eventsForeign: 0, specMaterialized: null, backfills: [] };
   }
   const real = target.dir;
   const hasConfig = readText(deps, path.join(real, 'config.yml')) !== null;
@@ -161,22 +181,24 @@ function computeAdoption({ runDir, mainRoot, cwd, deps }) {
   } catch (err) {
     decisionsHasContent = !(err && err.code === 'ENOENT');
   }
-  const hasOtherContent = decisionsHasContent || eventsHaveOwnContent(deps, path.join(real, 'events.jsonl')) || specMaterialized === true;
-  if (hasConfig) return { case: 1, note: ADOPTION_NOTES[1].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills: [] };
+  const events = classifyEvents(deps, path.join(real, 'events.jsonl'), state);
+  const eventsForeign = events.foreign;
+  const hasOtherContent = decisionsHasContent || events.own > 0 || events.unparseable > 0 || specMaterialized === true;
+  if (hasConfig) return { case: 1, note: ADOPTION_NOTES[1].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, eventsForeign, specMaterialized, backfills: [] };
   // #3242: a dispatched first call with `dispatched: true` and no `pr`
   // adopts as case 2 (fresh) even when decisions.md carries Step 1.8 or other
   // pre-Step-3 content — a compliant call 1 logs both claim and ledger lines
   // before Step 3 runs, and a recorded `pr` is what separates the #3226 call-2
   // repair from a fresh call 1.
   if (state && state.dispatched === true && !state.pr) {
-    return { case: 2, note: ADOPTION_NOTES[2].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills: [] };
+    return { case: 2, note: ADOPTION_NOTES[2].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, eventsForeign, specMaterialized, backfills: [] };
   }
-  if (!hasOtherContent) return { case: 2, note: ADOPTION_NOTES[2].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills: [] };
+  if (!hasOtherContent) return { case: 2, note: ADOPTION_NOTES[2].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, eventsForeign, specMaterialized, backfills: [] };
   const backfills = [];
   if (!state || typeof state.worktree !== 'string') backfills.push('worktree registration');
   if (!state || !state.pr) backfills.push('PR-early lifecycle');
   if (specMaterialized !== true) backfills.push('materialize commit');
-  return { case: 3, note: ADOPTION_NOTES[3].replace('{path}', real).replace(CASE3_PLACEHOLDER, backfills.length ? backfills.join(', ') : 'nothing'), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills };
+  return { case: 3, note: ADOPTION_NOTES[3].replace('{path}', real).replace(CASE3_PLACEHOLDER, backfills.length ? backfills.join(', ') : 'nothing'), path: real, anchored: true, hasConfig, hasOtherContent, eventsForeign, specMaterialized, backfills };
 }
 
 function parseChecklist(body) {
@@ -341,4 +363,4 @@ async function gatherPreflight({ runDir, steps = [], cwd = process.cwd(), mainRo
   return pack;
 }
 
-module.exports = { ADOPTION_NOTES, PR_CONFLICT_NOTE, LEVER_KEYS, computeAdoption, parseChecklist, gatherPreflight, defaultDeps };
+module.exports = { ADOPTION_NOTES, PR_CONFLICT_NOTE, LEVER_KEYS, classifyEvents, computeAdoption, parseChecklist, gatherPreflight, defaultDeps };
