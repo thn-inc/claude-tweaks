@@ -47,6 +47,14 @@ If the multi-spec run aborted early (one spec hit a HARD-GATE), still render the
 2. Else find the most recent directory in `.claude-tweaks/pipelines/` whose `spec-slug` is dash-joined with a single `spec-` prefix (e.g., `spec-157-159-160`)
 3. Else fall back to interactive single-spec behavior (no consolidation)
 
+## Re-entry after the parent session ended
+
+When the parent session ended before the pass ran, `PIPELINE_RUN_DIR="{parent-run-dir}" /claude-tweaks:flow #{A},#{B} review-console` re-enters it — the same pass, not a second path. `{parent-run-dir}` is "Locating the parent run directory" step 2's result, named explicitly so a later run with the same dash-joined slug cannot win its most-recent heuristic.
+
+1. **Check eligibility.** SessionStart's banner suffix is offline evidence only; this check is the authoritative gate: `node -e "console.log(JSON.stringify(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/flow/consolidated-pass.js').checkPassReentry('{parent-run-dir}', { online: true })))"`.
+2. **`eligible`:** export `MULTISPEC_PARENT_DIR={parent-run-dir}` and treat the run as `MULTISPEC_CURATION_DEFER=1` and `MULTISPEC_REVIEW_DEFER=1` — the original auto/hybrid run set both under the condition the `mode` check verifies. Run "When to run the consolidated console" from step 0 when the parent holds no `engine-state.json` (the batch pass first — `multispec-batch-curation.md`), else from step 1; approval and Shared teardown follow as normal.
+3. **Any other `reason`:** stop with one line naming `reason` and `detail`. `archived`, `closed` and `landed` point at `/claude-tweaks:wrap-up #{n}` once per record. `landed-unknown` means merge evidence could not tell: confirm whether the branch merged, then rerun or take the same wrap-up path. `no-manifest` and `mode` mean no consolidated pass applies to this run. `console-exists` means the console already rendered. `spec-unfinished` names the unfinished specs: finish them, or correct a manifest left stale with `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" spec-status --run "{parent-run-dir}" --spec {id} --status complete --phase wrap-up`, then rerun.
+
 ## Numbering rules
 
 **Canonical render order.** This is the one place this order is stated — every other reference to it (step 4 above, the template below) points here rather than restating the list: Auto-applied, Pending review, Low-confidence findings, Contested findings, then the five engine-rendered sections in their own position, then Cleanup actions, Issue closures, Translated briefs, Queue writes, Refused — no defer reason (`wrap-up/refused-proposals.md`), Memory updates, Upstream feedback.
@@ -210,7 +218,7 @@ Applies identically from "Shared teardown" step 5 above, regardless of whether i
 
 ## On stop (option 3)
 
-Halt before applying. Leave the parent run dir intact. User resumes with `/claude-tweaks:flow {specs} review-console` (a dedicated resume step that re-reads the same parent dir and re-presents the console).
+Halt before applying. Leave the parent run dir intact. User resumes with `/claude-tweaks:flow {specs} review-console` (a dedicated resume step that re-reads the same parent dir and re-presents the console). The same step also serves ended-parent re-entry, when the parent session ended before the pass ran (see "Re-entry after the parent session ended").
 
 **Logging the terminal decision:** At the consolidated terminal-decision point (when Approve all + merge / Approve all, leave PR open / Override / Stop is chosen), log the same `AUTO {time} — Review Console: terminal decision {…}. Reversibility: n/a.` line (per `wrap-up/review-console-interactive.md`'s format) to the parent run's `decisions.md`.
 

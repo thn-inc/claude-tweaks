@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/skills/flow/multi-spec.md
+  - plugin/skills/flow/multispec-review-console.md
   - plugin/skills/wrap-up/SKILL.md
 ---
 
@@ -31,7 +32,7 @@ files:
 - **URL:** `plugin/skills/flow/multi-spec.md`, Mixed execution step 3; `plugin/skills/flow/multispec-review-console.md`
 - **Action:** The parent `/claude-tweaks:flow` session continues to its batch curation pass and its consolidated Review Console. The maintainer picks "Approve all + merge", or "Approve all, leave PR open" to hand the merge to a human.
 - **Should feel:** Like the one wrap-up the run was deferring all along. A single console covers both specs, and B's changed files are inside the batch pass's merge-base diff.
-- **Should understand:** B's own `/claude-tweaks:review` Key Learnings are not seeded into the batch pass, because it seeds only from completed specs. If the parent session has already ended, no documented step re-runs this pass, and the run is treated as already closed (step 5).
+- **Should understand:** B's own `/claude-tweaks:review` Key Learnings are not seeded into the batch pass, because it seeds only from completed specs. If the parent session has already ended, `PIPELINE_RUN_DIR="{parent-run-dir}" /claude-tweaks:flow #{A},#{B} review-console` re-enters this same pass while the branch is unmerged (step 5).
 - **Red flags:** Two consoles for the same branch. A merge that happened from B's tail run instead of from this console.
 
 ### 4. `close-run` comes last, from the pass itself
@@ -41,13 +42,14 @@ files:
 - **Should understand:** Closing the parent before the pass forfeits the per-spec Reflect, curation engine and Review Console of every spec that ran under `MULTISPEC_CURATION_DEFER=1` and `MULTISPEC_REVIEW_DEFER=1`. Nothing in `close-run` checks whether the pass ran.
 - **Red flags:** A manual `hooks.js close-run` on the parent while the consolidated pass is still pending, which is exactly the incident #3033 records.
 
-### 5. Already closed: fall back to per-record wrap-up
-- **URL:** `plugin/skills/flow/multi-spec.md`, "Already closed?"; `plugin/skills/wrap-up/SKILL.md`, "If no arguments, detect from context"
-- **Action:** When the parent was closed before its consolidated pass, run `/claude-tweaks:wrap-up #{n}` once per record instead of a bare `/claude-tweaks:wrap-up` that would infer the work from the conversation.
-- **Should feel:** Honest about the loss. Each record gets its own Reflect, curation and Review Console back, and the run-level batch pass stays lost.
-- **Should understand:** Nothing re-runs a forfeited consolidated pass. The per-record fallback is record-scoped and cannot recover the run-level batch pass.
+### 5. Parent session ended: re-enter the pass, or fall back per record once landed
+- **URL:** `plugin/skills/flow/multi-spec.md`, Mixed execution step 3 and "Already closed?"; `plugin/skills/flow/multispec-review-console.md`, "Re-entry after the parent session ended"; `plugin/skills/wrap-up/SKILL.md`, "If no arguments, detect from context"
+- **Action:** While the branch is unmerged, re-enter with `PIPELINE_RUN_DIR="{parent-run-dir}" /claude-tweaks:flow #{A},#{B} review-console`; after its eligibility check passes, the re-entry runs the batch pass first when the parent holds no `engine-state.json`. Only once the branch has landed, or the run dir was archived or closed, run `/claude-tweaks:wrap-up #{n}` once per record instead of a bare `/claude-tweaks:wrap-up` that would infer the work from the conversation.
+- **Should feel:** Recoverable while the work is unmerged, and honest about the loss afterwards. Each record gets its own Reflect, curation and Review Console back, and the run-level batch pass stays lost.
+- **Should understand:** The re-entry is the same consolidated pass, not a second path. Once the branch has landed or the run dir is archived or closed, nothing re-runs it. The per-record fallback is record-scoped and cannot recover the run-level batch pass.
 - **Red flags:** A bare `/claude-tweaks:wrap-up` on a two-record branch quietly reconstructing the work from conversation context.
 
 ## Origin
 - Created during #3033's build (run 2026-10-17T215318-record-3033): the Mixed execution section in `multi-spec.md`, the detect-from-context pointer in `wrap-up/SKILL.md`, and `tests/flow-mixed-execution-convention.test.js`.
+- Updated during build of #3497 ("Consolidated-pass re-entry via review-console"): step 5 now re-enters the pass with `review-console` while the branch is unmerged; the per-record fallback applies only once landed or archived.
 - Related: `handle-a-failed-multispec-preflight-3351.md` (another multi-spec stop path) and #3035 (`hooks.js manifest-init`, which made step 2's `spec-status` call possible).

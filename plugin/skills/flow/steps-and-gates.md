@@ -19,7 +19,7 @@ Only automatable skills can be included in the pipeline:
 
 `re-verify` is **bundled** with `polish` — it is not a separately addressable step. When `polish` runs and modifies code, the re-verify gate runs automatically afterward (`/test skip-qa`, one-cycle cap) — scoped per `test/verification.md`'s re-verify scoping table. Including `re-verify` in a step list is a no-op; treat it as already implied by `polish`.
 
-**Resume-only step `review-console`** — accepted only on multi-spec resume after a Halt at the consolidated console (see `multispec-review-console.md`). Usage: `/claude-tweaks:flow {specs} review-console` re-reads the parent run dir and re-presents the console. Not a normal pipeline step; not valid in a comma-separated step list with other steps.
+**Resume-only step `review-console`** — accepted only on multi-spec resume, in two cases: after a Halt at the consolidated console, and ended-parent re-entry, where the parent session ended before the consolidated pass ran (eligibility per `multispec-review-console.md`'s "Re-entry after the parent session ended"). Usage: `/claude-tweaks:flow {specs} review-console` re-reads the parent run dir and re-presents the console. Not a normal pipeline step; not valid in a comma-separated step list with other steps.
 
 ## Step Arguments
 
@@ -36,7 +36,7 @@ Steps must follow lifecycle order. Invalid orderings are rejected.
 **Explicit subset** (comma-separated steps) runs only the listed steps. Context from skipped prior steps is read from files if available.
 
 **Valid examples:**
-- `review-console` — valid only on multi-spec resume after a Halt at the consolidated console (re-reads the parent run dir and re-presents the console)
+- `review-console` — valid only on multi-spec resume, after a Halt at the consolidated console or as ended-parent re-entry (re-reads the parent run dir and re-presents the console)
 - `build,test,review,polish,wrap-up` — valid (default; stories auto-inserted if UI changed)
 - `build,stories,test,review,polish,wrap-up` — valid (stories always runs regardless of UI changes)
 - `build,test,review,wrap-up` — valid (skips polish — equivalent to `no-polish`)
