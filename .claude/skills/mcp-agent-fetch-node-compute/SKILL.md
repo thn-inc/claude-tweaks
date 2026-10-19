@@ -23,11 +23,14 @@ A Node subprocess cannot call MCP tools. On a `gh`-absent firing (typically the 
 4. **Distinguish the entry states explicitly.** `null` is an absent blob, a string is content, `{failure}` is a failed read, and a missing key is a read that never happened (fail open: reported as unreadable, not as live or absent). A missing map reads as an empty one.
 5. **Fail open on the agent side too.** If the fetch step or the Write cannot complete, write the empty input (`[]`, `{}`), print the same one-line `AUTO — dispatch: …` message the gh branch prints, and skip the compute step. Write the handoff file on every pull so an earlier pull's file is never read.
 6. **Shell variables do not survive between tool calls.** Each Bash call re-runs the script's opening `eval "$(node … node-eval-file.js …)"` block and echoes the literal paths the Write tool needs.
+7. **Route the compute and the target list through one collector.** When the computation gains a rule that widens what it reads, the target-listing function must widen with it, or rule 2's equality breaks on the MCP path only. #3520 made strong near-duplicates neighbours; `neighbourInFlightExclusions` and `neighbourClaimTargets` both call the module-private `collectNeighbours`, so the claim targets are the union of file and near-duplicate neighbours by construction, not by a second edit.
+8. **Widen the handoff shape with every field the compute reads.** A field the agent leaves out of the file it writes is not an error: the compute reads `undefined` and the signal that field feeds never fires, a silent miss with no fail-open line. #3520's title-similarity signal needed `title`, so it went into `queue-pull-script.md`'s `gh issue list --json` list and `mcp-transport.md`'s `[{number, title, body, labels}]` shape in the same change, and `tests/dispatch-neighbour-in-flight-mcp.test.js` pins the shape string.
 
 ## Tests
 
 - Unit-test the reader over every entry state and the shape guard; prove the guard test is red with the guard disabled.
 - Extract-and-run the prose's heredoc snippets over fixture files (`tests/dispatch-neighbour-in-flight-mcp.test.js`), per the `skill-prose-conformance-tests` skill: the MCP-side fetch is fixtured as the file the agent would write, and the snippet is the one the agent actually runs. Register fixture temp dirs for cleanup with `t.after`.
+- Run the `gh` branch's fail-open fallback too: extract the fetch block and run it under `/bin/sh -c` with `PATH` set to an empty directory, so `gh` is absent, then assert the handoff file reads `[]` and the AUTO line printed (the pool-fetch test in `tests/dispatch-per-record-groups-prose.test.js`).
 
 ## Anti-patterns
 
