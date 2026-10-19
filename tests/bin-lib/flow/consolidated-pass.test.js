@@ -52,6 +52,14 @@ test('AC4.1 console.json present -> console-exists', () => {
   assert.equal(r.reason, 'console-exists');
 });
 
+test('#3497 console.json as a directory -> console-exists', () => {
+  const run = makeRun();
+  fs.mkdirSync(path.join(run, 'console.json'));
+  const r = checkPassReentry(run, { deps: deps() });
+  assert.equal(r.reason, 'console-exists');
+  assert.match(r.detail, /directory/);
+});
+
 test('AC4.1 a spec running -> spec-unfinished naming #12 running', () => {
   const r = checkPassReentry(makeRun({ statuses: ['complete', 'running'] }), { deps: deps() });
   assert.equal(r.reason, 'spec-unfinished');

@@ -14,6 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const { readManifest } = require('./manifest');
+const { lstatType } = require('../path-guard');
 const { checkBranchLanded, repoRootOf } = require('../hooks/run-integrity');
 const { resolvePrStateByNumber } = require('../reconcile/pr-state');
 
@@ -71,8 +72,11 @@ function checkPassReentry(runDir, opts = {}) {
     return verdict('mode', `config.yml mode is ${mode === null ? 'absent' : mode}`);
   }
 
-  if (fs.existsSync(path.join(runDir, 'console.json'))) {
-    return verdict('console-exists', 'console.json already written');
+  // Anything but a clean "missing" counts as present (dir, symlink, unreadable):
+  // fail toward not re-entering a pass that may already have a console.
+  const consoleLeaf = lstatType(path.join(runDir, 'console.json'));
+  if (consoleLeaf.type !== 'missing') {
+    return verdict('console-exists', `console.json already present (${consoleLeaf.type})`);
   }
 
   const unfinished = specs.filter((s) => s.status === 'pending' || s.status === 'running');
