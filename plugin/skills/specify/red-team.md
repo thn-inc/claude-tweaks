@@ -19,11 +19,11 @@ If any case is missing from the AC, emit a finding into the same findings table 
 
 ## Cross-AC literal check (deterministic, runs before persona dispatch)
 
-Before dispatching the personas below, check the sub-issue's composed Acceptance Criteria for one AC's own negative grep or sweep pattern matching a literal that a sibling AC requires. Collect every AC that carries a negative grep or sweep pattern (a "no file under X matches `grep …`" or "no occurrence of" line). Then collect every literal string the other ACs require to exist — quoted code, fixture text, and fenced blocks included. Test each collected pattern against each literal from the other ACs: as a literal substring, and, when the pattern is a regex, as a regex. An AC is never tested against its own literals. No AC carries a pattern, or no pattern hits a literal, means this check is a no-op: no row, no log entry.
+Before dispatching the personas below, check whether one AC's negative grep or sweep pattern matches a literal that a sibling AC requires. Collect every AC that carries a negative grep or sweep pattern. Then collect every literal string the other ACs require to exist — quoted code, fixture text, and fenced blocks included, but not a string an AC forbids, even when that AC quotes it. Test each pattern against each literal from the other ACs: as a literal substring, and, when the pattern is a regex, as a regex. An AC is never tested against its own literals. With no pattern-bearing AC, or no hit, the check is a no-op: it adds no row of its own and no separate log entry of its own.
 
-A hit means the ACs cannot both pass as written. It is a `critical` finding — persona column reads `Cross-AC Literal Check` — and, because it names two ACs rather than one sentence, it lands as one `## Open Questions` row naming both ACs, the pattern, and the literal. It then flows through the write-back procedure like a persona finding, and because its resolution rewrites an AC, it is decision-worthy: stage-or-ask per write-back step 5.
+A hit means the ACs cannot both pass as written: a `critical` finding (persona column `Cross-AC Literal Check`) that lands as one `## Open Questions` row naming both ACs, the pattern, and the literal. Its resolution rewrites an AC, so it is decision-worthy: stage-or-ask per write-back step 5.
 
-This check exists because of #3311: AC3's mandated fixtures (`const FOO_CEILING_BYTES = 30 * 1024`) tripped AC1's `CEILING_BYTES` sweep and AC2's `N * 1024` grep. The conflict surfaced only at implementation, costing a ruling, a review finding, and sweep amendments.
+Why: #3311's AC3 fixtures (`const FOO_CEILING_BYTES = 30 * 1024`) tripped AC1's `CEILING_BYTES` sweep, and the conflict surfaced only at implementation.
 
 ## Parallel dispatch
 

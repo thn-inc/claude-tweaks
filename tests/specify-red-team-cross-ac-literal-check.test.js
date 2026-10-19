@@ -3,8 +3,8 @@
 // Pins record #3463's prose wiring: red-team.md must carry a deterministic
 // cross-AC literal check between the path/URI guard scan and the persona
 // dispatch, testing every negative-grep/sweep pattern in one AC against the
-// literal strings the other ACs require. The fixture test shows the
-// pattern/literal pair the section describes is a real conflict shape (#3311).
+// literal strings the other ACs require. The fixture test is bound to the
+// section's own #3311 example, so deleting the section turns it red.
 'use strict';
 
 const test = require('node:test');
@@ -17,13 +17,18 @@ const RED_TEAM = fs.readFileSync(path.join(ROOT, 'plugin/skills/specify/red-team
 
 const HEADING = '## Cross-AC literal check (deterministic, runs before persona dispatch)';
 
-test('AC1.1: red-team.md names the Cross-AC literal check', () => {
+function section() {
   const start = RED_TEAM.indexOf(HEADING);
-  assert.notStrictEqual(start, -1, `heading not found: ${HEADING}`);
+  if (start === -1) return '';
   const next = RED_TEAM.indexOf('\n## ', start + HEADING.length);
-  const section = RED_TEAM.slice(start, next === -1 ? undefined : next);
+  return RED_TEAM.slice(start, next === -1 ? undefined : next);
+}
+
+test('AC1.1: red-team.md names the Cross-AC literal check', () => {
+  assert.notStrictEqual(RED_TEAM.indexOf(HEADING), -1, `heading not found: ${HEADING}`);
+  const body = section();
   for (const phrase of ['negative grep', 'sweep', 'every literal string', 'other ACs', '## Open Questions']) {
-    assert.ok(section.includes(phrase), `section must contain ${JSON.stringify(phrase)}`);
+    assert.ok(body.includes(phrase), `section must contain ${JSON.stringify(phrase)}`);
   }
 });
 
@@ -36,12 +41,29 @@ test('the Cross-AC literal check sits between the path/URI guard scan and Parall
   assert.ok(crossAcIdx < parallelIdx, 'cross-AC check must precede Parallel dispatch');
 });
 
-// Fixture modeled on #3311: AC1's negative sweep pattern matches the literal
-// AC2 mandates.
-const CONFLICT_FIXTURE = [
-  '- AC1: No file under `plugin/` matches `grep -rn "CEILING_BYTES"`.',
-  '- AC2: The guard\'s self-test fixture contains `const FOO_CEILING_BYTES = 30 * 1024`.',
-].join('\n');
+test('the scan rules are stated in the section\'s own wording', () => {
+  const body = section();
+  assert.match(body, /as a literal substring, and, when the pattern is a regex, as a regex/);
+  assert.match(body, /An AC is never tested against its own literals/);
+  assert.match(body, /every literal string the other ACs require to exist/);
+  assert.match(body, /not a string an AC forbids/);
+});
+
+// The section quotes #3311 as its example: AC1's sweep pattern, and the
+// fixture literal AC3 mandates.
+function extractSectionExample(text) {
+  const pattern = /AC1's `([^`]+)` sweep/.exec(text);
+  const literal = /fixtures \(`([^`]+)`\)/.exec(text);
+  assert.ok(pattern && literal, 'the section must quote the #3311 example: AC1\'s sweep pattern and AC3\'s fixture literal');
+  return { pattern: pattern[1], literal: literal[1] };
+}
+
+function buildFixture({ pattern, literal }) {
+  return [
+    `- AC1: No file under \`plugin/\` matches \`grep -rn "${pattern}"\`.`,
+    `- AC2: The guard's self-test fixture contains \`${literal}\`.`,
+  ].join('\n');
+}
 
 function extractPatternAndLiteral(spec) {
   const [ac1, ac2] = spec.split('\n');
@@ -50,16 +72,16 @@ function extractPatternAndLiteral(spec) {
   return { pattern, literal };
 }
 
-test('AC2.1: fixture spec trips its own sibling sweep', () => {
-  const { pattern, literal } = extractPatternAndLiteral(CONFLICT_FIXTURE);
-  assert.strictEqual(pattern, 'CEILING_BYTES');
-  assert.strictEqual(literal, 'const FOO_CEILING_BYTES = 30 * 1024');
-  assert.ok(new RegExp(pattern).test(literal), 'the sweep pattern must match the sibling AC literal');
+test('AC2.1: the section\'s #3311 example trips its own sibling sweep', () => {
+  const example = extractSectionExample(section());
+  const { pattern, literal } = extractPatternAndLiteral(buildFixture(example));
+  assert.ok(new RegExp(pattern).test(literal), `sweep ${pattern} must match sibling literal ${literal}`);
 });
 
-test('AC2.1 control: a non-conflicting sibling literal does not trip the sweep', () => {
-  const control = CONFLICT_FIXTURE.replace('FOO_CEILING_BYTES = 30 * 1024', 'FOO_LIMIT = 30 * 1024');
-  const { pattern, literal } = extractPatternAndLiteral(control);
-  assert.strictEqual(literal, 'const FOO_LIMIT = 30 * 1024');
+test('AC2.1 control: the same example with the pattern stripped from its literal does not trip the sweep', () => {
+  const example = extractSectionExample(section());
+  const control = { pattern: example.pattern, literal: example.literal.replace(example.pattern, 'LIMIT') };
+  const { pattern, literal } = extractPatternAndLiteral(buildFixture(control));
+  assert.ok(!literal.includes(pattern), 'control literal must not contain the pattern');
   assert.ok(!new RegExp(pattern).test(literal), 'the control literal must not match the sweep pattern');
 });
