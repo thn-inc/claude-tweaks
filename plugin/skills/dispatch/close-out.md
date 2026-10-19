@@ -46,7 +46,8 @@ touching shared state runs one member at a time.
    function, not a third PR-state-reading code path. It returns the PR's
    `{state, mergeable, mergeStateStatus, …}` object, or one of the strings `'gh-absent'` /
    `'network-failure'` (transport failure) / `'invalid-arguments'` (a misordered or malformed
-   call), or `null` for a missing number. Any string result (or `null`) stops this candidate — report
+   call) / `'pr-not-found'` (GitHub confirmed the queried number names no PR), or `null` for a
+   missing number. Any string result (or `null`) stops this candidate — report
    it, and never read it as "not DIRTY".
    `mergeStateStatus: DIRTY`: this is item 11's own finding surfacing again at close-out time —
    report it with that scope's own recommendation (rebase and re-verify: typecheck, lint, full test

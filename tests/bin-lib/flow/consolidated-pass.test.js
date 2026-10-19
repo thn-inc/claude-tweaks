@@ -259,6 +259,13 @@ test('#3497 review a symlink into pipelines/archive/ still reads as archived', (
   assert.equal(checkPassReentry(link, { deps: deps() }).reason, 'archived');
 });
 
+test('AC7.1: online + pr-not-found -> no throw, degraded text names it (#3543)', () => {
+  const run = makeRun({ runState: { status: 'active', pr: { number: 4242 } } });
+  const r = checkPassReentry(run, { online: true, deps: deps({ resolvePrStateByNumber: () => 'pr-not-found' }) });
+  assert.equal(r.eligible, true);
+  assert.match(r.detail, /online PR check unavailable \(pr-not-found\)/);
+});
+
 test('#3497 review a throwing PR resolver degrades like a transport failure', () => {
   const run = makeRun({ runState: { status: 'active', pr: { number: 4242 } } });
   const r = checkPassReentry(run, { online: true, deps: deps({ resolvePrStateByNumber: () => { throw new Error('boom'); } }) });
