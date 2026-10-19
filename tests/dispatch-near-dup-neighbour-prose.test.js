@@ -24,7 +24,7 @@ const NEXT_RANKING = read('plugin/skills/dispatch/next-ranking.md');
 const DOCS = read('docs/plugin-structure.md');
 
 const PREDICTED_LINE = '`#{A} / #{B} predicted to conflict (near-duplicate: {signals}; shared: {sharedAnchors}); dispatch order #{A} then #{B}, merge #{A} first`';
-const STAGED_LINE = 'STAGED {time} — dispatch: predicted conflict #{A} / #{B} (near-duplicate: {signals}); merge #{A} first. Reversibility: n/a.';
+const DECISION_LINE = 'AUTO {time} — dispatch: predicted conflict #{A} / #{B} (near-duplicate: {signals}); merge #{A} first. Reversibility: n/a.';
 
 function nearDupParagraph() {
   const start = SKILL.indexOf('**Near-duplicate candidate warning (refs #1944).**');
@@ -53,7 +53,7 @@ test('SKILL.md explicit-list bullet delegates the predicted-conflict line to nea
 test('near-duplicate-pairs.md carries both predicted-conflict templates verbatim and names its inputs', () => {
   const flat = collapse(PAIRS);
   assert.ok(flat.includes(collapse(PREDICTED_LINE)), 'printed line template');
-  assert.ok(flat.includes(collapse(STAGED_LINE)), 'decisions.md line template');
+  assert.ok(flat.includes(collapse(DECISION_LINE)), 'decisions.md line template');
   assert.match(PAIRS, /predictedConflicts/);
   assert.match(PAIRS, /dispatch-near-dup-pairs\.json/);
   assert.match(PAIRS, /DISPATCH_NEAR_DUP_PAIRS/);

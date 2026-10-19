@@ -23,7 +23,7 @@ choice, so both still dispatch; this step names the conflict and the merge order
    and log one line to `decisions.md`:
 
    ```
-   STAGED {time} — dispatch: predicted conflict #{A} / #{B} (near-duplicate: {signals}); merge #{A} first. Reversibility: n/a.
+   AUTO {time} — dispatch: predicted conflict #{A} / #{B} (near-duplicate: {signals}); merge #{A} first. Reversibility: n/a.
    ```
 
    `{A}` is `first` and `{B}` is `second`. `selectedGroups`' order is the dispatch order, Step 5 dispatches in that order,

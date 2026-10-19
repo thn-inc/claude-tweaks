@@ -27,7 +27,7 @@ files:
 
 ### 2. Read the predicted-conflict line before dispatch
 - **URL:** `plugin/skills/dispatch/near-duplicate-pairs.md`; `plugin/skills/dispatch/SKILL.md` (the `#N[,#M` bullet)
-- **Action:** After `selectGroupsForExplicitList` and before Step 4, dispatch runs `predictedConflicts` over the selected groups that will actually dispatch, bounded by `dispatch-batch-size`. For each strong pair split across two of those groups it prints one line, `#{A} / #{B} predicted to conflict (near-duplicate: {signals}; shared: {sharedAnchors}); dispatch order #{A} then #{B}, merge #{A} first`, and logs a matching `STAGED … dispatch: predicted conflict …` line to `decisions.md`.
+- **Action:** After `selectGroupsForExplicitList` and before Step 4, dispatch runs `predictedConflicts` over the selected groups that will actually dispatch, bounded by `dispatch-batch-size`. For each strong pair split across two of those groups it prints one line, `#{A} / #{B} predicted to conflict (near-duplicate: {signals}; shared: {sharedAnchors}); dispatch order #{A} then #{B}, merge #{A} first`, and logs a matching `AUTO … dispatch: predicted conflict …` line to `decisions.md`.
 - **Should feel:** Forewarned rather than blocked. The merge order is named up front, so close-out holds no surprise.
 - **Should understand:** Both records still dispatch, in the order already selected. Naming them explicitly is the accepted risk. The announced dispatch order is also the merge order.
 - **Red flags:** No predicted-conflict line for a strong pair the firing dispatches. A line naming a record beyond `dispatch-batch-size` that will not dispatch. Dispatch skipping one of the named records because of the pair.

@@ -417,8 +417,8 @@ test('the regex matches PR number extraction from drain-pr-overlap.md\'s own Ste
   assert.match(r.merge.reason, /#4001/);
 });
 
-test('the STAGED advisory-only line from Step 4 (no "held") never matches the hold regex, even after the case-insensitive/em-dash-tolerant loosening (final review Minor #5)', () => {
-  const decisions = '## /dispatch\n- STAGED 08:55:00 — dispatch: group [7] overlaps drain PR #4001 on src/a.js; dispatched anyway, serialize before merge. Reversibility: n/a.\n';
+test('the advisory-only line from Step 4 (no "held") never matches the hold regex, even after the case-insensitive/em-dash-tolerant loosening (final review Minor #5)', () => {
+  const decisions = '## /dispatch\n- AUTO 08:55:00 — dispatch: group [7] overlaps drain PR #4001 on src/a.js; dispatched anyway, serialize before merge. Reversibility: n/a.\n';
   const r = resolveAll({
     runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }),
     policy: 'console-auto',

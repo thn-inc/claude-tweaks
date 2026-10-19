@@ -41,7 +41,7 @@ a hit against the pre-drain snapshot. For every hit whose `source === 'drain'`, 
 `dispatch-drain-prs.json`'s own append order — and log:
 
 ```
-STAGED {time} — dispatch: group [{issues}] overlaps drain PR #{pr} on {files}; dispatched anyway,
+AUTO {time} — dispatch: group [{issues}] overlaps drain PR #{pr} on {files}; dispatched anyway,
 serialize before merge. Reversibility: n/a.
 ```
 
@@ -59,7 +59,7 @@ member whose strong-pair partner is closed by a drain PR (`closingIssueNumbers`)
 file list, and logs:
 
 ```
-STAGED {time} — dispatch: group [{issues}] overlaps drain PR #{pr} (near-duplicate of #{partner}); dispatched anyway,
+AUTO {time} — dispatch: group [{issues}] overlaps drain PR #{pr} (near-duplicate of #{partner}); dispatched anyway,
 serialize before merge. Reversibility: n/a.
 ```
 
