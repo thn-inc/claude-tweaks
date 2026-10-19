@@ -17,11 +17,11 @@ function splitNul(raw) {
   return String(raw).split('\0').filter((t) => t !== '');
 }
 
-// parseNameStatusZ(raw): `git diff --name-status -z` / `diff-tree -r -z`
-// — "STATUS\0path\0" per record, "STATUS\0old\0new\0" for a rename or copy
-// (status starts with R or C, e.g. "R100"). `status` is returned verbatim.
-function parseNameStatusZ(raw) {
-  const tokens = splitNul(raw);
+// parseNameStatusTokens(tokens): status/path tokens of a `--name-status -z`
+// stream -> [{ status, paths }]. A rename or copy (status starts with R or C,
+// e.g. "R100") carries two paths, every other status one. `status` is returned
+// verbatim; a truncated tail yields fewer paths.
+function parseNameStatusTokens(tokens) {
   const records = [];
   let i = 0;
   while (i < tokens.length) {
@@ -31,6 +31,12 @@ function parseNameStatusZ(raw) {
     i += 1 + width;
   }
   return records;
+}
+
+// parseNameStatusZ(raw): `git diff --name-status -z` / `diff-tree -r -z`
+// — "STATUS\0path\0" per record, "STATUS\0old\0new\0" for a rename or copy.
+function parseNameStatusZ(raw) {
+  return parseNameStatusTokens(splitNul(raw));
 }
 
 // splitLogZ(raw, isHeader): `git log -z --format=<header> --name-only` (or
@@ -63,4 +69,4 @@ function splitLogZ(raw, isHeader) {
   return records;
 }
 
-module.exports = { splitNul, parseNameStatusZ, splitLogZ };
+module.exports = { splitNul, parseNameStatusTokens, parseNameStatusZ, splitLogZ };

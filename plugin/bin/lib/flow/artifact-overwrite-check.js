@@ -35,7 +35,7 @@
 // no refs trailer, not a list reflow) is treated as an overwrite.
 
 const { execFileSync } = require('child_process');
-const { splitLogZ } = require('../git-z');
+const { splitLogZ, parseNameStatusTokens } = require('../git-z');
 
 const GIT_TIMEOUT_MS = 10000;
 
@@ -98,15 +98,9 @@ function setsIntersect(a, b) {
 // entries are kept; any other status is skipped along with its path(s).
 function parseNameStatusLog(output) {
   return splitLogZ(output, (t) => /^[0-9a-f]{40}$/.test(t)).map(({ header, tokens }) => {
-    const entries = [];
-    for (let i = 0; i < tokens.length;) {
-      const status = tokens[i];
-      const width = status[0] === 'R' || status[0] === 'C' ? 2 : 1;
-      if ((status === 'A' || status === 'M') && i + 1 < tokens.length) {
-        entries.push({ status, path: tokens[i + 1] });
-      }
-      i += 1 + width;
-    }
+    const entries = parseNameStatusTokens(tokens)
+      .filter(({ status, paths }) => (status === 'A' || status === 'M') && paths.length === 1)
+      .map(({ status, paths }) => ({ status, path: paths[0] }));
     return { commit: header, entries };
   });
 }

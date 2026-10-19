@@ -2,7 +2,7 @@
 
 The rule for any `plugin/bin` code that reads a git path list: `--name-only`, `--name-status`, `ls-tree --name-only`, `diff-tree --name-only`, `log --name-only` / `log --name-status`. Pass `-z` and split the output on NUL, never on newlines. Pass `--end-of-options` before any ref, range, or sha (a `-- <pathspec>` tail still follows the ref).
 
-- **Why `-z`:** without it, `core.quotepath` (on by default) C-quotes any path with a non-ASCII byte, a tab, or a newline — `docs/café.md` prints as `"docs/caf\303\251.md"`, a string no file matches, so the path is silently dropped.
+- **Why `-z`:** without it, `core.quotepath` (on by default) C-quotes any path with a non-ASCII byte, a tab, or a newline — `docs/café.txt` prints as `"docs/caf\303\251.txt"`, a string no file matches, so the path is silently dropped.
 - **Why `--end-of-options`:** without it, a dash-leading ref is parsed as an option. Not `--`, which flips git into pathspec mode (`gh-api-module-pattern` skill, flag-injection bullet).
 
 ## Reference implementations
