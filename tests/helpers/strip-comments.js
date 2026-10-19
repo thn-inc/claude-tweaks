@@ -35,6 +35,10 @@ function isIdentChar(ch) {
   return /[A-Za-z0-9_$]/.test(ch) || (ch >= '\u0080' && !/\s/.test(ch));
 }
 
+function isPunct(token, value) {
+  return token !== null && token.kind === 'punct' && token.value === value;
+}
+
 // Does a `/` after `prev` (the previous significant token) begin a regex literal?
 function slashStartsRegex(prev) {
   if (prev === null) return true;
@@ -127,8 +131,7 @@ function stripComments(src) {
       } else if (isIdentChar(ch)) {
         let end = i + 1;
         while (end < n && isIdentChar(src[end])) end++;
-        const afterDot = prev !== null && prev.kind === 'punct' && prev.value === '.';
-        prev = { kind: 'word', value: src.slice(i, end), afterDot };
+        prev = { kind: 'word', value: src.slice(i, end), afterDot: isPunct(prev, '.') };
         i = end;
       } else {
         if (ch === '{') depth++;
@@ -136,7 +139,7 @@ function stripComments(src) {
           if (inBrace && depth === 0) return i + 1;
           if (depth > 0) depth--;
         }
-        const doubled = (ch === '+' || ch === '-') && prev !== null && prev.kind === 'punct' && prev.value === ch && src[i - 1] === ch;
+        const doubled = (ch === '+' || ch === '-') && isPunct(prev, ch) && src[i - 1] === ch;
         prev = { kind: 'punct', value: doubled ? ch + ch : ch };
         i++;
       }
