@@ -84,9 +84,14 @@ test('AC1.2 multispec-review-console.md has the re-entry section, placed after L
     '/claude-tweaks:wrap-up #{n}',
     'spec-status',
     '--status complete',
+    '--status not-run',
   ]) {
     assert.ok(c.includes(token), `re-entry section must contain ${token}`);
   }
+  // A logged Stop takes the Halt resume, named before the eligibility call.
+  const halt = c.indexOf('terminal decision');
+  assert.ok(halt !== -1, 're-entry section must name the logged terminal decision');
+  assert.ok(halt < c.indexOf('checkPassReentry'), 'the Halt resume must come before the eligibility call');
 });
 
 test('#3497 every REENTRY_REASONS code is named in the re-entry section', () => {

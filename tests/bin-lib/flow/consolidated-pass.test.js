@@ -171,10 +171,83 @@ test('#3497 offline never calls the PR resolver', () => {
   assert.equal(r2.reason, 'eligible');
 });
 
+// #3497 I1: a run whose parent session is still live is never re-entered.
+// The worktree listing and lock verdict are injected, so no live pid is needed.
+const WT = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pass-reentry-wt-'));
+const LISTING = { stdout: `worktree ${WT}\nHEAD abc\nbranch refs/heads/feat\nlocked claude session (pid 4242)\n\n`, failure: null };
+const NO_CALL = (name) => () => { throw new Error(`${name} must not be called`); };
+
+test('#3497 I1 live worktree lock -> parent-live', () => {
+  const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: WT } });
+  const r = checkPassReentry(run, { deps: deps({ listWorktrees: () => LISTING, lockVerdict: () => 'in-use' }) });
+  assert.equal(r.eligible, false);
+  assert.equal(r.reason, 'parent-live');
+  assert.match(r.detail, /in-use/);
+  const unknown = checkPassReentry(run, { deps: deps({ listWorktrees: () => LISTING, lockVerdict: () => 'unknown' }) });
+  assert.equal(unknown.reason, 'parent-live');
+  const failed = checkPassReentry(run, { deps: deps({ listWorktrees: () => ({ stdout: '', failure: 'timeout' }) }) });
+  assert.equal(failed.reason, 'parent-live');
+  assert.match(failed.detail, /indeterminate/);
+});
+
+test('#3497 I1 own session skips the liveness check', () => {
+  const active = makeRun({ runState: { status: 'active', sessionId: 'me', worktree: WT } });
+  const r = checkPassReentry(active, { sessionId: 'me', deps: deps({ listWorktrees: NO_CALL('listWorktrees') }) });
+  assert.equal(r.reason, 'eligible');
+  const interrupted = makeRun({ runState: { status: 'interrupted', sessionId: 'me', worktree: WT } });
+  const r2 = checkPassReentry(interrupted, { sessionId: 'me', deps: deps({ checkResumeFreshness: NO_CALL('checkResumeFreshness') }) });
+  assert.equal(r2.reason, 'eligible');
+});
+
+test('#3497 I1 interrupted + recent commit -> parent-live', () => {
+  const run = makeRun({ runState: { status: 'interrupted', sessionId: 'parent', worktree: WT } });
+  let seen;
+  const r = checkPassReentry(run, {
+    sessionId: 'other',
+    deps: deps({
+      listWorktrees: NO_CALL('listWorktrees'),
+      checkResumeFreshness: (dir, o) => { seen = [dir, o]; return { safe: false, verdict: 'recent-commit', reason: 'worktree committed to within the last 10 minutes' }; },
+    }),
+  });
+  assert.equal(r.reason, 'parent-live');
+  assert.match(r.detail, /recent-commit/);
+  assert.match(r.detail, /within the last 10 minutes/);
+  assert.equal(seen[0], run);
+  assert.equal(seen[1].sessionId, 'other');
+  const stale = checkPassReentry(run, { deps: deps({ checkResumeFreshness: () => ({ safe: true, verdict: 'stale' }) }) });
+  assert.equal(stale.reason, 'eligible');
+});
+
+test('#3497 I1 orphaned lock -> continues to landed check', () => {
+  const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: WT } });
+  const landedTrue = () => ({ landed: true, evidence: {} });
+  for (const lock of ['orphaned', 'free']) {
+    const r = checkPassReentry(run, { deps: deps({ listWorktrees: () => LISTING, lockVerdict: () => lock, checkBranchLanded: landedTrue }) });
+    assert.equal(r.reason, 'landed', lock);
+  }
+  const gone = makeRun({ runState: { status: 'active', worktree: path.join(WT, 'gone') } });
+  assert.equal(checkPassReentry(gone, { deps: deps({ listWorktrees: NO_CALL('listWorktrees') }) }).reason, 'eligible');
+});
+
+test('#3497 M3 online OPEN PR + indeterminate merge evidence -> eligible, detail names the PR', () => {
+  const run = makeRun({ runState: { status: 'active', pr: { number: 4242 } } });
+  const r = checkPassReentry(run, {
+    online: true,
+    deps: deps({ resolvePrStateByNumber: () => ({ state: 'OPEN' }), checkBranchLanded: () => ({ landed: null }) }),
+  });
+  assert.equal(r.eligible, true);
+  assert.equal(r.detail, 'PR #4242 open');
+});
+
+test('#3497 T2 an empty mode: value never reads the next line', () => {
+  assert.equal(checkPassReentry(makeRun({ config: 'mode:\nauto\n' }), { deps: deps() }).reason, 'mode');
+  assert.equal(checkPassReentry(makeRun({ config: 'mode: \tauto\n' }), { deps: deps() }).reason, 'eligible');
+});
+
 test('REENTRY_REASONS is frozen and lists every reason the rule can return', () => {
   assert.ok(Object.isFrozen(REENTRY_REASONS));
   assert.deepEqual([...REENTRY_REASONS], [
     'archived', 'no-manifest', 'closed', 'mode', 'console-exists',
-    'spec-unfinished', 'landed', 'landed-unknown', 'eligible',
+    'spec-unfinished', 'parent-live', 'landed', 'landed-unknown', 'eligible',
   ]);
 });

@@ -82,7 +82,8 @@ function collectStaleRuns(cwd, { cache, exclude, pluginRoot } = {}) {
     // names its re-entry command. Offline only (no `online`) — SessionStart must
     // stay network-free; a squash-merged multi-commit branch can therefore still
     // read as unmerged here, and the review-console skill's online check is what
-    // refuses it at invocation.
+    // refuses it at invocation. No `sessionId` either — SessionStart has no run
+    // of its own to exempt, so a live parent lock always suppresses the suffix.
     try {
       const pass = passReentry.checkPassReentry(dir, { cache });
       if (pass.eligible) {

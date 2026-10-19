@@ -414,3 +414,12 @@ test('AC5.1 shipped-unclosed keeps the shipped line, no suffix', () => {
   assert.match(entries[0].line, /appears shipped/);
   assert.doesNotMatch(entries[0].line, /review-console/);
 });
+
+test('#3497 I1 banner carries no suffix while the parent worktree is locked by a live pid', () => {
+  const { root, wt } = reentryFixture();
+  reentryGit(root, 'worktree', 'lock', '--reason', `claude session (pid ${process.pid})`, wt);
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.ok(entries[0].line.startsWith('- 2026-08-01T090000-spec-11-12 (status: active)'), entries[0].line);
+  assert.doesNotMatch(entries[0].line, /review-console/);
+});
