@@ -207,7 +207,7 @@ function isStale(wtPath, now = Date.now(), graceMs = ORPHAN_GRACE_MS) {
 // Any failure to answer returns false: unresolvable is not identical.
 function isContentIdentical(repoRoot, branch, integration) {
   if (!branch || !integration) return false;
-  const { stdout, failure } = runGit(['diff', '--name-only', integration, branch], repoRoot);
+  const { stdout, failure } = runGit(['diff', '--name-only', '-z', '--end-of-options', integration, branch], repoRoot);
   if (failure) return false;
   return stdout.trim() === '';
 }

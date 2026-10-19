@@ -32,6 +32,7 @@ const policy = require('../policy');
 const wtDetect = require('./worktree-detect');
 const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName } = require('./worktree-reap');
 const { runGit, FAILURE } = require('./git-exec');
+const { parseNameStatusZ } = require('../git-z');
 const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
 const { hasClaimLogFor } = require('../log-decision/claim-log');
@@ -325,24 +326,25 @@ const POLICY_COMMIT_ALLOWLIST = Object.freeze(new RegExp(
 // `git mv <tracked-file> .claude-tweaks/policy.yml` (ungated — neither a
 // commit/push nor a WRITE_SHAPE) on a repo where policy.yml is not yet in
 // HEAD reads as "exactly policy.yml staged" and smuggles arbitrary tracked
-// content into the enforcement file (review finding). A rename renders as
-// `R<score>\told\tnew` under --name-status and is rejected on its status
-// letter; likewise Copy (C) and type-change (T). Wrapped so any exception
-// from the git spawn can never propagate out of this hook (this file's
-// header: never throw) — it falls through to "not exempt" instead.
+// content into the enforcement file (review finding). The read passes `-z`
+// (NUL-delimited, paths unquoted — see git-z.js) and `parseNameStatusZ` turns
+// it into `{ status, paths }` records: a rename renders as
+// `R<score>\0old\0new\0` under --name-status, a record with two paths, and is
+// rejected on its status letter; likewise Copy (C) and type-change (T).
+// Wrapped so any exception from the git spawn can never propagate out of this
+// hook (this file's header: never throw) — it falls through to "not exempt"
+// instead.
 const POLICY_COMMIT_STATUSES = new Set(['A', 'M', 'D']);
 function isPolicyOnlyCommit(command, cwd) {
   if (typeof command !== 'string' || !POLICY_COMMIT_ALLOWLIST.test(command)) return false;
   try {
-    const { stdout, failure } = runGit(['diff', '--cached', '--name-status'], cwd);
+    const { stdout, failure } = runGit(['diff', '--cached', '--name-status', '-z'], cwd);
     if (failure !== null || typeof stdout !== 'string') return false;
-    const rows = stdout.split('\n').filter(Boolean);
+    const rows = parseNameStatusZ(stdout);
     if (rows.length !== 1) return false;
-    const cols = rows[0].split('\t');
-    // Exactly two columns — status + one path. A rename/copy row carries three.
-    if (cols.length !== 2) return false;
-    const [status, file] = cols;
-    return POLICY_COMMIT_STATUSES.has(status) && file === toPosix(POLICY_FILE);
+    // Exactly one path — a rename/copy record carries two.
+    if (rows[0].paths.length !== 1) return false;
+    return POLICY_COMMIT_STATUSES.has(rows[0].status) && rows[0].paths[0] === toPosix(POLICY_FILE);
   } catch {
     return false;
   }
