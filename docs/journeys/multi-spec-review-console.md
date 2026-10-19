@@ -18,7 +18,7 @@ files:
 
 **Persona:** claude-tweaks user who ran `/claude-tweaks:flow "#157,#159,#160"` (or similar, `auto`/`hybrid` mode) across several linked GitHub issues and now needs to review everything the pipeline auto-resolved or staged before it merges/finishes the shared branch.
 **Goal:** Work through one consolidated batch table covering every spec in the run and make the terminal approve/override/stop decision — Approve all resolves every `Q#`/`M#`/`U#` proposal to its own stated default in the same click, with confidence that nothing any spec's pipeline decided was silently dropped from view.
-**Entry point:** The last spec in the run reaches `/wrap-up`'s Phase 4 execution step (each spec's own per-spec Review Console was deferred via `MULTISPEC_REVIEW_DEFER=1`), triggering `/flow`'s consolidated Multi-Spec Review Console.
+**Entry point:** The last spec in the run reaches `/wrap-up`'s Phase 4 execution step (each spec's own per-spec Review Console was deferred via `MULTISPEC_REVIEW_DEFER=1`), triggering `/flow`'s consolidated Multi-Spec Review Console. When the parent session ended before that, `PIPELINE_RUN_DIR="{parent-run-dir}" /claude-tweaks:flow #{A},#{B} review-console` re-enters the same console (`finish-a-multispec-run-after-the-parent-session-ended.md`).
 **Success state:** The batch decision is made (approved, or specific items overridden), every `Q#`/`M#`/`U#` proposal has a resolution — its own default under Approve all, or an explicit per-item answer under Override — the shared branch reaches an outcome (merged / PR / discarded), the parent run directory is archived, and the run's final turn closes with a plain-markdown `## Next Actions` block whose bold first line is the paste-ready next command.
 
 ## Steps
@@ -75,4 +75,5 @@ files:
   - Step 1: the Issue closures omit condition now keys on `manifest.yml`'s `specs[].id`, not on header presence.
   - Step 2: when a header can't be read from the worktree, teardown retries it in the parent run dir; if that also fails, it releases under the manifest `id` and logs a `SKIP` line instead of capturing nothing silently.
 - Updated during build of #3420 ("Multi-spec ledger deletion runs before the batch curation pass that reads and writes the ledger"). Step 2 now covers the shared open-items ledger. Under `MULTISPEC_REVIEW_DEFER=1`, cleanup item 2 is deferred, and `/flow` deletes the ledger once in Shared teardown step 0, after the batch pass and the console and before branch finish. `wrap-up/execution-and-verification.md` (its MULTISPEC skip list) was added to `files:`.
-- Related specs: #286 (Engine: multi-spec console section merging — the CLI call Step 1 references), #287, #350, #674, #675, #688, #693, #716, #906, #1179, #1985, #2299, #3192, #3395, #3420
+- Updated during build of #3497 ("Consolidated-pass re-entry via review-console"): the Entry point now names the ended-parent re-entry, documented in `finish-a-multispec-run-after-the-parent-session-ended.md`.
+- Related specs: #286 (Engine: multi-spec console section merging — the CLI call Step 1 references), #287, #350, #674, #675, #688, #693, #716, #906, #1179, #1985, #2299, #3192, #3395, #3420, #3497
