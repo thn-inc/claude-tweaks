@@ -443,6 +443,22 @@ test('#3515 non-strict: only a claim-log-only mint exists → null with no dropp
   }
 });
 
+test('#3515 close-run\'s no---run fallback (unknown session, includeWorktreeForeign) skips a never-adopted claim-log-only mint, finds an adopted run bound to another worktree', () => {
+  const main = gitRepo();
+  const otherWt = linkedWorktreeOf(main);
+  writeDecisions(mkRun(main, '2026-07-02T090000-record-7'), CLAIM_ONLY);
+  assert.deepStrictEqual(
+    ctxLib.resolveRun(main, {}, null, { includeWorktreeForeign: true }),
+    { dir: null, attribution: null },
+    'only a never-adopted mint exists: "no run found", matching #721\'s adopted-runs-only posture',
+  );
+  const adopted = mkRun(main, '2026-07-01T090000-record-3', { status: 'active', worktree: otherWt });
+  assert.deepStrictEqual(
+    ctxLib.resolveRun(main, {}, null, { includeWorktreeForeign: true }),
+    { dir: adopted, attribution: 'fallback' },
+  );
+});
+
 test('#3515 strict: only a claim-log-only mint exists → dropped, never guessed', () => {
   const cwd = project();
   const mint = mkRun(cwd, '2026-07-02T090000-record-7');
