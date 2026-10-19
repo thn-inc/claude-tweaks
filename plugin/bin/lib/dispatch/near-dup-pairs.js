@@ -12,7 +12,10 @@
 //     closed by a drain PR (dispatch-drain-prs.json shape), the partner being
 //     outside the selection.
 //
-// Each returns [] on null or malformed input and never throws.
+// A pair's `records` are issue NUMBERS ([subject, partner]), so the pair list
+// can be persisted as JSON without carrying issue bodies, and `first` /
+// `second` in a predicted conflict are numbers too. Each function returns []
+// on null or malformed input and never throws.
 
 const { findNearDuplicates, isStrongNearDuplicate } = require('../issues/near-duplicate');
 
@@ -22,7 +25,7 @@ function validGroups(groups) {
 
 function validPair(p) {
   return p && Array.isArray(p.records) && p.records.length === 2
-    && p.records.every((r) => r && typeof r === 'object' && Number.isInteger(r.number));
+    && p.records.every((n) => Number.isFinite(n));
 }
 
 function nearDuplicatePairsAcrossGroups(groups) {
@@ -36,9 +39,8 @@ function nearDuplicatePairsAcrossGroups(groups) {
         const key = [subject.number, hit.number].sort((a, b) => a - b).join('|');
         if (seen.has(key)) continue;
         seen.add(key);
-        const partner = others.find((r) => r.number === hit.number);
         pairs.push({
-          records: [subject, partner],
+          records: [subject.number, hit.number],
           signals: hit.signals,
           sharedAnchors: hit.sharedAnchors,
           strong: isStrongNearDuplicate(hit),
@@ -57,8 +59,8 @@ function predictedConflicts(pairs, selectedGroups) {
   for (const pair of pairs) {
     if (!validPair(pair)) continue;
     const [a, b] = pair.records;
-    const ia = groupOf.get(a.number);
-    const ib = groupOf.get(b.number);
+    const ia = groupOf.get(a);
+    const ib = groupOf.get(b);
     if (ia === undefined || ib === undefined || ia === ib) continue;
     const [first, second, fi, si] = ia < ib ? [a, b, ia, ib] : [b, a, ib, ia];
     out.push({ first, second, signals: pair.signals, sharedAnchors: pair.sharedAnchors, fi, si });
@@ -75,13 +77,13 @@ function drainNearDuplicateHits(memberNumbers, pairs, drainPrs) {
   for (const pair of pairs) {
     if (!validPair(pair)) continue;
     for (const [m, p] of [pair.records, [pair.records[1], pair.records[0]]]) {
-      if (!members.has(m.number) || members.has(p.number)) continue;
+      if (!members.has(m) || members.has(p)) continue;
       for (const pr of drainPrs) {
-        if (!pr || !Array.isArray(pr.closingIssueNumbers) || !pr.closingIssueNumbers.includes(p.number)) continue;
-        const key = [pr.number, m.number, p.number].join('|');
+        if (!pr || !Array.isArray(pr.closingIssueNumbers) || !pr.closingIssueNumbers.includes(p)) continue;
+        const key = [pr.number, m, p].join('|');
         if (seen.has(key)) continue;
         seen.add(key);
-        hits.push({ pr: pr.number, member: m.number, partner: p.number });
+        hits.push({ pr: pr.number, member: m, partner: p });
       }
     }
   }

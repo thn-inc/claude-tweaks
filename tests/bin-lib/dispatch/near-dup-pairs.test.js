@@ -42,31 +42,31 @@ function heredocLines(groups) {
   return out;
 }
 
-const nums = (pair) => pair.records.map((r) => r.number);
 
 test('pairs across groups reproduce the heredoc order and dedup on a three-group fixture', () => {
   const groups = [[r12, r13], [r10], [r11]];
   const pairs = nearDuplicatePairsAcrossGroups(groups);
-  const lines = pairs.map((p) => '#' + p.records[0].number + ' / #' + p.records[1].number + ' (' + p.signals.join(', ') + ')');
+  const lines = pairs.map((p) => '#' + p.records[0] + ' / #' + p.records[1] + ' (' + p.signals.join(', ') + ')');
   assert.deepStrictEqual(lines, heredocLines(groups));
-  assert.deepStrictEqual(pairs.map(nums), [[12, 10], [10, 11]]);
+  assert.deepStrictEqual(pairs.map((p) => p.records), [[12, 10], [10, 11]]);
 });
 
 test('the first sighting of an unordered pair wins (no reversed duplicate)', () => {
   const pairs = nearDuplicatePairsAcrossGroups([[r10], [r11]]);
   assert.strictEqual(pairs.length, 1);
-  assert.deepStrictEqual(nums(pairs[0]), [10, 11]);
+  assert.deepStrictEqual(pairs[0].records, [10, 11]);
 });
 
 test('strong follows isStrongNearDuplicate and sharedAnchors are carried', () => {
   const pairs = nearDuplicatePairsAcrossGroups([[r10], [r11], [r12]]);
-  const byKey = Object.fromEntries(pairs.map((p) => [nums(p).join('/'), p]));
+  const byKey = Object.fromEntries(pairs.map((p) => [p.records.join('/'), p]));
   assert.strictEqual(byKey['10/11'].strong, true);
   assert.deepStrictEqual(byKey['10/11'].sharedAnchors, ['alpha.js', 'beta.js', 'gamma.js']);
   assert.strictEqual(byKey['10/12'].strong, false);
   assert.deepStrictEqual(byKey['10/12'].sharedAnchors, []);
   for (const p of pairs) {
-    const hit = findNearDuplicates(p.records[0], [p.records[1]])[0];
+    const byNum = new Map([r10, r11, r12, r13].map((r) => [r.number, r]));
+    const hit = findNearDuplicates(byNum.get(p.records[0]), [byNum.get(p.records[1])])[0];
     assert.strictEqual(p.strong, isStrongNearDuplicate(hit));
   }
 });
@@ -77,10 +77,10 @@ test('a same-group pair is omitted', () => {
 
 test('predictedConflicts keeps only pairs spanning two selected groups, ordered by group index', () => {
   const pairs = nearDuplicatePairsAcrossGroups([[r10], [r11], [r12], [r13]]);
-  assert.deepStrictEqual(pairs.map(nums), [[10, 11], [10, 12]]);
+  assert.deepStrictEqual(pairs.map((p) => p.records), [[10, 11], [10, 12]]);
   // Selected groups in a different order than the pair encounter order.
   const out = predictedConflicts(pairs, [[r12], [r11], [r10]]);
-  assert.deepStrictEqual(out.map((c) => [c.first.number, c.second.number]), [[12, 10], [11, 10]]);
+  assert.deepStrictEqual(out.map((c) => [c.first, c.second]), [[12, 10], [11, 10]]);
   assert.deepStrictEqual(out[1].signals, pairs[0].signals);
   assert.deepStrictEqual(out[1].sharedAnchors, pairs[0].sharedAnchors);
 });
@@ -89,7 +89,7 @@ test('predictedConflicts drops a pair with a member outside the selected groups'
   const pairs = nearDuplicatePairsAcrossGroups([[r10], [r11], [r12]]);
   assert.deepStrictEqual(predictedConflicts(pairs, [[r10], [r13]]), []);
   const partial = predictedConflicts(pairs, [[r10], [r11]]);
-  assert.deepStrictEqual(partial.map((c) => [c.first.number, c.second.number]), [[10, 11]]);
+  assert.deepStrictEqual(partial.map((c) => [c.first, c.second]), [[10, 11]]);
 });
 
 test('predictedConflicts drops a pair whose members share one selected group', () => {
@@ -134,6 +134,15 @@ test('drainNearDuplicateHits sorts by pr then member', () => {
     [905, 11, 10],
     [905, 12, 10],
   ]);
+});
+
+test('records, first and second are plain issue numbers that render and persist without bodies', () => {
+  const pairs = nearDuplicatePairsAcrossGroups([[r10], [r11]]);
+  assert.deepStrictEqual(pairs[0].records, [10, 11]);
+  assert.ok(!JSON.stringify(pairs).includes('Current State'), 'a persisted pair must not carry issue bodies');
+  const [c] = predictedConflicts(pairs, [[r10], [r11]]);
+  assert.strictEqual('#' + c.first + ' / #' + c.second, '#10 / #11');
+  assert.strictEqual(typeof c.first, 'number');
 });
 
 test('null and malformed inputs give [] and never throw', () => {
