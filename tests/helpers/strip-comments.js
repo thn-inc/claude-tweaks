@@ -48,9 +48,9 @@ function stripperVerdict(raw, stripped = stripComments(raw)) {
 
 const STRIPPER_VERDICT_MESSAGES = {
   misparsed:
-    'the comment stripper mis-parsed this file: the stripped text no longer compiles, so live code was blanked and cannot be scanned',
+    'the comment stripper mis-parsed this file: the stripped text no longer compiles, so live code was blanked and cannot be scanned — see tests/helpers/strip-comments.js',
   unparseable:
-    'this file does not compile as a CommonJS module, so the comment-stripper check cannot judge it',
+    'this file does not compile as a CommonJS module, so the comment-stripper check cannot judge it — see tests/helpers/strip-comments.js',
 };
 
 module.exports = { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES };

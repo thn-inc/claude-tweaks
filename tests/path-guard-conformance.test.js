@@ -43,8 +43,10 @@ const DONTS = path.join(__dirname, '..', 'docs', 'donts.md');
 // openers carry the `(?<!\\)` guard. But a quote or backtick inside a regex can
 // pair with a later literal, and an unescaped `/*` or `//` in a character class
 // opens a comment; either can blank code after it. `stripperVerdict` catches
-// that: `evaluate` reports any file the stripper mis-parses, so it fails the
-// lint instead of counting as zero tokens. Computed member access
+// that: `evaluate` reports any file whose stripped text stops compiling (via
+// `stripperVerdict`), so it fails the lint instead of counting as zero tokens.
+// A mis-parse whose stripped text still compiles goes unseen, as the helper's
+// header says. Computed member access
 // (`fs['realpath' + 'Sync']`, `fs[name]`) is also not seen.
 
 // -> { realpathSync, existsSync } token counts in `src`, comments excluded.
@@ -195,7 +197,7 @@ test('scanner does not let a /* inside a line comment swallow live code (proves 
 
 test('a comment-stripper mis-parse is reported, not counted as zero tokens', () => {
   assert.deepEqual(evaluate({ 'lib/x.js': 'const a = /"/; const b = "//"; fs.existsSync(b);' }, {}), [
-    'lib/x.js: the comment stripper mis-parsed this file: the stripped text no longer compiles, so live code was blanked and cannot be scanned',
+    'lib/x.js: the comment stripper mis-parsed this file: the stripped text no longer compiles, so live code was blanked and cannot be scanned — see tests/helpers/strip-comments.js',
   ]);
 });
 
