@@ -32,6 +32,7 @@ const { STALE_DAYS } = require('./lib/harness-health/score');
 // finding: this was its own third copy of the same read/parse/extract logic — now
 // shared with bin/materialize.js and bin/lib/hooks/session-start.js.
 const { resolvePluginVersion } = require('./lib/plugin-version');
+const { canonicalRealpath } = require('./lib/path-guard');
 
 const TOOL_NAME = 'harness-health';
 
@@ -176,8 +177,9 @@ function resolvePremiseRoot(root) {
     const gitTop = String(execFileSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
     })).trim();
-    if (!gitTop) return undefined;
-    return path.resolve(root, path.relative(fs.realpathSync(root), gitTop));
+    const rootReal = canonicalRealpath(root);
+    if (!gitTop || !rootReal) return undefined;
+    return path.resolve(root, path.relative(rootReal, gitTop));
   } catch {
     return undefined;
   }
