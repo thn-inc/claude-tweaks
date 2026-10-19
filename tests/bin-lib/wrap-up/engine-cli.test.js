@@ -188,6 +188,12 @@ function withLinkedWorktree(fn) {
 
     git(['worktree', 'add', '-q', '-b', 'wt-branch', wtDir, 'HEAD'], mainDir);
     fs.writeFileSync(path.join(wtDir, 'src-a.js'), 'module.exports = 1;\n');
+    // j2 exists only in the worktree, so its frontmatter is readable only if
+    // buildJourneyFrontmatter reads the worktree top-level, not the main checkout.
+    fs.writeFileSync(
+      path.join(wtDir, 'docs', 'journeys', 'j2.md'),
+      ['---', 'title: Journey 2', 'files:', '  - src-a.js', '---', '', '# Journey 2', ''].join('\n'),
+    );
     git(['add', '.'], wtDir);
     git(['commit', '-q', '-m', 'wt change'], wtDir);
 
@@ -208,14 +214,20 @@ function journeyCandidatesFrom({ mainDir, baseSha }, cwd) {
 
 test('AC1/AC3: plan run from a linked worktree reports the worktree branch diff in the journeys row (#3431)', () => {
   withLinkedWorktree((fixture) => {
-    assert.deepStrictEqual(journeyCandidatesFrom(fixture, fixture.wtDir), ['docs/journeys/j1.md']);
+    assert.deepStrictEqual(
+      journeyCandidatesFrom(fixture, fixture.wtDir),
+      ['docs/journeys/j1.md', 'docs/journeys/j2.md'],
+    );
   });
 });
 
 test('AC1: plan run from a subdirectory of a linked worktree still resolves the worktree top-level (#3431)', () => {
   withLinkedWorktree((fixture) => {
     const subdir = fs.mkdtempSync(path.join(fixture.wtDir, 'sub-'));
-    assert.deepStrictEqual(journeyCandidatesFrom(fixture, subdir), ['docs/journeys/j1.md']);
+    assert.deepStrictEqual(
+      journeyCandidatesFrom(fixture, subdir),
+      ['docs/journeys/j1.md', 'docs/journeys/j2.md'],
+    );
   });
 });
 
