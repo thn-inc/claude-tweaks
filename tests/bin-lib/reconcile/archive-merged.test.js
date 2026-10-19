@@ -12,7 +12,7 @@ const path = require('path');
 const {
   archiveRunDir, listSpecDirs, decideArchive, decideArchiveCore, readConsoleState, isOrphanedMint, trackArchiveResult,
   archiveMerged, lastOwnEventMs, isAbandonedInterrupted, archiveOrphanedMint, ORPHAN_MINT_TTL_MS,
-  isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, isStaleDir,
+  isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS, isStaleDir,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin, resolveIdenticalWorkTwin,
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
   isClosedSlugStuck, recordNumbersFromSlug, refusal,
@@ -120,8 +120,11 @@ function installGhWrapper(prsJson) {
 // printed for `gh pr list ...`; `view` maps a PR number to the JSON printed for
 // `gh pr view {n} ...`, and any unmapped number exits 1. `viewMarker`, when
 // given, is touched on every `gh pr view` call so a test can prove the
-// by-number probe never ran. Any other argv exits 1.
-function installGhPrWrapper({ list, view, viewMarker }) {
+// by-number probe never ran. `graphql`, when given as `{ body, exit }`, makes
+// `gh api graphql ...` print `body` and exit `exit` (#3543's NOT_FOUND confirm
+// probe — gh exits 1 on a GraphQL error yet still prints the body). Any other
+// argv exits 1.
+function installGhPrWrapper({ list, view, viewMarker, graphql }) {
   const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-ghprwrap-'));
   const wrapperPath = path.join(wrapperDir, 'gh');
   const cases = Object.entries(view).map(([n, pr]) => `    ${n}) ${ghJsonHeredoc(pr)}\n      ;;`).join('\n');
@@ -135,6 +138,11 @@ function installGhPrWrapper({ list, view, viewMarker }) {
     cases,
     '    *) exit 1 ;;',
     '  esac',
+    ...(graphql ? [
+      'elif [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
+      `  cat <<'EOF'\n${graphql.body}\nEOF`, // raw body — ghJsonHeredoc would JSON-quote a string
+      `  exit ${graphql.exit}`,
+    ] : []),
     'else',
     '  exit 1',
     'fi',
@@ -2809,6 +2817,15 @@ test('decideArchiveCore: invalid-arguments skips with reason invalid-arguments (
   assert.deepStrictEqual(decideArchiveCore('invalid-arguments', 'resolved'), { action: 'skip', reason: 'invalid-arguments' });
 });
 
+test('decideArchiveCore: pr-not-found skips with reason pr-not-found (#3543)', () => {
+  assert.deepStrictEqual(decideArchiveCore('pr-not-found', 'resolved'), { action: 'skip', reason: 'pr-not-found' });
+});
+
+test('AC4.1 AC4.2: STRUCTURALLY_STUCK_REASONS has pr-not-found and not network-failure (#3543)', () => {
+  assert.equal(STRUCTURALLY_STUCK_REASONS.has('pr-not-found'), true);
+  assert.equal(STRUCTURALLY_STUCK_REASONS.has('network-failure'), false);
+});
+
 // #3416: a run's PR identity is its stamped run-state.json pr.number, not its
 // branch name. A live worktree's branch name can be reused from an earlier
 // run whose PR already merged, so the branch lookup can name the wrong PR.
@@ -2884,6 +2901,116 @@ test('AC1.1 transport failure: a by-number probe that fails skips network-failur
   assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
   assert.equal(skip.reason, 'network-failure');
   assert.equal(fs.existsSync(runDir), true);
+});
+
+// #3543: a stamped pr.number that GitHub confirms names no PR (the structured
+// GraphQL NOT_FOUND probe) is a permanent, human-fixable state — it skips as
+// `pr-not-found` and rides the structurally-stuck TTL/escalation path; a bare
+// transport failure (no confirming body) stays `network-failure` and never does.
+const NOT_FOUND_BODY = '{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","path":["repository","pullRequest"],"message":"x"}]}';
+
+function runStaleStampPass({ runId, graphql }) {
+  const { root, runDir, featureSha } = fixtureReusedBranchLiveRun({ runId, prNumber: 3406, consoleResolved: true });
+  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(runDir, backdated, backdated);
+  const wrapper = installGhPrWrapper({
+    list: [{ number: 3391, state: 'MERGED', mergedAt: '2026-10-17T14:09:02Z', updatedAt: '2026-10-17T14:09:02Z', mergeCommit: { oid: featureSha } }],
+    view: {},
+    graphql,
+  });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  return { root, runDir, result };
+}
+
+test('AC5.1: a stamped pr.number resolving pr-not-found skips pr-not-found, never archives via the MERGED branch PR, and enters the stuck counter once past the TTL (#3543)', () => {
+  const { root, runDir, result } = runStaleStampPass({
+    runId: '2026-10-17T090000-record-3543-stale-stamp',
+    graphql: { body: NOT_FOUND_BODY, exit: 1 },
+  });
+  assert.ok(!result.archived.includes(runDir), `a nonexistent stamped PR must not fall back to the branch PR, got ${JSON.stringify(result)}`);
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'pr-not-found');
+  assert.equal(fs.existsSync(runDir), true);
+  const entry = listResidueFailures(root).find((f) => f.reason === 'structurally-stuck' && f.path === runDir);
+  assert.ok(entry, 'the stale-stamp run must enter the structurally-stuck counter');
+  assert.equal(entry.lastError, 'stuck at pr-not-found');
+});
+
+test('AC5.3: the no-branch by-number path skips pr-not-found (not no-branch/no-worktree) for a stale stamp and enters the stuck counter with "stuck at pr-not-found" (#3543)', () => {
+  const root = fs.realpathSync(makeRepo());
+  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  const runId = '2026-10-17T090000-record-3543-nobranch-stale-stamp';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'gone-record-3543'), // stamped, but never created here
+    pr: { number: 3406, branch: 'worktree-record-3543-gone' }, // branch does not exist in this repo
+  }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'auto-mode: true\n'); // adopted — keeps the blind orphaned-mint mtime sweep off this dir
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(runDir, backdated, backdated);
+
+  const wrapper = installGhPrWrapper({ list: [], view: {}, graphql: { body: NOT_FOUND_BODY, exit: 1 } });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(!result.archived.includes(runDir), `a nonexistent stamped PR must not archive, got ${JSON.stringify(result)}`);
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'pr-not-found');
+  const entry = listResidueFailures(root).find((f) => f.reason === 'structurally-stuck' && f.path === runDir);
+  assert.ok(entry, 'the no-branch stale-stamp run must enter the structurally-stuck counter');
+  assert.equal(entry.lastError, 'stuck at pr-not-found');
+});
+
+test('AC5.2: trackStuckSkip escalates pr-not-found exactly once past the TTL with "stuck at pr-not-found" (#3543)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-notfound-'));
+  const calls = [];
+  const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
+  const stuckDir = mkDirWithMtime(STRUCTURALLY_STUCK_TTL_MS * 2);
+
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    trackStuckSkip(root, 'o/r', stuckDir, 'pr-not-found', { escalate });
+  }
+  assert.equal(calls.length, 1, `expected exactly one escalation call, got ${calls.length}`);
+  assert.equal(calls[0].lastError, 'stuck at pr-not-found');
+
+  trackStuckSkip(root, 'o/r', stuckDir, 'pr-not-found', { escalate });
+  assert.equal(calls.length, 1, 'must not re-escalate on a later still-stuck call');
+});
+
+test('#3543: a network-failure skip never escalates, even past the TTL', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-netfail-'));
+  const calls = [];
+  const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
+  const oldDir = mkDirWithMtime(STRUCTURALLY_STUCK_TTL_MS * 2);
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD * 2; i++) {
+    trackStuckSkip(root, 'o/r', oldDir, 'network-failure', { escalate });
+  }
+  assert.equal(calls.length, 0, 'a network-failure skip must never escalate');
+  assert.deepEqual(listResidueFailures(root), [], 'a network-failure skip must not enter the residue counter');
+
+  // End to end: a failed probe with no confirming NOT_FOUND body stays network-failure.
+  const { root: root2, runDir, result } = runStaleStampPass({
+    runId: '2026-10-17T090000-record-3543-transport',
+    graphql: { body: '', exit: 1 },
+  });
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'network-failure');
+  assert.ok(!listResidueFailures(root2).some((f) => f.reason === 'structurally-stuck' && f.path === runDir), 'a transport failure must not enter the structurally-stuck counter');
 });
 
 test('AC2.1: the clean-status sweep does not archive a status:clean run whose pr.number is OPEN even when its pr.branch backs a MERGED PR (#3416)', () => {
