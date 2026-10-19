@@ -9,11 +9,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const RED_TEAM = fs.readFileSync(path.join(ROOT, 'plugin/skills/specify/red-team.md'), 'utf8');
+const RED_TEAM = readText(path.join(ROOT, 'plugin/skills/specify/red-team.md'));
 
 const HEADING = '## Cross-AC literal check (deterministic, runs before persona dispatch)';
 
