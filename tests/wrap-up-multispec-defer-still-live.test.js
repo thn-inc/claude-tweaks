@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill.js');
 
 const FILE = path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'execution-and-verification.md');
 const ENGINE = path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'wrap-up', 'engine-verify.js');
@@ -21,7 +22,7 @@ const CLAIMS = [
 ];
 
 function live() {
-  return fs.readFileSync(FILE, 'utf8');
+  return readText(FILE);
 }
 
 function engineSource() {
@@ -59,7 +60,10 @@ test('AC2.1: acceptance-labeling pin goes red when only its sentence is removed'
 });
 
 test('the defer paragraph is still found as one paragraph under CRLF line endings', () => {
-  const paragraph = deferParagraph(live().replace(/\n/g, '\r\n'));
+  const crlf = live().replace(/\n/g, '\r\n');
+  assert.ok(crlf.includes('\r\n'), 'the CRLF input must contain \\r\\n line breaks');
+  assert.ok(!crlf.includes('\r\r\n'), 'the CRLF input must not contain \\r\\r\\n');
+  const paragraph = deferParagraph(crlf);
   assert.match(paragraph, /^\*\*MULTISPEC_REVIEW_DEFER branch:\*\*/);
 });
 
