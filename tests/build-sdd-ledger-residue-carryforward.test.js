@@ -145,6 +145,10 @@ test('AC1.1 #3513: console-execution.md — an unticked or --decline sdd-ruling-
   assert.match(CONSOLE_EXECUTION, ws("per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet"));
   assert.match(CONSOLE_EXECUTION, ws('only once the record exists; when the record is refused or not created, log that cause instead'));
   assert.match(CONSOLE_EXECUTION, ws('never `reversed` without a record number'));
+  assert.match(CONSOLE_EXECUTION, ws('Ticked, it is ratify (ledger row → `accepted`, per the same bullet)'));
+  assert.match(CONSOLE_EXECUTION, ws('(staged file `staged/sdd-ruling-{N}.md`, or `spec-{N}/staged/sdd-ruling-{N}.md` on a multi-spec bundle, #3401)'));
+  assert.match(CONSOLE_EXECUTION, ws('`REFUSED` when `wrap-up/refused-proposals.md` refuses it, else `SKIP`'));
+  assert.match(CONSOLE_EXECUTION, ws('a ruling the chat answer ratifies must be passed in `--approve` (an id in neither list is recorded `declined`)'));
   assert.match(CONSOLE_EXECUTION, ws('`reverse {#}` to `--decline`'));
   assert.match(CONSOLE_EXECUTION, ws('`AUTO` line naming `reversed → #{new record}` (or the logged refusal cause) is the authoritative record'));
 });
@@ -152,9 +156,10 @@ test('AC1.1 #3513: console-execution.md — an unticked or --decline sdd-ruling-
 const MULTISPEC_CONSOLE = read('plugin', 'skills', 'flow', 'multispec-review-console.md');
 
 test('AC1.1 #3513: multispec-review-console.md — step 1 ratifies a ruling, Override offers ratify/reverse and refuses skip/modify/revert on one', () => {
-  assert.match(MULTISPEC_CONSOLE, ws("an `sdd-ruling-*` file is no patch — Approve all ratifies it per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet (reverse is Override's `reverse {#}`)"));
+  assert.match(MULTISPEC_CONSOLE, ws("an `sdd-ruling-*` file is no patch — Approve all ratifies it: this step writes its `Ledger:` row to `accepted` directly (per `_shared/staged-patch.md`'s Write-back to the ledger, Resolution per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet — this console has no `finish-console` step); reverse is Override's `reverse {#}`"));
   assert.match(MULTISPEC_CONSOLE, ws('ratify/reverse {#} for an SDD ruling row'));
   assert.match(MULTISPEC_CONSOLE, ws("an `sdd-ruling-*` row takes only `ratify {#}`/`reverse {#}` (the appendix bullet); `skip`/`modify`/`revert` on one is refused as `wrap-up/review-console-interactive.md` refuses it"));
+  assert.match(MULTISPEC_CONSOLE, ws("`reverse {#}` stages its reversal record under that spec's `spec-{N}/staged/` and creates it at this console's step 2 (queue writes), not the appendix's step 7, then writes the row to `deferred` once the record exists"));
 });
 
 const CONSOLE_TEMPLATE = read('plugin', 'skills', 'wrap-up', 'console-template.md');
