@@ -123,7 +123,8 @@ function findRecentCommitOverlap({
 // candidate title, by set intersection of deriveKeyTerms on both sides (not a
 // substring test). Never throws: an empty or non-string title, or a prs value
 // that is not an array, yields null; a PR entry without a string title is skipped.
-function findOpenPrOverlap({ title, prs, minTermMatches = DEFAULT_MIN_TERM_MATCHES } = {}) {
+function findOpenPrOverlap(opts) {
+  const { title, prs, minTermMatches = DEFAULT_MIN_TERM_MATCHES } = opts || {};
   const candidateTerms = deriveKeyTerms(title);
   if (candidateTerms.length === 0 || !Array.isArray(prs)) return null;
 

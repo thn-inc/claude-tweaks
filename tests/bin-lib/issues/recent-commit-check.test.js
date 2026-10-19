@@ -227,6 +227,11 @@ test('findOpenPrOverlap returns null for an empty or non-string candidate title'
   }
 });
 
+test('findOpenPrOverlap returns null instead of throwing when called with null or no argument', () => {
+  assert.strictEqual(findOpenPrOverlap(null), null);
+  assert.strictEqual(findOpenPrOverlap(), null);
+});
+
 test('findOpenPrOverlap skips PR entries without a string title instead of throwing', () => {
   const prs = [null, { number: 1 }, { number: 2, title: 42 }, PR_3172];
   const result = findOpenPrOverlap({ title: TITLE_3185, prs });
