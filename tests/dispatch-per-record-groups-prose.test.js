@@ -174,10 +174,11 @@ test('AC1.1: the neighbour-in-flight heredoc reports a failed claim read and wri
 });
 
 function poolFetchBlock() {
+  const close = '\nfi\n';
   const start = QUEUE_PULL.indexOf('if ! gh issue list --label bot:in-progress');
-  const end = QUEUE_PULL.indexOf('\nfi\n', start);
+  const end = QUEUE_PULL.indexOf(close, start);
   assert.ok(start !== -1 && end !== -1, 'neighbour-in-flight pool fetch anchors must exist');
-  return QUEUE_PULL.slice(start, end + '\nfi\n'.length);
+  return QUEUE_PULL.slice(start, end + close.length);
 }
 
 test('a failed neighbour-in-flight pool fetch writes an empty pool and says so, so nothing is excluded (#3278)', () => {
