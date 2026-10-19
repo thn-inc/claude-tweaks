@@ -65,6 +65,8 @@ When a Deliverable adds a new Manifesto policy lever — a new `auto`-mode behav
 
 A criterion that counts something (rows, items, entries) states the count relative to this record's own change ("adds no rows", "adds exactly three items"), never as a file's absolute total, and the count must match what the record's body names. An absolute total breaks as soon as a Related record grows the same file: #2709's "the checklist still has 20 rows" was unsatisfiable once #2706 and #2707 landed beside it, and #2693's "all 20 items" named only 17.
 
+A criterion asserting that a search returns nothing (a grep that "returns nothing", "prints no lines" or "exits 1") names a command its author has run once against a tree that still contains the target and seen match; prefer `grep -F` for literal code text. A search that cannot match its target passes before and after the change, so the criterion can never fail: #3536's AC1.1 was a basic-regex grep whose escapes never matched the literal it named.
+
 ## Release Note
 
 {One plain-language, verb-first sentence describing what this record delivers, written for someone reading the release notes — never a raw conventional-commit subject, an internal module name, a record number, or a file path. Required on every record, including one with no end-user-visible effect: describe what changed from the release-notes reader's perspective, even when that's "no user-visible change" phrased plainly (e.g. "Improved internal test coverage for the release composer") — never omitted.}
@@ -176,6 +178,8 @@ When a spec calls for both deletion and a tombstone comment, do one of:
 - **Word the tombstone without the exact symbol name** (e.g., "see CHANGELOG.md for what was removed here") only when the exact name isn't operationally necessary for future readers — this is the fallback, not the default, since it loses the tombstone's specificity.
 
 Never write a bare "zero matches anywhere" AC alongside a tombstone requirement without picking one of these — it fails at review time every time.
+
+Either way the scoped grep is an absence grep: run it once against the pre-deletion tree and confirm it matches the symbol before the criterion relies on it returning zero matches.
 
 ## Empirical Premise-Check Deliverables
 

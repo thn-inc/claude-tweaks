@@ -156,7 +156,7 @@ both of which read a `Title:`/`Type:`/`Labels:` header off the staged file to cr
 prepend a 4-line header above the `# Reflect —` line, the same shape `wrap-up/leftover-routing.md`
 step 3 writes for `leftover-{slug}.md`. The body below the header is composed via `specShapedBody`
 (the finding → Current State, the proposed change → Deliverables, the observable outcome →
-Acceptance Criteria; `header: ''`; `filedBy: 'reflect'`; `provenance: { origin: 'reflect {mode} from #{n}', deferReason:
+Acceptance Criteria, where an outcome stated as a search that returns nothing is one the author has run against a tree that still holds the target and seen match, using `grep -F` for literal code text; `header: ''`; `filedBy: 'reflect'`; `provenance: { origin: 'reflect {mode} from #{n}', deferReason:
 'tangential' }`; footer `_Filed by \`reflect\` via specShapedBody._`; `keyFiles: [{ path, change }]` = the files the finding names, repo-relative file paths (no directories; drop any out-of-repo file) and omitted when none are named, so build's micro-plan gate and dispatch's file-overlap grouping can read the record) — with the `# Reflect —
 staged finding {n}` title line and `**Category:**` line kept above it; a finding whose own text
 names an open choice uses the composer's `openQuestion` variant and lands `needs:definition` (no
