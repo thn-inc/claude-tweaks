@@ -34,8 +34,8 @@ function nearDuplicatePairsAcrossGroups(groups) {
   const pairs = [];
   const seen = new Set();
   for (let i = 0; i < groups.length; i += 1) {
+    const others = groups.filter((_, j) => j !== i).flat();
     for (const subject of groups[i]) {
-      const others = groups.filter((_, j) => j !== i).flat();
       for (const hit of findNearDuplicates(subject, others)) {
         const key = [subject.number, hit.number].sort((a, b) => a - b).join('|');
         if (seen.has(key)) continue;
@@ -77,7 +77,8 @@ function drainNearDuplicateHits(memberNumbers, pairs, drainPrs) {
   const seen = new Set();
   for (const pair of pairs) {
     if (!validPair(pair)) continue;
-    for (const [m, p] of [pair.records, [pair.records[1], pair.records[0]]]) {
+    const [a, b] = pair.records;
+    for (const [m, p] of [[a, b], [b, a]]) {
       if (!members.has(m) || members.has(p)) continue;
       for (const pr of drainPrs) {
         if (!pr || !Array.isArray(pr.closingIssueNumbers) || !pr.closingIssueNumbers.includes(p)) continue;
