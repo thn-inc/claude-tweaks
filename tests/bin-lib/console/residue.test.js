@@ -117,7 +117,7 @@ test('formatResidueLines points a spec-level item at spec-N/staged and names the
   fs.writeFileSync(path.join(dir, 'spec-12', 'console.json'), JSON.stringify({ items: pendingItems(1) }));
   fs.writeFileSync(path.join(dir, 'spec-12', 'staged', 'polish-suggestion-1.md'), 'x');
   const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
-  assert.ok(lines[0].endsWith('(spec-12/console.json)'));
+  assert.ok(lines[0].endsWith(`(${path.join('spec-12', 'console.json')})`));
   assert.ok(lines.includes(`    cat "${path.join(dir, 'spec-12', 'staged', 'polish-suggestion-1.md')}"`));
 });
 
@@ -143,8 +143,9 @@ test('formatResidueLines caps item lines per run, across consoles: 2 consoles x 
   assert.strictEqual(lines[0], `- ${path.basename(dir)}: 8 item(s) no human has reviewed`);
   assert.strictEqual(lines.filter((l) => l.startsWith('- ')).length, 1, 'one header per run');
   assert.strictEqual(lines.filter((l) => l.startsWith('  - ')).length, 5);
-  assert.deepStrictEqual(lines.filter((l) => l.startsWith('  (')), ['  (console.json)', '  (spec-2/console.json)']);
-  assert.strictEqual(lines[lines.indexOf('  (spec-2/console.json)') + 1], '  - polish-suggestion-1.md — Pending review: pending (r)');
+  const specConsoleLine = `  (${path.join('spec-2', 'console.json')})`;
+  assert.deepStrictEqual(lines.filter((l) => l.startsWith('  (')), ['  (console.json)', specConsoleLine]);
+  assert.strictEqual(lines[lines.indexOf(specConsoleLine) + 1],'  - polish-suggestion-1.md — Pending review: pending (r)');
   assert.ok(lines.includes(`  … and 3 more — see "${dir}"`));
   assert.strictEqual(lines.filter((l) => l.includes('--ack --run')).length, 1);
   assert.strictEqual(lines[lines.length - 1], `  mark reviewed: node "/p/bin/console-residue.js" --ack --run "${dir}"`);
