@@ -9,6 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { splitLedgerRow } = require('./ledger-cells');
 
 const TERMINAL_STATUSES = ['fixed', 'deferred', 'accepted', 'acknowledged', 'observation'];
 
@@ -103,7 +104,9 @@ function flipLedgerRow(text, { item, status, resolution }) {
   const key = String(item);
   const row = table.rows.get(key);
   if (row === undefined) throw new Error(`no ledger row for item #${item}`);
-  const cells = row.split('|');
+  // The split honors GFM's `\|` escape (#3353): a literal pipe in Item stays
+  // inside its cell instead of adding a column.
+  const cells = splitLedgerRow(row);
   // cells[0] is '' (text before the leading '|'); columns are 1-indexed from
   // there: [1]=#, [2]=Phase, [3]=Item, [4]=Status, [5]=Resolution, [6]=''
   // (text after the trailing '|'). A row with extra/fewer cells than this

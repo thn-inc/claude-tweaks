@@ -120,6 +120,20 @@ test('flipLedgerRow allows an empty resolution for status "observation"', () => 
   assert.match(next, /\| 1 \| build \| First item \| observation \| — \|/);
 });
 
+test('flipLedgerRow resolves a row whose Item holds an escaped pipe, touching only Status/Resolution (#3353)', () => {
+  const lines = SAMPLE.split('\n');
+  lines[4] = '| 1 | build | Surface: web\\|mobile\\|desktop | open | — |';
+  const input = lines.join('\n');
+  const next = flipLedgerRow(input, { item: 1, status: 'fixed', resolution: 'Fixed — abc1234' });
+  const inLines = input.split('\n');
+  const outLines = next.split('\n');
+  assert.strictEqual(outLines.length, inLines.length);
+  assert.strictEqual(outLines[4], '| 1 | build | Surface: web\\|mobile\\|desktop | fixed | Fixed — abc1234 |');
+  for (let i = 0; i < inLines.length; i += 1) {
+    if (i !== 4) assert.strictEqual(outLines[i], inLines[i]);
+  }
+});
+
 test('TERMINAL_STATUSES matches ledger-format.md\'s closed five-value enum', () => {
   assert.deepStrictEqual(TERMINAL_STATUSES, ['fixed', 'deferred', 'accepted', 'acknowledged', 'observation']);
 });
