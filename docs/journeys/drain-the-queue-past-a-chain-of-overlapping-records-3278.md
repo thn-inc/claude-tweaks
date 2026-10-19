@@ -26,7 +26,7 @@ files:
 - **Action:** The queue pull groups the eligible records with `buildDispatchGroups`. Each record becomes its own group. Fast-lane singletons are bundled only with records they share no linking file with. A cached `order.json` written before this change carries no `grouping: 'per-record'` stamp, so `cacheUsable` rejects it and the groups are recomputed.
 - **Should feel:** Unremarkable. The queue simply has as many candidate groups as it has eligible records.
 - **Should understand:** Sharing a file with a record that shares a file with a third record no longer joins all three. Only a direct, live conflict holds a record back (step 2).
-- **Red flags:** A group of more than one record that is not a fast-lane bundle. An `oversized` exclusion on a non-bundle group. A stale cached order reused after upgrade (groups of the old transitive shape).
+- **Red flags:** A group of more than one record that is not a fast-lane bundle. An `oversized` exclusion on a non-bundle group. A stale cached order reused after upgrade (groups of the old transitive shape). A `: No such file or directory` line on stderr during the pull, which means a redirect to a `$DISPATCH_*` variable the script never declared (#3024).
 
 ### 2. Hold back records whose neighbour is mid-build
 - **URL:** `plugin/skills/dispatch/queue-pull-script.md` (neighbour-in-flight pass); `plugin/skills/dispatch/mcp-transport.md` (its MCP branch); `plugin/bin/lib/dispatch/in-flight-neighbours.js`
@@ -54,4 +54,5 @@ files:
 - Step 2 updated for #3393: the pass reads claims through `claim-store.js`'s `createClaimReader`, which reports an unresolved repo slug as a read failure.
 - Updated during `/claude-tweaks:build` of record #3392 (2026-10-17): the step 2 guard now also runs on the gh-absent MCP transport.
 - Updated during `/claude-tweaks:build` of record #3520 (2026-10-19). Steps 2 and 4: a strong near-duplicate of an in-flight record now counts as a neighbour, which closes the no-Key-Files blind spot behind the 2026-10-17 #3417/#3419 merge conflict.
+- Updated during `/claude-tweaks:build` of record #3024 (2026-10-19). Step 1 red flag: the pull prints no `: No such file or directory` noise. The open-PR pass's dead `$DISPATCH_OPEN_PR_EXCLUDED` redirect is gone, and `tests/bin-lib/dispatch/exclusions.test.js` now fails on any undeclared `$DISPATCH_*` reference.
 - Related specs: #1365 (hub-path exclusion), #1420 (bare-directory exclusion), #2066 (fast-lane bundles), #1228 (oversized guard in bare drain)

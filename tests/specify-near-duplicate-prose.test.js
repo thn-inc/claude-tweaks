@@ -13,9 +13,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const PLUGIN_DIR = path.join(ROOT, 'plugin').split(path.sep).join('/');
+const read = (rel) => readText(path.join(ROOT, rel));
 
 const SHAPING_MODE = read('plugin/skills/specify/shaping-mode.md');
 // Actions Performed moved to shaping-mode-readback.md (#2841's split).
@@ -96,12 +98,7 @@ test('shaping-mode.md decides refusal with shapingRefusal, not bot:in-progress (
 test('the shaping-mode.md refusal fence runs and refuses nothing when no hit is title-similar and ready (#3141)', () => {
   const { execFileSync } = require('node:child_process');
   const os = require('node:os');
-  const open = 'node -e "\n';
-  const close = '" "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"\n';
-  const start = SHAPING_MODE.indexOf(open);
-  const end = SHAPING_MODE.indexOf(close, start);
-  assert.ok(start !== -1 && end !== -1, 'refusal fence anchors must exist');
-  const code = SHAPING_MODE.slice(start + open.length, end).split('${CLAUDE_PLUGIN_ROOT}').join(path.join(ROOT, 'plugin'));
+  const code = refusalFenceBody().fence.split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_DIR);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'near-dup-fence-'));
   const hits = path.join(dir, 'hits.json');
   const snapshot = path.join(dir, 'snapshot.json');
@@ -146,14 +143,19 @@ test('next-mode-shape.md describes the same refusal condition (#3141)', () => {
   assert.match(section, /at least 2 signals/);
 });
 
-function refusalFenceBody() {
+function refusalFenceBody(text = SHAPING_MODE) {
+  const lf = text.replace(/\r\n/g, '\n');
   const open = 'node -e "\n';
   const close = '" "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"\n';
-  const start = SHAPING_MODE.indexOf(open);
-  const end = SHAPING_MODE.indexOf(close, start);
+  const start = lf.indexOf(open);
+  const end = lf.indexOf(close, start);
   assert.ok(start !== -1 && end !== -1, 'refusal fence anchors must exist');
-  return { fence: SHAPING_MODE.slice(start + open.length, end), end };
+  return { fence: lf.slice(start + open.length, end), end };
 }
+
+test('refusalFenceBody reads a CRLF shaping-mode.md the same as LF (#3518)', () => {
+  assert.strictEqual(refusalFenceBody(SHAPING_MODE.replace(/\n/g, '\r\n')).fence, refusalFenceBody().fence);
+});
 
 test('AC1.1: the shaping-mode refusal fence reads claims through createClaimReader and reports failed reads as unreadable (#3393)', () => {
   const { fence, end } = refusalFenceBody();
@@ -170,7 +172,7 @@ test('AC1.1: the shaping-mode refusal fence reads claims through createClaimRead
 test('AC1.1: an unreadable claim is reported on the output and the happy path stays { refuse: false } (#3393)', () => {
   const { execFileSync } = require('node:child_process');
   const os = require('node:os');
-  const code = refusalFenceBody().fence.split('${CLAUDE_PLUGIN_ROOT}').join(path.join(ROOT, 'plugin'));
+  const code = refusalFenceBody().fence.split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_DIR);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'near-dup-unreadable-'));
   const hits = path.join(dir, 'hits.json');
   const snapshot = path.join(dir, 'snapshot.json');
