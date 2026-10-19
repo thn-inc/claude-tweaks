@@ -7,8 +7,10 @@
 // open a fake comment that blanks real code. Both comment openers carry a
 // `(?<!\\)` guard: a slash right after a backslash is an escaped slash, never a
 // comment — a regex literal such as `/^origin\//` ends in one, and read as `//` it
-// would blank the rest of its line. A mis-parse can therefore only leave comment
-// text in (a loud false positive), never hide code.
+// would blank the rest of its line. Regex literals are not modeled: a quote or
+// backtick inside a regex can pair with a later literal, and an unescaped `/*` or
+// `//` in a character class opens a comment. Either can blank code after it.
+// Nothing under plugin/bin trips this today, but nothing enforces that.
 function stripComments(src) {
   return src.replace(
     /'(?:\\[\s\S]|[^'\\\n])*'|"(?:\\[\s\S]|[^"\\\n])*"|`(?:\\[\s\S]|[^`\\])*`|(?<!\\)\/\*[\s\S]*?\*\/|(?<!\\)\/\/[^\n]*/g,

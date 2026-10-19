@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { stripComments } = require('./helpers/strip-comments');
 
 // New filesystem-check code under plugin/bin/ routes through the shared
 // plugin/bin/lib/path-guard/ module (lstatType / resolveLeaf /
@@ -37,13 +38,13 @@ const DONTS = path.join(__dirname, '..', 'docs', 'donts.md');
 // generated source text (statusline-wrapper-source.js) and a bracket-string
 // form (`fs['realpathSync']`) still count.
 //
-// Regex literals are only partly modeled. A regex ending in an escaped slash
+// Regex literals are only partly modeled. A regex containing an escaped slash
 // (`/^https?:\/\//`, `/src\/*.js/`) no longer opens a comment, because both
-// openers carry the `(?<!\\)` guard. A quote inside a regex can still pair with
-// a later quote on the same line, which can only keep comment text in, never
-// blank code. Computed member access (`fs['realpath' + 'Sync']`, `fs[name]`) is
-// still not seen.
-const { stripComments } = require('./helpers/strip-comments');
+// openers carry the `(?<!\\)` guard. But a quote or backtick inside a regex can
+// pair with a later literal, and an unescaped `/*` or `//` in a character class
+// opens a comment; either can blank code after it. Nothing under plugin/bin
+// trips this today, but nothing enforces that. Computed member access
+// (`fs['realpath' + 'Sync']`, `fs[name]`) is also not seen.
 
 // -> { realpathSync, existsSync } token counts in `src`, comments excluded.
 // Calls, references (`{ realpath: fs.realpathSync.native }`), defaults

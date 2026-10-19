@@ -32,7 +32,8 @@ function walk(dir) {
   return out;
 }
 
-// Comments blanked in one literal-aware pass — see tests/helpers/strip-comments.js.
+// Comments blanked in one literal-aware pass — see tests/helpers/strip-comments.js
+// — so a comment that mentions windowsHide — or a call shape — never counts either way.
 
 // Text between the paren at `open` and its matching close paren.
 function balanced(src, open, openCh = '(', closeCh = ')') {

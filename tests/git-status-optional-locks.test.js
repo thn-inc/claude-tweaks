@@ -32,7 +32,8 @@ function walk(dir) {
   return out;
 }
 
-// Comments blanked in one literal-aware pass — see tests/helpers/strip-comments.js.
+// Comments blanked in one literal-aware pass — see tests/helpers/strip-comments.js
+// — so a comment that mentions a call shape never counts either way.
 
 // 'status' as the subcommand element: first in the array, after an optional
 // `'-C', <expr>,` pair and any top-level `'--…'` options. The -C operand is a
