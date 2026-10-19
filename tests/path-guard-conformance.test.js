@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { stripComments } = require('./helpers/strip-comments');
 
 // New filesystem-check code under plugin/bin/ routes through the shared
 // plugin/bin/lib/path-guard/ module (lstatType / resolveLeaf /
@@ -29,28 +30,21 @@ const path = require('node:path');
 const BIN_ROOT = path.join(__dirname, '..', 'plugin', 'bin');
 const DONTS = path.join(__dirname, '..', 'docs', 'donts.md');
 
-// Comments are blanked (offsets and newlines kept) in ONE left-to-right pass
-// that also steps over string and template literals. Two separate replaces —
-// block comments first, then line comments — let a `/*` inside a line comment
-// ("work/*-spec.md", "docs/*.md") open a "block comment" that runs to the next
-// real `*/` anywhere later in the file and blanks live code in between; four
-// plugin/bin files were undercounted that way. Strings are kept verbatim, so
-// a token inside generated source text (statusline-wrapper-source.js) and a
-// bracket-string form (`fs['realpathSync']`) still count.
+// Comments are blanked by the shared helper (tests/helpers/strip-comments.js),
+// in one left-to-right pass that steps over string and template literals. Two
+// separate replaces let a `/*` inside a line comment ("work/*-spec.md") open a
+// block comment that blanks live code up to the next `*/`; four plugin/bin
+// files were undercounted that way. Strings stay verbatim, so a token inside
+// generated source text (statusline-wrapper-source.js) and a bracket-string
+// form (`fs['realpathSync']`) still count.
 //
-// Regex literals are NOT modeled. A regex containing `//` or `/*`
-// (`/^https?:\/\//` reads `\//` as a line comment; `/src\/*.js/` opens a
-// phantom block comment) can blank live code after it, and a quote inside a
-// regex can pair with a later quote and hide a trailing comment. Nothing under
-// plugin/bin/ trips this today: when this was written, the tree's counts were
-// cross-checked once against an independent whole-line-comment filter and
-// agreed for every file. That was a one-time audit, not an enforced guard — a
-// future file that trips it can hide tokens from the lint. Computed member
-// access (`fs['realpath' + 'Sync']`, `fs[name]`) is likewise not seen.
-const TOKEN = /\/\/[^\n]*|\/\*[\s\S]*?\*\/|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\[\s\S]|[^`\\])*`/g;
-function stripComments(src) {
-  return src.replace(TOKEN, (m) => (m[0] === '/' ? m.replace(/[^\n]/g, ' ') : m));
-}
+// Regex literals are only partly modeled. A regex containing an escaped slash
+// (`/^https?:\/\//`, `/src\/*.js/`) no longer opens a comment, because both
+// openers carry the `(?<!\\)` guard. But a quote or backtick inside a regex can
+// pair with a later literal, and an unescaped `/*` or `//` in a character class
+// opens a comment; either can blank code after it. Nothing under plugin/bin
+// trips this today, but nothing enforces that. Computed member access
+// (`fs['realpath' + 'Sync']`, `fs[name]`) is also not seen.
 
 // -> { realpathSync, existsSync } token counts in `src`, comments excluded.
 // Calls, references (`{ realpath: fs.realpathSync.native }`), defaults

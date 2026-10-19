@@ -4,7 +4,7 @@ Loaded at summary-render time by `/flow`'s consolidated close-out.
 
 After all specs complete (or one fails), present a consolidated summary:
 
-**Needs-a-human residue (#3370).** Run `node "{pluginRoot}/bin/console-residue.js" --run "$MULTISPEC_PARENT_DIR"` once against the parent run dir (the archive path when already archived, as for Timing) — it covers every `spec-*/console.json` — and render its stdout verbatim under a `### Needs a human` heading. Omit the section only when the command exits 0 with empty stdout; on any non-zero exit, render the CLI's stderr verbatim under the heading, so a failed scan never reads as "no residue".
+**Needs-a-human residue (#3370).** Run `node "{pluginRoot}/bin/console-residue.js" --run "$MULTISPEC_PARENT_DIR"` once against the parent run dir (the archive path when already archived, per `_shared/timing-render.md`'s archive-path rule) — it covers every `spec-*/console.json` — and render its stdout verbatim under a `### Needs a human` heading. Omit the section only when the command exits 0 with empty stdout; on any non-zero exit, render the CLI's stderr verbatim under the heading, so a failed scan never reads as "no residue".
 
 ```markdown
 ## Flow: Multi-Spec Pipeline Complete  {— keep-going if applicable}
@@ -34,25 +34,7 @@ After all specs complete (or one fails), present a consolidated summary:
 
 ### Timing
 
-Rendered verbatim from `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-timing.js" --run "$MULTISPEC_PARENT_DIR" --markdown --auto-transcript` (#1928) — never composed by hand; a phase with no event reads `unattributed`. `{Minutes}` is the phase's span, with `(own N)` when nested phases are excluded. An `unattributed` table row (below the phase rows, above `total`) appears only when transcript usage rows fall outside every phase's span (#1929). When wrap-up's cleanup item 8 has already archived the run directory (`cleanup-procedures.md`), pass `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` as `--run` instead — the events and manifest travel with the archive. When the CLI prints a `tokens: transcript not found (...)` line, render it verbatim above the table — blank token columns are a fact about the run, not a formatting error (#1929). `Tokens (in/out)` sums the transcript's raw `input_tokens`/`output_tokens` only — cache reads and cache creation are separate fields in `timing.json`'s `tokens`, and on a cache-heavy session dwarf `in`.
-
-| Phase | Minutes | Verify | Tokens (in/out) | Proc. KB | Tool RTs |
-|---|---|---|---|---|---|
-| {phase} | {minutes} | {mode ×n | — | unattributed} | {in/out | —} | {kb | —} | {n | —} |
-| unattributed | — | — | {in/out} | {kb} | {n} |
-| total | {totals.minutes} | {verifyRuns} run(s) ({modes}) | {in/out} | {kb} | {n} |
-
-Guard denials: {n} gate · {n} wd-ambiguous · {n} wd-deny
-
-Under `--auto-transcript`/`--transcript` the CLI also appends a Dispatches section (#3375), rendered verbatim below the `Tokens (in/out)` footnote that follows the Guard denials line — never composed by hand. It carries two tables over the run's subagent dispatches, scoped to the `run window` (or the `whole session` when the run has no events): one by model tier (`fast`, `standard`, `capable`, `frontier`; an `unmapped` row carries the raw model names), one by role (implementer, task review, re-review, whole-branch review, plan review, lens reviewer, unlabelled). `Agent-seconds` sums each dispatch's span with overlap kept; `Elapsed (min)` is the union of those spans in minutes. The two are not comparable to phase minutes, and the Dispatches tokens are never summed with the phase table's main-session `Tokens (in/out)` column. A `Dispatches ({run window | whole session — no run events}; …):` line heads the tables. Render the not-found line (`dispatches: subagent transcripts not found (...)`, once per transcript whose `subagents/` directory yielded nothing), each per-dispatch line (`dispatch agent-{id}: ` followed by `transcript not found (...)`, `transcript has no usage rows`, `meta not found (description null)` or `meta not readable (...) (description null)`) and `dispatches: {n} outside the run window excluded` verbatim — a missing value is a fact about the run, never a zero.
-
-| Tier | Dispatches | Agent-seconds | Elapsed (min) | Tokens (in/out) | Cache (read/create) |
-|---|---|---|---|---|---|
-| {fast \| standard \| capable \| frontier \| unmapped (raw: {model}[, {model}…])} | {n} | {s} | {min} | {in/out} | {read/create} |
-
-| Role | Dispatches | Agent-seconds | Elapsed (min) | Tokens (in/out) | Cache (read/create) |
-|---|---|---|---|---|---|
-| {role} | {n} | {s} | {min} | {in/out} | {read/create} |
+{stdout of `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-timing.js" --run "$MULTISPEC_PARENT_DIR" --markdown --auto-transcript` (#1928), rendered verbatim per `_shared/timing-render.md` — the phase table, its notes, the archive-path `--run` rule, and the Dispatches section; never composed by hand}
 
 ### Manual Steps Required (all specs)
 | # | Spec | What | Where |

@@ -90,6 +90,7 @@ function decideRelease(classifiedState, prState, issueState, closesIssue) {
   }
   if (prState === 'gh-absent') return { action: 'skip', reason: 'gh-absent' };
   if (prState === 'network-failure') return { action: 'skip', reason: 'network-failure' };
+  if (prState === 'invalid-arguments') return { action: 'skip', reason: 'invalid-arguments' };
   if (prState && prState.state === 'MERGED') {
     if (closesIssue === true) return { action: 'release', reason: `merged: reconciled from PR #${prState.number}` };
     if (issueState === 'CLOSED') return { action: 'release', reason: 'issue-closed' };
@@ -119,10 +120,10 @@ function needsIssueEvidence(prState, closesIssue) {
   return prState.state === 'MERGED' && closesIssue !== true;
 }
 
-// Shared by Phase 1.5 and the #3249 by-number fallback below: pairs each
-// item's issueNumber with its runWithConcurrency result, mapping a rejected
-// probe (an Error instance) to the same 'network-failure' string every other
-// resolver in this module uses for a transport failure.
+// Shared by both Phase 1.5 pools — the by-number pool and the branch pool
+// (#3416): pairs each item's issueNumber with its runWithConcurrency result,
+// mapping a rejected probe (an Error instance) to the same 'network-failure'
+// string every other resolver in this module uses for a transport failure.
 function resultsByIssue(items, results) {
   return new Map(items.map((c, i) => [c.issueNumber, results[i] instanceof Error ? 'network-failure' : results[i]]));
 }
@@ -322,8 +323,10 @@ function logGrantRemoval(runDir, root, reason) {
 //   Phase 1 (sync) — read/classify/join every claim not cache-skipped,
 //     collecting active (live/stale) candidates with their branch join
 //     (PR-state deferred to Phase 1.5).
-//   Phase 1.5 (parallel) — one runWithConcurrency batch resolving every
-//     joinable candidate's PR-state fetch.
+//   Phase 1.5 (parallel, #3416) — one runWithConcurrency batch of by-number
+//     PR-state probes for every candidate stamping pr.number, then one batch
+//     of branch-join fetches for the joinable candidates those probes did not
+//     settle.
 //   Phase 1.75 (parallel, #3412) — one runWithConcurrency batch fetching the
 //     merge commit message of each MERGED candidate whose PR references don't
 //     already name its issue, then each candidate's closesIssue verdict
@@ -456,56 +459,49 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
     });
   }
 
-  // Phase 1.5: parallel PR-state fetches, capped, only for candidates whose
-  // branch actually resolved (joinFailure === null) — a candidate with
-  // 'no-run-state'/'no-branch' has nothing to resolve a PR against, so it
-  // costs nothing here, matching Phase 2's own "gated the same way the
-  // serial version gated its call" discipline (#820 review).
-  const needPrState = candidates.filter((c) => c.joinFailure === null);
+  // Phase 1.5: PR-state fetches, capped. A candidate that stamps pr.number
+  // (run-state.json) resolves BY NUMBER first (#3416): the stamped PR is this
+  // run's own PR, while its branch name can be reused by a later run and then
+  // names an unrelated (possibly merged) PR. Only a null answer falls through
+  // to the branch pool below. Deliberate asymmetry, do not align: a branchless
+  // candidate whose by-number probe fails keeps prState null so the #3249
+  // issue-closed release path still applies, while a branch-resolved candidate
+  // whose probe fails skips on the failure string (never releases via the
+  // branch's PR, #3416).
+  const byNumberCands = candidates.filter((c) => c.prNumber);
+  const prStatesByNumber = await runWithConcurrency(
+    byNumberCands,
+    (c) => resolvePrStateByNumberAsync(root, c.prNumber),
+  );
+  const prStateByNumberByIssue = resultsByIssue(byNumberCands, prStatesByNumber);
+  for (const c of byNumberCands) {
+    const byNumber = prStateByNumberByIssue.get(c.issueNumber);
+    if (byNumber === null) continue; // no answer — the branch join decides below
+    if (byNumber && typeof byNumber === 'object') {
+      // Real evidence — this candidate now behaves like an ordinary
+      // branch-joined one, and Phase 2 gates its issue-evidence fetch on it.
+      c.prState = byNumber;
+      c.joinFailure = null;
+    } else if (c.joinFailure === null) {
+      // Branch resolved, but the stamped PR's probe failed: that failure is the
+      // verdict (decideRelease skips), never a release via the branch's PR.
+      c.prState = byNumber;
+    }
+    // Otherwise (no branch resolved AND a failed probe): leave prState null and
+    // joinFailure set, so Phase 2 still tries issue-closed evidence (#3249 —
+    // recording the failure here would make needsIssueEvidence false).
+  }
+
+  // Then the branch join for every joinable candidate the by-number probe did
+  // not settle: no stamped number, or a by-number null. Candidates whose
+  // prState is already set (object or failure string) are not re-probed.
+  const needPrState = candidates.filter((c) => c.joinFailure === null && c.prState === null);
   const prStates = await runWithConcurrency(
     needPrState,
     (c) => resolvePrStateAsync(root, c.branch),
   );
   const prStateByIssue = resultsByIssue(needPrState, prStates);
-  for (const c of candidates) {
-    if (c.joinFailure === null) c.prState = prStateByIssue.get(c.issueNumber);
-  }
-
-  // #3249: a candidate whose branch could not be derived at all (joinFailure
-  // still set — the ordinary branch join above, including its own
-  // fallbackBranch layer, found nothing) still carries a by-number fallback
-  // when run-state.json stamped pr.number — probe it directly, the same
-  // escape hatch archive-merged.js's own by-number fallback uses for the
-  // identical "worktree AND branch both gone" shape (#1962). Gated on
-  // c.prNumber so this never fires for a run dir with no pr field at all
-  // (an already-archived run with no run-state.json, for instance).
-  const needPrByNumber = candidates.filter((c) => c.joinFailure !== null && c.prNumber);
-  const prStatesByNumber = await runWithConcurrency(
-    needPrByNumber,
-    (c) => resolvePrStateByNumberAsync(root, c.prNumber),
-  );
-  const prStateByNumberByIssue = resultsByIssue(needPrByNumber, prStatesByNumber);
-  // Iterates needPrByNumber (the same candidate objects, by reference) —
-  // not candidates re-filtered by the same predicate — since every entry
-  // worth checking is already in that array.
-  for (const c of needPrByNumber) {
-    const byNumber = prStateByNumberByIssue.get(c.issueNumber);
-    if (byNumber && typeof byNumber === 'object') {
-      // Real evidence recovered — this candidate now behaves exactly like
-      // an ordinary branch-joined one for decideRelease's purposes, and
-      // Phase 2 below gates its own issue-evidence fetch on this same
-      // prState, so a resolved MERGED/OPEN/CLOSED result here correctly
-      // skips an unnecessary issue-state lookup.
-      c.prState = byNumber;
-      c.joinFailure = null;
-    }
-    // Any other result — null (no such PR), 'gh-absent'/'network-failure'
-    // (a failed probe, transient or permanent, e.g. a stale pr.number), or
-    // 'invalid-arguments' — leaves joinFailure and prState (null)
-    // untouched, exactly as before this fallback existed: Phase 2 still
-    // tries issue-closed evidence. Recording the failure string as prState
-    // would make needsIssueEvidence false and block that path.
-  }
+  for (const c of needPrState) c.prState = prStateByIssue.get(c.issueNumber);
 
   // Phase 1.75 (#3412): the merge commit's message, fetched only where the PR's
   // closingIssuesReferences don't already settle that it closes this issue (a

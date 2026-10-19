@@ -6,6 +6,7 @@ files:
   - plugin/skills/wrap-up/summary-template.md
   - plugin/skills/flow/summary-template.md
   - plugin/skills/flow/multispec-summary.md
+  - plugin/skills/_shared/timing-render.md
   - docs/reference/dispatch-cost-baseline.md
 ---
 
@@ -68,4 +69,4 @@ files:
 
 ## Origin
 
-Built by #3375 (multi-spec run `2026-10-17T144508-spec-3375-3380`) — part of the "Build dispatch cost shape" decomposition from #3229.
+Built by #3375 (multi-spec run `2026-10-17T144508-spec-3375-3380`) — part of the "Build dispatch cost shape" decomposition from #3229. #3413 (run `2026-10-19T044738-record-3413`) moved the Dispatches render rules out of the three summary templates into `_shared/timing-render.md`, which all three now cite; the rendered output is unchanged.
