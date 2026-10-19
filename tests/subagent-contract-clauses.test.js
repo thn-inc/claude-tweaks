@@ -322,4 +322,14 @@ test('go-red control: the pre-#3519 recipe wording fails the shell-safe assertio
   const OLD =
     'create and delete the file via Bash (`mkdir -p` + a shell redirect/heredoc, then `rm`), never the `Write`/`Edit` tools.';
   assert.throws(() => assertShellSafeScratchRecipe(OLD, 'frozen pre-#3519 excerpt', 1));
+  // The old-wording guards must also go red on their own: the canonical fragment present once
+  // (count assertion satisfied) plus a leftover pre-#3519 phrase leaves only doesNotMatch to fail.
+  assert.throws(
+    () => assertShellSafeScratchRecipe(`${SHELL_SAFE_RECIPE} (redirect/heredoc)`, 'redirect/heredoc leftover', 1),
+    /redirect\/heredoc/,
+  );
+  assert.throws(
+    () => assertShellSafeScratchRecipe(`${SHELL_SAFE_RECIPE} (\`mkdir -p\` + a redirect)`, 'mkdir -p + a leftover', 1),
+    /mkdir -p/,
+  );
 });
