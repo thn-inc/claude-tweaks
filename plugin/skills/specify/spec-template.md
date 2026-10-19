@@ -179,7 +179,7 @@ When a spec calls for both deletion and a tombstone comment, do one of:
 
 Never write a bare "zero matches anywhere" AC alongside a tombstone requirement without picking one of these — it fails at review time every time.
 
-Either way the scoped grep is an absence grep: run it once against the pre-deletion tree and confirm it matches the symbol before the criterion relies on it returning zero matches.
+Either way the grep, scoped or bare, is an absence grep: run it once against the pre-deletion tree and confirm it matches the symbol before the criterion relies on it returning zero matches.
 
 ## Empirical Premise-Check Deliverables
 
