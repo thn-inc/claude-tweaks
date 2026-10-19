@@ -1,0 +1,172 @@
+// tests/bin-lib/flow/consolidated-pass.test.js — checkPassReentry (#3497): the
+// one eligibility rule for re-entering a multi-spec run's consolidated pass.
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { checkPassReentry, REENTRY_REASONS } = require('../../../plugin/bin/lib/flow/consolidated-pass');
+
+const NOT_LANDED = () => ({ landed: false, evidence: { branch: 'b', merged: false } });
+const NO_PR = () => { throw new Error('PR resolver must not be called'); };
+
+function manifestText(statuses) {
+  const ids = [11, 12, 13, 14];
+  const lines = ['multispec:', '  parent: .claude-tweaks/pipelines/2026-08-01T090000-spec-11-12/', '  specs:'];
+  statuses.forEach((status, i) => {
+    lines.push(`    - id: ${ids[i]}`, `      status: ${status}`, `      subdir: spec-${ids[i]}/`);
+  });
+  return lines.join('\n') + '\n';
+}
+
+// Builds {tmp}/.claude-tweaks/pipelines[/archive]/<run>/ with the files the
+// rule reads. Pass `null` for a file to omit it.
+function makeRun(o = {}) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pass-reentry-'));
+  const parent = path.join(tmp, '.claude-tweaks', 'pipelines', ...(o.archived ? ['archive'] : []));
+  const runDir = path.join(parent, '2026-08-01T090000-spec-11-12');
+  fs.mkdirSync(runDir, { recursive: true });
+  const manifest = 'manifest' in o ? o.manifest : manifestText(o.statuses || ['complete', 'complete']);
+  if (manifest !== null) fs.writeFileSync(path.join(runDir, 'manifest.yml'), manifest);
+  const config = 'config' in o ? o.config : 'mode: auto\n';
+  if (config !== null) fs.writeFileSync(path.join(runDir, 'config.yml'), config);
+  const runState = 'runState' in o ? o.runState : { status: 'active' };
+  if (runState !== null) fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(runState));
+  if (o.console) fs.writeFileSync(path.join(runDir, 'console.json'), '{}');
+  return runDir;
+}
+
+const deps = (over = {}) => ({ checkBranchLanded: NOT_LANDED, ...over });
+
+test('AC4.1 eligible run -> eligible, specIds [11, 12]', () => {
+  const r = checkPassReentry(makeRun(), { deps: deps() });
+  assert.equal(r.eligible, true);
+  assert.equal(r.reason, 'eligible');
+  assert.deepEqual(r.specIds, [11, 12]);
+});
+
+test('AC4.1 console.json present -> console-exists', () => {
+  const r = checkPassReentry(makeRun({ console: true }), { deps: deps() });
+  assert.equal(r.eligible, false);
+  assert.equal(r.reason, 'console-exists');
+});
+
+test('AC4.1 a spec running -> spec-unfinished naming #12 running', () => {
+  const r = checkPassReentry(makeRun({ statuses: ['complete', 'running'] }), { deps: deps() });
+  assert.equal(r.reason, 'spec-unfinished');
+  assert.match(r.detail, /#12 running/);
+  assert.doesNotMatch(r.detail, /#11/);
+});
+
+test('AC4.1 a spec pending -> spec-unfinished', () => {
+  const r = checkPassReentry(makeRun({ statuses: ['pending', 'complete'] }), { deps: deps() });
+  assert.equal(r.reason, 'spec-unfinished');
+  assert.match(r.detail, /#11 pending/);
+});
+
+test('AC4.1 mode interactive -> mode; config.yml without a mode line -> mode', () => {
+  assert.equal(checkPassReentry(makeRun({ config: 'mode: interactive\n' }), { deps: deps() }).reason, 'mode');
+  assert.equal(checkPassReentry(makeRun({ config: 'other: x\n' }), { deps: deps() }).reason, 'mode');
+  assert.equal(checkPassReentry(makeRun({ config: null }), { deps: deps() }).reason, 'mode');
+  assert.equal(checkPassReentry(makeRun({ config: 'mode: hybrid\n' }), { deps: deps() }).reason, 'eligible');
+});
+
+test('AC4.1 no manifest.yml -> no-manifest', () => {
+  const r = checkPassReentry(makeRun({ manifest: null }), { deps: deps() });
+  assert.equal(r.reason, 'no-manifest');
+  assert.deepEqual(r.specIds, []);
+});
+
+test('#3497 archived dir -> archived', () => {
+  const r = checkPassReentry(makeRun({ archived: true }), { deps: deps() });
+  assert.equal(r.eligible, false);
+  assert.equal(r.reason, 'archived');
+});
+
+test('#3497 run-state clean -> closed; missing run-state is not closed', () => {
+  assert.equal(checkPassReentry(makeRun({ runState: { status: 'clean' } }), { deps: deps() }).reason, 'closed');
+  assert.equal(checkPassReentry(makeRun({ runState: null }), { deps: deps() }).reason, 'eligible');
+});
+
+test('#3497 failed + not-run specs alongside complete -> eligible', () => {
+  const r = checkPassReentry(makeRun({ statuses: ['complete', 'failed', 'not-run'] }), { deps: deps() });
+  assert.equal(r.eligible, true);
+  assert.deepEqual(r.specIds, [11, 12, 13]);
+});
+
+test('#3497 landed true -> landed; landed null -> landed-unknown', () => {
+  const run = makeRun();
+  const landed = checkPassReentry(run, { deps: deps({ checkBranchLanded: () => ({ landed: true, evidence: {} }) }) });
+  assert.equal(landed.reason, 'landed');
+  const unknown = checkPassReentry(run, { deps: deps({ checkBranchLanded: () => ({ landed: null, evidence: {} }) }) });
+  assert.equal(unknown.reason, 'landed-unknown');
+  const thrown = checkPassReentry(run, { deps: deps({ checkBranchLanded: () => { throw new Error('boom'); } }) });
+  assert.equal(thrown.reason, 'landed-unknown');
+});
+
+test('#3497 cache option is passed through to checkBranchLanded', () => {
+  const cache = {};
+  let seen;
+  checkPassReentry(makeRun(), { cache, deps: deps({ checkBranchLanded: (_d, o) => { seen = o; return { landed: false }; } }) });
+  assert.equal(seen.cache, cache);
+});
+
+test('#3497 real checkBranchLanded in a non-git tmp project -> landed-unknown, no throw', () => {
+  const r = checkPassReentry(makeRun());
+  assert.equal(r.eligible, false);
+  assert.equal(r.reason, 'landed-unknown');
+});
+
+test('#3497 online + PR MERGED -> landed even when merge evidence says false', () => {
+  const run = makeRun({ runState: { status: 'active', pr: { number: 4242 } } });
+  let args;
+  const r = checkPassReentry(run, {
+    online: true,
+    deps: deps({ resolvePrStateByNumber: (root, n) => { args = [root, n]; return { number: n, state: 'MERGED' }; } }),
+  });
+  assert.equal(r.reason, 'landed');
+  assert.match(r.detail, /PR #4242 merged/);
+  assert.equal(args[1], 4242);
+  assert.equal(args[0], path.resolve(run, '..', '..', '..'));
+});
+
+test('#3497 online + OPEN PR -> continues to merge evidence', () => {
+  const run = makeRun({ runState: { status: 'active', pr: { number: 4242 } } });
+  const r = checkPassReentry(run, { online: true, deps: deps({ resolvePrStateByNumber: () => ({ state: 'OPEN' }) }) });
+  assert.equal(r.reason, 'eligible');
+});
+
+test('#3497 online + gh-absent -> falls back to merge evidence, detail names the degrade', () => {
+  const run = makeRun({ runState: { status: 'active', pr: { number: 4242 } } });
+  const r = checkPassReentry(run, { online: true, deps: deps({ resolvePrStateByNumber: () => 'gh-absent' }) });
+  assert.equal(r.eligible, true);
+  assert.match(r.detail, /online PR check unavailable \(gh-absent\)/);
+  const landed = checkPassReentry(run, {
+    online: true,
+    deps: deps({ resolvePrStateByNumber: () => 'network-failure', checkBranchLanded: () => ({ landed: true }) }),
+  });
+  assert.equal(landed.reason, 'landed');
+  assert.match(landed.detail, /network-failure/);
+});
+
+test('#3497 online without pr.number in run-state -> resolver not called', () => {
+  const r = checkPassReentry(makeRun(), { online: true, deps: deps({ resolvePrStateByNumber: NO_PR }) });
+  assert.equal(r.reason, 'eligible');
+});
+
+test('#3497 offline never calls the PR resolver', () => {
+  const run = makeRun({ runState: { status: 'active', pr: { number: 4242 } } });
+  const r = checkPassReentry(run, { deps: deps({ resolvePrStateByNumber: NO_PR }) });
+  assert.equal(r.reason, 'eligible');
+  const r2 = checkPassReentry(run, { online: false, deps: deps({ resolvePrStateByNumber: NO_PR }) });
+  assert.equal(r2.reason, 'eligible');
+});
+
+test('REENTRY_REASONS is frozen and lists every reason the rule can return', () => {
+  assert.ok(Object.isFrozen(REENTRY_REASONS));
+  assert.deepEqual([...REENTRY_REASONS], [
+    'archived', 'no-manifest', 'closed', 'mode', 'console-exists',
+    'spec-unfinished', 'landed', 'landed-unknown', 'eligible',
+  ]);
+});
