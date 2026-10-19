@@ -53,6 +53,16 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.147.1](https://github.com/thn-inc/claude-tweaks/compare/v6.147.0...v6.147.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* pr-first-merge: forbid rewriting the integration branch… ([#3347](https://github.com/thn-inc/claude-tweaks/issues/3347)) ([aadc01c](https://github.com/thn-inc/claude-tweaks/commit/aadc01cd40e7a9a4d889f23be0b39ad0af913601))
+* Windows regression: 2 test file(s) newly failing after… ([#3429](https://github.com/thn-inc/claude-tweaks/issues/3429)) ([f2ccc03](https://github.com/thn-inc/claude-tweaks/commit/f2ccc03c0660d489b35348e4086bcd4e41847fa1))
+* wrap-up-pack.js's ledger probe can match an unrelated… ([#2887](https://github.com/thn-inc/claude-tweaks/issues/2887)) ([6f46409](https://github.com/thn-inc/claude-tweaks/commit/6f46409012c4843a73f56ab6702dce383f74c122))
+* wrap-up: the ledger bulk-resolve fast path accepts… ([#3327](https://github.com/thn-inc/claude-tweaks/issues/3327)) ([eb2276d](https://github.com/thn-inc/claude-tweaks/commit/eb2276d1fb7e92830b303ab2739d25e80ebe53a4))
+
 ## [6.147.0](https://github.com/thn-inc/claude-tweaks/compare/v6.146.0...v6.147.0) (2026-10-19)
 
 
