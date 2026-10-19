@@ -54,7 +54,7 @@ test('the tombstone section treats its scoped grep as an absence grep', () => {
 });
 
 test('reflect maps a returns-nothing outcome to a pre-run search', () => {
-  assert.ok(REFLECT.includes('an outcome stated as a search that returns nothing is one the author has run against a tree that still holds the target and seen match'));
+  assert.ok(REFLECT.includes('an outcome stated as a search that returns nothing is one the author has run against a tree that still holds the target and seen match, using `grep -F` for literal code text'));
 });
 
 test('leftover routing asks for a matching run before a returns-nothing grep AC', () => {
