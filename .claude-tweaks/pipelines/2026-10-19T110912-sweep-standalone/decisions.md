@@ -5,3 +5,66 @@
 - STAGED 13:21:27 — Step 6 Propose digest cluster: wrap-up cluster (3 entries in #1426) — stage path: staged/digest-promotion-1.md. Reversibility: n/a.
 - SKIP 13:21:27 — Step 6 Propose digest cluster: docs cluster (4 entries) and dispatch cluster (3 entries) not staged — premise check: all 4 docs entries cite ledger files already deleted; dispatch DISPATCH_OPEN_PR_EXCLUDED entry already fixed by #3024, leaving 2 live (< 3 threshold) → surfaced in Yours review. Reversibility: n/a.
 - AUTO 13:23:45 — Step 7 Delete: git rm 26 orphaned plans under docs/superpowers/plans/ — each related record closed and no repo file cites the basename (re-verified fresh in scratch worktree tidy-sweep-2026-10-19); kept: 2767 (record open), 3316 (cited by docs/reference/dispatch-cost-baseline.md). Reversibility: med. [lever: tidy-aggressiveness=moderate (default)]
+- AUTO 13:24:50 — Step 7.5 housekeeping PR: PR #3591 opened (commit 57d08bba3) and gh pr merge --auto --squash merged it immediately (no required checks on main) rather than arming — compose-subject.js has no record-less form, subject hand-composed. Reversibility: med. [lever: housekeeping-auto-merge=true (policy)]
+- AUTO 14:15:40 — Approve (--approve): digest-promotion-1 approved (user: 'do all the next actions'); premise re-verified live; filed #3595 (type:task); marked 3 [wrap-up] entry lines in #1426 → #3595 (comments 6220771816, 6242125727, 6262466601). Reversibility: med.
+## /specify
+- AUTO 13:27:21 — Claim: claimed #3414 (bare drain iteration 1, transport git). Reversibility: high.
+- AUTO 13:28:27 — Release: released claim on #3414 (routed: needs:decision #3414); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 13:28:31 — Premise check: #3414 routed to needs:decision (proposed close as fixed by #3417) — premise contradicted: selectEntry already uses isAncestorOrSelf, callers-characterization.test.js:257 pins the ..foo case; not shaped. Reversibility: high. [lever: autonomy-ceiling needsDecisionMarker]
+- AUTO 13:28:56 — Claim: claimed #3557 (bare drain iteration 2). Reversibility: high.
+- AUTO 13:30:39 — Shape: #3557 shaped headless — framing guard open; ceremony-check standard; framing-check open; Release Note added; Key Files + 15 score-1 near-dup hits on Related; Design-intent n/a (Surface: infra). Reversibility: high.
+- AUTO 13:30:47 — Release: released claim on #3557 (shaped: #3557); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 13:31:07 — Claim: claimed #3538 (bare drain iteration 3). Reversibility: high.
+- AUTO 13:31:57 — Release: released claim on #3538 (routed: needs:decision #3538); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 13:31:58 — Premise check: #3538 routed to needs:decision (proposed close as fixed by #2868 / PR #3194, v6.142.0) — self-report filed by a v6.140.1 firing describes the GraphQL-blocked check-3 gap that has since shipped; not shaped. Reversibility: high. [lever: autonomy-ceiling needsDecisionMarker]
+- AUTO 13:38:35 — Claim: claimed #3564 (bare drain iteration 4). Reversibility: high.
+- AUTO 13:39:16 — Shape: #3564 shaped headless — test-side toPosix display-ID fix (research agent draft, win32 sim 7/1→8/0); guard open; ceremony fast-lane; framing open; risk:low size:low; 7 score-1 near-dup hits on Related. Reversibility: high.
+- AUTO 13:39:24 — Release: released claim on #3564 (shaped: #3564); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 13:40:52 — Claim: claimed #3562 (bare drain iteration 5). Reversibility: high.
+- AUTO 13:41:25 — Shape: #3562 shaped headless — test-side CRLF read + MSYS basename compare (research agent draft, CRLF sim 0/5→6/6); guard open; ceremony fast-lane; framing open; risk:low size:low; builder files one capture record for 10 unclaimed sibling files. Reversibility: high.
+- AUTO 13:41:33 — Release: released claim on #3562 (shaped: #3562); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 13:42:50 — Claim: claimed #3563 (bare drain iteration 6). Reversibility: high.
+- AUTO 13:43:20 — Shape: #3563 shaped headless — product-side: premise-self-check.js hard-codes /bin/sh (ENOENT on win32, premise checks silently off); research agent draft, sim reproduces exact Windows failure set; guard open; ceremony standard; framing open; risk:low size:low. Reversibility: high.
+- AUTO 13:43:28 — Release: released claim on #3563 (shaped: #3563); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 13:43:46 — Claim: claimed #3581 (bare drain iteration 7). Reversibility: high.
+- AUTO 13:44:17 — Shape: #3581 shaped headless — test-side: archive-merged.test.js PATH gh stub never resolves on win32 → skip per #3506 precedent; release-merged already fixed by 1ed26d947; guard open; ceremony fast-lane; framing open; risk:low size:low. Reversibility: high.
+- AUTO 13:44:27 — Release: released claim on #3581 (shaped: #3581); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 13:44:57 — Claim: claimed #3565 (bare drain iteration 8). Reversibility: high.
+- AUTO 13:45:26 — Shape: #3565 shaped headless — test-side: CRLF raw reads (drain-overlap, near-dup-pairs), backslash CLAUDE_PLUGIN_ROOT in JS literal, /bin/sh spawn in pool-fetch test; plus unowned sibling dispatch-named-target-exclusion-fixture; guard open; ceremony fast-lane; framing open; risk:low size:low. Reversibility: high.
+- AUTO 13:45:35 — Release: released claim on #3565 (shaped: #3565); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 13:45:51 — Drain close-out: {shaped: 6, routed: 2, failed: 0} — shaped #3557 #3564 #3562 #3563 #3581 #3565; routed (needs:decision, premise refuted) #3414 #3538; eligible set drained (--budget all). Research for the 5 Windows-regression records ran in 5 parallel read-only Capable agents; claim/guard/ceremony/framing/write/release stayed sequential in-thread. Reversibility: n/a.
+## /backlog
+- AUTO 13:48:00 — Backlog grant: zero-eligible short-circuit — 4 candidate(s), 0 needing grant-check: trust: 3 (#3587 #3566 #3256), needs-label: 1 (#3500); ceiling unattended + grant-origination-enabled true; merge-lane breaker not tripped, watched set empty. Reversibility: n/a.
+- SKIP 13:49:04 — Dependency repair: 4 prose-dependency flags (#3374 #3305 #3212 #2826) not wired — all are decomposition parents whose prose narrates their children's blocked-by chains, not the parent's own blockers; a mechanical wire would falsely block the parent → fallback: no write, surfaced in sweep report as a detector false-positive class. Reversibility: n/a.
+- AUTO 13:50:22 — apply-refine-labels: #3592: applied +priority:low. Reversibility: high.
+- AUTO 13:50:26 — apply-refine-labels: #3587: applied +priority:medium. Reversibility: high.
+- AUTO 13:50:29 — apply-refine-labels: #3585: applied +priority:low. Reversibility: high.
+- AUTO 13:50:33 — apply-refine-labels: #3581: applied +priority:medium. Reversibility: high.
+- AUTO 13:50:37 — apply-refine-labels: #3579: applied +priority:low. Reversibility: high.
+- AUTO 13:50:40 — apply-refine-labels: #3577: applied +priority:low. Reversibility: high.
+- AUTO 13:50:44 — apply-refine-labels: #3575: applied +priority:medium. Reversibility: high.
+- AUTO 13:50:47 — apply-refine-labels: #3574: applied +priority:medium. Reversibility: high.
+- AUTO 13:50:50 — apply-refine-labels: #3572: applied +priority:medium. Reversibility: high.
+- AUTO 13:50:53 — apply-refine-labels: #3568: applied +priority:medium. Reversibility: high.
+- AUTO 13:50:57 — apply-refine-labels: #3566: applied +priority:medium. Reversibility: high.
+- AUTO 13:51:01 — apply-refine-labels: #3565: applied +priority:medium. Reversibility: high.
+- AUTO 13:51:05 — apply-refine-labels: #3564: applied +priority:medium. Reversibility: high.
+- AUTO 13:51:09 — apply-refine-labels: #3563: applied +priority:medium. Reversibility: high.
+- AUTO 13:51:13 — apply-refine-labels: #3562: applied +priority:medium. Reversibility: high.
+- AUTO 13:51:16 — apply-refine-labels: #3551: applied +priority:low. Reversibility: high.
+- AUTO 13:51:20 — apply-refine-labels: #3544: applied +priority:low. Reversibility: high.
+- AUTO 13:51:23 — apply-refine-labels: #3543: applied +priority:low. Reversibility: high.
+- AUTO 13:51:26 — apply-refine-labels: #3541: applied +priority:medium. Reversibility: high.
+- AUTO 13:51:30 — apply-refine-labels: #3538: applied +priority:low. Reversibility: high.
+- AUTO 13:51:33 — apply-refine-labels: #3537: applied +priority:low. Reversibility: high.
+- AUTO 13:51:54 — Related: #3574: updated **Related:** line (headless refine synthesis). Reversibility: high.
+- AUTO 13:51:56 — Related: #3587: updated **Related:** line (headless refine synthesis). Reversibility: high.
+- AUTO 13:51:58 — Related: #3565: updated **Related:** line (headless refine synthesis). Reversibility: high.
+- AUTO 13:52:01 — Related: #3579: updated **Related:** line (headless refine synthesis). Reversibility: high.
+- AUTO 13:52:03 — Related: #3537: updated **Related:** line (headless refine synthesis). Reversibility: high.
+- AUTO 13:52:05 — Related: #3544: updated **Related:** line (headless refine synthesis). Reversibility: high.
+- AUTO 13:52:07 — Related: #3543: updated **Related:** line (headless refine synthesis). Reversibility: high.
+- AUTO 13:52:09 — Related: #3581: updated **Related:** line (headless refine synthesis). Reversibility: high.
+- AUTO 13:52:32 — Refine close-out: headless refine (--source sweep): granted 0, re-authorized 0, needs-decision 0; priority set 21 (12 medium, 9 low); Related updated 8 (closing-tally.js reports 0 — its parser does not classify the hand-composed Related lines); dependency-repair skipped 4 (parent false positives); grant chain zero-eligible (trust 3, needs-label 1); 7 records with unresolved proposals left for human Resolve. Reversibility: n/a.
+## /sweep
+- AUTO 13:53:13 — Close-out: tidy {applied: 4, staged: 1, yours: 31, clean: 6}; specify {shaped: 6, routed: 2, failed: 0}; refine {granted: 0, re-authorized: 0, needs-decision: 0, skipped: 4 dependency false positives; priority 21, related 8; grant chain zero-eligible}; attention: 22 rows. Reversibility: n/a.
