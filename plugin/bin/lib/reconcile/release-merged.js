@@ -120,7 +120,8 @@ function needsIssueEvidence(prState, closesIssue) {
   return prState.state === 'MERGED' && closesIssue !== true;
 }
 
-// Shared by Phase 1.5 and the #3249 by-number fallback below: pairs each
+// Shared by both Phase 1.5 pools — the by-number pool and the branch pool
+// (#3416): pairs each
 // item's issueNumber with its runWithConcurrency result, mapping a rejected
 // probe (an Error instance) to the same 'network-failure' string every other
 // resolver in this module uses for a transport failure.
@@ -463,7 +464,11 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
   // (run-state.json) resolves BY NUMBER first (#3416): the stamped PR is this
   // run's own PR, while its branch name can be reused by a later run and then
   // names an unrelated (possibly merged) PR. Only a null answer falls through
-  // to the branch pool below.
+  // to the branch pool below. Deliberate asymmetry, do not align: a branchless
+  // candidate whose by-number probe fails keeps prState null so the #3249
+  // issue-closed release path still applies, while a branch-resolved candidate
+  // whose probe fails skips on the failure string (never releases via the
+  // branch's PR, #3416).
   const byNumberCands = candidates.filter((c) => c.prNumber);
   const prStatesByNumber = await runWithConcurrency(
     byNumberCands,

@@ -2618,13 +2618,14 @@ test('archiveMerged: a MERGED PR reached via the by-number fallback with no cons
   assert.equal(fs.existsSync(runDir), true);
 });
 
-// #3249 (whole-branch review): the ORDINARY branch-resolvable path — not the
-// by-number fallback above. The worktree is gone but the branch ref still
-// resolves via fallbackBranch (run-state.json's pr.branch), so the sweep
-// reaches archiveMergedRun -> decideArchiveCore. This is the shape
+// #3249 (whole-branch review): exercises the archiveMergedRun -> decideArchiveCore
+// staged-items path. The fixture stamps `pr.number`, so since #3416 the run's PR
+// resolves by number (`gh pr view 3249100`), not via `gh pr list --head`; the
+// branch-path coverage lives in the AC4.1 test. The worktree is gone but the
+// branch ref still exists (run-state.json's pr.branch). This is the shape
 // pr-first-merge-post-merge.md Step 4.2's reconcile call hits; the
-// staged-items exception must apply here too, not only on the by-number
-// branch. `stagedFiles` seeds staged/ (absent when empty).
+// staged-items exception must apply here too. `stagedFiles` seeds staged/
+// (absent when empty).
 function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specStaged = {}) {
   const { root, featureSha } = mergedFeatureBranchRepo(branch); // branch ref stays — fallbackBranch recovers it
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
