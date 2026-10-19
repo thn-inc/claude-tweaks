@@ -121,10 +121,9 @@ function needsIssueEvidence(prState, closesIssue) {
 }
 
 // Shared by both Phase 1.5 pools — the by-number pool and the branch pool
-// (#3416): pairs each
-// item's issueNumber with its runWithConcurrency result, mapping a rejected
-// probe (an Error instance) to the same 'network-failure' string every other
-// resolver in this module uses for a transport failure.
+// (#3416): pairs each item's issueNumber with its runWithConcurrency result,
+// mapping a rejected probe (an Error instance) to the same 'network-failure'
+// string every other resolver in this module uses for a transport failure.
 function resultsByIssue(items, results) {
   return new Map(items.map((c, i) => [c.issueNumber, results[i] instanceof Error ? 'network-failure' : results[i]]));
 }

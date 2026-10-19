@@ -75,6 +75,11 @@ function removePreCommitHook(root) {
   fs.rmSync(path.join(root, '.git', 'hooks', 'pre-commit'), { force: true });
 }
 
+// Shell fragment that prints `value` as JSON, for the gh wrapper scripts below.
+function ghJsonHeredoc(value) {
+  return `cat <<'EOF'\n${JSON.stringify(value)}\nEOF`;
+}
+
 // resolvePrState (pr-state.js) shells to `gh pr list` and is bound at
 // archive-merged.js's own require time, same non-injectable caveat
 // reap-merged.test.js's own copy of this helper documents — intercept at the
@@ -86,10 +91,9 @@ function removePreCommitHook(root) {
 function installGhWrapper(prsJson) {
   const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-ghwrap-'));
   const wrapperPath = path.join(wrapperDir, 'gh');
-  const body = (value) => `cat <<'EOF'\n${JSON.stringify(value)}\nEOF`;
-  let script = `#!/bin/sh\n${body(prsJson)}\n`;
+  let script;
   if (Array.isArray(prsJson)) {
-    const cases = prsJson.map((pr) => `    ${pr.number}) ${body(pr)}\n      ;;`).join('\n');
+    const cases = prsJson.map((pr) => `    ${pr.number}) ${ghJsonHeredoc(pr)}\n      ;;`).join('\n');
     script = [
       '#!/bin/sh',
       'if [ "$1" = "pr" ] && [ "$2" = "view" ]; then',
@@ -98,10 +102,12 @@ function installGhWrapper(prsJson) {
       '    *) exit 1 ;;',
       '  esac',
       'else',
-      `  ${body(prsJson)}`,
+      `  ${ghJsonHeredoc(prsJson)}`,
       'fi',
       '',
     ].join('\n');
+  } else {
+    script = `#!/bin/sh\n${ghJsonHeredoc(prsJson)}\n`;
   }
   fs.writeFileSync(wrapperPath, script);
   fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
@@ -118,12 +124,11 @@ function installGhWrapper(prsJson) {
 function installGhPrWrapper({ list, view, viewMarker }) {
   const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-ghprwrap-'));
   const wrapperPath = path.join(wrapperDir, 'gh');
-  const body = (value) => `cat <<'EOF'\n${JSON.stringify(value)}\nEOF`;
-  const cases = Object.entries(view).map(([n, pr]) => `    ${n}) ${body(pr)}\n      ;;`).join('\n');
+  const cases = Object.entries(view).map(([n, pr]) => `    ${n}) ${ghJsonHeredoc(pr)}\n      ;;`).join('\n');
   const script = [
     '#!/bin/sh',
     'if [ "$1" = "pr" ] && [ "$2" = "list" ]; then',
-    `  ${body(list)}`,
+    `  ${ghJsonHeredoc(list)}`,
     'elif [ "$1" = "pr" ] && [ "$2" = "view" ]; then',
     viewMarker ? `  touch '${viewMarker}'` : '',
     '  case "$3" in',

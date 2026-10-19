@@ -404,7 +404,10 @@ function readConsoleState(runDir) {
 // archiving (a pending per-spec proposal the console does not surface still
 // blocks the archive), never toward archiving it.
 function hasStagedItems(runDir) {
-  const stagedDirs = [path.join(runDir, 'staged'), ...listSpecDirs(runDir).map((name) => path.join(runDir, name, 'staged'))];
+  const stagedDirs = [
+    path.join(runDir, 'staged'),
+    ...listSpecDirs(runDir).map((name) => path.join(runDir, name, 'staged')),
+  ];
   for (const dir of stagedDirs) {
     try {
       if (fs.readdirSync(dir).some((n) => !n.startsWith('.'))) return true;
@@ -1636,8 +1639,8 @@ function resolveRunPrState(root, state, branch) {
 
 // #1733: the merged-PR archive sequence both the main loop and the
 // #1544 clean-status sweep run. The run's PR is resolved via resolveRunPrState
-// (#3416: stamped `pr.number` first, `branch` second) -> decideArchiveCore -> (skip, with the
-// caller's own onSkip hook) -> localHasMerge -> (skip on not-yet-caught-up) ->
+// (#3416: stamped `pr.number` first, `branch` second) -> decideArchiveCore ->
+// (skip, with the caller's own onSkip hook) -> localHasMerge -> (skip on not-yet-caught-up) ->
 // dryRun short-circuit -> archiveRunDir -> trackArchiveResult. `onSkip` is the
 // one place the two callers genuinely differ: the main loop also calls
 // `trackStuckSkip` on a `decideArchiveCore` skip (#1613's structurally-stuck
