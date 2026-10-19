@@ -6,7 +6,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { checkRunIntegrity, repoRootOf, worktreePathForBranch } = require('../plugin/bin/lib/hooks/run-integrity');
+const { checkRunIntegrity, checkBranchLanded, repoRootOf, worktreePathForBranch } = require('../plugin/bin/lib/hooks/run-integrity');
 const { fixtureGit } = require('./helpers/git-fixtures');
 
 function sh(cwd, ...args) {
@@ -489,4 +489,43 @@ test('SessionStart: genuinely in-progress run line is byte-identical to the pre-
   const base = path.basename(runDir);
   assert.ok(ctxOut.includes(`- ${base} (status: active)`), `expected the unchanged line, got: ${ctxOut}`);
   assert.ok(!ctxOut.includes('appears shipped'), 'in-progress run must not carry the new text');
+});
+
+// #3497: checkBranchLanded answers "has this run's branch landed?" without
+// checkRunIntegrity's wrap-up event gate — a multi-spec run's deferred wrap-ups
+// write wrap-up skill_invoked events into the parent events.jsonl, which pins
+// checkRunIntegrity to in-progress even after the branch has merged.
+test('#3497 checkBranchLanded: unmerged feature branch -> landed false', () => {
+  const { runDir } = fixtureRepo();
+  const r = checkBranchLanded(runDir);
+  assert.strictEqual(r.landed, false);
+  assert.strictEqual(r.evidence.branch, 'feat-branch');
+  assert.strictEqual(r.evidence.merged, false);
+});
+
+test('#3497 checkBranchLanded: merged branch with wrap-up events -> landed true while checkRunIntegrity stays in-progress', () => {
+  const { root, runDir } = fixtureRepo();
+  sh(root, 'merge', '-q', '--no-edit', 'feat-branch');
+  writeEvents(runDir, [EV_BUILD, EV_WRAPUP]);
+  const r = checkBranchLanded(runDir);
+  assert.strictEqual(r.landed, true);
+  assert.strictEqual(r.evidence.branch, 'feat-branch');
+  assert.strictEqual(r.evidence.merged, 'ancestor');
+  // The reversed premise, pinned: the wrap-up gate that hides this from
+  // checkRunIntegrity is exactly why checkBranchLanded exists.
+  assert.strictEqual(checkRunIntegrity(runDir).state, 'in-progress');
+});
+
+test('#3497 checkBranchLanded: zero-commit branch -> landed null', () => {
+  const { runDir } = fixtureZeroCommitRepo();
+  const r = checkBranchLanded(runDir);
+  assert.strictEqual(r.landed, null);
+  assert.strictEqual(r.evidence.merged, 'ancestor');
+});
+
+test('#3497 checkBranchLanded: no run-state -> landed null, never throws', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-nors-'));
+  const r = checkBranchLanded(dir);
+  assert.strictEqual(r.landed, null);
+  assert.deepStrictEqual(r.evidence, { branch: null, merged: null });
 });
