@@ -13,7 +13,7 @@
 // and '' yield []. Tokens are returned verbatim — no trimming, so a path with
 // leading or trailing spaces survives.
 function splitNul(raw) {
-  if (raw == null || raw === '') return [];
+  if (raw == null) return [];
   return String(raw).split('\0').filter((t) => t !== '');
 }
 
@@ -45,17 +45,17 @@ function parseNameStatusZ(raw) {
 function splitLogZ(raw, isHeader) {
   const records = [];
   let current = null;
-  let first = false;
+  let afterHeader = false;
   for (let token of splitNul(raw)) {
-    if (first) {
+    if (afterHeader) {
       if (token[0] === '\n') token = token.slice(1);
-      first = false;
+      afterHeader = false;
     }
     if (token === '') continue;
     if (isHeader(token)) {
       current = { header: token, tokens: [] };
       records.push(current);
-      first = true;
+      afterHeader = true;
     } else if (current) {
       current.tokens.push(token);
     }

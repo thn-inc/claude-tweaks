@@ -340,11 +340,12 @@ function isPolicyOnlyCommit(command, cwd) {
   try {
     const { stdout, failure } = runGit(['diff', '--cached', '--name-status', '-z'], cwd);
     if (failure !== null || typeof stdout !== 'string') return false;
-    const rows = parseNameStatusZ(stdout);
-    if (rows.length !== 1) return false;
+    const records = parseNameStatusZ(stdout);
+    if (records.length !== 1) return false;
+    const { status, paths } = records[0];
     // Exactly one path — a rename/copy record carries two.
-    if (rows[0].paths.length !== 1) return false;
-    return POLICY_COMMIT_STATUSES.has(rows[0].status) && rows[0].paths[0] === toPosix(POLICY_FILE);
+    if (paths.length !== 1) return false;
+    return POLICY_COMMIT_STATUSES.has(status) && paths[0] === toPosix(POLICY_FILE);
   } catch {
     return false;
   }

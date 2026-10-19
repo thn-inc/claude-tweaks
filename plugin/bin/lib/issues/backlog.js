@@ -135,9 +135,9 @@ function deriveCreatedAtFromGit(records, { execFn = execSync } = {}) {
       maxBuffer: LARGE_MAX_BUFFER_BYTES,
     });
     for (const { header, tokens } of splitLogZ(out, (t) => t.startsWith(COMMIT_DATE_MARKER))) {
-      const currentDate = header.slice(COMMIT_DATE_MARKER.length);
+      const commitDate = header.slice(COMMIT_DATE_MARKER.length);
       for (const p of tokens) {
-        if (!(p in dateByPath)) dateByPath[p] = currentDate;
+        if (!(p in dateByPath)) dateByPath[p] = commitDate;
       }
     }
   } catch {
