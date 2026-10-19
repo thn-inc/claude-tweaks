@@ -523,6 +523,27 @@ test('#3497 checkBranchLanded: zero-commit branch -> landed null', () => {
   assert.strictEqual(r.evidence.merged, 'ancestor');
 });
 
+test('#3497 checkBranchLanded: patch-equivalent commit on the integration branch -> landed true via cherry', () => {
+  const { root, runDir } = fixtureRepo();
+  // Move trunk first, so the picked commit gets a new parent (and a new sha)
+  // instead of reproducing feat-branch's commit byte for byte.
+  fs.writeFileSync(path.join(root, 'c.txt'), 'trunk\n');
+  sh(root, 'add', 'c.txt');
+  datedSh(root, AFTER_RUN_START, 'commit', '-q', '-m', 'trunk work');
+  datedSh(root, AFTER_RUN_START, 'cherry-pick', 'feat-branch');
+  const r = checkBranchLanded(runDir);
+  assert.strictEqual(r.landed, true);
+  assert.strictEqual(r.evidence.merged, 'cherry');
+});
+
+test('#3497 checkBranchLanded: a clean (closed) run-state is still answered', () => {
+  const { root, wt, runDir } = fixtureRepo();
+  sh(root, 'merge', '-q', '--no-edit', 'feat-branch');
+  writeRunState(runDir, { status: 'clean', worktree: wt });
+  assert.strictEqual(checkBranchLanded(runDir).landed, true);
+  assert.strictEqual(checkRunIntegrity(runDir).state, 'in-progress');
+});
+
 test('#3497 checkBranchLanded: no run-state -> landed null, never throws', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-nors-'));
   const r = checkBranchLanded(dir);

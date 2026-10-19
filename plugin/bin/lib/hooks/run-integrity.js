@@ -303,9 +303,11 @@ function checkRunIntegrity(runDir, opts = {}) {
 // multi-spec spec's deferred wrap-up writes one into the parent run's log — so
 // "did this branch merge?" cannot be asked of checkRunIntegrity there. Accepts
 // any valid run-state status (including 'clean'). Same read-only, fail-open
-// contract: true = merge proven, false = definitively unmerged, null = anything
-// else (no valid run-state, no branch, no integration ref, an 'ancestor' with no
-// commit since the run started, any throw).
+// contract: true = merge proven, false = no ancestry or patch-id match, null =
+// anything else (no valid run-state, no branch, no integration ref, an
+// 'ancestor' with no commit since the run started, any throw). `false` never
+// proves non-landing: a squash-merged multi-commit branch reads false too, so a
+// caller that acts on "not landed" also asks the recorded PR (consolidated-pass.js).
 function checkBranchLanded(runDir, opts = {}) {
   const evidence = { branch: null, merged: null };
   try {

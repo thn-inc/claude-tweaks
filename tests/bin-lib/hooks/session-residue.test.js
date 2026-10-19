@@ -331,48 +331,9 @@ test('scanUnresolvedConsoles: window Infinity with limit Infinity reaches runs b
 // (modeled on tests/run-integrity.test.js's fixtureRepo): `trunk` integration
 // branch, a linked worktree on `feat-branch` with one commit dated after the
 // run dir's own start prefix, and a multi-spec run dir recording that worktree.
-const { fixtureGit } = require('../../helpers/git-fixtures');
+const { reentryFixture, reentryGit, writeReentryManifest, EV_BUILD } = require('../../helpers/reentry-fixture');
 
 const reentrySuffix = (runDir) => ` — consolidated pass never ran: PIPELINE_RUN_DIR="${runDir}" /claude-tweaks:flow #11,#12 review-console`;
-const EV_BUILD = '{"skill":"claude-tweaks:build","ts":"2026-08-01T09:05:00.000Z","type":"skill_invoked"}';
-const EV_WRAPUP = '{"skill":"claude-tweaks:wrap-up","ts":"2026-08-01T09:50:00.000Z","type":"skill_invoked"}';
-
-function reentryGit(cwd, ...args) {
-  return fixtureGit(['-C', cwd, ...args], {
-    env: { ...process.env, GIT_AUTHOR_DATE: '2026-08-01T10:00:00Z', GIT_COMMITTER_DATE: '2026-08-01T10:00:00Z' },
-  }).toString();
-}
-
-function writeReentryManifest(runDir, statuses) {
-  const ids = [11, 12];
-  const lines = ['multispec:', '  parent: .claude-tweaks/pipelines/2026-08-01T090000-spec-11-12/', '  specs:'];
-  statuses.forEach((status, i) => lines.push(`    - id: ${ids[i]}`, `      status: ${status}`, `      subdir: spec-${ids[i]}/`));
-  fs.writeFileSync(path.join(runDir, 'manifest.yml'), lines.join('\n') + '\n');
-}
-
-function reentryFixture({ events = [EV_BUILD, EV_WRAPUP] } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-residue-reentry-')));
-  fixtureGit(['init', '-q', '-b', 'trunk', root]);
-  reentryGit(root, 'config', 'user.email', 't@example.com');
-  reentryGit(root, 'config', 'user.name', 'T');
-  fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
-  reentryGit(root, 'add', 'a.txt');
-  reentryGit(root, 'commit', '-q', '-m', 'base');
-  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
-  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: trunk\n');
-  const wt = path.join(root, '.claude', 'worktrees', 'feat');
-  reentryGit(root, 'worktree', 'add', '-q', '-b', 'feat-branch', wt);
-  fs.writeFileSync(path.join(wt, 'b.txt'), 'feature\n');
-  reentryGit(wt, 'add', 'b.txt');
-  reentryGit(wt, 'commit', '-q', '-m', 'feature work');
-  const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-08-01T090000-spec-11-12');
-  fs.mkdirSync(runDir, { recursive: true });
-  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wt }));
-  fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
-  writeReentryManifest(runDir, ['complete', 'complete']);
-  fs.writeFileSync(path.join(runDir, 'events.jsonl'), events.join('\n') + '\n');
-  return { root, wt, runDir };
-}
 
 test('AC5.1 eligible multi-spec parent line ends with the review-console command', () => {
   const { root, runDir } = reentryFixture();

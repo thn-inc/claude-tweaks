@@ -147,7 +147,7 @@ function checkPassReentry(runDir, opts = {}) {
       if (pr.state === 'MERGED') return verdict('landed', `PR #${prNumber} merged`);
       prOpen = pr.state === 'OPEN';
     } else {
-      degraded = `online PR check unavailable (${pr === null ? 'null' : pr})`;
+      degraded = `online PR check unavailable (${pr == null ? 'no result' : pr})`;
     }
   }
   const withDegrade = (text) => [text, degraded].filter(Boolean).join('; ');

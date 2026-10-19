@@ -107,15 +107,24 @@ test('#3497 every REENTRY_REASONS code is named in the re-entry section', () => 
 
 test('AC2.1 retired limit sentences are gone from every skill file', () => {
   const retired = ['no documented step re-runs the pass', 'only re-presents a console after a Halt'];
-  const dir = path.join(ROOT, 'plugin', 'skills');
-  const files = fs.readdirSync(dir, { recursive: true }).filter((f) => String(f).endsWith('.md'));
-  assert.ok(files.length > 50, 'walk must reach the skill corpus');
-  for (const f of files) {
-    const c = collapse(fs.readFileSync(path.join(dir, String(f)), 'utf8'));
-    for (const phrase of retired) assert.ok(!c.includes(phrase), `${f} still contains: ${phrase}`);
-  }
-  // Control: the walk finds a doctored copy carrying a retired phrase.
-  assert.ok(collapse(`x ${retired[0]} y`).includes(retired[0]));
+  const walk = (dir) => {
+    const files = fs.readdirSync(dir, { recursive: true }).filter((f) => String(f).endsWith('.md'));
+    const hits = [];
+    for (const f of files) {
+      const c = collapse(fs.readFileSync(path.join(dir, String(f)), 'utf8'));
+      for (const phrase of retired) if (c.includes(phrase)) hits.push(`${f}: ${phrase}`);
+    }
+    return { files, hits };
+  };
+  const real = walk(path.join(ROOT, 'plugin', 'skills'));
+  assert.ok(real.files.length > 50, 'walk must reach the skill corpus');
+  assert.deepEqual(real.hits, []);
+  // Control: the same walk flags a doctored nested skill file carrying a
+  // retired phrase split across a line break.
+  const doctored = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ct-retired-'));
+  fs.mkdirSync(path.join(doctored, 'flow'));
+  fs.writeFileSync(path.join(doctored, 'flow', 'x.md'), 'Note: no documented step\nre-runs the pass.\n');
+  assert.deepEqual(walk(doctored).hits, ['flow/x.md: no documented step re-runs the pass']);
 });
 
 test('AC3.1 Mixed execution step 3 names the review-console re-entry', () => {

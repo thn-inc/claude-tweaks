@@ -264,6 +264,8 @@ test('#3497 review a throwing PR resolver degrades like a transport failure', ()
   const r = checkPassReentry(run, { online: true, deps: deps({ resolvePrStateByNumber: () => { throw new Error('boom'); } }) });
   assert.equal(r.reason, 'eligible');
   assert.match(r.detail, /online PR check unavailable \(threw\)/);
+  const none = checkPassReentry(run, { online: true, deps: deps({ resolvePrStateByNumber: () => undefined }) });
+  assert.match(none.detail, /online PR check unavailable \(no result\)/);
 });
 
 test('#3497 review landed-unknown names a missing run-state.json', () => {
