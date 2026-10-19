@@ -42,7 +42,9 @@ function isStaleClaim(archiveState, now = Date.now()) {
 // An unadopted mint — a directory mkdir'd by dispatch Step 4 or flow Step 2.8
 // that no invocation ever initialized — carries neither run-state.json nor
 // decisions.md. Fallback attribution must never guess into one: a mint that
-// sorts newest absorbs foreign sessions' events until swept (#721). Keyed on
+// sorts newest absorbs foreign sessions' events until swept (#721). Skipped by
+// every fallback resolution, strict or not; a mint whose decisions.md holds
+// only claim-log lines is skipped the same way (isClaimLogOnlyMint below). Keyed on
 // BOTH files being ABSENT (file presence, not parse success — a corrupt
 // run-state.json is still an adopted run, and readRunState's null covers
 // both cases), never on config.yml — standalone run dirs legitimately carry
@@ -62,9 +64,12 @@ function isUnadoptedMint(dir, state) {
 // holds flow Step 2.8's claim-log lines — and nothing else — is still an
 // unadopted mint, but isUnadoptedMint above only sees "decisions.md absent", so
 // the claim log defeated it and a sibling session's events were guessed into
-// the mint. Strict attribution (opt-in, ownedRun only) closes that gap: no
-// run-state.json on disk AND a claim-log-only decisions.md. A read error is
-// not-a-mint — never skip a candidate on evidence we could not read.
+// the mint. Like isUnadoptedMint, this skip applies to EVERY fallback
+// resolution — E1's non-strict runDir as well as the strict ownedRun (the
+// incident's write was pre-tool-use's gitignored-exemption breadcrumb, logged
+// against ctx.runDir): no run-state.json on disk AND a claim-log-only
+// decisions.md. A read error is not-a-mint — never skip a candidate on
+// evidence we could not read.
 function isClaimLogOnlyMint(dir, state) {
   if (state) return false;
   if (fs.existsSync(path.join(dir, 'run-state.json'))) return false;
@@ -80,11 +85,14 @@ function isClaimLogOnlyMint(dir, state) {
 // whose binding is gone from disk classifies 'indeterminate' and still guessed
 // in. Strict attribution skips any candidate whose recorded `worktree` is not
 // the caller's resolved toplevel. Fail-open on an unanswerable git question
-// (indeterminate, or no repo at all): no evidence, no skip.
-function isOtherWorktreeBound(cwd, state) {
+// (indeterminate, or no repo at all): no evidence, no skip. `callerRepoInfo`
+// is resolveRun's lazy per-call memo of wtDetect.repoInfo(cwd) — the caller's
+// cwd is the same for every candidate, so it is computed at most once, and
+// only once a bound candidate is actually met.
+function isOtherWorktreeBound(callerRepoInfo, state) {
   const binding = state && typeof state.worktree === 'string' && state.worktree ? state.worktree : null;
   if (!binding) return false;
-  const info = wtDetect.repoInfo(cwd);
+  const info = callerRepoInfo();
   if (info.indeterminate || !info.repoRoot) return false;
   return (wtDetect.safeReal(binding) || path.resolve(binding)) !== info.repoRoot;
 }
@@ -343,18 +351,20 @@ function isForeignWorktreeCandidate(cwd, sessionId, state) {
 // from the main checkout against the ad-hoc dir's worktree.
 //
 // Returns the skip reason (a non-empty string) or null, so both call sites keep
-// testing it for truthiness. Only reasons prefixed STRICT_REASON_PREFIX come from
-// the opt-in `strict` guards (#3515: claim-log-only mint, bound to another
-// worktree); resolveRun reports exactly those in `dropped`. `includeWorktreeForeign`
-// disables the worktree-binding guards, strict (b) included.
-const STRICT_REASON_PREFIX = 'strict:';
-function isSkippableFallbackCandidate(cwd, sessionId, dir, state, includeWorktreeForeign, strict = false) {
+// testing it for truthiness. Only reasons prefixed DROPPED_REASON_PREFIX are the
+// #3515 guards: (a) claim-log-only mint, applied to EVERY resolution, and (b)
+// bound to another worktree, applied only under the opt-in `strict`; a strict
+// resolveRun reports exactly those in `dropped`. `includeWorktreeForeign`
+// disables the worktree-binding guards, (b) included. `callerRepoInfo` is the
+// lazy memo isOtherWorktreeBound reads (see there).
+const DROPPED_REASON_PREFIX = 'dropped:';
+function isSkippableFallbackCandidate(cwd, sessionId, dir, state, includeWorktreeForeign, strict, callerRepoInfo) {
   if (isUnadoptedMint(dir, state)) return 'unadopted-mint';
   if (isAdHocRunDir(dir)) return 'ad-hoc';
-  if (strict && isClaimLogOnlyMint(dir, state)) return `${STRICT_REASON_PREFIX}claim-log-only mint`;
+  if (isClaimLogOnlyMint(dir, state)) return `${DROPPED_REASON_PREFIX}claim-log-only mint`;
   if (includeWorktreeForeign) return null;
   if (isForeignWorktreeCandidate(cwd, sessionId, state)) return 'worktree-foreign';
-  if (strict && isOtherWorktreeBound(cwd, state)) return `${STRICT_REASON_PREFIX}bound to ${state.worktree}`;
+  if (strict && isOtherWorktreeBound(callerRepoInfo, state)) return `${DROPPED_REASON_PREFIX}bound to ${state.worktree}`;
   return null;
 }
 function resolveRun(cwd, env, sessionId, opts = {}) {
@@ -377,18 +387,24 @@ function resolveRun(cwd, env, sessionId, opts = {}) {
   // event-attribution fallback, which is what #1410 was written for) omits
   // this and keeps the worktree filter.
   const includeWorktreeForeign = opts.includeWorktreeForeign === true;
-  // strictAttribution (#3515): opt-in for the WRITE path (hooks.js's ownedRun).
-  // Both fallback arms also skip a claim-log-only mint and any candidate bound
-  // to a worktree other than the caller's; when that leaves nothing, the null
-  // return carries `dropped` (one "<run-id> (<reason>)" per such skip) so the
-  // caller can say why its events went unrecorded. Non-strict callers get the
-  // pre-#3515 behavior and return shapes byte-for-byte.
+  // #3515: both fallback arms skip a claim-log-only mint for EVERY caller.
+  // strictAttribution is the opt-in for the WRITE path (hooks.js's ownedRun):
+  // it also skips any candidate bound to a worktree other than the caller's,
+  // and when the skips leave nothing, the null return carries `dropped` (one
+  // "<run-id> (<reason>)" per #3515 skip) so the caller can say why nothing
+  // was attributed. Non-strict callers keep the pre-#3515 return shapes (no
+  // `dropped` key).
   const strict = opts.strictAttribution === true;
   const dropped = [];
+  let callerInfo;
+  const callerRepoInfo = () => {
+    if (callerInfo === undefined) callerInfo = wtDetect.repoInfo(resolvedCwd);
+    return callerInfo;
+  };
   const skipReason = (dir, state) => {
-    const reason = isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign, strict);
-    if (reason && reason.startsWith(STRICT_REASON_PREFIX)) {
-      dropped.push(`${path.basename(dir)} (${reason.slice(STRICT_REASON_PREFIX.length)})`);
+    const reason = isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign, strict, callerRepoInfo);
+    if (reason && reason.startsWith(DROPPED_REASON_PREFIX)) {
+      dropped.push(`${path.basename(dir)} (${reason.slice(DROPPED_REASON_PREFIX.length)})`);
     }
     return reason;
   };

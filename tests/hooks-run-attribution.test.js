@@ -405,10 +405,10 @@ test('#2783 e2e: a commit from the main checkout is not E1-denied because some s
 //
 // The #3401 incident: a fresh /flow mint whose decisions.md held only Step 2.8
 // claim-log lines (no run-state.json yet) defeated #721's isUnadoptedMint, so a
-// sibling session's hook events were guessed into it. `strictAttribution` is the
-// opt-in hooks.js passes for ownedRun (the only thing hook modules write into):
-// it also skips a claim-log-only mint and any candidate bound to a worktree other
-// than the caller's. E1's owner-unfiltered runDir stays non-strict.
+// sibling session's hook events were guessed into it. Every resolution now skips
+// a claim-log-only mint. `strictAttribution` is the opt-in hooks.js passes for
+// ownedRun: it also skips any candidate bound to a worktree other than the
+// caller's. E1's owner-unfiltered runDir stays non-strict.
 
 const CLAIM_ONLY = '## /flow\n- AUTO 18:42:06 — Step 2.8: claimed #7 (bin/claim-targets.js, transport: git). Reversibility: high.\n';
 
@@ -416,7 +416,7 @@ function writeDecisions(dir, text) {
   fs.writeFileSync(path.join(dir, 'decisions.md'), text);
 }
 
-test('#3515 strict: a claim-log-only mint (no run-state.json) is never guessed into; an older standalone run wins', () => {
+test('#3515: a claim-log-only mint (no run-state.json) is never guessed into, strict or not; an older standalone run wins', () => {
   const cwd = project();
   const standalone = mkRun(cwd, '2026-07-01T090000-standalone');
   writeDecisions(standalone, '## /tidy\n- AUTO 10:00:00 — x. Reversibility: high.\n');
@@ -429,9 +429,18 @@ test('#3515 strict: a claim-log-only mint (no run-state.json) is never guessed i
   );
   assert.deepStrictEqual(
     ctxLib.resolveRun(cwd, {}, 'me'),
-    { dir: mint, attribution: 'fallback' },
-    'non-strict callers keep the pre-#3515 behavior',
+    { dir: standalone, attribution: 'fallback' },
+    'non-strict callers skip the claim-log-only mint too',
   );
+  assert.strictEqual(ctxLib.resolveRunDir(cwd, {}), standalone, 'E1 resolution skips the mint');
+});
+
+test('#3515 non-strict: only a claim-log-only mint exists → null with no dropped key', () => {
+  const cwd = project();
+  writeDecisions(mkRun(cwd, '2026-07-02T090000-record-7'), CLAIM_ONLY);
+  for (const sid of ['me', null]) {
+    assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, sid), { dir: null, attribution: null }, `session id ${sid}`);
+  }
 });
 
 test('#3515 strict: only a claim-log-only mint exists → dropped, never guessed', () => {
@@ -502,7 +511,31 @@ test('AC2.1 e2e: hooks.js pre-compact from the main checkout leaves a claim-log-
     env: { ...process.env, PIPELINE_RUN_DIR: '' },
   });
   assert.strictEqual(res.status, 0, res.stderr);
-  assert.match(res.stderr, /^attribution: dropped — /m);
+  assert.match(res.stderr, /^attribution: no run dir attributed — /m);
   assert.ok(res.stderr.includes(path.basename(mint)), res.stderr);
   assert.ok(!fs.existsSync(path.join(mint, 'events.jsonl')), 'no event was written into the mint');
+});
+
+// The #3401 incident's own write path: pre-tool-use's gitignored-target
+// exemption logs `gate-exempt-gitignored` against ctx.runDir (E1's non-strict
+// resolution), not ownedRun — so the claim-log-only mint skip must hold there too.
+test('#3515 incident e2e: a sibling worktree Write to a gitignored path writes nothing into a newer claim-log-only mint', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  fs.writeFileSync(path.join(wt, '.gitignore'), '.superpowers/\n');
+  const owned = mkRun(main, '2026-07-01T090000-record-6', { status: 'active', worktree: wt, sessionId: 'sib' });
+  const mint = mkRun(main, '2026-07-02T090000-record-7');
+  writeDecisions(mint, CLAIM_ONLY);
+
+  const hooks = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
+  const target = path.join(wt, '.superpowers', 'x.md');
+  const res = require('node:child_process').spawnSync('node', [hooks, 'pre-tool-use'], {
+    input: JSON.stringify({ session_id: 'sib', tool_name: 'Write', tool_input: { file_path: target }, cwd: wt }),
+    cwd: wt,
+    encoding: 'utf8',
+    env: { ...process.env, PIPELINE_RUN_DIR: '' },
+  });
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.ok(!fs.existsSync(path.join(mint, 'events.jsonl')), `no event was written into the mint: ${fs.existsSync(path.join(mint, 'events.jsonl')) ? fs.readFileSync(path.join(mint, 'events.jsonl'), 'utf8') : ''}`);
+  assert.strictEqual(ctxLib.resolveRunDir(wt, {}), owned, 'E1 resolution skips the mint');
 });

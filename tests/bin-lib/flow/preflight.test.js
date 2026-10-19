@@ -478,6 +478,22 @@ test('an event carrying this run\'s own sessionId counts as own → case 3; anot
   assert.strictEqual(theirs.eventsForeign, 1);
 });
 
+test('every own-evidence field counts: locators dir/path/worktree/actual under the worktree, session fields sessionId/session/callerSessionId equal to run-state\'s → case 3 (#3515)', () => {
+  for (const field of ['dir', 'path', 'worktree', 'actual']) {
+    const line = `${JSON.stringify({ type: 'commit', [field]: '/w/own/sub' })}\n`;
+    const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': line, 'run-state.json': OWN_STATE });
+    assert.strictEqual(a.case, 3, `locator ${field}: expected case 3, got case ${a.case}`);
+    assert.strictEqual(a.eventsForeign, 0, `locator ${field}: expected eventsForeign 0`);
+  }
+  const sessionState = JSON.stringify({ status: 'active', sessionId: 's-own' });
+  for (const field of ['sessionId', 'session', 'callerSessionId']) {
+    const line = `${JSON.stringify({ type: 'pre-compact', [field]: 's-own' })}\n`;
+    const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': line, 'run-state.json': sessionState });
+    assert.strictEqual(a.case, 3, `session field ${field}: expected case 3, got case ${a.case}`);
+    assert.strictEqual(a.eventsForeign, 0, `session field ${field}: expected eventsForeign 0`);
+  }
+});
+
 test('a fallback-attributed line naming the own worktree is still foreign (attribution wins over locator)', () => {
   const line = '{"type":"skill_invoked","dir":"/w/own","attribution":"fallback"}\n';
   const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': line, 'run-state.json': OWN_STATE });
