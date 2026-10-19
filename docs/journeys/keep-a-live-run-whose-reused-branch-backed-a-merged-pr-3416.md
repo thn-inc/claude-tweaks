@@ -46,3 +46,4 @@ files:
 - Created during build of #3416 (Reconcile archives a live run when an earlier PR from the same branch name has merged)
 - Steps 1-4 built in this session
 - Related specs: #3412 (claim release closes-this-issue gate — `keep-an-unfinished-records-claim-when-its-bundle-pr-merges-early-3412.md`), #3249 (no-console fast path, preserved), #3503 (manifest-closure archive check, same archive paths)
+- Updated during build of #3543: Steps 2 and 4 now name the `pr-not-found` stale-stamp classification and its escalation (full flow: `recover-a-run-stranded-by-a-stale-pr-number-3543.md`)
