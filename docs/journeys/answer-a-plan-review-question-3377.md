@@ -34,6 +34,7 @@ files:
 - **Action:** For each question, pick `Reading A`, `Reading B`, or `Stop the build`.
 - **Should feel:** Like a decision only the user can make, asked once, before any code exists — not a mid-build interruption over something the spec already said.
 - **Should understand:** The pick becomes a clarification attributed `Decided by the user at plan review:` in the in-run spec and in one record comment; the build then continues. `Stop the build` ends the run with the HARD-GATE `plan-review-needs-human`, and the failure card offers the claim release rather than taking it.
+- **Should understand:** A `parallel`-wave member of a multi-spec `/claude-tweaks:flow` run gets no prompt — it runs inside a subagent that cannot ask. It posts the same `<!-- plan-review-question -->` comment as step 3 and stops with `plan-review-needs-human`; the orchestrating `/flow` shows that stop on its failure card, and the answer goes on the record body as in step 3.
 - **Red flags:** A question whose two readings are not both defensible; one prompt per finding instead of one batched prompt; the claim released without the card offering it.
 
 ### 3. Answer on the record after a dispatched stop — GitHub issue
@@ -42,6 +43,7 @@ files:
 - **Should feel:** Self-contained — the comment carries the finding, its evidence and both readings, so the answer needs no access to the build's worktree.
 - **Should understand:**
   - A dispatched build runs in a subagent that cannot ask, so it posts the question, stops before Task 1, and the dispatching session relays it; Settle releases the claim without counting a retry and the draft PR stays open.
+  - The question also rides in the build's `BLOCKED` reply, so a failed comment post or label write still reaches the dispatch report — flagged there as a concern, never dropped.
   - The next build materializes the record body, not its comments — an answer left only as a comment does not reach it.
   - A headless (Routine-fired) stop also adds `bot:blocked` and removes the record's `auto:*` grants; a human-typed dispatch keeps `auto:build`, so a later drain can re-pick the record until it is answered.
 - **Red flags:** The draft PR closed as a failure tombstone; an attempt counted against `dispatch-retry-ceiling`; a stop whose question appears nowhere on the record.
