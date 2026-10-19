@@ -56,7 +56,10 @@ function isStaleClaim(archiveState, now = Date.now()) {
 // explicit --run, never guessing) only ever resolve an adopted run — safe
 // because every sanctioned caller runs after flow Step 3 has already
 // initialized the run dir (decisions.md with more than the claim line, or
-// run-state.json, already exists by then).
+// run-state.json, already exists by then). Exception: in `interactive` mode
+// Step 3 skips the Manifesto, so a current-branch run stays claim-log-only
+// with no run-state.json until wrap-up and its own session's events get no
+// fallback attribution — the same as an empty mint pre-#2492 (the #721 design).
 function isUnadoptedMint(dir, state) {
   if (state) return false;
   if (fs.existsSync(path.join(dir, 'run-state.json'))) return false;

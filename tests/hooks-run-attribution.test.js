@@ -268,6 +268,14 @@ test('a claim-log-only dir with run-state.json is adopted (#3363)', () => {
   assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir: mint, attribution: 'fallback' });
 });
 
+test('an unreadable decisions.md (non-ENOENT read error) is adopted, not an unadopted mint (#3363)', () => {
+  const cwd = project();
+  const dir = mkRun(cwd, '2026-07-02T090000-mint', null);
+  fs.mkdirSync(path.join(dir, 'decisions.md')); // readFileSync -> EISDIR
+
+  assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir, attribution: 'fallback' });
+});
+
 // ─── worktree-bound foreign candidates (#1402) ─────────────────────────────
 //
 // #1033's own events.jsonl accumulated six events belonging to unrelated,
