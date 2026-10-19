@@ -53,6 +53,28 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.146.0](https://github.com/thn-inc/claude-tweaks/compare/v6.145.0...v6.146.0) (2026-10-19)
+
+
+### Features
+
+* harness-cost: measureAgentToolCost is never wired into… ([#2933](https://github.com/thn-inc/claude-tweaks/issues/2933)) ([f2ce3e6](https://github.com/thn-inc/claude-tweaks/commit/f2ce3e67a03a0cc092df9236376a2523ba1425bf)), closes [#3191](https://github.com/thn-inc/claude-tweaks/issues/3191) [#3463](https://github.com/thn-inc/claude-tweaks/issues/3463)
+
+
+### Bug Fixes
+
+* dispatch: queue-pull-script.md redirects to undeclared… ([#3024](https://github.com/thn-inc/claude-tweaks/issues/3024)) ([b67d789](https://github.com/thn-inc/claude-tweaks/commit/b67d789af9e2e68f80b16554acc04766c872f7fe))
+* docs/incident-log.md ends mid-sentence — the IL-162… ([#3187](https://github.com/thn-inc/claude-tweaks/issues/3187)) ([b220a7b](https://github.com/thn-inc/claude-tweaks/commit/b220a7be2ca339f16a73fb1f1eb00052334373ab))
+* Make harness-health Premise-check paths portable across… ([#2857](https://github.com/thn-inc/claude-tweaks/issues/2857)) ([87875be](https://github.com/thn-inc/claude-tweaks/commit/87875beca6d92f08f50e63e8cd4f650c9a6cd7fd))
+* Reconcile archives a live run when an earlier PR from the… ([#3416](https://github.com/thn-inc/claude-tweaks/issues/3416)) ([dcdd588](https://github.com/thn-inc/claude-tweaks/commit/dcdd588637ec1e47fbe9bc8deb55c96859e75b1f))
+* resolve-run-dir mis-resolves a stale, never-closed… ([#2870](https://github.com/thn-inc/claude-tweaks/issues/2870)) ([a865bb7](https://github.com/thn-inc/claude-tweaks/commit/a865bb71d72935471f39c361f48971236d30c56a))
+* Scratch-path instruction tells worktree-isolated lens… ([#3519](https://github.com/thn-inc/claude-tweaks/issues/3519)) ([aaafbde](https://github.com/thn-inc/claude-tweaks/commit/aaafbde5afeb82e4426b1f07b01cd302459e9a8f))
+* statusline git status takes the index lock and races… ([#3352](https://github.com/thn-inc/claude-tweaks/issues/3352)) ([229108c](https://github.com/thn-inc/claude-tweaks/commit/229108c65c8ad1e24e8a2015481be70f9b10559c)), closes [#3464](https://github.com/thn-inc/claude-tweaks/issues/3464)
+* Windows regression: 1 test file(s) newly failing after… ([#3440](https://github.com/thn-inc/claude-tweaks/issues/3440)) ([1ed26d9](https://github.com/thn-inc/claude-tweaks/commit/1ed26d947c9a04dc04d8aed862029f6eb0f764a4)), closes [#3505](https://github.com/thn-inc/claude-tweaks/issues/3505) [#3506](https://github.com/thn-inc/claude-tweaks/issues/3506)
+* Windows regression: 1 test file(s) newly failing after… ([#3517](https://github.com/thn-inc/claude-tweaks/issues/3517)) ([1301982](https://github.com/thn-inc/claude-tweaks/commit/13019828d15e0efee90a0700bf1b8fcdcbe9ab58))
+* Windows regression: 1 test file(s) newly failing after… ([#3523](https://github.com/thn-inc/claude-tweaks/issues/3523)) ([59406eb](https://github.com/thn-inc/claude-tweaks/commit/59406ebe9944c8f8434f487fd957fd05c5f3bc3b))
+* Windows regression: 2 test file(s) newly failing after… ([#3518](https://github.com/thn-inc/claude-tweaks/issues/3518)) ([e4d6b12](https://github.com/thn-inc/claude-tweaks/commit/e4d6b12bf9745a39f3c3e737a9f51ef89367f4f6))
+
 ## [6.145.0](https://github.com/thn-inc/claude-tweaks/compare/v6.144.0...v6.145.0) (2026-10-18)
 
 
