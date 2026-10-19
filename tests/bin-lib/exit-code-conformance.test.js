@@ -14,6 +14,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
+const { stripComments } = require('../helpers/strip-comments');
 
 const ROOT = path.join(__dirname, '..', '..');
 
@@ -45,15 +46,6 @@ function getAllBinFiles() {
   return walkFilesRelative(binDir)
     .filter((f) => f.endsWith('.js'))
     .map((f) => path.join('plugin', 'bin', f));
-}
-
-// Naive comment stripping -- sufficient for this repo's own source, which
-// never relies on a literal "//" or "/*...*/" inside a string on a line that
-// also matters to this scan (the one real case in the wild,
-// wrap-up-engine.js's `// Never process.exit() right after...` comment,
-// would otherwise false-positive).
-function stripComments(src) {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 }
 
 // Extracts the text governed by a `require.main === module` guard: either a
@@ -103,6 +95,11 @@ function guardRegionFor(content) {
 function findDirectProcessExit(guardText) {
   return guardText.match(/process\.exit\(/g) || [];
 }
+
+test('a guard after a string holding /* is still scanned (proves the literal-aware stripper)', () => {
+  const fixture = ["const pattern = 'work/*-spec.md';", 'if (require.main === module) process.exit(main());', '/* trailing note */'].join('\n');
+  assert.strictEqual(findDirectProcessExit(guardRegionFor(stripComments(fixture))).length, 1);
+});
 
 test('every require.main guard (or equivalent whole-file entry point) under plugin/bin/**/*.js sets process.exitCode, never process.exit() directly', () => {
   const files = getAllBinFiles();
