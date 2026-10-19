@@ -134,9 +134,47 @@ test('countSharedCitations: zero when the skill cites nothing', () => {
 
 test('estimateHarnessCost covers every shipped skill with a positive byte count', () => {
   const { entries, totalSkills } = estimateHarnessCost(REPO);
-  assert.strictEqual(entries.length, listSkillDirs(REPO).length);
-  assert.strictEqual(totalSkills, entries.length);
+  const skills = entries.filter((e) => e.kind === 'skill');
+  assert.strictEqual(skills.length, listSkillDirs(REPO).length);
+  assert.strictEqual(totalSkills, skills.length);
   assert.ok(entries.every((e) => e.bytes > 0));
+});
+
+test('AC2.1: estimateHarnessCost includes the real shipped qa-agent as an agent entry', () => {
+  const { entries, totalAgents } = estimateHarnessCost(REPO);
+  const qa = entries.find((e) => e.kind === 'agent' && e.name === 'qa-agent');
+  assert.ok(qa, 'expected an agent entry for plugin/agents/qa-agent.md');
+  assert.deepStrictEqual(qa.tools, ['Bash']);
+  assert.strictEqual(qa.toolCount, 1);
+  assert.strictEqual(qa.sharedCitations, null);
+  assert.strictEqual(totalAgents, measureAgentToolCost(REPO).length);
+});
+
+test('estimateHarnessCost: synthetic corpus with a skill and an agent of the same name keeps both, by kind', () => {
+  const root = tmpRoot('dup-kind');
+  makeSkill(root, 'dup', ['allowed-tools: Read, Bash']);
+  const agentsDir = path.join(root, 'agents');
+  fs.mkdirSync(path.join(agentsDir, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(agentsDir, 'dup.md'), '---\nname: dup\ntools: Bash, Read, Write\n---\nbody\n');
+  fs.writeFileSync(path.join(agentsDir, 'unscoped-agent.md'), '---\nname: unscoped-agent\n---\nbody\n');
+  fs.writeFileSync(path.join(agentsDir, 'notes.txt'), 'not an agent\n');
+  const { entries, totalSkills, totalAgents, unscopedCount } = estimateHarnessCost(root);
+  const dupRows = entries.filter((e) => e.name === 'dup');
+  assert.deepStrictEqual(dupRows.map((e) => e.kind).sort(), ['agent', 'skill']);
+  assert.strictEqual(totalSkills, 1);
+  assert.strictEqual(totalAgents, 2);
+  assert.strictEqual(unscopedCount, 0);
+  const agentDup = dupRows.find((e) => e.kind === 'agent');
+  assert.strictEqual(agentDup.bytes, fs.statSync(path.join(agentsDir, 'dup.md')).size);
+});
+
+test('AC3.1: estimateHarnessCost: no agents/ directory yields zero agent entries and no error', () => {
+  const root = tmpRoot('no-agents-composite');
+  makeSkill(root, 'only-skill', ['allowed-tools: Read']);
+  const { entries, totalAgents, totalSkills } = estimateHarnessCost(root);
+  assert.strictEqual(totalAgents, 0);
+  assert.strictEqual(totalSkills, 1);
+  assert.ok(entries.every((e) => e.kind === 'skill'));
 });
 
 test('estimateHarnessCost: entries are sorted by bytes descending', () => {
@@ -148,7 +186,7 @@ test('estimateHarnessCost: entries are sorted by bytes descending', () => {
 
 test('estimateHarnessCost: unscopedCount matches the number of null-toolCount entries', () => {
   const { entries, unscopedCount } = estimateHarnessCost(REPO);
-  const actual = entries.filter((e) => e.toolCount === null).length;
+  const actual = entries.filter((e) => e.kind === 'skill' && e.toolCount === null).length;
   assert.strictEqual(unscopedCount, actual);
 });
 

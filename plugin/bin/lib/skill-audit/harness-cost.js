@@ -112,14 +112,18 @@ function countSharedCitations(repoRoot, skillName) {
   return cited.size;
 }
 
-// Per-skill composite: tool cost + the guaranteed per-invocation SKILL.md
-// byte payload (not sub-files, which are lazy-loaded — `context-cost.js`'s
-// own distinction) + shared-citation depth. Sorted by byte size descending,
-// matching this corpus's existing reporting convention
-// (`measureSubFiles`).
+// Per-skill and per-agent composite: tool cost + the guaranteed per-invocation
+// byte payload (a skill's SKILL.md, not its lazy-loaded sub-files — `context-cost.js`'s
+// own distinction; an agent's flat `agents/{name}.md`) + shared-citation depth
+// (skills only; `sharedCitations` is null for agents). Each row carries a
+// `kind` discriminator. Sorted by byte size descending, matching this corpus's
+// existing reporting convention (`measureSubFiles`). `totalSkills`,
+// `totalAgents`, and `unscopedCount` are per-kind: `unscopedCount` tallies
+// skills only.
 function estimateHarnessCost(repoRoot) {
   const dir = path.join(repoRoot, 'skills');
-  const entries = measureSkillToolCost(repoRoot).map(({ name, tools, toolCount, overageRatio }) => ({
+  const skillEntries = measureSkillToolCost(repoRoot).map(({ name, tools, toolCount, overageRatio }) => ({
+    kind: 'skill',
     name,
     bytes: measuredBytes(path.join(dir, name, 'SKILL.md')).bytes,
     tools,
@@ -127,9 +131,24 @@ function estimateHarnessCost(repoRoot) {
     overageRatio,
     sharedCitations: countSharedCitations(repoRoot, name),
   }));
+  const agentEntries = measureAgentToolCost(repoRoot).map(({ name, tools, toolCount, overageRatio }) => ({
+    kind: 'agent',
+    name,
+    bytes: measuredBytes(path.join(repoRoot, 'agents', `${name}.md`)).bytes,
+    tools,
+    toolCount,
+    overageRatio,
+    sharedCitations: null,
+  }));
+  const entries = [...skillEntries, ...agentEntries];
   entries.sort((a, b) => b.bytes - a.bytes);
-  const unscopedCount = entries.filter((e) => e.toolCount === null).length;
-  return { entries, totalSkills: entries.length, unscopedCount };
+  const unscopedCount = skillEntries.filter((e) => e.toolCount === null).length;
+  return {
+    entries,
+    totalSkills: skillEntries.length,
+    totalAgents: agentEntries.length,
+    unscopedCount,
+  };
 }
 
 // Skills whose DECLARED tool count exceeds the baseline by more than
