@@ -155,3 +155,19 @@ test('AC1.1 #3513: multispec-review-console.md — step 1 ratifies a ruling, Ove
   assert.match(MULTISPEC_CONSOLE, ws('ratify/reverse {#} for an SDD ruling row'));
   assert.match(MULTISPEC_CONSOLE, ws("an `sdd-ruling-*` row takes only `ratify {#}`/`reverse {#}` (the appendix bullet); `skip`/`modify`/`revert` on one is refused as `wrap-up/review-console-interactive.md` refuses it"));
 });
+
+const CONSOLE_TEMPLATE = read('plugin', 'skills', 'wrap-up', 'console-template.md');
+const MULTISPEC_TEMPLATE = read('plugin', 'skills', 'flow', 'multispec-console-template.md');
+
+test('AC2.1 #3513: review-console-interactive.md names reverse in the Override option description and refuses modify/revert on a ruling row', () => {
+  const reverseLines = INTERACTIVE.split('\n').filter((l) => /reverse/.test(l));
+  assert.ok(reverseLines.length >= 2, `grep -c reverse must be >= 2, got ${reverseLines.length}`);
+  assert.match(INTERACTIVE, ws('ratify/reverse {#} for an SDD ruling row; also the only path that drills Q#/M#/U# individually'));
+  assert.match(INTERACTIVE, ws('`modify {#}` and `revert {#}` on a ruling row are refused with the same notice, that verb in place of `skip`'));
+});
+
+test('#3513: both Pending review headings name ratify/reverse for an sdd-ruling-* row', () => {
+  const heading = '#### Pending review (staged — apply, skip, or modify per item; `ratify`/`reverse` an `sdd-ruling-*` row)';
+  assert.ok(CONSOLE_TEMPLATE.includes(heading), 'console-template.md heading');
+  assert.ok(MULTISPEC_TEMPLATE.includes(heading), 'multispec-console-template.md heading');
+});

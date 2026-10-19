@@ -24,7 +24,7 @@ Pipeline complete for specs 157, 159, 160. The pipeline auto-resolved {N} decisi
 
 A `SCANNED` entry (skill-curation's scan-summary log line — see `_shared/auto-decision-log.md`) also renders in this section, tagged with its originating spec, but with `Status` = `Informational` and `Where` = the step/location it ran at (no commit ref, since nothing was applied) — there is nothing to revert for these rows.
 
-#### Pending review (staged — apply, skip, or modify per item)
+#### Pending review (staged — apply, skip, or modify per item; `ratify`/`reverse` an `sdd-ruling-*` row)
 
 | # | Spec | Skill | What | Detail | Patch |
 |---|---|---|---|---|---|
