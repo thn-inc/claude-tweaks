@@ -1,4 +1,4 @@
-// tests/timing-prose-conformance.test.js — #1928 prose pins.
+// tests/timing-prose-conformance.test.js — #1928 and #3413 prose pins.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -143,11 +143,15 @@ test('#3413 AC2: the timing-render contract carries the phase-table and Dispatch
     [/\| Phase \| Minutes \| Verify \|/, 'phase table header'],
     [/^Guard denials: /m, 'guard denials line'],
     [/\(below the phase rows, above `total`\)/, 'normalized unattributed placement'],
+    [/`dispatch agent-\{id\}: ` followed by[^\n]*`meta not found \(description null\)`/, 'per-dispatch meta-not-found form'],
+    [/`dispatch agent-\{id\}: ` followed by[^\n]*`transcript has no usage rows`/, 'per-dispatch no-usage-rows form'],
+    [/a phase with no event reads `unattributed`/, 'phase with no event reads unattributed'],
+    [/cache reads and cache creation are separate fields/, 'Tokens (in/out) footnote cache sentence'],
   ];
   for (const [re, msg] of checks) assert.match(t, re, `${CONTRACT}: ${msg}`);
   assert.doesNotMatch(t, /rendered verbatim below the Guard denials line/, `${CONTRACT}: stale placement`);
   assert.doesNotMatch(t, /`total`'s neighbor rows/, `${CONTRACT}: stale unattributed placement`);
-  assert.match(t, /\*\*Archive-path rule\.\*\*[^\n]*archive\/\{run-id\}\//, `${CONTRACT}: archive rule`);
+  assert.match(t, /\*\*Archive-path rule\.\*\*[^\n]*archive\/\{run-id\}\/` as `--run`/, `${CONTRACT}: archive rule`);
   const header = t.slice(0, t.indexOf('## Phase table'));
   assert.match(header, /wrap-up\/summary-template\.md/, `${CONTRACT}: header names wrap-up template`);
   assert.match(header, /flow\/summary-template\.md/, `${CONTRACT}: header names flow template`);
@@ -159,9 +163,9 @@ test('#3413 AC4: the contract\'s tier and role sets equal derive.js TIERS and RO
   const original = read(CONTRACT);
   assertVocabMatches(original, TIERS, roles);
 
-  const noFrontierTier = original.replace('`capable`, ', '');
-  assert.notEqual(noFrontierTier, original, 'control mutation applied: `capable`, removed');
-  assert.throws(() => assertVocabMatches(noFrontierTier, TIERS, roles), { message: /contract tier set/ });
+  const noCapableTier = original.replace('`capable`, ', '');
+  assert.notEqual(noCapableTier, original, 'control mutation applied: `capable`, removed');
+  assert.throws(() => assertVocabMatches(noCapableTier, TIERS, roles), { message: /contract tier set/ });
 
   const noLensRole = original.replace(', lens reviewer', '');
   assert.notEqual(noLensRole, original, 'control mutation applied: lens reviewer removed');
@@ -181,12 +185,15 @@ const PRE_3413_DISPATCHES = [
   "When the CLI prints a `tokens: transcript not found (...)` line, render it verbatim above the table — blank token columns are a fact about the run, not a formatting error (#1929).",
   "Under `--auto-transcript`/`--transcript` the CLI also appends a Dispatches section (#3375), rendered verbatim below the `Tokens (in/out)` footnote that follows the Guard denials line — never composed by hand. It carries two tables over the run's subagent dispatches, scoped to the `run window` (or the `whole session` when the run has no events): one by model tier (`fast`, `standard`, `capable`, `frontier`; an `unmapped` row carries the raw model names), one by role (implementer, task review, re-review, whole-branch review, plan review, lens reviewer, unlabelled). `Agent-seconds` sums each dispatch's span with overlap kept;",
   '| Tier | Dispatches | Agent-seconds | Elapsed (min) | Tokens (in/out) | Cache (read/create) |',
+  '| Phase | Minutes | Verify | Tokens (in/out) | Proc. KB | Tool RTs |',
+  '| Role | Dispatches | Agent-seconds | Elapsed (min) | Tokens (in/out) | Cache (read/create) |',
 ].join('\n');
-const RETIRED = [/sums each dispatch's span with overlap kept/, /blank token columns are a fact about the run/, /\| Tier \| Dispatches \|/, /rendered verbatim below the Guard denials line/];
+const STALE_PLACEMENT = /rendered verbatim below the Guard denials line/;
+const RETIRED = [/sums each dispatch's span with overlap kept/, /blank token columns are a fact about the run/, /\| Tier \| Dispatches \|/, /\| Phase \| Minutes \| Verify \|/, /\| Role \| Dispatches \|/, STALE_PLACEMENT];
 
 test('#3413 AC1: each Timing template cites the contract, keeps its own invocation, and no longer restates the body', () => {
   // Control: the frozen pre-extraction text trips each absence check, except the stale-placement one (which it does not contain).
-  for (const re of RETIRED.slice(0, 3)) assert.match(collapse(PRE_3413_DISPATCHES), re, `control: ${re}`);
+  for (const re of RETIRED.filter((r) => r.source !== STALE_PLACEMENT.source)) assert.match(collapse(PRE_3413_DISPATCHES), re, `control: ${re}`);
   for (const [f, runVar] of Object.entries(TEMPLATES)) {
     const t = read(f);
     assert.match(t, /^### Timing$/m, f);
