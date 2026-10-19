@@ -2,19 +2,19 @@
 // A returns-nothing search is run once against a tree that still holds its target before it is pinned (#3571, after #3536's AC1.1).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const CHECKS = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin/skills/build/plan-authoring-checks.md'), 'utf8');
-const TEMPLATE = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin/skills/specify/spec-template.md'), 'utf8');
-const REFLECT = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin/skills/reflect/SKILL.md'), 'utf8');
-const LEFTOVER = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin/skills/wrap-up/leftover-routing.md'), 'utf8');
-const LEDGER = fs.readFileSync(
-  path.join(__dirname, '..', 'plugin/skills/_shared/ledger-format.md'), 'utf8');
+const CHECKS = readText(
+  path.join(__dirname, '..', 'plugin/skills/build/plan-authoring-checks.md'));
+const TEMPLATE = readText(
+  path.join(__dirname, '..', 'plugin/skills/specify/spec-template.md'));
+const REFLECT = readText(
+  path.join(__dirname, '..', 'plugin/skills/reflect/SKILL.md'));
+const LEFTOVER = readText(
+  path.join(__dirname, '..', 'plugin/skills/wrap-up/leftover-routing.md'));
+const LEDGER = readText(
+  path.join(__dirname, '..', 'plugin/skills/_shared/ledger-format.md'));
 
 function acSection() {
   const start = TEMPLATE.indexOf('## Acceptance Criteria\n');
