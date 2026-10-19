@@ -4,7 +4,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { splitLedgerRow } = require('../../../plugin/bin/lib/wrap-up/ledger-cells');
+const { splitLedgerRow, escapeLedgerPipes } = require('../../../plugin/bin/lib/wrap-up/ledger-cells');
 
 const NO_BACKSLASH_ROWS = ['| 1 | build | item | open | — |', '|||', ''];
 
@@ -51,5 +51,18 @@ test('splitLedgerRow round-trips byte-identically', () => {
   ];
   for (const row of rows) {
     assert.strictEqual(splitLedgerRow(row).join('|'), row);
+  }
+});
+
+test('escapeLedgerPipes escapes a bare pipe and keeps an already-escaped one', () => {
+  assert.strictEqual(escapeLedgerPipes('a | b'), 'a \\| b');
+  assert.strictEqual(escapeLedgerPipes('a \\| b'), 'a \\| b');
+  assert.strictEqual(escapeLedgerPipes('x\\\\| y'), 'x\\\\\\| y');
+  assert.strictEqual(escapeLedgerPipes('no pipes \\'), 'no pipes \\');
+});
+
+test('escapeLedgerPipes output stays inside one cell when split', () => {
+  for (const text of ['a | b', 'a \\| b', 'x\\\\| y', '||', 'plain']) {
+    assert.strictEqual(splitLedgerRow(`| ${escapeLedgerPipes(text)} |`).length, 3);
   }
 });

@@ -142,6 +142,15 @@ test('flipLedgerRow writes a resolution holding an escaped pipe as given (#3353)
   assert.strictEqual(splitLedgerRow(row).length, 7);
 });
 
+test('flipLedgerRow escapes a bare pipe in the Resolution so the row keeps its shape (#3353)', () => {
+  const next = flipLedgerRow(SAMPLE, { item: 1, status: 'fixed', resolution: 'Fixed a | b' });
+  const row = next.split('\n')[4];
+  assert.ok(row.endsWith('| fixed | Fixed a \\| b |'), row);
+  assert.strictEqual(splitLedgerRow(row).length, 7);
+  const again = flipLedgerRow(next, { item: 1, status: 'accepted', resolution: 'Accepted' });
+  assert.ok(again.split('\n')[4].endsWith('| accepted | Accepted |'));
+});
+
 test('TERMINAL_STATUSES matches ledger-format.md\'s closed five-value enum', () => {
   assert.deepStrictEqual(TERMINAL_STATUSES, ['fixed', 'deferred', 'accepted', 'acknowledged', 'observation']);
 });

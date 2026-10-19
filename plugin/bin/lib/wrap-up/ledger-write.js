@@ -9,7 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { splitLedgerRow } = require('./ledger-cells');
+const { splitLedgerRow, escapeLedgerPipes } = require('./ledger-cells');
 
 const TERMINAL_STATUSES = ['fixed', 'deferred', 'accepted', 'acknowledged', 'observation'];
 
@@ -114,7 +114,9 @@ function flipLedgerRow(text, { item, status, resolution }) {
   // which.
   if (cells.length !== 7) throw new Error(`ledger row for item #${item} does not have the expected 5-column shape`);
   cells[4] = ` ${status} `;
-  cells[5] = ` ${String(resolution || '').trim() || '—'} `;
+  // A bare `|` in the Resolution would split into an extra cell that a later
+  // flip refuses, so it is written as `\|` (an already-escaped one is kept).
+  cells[5] = ` ${escapeLedgerPipes(String(resolution || '').trim()) || '—'} `;
   table.rows.set(key, cells.join('|'));
   return serializeLedgerTable(table);
 }

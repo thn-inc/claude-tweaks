@@ -38,6 +38,10 @@ The `{feature}` name matches the execution plan or spec topic. One ledger per pi
 
 Items are numbered sequentially starting at 1. New items always get the next available number. Numbers are never reused — if item 3 is resolved, the next item is still 4.
 
+### Cell Text
+
+A literal `|` in an Item or Resolution cell is written `\|` (GFM's table escape), so the row keeps its five columns; `bin/lib/wrap-up/ledger-cells.js` reads and writes cells that way (`splitLedgerRow`, `escapeLedgerPipes`), and `flipLedgerRow` escapes a bare `|` in the Resolution it writes.
+
 ### De-duplication on Append
 
 Before appending, check existing items for semantic duplicates. If an item with the same phase and a substantially similar description already exists, skip the add and note "Duplicate — matches item #{N}" in the writing skill's own output — never silently skip.

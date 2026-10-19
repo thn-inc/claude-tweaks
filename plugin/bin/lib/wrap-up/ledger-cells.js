@@ -33,4 +33,24 @@ function splitLedgerRow(row) {
   return segments;
 }
 
-module.exports = { splitLedgerRow };
+// The write-side twin (#3353 follow-up): escapes every `|` in cell text that
+// splitLedgerRow would read as a boundary, using the same walk — a backslash
+// consumes the one character after it, so an already-escaped `\|` is kept and
+// a bare `|` becomes `\|`. Text written through it splits back into one cell.
+function escapeLedgerPipes(text) {
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '\\') {
+      out += text.slice(i, i + 2);
+      i += 2;
+    } else {
+      out += ch === '|' ? '\\|' : ch;
+      i += 1;
+    }
+  }
+  return out;
+}
+
+module.exports = { splitLedgerRow, escapeLedgerPipes };
