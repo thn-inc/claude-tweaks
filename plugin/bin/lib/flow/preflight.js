@@ -108,26 +108,29 @@ function configValue(text, key) {
 const EVENT_PATH_FIELDS = ['dir', 'path', 'worktree', 'actual'];
 const EVENT_SESSION_FIELDS = ['sessionId', 'session', 'callerSessionId'];
 
+function isOwnEvent(ev, worktree, sessionId) {
+  if (!ev || typeof ev !== 'object' || Array.isArray(ev) || ev.attribution === 'fallback') return false;
+  if (worktree && EVENT_PATH_FIELDS.some((field) => isWithin(ev[field], worktree))) return true;
+  return sessionId !== null && EVENT_SESSION_FIELDS.some((field) => ev[field] === sessionId);
+}
+
+function isWithin(value, worktree) {
+  if (typeof value !== 'string' || !value) return false;
+  const resolved = path.resolve(value);
+  return resolved === worktree || resolved.startsWith(worktree + path.sep);
+}
+
 function classifyEvents(deps, file, state) {
   const out = { own: 0, foreign: 0, unparseable: 0 };
   const t = readText(deps, file);
   if (t === null) return out;
-  const wt = state && typeof state.worktree === 'string' && state.worktree ? path.resolve(state.worktree) : null;
-  const sid = state && typeof state.sessionId === 'string' && state.sessionId ? state.sessionId : null;
-  const isOwn = (ev) => {
-    if (!ev || typeof ev !== 'object' || Array.isArray(ev) || ev.attribution === 'fallback') return false;
-    if (wt && EVENT_PATH_FIELDS.some((f) => {
-      if (typeof ev[f] !== 'string' || !ev[f]) return false;
-      const v = path.resolve(ev[f]);
-      return v === wt || v.startsWith(wt + path.sep);
-    })) return true;
-    return sid !== null && EVENT_SESSION_FIELDS.some((f) => ev[f] === sid);
-  };
+  const worktree = state && typeof state.worktree === 'string' && state.worktree ? path.resolve(state.worktree) : null;
+  const sessionId = state && typeof state.sessionId === 'string' && state.sessionId ? state.sessionId : null;
   for (const line of t.split('\n')) {
     if (!line.trim()) continue;
     let ev;
     try { ev = JSON.parse(line); } catch { out.unparseable += 1; continue; }
-    if (isOwn(ev)) out.own += 1; else out.foreign += 1;
+    if (isOwnEvent(ev, worktree, sessionId)) out.own += 1; else out.foreign += 1;
   }
   return out;
 }
@@ -181,9 +184,8 @@ function computeAdoption({ runDir, mainRoot, cwd, deps }) {
   } catch (err) {
     decisionsHasContent = !(err && err.code === 'ENOENT');
   }
-  const events = classifyEvents(deps, path.join(real, 'events.jsonl'), state);
-  const eventsForeign = events.foreign;
-  const hasOtherContent = decisionsHasContent || events.own > 0 || events.unparseable > 0 || specMaterialized === true;
+  const { own, foreign: eventsForeign, unparseable } = classifyEvents(deps, path.join(real, 'events.jsonl'), state);
+  const hasOtherContent = decisionsHasContent || own > 0 || unparseable > 0 || specMaterialized === true;
   if (hasConfig) return { case: 1, note: ADOPTION_NOTES[1].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, eventsForeign, specMaterialized, backfills: [] };
   // #3242: a dispatched first call with `dispatched: true` and no `pr`
   // adopts as case 2 (fresh) even when decisions.md carries Step 1.8 or other
