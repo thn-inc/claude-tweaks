@@ -1,6 +1,0 @@
-# Open Items — Windows regression: 1 test file(s) newly failing after c65b3fdbb (#3517)
-
-| # | Phase | Item | Status | Resolution |
-|---|-------|------|--------|------------|
-| 1 | build | snippet reassigns its text parameter (`text = section(text)`) instead of a separate const — mirrors the original shape (SDD task-review Minor) | fixed | Fixed by /build Common Step 3 simplify: `snippet(index, source = MCP)` with `const text = section(source)` (dbd2f272a) |
-| 2 | build | Possible production twin of the Windows `CLAUDE_PLUGIN_ROOT` failure: `plugin/skills/dispatch/mcp-transport.md`'s two neighbour-in-flight heredocs (and every other unquoted `<<NODE_EVAL_EOF` body doing `require('${CLAUDE_PLUGIN_ROOT}/…')`, per `plugin/bin/node-eval-file.js`'s #3091 note) interpolate the root into a JS string literal, so a backslash Windows root (`C:\…`) would be read as escapes. The test now passes a forward-slash root (f9bfb5d08), so it no longer exercises this. Unverified whether Claude Code on Windows hands Git Bash a backslash `CLAUDE_PLUGIN_ROOT` — probe that before fixing (e.g. `JSON.stringify` the root inside the body, or normalise it in `node-eval-file.js`). Out of scope for #3517 (no `plugin/` change allowed) | open | — |
