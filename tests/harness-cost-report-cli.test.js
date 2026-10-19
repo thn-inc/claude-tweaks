@@ -110,7 +110,7 @@ test('a high-tool-count agent is flagged like a skill', () => {
   assert.strictEqual(report.totalAgents, 1);
 });
 
-test('--ratio-threshold 0 flags every skill with a declared (non-null) tool count', () => {
+test('--ratio-threshold 0 flags every skill or agent with a declared (non-null) tool count', () => {
   const { out, deps } = capture();
   const code = run(['--plugin-root', PLUGIN_ROOT, '--ratio-threshold', '0'], deps);
   assert.strictEqual(code, 0);

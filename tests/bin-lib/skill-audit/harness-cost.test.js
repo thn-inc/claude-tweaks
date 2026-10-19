@@ -231,13 +231,13 @@ test('flagHighToolCount: custom ratioThreshold is honored', () => {
 // carries no allowed-tools line at all, which this lens surfaces via
 // unscopedCount rather than per-skill flags; see harness-cost.js's header).
 
-test('no shipped skill with a declared allowed-tools line currently exceeds 2x the baseline', () => {
+test('no shipped skill or agent with a declared tool list currently exceeds 2x the baseline', () => {
   const { entries } = estimateHarnessCost(REPO);
   const flagged = flagHighToolCount(entries);
   assert.deepStrictEqual(
     flagged.map((e) => `${e.name} (${e.toolCount} tools)`),
     [],
-    'a skill crossing this threshold is not necessarily wrong, but should be a deliberate choice — '
+    'a skill or agent crossing this threshold is not necessarily wrong, but should be a deliberate choice — '
       + 'review whether its allowed-tools list can be narrowed',
   );
 });

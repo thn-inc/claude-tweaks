@@ -151,10 +151,10 @@ function estimateHarnessCost(repoRoot) {
   };
 }
 
-// Skills whose DECLARED tool count exceeds the baseline by more than
-// `ratioThreshold` — never an unscoped skill (toolCount: null), since there's
-// no declared count to ratio. An unscoped corpus majority is reported as the
-// `unscopedCount` summary field instead (see estimateHarnessCost), since
+// Entries (skills or agents) whose DECLARED tool count exceeds the baseline by
+// more than `ratioThreshold` — never an unscoped entry (toolCount: null), since
+// there's no declared count to ratio. An unscoped corpus majority is reported as
+// the `unscopedCount` summary field instead (see estimateHarnessCost), since
 // flagging each one individually would be noise, not signal, when it's the
 // corpus norm rather than the exception.
 function flagHighToolCount(entries, { ratioThreshold = 2 } = {}) {
