@@ -114,7 +114,7 @@ const COMMIT_DATE_MARKER = '\x01';
 // from its own last-commit date — used for records whose driver carries no
 // timestamp facet (local-files backend, and any unsynced-fallback record),
 // the same approach /tidy's Step 1 staleness clock already uses. Resolves
-// every record from a SINGLE `git log --name-only` walk of the whole
+// every record from a SINGLE `git log -z --name-only` walk of the whole
 // repository history (newest commit first, git log's default order) instead
 // of one `git log -1 -- <path>` subprocess per record: for each path, the
 // FIRST commit encountered while walking newest-to-oldest is by construction

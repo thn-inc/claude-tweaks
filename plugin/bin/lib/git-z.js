@@ -36,11 +36,12 @@ function parseNameStatusZ(raw) {
 // splitLogZ(raw, isHeader): `git log -z --format=<header> --name-only` (or
 // --name-status) — a flat NUL stream in which each commit contributes one
 // header token followed by its path (or status/path) tokens. isHeader(token)
-// recognizes a header; tokens before the first header are dropped. git
-// separates the header from the commit's files with one '\n', which lands on
-// the first token after the header, so that single leading '\n' is removed
-// BEFORE the header test — an empty commit's trailing '\n' therefore rides
-// onto the next header without hiding it.
+// recognizes a header; tokens before the first header are dropped. For a commit
+// that lists files, git separates the header from them with one '\n', which
+// lands on the first path/status token after the header; that single leading
+// '\n' is removed. An empty commit's header is followed directly by the next
+// header (no '\n'); stripping before the header test is only defensive, so a
+// stray leading '\n' cannot hide a header.
 function splitLogZ(raw, isHeader) {
   const records = [];
   let current = null;

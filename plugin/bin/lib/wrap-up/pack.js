@@ -504,7 +504,7 @@ function ledgerProbe(inputs, deps) {
   if (!inputs.base) throw new Error('ledger: merge base unavailable — cannot attribute docs/plans ledgers to this run');
   const gitOptions = { cwd: inputs.worktree };
   const owned = new Set([
-    ...plansFileNames(deps.git(['diff', '--name-only', '-z', '--relative', inputs.base, '--', PLANS_PREFIX], gitOptions)),
+    ...plansFileNames(deps.git(['diff', '--name-only', '-z', '--relative', '--end-of-options', inputs.base, '--', PLANS_PREFIX], gitOptions)),
     ...plansFileNames(deps.git(['ls-files', '--others', '--exclude-standard', '-z', '--', PLANS_PREFIX], gitOptions)),
   ]);
   const ownedCandidates = candidates.filter((f) => owned.has(f));

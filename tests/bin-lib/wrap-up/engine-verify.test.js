@@ -1456,7 +1456,8 @@ test('reference-repairs check fails when Initiative-Fix commit diff touches a fi
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
   const row = result.rows.find((r) => r.check === 'reference-repairs');
   assert.strictEqual(row.result, 'fail');
-  assert.match(row.detail, /docs\/b\.md/);
+  // Exact: a '\n'-split parse would fold both NUL-separated paths into one token.
+  assert.strictEqual(row.detail, 'Initiative-Fix: commit touches unrelated file(s): docs/b.md');
 });
 
 // ---- reference-repairs: pr-first verification via the PR's own (pre-squash)
@@ -2463,7 +2464,10 @@ test('reference-repairs check runs git log and git diff-tree against the injecte
     return '';
   };
   try {
-    runVerify({ runDir, base: 'main', repoRoot, cwd, deps: { git: fakeGit, gh: () => '' } });
+    const result = runVerify({ runDir, base: 'main', repoRoot, cwd, deps: { git: fakeGit, gh: () => '' } });
+    // The fake returns only the applied file, NUL-terminated: a pass proves the NUL parse (splitNul), not a '\n' split.
+    const row = result.rows.find((r) => r.check === 'reference-repairs');
+    assert.strictEqual(row.result, 'pass');
     const logCall = calls.find((c) => c.args[0] === 'log' && c.args.includes('--grep=Initiative-Fix:'));
     const diffCall = calls.find((c) => c.args[0] === 'diff-tree');
     assert.ok(logCall, 'expected a git log call');

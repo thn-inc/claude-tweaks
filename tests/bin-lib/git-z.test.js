@@ -43,8 +43,10 @@ test('splitLogZ groups tokens under headers and strips the one leading newline',
   );
 });
 
-test('splitLogZ: an empty commit followed by the next header still opens a new record', () => {
-  // The empty commit's trailing "\n" rides on the next header token.
+test('splitLogZ: a defensive leading newline before a header is stripped and the header still opens a record', () => {
+  // Real git does not emit this shape (an empty commit's header is followed
+  // directly by the next header, as in the test above); the strip-before-test
+  // order just keeps a stray "\n" from hiding a header.
   assert.deepEqual(
     splitLogZ('\x01100\0\n\x01200\0\ndocs/a.md\0', isHeader),
     [

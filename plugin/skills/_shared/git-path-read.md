@@ -12,7 +12,7 @@ The rule for any `plugin/bin` code that reads a git path list: `--name-only`, `-
 
 ## Parsers
 
-`plugin/bin/lib/git-z.js` exports `splitNul` (verbatim NUL tokens), `parseNameStatusZ` (`STATUS\0path\0`, two paths for `R`/`C`), and `splitLogZ` (a `log -z --format=<header>` stream). `git log -z` puts one leading `\n` on the first token after each header; `splitLogZ` strips it before testing for a header.
+`plugin/bin/lib/git-z.js` exports `splitNul` (verbatim NUL tokens), `parseNameStatusZ` (`STATUS\0path\0`, two paths for `R`/`C`), and `splitLogZ` (a `log -z --format=<header>` stream). `git log -z` puts one leading `\n` on the first path (or status) token of each commit that lists any files; an empty commit's header is followed directly by the next header. `splitLogZ` strips the `\n` before testing for a header.
 
 ## Pinned by
 
@@ -20,4 +20,4 @@ The rule for any `plugin/bin` code that reads a git path list: `--name-only`, `-
 
 ## Not covered yet
 
-`--numstat`, `ls-files`, and `status --porcelain` readers — same quoting hazard, no sweep or pin yet.
+`--numstat`, `ls-files`, and `status --porcelain` readers — same quoting hazard, no sweep or pin yet. Also unswept: the full-format `ls-tree` readers in `plugin/bin/lib/health-core/durable-state.js` and `plugin/bin/lib/issues/claims-git-cas.js`, and the `diff -U0` patch-header parsing in `plugin/bin/lib/wrap-up/facts.js`.
