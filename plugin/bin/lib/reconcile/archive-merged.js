@@ -1640,12 +1640,13 @@ function resolveRunPrState(root, state, branch) {
 // #1733: the merged-PR archive sequence both the main loop and the
 // #1544 clean-status sweep run. The run's PR is resolved via resolveRunPrState
 // (#3416: stamped `pr.number` first, `branch` second) -> decideArchiveCore ->
-// (skip, with the caller's own onSkip hook) -> localHasMerge -> (skip on not-yet-caught-up) ->
-// dryRun short-circuit -> archiveRunDir -> trackArchiveResult. `onSkip` is the
-// one place the two callers genuinely differ: the main loop also calls
-// `trackStuckSkip` on a `decideArchiveCore` skip (#1613's structurally-stuck
-// visibility); the clean loop does not (see this file's clean-loop comment
-// for why that asymmetry is intentional, not a gap to "fix").
+// (skip, with the caller's own onSkip hook) -> localHasMerge ->
+// (skip on not-yet-caught-up) -> dryRun short-circuit -> archiveRunDir ->
+// trackArchiveResult. `onSkip` is the one place the two callers genuinely
+// differ: the main loop also calls `trackStuckSkip` on a `decideArchiveCore`
+// skip (#1613's structurally-stuck visibility); the clean loop does not (see
+// this file's clean-loop comment for why that asymmetry is intentional, not a
+// gap to "fix").
 function archiveMergedRun({
   root, repoSlug, dir, branch, state, dryRun, onSkip, runner, cacheTarget = root, integration,
 }) {
