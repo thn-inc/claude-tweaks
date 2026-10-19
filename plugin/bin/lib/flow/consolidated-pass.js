@@ -8,8 +8,9 @@
 //
 // Read-only: no writes, no event appends, no git mutation. File reads treat
 // any failure as "absent" and surface as that file's own reason; only the
-// parent-liveness and merge-evidence calls are wrapped, because they shell out
-// to git and any throw there is "cannot tell", never "dead" or "not landed".
+// parent-liveness, PR-state and merge-evidence calls are wrapped, because they
+// shell out to git or gh and any throw there is "cannot tell", never "dead" or
+// "not landed".
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -99,7 +100,8 @@ function checkPassReentry(runDir, opts = {}) {
   const specIds = specs.map((s) => s.id);
   const verdict = (reason, detail = '') => ({ eligible: reason === 'eligible', reason, specIds, detail });
 
-  if (path.basename(path.dirname(path.resolve(runDir))) === 'archive') {
+  // Real path, so a symlink into pipelines/archive/ still reads as archived.
+  if (path.basename(path.dirname(safeReal(runDir) || path.resolve(runDir))) === 'archive') {
     return verdict('archived', 'run dir is under pipelines/archive/');
   }
   if (specs.length === 0) return verdict('no-manifest', 'no manifest.yml with specs');
@@ -139,7 +141,8 @@ function checkPassReentry(runDir, opts = {}) {
   let prOpen = false;
   const prNumber = runState && runState.pr ? runState.pr.number : null;
   if (opts.online === true && Number.isInteger(prNumber) && prNumber > 0) {
-    const pr = prResolver(repoRootOf(runDir), prNumber);
+    let pr;
+    try { pr = prResolver(repoRootOf(runDir), prNumber); } catch { pr = 'threw'; }
     if (pr && typeof pr === 'object') {
       if (pr.state === 'MERGED') return verdict('landed', `PR #${prNumber} merged`);
       prOpen = pr.state === 'OPEN';
@@ -158,7 +161,10 @@ function checkPassReentry(runDir, opts = {}) {
   if (landed === true) return verdict('landed', withDegrade('branch work already merged'));
   // An open PR answers what indeterminate offline evidence cannot: not landed.
   if (landed !== false && prOpen) return verdict('eligible', `PR #${prNumber} open`);
-  if (landed !== false) return verdict('landed-unknown', withDegrade('merge evidence indeterminate'));
+  if (landed !== false) {
+    const why = runState ? 'merge evidence indeterminate' : 'no valid run-state.json, so no recorded branch or PR';
+    return verdict('landed-unknown', withDegrade(why));
+  }
   return verdict('eligible', withDegrade(''));
 }
 

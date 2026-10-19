@@ -86,12 +86,15 @@ function collectStaleRuns(cwd, { cache, exclude, pluginRoot } = {}) {
     // of its own to exempt, so a live parent lock always suppresses the suffix.
     try {
       const pass = passReentry.checkPassReentry(dir, { cache });
-      if (pass.eligible) {
+      // Manifest ids are other sessions' file content headed for a command line:
+      // a non-integer id suppresses the suffix. The full dir is named so the
+      // pasted command never falls back to the most-recent-slug heuristic.
+      if (pass.eligible && pass.specIds.every((id) => Number.isInteger(id))) {
         const ids = pass.specIds.map((id) => '#' + id).join(',');
         return {
           dir,
           state,
-          line: `${base} — consolidated pass never ran: /claude-tweaks:flow ${ids} review-console`,
+          line: `${base} — consolidated pass never ran: PIPELINE_RUN_DIR="${dir}" /claude-tweaks:flow ${ids} review-console`,
         };
       }
     } catch { /* re-entry check is advisory — never break the scan */ }

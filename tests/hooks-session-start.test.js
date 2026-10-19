@@ -1351,4 +1351,6 @@ test('AC6.1 SessionStart banner carries the review-console suffix for an eligibl
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.ok(ctx.includes('/claude-tweaks:flow #11,#12 review-console'), ctx);
   assert.ok(ctx.includes('one line per run naming its close-run command, or its re-entry command where the line carries one'), ctx);
+  assert.ok(ctx.includes('never run either command yourself'), ctx);
+  assert.ok(ctx.includes('PIPELINE_RUN_DIR="'), ctx);
 });

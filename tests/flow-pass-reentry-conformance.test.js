@@ -85,6 +85,9 @@ test('AC1.2 multispec-review-console.md has the re-entry section, placed after L
     'spec-status',
     '--status complete',
     '--status not-run',
+    'checkPassReentry(process.argv[1]',
+    'is a stop: report it and never proceed',
+    'online PR check unavailable',
   ]) {
     assert.ok(c.includes(token), `re-entry section must contain ${token}`);
   }

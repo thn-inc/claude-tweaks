@@ -333,7 +333,7 @@ test('scanUnresolvedConsoles: window Infinity with limit Infinity reaches runs b
 // run dir's own start prefix, and a multi-spec run dir recording that worktree.
 const { fixtureGit } = require('../../helpers/git-fixtures');
 
-const REENTRY_SUFFIX = ' — consolidated pass never ran: /claude-tweaks:flow #11,#12 review-console';
+const reentrySuffix = (runDir) => ` — consolidated pass never ran: PIPELINE_RUN_DIR="${runDir}" /claude-tweaks:flow #11,#12 review-console`;
 const EV_BUILD = '{"skill":"claude-tweaks:build","ts":"2026-08-01T09:05:00.000Z","type":"skill_invoked"}';
 const EV_WRAPUP = '{"skill":"claude-tweaks:wrap-up","ts":"2026-08-01T09:50:00.000Z","type":"skill_invoked"}';
 
@@ -375,11 +375,20 @@ function reentryFixture({ events = [EV_BUILD, EV_WRAPUP] } = {}) {
 }
 
 test('AC5.1 eligible multi-spec parent line ends with the review-console command', () => {
-  const { root } = reentryFixture();
+  const { root, runDir } = reentryFixture();
   const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
   assert.strictEqual(entries.length, 1);
   assert.ok(entries[0].line.startsWith('- 2026-08-01T090000-spec-11-12 (status: active)'), entries[0].line);
-  assert.ok(entries[0].line.endsWith(REENTRY_SUFFIX), entries[0].line);
+  assert.ok(entries[0].line.endsWith(reentrySuffix(runDir)), entries[0].line);
+});
+
+test('#3497 review a non-integer manifest id suppresses the suffix', () => {
+  const { root, runDir } = reentryFixture();
+  const text = fs.readFileSync(path.join(runDir, 'manifest.yml'), 'utf8').replace('- id: 12', '- id: 12; rm -rf x');
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), text);
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.doesNotMatch(entries[0].line, /review-console/);
 });
 
 test('AC5.1 ineligible variants carry no suffix', () => {

@@ -251,3 +251,26 @@ test('REENTRY_REASONS is frozen and lists every reason the rule can return', () 
     'spec-unfinished', 'parent-live', 'landed', 'landed-unknown', 'eligible',
   ]);
 });
+
+test('#3497 review a symlink into pipelines/archive/ still reads as archived', () => {
+  const archived = makeRun({ archived: true });
+  const link = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pass-link-')), 'run');
+  fs.symlinkSync(archived, link);
+  assert.equal(checkPassReentry(link, { deps: deps() }).reason, 'archived');
+});
+
+test('#3497 review a throwing PR resolver degrades like a transport failure', () => {
+  const run = makeRun({ runState: { status: 'active', pr: { number: 4242 } } });
+  const r = checkPassReentry(run, { online: true, deps: deps({ resolvePrStateByNumber: () => { throw new Error('boom'); } }) });
+  assert.equal(r.reason, 'eligible');
+  assert.match(r.detail, /online PR check unavailable \(threw\)/);
+});
+
+test('#3497 review landed-unknown names a missing run-state.json', () => {
+  const unknown = () => ({ landed: null, evidence: {} });
+  const missing = checkPassReentry(makeRun({ runState: null }), { deps: deps({ checkBranchLanded: unknown }) });
+  assert.equal(missing.reason, 'landed-unknown');
+  assert.match(missing.detail, /no valid run-state\.json/);
+  const present = checkPassReentry(makeRun(), { deps: deps({ checkBranchLanded: unknown }) });
+  assert.equal(present.detail, 'merge evidence indeterminate');
+});
