@@ -191,8 +191,7 @@ test('queue-pull-script.md: every referenced $DISPATCH_* is declared or assigned
   const script = fs.readFileSync(
     path.join(__dirname, '../../../plugin/skills/dispatch/queue-pull-script.md'), 'utf8');
   const declared = new Set();
-  for (const m of script.matchAll(/^\s*(DISPATCH_[A-Z0-9_]+):\s*'/gm)) declared.add(m[1]);
-  for (const m of script.matchAll(/^\s*(DISPATCH_[A-Z0-9_]+)=/gm)) declared.add(m[1]);
+  for (const m of script.matchAll(/^\s*(DISPATCH_[A-Z0-9_]+)(?::\s*'|=)/gm)) declared.add(m[1]);
   const referenced = new Set();
   for (const m of script.matchAll(/\$\{?(DISPATCH_[A-Z0-9_]+)\}?/g)) referenced.add(m[1]);
   const undeclared = [...referenced].filter((v) => !declared.has(v)).sort();
