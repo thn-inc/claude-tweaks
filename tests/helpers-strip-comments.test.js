@@ -58,7 +58,7 @@ test('a regex ending in an escaped slash is not a // comment', () => {
   assert.ok(out.includes('live();'));
 });
 
-test("a quote inside a regex with no later literal on the line blanks no code", () => {
+test('a quote inside a regex with no later literal on the line blanks no code', () => {
   const out = stripComments("/'/.test(s); live(); // note");
   assert.ok(out.includes('live();'));
 });
