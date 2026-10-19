@@ -269,10 +269,11 @@ When mechanizing a prose heuristic into a deterministic check:
 15. **A transform in front of a scanner owes its own could-not-parse verdict.** A scan over
     transformed text reads whatever the transform wrongly removed as "nothing here", so a
     transform that mis-parses produces a clean scan. `tests/helpers/strip-comments.js`'s
-    `stripComments` blanks comments to spaces before the path-guard, windows-hide and git-status
-    conformance scans count tokens, and it does not model regex literals. In
-    `const a = /"/; const b = "//"; fs.existsSync(b);` the quote inside the regex pairs with a later
-    string, the `//` after it opens a line comment, and the guarded call counted as zero.
+    `stripComments` blanks comments to spaces before the path-guard, windows-hide, git-status and
+    exit-code conformance scans count tokens. It models regex literals (#3585); its residual
+    ambiguity is a regex right after `)` or `}`, which it reads as division. In
+    `if (b) /"/.test(b); const c = "//"; fs.existsSync(c);` the quote inside the regex pairs with a
+    later string, the `//` after it opens a line comment, and the guarded call counted as zero.
     `stripperVerdict` (#3573) checks the transform with an oracle the raw input already passes: it
     compiles both the raw file and the stripped text under a CommonJS wrapper with `vm.Script`. A
     blanked comment never breaks syntax, but blanked code cuts a literal short. So "raw compiles,
