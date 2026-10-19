@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/skills/_shared/subagent-dispatch-core.md
+  - plugin/skills/_shared/subagent-output-contract.md
   - plugin/skills/review/step3-lens-dispatch.md
   - plugin/skills/review/step3-debate-and-refutation.md
   - plugin/skills/review/review-summary-template.md
@@ -19,8 +20,8 @@ files:
 - **URL:** `/claude-tweaks:review #{n}` at `review-effort` `medium` or above
 - **Action:** let Step 3 compose the `review-dispatch` bundle and dispatch its reproduction pairs.
 - **Should feel:** quiet on the machine. Lens agents read the diff bundle and source files, and the developer sees no burst of test-runner or dev-server processes and no port collisions with their own running server.
-- **Should understand:** every lens, debate, refutation, and gap-sweep prompt carries the verbatim `READ-ONLY REVIEW:` line from `_shared/subagent-dispatch-core.md`'s Read-only Reviewer Discipline section. Running checks is `/claude-tweaks:test`'s job. The one sanctioned run is a single targeted test case, in the foreground, when lens 3f's Vacuity-evidence diagnostic needs execution evidence. A throwaway probe under the agent's `SCRATCH:` path is also fine.
-- **Red flags:** a lens agent's reply mentions "e2e: in-flight" or a backgrounded suite. A finding cites suite failures from the wrong harness (e.g. dev-build auth-gate failures under `next dev`). The rule appears inside the byte-pinned Calibration block.
+- **Should understand:** every lens, debate, refutation, and gap-sweep prompt carries the verbatim `READ-ONLY REVIEW:` line from `_shared/subagent-dispatch-core.md`'s Read-only Reviewer Discipline section. Running checks is `/claude-tweaks:test`'s job. The one sanctioned run is a single targeted test case, in the foreground, when lens 3f's Vacuity-evidence diagnostic needs execution evidence. A throwaway probe under the agent's `SCRATCH:` path is also fine. When that path lies outside the agent's worktree, the prompt tells the agent to write the probe one plain Bash command per call: `mkdir -p` on its own, then one `printf` redirect or `node -e` call, then `rm` on its own. It never uses a heredoc or an `&&` chain, because the harness guard refuses both by shape (#3519).
+- **Red flags:** a lens agent's reply mentions "e2e: in-flight" or a backgrounded suite. `friction-events.js` reports `wd-guard-refusal` events from lens probes written as `cat > … <<EOF` or `mkdir -p … && …`. A finding cites suite failures from the wrong harness (e.g. dev-build auth-gate failures under `next dev`). The rule appears inside the byte-pinned Calibration block.
 
 ### 2. Read the post-fan-out sweep's result — the review summary
 - **URL:** the review summary's `### Fan-out leftovers` section (full form), or `Fan-out leftovers 0` in the compact form
@@ -38,4 +39,5 @@ files:
 
 ## Origin
 - Created during build of #3001. A Fast-profile 3f Test Quality lens agent ran a project's full Playwright e2e suite in the background on the framework's default ports during the fan-out. It raced `/visual-review`'s ephemeral servers and reported wrong-harness failures, and the untracked-file sweep could not see the stray server. The fix added the Read-only Reviewer Discipline to the `review-dispatch` bundle and a report-only leftover-listener check to the post-fan-out sweep.
+- Updated during build of #3519. Lens probes on run 2026-10-17T214422-record-3020 followed the old `mkdir -p` + redirect/heredoc scratch recipe and were refused five times. The recipe is now a shell-shape-safe sequence at all four sites that state it.
 - Related journeys: `run-a-deterministic-verification-check.md` (where mechanical verification belongs instead).
