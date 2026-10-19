@@ -231,7 +231,7 @@ function mkClaimedMint(cwd, state = null) {
 test('fallback never selects a claim-log-only mint (decisions.md holds only the Step 2.8 claim line, no run-state.json) (#3363)', () => {
   const cwd = project();
   const real = mkRun(cwd, '2026-07-01T090000-real', { status: 'active' });
-  const mint = mkClaimedMint(cwd);
+  mkClaimedMint(cwd);
 
   assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir: real, attribution: 'fallback' });
   assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, null), { dir: real, attribution: 'fallback' });
@@ -239,7 +239,7 @@ test('fallback never selects a claim-log-only mint (decisions.md holds only the 
 
 test('a claim-log-only mint is the only run — resolves null (#3363)', () => {
   const cwd = project();
-  const mint = mkClaimedMint(cwd);
+  mkClaimedMint(cwd);
 
   assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir: null, attribution: null });
   assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, null), { dir: null, attribution: null });
@@ -257,8 +257,8 @@ test('AC1.1: a foreign session\'s hook event never lands in a claim-log-only min
 
 test('a claim line plus any other decisions.md content is adopted (#3363)', () => {
   const cwd = project();
-  const mint = mkRun(cwd, '2026-07-02T090000-mint', null);
-  fs.writeFileSync(path.join(mint, 'decisions.md'), CLAIM_ONLY + '- AUTO 18:43:00 — Manifesto: levers written. Reversibility: n/a.\n');
+  const mint = mkClaimedMint(cwd);
+  fs.appendFileSync(path.join(mint, 'decisions.md'), '- AUTO 18:43:00 — Manifesto: levers written. Reversibility: n/a.\n');
 
   assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir: mint, attribution: 'fallback' });
 });
