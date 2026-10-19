@@ -289,6 +289,11 @@ test('#3521: Step 3 item 1 states allow_auto_merge without branch protection sti
   assert.doesNotMatch(PRE_3521_ITEM_1, /`allow_auto_merge: true`/, 'pre-change text must NOT carry the allow_auto_merge sentence (proves the pin can go red) [IL-105]');
 });
 
+test('#3521: the token-alone match yields to item 3\'s and item 4\'s signatures', () => {
+  assert.match(item1Body(), /unless item 3's or item 4's signature is also present/);
+  assert.doesNotMatch(PRE_3521_ITEM_1, /unless item 3's or item 4's signature/, 'pre-change text must NOT carry the precedence clause (proves the pin can go red) [IL-105]');
+});
+
 test('/flow closing reports carry the release-status line verbatim (#678)', () => {
   const summary = read('plugin', 'skills', 'flow', 'summary-template.md');
   // The multi-spec closing template moved to multispec-summary.md in #724's

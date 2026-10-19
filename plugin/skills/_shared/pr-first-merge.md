@@ -325,8 +325,9 @@ the result:
    branch (enablePullRequestAutoMerge)`), or the looser paraphrase — `auto-merge` and
    (`not allowed` or `not enabled`) — for a differently-worded GitHub response to the same
    repository setting ("Allow auto-merge") being off. `enablePullRequestAutoMerge` alone in the
-   error text also matches: it is the arm mutation's name, which GitHub appends to every
-   arm-unavailable failure of an `--auto` call. `allow_auto_merge: true` alone, without
+   error text also matches, unless item 3's or item 4's signature is also present: it is the arm
+   mutation's name, which GitHub appends to every arm-unavailable failure of an `--auto` call.
+   `allow_auto_merge: true` alone, without
    branch protection or a ruleset on the base branch, still fails this way — the setting by
    itself does not make `--auto` armable (the Step 2.5 "Why `--auto` alone is not a wait"
    mechanism):
