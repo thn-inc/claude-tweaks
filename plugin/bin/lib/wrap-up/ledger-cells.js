@@ -3,7 +3,12 @@
 // cell boundary, so a ledger item whose text contains a literal `|` must not
 // split into extra cells. `splitLedgerRow` walks the row once, left to right,
 // and returns untrimmed segments such that `splitLedgerRow(row).join('|')`
-// reproduces `row` byte-for-byte.
+// reproduces `row` byte-for-byte. Two deliberate edges versus GFM proper: a
+// backslash consumes exactly the one character after it, so an escaped
+// backslash `\\` followed by `|` IS a cell boundary (cmark-gfm / GitHub treat
+// any `|` right after a backslash as literal); and a cell ending in a backslash
+// directly before the delimiter with no space (`C:\dir\|`) merges with the next
+// cell. Ledger writers pad cells with spaces, so the latter does not arise.
 'use strict';
 
 function splitLedgerRow(row) {

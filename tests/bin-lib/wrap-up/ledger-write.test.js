@@ -9,6 +9,7 @@ const path = require('node:path');
 const {
   TERMINAL_STATUSES, resolveLedgerPath, parseLedgerTable, flipLedgerRow,
 } = require('../../../plugin/bin/lib/wrap-up/ledger-write');
+const { splitLedgerRow } = require('../../../plugin/bin/lib/wrap-up/ledger-cells');
 
 const SAMPLE = [
   '# Open Items — Sample',
@@ -132,6 +133,13 @@ test('flipLedgerRow resolves a row whose Item holds an escaped pipe, touching on
   for (let i = 0; i < inLines.length; i += 1) {
     if (i !== 4) assert.strictEqual(outLines[i], inLines[i]);
   }
+});
+
+test('flipLedgerRow writes a resolution holding an escaped pipe as given (#3353)', () => {
+  const next = flipLedgerRow(SAMPLE, { item: 1, status: 'fixed', resolution: 'Fixed a \\| b' });
+  const row = next.split('\n')[4];
+  assert.ok(row.endsWith('| fixed | Fixed a \\| b |'), row);
+  assert.strictEqual(splitLedgerRow(row).length, 7);
 });
 
 test('TERMINAL_STATUSES matches ledger-format.md\'s closed five-value enum', () => {

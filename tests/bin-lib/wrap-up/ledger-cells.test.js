@@ -22,6 +22,13 @@ test('splitLedgerRow splits after an escaped backslash', () => {
   );
 });
 
+test('splitLedgerRow treats a backslash before an ordinary character as a literal pair', () => {
+  assert.deepStrictEqual(
+    splitLedgerRow('| a\\x| b |'),
+    ['', ' a\\x', ' b ', ''],
+  );
+});
+
 test('splitLedgerRow keeps a trailing lone backslash', () => {
   assert.deepStrictEqual(
     splitLedgerRow('| a \\'),
