@@ -417,3 +417,26 @@ test('AC6.1: an unresolvable checkout root degrades premise to null without thro
     });
   }
 });
+
+test('resolveCheckoutRoot resolves from the cwd it is given, not the process cwd', () => {
+  const repo = gitRepo();
+  const other = gitRepo();
+  fs.mkdirSync(path.join(repo, 'sub'));
+  withCwd(other, () => {
+    assert.strictEqual(fs.realpathSync(resolveCheckoutRoot(path.join(repo, 'sub'))), fs.realpathSync(repo));
+  });
+});
+
+test('computePremise asks checkoutRoot for the injected cwd', () => {
+  const repo = gitRepo();
+  withCwd(repo, () => {
+    const seen = [];
+    const deps = fakeDeps(repo, {
+      body: shapedBodyWithPremiseCheck('some-command'),
+      checkoutRoot: (c) => { seen.push(c); return repo; },
+      runPremiseCheck: () => 0,
+    });
+    run(['1829', '--run-dir', runDirFor(repo), '--repo', 'owner/repo'], deps);
+    assert.deepStrictEqual(seen, [deps.cwd()]);
+  });
+});

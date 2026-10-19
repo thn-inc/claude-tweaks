@@ -112,6 +112,11 @@ function buildPremiseCheck(finding, targetPath, root) {
 // stay shell-free.
 // options.repoRoot (#2975, optional): the repo root finding.path is made
 // relative to for the `### Key Files` entry (see keyFiles below).
+// options.premiseRoot (#2857, optional): the git top-level of the sweep root,
+// the directory materialize.js runs the Premise-check: command from; an
+// in-root finding.path is composed repo-relative to it. Absent (not a git
+// repo), the Premise-check: path stays absolute — the fail-safe. Distinct
+// from repoRoot, which feeds only keyFiles.
 function toIssuePayload(finding, verifiedAsOf, pluginVersion, options = {}) {
   const isNewSkill = finding.kind === 'new-skill';
   const assetLabel = ASSET_TYPE_LABELS[finding.assetType] || finding.assetType;
@@ -154,7 +159,7 @@ function toIssuePayload(finding, verifiedAsOf, pluginVersion, options = {}) {
   // no section to bundle by, so finding.relatedSections is always absent there.
   const relatedBlocks = buildRelatedBlocks(finding.relatedSections);
 
-  let premiseCheck = buildPremiseCheck(finding, finding.path, options.repoRoot);
+  let premiseCheck = buildPremiseCheck(finding, finding.path, options.premiseRoot);
   if (premiseCheck && options.premiseSelfCheck && !options.premiseSelfCheck(premiseCheck)) {
     premiseCheck = undefined;
   }

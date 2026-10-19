@@ -545,8 +545,12 @@ test('an in-root file whose name starts with .. is still relative', () => {
 test('a target equal to the root keeps its absolute path', () => {
   assert.strictEqual(buildPremiseCheck({ kind: 'patch', newString: 'X' }, '/repo', '/repo'), "! grep -qF -- 'X' '/repo'");
 });
-test('AC1.1: toIssuePayload threads options.repoRoot into the Premise-check line', () => {
-  const payload = toIssuePayload(patchFinding({ path: '/repo/.claude/skills/auth.md' }), undefined, undefined, { repoRoot: '/repo' });
+test('AC1.1: toIssuePayload threads options.premiseRoot into the Premise-check line', () => {
+  const payload = toIssuePayload(patchFinding({ path: '/repo/.claude/skills/auth.md' }), undefined, undefined, { premiseRoot: '/repo' });
   assert.match(payload.body, /^Premise-check: ! grep -qF -- '.*' '\.claude\/skills\/auth\.md'$/m);
   assert.ok(!payload.body.includes("'/repo/.claude"), 'no absolute path in the line');
+});
+test('options.repoRoot alone does not relativize the Premise-check path (it feeds Key Files only)', () => {
+  const payload = toIssuePayload(patchFinding({ path: '/repo/.claude/skills/auth.md' }), undefined, undefined, { repoRoot: '/repo' });
+  assert.ok(payload.body.includes("'/repo/.claude/skills/auth.md'"), 'absolute path stays in the Premise-check line');
 });

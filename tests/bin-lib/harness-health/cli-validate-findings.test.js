@@ -395,6 +395,9 @@ test('validate-findings: a real run still succeeds and emits its payload when du
 
 test('validate-findings: a patch finding against a real target file carries a Premise-check: line resolvable to that file', () => {
   const root = tmp();
+  // The Premise-check: path is composed relative to the git top-level (#2857),
+  // so the sweep root must be a git repo — no commit needed for rev-parse.
+  execFileSync('git', ['init', '-q'], { cwd: root });
   fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth\n\nSee `src/auth/login.js`.\n');
   const findingsFile = path.join(root, 'findings.json');
@@ -411,6 +414,89 @@ test('validate-findings: a patch finding against a real target file carries a Pr
   const premiseLine = payloads[0].body.split('\n').find((l) => l.startsWith('Premise-check:'));
   assert.ok(!premiseLine.includes(root), `the Premise-check: line must not carry the absolute root, got: ${premiseLine}`);
   assert.ok(!result.stderr.includes('dropped Premise-check:'), `a kept line must not log a drop, got:\n${result.stderr}`);
+});
+
+// #2857 final review: the Premise-check: path is composed from the git
+// top-level of --root (where materialize.js runs it), not from --root itself.
+function premiseLineOf(payload) {
+  return payload.body.split('\n').find((l) => l.startsWith('Premise-check:'));
+}
+
+test('validate-findings: --root a subdirectory of a git repo composes the Premise-check: path relative to the git top-level', () => {
+  const top = tmp();
+  execFileSync('git', ['init', '-q'], { cwd: top });
+  const sub = path.join(top, 'packages', 'app');
+  fs.mkdirSync(path.join(sub, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(sub, '.claude', 'skills', 'auth.md'), '# auth\n\nSee `src/auth/login.js`.\n');
+  const findingsFile = path.join(top, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
+
+  const result = runValidateFindings(sub, findingsFile, ['--target', 'auth', '--kind', 'skill']);
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const [payload] = JSON.parse(result.stdout);
+  const line = premiseLineOf(payload);
+  assert.ok(line, `expected a Premise-check: line, got body:\n${payload.body}`);
+  assert.ok(line.includes("'packages/app/.claude/skills/auth.md'"), `expected the top-level-relative path, got: ${line}`);
+  // Run the way materialize does (cwd = git top-level): the anchor is absent, so exit 0 = unresolved.
+  const command = line.slice('Premise-check:'.length).trim();
+  const run = spawnSync('/bin/sh', ['-c', command], { cwd: top, encoding: 'utf8' });
+  assert.strictEqual(run.status, 0, `command must read unresolved from the git top-level, stderr: ${run.stderr}`);
+});
+
+test('validate-findings: --root a git subdirectory, removal polarity: a still-present old string in the subdir CLAUDE.md never reads resolved from the git top-level', () => {
+  const top = tmp();
+  execFileSync('git', ['init', '-q'], { cwd: top });
+  // The top-level CLAUDE.md lacks the string; only packages/app/CLAUDE.md still has it.
+  fs.writeFileSync(path.join(top, 'CLAUDE.md'), '# top\nunrelated\n');
+  const sub = path.join(top, 'packages', 'app');
+  fs.mkdirSync(sub, { recursive: true });
+  fs.writeFileSync(path.join(sub, 'CLAUDE.md'), '# app\nDEAD-RULE still here\n');
+  const findingsFile = path.join(top, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding({
+    assetType: 'claude-md', target: 'CLAUDE', classification: 'restructural',
+    intent: 'remove', oldString: 'DEAD-RULE', newString: '',
+  })]));
+
+  const result = runValidateFindings(sub, findingsFile, ['--target', 'CLAUDE', '--kind', 'claude-md']);
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const [payload] = JSON.parse(result.stdout);
+  const line = premiseLineOf(payload);
+  assert.ok(line, `the still-present removal must keep its Premise-check: line, got body:\n${payload.body}`);
+  assert.ok(line.includes("'packages/app/CLAUDE.md'"), `expected the top-level-relative path, got: ${line}`);
+  const command = line.slice('Premise-check:'.length).trim();
+  const run = spawnSync('/bin/sh', ['-c', command], { cwd: top, encoding: 'utf8' });
+  assert.strictEqual(run.status, 0, `work is not done, so the command must exit 0 (unresolved), stderr: ${run.stderr}`);
+});
+
+test('validate-findings: a non-git --root composes the absolute target path (the fail-safe)', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'skills', 'auth.md'), '# auth\n\nSee `src/auth/login.js`.\n');
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding()]));
+
+  const result = runValidateFindings(root, findingsFile, ['--target', 'auth', '--kind', 'skill']);
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const [payload] = JSON.parse(result.stdout);
+  const line = premiseLineOf(payload);
+  assert.ok(line, `expected a Premise-check: line, got body:\n${payload.body}`);
+  assert.ok(
+    line.includes(path.join(root, '.claude', 'skills', 'auth.md')),
+    `no git top-level means the fail-safe absolute path, got: ${line}`,
+  );
+});
+
+// The sweep's stderr as a whole is no place to assert git silence: other,
+// older git calls on a non-git --root (durable-state fetch, read-commit)
+// legitimately log. So the premise-root probe is checked on its own, in a
+// child process whose stderr is captured.
+test('resolvePremiseRoot: undefined for a non-git root, and git writes nothing to stderr', () => {
+  const root = tmp();
+  const script = `const r = require(${JSON.stringify(CLI)}).resolvePremiseRoot(${JSON.stringify(root)}); process.stdout.write(String(r));`;
+  const result = spawnSync('node', ['-e', script], { encoding: 'utf8' });
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  assert.strictEqual(result.stdout, 'undefined');
+  assert.strictEqual(result.stderr, '', 'git\'s "not a git repository" must not leak');
 });
 
 test('validate-findings: a patch finding against a real target file carries that file, repo-relative, under ### Key Files (repoRoot is wired through)', () => {

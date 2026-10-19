@@ -118,9 +118,12 @@ const SIBLING_PREMISE_SEARCH_TIMEOUT_MS = GH_TIMEOUT_MS;
 // composed with a repo-relative path only means the same thing on every
 // machine when run from here, whatever directory this CLI was started in.
 // Throws when cwd is not inside a git work tree — computePremise degrades
-// that to premise: null.
-function resolveCheckoutRoot() {
-  return String(execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', windowsHide: true })).trim();
+// that to premise: null. git's stderr is silenced so the "not a git
+// repository" fatal never leaks before that degrade.
+function resolveCheckoutRoot(cwd) {
+  return String(execFileSync('git', ['rev-parse', '--show-toplevel'], {
+    encoding: 'utf8', windowsHide: true, cwd, stdio: ['ignore', 'pipe', 'ignore'],
+  })).trim();
 }
 
 // command, { cwd } -> exit code, run from the checkout root (cwd — see
@@ -148,7 +151,7 @@ function computePremise(command, deps) {
   if (!command) return null;
   let exit;
   try {
-    const cwd = deps.checkoutRoot();
+    const cwd = deps.checkoutRoot(deps.cwd());
     if (!cwd) return null;
     exit = deps.runPremiseCheck(command, { cwd });
   } catch {

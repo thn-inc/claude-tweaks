@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 const fs = require('fs');
+const { execFileSync } = require('child_process');
 const path = require('path');
 const { fingerprint } = require('./lib/harness-health/fingerprint');
 const {
@@ -162,10 +163,31 @@ function cmdNextTarget(args) {
   process.stdout.write(JSON.stringify({ targets, gapScanDue }, null, 2) + '\n');
 }
 
+// The directory a Premise-check: command is composed against and self-checked
+// from (#2857): the git top-level of `root`, because materialize.js runs the
+// command from `git rev-parse --show-toplevel`, not from the sweep's --root.
+// Re-expressed in `root`'s own path spelling (git returns a realpath, e.g.
+// /private/var/... on macOS, while root and the resolved target path may be
+// spelled /var/...) so an in-root target stays in-root. undefined on any
+// failure (not a git repo, git missing, realpath error) — the caller then
+// composes the absolute target path, the fail-safe.
+function resolvePremiseRoot(root) {
+  try {
+    const gitTop = String(execFileSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
+    })).trim();
+    if (!gitTop) return undefined;
+    return path.resolve(root, path.relative(fs.realpathSync(root), gitTop));
+  } catch {
+    return undefined;
+  }
+}
+
 function cmdValidateFindings(args) {
   // Absolute, so a relative --root can't leave the resolved target path
   // relative to this process's cwd while the Premise-check self-check runs
-  // with cwd: root (#2633 review follow-up).
+  // (#2633 review follow-up), and because the repo-relative Premise-check
+  // path is computed from the git top-level of this absolute root (#2857).
   const root = path.resolve(args.root || process.cwd());
   const findingsPath = args._[1];
   if (!findingsPath) {
@@ -282,10 +304,14 @@ function cmdValidateFindings(args) {
   // materialize. Only this CLI injects the real shell runner; toIssuePayload
   // itself never spawns one. A drop is logged, like every other soft-drop in
   // this command, so a missing line is diagnosable from the sweep's stderr.
+  // #2857: composed against, and self-checked from, the git top-level —
+  // where materialize.js runs the command. Resolved once per run.
+  const premiseRoot = resolvePremiseRoot(root);
   const toIssuePayloadSelfChecked = (finding, v, p) => toIssuePayload(finding, v, p, {
     repoRoot: root,
+    premiseRoot,
     premiseSelfCheck: (command) => {
-      const keep = premiseReadsUnresolved(command, { root });
+      const keep = premiseReadsUnresolved(command, { root: premiseRoot || root });
       if (!keep) {
         process.stderr.write(
           `[harness-health] validate-findings: dropped Premise-check: line for finding ${finding.id} — the command does not read "unresolved" at filing time (non-zero exit, timeout, or spawn error)\n`,
@@ -383,5 +409,5 @@ function main(argv) {
 if (require.main === module) main(process.argv.slice(2));
 
 module.exports = {
-  parseArgs, cmdNextTarget, cmdValidateFindings, cmdPushCursor, cmdChurnReport, cmdMark, cmdStatus, CONFIDENCE_RANK, main,
+  parseArgs, cmdNextTarget, cmdValidateFindings, cmdPushCursor, cmdChurnReport, cmdMark, cmdStatus, CONFIDENCE_RANK, main, resolvePremiseRoot,
 };
