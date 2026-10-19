@@ -4,8 +4,10 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
+const { TIERS, ROLE_PATTERNS } = require('../plugin/bin/lib/timing/derive.js');
 const ROOT = path.join(__dirname, '..');
 const read = (p) => readText(path.join(ROOT, p));
+const CONTRACT = 'plugin/skills/_shared/timing-render.md';
 
 test('#1928: multi-spec.md cites the run-dir layout sub-file', () => {
   const ms = read('plugin/skills/flow/multi-spec.md');
@@ -117,4 +119,71 @@ test('#3375 M3: docs and the verification brief name the Dispatches section', ()
   assert.match(ps, /^plugin\/bin\/lib\/timing\/ [^\n]*readDispatches[^\n]*aggregateDispatches/m);
   assert.match(ps, /^node plugin\/bin\/phase-timing\.js --run <dir>[^\n]*Dispatches/m);
   assert.match(read('plugin/skills/wrap-up/verification-brief.md'), /`tokens: transcript not found \(\.\.\.\)` line[^\n]*Dispatches/);
+});
+
+// #3413: the Timing render contract. The tier and role vocabularies are parsed out of the
+// contract's Dispatches paragraph and compared as Sets against derive.js's exports.
+function contractTiers(text) {
+  const start = text.indexOf('one by model tier (');
+  const end = text.indexOf('), one by role', start);
+  if (start < 0 || end < 0) return [];
+  return [...text.slice(start, end).matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+}
+function contractRoles(text) {
+  const open = 'one by role (';
+  const start = text.indexOf(open);
+  const end = text.indexOf(')', start);
+  if (start < 0 || end < 0) return [];
+  return text.slice(start + open.length, end).split(', ').map((s) => s.trim());
+}
+function assertVocabMatches(text, tiers, roles) {
+  const ct = contractTiers(text);
+  const cr = contractRoles(text);
+  assert.ok(ct.length > 0, 'contract tier list parsed');
+  assert.ok(cr.length > 0, 'contract role list parsed');
+  assert.deepStrictEqual(new Set(ct), new Set(tiers), 'contract tier set');
+  assert.deepStrictEqual(new Set(cr), new Set(roles), 'contract role set');
+}
+
+test('#3413 AC2: the timing-render contract carries the phase-table and Dispatches render rules', () => {
+  const t = read(CONTRACT);
+  const checks = [
+    [/\| Tier \| Dispatches \| Agent-seconds \| Elapsed \(min\) \| Tokens \(in\/out\) \| Cache \(read\/create\) \|/, 'tier header'],
+    [/\| Role \| Dispatches \| Agent-seconds \| Elapsed \(min\) \| Tokens \(in\/out\) \| Cache \(read\/create\) \|/, 'role header'],
+    [/dispatches: subagent transcripts not found/, 'not-found line'],
+    [/`Dispatches \(\{run window \| whole session — no run events\}; …\):` line heads the tables/, 'scope line'],
+    [/`dispatch agent-\{id\}: ` followed by `transcript not found \(\.\.\.\)`/, 'per-dispatch line'],
+    [/`dispatches: \{n\} outside the run window excluded`/, 'excluded line'],
+    [/not comparable to phase minutes/, 'comparability (minutes)'],
+    [/never summed with the phase table/, 'comparability (tokens)'],
+    [/rendered verbatim below the `Tokens \(in\/out\)` footnote that follows the Guard denials line/, 'placement'],
+    [/`tokens: transcript not found/, 'token note line'],
+    [/\| Phase \| Minutes \| Verify \|/, 'phase table header'],
+    [/^Guard denials: /m, 'guard denials line'],
+    [/\(below the phase rows, above `total`\)/, 'normalized unattributed placement'],
+  ];
+  for (const [re, msg] of checks) assert.match(t, re, `${CONTRACT}: ${msg}`);
+  assert.doesNotMatch(t, /rendered verbatim below the Guard denials line/, `${CONTRACT}: stale placement`);
+  assert.doesNotMatch(t, /`total`'s neighbor rows/, `${CONTRACT}: stale unattributed placement`);
+  assert.match(t, /\*\*Archive-path rule\.\*\*[^\n]*archive\/\{run-id\}\//, `${CONTRACT}: archive rule`);
+  const header = t.slice(0, t.indexOf('## Phase table'));
+  assert.match(header, /wrap-up\/summary-template\.md/, `${CONTRACT}: header names wrap-up template`);
+  assert.match(header, /flow\/summary-template\.md/, `${CONTRACT}: header names flow template`);
+  assert.match(header, /flow\/multispec-summary\.md/, `${CONTRACT}: header names multi-spec template`);
+});
+
+test('#3413 AC4: the contract\'s tier and role sets equal derive.js TIERS and ROLE_PATTERNS', () => {
+  const roles = [...ROLE_PATTERNS.map((p) => p.role), 'unlabelled'];
+  const original = read(CONTRACT);
+  assertVocabMatches(original, TIERS, roles);
+
+  const noFrontierTier = original.replace('`capable`, ', '');
+  assert.notEqual(noFrontierTier, original, 'control mutation applied: `capable`, removed');
+  assert.throws(() => assertVocabMatches(noFrontierTier, TIERS, roles), { message: /contract tier set/ });
+
+  const noLensRole = original.replace(', lens reviewer', '');
+  assert.notEqual(noLensRole, original, 'control mutation applied: lens reviewer removed');
+  assert.throws(() => assertVocabMatches(noLensRole, TIERS, roles), { message: /contract role set/ });
+
+  assert.throws(() => assertVocabMatches(original, [...TIERS, 'ultra'], roles), { message: /contract tier set/ });
 });
