@@ -298,8 +298,9 @@ gh pr merge {pr-number} --repo {owner}/{repo} --auto --squash -t {title-arg} --b
 
 Run each fence as its own Bash call, never chained; if the composer exits non-zero, stop before any
 merge (its stderr names the reason). `{subject-dir}` is a literal path — resolve it once with
-`node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" SUBJECT_DIR=merge-subject-{pr-number}`
-(session-scoped, `_shared/session-tmp-root.md`) and paste the printed path. `{title-arg}` is the
+`node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" SUBJECT_DIR=merge-subject-{key}`
+(`{key}` is `{pr-number}` at a pr-first fence, the subject `{issue}` at a local-merge fence; session-scoped,
+`_shared/session-tmp-root.md`) and paste the path inside the printed `SUBJECT_DIR="…"` quotes. `{title-arg}` is the
 composer's one stdout line pasted verbatim — already POSIX single-quoted, so a `$(…)`, backtick, or
 `'` in the title stays inert. Why: the worktree Bash guard refuses `eval` and a `gh` argument computed
 at runtime, and every pr-first merge runs from a worktree session (#3522).
