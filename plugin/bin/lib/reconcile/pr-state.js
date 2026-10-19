@@ -181,10 +181,12 @@ function prNotFoundProbeArgs(repoRoot, number) {
   // confirm could target a different repo: worst case a false pr-not-found
   // escalation, never a wrong archive or release.
   // -f for the String! variables, -F only for the Int! number (#610's shipped bug shape)
-  return ['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${String(number)}`, '-f', `query=${PR_NOT_FOUND_QUERY}`];
+  return ['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`, '-f', `query=${PR_NOT_FOUND_QUERY}`];
 }
 
-const probeBodyOf = (e) => (e && e.stdout) || '';
+function probeBodyOf(e) {
+  return (e && e.stdout) || '';
+}
 
 function confirmPrNotFound(repoRoot, number) {
   const args = prNotFoundProbeArgs(repoRoot, number);

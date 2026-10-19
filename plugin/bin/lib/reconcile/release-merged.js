@@ -113,8 +113,8 @@ function decideRelease(classifiedState, prState, issueState, closesIssue) {
 // (`closesIssue` false or unknown: the issue's own state is the only remaining
 // release evidence, #3412). Everything else (OPEN, MERGED + closesIssue true,
 // gh-absent, network-failure, invalid-arguments, pr-not-found) is decided
-// without an issue lookup, so this is
-// what gates the extra gh api call at the call site.
+// without an issue lookup, so this is what gates the extra gh api call at the
+// call site.
 function needsIssueEvidence(prState, closesIssue) {
   if (prState === null) return true;
   if (typeof prState !== 'object') return false;
