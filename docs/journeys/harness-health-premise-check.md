@@ -4,6 +4,7 @@ files:
   - plugin/bin/lib/harness-health/issue-payload.js
   - plugin/bin/lib/harness-health/scope.js
   - plugin/bin/lib/health-core/premise-self-check.js
+  - plugin/bin/materialize.js
   - plugin/skills/harness-health/SKILL.md
 ---
 
@@ -25,7 +26,7 @@ files:
 
 ### 2. A patch finding's `Premise-check:` command is composed
 - **URL:** N/A
-- **Action:** `toIssuePayload` calls `buildPremiseCheck(finding, finding.path)`. An additive finding (proposing new/replacement text) gets `! grep -qF -- '<newString>' '<path>'` — exits 0 while the string is absent (unresolved), non-zero once present (resolved). A removal finding (`intent: "remove"`) gets the mirrored `! test -r '<path>' || grep -qF -- '<oldString>' '<path>'` — exits 0 while the old string is still present *or* the file can't be read (both read as "unresolved"), non-zero only once the string is genuinely gone.
+- **Action:** `toIssuePayload` calls `buildPremiseCheck(finding, finding.path, premiseRoot)`, where `premiseRoot` is the git top-level of the absolute `--root` (spelled in `--root`'s own path form). A target inside it is written as a repo-relative POSIX path (`.claude/skills/auth.md`); a target outside it (a `--memory-dir` memory file), or any target when `--root` isn't in a git checkout, keeps its absolute path. An additive finding (proposing new/replacement text) gets `! grep -qF -- '<newString>' '<path>'` — exits 0 while the string is absent (unresolved), non-zero once present (resolved). A removal finding (`intent: "remove"`) gets the mirrored `! test -r '<path>' || grep -qF -- '<oldString>' '<path>'` — exits 0 while the old string is still present *or* the file can't be read (both read as "unresolved"), non-zero only once the string is genuinely gone.
 - **Should feel:** Exact — the composed command is a real, safe shell command, not a description of one.
 - **Should understand:** Every interpolated value (the anchor string, the path) is single-quote-escaped (`shQuote`), and `grep -F --` prevents both shell injection and a leading-dash anchor being read as a flag.
 - **Check:** for a hand-built finding, run the composed `Premise-check:` command's text directly (`sh -c '<command>'; echo $?`) against the actual target file and confirm the exit code matches the finding's real resolved/unresolved state.
@@ -33,11 +34,11 @@ files:
 
 ### 3. The composed command is self-checked once, at filing time
 - **URL:** N/A (`validate-findings` injects `health-core/premise-self-check.js`'s `premiseReadsUnresolved` into `toIssuePayload`)
-- **Action:** Before the issue body is composed, the CLI runs the command from step 2 once via `/bin/sh -c` from `--root`, with the same 5 s bound `materialize.js` uses. Exit 0 ("still unresolved") keeps the line exactly as composed; a non-zero exit, a timeout, or a spawn error drops it.
+- **Action:** Before the issue body is composed, the CLI runs the command from step 2 once via `/bin/sh -c` from the git top-level of `--root` (the same directory `materialize.js` will run it from; `--root` itself when it isn't in a git checkout), with the same 5 s bound `materialize.js` uses. Exit 0 ("still unresolved") keeps the line exactly as composed; a non-zero exit, a timeout, or a spawn error drops it.
 - **Should feel:** Invisible when the finding is genuine; a quiet guard when it isn't — a finding whose proposed text already appears in the target file (a short, generic anchor) is filed without a `Premise-check:` line instead of auto-closing on its very first materialize.
 - **Should understand:** The drop always errs toward "no auto-close" — losing the line only costs the automatic close-detection for that one record, while keeping a line that already reads "resolved" would close a finding whose work was never done. `buildPremiseCheck` itself stays pure; only the CLI injects the real shell runner, so `toIssuePayload`'s own unit tests never spawn a shell.
 - **Check:** file a finding whose `newString` already exists in the target skill file and confirm the emitted payload body has no `Premise-check:` line; a finding whose `newString` is absent still carries the line byte-for-byte. A dropped line is never silent on the sweep's own terminal: `validate-findings` writes one stderr line per drop, `[harness-health] validate-findings: dropped Premise-check: line for finding {id} — the command does not read "unresolved" at filing time (non-zero exit, timeout, or spawn error)` — the first place to look when a filed issue is missing its `Premise-check:` line.
-- **Red flags:** A kept line for an in-repo target whose path is absolute (it must be repo-relative, so it resolves from any checkout root), or for an out-of-repo target (a `--memory-dir` memory file) whose path is relative. `validate-findings` resolves `--root` to an absolute path first (the relative path is computed against it), so a relative `--root` can't leave the self-check (run with `cwd: --root`) reading the wrong file. Every other health skill still files without this step, since none composes a `Premise-check:` line.
+- **Red flags:** A kept line for an in-repo target whose path is absolute (it must be repo-relative, so it resolves from any checkout root), or for an out-of-repo target (a `--memory-dir` memory file) whose path is relative. A sweep run with `--root` set to a subdirectory of the repo must still compose the path relative to the git top-level (`packages/app/CLAUDE.md`, not `CLAUDE.md`) — otherwise materialize reads the top-level file and can falsely report "resolved". `validate-findings` resolves `--root` to an absolute path first, so a relative `--root` can't misanchor either the composed path or the self-check. Every other health skill still files without this step, since none composes a `Premise-check:` line.
 
 ### 4. The issue is filed with (or without) the line
 - **URL:** N/A
@@ -58,3 +59,4 @@ files:
 - All 4 steps built in this session, including a whole-branch-review fix wave (cross-target anchoring guard, fail-safe removal check on an unreadable target, `--memory-dir` wiring)
 - Related: #1829 (the underlying premise-check machinery, first shipped for `claude-md-curation.md`)
 - Updated during build of #2633: added step 3 (filing-time self-check via `health-core/premise-self-check.js`) and renumbered the filing/build steps to 4-5
+- Updated during build of #2857: steps 2, 3 and 5 now describe portable paths — in-repo targets relative to the git top-level of `--root`, the self-check and `materialize.js` both running from that top-level, and the old cross-machine inertness caveat removed
