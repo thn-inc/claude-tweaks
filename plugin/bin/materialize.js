@@ -114,21 +114,31 @@ const AUTHOR_ASSOCIATION_TIMEOUT_MS = GH_TIMEOUT_MS;
 // on a black-holed network (see .claude/skills/gh-api-module-pattern).
 const SIBLING_PREMISE_SEARCH_TIMEOUT_MS = GH_TIMEOUT_MS;
 
-// command -> exit code, run from the checkout root. Shares health-core's
-// runner and 5 s bound with the filing-time self-check (#2633), so a
-// command is read here exactly the way it was read before filing. A
-// non-zero exit is a normal outcome; no exit code at all (ENOENT on
-// /bin/sh, a timeout) re-throws for computePremise's own catch to degrade
-// to null.
-function runPremiseCheckDefault(command) {
-  return runPremiseCommand(command, { timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS });
+// The checkout root the Premise-check: command runs from (#2857): a command
+// composed with a repo-relative path only means the same thing on every
+// machine when run from here, whatever directory this CLI was started in.
+// Throws when cwd is not inside a git work tree — computePremise degrades
+// that to premise: null.
+function resolveCheckoutRoot() {
+  return String(execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', windowsHide: true })).trim();
+}
+
+// command, { cwd } -> exit code, run from the checkout root (cwd — see
+// resolveCheckoutRoot). Shares health-core's runner and 5 s bound with the
+// filing-time self-check (#2633), so a command is read here exactly the way
+// it was read before filing. A non-zero exit is a normal outcome; no exit
+// code at all (ENOENT on /bin/sh, a timeout) re-throws for computePremise's
+// own catch to degrade to null.
+function runPremiseCheckDefault(command, { cwd } = {}) {
+  return runPremiseCommand(command, { cwd, timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS });
 }
 
 // command -> { command, exit, satisfiedAtBase } | null. null means "no
 // Premise-check: line" (the common case — every existing record behaves
 // byte-identically) OR "the command could not be run at all" (mirrors
 // computeDrift's own degrade-to-null-on-throw posture above — a hostile or
-// broken command must never crash materialize). satisfiedAtBase is true
+// broken command must never crash materialize; an unresolvable checkout
+// root degrades the same way, without running the command). satisfiedAtBase is true
 // when the command exits NON-zero: per specShapedBody's premiseCheck
 // contract, the command is written to exit 0 while the premise (the
 // record's Current State claim) still holds, so a non-zero exit means the
@@ -138,7 +148,9 @@ function computePremise(command, deps) {
   if (!command) return null;
   let exit;
   try {
-    exit = deps.runPremiseCheck(command);
+    const cwd = deps.checkoutRoot();
+    if (!cwd) return null;
+    exit = deps.runPremiseCheck(command, { cwd });
   } catch {
     return null;
   }
@@ -201,7 +213,9 @@ const realDeps = {
   // HEAD, and that commit's own date — both scoped to computeDrift above.
   gitRevListCount: (sha) => execFileSync('git', ['rev-list', '--count', `${sha}..HEAD`], { encoding: 'utf8', windowsHide: true }),
   gitCommitDate: (sha) => execFileSync('git', ['show', '-s', '--format=%cI', sha], { encoding: 'utf8', windowsHide: true }),
-  // #1829: the Premise-check: command, run from the checkout root.
+  // #1829: the Premise-check: command, run from the checkout root (#2857:
+  // resolved by checkoutRoot and handed to the runner as its cwd).
+  checkoutRoot: resolveCheckoutRoot,
   runPremiseCheck: runPremiseCheckDefault,
   cwd: () => process.cwd(),
   mainRoot: (cwd) => wtDetect.mainCheckoutRoot(cwd),
@@ -575,6 +589,8 @@ function run(argv, deps = realDeps) {
   return 0;
 }
 
-module.exports = { run, parseArgs, parseRepo };
+module.exports = {
+  run, parseArgs, parseRepo, runPremiseCheckDefault, resolveCheckoutRoot,
+};
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

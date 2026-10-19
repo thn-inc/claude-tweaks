@@ -16,7 +16,8 @@ const fs = require('fs');
 const path = require('path');
 const { gitRepo } = require('./helpers/git-fixtures');
 const wtDetect = require('../plugin/bin/lib/hooks/worktree-detect');
-const { run } = require('../plugin/bin/materialize');
+const { run, runPremiseCheckDefault, resolveCheckoutRoot } = require('../plugin/bin/materialize');
+const { buildPremiseCheck } = require('../plugin/bin/lib/harness-health/issue-payload');
 
 const SHAPED_BODY_NO_PREMISE_CHECK = [
   'Surface: backend',
@@ -59,7 +60,9 @@ function withCwd(dir, fn) {
   try { return fn(); } finally { process.chdir(prev); }
 }
 
-function fakeDeps(root, { body, runPremiseCheck, authorAssociation = 'OWNER' }) {
+function fakeDeps(root, {
+  body, runPremiseCheck, authorAssociation = 'OWNER', checkoutRoot = () => root,
+}) {
   const stdout = [];
   const stderr = [];
   return {
@@ -92,6 +95,7 @@ function fakeDeps(root, { body, runPremiseCheck, authorAssociation = 'OWNER' }) 
     gitRevListCount: () => { throw new Error('gitRevListCount should not be called — no Verified-as-of stamp on this record'); },
     gitCommitDate: () => { throw new Error('gitCommitDate should not be called — no Verified-as-of stamp on this record'); },
     runPremiseCheck: runPremiseCheck || (() => { throw new Error('runPremiseCheck should not be called — no Premise-check: line on this record'); }),
+    checkoutRoot,
   };
 }
 
@@ -293,6 +297,7 @@ test('premise (security gate): --record-json path trusts the command only when t
       stdout: (s) => stdout.push(s),
       stderr: (s) => stderr.push(s),
       runPremiseCheck: () => 0,
+      checkoutRoot: () => repo,
     };
     const runDir = runDirFor(repo);
     const exitCode = run(['1829', '--run-dir', runDir, '--record-json', recordJsonPath], deps);
@@ -330,6 +335,7 @@ test('premise (security gate): --record-json path with no authorAssociation fiel
       stdout: (s) => stdout.push(s),
       stderr: (s) => stderr.push(s),
       runPremiseCheck: () => { throw new Error('runPremiseCheck should not be called — no authorAssociation field supplied'); },
+      checkoutRoot: () => repo,
     };
     const runDir = runDirFor(repo);
     const exitCode = run(['1829', '--run-dir', runDir, '--record-json', recordJsonPath], deps);
@@ -338,4 +344,76 @@ test('premise (security gate): --record-json path with no authorAssociation fiel
     assert.strictEqual(envelope.premise, null);
     assert.match(stderr[0], /not trusted — skipping/);
   });
+});
+
+// #2857: the command is composed with repo-relative paths, so it only means
+// the same thing when run from the building checkout's root — whatever
+// directory materialize.js itself was started in.
+test('premise: the runner receives the resolved checkout root as cwd', () => {
+  const repo = gitRepo();
+  withCwd(repo, () => {
+    const seen = [];
+    const deps = fakeDeps(repo, {
+      body: shapedBodyWithPremiseCheck('true'),
+      runPremiseCheck: (c, o) => { seen.push(o); return 0; },
+    });
+    const exitCode = run(['1829', '--run-dir', runDirFor(repo), '--repo', 'owner/repo'], deps);
+    assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+    assert.deepStrictEqual(seen, [{ cwd: repo }]);
+  });
+});
+
+test('AC5.1: a command composed under root A reads unresolved from checkout B until B\'s file carries the anchor, then resolved', () => {
+  const A = fs.mkdtempSync(path.join(require('os').tmpdir(), 'premise-root-a-'));
+  const command = buildPremiseCheck(
+    { kind: 'patch', newString: 'ANCHOR-2857' },
+    path.join(A, '.claude', 'skills', 'auth.md'),
+    A,
+  );
+  assert.ok(!command.includes(A), 'the composed command carries no machine-specific absolute path');
+  const B = gitRepo();
+  fs.mkdirSync(path.join(B, '.claude', 'skills'), { recursive: true });
+  fs.mkdirSync(path.join(B, 'sub'));
+  const target = path.join(B, '.claude', 'skills', 'auth.md');
+  fs.writeFileSync(target, 'no anchor here\n');
+  const runFromSub = (runDir) => withCwd(path.join(B, 'sub'), () => {
+    const deps = fakeDeps(B, {
+      body: shapedBodyWithPremiseCheck(command),
+      runPremiseCheck: runPremiseCheckDefault,
+      checkoutRoot: resolveCheckoutRoot,
+    });
+    const exitCode = run(['1829', '--run-dir', runDir, '--repo', 'owner/repo'], deps);
+    assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+    return JSON.parse(deps.calls.stdout.join(''));
+  });
+  assert.deepStrictEqual(runFromSub(runDirFor(B)).premise, { command, exit: 0, satisfiedAtBase: false });
+  fs.writeFileSync(target, 'no anchor here\nANCHOR-2857\n');
+  const resolved = runFromSub(path.join(B, '.claude-tweaks', 'pipelines', '2026-01-02T000000-record-1829')).premise;
+  assert.strictEqual(resolved.satisfiedAtBase, true);
+  assert.notStrictEqual(resolved.exit, 0);
+});
+
+test('AC6.1: an unresolvable checkout root degrades premise to null without throwing or running the command', () => {
+  const cases = {
+    throws: () => { throw new Error('not a git repository'); },
+    empty: () => '',
+  };
+  for (const [name, checkoutRoot] of Object.entries(cases)) {
+    const repo = gitRepo();
+    withCwd(repo, () => {
+      // Records the call and returns 1 (not throws): a throw would be masked by
+      // computePremise's own catch, so a run that wrongly executed the command
+      // would still read premise: null.
+      const ran = [];
+      const deps = fakeDeps(repo, {
+        body: shapedBodyWithPremiseCheck('some-command'),
+        checkoutRoot,
+        runPremiseCheck: (c) => { ran.push(c); return 1; },
+      });
+      const exitCode = run(['1829', '--run-dir', runDirFor(repo), '--repo', 'owner/repo'], deps);
+      assert.strictEqual(exitCode, 0, name + ': ' + deps.calls.stderr.join(''));
+      assert.strictEqual(JSON.parse(deps.calls.stdout.join('')).premise, null, name);
+      assert.deepStrictEqual(ran, [], name);
+    });
+  }
 });
