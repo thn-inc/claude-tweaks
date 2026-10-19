@@ -180,3 +180,22 @@ test('readExclusionsStatus never logs; readExclusions keeps its stderr diagnosti
     console.error = originalError;
   }
 });
+
+// #1752 migrated per-reason exclusion files into dispatch-exclusions.json but
+// left queue-pull-script.md's `$DISPATCH_OPEN_PR_EXCLUDED` redirect behind
+// (#3024): the variable was never declared, so the redirect expanded to an
+// empty string on every pull. This guards against that recurring: every
+// $DISPATCH_* the script references must be declared in its files map
+// (`KEY: 'file'`) or assigned in the script (`KEY=`).
+test('queue-pull-script.md: every referenced $DISPATCH_* is declared or assigned (#3024)', () => {
+  const script = fs.readFileSync(
+    path.join(__dirname, '../../../plugin/skills/dispatch/queue-pull-script.md'), 'utf8');
+  const declared = new Set();
+  for (const m of script.matchAll(/^\s*(DISPATCH_[A-Z0-9_]+):\s*'/gm)) declared.add(m[1]);
+  for (const m of script.matchAll(/^\s*(DISPATCH_[A-Z0-9_]+)=/gm)) declared.add(m[1]);
+  const referenced = new Set();
+  for (const m of script.matchAll(/\$\{?(DISPATCH_[A-Z0-9_]+)\}?/g)) referenced.add(m[1]);
+  const undeclared = [...referenced].filter((v) => !declared.has(v)).sort();
+  assert.deepStrictEqual(undeclared, [],
+    `referenced but neither declared in the files map nor assigned: ${undeclared.join(', ')}`);
+});

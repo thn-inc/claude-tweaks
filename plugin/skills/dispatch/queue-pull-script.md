@@ -360,7 +360,6 @@ DISPATCH_GROUP_NUMS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPA
 NODE_EVAL_EOF
 )
 echo '{}' > "$DISPATCH_LINKED_PRS"
-echo '[]' > "$DISPATCH_OPEN_PR_EXCLUDED"
 if [ -n "$DISPATCH_GROUP_NUMS" ]; then
   if ! node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-linked-prs.js" "$DISPATCH_GROUP_NUMS" \
     > "$DISPATCH_LINKED_PRS" 2>"$DISPATCH_LINKED_PRS_ERR"; then
