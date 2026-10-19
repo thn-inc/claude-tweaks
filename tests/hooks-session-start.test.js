@@ -1206,14 +1206,16 @@ function mkSuperpowersWorld(project, { projectVersion, userVersion, rawFile, use
     return d;
   };
   const entries = [];
-  if (userVersion || userInstallPath) {
-    entries.push({ scope: 'user', installPath: userInstallPath || artifact('u', userVersion), lastUpdated: '2026-01-01T00:00:00.000Z' });
-  }
+  // File order is the ranking (#3541): the project record is listed first so it
+  // stays the selected one when both exist.
   if (projectVersion) {
     entries.push({
       scope: 'project', installPath: artifact('p', projectVersion), projectPath: fs.realpathSync(project),
       lastUpdated: '2026-01-01T00:00:00.000Z',
     });
+  }
+  if (userVersion || userInstallPath) {
+    entries.push({ scope: 'user', installPath: userInstallPath || artifact('u', userVersion), lastUpdated: '2026-01-01T00:00:00.000Z' });
   }
   fs.writeFileSync(
     path.join(config, 'plugins', 'installed_plugins.json'),
