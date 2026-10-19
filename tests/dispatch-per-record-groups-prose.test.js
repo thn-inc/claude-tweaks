@@ -78,6 +78,7 @@ test('oversized-group-report.md says a group over the guard needs a bundle cap a
 
 const SHARED = path.join(__dirname, '..', 'plugin', 'skills', '_shared');
 const ROOT = path.join(__dirname, '..');
+const PLUGIN_DIR = path.join(ROOT, 'plugin').split(path.sep).join('/');
 
 test('AC8.1: issue-claims Group claiming says groups are single records or fast-lane bundles and all-members claiming applies to bundles', () => {
   const claims = readText(path.join(SHARED, 'issue-claims.md'));
@@ -131,7 +132,7 @@ function neighbourHeredocCode() {
   const start = QUEUE_PULL.indexOf(open);
   const end = QUEUE_PULL.indexOf(close, start);
   assert.ok(start !== -1 && end !== -1, 'neighbour-in-flight heredoc anchors must exist');
-  return QUEUE_PULL.slice(start + open.length, end).split('${CLAUDE_PLUGIN_ROOT}').join(path.join(ROOT, 'plugin'));
+  return QUEUE_PULL.slice(start + open.length, end).split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_DIR);
 }
 
 // Runs the heredoc with PATH pointing at an empty dir, so gh and git are unavailable and nothing
