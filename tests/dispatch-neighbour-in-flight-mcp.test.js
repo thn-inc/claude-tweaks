@@ -30,8 +30,8 @@ function section(text = MCP) {
 }
 
 // The Nth heredoc: from its node-eval-file.js line through its closing NODE_EVAL_EOF line.
-function snippet(index, text = MCP) {
-  text = section(text);
+function snippet(index, source = MCP) {
+  const text = section(source);
   let from = 0;
   let found = -1;
   for (let i = 0; i <= index; i += 1) {
