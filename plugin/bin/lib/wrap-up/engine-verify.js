@@ -34,6 +34,7 @@ const { resolvePolicyKeys } = require('../policy-schema');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
 const { resolveRecords, closingRecords } = require('./pack');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
+const { splitNul } = require('../git-z');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -630,11 +631,11 @@ registerCheck('reference-repairs', ({ runDir, base, deps, cwd }) => {
   for (const sha of commits) {
     let diff;
     try {
-      diff = deps.git(['diff-tree', '--no-commit-id', '--name-only', '-r', sha], cwd);
+      diff = deps.git(['diff-tree', '--no-commit-id', '--name-only', '-r', '-z', '--end-of-options', sha], cwd);
     } catch (err) {
       return { result: 'unknown', detail: `git diff-tree failed for ${sha}: ${err.message}` };
     }
-    for (const f of diff.split('\n').filter(Boolean)) touched.add(f);
+    for (const f of splitNul(diff)) touched.add(f);
   }
   const extra = [...touched].filter((f) => !appliedSet.has(f));
   if (extra.length) return { result: 'fail', detail: `Initiative-Fix: commit touches unrelated file(s): ${extra.join(', ')}` };

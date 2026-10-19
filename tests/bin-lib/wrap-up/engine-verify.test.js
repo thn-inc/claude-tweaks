@@ -1450,7 +1450,7 @@ test('reference-repairs check fails when Initiative-Fix commit diff touches a fi
   }));
   const fakeGit = (args) => {
     if (args[0] === 'log' && args.includes('--grep=Initiative-Fix:')) return 'def5678 Initiative-Fix: repair refs\n';
-    if (args[0] === 'diff-tree' && args.includes('--name-only')) return 'docs/a.md\ndocs/b.md\n';
+    if (args[0] === 'diff-tree' && args.includes('--name-only')) return 'docs/a.md\0docs/b.md\0';
     return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
@@ -2459,7 +2459,7 @@ test('reference-repairs check runs git log and git diff-tree against the injecte
   const fakeGit = (args, callCwd) => {
     calls.push({ args, cwd: callCwd });
     if (args[0] === 'log' && args.includes('--grep=Initiative-Fix:')) return 'def5678 Initiative-Fix: repair refs\n';
-    if (args[0] === 'diff-tree' && args.includes('--name-only')) return 'docs/a.md\n';
+    if (args[0] === 'diff-tree' && args.includes('--name-only')) return 'docs/a.md\0';
     return '';
   };
   try {
@@ -2468,6 +2468,8 @@ test('reference-repairs check runs git log and git diff-tree against the injecte
     const diffCall = calls.find((c) => c.args[0] === 'diff-tree');
     assert.ok(logCall, 'expected a git log call');
     assert.ok(diffCall, 'expected a git diff-tree call');
+    // -z so a non-ASCII path is read raw (not C-quoted); the sha is the fake log's one line.
+    assert.deepStrictEqual(diffCall.args, ['diff-tree', '--no-commit-id', '--name-only', '-r', '-z', '--end-of-options', 'def5678 Initiative-Fix: repair refs']);
     assert.strictEqual(logCall.cwd, cwd);
     assert.strictEqual(diffCall.cwd, cwd);
     assert.notStrictEqual(logCall.cwd, repoRoot);
