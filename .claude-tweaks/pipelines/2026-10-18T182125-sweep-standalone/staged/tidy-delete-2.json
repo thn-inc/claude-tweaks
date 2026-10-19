@@ -4,6 +4,6 @@
     "record": 1597,
     "title": "Consider a state-machine plan-markdown parser if …",
     "action": "Close as not planned — parked 49d, stale, trigger not met",
-    "command": "gh issue comment 1597 --body \"Closed by /claude-tweaks:tidy: parked 49d with its trigger unmet; reopen if it fires.\" && gh issue close 1597 --reason \"not planned\""
+    "command": "gh issue close 1597 --reason \"not planned\" --comment \"tidy: parked 49d, trigger unmet\""
   }
 ]

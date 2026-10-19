@@ -9,7 +9,7 @@
 **Commands:**
 
 ```bash
-gh issue comment 986 --body "Closed by /claude-tweaks:tidy: parked 59d with its trigger unmet; reopen if it fires." && gh issue close 986 --reason "not planned"
+gh issue close 986 --reason "not planned" --comment "tidy: parked 59d, trigger unmet"
 ```
 
 Re-verify before applying: the record is still open, still `parked`, and its trigger still unmet.
