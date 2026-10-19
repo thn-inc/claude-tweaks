@@ -1,6 +1,7 @@
 ---
 files:
   - tests/path-guard-conformance.test.js
+  - tests/helpers/strip-comments.js
   - plugin/bin/lib/path-guard/index.js
   - docs/donts.md
 ---
@@ -25,7 +26,7 @@ files:
   - The lint counts tokens, not calls. A reference (`{ realpath: fs.realpathSync }`), a default (`{ realpath = fs.realpathSync }`), a destructured alias (`const { existsSync: ex } = fs`) and a bracket form (`fs['realpathSync']`) all count. A mention inside a comment does not.
   - A count that went *down* (a call migrated to path-guard) is also red, because the allowlist is an exact audit record, not a ceiling.
 - **Red flags:**
-  - An offender naming a file the maintainer did not touch. The count stripper does not model regex literals, so a regex containing `//` or `/*` can blank code after it. Check the file for one before suspecting a real change.
+  - An offender naming a file the maintainer did not touch. The shared stripper (`tests/helpers/strip-comments.js`) does not model regex literals. An escaped slash is safe (`/^https?:\/\//`), but a quote or backtick inside a regex, or an unescaped `/*` or `//` in a character class (`/[/*]/`), can blank code after it. Check the file for one before suspecting a real change.
   - A green run after rewriting the call as `fs['realpath' + 'Sync']`. Computed member access is not seen, so that hides the check rather than removing it.
 
 ### 2. Decide what the check is asking
@@ -51,4 +52,5 @@ files:
 
 ## Origin
 - Created during build of #3417. That build added the shared `plugin/bin/lib/path-guard/` module, routed `transcript.js`, `installed-plugins.js` and `pre-tool-use.js`'s `realTarget()` through it, added the token-count conformance lint, and narrowed [IL-150]/[IL-161].
+- Updated during build of #3536. The lint's comment stripper moved into the shared `tests/helpers/strip-comments.js`, so escaped-slash regexes no longer blank code. The Step 1 red flag now names the regex shapes that still can.
 - Related: `act-on-a-red-skill-size-guard-3311.md` (the same shape for the skill-size guard), and `notice-a-stale-superpowers-install-3380.md` (the case-canonical realpath incident).
