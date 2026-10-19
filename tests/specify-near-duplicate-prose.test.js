@@ -151,7 +151,7 @@ function refusalFenceBody(text = SHAPING_MODE) {
 }
 
 test('refusalFenceBody reads a CRLF shaping-mode.md the same as LF (#3518)', () => {
-  assert.deepStrictEqual(refusalFenceBody(SHAPING_MODE.replace(/\n/g, '\r\n')).fence, refusalFenceBody().fence);
+  assert.strictEqual(refusalFenceBody(SHAPING_MODE.replace(/\n/g, '\r\n')).fence, refusalFenceBody().fence);
 });
 
 test('AC1.1: the shaping-mode refusal fence reads claims through createClaimReader and reports failed reads as unreadable (#3393)', () => {
