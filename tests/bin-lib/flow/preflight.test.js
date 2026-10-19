@@ -507,6 +507,40 @@ test('a valid-JSON non-object events line counts as foreign, never throws', () =
   assert.strictEqual(a.eventsForeign, 2);
 });
 
+test('a symlinked spelling of the run\'s worktree still reads as own, in either direction (ledger row 1)', () => {
+  const real = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-wt-')));
+  const link = `${real}-link`;
+  fs.symlinkSync(real, link);
+  try {
+    const viaLink = `${JSON.stringify({ type: 'gate-exempt-gitignored', path: path.join(link, 'x.md') })}\n`;
+    const viaReal = `${JSON.stringify({ type: 'gate-exempt-gitignored', path: path.join(real, 'x.md') })}\n`;
+    const stateReal = JSON.stringify({ worktree: real, status: 'active' });
+    const stateLink = JSON.stringify({ worktree: link, status: 'active' });
+    for (const [events, state] of [[viaLink, stateReal], [viaReal, stateLink]]) {
+      const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': events, 'run-state.json': state });
+      assert.strictEqual(a.case, 3, `expected case 3, got case ${a.case}`);
+      assert.strictEqual(a.eventsForeign, 0);
+    }
+    const sibling = `${JSON.stringify({ type: 'gate-exempt-gitignored', path: `${real}-other/x.md` })}\n`;
+    const { a: b } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': sibling, 'run-state.json': stateLink });
+    assert.strictEqual(b.case, 2);
+    assert.strictEqual(b.eventsForeign, 1);
+  } finally {
+    fs.unlinkSync(link);
+    fs.rmSync(real, { recursive: true, force: true });
+  }
+});
+
+test('an interrupted run\'s events with no run-state worktree or sessionId carry no own evidence → case 2 (the own-evidence rule narrows case 3 here)', () => {
+  const orphaned = '{"action":"commit","dir":"/w/own","hash":"abc","type":"commit"}\n';
+  for (const state of [{}, { 'run-state.json': JSON.stringify({ status: 'active' }) }]) {
+    const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': orphaned, ...state });
+    assert.strictEqual(a.case, 2, `expected case 2, got case ${a.case}`);
+    assert.strictEqual(a.eventsForeign, 1);
+    assert.strictEqual(a.hasOtherContent, false);
+  }
+});
+
 test('AC 2: dispatched call 1 (dispatched: true, no pr, no config) with Step 1.8 ledger line → case 2', () => {
   const fx = mainRoot();
   fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), CLAIM_AND_LEDGER);

@@ -354,21 +354,20 @@ function isForeignWorktreeCandidate(cwd, sessionId, state) {
 // 'session' arm. As a guess it became ctx.runDir — E1 then denied a commit
 // from the main checkout against the ad-hoc dir's worktree.
 //
-// Returns the skip reason (a non-empty string) or null, so both call sites keep
-// testing it for truthiness. Only reasons prefixed DROPPED_REASON_PREFIX are the
-// #3515 guards: (a) claim-log-only mint, applied to EVERY resolution, and (b)
-// bound to another worktree, applied only under the opt-in `strict`; a strict
-// resolveRun reports exactly those in `dropped`. `includeWorktreeForeign`
-// disables the worktree-binding guards, (b) included. `callerRepoInfo` is the
-// lazy memo isOtherWorktreeBound reads (see there).
-const DROPPED_REASON_PREFIX = 'dropped:';
+// Returns `{ reason, dropped }` or null, so both call sites keep testing it for
+// truthiness. `dropped: true` marks the #3515 guards: (a) claim-log-only mint,
+// applied to EVERY resolution, and (b) bound to another worktree, applied only
+// under the opt-in `strict`; a strict resolveRun reports exactly those in its
+// `dropped` list. `includeWorktreeForeign` disables the worktree-binding
+// guards, (b) included. `callerRepoInfo` is the lazy memo isOtherWorktreeBound
+// reads (see there).
 function isSkippableFallbackCandidate(cwd, sessionId, dir, state, includeWorktreeForeign, strict, callerRepoInfo) {
-  if (isUnadoptedMint(dir, state)) return 'unadopted-mint';
-  if (isAdHocRunDir(dir)) return 'ad-hoc';
-  if (isClaimLogOnlyMint(dir, state)) return `${DROPPED_REASON_PREFIX}claim-log-only mint`;
+  if (isUnadoptedMint(dir, state)) return { reason: 'unadopted-mint', dropped: false };
+  if (isAdHocRunDir(dir)) return { reason: 'ad-hoc', dropped: false };
+  if (isClaimLogOnlyMint(dir, state)) return { reason: 'claim-log-only mint', dropped: true };
   if (includeWorktreeForeign) return null;
-  if (isForeignWorktreeCandidate(cwd, sessionId, state)) return 'worktree-foreign';
-  if (strict && isOtherWorktreeBound(callerRepoInfo, state)) return `${DROPPED_REASON_PREFIX}bound to ${state.worktree}`;
+  if (isForeignWorktreeCandidate(cwd, sessionId, state)) return { reason: 'worktree-foreign', dropped: false };
+  if (strict && isOtherWorktreeBound(callerRepoInfo, state)) return { reason: `bound to ${state.worktree}`, dropped: true };
   return null;
 }
 function resolveRun(cwd, env, sessionId, opts = {}) {
@@ -406,11 +405,9 @@ function resolveRun(cwd, env, sessionId, opts = {}) {
     return callerInfo;
   };
   const skipReason = (dir, state) => {
-    const reason = isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign, strict, callerRepoInfo);
-    if (reason && reason.startsWith(DROPPED_REASON_PREFIX)) {
-      dropped.push(`${path.basename(dir)} (${reason.slice(DROPPED_REASON_PREFIX.length)})`);
-    }
-    return reason;
+    const skip = isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign, strict, callerRepoInfo);
+    if (skip && skip.dropped) dropped.push(`${path.basename(dir)} (${skip.reason})`);
+    return skip;
   };
   const noRun = () => (strict && dropped.length ? { dir: null, attribution: null, dropped } : { dir: null, attribution: null });
   // Resolve once, up front, so the worktree-binding check below always sees

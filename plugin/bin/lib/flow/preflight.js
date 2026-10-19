@@ -20,6 +20,7 @@ const { resolvePolicyConfig } = require('../policy-schema');
 const { computeDerivedDefaults } = require('../policy-derived-defaults');
 const { resolveTarget } = require('../stage-item/write');
 const { classifyDecisions } = require('../log-decision/claim-log');
+const { canonicalRealpath } = require('../path-guard');
 
 const BIN = path.join(__dirname, '..', '..');
 const VERIFY_JS = path.join(BIN, 'verify.js');
@@ -108,23 +109,52 @@ function configValue(text, key) {
 const EVENT_PATH_FIELDS = ['dir', 'path', 'worktree', 'actual'];
 const EVENT_SESSION_FIELDS = ['sessionId', 'session', 'callerSessionId'];
 
-function isOwnEvent(ev, worktree, sessionId) {
+// `worktrees` holds every spelling of the run's worktree: the lexical
+// path.resolve form plus its canonical realpath when it resolves, so a symlinked
+// spelling (/var vs /private/var) on either side still reads as the same tree.
+function isOwnEvent(ev, worktrees, sessionId) {
   if (!ev || typeof ev !== 'object' || Array.isArray(ev) || ev.attribution === 'fallback') return false;
-  if (worktree && EVENT_PATH_FIELDS.some((field) => isWithin(ev[field], worktree))) return true;
+  if (worktrees.length && EVENT_PATH_FIELDS.some((field) => isWithin(ev[field], worktrees))) return true;
   return sessionId !== null && EVENT_SESSION_FIELDS.some((field) => ev[field] === sessionId);
 }
 
-function isWithin(value, worktree) {
+function isUnder(candidate, worktrees) {
+  return worktrees.some((wt) => candidate === wt || candidate.startsWith(wt + path.sep));
+}
+
+// Realpath of the nearest existing ancestor plus the not-yet-existing tail: an
+// event's path (a deleted scratch file) or a removed worktree has no realpath of
+// its own, but its symlinked parent does.
+function canonicalWithTail(p) {
+  const tail = [];
+  for (let cur = p; ; cur = path.dirname(cur)) {
+    const real = canonicalRealpath(cur);
+    if (real !== null) return path.join(real, ...tail.reverse());
+    if (path.dirname(cur) === cur) return null;
+    tail.push(path.basename(cur));
+  }
+}
+
+function isWithin(value, worktrees) {
   if (typeof value !== 'string' || !value) return false;
   const resolved = path.resolve(value);
-  return resolved === worktree || resolved.startsWith(worktree + path.sep);
+  if (isUnder(resolved, worktrees)) return true;
+  const canonical = canonicalWithTail(resolved);
+  return canonical !== null && isUnder(canonical, worktrees);
+}
+
+function worktreeSpellings(raw) {
+  if (typeof raw !== 'string' || !raw) return [];
+  const resolved = path.resolve(raw);
+  const canonical = canonicalWithTail(resolved);
+  return canonical && canonical !== resolved ? [resolved, canonical] : [resolved];
 }
 
 function classifyEvents(deps, file, state) {
   const out = { own: 0, foreign: 0, unparseable: 0 };
   const t = readText(deps, file);
   if (t === null) return out;
-  const worktree = state && typeof state.worktree === 'string' && state.worktree ? path.resolve(state.worktree) : null;
+  const worktree = worktreeSpellings(state && state.worktree);
   const sessionId = state && typeof state.sessionId === 'string' && state.sessionId ? state.sessionId : null;
   for (const line of t.split('\n')) {
     if (!line.trim()) continue;
