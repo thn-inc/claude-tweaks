@@ -36,6 +36,15 @@ function shQuote(str) {
 // sentence or a few lines of prose/code).
 const MAX_PREMISE_ANCHOR_LENGTH = 400;
 
+// targetPath as a repo-relative POSIX path when it lies strictly inside
+// `root`; otherwise (no root, the root itself, or outside it) unchanged.
+function repoRelativePath(targetPath, root) {
+  if (!root) return targetPath;
+  const rel = path.relative(root, path.resolve(root, targetPath));
+  const isStrictlyInside = rel !== '' && !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + path.sep);
+  return isStrictlyInside ? rel.split(path.sep).join('/') : targetPath;
+}
+
 // Builds a Premise-check: command (#1829/#2621) for a mechanically
 // re-checkable patch finding. Additive intent (the common case) checks for
 // the proposed string's absence in the target file — exit 0 while absent
@@ -79,13 +88,7 @@ function buildPremiseCheck(finding, targetPath, root) {
   const isRemoval = finding.intent === 'remove';
   const anchor = isRemoval ? finding.oldString : finding.newString;
   if (!anchor || anchor.includes('\n') || anchor.length > MAX_PREMISE_ANCHOR_LENGTH) return undefined;
-  let checkPath = targetPath;
-  if (root) {
-    const rel = path.relative(root, path.resolve(root, targetPath));
-    if (rel !== '' && !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + path.sep)) {
-      checkPath = rel.split(path.sep).join('/');
-    }
-  }
+  const checkPath = repoRelativePath(targetPath, root);
   const grep = `grep -qF -- ${shQuote(anchor)} ${shQuote(checkPath)}`;
   return isRemoval ? `! test -r ${shQuote(checkPath)} || ${grep}` : `! ${grep}`;
 }

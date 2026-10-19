@@ -141,8 +141,8 @@ function runPremiseCheckDefault(command, { cwd } = {}) {
 // byte-identically) OR "the command could not be run at all" (mirrors
 // computeDrift's own degrade-to-null-on-throw posture above — a hostile or
 // broken command must never crash materialize; an unresolvable checkout
-// root degrades the same way, without running the command). satisfiedAtBase is true
-// when the command exits NON-zero: per specShapedBody's premiseCheck
+// root degrades the same way, without running the command). satisfiedAtBase
+// is true when the command exits NON-zero: per specShapedBody's premiseCheck
 // contract, the command is written to exit 0 while the premise (the
 // record's Current State claim) still holds, so a non-zero exit means the
 // claim no longer holds at this checkout's base — the record's work may
