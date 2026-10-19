@@ -289,11 +289,20 @@ merge (capture (a)), so the confirmation itself carries the choice: wait for gre
 **Creation-time caller:** `tidy/SKILL.md`'s Step 7.5 `pr-first` branch invokes only this step's initial `gh pr merge --auto` call at PR-creation time, with the degrade chain below replaced by leave-unarmed + report — see that step's own text for the full routing.
 
 ```bash
-SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --shell) || exit 1
-eval "$SUBJECT_EXPORTS"
-gh pr merge {pr-number} --repo {owner}/{repo} --auto --squash \
-  -t "$SUBJECT_TITLE" -b "$SUBJECT_BODY"
+node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --out-dir {subject-dir}
 ```
+
+```bash
+gh pr merge {pr-number} --repo {owner}/{repo} --auto --squash -t {title-arg} --body-file {subject-dir}/body.md
+```
+
+Run each fence as its own Bash call, never chained; if the composer exits non-zero, stop before any
+merge (its stderr names the reason). `{subject-dir}` is a literal path — resolve it once with
+`node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" SUBJECT_DIR=merge-subject-{pr-number}`
+(session-scoped, `_shared/session-tmp-root.md`) and paste the printed path. `{title-arg}` is the
+composer's one stdout line pasted verbatim — already POSIX single-quoted, so a `$(…)`, backtick, or
+`'` in the title stays inert. Why: the worktree Bash guard refuses `eval` and a `gh` argument computed
+at runtime, and every pr-first merge runs from a worktree session (#3522).
 
 `{tag}` is `auto-merge` for the dispatch/headless path (`dispatch/settle-and-merge.md`'s Auto-merge
 gate), `fast-lane` for the interactive single-record short-circuit triggered by a live `auto:merge`
@@ -327,10 +336,11 @@ the result:
      behavior):
 
      ```bash
-     SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --shell) || exit 1
-     eval "$SUBJECT_EXPORTS"
-     gh pr merge {pr-number} --repo {owner}/{repo} --squash \
-       -t "$SUBJECT_TITLE" -b "$SUBJECT_BODY"
+     node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --out-dir {subject-dir}
+     ```
+
+     ```bash
+     gh pr merge {pr-number} --repo {owner}/{repo} --squash -t {title-arg} --body-file {subject-dir}/body.md
      ```
 
    - under `merge-when-green` or `wait` — do not merge immediately: degrade to Step 2.5's `wait`
