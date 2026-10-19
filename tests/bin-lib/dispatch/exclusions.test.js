@@ -7,6 +7,7 @@ const path = require('node:path');
 const {
   readExclusions, readExclusionsStatus, appendExclusion, excludedNumbers, groupIsExcluded,
 } = require('../../../plugin/bin/lib/dispatch/exclusions');
+const { readText } = require('../../helpers/read-skill');
 
 function tmpFile() {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'exclusions-test-')), 'dispatch-exclusions.json');
@@ -188,8 +189,8 @@ test('readExclusionsStatus never logs; readExclusions keeps its stderr diagnosti
 // $DISPATCH_* the script references must be declared in its files map
 // (`KEY: 'file'`) or assigned in the script (`KEY=`).
 test('queue-pull-script.md: every referenced $DISPATCH_* is declared or assigned (#3024)', () => {
-  const script = fs.readFileSync(
-    path.join(__dirname, '../../../plugin/skills/dispatch/queue-pull-script.md'), 'utf8');
+  const script = readText(
+    path.join(__dirname, '../../../plugin/skills/dispatch/queue-pull-script.md'));
   const declared = new Set();
   for (const m of script.matchAll(/^\s*(DISPATCH_[A-Z0-9_]+)(?::\s*'|=)/gm)) declared.add(m[1]);
   const referenced = new Set();
