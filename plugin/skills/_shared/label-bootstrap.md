@@ -42,7 +42,7 @@ gh label list --search "claude-tweaks:bootstrapped-v{LABEL_BOOTSTRAP_VERSION}" -
   | grep -qx "claude-tweaks:bootstrapped-v{LABEL_BOOTSTRAP_VERSION}" && SKIP_BOOTSTRAP=true || SKIP_BOOTSTRAP=false
 ```
 
-`{LABEL_BOOTSTRAP_VERSION}` is the literal integer below — **current value: `8`**. Bump it (and
+`{LABEL_BOOTSTRAP_VERSION}` is the literal integer below — **current value: `9`**. Bump it (and
 this literal) whenever a label is added to or removed from the canonical `LABELS_JSON` array
 below, **or whenever an existing label's description or color changes** (#1873 — a color-only
 convention update is exactly this case). A marker stamped under the old version no longer matches
