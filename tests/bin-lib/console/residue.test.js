@@ -105,7 +105,7 @@ test('formatResidueLines names every item, cats only existing staged files, ends
   assert.strictEqual(lines[0], `- ${path.basename(dir)}: 4 item(s) no human has reviewed (console.json)`);
   assert.ok(lines.includes('  - review-13-record.md — Pending review: pending (unmapped-prefix)'));
   assert.ok(lines.includes('  - reflect-1.md — Pending review: pending (non-tangential-category:convention)'));
-  assert.ok(lines.includes(`    cat "${dir}/staged/review-13-record.md"`));
+  assert.ok(lines.includes(`    cat "${path.join(dir, 'staged', 'review-13-record.md')}"`));
   assert.ok(!lines.some((l) => l.trimStart().startsWith('cat ') && l.includes('reflect-1.md')));
   assert.strictEqual(lines.filter((l) => l.trimStart().startsWith('cat ')).length, 1);
   assert.strictEqual(lines[lines.length - 1], `  mark reviewed: node "/p/bin/console-residue.js" --ack --run "${dir}"`);
@@ -118,7 +118,7 @@ test('formatResidueLines points a spec-level item at spec-N/staged and names the
   fs.writeFileSync(path.join(dir, 'spec-12', 'staged', 'polish-suggestion-1.md'), 'x');
   const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
   assert.ok(lines[0].endsWith('(spec-12/console.json)'));
-  assert.ok(lines.includes(`    cat "${dir}/spec-12/staged/polish-suggestion-1.md"`));
+  assert.ok(lines.includes(`    cat "${path.join(dir, 'spec-12', 'staged', 'polish-suggestion-1.md')}"`));
 });
 
 test('formatResidueLines caps items at maxItems', () => {
@@ -126,7 +126,7 @@ test('formatResidueLines caps items at maxItems', () => {
   fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ items: pendingItems(7) }));
   const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p', maxItems: 5 });
   assert.strictEqual(lines.filter((l) => l.startsWith('  - ')).length, 5);
-  assert.ok(lines.includes(`  … and 2 more — see "${dir}/console.json"`));
+  assert.ok(lines.includes(`  … and 2 more — see "${path.join(dir, 'console.json')}"`));
   assert.ok(lines[0].includes('7 item(s)'));
 });
 
@@ -169,7 +169,7 @@ test('formatResidueLines renders an item without an id as (no id), with — for 
   assert.ok(lines[0].includes('2 item(s)'));
   assert.ok(lines.includes('  - (no id) — —: pending (—)'), lines.join('\n'));
   assert.ok(!lines.some((l) => l.includes('undefined')), lines.join('\n'));
-  assert.deepStrictEqual(lines.filter((l) => l.trimStart().startsWith('cat ')), [`    cat "${dir}/staged/polish-suggestion-1.md"`]);
+  assert.deepStrictEqual(lines.filter((l) => l.trimStart().startsWith('cat ')), [`    cat "${path.join(dir, 'staged', 'polish-suggestion-1.md')}"`]);
 });
 
 test('formatResidueLines points a decision: item at decisions.md, never a cat line, and only when decisions.md exists (#3370 M1)', () => {
@@ -179,6 +179,6 @@ test('formatResidueLines points a decision: item at decisions.md, never a cat li
   assert.ok(!formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' }).some((l) => l.startsWith('    ')));
   fs.writeFileSync(path.join(dir, 'decisions.md'), '');
   const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
-  assert.ok(lines.includes(`    see "${dir}/decisions.md"`), lines.join('\n'));
+  assert.ok(lines.includes(`    see "${path.join(dir, 'decisions.md')}"`), lines.join('\n'));
   assert.ok(!lines.some((l) => l.trimStart().startsWith('cat ')));
 });
