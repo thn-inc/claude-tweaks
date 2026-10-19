@@ -286,14 +286,14 @@ merge (capture (a)), so the confirmation itself carries the choice: wait for gre
 
 ## Step 3: Attempt auto-merge, degrading on specific failure signatures
 
-**Creation-time caller:** `tidy/SKILL.md`'s Step 7.5 `pr-first` branch invokes only this step's initial `gh pr merge --auto` call at PR-creation time, with the degrade chain below replaced by leave-unarmed + report — see that step's own text for the full routing.
+**Creation-time caller:** `tidy/SKILL.md`'s Step 7.5 `pr-first` branch invokes only this step's initial compose + `gh pr merge --auto` fences at PR-creation time, with the degrade chain below replaced by leave-unarmed + report — see that step's own text for the full routing.
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --out-dir {subject-dir}
+node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --out-dir "{subject-dir}"
 ```
 
 ```bash
-gh pr merge {pr-number} --repo {owner}/{repo} --auto --squash -t {title-arg} --body-file {subject-dir}/body.md
+gh pr merge {pr-number} --repo {owner}/{repo} --auto --squash -t {title-arg} --body-file "{subject-dir}/body.md"
 ```
 
 Run each fence as its own Bash call, never chained; if the composer exits non-zero, stop before any
@@ -337,11 +337,11 @@ the result:
      behavior):
 
      ```bash
-     node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --out-dir {subject-dir}
+     node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --out-dir "{subject-dir}"
      ```
 
      ```bash
-     gh pr merge {pr-number} --repo {owner}/{repo} --squash -t {title-arg} --body-file {subject-dir}/body.md
+     gh pr merge {pr-number} --repo {owner}/{repo} --squash -t {title-arg} --body-file "{subject-dir}/body.md"
      ```
 
    - under `merge-when-green` or `wait` — do not merge immediately: degrade to Step 2.5's `wait`

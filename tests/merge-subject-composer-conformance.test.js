@@ -41,7 +41,7 @@ const PRE_WORKTREE_RANGELESS_CALL = `   SUBJECT_EXPORTS=$(node "\${CLAUDE_PLUGIN
 
 // local-merge fences read the changed paths from a local `--range {base}...{head}` diff;
 // pr-first fences read them from the PR itself via `--pr {pr-number}` (#3298 final review).
-const LOCAL_COMPOSER_CALL = /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/compose-subject\.js" [^\n]*--range \{[a-z-]+\}\.\.\.\{[a-z-]+\} --out-dir \{subject-dir\} \|\| exit 1\n/;
+const LOCAL_COMPOSER_CALL = /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/compose-subject\.js" [^\n]*--range \{[a-z-]+\}\.\.\.\{[a-z-]+\} --out-dir "\{subject-dir\}" \|\| exit 1\n/;
 // The pre-#3522 local-merge fence (local-merge-auto-finish.md, byte-for-byte): composer under
 // `$(…) || exit 1`, then `eval`, then `-m "$SUBJECT_TITLE⏎⏎$SUBJECT_BODY"`.
 const PRE_EVAL_LOCAL_SITE = `   SUBJECT_EXPORTS=$(node "\${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --range {base-branch}...{feature-branch} --shell) || exit 1
@@ -55,28 +55,34 @@ eval "$SUBJECT_EXPORTS"
 gh pr merge {pr-number} --repo {owner}/{repo} --auto --squash \\
   -t "$SUBJECT_TITLE" -b "$SUBJECT_BODY"`;
 // pr-first fences compose to files (#3522): the composer line is a plain command, no eval, no `$(…)`.
-const PR_FIRST_COMPOSER_CALL = /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/compose-subject\.js" [^\n]*--pr \{pr-number\} --out-dir \{subject-dir\}\n/;
-const LOCAL_MERGE_FORM = /git merge --no-ff \{[a-z-]+\} -F \{subject-dir\}\/message\.txt/;
+const PR_FIRST_COMPOSER_CALL = /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/compose-subject\.js" [^\n]*--pr \{pr-number\} --out-dir "\{subject-dir\}"\n/;
+const LOCAL_MERGE_FORM = /git merge --no-ff \{[a-z-]+\} -F "\{subject-dir\}\/message\.txt"/;
 const STALE_LOCAL_FORM = /git merge --no-ff \{[a-z-]+\} -m "(\[|Merge \{branch\})/;
 const STALE_PR_FIRST_FORM = /gh pr merge \{pr-number\}[^\n]*--merge \\/;
 
 test('pr-first-merge.md: both gh pr merge sites squash and take the composer output', () => {
   const text = read(PR_FIRST);
-  const squashSites = text.match(/gh pr merge \{pr-number\} --repo \{owner\}\/\{repo\} (--auto )?--squash -t \{title-arg\} --body-file \{subject-dir\}\/body\.md/g) || [];
+  const squashSites = text.match(/gh pr merge \{pr-number\} --repo \{owner\}\/\{repo\} (--auto )?--squash -t \{title-arg\} --body-file "\{subject-dir\}\/body\.md"/g) || [];
   assert.equal(squashSites.length, 2, 'expected exactly two squash merge sites');
   assert.match(text, PR_FIRST_COMPOSER_CALL);
   assert.doesNotMatch(text, /--range \{/, 'pr-first fences carry no --range');
   // F1: the degrade fence (the `--squash` site under `merge-verification: off`) no longer relies
-  // on the first fence's shell state surviving into its own, separate Bash call — it guards its
+  // on the first fence's shell state surviving into its own, separate Bash call — it runs its
   // own composer call, same as the first fence.
   const composerCalls = text.match(new RegExp(PR_FIRST_COMPOSER_CALL.source, 'g')) || [];
-  assert.equal(composerCalls.length, 2, 'expected both squash sites to run their own guarded composer call');
+  assert.equal(composerCalls.length, 2, 'expected both squash sites to run their own composer call');
   assert.doesNotMatch(text, STALE_PR_FIRST_FORM);
   assert.doesNotMatch(text, /-t "\[\{tag\}\] \{one-line summary\}"/);
   // go-red proof
   assert.match(PRE_PR_FIRST_SITE, STALE_PR_FIRST_FORM);
   assert.doesNotMatch(PRE_PR_FIRST_SITE, PR_FIRST_COMPOSER_CALL);
   assert.doesNotMatch(PRE_EVAL_PR_FIRST_SITE, PR_FIRST_COMPOSER_CALL);
+  // negative control: the unquoted form must not match — the quote around {subject-dir} is pinned
+  // (the path comes from os.tmpdir() and can contain a space).
+  const unquoted = 'node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --out-dir {subject-dir}\n';
+  assert.doesNotMatch(unquoted, PR_FIRST_COMPOSER_CALL);
+  // the {subject-dir} definition (paste target of every fence) is pinned where the pointers land.
+  assert.ok(text.includes('session-tmp-resolve.js" SUBJECT_DIR=merge-subject-{key}'), '{subject-dir} definition present');
 });
 
 test('AC1.1: pr-first-merge.md carries no eval "$SUBJECT_EXPORTS"', () => {
@@ -127,6 +133,7 @@ for (const rel of LOCAL_SITES) {
     assert.equal(text.split('SUBJECT_EXPORTS=').length - 1, 0);
     assert.equal(text.split('--shell').length - 1, 0);
     assert.equal(text.split('$SUBJECT_TITLE').length - 1, 0);
+    assert.ok(text.includes('`{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3'), 'pointer to the {subject-dir} definition');
   });
 }
 

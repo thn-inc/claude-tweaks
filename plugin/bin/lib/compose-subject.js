@@ -27,6 +27,7 @@
 // title on one line. It exists because the Claude Code worktree Bash guard
 // refuses `eval` and `$(…)` wrapped around `gh`, which the --shell form needs
 // (#3522); a merge fence consumes the files with `-F`/`--body-file` instead.
+// `--shell` is kept as a manual/debug surface; no shipped merge fence consumes it since #3522.
 // Exit codes (Split-1/2, mirroring bin/resolve-blockers.js): 0 composed; 1
 // malformed invocation (including --range with --pr, or commit-scope-paths
 // set with neither) OR a policy misconfiguration (a malformed

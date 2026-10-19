@@ -115,8 +115,8 @@ it literally into the next call; never carry it in a shell variable across calls
    ends in an explicit, logged outcome.
 
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --range {base-branch}...{feature-branch} --out-dir {subject-dir} || exit 1
-   git merge --no-ff {feature-branch} -F {subject-dir}/message.txt
+   node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --range {base-branch}...{feature-branch} --out-dir "{subject-dir}" || exit 1
+   git merge --no-ff {feature-branch} -F "{subject-dir}/message.txt"
    ```
 
    `{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3.

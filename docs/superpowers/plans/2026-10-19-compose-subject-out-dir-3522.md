@@ -4,7 +4,7 @@
 
 **Goal:** Make every merge fence that calls `bin/compose-subject.js` runnable without `eval` or a `$(…)` command substitution. The worktree Bash guard refuses both, so the pr-first merge snippet becomes runnable verbatim from a worktree session.
 
-**Architecture:** `compose-subject.js` gains an `--out-dir <dir>` output mode. It writes `title.txt`, `body.md`, and `message.txt` (title, blank line, body) and prints the title on stdout as one POSIX single-quoted line. The two pr-first `gh pr merge` fences become plain one-command-per-fence calls: compose to files, then `gh pr merge … -t {title-arg} --body-file {subject-dir}/body.md`. The four local-merge fences take `git merge --no-ff {branch} -F {subject-dir}/message.txt`. `tests/merge-subject-composer-conformance.test.js` is rewritten to pin the new shapes and forbid `eval "$SUBJECT_EXPORTS"` / `--shell` at every merge site.
+**Architecture:** `compose-subject.js` gains an `--out-dir <dir>` output mode. It writes `title.txt`, `body.md`, and `message.txt` (title, blank line, body) and prints the title on stdout as one POSIX single-quoted line. The two pr-first `gh pr merge` fences become plain one-command-per-fence calls: compose to files, then `gh pr merge … -t {title-arg} --body-file "{subject-dir}/body.md"`. The four local-merge fences take `git merge --no-ff {branch} -F "{subject-dir}/message.txt"`. `tests/merge-subject-composer-conformance.test.js` is rewritten to pin the new shapes and forbid `eval "$SUBJECT_EXPORTS"` / `--shell` at every merge site.
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, markdown skill prose.
 
@@ -98,11 +98,11 @@ Expected: FAIL. The pr-first test and AC1.1 fail against the live `eval` form.
 
 ````markdown
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --out-dir {subject-dir}
+node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --pr {pr-number} --out-dir "{subject-dir}"
 ```
 
 ```bash
-gh pr merge {pr-number} --repo {owner}/{repo} --auto --squash -t {title-arg} --body-file {subject-dir}/body.md
+gh pr merge {pr-number} --repo {owner}/{repo} --auto --squash -t {title-arg} --body-file "{subject-dir}/body.md"
 ```
 ````
 
@@ -128,7 +128,7 @@ Expected: the pr-first, AC1.1 and AC3.1 tests PASS. The local-site tests still p
 
   PR 999999 does not exist, so nothing can merge. No `commit-scope-paths` is set in this repo, so `--pr` is never diffed. Expected: none of the three is refused by the worktree guard ("too complex to verify" / "value computed at runtime"). Call 3 reaches gh and fails with `Could not resolve to a PullRequest with the number of 999999`. Record the three outputs in the task report.
 
-- [ ] **Step 7: Update `docs/journeys/pre-authorize-a-flow-runs-merge.md:31`.** Replace `… --pr {pr-number} --shell`, then `gh pr merge --squash -t "$SUBJECT_TITLE" -b "$SUBJECT_BODY"` with `… --pr {pr-number} --out-dir {subject-dir}`, then `gh pr merge --squash -t {title-arg} --body-file {subject-dir}/body.md`.
+- [ ] **Step 7: Update `docs/journeys/pre-authorize-a-flow-runs-merge.md:31`.** Replace `… --pr {pr-number} --shell`, then `gh pr merge --squash -t "$SUBJECT_TITLE" -b "$SUBJECT_BODY"` with `… --pr {pr-number} --out-dir "{subject-dir}"`, then `gh pr merge --squash -t {title-arg} --body-file "{subject-dir}/body.md"`.
 
 - [ ] **Step 8: Commit**
 
@@ -152,7 +152,7 @@ git commit -m "Rewrite pr-first-merge Step 3 fences — compose to files, no eva
 **Interfaces:**
 - Consumes: Task 1's `--out-dir` (`message.txt`), and Task 2's `{subject-dir}` definition (cite `_shared/pr-first-merge.md` Step 3, do not restate it).
 
-- [ ] **Step 1: Write the failing tests.** In the conformance test, set `LOCAL_COMPOSER_CALL = /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/compose-subject\.js" [^\n]*--range \{[a-z-]+\}\.\.\.\{[a-z-]+\} --out-dir \{subject-dir\} \|\| exit 1\n/` and `LOCAL_MERGE_FORM = /git merge --no-ff \{[a-z-]+\} -F \{subject-dir\}\/message\.txt/`. In the local-sites loop, add assertions that each site has no `eval "$SUBJECT_EXPORTS"` (fixed-string count 0), no `SUBJECT_EXPORTS=`, no `--shell`, and no `$SUBJECT_TITLE`. Add a go-red frozen excerpt `PRE_EVAL_LOCAL_SITE` (today's `local-merge-auto-finish.md` lines 118-122 byte-for-byte) and assert it fails both new patterns. Keep the existing `PRE_RANGELESS_CALL` go-red assertions. They still hold: the rangeless calls lack `--range … --out-dir`. In the backstop test, change the line-121 anchor to `'git merge --no-ff {branch} -F {subject-dir}/message.txt'`.
+- [ ] **Step 1: Write the failing tests.** In the conformance test, set `LOCAL_COMPOSER_CALL = /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/compose-subject\.js" [^\n]*--range \{[a-z-]+\}\.\.\.\{[a-z-]+\} --out-dir \{subject-dir\} \|\| exit 1\n/` and `LOCAL_MERGE_FORM = /git merge --no-ff \{[a-z-]+\} -F \{subject-dir\}\/message\.txt/`. In the local-sites loop, add assertions that each site has no `eval "$SUBJECT_EXPORTS"` (fixed-string count 0), no `SUBJECT_EXPORTS=`, no `--shell`, and no `$SUBJECT_TITLE`. Add a go-red frozen excerpt `PRE_EVAL_LOCAL_SITE` (today's `local-merge-auto-finish.md` lines 118-122 byte-for-byte) and assert it fails both new patterns. Keep the existing `PRE_RANGELESS_CALL` go-red assertions. They still hold: the rangeless calls lack `--range … --out-dir`. In the backstop test, change the line-121 anchor to `'git merge --no-ff {branch} -F "{subject-dir}/message.txt"'`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -162,8 +162,8 @@ Expected: FAIL after Step 1. All four local-site tests fail, and the backstop or
 - [ ] **Step 3: Rewrite each fence.** Replace the three-line `SUBJECT_EXPORTS=$(…) || exit 1` / `eval` / `git merge … -m "$SUBJECT_TITLE⏎⏎$SUBJECT_BODY"` block with two lines, keeping each site's own args and indentation:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --range {base-branch}...{feature-branch} --out-dir {subject-dir} || exit 1
-git merge --no-ff {feature-branch} -F {subject-dir}/message.txt
+node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --range {base-branch}...{feature-branch} --out-dir "{subject-dir}" || exit 1
+git merge --no-ff {feature-branch} -F "{subject-dir}/message.txt"
 ```
 
 `|| exit 1` stays at these four sites. Their fences are multi-line scripts run in one call from the main checkout (two of them inside an existing `if [ "$CURRENT" … ]` guard), where it is what stops the merge. The existing "composer failure" prose that cites `|| exit 1` stays accurate. At each site's first mention, add one short clause: `{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3. In `settle-and-merge.md`, keep the edit net-neutral in bytes (`wc -c` before and after; it must stay ≤ 46,400).
@@ -173,7 +173,7 @@ git merge --no-ff {feature-branch} -F {subject-dir}/message.txt
 Run: `node --test tests/merge-subject-composer-conformance.test.js tests/auto-merge-short-circuit-verdict-backstop.test.js`
 Expected: PASS, 0 fail.
 
-- [ ] **Step 5: Sweep for stragglers.** Run `git grep -n -F -e 'SUBJECT_EXPORTS' -e '$SUBJECT_TITLE' -e '$SUBJECT_BODY' -- plugin docs/journeys docs/plugin-structure.md`. Expected: no hits. Then update the two journeys files. In `merge-a-record-…-2251.md`, line 30 becomes the `--out-dir {subject-dir}` composer call. Line 33 drops the "A bare `eval "$(…)"` would have swallowed that" sentence: the exit status now stops the fence because the merge call runs only after a zero exit. Line 37 becomes `gh pr merge {pr} --squash -t {title-arg} --body-file {subject-dir}/body.md` (pr-first) or `git merge --no-ff {branch} -F {subject-dir}/message.txt` (local-merge). Line 44 changes `--shell` to `--out-dir {subject-dir}`. In `finish-a-local-merge-run-without-a-human.md:30`, `-m "$SUBJECT_TITLE\n\n$SUBJECT_BODY"` becomes `-F {subject-dir}/message.txt`. Add a `- Updated during build of #3522 (guard-safe --out-dir merge fences)` line to each journey's update log if it has one.
+- [ ] **Step 5: Sweep for stragglers.** Run `git grep -n -F -e 'SUBJECT_EXPORTS' -e '$SUBJECT_TITLE' -e '$SUBJECT_BODY' -- plugin docs/journeys docs/plugin-structure.md`. Expected: no hits. Then update the two journeys files. In `merge-a-record-…-2251.md`, line 30 becomes the `--out-dir "{subject-dir}"` composer call. Line 33 drops the "A bare `eval "$(…)"` would have swallowed that" sentence: the exit status now stops the fence because the merge call runs only after a zero exit. Line 37 becomes `gh pr merge {pr} --squash -t {title-arg} --body-file "{subject-dir}/body.md"` (pr-first) or `git merge --no-ff {branch} -F "{subject-dir}/message.txt"` (local-merge). Line 44 changes `--shell` to `--out-dir "{subject-dir}"`. In `finish-a-local-merge-run-without-a-human.md:30`, `-m "$SUBJECT_TITLE\n\n$SUBJECT_BODY"` becomes `-F "{subject-dir}/message.txt"`. Add a `- Updated during build of #3522 (guard-safe --out-dir merge fences)` line to each journey's update log if it has one.
 
 - [ ] **Step 6: Commit**
 

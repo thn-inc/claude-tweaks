@@ -60,8 +60,8 @@ For each completed branch (in order):
    issue (see "Close-via-merge" in `_shared/issue-claims.md`):
 
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --range {base-branch}...{branch} --out-dir {subject-dir} || exit 1
-   git merge --no-ff {branch} -F {subject-dir}/message.txt
+   node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --range {base-branch}...{branch} --out-dir "{subject-dir}" || exit 1
+   git merge --no-ff {branch} -F "{subject-dir}/message.txt"
    ```
 
    `{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3.

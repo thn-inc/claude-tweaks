@@ -265,8 +265,8 @@ if [ "$CURRENT" != "{integration-branch}" ]; then
   echo "Main checkout is on '$CURRENT', not '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
   exit 1
 fi
-node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag {tag} --range {integration-branch}...{branch} --out-dir {subject-dir} || exit 1
-git merge --no-ff {branch} -F {subject-dir}/message.txt
+node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag {tag} --range {integration-branch}...{branch} --out-dir "{subject-dir}" || exit 1
+git merge --no-ff {branch} -F "{subject-dir}/message.txt"
 ```
 
 `{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3.
