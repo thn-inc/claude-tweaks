@@ -404,11 +404,12 @@ test('validate-findings: a patch finding against a real target file carries a Pr
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
   const payloads = JSON.parse(result.stdout);
   assert.strictEqual(payloads.length, 1);
-  const expectedPath = path.join(root, '.claude', 'skills', 'auth.md');
   assert.ok(
-    payloads[0].body.includes(`Premise-check: ! grep -qF -- 'See \`src/auth/session.js\`.' '${expectedPath}'`),
-    `expected a Premise-check: line anchored on the resolved target path, got body:\n${payloads[0].body}`,
+    payloads[0].body.includes("Premise-check: ! grep -qF -- 'See `src/auth/session.js`.' '.claude/skills/auth.md'"),
+    `expected a Premise-check: line anchored on the repo-relative target path, got body:\n${payloads[0].body}`,
   );
+  const premiseLine = payloads[0].body.split('\n').find((l) => l.startsWith('Premise-check:'));
+  assert.ok(!premiseLine.includes(root), `the Premise-check: line must not carry the absolute root, got: ${premiseLine}`);
   assert.ok(!result.stderr.includes('dropped Premise-check:'), `a kept line must not log a drop, got:\n${result.stderr}`);
 });
 

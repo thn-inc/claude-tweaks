@@ -75,3 +75,15 @@ test('defaultRunner returns the exit code of a command that ran', () => {
   assert.strictEqual(defaultRunner('exit 0', { cwd: os.tmpdir(), timeoutMs: 5000 }), 0);
   assert.strictEqual(defaultRunner('exit 3', { cwd: os.tmpdir(), timeoutMs: 5000 }), 3);
 });
+
+test('AC4.1: real shell: a repo-relative command composed with root resolves at filing time (cwd: root)', () => {
+  const dir = tmpWithSpace();
+  fs.mkdirSync(path.join(dir, '.claude', 'skills'), { recursive: true });
+  const target = path.join(dir, '.claude', 'skills', 'auth.md');
+  fs.writeFileSync(target, '# auth\n\nSee `src/auth/login.js`.\n');
+  const command = buildPremiseCheck({ kind: 'patch', newString: 'See `src/auth/session.js`.' }, target, dir);
+  assert.ok(!command.includes(dir), 'the command carries no absolute root');
+  assert.strictEqual(premiseReadsUnresolved(command, { root: dir }), true);
+  fs.writeFileSync(target, '# auth\n\nSee `src/auth/session.js`.\n');
+  assert.strictEqual(premiseReadsUnresolved(command, { root: dir }), false);
+});

@@ -516,3 +516,37 @@ test('harness payload resolves a relative finding.path against repoRoot, not cwd
   );
   assert.ok(payload.body.includes('### Key Files\n\n- `plugin/skills/foo/SKILL.md` — apply the proposed change'));
 });
+
+test('AC1.1: buildPremiseCheck composes an in-root additive target with its repo-relative path', () => {
+  const cmd = buildPremiseCheck({ kind: 'patch', newString: 'X' }, '/repo/.claude/skills/auth.md', '/repo');
+  assert.strictEqual(cmd, "! grep -qF -- 'X' '.claude/skills/auth.md'");
+});
+test('AC1.1: buildPremiseCheck composes an in-root removal with the relative path at both quoted sites', () => {
+  const cmd = buildPremiseCheck({ kind: 'patch', intent: 'remove', oldString: 'old' }, '/repo/CLAUDE.md', '/repo');
+  assert.strictEqual(cmd, "! test -r 'CLAUDE.md' || grep -qF -- 'old' 'CLAUDE.md'");
+});
+test('AC2.1: an out-of-root target (memory file) keeps its absolute path, byte-identical to the no-root output, both polarities', () => {
+  const mem = '/home/u/.claude/projects/x/memory/note.md';
+  const add = { kind: 'patch', newString: 'X' };
+  const rem = { kind: 'patch', intent: 'remove', oldString: 'old' };
+  assert.strictEqual(buildPremiseCheck(add, mem, '/repo'), buildPremiseCheck(add, mem));
+  assert.strictEqual(buildPremiseCheck(rem, mem, '/repo'), buildPremiseCheck(rem, mem));
+  assert.ok(buildPremiseCheck(add, mem, '/repo').includes(`'${mem}'`));
+});
+test('AC3.1: buildPremiseCheck without root keeps the absolute path exactly as before', () => {
+  assert.strictEqual(buildPremiseCheck({ kind: 'patch', newString: 'X' }, '/repo/CLAUDE.md'), "! grep -qF -- 'X' '/repo/CLAUDE.md'");
+});
+test('a sibling directory sharing the root prefix stays absolute', () => {
+  assert.strictEqual(buildPremiseCheck({ kind: 'patch', newString: 'X' }, '/repo-old/x.md', '/repo'), "! grep -qF -- 'X' '/repo-old/x.md'");
+});
+test('an in-root file whose name starts with .. is still relative', () => {
+  assert.strictEqual(buildPremiseCheck({ kind: 'patch', newString: 'X' }, '/repo/..notes.md', '/repo'), "! grep -qF -- 'X' '..notes.md'");
+});
+test('a target equal to the root keeps its absolute path', () => {
+  assert.strictEqual(buildPremiseCheck({ kind: 'patch', newString: 'X' }, '/repo', '/repo'), "! grep -qF -- 'X' '/repo'");
+});
+test('AC1.1: toIssuePayload threads options.repoRoot into the Premise-check line', () => {
+  const payload = toIssuePayload(patchFinding({ path: '/repo/.claude/skills/auth.md' }), undefined, undefined, { repoRoot: '/repo' });
+  assert.match(payload.body, /^Premise-check: ! grep -qF -- '.*' '\.claude\/skills\/auth\.md'$/m);
+  assert.ok(!payload.body.includes("'/repo/.claude"), 'no absolute path in the line');
+});

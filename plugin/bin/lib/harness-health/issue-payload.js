@@ -50,10 +50,17 @@ const MAX_PREMISE_ANCHOR_LENGTH = 400;
 // ceiling above). materialize.js's own "no Premise-check: line" fallback
 // handles the undefined case.
 //
+// Path form (#2857): when `root` (the absolute sweep root) is given and
+// targetPath lies strictly inside it, the command carries the repo-relative
+// POSIX path — materialize.js runs it from the checkout root, so it resolves
+// on any machine. An out-of-root target (a --memory-dir memory file), or a
+// call without `root`, keeps the absolute path as before and still fails safe
+// off-machine, per the next paragraph.
+//
 // Fail-safe when the target file can't be read at check time (#2621): this
 // command can run on a different machine/sandbox than the one that resolved
-// targetPath (a scheduled cloud Routine vs. a build checkout), so the
-// baked-in absolute path may not exist there. Empirically (see
+// targetPath (a scheduled cloud Routine vs. a build checkout), so an
+// absolute path may not exist there. Empirically (see
 // final-fix-report.md): a bare `grep` on a missing file exits 2, and a
 // missing-file exit 2 is non-zero — for the removal polarity (a bare grep,
 // no `!`), that reads as "resolved" (false auto-close risk) when it should
@@ -64,7 +71,7 @@ const MAX_PREMISE_ANCHOR_LENGTH = 400;
 // `! grep -qF x /missing/path` exits 0 empirically (negating grep's exit 2),
 // which already reads as "unresolved" — the correct fail-safe answer for
 // that polarity, with no change needed.
-function buildPremiseCheck(finding, targetPath) {
+function buildPremiseCheck(finding, targetPath, root) {
   if (finding.kind !== 'patch' || !targetPath) return undefined;
   // specShapedBody rejects a multi-line premiseCheck, so a newline in an LLM-supplied
   // path would abort the whole validate-findings run; omit the line instead (#2975).
@@ -72,8 +79,15 @@ function buildPremiseCheck(finding, targetPath) {
   const isRemoval = finding.intent === 'remove';
   const anchor = isRemoval ? finding.oldString : finding.newString;
   if (!anchor || anchor.includes('\n') || anchor.length > MAX_PREMISE_ANCHOR_LENGTH) return undefined;
-  const grep = `grep -qF -- ${shQuote(anchor)} ${shQuote(targetPath)}`;
-  return isRemoval ? `! test -r ${shQuote(targetPath)} || ${grep}` : `! ${grep}`;
+  let checkPath = targetPath;
+  if (root) {
+    const rel = path.relative(root, path.resolve(root, targetPath));
+    if (rel !== '' && !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + path.sep)) {
+      checkPath = rel.split(path.sep).join('/');
+    }
+  }
+  const grep = `grep -qF -- ${shQuote(anchor)} ${shQuote(checkPath)}`;
+  return isRemoval ? `! test -r ${shQuote(checkPath)} || ${grep}` : `! ${grep}`;
 }
 
 // verifiedAsOf (#117): the sha the sweep read this repo at, resolved ONCE per
@@ -140,7 +154,7 @@ function toIssuePayload(finding, verifiedAsOf, pluginVersion, options = {}) {
   // no section to bundle by, so finding.relatedSections is always absent there.
   const relatedBlocks = buildRelatedBlocks(finding.relatedSections);
 
-  let premiseCheck = buildPremiseCheck(finding, finding.path);
+  let premiseCheck = buildPremiseCheck(finding, finding.path, options.repoRoot);
   if (premiseCheck && options.premiseSelfCheck && !options.premiseSelfCheck(premiseCheck)) {
     premiseCheck = undefined;
   }
