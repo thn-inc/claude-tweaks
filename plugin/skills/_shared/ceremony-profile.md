@@ -35,7 +35,7 @@
 | reflect Near-misses, Fresh-start, Friction | `reflect/light-mode.md` | The lenses that can still produce the Safety regression finding the escape hatch keys on |
 | Ceremony escape hatch | `wrap-up/SKILL.md` | The control for `[IL-145]`'s failure class |
 | `[IL-116]` cleanup floor | `wrap-up/cleanup-procedures.md` Section C, step 3.5 | Teardown ordering is a floor `cleanup-only` may never relax |
-| HARD-GATEs | `_shared/auto-mode-contract.md` | Test failures, spec compliance blocks, structural coupling, plan validation stop every mode |
+| HARD-GATEs | `_shared/auto-mode-contract.md` | Test failures, spec compliance blocks, structural coupling, plan validation, a plan-review needs-human spec gap stop every mode |
 | `/claude-tweaks:test` Step 1.5 Design CLI gate | `test/design-gate.md` | The polish skip's safety argument leans on it |
 | `/claude-tweaks:review` Step 6.5 Design Quality Pass | `review/code-mode-steps.md` | The polish skip's safety argument leans on it |
 
