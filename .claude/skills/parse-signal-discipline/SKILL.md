@@ -251,6 +251,21 @@ When mechanizing a prose heuristic into a deterministic check:
     that fails loudly, and pin each with its own test: a spaced `prefix = token` entry that must
     match, and a whitespace-bearing value that must exit non-zero. A schema resolver that falls
     back to a default on an invalid value is not the hard error "When not to use" exempts.
+15. **A transform in front of a scanner owes its own could-not-parse verdict.** A scan over
+    transformed text reads whatever the transform wrongly removed as "nothing here", so a
+    transform that mis-parses produces a clean scan. `tests/helpers/strip-comments.js`'s
+    `stripComments` blanks comments to spaces before the path-guard, windows-hide and git-status
+    conformance scans count tokens, and it does not model regex literals. In
+    `const a = /"/; const b = "//"; fs.existsSync(b);` the quote inside the regex pairs with a later
+    string, the `//` after it opens a line comment, and the guarded call counted as zero.
+    `stripperVerdict` (#3573) checks the transform with an oracle the raw input already passes: it
+    compiles both the raw file and the stripped text under a CommonJS wrapper with `vm.Script`. A
+    blanked comment never breaks syntax, but blanked code cuts a literal short. So "raw compiles,
+    stripped does not" is `misparsed`, and a raw file that does not compile at all (an ESM file) is
+    `unparseable`, its own outcome and never `ok`. Each scan reports either one as an offender.
+    State what the oracle cannot see, as the helper's header does: a mis-parse whose stripped text
+    still compiles passes unseen. Pin the planted mis-parse through every scan that calls the
+    verdict, not only through the helper's own tests.
 
 ## When to use
 
