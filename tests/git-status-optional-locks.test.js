@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { stripComments } = require('./helpers/strip-comments');
+const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
 
 // Every read-only `git status` under plugin/bin/ must pass the top-level
 // `--no-optional-locks` option (before `status`, after any `-C <path>`). A plain
@@ -48,6 +48,7 @@ const GIT_STATUS_CMD = /^git\s+(?:\S+\s+)*?status(?=\s+-|\s*$)/;
 // -> { matched, offenders: [{ line, text }] } for every git status call in `raw`.
 function unflaggedStatusCalls(raw) {
   const src = stripComments(raw);
+  const verdict = stripperVerdict(raw, src);
   const lineOf = (index) => src.slice(0, index).split('\n').length;
   const offenders = [];
   let matched = 0;
@@ -65,6 +66,7 @@ function unflaggedStatusCalls(raw) {
       offenders.push({ line: lineOf(m.index), text: m[0].slice(0, 100) });
     }
   }
+  if (verdict !== 'ok') offenders.push({ line: 0, text: STRIPPER_VERDICT_MESSAGES[verdict] });
   offenders.sort((a, b) => a.line - b.line);
   return { matched, offenders };
 }
@@ -110,6 +112,13 @@ test('scanner flags an unflagged status call and ignores non-git status (proves 
   ].join('\n'));
   assert.deepEqual(clean.offenders, []);
   assert.equal(clean.matched, 2);
+});
+
+test('a comment-stripper mis-parse is reported, not passed as a file with no status calls', () => {
+  assert.deepEqual(unflaggedStatusCalls("const re = /[/*]/; runGit(['status']); /* c */"), {
+    matched: 0,
+    offenders: [{ line: 0, text: 'the comment stripper mis-parsed this file: the stripped text no longer compiles, so live code was blanked and cannot be scanned' }],
+  });
 });
 
 test('AC1.1/AC1.2/AC2.3: every git status under plugin/bin passes --no-optional-locks before the subcommand', () => {

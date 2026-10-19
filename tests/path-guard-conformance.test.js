@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { stripComments } = require('./helpers/strip-comments');
+const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
 
 // New filesystem-check code under plugin/bin/ routes through the shared
 // plugin/bin/lib/path-guard/ module (lstatType / resolveLeaf /
@@ -42,8 +42,9 @@ const DONTS = path.join(__dirname, '..', 'docs', 'donts.md');
 // (`/^https?:\/\//`, `/src\/*.js/`) no longer opens a comment, because both
 // openers carry the `(?<!\\)` guard. But a quote or backtick inside a regex can
 // pair with a later literal, and an unescaped `/*` or `//` in a character class
-// opens a comment; either can blank code after it. Nothing under plugin/bin
-// trips this today, but nothing enforces that. Computed member access
+// opens a comment; either can blank code after it. `stripperVerdict` catches
+// that: `evaluate` reports any file the stripper mis-parses, so it fails the
+// lint instead of counting as zero tokens. Computed member access
 // (`fs['realpath' + 'Sync']`, `fs[name]`) is also not seen.
 
 // -> { realpathSync, existsSync } token counts in `src`, comments excluded.
@@ -73,6 +74,8 @@ function evaluate(files, allowlist) {
     }
   }
   for (const [rel, src] of Object.entries(files)) {
+    const verdict = stripperVerdict(src);
+    if (verdict !== 'ok') offenders.push(`${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
     const actual = countGuardedTokens(src);
     const allowed = allowlist[rel] || {};
     for (const key of KEYS) {
@@ -188,6 +191,12 @@ test('scanner does not let a /* inside a line comment swallow live code (proves 
     "const gen = `if (!fs.existsSync(t)) process.exit(0);`;",
   ].join('\n');
   assert.deepEqual(countGuardedTokens(fixture), { realpathSync: 1, existsSync: 2 });
+});
+
+test('a comment-stripper mis-parse is reported, not counted as zero tokens', () => {
+  assert.deepEqual(evaluate({ 'lib/x.js': 'const a = /"/; const b = "//"; fs.existsSync(b);' }, {}), [
+    'lib/x.js: the comment stripper mis-parsed this file: the stripped text no longer compiles, so live code was blanked and cannot be scanned',
+  ]);
 });
 
 test('AC3.1: a bare fs.realpathSync( in a new plugin/bin/lib/ file is flagged', () => {
