@@ -27,7 +27,6 @@ test('#1928 AC6: both summary templates carry a ### Timing section rendered from
     const t = read(f);
     assert.match(t, /^### Timing$/m, f);
     assert.match(t, /bin\/phase-timing\.js" --run "\$PIPELINE_RUN_DIR" --markdown/, f);
-    assert.match(t, /\| Phase \| Minutes \| Verify \|/, f);
   }
 });
 
@@ -35,7 +34,6 @@ test('#1928: the multi-spec summary also carries a ### Timing section, rendered 
   const t = read('plugin/skills/flow/multispec-summary.md');
   assert.match(t, /^### Timing$/m);
   assert.match(t, /bin\/phase-timing\.js" --run "(\$PIPELINE_RUN_DIR|\$MULTISPEC_PARENT_DIR)" --markdown/);
-  assert.match(t, /\| Phase \| Minutes \| Verify \|/);
 });
 
 test('#1928 AC6: pr-run-comments.md has a timing comment kind with its producer', () => {
@@ -76,7 +74,8 @@ test('#1928: docs name the timing module, the CLI, and the flow/wrap-up table so
 });
 
 test('#1929 AC5: the three summary Timing blocks, the PR timing command, and pr-run-comments.md pass --auto-transcript after --markdown', () => {
-  const noteExempt = new Set(['plugin/skills/_shared/pr-run-comments.md', 'docs/journeys/read-where-a-pipeline-run-spent-its-minutes-1928.md', 'docs/journeys/see-which-phase-spent-the-tokens-1929.md']);
+  // #3413: the three summary templates' Timing sections cite _shared/timing-render.md, which carries the note line (pinned by #3413 AC2).
+  const noteExempt = new Set(['plugin/skills/_shared/pr-run-comments.md', 'docs/journeys/read-where-a-pipeline-run-spent-its-minutes-1928.md', 'docs/journeys/see-which-phase-spent-the-tokens-1929.md', 'plugin/skills/flow/summary-template.md', 'plugin/skills/wrap-up/summary-template.md', 'plugin/skills/flow/multispec-summary.md']);
   for (const f of ['plugin/skills/flow/summary-template.md', 'plugin/skills/wrap-up/summary-template.md', 'plugin/skills/flow/multispec-summary.md', 'plugin/skills/wrap-up/verification-brief.md', 'plugin/skills/_shared/pr-run-comments.md', 'docs/journeys/read-where-a-pipeline-run-spent-its-minutes-1928.md', 'docs/journeys/see-which-phase-spent-the-tokens-1929.md']) {
     const t = read(f);
     assert.match(t, /bin\/phase-timing\.js"? --run "(\$PIPELINE_RUN_DIR|\$MULTISPEC_PARENT_DIR)" --markdown --auto-transcript/, f);
@@ -95,23 +94,6 @@ test('#1929: docs name the transcript reader, the new flags, and the guard count
   assert.match(ps, /^plugin\/bin\/lib\/timing\/ [^\n]*transcript\.js/m);
   assert.match(ps, /^node plugin\/bin\/phase-timing\.js --run <dir> \[--json\] \[--markdown\] \[--transcript <path> \.\.\.\] \[--auto-transcript\]/m);
   assert.match(read('docs/hooks.md'), /timing\.json[^\n]*(gate-denial|guard)/);
-});
-
-test('#3375 AC10.1: every Timing template documents the Dispatches table and its not-found line', () => {
-  for (const f of ['plugin/skills/wrap-up/summary-template.md', 'plugin/skills/flow/summary-template.md', 'plugin/skills/flow/multispec-summary.md']) {
-    const t = read(f);
-    assert.match(t, /\| Tier \| Dispatches \| Agent-seconds \| Elapsed \(min\) \| Tokens \(in\/out\) \| Cache \(read\/create\) \|/, `${f} tier header`);
-    assert.match(t, /\| Role \| Dispatches \| Agent-seconds \| Elapsed \(min\) \| Tokens \(in\/out\) \| Cache \(read\/create\) \|/, `${f} role header`);
-    assert.match(t, /dispatches: subagent transcripts not found/, `${f} not-found line`);
-    assert.match(t, /`Dispatches \(\{run window \| whole session — no run events\}; …\):` line heads the tables/, `${f} scope line`);
-    assert.match(t, /`dispatch agent-\{id\}: ` followed by `transcript not found \(\.\.\.\)`/, `${f} per-dispatch line`);
-    assert.match(t, /`dispatches: \{n\} outside the run window excluded`/, `${f} excluded line`);
-    assert.match(t, /not comparable to phase minutes/, `${f} comparability (minutes)`);
-    assert.match(t, /never summed with the phase table/, `${f} comparability (tokens)`);
-    // #3375 M3: the CLI prints the Tokens (in/out) footnote between the Guard denials line and the Dispatches section.
-    assert.match(t, /rendered verbatim below the `Tokens \(in\/out\)` footnote that follows the Guard denials line/, `${f} placement`);
-    assert.doesNotMatch(t, /rendered verbatim below the Guard denials line/, `${f} stale placement`);
-  }
 });
 
 test('#3375 M3: docs and the verification brief name the Dispatches section', () => {
@@ -186,4 +168,44 @@ test('#3413 AC4: the contract\'s tier and role sets equal derive.js TIERS and RO
   assert.throws(() => assertVocabMatches(noLensRole, TIERS, roles), { message: /contract role set/ });
 
   assert.throws(() => assertVocabMatches(original, [...TIERS, 'ultra'], roles), { message: /contract tier set/ });
+});
+
+const TEMPLATES = {
+  'plugin/skills/wrap-up/summary-template.md': '$PIPELINE_RUN_DIR',
+  'plugin/skills/flow/summary-template.md': '$PIPELINE_RUN_DIR',
+  'plugin/skills/flow/multispec-summary.md': '$MULTISPEC_PARENT_DIR',
+};
+const collapse = (s) => s.replace(/\s+/g, ' ');
+// Frozen control: the pre-#3413 Timing prose (Dispatches paragraph, phase-table note, Tier header).
+const PRE_3413_DISPATCHES = [
+  "When the CLI prints a `tokens: transcript not found (...)` line, render it verbatim above the table — blank token columns are a fact about the run, not a formatting error (#1929).",
+  "Under `--auto-transcript`/`--transcript` the CLI also appends a Dispatches section (#3375), rendered verbatim below the `Tokens (in/out)` footnote that follows the Guard denials line — never composed by hand. It carries two tables over the run's subagent dispatches, scoped to the `run window` (or the `whole session` when the run has no events): one by model tier (`fast`, `standard`, `capable`, `frontier`; an `unmapped` row carries the raw model names), one by role (implementer, task review, re-review, whole-branch review, plan review, lens reviewer, unlabelled). `Agent-seconds` sums each dispatch's span with overlap kept;",
+  '| Tier | Dispatches | Agent-seconds | Elapsed (min) | Tokens (in/out) | Cache (read/create) |',
+].join('\n');
+const RETIRED = [/sums each dispatch's span with overlap kept/, /blank token columns are a fact about the run/, /\| Tier \| Dispatches \|/, /rendered verbatim below the Guard denials line/];
+
+test('#3413 AC1: each Timing template cites the contract, keeps its own invocation, and no longer restates the body', () => {
+  // Control: the frozen pre-extraction text trips each absence check, except the stale-placement one (which it does not contain).
+  for (const re of RETIRED.slice(0, 3)) assert.match(collapse(PRE_3413_DISPATCHES), re, `control: ${re}`);
+  for (const [f, runVar] of Object.entries(TEMPLATES)) {
+    const t = read(f);
+    assert.match(t, /^### Timing$/m, f);
+    // Scoped to the Timing section: a citation elsewhere in the template (e.g. the Needs-a-human back-reference) does not count.
+    const section = t.slice(t.search(/^### Timing$/m)).split(/\n### /)[0];
+    assert.match(section, /`_shared\/timing-render\.md`/, `${f} Timing section cites the contract`);
+    const esc = runVar.replace(/\$/g, '\\$');
+    assert.match(section, new RegExp(`bin/phase-timing\\.js" --run "${esc}" --markdown --auto-transcript`), `${f} Timing section keeps its own invocation`);
+    for (const re of RETIRED) assert.doesNotMatch(collapse(t), re, `${f} still restates ${re}`);
+  }
+});
+
+test('#3413 AC5: the Needs-a-human archive back-references name the contract', () => {
+  for (const f of ['plugin/skills/flow/summary-template.md', 'plugin/skills/flow/multispec-summary.md']) {
+    const t = read(f);
+    assert.doesNotMatch(t, /Timing section's rule|as for Timing/, f);
+    const start = t.indexOf('**Needs-a-human residue');
+    const para = t.slice(start, t.indexOf('\n\n', start));
+    assert.match(para, /`_shared\/timing-render\.md`'s archive-path rule/, `${f} names the contract`);
+    assert.match(para, /console-residue\.js" --run "\$(PIPELINE_RUN_DIR|MULTISPEC_PARENT_DIR)"/, `${f} keeps the console-residue literal`);
+  }
 });
