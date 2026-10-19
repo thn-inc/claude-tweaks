@@ -320,6 +320,7 @@ function isAbandonedInterrupted(runDir, state, sessionId, now = Date.now()) {
 function decideArchiveCore(prState, consoleState, hasStagedPending) {
   if (prState === 'gh-absent') return { action: 'skip', reason: 'gh-absent' };
   if (prState === 'network-failure') return { action: 'skip', reason: 'network-failure' };
+  if (prState === 'invalid-arguments') return { action: 'skip', reason: 'invalid-arguments' };
   if (!prState) return { action: 'skip', reason: 'no-pr' };
   if (prState.state !== 'MERGED') {
     return { action: 'skip', reason: prState.state === 'OPEN' ? 'pr-open' : 'pr-closed-unmerged' };
@@ -1605,9 +1606,25 @@ function finishArchiveAttempt(cacheTarget, repoSlug, dir, dryRun, runner, archiv
   archived.push(dir);
 }
 
+// #3416: a run's PR identity is its stamped run-state.json `pr.number`, not
+// its branch name — a worktree branch name is reused across runs, so
+// `gh pr list --head {branch}` can return a MERGED PR from an earlier run that
+// shared the name and archive a live run. The by-branch lookup is the fallback
+// only when no number is stamped (or the by-number probe returns null). Any
+// failure string from the by-number probe is returned as-is, never falling
+// back to the branch: the branch lookup would reintroduce the same
+// misattribution on a transient gh failure.
+function resolveRunPrState(root, state, branch) {
+  if (state && state.pr && state.pr.number) {
+    const byNumber = resolvePrStateByNumber(root, state.pr.number);
+    if (byNumber !== null) return byNumber;
+  }
+  return resolvePrState(root, branch);
+}
+
 // #1733: the merged-PR archive sequence both the main loop and the
 // #1544 clean-status sweep run, once branch resolution has already produced a
-// `branch` to check — resolvePrState -> decideArchiveCore -> (skip, with the
+// `branch` to check — resolveRunPrState -> decideArchiveCore -> (skip, with the
 // caller's own onSkip hook) -> localHasMerge -> (skip on not-yet-caught-up) ->
 // dryRun short-circuit -> archiveRunDir -> trackArchiveResult. `onSkip` is the
 // one place the two callers genuinely differ: the main loop also calls
@@ -1615,9 +1632,9 @@ function finishArchiveAttempt(cacheTarget, repoSlug, dir, dryRun, runner, archiv
 // visibility); the clean loop does not (see this file's clean-loop comment
 // for why that asymmetry is intentional, not a gap to "fix").
 function archiveMergedRun({
-  root, repoSlug, dir, branch, dryRun, onSkip, runner, cacheTarget = root, integration,
+  root, repoSlug, dir, branch, state, dryRun, onSkip, runner, cacheTarget = root, integration,
 }) {
-  const prState = resolvePrState(root, branch);
+  const prState = resolveRunPrState(root, state, branch);
   const consoleState = readConsoleState(dir);
   // #3249: decideArchiveCore directly, not decideArchive — that thin wrapper
   // routes through classifyRunDir without a `dir`, so the staged-items
@@ -1922,7 +1939,7 @@ function archiveMerged({
     }
 
     const runResult = archiveMergedRun({
-      root, repoSlug, dir, branch, dryRun, runner, cacheTarget: cacheBatch, integration,
+      root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
       onSkip: (reason) => trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner }),
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
@@ -1943,7 +1960,7 @@ function archiveMerged({
     if (!branch) { skipped.push({ runDir: dir, reason: 'no-branch' }); continue; }
 
     const runResult = archiveMergedRun({
-      root, repoSlug, dir, branch, dryRun, runner, cacheTarget: cacheBatch, integration,
+      root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
     skipped.push({ runDir: dir, reason: runResult.reason });

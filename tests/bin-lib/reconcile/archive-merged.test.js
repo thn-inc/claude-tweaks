@@ -79,10 +79,63 @@ function removePreCommitHook(root) {
 // archive-merged.js's own require time, same non-injectable caveat
 // reap-merged.test.js's own copy of this helper documents — intercept at the
 // process-spawn boundary via a `gh` wrapper placed first on PATH.
+// #3416: when `prsJson` is an array, `gh pr view {n}` prints the element whose
+// `number` is {n} (exit 1 when none matches — a probe for an unknown PR is a
+// transport-style failure); every other call, and any non-array body, prints
+// `prsJson` exactly as before.
 function installGhWrapper(prsJson) {
   const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-ghwrap-'));
   const wrapperPath = path.join(wrapperDir, 'gh');
-  fs.writeFileSync(wrapperPath, `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(prsJson)}\nEOF\n`);
+  const body = (value) => `cat <<'EOF'\n${JSON.stringify(value)}\nEOF`;
+  let script = `#!/bin/sh\n${body(prsJson)}\n`;
+  if (Array.isArray(prsJson)) {
+    const cases = prsJson.map((pr) => `    ${pr.number}) ${body(pr)}\n      ;;`).join('\n');
+    script = [
+      '#!/bin/sh',
+      'if [ "$1" = "pr" ] && [ "$2" = "view" ]; then',
+      '  case "$3" in',
+      cases,
+      '    *) exit 1 ;;',
+      '  esac',
+      'else',
+      `  ${body(prsJson)}`,
+      'fi',
+      '',
+    ].join('\n');
+  }
+  fs.writeFileSync(wrapperPath, script);
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  return { restore: () => { process.env.PATH = originalPath; } };
+}
+
+// #3416: argv-dispatching gh wrapper for the run-PR identity tests — `list` is
+// printed for `gh pr list ...`; `view` maps a PR number to the JSON printed for
+// `gh pr view {n} ...`, and any unmapped number exits 1. `viewMarker`, when
+// given, is touched on every `gh pr view` call so a test can prove the
+// by-number probe never ran. Any other argv exits 1.
+function installGhPrWrapper({ list, view, viewMarker }) {
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-ghprwrap-'));
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  const body = (value) => `cat <<'EOF'\n${JSON.stringify(value)}\nEOF`;
+  const cases = Object.entries(view).map(([n, pr]) => `    ${n}) ${body(pr)}\n      ;;`).join('\n');
+  const script = [
+    '#!/bin/sh',
+    'if [ "$1" = "pr" ] && [ "$2" = "list" ]; then',
+    `  ${body(list)}`,
+    'elif [ "$1" = "pr" ] && [ "$2" = "view" ]; then',
+    viewMarker ? `  touch '${viewMarker}'` : '',
+    '  case "$3" in',
+    cases,
+    '    *) exit 1 ;;',
+    '  esac',
+    'else',
+    '  exit 1',
+    'fi',
+    '',
+  ].join('\n');
+  fs.writeFileSync(wrapperPath, script);
   fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
   process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
@@ -149,12 +202,14 @@ function mergedFeatureBranchRepo(branch) {
 // (or was never present in this fixture), so the only way to recover a
 // branch name is run-state.json's own `pr.branch` stamp (run-integrity.js's
 // fallbackBranch, same source #1672's own fixture uses).
-function fixtureCleanUnarchivedRun({ runId, consoleResolved = true } = {}) {
+// #3416: `prNumber`, when set, stamps the run's PR identity (pr.number).
+function fixtureCleanUnarchivedRun({ runId, consoleResolved = true, prNumber } = {}) {
   const { root, featureSha } = mergedFeatureBranchRepo('feat-clean-branch');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
+  const pr = prNumber ? { number: prNumber, branch: 'feat-clean-branch' } : { branch: 'feat-clean-branch' };
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
-    status: 'clean', worktree: null, pr: { branch: 'feat-clean-branch' },
+    status: 'clean', worktree: null, pr,
   }));
   if (consoleResolved) {
     fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
@@ -2682,6 +2737,126 @@ test('decideArchiveCore: consoleState none + MERGED + hasStagedPending:false arc
 });
 test('decideArchiveCore: consoleState unresolved still skips regardless of hasStagedPending', () => {
   assert.deepStrictEqual(decideArchiveCore({ state: 'MERGED' }, 'unresolved', false), { action: 'skip', reason: 'console-unresolved' });
+});
+
+test('decideArchiveCore: invalid-arguments skips with reason invalid-arguments (#3416)', () => {
+  assert.deepStrictEqual(decideArchiveCore('invalid-arguments', 'resolved'), { action: 'skip', reason: 'invalid-arguments' });
+});
+
+// #3416: a run's PR identity is its stamped run-state.json pr.number, not its
+// branch name. A live worktree's branch name can be reused from an earlier
+// run whose PR already merged, so the branch lookup can name the wrong PR.
+// This fixture is that shape: the live worktree is on `worktree-reused`, and
+// the earlier merged PR is the one the branch list would return.
+function fixtureReusedBranchLiveRun({ runId, prNumber, consoleResolved = false }) {
+  const { root, featureSha } = mergedFeatureBranchRepo('feat-reused-branch');
+  const wt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-reusedwt-')));
+  git(root, 'worktree', 'add', '-q', wt, '-b', 'worktree-reused');
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active', worktree: wt, pr: { number: prNumber, branch: 'worktree-reused' },
+  }));
+  if (consoleResolved) fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+  return { root, runDir, featureSha };
+}
+
+test('AC1.1: archiveMerged skips pr-open a live run whose stamped pr.number is OPEN while its live worktree branch backs an older MERGED PR (#3416)', () => {
+  const runId = '2026-10-17T090000-record-3416-reused-open';
+  const { root, runDir, featureSha } = fixtureReusedBranchLiveRun({ runId, prNumber: 3406 });
+  const wrapper = installGhPrWrapper({
+    list: [{ number: 3391, state: 'MERGED', mergedAt: '2026-10-17T14:09:02Z', updatedAt: '2026-10-17T14:09:02Z', mergeCommit: { oid: featureSha } }],
+    view: { 3406: { number: 3406, state: 'OPEN', mergedAt: null, updatedAt: '2026-10-17T17:00:00Z', mergeCommit: null } },
+  });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(!result.archived.includes(runDir), `a live run must not be archived off a reused branch, got ${JSON.stringify(result)}`);
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'pr-open');
+  assert.equal(fs.existsSync(runDir), true);
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)), false);
+});
+
+test('AC1.1 orthogonal: a stamped pr.number that is MERGED archives even when the branch list returns OPEN — resolution is keyed on the number (#3416)', () => {
+  const runId = '2026-10-17T090000-record-3416-reused-merged';
+  const { root, runDir, featureSha } = fixtureReusedBranchLiveRun({ runId, prNumber: 3406, consoleResolved: true });
+  const wrapper = installGhPrWrapper({
+    list: [{ number: 7, state: 'OPEN', mergedAt: null, updatedAt: '2026-10-17T17:00:00Z', mergeCommit: null }],
+    view: { 3406: { number: 3406, state: 'MERGED', mergedAt: '2026-10-17T14:09:02Z', updatedAt: '2026-10-17T14:09:02Z', mergeCommit: { oid: featureSha } } },
+  });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
+});
+
+test('AC1.1 transport failure: a by-number probe that fails skips network-failure, never falls back to the MERGED branch PR (#3416)', () => {
+  const runId = '2026-10-17T090000-record-3416-reused-transport';
+  const { root, runDir, featureSha } = fixtureReusedBranchLiveRun({ runId, prNumber: 3406 });
+  const wrapper = installGhPrWrapper({
+    list: [{ number: 3391, state: 'MERGED', mergedAt: '2026-10-17T14:09:02Z', updatedAt: '2026-10-17T14:09:02Z', mergeCommit: { oid: featureSha } }],
+    view: {},
+  });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(!result.archived.includes(runDir), `a failed probe must not fall back to the branch PR, got ${JSON.stringify(result)}`);
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'network-failure');
+  assert.equal(fs.existsSync(runDir), true);
+});
+
+test('AC2.1: the clean-status sweep does not archive a status:clean run whose pr.number is OPEN even when its pr.branch backs a MERGED PR (#3416)', () => {
+  const runId = '2026-08-01T090000-clean-3416-open';
+  const { root, runDir, featureSha } = fixtureCleanUnarchivedRun({ runId, prNumber: 3407 });
+  const wrapper = installGhPrWrapper({
+    list: [{ number: 99, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z', mergeCommit: { oid: featureSha } }],
+    view: { 3407: { number: 3407, state: 'OPEN', mergedAt: null, updatedAt: '2026-08-01T00:00:00Z', mergeCommit: null } },
+  });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(!result.archived.includes(runDir), `expected ${runDir} NOT archived while its stamped PR is open, got ${JSON.stringify(result)}`);
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'pr-open');
+  assert.equal(fs.existsSync(runDir), true);
+});
+
+test('AC4.1: a run with no stamped pr.number resolves by branch and never calls gh pr view (#3416)', () => {
+  const runId = '2026-08-31T090000-spec-3416-unstamped';
+  const { root, runDir, featureSha } = fixtureActiveUnstampedMergedRun({ runId });
+  const viewMarker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-viewmarker-')), 'pr-view-called');
+  const wrapper = installGhPrWrapper({
+    list: [{ number: 101, state: 'MERGED', mergedAt: '2026-08-31T00:00:00Z', updatedAt: '2026-08-31T00:00:00Z', mergeCommit: { oid: featureSha } }],
+    view: {},
+    viewMarker,
+  });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived via the branch lookup, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(viewMarker), false, 'an unstamped run must never probe gh pr view by number');
 });
 
 test('#1854: an auto-resolve console.json ({resolved:true, mode:"auto-resolve", …}) reads as resolved and archives, never console-never-rendered (#1932 AC6)', () => {
