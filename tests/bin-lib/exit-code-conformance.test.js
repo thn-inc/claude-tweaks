@@ -96,8 +96,9 @@ function findDirectProcessExit(guardText) {
   return guardText.match(/process\.exit\(/g) || [];
 }
 
-// The shared stripper does not model regex literals, so a mis-parse can blank
-// a guard (tests/helpers/strip-comments.js's header). A file that also exports
+// The shared stripper reads a regex right after `)` or `}` as division
+// (tests/helpers/strip-comments.js's header), so a mis-parse can still blank
+// a guard. A file that also exports
 // would then read as a guard-less library and be skipped silently; the scan
 // reports it instead.
 const GUARD_RE = /if\s*\(\s*require\.main\s*===\s*module\s*\)/;

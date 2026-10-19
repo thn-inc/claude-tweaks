@@ -38,15 +38,12 @@ const DONTS = path.join(__dirname, '..', 'docs', 'donts.md');
 // generated source text (statusline-wrapper-source.js) and a bracket-string
 // form (`fs['realpathSync']`) still count.
 //
-// Regex literals are only partly modeled. A regex containing an escaped slash
-// (`/^https?:\/\//`, `/src\/*.js/`) no longer opens a comment, because both
-// openers carry the `(?<!\\)` guard. But a quote or backtick inside a regex can
-// pair with a later literal, and an unescaped `/*` or `//` in a character class
-// opens a comment; either can blank code after it. `evaluate` fails the lint on
-// any file whose stripped text stops compiling (`stripperVerdict`) instead of
-// counting it as zero tokens. A mis-parse whose stripped text still compiles
-// goes unseen, as the helper's header says. Computed member access
-// (`fs['realpath' + 'Sync']`, `fs[name]`) is also not seen.
+// The stripper models regex literals: a quote, backtick, `//` or `/*` inside one
+// stays code. Its one known ambiguity is a regex right after `)` or `}`, which it
+// reads as division. `evaluate` fails the lint on any file whose stripped text
+// stops compiling (`stripperVerdict`) instead of counting it as zero tokens, and
+// a misread that still compiles goes unseen, as the helper's header says.
+// Computed member access (`fs['realpath' + 'Sync']`, `fs[name]`) is also not seen.
 
 // -> { realpathSync, existsSync } token counts in `src`, comments excluded.
 // Calls, references (`{ realpath: fs.realpathSync.native }`), defaults
