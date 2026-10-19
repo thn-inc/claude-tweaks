@@ -23,9 +23,9 @@ const RECORDS = {
 
 function fakeDeps({
   records = RECORDS, ghAvailable = () => true, remoteUrl = () => 'git@github.com:acme/repo.git', failView = false,
-  commitScope = null, commitScopePaths = [], changedFiles = null, prFiles = null,
+  commitScope = null, commitScopePaths = [], changedFiles = null, prFiles = null, writeError = null,
 } = {}) {
-  const out = { stdout: '', stderr: '', calls: [], gitCalls: [] };
+  const out = { stdout: '', stderr: '', calls: [], gitCalls: [], files: {}, dirs: [] };
   const deps = {
     ghAvailable,
     remoteUrl,
@@ -50,6 +50,11 @@ function fakeDeps({
       if (changedFiles instanceof Error) throw changedFiles;
       if (changedFiles === null) throw new Error('gitRunner must not be called');
       return changedFiles;
+    },
+    mkdirp: (d) => { out.dirs.push(d); },
+    writeFile: (p, s) => {
+      if (writeError) throw writeError;
+      out.files[p] = s;
     },
     stdout: (s) => { out.stdout += s; },
     stderr: (s) => { out.stderr += s; },
@@ -647,4 +652,89 @@ test('realDeps reads commit-scope and commit-scope-paths from the cwd policy', (
       assert.deepEqual(realDeps.readCommitScopePaths(), ['plugin/bin/=bin', 'plugin/skills/=skills']);
     } finally { process.chdir(prev); }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// #3522 — --out-dir: the file-emitting form the worktree-guard-safe merge fences use.
+test('AC2.1: --out-dir writes title.txt/body.md/message.txt equal to the --shell values', () => {
+  const path = require('node:path');
+  const json = fakeDeps();
+  assert.equal(run(['2251', '--tag', 'human-approved'], json.deps), 0, json.out.stderr);
+  const { title, body } = JSON.parse(json.out.stdout);
+
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2251', '--tag', 'human-approved', '--out-dir', '/x/subj'], deps), 0, out.stderr);
+  assert.equal(out.files[path.join('/x/subj', 'title.txt')], title);
+  assert.equal(out.files[path.join('/x/subj', 'body.md')], body);
+  assert.equal(out.files[path.join('/x/subj', 'message.txt')], title + '\n\n' + body);
+  assert.ok(out.dirs.includes('/x/subj'), JSON.stringify(out.dirs));
+
+  const shell = fakeDeps();
+  assert.equal(run(['2251', '--tag', 'human-approved', '--shell'], shell.deps), 0, shell.out.stderr);
+  assert.equal(shell.out.stdout, 'SUBJECT_TITLE=' + shellQuote(title) + '\nSUBJECT_BODY=' + shellQuote(body) + '\n');
+});
+
+test('AC2.2: --out-dir stdout is the single-quoted title on one line', () => {
+  const json = fakeDeps();
+  assert.equal(run(['2262'], json.deps), 0, json.out.stderr);
+  const { title } = JSON.parse(json.out.stdout);
+
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2262', '--out-dir', '/x/subj'], deps), 0, out.stderr);
+  assert.equal(out.stdout, shellQuote(title) + '\n');
+  assert.equal(out.stdout.split('\n').length - 1, 1, 'exactly one newline');
+});
+
+test('--out-dir and --shell together is a usage error, exit 1', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2251', '--shell', '--out-dir', '/x/subj'], deps), 1);
+  assert.match(out.stderr, /--out-dir and --shell are mutually exclusive/);
+  assert.equal(Object.keys(out.files).length, 0);
+  assert.equal(out.dirs.length, 0);
+});
+
+test('--out-dir with no value is a usage error', () => {
+  assert.ok(parseArgs(['2251', '--out-dir']).error);
+  assert.ok(parseArgs(['2251', '--out-dir', '--shell']).error);
+  assert.equal(parseArgs(['2251', '--out-dir', 'd']).outDir, 'd');
+  assert.equal(parseArgs(['2251']).outDir, null);
+});
+
+test('no files on an uncomposable record', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2290', '--out-dir', '/x/subj'], deps), 1);
+  assert.equal(Object.keys(out.files).length, 0);
+});
+
+test('write failure exits 3 naming the path', () => {
+  const { deps, out } = fakeDeps({ writeError: new Error('EACCES: permission denied') });
+  assert.equal(run(['2251', '--out-dir', '/x/subj'], deps), 3);
+  assert.match(out.stderr, /compose-subject\.js: could not write .*title\.txt/);
+  assert.match(out.stderr, /EACCES/);
+  assert.equal(out.stdout, '');
+});
+
+test('USAGE advertises --out-dir', () => {
+  const { USAGE } = require('../../plugin/bin/lib/compose-subject.js');
+  assert.match(USAGE, /\[--out-dir <dir>\]/);
+});
+
+test('real fs: --out-dir creates the directory and writes the files', (t) => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-subject-outdir-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'a', 'b');
+
+  const json = fakeDeps();
+  assert.equal(run(['2262'], json.deps), 0, json.out.stderr);
+  const { title, body } = JSON.parse(json.out.stdout);
+
+  const { deps, out } = fakeDeps();
+  deps.mkdirp = realDeps.mkdirp;
+  deps.writeFile = realDeps.writeFile;
+  assert.equal(run(['2262', '--out-dir', dir], deps), 0, out.stderr);
+  assert.equal(fs.readFileSync(path.join(dir, 'title.txt'), 'utf8'), title);
+  assert.equal(fs.readFileSync(path.join(dir, 'body.md'), 'utf8'), body);
+  assert.equal(fs.readFileSync(path.join(dir, 'message.txt'), 'utf8'), title + '\n\n' + body);
 });
