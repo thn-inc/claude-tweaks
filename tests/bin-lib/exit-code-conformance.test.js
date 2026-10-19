@@ -14,6 +14,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
+const { stripComments } = require('../helpers/strip-comments');
 
 const ROOT = path.join(__dirname, '..', '..');
 
@@ -45,15 +46,6 @@ function getAllBinFiles() {
   return walkFilesRelative(binDir)
     .filter((f) => f.endsWith('.js'))
     .map((f) => path.join('plugin', 'bin', f));
-}
-
-// Naive comment stripping -- sufficient for this repo's own source, which
-// never relies on a literal "//" or "/*...*/" inside a string on a line that
-// also matters to this scan (the one real case in the wild,
-// wrap-up-engine.js's `// Never process.exit() right after...` comment,
-// would otherwise false-positive).
-function stripComments(src) {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 }
 
 // Extracts the text governed by a `require.main === module` guard: either a
@@ -104,13 +96,42 @@ function findDirectProcessExit(guardText) {
   return guardText.match(/process\.exit\(/g) || [];
 }
 
+// The shared stripper does not model regex literals, so a mis-parse can blank
+// a guard (tests/helpers/strip-comments.js's header). A file that also exports
+// would then read as a guard-less library and be skipped silently; the scan
+// reports it instead.
+const GUARD_RE = /if\s*\(\s*require\.main\s*===\s*module\s*\)/;
+function guardBlankedByStripper(raw, stripped) {
+  return GUARD_RE.test(raw) && !GUARD_RE.test(stripped);
+}
+
+test('a guard after a string holding /* is still scanned (proves the literal-aware stripper)', () => {
+  const fixture = ["const pattern = 'work/*-spec.md';", 'if (require.main === module) process.exit(main());', '/* trailing note */'].join('\n');
+  assert.strictEqual(findDirectProcessExit(guardRegionFor(stripComments(fixture))).length, 1);
+});
+
+test('a guard the stripper blanks is reported, not skipped as a guard-less library', () => {
+  // An unescaped /* in a regex character class opens a comment that runs to
+  // the trailing */ and blanks the guard; the module.exports line would then
+  // make guardRegionFor read the file as a pure library and skip it.
+  const blanked = ['const re = /[/*]/;', 'if (require.main === module) process.exit(main());', 'module.exports = { re };', '/* x */'].join('\n');
+  assert.strictEqual(guardBlankedByStripper(blanked, stripComments(blanked)), true);
+  const intact = ['if (require.main === module) process.exitCode = main();', 'module.exports = {};'].join('\n');
+  assert.strictEqual(guardBlankedByStripper(intact, stripComments(intact)), false);
+});
+
 test('every require.main guard (or equivalent whole-file entry point) under plugin/bin/**/*.js sets process.exitCode, never process.exit() directly', () => {
   const files = getAllBinFiles();
   assert.ok(files.length > 50, 'sanity check: expected plugin/bin/**/*.js to contain many files');
   const violations = [];
   for (const rel of files) {
     if (ALLOWLIST.has(rel)) continue;
-    const content = stripComments(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
+    const raw = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const content = stripComments(raw);
+    if (guardBlankedByStripper(raw, content)) {
+      violations.push(`${rel}: its require.main guard is blanked by the comment stripper, so the scan cannot see it`);
+      continue;
+    }
     const guard = guardRegionFor(content);
     if (guard === null) continue;
     const hits = findDirectProcessExit(guard);

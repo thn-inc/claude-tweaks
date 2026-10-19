@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  findRecentCommitOverlap, deriveKeyTerms, DEFAULT_LOOKBACK_DAYS, DEFAULT_MIN_TERM_MATCHES,
+  findRecentCommitOverlap, findOpenPrOverlap, deriveKeyTerms, DEFAULT_LOOKBACK_DAYS, DEFAULT_MIN_TERM_MATCHES,
 } = require('../../../plugin/bin/lib/issues/recent-commit-check');
 
 // A fake git-log runner: asserts the argv shape, returns a %x1f-delimited
@@ -159,4 +159,81 @@ test('findRecentCommitOverlap defaults execImpl to child_process.execFileSync wh
     lookbackDays: 3650,
   });
   assert.strictEqual(result, null);
+});
+
+// findOpenPrOverlap fixtures are the real #3155-incident titles, verbatim
+// (#3155's fix PR #3172 and the three by:capture records filed while it was open).
+const PR_3172 = {
+  number: 3172,
+  title: 'bin/verify.js baseline adjudication mangles failing-file paths in a space-containing checkout path (#3155)',
+  url: 'https://github.com/thn-inc/claude-tweaks/pull/3172',
+};
+const TITLE_3178 = 'verify.js baseline isolation mis-extracts test-file paths containing a space';
+const TITLE_3185 = 'verify.js baseline adjudication misclassifies a flaky test as attributable when the checkout path contains a space';
+const TITLE_3189 = "bin/verify.js's --baseline adjudicator mis-extracts failing-test file paths on a checkout whose path contains a space";
+
+test('findOpenPrOverlap names PR #3172 for the #3185 incident title, with the five shared terms (AC3.1)', () => {
+  const result = findOpenPrOverlap({ title: TITLE_3185, prs: [PR_3172] });
+  assert.notStrictEqual(result, null);
+  assert.strictEqual(result.prs.length, 1);
+  assert.strictEqual(result.prs[0].number, 3172);
+  assert.strictEqual(result.prs[0].title, PR_3172.title);
+  assert.strictEqual(result.prs[0].url, PR_3172.url);
+  assert.deepStrictEqual(result.prs[0].matchedTerms, ['verify', 'baseline', 'adjudication', 'checkout', 'path']);
+});
+
+test('findOpenPrOverlap matches the #3178 and #3189 incident titles against PR #3172 on 3 and 4 terms', () => {
+  const r3178 = findOpenPrOverlap({ title: TITLE_3178, prs: [PR_3172] });
+  assert.strictEqual(r3178.prs[0].number, 3172);
+  assert.strictEqual(r3178.prs[0].matchedTerms.length, 3);
+  const r3189 = findOpenPrOverlap({ title: TITLE_3189, prs: [PR_3172] });
+  assert.strictEqual(r3189.prs[0].number, 3172);
+  assert.strictEqual(r3189.prs[0].matchedTerms.length, 4);
+});
+
+test('findOpenPrOverlap returns null for an unrelated title sharing at most one term (AC3.2)', () => {
+  // The candidate's own terms are capture/list/open/pull/requests/record; the second
+  // open PR shares only "record" with it, which is below the module default of 2.
+  const candidate = 'capture should list open pull requests before filing a record';
+  const prs = [PR_3172, { number: 3190, title: 'Document record snapshot invalidation', url: 'https://github.com/thn-inc/claude-tweaks/pull/3190' }];
+  assert.strictEqual(findOpenPrOverlap({ title: candidate, prs }), null);
+});
+
+test('findOpenPrOverlap ranks matches by matched-term count, most first', () => {
+  // 3172 shares 5 terms with TITLE_3185 and 3178 shares 3; input order puts 3178 first.
+  const result = findOpenPrOverlap({ title: TITLE_3185, prs: [{ number: 3178, title: TITLE_3178 }, PR_3172] });
+  assert.deepStrictEqual(result.prs.map((p) => p.number), [3172, 3178]);
+  assert.deepStrictEqual(result.prs[1].matchedTerms, ['verify', 'baseline', 'space']);
+});
+
+test('findOpenPrOverlap breaks matched-term ties by higher PR number first', () => {
+  const prs = [
+    { number: 3100, title: TITLE_3178 },
+    { number: 3150, title: TITLE_3178 },
+  ];
+  const result = findOpenPrOverlap({ title: TITLE_3178, prs });
+  assert.deepStrictEqual(result.prs.map((p) => p.number), [3150, 3100]);
+});
+
+test('findOpenPrOverlap returns null for unusable PR input', () => {
+  for (const prs of [[], undefined, 'x', {}]) {
+    assert.strictEqual(findOpenPrOverlap({ title: TITLE_3185, prs }), null, `prs=${JSON.stringify(prs)}`);
+  }
+});
+
+test('findOpenPrOverlap returns null for an empty or non-string candidate title', () => {
+  for (const title of ['', undefined, 42, null]) {
+    assert.strictEqual(findOpenPrOverlap({ title, prs: [PR_3172] }), null, `title=${JSON.stringify(title)}`);
+  }
+});
+
+test('findOpenPrOverlap returns null instead of throwing when called with null or no argument', () => {
+  assert.strictEqual(findOpenPrOverlap(null), null);
+  assert.strictEqual(findOpenPrOverlap(), null);
+});
+
+test('findOpenPrOverlap skips PR entries without a string title instead of throwing', () => {
+  const prs = [null, { number: 1 }, { number: 2, title: 42 }, PR_3172];
+  const result = findOpenPrOverlap({ title: TITLE_3185, prs });
+  assert.deepStrictEqual(result.prs.map((p) => p.number), [3172]);
 });

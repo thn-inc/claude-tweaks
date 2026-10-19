@@ -195,6 +195,33 @@ toward the grant.
    node "${CLAUDE_PLUGIN_ROOT}/bin/compose-record.js" "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-payload.json" --out "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md"
    ```
 
+   **Open-PR overlap check.** Before any `gh issue create` below, screen the new title against open pull requests (#3191) — in-flight work a commit-only screen cannot see. Each step is its own plain Bash call:
+
+   ```bash
+   rm -f "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-open-pr-match.json"
+   ```
+
+   ```bash
+   gh pr list --state open --json number,title,url --limit 200 > "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-open-prs.json"
+   ```
+
+   ```bash
+   node -e "
+   const fs = require('fs');
+   const { findOpenPrOverlap } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/recent-commit-check');
+   const session = process.env.CLAUDE_CODE_SESSION_ID;
+   let result = null;
+   try {
+     const title = JSON.parse(fs.readFileSync('/tmp/capture-' + session + '-payload.json', 'utf8')).title;
+     const prs = JSON.parse(fs.readFileSync('/tmp/capture-' + session + '-open-prs.json', 'utf8'));
+     result = findOpenPrOverlap({ title, prs });
+   } catch {}
+   fs.writeFileSync('/tmp/capture-' + session + '-open-pr-match.json', JSON.stringify(result));
+   "
+   ```
+
+   `--limit 200` follows `_shared/github-write-transport.md`'s "Sizing the list-then-filter window" (16 open PRs measured 2026-10-19); a result of exactly 200 is truncated, not complete. Plain `gh pr list`, never `--search`. **Fail open:** a non-zero `gh pr list`, non-JSON output, a snippet that does not run, or a thrown `findOpenPrOverlap` each leave the match file `null` (or absent, read as `null`) — none is a filing failure; filing proceeds unchanged.
+
    **Type expression branch.** Read the project's `work-types` config key once before filing and branch — never re-probe mid-flow (`_shared/work-record.md`'s config-key table; the key is written by `/init`). `work-types: native` applies `$TYPE` via GitHub's native Issue Type; `work-types: labels` adds the matching `type:$TYPE` label instead (the pairs live in `record.js`'s `TYPE_LABELS`).
 
    **`work-types: native`** — detect-then-fallback, never version-sniff `gh --version` (gh added `issue create --type` between 2.92.0 and 2.96.0; a fleet runs a mix of both, so presence of the flag is what matters, not the version string). Run each command below as its **own plain Bash call** and branch on what it returns: an `if VAR=$(gh …)` wrapper and an inline GraphQL mutation declaring two `$var`s inside a nested `input:{…}` are both refused by the worktree-session guard (`_shared/scratch-worktree.md`), and shell variables do not survive between calls — carry each returned value (issue number, node id, type id) forward as a literal.
@@ -246,6 +273,8 @@ toward the grant.
 
    **Recent-commit overlap check.** Immediately after the `gh issue create` call above succeeds, run `_shared/health-recent-commit-check.md` and apply it in full (`title: "$TITLE"`) — it screens the just-filed record against recently-merged commits and, on a strong match, posts a triage comment rather than blocking or reopening anything.
 
+   **Open-PR overlap comment.** Runs after the Recent-commit overlap check above (its comment, if any, posts first). Only when the held match file is not `null`, post one separate triage comment on the new record N: write the body to `/tmp/capture-${CLAUDE_CODE_SESSION_ID}-open-pr-comment.md` with the `Write` tool — up to the first 5 `prs` entries as `#{number} {title}` lines, under: "Possible overlap with an open pull request — a heuristic screen (#3191), not a verdict. If a PR listed here already does this work, close this record as a duplicate; otherwise disregard this comment." Then `gh issue comment N --body-file "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-open-pr-comment.md"`. A retry or replay of an already-screened payload skips it a second time, as the commit check does. A failed post is logged; filing still reports success. The comment never blocks, delays, or absorbs filing.
+
    Immediately after the `gh issue create` call succeeds, invalidate the session-scoped record
    snapshot (`_shared/record-queue-fetch.md`) — this filing changed what a `--state all` pull
    would return, so the next consumer must re-fetch rather than read the pre-filing snapshot — and
@@ -253,7 +282,7 @@ toward the grant.
 
    ```bash
    node -e "require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record-snapshot.js').invalidateSnapshot(process.env.CLAUDE_CODE_SESSION_ID)"
-   rm -f "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-payload.json" "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md"
+   rm -f "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-payload.json" "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-body.md" "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-open-prs.json" "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-open-pr-match.json" "/tmp/capture-${CLAUDE_CODE_SESSION_ID}-open-pr-comment.md"
    ```
 
 3. **On failure** (GitHub unreachable, `gh` broken, `gh` not installed, transient API error): fall back to the local driver — write the record via `local-store.js`'s `createRecord` (atomic id allocation; see the local-files branch below for why `allocateId`+`writeRecord` is unsafe for creating a brand-new record). Same script as the local-files branch below, with one difference: `facets` also includes `unsynced: true`.

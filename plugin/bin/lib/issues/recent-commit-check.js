@@ -1,5 +1,5 @@
-// bin/lib/issues/recent-commit-check.js — recent-commit overlap screen for a
-// finding about to be filed as a new record (#1316).
+// bin/lib/issues/recent-commit-check.js — overlap screens for a finding about
+// to be filed as a new record: recent-commit (#1316) and open-PR (#3191).
 //
 // Why: #1068 was filed describing exactly the symptom commit 73478c8b (refs
 // #959) had already fixed the day before — nothing caught the near-duplicate
@@ -11,7 +11,9 @@
 // grep against the finding's own key terms/file paths over a lookback
 // window's `git log`.
 //
-// Pure and local-only: reads `git log`, never the network, never `gh` — no
+// Pure and local-only: the commit screen reads `git log`; the open-PR screen
+// takes an already-fetched PR list (capture's skill prose runs `gh pr list`
+// and hands the JSON in). Neither touches the network or `gh` itself — no
 // timeout bound per the gh-api-module-pattern skill's local-only exemption.
 // Fails toward null on any git failure (not a repo, no git on PATH, empty
 // history) — this screen must never block or delay filing over its own
@@ -113,6 +115,37 @@ function findRecentCommitOverlap({
   return { lookbackDays: days, fileScoped: cleanFiles.length > 0, commits: strong };
 }
 
+// { title, prs, minTermMatches? } -> { prs: [{number, title, url, matchedTerms}] }
+//    sorted by matchedTerms count (desc, then higher PR number first), or null.
+//
+// prs is an already-fetched open-PR list (`gh pr list --json number,title,url`).
+// A PR matches when it shares at least minTermMatches key terms with the
+// candidate title, by set intersection of deriveKeyTerms on both sides (not a
+// substring test). Never throws: an empty or non-string title, or a prs value
+// that is not an array, yields null; a PR entry without a string title is skipped.
+function findOpenPrOverlap(opts) {
+  const { title, prs, minTermMatches = DEFAULT_MIN_TERM_MATCHES } = opts || {};
+  const candidateTerms = deriveKeyTerms(title);
+  if (candidateTerms.length === 0 || !Array.isArray(prs)) return null;
+
+  const threshold = Math.max(1, minTermMatches);
+  const matches = [];
+  for (const pr of prs) {
+    if (!pr || typeof pr.title !== 'string') continue;
+    const prTerms = new Set(deriveKeyTerms(pr.title));
+    const matchedTerms = candidateTerms.filter((t) => prTerms.has(t));
+    if (matchedTerms.length >= threshold) {
+      matches.push({ number: pr.number, title: pr.title, url: pr.url, matchedTerms });
+    }
+  }
+  if (matches.length === 0) return null;
+
+  matches.sort((a, b) => (b.matchedTerms.length - a.matchedTerms.length)
+    || ((Number(b.number) || 0) - (Number(a.number) || 0)));
+
+  return { prs: matches };
+}
+
 module.exports = {
-  findRecentCommitOverlap, deriveKeyTerms, DEFAULT_LOOKBACK_DAYS, DEFAULT_MIN_TERM_MATCHES,
+  findRecentCommitOverlap, findOpenPrOverlap, deriveKeyTerms, DEFAULT_LOOKBACK_DAYS, DEFAULT_MIN_TERM_MATCHES,
 };

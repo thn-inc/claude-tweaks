@@ -9,6 +9,8 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const { run } = require('../plugin/bin/harness-cost-report');
@@ -75,12 +77,55 @@ test('--plugin-root <plugin/> emits one JSON line matching estimateHarnessCost()
 
   assert.strictEqual(report.totalSkills, listSkillDirs(PLUGIN_ROOT).length);
   assert.strictEqual(report.totalSkills, expected.totalSkills);
+  assert.strictEqual(report.totalAgents, expected.totalAgents);
   assert.strictEqual(report.unscopedCount, expected.unscopedCount);
   assert.deepStrictEqual(report.entries, expected.entries);
   assert.deepStrictEqual(report.flagged, flagHighToolCount(expected.entries));
 });
 
-test('--ratio-threshold 0 flags every skill with a declared (non-null) tool count', () => {
+test('AC1.1: --plugin-root <plugin/> output includes qa-agent marked as an agent', () => {
+  const { out, deps } = capture();
+  const code = run(['--plugin-root', PLUGIN_ROOT], deps);
+  assert.strictEqual(code, 0);
+  const report = JSON.parse(out.stdout.trim());
+  const qa = report.entries.find((e) => e.name === 'qa-agent');
+  assert.ok(qa, 'expected a qa-agent entry');
+  assert.strictEqual(qa.kind, 'agent');
+});
+
+test('a high-tool-count agent is flagged like a skill', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-cost-report-agent-'));
+  fs.mkdirSync(path.join(root, 'skills', 's'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'skills', 's', 'SKILL.md'), '---\nname: s\nallowed-tools: Read\n---\nbody\n');
+  fs.mkdirSync(path.join(root, 'agents'));
+  fs.writeFileSync(
+    path.join(root, 'agents', 'wide.md'),
+    '---\nname: wide\ntools: Read, Write, Edit, Bash, Grep, Glob, Skill, Agent, WebFetch\n---\nbody\n',
+  );
+  const { out, deps } = capture();
+  const code = run(['--plugin-root', root], deps);
+  assert.strictEqual(code, 0);
+  const report = JSON.parse(out.stdout.trim());
+  assert.deepStrictEqual(report.flagged.map((e) => `${e.kind}:${e.name}`), ['agent:wide']);
+  assert.strictEqual(report.totalAgents, 1);
+  assert.strictEqual(report.unscopedAgentCount, 0);
+});
+
+test('an agent with no tools: line is counted in unscopedAgentCount, not unscopedCount', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-cost-report-unscoped-agent-'));
+  fs.mkdirSync(path.join(root, 'skills', 's'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'skills', 's', 'SKILL.md'), '---\nname: s\nallowed-tools: Read\n---\nbody\n');
+  fs.mkdirSync(path.join(root, 'agents'));
+  fs.writeFileSync(path.join(root, 'agents', 'open.md'), '---\nname: open\n---\nbody\n');
+  const { out, deps } = capture();
+  const code = run(['--plugin-root', root], deps);
+  assert.strictEqual(code, 0);
+  const report = JSON.parse(out.stdout.trim());
+  assert.strictEqual(report.unscopedAgentCount, 1);
+  assert.strictEqual(report.unscopedCount, 0);
+});
+
+test('--ratio-threshold 0 flags every skill or agent with a declared (non-null) tool count', () => {
   const { out, deps } = capture();
   const code = run(['--plugin-root', PLUGIN_ROOT, '--ratio-threshold', '0'], deps);
   assert.strictEqual(code, 0);

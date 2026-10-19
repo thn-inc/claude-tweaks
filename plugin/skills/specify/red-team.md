@@ -17,6 +17,14 @@ When the trigger fires, check whether the AC already enumerates this adversarial
 
 If any case is missing from the AC, emit a finding into the same findings table the personas below produce — persona column reads `Adversarial-Input Check`, severity `critical` (fixing it changes the AC's own test list — a Deliverables-scope change, not a copy-edit) — and let it flow through the write-back procedure exactly like a persona finding: dedup, precise-location-or-Open-Questions placement, and (a `critical` severity is always decision-worthy) stage-or-ask per write-back step 5.
 
+## Cross-AC literal check (deterministic, runs before persona dispatch)
+
+Before dispatching the personas below, check whether one AC's negative grep or sweep pattern matches a literal that a sibling AC requires. Collect every AC that carries a negative grep or sweep pattern. Then collect every literal string the other ACs require to exist — quoted code, fixture text, and fenced blocks included, but not a string an AC forbids, even when that AC quotes it. Test each pattern against each literal from the other ACs: as a literal substring, and, when the pattern is a regex, as a regex. An AC is never tested against its own literals. With no pattern-bearing AC, or no hit, the check is a no-op: it adds no row of its own and no separate log entry of its own.
+
+A hit means the ACs cannot both pass as written: a `critical` finding (persona column `Cross-AC Literal Check`) that lands as one `## Open Questions` row naming both ACs, the pattern, and the literal. Its resolution rewrites an AC, so it is decision-worthy: stage-or-ask per write-back step 5.
+
+Why: #3311's AC3 fixtures (`const FOO_CEILING_BYTES = 30 * 1024`) tripped AC1's `CEILING_BYTES` sweep, and the conflict surfaced only at implementation.
+
 ## Parallel dispatch
 
 **Persona selection by tier** (`ceremony:*` label, stamped on the sub-issue in Step 3 — rationale

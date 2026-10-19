@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { stripComments } = require('./helpers/strip-comments');
 
 // Every child_process call under plugin/bin/ must pass `windowsHide: true`.
 // Node defaults the flag to FALSE, and on Windows a console child of a parent
@@ -31,21 +32,8 @@ function walk(dir) {
   return out;
 }
 
-// Blank out comments (preserving offsets and newlines) so a comment that
-// mentions windowsHide — or a call shape — never counts either way. One
-// left-to-right pass: a string or template literal is matched first and returned
-// verbatim, so a `/*` or `//` inside a literal or inside a `//` comment can never
-// open a fake comment that blanks real code up to the next `*/`. Both comment
-// openers carry a `(?<!\\)` guard: a slash right after a backslash is an escaped
-// slash (a regex literal like `/^origin\//` ends in one), never a comment. A
-// mis-parse can therefore only leave comment text in (a loud false positive),
-// never hide code.
-function stripComments(src) {
-  return src.replace(
-    /'(?:\\[\s\S]|[^'\\\n])*'|"(?:\\[\s\S]|[^"\\\n])*"|`(?:\\[\s\S]|[^`\\])*`|(?<!\\)\/\*[\s\S]*?\*\/|(?<!\\)\/\/[^\n]*/g,
-    (m) => (/^['"`]/.test(m) ? m : m.replace(/[^\n]/g, ' ')),
-  );
-}
+// Comments blanked in one literal-aware pass — see tests/helpers/strip-comments.js
+// — so a comment that mentions windowsHide — or a call shape — never counts either way.
 
 // Text between the paren at `open` and its matching close paren.
 function balanced(src, open, openCh = '(', closeCh = ')') {

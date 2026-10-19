@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { stripComments } = require('./helpers/strip-comments');
 
 // Every read-only `git status` under plugin/bin/ must pass the top-level
 // `--no-optional-locks` option (before `status`, after any `-C <path>`). A plain
@@ -31,21 +32,8 @@ function walk(dir) {
   return out;
 }
 
-// Blank out comments (preserving offsets and newlines) so a comment that
-// mentions a call shape never counts either way. One left-to-right pass: a
-// string or template literal is matched first and returned verbatim, so a `/*`
-// or `//` inside a literal (`'/*'`, `` `${dir}/spec-*/work/*` ``) or inside a
-// `//` comment can never open a fake comment that blanks real code. Both comment
-// openers carry a `(?<!\\)` guard: a slash right after a backslash is an escaped
-// slash, never a comment — a regex literal such as `/^origin\//` ends in one, and
-// read as `//` it would blank the rest of its line. A mis-parse can therefore only
-// leave comment text in (a loud false positive), never hide code.
-function stripComments(src) {
-  return src.replace(
-    /'(?:\\[\s\S]|[^'\\\n])*'|"(?:\\[\s\S]|[^"\\\n])*"|`(?:\\[\s\S]|[^`\\])*`|(?<!\\)\/\*[\s\S]*?\*\/|(?<!\\)\/\/[^\n]*/g,
-    (m) => (/^['"`]/.test(m) ? m : m.replace(/[^\n]/g, ' ')),
-  );
-}
+// Comments blanked in one literal-aware pass — see tests/helpers/strip-comments.js
+// — so a comment that mentions a call shape never counts either way.
 
 // 'status' as the subcommand element: first in the array, after an optional
 // `'-C', <expr>,` pair and any top-level `'--…'` options. The -C operand is a
