@@ -111,6 +111,12 @@ test('AC1.1: division never opens a regex', () => {
     stripComments("a.return / 2; x.in / 3; ü / 4; $x / 5; // it's gone"),
     "a.return / 2; x.in / 3; ü / 4; $x / 5;             ",
   );
+  // A `/` after postfix or prefix ++/-- is division (a deliberate deviation from the
+  // plain punctuator rule: a regex can never follow ++/--); a single + still starts a regex.
+  assert.equal(stripComments("n = i++ / 2; // it's gone"), "n = i++ / 2;             ");
+  assert.equal(stripComments("n = i-- / 2; // it's gone"), "n = i-- / 2;             ");
+  assert.equal(stripComments("x = ++i / 2; // it's gone"), "x = ++i / 2;             ");
+  assert.equal(stripComments("a = b + /'/.source; // it's gone"), "a = b + /'/.source;             ");
 });
 
 test('AC1.1: return and typeof introduce a regex', () => {
@@ -119,12 +125,28 @@ test('AC1.1: return and typeof introduce a regex', () => {
     "function f() { return /'/.test(s); }             ",
   );
   assert.equal(stripComments("const t = typeof /'/; // it's gone"), "const t = typeof /'/;             ");
+  // Unicode whitespace after the keyword is not part of the word.
+  assert.equal(
+    stripComments("function f(s) { return /'/.test(s); } // it's gone"),
+    "function f(s) { return /'/.test(s); }             ",
+  );
 });
 
 test("AC1.1: a template's nested ${} code is scanned, and its closing } returns to the template", () => {
   assert.equal(
     stripComments("const t = `a${ '/' + \"`\" }b`; // it's gone"),
     "const t = `a${ '/' + \"`\" }b`;             ",
+  );
+});
+
+test("AC1.1: a { } pair inside a template's ${} does not end the ${} early", () => {
+  assert.equal(
+    stripComments("const t = `${ {a: 1}.a + '`' }`; // it's gone"),
+    "const t = `${ {a: 1}.a + '`' }`;             ",
+  );
+  assert.equal(
+    stripComments("const t = `a${ `b${ {k: 1}.k }c` + {z: 2}.z + '`' }d`; // it's gone"),
+    "const t = `a${ `b${ {k: 1}.k }c` + {z: 2}.z + '`' }d`;             ",
   );
 });
 

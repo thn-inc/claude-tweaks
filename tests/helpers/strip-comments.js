@@ -14,23 +14,25 @@ const vm = require('node:vm');
 //
 // Whether a `/` that is not a comment opener begins a regex or is division follows
 // the previous significant token: a regex after nothing, after a punctuator other
-// than `)`, `]` or `}`, or after one of the keywords in REGEX_KEYWORDS (unless that
-// word follows a `.`, so a property named `return` is just a word); division after
-// a literal, an identifier or number, or `)`, `]`, `}`.
+// than `)`, `]`, `}`, `++` or `--`, or after one of the keywords in REGEX_KEYWORDS
+// (unless that word follows a `.`, so a property named `return` is just a word);
+// division after a literal, an identifier or number, or `)`, `]`, `}`, `++`, `--`
+// (a regex can never follow a postfix `++`/`--`, so `i++ / 2` is division).
 //
 // Known ambiguity: a `/` right after `)` or `}` is read as division, so a regex
 // there — `if (x) /re/.test(y)`, or one opening a statement after a block-closing
 // `}` — is misread. No such shape exists in plugin/bin or tests/ at the time of
 // writing. `stripperVerdict` is the backstop for the compile-breaking direction:
 // blanked code cuts a literal short, so the stripped text stops compiling. A misread
-// that still compiles can keep a comment's text, but never blanks code that compiles.
+// that still compiles goes unseen: it can keep a comment's text, or blank text
+// inside a multi-line template literal.
 const REGEX_KEYWORDS = new Set([
   'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await',
 ]);
 const LITERAL = { kind: 'literal' };
 
 function isIdentChar(ch) {
-  return /[A-Za-z0-9_$]/.test(ch) || ch >= '\u0080';
+  return /[A-Za-z0-9_$]/.test(ch) || (ch >= '\u0080' && !/\s/.test(ch));
 }
 
 // Does a `/` after `prev` (the previous significant token) begin a regex literal?
@@ -38,6 +40,7 @@ function slashStartsRegex(prev) {
   if (prev === null) return true;
   if (prev.kind === 'literal') return false;
   if (prev.kind === 'word') return REGEX_KEYWORDS.has(prev.value) && !prev.afterDot;
+  if (prev.value === '++' || prev.value === '--') return false;
   return !')]}'.includes(prev.value);
 }
 
@@ -133,7 +136,8 @@ function stripComments(src) {
           if (inBrace && depth === 0) return i + 1;
           if (depth > 0) depth--;
         }
-        prev = { kind: 'punct', value: ch };
+        const doubled = (ch === '+' || ch === '-') && prev !== null && prev.kind === 'punct' && prev.value === ch && src[i - 1] === ch;
+        prev = { kind: 'punct', value: doubled ? ch + ch : ch };
         i++;
       }
     }
