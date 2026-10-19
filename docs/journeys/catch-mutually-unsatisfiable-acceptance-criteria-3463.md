@@ -23,7 +23,7 @@ files:
 - **URL:** N/A
 - **Action:** For each AC with a negative grep/sweep pattern, the check tests that pattern — as a literal substring and, when it is a regex, as a regex — against every literal string the *other* ACs require to exist (quoted code, fixture text, fenced blocks), never against strings an AC forbids or against the sweep AC's own literals.
 - **Should feel:** Precise — the #3311 shape (AC1 sweeps `CEILING_BYTES`, AC3 mandates the fixture `FOO_CEILING_BYTES = 30 * 1024`) is caught; an unrelated literal is not.
-- **Should understand:** It compares text only; it does not yet weigh the sweep's pathspec (a `plugin/`-scoped sweep vs a `tests/` fixture can still be flagged — tracked as a run-ledger follow-up).
+- **Should understand:** It compares text only; it does not yet weigh the sweep's pathspec (a `plugin/`-scoped sweep vs a `tests/` fixture can still be flagged — an accepted limitation: the staged row costs a human one quick ruling, and pathspec awareness is revisited only if such a false positive is observed).
 - **Red flags:** A hit missed because the literal sat inside a fenced code block.
 
 ### 3. The conflict lands as an Open Questions row and is staged or asked
