@@ -1655,7 +1655,16 @@ async function main(argv) {
   // subcommand, not a hook) can read it.
   const runDir = ctxLib.resolveRunDir(cwd, process.env);
   const runState = runDir ? ctxLib.readRunState(runDir) : null;
-  const ownedRun = ctxLib.resolveRun(cwd, process.env, input.session_id);
+  // #3515: ownedRun resolves STRICT — a write must not be guessed into a
+  // claim-log-only mint or a run bound to another worktree (the #3401 incident).
+  // The runDir above deliberately stays non-strict: E1 must still resolve a
+  // run it does not own.
+  const ownedRun = ctxLib.resolveRun(cwd, process.env, input.session_id, { strictAttribution: true });
+  if (Array.isArray(ownedRun.dropped) && ownedRun.dropped.length) {
+    try {
+      fs.writeSync(2, `attribution: dropped — no fallback run dir matches ${cwd}; skipped ${ownedRun.dropped.join(', ')} — this hook's events are not recorded\n`);
+    } catch { /* diagnostics never break a session */ }
+  }
   const out = (await mod.run({ input, runDir, runState, ownedRun, cwd })) || {};
   if (out.json) fs.writeSync(1, JSON.stringify(out.json));
   return typeof out.exit === 'number' ? out.exit : 0;
