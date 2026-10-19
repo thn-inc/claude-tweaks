@@ -143,9 +143,10 @@ test('AC1.1 #3513: console-on-pr.md — an sdd-ruling-* row label carries ratify
 test('AC1.1 #3513: console-execution.md — an unticked or --decline sdd-ruling-* item routes to reverse, citing the appendix bullet', () => {
   assert.match(CONSOLE_EXECUTION, ws('it routes to **reverse**, never to a plain decline'));
   assert.match(CONSOLE_EXECUTION, ws("per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet"));
-  assert.match(CONSOLE_EXECUTION, ws('Log the item as `reversed`, not declined'));
+  assert.match(CONSOLE_EXECUTION, ws('only once the record exists; when the record is refused or not created, log that cause instead'));
+  assert.match(CONSOLE_EXECUTION, ws('never `reversed` without a record number'));
   assert.match(CONSOLE_EXECUTION, ws('`reverse {#}` to `--decline`'));
-  assert.match(CONSOLE_EXECUTION, ws('the `decisions.md` `reversed` line is the authoritative record'));
+  assert.match(CONSOLE_EXECUTION, ws('`AUTO` line naming `reversed → #{new record}` (or the logged refusal cause) is the authoritative record'));
 });
 
 const MULTISPEC_CONSOLE = read('plugin', 'skills', 'flow', 'multispec-review-console.md');
