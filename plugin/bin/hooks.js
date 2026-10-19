@@ -1336,7 +1336,7 @@ async function main(argv) {
     }
     // Each line names the item; the resolution command follows on its own
     // line right after — an ordinary stale entry's own line carries no
-    // command of its own (only a shipped-unclosed verdict embeds one), so
+    // command of its own (only a shipped-unclosed or pass-re-entry line embeds one), so
     // this mirrors session-start.js's own banner trailer rather than
     // leaving that category's rows without a pointer.
     const blocks = [];

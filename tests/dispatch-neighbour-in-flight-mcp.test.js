@@ -149,3 +149,34 @@ test('queue-pull-script.md declares DISPATCH_IN_FLIGHT_CLAIMS and points MCP-tra
   assert.notStrictEqual(at, -1);
   assert.ok(QUEUE_PULL.slice(at, at + 400).includes('mcp-transport.md'));
 });
+
+// #3520: the pool carries title (the near-duplicate rule's title signal), and a strong
+// near-duplicate with no Key Files section is a neighbour.
+function recAnchors(number, title, anchors) {
+  return {
+    number,
+    title,
+    labels: [{ name: 'priority:medium' }],
+    body: '## Current State\n\n' + anchors.map((a) => `- \`${a}\` is wired`).join('\n') + '\n',
+  };
+}
+
+test('AC8: the pool shape the agent writes includes title', () => {
+  assert.ok(section().includes('[{number, title, body, labels}]'));
+});
+
+test('AC8: a strong near-duplicate with no Key Files is a claim target and its exclusion element carries sharedAnchors', (t) => {
+  const anchors = ['alpha.one', 'beta.two', 'gamma.three'];
+  const files = fixture(t, {
+    groups: [[recAnchors(1, 'Wire the cache layer', anchors)]],
+    inFlight: [recAnchors(9, 'Different words entirely', anchors)],
+    claims: { 9: liveClaim() },
+  });
+  assert.deepStrictEqual(JSON.parse(run(snippet(0), files).stdout), [9]);
+  run(snippet(1), files);
+  const [exclusion] = readExclusions(files.DISPATCH_EXCLUSIONS);
+  assert.strictEqual(exclusion.reason, 'neighbour-in-flight');
+  assert.deepStrictEqual(exclusion.records, [1]);
+  assert.deepStrictEqual(exclusion.detail.neighbours.map((n) => n.number), [9]);
+  assert.deepStrictEqual(exclusion.detail.neighbours[0].sharedAnchors, [...anchors].sort());
+});

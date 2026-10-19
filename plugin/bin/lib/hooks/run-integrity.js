@@ -246,6 +246,32 @@ function hasCommitSinceRunStart(root, branch, runDir) {
   return log.stdout.trim() !== '';
 }
 
+// #3497: the branch + merge derivation shared by checkRunIntegrity and
+// checkBranchLanded. Both need the same evidence in the same order — live
+// worktree, then the durable-artifact fallback (#1672), then the integration
+// branch, then mergedEvidence — and differ only in the event-ledger gates
+// checkRunIntegrity layers on top. Fields fill in progressively so a caller
+// that stops early (no branch, no integration ref) still reports what it found.
+// `hasCommit` is computed only for 'ancestor' (the corroboration gate, #1463);
+// 'cherry' needs none — `git cherry` only reports commits the branch really has.
+function branchMergeEvidence(runDir, state, cache) {
+  const out = { branch: null, merged: null, hasCommit: false };
+  const root = repoRootOf(runDir);
+  out.branch = deriveBranch(root, state.worktree || null, cache);
+  // Live worktree wins; the fallback runs only when it can't answer (#1672).
+  if (!out.branch) out.branch = fallbackBranch(root, runDir, state);
+  if (!out.branch) return out;
+  // #1861: mergedEvidence normalizes for its own self-ancestor guard --
+  // kept un-bare-ified here so a genuine cross-branch check still benefits
+  // from resolveIntegrationBranch's origin/-prefixed freshness upgrade
+  // (#1688), same as before #1861.
+  const integration = resolveIntegrationBranch(root, cache);
+  if (!integration) return out;
+  out.merged = mergedEvidence(root, out.branch, integration);
+  if (out.merged === 'ancestor') out.hasCommit = hasCommitSinceRunStart(root, out.branch, runDir);
+  return out;
+}
+
 function checkRunIntegrity(runDir, opts = {}) {
   const cache = opts.cache;
   const evidence = { branch: null, merged: null, ledgerActive: null, wrapupInvoked: null };
@@ -253,22 +279,11 @@ function checkRunIntegrity(runDir, opts = {}) {
   try {
     const state = readValidatedRunState(runDir);
     if (!state || !NON_TERMINAL.has(state.status)) return inProgress;
-    const root = repoRootOf(runDir);
-    evidence.branch = deriveBranch(root, state.worktree || null, cache);
-    // Live worktree wins; the fallback runs only when it can't answer (#1672).
-    if (!evidence.branch) evidence.branch = fallbackBranch(root, runDir, state);
-    if (!evidence.branch) return inProgress;
-    // #1861: mergedEvidence normalizes for its own self-ancestor guard --
-    // kept un-bare-ified here so a genuine cross-branch check still benefits
-    // from resolveIntegrationBranch's origin/-prefixed freshness upgrade
-    // (#1688), same as before #1861.
-    const integration = resolveIntegrationBranch(root, cache);
-    if (!integration) return inProgress;
-    evidence.merged = mergedEvidence(root, evidence.branch, integration);
+    const found = branchMergeEvidence(runDir, state, cache);
+    evidence.branch = found.branch;
+    evidence.merged = found.merged;
     if (evidence.merged !== 'ancestor' && evidence.merged !== 'cherry') return inProgress;
-    // 'cherry' needs no corroboration — `git cherry` only reports commits the
-    // branch actually has, so that path already implies real divergent work.
-    if (evidence.merged === 'ancestor' && !hasCommitSinceRunStart(root, evidence.branch, runDir)) return inProgress;
+    if (evidence.merged === 'ancestor' && !found.hasCommit) return inProgress;
     const events = ctxLib.scanWrapupEvents(runDir);
     if (!events) return inProgress;
     evidence.ledgerActive = events.any;
@@ -281,8 +296,37 @@ function checkRunIntegrity(runDir, opts = {}) {
   }
 }
 
+// #3497: has this run's branch landed on the integration branch? The merge
+// evidence checkRunIntegrity uses, WITHOUT its event-ledger gates and without
+// its NON_TERMINAL status guard. checkRunIntegrity returns 'in-progress' for
+// any run whose events.jsonl holds a wrap-up skill_invoked event, and every
+// multi-spec spec's deferred wrap-up writes one into the parent run's log — so
+// "did this branch merge?" cannot be asked of checkRunIntegrity there. Accepts
+// any valid run-state status (including 'clean'). Same read-only, fail-open
+// contract: true = merge proven, false = no ancestry or patch-id match, null =
+// anything else (no valid run-state, no branch, no integration ref, an
+// 'ancestor' with no commit since the run started, any throw). `false` never
+// proves non-landing: a squash-merged multi-commit branch reads false too, so a
+// caller that acts on "not landed" also asks the recorded PR (consolidated-pass.js).
+function checkBranchLanded(runDir, opts = {}) {
+  const evidence = { branch: null, merged: null };
+  try {
+    const state = readValidatedRunState(runDir);
+    if (!state) return { landed: null, evidence };
+    const found = branchMergeEvidence(runDir, state, opts.cache);
+    evidence.branch = found.branch;
+    evidence.merged = found.merged;
+    if (found.merged === 'cherry') return { landed: true, evidence };
+    if (found.merged === 'ancestor') return { landed: found.hasCommit ? true : null, evidence };
+    if (found.merged === false) return { landed: false, evidence };
+    return { landed: null, evidence };
+  } catch {
+    return { landed: null, evidence };
+  }
+}
+
 module.exports = {
-  checkRunIntegrity, repoRootOf, NON_TERMINAL, deriveBranch,
+  checkRunIntegrity, checkBranchLanded, repoRootOf, NON_TERMINAL, deriveBranch,
   // #1544: archive-merged.js's clean-status sweep (a run dir close-run
   // already marked terminal, whose archive-run step never followed) needs
   // this same torn-down-worktree branch fallback — checkRunIntegrity itself

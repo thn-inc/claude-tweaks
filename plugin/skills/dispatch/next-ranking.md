@@ -10,7 +10,7 @@ excludes any group with a member matching a `reason: 'oversized'` entry's `recor
 firing has nobody present to see the Oversized-group report's surfaced line, so the bare drain
 (and its `next` alias) is the form that must not auto-select an oversized group at all (#1228).
 A headless firing likewise skips a group with a member under `reason: 'neighbour-in-flight'` for
-that queue pull, because a direct file-sharing neighbour holds a live claim (#3278).
+that queue pull, because a direct file-sharing or strong near-duplicate neighbour (#3520) holds a live claim (#3278).
 Writes the picked group (or `null`, when no candidate remains) to `dispatch-next-pick.json`.
 
 **Also filters on `reason: 'firing'` entries in the same `dispatch-exclusions.json`** — every

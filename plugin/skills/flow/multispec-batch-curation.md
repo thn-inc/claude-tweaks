@@ -13,7 +13,7 @@ Each spec's wrap-up proceeds straight through Phases 3-4 as normal (leftover rou
 
 ## When to run the batch pass
 
-Identical trigger to `multispec-review-console.md`'s "When to run the consolidated console": after every spec's pipeline reaches `/wrap-up`'s Phase 4 execution step (or the run aborts at a HARD-GATE failure) AND the multi-spec run is in `auto` or `hybrid` mode. Run this batch pass **before** the consolidated console (below) — its findings need to be in `decisions.md`/`staged/` before the console reads them.
+Identical trigger to `multispec-review-console.md`'s "When to run the consolidated console": after every spec's pipeline reaches `/wrap-up`'s Phase 4 execution step (or the run aborts at a HARD-GATE failure) AND the multi-spec run is in `auto` or `hybrid` mode. Re-entry via `review-console` runs this pass first when the parent holds no `engine-state.json`. Run this batch pass **before** the consolidated console (below) — its findings need to be in `decisions.md`/`staged/` before the console reads them.
 
 If the run aborted early (one spec hit a HARD-GATE, no `keep-going`), still run the batch pass against whatever specs completed — mirroring how the consolidated console already renders on partial completion with a Not-run footer.
 

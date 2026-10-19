@@ -1301,3 +1301,19 @@ test('#3380: the notice is inform-only — no permissionDecision, no exit code',
   assert.ok(!('permissionDecision' in out.json.hookSpecificOutput));
   assert.strictEqual(out.exitCode, undefined);
 });
+
+// #3497: an unfinished multi-spec run whose consolidated pass never ran names
+// its re-entry command in the banner. Real git fixture modeled on
+// tests/run-integrity.test.js's fixtureRepo: `trunk` integration branch, a
+// linked worktree whose `feat-branch` commit is dated after the run's prefix.
+const { reentryFixture } = require('./helpers/reentry-fixture');
+
+test('AC6.1 SessionStart banner carries the review-console suffix for an eligible multi-spec run', async () => {
+  const { root } = reentryFixture();
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: root });
+  const ctx = out.json.hookSpecificOutput.additionalContext;
+  assert.ok(ctx.includes('/claude-tweaks:flow #11,#12 review-console'), ctx);
+  assert.ok(ctx.includes('one line per run naming its close-run command, or its re-entry command where the line carries one'), ctx);
+  assert.ok(ctx.includes('never run either command yourself'), ctx);
+  assert.ok(ctx.includes('PIPELINE_RUN_DIR="'), ctx);
+});

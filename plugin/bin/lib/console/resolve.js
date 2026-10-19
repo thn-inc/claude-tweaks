@@ -284,8 +284,9 @@ function needsHumanVerdict(decisions) {
 // across retries — so every distinct PR named across all hold lines is
 // returned; the group only clears once EVERY one of them is confirmed
 // merged/closed. The "held" keyword is the load-bearing discriminator against
-// Step 4's differently-worded advisory-only line (`STAGED … group [{issues}]
-// overlaps drain PR #{pr}`, no "held"), which must never match this regex.
+// Step 4's differently-worded advisory-only line (`AUTO … group [{issues}]
+// overlaps drain PR #{pr}`, no "held"; STAGED before #3520), which must never
+// match this regex.
 const DRAIN_OVERLAP_HOLD_RE = /held\s*[-—]\s*overlaps drain PR #(\d+)/i;
 
 function drainOverlapHoldPrs(decisions) {

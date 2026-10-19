@@ -66,9 +66,12 @@ test('dispatch/queue-pull-script.md runs the cross-group near-duplicate warning 
   assert.match(QUEUE_PULL, /near-duplicate candidates across groups/);
 });
 
-test('dispatch/SKILL.md Step 3 documents the near-duplicate candidate warning as non-gating', () => {
+test('dispatch/SKILL.md Step 3 documents the near-duplicate candidate warning, with strong pairs feeding the neighbour guard (#3520)', () => {
   assert.match(DISPATCH_SKILL, /Near-duplicate candidate warning \(refs #1944\)/);
-  assert.match(DISPATCH_SKILL, /Warning\s+only, never a gate/);
+  assert.doesNotMatch(DISPATCH_SKILL, /Warning\s+only, never a gate/);
+  const start = DISPATCH_SKILL.indexOf('**Near-duplicate candidate warning (refs #1944).**');
+  const paragraph = DISPATCH_SKILL.slice(start, DISPATCH_SKILL.indexOf('\n**', start + 5));
+  assert.match(paragraph, /strong/);
 });
 
 test('the cited module actually exports findNearDuplicates', () => {

@@ -325,3 +325,71 @@ test('scanUnresolvedConsoles: window Infinity with limit Infinity reaches runs b
   assert.strictEqual(runs.length, 205);
   assert.strictEqual(more, false);
 });
+
+// #3497: a multi-spec run whose consolidated Review Console pass never ran
+// names its re-entry command in the banner line. The fixture is a real git repo
+// (modeled on tests/run-integrity.test.js's fixtureRepo): `trunk` integration
+// branch, a linked worktree on `feat-branch` with one commit dated after the
+// run dir's own start prefix, and a multi-spec run dir recording that worktree.
+const { reentryFixture, reentryGit, writeReentryManifest, EV_BUILD } = require('../../helpers/reentry-fixture');
+
+const reentrySuffix = (runDir) => ` — consolidated pass never ran: PIPELINE_RUN_DIR="${runDir}" /claude-tweaks:flow #11,#12 review-console`;
+
+test('AC5.1 eligible multi-spec parent line ends with the review-console command', () => {
+  const { root, runDir } = reentryFixture();
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.ok(entries[0].line.startsWith('- 2026-08-01T090000-spec-11-12 (status: active)'), entries[0].line);
+  assert.ok(entries[0].line.endsWith(reentrySuffix(runDir)), entries[0].line);
+});
+
+test('#3497 review a non-integer manifest id suppresses the suffix', () => {
+  const { root, runDir } = reentryFixture();
+  const text = fs.readFileSync(path.join(runDir, 'manifest.yml'), 'utf8').replace('- id: 12', '- id: 12; rm -rf x');
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), text);
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.doesNotMatch(entries[0].line, /review-console/);
+});
+
+test('AC5.1 ineligible variants carry no suffix', () => {
+  const mutations = {
+    'console.json written': (runDir) => fs.writeFileSync(path.join(runDir, 'console.json'), '{}'),
+    'spec 12 running': (runDir) => writeReentryManifest(runDir, ['complete', 'running']),
+    'mode interactive': (runDir) => fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: interactive\n'),
+  };
+  for (const [label, mutate] of Object.entries(mutations)) {
+    const { root, runDir } = reentryFixture();
+    mutate(runDir);
+    const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+    assert.strictEqual(entries.length, 1, label);
+    assert.doesNotMatch(entries[0].line, /review-console/, label);
+  }
+});
+
+test('AC5.1 merged branch -> no suffix and no shipped line', () => {
+  const { root } = reentryFixture();
+  reentryGit(root, 'merge', '-q', '--no-edit', 'feat-branch');
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.doesNotMatch(entries[0].line, /review-console/);
+  assert.doesNotMatch(entries[0].line, /appears shipped/);
+});
+
+test('AC5.1 shipped-unclosed keeps the shipped line, no suffix', () => {
+  const { root } = reentryFixture({ events: [EV_BUILD] });
+  reentryGit(root, 'merge', '-q', '--no-edit', 'feat-branch');
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.match(entries[0].line, /appears shipped/);
+  assert.doesNotMatch(entries[0].line, /review-console/);
+});
+
+test('#3497 I1 banner carries no suffix while the parent worktree is locked by a live pid', () => {
+  const { root, wt } = reentryFixture();
+  reentryGit(root, 'worktree', 'lock', '--reason', `claude session (pid ${process.pid})`, wt);
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.ok(entries[0].line.startsWith('- 2026-08-01T090000-spec-11-12 (status: active)'), entries[0].line);
+  assert.doesNotMatch(entries[0].line, /review-console/);
+});

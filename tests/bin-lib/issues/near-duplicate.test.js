@@ -13,6 +13,8 @@ const {
   shapingRefusal,
   buildShapingState,
   MIN_REFUSAL_SCORE,
+  STRONG_NEAR_DUPLICATE_MIN,
+  isStrongNearDuplicate,
 } = require('../../../plugin/bin/lib/issues/near-duplicate');
 
 function withKeyFiles(files) {
@@ -363,4 +365,64 @@ test('malformed shapes degrade to no refusal instead of throwing', () => {
   assert.deepStrictEqual(buildShapingState({ numbers: { a: 1 }, labelsByNumber: {}, claimContentByNumber: {}, linkedPRRepoData: null, now: NOW }), {});
   const state = buildShapingState({ numbers: [5], labelsByNumber: { 5: { labels: ['ready'] } }, claimContentByNumber: {}, linkedPRRepoData: null, now: NOW });
   assert.strictEqual(state[5].ready, false);
+});
+
+// ── #3520: sharedAnchors and the strong predicate ───────────────────────────
+
+test('AC4: every hit carries sharedAnchors, empty when body-anchor-overlap did not fire', () => {
+  const kfSubject = { number: 1, title: 'Completely unrelated title alpha', body: withKeyFiles(['a.js', 'b.js']) };
+  const kfRecord = { number: 2, title: 'Something else entirely zeta', body: withKeyFiles(['a.js', 'b.js', 'c.js']) };
+  const [kfHit] = findNearDuplicates(kfSubject, [kfRecord]);
+  assert.deepStrictEqual(kfHit.signals, ['key-files-overlap']);
+  assert.deepStrictEqual(kfHit.sharedAnchors, []);
+
+  const subject = { number: 1, title: 'Alpha unrelated title here', body: '## Current State\n\nThe check lives in `bin/lib/issues/grouping.js`.\n\n### Key Files\n\n- `a.js` — modify\n' };
+  const record = { number: 2, title: 'Zeta unrelated title elsewhere', body: '## Current State\n\nAlso touches `bin/lib/issues/grouping.js` directly.\n\n### Key Files\n\n- `z.js` — modify\n' };
+  const [hit] = findNearDuplicates(subject, [record]);
+  assert.deepStrictEqual(hit.sharedAnchors, ['bin/lib/issues/grouping.js']);
+});
+
+test('AC4: existing fields, scores and ordering are unchanged', () => {
+  const body = (f) => `## Current State\n\nUses \`bin/lib/issues/grouping.js\`.\n\n### Key Files\n\n- \`${f}\` — modify\n`;
+  const subject = { number: 1, title: 'dispatch pre-build near-duplicate check', body: body('a.js') };
+  const records = [
+    { number: 30, title: 'totally unrelated too', body: body('w.js') },
+    { number: 20, title: 'dispatch pre-build near-duplicate check', body: body('z.js') },
+    { number: 5, title: 'totally unrelated', body: body('y.js') },
+  ];
+  const hits = findNearDuplicates(subject, records);
+  assert.deepStrictEqual(
+    hits.map(({ number, title, score, signals }) => ({ number, title, score, signals })),
+    [
+      { number: 20, title: 'dispatch pre-build near-duplicate check', score: 2, signals: ['title-similarity', 'body-anchor-overlap'] },
+      { number: 5, title: 'totally unrelated', score: 1, signals: ['body-anchor-overlap'] },
+      { number: 30, title: 'totally unrelated too', score: 1, signals: ['body-anchor-overlap'] },
+    ],
+  );
+});
+
+test('sharedAnchors lists every shared Current State anchor, sorted', () => {
+  const mk = (order) => `## Current State\n\n${order.map((a) => `Cites \`${a}\`.`).join('\n')}\n`;
+  const subject = { number: 1, title: 'Alpha unrelated title here', body: mk(['fs.realpathSync.native', 'docs/donts.md', 'fs.realpathSync', 'only-subject.js']) };
+  const record = { number: 2, title: 'Zeta unrelated title elsewhere', body: mk(['fs.realpathSync', 'fs.realpathSync.native', 'docs/donts.md', 'only-record.js']) };
+  const [hit] = findNearDuplicates(subject, [record]);
+  assert.deepStrictEqual(hit.sharedAnchors, ['docs/donts.md', 'fs.realpathSync', 'fs.realpathSync.native']);
+  assert.strictEqual(hit.score, 1);
+});
+
+test('isStrongNearDuplicate: 2+ shared anchors or score >= 2 is strong; one anchor alone is not', () => {
+  assert.strictEqual(STRONG_NEAR_DUPLICATE_MIN, 2);
+  assert.strictEqual(isStrongNearDuplicate({ score: 1, sharedAnchors: ['a', 'b'] }), true);
+  assert.strictEqual(isStrongNearDuplicate({ score: 2, sharedAnchors: [] }), true);
+  assert.strictEqual(isStrongNearDuplicate({ score: 1, sharedAnchors: ['a'] }), false);
+  assert.strictEqual(isStrongNearDuplicate({ score: 1 }), false);
+  assert.strictEqual(isStrongNearDuplicate(null), false);
+  assert.strictEqual(isStrongNearDuplicate({}), false);
+});
+
+test('generic shared anchors never count toward sharedAnchors', () => {
+  const body = '## Current State\n\nRuns `--run-dir` via `/claude-tweaks:dispatch`.\n';
+  const subject = { number: 1, title: 'Alpha unrelated title here', body };
+  const record = { number: 2, title: 'Zeta unrelated title elsewhere', body };
+  assert.deepStrictEqual(findNearDuplicates(subject, [record]), []);
 });

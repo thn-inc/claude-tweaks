@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/issues/grouping.js
   - plugin/bin/lib/dispatch/in-flight-neighbours.js
+  - plugin/bin/lib/issues/near-duplicate.js
   - plugin/bin/lib/dispatch/queue-order.js
   - plugin/bin/lib/issues/claim-store.js
   - plugin/skills/dispatch/queue-pull-script.md
@@ -16,7 +17,7 @@ files:
 **Persona:** a scheduled Routine firing bare `/claude-tweaks:dispatch --budget 3` unattended against a queue of about 60 `auto:build` records, where many pairs edit the same hot files (`hooks.js`, `code-mode-steps.md`). Also the maintainer who reads that firing's report the next morning.
 **Goal:** keep building records from a queue whose Key Files chain together, instead of finding that most of the queue has fused into one group too large to dispatch.
 **Entry point:** bare `/claude-tweaks:dispatch` (or a `--budget` drain), headless.
-**Success state:** every eligible record is its own group, apart from disjoint fast-lane bundles. The firing builds up to `{budget}` records. A record whose direct file-sharing neighbour is mid-build waits for a later firing and is named in the report. Nothing is starved by a chain of records it shares no file with.
+**Success state:** every eligible record is its own group, apart from disjoint fast-lane bundles. The firing builds up to `{budget}` records. A record whose direct file-sharing neighbour, or strong near-duplicate, is mid-build waits for a later firing and is named in the report. Nothing is starved by a chain of records it shares no file with.
 
 ## Steps
 
@@ -29,10 +30,10 @@ files:
 
 ### 2. Hold back records whose neighbour is mid-build
 - **URL:** `plugin/skills/dispatch/queue-pull-script.md` (neighbour-in-flight pass); `plugin/skills/dispatch/mcp-transport.md` (its MCP branch); `plugin/bin/lib/dispatch/in-flight-neighbours.js`
-- **Action:** The pass fetches the open `bot:in-progress` records. For each one that shares a linking file with a candidate, it reads the claim blob once and counts the record as in flight only when the blob reads `live`. Each candidate with a live neighbour gets a `neighbour-in-flight` exclusion naming the neighbour and the shared files. The candidate stays in `dispatch-groups.json`. On the MCP transport the agent does the fetching instead: it lists the pool through `list_issues` and reads only the neighbours' claim blobs from `claims-registry`. Node then computes the same exclusions over the claim map the agent wrote (`claimReaderFromMap`).
+- **Action:** The pass fetches the open `bot:in-progress` records, including their titles. An in-flight record is a neighbour of a candidate when it shares a linking file with it, or when it is a strong near-duplicate of it (`isStrongNearDuplicate`: at least 2 shared `## Current State` anchors, or a near-duplicate score of at least 2, #3520). The second rule catches pairs with no `### Key Files` section, like #3417/#3419. For each neighbour, the pass reads the claim blob once and counts the record as in flight only when the blob reads `live`. Each candidate with a live neighbour gets a `neighbour-in-flight` exclusion naming the neighbour, plus the shared files or the near-duplicate signals and shared anchors. The candidate stays in `dispatch-groups.json`. On the MCP transport the agent does the fetching instead: it lists the pool through `list_issues` and reads only the neighbours' claim blobs from `claims-registry`. Node then computes the same exclusions over the claim map the agent wrote (`claimReaderFromMap`).
 - **Should feel:** Conservative only where it matters. A leftover `bot:in-progress` label or an expired claim never blocks anything.
 - **Should understand:** The guard fails open. An unreadable claim prints `AUTO — dispatch: neighbour-in-flight claim read failed …`, and a failed pool fetch prints `AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull`. Either way the records build, and any real conflict resolves at merge. On a `gh`-absent firing the same guard runs over the MCP transport (`dispatch/mcp-transport.md`, #3392).
-- **Red flags:** A record held back by a neighbour whose claim is expired or absent. A neighbour whose claim could not be read (an unresolved repo slug with a failed git read included) treated as having no claim, with no `claim read failed` AUTO line. A silent pool-fetch failure with no AUTO line. A bare-directory or hub path reported as the shared file. A `gh`-absent firing that builds a candidate alongside a live-claimed neighbour with no `neighbour-in-flight` exclusion and no AUTO line.
+- **Red flags:** A record held back by a neighbour whose claim is expired or absent. A record held back by an in-flight record it shares only one `## Current State` anchor with and nothing else (a weak near-duplicate must only warn). Two records with no Key Files but three shared Current State anchors both building at once. A neighbour whose claim could not be read (an unresolved repo slug with a failed git read included) treated as having no claim, with no `claim read failed` AUTO line. A silent pool-fetch failure with no AUTO line. A bare-directory or hub path reported as the shared file. A `gh`-absent firing that builds a candidate alongside a live-claimed neighbour with no `neighbour-in-flight` exclusion and no AUTO line.
 
 ### 3. Rank, dispatch, and re-pull
 - **URL:** `plugin/skills/dispatch/next-ranking.md`; `plugin/skills/dispatch/SKILL.md` Step 3 Loop
@@ -43,7 +44,7 @@ files:
 
 ### 4. Read the report
 - **URL:** `plugin/skills/dispatch/neighbour-in-flight-report.md`
-- **Action:** **The maintainer** reads the firing's report. Each waiting record has one line: `#{n} waits — direct neighbour(s) in flight: #{m} ({files}); bare drain skips it this firing`.
+- **Action:** **The maintainer** reads the firing's report. Each waiting record has one line: `#{n} waits — direct neighbour(s) in flight: #{m} ({files}); bare drain skips it this firing`. A near-duplicate neighbour reads `#{m} (near-duplicate: {signals}; shared: {sharedAnchors})` in place of `#{m} ({files})`, and one that also shares files reads `#{m} ({files}; near-duplicate: {signals}; shared: {sharedAnchors})`.
 - **Should feel:** Explained. Each idle record names exactly which build it is waiting on, and why.
 - **Should understand:** Nothing needs doing. The record is picked up automatically once the neighbour finishes. `/claude-tweaks:dispatch #n` builds it now regardless, if the maintainer accepts the merge-time conflict risk.
 - **Red flags:** A waiting record with no report line. A report line naming a neighbour that is not in flight.
@@ -52,4 +53,5 @@ files:
 - Created during `/claude-tweaks:build` of record #3278 (2026-10-17). Dispatch builds each record as its own group instead of the transitive file-overlap closure. On 2026-10-17 that closure fused 18 of 61 eligible records into one oversized, never-dispatched group.
 - Step 2 updated for #3393: the pass reads claims through `claim-store.js`'s `createClaimReader`, which reports an unresolved repo slug as a read failure.
 - Updated during `/claude-tweaks:build` of record #3392 (2026-10-17): the step 2 guard now also runs on the gh-absent MCP transport.
+- Updated during `/claude-tweaks:build` of record #3520 (2026-10-19). Steps 2 and 4: a strong near-duplicate of an in-flight record now counts as a neighbour, which closes the no-Key-Files blind spot behind the 2026-10-17 #3417/#3419 merge conflict.
 - Related specs: #1365 (hub-path exclusion), #1420 (bare-directory exclusion), #2066 (fast-lane bundles), #1228 (oversized guard in bare drain)

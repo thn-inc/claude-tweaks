@@ -4,7 +4,7 @@ Referenced by `skills/dispatch/SKILL.md` Step 2. Run this verbatim — it produc
 
 - `reason: 'blocked'` (`detail: {blockedBy: [ids]}`) — every otherwise-`auto:build`-eligible candidate this run's own blocked-by checks (body-text and, under `work-links: native`, the native `blockedBy` connection) dropped from the pool, via `record.js`'s `partitionByOpenBodyBlockers` for the body-text case and `bin/resolve-blockers.js`'s `openBlockerIds` field for the `work-links: native` case — SKILL.md Step 2's Blocked-exclusion report reads these entries so a shrinking pool is never silent.
 - `reason: 'oversized'` (`detail: {size, threshold}`, #1228) — every dispatch group `grouping.js`'s `partitionGroupsBySizeGuard` found over the size guard. These groups stay IN `dispatch-groups.json` (`#N`/`#N,#M,...` still resolve them normally — a human present, explicitly naming one, is itself the required surfacing); only bare drain's auto-selection (SKILL.md Step 3, reusing the `next`-alias ranking script) excludes an oversized group from its own candidate pool, since nobody is present there to see a table row or answer a prompt. SKILL.md Step 3's Oversized-exclusion report surfaces these entries too, so every form's exclusion (or non-exclusion) is never silent. Before the size guard runs, `grouping.js`'s `bundleFastLaneSingletons` (#1910) merges up to `dispatch-fastlane-bundle-cap` (default 3, `policy.yml`) non-overlapping `ceremony:fast-lane` singleton groups — same `auto:merge` state, same `priority:*` band, oldest-first — into one multi-spec group each, so the pool `dispatch-groups.json` carries already reflects any bundling; it also writes `dispatch-fastlane-bundles.json` (`{records: number[]}[]`), naming exactly the groups this pass created, so the Reporting section can call out a fast-lane bundle distinctly from an ordinary single-record group.
-- `reason: 'neighbour-in-flight'` (`detail: {neighbours: [{number, files}]}`, #3278) — every remaining candidate sharing a linking Key File with an open `bot:in-progress` record whose claim blob reads `live`. These records stay IN `dispatch-groups.json` (`#N`/`#N,#M,...` still report and dispatch them normally); only bare drain's ranking skips them. Fail open: an unreadable claim or a failed fetch means no exclusion.
+- `reason: 'neighbour-in-flight'` (`detail: {neighbours: [{number, files, signals?, sharedAnchors?}]}`, #3278, #3520) — every remaining candidate sharing a linking Key File, or a strong near-duplicate (`isStrongNearDuplicate`), with an open `bot:in-progress` record whose claim blob reads `live`. These records stay IN `dispatch-groups.json` (`#N`/`#N,#M,...` still report and dispatch them normally); only bare drain's ranking skips them. Fail open: an unreadable claim or a failed fetch means no exclusion.
 - `reason: 'not-spec-shaped'` (`detail: {missing: [...]}`, #2829) — every candidate, right after grouping/bundling completes, whose cached body fails `/flow`'s Materialization hard gate (`shapeGate`, `bin/lib/issues/materialize-format.js`). This one DOES remove excluded candidates from `dispatch-groups.json`, running ahead of the `open-pr`/`target-missing`/`shipped` passes below so an excluded candidate costs none of their `gh` probes and gets no stray Close proposal from them — no bypass: unlike `oversized`, where a human naming a record directly is itself an accepted size-risk signal, a spec-shape failure is not a risk anyone can accept, since `/flow`'s own Materialization gate would stop the named record anyway, after a claim and a spent retry attempt.
 - `reason: 'open-pr'` (`detail: {pr}`, #1224) — every remaining candidate already covered by an open, unmerged PR that will close it (GitHub's own `closedByPullRequestsReferences` connection, a closing keyword in the PR body), via `record.js`'s `partitionByOpenLinkedPR`. Unlike the blocked-by pass above, this one runs unconditionally, independent of `work-links`, and unlike the cross-PR overlap report below it DOES remove excluded candidates from `dispatch-groups.json` before any selection form reads it — a record with an in-flight PR is not a warning, it is not re-dispatch-eligible at all.
 - `reason: 'target-missing'` (`detail: {path}`, #1983) — every remaining candidate whose `namedTarget` (`bin/lib/issues/named-target.js` — today, `by:docs-health` records only) names a file no longer present at the integration tip — a docs-health-filed ledger correction whose target a since-merged tidy sweep already deleted. This one DOES remove excluded candidates from `dispatch-groups.json` too, the same as the open-PR pass: such a record's own Acceptance Criteria is unsatisfiable, so re-dispatching it only burns a build attempt against the retry ceiling for nothing. Also stages one Close proposal in this firing's own run directory (`tidy`'s Close (GitHub) shape) so the next `tidy --approve` closes the record — nothing is written to GitHub by dispatch itself. SKILL.md Step 3's Blocked-exclusion report reads this reason too, under the same non-silent convention.
@@ -35,6 +35,7 @@ eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" <<NODE_EVAL_EOF
     DISPATCH_DEP_FRESHNESS: 'dispatch-dep-freshness.json',
     DISPATCH_OPEN_PRS: 'dispatch-open-prs.json',
     DISPATCH_CROSSPR_OVERLAP: 'dispatch-crosspr-overlap.json',
+    DISPATCH_NEAR_DUP_PAIRS: 'dispatch-near-dup-pairs.json',
     DISPATCH_LINKED_PRS: 'dispatch-linked-prs.json',
     DISPATCH_LINKED_PRS_ERR: 'dispatch-linked-prs.err',
     DISPATCH_NAMED_TARGETS: 'dispatch-named-targets.json',
@@ -607,11 +608,12 @@ NODE_EVAL_EOF
   done
 fi
 
-# #3278: neighbour-in-flight pass. Records stay in $DISPATCH_GROUPS; only bare
+# #3278: neighbour-in-flight pass. Neighbour: a linking Key File or a strong
+# near-duplicate (isStrongNearDuplicate, #3520). Records stay in $DISPATCH_GROUPS; only bare
 # drain's ranking skips them. Fail open: an unreadable claim or a failed fetch
 # excludes nothing. Claim blobs chain one fetch via the first git-tip read.
 # MCP transport: mcp-transport.md's neighbour-in-flight section replaces this pass.
-if ! gh issue list --label bot:in-progress --state open --json number,body,labels --limit 200 > "$DISPATCH_IN_FLIGHT_RAW" 2>/dev/null; then
+if ! gh issue list --label bot:in-progress --state open --json number,title,body,labels --limit 200 > "$DISPATCH_IN_FLIGHT_RAW" 2>/dev/null; then
   echo '[]' > "$DISPATCH_IN_FLIGHT_RAW"
   echo "AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull" >&2
 fi
@@ -669,30 +671,23 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
   require('fs').writeFileSync(process.argv[3], JSON.stringify(overlaps));
 NODE_EVAL_EOF
 
-# #1944: cross-group near-duplicate candidate warning. Read-only and never a
-# selection change (AC4) -- run findNearDuplicates pairwise across every pair
-# of records that landed in DIFFERENT groups (a same-group pair is a
-# fast-lane bundle's members, already co-built together, and has nothing new
-# to warn about here). Each candidate that fires is logged once to this firing's own
-# decisions.md as an AUTO line naming both records and the signals that fired
-# -- the dispatcher's cue to look before dispatching both in the same firing,
-# never a gate. Since #3278 records sharing a Key File are in separate groups,
-# so they reach this cross-group warning too.
-node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" <<NODE_EVAL_EOF
-  const { findNearDuplicates } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
-  const groups = require(process.argv[1]);
-  const seen = new Set();
-  for (let i = 0; i < groups.length; i += 1) {
-    for (const subject of groups[i]) {
-      const others = groups.filter((_, j) => j !== i).flat();
-      for (const hit of findNearDuplicates(subject, others)) {
-        const key = [subject.number, hit.number].sort((a, b) => a - b).join('|');
-        if (seen.has(key)) continue;
-        seen.add(key);
-        console.error('AUTO — dispatch: near-duplicate candidates across groups: #' + subject.number + ' / #' + hit.number + ' (' + hit.signals.join(', ') + ')');
-      }
-    }
-  }
+# #1944: cross-group near-duplicate candidate warning. Never removes anything
+# from $DISPATCH_GROUPS, so never a selection change (AC4) -- near-dup-pairs.js runs findNearDuplicates pairwise
+# across every pair of records that landed in DIFFERENT groups (a same-group
+# pair is a fast-lane bundle's members, already co-built together, and has
+# nothing new to warn about here). Each candidate that fires is logged once to
+# this firing's own decisions.md as an AUTO line naming both records and the
+# signals that fired -- the dispatcher's cue to look before dispatching both
+# in the same firing. It still removes nothing from $DISPATCH_GROUPS. Since
+# #3520 the STRONG pairs (isStrongNearDuplicate) are also written to
+# $DISPATCH_NEAR_DUP_PAIRS -- always, [] when there are none, so an earlier
+# pull's pairs are never read -- for Step 4/6 and the explicit-list line to
+# act on.
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_NEAR_DUP_PAIRS" <<NODE_EVAL_EOF
+  const { nearDuplicatePairsAcrossGroups } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/near-dup-pairs.js');
+  const pairs = nearDuplicatePairsAcrossGroups(require(process.argv[1]));
+  for (const p of pairs) console.error('AUTO — dispatch: near-duplicate candidates across groups: #' + p.records[0] + ' / #' + p.records[1] + ' (' + p.signals.join(', ') + ')');
+  require('fs').writeFileSync(process.argv[2], JSON.stringify(pairs.filter((p) => p.strong).map(({ records, signals, sharedAnchors }) => ({ records, signals, sharedAnchors }))));
 NODE_EVAL_EOF
 ```
 

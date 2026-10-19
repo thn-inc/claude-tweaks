@@ -143,9 +143,10 @@ function isReconcileResidueTitle(title) {
 
 // subject, records: issue-shaped objects — { number, title, body, labels }.
 // opts.titleSimilarityThreshold overrides the default (0.5) for tests.
-// Returns [{ number, title, score, signals }], sorted by score descending
+// Returns [{ number, title, score, signals, sharedAnchors }], sorted by score descending
 // then number ascending — score is the count of signals that fired (1-3);
-// a record with zero fired signals is never included.
+// a record with zero fired signals is never included. sharedAnchors (#3520)
+// is the sorted Signal 3 intersection — [] when body-anchor-overlap did not fire.
 function findNearDuplicates(subject, records, opts = {}) {
   const titleThreshold = opts.titleSimilarityThreshold ?? DEFAULT_TITLE_SIMILARITY_THRESHOLD;
   const subjectNumber = subject && subject.number;
@@ -181,14 +182,11 @@ function findNearDuplicates(subject, records, opts = {}) {
     // Signal 3: the same named symbol/file path appears in both bodies'
     // `## Current State` sections.
     const recordAnchors = extractCurrentStateAnchors(record.body);
-    let anchorOverlap = false;
-    for (const anchor of recordAnchors) {
-      if (subjectAnchors.has(anchor)) { anchorOverlap = true; break; }
-    }
-    if (anchorOverlap) signals.push('body-anchor-overlap');
+    const sharedAnchors = [...recordAnchors].filter((a) => subjectAnchors.has(a)).sort();
+    if (sharedAnchors.length > 0) signals.push('body-anchor-overlap');
 
     if (signals.length > 0) {
-      results.push({ number: record.number, title: record.title, score: signals.length, signals });
+      results.push({ number: record.number, title: record.title, score: signals.length, signals, sharedAnchors });
     }
   }
 
@@ -199,6 +197,17 @@ function findNearDuplicates(subject, records, opts = {}) {
 // #3366: a refusal needs a score of at least MIN_REFUSAL_SCORE — a
 // title-similarity hit alone (score 1) is surfaced, not refused.
 const MIN_REFUSAL_SCORE = 2;
+
+// #3520: one constant bounds both counts of a strong near-duplicate — shared
+// Current State anchors or fired signals. Calibrated on real pairs: the
+// conflicting #3417/#3419 shared 3 anchors, the clean #3417/#3012 shared 1.
+const STRONG_NEAR_DUPLICATE_MIN = 2;
+
+function isStrongNearDuplicate(hit) {
+  if (!hit || typeof hit !== 'object') return false;
+  const anchors = Array.isArray(hit.sharedAnchors) ? hit.sharedAnchors.length : 0;
+  return anchors >= STRONG_NEAR_DUPLICATE_MIN || hit.score >= STRONG_NEAR_DUPLICATE_MIN;
+}
 
 // #3141: the refusal decision /specify shaping applies on top of the
 // finder's screen (shaping-mode.md's Near-duplicate candidate check).
@@ -259,5 +268,7 @@ module.exports = {
   shapingRefusal,
   buildShapingState,
   MIN_REFUSAL_SCORE,
+  STRONG_NEAR_DUPLICATE_MIN,
+  isStrongNearDuplicate,
   DEFAULT_TITLE_SIMILARITY_THRESHOLD,
 };
