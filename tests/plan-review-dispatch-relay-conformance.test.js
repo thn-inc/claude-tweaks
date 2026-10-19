@@ -35,6 +35,13 @@ function missing(text, anchors) {
   return anchors.filter((a) => !text.includes(a));
 }
 
+function section(text, name) {
+  const start = text.indexOf(`\n## ${name}\n`);
+  assert.ok(start >= 0, `no ## ${name} section`);
+  const end = text.indexOf('\n## ', start + 1);
+  return text.slice(start, end < 0 ? undefined : end);
+}
+
 const SETTLE_ANCHORS = [
   'failed:plan-review-needs-human',
   'build/plan-review.md',
@@ -97,13 +104,6 @@ test('reporting.md\'s PushNotification rule agrees with plan-review.md\'s headle
   assert.ok(planReview.includes('send a `PushNotification`'), 'plan-review.md no longer sends a PushNotification — revisit reporting.md');
 });
 
-function section(text, name) {
-  const start = text.indexOf(`\n## ${name}\n`);
-  assert.ok(start >= 0, `no ## ${name} section`);
-  const end = text.indexOf('\n## ', start + 1);
-  return text.slice(start, end < 0 ? undefined : end);
-}
-
 test('AC8.1: docs/skill-graph.md states the /build → /dispatch edge once, in the build section', () => {
   const text = read(GRAPH);
   const rows = section(text, 'build').split('\n').filter((l) => l.startsWith('| `/dispatch` |'));
@@ -114,13 +114,14 @@ test('AC8.1: docs/skill-graph.md states the /build → /dispatch edge once, in t
 });
 
 test('go-red: missing() flags each removed anchor', () => {
-  const settle = paragraph(read(SETTLE), SETTLE_HEAD);
-  for (const anchor of SETTLE_ANCHORS) {
-    assert.ok(missing(settle.split(anchor).join(''), SETTLE_ANCHORS).includes(anchor), `removing ${anchor} was not flagged`);
-  }
-  const relay = paragraph(read(REPORTING), RELAY_HEAD);
-  for (const anchor of RELAY_ANCHORS) {
-    assert.ok(missing(relay.split(anchor).join(''), RELAY_ANCHORS).includes(anchor), `removing ${anchor} was not flagged`);
+  const cases = [
+    [paragraph(read(SETTLE), SETTLE_HEAD), SETTLE_ANCHORS],
+    [paragraph(read(REPORTING), RELAY_HEAD), RELAY_ANCHORS],
+  ];
+  for (const [source, anchors] of cases) {
+    for (const anchor of anchors) {
+      assert.ok(missing(source.split(anchor).join(''), anchors).includes(anchor), `removing ${anchor} was not flagged`);
+    }
   }
 });
 

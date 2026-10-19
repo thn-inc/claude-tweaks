@@ -78,10 +78,12 @@ test('AC5.2: every consumer that restates the HARD-GATE families cites the new g
 });
 
 test('AC5.2: the consumer list is complete', () => {
-  const superpowers = path.join('docs', 'superpowers');
+  // docs/superpowers (plans/specs) and docs/plans (run ledgers) are pipeline
+  // working state that quotes contract text, not consumers that restate it.
+  const skipped = new Set([path.join('docs', 'superpowers'), path.join('docs', 'plans')]);
   const files = [
     ...walkMarkdown('plugin', () => false),
-    ...walkMarkdown('docs', (p) => p === superpowers),
+    ...walkMarkdown('docs', (p) => skipped.has(p)),
     'CLAUDE.md',
     'README.md',
   ];
