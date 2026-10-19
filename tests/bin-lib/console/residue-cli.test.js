@@ -157,7 +157,7 @@ test('--ack-all marks every unacknowledged run', () => {
 });
 
 // #3370 I4: a --run path printed before the run was archived.
-const MOVED = new RegExp(`^console-residue\\.js: .*/pipelines/${RUN_2821} has moved to .*/pipelines/archive/${RUN_2821} — using the archived copy\\n$`);
+const MOVED = new RegExp(`^console-residue\\.js: .*[\\\\/]pipelines[\\\\/]${RUN_2821} has moved to .*[\\\\/]pipelines[\\\\/]archive[\\\\/]${RUN_2821} — using the archived copy\\n$`);
 
 test('--run given the pre-archive path prints the archived copy\'s residue with one stderr note', () => {
   const f = fixture();
