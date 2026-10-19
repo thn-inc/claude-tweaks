@@ -267,9 +267,10 @@ function item1Body() {
 }
 
 test('#3521 AC1.1 AC1.2: Step 3 item 1 carries the PR #3450 literal', () => {
-  assert.ok(item1Body().includes('Protected branch rules not configured for this branch'));
-  assert.ok(item1Body().includes('PR #3450'));
-  assert.ok(item1Body().includes('2026-10-18'));
+  const body = item1Body();
+  assert.ok(body.includes('Protected branch rules not configured for this branch'));
+  assert.ok(body.includes('PR #3450'));
+  assert.ok(body.includes('2026-10-18'));
   assert.ok(
     !PRE_3521_ITEM_1.includes('Protected branch rules not configured for this branch'),
     'pre-change text must NOT contain the PR #3450 literal (proves the pin can go red) [IL-105]',
@@ -282,8 +283,9 @@ test('#3521 AC2.1: Step 3 item 1 names enablePullRequestAutoMerge alone as a mat
 });
 
 test('#3521: Step 3 item 1 states allow_auto_merge without branch protection still fails to arm', () => {
-  assert.match(item1Body(), /`allow_auto_merge: true`/);
-  assert.match(item1Body(), /branch protection or a ruleset/);
+  const body = item1Body();
+  assert.match(body, /`allow_auto_merge: true`/);
+  assert.match(body, /branch protection or a ruleset/);
   assert.doesNotMatch(PRE_3521_ITEM_1, /`allow_auto_merge: true`/, 'pre-change text must NOT carry the allow_auto_merge sentence (proves the pin can go red) [IL-105]');
 });
 
