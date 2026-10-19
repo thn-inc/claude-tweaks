@@ -430,6 +430,25 @@ test('an unparseable events.jsonl line counts as other-run content → case 3 (f
   assert.strictEqual(a.hasOtherContent, true);
 });
 
+test('AC2.1: claim-log-only decisions.md beside fallback-only events.jsonl → case 2 (#3363)', () => {
+  const fallbackOnly = '{"type":"skill_invoked","skill":"claude-tweaks:build","ts":"2026-09-06T12:01:00.000Z","attribution":"fallback"}\n'
+    + '{"type":"skill_invoked","skill":"claude-tweaks:test","ts":"2026-09-06T12:02:00.000Z","attribution":"fallback"}\n';
+  const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': fallbackOnly });
+  assert.strictEqual(a.case, 2, `expected case 2, got case ${a.case}`);
+  assert.strictEqual(a.hasOtherContent, false);
+});
+
+test('AC3.1: an env- or session-attributed (untagged) events.jsonl line is still other-run content (#3363)', () => {
+  const fallbackLine = '{"type":"skill_invoked","skill":"claude-tweaks:build","ts":"2026-09-06T12:01:00.000Z","attribution":"fallback"}\n';
+  for (const other of [
+    '{"type":"skill_invoked","skill":"claude-tweaks:build","ts":"2026-09-06T12:01:00.000Z"}\n',
+    '{"type":"commit","ts":"2026-09-06T12:01:00.000Z","attribution":"session"}\n',
+  ]) {
+    const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': fallbackLine + other });
+    assert.strictEqual(a.hasOtherContent, true, other);
+  }
+});
+
 test('AC 2: dispatched call 1 (dispatched: true, no pr, no config) with Step 1.8 ledger line → case 2', () => {
   const fx = mainRoot();
   fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), CLAIM_AND_LEDGER);
