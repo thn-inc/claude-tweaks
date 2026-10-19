@@ -5,7 +5,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { skipUnderRoot } = require('../../helpers/root');
+const { IS_ROOT } = require('../../helpers/root');
+const { readText } = require('../../helpers/read-skill');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'phase-timing.js');
 const FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'record-1535');
@@ -14,6 +15,13 @@ function tmpRun(copyFixture) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-timing-'));
   if (copyFixture) for (const f of ['events.jsonl', 'manifest.yml']) fs.copyFileSync(path.join(FIX, f), path.join(dir, f));
   return dir;
+}
+// A fixture home for spawned children: os.homedir() reads USERPROFILE on
+// Windows, so both are set; CLAUDE_CONFIG_DIR is dropped so the developer's
+// own config dir cannot redirect the transcript lookup away from the fixture.
+function fixtureHomeEnv(home) {
+  const { CLAUDE_CONFIG_DIR, ...base } = process.env;
+  return { ...base, HOME: home, USERPROFILE: home };
 }
 
 test('#1928 AC4: --markdown prints the table and writes timing.json', () => {
@@ -118,12 +126,12 @@ test('#1929 AC4: --auto-transcript locates the run session transcript from run-s
   fs.mkdirSync(slugDir, { recursive: true });
   fs.copyFileSync(TFIX, path.join(slugDir, 'sess-9.jsonl'));
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree, sessionId: 'sess-9', status: 'active' }));
-  const r = spawnSync(process.execPath, [CLI, '--run', dir, '--markdown', '--auto-transcript'], { encoding: 'utf8', env: { ...process.env, HOME: home } });
+  const r = spawnSync(process.execPath, [CLI, '--run', dir, '--markdown', '--auto-transcript'], { encoding: 'utf8', env: fixtureHomeEnv(home) });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^\| review \| 8 \| — \| 116\/228 \| 0\.0 \| 3 \|$/m);
   const none = tmpRun(true);
   fs.writeFileSync(path.join(none, 'run-state.json'), JSON.stringify({ status: 'active' }));
-  const r2 = spawnSync(process.execPath, [CLI, '--run', none, '--markdown', '--auto-transcript'], { encoding: 'utf8', env: { ...process.env, HOME: home } });
+  const r2 = spawnSync(process.execPath, [CLI, '--run', none, '--markdown', '--auto-transcript'], { encoding: 'utf8', env: fixtureHomeEnv(home) });
   assert.equal(r2.status, 0);
   assert.match(r2.stdout, /^tokens: transcript not found \(no worktree or sessionId in run-state\.json\)$/m);
 });
@@ -167,7 +175,7 @@ test('#2550 review fix: the collapsed one-line summary still carries a Guard-den
   assert.equal(r.stdout, `no phase events; 0 tool round-trips, 3/4 tokens\nGuard denials: 1 gate · 0 wd-ambiguous · 1 wd-deny\n\ndispatches: subagent transcripts not found (no subagents/ directory at ${subDir})\n`);
 });
 
-test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds but whose read fails (mode 000) degrades to a note, exit 0', skipUnderRoot('root ignores file permissions'), () => {
+test('#1929 whole-branch review fix 2: a --transcript file whose stat succeeds but whose read fails (mode 000) degrades to a note, exit 0', { skip: (IS_ROOT && 'root ignores file permissions') || (process.platform === 'win32' && 'win32: chmod 0o000 only sets the read-only attribute') }, () => {
   const dir = tmpRun(true);
   const unreadable = path.join(os.tmpdir(), 'ct-timing-unreadable-transcript.jsonl');
   fs.writeFileSync(unreadable, '{}\n');
@@ -200,7 +208,7 @@ function subagentRun({ events = SUB_EVENTS } = {}) {
   fs.mkdirSync(slugDir, { recursive: true });
   fs.cpSync(SUBFIX, slugDir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/Users/x/Code/repo/.claude/worktrees/wt', sessionId: 'sess-1', status: 'active' }));
-  return { dir, home, slugDir, transcript: path.join(slugDir, 'sess-1.jsonl'), env: { ...process.env, HOME: home } };
+  return { dir, home, slugDir, transcript: path.join(slugDir, 'sess-1.jsonl'), env: fixtureHomeEnv(home) };
 }
 function runAuto(s, extra = []) {
   return spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--auto-transcript', ...extra], { encoding: 'utf8', env: s.env });
@@ -211,7 +219,7 @@ test('#3375 AC3.1: with --auto-transcript the phase table is byte-identical to b
   const s = subagentRun();
   const r = runAuto(s);
   assert.equal(r.status, 0, r.stderr);
-  const golden = fs.readFileSync(path.join(SUBFIX, '..', 'subagents-golden-auto.md'), 'utf8');
+  const golden = readText(path.join(SUBFIX, '..', 'subagents-golden-auto.md'));
   assert.ok(r.stdout.startsWith(golden), 'the phase table and Guard footer must be unchanged');
   assert.ok(r.stdout.slice(golden.length).startsWith('\nDispatches (run window'), r.stdout.slice(golden.length));
   // a1 65s + a2 30s of standard (two separate minutes), a3 120s of capable
@@ -235,7 +243,7 @@ test('#3375 AC3.2: with no transcript flag, the whole output and timing.json are
   const s = subagentRun();
   const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown'], { encoding: 'utf8', env: s.env });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, fs.readFileSync(path.join(SUBFIX, '..', 'subagents-golden-plain.md'), 'utf8'));
+  assert.equal(r.stdout, readText(path.join(SUBFIX, '..', 'subagents-golden-plain.md')));
   assert.equal('dispatches' in readTiming(s.dir), false);
 });
 
@@ -317,11 +325,12 @@ test('#3375: with several transcripts, one whose subagents/ directory is missing
   const r = spawnSync(process.execPath, [CLI, '--run', s.dir, '--markdown', '--transcript', s.transcript, '--transcript', other], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   const d = readTiming(s.dir).dispatches;
+  const expectedDir = path.join(s.slugDir, 'sess-2', 'subagents');
   assert.equal(d.items.length, 3);
   assert.equal(d.notFoundDirs.length, 1);
-  assert.match(d.notFoundDirs[0], /^no subagents\/ directory at .+sess-2\/subagents$/);
+  assert.equal(d.notFoundDirs[0], `no subagents/ directory at ${expectedDir}`);
   assert.match(r.stdout, /^\| standard \| 2 \|/m);
-  assert.match(r.stdout, /^dispatches: subagent transcripts not found \(no subagents\/ directory at .+sess-2\/subagents\)$/m);
+  assert.ok(r.stdout.split('\n').includes(`dispatches: subagent transcripts not found (no subagents/ directory at ${expectedDir})`), r.stdout);
 });
 
 test('#3375 M2: the same transcript reached through a symlinked directory alias does not double-count dispatches', () => {
