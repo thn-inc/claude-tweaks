@@ -52,7 +52,7 @@ const doctor = (text, anchor) => text.split(anchor).join('removed');
 
 // --- pin sets ---
 
-const STUB_ANCHORS = ['plan-review.md', 'Spec Mode only', 'roster tag `plan-review`', 'fewer than 3 file references', 'Scope keywords:', 'SKIP', 'design mode'];
+const STUB_ANCHORS = ['plan-review.md', 'Spec Mode only', '`ceremony-profile` is `fast-lane`', 'roster tag `plan-review`', 'fewer than 3 file references', 'Scope keywords:', 'SKIP', 'design mode'];
 const stubProblems = (body) => STUB_ANCHORS.filter((a) => !body.includes(a));
 
 const PROMPT_ANCHORS = [
@@ -92,20 +92,20 @@ const FOCUS_ANCHORS = [
   'never read as "No findings."',
   'treated as `needs-human`',
   'one `AskUserQuestion` call',
-  'one comment',
+  'question set as one comment',
   'never on Severity',
   '`low` and `info` findings are logged only',
 ];
 const focusProblems = (text) => FOCUS_ANCHORS.filter((a) => !norm(text).includes(a));
 
-// Scoped to the `### Spec gap — needs-human` subsection (final-review minor 6): the
-// whole file carries DISPATCH_HEADLESS=1 and BLOCKED elsewhere, so a file-wide check
-// could not go red. Final-review Important 1 moved the claim release to Settle.
+// Scoped to the `### Spec gap — needs-human` subsection: the whole file carries
+// DISPATCH_HEADLESS=1 and BLOCKED elsewhere, so a file-wide check could not go red.
+// Settle (dispatch/settle-and-merge.md), not the build, releases the dispatched claim.
 const NEEDS_HUMAN = '### Spec gap — needs-human';
 const GATE_ANCHORS = ['<!-- HARD-GATE: plan-review-needs-human -->', 'DISPATCH_HEADLESS=1', 'dispatched: true', 'bot:blocked', 'Settle (steps 1-2) releases the claim', 'failed: plan-review-needs-human', 'reports `BLOCKED`'];
 const gateProblems = (section) => GATE_ANCHORS.filter((a) => !norm(section).includes(a));
 
-// Fix round 1 (task review): the exit state is scoped to the dispatched call and exact
+// Exit state and transports: the exit state is scoped to the dispatched call and exact
 // about teardown; local-files has no issue to comment on; the question comment names its
 // transport; the comment body path is a literal, not a shell variable.
 const FIX_ANCHORS = [
@@ -122,7 +122,7 @@ const FIX_ANCHORS = [
 ];
 const fixProblems = (text) => FIX_ANCHORS.filter((a) => !norm(text).includes(a));
 
-// Final-review fix wave, read from the needs-human subsection: presence in multi-spec
+// Read from the needs-human subsection: presence in multi-spec
 // and parallel-wave contexts, guarded grant removal, readings as options, the
 // KEPT-PROMPT command, and the resume path's conditional re-grant.
 const FINAL_ANCHORS = [
@@ -193,7 +193,7 @@ test("AC2.1: the brief states the class boundary against SDD's pre-flight scan w
 test('AC3.1 + AC3.2: the model comes from resolve-profile.js capable and no model name is hardcoded', () => {
   const text = readText(REVIEW_PATH);
   assert.ok(text.includes('"${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" capable'));
-  assert.ok(text.includes('model'));
+  assert.ok(text.includes("Pass the returned `model` value as the Agent tool's `model` parameter"));
   assert.doesNotMatch(text, /\b(opus|sonnet|haiku|fable)\b/i);
 });
 
@@ -222,24 +222,24 @@ test('the needs-human stop carries the HARD-GATE marker and the presence branche
   assert.deepStrictEqual(gateProblems(subsection(readText(REVIEW_PATH), NEEDS_HUMAN)), []);
 });
 
-test('final review: the build never runs release-claim.js — Settle steps 1-2 release the dispatched claim', () => {
+test('the build never runs release-claim.js — Settle steps 1-2 release the dispatched claim', () => {
   assert.ok(!readText(REVIEW_PATH).includes('release-claim.js'), 'plan-review.md must not run release-claim.js itself');
 });
 
-test('final review: multi-spec presence read, parallel-wave member branch, guarded grant removal, readings, KEPT-PROMPT command, conditional re-grant', () => {
+test('multi-spec presence read, parallel-wave member branch, guarded grant removal, readings, KEPT-PROMPT command, conditional re-grant', () => {
   const text = readText(REVIEW_PATH);
   assert.deepStrictEqual(finalProblems(subsection(text, NEEDS_HUMAN)), []);
   assert.deepStrictEqual(finalFileProblems(text), []);
 });
 
-test("final review: subagent-dispatch-core's Template A Used-by line names /build's plan review", () => {
+test("subagent-dispatch-core's Template A Used-by line names /build's plan review", () => {
   const core = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'subagent-dispatch-core.md'));
   const usedBy = core.split('\n').filter((l) => l.startsWith('**Used by:** `/review` (review angles)'));
   assert.strictEqual(usedBy.length, 1, 'expected exactly one Template A Used-by line');
   assert.ok(usedBy[0].includes('`/build` (Common Step 1.6 plan review'), 'Template A Used-by line must name /build');
 });
 
-test('fix round 1: dispatched-only exit state, local-files comment skip, question-comment transport, literal body path', () => {
+test('dispatched-only exit state, local-files comment skip, question-comment transport, literal body path', () => {
   const text = readText(REVIEW_PATH);
   assert.deepStrictEqual(fixProblems(text), []);
   assert.ok(!text.includes('eval "$('), 'the comment body path must be a literal, not an eval-set shell variable');

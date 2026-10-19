@@ -8,7 +8,7 @@ const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
 // #3377: /build Common Step 1.6 (build/plan-review.md) can stop a dispatched
 // first call with `failed:plan-review-needs-human`. The build's own exit has
 // already posted the question; dispatch's Settle releases the claim (steps 1-2,
-// against the group run dir the claim is keyed to — final-review Important 1) but
+// against the group run dir the claim is keyed to) but
 // must not count a retry, post a failure comment, or tombstone the draft PR —
 // and the dispatching session must relay the question, since the Task call
 // cannot ask it. Read live: both dispatch files grow with every special case.
@@ -53,7 +53,7 @@ const SETTLE_ANCHORS = [
   'dispatch-retry-ceiling',
   'no failure comment',
   'no PR tombstone',
-  // controller addition (a): the ordinary first-call teardown still runs
+  // the ordinary first-call teardown still runs
   'dispatch/two-call-gate.md` §5',
   'removes the local worktree only',
   'the pushed branch and draft PR stay open for the resumed run',
@@ -66,7 +66,7 @@ const RELAY_ANCHORS = [
   '/claude-tweaks:dispatch #{n}',
   '/claude-tweaks:backlog refine',
   'no `AskUserQuestion` in a subagent',
-  // controller addition (c): a non-headless block can be re-picked headlessly
+  // a non-headless block can be re-picked headlessly
   'A non-headless block keeps `auto:build` with the claim released',
   'a later Routine drain may re-pick the still-unanswered record',
   '`bot:blocked`',
@@ -80,15 +80,16 @@ test('Review Focus 5: Settle skips its numbered steps for the plan-review needs-
   const step1 = text.indexOf(`\n${STEP_1_HEAD}`);
   assert.ok(step1 > 0, 'Settle step 1 anchor not found');
   assert.ok(at < step1, 'the special case must precede Settle step 1');
-  assert.ok(text.indexOf('**Headless ride-along special case (#1780).**') < at,
-    'the special case sits after the Headless ride-along special case');
+  const rideAlong = text.indexOf('**Headless ride-along special case (#1780).**');
+  assert.ok(rideAlong >= 0, 'the Headless ride-along special case anchor is missing');
+  assert.ok(rideAlong < at, 'the special case sits after the Headless ride-along special case');
 });
 
 test('Review Focus 5: the dispatching session relays the question to the human', () => {
   assert.deepStrictEqual(missing(paragraph(read(REPORTING), RELAY_HEAD), RELAY_ANCHORS), []);
 });
 
-test('reporting.md\'s PushNotification rule names the plan-review headless block (controller addition b)', () => {
+test('reporting.md\'s PushNotification rule names the plan-review headless block (headless block notification)', () => {
   const rule = paragraph(read(REPORTING), '`PushNotification` fires only');
   assert.deepStrictEqual(missing(rule, [
     'at the retry ceiling',
@@ -132,7 +133,7 @@ test('grown dispatch files stay within the rail', () => {
   }
 });
 
-// Final-review minor 7: plan-review.md's resume path sends the human to
+// plan-review.md's resume path sends the human to
 // /claude-tweaks:backlog refine, an edge /build owns; /backlog must not restate it.
 test('AC8.1: docs/skill-graph.md states the /build → /backlog edge once, in the build section', () => {
   const text = read(GRAPH);
@@ -143,7 +144,7 @@ test('AC8.1: docs/skill-graph.md states the /build → /backlog edge once, in th
   assert.deepStrictEqual(backlogRows, [], 'the ## backlog section must not restate the edge');
 });
 
-// Final-review Important 2: `bot:blocked` gained a second cause (a headless
+// `bot:blocked` gained a second cause (a headless
 // plan-review question awaiting an answer). Every consumer that explains the label
 // to a human names that cause. Each pin reads only the explaining passage — a line
 // (`line`) or a blank-line-delimited paragraph (`para`) starting at `head` — so it
@@ -159,6 +160,10 @@ const BLOCKED_CONSUMERS = [
   [path.join('plugin', 'skills', '_shared', 'github-pr-scan.md'), '   - **`bot:blocked`** —', 'line', 'plan-review-question'],
   [path.join('plugin', 'skills', 'backlog', 'SKILL.md'), '- A record hit its retry ceiling', 'line', 'plan-review'],
   [path.join('plugin', 'skills', '_shared', 'label-bootstrap.md'), '  ["bot:blocked",', 'line', 'plan-review question'],
+  [path.join('plugin', 'skills', 'help', 'status-scan.md'), '- Blocked: **', 'line', 'plan-review question'],
+  [path.join('plugin', 'skills', '_shared', 'github-pr-scan.md'), 'Render as three lines:', 'line', 'plan-review question'],
+  [path.join('plugin', 'skills', '_shared', 'work-record-permission-matrix.md'), '| **Executors**', 'line', 'build/plan-review.md'],
+  [path.join('docs', 'skill-graph.md'), '| `/dispatch` | `/tidy` Step 4.7', 'line', 'plan-review question'],
 ];
 
 function passage(text, head, mode) {

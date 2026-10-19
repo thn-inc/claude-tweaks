@@ -35,7 +35,7 @@ const ANCHORS = [
   'reports `BLOCKED`',
   '/claude-tweaks:backlog refine',
   're-materializes',
-  // final-review fix wave: Settle releases the dispatched claim; a parallel-wave
+  // Settle releases the dispatched claim; a parallel-wave
   // member reports to its orchestrator; the re-grant is conditional on the headless block
   "Settle steps 1-2, never by the build",
   '`parallel`-wave member reports `hard-gate-failed`',
