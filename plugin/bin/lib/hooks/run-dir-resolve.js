@@ -100,7 +100,10 @@ function isDeadRunDir(dir) {
 // directory under `{pipelinesRoot}` whose name contains `specSlug`, matching
 // the reference snippet's `find ... -name "*${SPEC_SLUG}*" | sort | tail -n 1`
 // — except a dead candidate (#1962, `isDeadRunDir` above) is skipped in favor
-// of the next-newest match, rather than being adopted as-is.
+// of the next-newest match, rather than being adopted as-is, and a
+// non-canonical name (`RUN_ID_RE` above) is never a candidate at all: the
+// snippet's plain `sort` lets `20260911T…` outrank every `2026-MM-DDT…` name
+// forever (#2870), so this filter is a deliberate divergence from it.
 function newestMatch(pipelinesRoot, specSlug) {
   let entries;
   try { entries = fs.readdirSync(pipelinesRoot, { withFileTypes: true }); } catch { return null; }

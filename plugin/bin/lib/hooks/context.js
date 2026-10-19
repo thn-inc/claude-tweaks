@@ -70,10 +70,8 @@ function rollbackMint(dirPath) {
   try { fs.rmdirSync(dirPath); } catch { /* best-effort */ }
 }
 
-// Run dirs are named as ISO-timestamp-prefixed slugs (e.g. 2026-07-01T090000-spec-1).
-// Other siblings under pipelines/ — notably archive/, the wrap-up archival
-// destination — are not runs. archive/ sorts AFTER ISO names lexically, so an
-// unfiltered .sort().reverse() would rank it first and shadow live runs.
+// Canonical run-dir name matcher; defined in run-dir-resolve.js, which owns
+// the rationale for filtering out non-run siblings such as archive/.
 const RUN_ID_RE = runDirResolve.RUN_ID_RE;
 
 function isPlainObject(v) {
