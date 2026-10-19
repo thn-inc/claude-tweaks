@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/lib/wrap-up/pack.js
+  - plugin/bin/lib/wrap-up/ledger-cells.js
   - plugin/skills/wrap-up/nothing-left-behind.md
   - plugin/skills/_shared/ledger-format.md
   - plugin/skills/ledger/SKILL.md
@@ -21,8 +22,9 @@ files:
 - **URL:** `jq .ledger.value "$PIPELINE_RUN_DIR/wrap-up-pack.json"`
 - **Action:** Check `deferredUnstaged` and `deferredUnstagedItems`, alongside the existing `open` / `total` / `unrecognized` fields.
 - **Should feel:** One number says whether the "every item is terminal" picture is trustworthy, and the ids say exactly which rows to look at. Each id has the form `docs/plans/{file}-ledger.md#4`, or `ledger.md#4` for a run-dir ledger.
-- **Should understand:** A flagged row is still counted as terminal for `open` and `unrecognized`. The JSON shape is additive, so older readers are unaffected. The ids are qualified with their file because a worktree can hold several `*-ledger.md` files that reuse the same row numbers. The count reflects the ledger at pack time; if the residue sweep appends rows after the pack runs, re-check the file with the same rule.
+- **Should understand:** A flagged row is still counted as terminal for `open` and `unrecognized`. The JSON shape is additive, so older readers are unaffected. The ids are qualified with their file because a worktree can hold several `*-ledger.md` files that reuse the same row numbers. The count reflects the ledger at pack time; if the residue sweep appends rows after the pack runs, re-check the file with the same rule. Cells are split by `splitLedgerRow` (`ledger-cells.js`, #3353), so a GFM-escaped pipe (`\|`) inside an Item stays in its cell. A row quoting `Surface: web\|mobile\|desktop` is still read by its real Status.
 - **Red flags:**
+  - An `open` row whose Item contains `\|` shows up under `unrecognized` (with a fragment like `mobile\` in `unrecognizedValues`) instead of `open`. That is the #3353 shape, where an open item slipped past the gate's open count.
   - A row whose Resolution reads `→ backlog https://github.com/…/issues/N` is flagged. That is a real record reference and must stay terminal.
   - A row whose only `#N` is this run's own record number is *not* flagged. That `#N` is the run's origin, not a carrying record.
 
@@ -45,4 +47,5 @@ files:
 ## Origin
 - Created during the build of #3327 (wrap-up: the ledger bulk-resolve fast path accepts deferred rows with no staged proposal), run `2026-10-18T203911-record-3327`.
 - All steps were built in this session. The producer that motivated the work, `build/dispatch.md`'s SDD carry-forward, still writes `minor (deferred):` lines as `deferred` with no staged path or record reference. The gate catches them; the producer is unchanged by design.
+- Updated during the build of #3353 (ledger row parsers ignored GFM's escaped pipe), run `2026-10-19T185754-record-3353`. Step 1 now reads cells with the escape-aware splitter, and `flipLedgerRow` and the statusline's open count use it too.
 - Related: `docs/journeys/gather-the-wrap-up-fact-pack-1930.md` (the pack this reads) and `docs/journeys/ratify-or-reverse-an-sdd-ruling-at-the-review-console-3401.md` (the sibling SDD-residue path for `Ruling:` lines).
