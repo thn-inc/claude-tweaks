@@ -158,12 +158,15 @@ test('estimateHarnessCost: synthetic corpus with a skill and an agent of the sam
   fs.writeFileSync(path.join(agentsDir, 'dup.md'), '---\nname: dup\ntools: Bash, Read, Write\n---\nbody\n');
   fs.writeFileSync(path.join(agentsDir, 'unscoped-agent.md'), '---\nname: unscoped-agent\n---\nbody\n');
   fs.writeFileSync(path.join(agentsDir, 'notes.txt'), 'not an agent\n');
-  const { entries, totalSkills, totalAgents, unscopedCount } = estimateHarnessCost(root);
+  const {
+    entries, totalSkills, totalAgents, unscopedCount, unscopedAgentCount,
+  } = estimateHarnessCost(root);
   const dupRows = entries.filter((e) => e.name === 'dup');
   assert.deepStrictEqual(dupRows.map((e) => e.kind).sort(), ['agent', 'skill']);
   assert.strictEqual(totalSkills, 1);
   assert.strictEqual(totalAgents, 2);
   assert.strictEqual(unscopedCount, 0);
+  assert.strictEqual(unscopedAgentCount, 1, 'the agent with no tools: line is tallied apart from the skill-only unscopedCount');
   const agentDup = dupRows.find((e) => e.kind === 'agent');
   assert.strictEqual(agentDup.bytes, fs.statSync(path.join(agentsDir, 'dup.md')).size);
 });

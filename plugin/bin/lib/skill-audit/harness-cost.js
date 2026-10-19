@@ -118,8 +118,9 @@ function countSharedCitations(repoRoot, skillName) {
 // (skills only; `sharedCitations` is null for agents). Each row carries a
 // `kind` discriminator. Sorted by byte size descending, matching this corpus's
 // existing reporting convention (`measureSubFiles`). `totalSkills`,
-// `totalAgents`, and `unscopedCount` are per-kind: `unscopedCount` tallies
-// skills only.
+// `totalAgents`, `unscopedCount`, and `unscopedAgentCount` are per-kind:
+// `unscopedCount` tallies skills only, `unscopedAgentCount` agents with no
+// `tools:` line.
 function estimateHarnessCost(repoRoot) {
   const dir = path.join(repoRoot, 'skills');
   const skillEntries = measureSkillToolCost(repoRoot).map(({ name, tools, toolCount, overageRatio }) => ({
@@ -143,11 +144,13 @@ function estimateHarnessCost(repoRoot) {
   const entries = [...skillEntries, ...agentEntries];
   entries.sort((a, b) => b.bytes - a.bytes);
   const unscopedCount = skillEntries.filter((e) => e.toolCount === null).length;
+  const unscopedAgentCount = agentEntries.filter((e) => e.toolCount === null).length;
   return {
     entries,
     totalSkills: skillEntries.length,
     totalAgents: agentEntries.length,
     unscopedCount,
+    unscopedAgentCount,
   };
 }
 

@@ -15,15 +15,17 @@
 // four-tool baseline) — rarely needed; exists for a one-off deeper sweep.
 //
 // Output (stdout): one JSON line —
-// { totalSkills, totalAgents, unscopedCount, flagged: [...], entries: [...] } —
+// { totalSkills, totalAgents, unscopedCount, unscopedAgentCount, flagged: [...],
+// entries: [...] } —
 // `entries` is every skill's AND agent definition's row, each carrying a
 // `kind` ('skill' | 'agent') plus { name, bytes, tools, toolCount,
 // overageRatio, sharedCitations }, sorted by bytes descending; `flagged` is
 // the subset `flagHighToolCount` returns. Agents are measured against the
 // same four-tool yardstick as skills — MINIMAL_BASELINE_TOOLS was calibrated
 // as a skill baseline, and that equivalence for agents is not validated.
-// `totalSkills` and `unscopedCount` count skills only. Exit 0 on success; 2
-// on malformed invocation.
+// `totalSkills` and `unscopedCount` count skills only; `unscopedAgentCount`
+// counts agents with no `tools:` line. Exit 0 on success; 2 on malformed
+// invocation.
 'use strict';
 const path = require('path');
 const { estimateHarnessCost, flagHighToolCount } = require('./lib/skill-audit/harness-cost');
@@ -62,9 +64,13 @@ function run(argv, deps = realDeps) {
   const root = path.resolve(o.pluginRoot);
   let report;
   try {
-    const { entries, totalSkills, totalAgents, unscopedCount } = estimateHarnessCost(root);
+    const {
+      entries, totalSkills, totalAgents, unscopedCount, unscopedAgentCount,
+    } = estimateHarnessCost(root);
     const flagged = flagHighToolCount(entries, { ratioThreshold: o.ratioThreshold });
-    report = { totalSkills, totalAgents, unscopedCount, flagged, entries };
+    report = {
+      totalSkills, totalAgents, unscopedCount, unscopedAgentCount, flagged, entries,
+    };
   } catch (err) {
     deps.stderr(`harness-cost-report.js: ${err && err.message}\n`);
     return 2;
