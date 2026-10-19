@@ -399,6 +399,7 @@ test('F2: the git calls carry core.quotePath=false and explicit diff prefixes', 
     '--no-ext-diff',
     '--src-prefix=a/',
     '--dst-prefix=b/',
+    '--end-of-options',
     'main...feature',
   ]);
   const namesCall = calls.find((a) => a.includes('--name-only'));

@@ -69,6 +69,10 @@ test('AC1.1: real git -z output reports docs/café.md unquoted', () => {
     git('init', '-q');
     git('config', 'user.email', 'test@example.com');
     git('config', 'user.name', 'Test');
+    // Pin the two settings a host's global config could flip: quotepath decides
+    // whether the plain form below is C-quoted, gpgsign would make `commit` prompt.
+    git('config', 'core.quotepath', 'true');
+    git('config', 'commit.gpgsign', 'false');
     fs.mkdirSync(path.join(cwd, 'docs'));
     fs.writeFileSync(path.join(cwd, 'docs', 'a.md'), 'a\n');
     git('add', 'docs/a.md');
@@ -76,6 +80,8 @@ test('AC1.1: real git -z output reports docs/café.md unquoted', () => {
     fs.writeFileSync(path.join(cwd, 'docs', 'café.md'), 'c\n');
     git('add', 'docs/café.md');
 
+    // Without -z git C-quotes the path - the hazard the -z readers exist to avoid.
+    assert.equal(git('diff', '--cached', '--name-only').trim(), '"docs/caf\\303\\251.md"');
     assert.ok(splitNul(git('diff', '--cached', '--name-only', '-z')).includes('docs/café.md'));
     assert.deepEqual(
       parseNameStatusZ(git('diff', '--cached', '--name-status', '-z')),

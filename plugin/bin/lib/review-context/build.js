@@ -155,6 +155,7 @@ function buildContext({
     '--no-ext-diff',
     '--src-prefix=a/',
     '--dst-prefix=b/',
+    '--end-of-options',
     range,
   ]);
 

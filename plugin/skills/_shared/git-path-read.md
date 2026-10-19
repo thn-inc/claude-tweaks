@@ -16,7 +16,7 @@ The rule for any `plugin/bin` code that reads a git path list: `--name-only`, `-
 
 ## Pinned by
 
-`tests/git-path-read-conformance.test.js`: every `'--name-only'` / `'--name-status'` argv line in `plugin/bin` also carries `'-z'` on the same line.
+`tests/git-path-read-conformance.test.js`: every `'--name-only'` / `'--name-status'` argv line in `plugin/bin` also carries `'-z'` on the same line, and so does a `git ... --name-only` template string passed straight to an exec-named call (`backlog.js`). Every such argv line also carries `'--end-of-options'`, except the two readers that take no ref: `pre-tool-use.js` (the staged index) and `freshness.js` (a pathspec-only log).
 
 ## Not covered yet
 

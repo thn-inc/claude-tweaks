@@ -140,13 +140,6 @@ test('parseNameStatusLog: empty output yields no commits', () => {
   assert.deepStrictEqual(parseNameStatusLog(''), []);
 });
 
-test('the top-level walk reads the log with -z', () => {
-  const calls = [];
-  const fakeGit = (args) => { calls.push(args); return ''; };
-  checkArtifactOverwrite({ base: 'main', head: 'HEAD', git: fakeGit, cwd: '/fake' });
-  assert.ok(calls[0].includes('-z'), 'the name-status log must be read with -z');
-});
-
 test('a journey with a non-ASCII name is walked through real -z git output', () => {
   const fx = repo();
   write(fx.dir, 'docs/journeys/café.md', '# Demo\n\n## Step 1\nFirst content.\n\n## Step 2\nSecond content.\n');
