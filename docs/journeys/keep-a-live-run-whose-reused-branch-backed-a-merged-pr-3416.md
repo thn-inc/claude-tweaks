@@ -24,7 +24,7 @@ files:
 - **URL:** —
 - **Action:** `archiveMerged` (both its main loop and its clean-status sweep, through the shared `archiveMergedRun` → `resolveRunPrState`) probes `gh pr view {pr.number}` first and gets OPEN, so `decideArchiveCore` skips with `pr-open`. `releaseMerged` Phase 1.5 probes the same stamped number for each live claim and `decideRelease` skips with `pr-open`. Only a run with no stamped `pr.number` falls back to `gh pr list --head {branch}`.
 - **Should feel:** Invisible — one `gh pr view` per stamped run, no extra prompts.
-- **Should understand:** A by-number probe that fails (`network-failure`, `gh-absent`, `invalid-arguments`) skips the run for this pass; it never falls back to the branch lookup, because that lookup is exactly what returns the old MERGED PR.
+- **Should understand:** A by-number probe that fails (`network-failure`, `gh-absent`, `invalid-arguments`) skips the run for this pass; it never falls back to the branch lookup, because that lookup is exactly what returns the old MERGED PR. (Claim release for a candidate with no resolvable branch at all is the one exception: it keeps the #3249 issue-closed path, since there is no branch lookup to misattribute.)
 - **Red flags:** The run directory moved to `.claude-tweaks/pipelines/archive/` or a claim tombstoned with reason `merged: reconciled from PR #{old-pr}` while `#{new-pr}` is still open.
 
 ### 3. A multi-spec run with pending per-spec proposals and no console yet — same sweep, after the run's own PR merged
