@@ -53,6 +53,24 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.147.0](https://github.com/thn-inc/claude-tweaks/compare/v6.146.0...v6.147.0) (2026-10-19)
+
+
+### Features
+
+* review lens dispatch: a worktree-isolated session cannot… ([#2956](https://github.com/thn-inc/claude-tweaks/issues/2956)) ([357bac5](https://github.com/thn-inc/claude-tweaks/commit/357bac56f70185e3fca3bbe1d28eb7fe61c14ebc)), closes [#3379](https://github.com/thn-inc/claude-tweaks/issues/3379) [#3462](https://github.com/thn-inc/claude-tweaks/issues/3462)
+
+
+### Bug Fixes
+
+* check-sibling-sessions: `--record N` reads only local… ([#3030](https://github.com/thn-inc/claude-tweaks/issues/3030)) ([6ac24fd](https://github.com/thn-inc/claude-tweaks/commit/6ac24fd3f5594b94f3786cd1adad9e5ba2e9ca8b))
+* Don't adopt a clean worktree whose branch's PR already… ([#3572](https://github.com/thn-inc/claude-tweaks/issues/3572)) ([36621f2](https://github.com/thn-inc/claude-tweaks/commit/36621f2827ae0ae47a75526b8367a1777318e3b3))
+* Four friction points in a /flow build-review-wrap-up run… ([#2869](https://github.com/thn-inc/claude-tweaks/issues/2869)) ([e91df45](https://github.com/thn-inc/claude-tweaks/commit/e91df452cc1bd26f5d550b44eba51471db3898bb))
+* matchPreExisting adjudicates a run as covered while… ([#3481](https://github.com/thn-inc/claude-tweaks/issues/3481)) ([d80475a](https://github.com/thn-inc/claude-tweaks/commit/d80475a0f3456462215eb78838f9c889a24eaedc))
+* materialize.js: a comma-separated `Design-intent:` list… ([#3018](https://github.com/thn-inc/claude-tweaks/issues/3018)) ([78a2fbd](https://github.com/thn-inc/claude-tweaks/commit/78a2fbd003725a155bbb40724709c3d93d76efa2))
+* One reader for installed_plugins.json — Impeccable's… ([#3415](https://github.com/thn-inc/claude-tweaks/issues/3415)) ([9441f5b](https://github.com/thn-inc/claude-tweaks/commit/9441f5b4d176b25c9b8c87aa8f638ee88459b9e9))
+* SubagentStop contract check fires on an intermediate… ([#3015](https://github.com/thn-inc/claude-tweaks/issues/3015)) ([37950c2](https://github.com/thn-inc/claude-tweaks/commit/37950c276a9c5480d919d9338bafd281993dcbf9))
+
 ## [6.146.0](https://github.com/thn-inc/claude-tweaks/compare/v6.145.0...v6.146.0) (2026-10-19)
 
 
