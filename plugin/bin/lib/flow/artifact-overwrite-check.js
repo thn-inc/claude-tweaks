@@ -35,6 +35,7 @@
 // no refs trailer, not a list reflow) is treated as an overwrite.
 
 const { execFileSync } = require('child_process');
+const { splitLogZ } = require('../git-z');
 
 const GIT_TIMEOUT_MS = 10000;
 
@@ -89,25 +90,25 @@ function setsIntersect(a, b) {
   return false;
 }
 
-// Parses `git log --reverse --diff-filter=AM --name-status --format=%H
+// Parses `git log -z --reverse --diff-filter=AM --name-status --format=%H
 // {base}..{head} -- {paths}` output into an ordered (oldest-first) list of
-// { commit, entries: [{ status, path }] }.
+// { commit, entries: [{ status, path }] }. Under `-z` the stream is NUL
+// delimited and paths are raw (never C-quoted); each commit's tokens are flat
+// status/path pairs, with a second path after an R*/C* status. Only A/M
+// entries are kept; any other status is skipped along with its path(s).
 function parseNameStatusLog(output) {
-  const commits = [];
-  let current = null;
-  for (const raw of output.split('\n')) {
-    const line = raw.replace(/\r$/, '');
-    if (/^[0-9a-f]{40}$/.test(line)) {
-      current = { commit: line, entries: [] };
-      commits.push(current);
-      continue;
+  return splitLogZ(output, (t) => /^[0-9a-f]{40}$/.test(t)).map(({ header, tokens }) => {
+    const entries = [];
+    for (let i = 0; i < tokens.length;) {
+      const status = tokens[i];
+      const width = status[0] === 'R' || status[0] === 'C' ? 2 : 1;
+      if ((status === 'A' || status === 'M') && i + 1 < tokens.length) {
+        entries.push({ status, path: tokens[i + 1] });
+      }
+      i += 1 + width;
     }
-    const m = line.match(/^([AM])\t(.+)$/);
-    if (m && current) {
-      current.entries.push({ status: m[1], path: m[2] });
-    }
-  }
-  return commits;
+    return { commit: header, entries };
+  });
 }
 
 // Builds path -> ordered [{ commit, status }] from the parsed commit list.
@@ -222,7 +223,7 @@ function checkArtifactOverwrite(opts) {
   const paths = (rawPaths && rawPaths.length > 0) ? rawPaths : ['docs/journeys/', 'stories/'];
 
   const nameStatusOut = git(
-    ['log', '--reverse', '--diff-filter=AM', '--name-status', '--format=%H', '--end-of-options', `${base}..${head}`, '--', ...paths],
+    ['log', '--reverse', '--diff-filter=AM', '--name-status', '-z', '--format=%H', '--end-of-options', `${base}..${head}`, '--', ...paths],
     cwd,
   );
   const commits = parseNameStatusLog(nameStatusOut);

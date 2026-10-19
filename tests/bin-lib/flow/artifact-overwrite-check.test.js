@@ -24,6 +24,7 @@ const {
   extractRefs,
   parseHunks,
   isListReflow,
+  parseNameStatusLog,
   ArtifactOverwriteCheckError,
 } = require(MOD);
 
@@ -115,6 +116,47 @@ test('parseHunks + isListReflow: a list shrinking (fewer entries added than remo
   ].join('\n');
   const hunks = parseHunks(diff);
   assert.strictEqual(isListReflow(hunks[0]), false);
+});
+
+test('parseNameStatusLog: parses `git log -z --name-status` NUL output, non-ASCII paths included', () => {
+  const sha1 = 'a'.repeat(40);
+  const sha2 = 'b'.repeat(40);
+  const out = `${sha1}\0\nA\0docs/journeys/café.md\0${sha2}\0\nM\0docs/journeys/café.md\0A\0stories/x.yaml\0`;
+  assert.deepStrictEqual(parseNameStatusLog(out), [
+    { commit: sha1, entries: [{ status: 'A', path: 'docs/journeys/café.md' }] },
+    { commit: sha2, entries: [{ status: 'M', path: 'docs/journeys/café.md' }, { status: 'A', path: 'stories/x.yaml' }] },
+  ]);
+});
+
+test('parseNameStatusLog: skips non-A/M statuses along with their path(s), two paths for R/C', () => {
+  const sha = 'c'.repeat(40);
+  const out = `${sha}\0\nR100\0old.md\0new.md\0C75\0src.md\0copy.md\0D\0gone.md\0M\0kept.md\0`;
+  assert.deepStrictEqual(parseNameStatusLog(out), [
+    { commit: sha, entries: [{ status: 'M', path: 'kept.md' }] },
+  ]);
+});
+
+test('parseNameStatusLog: empty output yields no commits', () => {
+  assert.deepStrictEqual(parseNameStatusLog(''), []);
+});
+
+test('the top-level walk reads the log with -z', () => {
+  const calls = [];
+  const fakeGit = (args) => { calls.push(args); return ''; };
+  checkArtifactOverwrite({ base: 'main', head: 'HEAD', git: fakeGit, cwd: '/fake' });
+  assert.ok(calls[0].includes('-z'), 'the name-status log must be read with -z');
+});
+
+test('a journey with a non-ASCII name is walked through real -z git output', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/café.md', '# Demo\n\n## Step 1\nFirst content.\n\n## Step 2\nSecond content.\n');
+  commit(fx, 'Add café journey (refs #10)');
+  write(fx.dir, 'docs/journeys/café.md', '# Demo\n\n## Step 1\nReplaced without attribution.\n\n## Step 2\nSecond content.\n');
+  commit(fx, 'Clobber step 1 (refs #12)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites[0].path, 'docs/journeys/café.md');
 });
 
 // --- Synthetic-repo tests: the real algorithm against real git history ---
