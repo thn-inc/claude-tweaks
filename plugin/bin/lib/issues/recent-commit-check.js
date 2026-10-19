@@ -121,8 +121,8 @@ function findRecentCommitOverlap({
 // prs is an already-fetched open-PR list (`gh pr list --json number,title,url`).
 // A PR matches when it shares at least minTermMatches key terms with the
 // candidate title, by set intersection of deriveKeyTerms on both sides (not a
-// substring test). Unusable input — empty or non-string title, prs not an
-// array — and entries without a string title yield null or are skipped; never throws.
+// substring test). Never throws: an empty or non-string title, or a prs value
+// that is not an array, yields null; a PR entry without a string title is skipped.
 function findOpenPrOverlap({ title, prs, minTermMatches = DEFAULT_MIN_TERM_MATCHES } = {}) {
   const candidateTerms = deriveKeyTerms(title);
   if (candidateTerms.length === 0 || !Array.isArray(prs)) return null;
