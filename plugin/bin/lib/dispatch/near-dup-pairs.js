@@ -15,7 +15,8 @@
 // A pair's `records` are issue NUMBERS ([subject, partner]), so the pair list
 // can be persisted as JSON without carrying issue bodies, and `first` /
 // `second` in a predicted conflict are numbers too. Each function returns []
-// on null or malformed input and never throws.
+// on null or malformed shapes; a non-string title still throws inside
+// findNearDuplicates.
 
 const { findNearDuplicates, isStrongNearDuplicate } = require('../issues/near-duplicate');
 

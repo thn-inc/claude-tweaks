@@ -48,9 +48,10 @@ serialize before merge. Reversibility: n/a.
 Still a warning, never a gate — the group dispatches regardless. A hit against the pre-drain
 snapshot (no `source`) is already covered by Step 3's report and is not re-logged here.
 
-**Near-duplicate hit source (#3520).** `detectCrossPRFileOverlap` sees changed files only, so a
-strong near-duplicate pair whose shared files appear during the build is invisible to it. Also run
-`drainNearDuplicateHits(members, pairs, drainPrs)` (`bin/lib/dispatch/near-dup-pairs.js`) with this
+**Near-duplicate hit source (#3520), explicit-list firings.** `detectCrossPRFileOverlap` sees changed files only, so a
+strong near-duplicate pair whose shared files appear during the build is invisible to it. It applies to explicit-list firings (one queue
+pull); a drain re-pulls after each group, so it gets the same protection from the neighbour-in-flight
+guard instead. Also run `drainNearDuplicateHits(members, pairs, drainPrs)` (`bin/lib/dispatch/near-dup-pairs.js`) with this
 group's member numbers, `dispatch-near-dup-pairs.json` (`queue-pull-script.md`'s output, strong
 pairs only) and this firing's `dispatch-drain-prs.json`. Each `{pr, member, partner}` hit — a
 member whose strong-pair partner is closed by a drain PR (`closingIssueNumbers`) — renders
@@ -87,8 +88,8 @@ firing, or a retry) finds no live overlap and proceeds normally through Authoriz
 judgment. No hit, or a hit only against a PR that has already merged/closed: proceed to
 Authorization immediately, unaffected.
 
-**Near-duplicate hold (#3520).** Also run `drainNearDuplicateHits(members, pairs, drainPrs)` here, the
-same call and inputs as Step 4's near-duplicate hit source, evaluated fresh. A hit whose drain PR
+**Near-duplicate hold (#3520), explicit-list firings.** Also run `drainNearDuplicateHits(members, pairs, drainPrs)` here, the
+same call and inputs as Step 4's near-duplicate hit source, evaluated fresh (a drain relies on the neighbour-in-flight guard). A hit whose drain PR
 is **still open** (`gh pr view {pr} --json state`, the same self-healing rule as above) holds the
 group exactly like a file overlap does — normal Review Console, skip Authorization and Content
 judgment — and logs:

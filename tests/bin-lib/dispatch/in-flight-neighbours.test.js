@@ -326,3 +326,44 @@ test('neighbourClaimTargets includes near-duplicate neighbours', () => {
   });
   assert.deepStrictEqual(targets, [9]);
 });
+
+test('a score-only strong pair (one shared anchor plus similar titles, no Key Files) excludes', () => {
+  const anchor = ['plugin/skills/dispatch/drain-pr-overlap.md'];
+  const result = runNd(
+    [nd(1, 'Fix drain hold prose in dispatch skill', anchor)],
+    [nd(9, 'Fix drain hold line in dispatch skill', anchor)],
+    readerFrom({ 9: { content: live } }),
+  );
+  assert.strictEqual(result.exclusions.length, 1);
+  assert.strictEqual(result.exclusions[0].reason, 'neighbour-in-flight');
+  const [neighbour] = result.exclusions[0].detail.neighbours;
+  assert.strictEqual(neighbour.number, 9);
+  assert.deepStrictEqual(neighbour.files, []);
+  assert.ok(neighbour.signals.includes('title-similarity'));
+  assert.ok(neighbour.signals.includes('body-anchor-overlap'));
+  assert.strictEqual(neighbour.sharedAnchors.length, 1);
+});
+
+test('accepted gap (#3520): a hub Key File dropped by findInFlightNeighbours still counts as a key-files-overlap signal', () => {
+  const withHub = (n, title) => ({ ...rec(n, ['hub.js']), title });
+  const result = runNd(
+    [withHub(1, 'Fix drain hold prose in dispatch skill')],
+    [
+      withHub(9, 'Fix drain hold line in dispatch skill'),
+      withHub(8, 'Zeta ledger sweep'),
+      withHub(7, 'Yankee cache layer'),
+    ],
+    readerFrom({ 9: { content: live }, 8: { content: live }, 7: { content: live } }),
+  );
+  assert.deepStrictEqual(result.exclusions, [
+    {
+      reason: 'neighbour-in-flight',
+      records: [1],
+      detail: {
+        neighbours: [
+          { number: 9, files: [], signals: ['key-files-overlap', 'title-similarity'], sharedAnchors: [] },
+        ],
+      },
+    },
+  ]);
+});

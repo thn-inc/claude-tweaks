@@ -164,10 +164,11 @@ same convention as the reports above (weak-tier: see above).
 landing in *different* dispatch groups, logging one `AUTO — dispatch: near-duplicate
 candidates across groups: #A / #B ({signals})` line per firing pair to stderr. Same-group pairs
 (a fast-lane bundle's members) are already co-built together and have nothing new to warn about. A
-weak pair only warns; a strong pair (`isStrongNearDuplicate`, #3520) also persists to
-`dispatch-near-dup-pairs.json` and feeds the neighbour-in-flight guard, so a bare drain defers the
-later record while the partner's claim is live; an explicit list prints the predicted-conflict line
-(`near-duplicate-pairs.md`, this skill's directory).
+weak pair only warns; a strong pair (`isStrongNearDuplicate`, #3520) counts as a neighbour in the
+neighbour-in-flight guard through the same predicate, so a drain defers the later record while the
+partner's claim is live, and also persists to `dispatch-near-dup-pairs.json`, which an explicit
+list uses for the predicted-conflict line and the drain-PR checks (`near-duplicate-pairs.md`,
+this skill's directory).
 
 **Bare (drain)** `/dispatch` — headless, no `AskUserQuestion` (skip this and the rest of Step 3 if the zero-groups case above applies). Resolve `{budget}`: `--budget <n|all>` if present (or its deprecated `--batch-size <n>`/`--concurrent <n>` aliases, each with its own notice), else `dispatch-batch-size` (or its deprecated `dispatch-pick-max-concurrent` key, same notice) — CLI arg beats project policy per `_shared/auto-mode-card.md`. `n` = attempt count; `all` drains to empty. `--budget` + `next`/`#N,#M,...`: **rejected with one notice** (bare-drain-only; `next` already means `--budget 1`).
 

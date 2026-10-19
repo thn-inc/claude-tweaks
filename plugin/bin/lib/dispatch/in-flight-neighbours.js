@@ -10,7 +10,9 @@
 // records with no `### Key Files` section, which the first cannot see. This
 // module turns those live-claimed direct neighbours into
 // {reason: 'neighbour-in-flight', records, detail} entries in the shape
-// exclusions.js owns.
+// exclusions.js owns. findNearDuplicates' key-files-overlap signal is not
+// hub-filtered, so a shared hub file plus one more signal can make a strong
+// neighbour; #3520 accepted that (a small share of strong pairs).
 //
 // Liveness comes from the claim blob (claims.js classifyClaimBlob), never from
 // a bot:in-progress label — a label outlives its claim. Only in-flight records

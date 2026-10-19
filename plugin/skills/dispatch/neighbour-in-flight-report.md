@@ -10,9 +10,9 @@ line per entry before the rest of Step 3:
 `#{n} waits — direct neighbour(s) in flight: #{m} ({files}); bare drain skips it this firing`
 
 `{m}` lists each neighbour (`detail.neighbours[].number`), `{files}` the Key Files they share with
-`#{n}`. A neighbour carrying `signals` is a strong near-duplicate (#3520) and renders as
-`#{m} (near-duplicate: {signals}; shared: {sharedAnchors})` instead, comma-joined; one carrying
-both `files` and `signals` renders both forms; a file neighbour renders `#{m} ({files})` as before. The record stays in `dispatch-groups.json` — the exclusion is non-removing, so
+`#{n}`. A neighbour with `signals` and empty `files` is a strong near-duplicate (#3520) and renders as
+`#{m} (near-duplicate: {signals}; shared: {sharedAnchors})` instead, comma-joined; one with non-empty
+`files` and `signals` renders `#{m} ({files}; near-duplicate: {signals}; shared: {sharedAnchors})`; a file neighbour renders `#{m} ({files})` as before. The record stays in `dispatch-groups.json` — the exclusion is non-removing, so
 `#N`/`#N,#M,...` print the same line and still dispatch it (naming one directly is the required
 surfacing), while bare drain's ranking skips it exactly as it skips oversized groups — reused, not
 new logic. Same drain+zero-eligible exception as the Blocked-exclusion report (`SKILL.md` Step 3);

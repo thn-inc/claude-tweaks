@@ -608,7 +608,8 @@ NODE_EVAL_EOF
   done
 fi
 
-# #3278: neighbour-in-flight pass. Records stay in $DISPATCH_GROUPS; only bare
+# #3278: neighbour-in-flight pass. Neighbour: a linking Key File or a strong
+# near-duplicate (isStrongNearDuplicate, #3520). Records stay in $DISPATCH_GROUPS; only bare
 # drain's ranking skips them. Fail open: an unreadable claim or a failed fetch
 # excludes nothing. Claim blobs chain one fetch via the first git-tip read.
 # MCP transport: mcp-transport.md's neighbour-in-flight section replaces this pass.
@@ -670,8 +671,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
   require('fs').writeFileSync(process.argv[3], JSON.stringify(overlaps));
 NODE_EVAL_EOF
 
-# #1944: cross-group near-duplicate candidate warning. Read-only and never a
-# selection change (AC4) -- near-dup-pairs.js runs findNearDuplicates pairwise
+# #1944: cross-group near-duplicate candidate warning. Never removes anything
+# from $DISPATCH_GROUPS, so never a selection change (AC4) -- near-dup-pairs.js runs findNearDuplicates pairwise
 # across every pair of records that landed in DIFFERENT groups (a same-group
 # pair is a fast-lane bundle's members, already co-built together, and has
 # nothing new to warn about here). Each candidate that fires is logged once to
