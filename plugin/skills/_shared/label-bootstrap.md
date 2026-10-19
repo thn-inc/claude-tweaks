@@ -123,7 +123,7 @@ one-time provision-now offer, which uses this list whole):
   ["auto:merge",        "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)", "1D76DB"],
   ["auto:merge-pending", "Grant: machine-granted merge trust awaiting its veto window (matures to auto:merge)", "1D76DB"],
   ["bot:in-progress",   "Bot state: an agent currently holds the claim on this record", "6A737D"],
-  ["bot:blocked",       "Bot state: hit the retry ceiling — needs re-authorization before autonomous retry", "6A737D"],
+  ["bot:blocked",       "Bot state: retry ceiling hit, or a plan-review question awaits an answer — needs re-authorization", "6A737D"],
   ["bot:parked",        "Bot state: merge-verification parked it (CI red/timed-out) — auto:* grants stay intact", "6A737D"],
   ["demo:pending",           "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo", "006B75"],
   ["demo:approved",          "Acceptance: a human verified this record does what was asked", "006B75"],

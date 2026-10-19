@@ -65,6 +65,7 @@ const PROMPT_ANCHORS = [
   '+N more',
   'at most 7 rows',
   'STATUS: {DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED}',
+  'On a needs-human row, Suggested resolution names both defensible readings: "Reading A: … / Reading B: …"',
 ];
 const promptProblems = (block) => PROMPT_ANCHORS.filter((a) => !block.includes(a));
 
@@ -97,8 +98,12 @@ const FOCUS_ANCHORS = [
 ];
 const focusProblems = (text) => FOCUS_ANCHORS.filter((a) => !norm(text).includes(a));
 
-const GATE_ANCHORS = ['<!-- HARD-GATE: plan-review-needs-human -->', 'DISPATCH_HEADLESS=1', 'dispatched: true', 'bot:blocked', 'release-claim.js', 'failed: plan-review-needs-human', 'BLOCKED'];
-const gateProblems = (text) => GATE_ANCHORS.filter((a) => !norm(text).includes(a));
+// Scoped to the `### Spec gap — needs-human` subsection (final-review minor 6): the
+// whole file carries DISPATCH_HEADLESS=1 and BLOCKED elsewhere, so a file-wide check
+// could not go red. Final-review Important 1 moved the claim release to Settle.
+const NEEDS_HUMAN = '### Spec gap — needs-human';
+const GATE_ANCHORS = ['<!-- HARD-GATE: plan-review-needs-human -->', 'DISPATCH_HEADLESS=1', 'dispatched: true', 'bot:blocked', 'Settle (steps 1-2) releases the claim', 'failed: plan-review-needs-human', 'reports `BLOCKED`'];
+const gateProblems = (section) => GATE_ANCHORS.filter((a) => !norm(section).includes(a));
 
 // Fix round 1 (task review): the exit state is scoped to the dispatched call and exact
 // about teardown; local-files has no issue to comment on; the question comment names its
@@ -116,6 +121,32 @@ const FIX_ANCHORS = [
   'take the literal path it prints',
 ];
 const fixProblems = (text) => FIX_ANCHORS.filter((a) => !norm(text).includes(a));
+
+// Final-review fix wave, read from the needs-human subsection: presence in multi-spec
+// and parallel-wave contexts, guarded grant removal, readings as options, the
+// KEPT-PROMPT command, and the resume path's conditional re-grant.
+const FINAL_ANCHORS = [
+  '${MULTISPEC_PARENT_DIR:-$PIPELINE_RUN_DIR}/run-state.json',
+  'holds no `run-state.json`',
+  '`MULTISPEC_PARALLEL_WAVE=1`',
+  'OUTCOME: hard-gate-failed',
+  'No label change and no claim release here',
+  'The build releases no claim itself',
+  'never by the build',
+  'remove whichever of `auto:build`, `auto:merge`, `auto:merge-pending` is present — read live labels first',
+  '`Reading A: …` and `Reading B: …`, plus `Stop the build`',
+  '--status KEPT-PROMPT',
+  "Status semantics table",
+  'when the headless block removed it',
+];
+const finalProblems = (section) => FINAL_ANCHORS.filter((a) => !norm(section).includes(a));
+
+// Whole-file pins for the minors that live outside the needs-human subsection.
+const FINAL_FILE_ANCHORS = [
+  'a `needs-human` spec-gap row triggers the HARD-GATE at any severity',
+  'the path inside the quotes',
+];
+const finalFileProblems = (text) => FINAL_FILE_ANCHORS.filter((a) => !norm(text).includes(a));
 
 // --- SKILL.md pointer stub ---
 
@@ -187,8 +218,25 @@ test('Review Focus 1-4: unusable reply never clean; unquoted intent-resolvable i
   assert.deepStrictEqual(focusProblems(readText(REVIEW_PATH)), []);
 });
 
-test('the needs-human stop carries the HARD-GATE marker and the three presence branches', () => {
-  assert.deepStrictEqual(gateProblems(readText(REVIEW_PATH)), []);
+test('the needs-human stop carries the HARD-GATE marker and the presence branches', () => {
+  assert.deepStrictEqual(gateProblems(subsection(readText(REVIEW_PATH), NEEDS_HUMAN)), []);
+});
+
+test('final review: the build never runs release-claim.js — Settle steps 1-2 release the dispatched claim', () => {
+  assert.ok(!readText(REVIEW_PATH).includes('release-claim.js'), 'plan-review.md must not run release-claim.js itself');
+});
+
+test('final review: multi-spec presence read, parallel-wave member branch, guarded grant removal, readings, KEPT-PROMPT command, conditional re-grant', () => {
+  const text = readText(REVIEW_PATH);
+  assert.deepStrictEqual(finalProblems(subsection(text, NEEDS_HUMAN)), []);
+  assert.deepStrictEqual(finalFileProblems(text), []);
+});
+
+test("final review: subagent-dispatch-core's Template A Used-by line names /build's plan review", () => {
+  const core = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'subagent-dispatch-core.md'));
+  const usedBy = core.split('\n').filter((l) => l.startsWith('**Used by:** `/review` (review angles)'));
+  assert.strictEqual(usedBy.length, 1, 'expected exactly one Template A Used-by line');
+  assert.ok(usedBy[0].includes('`/build` (Common Step 1.6 plan review'), 'Template A Used-by line must name /build');
 });
 
 test('fix round 1: dispatched-only exit state, local-files comment skip, question-comment transport, literal body path', () => {
@@ -209,14 +257,17 @@ test('go-red: each pin set fails when one anchor is removed', () => {
   const block = dispatchBlock(text);
   const intent = subsection(text, '### Spec gap — intent-resolvable');
   const stub = stepBody(readText(SKILL_PATH));
+  const needsHuman = norm(subsection(text, NEEDS_HUMAN));
   const cases = [
     [stubProblems, stub, STUB_ANCHORS],
     [promptProblems, block, PROMPT_ANCHORS],
     [boundaryProblems, block, BOUNDARY_ANCHORS],
     [intentProblems, norm(intent), [...ORDER_ANCHORS, ...SECTION_ANCHORS]],
     [focusProblems, norm(text), FOCUS_ANCHORS],
-    [gateProblems, norm(text), GATE_ANCHORS],
+    [gateProblems, needsHuman, GATE_ANCHORS],
     [fixProblems, norm(text), FIX_ANCHORS],
+    [finalProblems, needsHuman, FINAL_ANCHORS],
+    [finalFileProblems, norm(text), FINAL_FILE_ANCHORS],
   ];
   for (const [problems, source, anchors] of cases) {
     for (const anchor of anchors) {

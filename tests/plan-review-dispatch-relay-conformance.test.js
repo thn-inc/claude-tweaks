@@ -7,7 +7,8 @@ const { readText } = require('./helpers/read-skill');
 const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
 // #3377: /build Common Step 1.6 (build/plan-review.md) can stop a dispatched
 // first call with `failed:plan-review-needs-human`. The build's own exit has
-// already posted the question and released the claim, so dispatch's Settle
+// already posted the question; dispatch's Settle releases the claim (steps 1-2,
+// against the group run dir the claim is keyed to — final-review Important 1) but
 // must not count a retry, post a failure comment, or tombstone the draft PR —
 // and the dispatching session must relay the question, since the Task call
 // cannot ask it. Read live: both dispatch files grow with every special case.
@@ -37,7 +38,11 @@ function missing(text, anchors) {
 const SETTLE_ANCHORS = [
   'failed:plan-review-needs-human',
   'build/plan-review.md',
-  'Skip steps 1-7',
+  'Skip steps 3-7',
+  'it released no claim',
+  'Steps 1-2 run as normal',
+  '`release-claim.js` with `--reason "failed: plan-review-needs-human"`',
+  'the group directory the claim is keyed to',
   'dispatch-retry-ceiling',
   'no failure comment',
   'no PR tombstone',
@@ -124,4 +129,53 @@ test('grown dispatch files stay within the rail', () => {
     const bytes = Buffer.byteLength(read(file), 'utf8');
     assert.ok(bytes <= RAIL_BYTES, `${file} is ${bytes} B, over the ${RAIL_BYTES} B rail`);
   }
+});
+
+// Final-review minor 7: plan-review.md's resume path sends the human to
+// /claude-tweaks:backlog refine, an edge /build owns; /backlog must not restate it.
+test('AC8.1: docs/skill-graph.md states the /build → /backlog edge once, in the build section', () => {
+  const text = read(GRAPH);
+  const rows = section(text, 'build').split('\n').filter((l) => l.startsWith('| `/backlog` |'));
+  assert.strictEqual(rows.length, 1, 'expected exactly one /backlog row under ## build');
+  assert.ok(rows[0].includes('build/plan-review.md') && rows[0].includes('/claude-tweaks:backlog refine'));
+  const backlogRows = section(text, 'backlog').split('\n').filter((l) => l.startsWith('|') && l.includes('plan-review'));
+  assert.deepStrictEqual(backlogRows, [], 'the ## backlog section must not restate the edge');
+});
+
+// Final-review Important 2: `bot:blocked` gained a second cause (a headless
+// plan-review question awaiting an answer). Every consumer that explains the label
+// to a human names that cause. Each pin reads only the explaining passage — a line
+// (`line`) or a blank-line-delimited paragraph (`para`) starting at `head` — so it
+// goes red when that passage loses the cause, not when some other line mentions it.
+const BLOCKED_CONSUMERS = [
+  [path.join('plugin', 'skills', '_shared', 'work-record.md'), '| **Bot state** |', 'line', 'build/plan-review.md'],
+  [path.join('plugin', 'skills', '_shared', 'work-record.md'), '  `transient`-classified one preserves it.', 'para', 'plan-review-question'],
+  [path.join('plugin', 'skills', 'tidy', 'step-1-records.md'), '`isBotBlocked(record)`', 'para', 'plan-review-question'],
+  [path.join('plugin', 'skills', 'tidy', 'step-1-records.md'), '→ Collect each as: `[blocked]', 'line', 'plan-review question'],
+  [path.join('plugin', 'skills', 'backlog', 'attention-mode.md'), '| #{n} | bot:blocked |', 'line', 'plan-review-question'],
+  [path.join('plugin', 'skills', 'backlog', 'refine-lanes.md'), 'Population: `.blocked`', 'para', 'plan-review-question'],
+  [path.join('plugin', 'skills', 'backlog', 'refine-mode.md'), 'For every record in `blocked`', 'para', 'plan-review-question'],
+  [path.join('plugin', 'skills', '_shared', 'github-pr-scan.md'), '   - **`bot:blocked`** —', 'line', 'plan-review-question'],
+  [path.join('plugin', 'skills', 'backlog', 'SKILL.md'), '- A record hit its retry ceiling', 'line', 'plan-review'],
+  [path.join('plugin', 'skills', '_shared', 'label-bootstrap.md'), '  ["bot:blocked",', 'line', 'plan-review question'],
+];
+
+function passage(text, head, mode) {
+  const start = text.indexOf(head);
+  assert.ok(start >= 0, `passage head not found: ${head}`);
+  const end = text.indexOf(mode === 'line' ? '\n' : '\n\n', start);
+  return text.slice(start, end < 0 ? undefined : end);
+}
+
+test('every bot:blocked explanation names the plan-review question as a cause', () => {
+  for (const [file, head, mode, cause] of BLOCKED_CONSUMERS) {
+    assert.ok(passage(read(file), head, mode).includes(cause), `${file} (${head}) does not name "${cause}"`);
+  }
+});
+
+test('the widened bot:blocked label description stays within the 100-char cap', () => {
+  const { ensureLabelPayload } = require('../plugin/bin/lib/issues/labels.js');
+  const match = read('plugin', 'skills', '_shared', 'label-bootstrap.md').match(/\["bot:blocked",\s*"([^"]*)",\s*"([^"]*)"\]/);
+  assert.ok(match, 'could not locate the bot:blocked LABELS_JSON row');
+  assert.doesNotThrow(() => ensureLabelPayload('bot:blocked', match[1], match[2]));
 });

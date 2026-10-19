@@ -31,9 +31,15 @@ const ANCHORS = [
   'bot:blocked',
   'claim is released',
   'worktree and draft PR are left in place',
-  'BLOCKED',
+  // anchored on the report, not the bare word: the row's own name carries BLOCKED
+  'reports `BLOCKED`',
   '/claude-tweaks:backlog refine',
   're-materializes',
+  // final-review fix wave: Settle releases the dispatched claim; a parallel-wave
+  // member reports to its orchestrator; the re-grant is conditional on the headless block
+  "Settle steps 1-2, never by the build",
+  '`parallel`-wave member reports `hard-gate-failed`',
+  'when the headless block removed it',
 ];
 
 function rowProblems(row) {
