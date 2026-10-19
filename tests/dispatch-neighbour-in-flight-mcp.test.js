@@ -13,25 +13,25 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { readExclusions } = require('../plugin/bin/lib/dispatch/exclusions.js');
+const { readText } = require('./helpers/read-skill.js');
 
 const ROOT = path.join(__dirname, '..');
-const MCP = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'mcp-transport.md'), 'utf8');
-const QUEUE_PULL = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'), 'utf8');
+const MCP = readText(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'mcp-transport.md'));
+const QUEUE_PULL = readText(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'));
 
 const HEADING = '## Step 2 — neighbour-in-flight pool (#3278, #3392)';
 const START = 'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js"';
-const END = 'NODE_EVAL_EOF\n';
 
-function section() {
-  const start = MCP.indexOf(HEADING);
+function section(text = MCP) {
+  const start = text.indexOf(HEADING);
   assert.notStrictEqual(start, -1, 'section heading anchor not found in mcp-transport.md');
-  const next = MCP.indexOf('\n## ', start + HEADING.length);
-  return MCP.slice(start, next === -1 ? undefined : next);
+  const next = text.indexOf('\n## ', start + HEADING.length);
+  return text.slice(start, next === -1 ? undefined : next);
 }
 
 // The Nth heredoc: from its node-eval-file.js line through its closing NODE_EVAL_EOF line.
-function snippet(index) {
-  const text = section();
+function snippet(index, text = MCP) {
+  text = section(text);
   let from = 0;
   let found = -1;
   for (let i = 0; i <= index; i += 1) {
@@ -39,9 +39,11 @@ function snippet(index) {
     assert.notStrictEqual(found, -1, `heredoc #${index} not found in the section`);
     from = found + START.length;
   }
-  const close = text.indexOf('\n' + END, found);
-  assert.notStrictEqual(close, -1, `heredoc #${index} has no NODE_EVAL_EOF terminator`);
-  return text.slice(found, close + 1 + END.length);
+  const eof = /\r?\nNODE_EVAL_EOF\r?\n/g;
+  eof.lastIndex = found;
+  const close = eof.exec(text);
+  assert.notStrictEqual(close, null, `heredoc #${index} has no NODE_EVAL_EOF terminator`);
+  return text.slice(found, close.index + close[0].length);
 }
 
 function rec(number, files) {
@@ -86,6 +88,13 @@ test('AC1.1: the MCP claim-target snippet prints [9] and the MCP exclusion snipp
   assert.deepStrictEqual(readExclusions(files.DISPATCH_EXCLUSIONS), [
     { reason: 'neighbour-in-flight', records: [1], detail: { neighbours: [{ number: 9, files: ['a.js'] }] } },
   ]);
+});
+
+test('CRLF: snippet extracts heredocs 0 and 1 from CRLF text identically to LF text', () => {
+  const crlf = MCP.replace(/\n/g, '\r\n');
+  for (const i of [0, 1]) {
+    assert.strictEqual(snippet(i, crlf).replace(/\r\n/g, '\n'), snippet(i));
+  }
 });
 
 test('AC2.1: a stale label with no live claim (a tombstone, or no claim file) read over MCP writes no exclusion', (t) => {
