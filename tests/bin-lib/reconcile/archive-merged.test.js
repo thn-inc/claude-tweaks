@@ -2625,7 +2625,7 @@ test('archiveMerged: a MERGED PR reached via the by-number fallback with no cons
 // pr-first-merge-post-merge.md Step 4.2's reconcile call hits; the
 // staged-items exception must apply here too, not only on the by-number
 // branch. `stagedFiles` seeds staged/ (absent when empty).
-function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = []) {
+function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specStaged = {}) {
   const { root, featureSha } = mergedFeatureBranchRepo(branch); // branch ref stays — fallbackBranch recovers it
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
@@ -2639,6 +2639,15 @@ function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = []) {
   for (const name of stagedFiles) {
     fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
     fs.writeFileSync(path.join(runDir, 'staged', name), 'x\n');
+  }
+  // #3416: per-spec staged items under a multi-spec run dir's spec-{N}/staged/.
+  // Maps a spec dir name to its staged entries; an array (even empty) creates
+  // spec-{N}/staged/ with those entries, null creates the spec dir alone.
+  for (const [spec, entries] of Object.entries(specStaged)) {
+    fs.mkdirSync(path.join(runDir, spec), { recursive: true });
+    if (!Array.isArray(entries)) continue;
+    fs.mkdirSync(path.join(runDir, spec, 'staged'), { recursive: true });
+    for (const name of entries) fs.writeFileSync(path.join(runDir, spec, 'staged', name), 'x\n');
   }
   const wrapper = installGhWrapper([{
     number: 3249100, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
@@ -2710,6 +2719,57 @@ test('archiveMerged: ordinary path — staged/ existing as a non-directory (ENOT
     wrapper.restore();
   }
   assert.ok(!result.archived.includes(runDir), 'an unreadable staged/ entry must never be treated as "nothing pending"');
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'console-never-rendered');
+  assert.equal(fs.existsSync(runDir), true);
+});
+
+// #3416: a multi-spec run keeps each spec's staged items under
+// spec-{N}/staged/, not the top-level staged/. hasStagedItems must count them,
+// or a run with a pending per-spec proposal archives on the never-rendered
+// console fast path.
+test('AC5.1: a multi-spec run whose only staged items sit under spec-N/staged/ skips console-never-rendered (#3416)', () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole('feat-3416-spec-staged', '2026-10-17T144508-spec-3375-3380', [], { 'spec-3375': ['review-1.patch', 'review-2.patch', 'reflect-1.md'] });
+  assert.ok(!result.archived.includes(runDir), 'a run with a pending per-spec staged item must never be archived out of sight');
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'console-never-rendered');
+  assert.equal(fs.existsSync(runDir), true);
+});
+
+test('AC5.2: a multi-spec run whose spec-*/staged/ are empty or absent still archives (#3249 fast path preserved) (#3416)', () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole('feat-3416-spec-empty', '2026-10-17T144508-spec-3375-3381', [], { 'spec-3375': [], 'spec-3380': ['.DS_Store'], 'spec-3381': null });
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
+});
+
+// Same fail-closed rule as the top-level staged/ ENOTDIR case above, one level
+// down: a spec-N/staged that exists as a plain file is unprovable, not empty.
+test('AC5.1 fail-closed: a spec-N/staged that exists as a file (ENOTDIR) counts as pending (#3416)', () => {
+  const branch = 'feat-3416-spec-staged-enotdir';
+  const runId = '2026-10-17T144508-spec-3375-enotdir';
+  const { root, featureSha } = mergedFeatureBranchRepo(branch);
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(path.join(runDir, 'spec-3375'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', `gone-${runId}`),
+    pr: { number: 3416102, branch },
+  }));
+  fs.writeFileSync(path.join(runDir, 'spec-3375', 'staged'), 'not a directory\n');
+  const wrapper = installGhWrapper([{
+    number: 3416102, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    mergeCommit: { oid: featureSha },
+  }]);
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(!result.archived.includes(runDir), 'an unreadable spec-N/staged entry must never be treated as "nothing pending"');
   const skip = result.skipped.find((s) => s.runDir === runDir);
   assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
   assert.equal(skip.reason, 'console-never-rendered');

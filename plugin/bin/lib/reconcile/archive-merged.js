@@ -385,8 +385,8 @@ function readConsoleState(runDir) {
 // (the #657/#1130 protection this file's console-never-rendered skip
 // exists for). Dotfiles (a stray .DS_Store) are not items: the console's
 // own reader (console/resolve.js readSnapshot) filters names starting with
-// `.` the same way — keep the two agreeing. Returns false when the
-// directory doesn't exist (ENOENT) or holds no non-dotfile entry — an
+// `.` the same way — keep the two agreeing. Returns false when no staged/
+// directory exists (ENOENT) or each one holds only dotfiles or nothing — an
 // absent and an empty staged/ directory are the same signal (nothing
 // pending). Any other read failure (EACCES, ENOTDIR, EIO, …) is not the
 // same signal — it means the contents are genuinely unprovable, not
@@ -395,12 +395,24 @@ function readConsoleState(runDir) {
 // unparseable console.json; this is the one function the #657/#1130
 // protection's archive decision rests on, so an ambiguous read must never
 // resolve toward "safe to archive" (review finding, #3249).
+//
+// #3416: a multi-spec run dir (`plugin/skills/flow/multispec-run-dir-layout.md`)
+// keeps each spec's staged items under `spec-{N}/staged/`, so both the
+// top-level staged/ and every spec-{N}/staged/ are checked. This is
+// deliberately wider than console/resolve.js's readSnapshot, which reads only
+// the top-level staged/: where the two disagree, this check fails toward NOT
+// archiving (a pending per-spec proposal the console does not surface still
+// blocks the archive), never toward archiving it.
 function hasStagedItems(runDir) {
-  try {
-    return fs.readdirSync(path.join(runDir, 'staged')).some((n) => !n.startsWith('.'));
-  } catch (err) {
-    return err && err.code !== 'ENOENT';
+  const stagedDirs = [path.join(runDir, 'staged'), ...listSpecDirs(runDir).map((name) => path.join(runDir, name, 'staged'))];
+  for (const dir of stagedDirs) {
+    try {
+      if (fs.readdirSync(dir).some((n) => !n.startsWith('.'))) return true;
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') return true;
+    }
   }
+  return false;
 }
 
 // #1130: gh's MERGED state is a remote fact; the local main checkout may not
