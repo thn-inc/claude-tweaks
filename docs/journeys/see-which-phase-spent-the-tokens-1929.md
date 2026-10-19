@@ -6,6 +6,7 @@ files:
   - plugin/skills/flow/summary-template.md
   - plugin/skills/wrap-up/summary-template.md
   - plugin/skills/flow/multispec-summary.md
+  - plugin/skills/_shared/timing-render.md
   - plugin/skills/wrap-up/verification-brief.md
   - plugin/skills/dispatch/SKILL.md
   - tests/timing-prose-conformance.test.js
