@@ -114,7 +114,7 @@ function contractTiers(text) {
 function contractRoles(text) {
   const open = 'one by role (';
   const start = text.indexOf(open);
-  const end = text.indexOf(')', start);
+  const end = text.indexOf('). ', start); // the list closes at ")." — a role name may itself carry parentheses
   if (start < 0 || end < 0) return [];
   return text.slice(start + open.length, end).split(', ').map((s) => s.trim());
 }
@@ -170,6 +170,10 @@ test('#3413 AC4: the contract\'s tier and role sets equal derive.js TIERS and RO
   const noLensRole = original.replace(', lens reviewer', '');
   assert.notEqual(noLensRole, original, 'control mutation applied: lens reviewer removed');
   assert.throws(() => assertVocabMatches(noLensRole, TIERS, roles), { message: /contract role set/ });
+
+  const parenRole = original.replace(', lens reviewer', ', lens reviewer, odd (name)');
+  assert.notEqual(parenRole, original, 'control mutation applied: parenthesized role added');
+  assert.ok(contractRoles(parenRole).includes('odd (name)'), 'a parenthesized role name does not truncate the parsed list');
 
   assert.throws(() => assertVocabMatches(original, [...TIERS, 'ultra'], roles), { message: /contract tier set/ });
 });
