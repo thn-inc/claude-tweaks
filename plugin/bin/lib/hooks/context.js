@@ -54,9 +54,13 @@ function isStaleClaim(archiveState, now = Date.now()) {
 // only ever resolve an adopted run — safe because every sanctioned caller
 // runs after flow Step 3 has already initialized the run dir (decisions.md
 // or run-state.json already exists by then).
+function hasRunStateFile(dir) {
+  return fs.existsSync(path.join(dir, 'run-state.json'));
+}
+
 function isUnadoptedMint(dir, state) {
   if (state) return false;
-  if (fs.existsSync(path.join(dir, 'run-state.json'))) return false;
+  if (hasRunStateFile(dir)) return false;
   return !fs.existsSync(path.join(dir, 'decisions.md'));
 }
 
@@ -72,7 +76,7 @@ function isUnadoptedMint(dir, state) {
 // evidence we could not read.
 function isClaimLogOnlyMint(dir, state) {
   if (state) return false;
-  if (fs.existsSync(path.join(dir, 'run-state.json'))) return false;
+  if (hasRunStateFile(dir)) return false;
   try {
     return classifyDecisions(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8')) === 'claim-log-only';
   } catch { return false; }
