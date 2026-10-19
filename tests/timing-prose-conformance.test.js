@@ -188,12 +188,12 @@ const PRE_3413_DISPATCHES = [
   '| Phase | Minutes | Verify | Tokens (in/out) | Proc. KB | Tool RTs |',
   '| Role | Dispatches | Agent-seconds | Elapsed (min) | Tokens (in/out) | Cache (read/create) |',
 ].join('\n');
-const STALE_PLACEMENT = /rendered verbatim below the Guard denials line/;
-const RETIRED = [/sums each dispatch's span with overlap kept/, /blank token columns are a fact about the run/, /\| Tier \| Dispatches \|/, /\| Phase \| Minutes \| Verify \|/, /\| Role \| Dispatches \|/, STALE_PLACEMENT];
+const RETIRED_PROSE = [/sums each dispatch's span with overlap kept/, /blank token columns are a fact about the run/, /\| Tier \| Dispatches \|/, /\| Phase \| Minutes \| Verify \|/, /\| Role \| Dispatches \|/];
+const RETIRED = [...RETIRED_PROSE, /rendered verbatim below the Guard denials line/];
 
 test('#3413 AC1: each Timing template cites the contract, keeps its own invocation, and no longer restates the body', () => {
   // Control: the frozen pre-extraction text trips each absence check, except the stale-placement one (which it does not contain).
-  for (const re of RETIRED.filter((r) => r.source !== STALE_PLACEMENT.source)) assert.match(collapse(PRE_3413_DISPATCHES), re, `control: ${re}`);
+  for (const re of RETIRED_PROSE) assert.match(collapse(PRE_3413_DISPATCHES), re, `control: ${re}`);
   for (const [f, runVar] of Object.entries(TEMPLATES)) {
     const t = read(f);
     assert.match(t, /^### Timing$/m, f);
