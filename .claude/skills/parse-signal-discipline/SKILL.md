@@ -282,6 +282,13 @@ When mechanizing a prose heuristic into a deterministic check:
     State what the oracle cannot see, as the helper's header does: a mis-parse whose stripped text
     still compiles passes unseen. Pin the planted mis-parse through every scan that calls the
     verdict, not only through the helper's own tests.
+    To settle how accurate the heuristic transform is, measure it against an exact parser that is
+    run offline from a scratch install and never added as a dependency. #3585 compared the
+    stripper's output with `acorn` 8.14.0's comment ranges, byte for byte over the real corpus:
+    the differing `plugin/bin` files went from 23 to 0, and 0 of the 1,275 corpus files differed.
+    That turned "accurate enough" from a judgment into a count. Pair the comparison with a mutation
+    check on every branch the corpus does not reach. A `${}` brace-depth mutant survived both
+    every unit test and the whole corpus, so the corpus count says nothing about those branches.
 16. **A precondition probe does not cover the main probe's own failure to run.** Some tools exit
     with one code for both "not found" and "could not run", so item 8's exit-code branch has
     nothing to split on: `git cat-file -e HEAD:<path>` exits 128 for a path missing from HEAD and
