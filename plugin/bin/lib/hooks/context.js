@@ -39,6 +39,10 @@ function isStaleClaim(archiveState, now = Date.now()) {
   return (now - updatedAt) > ARCHIVE_CLAIM_TTL_MS;
 }
 
+function hasRunStateFile(dir) {
+  return fs.existsSync(path.join(dir, 'run-state.json'));
+}
+
 // An unadopted mint — a directory mkdir'd by dispatch Step 4 or flow Step 2.8
 // that no invocation ever initialized — carries neither run-state.json nor
 // decisions.md. Fallback attribution must never guess into one: a mint that
@@ -54,10 +58,6 @@ function isStaleClaim(archiveState, now = Date.now()) {
 // only ever resolve an adopted run — safe because every sanctioned caller
 // runs after flow Step 3 has already initialized the run dir (decisions.md
 // or run-state.json already exists by then).
-function hasRunStateFile(dir) {
-  return fs.existsSync(path.join(dir, 'run-state.json'));
-}
-
 function isUnadoptedMint(dir, state) {
   if (state) return false;
   if (hasRunStateFile(dir)) return false;
