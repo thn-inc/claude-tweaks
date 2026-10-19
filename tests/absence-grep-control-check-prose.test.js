@@ -11,6 +11,10 @@ const TEMPLATE = fs.readFileSync(
   path.join(__dirname, '..', 'plugin/skills/specify/spec-template.md'), 'utf8');
 const REFLECT = fs.readFileSync(
   path.join(__dirname, '..', 'plugin/skills/reflect/SKILL.md'), 'utf8');
+const LEFTOVER = fs.readFileSync(
+  path.join(__dirname, '..', 'plugin/skills/wrap-up/leftover-routing.md'), 'utf8');
+const LEDGER = fs.readFileSync(
+  path.join(__dirname, '..', 'plugin/skills/_shared/ledger-format.md'), 'utf8');
 
 function acSection() {
   const start = TEMPLATE.indexOf('## Acceptance Criteria\n');
@@ -50,4 +54,12 @@ test('the tombstone section treats its scoped grep as an absence grep', () => {
 
 test('reflect maps a returns-nothing outcome to a pre-run search', () => {
   assert.ok(REFLECT.includes('an outcome stated as a search that returns nothing is one the author has run against a tree that still holds the target and seen match'));
+});
+
+test('leftover routing asks for a matching run before a returns-nothing grep AC', () => {
+  assert.ok(LEFTOVER.includes('a grep asserting that nothing matches is first run against a tree that still holds its target and seen to match'));
+});
+
+test('the ledger resolve gate asks for a matching run before a returns-nothing grep AC', () => {
+  assert.ok(LEDGER.includes('a grep asserting that nothing matches is first run against a tree that still holds its target and seen to match'));
 });
