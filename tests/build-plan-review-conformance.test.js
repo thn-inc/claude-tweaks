@@ -100,6 +100,23 @@ const focusProblems = (text) => FOCUS_ANCHORS.filter((a) => !norm(text).includes
 const GATE_ANCHORS = ['<!-- HARD-GATE: plan-review-needs-human -->', 'DISPATCH_HEADLESS=1', 'dispatched: true', 'bot:blocked', 'release-claim.js', 'failed: plan-review-needs-human', 'BLOCKED'];
 const gateProblems = (text) => GATE_ANCHORS.filter((a) => !norm(text).includes(a));
 
+// Fix round 1 (task review): the exit state is scoped to the dispatched call and exact
+// about teardown; local-files has no issue to comment on; the question comment names its
+// transport; the comment body path is a literal, not a shell variable.
+const FIX_ANCHORS = [
+  '**Exit state (dispatched call)**',
+  'The gate itself tears nothing down and closes no PR',
+  '`dispatch/two-call-gate.md` §5',
+  'needs no local state',
+  'The present-human branch releases no claim',
+  'Under `work-backend: local-files` there is no GitHub issue to comment on',
+  'the committed `## Plan Review Clarifications` section is the trail',
+  '`/claude-tweaks:dispatch` is GitHub-only',
+  "same transport as the intent-resolvable step's comment",
+  'take the literal path it prints',
+];
+const fixProblems = (text) => FIX_ANCHORS.filter((a) => !norm(text).includes(a));
+
 // --- SKILL.md pointer stub ---
 
 test('AC1.1: Common Step 1.6 sits after 1.5 and before 1.7 and 2, names Spec Mode only, and points at plan-review.md', () => {
@@ -174,6 +191,12 @@ test('the needs-human stop carries the HARD-GATE marker and the three presence b
   assert.deepStrictEqual(gateProblems(readText(REVIEW_PATH)), []);
 });
 
+test('fix round 1: dispatched-only exit state, local-files comment skip, question-comment transport, literal body path', () => {
+  const text = readText(REVIEW_PATH);
+  assert.deepStrictEqual(fixProblems(text), []);
+  assert.ok(!text.includes('eval "$('), 'the comment body path must be a literal, not an eval-set shell variable');
+});
+
 test('plan-review.md is within the rail', () => {
   const bytes = Buffer.byteLength(readText(REVIEW_PATH));
   assert.ok(bytes <= RAIL_BYTES, `plan-review.md is ${bytes} bytes, rail ${RAIL_BYTES}`);
@@ -193,6 +216,7 @@ test('go-red: each pin set fails when one anchor is removed', () => {
     [intentProblems, norm(intent), [...ORDER_ANCHORS, ...SECTION_ANCHORS]],
     [focusProblems, norm(text), FOCUS_ANCHORS],
     [gateProblems, norm(text), GATE_ANCHORS],
+    [fixProblems, norm(text), FIX_ANCHORS],
   ];
   for (const [problems, source, anchors] of cases) {
     for (const anchor of anchors) {
