@@ -199,24 +199,23 @@ function withLinkedWorktree(fn) {
   }
 }
 
+function journeyCandidatesFrom({ mainDir, baseSha }, cwd) {
+  const runDir = fs.mkdtempSync(path.join(mainDir, 'rundir-'));
+  const r = run(['plan', '--run-dir', runDir, '--base', baseSha, '--dry-run'], { cwd });
+  assert.strictEqual(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout).rows.find((row) => row.id === 'journeys').scope.candidates;
+}
+
 test('AC1/AC3: plan run from a linked worktree reports the worktree branch diff in the journeys row (#3431)', () => {
-  withLinkedWorktree(({ mainDir, wtDir, baseSha }) => {
-    const runDir = fs.mkdtempSync(path.join(mainDir, 'rundir-'));
-    const r = run(['plan', '--run-dir', runDir, '--base', baseSha, '--dry-run'], { cwd: wtDir });
-    assert.strictEqual(r.status, 0, r.stderr);
-    const journeysRow = JSON.parse(r.stdout).rows.find((row) => row.id === 'journeys');
-    assert.deepStrictEqual(journeysRow.scope.candidates, ['docs/journeys/j1.md']);
+  withLinkedWorktree((fixture) => {
+    assert.deepStrictEqual(journeyCandidatesFrom(fixture, fixture.wtDir), ['docs/journeys/j1.md']);
   });
 });
 
 test('AC1: plan run from a subdirectory of a linked worktree still resolves the worktree top-level (#3431)', () => {
-  withLinkedWorktree(({ mainDir, wtDir, baseSha }) => {
-    const runDir = fs.mkdtempSync(path.join(mainDir, 'rundir-'));
-    const subdir = fs.mkdtempSync(path.join(wtDir, 'sub-'));
-    const r = run(['plan', '--run-dir', runDir, '--base', baseSha, '--dry-run'], { cwd: subdir });
-    assert.strictEqual(r.status, 0, r.stderr);
-    const journeysRow = JSON.parse(r.stdout).rows.find((row) => row.id === 'journeys');
-    assert.deepStrictEqual(journeysRow.scope.candidates, ['docs/journeys/j1.md']);
+  withLinkedWorktree((fixture) => {
+    const subdir = fs.mkdtempSync(path.join(fixture.wtDir, 'sub-'));
+    assert.deepStrictEqual(journeyCandidatesFrom(fixture, subdir), ['docs/journeys/j1.md']);
   });
 });
 
