@@ -149,6 +149,20 @@ or moving the writer after the probe, does not. List the pre-gather writers when
 planned, and give each one a test fixture that holds its output (`tests/bin-lib/flow/preflight.test.js`'s
 `CLAIM_ONLY` and `CLAIM_AND_LEDGER`).
 
+**Writers from other sessions count too, and for them a recogniser of foreign lines cannot
+work.** Sibling sessions' hooks append to a fresh mint's `events.jsonl` in the mint-to-probe
+window (#3515, the #3401 incident). The earlier rule counted every line not stamped
+`attribution: "fallback"` as this run's content, but older writes (pre-#2783) carry no stamp at
+all, so a stranger's unstamped line still read as a repair. `flow/preflight.js`'s `classifyEvents`
+inverts the test: a parsed line is own only when it is not fallback-stamped and carries this run's
+own locator (a `dir`/`path`/`worktree`/`actual` equal to or under `run-state.json`'s `worktree`, or
+its `sessionId`); every other parsed line is foreign, and an unparseable line still counts as
+content (fail toward case 3). The discounted count ships as its own field,
+`adoption.value.eventsForeign`, which `plugin/skills/flow/steps-and-gates.md` names. When a probe
+must tell this run's content from a stranger's, key it on positive evidence the run's own writer
+stamps, never on the absence of a foreign marker — and give it a fixture of foreign lines with
+neither stamp nor locator.
+
 ## The prose half
 
 - **Every field needs a named prose consumer.** A field nothing reads is context nobody spends;
