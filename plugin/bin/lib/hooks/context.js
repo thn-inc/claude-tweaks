@@ -74,7 +74,7 @@ function rollbackMint(dirPath) {
 // Other siblings under pipelines/ — notably archive/, the wrap-up archival
 // destination — are not runs. archive/ sorts AFTER ISO names lexically, so an
 // unfiltered .sort().reverse() would rank it first and shadow live runs.
-const RUN_ID_RE = /^\d{4}-\d{2}-\d{2}T/;
+const RUN_ID_RE = runDirResolve.RUN_ID_RE;
 
 function isPlainObject(v) {
   return Boolean(v) && typeof v === 'object' && !Array.isArray(v);

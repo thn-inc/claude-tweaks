@@ -28,6 +28,12 @@ function safeReal(p) {
   try { return fs.realpathSync(p); } catch { return null; }
 }
 
+// Run dirs are named as ISO-timestamp-prefixed slugs (e.g. 2026-07-01T090000-spec-1).
+// Other siblings under pipelines/ — notably archive/, the wrap-up archival
+// destination — are not runs. archive/ sorts AFTER ISO names lexically, so an
+// unfiltered .sort().reverse() would rank it first and shadow live runs (#848, #2870).
+const RUN_ID_RE = /^\d{4}-\d{2}-\d{2}T/;
+
 // ISO-timestamp-prefixed run-dir naming: YYYY-MM-DDTHHMMSS (no colons —
 // portable across filesystems), matching run-dir-resolution.md's SPEC_SLUG
 // conventions and every hand-written snippet this module replaces.
@@ -99,7 +105,7 @@ function newestMatch(pipelinesRoot, specSlug) {
   let entries;
   try { entries = fs.readdirSync(pipelinesRoot, { withFileTypes: true }); } catch { return null; }
   const names = entries
-    .filter((e) => e.isDirectory() && e.name.includes(specSlug))
+    .filter((e) => e.isDirectory() && RUN_ID_RE.test(e.name) && e.name.includes(specSlug))
     .map((e) => e.name)
     .sort();
   for (let i = names.length - 1; i >= 0; i -= 1) {
@@ -266,4 +272,4 @@ function resolve(opts = {}) {
   );
 }
 
-module.exports = { resolve, formatTimestamp, isDeadRunDir };
+module.exports = { resolve, formatTimestamp, isDeadRunDir, RUN_ID_RE };
