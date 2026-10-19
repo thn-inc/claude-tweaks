@@ -32,9 +32,10 @@ files:
 - **URL:** the agent's Bash tool output for `git add` / `git commit` / `git merge`.
 - **Action:** Let the agent stage and commit, or run the post-creation catch-up merge in a fresh worktree.
 - **Should feel:** Boring and reliable. The command succeeds on the first attempt, with no retry loop and no workaround script.
-- **Should understand:** Before #3352, a plain `git status` refreshed the index's stat cache and rewrote it under `index.lock`. This happened in bursts of roughly 400ms every ~1.8s, so a commit starting at tool-call time often collided. With `--no-optional-locks` the statusline never takes the lock, so its rendering can no longer be what holds it.
+- **Should understand:** Before #3352 a plain `git status` refreshed the index's stat cache and rewrote it under `index.lock` in bursts of roughly 400ms every ~1.8s, so a commit starting at tool-call time often collided. With `--no-optional-locks` the statusline never takes the lock. Its rendering can no longer be the process holding it.
 - **Red flags:**
-  - Deleting `.git/index.lock` (or `.git/worktrees/{name}/index.lock`) by hand to get past the error. This is never the fix: the lock may belong to a live process.
+  - `index.lock: File exists` still appears with no other git process running in this worktree. That points at a different lock taker; #3464 covers the plugin's other read-only `git status` probes.
+  - Deleting `.git/index.lock` (or `.git/worktrees/{name}/index.lock`) by hand to get past the error. Never the fix: the lock may belong to a live process.
 
 ### 3. Commit while sibling sessions sweep the worktrees
 - **URL:** the agent's Bash tool output for `git add` / `git commit`, while another Claude Code session in a sibling worktree starts up, reconciles, or wraps up.
@@ -46,5 +47,5 @@ files:
   - A sibling's reaper now keeps or removes worktrees differently than before. The flag changes locking, not answers, so any difference is a regression.
 
 ## Origin
-- Created during build of #3352 (statusline `renderGit` passes `--no-optional-locks`; a real-git test pins that a stale-stat repo's index is left byte- and mtime-identical), in flow run `2026-10-18T193619-spec-3352-3464`.
+- Created during build of #3352 (statusline `renderGit` passes `--no-optional-locks`; real-git test pins that a stale-stat repo's index is left byte- and mtime-identical), in flow run `2026-10-18T193619-spec-3352-3464`.
 - Extended during build of #3464 in the same run. Step 3 was added because every other read-only `git status` probe under `plugin/bin` now passes the flag. A real-git test pins the residue worktrees probe, and a conformance scan pins every call site.
