@@ -129,7 +129,7 @@ for this caller by #435):**
   human looking at it") and a residue-sweep-originated commit carries the same low-judgment,
   purely-mechanical shape as a tidy Step-7 commit. Resolve it fresh (`resolve-policy.js`, JSON
   mode, capturing `source`) before `ExitWorktree`: `false` → no action; `true` → arm now via
-  `_shared/pr-first-merge.md` Step 3's initial `gh pr merge --auto` call (not its degrade chain —
+  `_shared/pr-first-merge.md` Step 3's initial compose + `gh pr merge --auto` fences (not its degrade chain —
   failure leaves it unarmed, reported). Log the outcome to `decisions.md`
   (`_shared/auto-decision-log.md`, lever-attributed `[lever: housekeeping-auto-merge={true|false}
   ({source})]`). **Sweep backstop**: `github-pr-scan.md`'s `repo-wide` item 9 recognizes
