@@ -8,6 +8,7 @@ files:
   - plugin/bin/lib/hooks/subagent-stop.js
   - plugin/skills/flow/summary-template.md
   - plugin/skills/wrap-up/summary-template.md
+  - plugin/skills/_shared/timing-render.md
   - plugin/skills/_shared/pr-run-comments.md
   - plugin/skills/wrap-up/verification-brief.md
   - plugin/skills/dispatch/SKILL.md
