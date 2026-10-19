@@ -60,12 +60,11 @@ For each completed branch (in order):
    issue (see "Close-via-merge" in `_shared/issue-claims.md`):
 
    ```bash
-   SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --range {base-branch}...{branch} --shell) || exit 1
-   eval "$SUBJECT_EXPORTS"
-   git merge --no-ff {branch} -m "$SUBJECT_TITLE
-
-$SUBJECT_BODY"
+   node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --range {base-branch}...{branch} --out-dir {subject-dir} || exit 1
+   git merge --no-ff {branch} -F {subject-dir}/message.txt
    ```
+
+   `{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3.
 
    Otherwise a plain `git merge {branch}` is fine. The issues close when the user pushes the
    base branch to the default remote branch.

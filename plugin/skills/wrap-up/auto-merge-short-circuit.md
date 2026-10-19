@@ -265,12 +265,11 @@ if [ "$CURRENT" != "{integration-branch}" ]; then
   echo "Main checkout is on '$CURRENT', not '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
   exit 1
 fi
-SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag {tag} --range {integration-branch}...{branch} --shell) || exit 1
-eval "$SUBJECT_EXPORTS"
-git merge --no-ff {branch} -m "$SUBJECT_TITLE
-
-$SUBJECT_BODY"
+node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag {tag} --range {integration-branch}...{branch} --out-dir {subject-dir} || exit 1
+git merge --no-ff {branch} -F {subject-dir}/message.txt
 ```
+
+`{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3.
 
 **Second call — push, from inside the worktree.** Both placeholders are the
 literal values read above:

@@ -27,7 +27,7 @@ files:
 
 ### 2a. The branch merges itself — terminal, no interaction
 - **URL:** none — `_shared/local-merge-auto-finish.md`'s Procedure runs from inside the worktree/main checkout
-- **Action:** The default policy (merge locally) resolves the integration branch, asks `bin/compose-subject.js` for the merge message (`--tag auto-finish --range {base-branch}...{feature-branch}`, guarded so a composer failure stops before the merge), merges the feature branch with `--no-ff -m "$SUBJECT_TITLE\n\n$SUBJECT_BODY"`, runs verification on the merged result, and — on green — pushes and logs the `merged` outcome.
+- **Action:** The default policy (merge locally) resolves the integration branch, asks `bin/compose-subject.js` for the merge message (`--tag auto-finish --range {base-branch}...{feature-branch}`, guarded so a composer failure stops before the merge), merges the feature branch with `--no-ff -F {subject-dir}/message.txt`, runs verification on the merged result, and — on green — pushes and logs the `merged` outcome.
 - **Should feel:** Invisible — the maintainer notices only that the branch is already merged when they check back.
 - **Should understand:** Discard and keep-as-is are never chosen automatically — merging locally is the only default this path can produce, matching `finishing-a-development-branch`'s own rule that discard requires an explicit human ask. The merge commit's subject is Conventional-Commits shaped (`feat|fix|chore[(scope)][!]: {title} (#N)`, #2251) and its body carries the `Fixes #N` line plus an `[auto-finish]` paragraph, so the record still auto-closes and `/help`'s auto-merged metric still counts it. The `(scope)` is present only when the project sets the `commit-scope` or `commit-scope-paths` policy key — the composer resolves it from the `--range` diff's changed paths (#3298).
 - **Red flags:** A merge commit with no corresponding `AUTO … [outcome: merged]` line in `decisions.md`; a merge commit whose subject is not `{type}[(scope)]: {title} (#N)`-shaped or whose body lacks `Fixes #N`; a composer failure (a malformed `commit-scope-paths` entry, a failed `--range` diff) that merged anyway instead of parking.
@@ -50,3 +50,4 @@ files:
 - Created during build of #771 (local-merge + auto mode: finishing-a-development-branch has no auto-mode awareness, blocks on a human answer)
 - Updated during wrap-up of #3298 (merge-subject scope source): step 2a's composer call carries `--range`, and the subject grammar gained the optional policy-resolved `(scope)`
 - Related: #688, #689, #693 (the `pr-first` sibling behavior this journey mirrors)
+- Updated during build of #3522 (guard-safe --out-dir merge fences): the composed message is read from `{subject-dir}/message.txt` via `git merge -F`, not an `eval`d `-m`

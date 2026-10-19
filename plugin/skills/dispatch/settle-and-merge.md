@@ -397,14 +397,11 @@ if [ "$CURRENT" != "{integration-branch}" ]; then
   echo "Main checkout is on '$CURRENT', not '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
   exit 1
 fi
-SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --tag auto-merge --range {integration-branch}...{branch} --shell) || exit 1
-eval "$SUBJECT_EXPORTS"
-git merge --no-ff {branch} -m "$SUBJECT_TITLE
-
-$SUBJECT_BODY"
+node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} {second-issue} --tag auto-merge --range {integration-branch}...{branch} --out-dir {subject-dir} || exit 1
+git merge --no-ff {branch} -F {subject-dir}/message.txt
 ```
 
-The guard's job is catching a concurrent session switching the shared checkout out from under this merge.
+`{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3. The guard's job is catching a concurrent session switching the shared checkout out from under this merge.
 
 **Second call — push, from inside the worktree** — not the main checkout, which the `worktree-always` gate denies a push from even after `close-run`. Both checkouts share the same underlying `.git`, so pushing the just-merged integration branch from the worktree publishes exactly what the main checkout just merged:
 

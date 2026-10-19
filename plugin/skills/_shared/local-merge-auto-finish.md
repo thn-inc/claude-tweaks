@@ -115,12 +115,11 @@ it literally into the next call; never carry it in a shell variable across calls
    ends in an explicit, logged outcome.
 
    ```bash
-   SUBJECT_EXPORTS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --range {base-branch}...{feature-branch} --shell) || exit 1
-   eval "$SUBJECT_EXPORTS"
-   git merge --no-ff {feature-branch} -m "$SUBJECT_TITLE
-
-$SUBJECT_BODY"
+   node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --range {base-branch}...{feature-branch} --out-dir {subject-dir} || exit 1
+   git merge --no-ff {feature-branch} -F {subject-dir}/message.txt
    ```
+
+   `{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3.
 
    **On a composer failure** (the `|| exit 1` above fired — `compose-subject.js` printed its
    reason to stderr and nothing has been merged): this is not a bare, unlogged exit — log it via
