@@ -6,7 +6,7 @@
 function guardReleasableTree(deps, { branch = 'main' } = {}) {
   const current = deps.git(['branch', '--show-current']).trim();
   if (current !== branch) throw new Error(`releases run from ${branch}; current branch is "${current}"`);
-  if (deps.git(['status', '--porcelain', '--untracked-files=no']).trim() !== '') {
+  if (deps.git(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no']).trim() !== '') {
     throw new Error('working tree has tracked modifications — commit or restore them first');
   }
 }

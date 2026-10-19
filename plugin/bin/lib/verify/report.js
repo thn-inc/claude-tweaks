@@ -20,7 +20,7 @@ function gitInfo(execImpl = execFileSync) {
     return { sha: null, dirty: null };
   }
   try {
-    dirty = String(execImpl('git', ['status', '--porcelain'], { encoding: 'utf8' })).trim() !== '';
+    dirty = String(execImpl('git', ['--no-optional-locks', 'status', '--porcelain'], { encoding: 'utf8' })).trim() !== '';
   } catch {
     dirty = null;
   }

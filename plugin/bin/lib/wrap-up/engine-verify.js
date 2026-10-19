@@ -247,7 +247,7 @@ function fsStartTimeMs(targetPath) {
 registerCheck('plans-ledger', ({ runDir, cwd, deps }) => {
   let status;
   try {
-    status = deps.git(['status', '--porcelain=v1', '-uall', '--', 'docs/superpowers/plans', 'docs/plans'], cwd);
+    status = deps.git(['--no-optional-locks', 'status', '--porcelain=v1', '-uall', '--', 'docs/superpowers/plans', 'docs/plans'], cwd);
   } catch (err) {
     return { result: 'unknown', detail: `git status failed: ${err.message}` };
   }
@@ -303,7 +303,7 @@ registerCheck('design-caches', ({ cwd, expectations, deps }) => {
   if (!fs.existsSync(cacheDir)) return { result: 'pass', detail: '' };
   let status;
   try {
-    status = deps.git(['status', '--porcelain=v1', '-uall', '--', 'docs/plans'], cwd);
+    status = deps.git(['--no-optional-locks', 'status', '--porcelain=v1', '-uall', '--', 'docs/plans'], cwd);
   } catch (err) {
     return { result: 'unknown', detail: `git status failed: ${err.message}` };
   }

@@ -339,7 +339,7 @@ function refusedVcsMutation(command) {
 function checkC(verificationChecks, repoRoot, deps = {}, unparseableStep2s = []) {
   const run = deps.run || ((command, cwd) => {
     try {
-      const output = execFileSync(command, { cwd, shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      const output = execFileSync(command, { cwd, shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       return { exitCode: 0, output };
     } catch (err) {
       const output = `${err.stdout || ''}${err.stderr || ''}`;

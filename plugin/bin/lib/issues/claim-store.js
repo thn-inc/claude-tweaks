@@ -275,12 +275,19 @@ function defaultRunGh(args) {
   });
 }
 
-// (runGh?) -> string|null. `runGh(args)` returns stdout or throws; a thrown
-// or empty answer resolves to null (the unresolved-slug case).
+// (runGh?) -> string|null. `runGh(args)` returns stdout; a thrown error
+// propagates unchanged. An empty or absent answer resolves to null. Callers
+// that classify the failure (claim-targets' retry-on-timeout) use this one.
+function resolveRepoSlugOrThrow(runGh = defaultRunGh) {
+  const out = runGh(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner']);
+  return String(out || '').trim() || null;
+}
+
+// (runGh?) -> string|null. The non-throwing form of `resolveRepoSlugOrThrow`:
+// any failure resolves to null (the unresolved-slug case).
 function resolveRepoSlug(runGh = defaultRunGh) {
   try {
-    const slug = String(runGh(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'])).trim();
-    return slug || null;
+    return resolveRepoSlugOrThrow(runGh);
   } catch {
     return null;
   }
@@ -530,5 +537,6 @@ module.exports = {
   defaultSleep,
   isWellFormedClaimContent,
   resolveRepoSlug,
+  resolveRepoSlugOrThrow,
   createClaimReader,
 };

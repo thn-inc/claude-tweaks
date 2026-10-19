@@ -130,3 +130,19 @@ for (const { label, extract } of SNIPPETS) {
     );
   });
 }
+
+// #2870: the reference snippet's Step-2 `find | sort | tail` ranked a legacy
+// dash-less name (20260911T…) above every canonical 2026-MM-DDT… run-id, so a
+// stale directory was adopted forever. bin/lib/hooks/run-dir-resolve.js's
+// newestMatch filters to canonical names; the snippet must agree with it.
+test('step 2 (shared run-dir-resolution.md snippet): a non-canonical dir that string-sorts last is never adopted over a canonical match', () => {
+  const main = gitRepo();
+  const pipelines = path.join(main, '.claude-tweaks', 'pipelines');
+  const canonical = path.join(pipelines, '2026-09-20T080000-backlog-standalone');
+  fs.mkdirSync(canonical, { recursive: true });
+  fs.mkdirSync(path.join(pipelines, '20260911T131119-backlog-standalone'), { recursive: true });
+
+  const resolved = runResolutionWith(extractSnippet(), { cwd: main, specSlug: 'backlog-standalone' });
+
+  assert.strictEqual(resolved, canonical);
+});

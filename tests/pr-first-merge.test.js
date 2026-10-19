@@ -245,6 +245,55 @@ test('#1411: the auto-merge-not-enabled branch (item 1) always degrades — an i
   assert.match(MERGE, /under `merge-when-green` or `wait` — do not merge immediately: degrade to Step 2\.5's `wait`/);
 });
 
+// #3521: PR #3450 (2026-10-18) captured a second arm-unavailable wording on this
+// repo, and `enablePullRequestAutoMerge` alone (the arm mutation's name, which
+// GitHub appends to every arm-unavailable failure of an `--auto` call) must match
+// item 1 too. Pin item 1's lead paragraph against the frozen pre-change text, with
+// the same slice anchors as the #1411 block above.
+const PRE_3521_ITEM_1 = `1. **Command failed with an auto-merge-not-enabled signature** — stderr contains the literal
+   captured GitHub GraphQL wording \`Auto merge is not allowed for this repository\` (captured
+   verbatim on this repo, PR #1401, 2026-08-24: \`GraphQL: Auto merge is not allowed for this
+   repository (enablePullRequestAutoMerge)\`), or the looser paraphrase — \`auto-merge\` and
+   (\`not allowed\` or \`not enabled\`) — for a differently-worded GitHub response to the same
+   repository setting ("Allow auto-merge") being off:`;
+
+function item1Body() {
+  const step3 = MERGE.indexOf('## Step 3: Attempt auto-merge');
+  const conflictPath = MERGE.indexOf('## Conflict path');
+  const step3Body = MERGE.slice(step3, conflictPath);
+  const item1 = step3Body.indexOf('1. **Command failed with an auto-merge-not-enabled signature**');
+  const item2 = step3Body.indexOf('2. **Command failed with a checks-pending');
+  return step3Body.slice(item1, item2);
+}
+
+test('#3521 AC1.1 AC1.2: Step 3 item 1 carries the PR #3450 literal', () => {
+  const body = item1Body();
+  assert.ok(body.includes('Protected branch rules not configured for this branch'));
+  assert.ok(body.includes('PR #3450'));
+  assert.ok(body.includes('2026-10-18'));
+  assert.ok(
+    !PRE_3521_ITEM_1.includes('Protected branch rules not configured for this branch'),
+    'pre-change text must NOT contain the PR #3450 literal (proves the pin can go red) [IL-105]',
+  );
+});
+
+test('#3521 AC2.1: Step 3 item 1 names enablePullRequestAutoMerge alone as a matching token', () => {
+  assert.match(item1Body(), /`enablePullRequestAutoMerge` alone/);
+  assert.doesNotMatch(PRE_3521_ITEM_1, /`enablePullRequestAutoMerge` alone/, 'pre-change text must NOT name the token-alone match (proves the pin can go red) [IL-105]');
+});
+
+test('#3521: Step 3 item 1 states allow_auto_merge without branch protection still fails to arm', () => {
+  const body = item1Body();
+  assert.match(body, /`allow_auto_merge: true`/);
+  assert.match(body, /branch protection or a ruleset/);
+  assert.doesNotMatch(PRE_3521_ITEM_1, /`allow_auto_merge: true`/, 'pre-change text must NOT carry the allow_auto_merge sentence (proves the pin can go red) [IL-105]');
+});
+
+test('#3521: the token-alone match yields to item 3\'s and item 4\'s signatures', () => {
+  assert.match(item1Body(), /unless item 3's or item 4's signature is also present/);
+  assert.doesNotMatch(PRE_3521_ITEM_1, /unless item 3's or item 4's signature/, 'pre-change text must NOT carry the precedence clause (proves the pin can go red) [IL-105]');
+});
+
 test('/flow closing reports carry the release-status line verbatim (#678)', () => {
   const summary = read('plugin', 'skills', 'flow', 'summary-template.md');
   // The multi-spec closing template moved to multispec-summary.md in #724's

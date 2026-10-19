@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   listClaimNames, readClaimBlob, writeClaimBlob, defaultGhApi, classifyGhApiError, tombstoneInFlightPr,
-  isWellFormedClaimContent, createClaimReader, resolveRepoSlug,
+  isWellFormedClaimContent, createClaimReader, resolveRepoSlug, resolveRepoSlugOrThrow,
 } = require('../../../plugin/bin/lib/issues/claim-store');
 
 // Fake ghApi functions mirror release-merged.js's own ghApi shape: a
@@ -940,4 +940,13 @@ test('createClaimReader: resolves the slug through runGh when none is given', ()
 test('resolveRepoSlug: a thrown or empty gh answer resolves to null', () => {
   assert.equal(resolveRepoSlug(() => { throw new Error('gh: not logged in'); }), null);
   assert.equal(resolveRepoSlug(() => '\n'), null);
+});
+
+test('resolveRepoSlugOrThrow: trims the slug, null on empty/absent output, rethrows a gh failure unchanged (AC1)', () => {
+  const runGh = (args) => { assert.deepEqual(args, ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner']); return 'acme/w\n'; };
+  assert.equal(resolveRepoSlugOrThrow(runGh), 'acme/w');
+  assert.equal(resolveRepoSlugOrThrow(() => '\n'), null);
+  assert.equal(resolveRepoSlugOrThrow(() => undefined), null);
+  const timeout = Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT' });
+  assert.throws(() => resolveRepoSlugOrThrow(() => { throw timeout; }), (e) => e === timeout);
 });

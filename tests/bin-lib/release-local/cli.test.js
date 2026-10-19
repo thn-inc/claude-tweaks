@@ -60,7 +60,7 @@ function makeDeps(o = {}) {
       state.git.push(key);
       if (o.gitFail && o.gitFail(key)) throw new Error(`fatal: ${key} failed`);
       if (key === 'branch --show-current') return `${o.branch || 'main'}\n`;
-      if (key === 'status --porcelain --untracked-files=no') return o.dirty || '';
+      if (key === '--no-optional-locks status --porcelain --untracked-files=no') return o.dirty || '';
       if (key === 'remote get-url origin') { if (o.noOrigin) throw new Error('fatal: No such remote'); return 'git@github.com:o/r.git\n'; }
       if (key.startsWith('tag --merged')) return o.noTag ? '' : (o.mergedTag === undefined ? 'v1.2.0\n' : o.mergedTag);
       if (key.startsWith('log --first-parent')) return LOG(o.subjects || ['fix: a', 'feat: b', 'fix: c']);

@@ -31,7 +31,7 @@ const FETCH_TIMEOUT_MS = 5000;
 // opts.skipFetch: trust the caller already refreshed origin/* this pass
 // (reconcile()'s shared fetch, #820 D2) instead of fetching again here.
 function classifyMirror(repoRoot, integration, opts = {}) {
-  const status = runGit(['status', '--porcelain'], repoRoot);
+  const status = runGit(['--no-optional-locks', 'status', '--porcelain'], repoRoot);
   if (status.failure) return { state: null, failure: status.failure };
   if (status.stdout !== '') return { state: 'dirty', failure: null };
 

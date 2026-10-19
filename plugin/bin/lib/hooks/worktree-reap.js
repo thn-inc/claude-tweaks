@@ -140,11 +140,12 @@ function lockVerdict(entry) {
   return isPidAlive(entry.pid) ? 'in-use' : 'orphaned';
 }
 
-// Skipped wholesale. `.git` is git's own bookkeeping, and hasLocalOnlyContent()
-// below runs `git status` INSIDE the worktree, which can rewrite the index — an
-// admin-dir signal would be perturbed by the reaper itself, making every
-// candidate look freshly touched. `node_modules` is enormous and is never
-// evidence of a human being present.
+// Skipped wholesale. `.git` is git's own bookkeeping — its mtimes track git
+// operations, so an admin-dir signal would make every candidate look freshly
+// touched. (hasLocalOnlyContent() below runs `git status` with
+// --no-optional-locks, so that probe no longer rewrites the index, but other
+// git activity still moves those mtimes.) `node_modules` is enormous
+// and is never evidence of a human being present.
 const MTIME_SCAN_SKIP = new Set(['.git', 'node_modules']);
 
 // A pathological tree must not turn a per-candidate check into an unbounded
@@ -217,7 +218,7 @@ function isContentIdentical(repoRoot, branch, integration) {
 // else, and merge status is silent about it. Phase 1 moved claude-tweaks' own
 // run state out of the worktree; this catches everyone else's.
 function hasLocalOnlyContent(wtPath) {
-  const { stdout, failure } = runGit(['status', '--porcelain', '--ignored'], wtPath);
+  const { stdout, failure } = runGit(['--no-optional-locks', 'status', '--porcelain', '--ignored'], wtPath);
   if (failure) return true; // can't tell -> assume yes
   return stdout.trim() !== '';
 }

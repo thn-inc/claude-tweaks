@@ -1779,7 +1779,9 @@ Cost on this build: one review-fix cycle — a fix commit, a new timing test, an
 re-run.
 
 **Removal condition:** retire this entry and its `docs/donts.md` rule once a mechanical check (a
-lint for unbounded quantifiers over externally-sized input, or a shared bounded-match helper such
+lint for unbounded quantifiers over externally-sized input, or a shared bounded-match helper that
+such regex call sites are required to route through) flags a regex run over transcript, tool-output,
+or issue-body text with no input-length cap in front of it.
 
 ## IL-163 — A capture filed mid-review almost duplicated an already-open PR
 

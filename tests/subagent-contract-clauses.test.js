@@ -274,3 +274,62 @@ test('subagent-output-contract.md states the Scratch rule inside Input Disciplin
     'the Scratch rule must require the agent to delete what it created before its status word',
   );
 });
+
+// #3519: the scratch-write recipe is a shell-shape-safe sequence — one plain command per
+// Bash call, no heredoc, no && chain — because the harness Bash guard refuses both by shape.
+// Four prose sites carry it; each must state the canonical fragment verbatim and none may
+// keep the pre-#3519 "mkdir -p + a redirect/heredoc" wording.
+const SHELL_SAFE_RECIPE = 'via Bash, one plain command per call — `mkdir -p` as its own call, the file written by one plain `printf` redirect or `node -e` call, `rm` as its own call; never a heredoc or an `&&` chain, which the harness Bash guard refuses by shape';
+
+function assertShellSafeScratchRecipe(text, label, expectedCount) {
+  assert.strictEqual(
+    text.split(SHELL_SAFE_RECIPE).length - 1,
+    expectedCount,
+    `${label} must state the shell-shape-safe scratch recipe verbatim ${expectedCount} time(s) (#3519)`,
+  );
+  assert.doesNotMatch(
+    text,
+    /redirect\/heredoc/,
+    `${label} must not keep the pre-#3519 "redirect/heredoc" wording (#3519)`,
+  );
+  assert.doesNotMatch(
+    text,
+    /`mkdir -p` \+ a/,
+    `${label} must not keep the pre-#3519 "mkdir -p + a" wording (#3519)`,
+  );
+}
+
+test('scratch-write recipe is shell-shape-safe at every site (#3519)', () => {
+  const reviewDir = path.join(ROOT, 'plugin', 'skills', 'review');
+  assertShellSafeScratchRecipe(
+    FILES['skills/_shared/subagent-output-contract.md'],
+    'subagent-output-contract.md',
+    1,
+  );
+  assertShellSafeScratchRecipe(
+    readText(path.join(reviewDir, 'step3-lens-dispatch.md')),
+    'review/step3-lens-dispatch.md',
+    1,
+  );
+  assertShellSafeScratchRecipe(
+    readText(path.join(reviewDir, 'step3-debate-and-refutation.md')),
+    'review/step3-debate-and-refutation.md',
+    2,
+  );
+});
+
+test('go-red control: the pre-#3519 recipe wording fails the shell-safe assertion (#3519)', () => {
+  const OLD =
+    'create and delete the file via Bash (`mkdir -p` + a shell redirect/heredoc, then `rm`), never the `Write`/`Edit` tools.';
+  assert.throws(() => assertShellSafeScratchRecipe(OLD, 'frozen pre-#3519 excerpt', 1));
+  // The old-wording guards must also go red on their own: the canonical fragment present once
+  // (count assertion satisfied) plus a leftover pre-#3519 phrase leaves only doesNotMatch to fail.
+  assert.throws(
+    () => assertShellSafeScratchRecipe(`${SHELL_SAFE_RECIPE} (redirect/heredoc)`, 'redirect/heredoc leftover', 1),
+    /redirect\/heredoc/,
+  );
+  assert.throws(
+    () => assertShellSafeScratchRecipe(`${SHELL_SAFE_RECIPE} (\`mkdir -p\` + a redirect)`, 'mkdir -p + a leftover', 1),
+    /mkdir -p/,
+  );
+});

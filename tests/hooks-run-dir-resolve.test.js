@@ -186,6 +186,49 @@ test('#2838: --create with --standalone AND --spec-slug is unaffected by the min
   assert.strictEqual(path.basename(out.path), '2026-03-04T050607-release-standalone');
 });
 
+// #2870: a legacy non-canonical name (no `YYYY-MM-DDT` run-id prefix, no
+// run-state.json) string-sorts AFTER every canonical run-id, so Step 2 adopted
+// it as "newest" forever. Step 2 now only considers canonical run-id names.
+const STALE_NON_CANONICAL = '20260911T131119-backlog-standalone';
+
+function mkStaleNonCanonical(main) {
+  const dir = mkRunDir(main, STALE_NON_CANONICAL);
+  fs.writeFileSync(path.join(dir, 'decisions.md'), '## /backlog\n- AUTO 15:11:19 — refine #1894: stale\n');
+  return dir;
+}
+
+test('#2870: --create with --spec-slug never hands back a non-canonical dir lacking run-state.json — mints fresh', () => {
+  const main = gitRepo();
+  const stale = mkStaleNonCanonical(main);
+  const out = resolve({
+    cwd: main, env: {}, specSlug: 'backlog-standalone', create: true,
+    now: new Date('2026-10-01T12:00:00Z'),
+  });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, true);
+  assert.notStrictEqual(out.path, stale);
+  assert.strictEqual(path.basename(out.path), '2026-10-01T120000-backlog-standalone');
+});
+
+test('#2870: read-only resolution prefers an older canonical match over a non-canonical name that string-sorts last', () => {
+  const main = gitRepo();
+  mkStaleNonCanonical(main);
+  const canonical = mkRunDir(main, '2026-09-20T080000-backlog-standalone');
+  const out = resolve({ cwd: main, env: {}, specSlug: 'backlog-standalone' });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, false);
+  assert.strictEqual(out.path, canonical);
+});
+
+test('#2870: read-only resolution never adopts a non-canonical dir even when it is the only match', () => {
+  const main = gitRepo();
+  mkStaleNonCanonical(main);
+  const out = resolve({ cwd: main, env: {}, specSlug: 'backlog-standalone' });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'unresolved');
+  assert.strictEqual(out.created, false);
+});
+
 test('#1962: step 2 falls through to the next-newest match when the newest is dead', () => {
   const main = gitRepo();
   const older = mkRunDir(main, '2026-01-01T000000-record-91');
