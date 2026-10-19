@@ -62,3 +62,36 @@ test('multi-spec console: matching drain-overlap-hold carve-out present and go-r
 test('multi-spec console: drain-overlap-hold carve-out sentence ends with the mirror phrase', () => {
   assertPinned(MULTISPEC_FLAT, MULTISPEC_MIRRORS, PRE_CHANGE_MULTISPEC, 'flow/multispec-review-console.md');
 });
+
+// AC7 (#3520): the near-duplicate Step 6 hold template that drain-pr-overlap.md gives
+// must still be read by the console auto-resolver's DRAIN_OVERLAP_HOLD_RE second reader.
+const { drainOverlapHoldPrs } = require('../plugin/bin/lib/console/resolve');
+
+function nearDuplicateHoldTemplate() {
+  const raw = fs.readFileSync(path.join(ROOT, 'plugin/skills/dispatch/drain-pr-overlap.md'), 'utf8');
+  const blocks = [...raw.matchAll(/```\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+  const hit = blocks.find((b) => b.includes('(near-duplicate of #{partner})') && /Auto-merge gate/.test(b));
+  assert.ok(hit, 'drain-pr-overlap.md has a fenced Auto-merge gate template with the near-duplicate suffix');
+  return collapse(hit).trim();
+}
+
+const asDecisions = (line) => `## /dispatch\n- ${line}\n`;
+
+function fill(template) {
+  return template
+    .replace('{time}', '2026-10-19T04:00:00Z')
+    .replace('{issues}', '#3419')
+    .replace('{pr}', '4123')
+    .replace('{partner}', '77');
+}
+
+test('near-duplicate Step 6 hold template is parsed by drainOverlapHoldPrs (AC7)', () => {
+  const line = fill(nearDuplicateHoldTemplate());
+  assert.deepStrictEqual(drainOverlapHoldPrs(asDecisions(line)), [4123]);
+});
+
+test('go-red control: the same near-duplicate hold line without "held — " parses to nothing', () => {
+  const line = fill(nearDuplicateHoldTemplate());
+  assert.ok(line.includes('held — '));
+  assert.deepStrictEqual(drainOverlapHoldPrs(asDecisions(line.replace('held — ', ''))), []);
+});

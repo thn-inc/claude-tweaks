@@ -59,6 +59,18 @@ test('the Auto-merge gate points to drain-pr-overlap.md\'s hold section, which h
   assert.ok(holdIdx !== -1 && authIdx !== -1 && holdIdx < authIdx, 'the hold pointer runs before Authorization/Content judgment');
 });
 
+test('drain-pr-overlap.md adds the near-duplicate hit source to Step 4 and the Step 6 hold (#3520)', () => {
+  const flat = DRAIN_PR_OVERLAP.replace(/\s+/g, ' ');
+  assert.match(DRAIN_PR_OVERLAP, /drainNearDuplicateHits/);
+  assert.match(DRAIN_PR_OVERLAP, /bin\/lib\/dispatch\/near-dup-pairs\.js/);
+  assert.match(DRAIN_PR_OVERLAP, /dispatch-near-dup-pairs\.json/);
+  assert.match(flat, /\(near-duplicate of #\{partner\}\)/);
+  assert.match(flat, /AUTO \{time\} — Auto-merge gate: group \[\{issues\}\] held — overlaps drain PR #\{pr\} \(near-duplicate of #\{partner\}\); merge order is a human call\. Reversibility: n\/a\./);
+  // the pre-existing file-overlap templates stay beside the new ones
+  assert.match(flat, /STAGED \{time\} — dispatch: group \[\{issues\}\] overlaps drain PR #\{pr\} on \{files\}/);
+  assert.match(flat, /held — overlaps drain PR #\{pr\} on \{files\}/);
+});
+
 test('cross-pr-overlap-report.md documents both new invocation sites and states the pre-drain report is unchanged', () => {
   assert.match(CROSS_PR_REPORT, /## Second and third invocation \(refs #1985\)/);
   assert.match(CROSS_PR_REPORT, /`dispatch\/SKILL\.md` Step 4/);

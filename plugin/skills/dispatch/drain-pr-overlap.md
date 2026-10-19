@@ -48,6 +48,22 @@ serialize before merge. Reversibility: n/a.
 Still a warning, never a gate — the group dispatches regardless. A hit against the pre-drain
 snapshot (no `source`) is already covered by Step 3's report and is not re-logged here.
 
+**Near-duplicate hit source (#3520).** `detectCrossPRFileOverlap` sees changed files only, so a
+strong near-duplicate pair whose shared files appear during the build is invisible to it. Also run
+`drainNearDuplicateHits(members, pairs, drainPrs)` (`bin/lib/dispatch/near-dup-pairs.js`) with this
+group's member numbers, `dispatch-near-dup-pairs.json` (`queue-pull-script.md`'s output, strong
+pairs only) and this firing's `dispatch-drain-prs.json`. Each `{pr, member, partner}` hit — a
+member whose strong-pair partner is closed by a drain PR (`closingIssueNumbers`) — renders
+`cross-pr-overlap-report.md`'s warning line with `(near-duplicate of #{partner})` in place of the
+file list, and logs:
+
+```
+STAGED {time} — dispatch: group [{issues}] overlaps drain PR #{pr} (near-duplicate of #{partner}); dispatched anyway,
+serialize before merge. Reversibility: n/a.
+```
+
+Same posture: a warning, never a gate. `detectCrossPRFileOverlap` and its contract are untouched.
+
 ## Step 6 (Auto-merge gate) — hold on a still-open drain overlap, before merge-check
 
 Referenced by `settle-and-merge.md`'s Auto-merge gate section, before its two-layer
@@ -70,6 +86,19 @@ persisted hold — so once that PR has merged or closed, the next evaluation of 
 firing, or a retry) finds no live overlap and proceeds normally through Authorization and Content
 judgment. No hit, or a hit only against a PR that has already merged/closed: proceed to
 Authorization immediately, unaffected.
+
+**Near-duplicate hold (#3520).** Also run `drainNearDuplicateHits(members, pairs, drainPrs)` here, the
+same call and inputs as Step 4's near-duplicate hit source, evaluated fresh. A hit whose drain PR
+is **still open** (`gh pr view {pr} --json state`, the same self-healing rule as above) holds the
+group exactly like a file overlap does — normal Review Console, skip Authorization and Content
+judgment — and logs:
+
+```
+AUTO {time} — Auto-merge gate: group [{issues}] held — overlaps drain PR #{pr} (near-duplicate of #{partner}); merge order is a human call. Reversibility: n/a.
+```
+
+The `held — overlaps drain PR #{pr}` prefix is kept verbatim, so the second reader below parses this
+line unchanged.
 
 **This log line has a second reader (#2299).** `bin/lib/console/resolve.js`'s `mergeResolution()`
 parses this exact line (`drainOverlapHoldPrs()`) when a group reaches the Wrap-Up Review Console's
