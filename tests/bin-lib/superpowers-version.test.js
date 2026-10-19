@@ -11,6 +11,7 @@ const {
   effectiveSuperpowersVersion,
   superpowersNotice,
 } = require('../../plugin/bin/lib/superpowers-version');
+const { canonicalGitRoot } = require('../../plugin/bin/lib/installed-plugins');
 const { loadManifest } = require('../../tools/upstream-drift/manifest');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -126,6 +127,28 @@ test('a symlinked cwd to the matched project gets no "run from" suffix (both sid
   assert.ok(!superpowersNotice({ effective: effective2, floor: SUPERPOWERS_FLOOR, projectDir: link }).includes('run from'));
 });
 
+test('a project record whose projectPath no longer exists says so instead of naming it as the place to run from', () => {
+  const w = mkWorld();
+  const proj = w.dir('proj');
+  const gone = w.dir('gone');
+  fs.rmSync(gone, { recursive: true });
+  const effective = { version: '6.3.0', scope: 'project', marketplace: MK, projectPath: gone };
+  const notice = superpowersNotice({ effective, floor: SUPERPOWERS_FLOOR, projectDir: proj });
+  assert.ok(notice.includes(` (this install is recorded for ${gone}, which no longer exists; it applies here because that path belongs to the same git checkout)`));
+  assert.ok(!notice.includes('run from'));
+});
+
+test('a local record for an existing, different directory gets the "run from" suffix', () => {
+  const w = mkWorld();
+  const proj = w.dir('proj');
+  const other = w.dir('other');
+  const effective = { version: '6.3.0', scope: 'local', marketplace: MK, projectPath: other };
+  const notice = superpowersNotice({ effective, floor: SUPERPOWERS_FLOOR, projectDir: proj });
+  assert.ok(notice.includes('--scope local'));
+  assert.ok(notice.includes(`run from ${other}`));
+  assert.ok(!notice.includes('no longer exists'));
+});
+
 // ---- AC2: no notice at or above the floor; scope resolution -------------------
 
 test('AC2.1: equal to the floor and newer than the floor give a null notice', () => {
@@ -195,10 +218,13 @@ test('AC2.2: a project entry for a git checkout applies below it, and the notice
   assert.ok(notice.includes('the project this install belongs to'));
 });
 
-test('a project entry for a non-git folder does not apply below it — the user entry wins', () => {
+test('a project entry for a non-git folder does not apply below it — the user entry wins', (t) => {
   const w = mkWorld();
   const proj = w.dir('proj');
   const deep = w.dir('proj', 'sub', 'deep');
+  if (canonicalGitRoot(proj, w.deps({ realpath: fs.realpathSync.native, readFile: (p) => fs.readFileSync(p, 'utf8') })) !== null) {
+    return t.skip('tmpdir sits inside a git checkout');
+  }
   w.plugins({
     [`superpowers@${MK}`]: [
       entry('project', w.artifact('p', '6.3.0'), { projectPath: proj }),
@@ -426,12 +452,10 @@ test('a throwing homedir gives null rather than throwing', () => {
   const w = mkWorld();
   const proj = w.dir('proj');
   w.plugins({ [`superpowers@${MK}`]: [entry('user', w.artifact('u', '6.3.0'))] });
-  const homedir = () => { throw new Error('no home'); };
-  // w.deps() injects CLAUDE_CONFIG_DIR, so the plugins file resolves without
-  // calling homedir and selectEntry no longer reads it (the home exclusion is
-  // gone, #3541): the user entry resolves. The intent is unchanged — no throw.
-  assert.doesNotThrow(() => effectiveSuperpowersVersion(proj, w.deps({ homedir })));
-  assert.equal(effectiveSuperpowersVersion(proj, w.deps({ homedir })).version, '6.3.0');
+  // No CLAUDE_CONFIG_DIR, so readInstalledPlugins reaches the throwing homedir.
+  const deps = w.deps({ homedir: () => { throw new Error('no home'); }, env: {} });
+  assert.doesNotThrow(() => effectiveSuperpowersVersion(proj, deps));
+  assert.equal(effectiveSuperpowersVersion(proj, deps), null);
 });
 
 // ---- AC4: numeric, strict comparison -------------------------------------------

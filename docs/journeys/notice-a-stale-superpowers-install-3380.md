@@ -27,19 +27,19 @@ files:
 ### 2. Read the relayed notice
 - **URL:** the model's first reply
 - **Action:** Read the line the model passes on.
-- **Should feel:** Informed, not nagged. One sentence names both versions and the command to run, and when the install belongs to a parent directory, which directory to run it from.
+- **Should feel:** Informed, not nagged. One sentence names both versions and the command to run, and, when the install belongs to another path of the same checkout, where it is recorded.
 - **Should understand:**
-  - A project-scope install for this directory, or for any parent directory of it, takes priority over the user-scope one. The most specific match wins.
-  - A project install recorded for the home directory itself is ignored, because Claude Code never applies it.
+  - Claude Code runs the first install record in `installed_plugins.json` order that applies to this directory: a user-scope or managed record applies everywhere; a project or local record applies to its own directory, or to any directory of the same git checkout (worktrees included). Scope is not ranked — the record listed first wins.
+  - A project install recorded for the home directory is not special: it loses only when a user-scope record is listed before it.
   - The `--scope` and the `superpowers@{marketplace}` name in the command come from the matched install, never hardcoded.
-  - The "run from …" hint appears only when the install belongs to a parent directory. A project-scope update acts on the project you run it from.
+  - The "run from …" hint appears only when the matched install is recorded for a different, still-existing directory; when that directory is gone, the notice says so instead. A project-scope update acts on the project you run it from.
 - **Red flags:**
   - The model runs `claude plugin update` itself. The line tells it never to, and updating on the developer's behalf is out of scope.
   - The line is repeated on every reply.
   - A notice when no superpowers is installed at all. Missing installs are `/claude-tweaks:init`'s concern.
 
 ### 3. Update, then confirm the notice is gone
-- **URL:** `claude plugin update superpowers@{marketplace} --scope {scope}`, run from the directory the notice named
+- **URL:** `claude plugin update superpowers@{marketplace} --scope {scope}`, run from the directory the notice named, if it named one
 - **Action:** Run the suggested command. If it reports "already at the latest", run `claude plugin marketplace update {marketplace}` first and retry, then start a new session.
 - **Should feel:** Closed. The new session's context carries no superpowers notice.
 - **Should understand:**

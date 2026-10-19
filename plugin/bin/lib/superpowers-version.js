@@ -26,6 +26,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readInstalledPlugins, selectEntry, safeRealpath } = require('./installed-plugins');
+const { lstatType } = require('./path-guard');
 
 // The last verified pin in tools/upstream-drift/manifest.yml. A future
 // superpowers re-pin deliberately raises the notice threshold for every project
@@ -108,9 +109,13 @@ function effectiveSuperpowersVersion(projectDir, overrides = {}) {
 function superpowersNotice({ effective, floor, projectDir }) {
   if (!effective || !isOlder(effective.version, floor)) return null;
   let suffix = '';
-  if (effective.scope === 'project' && typeof effective.projectPath === 'string') {
+  if ((effective.scope === 'project' || effective.scope === 'local') && typeof effective.projectPath === 'string') {
     const deps = { realpath: fs.realpathSync.native };
-    if (safeRealpath(effective.projectPath, deps) !== safeRealpath(projectDir, deps)) {
+    if (lstatType(effective.projectPath).type === 'missing') {
+      // The record applies here only because its path belongs to this git checkout;
+      // never send the user to a directory that is gone.
+      suffix = ` (this install is recorded for ${effective.projectPath}, which no longer exists; it applies here because that path belongs to the same git checkout)`;
+    } else if (safeRealpath(effective.projectPath, deps) !== safeRealpath(projectDir, deps)) {
       suffix = ` (run from ${effective.projectPath}, the project this install belongs to)`;
     }
   }

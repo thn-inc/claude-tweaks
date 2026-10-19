@@ -165,9 +165,10 @@ test('selectEntry: a symlinked session path and a symlinked projectPath both mat
   assert.equal(selectEntry([viaLink], proj, deps), viaLink);
 });
 
-test('selectEntry: no match and no user or managed record returns null', () => {
+test('selectEntry: no match and no user or managed record returns null', (t) => {
   const root = tmpRoot();
   mkdirs(path.join(root, 'proj'), path.join(root, 'other'));
+  if (canonicalGitRoot(root, deps) !== null) return t.skip('tmpdir sits inside a git checkout');
   assert.equal(selectEntry([project(path.join(root, 'proj'))], path.join(root, 'other'), deps), null);
   assert.equal(selectEntry([], path.join(root, 'other'), deps), null);
 });

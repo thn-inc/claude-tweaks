@@ -43,7 +43,7 @@ Nothing upstream computes a frontend predicate, so deleting or weakening Layer 3
 
 ## Resolution
 
-The engine module resolves the active install itself — read `installed_plugins.json`, select the best project-or-user-scope entry for the calling session's working directory, confirm the 4.2.2+ launcher exists, then probe the cached design-engine binary. Every consumer calls the same two functions (`resolve()`/`run()`, `plugin/bin/lib/impeccable-engine/index.js`) via the CLI wrapper — nothing here re-derives that procedure.
+The engine module resolves the active install itself — read `installed_plugins.json`, select the first record in `installed_plugins.json` order that applies to the calling session's working directory, confirm the 4.2.2+ launcher exists, then probe the cached design-engine binary. Every consumer calls the same two functions (`resolve()`/`run()`, `plugin/bin/lib/impeccable-engine/index.js`) via the CLI wrapper — nothing here re-derives that procedure.
 
 ### `node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" resolve`
 
