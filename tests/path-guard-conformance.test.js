@@ -195,7 +195,7 @@ test('scanner does not let a /* inside a line comment swallow live code (proves 
 });
 
 test('a comment-stripper mis-parse is reported, not counted as zero tokens', () => {
-  assert.deepEqual(evaluate({ 'lib/x.js': 'const a = /"/; const b = "//"; fs.existsSync(b);' }, {}), [
+  assert.deepEqual(evaluate({ 'lib/x.js': 'if (b) /"/.test(b); const c = "//"; fs.existsSync(c);' }, {}), [
     'lib/x.js: the comment stripper mis-parsed this file: the stripped text no longer compiles, so live code was blanked and cannot be scanned — see tests/helpers/strip-comments.js',
   ]);
 });

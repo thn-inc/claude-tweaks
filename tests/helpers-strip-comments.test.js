@@ -69,14 +69,14 @@ test('stripperVerdict reads real comments, a hashbang and a top-level return as 
   assert.equal(stripperVerdict('if (x) return 1;\nlive();'), 'ok');
 });
 
-test('stripperVerdict reports each reproducing mis-parse shape as misparsed', () => {
-  assert.equal(stripperVerdict("const x = 'a'; const a = /'/.test(x); const b = 'p//q'; fs.realpathSync(b);"), 'misparsed');
-  assert.equal(stripperVerdict('const a = /"/; const b = "//"; live();'), 'misparsed');
-  assert.equal(stripperVerdict('const a = /`/; const b = `x // y`; live();'), 'misparsed');
-  assert.equal(stripperVerdict('const re = /[/*]/; live(); /* c */'), 'misparsed');
+test('stripperVerdict reports each residual mis-parse shape (a regex after ) or }) as misparsed', () => {
+  assert.equal(stripperVerdict("const x = 'a'; if (x) /'/.test(x); const b = 'p//q'; fs.realpathSync(b);"), 'misparsed');
+  assert.equal(stripperVerdict('if (a) /"/.test(a); const b = "//"; live();'), 'misparsed');
+  assert.equal(stripperVerdict('function f() {} /`/.test(s); const b = `x // y`; live();'), 'misparsed');
+  assert.equal(stripperVerdict('if (x) /[/*]/.test(x); live(); /* c */'), 'misparsed');
   // A lazily compiled body: the mis-parse sits inside a function.
   assert.equal(
-    stripperVerdict('function outer() { function inner() { const re = /[/*]/; live(); } return inner; } /* c */'),
+    stripperVerdict('function outer() { function inner() { if (x) /[/*]/.test(x); live(); } return inner; } /* c */'),
     'misparsed',
   );
 });
