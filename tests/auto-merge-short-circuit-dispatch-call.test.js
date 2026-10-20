@@ -119,12 +119,10 @@ test('the branch snippet, executed verbatim, answers true only for this run\'s o
   assert.ok(snippet.includes('isDispatchTaskCallForRun'), 'snippet must call isDispatchTaskCallForRun');
   // Run the snippet byte-for-byte: the shell expands ${CLAUDE_PLUGIN_ROOT} from the child's env, the
   // way an agent's would.
-  const script = snippet;
-
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-call-snippet-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const runState = path.join(dir, 'run-state.json');
-  const run = (sessionId) => execFileSync('bash', ['-c', script], {
+  const run = (sessionId) => execFileSync('bash', ['-c', snippet], {
     encoding: 'utf8',
     env: { ...process.env, PIPELINE_RUN_DIR: dir, CLAUDE_CODE_SESSION_ID: sessionId, CLAUDE_PLUGIN_ROOT: PLUGIN_DIR },
   }).trim();
