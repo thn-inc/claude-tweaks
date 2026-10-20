@@ -57,8 +57,8 @@ test('criteria-agent-trust-scope.md names all three candidate kinds', () => {
 test('review wires in Step 6.65 and consolidates Step 6.7 routing', () => {
   // #2628 split the Step 6.6/6.65/6.66 component-pass bodies out of
   // code-mode-steps.md into focus-criterion-passes.md to stay under the
-  // per-file byte ceiling (tests/ceremony-profile-roster.test.js's #1926 AC7
-  // check) — step numbering and the Step 6.7 consolidated-routing table
+  // per-file byte ceiling (tests/review-qa-rerun-after-fix-wave-conformance.test.js's
+  // AC5.1 Read-limit byte rail) — step numbering and the Step 6.7 consolidated-routing table
   // (still in code-mode-steps.md) are unaffected by the split.
   const passes = readText(path.join(ROOT, 'plugin/skills/review/focus-criterion-passes.md'));
   assert.match(passes, /## Step 6\.65: Agent Trust Scope Pass/);
@@ -123,10 +123,24 @@ function assertStep665AcceptedRiskRow(passes) {
   assert.match(row, /Not an Agent Trust Scope finding/);
 }
 
+function assertTemplateAcceptedRiskNote(tmpl) {
+  const start = tmpl.indexOf('### Agent Trust Scope');
+  const end = tmpl.indexOf('\n### ', start + 1);
+  assert.ok(start >= 0 && end > start, 'summary template must have an "### Agent Trust Scope" section');
+  assert.ok(tmpl.slice(start, end).includes(ACCEPTED_RISK_LINE),
+    'the Agent Trust Scope section of the summary template must name the accepted-risk footer note');
+}
+
 test('AC1.1: review Step 6.65 renders an accepted-risk candidate as a footer note naming the ADR', () => {
   assertStep665AcceptedRiskRow(readText(FOCUS_PASSES_PATH));
+  assertTemplateAcceptedRiskNote(readText(SUMMARY_TEMPLATE_PATH));
+});
+
+test('go-red: the template check fails when only another section names the accepted-risk line', () => {
   const tmpl = readText(SUMMARY_TEMPLATE_PATH);
-  assert.ok(tmpl.includes(ACCEPTED_RISK_LINE), 'summary template must name the accepted-risk footer note');
+  const mutated = tmpl.split(ACCEPTED_RISK_LINE).join('REMOVED') + `\n### Elsewhere\n${ACCEPTED_RISK_LINE}\n`;
+  assert.notEqual(mutated, tmpl, 'mutation did not apply');
+  assert.throws(() => assertTemplateAcceptedRiskNote(mutated));
 });
 
 test('go-red: the Step 6.65 row check fails when the row is removed', () => {
