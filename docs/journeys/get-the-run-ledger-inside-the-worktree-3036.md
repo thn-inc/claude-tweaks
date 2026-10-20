@@ -34,10 +34,10 @@ files:
 
 ### 3. The ledger is created once the worktree exists
 - **URL:** `plugin/skills/build/worktree-setup.md` Step 4.6; `plugin/skills/flow/multi-spec.md` "Shared worktree" step 1; `plugin/skills/ledger/SKILL.md` "Create" (resume no-op)
-- **Action:** Right after the worktree is created or adopted (and stamped), the ledger is created at `docs/plans/…-ledger.md` inside it, the creation line is logged, the held notes are appended, and the ledger is committed by its explicit path. Multi-spec runs create one shared ledger, `{feature}` = the shared `spec-{N1}-{N2}…` slug, logged to the parent run dir's `decisions.md`.
+- **Action:** Right after the worktree is created or adopted (and stamped), the ledger is created at `docs/plans/…-ledger.md` inside it, the creation line is logged, the held notes are appended, and the ledger is committed by its explicit path. A single-spec run does this right after Step 6 records the draft PR (or logs its `SKIP`): `/flow` Step 4.2's materialize commit has already landed, and under `pr-first` the bookkeeping-stamps gate denies the ledger `Write` until the `pr` stamp exists (#3289). Multi-spec runs create one shared ledger up front, before any materialize commit, with `{feature}` set to the shared `spec-{N1}-{N2}…` slug, and log it to the parent run dir's `decisions.md`.
 - **Should feel:** Like it was always there by the time build's first task runs.
 - **Should understand:** A resumed run whose active ledger already exists creates nothing and logs no second creation line, but still appends any held notes and commits the ledger — an untracked `docs/plans/` ledger reads as dirty to a later Adopt-or-create re-check (`git status --porcelain`), which would abandon this worktree. Standalone `/claude-tweaks:build` (no `$PIPELINE_RUN_DIR`) never creates one here. An older run dir already holding a pre-#3036 `{run-dir}/ledger.md` keeps using it — the run-dir-first resolution rule finds it.
-- **Red flags:** two creation lines in one run's `decisions.md`; a `{run-dir}/ledger.md` at the end of a run that created a worktree; `git status --porcelain` in the worktree showing the ledger untracked after Step 4.6 (or multi-spec step 1); a resumed run's held pre-flight note missing from its ledger.
+- **Red flags:** a `bookkeeping-stamp-deny` on the ledger `Write`, followed by build tasks running with no ledger and no creation line (Step 4.6 attempted before Step 6's PR open); two creation lines in one run's `decisions.md`; a `{run-dir}/ledger.md` at the end of a run that created a worktree; `git status --porcelain` in the worktree showing the ledger untracked after Step 4.6 (or multi-spec step 1); a resumed run's held pre-flight note missing from its ledger.
 
 ### 4. Review's QA Ledger Check explains a missing ledger
 - **URL:** `plugin/skills/review/code-mode-steps.md` "QA Ledger Check"
@@ -49,4 +49,5 @@ files:
 ## Origin
 - Created during `/claude-tweaks:build` of record #3036 (2026-10-17): `/flow` ledger creation moved behind the worktree; Step 1.8 kept for `current-branch` only; pre-flight ledger-bound notes held until creation.
 - Updated during wrap-up of record #3036 (2026-10-17): Steps 2–3 brought in line with the review fixes in bbe06ba26 — held notes are appended on a resume too, and the ledger is committed by its explicit path at the creation point.
+- Updated during `/claude-tweaks:build` of record #3289 (2026-10-20): Step 3 sequences the single-spec ledger after Step 6's draft-PR open, because the bookkeeping-stamps gate denied the earlier write under `pr-first`.
 - Related: `docs/journeys/recover-from-a-bookkeeping-stamp-deny.md` (the worktree stamp Step 4.6 follows)
