@@ -138,17 +138,38 @@ test('AC4.1/AC4.2: pipeline QA selection and design-gate.md name --ignore-stamp;
   assertIgnoreStampSites(read('plugin/skills/test/SKILL.md'), read('plugin/skills/test/design-gate.md'));
 });
 
+function mutateLine(text, marker, from, to) {
+  const line = lineFrom(text, marker);
+  const mutated = text.replace(line, line.replace(from, to));
+  assert.notStrictEqual(mutated, text, 'the mutation must change the text');
+  return mutated;
+}
+
+test('go-red: dropping --ignore-stamp from the pipeline story-selection bullet fails the AC4 pin', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const gate = read('plugin/skills/test/design-gate.md');
+  const mutated = mutateLine(skill, '- `VERIFICATION_PASSED=true` + stories exist', '--changed-files --ignore-stamp', '--changed-files');
+  assert.throws(() => assertIgnoreStampSites(mutated, gate), { message: /pipeline story-selection bullet must pass --ignore-stamp/ });
+});
+
 test('go-red: dropping --ignore-stamp from design-gate.md fails the AC4 pin', () => {
   const skill = read('plugin/skills/test/SKILL.md');
   const gate = read('plugin/skills/test/design-gate.md');
-  assert.throws(() => assertIgnoreStampSites(skill, gate.replace('--changed-files --ignore-stamp', '--changed-files')));
+  const mutated = gate.replace('--changed-files --ignore-stamp', '--changed-files');
+  assert.notStrictEqual(mutated, gate, 'the mutation must change the text');
+  assert.throws(() => assertIgnoreStampSites(skill, mutated), { message: /design-gate\.md must resolve <changed-files> with --ignore-stamp/ });
 });
 
 test('go-red: adding --ignore-stamp to the affected bullet fails the AC4 pin', () => {
   const skill = read('plugin/skills/test/SKILL.md');
   const gate = read('plugin/skills/test/design-gate.md');
-  const affected = lineFrom(skill, '- **`affected`**');
-  const mutated = skill.replace(affected, affected.replace('--changed-files --integration-branch', '--changed-files --ignore-stamp --integration-branch'));
-  assert.notStrictEqual(mutated, skill, 'the mutation must change the text');
-  assert.throws(() => assertIgnoreStampSites(mutated, gate));
+  const mutated = mutateLine(skill, '- **`affected`**', '--changed-files --integration-branch', '--changed-files --ignore-stamp --integration-branch');
+  assert.throws(() => assertIgnoreStampSites(mutated, gate), { message: /the affected bullet keeps the stamp anchor/ });
+});
+
+test('go-red: adding --ignore-stamp to qa affected step 1 fails the AC4 pin', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const gate = read('plugin/skills/test/design-gate.md');
+  const mutated = mutateLine(skill, '1. Read the changed-file set:', '--changed-files --integration-branch', '--changed-files --ignore-stamp --integration-branch');
+  assert.throws(() => assertIgnoreStampSites(mutated, gate), { message: /qa affected step 1 keeps the stamp anchor/ });
 });
