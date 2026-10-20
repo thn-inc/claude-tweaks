@@ -39,7 +39,7 @@ item keeps its own draft shape; nothing here reconciles a queue candidate agains
 finding even when they describe the same underlying issue. Run Steps 1-6 non-interactively for
 every item in the merged batch (gather from the queue issue's own body, or from the finding's
 symptom/evidence/proposed fix — deriving the affected component from the skill, contract, or CLI
-the evidence names, falling back to "unclear / general" per Step 1 — classify,
+the evidence names, falling back to "unclear / general" per Step 1, and applying Step 1's Bash-refusal attribution check — classify,
 confirm self-reference doesn't apply, dedup search, draft, scrub), then call
 `_shared/upstream-feedback-batch.md`'s shared batch contract once — chunked per that file's own
 rule — instead of looping Step 7 individually per item. Step 4's dedup fingerprint basis stays the

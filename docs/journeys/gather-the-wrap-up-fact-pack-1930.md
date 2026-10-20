@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/wrap-up/pack.js
   - plugin/bin/wrap-up-pack.js
+  - plugin/bin/pr-checks.js
   - plugin/skills/wrap-up/SKILL.md
   - plugin/skills/wrap-up/residue-sweep.md
   - plugin/skills/wrap-up/unblocked-records.md
@@ -9,6 +10,7 @@ files:
   - plugin/bin/lib/wrap-up/engine-verify.js
   - plugin/skills/assess-agent-autonomy/merge-check.md
   - tests/wrap-up-pack-conformance.test.js
+  - tests/bin-lib/wrap-up/pack.test.js
 ---
 
 # Gather the Wrap-Up Fact Pack Once, Then Read Fields
@@ -24,8 +26,8 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-pack.js" --run "$PIPELINE_RUN_DIR"`
 - **Action:** Invoke it exactly where `wrap-up/SKILL.md`'s "**Fact pack first.**" paragraph places it — once, before `residue-sweep.md`.
 - **Should feel:** One command, a few seconds, replacing a page of "now run X, now run Y" narration whose outputs the model used to paraphrase.
-- **Should understand:** The eight probes run concurrently and each is bounded (a 30 s subprocess timeout, a 60 s per-probe race), so the pack's wall-clock is its slowest probe, not their sum. `residue` runs with `--no-suite`: the pack never re-runs the test suite — suite state is `/claude-tweaks:test`'s pass stamp, which `residue-sweep.md` names. Exit `0` means "a pack was produced", not "every probe succeeded".
-- **Red flags:** Exit `3` — `--run` (or `--json`) resolves outside the main checkout's `.claude-tweaks/pipelines/` tree. A worktree-relative path is the usual cause (`[IL-127]`); nothing is written, so re-run with the anchored path rather than hunting for a half-written file.
+- **Should understand:** The eight probes run concurrently and each is bounded (a 30 s subprocess timeout, a 60 s per-probe race), so the pack's wall-clock is its slowest probe, not their sum. `residue` runs with `--no-suite`: the pack never re-runs the test suite — suite state is `/claude-tweaks:test`'s pass stamp, which `residue-sweep.md` names. Exit `0` means "a pack was produced", not "every probe succeeded". A subprocess killed by that 30 s timeout reports a field error naming it — `timeout after 30000ms: node residue.js (killed by SIGTERM)` — never Node's bare `Command failed: …`, which read as a crash and hid a probe running 0.5 s inside its limit (#3479); a probe outliving the 60 s race reads `timeout after 60000ms`.
+- **Red flags:** A `residue` field failing with `timeout after 30000ms` in a many-worktree checkout — the blast-radius sweep should finish in a few seconds there since #3479 (`sweep-only-your-own-residue-at-close-time.md` step 1), so a timeout points at a regression or a hung git call, not at worktree count. Exit `3` — `--run` (or `--json`) resolves outside the main checkout's `.claude-tweaks/pipelines/` tree. A worktree-relative path is the usual cause (`[IL-127]`); nothing is written, so re-run with the anchored path rather than hunting for a half-written file.
 
 ### 2. Read `inputs.sources` before trusting any record-scoped field
 - **URL:** `jq .inputs "$PIPELINE_RUN_DIR/wrap-up-pack.json"`
@@ -38,7 +40,7 @@ files:
 - **URL:** `plugin/skills/wrap-up/residue-sweep.md`, `unblocked-records.md`, `cleanup-procedures.md`, `review-console.md`, `auto-merge-short-circuit.md`, `summary-template.md`, `review-console-interactive.md`
 - **Action:** Follow each file's one pack sentence: read `pack.{field}` from `wrap-up-pack.json`; run the file's own command only when the pack file is absent.
 - **Should feel:** The gathering happened once; the sub-steps are now pure reads plus the judgment they always carried.
-- **Should understand:** Three rules, stated once in SKILL.md and applied everywhere: an `ok: false` field takes that sub-step's existing failure path (the residue sweep's `unknown`, the unblocked check's "skip this run" warning, merge-check's `could-not-gather` → `needs-human`); a key missing from a present file counts as `ok: false`; only an absent file lets a sub-step gather for itself. Two fields are informational by design — `pack.recordLabels` is the console's audit snapshot, while the authorization grant read stays a live `gh issue view` fetch, because a Phase 3 snapshot must never authorize a merge; and `pack.state.value.rendered` is pasted verbatim, because `summary-template.md` forbids composing the State block from JSON fields.
+- **Should understand:** Three rules, stated once in SKILL.md and applied everywhere: an `ok: false` field takes that sub-step's existing failure path (the residue sweep's `unknown`, the unblocked check's "skip this run" warning, merge-check's `could-not-gather` → `needs-human`); a key missing from a present file counts as `ok: false`; only an absent file lets a sub-step gather for itself. Two fields are informational by design — `pack.recordLabels` is the console's audit snapshot, while the authorization grant read stays a live `gh issue view` fetch, because a Phase 3 snapshot must never authorize a merge; and `pack.state.value.rendered` is pasted verbatim, because `summary-template.md` forbids composing the State block from JSON fields. `pack.pr.value.ci` is the `bin/pr-checks.js --pr` verdict for the run's PR head (#3469): the Review Console recommends merging only on `green`/`no-ci`/`pending`/`stale`, and a missing `ci` key or a `read-failed` verdict is a failed read, never green. The rollup alone is never the source, because it reads a partial CI run as green.
 - **Red flags:** A sub-step that reads `ok: false` and reports a clean result. Any prose that names a `pack.*` field the code does not produce — `tests/wrap-up-pack-conformance.test.js` pins the call count, its Phase 3 position, the eight names, and each sub-file's `wrap-up-pack.json` + absent-file sentence, so a drift here should fail that test before it reaches a run.
 
 ### 4. Hand merge-check the blast radius instead of letting it re-probe

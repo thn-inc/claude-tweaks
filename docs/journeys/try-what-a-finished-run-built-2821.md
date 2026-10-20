@@ -25,11 +25,11 @@ files:
 - **Red flags:** The section missing, or empty, on any successful run. Placeholder text (`TBD`, an unfilled `{...}`, "see the PR"). Agent procedure where human steps belong (`playwright-cli`, Prepare/Validate, a test command offered as the Expected result). A backend or infra record left with no block because it had no green QA stories; it should be built from the ACs and an entry-point command instead. A parent's end-to-end walkthrough folded into the spec's own group instead of rendering as its own section.
 
 ### 2. Find the same walkthrough on the PR — the run's GitHub PR
-- **URL:** the run's PR (`gh pr view {n} --comments`), comment starting `<!-- run-comment: try-it -->` (`try-it:{N}` per spec in a bundle), or the `## Verification Brief` comment's `### Try it` section
+- **URL:** the run's PR (`gh pr view {n} --comments`), comment starting `<!-- run-comment: try-it -->` (`try-it:{N}` per spec in a bundle), or the `## Verification Brief` comment's `### Try it` section (`<!-- run-comment: brief:{N} -->` per spec in a bundle, else `<!-- run-comment: brief -->`)
 - **Action:** Open the PR after the session has ended (or from another machine) and read the walkthrough there. An above-floor record with no parent carries it inside its Verification Brief, between `### What shipped` and `### Confirmed`. A below-floor record, or any sub-issue of a decomposed parent, carries it as its own `try-it` comment.
 - **Should feel:** Durable. The walkthrough outlives the terminal session, and it is the identical text the summary showed.
 - **Should understand:** A run with no PR (`local-merge`, or a degraded `pr-first` run) posts nothing, and its Pipeline Summary is the only place the walkthrough appears. A below-floor record never gets a comment on the issue: the floor still means no ceremony there. When a run closes its parent's last open sub-issue, the parent's end-to-end walkthrough is appended to the sub-issue's `try-it` comment. If the parent cleared the floor, the parent's own Verification Brief also carries it as `### Try it — end to end`.
-- **Red flags:** Two specs in one bundle overwriting each other's `try-it` comment (each must carry its own `try-it:{N}` marker). A `try-it` comment showing different steps from the summary. A failed PR post re-routed onto the issue.
+- **Red flags:** Two specs in one bundle overwriting each other's `try-it` comment (each must carry its own `try-it:{N}` marker), or a bundled spec's demo reading a sibling's `brief:{M}` Try it section. A `try-it` comment showing different steps from the summary. A failed PR post re-routed onto the issue.
 
 ### 3. Re-open it days later — `/claude-tweaks:demo #N`
 - **URL:** `/claude-tweaks:demo #N`
@@ -43,3 +43,4 @@ files:
 - Steps 1-3 built in this session
 - Related specs: #2821, #367 (the oversight floor whose gating this narrows to the label and ceremony)
 - Step 3 updated during build of #3358 (demo reads back only trusted-author comments)
+- Step 2 updated during build of #3333 (the brief comment's Try it section is read from the spec's own `brief:{N}` first in a bundle)

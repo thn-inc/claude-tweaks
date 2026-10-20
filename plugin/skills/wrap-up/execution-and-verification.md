@@ -45,6 +45,52 @@ push of the run; it does not mark the PR ready for merge or touch its draft stat
 transition belongs to the merge-path sub-issue, not this one (Non-Goals). A no-op under
 `local-merge` or `current-branch` mode.
 
+**Leave-open mergeability re-check (`worktree` mode, `integration-model: pr-first`, #3483).** When
+the Review Console's merge half resolved leave-open — `console.json`'s `merge.resolution` reads
+`leave-open`, or an attended console chose "Approve all, leave PR open" — the merge path
+(`_shared/pr-first-merge.md`) never runs, so the push above is the last time anything reads the PR
+before a human opens it. A sibling merge that landed during the run can have left the PR `DIRTY`,
+and GitHub then runs no `pull_request` workflow on it: the parked PR shows no test run, which reads
+as "checks still pending" (#3298). Here the run takes the conflict that `_shared/git-discipline.md`'s
+Post-push merge-state check otherwise leaves to the merge path at wrap-up's exit. Reuse the state
+that check's `pr-merge-state.js --phase wrap-up` call just printed — never a second read — unless
+it printed `unknown` (GitHub's mergeability computation, which that request started, not finished
+straight after the push) or exited 3 because cleanup item 8 (`cleanup-procedures.md`) had already
+archived `$PIPELINE_RUN_DIR` — item 8 runs before this step's commit and push. Then take one read
+of its own, as the last call of this execution step — after the phase-exit push, its Post-push
+merge-state check and the PR checklist flip, before the Verify execution section:
+`node "${CLAUDE_PLUGIN_ROOT}/bin/pr-merge-state.js" --run "{run-dir}" --phase wrap-up`, where
+`{run-dir}` is `$PIPELINE_RUN_DIR` while it still resolves, or
+`$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` once item 8 archived it
+(`_shared/timing-render.md`'s archive-path rule; the CLI exits 3 on a run dir that no longer
+exists). The worktree is still there: under leave-open, `cleanup-procedures-execution.md` Section
+C's step 4 stops with no merge commit. A late `unknown` is not read again. Route on the state in
+every mode; only git's own auto-merge runs, so there is no judgment to surface:
+
+- **`conflicting`** — run that section's Catch-up steps 1-5 against this worktree, with two
+  substitutions. Step 4 never resolves a conflict: on a conflicted merge, list the conflicting
+  paths (`git -C "{worktree-path}" diff --name-only --diff-filter=U`), then run
+  `git -C "{worktree-path}" merge --abort` as its own Bash call, and skip step 5. And the steps'
+  own log lines give way to one `mergeability:` line: a clean merge step 5 pushed logs
+  `DIRTY → merged main as {after short}`; a conflict logs `DIRTY — conflict in {files}`; a merge
+  that brought in nothing (step 5's stale-forge case) logs `DIRTY → nothing to merge (forge state
+  stale)`; a catch-up that could not run — step 1's uncommitted changes, a failed fetch or push —
+  logs `DIRTY — not caught up ({reason})`.
+- **Any other state** — log `mergeability: {mergeStateStatus}` (`CLEAN`, `BLOCKED`, `UNKNOWN`, …),
+  or the printed `state` when no `mergeStateStatus` was read (`read-failed`, `gh-absent`, `no-pr`),
+  or `exit 2`/`exit 3` when the read printed nothing (the CLI prints no `state` on those exits);
+  nothing else changes. The `SKIP` that check already wrote for a failed read stays as written.
+
+Log with `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --status AUTO
+--section "/wrap-up" --step "Leave-open mergeability re-check" --reversibility high --text
+"mergeability: {outcome}"`. Escape any `"`, `$`, backtick or `\` in `{files}` and `{reason}`
+first — git accepts them in file names and its own error text. The phase-trace report's Verdict
+line (`summary-template.md`) and `/claude-tweaks:flow`'s resume-to-merge row
+(`flow/summary-template.md`) name a `DIRTY` outcome, so a parked PR whose CI GitHub suppressed is
+visible from the summary; any other outcome stays in `decisions.md` only. A merge outcome of
+`merged`, `armed`, or the merge path's own `pending-review` skips this paragraph —
+`_shared/pr-first-merge.md` Step 2.5 already read the state on that path.
+
 ### Verify execution
 
 The verb reads `verify-expectations.json` from `$PIPELINE_RUN_DIR` — written by the Review Console at resolution time, always (see the Memory updates and Upstream feedback bullets above) — alongside repo and forge state. Run `wrap-up-engine.js verify --run-dir "$PIPELINE_RUN_DIR" --base {base}` and insert its output table **verbatim** — never summarized or paraphrased — as this section's evidence. `{base}` is the same base ref `summary-template.md`'s ladder already resolved for this run. `--run-dir` takes the run's original (pre-archive) `$PIPELINE_RUN_DIR` path even after Section B archived the run — the verb resolves the archived copy itself. An archive path under this checkout's own `.claude-tweaks/pipelines/archive/` is recognised and passes, but any archive path outside it makes `run-dir-archived` report `original path still present`.

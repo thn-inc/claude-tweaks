@@ -201,8 +201,10 @@ Population: rows `grant-lane-decision.md`'s branch routes to `needs:decision` �
 spec-shaped record `grant-check` refused for a content reason, not a scoring gap (`refine-mode.md`
 Step 3 / Step 3.5). Rows already carrying an unresolved `<!-- needs-decision: backlog-refine -->`
 comment (`grant-lane-decision.md`'s Idempotence check) render one annotation line instead of a
-fresh row and write nothing this run. Unlike the Priority/Dependency-repair annotation lines, which
-attach beneath a record's row in a higher-precedence lane, this one has no such row to attach
+fresh row and write nothing this run. A record whose latest grant decision was resolved `keep` or
+`build it myself`, with no body or label change since, renders the Resolved-refusal check's
+`not re-asked` annotation the same way (`grant-lane-decision.md`). Unlike the
+Priority/Dependency-repair annotation lines, which attach beneath a record's row in a higher-precedence lane, this one has no such row to attach
 to — a record on this branch is idempotent by construction, not newly laned elsewhere this run —
 so it renders as its own bare line directly under this `## Needs-decision` heading, above the table
 when both render this run.

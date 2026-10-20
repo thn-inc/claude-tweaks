@@ -37,19 +37,24 @@ Read `console-template.md` and render that exact shape — every section's colum
 Immediately after presenting the console tables above (and the qualifying-rows list, when non-empty), call `AskUserQuestion` with `question`: `"How do you want to handle the Review Console items?"`, `header`: `"Review Console"`, `multiSelect`: `false`. Cleanup actions' worktree/branch-finish row is what makes the merge decision real (`cleanup-procedures-execution.md` Section C) — folding it into these options is what keeps that row from becoming its own improvised stop (`_shared/auto-mode-contract.md`'s bookend rule).
 
 **`integration-model: pr-first`** — read the PR's live CI status before rendering the options
-below, the same read `_shared/pr-first-merge.md`'s Step 2.5 (Merge-verification gate) classifies
-as green/pending/red (`gh pr view {pr-number} --json state,mergeStateStatus,headRefOid,statusCheckRollup`)
-— cite that classification rather than restating it. Read `pack.pr` from `{run-dir}/wrap-up-pack.json`
-first (#1930) — its `value` is that same `gh pr view` JSON — and run the command itself only when the
-pack file is absent. An `ok: false` field is the state read having failed, which is Step 2.5's own
-first classification (`state-read-failed`: report `pending-review` and stop; a read failure is not
-"no CI"), never a green or empty rollup. This is the same rule
+below: read `pack.pr.value.ci` from `{run-dir}/wrap-up-pack.json` first (#1930) — the `bin/pr-checks.js`
+verdict (`_shared/pr-first-merge.md`'s Step 2.5 state read plus its head-run read, classified by
+`classifyRollup`; cite that classification rather than restating it) — and run
+`node "${CLAUDE_PLUGIN_ROOT}/bin/pr-checks.js" --pr {pr-number}` itself only when the pack
+file is absent (#3469; `{pr-number}` is the run's `run-state.json` `pr.number`). A `pack.pr` value with
+no `ci` key (an older pack) counts as a failed read, never green. `green`, `no-ci`, `pending` or `stale` → option 1 carries Recommended;
+`red` or `inherited-red` → option 2 does. `read-failed`, `gh-absent`, `no-pr`, or a `pack.pr` with
+`ok: false` is the state read having failed, Step 2.5's own first classification (`state-read-failed`:
+report `pending-review` and stop; a read failure is not "no CI"), never green — option 2 carries
+Recommended. This is the same rule
 `dispatch/SKILL.md`'s "Confirm before resuming" applies to its own Resume/Cancel options, so a
 run reaching both prompts in one session (dispatch's resume confirmation, then this console on
-re-entry) never sees them disagree. Four options:
-- Option 1 — `label`: `"Approve all + merge"` (append `" (Recommended)"` when CI reads green or pending), `description`: `"Apply pending items, accept auto-applied, apply skill + config updates, execute cleanup incl. merging the branch (items 1-{N}); resolve every Q#/M# to Apply and every U# to filed (if its staged draft carries a systemic causal tag) or declined (otherwise) — their own stated defaults, no further prompts except rows marked drills-individually, listed above the options when present"`
-- Option 2 — `label`: `"Approve all, leave PR open"` (append `" (Recommended)"` instead when CI reads red — apply everything except the merge, which stays blocked until CI is fixed), `description`: `"Same as above, but skip the branch-finish merge — the PR stays open for manual merge later"`
-- Option 3 — `label`: `"Override specific items"`, `description`: `"Reply with #s to skip/modify (e.g., \"skip 5, modify 7, revert 1\"); also the only path that drills Q#/M#/U# individually"`
+re-entry) never sees them disagree. Render the verdict as one line directly above the options —
+`CI: {ci.state}`, with the `pending` or `failing` check names appended when non-empty — so a green
+rollup over a head run still in progress reads `CI: pending`, not passing (#3469). Four options:
+- Option 1 — `label`: `"Approve all + merge"` (append `" (Recommended)"` when `ci.state` is green, no-ci, pending or stale), `description`: `"Apply pending items, accept auto-applied, apply skill + config updates, execute cleanup incl. merging the branch (items 1-{N}); resolve every Q#/M# to Apply and every U# to filed (if its staged draft carries a systemic causal tag) or declined (otherwise) — their own stated defaults, no further prompts except rows marked drills-individually, listed above the options when present"`
+- Option 2 — `label`: `"Approve all, leave PR open"` (append `" (Recommended)"` instead when `ci.state` is red or inherited-red, or the read failed — apply everything except the merge, which stays blocked until CI is fixed), `description`: `"Same as above, but skip the branch-finish merge — the PR stays open for manual merge later"`
+- Option 3 — `label`: `"Override specific items"`, `description`: `"Reply with #s to skip/modify (e.g., \"skip 5, modify 7, revert 1\"); ratify/reverse {#} for an SDD ruling row; also the only path that drills Q#/M#/U# individually"`
 - Option 4 — `label`: `"Stop and re-engage"`, `description`: `"Pause the pipeline; resume after manual review"`
 
 Exactly one of options 1 and 2 carries `(Recommended)`, never both, never neither. Options 3 and 4
@@ -59,7 +64,7 @@ never carry it — they are the deliberate-override and pause paths, not default
 
 If "Override specific items" is chosen, the skip/modify list is ordinary free-text chat in the next message, per docs/skill-authoring.md's Multi-item decisions convention — not the tool's `Other` field.
 
-**`sdd-ruling-*` rows (Pending review, #3401):** the Override vocabulary for one is `ratify {#}` / `reverse {#}` — `ratify` is step 1's `apply` (`review-console-appendix.md`'s `sdd-ruling-*` bullet; ledger row → `accepted`), `reverse` files the reversal record per that same bullet (ledger row → `deferred`). A bare `skip {#}` on one is refused with a one-line notice naming the two — `` #{#} is an SDD ruling — reply `ratify {#}` or `reverse {#}`; skip is not available `` — because SDD already decided, so the human confirms or files the reversal, never leaves it undecided.
+**`sdd-ruling-*` rows (Pending review, #3401):** the Override vocabulary for one is `ratify {#}` / `reverse {#}` — `ratify` is step 1's `apply` (`review-console-appendix.md`'s `sdd-ruling-*` bullet; ledger row → `accepted`), `reverse` files the reversal record per that same bullet (ledger row → `deferred`). A bare `skip {#}` on one is refused with a one-line notice naming the two — `` #{#} is an SDD ruling — reply `ratify {#}` or `reverse {#}`; skip is not available `` — because SDD already decided, so the human confirms or files the reversal, never leaves it undecided. `modify {#}` and `revert {#}` on a ruling row are refused with the same notice, that verb in place of `skip` — a ruling has no patch to modify and no commit to revert.
 
 Queue writes, Memory updates, and Upstream feedback all resolve as part of this terminal decision now: choosing Approve all resolves every `Q#`/`M#` item to `Apply` and every `U#` item to filed (its staged draft carries a `**Causal:** systemic` tag) or declined (otherwise) — their own stated defaults — with no further prompt (see Hard requirements below). Choosing Override is what still drills them individually, below.
 

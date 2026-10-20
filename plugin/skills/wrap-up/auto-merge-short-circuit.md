@@ -214,6 +214,14 @@ attach it to a
 only the wait for a live approval is skipped. Log to `decisions.md`:
 `AUTO {time} — Fast-lane auto-merge: issue #{n}, assess-agent-autonomy verdict auto-merge (see RATIONALE), pr-first-merge outcome {merged|armed|pending-review}. {Merge commit: {sha}. Reversibility: high (git revert). | Reversibility: n/a (nothing merged yet).} [lever: auto-merge-max-lines={value} ({source}); auto-merge-max-files={value} ({source}); merge-sensitive-paths={value} ({source})]`
 
+**Why no `console.json` (#3297):** writing a minimal `console.json` here was evaluated and rejected.
+The pr-first `PushNotification` is an FYI that records only that a notification was sent, not that
+anyone approved or discarded the staged proposals. Marking the console resolved would let reconcile
+archive those proposals out of the console's sight, which is the #657/#1130 loss. Instead, a run
+left with pending `staged/` items reports `console-never-rendered-staged-pending` and escalates
+once it sits past the TTL and repeated stuck passes, while the run is not yet closed
+(`pr-first-merge-post-merge.md` Step 4.2).
+
 **`integration-model: local-merge`:** run the Verdict backstop above first (anything but `{n}=1`,
 stop here and fall through). Then, before merging, clear this run's worktree
 assignment as `flow/worktree-merge.md`'s reconciliation does

@@ -507,6 +507,50 @@ test('reproduction (#3418): the wide band uses the same 0.2 threshold — a pair
   assert.strictEqual(above.unconfirmed.length, 0);
 });
 
+// #3326: the three observed independently worded same-line pairs, verbatim from their archived
+// review runs: lens 3c (2026-10-16T172900-spec-3072-3003), lens 3b (2026-10-16T162827-spec-3023),
+// lens 3f (2026-10-16T191151-record-3028). Each agent's rows for the paired path only.
+const QA_STAMP_A = [
+  { path: 'plugin/bin/qa-stamp.js', line: 132, severity: 'medium', text: 'A `report.json` whose top-level JSON value is `null` crashes `--write` with an uncaught TypeError instead of the documented `{written:false, reason:\'report-unreadable\'}` exit-0 contract' },
+  { path: 'plugin/bin/qa-stamp.js', line: 121, severity: 'medium', text: '`invalidateStaleStamp` silently swallows an `unlinkSync` failure, leaving a now-invalid same-HEAD stamp on disk with no diagnostic, defeating Deliverable 1\'s "a later failed run invalidates the stamp" guarantee' },
+];
+const QA_STAMP_B = [
+  { path: 'plugin/bin/qa-stamp.js', line: 132, severity: 'medium', text: '`--write` crashes with an uncaught TypeError instead of its documented graceful refusal when `report.json` parses to the JSON literal `null`' },
+  { path: 'plugin/bin/qa-stamp.js', line: 121, severity: 'medium', text: 'A failed `fs.unlinkSync` inside `invalidateStaleStamp` is swallowed, silently leaving a stale same-HEAD "pass" stamp in place after a failed QA run' },
+];
+const RELEASE_A = [
+  { path: 'plugin/bin/lib/residue/probes/release.js', line: 75, severity: 'low', text: 'merge-base --is-ancestor call omits --end-of-options before the resolved remoteRef, unlike the guarded rev-parse two lines above and run-integrity.js:195' },
+];
+const RELEASE_B = [
+  { path: 'plugin/bin/lib/residue/probes/release.js', line: 75, severity: 'low', text: 'remoteRef passed into git merge-base --is-ancestor without the --end-of-options guard the sibling rev-parse call uses for the same variable' },
+];
+const SUBJECT_TEST_A = [
+  { path: 'tests/bin-lib/compose-subject.test.js', line: 454, severity: 'low', text: 'Test checks implementation details (source string patterns) rather than behavior; would break on refactoring that preserves functionality (e.g., extracting stdio options to a variable)' },
+];
+const SUBJECT_TEST_B = [
+  { path: 'tests/bin-lib/compose-subject.test.js', line: 454, severity: 'medium', text: 'Implementation detail coupling: test reads source code for literal string `stdio: [\'ignore\', \'pipe\', \'pipe\']` instead of testing behavior. Refactoring to `const stdio = [\'ignore\', \'pipe\', \'pipe\']; runner: ... stdio ...` would make test fail despite identical behavior.' },
+];
+
+// One test per pair, so a regression reports every pair it breaks rather than only the first.
+for (const [label, agentA, agentB] of [
+  ['#3003 lens 3c', QA_STAMP_A, QA_STAMP_B],
+  ['#3023 lens 3b', RELEASE_A, RELEASE_B],
+  ['#3028 lens 3f', SUBJECT_TEST_A, SUBJECT_TEST_B],
+]) {
+  test(`AC1 reproduction (#3326): the independently worded same-line pair from ${label} is confirmed`, () => {
+    const { confirmed, unconfirmed } = c.categoriseReproduction(agentA, agentB);
+    assert.strictEqual(confirmed.length, agentA.length, 'every agent A finding should confirm');
+    assert.strictEqual(unconfirmed.length, 0, 'no finding should stay unconfirmed');
+  });
+}
+
+test('reproduction (#3326): the #3028 pair keeps agent A\'s severity', () => {
+  // low and medium share one severity bucket, so the pair keeps agent A's severity and raises no contest flag.
+  const { confirmed } = c.categoriseReproduction(SUBJECT_TEST_A, SUBJECT_TEST_B);
+  assert.strictEqual(confirmed[0].severity, 'low');
+  assert.strictEqual(confirmed[0].severityContested, undefined);
+});
+
 // #2907: pairing must not depend on the order agent A reported its findings.
 // Fixture from #2628's review (lens 3b): both agents reported the symlink
 // containment gap at one path:line, and agent A also reported a size-cap issue there.
@@ -807,6 +851,207 @@ test('debate: triggers only on cross-lens Path:Line overlap within ±5 lines wit
     b: [{ path: 'src/x.ts', line: 17, severity: 'low' }],
   });
   assert.strictEqual(noOverlap.length, 0);
+});
+
+// #3604: corroborateCrossLens — cross-lens corroboration of single-read findings.
+const CORROB_A = 'superseded failed run marks real PR failure inherited';
+const CORROB_B = 'superseded failed run at base marks PR failure as inherited';
+
+test('AC1.1: two different lenses reporting the same path/line and substance corroborate to confirmed', () => {
+  const r = c.corroborateCrossLens({
+    '3b': [{ path: 'x.js', line: 10, severity: 'low', text: CORROB_A }],
+    '3c': [{ path: 'x.js', line: 12, severity: 'low', text: CORROB_B }],
+  });
+  assert.strictEqual(r.corroborated.length, 1);
+  assert.deepStrictEqual(r.corroborated[0].lenses, ['3b', '3c']);
+  assert.strictEqual(r.corroborated[0].members.length, 2);
+  assert.deepStrictEqual(r.unconfirmed['3b'], []);
+  assert.deepStrictEqual(r.unconfirmed['3c'], []);
+});
+
+test('AC1.2: a finding reported by one lens only stays unconfirmed', () => {
+  const f1 = { path: 'x.js', line: 10, severity: 'low', text: CORROB_A };
+  const f2 = { path: 'y.js', line: 99, severity: 'low', text: 'unrelated defect elsewhere entirely' };
+  const r = c.corroborateCrossLens({ '3b': [f1], '3c': [f2] });
+  assert.deepStrictEqual(r.corroborated, []);
+  assert.deepStrictEqual(r.unconfirmed['3b'], [f1]);
+  assert.deepStrictEqual(r.unconfirmed['3c'], [f2]);
+});
+
+test('corroborateCrossLens: same lens never self-corroborates', () => {
+  const f1 = { path: 'x.js', line: 10, severity: 'low', text: CORROB_A };
+  const twin = { path: 'x.js', line: 11, severity: 'low', text: CORROB_A };
+  const r = c.corroborateCrossLens({ '3a': [f1, twin] });
+  assert.deepStrictEqual(r.corroborated, []);
+  assert.deepStrictEqual(r.unconfirmed['3a'], [f1, twin]);
+});
+
+test('corroborateCrossLens: a same-lens pair never bridges into a cluster row', () => {
+  // 3a@10 and 3a@13 are one lens (no edge between them); only 3a@13 matches
+  // 3b@17 (delta 4; 3a@10 to 3b@17 is delta 7, outside +/-5). 3a@10 must stay
+  // unconfirmed, and the row must still name two lenses.
+  const f10 = { path: 'x.js', line: 10, severity: 'low', text: CORROB_A };
+  const f13 = { path: 'x.js', line: 13, severity: 'low', text: CORROB_A };
+  const f17 = { path: 'x.js', line: 17, severity: 'low', text: CORROB_A };
+  const r = c.corroborateCrossLens({ '3a': [f10, f13], '3b': [f17] });
+  assert.strictEqual(r.corroborated.length, 1);
+  assert.deepStrictEqual(r.corroborated[0].lenses, ['3a', '3b']);
+  assert.deepStrictEqual(r.corroborated[0].members.map((m) => `${m.lens}@${m.line}`).sort(), ['3a@13', '3b@17']);
+  assert.deepStrictEqual(r.unconfirmed['3a'], [f10]);
+});
+
+test('corroborateCrossLens: the remainder of a promoted coincidence pair keeps its nearLocation', () => {
+  // 3b@11 carried a share-a-location nearLocation pointing at 3b@10; 3b@10 is
+  // promoted with 3c@12. The remainder stays unconfirmed and still carries the
+  // field — step3-cross-lens-corroboration.md step 4 tells the orchestrator to
+  // write the plain not-reproduced line for it, so the primitive must not drop it.
+  const near = { source: 'B', path: 'x.js', line: 10 };
+  const partner = { path: 'x.js', line: 11, severity: 'low', text: 'unrelated wording about lock files entirely', nearLocation: near };
+  const r = c.corroborateCrossLens({
+    '3b': [{ path: 'x.js', line: 10, severity: 'low', text: CORROB_A }, partner],
+    '3c': [{ path: 'x.js', line: 12, severity: 'low', text: CORROB_B }],
+  });
+  assert.strictEqual(r.corroborated.length, 1);
+  assert.strictEqual(r.corroborated[0].line, 10);
+  assert.strictEqual(r.unconfirmed['3b'].length, 1);
+  assert.strictEqual(r.unconfirmed['3b'][0].line, 11);
+  assert.deepStrictEqual(r.unconfirmed['3b'][0].nearLocation, near);
+});
+
+test('corroborateCrossLens: same-bucket distinct severities carry no severityContested', () => {
+  const at = (sevA, sevB) => c.corroborateCrossLens({
+    '3b': [{ path: 'x.js', line: 10, severity: sevA, text: CORROB_A }],
+    '3c': [{ path: 'x.js', line: 10, severity: sevB, text: CORROB_B }],
+  }).corroborated[0];
+  const highPair = at('critical', 'high');
+  assert.strictEqual(highPair.severity, 'critical');
+  assert.strictEqual(highPair.severityContested, undefined);
+  const lowPair = at('medium', 'low');
+  assert.strictEqual(lowPair.severity, 'medium');
+  assert.strictEqual(lowPair.severityContested, undefined);
+});
+
+test('corroborateCrossLens: three lenses collapse to one row with the highest severity, contested', () => {
+  const r = c.corroborateCrossLens({
+    '3a': [{ path: 'x.js', line: 10, severity: 'high', text: CORROB_A }],
+    '3b': [{ path: 'x.js', line: 11, severity: 'low', text: CORROB_B }],
+    '3c': [{ path: 'x.js', line: 12, severity: 'low', text: CORROB_A }],
+  });
+  assert.strictEqual(r.corroborated.length, 1);
+  const row = r.corroborated[0];
+  assert.strictEqual(row.severity, 'high');
+  assert.strictEqual(row.severityContested, true);
+  assert.deepStrictEqual(row.lenses, ['3a', '3b', '3c']);
+  assert.strictEqual(row.members.length, 3);
+  // Representative is the most severe member: 3a's finding.
+  assert.strictEqual(row.path, 'x.js');
+  assert.strictEqual(row.line, 10);
+});
+
+test('corroborateCrossLens: critical security finding corroborated by a low convention finding stays critical', () => {
+  const r = c.corroborateCrossLens({
+    '3a': [{ path: 'x.js', line: 10, severity: 'low', text: CORROB_A }],
+    '3b': [{ path: 'x.js', line: 13, severity: 'critical', text: CORROB_B }],
+  });
+  assert.strictEqual(r.corroborated.length, 1);
+  const row = r.corroborated[0];
+  assert.strictEqual(row.severity, 'critical');
+  assert.strictEqual(row.severityContested, true);
+  assert.strictEqual(row.line, 13);
+  assert.strictEqual(row.text, CORROB_B);
+  assert.deepStrictEqual(row.lenses, ['3a', '3b']);
+});
+
+test('corroborateCrossLens: chain cluster keeps every distinct finding routed', () => {
+  const CORROB_C = 'superseded failed base run marks the real PR failure inherited';
+  // 3c@10 and 3c@18 are 8 lines apart (outside +/-5); 3b@14 bridges both.
+  const r = c.corroborateCrossLens({
+    '3b': [{ path: 'x.js', line: 14, severity: 'low', text: CORROB_B }],
+    '3c': [
+      { path: 'x.js', line: 10, severity: 'medium', text: CORROB_A },
+      { path: 'x.js', line: 18, severity: 'high', text: CORROB_C },
+    ],
+  });
+  assert.strictEqual(r.corroborated.length, 2);
+  const at = (line) => r.corroborated.find((row) => row.line === line);
+  const memberKeys = (row) => row.members.map((m) => `${m.lens}@${m.line}`).sort();
+  const row18 = at(18);
+  assert.ok(row18, 'no row at line 18');
+  assert.strictEqual(row18.severity, 'high');
+  assert.deepStrictEqual(row18.lenses, ['3b', '3c']);
+  assert.deepStrictEqual(memberKeys(row18), ['3b@14', '3c@18']);
+  const row10 = at(10);
+  assert.ok(row10, 'no row at line 10');
+  assert.strictEqual(row10.severity, 'medium');
+  assert.deepStrictEqual(row10.lenses, ['3b', '3c']);
+  assert.deepStrictEqual(memberKeys(row10), ['3c@10']);
+  assert.deepStrictEqual(r.unconfirmed['3b'], []);
+  assert.deepStrictEqual(r.unconfirmed['3c'], []);
+});
+
+test('corroborateCrossLens: corroborated rows carry no nearLocation/source', () => {
+  const r = c.corroborateCrossLens({
+    '3b': [{
+      path: 'x.js', line: 10, severity: 'high', text: CORROB_A,
+      source: 'A', nearLocation: { source: 'B', path: 'x.js', line: 11 },
+    }],
+    '3c': [{ path: 'x.js', line: 12, severity: 'low', text: CORROB_B }],
+  });
+  assert.strictEqual(r.corroborated.length, 1);
+  const row = r.corroborated[0];
+  assert.strictEqual(row.line, 10);
+  assert.ok(!('nearLocation' in row), 'row carries nearLocation');
+  assert.ok(!('source' in row), 'row carries source');
+});
+
+test('corroborateCrossLens: matching-bucket members carry no severityContested', () => {
+  const r = c.corroborateCrossLens({
+    '3b': [{ path: 'x.js', line: 10, severity: 'low', text: CORROB_A }],
+    '3c': [{ path: 'x.js', line: 10, severity: 'low', text: CORROB_B }],
+  });
+  assert.strictEqual(r.corroborated.length, 1);
+  assert.strictEqual(r.corroborated[0].severityContested, undefined);
+});
+
+test('corroborateCrossLens: +/-5 line boundary corroborates at delta 5, not at delta 6', () => {
+  const at = (delta) => c.corroborateCrossLens({
+    '3b': [{ path: 'x.js', line: 10, severity: 'low', text: CORROB_A }],
+    '3c': [{ path: 'x.js', line: 10 + delta, severity: 'low', text: CORROB_B }],
+  });
+  assert.strictEqual(c.LINE_TOLERANCE_CORROBORATION, 5);
+  assert.strictEqual(at(5).corroborated.length, 1);
+  assert.strictEqual(at(6).corroborated.length, 0);
+});
+
+test('corroborateCrossLens: different substance at the same location stays unconfirmed', () => {
+  const r = c.corroborateCrossLens({
+    '3b': [{ path: 'x.js', line: 10, severity: 'low', text: 'sql injection in query builder' }],
+    '3c': [{ path: 'x.js', line: 10, severity: 'low', text: 'missing await on file close' }],
+  });
+  assert.deepStrictEqual(r.corroborated, []);
+  assert.strictEqual(r.unconfirmed['3b'].length, 1);
+  assert.strictEqual(r.unconfirmed['3c'].length, 1);
+});
+
+test('corroborateCrossLens: a finding with no text never corroborates', () => {
+  const r = c.corroborateCrossLens({
+    '3b': [{ path: 'x.js', line: 10, severity: 'low', text: CORROB_A }],
+    '3c': [{ path: 'x.js', line: 10, severity: 'low' }],
+  });
+  assert.deepStrictEqual(r.corroborated, []);
+  assert.strictEqual(r.unconfirmed['3b'].length, 1);
+  assert.strictEqual(r.unconfirmed['3c'].length, 1);
+});
+
+test('corroborateCrossLens: a combined Path:Line transcription is normalized', () => {
+  const r = c.corroborateCrossLens({
+    '3b': [{ 'Path:Line': 'x.js:10', Severity: 'low', Finding: CORROB_A }],
+    '3c': [{ 'Path:Line': 'x.js:12', Severity: 'low', Finding: CORROB_B }],
+  });
+  assert.strictEqual(r.corroborated.length, 1);
+  assert.deepStrictEqual(r.corroborated[0].lenses, ['3b', '3c']);
+  assert.strictEqual(r.corroborated[0].path, 'x.js');
+  assert.strictEqual(r.corroborated[0].line, 10);
 });
 
 test('debate: runs exactly 1 round with 2 agents', () => {

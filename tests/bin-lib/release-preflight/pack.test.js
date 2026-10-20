@@ -11,13 +11,18 @@ const LOG = (subjects) => subjects.map((s, i) => `${String(i).repeat(40)}\x1f${s
 function fakeDeps(o = {}) {
   const workflowFiles = Object.fromEntries(Object.entries(o.workflows || {}).map(([name, text]) => [path.join(ROOT, '.github/workflows', name), text]));
   const files = { [path.join(ROOT, '.claude-tweaks/policy.yml')]: o.policy === undefined ? 'integration-model: pr-first\n' : o.policy, ...workflowFiles, ...(o.files || {}) };
-  const calls = { git: [], gh: [] };
+  const calls = { git: [], gh: [], lsTree: [] };
   return {
     calls,
     deps: {
       git: (args) => {
         const key = args.join(' ');
         calls.git.push(key);
+        if (args[0] === 'ls-tree') {
+          calls.lsTree.push(args);
+          if (o.lsTree === undefined) throw new Error(`unexpected git: ${key}`);
+          return o.lsTree;
+        }
         if (key === 'rev-parse --show-toplevel') return `${ROOT}\n`;
         if (key === 'symbolic-ref --short refs/remotes/origin/HEAD') {
           if (o.noSymbolicRef) throw new Error('fatal: ref refs/remotes/origin/HEAD is not a symbolic ref');
@@ -237,6 +242,18 @@ test('ruling 12: a release-please-config.json at tipRef routes the manifest read
   };
   const pack = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ tags: ['v1.2.0'], show }).deps });
   assert.deepStrictEqual(pack.proposedVersion.value, { version: '3.5.0', part: 'minor', base: '3.4.0', baseSource: 'manifest', preMajor: false, tipRef: 'origin/main' });
+});
+
+test('#3470: the tip root listing is read with -z, so a ruby *.gemspec glob target resolves from NUL-delimited names', async () => {
+  const show = {
+    'origin/main:release-please-config.json': '{ "packages": { ".": { "release-type": "ruby" } } }',
+    'origin/main:Foo.gemspec': 'Gem::Specification.new do |spec|\n  spec.version = "1.5.0"\nend\n',
+  };
+  const { deps, calls } = fakeDeps({ tags: ['v1.2.0'], show, lsTree: 'Foo.gemspec\0README.md\0' });
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
+  assert.deepStrictEqual(calls.lsTree[0], ['ls-tree', '--name-only', '-z', '--end-of-options', 'origin/main']);
+  // The gemspec's 1.5.0 outranks tag 1.2.0 only if the glob resolved to Foo.gemspec.
+  assert.deepStrictEqual(pack.proposedVersion.value, { version: '1.6.0', part: 'minor', base: '1.5.0', baseSource: 'manifest', preMajor: false, tipRef: 'origin/main' });
 });
 
 test('#2327 AC 2: a 0.x base with a breaking commit reports part: minor, preMajor: true (bump-minor-pre-major defaults true)', async () => {

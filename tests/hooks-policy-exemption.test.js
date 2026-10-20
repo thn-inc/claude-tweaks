@@ -293,6 +293,32 @@ test('a staged Add, Modify, and Delete of policy.yml each still qualify (the thr
   assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), true, 'Delete');
 });
 
+test('AC1.1: the staged-file read uses -z', () => {
+  // isPolicyOnlyCommit returns only a boolean, so the unquoted-path proof for
+  // this read is parseNameStatusZ's real-repo test over the same argv; here we
+  // pin that the argv actually carries -z.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'), 'utf8');
+  const line = src.split('\n').find((l) => l.includes("'--cached'") && l.includes("'--name-status'"));
+  assert.ok(line, "pre-tool-use.js has a line naming '--cached' and '--name-status'");
+  assert.ok(line.includes("'-z'"), `the staged-file read must pass -z: ${line.trim()}`);
+});
+
+test('the exemption still fires when HEAD tracks a non-ASCII path (docs/café.md) and only policy.yml is staged', () => {
+  const repo = gitRepoWithCommit();
+  fs.mkdirSync(path.join(repo, 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'docs', 'café.md'), 'one\n');
+  withPolicy(repo, 'a: b\n');
+  execFileSync('git', ['-C', repo, 'add', 'docs/café.md', '.claude-tweaks/policy.yml']);
+  execFileSync('git', ['-C', repo, 'commit', '-m', 'baseline', '-q']);
+  withPolicy(repo, 'a: c\n');
+  execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml']);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), true);
+  // A second staged entry — the non-ASCII path — still defeats the exemption.
+  fs.writeFileSync(path.join(repo, 'docs', 'café.md'), 'two\n');
+  execFileSync('git', ['-C', repo, 'add', 'docs/café.md']);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), false);
+});
+
 // ─── allowlist regex unit cases (pure — no spawn) ──────────────────────────
 
 test('POLICY_COMMIT_ALLOWLIST matches exactly the admitted shapes', () => {

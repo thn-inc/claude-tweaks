@@ -479,6 +479,23 @@ test('a staged patch that fails git apply --check resolves to stale with its Inv
   assert.match(item.reason, /re-derive from Invariant: the guard runs before the read/);
 });
 
+test('a staged pair whose stacked verdict is ok resolves to apply though a per-patch check would fail the second (#3290 I1)', () => {
+  const staged = { 'review-1.patch': PATCH, 'review-2.patch': PATCH };
+  const solo = (p) => (path.basename(p) === 'review-2.patch' ? { ok: false, error: 'patch failed: src/a.js:1' } : { ok: true });
+  const alone = resolveAll({ runDir: fixture({ staged, headers: [7] }), policy: 'console-auto', deps: deps({ gitApplyCheck: solo }) });
+  assert.strictEqual(alone.items.find((i) => i.id === 'review-2.patch').resolution, 'stale');
+  const seen = [];
+  const checkPatchStack = (paths) => {
+    seen.push(paths.map((p) => path.basename(p)));
+    return Object.fromEntries(paths.map((p) => [path.basename(p), { ok: true }]));
+  };
+  const stacked = resolveAll({ runDir: fixture({ staged, headers: [7] }), policy: 'console-auto', deps: deps({ gitApplyCheck: solo, checkPatchStack }) });
+  assert.deepStrictEqual(seen, [['review-1.patch', 'review-2.patch']]);
+  for (const id of ['review-1.patch', 'review-2.patch']) {
+    assert.strictEqual(stacked.items.find((i) => i.id === id).resolution, 'apply');
+  }
+});
+
 test('engine-state.json staged findings classify into their curation sections; applied ones render as applied (#1932)', () => {
   const engineState = { results: { skills: { result: 'findings', findings: [{ target: 'auth', action: 'staged', stagePath: 'staged/wrap-up-skill-1.md' }] }, references: { result: 'findings', findings: [{ target: 'docs/a.md', action: 'applied', commit: 'abc1234' }] } } };
   const r = resolveAll({ runDir: fixture({ staged: { 'wrap-up-skill-1.md': 'skill' }, engineState, headers: [7] }), policy: 'console-auto', deps: deps() });

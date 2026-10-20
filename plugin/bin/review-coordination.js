@@ -5,9 +5,11 @@
 // `node -e` invocations the harness worktree guard refuses (refs #887).
 //   node bin/review-coordination.js categorise-reproduction <agentA.json> <agentB.json>
 //   node bin/review-coordination.js detect-overlap <findings-by-lens.json>
+//   node bin/review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>
 //   node bin/review-coordination.js resolve-debate <verdictA> <verdictB>
 //   node bin/review-coordination.js resolve-refutation <verdict>
-// categorise-reproduction/detect-overlap print JSON; resolve-debate/resolve-refutation print
+// categorise-reproduction/detect-overlap/corroborate-cross-lens print JSON
+// (corroborate-cross-lens: #3604); resolve-debate/resolve-refutation print
 // the bare resolution string. Exit 0 ok; 2 malformed invocation or unreadable/invalid input.
 'use strict';
 
@@ -15,6 +17,7 @@ const fs = require('node:fs');
 const {
   categoriseReproduction,
   detectCrossLensOverlap,
+  corroborateCrossLens,
   resolveDebate,
   resolveRefutation,
 } = require('./lib/coordination');
@@ -22,6 +25,7 @@ const {
 const USAGE =
   'usage: review-coordination.js categorise-reproduction <agentA.json> <agentB.json>\n' +
   '       review-coordination.js detect-overlap <findings-by-lens.json>\n' +
+  '       review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>\n' +
   '       review-coordination.js resolve-debate <verdictA> <verdictB>\n' +
   '       review-coordination.js resolve-refutation <verdict>\n';
 
@@ -80,6 +84,24 @@ function run(argv, deps = realDeps) {
       return 2;
     }
     deps.stdout(JSON.stringify(detectCrossLensOverlap(input.value)) + '\n');
+    return 0;
+  }
+  if (command === 'corroborate-cross-lens') {
+    if (rest.length !== 1) {
+      deps.stderr('review-coordination.js: corroborate-cross-lens takes exactly 1 JSON file path\n' + USAGE);
+      return 2;
+    }
+    const input = readJson(rest[0], deps.stderr);
+    if (input.failed) return 2;
+    if (!input.value || typeof input.value !== 'object' || Array.isArray(input.value)) {
+      deps.stderr('review-coordination.js: input must be a JSON object mapping lens name to findings array\n');
+      return 2;
+    }
+    if (!Object.values(input.value).every(Array.isArray)) {
+      deps.stderr('review-coordination.js: every lens value must be a findings array\n');
+      return 2;
+    }
+    deps.stdout(JSON.stringify(corroborateCrossLens(input.value)) + '\n');
     return 0;
   }
   if (command === 'resolve-debate') {

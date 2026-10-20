@@ -19,6 +19,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { resolveAll, renderStoredTable } = require('./lib/console/resolve');
 const { resolveTarget } = require('./lib/stage-item/write');
+const { stackVerdicts } = require('./lib/staged-patch/stack-check');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { resolvePolicyConfig } = require('./lib/policy-schema');
 const { resolveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
@@ -101,6 +102,21 @@ function gitApplyCheck(execFile, cwd) {
     try { execFile('git', ['apply', '--check', patchPath], { cwd }); return { ok: true }; } catch (err) {
       const msg = err && (err.stderr || err.message) ? String(err.stderr || err.message).trim() : 'git apply --check failed';
       return { ok: false, error: msg };
+    }
+  };
+}
+
+// One stacked verdict per staged .patch (#3290): the paths arrive in apply order and a re-derived
+// patch is ok at its position on top of the earlier ones. A walk that cannot run fails closed —
+// every patch reads as not applying, the same route a failing per-patch check takes.
+function checkPatchStack(worktree) {
+  return (paths) => {
+    if (paths.length === 0) return {};
+    try {
+      return stackVerdicts({ worktree, patches: paths });
+    } catch (err) {
+      const error = `stacked check could not run: ${err && err.message ? err.message : err}`;
+      return Object.fromEntries(paths.map((p) => [path.basename(p), { ok: false, error }]));
     }
   };
 }
@@ -188,6 +204,7 @@ async function run(argv, deps = {}) {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
     gitApplyCheck: gitApplyCheck(execFile, cwd()),
+    checkPatchStack: checkPatchStack(cwd()),
     readGrants: ghReadGrants(execFile, cwd()),
     checkPrState: ghCheckPrState(execFile, cwd()),
     vetoWindowHours,

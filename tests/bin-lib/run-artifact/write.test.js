@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { isArtifactName, writeArtifact, deleteArtifact } = require('../../../plugin/bin/lib/run-artifact/write');
+const { ARTIFACT_NAMES, isArtifactName, writeArtifact, deleteArtifact } = require('../../../plugin/bin/lib/run-artifact/write');
 
 const NAME = 'sdd-dispatch-sample.txt';
 
@@ -59,4 +59,20 @@ test('deleteArtifact removes and is idempotent', (t) => {
 test('deleteArtifact refuses a non-allowlisted name', (t) => {
   const runDir = tmpRunDir(t);
   assert.throws(() => deleteArtifact({ runDir, name: 'config.yml' }));
+});
+
+test('#3496: sdd-final-review.md is allowlisted; traversal forms of it are not', (t) => {
+  const runDir = tmpRunDir(t);
+  const name = 'sdd-final-review.md';
+  assert.equal(isArtifactName(name), true);
+  assert.equal(isArtifactName('../sdd-final-review.md'), false);
+  assert.equal(isArtifactName('staged/sdd-final-review.md'), false);
+  const content = 'line `one` $HOME "q" \'s\'\n— two\n';
+  const r = writeArtifact({ runDir, name, content });
+  assert.equal(r.file, path.join(runDir, name));
+  assert.equal(fs.readFileSync(r.file, 'utf8'), content);
+});
+
+test('ARTIFACT_NAMES is exactly the allowlist (#3496)', () => {
+  assert.deepEqual([...ARTIFACT_NAMES], ['sdd-dispatch-sample.txt', 'sdd-final-review.md']);
 });

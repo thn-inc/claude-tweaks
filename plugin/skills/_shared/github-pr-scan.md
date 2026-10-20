@@ -120,9 +120,24 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
      });
      fs.writeFileSync('$PR_SCAN_UNARMED_CANDIDATES', JSON.stringify(candidates));
    "
+
+   PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" node -e "
+     // The rollup lists only registered checks; pr-checks.js adds the head-sha runs (Step 2.5, #3469).
+     const fs = require('fs');
+     const { execFileSync } = require('child_process');
+     const PR_CHECKS = require('path').join(process.env.PLUGIN_ROOT, 'bin', 'pr-checks.js');
+     const kept = require('$PR_SCAN_UNARMED_CANDIDATES').filter((pr) => {
+       let state;
+       try { state = JSON.parse(execFileSync('node', [PR_CHECKS, '--pr', String(pr.number)], { encoding: 'utf8' })).state; } catch (e) { state = 'read-failed'; }
+       if (state === 'green' || state === 'no-ci') return true;
+       console.error('[pr-unarmed] PR #' + pr.number + ' not offered: CI ' + state);
+       return false;
+     });
+     fs.writeFileSync('$PR_SCAN_UNARMED_CANDIDATES', JSON.stringify(kept));
+   "
    ```
 
-   The age/gate/marker filter above narrows to a small candidate set before any further per-PR calls — unresolved threads (the same GraphQL query as `current-pr` item 2, run once per **candidate**, never against the full open-PR list) gate out any candidate that still has one, since a PR with an open thread is not actually ready regardless of CI or age. For each surviving candidate carrying the `claude-tweaks-run` marker (not the housekeeping one), fetch every linked record's labels — `closingIssuesReferences` names the numbers, not their labels. Re-resolve this fence's session-scoped paths (`_shared/session-tmp-root.md`; a fresh bash invocation does not inherit the prior fence's shell variable):
+   Candidates also need a `green` or `no-ci` `pr-checks.js --pr` verdict; a partial run reads green in the rollup alone. The age/gate/marker filter above narrows to a small candidate set before any further per-PR calls — unresolved threads (the same GraphQL query as `current-pr` item 2, run once per **candidate**, never against the full open-PR list) gate out any candidate that still has one, since a PR with an open thread is not actually ready regardless of CI or age. For each surviving candidate carrying the `claude-tweaks-run` marker (not the housekeeping one), fetch every linked record's labels — `closingIssuesReferences` names the numbers, not their labels. Re-resolve this fence's session-scoped paths (`_shared/session-tmp-root.md`; a fresh bash invocation does not inherit the prior fence's shell variable):
 
    ```bash
    eval "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_SCAN_UNARMED_CANDIDATES=pr-scan-unarmed-candidates.json PR_SCAN_UNARMED_LINKS=pr-scan-unarmed-links.jsonl)"

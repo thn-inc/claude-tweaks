@@ -129,6 +129,15 @@ test('gitLastChangedMap picks each path\'s MOST RECENT commit, not its first, wh
   assert.strictEqual(map['src/a.ts'], latestChangedAt);
 });
 
+test('AC1.1: gitLastChangedMap resolves a non-ASCII tracked path', () => {
+  const root = makeTmpGitRoot();
+  commitFile(root, 'src/café.ts', 'export const c = 1;\n');
+  const changedAt = commitTimestampMs(root, 'src/café.ts');
+
+  const map = gitLastChangedMap(root, ['src/café.ts']);
+  assert.strictEqual(map['src/café.ts'], changedAt);
+});
+
 test('checkTrackedFreshness correctly classifies multiple tracked files with independent staleness from one batched call', () => {
   const root = makeTmpGitRoot();
   // Backdated commits (minutes apart, not relying on real-time delay between

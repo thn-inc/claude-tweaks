@@ -140,6 +140,13 @@ const KNOWN_FLAGS = {
   'record-pr': ['--run'],
   'manifest-init': ['--run', '--specs'],
   'spec-status': ['--run', '--spec', '--status', '--phase', '--now'],
+  // `--remote-ref-only` (#3088) has been inert since #3490, because teardown-run never archives.
+  // Remove it in two releases. (1) Drop it from the three skill-prose call sites
+  // (`wrap-up/cleanup-procedures-execution.md` Section C steps 5 and 5.5, `flow/multispec-review-console.md`
+  // Shared teardown step 7) and from their pins in `tests/scratch-worktree-remote-branch-delete.test.js`,
+  // and every other prose mention or pin of it (`git grep -n -F -- --remote-ref-only`), in any release after the one that ships #3490. (2) Only in a release after (1) has shipped, remove
+  // it from `KNOWN_FLAGS` and `USAGE` here. Until then a session can still hold pre-(1) prose in context
+  // while the running build's hooks.js is newer, and the unknown-flag guard would refuse that call.
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
   'resolve-console': ['--run', '--approve', '--decline'],
 };
@@ -1064,8 +1071,11 @@ async function main(argv) {
     // no sanctioned CLI path. --run mirrors record-pr/spec-status's shape
     // (unambiguous-only resolution, explicit --run always wins); --ledger
     // overrides resolveLedgerPath's own run-dir-first/docs-plans-fallback
-    // resolution for the rare case (2+ *-ledger.md candidates) it can't
-    // disambiguate on its own.
+    // resolution for the rare case (2+ owned *-ledger.md candidates, or
+    // ownership not computable) it can't disambiguate on its own. The
+    // fallback only considers the docs/plans ledger this branch owns
+    // (merge-base diff or untracked, #3566) — an inherited one is never
+    // deleted from here.
     const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
     const {
       runDir, invalidRunArg, rest, worktreeLocalFallback, candidates,
@@ -1086,6 +1096,8 @@ async function main(argv) {
         process.stdout.write(`claude-tweaks: delete-ledger: ${resolved.candidates.length} candidate ledgers found, cannot pick one — pass --ledger <path> explicitly:\n${resolved.candidates.map((c) => `  ${c}`).join('\n')}\nLedger not deleted.\n`);
       } else if (!resolved.ok && resolved.reason === 'rejected') {
         process.stdout.write(`claude-tweaks: delete-ledger: --ledger ${resolved.candidates[0]} rejected (${resolved.detail}) — ledger not deleted\n`);
+      } else if (!resolved.ok && resolved.reason === 'unattributable') {
+        process.stdout.write(`claude-tweaks: delete-ledger: cannot attribute docs/plans ledgers to ${path.basename(runDir)} (${resolved.detail}) — pass --ledger <path> explicitly; ledger not deleted\n`);
       } else if (!resolved.ok) {
         process.stdout.write(`claude-tweaks: delete-ledger: no ledger found for ${path.basename(runDir)} — not found\n`);
       } else {
@@ -1111,8 +1123,7 @@ async function main(argv) {
     } else if (candidates) {
       process.stdout.write(`${renderCandidateRefusal('teardown-run', candidates)}\nRun not torn down.\n`);
     } else if (runDir) {
-      const remoteRefOnly = argv.includes('--remote-ref-only');
-      const result = teardownRun(runDir, { mode, sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd(), remoteRefOnly });
+      const result = teardownRun(runDir, { mode, sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() });
       process.stdout.write(`claude-tweaks: teardown-run ${path.basename(runDir)}\n${result.lines.map((l) => `  ${l}`).join('\n')}\n`);
     } else {
       process.stdout.write('claude-tweaks: no pipeline run dir found — run not torn down\n');
@@ -1432,6 +1443,15 @@ async function main(argv) {
       cwd: process.cwd(),
       mcpReachable: args.includes('--mcp-reachable'),
       checks: checksList.length ? checksList : undefined,
+      // An explicit --checks subset is the caller naming exactly which checks
+      // must run — don't let the SessionStart hot-path time ceiling (#820 D4)
+      // skip them; an unscoped pass keeps the default ceiling (#3026).
+      budgetMs: checksList.length ? Infinity : undefined,
+      // An explicit subset cannot claim the whole fast pass ran, so it must
+      // not stamp the shared freshness key — otherwise the next SessionStart
+      // inside the TTL skips its red-tip/console checks (the #644 hazard,
+      // same opt-out reconcile-summary already uses; #3026 ledger follow-up).
+      skipCacheStamp: checksList.length ? true : undefined,
     };
     const jsonOut = args.includes('--json');
     let out;

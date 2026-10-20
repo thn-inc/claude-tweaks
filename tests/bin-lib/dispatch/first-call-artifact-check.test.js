@@ -365,6 +365,57 @@ test('AC6.2: every reason other than missing-config, and ok: true, carries no re
   assert.deepEqual(pass, { ok: true });
 });
 
+// ---- #3350: no integration-model pin -> the PR-bookend check degrades loudly, never silently ----
+
+function pinRun(config) {
+  const runDir = mkRunDir();
+  writeRunDir(runDir, { runState: {}, config });
+  return runDir;
+}
+
+function checkWithWarn(runDir, extra = {}) {
+  const lines = [];
+  const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, {
+    ghApi: fakeGhApi({ 2806: liveClaimContent(RUN_ID) }),
+    now: NOW,
+    warn: (line) => lines.push(line),
+    ...extra,
+  });
+  return { result, lines };
+}
+
+test('AC2.1: with an integration-model: pr-first pin, the PR-bookend check runs -- no recorded PR fails pr-missing, no degrade line', () => {
+  const { result, lines } = checkWithWarn(pinRun('integration-model: pr-first\n'));
+  assert.equal(result.reason, 'pr-missing');
+  assert.equal(lines.length, 0);
+});
+
+test('AC3.1: with no integration-model pin, a degrade line is emitted instead of passing silently', () => {
+  const runDir = pinRun('autonomy: trusted\n');
+  writeHeader(runDir, 'work', 2806);
+  const { result, lines } = checkWithWarn(runDir);
+  assert.deepEqual(result, { ok: true });
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^first-call-artifact-check: degraded — .*carries no valid integration-model pin/);
+});
+
+test('AC3.1: an invalid integration-model pin emits the same degrade line', () => {
+  const runDir = pinRun('integration-model: bogus\n');
+  writeHeader(runDir, 'work', 2806);
+  const { result, lines } = checkWithWarn(runDir);
+  assert.deepEqual(result, { ok: true });
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^first-call-artifact-check: degraded — .*carries no valid integration-model pin/);
+});
+
+test('a local-merge pin emits no degrade line', () => {
+  const runDir = pinRun('integration-model: local-merge\n');
+  writeHeader(runDir, 'work', 2806);
+  const { result, lines } = checkWithWarn(runDir);
+  assert.deepEqual(result, { ok: true });
+  assert.equal(lines.length, 0);
+});
+
 // #3226: resolveFirstCallGate -- the two-call gate's ordering as code (status line, then
 // OUTCOME, then the artifact check). A repairable artifact never overrides the status line.
 const { resolveFirstCallGate } = require('../../../plugin/bin/lib/dispatch/first-call-artifact-check');

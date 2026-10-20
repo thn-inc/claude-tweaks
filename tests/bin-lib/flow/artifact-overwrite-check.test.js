@@ -16,14 +16,18 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'flow', 'artifact-overwrite-check.js');
+const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'check-artifact-overwrite.js');
 const {
   checkArtifactOverwrite,
   extractRefs,
   parseHunks,
   isListReflow,
+  parseNameStatusLog,
+  normalizeStepMarkup,
+  isStepMarkupReformat,
   ArtifactOverwriteCheckError,
 } = require(MOD);
 
@@ -115,6 +119,125 @@ test('parseHunks + isListReflow: a list shrinking (fewer entries added than remo
   ].join('\n');
   const hunks = parseHunks(diff);
   assert.strictEqual(isListReflow(hunks[0]), false);
+});
+
+test('parseNameStatusLog: parses `git log -z --name-status` NUL output, non-ASCII paths included', () => {
+  const sha1 = 'a'.repeat(40);
+  const sha2 = 'b'.repeat(40);
+  const out = `${sha1}\0\nA\0docs/journeys/café.md\0${sha2}\0\nM\0docs/journeys/café.md\0A\0stories/x.yaml\0`;
+  assert.deepStrictEqual(parseNameStatusLog(out), [
+    { commit: sha1, entries: [{ status: 'A', path: 'docs/journeys/café.md' }] },
+    { commit: sha2, entries: [{ status: 'M', path: 'docs/journeys/café.md' }, { status: 'A', path: 'stories/x.yaml' }] },
+  ]);
+});
+
+test('parseNameStatusLog: skips non-A/M statuses along with their path(s), two paths for R/C', () => {
+  const sha = 'c'.repeat(40);
+  const out = `${sha}\0\nR100\0old.md\0new.md\0C75\0src.md\0copy.md\0D\0gone.md\0M\0kept.md\0`;
+  assert.deepStrictEqual(parseNameStatusLog(out), [
+    { commit: sha, entries: [{ status: 'M', path: 'kept.md' }] },
+  ]);
+});
+
+test('parseNameStatusLog: empty output yields no commits', () => {
+  assert.deepStrictEqual(parseNameStatusLog(''), []);
+});
+
+test('a journey with a non-ASCII name is walked through real -z git output', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/café.md', '# Demo\n\n## Step 1\nFirst content.\n\n## Step 2\nSecond content.\n');
+  commit(fx, 'Add café journey (refs #10)');
+  write(fx.dir, 'docs/journeys/café.md', '# Demo\n\n## Step 1\nReplaced without attribution.\n\n## Step 2\nSecond content.\n');
+  commit(fx, 'Clobber step 1 (refs #12)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites[0].path, 'docs/journeys/café.md');
+});
+
+test('normalizeStepMarkup: list-step and header-step forms normalize equal', () => {
+  assert.strictEqual(
+    normalizeStepMarkup('1. **Read the banner** — A session starts.'),
+    normalizeStepMarkup('### 1. Read the banner — A session starts.'),
+  );
+  assert.strictEqual(
+    normalizeStepMarkup('1. **Read the banner** — A session starts.'),
+    normalizeStepMarkup('### 1. **Read the banner** — A session starts.'),
+  );
+  assert.strictEqual(
+    normalizeStepMarkup('   - **Action:** Do it.'),
+    normalizeStepMarkup('- **Action:** Do it.'),
+  );
+});
+
+test('normalizeStepMarkup: a non-numbered heading is left as a heading', () => {
+  assert.notStrictEqual(normalizeStepMarkup('### Origin'), normalizeStepMarkup('## Origin'));
+});
+
+test('parseHunks + isStepMarkupReformat: list steps converted to ### headers with flush sub-bullets is a reformat', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -3,9 +3,9 @@',
+    '-1. **Read the banner** — A session starts.',
+    '-   - **Action:** Do it.',
+    '-   - **Should feel:** Calm.',
+    '-   - **Red flags:** None.',
+    '-',
+    '-2. **Read the footer** — A session ends.',
+    '-   - **Action:** Stop.',
+    '-   - **Should feel:** Done.',
+    '-   - **Red flags:** Some.',
+    '+### 1. Read the banner — A session starts.',
+    '+- **Action:** Do it.',
+    '+- **Should feel:** Calm.',
+    '+- **Red flags:** None.',
+    '+',
+    '+### 2. Read the footer — A session ends.',
+    '+- **Action:** Stop.',
+    '+- **Should feel:** Done.',
+    '+- **Red flags:** Some.',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(hunks.length, 1);
+  assert.strictEqual(isStepMarkupReformat(hunks[0]), true);
+});
+
+test('isStepMarkupReformat: a conversion that also changes one word in a step body is not a reformat', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -3 +3 @@',
+    '-1. **Read the banner** — A session starts.',
+    '+### 1. Read the banner — A session ends.',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isStepMarkupReformat(hunks[0]), false);
+});
+
+test('isStepMarkupReformat: a deletion-only hunk is not a reformat', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -3 +2,0 @@',
+    '-1. **Read the banner** — A session starts.',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isStepMarkupReformat(hunks[0]), false);
+});
+
+test('parseHunks + isStepMarkupReformat: a conversion that also deletes a `---` frontmatter delimiter is not a reformat', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -1,2 +1 @@',
+    '----',
+    '-1. **Read the banner** — A session starts.',
+    '+### 1. Read the banner — A session starts.',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.deepStrictEqual(hunks[0].deletedLines.map((d) => d.content), ['---', '1. **Read the banner** — A session starts.']);
+  assert.strictEqual(isStepMarkupReformat(hunks[0]), false);
 });
 
 // --- Synthetic-repo tests: the real algorithm against real git history ---
@@ -266,4 +389,93 @@ test('the real #1988-#1997 journey history in this repo passes with no manual ru
     cwd: repoRoot,
   });
   assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+});
+
+// Commit A: two list-form journey steps (the pre-#3341 shape of
+// docs/journeys/*.md). Shared by the step-markup fixtures below.
+const LIST_FORM_STEPS = [
+  '# Demo',
+  '',
+  '1. **Read the banner** — A session starts.',
+  '   - **Action:** Do it.',
+  '   - **Should feel:** Calm.',
+  '   - **Red flags:** None.',
+  '',
+  '2. **Read the footer** — A session ends.',
+  '   - **Action:** Stop.',
+  '   - **Should feel:** Done.',
+  '   - **Red flags:** Some.',
+  '',
+].join('\n');
+
+test('cross-spec step-markup conversion with zero content change passes clean', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/demo.md', LIST_FORM_STEPS);
+  commit(fx, 'Add demo journey steps (refs #10)');
+  write(fx.dir, 'docs/journeys/demo.md', [
+    '# Demo',
+    '',
+    '### 1. Read the banner — A session starts.',
+    '- **Action:** Do it.',
+    '- **Should feel:** Calm.',
+    '- **Red flags:** None.',
+    '',
+    '### 2. Read the footer — A session ends.',
+    '- **Action:** Stop.',
+    '- **Should feel:** Done.',
+    '- **Red flags:** Some.',
+    '',
+  ].join('\n'));
+  commit(fx, 'Convert demo journey steps to canonical headers (refs #12)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+});
+
+test('cross-spec step-markup conversion that also drops a step still HARD-GATEs (exit 1 naming the commit)', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/demo.md', LIST_FORM_STEPS);
+  commit(fx, 'Add demo journey steps (refs #10)');
+  write(fx.dir, 'docs/journeys/demo.md', [
+    '# Demo',
+    '',
+    '### 1. Read the banner — A session starts.',
+    '- **Action:** Do it.',
+    '- **Should feel:** Calm.',
+    '- **Red flags:** None.',
+    '',
+  ].join('\n'));
+  const commitB = commit(fx, 'Convert step 1 and drop step 2 (refs #12)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  assert.strictEqual(result.overwrites[0].commit, commitB);
+
+  const spawned = spawnSync('node', [CLI, '--base', fx.base, '--path', 'docs/journeys/'], { cwd: fx.dir, encoding: 'utf8' });
+  assert.strictEqual(spawned.status, 1, spawned.stderr);
+  assert.strictEqual(JSON.parse(spawned.stdout).overwrites[0].commit, commitB);
+});
+
+test('the real #2702/#2727/#2776 journey reformat (d81250829..80e3dad2d) passes with no manual ruling', () => {
+  const repoRoot = path.join(__dirname, '..', '..', '..');
+  let head;
+  try {
+    head = execFileSync('git', ['-C', repoRoot, 'cat-file', '-t', '80e3dad2d'], { encoding: 'utf8' }).trim();
+  } catch {
+    head = null;
+  }
+  if (head !== 'commit') {
+    // Same environment-precondition skip as the AC1 test above: the commit
+    // is not reachable in this checkout, so there is nothing to replay.
+    return;
+  }
+  const result = checkArtifactOverwrite({
+    base: 'd81250829',
+    head: '80e3dad2d',
+    paths: ['docs/journeys/', 'stories/'],
+    cwd: repoRoot,
+  });
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+  assert.deepStrictEqual(result.overwrites, []);
 });

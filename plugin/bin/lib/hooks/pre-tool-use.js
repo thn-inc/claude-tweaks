@@ -32,10 +32,11 @@ const policy = require('../policy');
 const wtDetect = require('./worktree-detect');
 const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName } = require('./worktree-reap');
 const { runGit, FAILURE } = require('./git-exec');
+const { parseNameStatusZ } = require('../git-z');
 const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
 const { hasClaimLogFor } = require('../log-decision/claim-log');
-const { resolveLeaf } = require('../path-guard');
+const { resolveLeaf, canonicalRealpath, lstatType } = require('../path-guard');
 
 function pluginRoot() {
   return process.env.CLAUDE_PLUGIN_ROOT || '${CLAUDE_PLUGIN_ROOT}';
@@ -175,7 +176,7 @@ function isPipelineBookkeeping(repoRoot, targetPath) {
 
 // Resolves a write TARGET the way an already-existing file or symlink chain
 // actually behaves: if something exists at this path, follow it all the way
-// (fs.realpathSync follows every symlink, including the final component) —
+// (realpath follows every symlink, including the final component) —
 // an Edit/Write through a symlink acts on whatever it ultimately points at.
 // If nothing exists there yet (Write creating a brand-new file), there is no
 // leaf to follow: resolve only the parent directory and keep the literal
@@ -184,21 +185,18 @@ function isPipelineBookkeeping(repoRoot, targetPath) {
 // swap masquerade as a fresh Write and slip through the parent-only fallback
 // meant for genuinely new files. Non-absolute/empty/non-string input is
 // unprovable, matching isPipelineBookkeeping's own posture above.
-function realTarget(targetPath) {
+function realTarget(targetPath, { fsImpl } = {}) {
   if (typeof targetPath !== 'string' || !targetPath || !path.isAbsolute(targetPath)) return null;
   const resolved = path.resolve(targetPath);
-  // realpath: fs.realpathSync (the JS form), not path-guard's .native default:
-  // canonicalRepoPath and safeReal resolve the other side of isPolicyFile's
-  // equality with the JS form, so switching only this side to .native would
-  // turn a mis-cased allow into a deny. Moving both sides together is a
-  // separate change (#3495).
-  const leaf = resolveLeaf(resolved, { realpath: fs.realpathSync });
+  // Both sides of isPolicyFile resolve through path-guard's .native default, so
+  // a mis-cased path compares equal to the on-disk casing (#3495).
+  const leaf = resolveLeaf(resolved, { fsImpl });
   if (leaf.state === 'resolved') return leaf.path;
   if (leaf.state === 'dangling') return null;
   // 'missing' and 'unreadable' both keep the parent-only path: the pre-#3417
   // code treated every lstat failure as "nothing there yet". It is a write
   // target, so the write itself fails on the same EACCES.
-  const parentReal = safeReal(path.dirname(resolved));
+  const parentReal = canonicalRealpath(path.dirname(resolved), { fsImpl });
   if (!parentReal) return null;
   return path.join(parentReal, path.basename(resolved));
 }
@@ -212,11 +210,21 @@ function realTarget(targetPath) {
 // trivially agree on the forged destination. This side always means
 // "whatever is literally at {relPath}", never wherever a swapped-in symlink
 // currently points.
-function canonicalRepoPath(repoRoot, relPath) {
+//
+// The one refinement (#3495): when the leaf is a REGULAR file (lstat type
+// 'file' — not a symlink, not missing), it is canonicalised too, so its
+// on-disk casing (a policy file stored as `Policy.yml` on a case-insensitive
+// volume) matches what realTarget returns. A symlink leaf or a missing leaf
+// keeps the literal basename — that is the symlink-swap protection.
+function canonicalRepoPath(repoRoot, relPath, { fsImpl } = {}) {
   if (!repoRoot) return null;
   const joined = path.join(repoRoot, relPath);
-  const parentReal = safeReal(path.dirname(joined));
+  const parentReal = canonicalRealpath(path.dirname(joined), { fsImpl });
   if (!parentReal) return null;
+  if (lstatType(joined, { fsImpl }).type === 'file') {
+    const leafReal = canonicalRealpath(joined, { fsImpl });
+    if (leafReal) return leafReal;
+  }
   return path.join(parentReal, path.basename(joined));
 }
 
@@ -226,10 +234,10 @@ function canonicalRepoPath(repoRoot, relPath) {
 // equality only, never containment — so a symlink ALIAS to policy.yml
 // resolves to the same allow and policy.yml itself being SWAPPED for a
 // symlink elsewhere resolves to the same deny (see canonicalRepoPath).
-function isPolicyFile(repoRoot, targetPath) {
-  const real = realTarget(targetPath);
+function isPolicyFile(repoRoot, targetPath, { fsImpl } = {}) {
+  const real = realTarget(targetPath, { fsImpl });
   if (!real) return false;
-  const canonical = canonicalRepoPath(repoRoot, POLICY_FILE);
+  const canonical = canonicalRepoPath(repoRoot, POLICY_FILE, { fsImpl });
   if (!canonical) return false;
   return real === canonical;
 }
@@ -325,24 +333,26 @@ const POLICY_COMMIT_ALLOWLIST = Object.freeze(new RegExp(
 // `git mv <tracked-file> .claude-tweaks/policy.yml` (ungated — neither a
 // commit/push nor a WRITE_SHAPE) on a repo where policy.yml is not yet in
 // HEAD reads as "exactly policy.yml staged" and smuggles arbitrary tracked
-// content into the enforcement file (review finding). A rename renders as
-// `R<score>\told\tnew` under --name-status and is rejected on its status
-// letter; likewise Copy (C) and type-change (T). Wrapped so any exception
-// from the git spawn can never propagate out of this hook (this file's
-// header: never throw) — it falls through to "not exempt" instead.
+// content into the enforcement file (review finding). The read passes `-z`
+// (NUL-delimited, paths unquoted — see git-z.js) and `parseNameStatusZ` turns
+// it into `{ status, paths }` records: a rename renders as
+// `R<score>\0old\0new\0` under --name-status, a record with two paths, and is
+// rejected on its status letter; likewise Copy (C) and type-change (T).
+// Wrapped so any exception from the git spawn can never propagate out of this
+// hook (this file's header: never throw) — it falls through to "not exempt"
+// instead.
 const POLICY_COMMIT_STATUSES = new Set(['A', 'M', 'D']);
 function isPolicyOnlyCommit(command, cwd) {
   if (typeof command !== 'string' || !POLICY_COMMIT_ALLOWLIST.test(command)) return false;
   try {
-    const { stdout, failure } = runGit(['diff', '--cached', '--name-status'], cwd);
+    const { stdout, failure } = runGit(['diff', '--cached', '--name-status', '-z'], cwd);
     if (failure !== null || typeof stdout !== 'string') return false;
-    const rows = stdout.split('\n').filter(Boolean);
-    if (rows.length !== 1) return false;
-    const cols = rows[0].split('\t');
-    // Exactly two columns — status + one path. A rename/copy row carries three.
-    if (cols.length !== 2) return false;
-    const [status, file] = cols;
-    return POLICY_COMMIT_STATUSES.has(status) && file === toPosix(POLICY_FILE);
+    const records = parseNameStatusZ(stdout);
+    if (records.length !== 1) return false;
+    const { status, paths } = records[0];
+    // Exactly one path — a rename/copy record carries two.
+    if (paths.length !== 1) return false;
+    return POLICY_COMMIT_STATUSES.has(status) && paths[0] === toPosix(POLICY_FILE);
   } catch {
     return false;
   }
@@ -675,7 +685,10 @@ function shadowPipelineRunDir(targetPath) {
   const resolved = path.resolve(targetPath);
   const { repoRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(resolved);
   if (indeterminate || !repoRoot || !isLinkedWorktree) return null;
-  const pipelinesDir = path.join(repoRoot, PIPELINE_STATE_DIR);
+  // realTarget (below) now returns path-guard's case-canonical (.native) form,
+  // so the root it is compared against is canonicalised the same way (#3495);
+  // repoRoot is the JS form, which echoes casing on a case-insensitive volume.
+  const pipelinesDir = path.join(canonicalRealpath(repoRoot) || repoRoot, PIPELINE_STATE_DIR);
   // realTarget follows an existing symlink chain the same way the policy.yml
   // exemption does; falls back to the literal resolved path when nothing
   // exists yet (a brand-new mkdir target has no leaf, sometimes not even a

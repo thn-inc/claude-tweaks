@@ -12,7 +12,7 @@ After journey capture, check if the build's code changes affect documented areas
 > **Parallel execution:** Use parallel tool calls — all Read operations on matched docs and their source files are independent.
 
    a. Read the doc file
-   b. Read the relevant changed source files
+   b. Read the relevant changed source files. A registry match says the doc may be affected, not which line. When the change adds a member to an enumerated set, such as a CLI verb, an input or output filename, or a flag, grep the matched doc for an existing sibling member (`grep -n -F '{sibling}' {doc}`). Every hit that lists the siblings needs the new member too. Judging the doc as a whole missed both of #3604's stale lists: the `review-coordination.js` verb line in `docs/plugin-structure.md` and the `_shared/session-tmp-root.md` filename row in `docs/skill-graph.md`.
    c. Determine the update and the inline-vs-defer decision using `docs-structure.md`'s own "Doc Update Patterns (for /build Step 6.5)" section, in the `/claude-tweaks:init` skill's directory — the canonical doc-type/trigger/action table and the inline-vs-defer threshold live there; this step doesn't restate them.
    d. **Update inline** (per that threshold). Commit separately:
       `git commit -m "Update {doc} — {what changed}"`

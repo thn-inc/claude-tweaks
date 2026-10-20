@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { writeFileAtomic } = require('../atomic-write');
 
-const ARTIFACT_NAMES = Object.freeze(['sdd-dispatch-sample.txt']);
+const ARTIFACT_NAMES = Object.freeze(['sdd-dispatch-sample.txt', 'sdd-final-review.md']);
 
 // Exact membership — `name` is used as a bare filename directly under runDir.
 function isArtifactName(name) {

@@ -7,6 +7,7 @@ const { writeFileAtomic } = require('../atomic-write');
 const { runGit } = require('./git-exec');
 const { parseWorktreeList } = require('./worktree-reap');
 const runDirResolve = require('./run-dir-resolve');
+const { classifyDecisions } = require('../log-decision/claim-log');
 
 function readStdin() {
   try { return fs.readFileSync(0, 'utf8'); } catch { return ''; }
@@ -40,21 +41,35 @@ function isStaleClaim(archiveState, now = Date.now()) {
 
 // An unadopted mint — a directory mkdir'd by dispatch Step 4 or flow Step 2.8
 // that no invocation ever initialized — carries neither run-state.json nor
-// decisions.md. Fallback attribution must never guess into one: a mint that
-// sorts newest absorbs foreign sessions' events until swept (#721). Keyed on
-// BOTH files being ABSENT (file presence, not parse success — a corrupt
-// run-state.json is still an adopted run, and readRunState's null covers
-// both cases), never on config.yml — standalone run dirs legitimately carry
-// decisions.md but no config.yml. Consequence: hooks.js CLI verbs that rely
-// on this fallback with no --run (record-pr, close-run — record-worktree no
-// longer does, #1124: it now hard-requires an explicit --run, never guessing)
-// only ever resolve an adopted run — safe because every sanctioned caller
-// runs after flow Step 3 has already initialized the run dir (decisions.md
-// or run-state.json already exists by then).
+// decisions.md, or (#3363) a decisions.md holding ONLY flow Step 2.8's claim
+// line: that claim is written before Step 3 initializes anything, so a mint
+// that has only been claimed is still unadopted. Fallback attribution must
+// never guess into one: a mint that sorts newest absorbs foreign sessions'
+// events until swept (#721). Keyed on file presence and content shape, not
+// parse success — a corrupt run-state.json is still an adopted run, and
+// readRunState's null covers both cases — and never on config.yml: standalone
+// run dirs legitimately carry decisions.md but no config.yml. An empty
+// decisions.md, or one with any non-claim content, is adopted; an unreadable
+// one (non-ENOENT error) is adopted rather than guessed into. Consequence:
+// hooks.js CLI verbs that rely on this fallback with no --run (record-pr,
+// close-run — record-worktree no longer does, #1124: it now hard-requires an
+// explicit --run, never guessing) only ever resolve an adopted run — safe
+// because every sanctioned caller runs after flow Step 3 has already
+// initialized the run dir (decisions.md with more than the claim line, or
+// run-state.json, already exists by then). Exception: in `interactive` mode
+// Step 3 skips the Manifesto, so a current-branch run stays claim-log-only
+// with no run-state.json until wrap-up and its own session's events get no
+// fallback attribution — the same as an empty mint pre-#2492 (the #721 design).
 function isUnadoptedMint(dir, state) {
   if (state) return false;
   if (fs.existsSync(path.join(dir, 'run-state.json'))) return false;
-  return !fs.existsSync(path.join(dir, 'decisions.md'));
+  let text;
+  try {
+    text = fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8');
+  } catch (err) {
+    return err.code === 'ENOENT';
+  }
+  return classifyDecisions(text) === 'claim-log-only';
 }
 
 // #1177: best-effort removal of a mint's own layout (staged/, decisions.md,

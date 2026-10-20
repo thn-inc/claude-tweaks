@@ -2,6 +2,8 @@
 
 Canonical git rules for skills that commit code. Referenced from `/build`, `/review`, `/wrap-up`, `/simplify`, `/journeys`, and any other skill that runs `git commit`.
 
+Code that reads git path lists (`plugin/bin`) follows `_shared/git-path-read.md`: `-z` + NUL split, `--end-of-options` before refs.
+
 For working-directory rules specific to dispatched subagents (anchoring CWD, `git -C "$WORKTREE"`, `pwd` checks before commit), see `subagent-dispatch-core.md` (Working Directory Discipline section) — that contract applies whenever a skill dispatches an agent that runs `git` or `node --test`.
 
 During worktree-mode pipeline runs, the wrong-checkout commit rule is mechanically enforced by the plugin's PreToolUse hook (E1) — a denied commit names the assigned worktree; clear the assignment with `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run` when legitimately finishing the branch. Enforcement is scoped to the session that recorded the worktree: a commit from a different session (e.g. unrelated fix work in the main checkout while the pipeline runs elsewhere) is allowed with a warning, not denied. Run `close-run` only from the session that owns the run or at the merge/finish handoff — closing another session's live run ends its enforcement and event logging mid-flight.
@@ -80,7 +82,10 @@ decision. One plain command:
 node "${CLAUDE_PLUGIN_ROOT}/bin/pr-merge-state.js" --run "$PIPELINE_RUN_DIR" --phase {build|test|review|polish|wrap-up}
 ```
 
-It reads `run-state.json`'s `pr.number` and the PR through `bin/lib/reconcile/pr-state.js`'s
+At wrap-up's exit, pass `--run` the archive path
+(`$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/`, `_shared/timing-render.md`'s archive-path
+rule) once cleanup item 8 archived the run directory — the CLI exits 3 on the live path it moved
+from. It reads `run-state.json`'s `pr.number` and the PR through `bin/lib/reconcile/pr-state.js`'s
 `resolvePrStateByNumber` — one resolver call — prints `{state, pr, mergeable, mergeStateStatus, phase,
 logged, reason?}`, and exits 0 in every state; exit 2 or 3 is a tooling problem with the read
 itself — route it like `read-failed`. `local-merge` and `current-branch` runs never reach this
@@ -98,12 +103,17 @@ check (no phase-exit push), and a run with no `pr` in `run-state.json` reads `no
     continue: no new stop — the next phase starts as it would have.
   - **At wrap-up's exit** there is no next phase, so no catch-up runs there, in any mode — the
     merge path (`_shared/pr-first-merge.md`) owns a conflict from there, unchanged.
+    The one exception is a Review Console that resolved leave-open: the merge path never runs, so
+    `wrap-up/execution-and-verification.md`'s Leave-open mergeability re-check takes it, in every
+    mode — only git's own auto-merge runs; a conflict is reported, never resolved.
 - **`no-conflict`**, **`not-open`**, **`no-pr`** — nothing to do, nothing to log. `not-open` is a
   closed or merged PR: whatever its mergeability says, it is no signal for the run.
 - **`unknown`**, **`read-failed`**, **`gh-absent`** (and exit 2/3) — fail open: the phase
   proceeds unchanged. `unknown` is GitHub's asynchronous mergeability computation not finished
   yet (common straight after a push): no signal, never read as a conflict, and never re-read —
-  this check costs the phase one resolver call and no more. Write one `SKIP` entry per
+  this check costs the phase one resolver call and no more. The one exception is an `unknown` at
+  wrap-up's exit under a leave-open Review Console: `wrap-up/execution-and-verification.md`'s
+  Leave-open mergeability re-check takes one later read of its own. Write one `SKIP` entry per
   `_shared/auto-decision-log.md`'s degrade-trace rule, the convention
   `_shared/pr-check-gate.md` applies to its own failed read:
   `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --section "{/build|/test|/review|/flow|/wrap-up}" --step "Post-push merge-state check" --reversibility n/a --text "condition: pr-merge-state.js {state} → fallback: no merge-state signal this phase"` — in
@@ -151,7 +161,8 @@ the following phases re-verify the merged tree. One plain command per Bash call.
    "{branch}"` — the re-push is what lets GitHub run the PR's `pull_request` workflows — and log:
    `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --section "{/build|/test|/review|/flow|/wrap-up}" --step "Post-push merge-state check" --reversibility high --text "caught PR #{pr}'s branch up with origin/{integration-branch} before the next phase ({before short} → {after short}); re-pushed"`.
 
-`interactive` and `hybrid` never run this merge themselves — they only surface the commands. A
+`interactive` and `hybrid` never run this merge themselves — they only surface the commands (except
+wrap-up's Leave-open mergeability re-check named above, which runs git's own auto-merge in every mode). A
 failed fetch, `rev-parse`, or push here degrades exactly like a failed phase-exit push: log it
 and let the next phase start; the next phase exit's check reads the state again. A failed merge
 never leaves the tree mid-merge: run `git -C "{worktree-path}" merge --abort` first (a no-op

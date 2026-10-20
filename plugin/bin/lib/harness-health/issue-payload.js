@@ -14,6 +14,7 @@ const {
   recordPayload, specShapedBody, CLASSIFICATION_SCORING, fencedBlock, isRepoRelativeKeyFilePath,
 } = require('../issues/record');
 const { buildRelatedBlocks } = require('../issues/related-blocks');
+const { isPathContained } = require('../shared-primitives');
 const path = require('path');
 
 const ASSET_TYPE_LABELS = { skill: 'Skill', rule: 'Rule', 'claude-md': 'CLAUDE.md', 'design-artifact': 'Design Context', memory: 'Memory' };
@@ -40,9 +41,8 @@ const MAX_PREMISE_ANCHOR_LENGTH = 400;
 // `root`; otherwise (no root, the root itself, or outside it) unchanged.
 function repoRelativePath(targetPath, root) {
   if (!root) return targetPath;
-  const rel = path.relative(root, path.resolve(root, targetPath));
-  const isStrictlyInside = rel !== '' && !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + path.sep);
-  return isStrictlyInside ? rel.split(path.sep).join('/') : targetPath;
+  const abs = path.resolve(root, targetPath);
+  return isPathContained(abs, path.resolve(root)) ? path.relative(root, abs).split(path.sep).join('/') : targetPath;
 }
 
 // Builds a Premise-check: command (#1829/#2621) for a mechanically

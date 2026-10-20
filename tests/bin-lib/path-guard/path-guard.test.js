@@ -15,6 +15,7 @@ const {
   lstatType, canonicalRealpath, resolveLeaf, isAncestorOrSelf, resolveWithin,
 } = require('../../../plugin/bin/lib/path-guard');
 const { isPathContained } = require('../../../plugin/bin/lib/shared-primitives');
+const { caseInsensitiveFs } = require('../../helpers/case-insensitive-fs');
 
 // --- Fixture 1: real tmp tree -------------------------------------------------
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'path-guard-')));
@@ -52,37 +53,8 @@ const eio = (() => {
   return { ...fs, lstatSync, realpathSync };
 })();
 
-// --- Fixture 3: case-insensitive volume (posix-only fake) -----------------------
-function caseInsensitiveVolume(entries) {
-  const key = (p) => path.posix.resolve(p).toLowerCase();
-  const table = new Map(Object.entries(entries).map(([name, kind]) => [key(name), { name, kind }]));
-  const enoent = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-  const stat = (p) => {
-    const e = table.get(key(p));
-    if (!e) throw enoent();
-    return {
-      isFile: () => e.kind === 'file',
-      isDirectory: () => e.kind === 'dir',
-      isSymbolicLink: () => false,
-    };
-  };
-  const realpathSync = (p) => {
-    if (!table.has(key(p))) throw enoent();
-    return p; // the JS form echoes the input casing (#3380)
-  };
-  realpathSync.native = (p) => {
-    const e = table.get(key(p));
-    if (!e) throw enoent();
-    return e.name; // the canonical casing
-  };
-  return {
-    lstatSync: stat,
-    statSync: stat,
-    existsSync: (p) => table.has(key(p)),
-    realpathSync,
-  };
-}
-const vol = caseInsensitiveVolume({
+// --- Fixture 3: case-insensitive volume (posix-only fake, tests/helpers/case-insensitive-fs.js)
+const vol = caseInsensitiveFs({
   '/Vol/Root': 'dir',
   '/Vol/Root/Notes.txt': 'file',
   '/Vol/Root/Sub': 'dir',

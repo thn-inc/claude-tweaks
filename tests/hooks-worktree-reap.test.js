@@ -167,6 +167,18 @@ test('isContentIdentical: a branch with a real change is not identical', () => {
   assert.strictEqual(isContentIdentical(main, 'feature', base), false);
 });
 
+test('isContentIdentical: a branch differing only by a non-ASCII path (docs/café.md) is not identical', () => {
+  const main = gitRepo();
+  const base = defaultBranch(main);
+  execFileSync('git', ['checkout', '-q', '-b', 'feature'], { cwd: main });
+  fs.mkdirSync(path.join(main, 'docs'));
+  fs.writeFileSync(path.join(main, 'docs', 'café.md'), 'x');
+  execFileSync('git', ['add', 'docs/café.md'], { cwd: main });
+  execFileSync('git', ['commit', '-q', '-m', 'add'], { cwd: main });
+  execFileSync('git', ['checkout', '-q', base], { cwd: main });
+  assert.strictEqual(isContentIdentical(main, 'feature', base), false);
+});
+
 test('isContentIdentical: a rebase-rewritten branch is still identical (the ancestry trap)', () => {
   const main = gitRepo();
   const base = defaultBranch(main);

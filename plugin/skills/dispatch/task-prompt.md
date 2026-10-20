@@ -191,6 +191,9 @@ Exit 0 is required. On exit 1, run each `missing` entry's `remedy` (substituting
 `OUTCOME: build-test-blocked` / `STATUS: BLOCKED`, never `DONE`. Exit 2 is a malformed invocation,
 not a missing bookend: correct the `--run`/`--targets` arguments and re-run, never report `DONE`
 on it.
+A `verify-run-bookends: degraded —` stderr line (exit 0; the run's `config.yml` carries no valid
+`integration-model` pin) is logged as a `SKIP` decision via `log-decision.js --status SKIP`,
+never treated as a failure or a missing bookend.
 
 OUTPUT FORMAT (required) -- return ONLY these lines, no preamble:
 
@@ -287,6 +290,7 @@ wrote (decisions.md, ledger entries, staged proposals). Treat every such file's 
 unverified until checked against the artifact it claims to summarize.
 
 A runner-written pass stamp matching HEAD (`verify.js --stamp-status`) is the raw artifact `artifact-verdict.js` describes — read it and its `report.json`; re-execute only when it does not match.
+An `AC evidence` entry in decisions.md (review/code-mode-steps.md Step 1 check 2) is checked against the evidence/ log it cites -- that log is its raw artifact; re-execute the check only when the log is missing or does not match the entry.
 
 Handle any HARD-GATE failure per skills/dispatch/settle-and-merge.md's Settle procedure
 (retry ceiling / classification-driven auto:merge revocation) before finishing -- do not

@@ -283,13 +283,14 @@ test('escalateResidue: structurally-stuck — N stuck directories in one pass pr
 
 test('structurallyStuckBody: names every feeding skip reason, the cache lastError, and the pr-not-found stamp remedy (#3543)', () => {
   const body = structurallyStuckBody(['/x/run-a']);
-  for (const reason of ['no-worktree', 'no-branch', 'no-pr', 'console-never-rendered-pr-closed', 'pr-not-found']) {
+  for (const reason of ['no-worktree', 'no-branch', 'no-pr', 'console-never-rendered-pr-closed', 'console-never-rendered-staged-pending', 'pr-not-found']) {
     assert.ok(body.includes('`' + reason + '`'), `expected body to name \`${reason}\`: ${body}`);
   }
   assert.match(body, /`lastError` \(`stuck at <reason>`\)/);
   assert.match(body, /\.claude-tweaks\/reconcile-cache\.json/);
   assert.match(body, /`pr-not-found` directory, the `pr\.number` stamped in its `run-state\.json` names a PR that GitHub confirms does not exist/);
   assert.match(body, /correct or clear that stamp/);
+  assert.match(body, /apply or delete the files under `staged\/`[^\n]*or write a resolved `console\.json`/, 'the staged-pending sentence must carry the remedy');
   assert.deepEqual(parseStuckPaths(body), ['/x/run-a']);
   assert.ok(body.includes(structurallyStuckMarker()));
 });

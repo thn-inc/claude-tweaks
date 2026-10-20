@@ -14,10 +14,12 @@
 //
 // Lever names validate against the canonical Manifesto lever set (pinned
 // against manifesto.md's config.yml example block by
-// tests/bin-lib/set-config/write.test.js). Values validate against
-// POLICY_KEYS enums where a schema row exists; `mode` and `ceremony-profile`
-// are config.yml-only levers with no POLICY_KEYS row (flow/manifesto.md
-// computes them per run), so their enums live here.
+// tests/bin-lib/set-config/write.test.js), plus RUN_PINS — run-scoped keys
+// (integration-model) validated the same way but never Manifesto levers.
+// Values validate against POLICY_KEYS enums where a schema row exists;
+// `mode` and `ceremony-profile` are config.yml-only levers with no
+// POLICY_KEYS row (flow/manifesto.md computes them per run), so their enums
+// live here.
 //
 // Caveat: bin/resolve-policy.js --run resolves only POLICY_KEYS-backed
 // levers — `ceremony-profile` and `mode` return unknown-key there, by
@@ -39,6 +41,18 @@ const MANIFESTO_LEVERS = Object.freeze([
   'merge-authorization',
 ]);
 
+// Run pins: config.yml keys a run records once at its start, validated like
+// levers (enum from POLICY_KEYS) but deliberately NOT Manifesto levers — no
+// Manifesto prompt asks for them and the FYI table does not show them. They
+// stay out of MANIFESTO_LEVERS because integration-model is run-scoped
+// (_shared/integration-model.md's Run-scoped stability): the value is fixed
+// for the run's life, not a policy the operator tunes at the Manifesto gate.
+const RUN_PINS = Object.freeze(['integration-model']);
+
+function isConfigKey(key) {
+  return MANIFESTO_LEVERS.includes(key) || RUN_PINS.includes(key);
+}
+
 // The two levers with no POLICY_KEYS row: their value sets are defined by
 // flow/manifesto.md (mode table; ceremony fold), stated here as data.
 const CONFIG_ONLY_VALUES = Object.freeze({
@@ -47,12 +61,12 @@ const CONFIG_ONLY_VALUES = Object.freeze({
 });
 
 // key -> allowed values array, or null when key is not a config.yml lever OR
-// is a lever with no known enum (name-only validation; none exists today).
-// validateLever below tells the two null cases apart itself — it checks
-// MANIFESTO_LEVERS membership before calling this — so this function's null
-// return does not by itself mean "unknown key".
+// is a lever or run pin with no known enum (name-only validation; none
+// exists today). validateLever below tells the two null cases apart itself —
+// it checks isConfigKey before calling this — so this function's null return
+// does not by itself mean "unknown key".
 function leverValues(key) {
-  if (!MANIFESTO_LEVERS.includes(key)) return null;
+  if (!isConfigKey(key)) return null;
   if (CONFIG_ONLY_VALUES[key]) return [...CONFIG_ONLY_VALUES[key]];
   const row = POLICY_KEYS.find((r) => r.key === key);
   if (row && row.type === 'enum') return [...row.values];
@@ -62,7 +76,7 @@ function leverValues(key) {
 // (key, value) -> { ok } | { ok:false, reason:'unknown-key' } |
 // { ok:false, reason:'invalid-value', allowed }
 function validateLever(key, value) {
-  if (!MANIFESTO_LEVERS.includes(key)) return { ok: false, reason: 'unknown-key' };
+  if (!isConfigKey(key)) return { ok: false, reason: 'unknown-key' };
   const allowed = leverValues(key);
   if (allowed === null) return { ok: true }; // a lever with no known enum: name-only validation
   if (!allowed.includes(value)) return { ok: false, reason: 'invalid-value', allowed };
@@ -106,4 +120,4 @@ function setConfigLever({ runDir, key, value }) {
   return { file, previous };
 }
 
-module.exports = { MANIFESTO_LEVERS, leverValues, validateLever, setConfigLever };
+module.exports = { MANIFESTO_LEVERS, RUN_PINS, isConfigKey, leverValues, validateLever, setConfigLever };

@@ -217,6 +217,67 @@ test('a run with a corrupt run-state.json and no decisions.md is still not a min
   assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir, attribution: 'fallback' });
 });
 
+// #3363: flow Step 2.8 writes the claim line before anything else, so a
+// freshly minted run dir holds ONLY that line in decisions.md (no run-state.json)
+// and is still unadopted — a sibling session's events must not land in it.
+const CLAIM_ONLY = '## /flow\n- AUTO 18:42:06 — Step 2.8: claimed #7 (bin/claim-targets.js, transport: git). Reversibility: high.\n';
+
+function mkClaimedMint(cwd, state = null) {
+  const mint = mkRun(cwd, '2026-07-02T090000-mint', state);
+  fs.writeFileSync(path.join(mint, 'decisions.md'), CLAIM_ONLY);
+  return mint;
+}
+
+test('fallback never selects a claim-log-only mint (decisions.md holds only the Step 2.8 claim line, no run-state.json) (#3363)', () => {
+  const cwd = project();
+  const real = mkRun(cwd, '2026-07-01T090000-real', { status: 'active' });
+  mkClaimedMint(cwd);
+
+  assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir: real, attribution: 'fallback' });
+  assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, null), { dir: real, attribution: 'fallback' });
+});
+
+test('a claim-log-only mint is the only run — resolves null (#3363)', () => {
+  const cwd = project();
+  mkClaimedMint(cwd);
+
+  assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir: null, attribution: null });
+  assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, null), { dir: null, attribution: null });
+});
+
+test('AC1.1: a foreign session\'s hook event never lands in a claim-log-only mint\'s events.jsonl (#3363)', () => {
+  const cwd = project();
+  const mint = mkClaimedMint(cwd);
+
+  const owned = ctxLib.resolveRun(cwd, {}, 'other-session');
+  sessionEnd.run({ input: { reason: 'exit', session_id: 'other-session' }, ownedRun: owned, cwd });
+
+  assert.deepStrictEqual(readEvents(mint), []);
+});
+
+test('a claim line plus any other decisions.md content is adopted (#3363)', () => {
+  const cwd = project();
+  const mint = mkClaimedMint(cwd);
+  fs.appendFileSync(path.join(mint, 'decisions.md'), '- AUTO 18:43:00 — Manifesto: levers written. Reversibility: n/a.\n');
+
+  assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir: mint, attribution: 'fallback' });
+});
+
+test('a claim-log-only dir with run-state.json is adopted (#3363)', () => {
+  const cwd = project();
+  const mint = mkClaimedMint(cwd, { status: 'active' });
+
+  assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir: mint, attribution: 'fallback' });
+});
+
+test('an unreadable decisions.md (non-ENOENT read error) is adopted, not an unadopted mint (#3363)', () => {
+  const cwd = project();
+  const dir = mkRun(cwd, '2026-07-02T090000-mint', null);
+  fs.mkdirSync(path.join(dir, 'decisions.md')); // readFileSync -> EISDIR
+
+  assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir, attribution: 'fallback' });
+});
+
 // ─── worktree-bound foreign candidates (#1402) ─────────────────────────────
 //
 // #1033's own events.jsonl accumulated six events belonging to unrelated,

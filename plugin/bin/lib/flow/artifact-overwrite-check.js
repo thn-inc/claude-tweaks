@@ -12,7 +12,7 @@
 // The walk: find every path under the watched globs that was Added (A) in
 // one commit and later Modified (M) by a commit in the same range. For each
 // such later commit, every hunk with deletions is judged safe (an extension)
-// by either of two independent tests — either one is enough:
+// by either of three independent tests — any one is enough:
 //
 //   1. Same-spec self-edit: every deleted line traces, via `git blame` on the
 //      parent revision, back to a commit carrying the *same* `refs #N`
@@ -26,15 +26,26 @@
 //      is expected to shuffle its neighboring entries on every append (a new
 //      bullet displaces the previous "last" one), and no single spec owns
 //      any one entry the way it owns its own step body.
+//   3. Step-markup reformat: once journey step markup is normalized
+//      (normalizeStepMarkup), every deleted line equals the matching added
+//      line. A numbered step is the same step whether it is written as a
+//      `N. **Name** — text` list item or as a `### N. Name — text` heading,
+//      and leading indentation and blank lines are ignored, so the canonical
+//      `### N.` conversion of a list-form journey step (#3341) passes when no
+//      step text changed. Judged per hunk: a conversion that also edits a
+//      word, or drops a step, leaves a hunk that fails this test.
 //
-// A hunk that fails both tests — deletes non-list content, or shrinks a list
-// — is a real overwrite and trips the gate. This is deliberately general
-// rather than journeys-format-specific: neither test parses step headings or
-// section names, so the same two rules apply unchanged to a stories/*.yaml
-// file's own shared list. Fails closed: an unattributable deletion (no blame,
-// no refs trailer, not a list reflow) is treated as an overwrite.
+// A hunk that fails all three tests — deletes non-list content that is not
+// a pure step-markup conversion, or shrinks a list — is a real overwrite and
+// trips the gate. This is deliberately general rather than journeys-format-
+// specific: tests 1 and 2 never parse step headings or section names, and
+// test 3 recognizes numbered step headings only to normalize them, so the
+// same rules apply unchanged to a stories/*.yaml file's own shared list.
+// Fails closed: an unattributable deletion (no blame, no refs trailer, not a
+// list reflow, not a step-markup reformat) is treated as an overwrite.
 
 const { execFileSync } = require('child_process');
+const { splitLogZ, parseNameStatusTokens } = require('../git-z');
 
 const GIT_TIMEOUT_MS = 10000;
 
@@ -89,25 +100,19 @@ function setsIntersect(a, b) {
   return false;
 }
 
-// Parses `git log --reverse --diff-filter=AM --name-status --format=%H
+// Parses `git log -z --reverse --diff-filter=AM --name-status --format=%H
 // {base}..{head} -- {paths}` output into an ordered (oldest-first) list of
-// { commit, entries: [{ status, path }] }.
+// { commit, entries: [{ status, path }] }. Under `-z` the stream is NUL
+// delimited and paths are raw (never C-quoted); each commit's tokens are flat
+// status/path pairs, with a second path after an R*/C* status. Only A/M
+// entries are kept; any other status is skipped along with its path(s).
 function parseNameStatusLog(output) {
-  const commits = [];
-  let current = null;
-  for (const raw of output.split('\n')) {
-    const line = raw.replace(/\r$/, '');
-    if (/^[0-9a-f]{40}$/.test(line)) {
-      current = { commit: line, entries: [] };
-      commits.push(current);
-      continue;
-    }
-    const m = line.match(/^([AM])\t(.+)$/);
-    if (m && current) {
-      current.entries.push({ status: m[1], path: m[2] });
-    }
-  }
-  return commits;
+  return splitLogZ(output, (t) => /^[0-9a-f]{40}$/.test(t)).map(({ header, tokens }) => {
+    const entries = parseNameStatusTokens(tokens)
+      .filter(({ status, paths }) => (status === 'A' || status === 'M') && paths.length === 1)
+      .map(({ status, paths }) => ({ status, path: paths[0] }));
+    return { commit: header, entries };
+  });
 }
 
 // Builds path -> ordered [{ commit, status }] from the parsed commit list.
@@ -151,7 +156,9 @@ function parseHunks(diffOutput) {
       continue;
     }
     if (!current) continue;
-    if (line.startsWith('---') || line.startsWith('+++')) continue; // file-level diff headers
+    // No file-header skip here: `---`/`+++` headers precede the first `@@` (swallowed by the
+    // `!current` guard above), so inside a hunk a `---` line is a deleted `--` line, e.g. a
+    // YAML frontmatter delimiter (`-` + `---`).
     if (line.startsWith('-')) {
       const lineNo = current.oldStart + current.deletedLines.length;
       current.deletedLines.push({ lineNo, content: line.slice(1) });
@@ -170,6 +177,28 @@ function isListReflow(hunk) {
   if (hunk.deletedLines.length === 0) return false;
   if (hunk.addedLines.length < hunk.deletedLines.length) return false;
   return hunk.deletedLines.every((d) => LIST_ENTRY_RE.test(d.content));
+}
+
+const STEP_HEADING_RE = /^#{1,6}\s+(?=\d+\.\s)/;
+const STEP_BOLD_NAME_RE = /^(\d+\.)\s\*\*(.+?)\*\*/;
+
+// Test 3's normalization: leading indentation dropped; a numbered step heading
+// (`### 1. ...`) loses its `#` marker; a numbered list step's bold name
+// (`1. **Name** — ...`) loses its bold. Nothing else is touched.
+function normalizeStepMarkup(line) {
+  const unindented = line.replace(/^\s+/, '');
+  return unindented.replace(STEP_HEADING_RE, '').replace(STEP_BOLD_NAME_RE, '$1 $2');
+}
+
+// Test 3 above: the hunk's deleted and added lines are equal once step markup
+// is normalized (blank lines dropped on both sides, so a hunk that deletes only
+// blank lines also qualifies — no content is lost). A hunk that deletes content
+// lines with no counterpart added never qualifies.
+function isStepMarkupReformat(hunk) {
+  if (hunk.deletedLines.length === 0) return false;
+  const removed = hunk.deletedLines.map((d) => normalizeStepMarkup(d.content)).filter((l) => l.length > 0);
+  const added = hunk.addedLines.map(normalizeStepMarkup).filter((l) => l.length > 0);
+  return removed.length === added.length && removed.every((l, i) => l === added[i]);
 }
 
 // Blames `rev`'s copy of `path`, returning a 1-indexed array (index 0 unused)
@@ -222,7 +251,7 @@ function checkArtifactOverwrite(opts) {
   const paths = (rawPaths && rawPaths.length > 0) ? rawPaths : ['docs/journeys/', 'stories/'];
 
   const nameStatusOut = git(
-    ['log', '--reverse', '--diff-filter=AM', '--name-status', '--format=%H', '--end-of-options', `${base}..${head}`, '--', ...paths],
+    ['log', '--reverse', '--diff-filter=AM', '--name-status', '-z', '--format=%H', '--end-of-options', `${base}..${head}`, '--', ...paths],
     cwd,
   );
   const commits = parseNameStatusLog(nameStatusOut);
@@ -260,13 +289,14 @@ function checkArtifactOverwrite(opts) {
       const diffOut = git(['diff', '--no-color', '-U0', `${commit}~1`, commit, '--', path], cwd);
       const hunks = parseHunks(diffOut);
 
-      let blame = null; // lazily fetched — only needed when a hunk isn't a list reflow
+      let blame = null; // lazily fetched — only needed when a hunk isn't a list reflow or step-markup reformat
       let overwrite = false;
       let culprit = null;
 
       for (const hunk of hunks) {
         if (hunk.deletedLines.length === 0) continue;
         if (isListReflow(hunk)) continue; // Test 2 — shared-collection reflow, always safe
+        if (isStepMarkupReformat(hunk)) continue; // Test 3 — step-markup reformat, no content change
 
         if (!blame) blame = blameShas(git, cwd, `${commit}~1`, path);
         for (const d of hunk.deletedLines) {
@@ -290,7 +320,7 @@ function checkArtifactOverwrite(opts) {
       if (overwrite) {
         const reason = culprit.blamedSha
           ? `deleted line ${culprit.lineNo} (as of parent ${commit}~1) traces to commit ${culprit.blamedSha}, `
-            + `whose refs trailer does not match ${commit}'s own refs trailer, and the deletion is not a list reflow`
+            + `whose refs trailer does not match ${commit}'s own refs trailer, and the deletion is neither a list reflow nor a step-markup reformat`
           : `deleted line ${culprit.lineNo} has no blame attribution — cannot confirm self-edit or list reflow`;
         overwrites.push({ path, commit, reason });
       }
@@ -307,6 +337,8 @@ module.exports = {
   parseNumstatDeletions,
   parseHunks,
   isListReflow,
+  normalizeStepMarkup,
+  isStepMarkupReformat,
   defaultGit,
   ArtifactOverwriteCheckError,
 };

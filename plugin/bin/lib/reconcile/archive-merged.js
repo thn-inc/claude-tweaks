@@ -11,6 +11,7 @@ const { runGit } = require('../hooks/git-exec');
 const { withIndexLockRetry } = require('../git-retry');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
+const { isPathContained } = require('../shared-primitives');
 const {
   iterRunDirsWithState, writeRunState, readRunState, readEventLines, isAdHocRunDir,
 } = require('../hooks/context');
@@ -344,8 +345,13 @@ function decideArchiveCore(prState, consoleState, hasStagedPending) {
   // staged/ directory; only an explicit `false` unlocks the archive path, so
   // every existing 2-arg call site (and any caller that genuinely doesn't
   // know) keeps today's unconditional skip.
+  // #3297: a true `hasStagedPending` gets its own reason — the run has real
+  // pending items and no console will ever render, so only a human can
+  // converge it (STRUCTURALLY_STUCK_REASONS tracks it). Unknown (undefined)
+  // keeps the plain, untracked reason.
   if (consoleState === 'none') {
     if (hasStagedPending === false) return { action: 'archive' };
+    if (hasStagedPending === true) return { action: 'skip', reason: 'console-never-rendered-staged-pending' };
     return { action: 'skip', reason: 'console-never-rendered' };
   }
   return { action: 'archive' };
@@ -1013,7 +1019,7 @@ function archiveRunDir(root, runDir) {
   // nothing) rather than guessing which copy is canonical.
   const twinPlan = [];
   // #1323: `runDir` can itself already equal its own `archiveDir` (a caller
-  // — e.g. teardown-run's AC7 — passing an already-archived path as `runDir`
+  // passing an already-archived path as `runDir`
   // directly, where `path.basename` round-trips to the same archive twin).
   // `topWork === topWorkDest` there, and comparing a directory against
   // itself trivially reads "identical," which would route straight into
@@ -1209,11 +1215,12 @@ function archiveRunDir(root, runDir) {
   if (fs.existsSync(runDir)) {
     const lsFiles = runGit(['ls-files', runDir], root);
     if (lsFiles.failure) return refuseAfterMarker('ls-files-failed');
+    const workDir = path.join(runDir, 'work');
     const trackedOutsideWork = (lsFiles.stdout || '')
       .split('\n')
       .filter(Boolean)
-      .map((p) => path.relative(runDir, path.join(root, p)))
-      .filter((rel) => rel && !rel.startsWith('work' + path.sep) && rel !== 'work');
+      .map((p) => path.join(root, p))
+      .filter((abs) => path.relative(runDir, abs) !== '' && !isPathContained(abs, workDir, { orEqual: true }));
     if (trackedOutsideWork.length > 0) {
       return refuseAfterMarker('tracked-entry');
     }
@@ -1414,21 +1421,24 @@ const STRUCTURALLY_STUCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // deliberately excluded — each already has its own clear resolution path
 // (a human answering a console, a local fetch catching up) that doesn't
 // need this generic staleness backstop. 'console-never-rendered-pr-closed'
-// (#2231) is the one exception carved out of that exclusion: it fires only
+// (#2231) is one exception carved out of that exclusion: it fires only
 // when the by-number fallback below confirms the run's PR is CLOSED
 // (never merged) — at that point nothing drives the run's pipeline to
 // wrap-up anymore, so no console will ever render, and the plain
 // 'console-never-rendered' reason's "a human eventually answers it"
 // rationale does not apply. The MERGED sub-case of that same fallback
 // (and of the ordinary branch-joined path) archives when staged/ holds
-// nothing pending (#3249), and otherwise keeps plain, untracked
-// 'console-never-rendered' — real staged items still await a human.
+// nothing pending (#3249). Plain, untracked 'console-never-rendered' stays
+// for unknown staged state. When a merged run's staged/ holds pending items,
+// the reason is 'console-never-rendered-staged-pending' (#3297), which is
+// tracked: the fast-lane short-circuit writes no console, so none will ever
+// render and only a human can converge it.
 // 'pr-not-found' (#3543) is also tracked: a stamped pr.number that GitHub
 // confirms names no PR will never resolve without a human (fix or clear the
 // stamp), and the by-number lookup deliberately never falls back to the
 // branch (#3416), so the skip would otherwise repeat silently forever.
 // 'network-failure' stays excluded — a long genuine outage must not page.
-const STRUCTURALLY_STUCK_REASONS = new Set(['no-worktree', 'no-branch', 'no-pr', 'console-never-rendered-pr-closed', 'pr-not-found']);
+const STRUCTURALLY_STUCK_REASONS = new Set(['no-worktree', 'no-branch', 'no-pr', 'console-never-rendered-pr-closed', 'console-never-rendered-staged-pending', 'pr-not-found']);
 
 // #1732: thin wrapper — see isOrphanedMint's comment on the `kinds` scoping
 // pattern. Pure except for the one mtime stat classifyRunDir performs.
@@ -1948,10 +1958,10 @@ function archiveMerged({
             // genuinely dead-ended state escalates like no-branch/
             // no-worktree/no-pr, instead of silently freezing the
             // escalation cache the way plain 'console-never-rendered'
-            // does (that reason stays untracked for the MERGED case,
-            // reached here only when staged/ holds real pending items
-            // a human must still resolve).
-            const consoleReason = byNumber.state === 'CLOSED' ? 'console-never-rendered-pr-closed' : 'console-never-rendered';
+            // does. #3297: the MERGED sub-case reached here holds real
+            // pending staged/ items a human must still resolve, so it gets
+            // its own tracked reason too.
+            const consoleReason = byNumber.state === 'CLOSED' ? 'console-never-rendered-pr-closed' : 'console-never-rendered-staged-pending';
             skipped.push({ runDir: dir, reason: consoleReason });
             trackStuckSkip(cacheBatch, repoSlug, dir, consoleReason, { runner });
             continue;

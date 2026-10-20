@@ -34,6 +34,8 @@ The `{feature}` name matches the execution plan or spec topic. One ledger per pi
 | 3 | test | Login story fails — selector `.login-btn` not found | open | — |
 ```
 
+**A `|` inside a cell is written `\|`.** Every writer escapes it on append or rewrite — an agent appending an Item or Resolution that quotes a regex alternation, a table fragment, or an SDD `Ruling:` one-liner, and `finish-console`'s flips through `bin/lib/wrap-up/ledger-cells.js`'s `escapeLedgerCell` (the payload's `resolution` is passed raw — the CLI escapes it, so an agent escaping it first double-escapes and leaves a stray backslash) — and every reader splits a row only on an unescaped `|`, then unescapes (`splitLedgerRow` / `ledgerRowCells`). GitHub renders `\|` in a table cell as a literal pipe, so the row still reads as written. A row carrying a raw `|` inside a cell no longer has five columns: `flipLedgerRow` refuses it rather than guess which cell is which, so `finish-console --approve-all` stops at step 3 after steps 1-2 have already landed.
+
 ### Item Numbering
 
 Items are numbered sequentially starting at 1. New items always get the next available number. Numbers are never reused — if item 3 is resolved, the next item is still 4.
