@@ -1,6 +1,6 @@
 ---
 name: work-record-facet-rename
-description: Use when renaming a work-record facet or its GitHub label in this repo, or splitting one overloaded label into two — the emit/read split, the permanent legacy fallbacks, the label-bootstrap version bump, the emit-side rejection guard, the live-repo migration, and the repo-wide vocabulary sweep. Keywords - facet rename, label rename, label split, LABELS, parseRecordFacets, parseFrontmatterLines, sharedFacetDefaults, LABELS_JSON, LABEL_BOOTSTRAP_VERSION, IL-85, migrate-then-delete.
+description: Use when renaming a work-record facet or its GitHub label in this repo, or splitting one overloaded label into two, or giving an existing label a second cause — the emit/read split, the permanent legacy fallbacks, the label-bootstrap version bump, the emit-side rejection guard, the live-repo migration, and the repo-wide vocabulary sweep. Keywords - facet rename, label rename, label split, LABELS, parseRecordFacets, parseFrontmatterLines, sharedFacetDefaults, LABELS_JSON, LABEL_BOOTSTRAP_VERSION, IL-85, migrate-then-delete, label widening, second cause.
 ---
 
 # Work-record facet rename
@@ -24,6 +24,16 @@ A **split** — one label whose meaning grew two senses, one of which moves to a
 - **The sweep asks a different question.** In a rename every hit on the old spelling is mechanical (swap it). In a split each hit must be *classified*: does this site mean the narrowed sense, the split-off sense, or both? Every site that branched on the old label needs an explicit decision about whether the new one belongs beside it — #605's were `record-buckets.js` (`isBotParked` beside `isBotBlocked`), `pending-authorization.js`, `github-pr-scan.md`'s `[pr-unarmed]` exclusion, `dispatch/queue-pull-script.md`'s eligibility filter, `tidy`'s record shapes, and `backlog/refine-mode.md`'s re-triage row. Prose lags code here: #605 left four `_shared` files still describing the merge-verification park under the old label while their own code branched on both.
 - **A new finding shape needs a routing home.** A split that adds a `/tidy` finding shape must also add its `tidy/step-6-auto.md` routing row — that table is the declared source for the Yours rows' Why-not-auto column, never re-derived per render. #605 added Shape 5.6 (`[bot-parked]`) without one.
 - **Live migration is mandatory here, not optional.** A rename leans on the permanent read-side fallback, so adopter repos need no migration. A split has no such cover: an existing record carrying the old label in its *wide* sense is silently read as the narrowed sense, because both spellings stay live and legitimate. Re-label the live carriers that meant the split-off sense, and say so in the spec — #605's deliverables listed every consumer site and no live-carrier pass.
+
+## Variant: widening a label with a second cause
+
+Widening is the reverse of a split. A surviving label gains a second cause and a new writer, with no new label and no rename. #3377 is the shipped instance: `bot:blocked` (retry ceiling) also came to mean "a plan-review question awaits a human answer", written by `/build` Common Step 1.6 on a headless needs-human stop (`plugin/skills/build/plan-review.md`).
+
+- **Decide first whether this should be a split.** Widen only when every reader may treat both causes the same way. #3377's stop revokes `auto:*` exactly as the retry ceiling does and clears through the same re-grant, so one label fits. #605 split `bot:parked` off because its grants had to survive. If any reader must tell the two causes apart, split instead.
+- **Layer 2 still bumps.** Widening rewrites the label's `LABELS_JSON` description, and `_shared/label-bootstrap.md` requires a `LABEL_BOOTSTRAP_VERSION` bump whenever an existing label's description changes. Without it, a repo already stamped at the old version never reaches the reconcile pass that edits live descriptions, so it keeps the old one. #3377's build rewrote `bot:blocked`'s description without the bump, and none of its reviews caught it.
+- **The new writer needs its own permission-matrix cell.** Add it in the writer's row of `_shared/work-record-permission-matrix.md`, plus Removes and Never entries when the new path revokes grants. Updating `work-record.md`'s taxonomy row does not cover it. #3377's plan missed the matrix, and only its final review caught it.
+- **Every reader that explains the label to a human names both causes and the new cause's resolution step.** A reader that says only "re-grant" leaves the human with no answer step. #3377 pins each explaining passage on its own head line or paragraph: `BLOCKED_CONSUMERS` in `tests/plan-review-dispatch-relay-conformance.test.js`.
+- **Layers 1 and 5 do not apply.** No facet key changes, and no live carrier needs relabelling, because every existing carrier already means the original cause.
 
 ## Project conventions
 

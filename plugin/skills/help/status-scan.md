@@ -409,7 +409,7 @@ claude-tweaks v{version} (Stage 0 — see its own section for the missing/unread
 *(Omit this section entirely when the GitHub scan was skipped, or when all three counts are 0.)*
 
 - Pending authorization: **{N} records awaiting your decision** — run `/claude-tweaks:backlog refine` (omit this line when N is 0)
-- Blocked: **{N} records hit their retry ceiling** — run `/claude-tweaks:backlog refine` to review (omit this line when N is 0)
+- Blocked: **{N} records blocked** (retry ceiling, or a plan-review question awaiting an answer) — run `/claude-tweaks:backlog refine` to review (omit this line when N is 0)
 - Auto-merged this week: **{N} auto-merges** on the default branch in the last 7 days (omit this line when N is 0)
 
 ### Acceptance Queue

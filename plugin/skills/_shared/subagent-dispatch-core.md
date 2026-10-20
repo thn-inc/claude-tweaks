@@ -183,7 +183,7 @@ Return at most 15 rows, highest severity first; if more were found, append a fin
 Do not add narration, headers, or summaries before or after the table.
 ```
 
-**Used by:** `/review` (review angles), `/visual-review` (per-page review agents), `/specify` (per-persona red-team findings).
+**Used by:** `/review` (review angles), `/visual-review` (per-page review agents), `/specify` (per-persona red-team findings), `/build` (Common Step 1.6 plan review — a variant adding Class, Resolution and Suggested resolution columns, `build/plan-review.md`).
 
 ## Failed-agent retrieval
 

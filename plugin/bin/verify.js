@@ -173,18 +173,21 @@ function stampStatus(parsed) {
 }
 
 // --changed-files (#1923): the read-only "what changed in this run" set the
-// skills consume — /claude-tweaks:test affected and the QA story filter read
+// skills consume — /claude-tweaks:test affected and qa affected read
 // this instead of hand-rolling `git diff --name-only` (empty for every
 // committed pipeline diff). Same base resolution as --scope: the checkout's
 // own stamp anchor when usable, else --base / --integration-branch; an
 // unresolvable base is exit 1 with a message, never an empty list.
+// --ignore-stamp (#3048) skips that stamp anchor, so a stamp written right
+// after the build's own commits cannot hide them.
 function changedFilesMode(parsed) {
   const ownGitDir = resolveGitDir();
   const priorStamp = ownGitDir ? readVerifyStamp(ownGitDir) : null;
+  const anchorStamp = parsed.ignoreStamp ? null : priorStamp;
   let base;
   try {
     base = resolveBase({
-      stamp: priorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base, requireNonDegenerate: true,
+      stamp: anchorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base, requireNonDegenerate: true,
     });
   } catch (err) {
     if (!(err instanceof ChangedFilesError)) throw err;

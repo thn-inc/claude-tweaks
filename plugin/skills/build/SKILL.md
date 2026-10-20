@@ -196,6 +196,10 @@ Audit the plan against the actual repo before dispatching execution, via `node "
 
 For the full procedure (CLI invocation and JSON envelope, Check A/headroom failure handling, Check B scope-keyword sweep, Check C verification-command pre-check, `scope-keywords-required` setting, auto-mode policy table, interactive prompt), read `plan-audit.md` in this skill's directory.
 
+### Common Step 1.6: Plan Review (Spec Mode only)
+
+Spec Mode only — design mode has no materialized spec, so this step never runs there. After Common Step 1.5 and before Common Step 1.7 (so plan amendments land before design references are pre-loaded) and Task 1, dispatch one Capable reviewer over the materialized spec and the plan, then route its findings. **Skip this step when** `config.yml`'s `ceremony-profile` is `fast-lane` — roster tag `plan-review`, `_shared/ceremony-profile.md` — or the plan is trivial by Common Step 1.5's own test (fewer than 3 file references and no `Scope keywords:` field); standalone `/build` (no `config.yml`) uses the size test alone. **On skip**, write a `SKIP` entry per `_shared/auto-decision-log.md`'s degrade-trace rule; standalone: list in the Step 7 handoff. This is the full gate — deciding skip-vs-run never loads the sub-file. Otherwise read `plan-review.md` in this skill's directory.
+
 ### Common Step 1.7: Design Pre-Build (frontend specs + terminal)
 
 For a surface routed to pre-build — `surface` ∈ `web | mobile | desktop | terminal`, read from the materialized header's `surface:` field (lifted from the record body's `Surface:` metadata line per `skills/flow/materialize.md`) — invoke `/claude-tweaks:design-wrapper pre-build <spec>` to lazy-load relevant design references into the implementer subagent's context. For the full skip conditions, invocation rules, result handling, the terminal-track always-load set, and where loaded references go, see `design-prebuild.md` in this skill's directory. **On skip**, write a `SKIP` entry per `_shared/auto-decision-log.md`'s degrade-trace rule; standalone: list in the Step 7 handoff.
