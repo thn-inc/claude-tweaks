@@ -40,7 +40,7 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --run "<run-dir>" --policy console-auto`
 - **Action:** run it as the reason directs, then execute every returned resolution and the merge half, per `resolve-the-unattended-console-in-one-process-1932.md`.
 - **Should feel:** like resuming at the step that was skipped.
-- **Should understand:** the CLI re-checks the ceiling itself, using the same resolution the hook used (`tests/hooks-pre-tool-use.test.js`'s readPolicy parity case pins the two). Exits `4` and `5` route to that section's non-zero-exit rules. Exit `5` means a console is already rendered on the PR and waiting for a human; a headless session then reports `pending-review` with the PR URL rather than asking.
+- **Should understand:** the CLI re-checks the ceiling itself, using the same resolution the hook used (`tests/hooks-pre-tool-use.test.js`'s readPolicy parity case pins the two). Exits `4` and `5` route to that section's non-zero-exit rules. Exit `5` never asks, human present or not: a console already rendered on the PR and waiting for a human follows `_shared/console-on-pr.md`'s Headless conclusion (report `pending-review` with the PR URL), and a `console.json` that will not parse stops and reports the CLI's stderr. The deny reason states both branches.
 - **Red flags:** an `AskUserQuestion` issued after exit `5`; the merge computed but never executed on a record carrying `auto:merge`.
 
 ### 4. Find the gate in the run's friction record

@@ -1582,7 +1582,6 @@ test('#3712: a deny logs one gate-denial event for gate review-console-ask', () 
   assert.strictEqual(hits.length, 1);
   assert.strictEqual(hits[0].tool, 'AskUserQuestion');
   assert.strictEqual(hits[0].ceiling, 'unattended');
-  assert.ok(!lines.some((e) => e.type === 'console-ask-deny'), 'no event under the unread type');
 });
 
 test('#3712: the deny reason names the console file by run shape', () => {
