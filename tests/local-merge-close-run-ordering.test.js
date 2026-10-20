@@ -56,6 +56,17 @@ const SITES = [
       'group-worktree': posix(WORKTREE),
     },
   },
+  {
+    label: 'local-merge-auto-finish.md',
+    file: 'plugin/skills/_shared/local-merge-auto-finish.md',
+    vars: {
+      'base-branch': 'main',
+      'feature-branch': 'feat',
+      issue: '1',
+      'subject-dir': posix(SUBJECT_DIR),
+      'worktree-path': posix(WORKTREE),
+    },
+  },
 ];
 
 const PRE_MERGE_NEEDLE = 'git merge-tree --write-tree';
@@ -64,7 +75,9 @@ const MERGE_NEEDLE = 'git merge --no-ff';
 const REPROTECT_NEEDLE = 'bin/hooks.js" record-worktree --run';
 const WORKTREE_READ_NEEDLE = "run-state.json').worktree";
 
-const fencesOf = (text) => [...text.matchAll(/```bash\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+// Bash fence bodies, dedented by the opening fence's indent (a fence inside a numbered list item is indented).
+const fencesOf = (text) => [...text.matchAll(/^([ \t]*)```bash\n([\s\S]*?)\n[ \t]*```/gm)]
+  .map((m) => m[2].split('\n').map((line) => (line.startsWith(m[1]) ? line.slice(m[1].length) : line)).join('\n'));
 
 // The body of the unique ```bash fence containing `needle`.
 function extractFence(text, needle) {
@@ -245,7 +258,8 @@ for (const site of SITES) {
 
     assert.notStrictEqual(attempt(makeRepo({ conflict: true })).code, 0, 'a predicted conflict aborts');
     assert.notStrictEqual(attempt(makeRepo(), { env: { STUB_EXIT: '1' } }).code, 0, 'a composer failure aborts');
-    assert.notStrictEqual(attempt(makeRepo(), { overrides: { branch: 'nope' } }).code, 0, 'an unknown ref aborts, it does not merge');
+    const branchVar = 'feature-branch' in vars ? 'feature-branch' : 'branch';
+    assert.notStrictEqual(attempt(makeRepo(), { overrides: { [branchVar]: 'nope' } }).code, 0, 'an unknown ref aborts, it does not merge');
   });
 
   test(`${label}: the re-protect fence restores the worktree assignment after close-run`, () => {
