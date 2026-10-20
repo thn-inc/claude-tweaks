@@ -203,12 +203,12 @@ function attachCmdEnvAndTimeout(raw) {
 // never carries it as a top-level key. cmdEnvs is the one exception (#3022).
 function toResult(raw) {
   const {
-    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, ignoreStamp, run,
-    cwd, baseline, baselineCmds, cmdEnvs,
+    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles,
+    ignoreStamp, run, cwd, baseline, baselineCmds, cmdEnvs,
   } = raw;
   return {
-    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, ignoreStamp, run,
-    cwd, baseline, baselineCmds,
+    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles,
+    ignoreStamp, run, cwd, baseline, baselineCmds,
     // #3022: every --cmd-env entry, matched or not — verify.js's own
     // --scope block uses the unmatched ones to bind env vars onto a
     // declared-only suite (no --cmd) once it has read the declaration.

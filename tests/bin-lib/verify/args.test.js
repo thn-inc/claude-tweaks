@@ -45,6 +45,16 @@ test('AC3.1: --ignore-stamp parses under --changed-files', () => {
   assert.strictEqual(got.ignoreStamp, true);
 });
 
+test('--ignore-stamp leaves the other --changed-files flags and conflicts unchanged', () => {
+  const got = parseArgs(['--changed-files', '--ignore-stamp', '--base', 'abc123', '--integration-branch', 'main']);
+  assert.strictEqual(got.base, 'abc123');
+  assert.strictEqual(got.integrationBranch, 'main');
+  assert.throws(() => parseArgs(['--changed-files', '--ignore-stamp', '--cmd', 'tests=x']),
+    { message: '--changed-files takes no --cmd' });
+  assert.throws(() => parseArgs(['--changed-files', '--ignore-stamp', '--scope', 'd.json']),
+    { message: '--changed-files takes no --scope' });
+});
+
 test('AC3.1: --ignore-stamp on a check run is a usage error', () => {
   const expected = { message: '--ignore-stamp applies only to --changed-files' };
   assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--ignore-stamp']), expected);
