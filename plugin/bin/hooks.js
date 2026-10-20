@@ -700,6 +700,12 @@ async function main(argv) {
       // Permanent for the run's lifetime: only ever written true, never
       // false, so a later plain re-stamp (no --dispatch) cannot clear it.
       if (dispatch) patch.dispatched = true;
+      // #3711: the session that ran `--dispatch`, written ONLY by that flag (same
+      // omit-when-absent rule as sessionId). A plain re-stamp — a human resuming
+      // the run (run-resume-freshness.md) — overwrites sessionId but never writes
+      // or clears this, so bin/lib/dispatch/task-call.js can tell the dispatching
+      // session from a later resumer.
+      if (dispatch && process.env.CLAUDE_CODE_SESSION_ID) patch.dispatchSessionId = process.env.CLAUDE_CODE_SESSION_ID;
       const result = ctxLib.writeRunState(runDir, patch);
       if (result) {
         process.stdout.write(`claude-tweaks: worktree recorded for ${path.basename(runDir)}\n`);

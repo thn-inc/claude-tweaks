@@ -1,7 +1,8 @@
 'use strict';
 // #3711: the dispatch-call discriminator used by wrap-up/auto-merge-short-circuit.md's
 // Dispatch-call branch — decides whether this call is one of /claude-tweaks:dispatch's Task
-// calls (run-state.json carries `dispatched: true` AND a `sessionId` equal to the current one).
+// calls (run-state.json carries `dispatched: true` AND a `dispatchSessionId` equal to the current
+// session, falling back to `sessionId` only for run-states that predate that field).
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -29,6 +30,26 @@ test('AC2.1: false for every non-matching shape', () => {
   // Collect every wrongly-true row so a regression names all of them, not just the first.
   const wronglyTrue = rows.filter(([, input]) => isDispatchTaskCall(input) !== false).map(([label]) => label);
   assert.deepStrictEqual(wronglyTrue, []);
+});
+
+test('#3711: the match is against dispatchSessionId, which a resume re-stamp of sessionId cannot move', () => {
+  const stamped = { dispatched: true, sessionId: 'H', dispatchSessionId: 'D' };
+  assert.strictEqual(isDispatchTaskCall({ runState: stamped, sessionId: 'H' }), false, 'human resume after re-stamp');
+  assert.strictEqual(isDispatchTaskCall({ runState: stamped, sessionId: 'D' }), true, 'the dispatching session');
+});
+
+test('#3711: legacy run-state (no dispatchSessionId) falls back to sessionId; a present-but-bad dispatchSessionId does not', () => {
+  assert.strictEqual(isDispatchTaskCall({ runState: { dispatched: true, sessionId: 'S' }, sessionId: 'S' }), true, 'legacy fallback');
+  const empty = { dispatched: true, sessionId: 'S', dispatchSessionId: '' };
+  assert.strictEqual(isDispatchTaskCall({ runState: empty, sessionId: '' }), false, 'empty vs empty');
+  assert.strictEqual(isDispatchTaskCall({ runState: empty, sessionId: 'S' }), false, 'empty does not fall back');
+  const nonString = { dispatched: true, sessionId: 'S', dispatchSessionId: 7 };
+  assert.strictEqual(isDispatchTaskCall({ runState: nonString, sessionId: 'S' }), false, 'non-string does not fall back');
+});
+
+test('#3711: a null or missing argument is false, not a throw', () => {
+  assert.strictEqual(isDispatchTaskCall(null), false);
+  assert.strictEqual(isDispatchTaskCall(), false);
 });
 
 test('AC2.1: isDispatchTaskCallForRun reads run-state.json and never throws', () => {

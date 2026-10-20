@@ -176,11 +176,15 @@ to the main checkout. Ask `bin/lib/dispatch/task-call.js`:
 node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/task-call.js').isDispatchTaskCallForRun(process.argv[1], process.env.CLAUDE_CODE_SESSION_ID))" "$PIPELINE_RUN_DIR"
 ```
 
-`true` means a dispatch Task call: `run-state.json` carries `dispatched: true` and its `sessionId`
-equals this session's `CLAUDE_CODE_SESSION_ID`, both stamped by `hooks.js record-worktree
---dispatch`, whose session id a Task call shares. Any other output, including a non-zero exit,
-means a genuine top-level, human-run session — fall through to the direct-merge path below. That
-includes a human resuming a dispatched run from a new session. Fail-safe: a Task call misread as
+`true` means a dispatch Task call: `run-state.json` carries `dispatched: true` and its
+`dispatchSessionId` equals this session's `CLAUDE_CODE_SESSION_ID`, both stamped by `hooks.js
+record-worktree --dispatch`, whose session id a Task call shares. Only `--dispatch` writes
+`dispatchSessionId`: a plain `record-worktree` re-stamp (a resume, `_shared/run-resume-freshness.md`)
+overwrites `sessionId` but never touches it, which is why that re-stamp cannot make a human session
+match. A run-state written before the field existed has no `dispatchSessionId` and falls back to
+comparing `sessionId`. Any other output, including a non-zero exit, means a genuine top-level,
+human-run session — fall through to the direct-merge path below. That includes a human resuming a
+dispatched run from a new session. Fail-safe: a Task call misread as
 human-run (for example after a failed bind) reaches the local-merge first call's branch guard,
 sees the feature branch, and aborts into the console fallback — it never merges into a wrong
 checkout. This is what routes a dispatched **singleton**'s merge decision through this file's own
@@ -316,8 +320,8 @@ step against this branch explicitly; a claim true about one category is not evid
 resolution requires judgment a headless run can't supply — `git merge --abort` only if a merge is
 actually in progress, then fall back to rendering the console normally, exactly as an
 `auto:build`-only record would, logging why the auto-merge path was abandoned. **One accepted
-residual:** `close-run` already ran, above, before this was discovered, so the parked run is no
-longer E1-protected. Not fixed here; there is no "reopen-run" mechanic to reverse it.
+residual:** under `local-merge`, `close-run` already ran, above, before this was discovered, so the
+parked run is no longer E1-protected and its worktree assignment has been cleared too. Not fixed here; there is no "reopen-run" mechanic to reverse it.
 
 Log to `decisions.md`:
 `AUTO {time} — Fast-lane auto-merge: issue #{n}, assess-agent-autonomy verdict auto-merge (see RATIONALE). Merge commit: {sha}. Reversibility: high (git revert). [lever: auto-merge-max-lines={value} ({source}); auto-merge-max-files={value} ({source}); merge-sensitive-paths={value} ({source})]` — or, on the `manifesto-authorized-merge.md` path, its own tag and log line instead

@@ -117,19 +117,25 @@ test('the branch snippet, executed verbatim, answers true only for this run\'s o
   assert.ok(fence, 'a fenced bash block must sit inside the branch paragraph');
   const snippet = fence[1];
   assert.ok(snippet.includes('isDispatchTaskCallForRun'), 'snippet must call isDispatchTaskCallForRun');
-  const script = snippet.split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_DIR);
+  // Run the snippet byte-for-byte: the shell expands ${CLAUDE_PLUGIN_ROOT} from the child's env, the
+  // way an agent's would.
+  const script = snippet;
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-call-snippet-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const runState = path.join(dir, 'run-state.json');
   const run = (sessionId) => execFileSync('bash', ['-c', script], {
     encoding: 'utf8',
-    env: { ...process.env, PIPELINE_RUN_DIR: dir, CLAUDE_CODE_SESSION_ID: sessionId },
+    env: { ...process.env, PIPELINE_RUN_DIR: dir, CLAUDE_CODE_SESSION_ID: sessionId, CLAUDE_PLUGIN_ROOT: PLUGIN_DIR },
   }).trim();
 
   fs.writeFileSync(runState, JSON.stringify({ dispatched: true, sessionId: 'S' }));
   assert.strictEqual(run('S'), 'true', 'matching session id on a dispatched run');
   assert.strictEqual(run('T'), 'false', 'a foreign session id (a human resuming)');
+
+  fs.writeFileSync(runState, JSON.stringify({ dispatched: true, sessionId: 'H', dispatchSessionId: 'D' }));
+  assert.strictEqual(run('H'), 'false', 'a human resume that re-stamped sessionId (dispatchSessionId stays the dispatcher\'s)');
+  assert.strictEqual(run('D'), 'true', 'the dispatching session');
 
   fs.rmSync(runState);
   assert.strictEqual(run('S'), 'false', 'no run-state.json');

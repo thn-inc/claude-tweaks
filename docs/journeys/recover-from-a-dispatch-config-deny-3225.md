@@ -21,7 +21,7 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$GROUP_RUN_DIR" "{worktree}" --dispatch`, in `dispatch/sibling-session-check.md`'s Worktree-resume check, after the worktree is confirmed fresh
 - **Action:** run the bind once, then dispatch the group's first Task call.
 - **Should feel:** a single bookkeeping line. It prints `claude-tweaks: worktree recorded for {run-id}`, and a failure never blocks the dispatch.
-- **Should understand:** one `run-state.json` write records the worktree, this session's id, and a permanent `dispatched: true`. A later plain `record-worktree` re-stamp never clears that marker. Task subagents share this session's id, so their hook calls resolve this same run through `ctx.ownedRun`.
+- **Should understand:** one `run-state.json` write records the worktree, this session's id, a permanent `dispatched: true`, and a `dispatchSessionId` (that same id, written only by `--dispatch`). A later plain `record-worktree` re-stamp never clears that marker or `dispatchSessionId`. Task subagents share this session's id, so their hook calls resolve this same run through `ctx.ownedRun`.
 - **Red flags:**
   - binding a worktree the resume check found already present, because that is a sibling's run;
   - a bind failure that stops the dispatch, when it should only be logged;
