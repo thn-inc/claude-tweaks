@@ -126,3 +126,9 @@ Expected: PASS
 ### Task 3: AC4.1 — every new test goes red with its fix reverted
 
 - [ ] AC4.1: for each of Task 1's and Task 2's fixes: restore the pre-change source via `git show {base}:{path} > {path}` (never `git stash`), run the new tests, confirm each new AC test FAILS, then `git show HEAD:{path} > {path}` back to the committed fix (same command that swapped it — never leave the swap across a timeout) and confirm PASS. Record the observed red/green output in the build handoff.
+
+## As built (architecture alignment, /build Common Step 4.5)
+
+- **Missing-file resolution lives in `residue.js`, not `resolve.js`** (Beneficial). The spec's Key Files assigned "missing-file resolution" to `resolve.js`, but `resolveAll` builds staged items from the current `staged/` listing, so a file can only be absent *after* resolution. `splitMissing` therefore derives `missing` at read time and writes nothing to `console.json` — compatible with every console already on disk and with older installed builds.
+- **Third consumer covered** (Beneficial). `console-resolve.js`'s re-render "Needs a human" block uses the same split, with its own tests (`AC3.6` in `tests/bin-lib/console/cli.test.js`), so all three residue readers agree.
+- **`missingOnly`** (Beneficial, final-review fix). A console whose only unresolved items are missing is still never residue (AC3.2), but when another console in the same run is listed, its missing items are named in the same single `not counted —` line.
