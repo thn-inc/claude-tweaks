@@ -43,17 +43,19 @@ test('AC2.2: the classification rule — a first-match Ruling: line is load-bear
   assert.match(DISPATCH, /a `parked —` line's first match is `parked —`, so the match order already separates the two classes/);
 });
 
-test('AC2.3: the run-directory branch stages staged/sdd-ruling-{N}.md via stage-item.js --allocate, ledger first then the file, and logs STAGED', () => {
-  assert.match(DISPATCH, /Item `SDD ruling — \{one-liner\}: ratify or reverse at the Review Console \(staged\/sdd-ruling-\{N\}\.md\)`/);
-  assert.match(DISPATCH, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/stage-item\.js" --run "\$PIPELINE_RUN_DIR" --id "sdd-ruling-\{N\}" --file \{tmp\}\.md --allocate/);
-  assert.match(DISPATCH, /`Title:`.*?`Kind: sdd-ruling`.*?`Ruling:`.*?`Staged-at:`.*?`Ledger: \{ledger path\}#\{item-number\}`/);
-  assert.match(DISPATCH, /STAGED \{time\} — SDD ruling carried forward: "\{one-liner\}"\. Stage path: staged\/sdd-ruling-\{N\}\.md\. Reversibility: high\./);
-  const ledgerIdx = DISPATCH.indexOf('(1) append the ledger row — phase `build`, status `open`');
-  const fileIdx = DISPATCH.indexOf('(2) write the staged file via');
-  assert.ok(ledgerIdx > 0 && fileIdx > ledgerIdx, 'ledger row (1) must precede the staged-file write (2)');
-  assert.match(DISPATCH, /ledger first, then the file/);
-  assert.match(DISPATCH, /The path named by step \(3\)'s `STAGED` line and by the row's Item text is the path `stage-item\.js` actually wrote \(its first stdout line\)/);
-  assert.match(DISPATCH, /`--id \{requested\} already exists in staged\/ — wrote \{actual\} instead`\), update the just-appended row's Item text to the actual path before writing the `STAGED` line/);
+test('AC1.1: dispatch.md carries the carry-forward on at least two stage-item.js lines and no hand-rewrite clause', () => {
+  assert.ok(DISPATCH.split('\n').filter((l) => l.includes('stage-item.js')).length >= 2);
+  assert.ok(!DISPATCH.includes('update the just-appended row'));
+});
+
+test('AC2.3: the run-directory branch stages each ruling through one stage-item.js --ledger call', () => {
+  assert.match(DISPATCH, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/stage-item\.js" --run "\$PIPELINE_RUN_DIR" --id "sdd-ruling-\{N\}" --file \{tmp\}\.md --allocate --ledger "\{ledger path\}" --label "SDD ruling" --item 'SDD ruling — \{one-liner\}: ratify or reverse at the Review Console'/);
+  assert.match(DISPATCH, /--id "build-deviation-\{N\}" --file \{tmp\}\.md --allocate --ledger "\{ledger path\}" --label "SDD ruling" --item 'SDD ruling — \{one-liner\}: apply or decline at the Review Console'/);
+  assert.match(DISPATCH, /`Title:`.*?`Kind: sdd-ruling`.*?`Ruling:`.*?`Staged-at:`/);
+  assert.match(DISPATCH, /`Ledger: \{ledger path\}#\{item-number\}` header already filled/);
+  assert.match(DISPATCH, /STAGED \{time\} — SDD ruling carried forward: "\{Title\}"\. Stage path: staged\/sdd-ruling-\{N\}\.md\. Reversibility: high\./);
+  assert.match(DISPATCH, /never Add Item's De-duplication on Append/);
+  assert.match(DISPATCH, /the row's Item names the path the call actually wrote, after any `--allocate` renumbering/);
 });
 
 test('the no-run-directory branch keeps the row open, stages nothing, and hands the ruling to the Step 7 handoff', () => {
@@ -121,12 +123,13 @@ test('review-console.md step 1 points an sdd-ruling-* write-back at the appendix
   assert.match(CONSOLE, /an `sdd-ruling-\*` item's write-back follows `review-console-appendix\.md`'s `sdd-ruling-\*` bullet \(ratify → `accepted` here; reverse → `deferred` at step 7, once the reversal record exists\), not the patch table/);
 });
 
-test('review #3401: the carry-forward names the stage-item.js failure branch, the Item-cell rewrite rule, and the no-dedupe rule for ruling rows', () => {
-  assert.match(DISPATCH, /If `stage-item\.js` exits non-zero, write no `STAGED` line: rewrite the row's Item text without its `\(staged\/…\)` suffix/);
-  assert.match(DISPATCH, /SKIP \{time\} — SDD ruling carry-forward \(degraded\): condition: stage-item\.js exited \{code\} for sdd-ruling-\{N\} \(\{first stderr line\}\) → fallback: ledger row #\{item\} left open with no staged file/);
-  assert.match(DISPATCH, /the same operation, not an Update Item/);
-  assert.match(DISPATCH, /De-duplication on Append never skips a ruling row/);
-  assert.match(DISPATCH, /takes the staged extension from the source; the file opens with a header block `Title:`/);
+test('review #3401 → #3510: the CLI owns the failure branch; the hand-performed rewrite and ordering clauses are gone', () => {
+  assert.match(DISPATCH, /SKIP \{time\} — SDD ruling carry-forward \(degraded\): condition: staged write failed for sdd-ruling-\{N\} \(\{error\}\) → fallback: ledger row #\{item\} left open with no staged file/);
+  assert.match(DISPATCH, /so no row ever names a file that was not written/);
+  assert.match(DISPATCH, /the carry-forward call below escapes itself, so pass it unescaped/);
+  for (const gone of ['ledger first, then the file', 'the same operation, not an Update Item', "rewrite the row's Item text", '(1) append the ledger row']) {
+    assert.ok(!DISPATCH.includes(gone), `stale hand-performed clause still present: ${gone}`);
+  }
 });
 
 const { DECLINED_NOTE, REVERSED_LABEL, REVERSE_FAILED_NOTE } = require('../plugin/bin/lib/reconcile/console-execute');
