@@ -9,6 +9,13 @@ const { readText } = require('./helpers/read-skill');
 // finding stages forever with no stated tier ("a finding class that keeps
 // staging needs a routing row"). Release Backfill and pipeline-run Archive
 // were the two verbs that had none.
+//
+// Bound: the extractor sees only backticked collect templates whose last
+// ` — ` segment is a literal verb, and a routing row matches by its bold
+// label alone. A verb collected any other way (unbackticked prose, a verb
+// built from a placeholder) escapes the AC3.1 coverage check, and it proves a
+// row exists, not its tier: tiers are pinned per row, for Backfill and
+// Archive only, by the tests below.
 
 const ROOT = path.join(__dirname, '..');
 const SCAN = readText(path.join(ROOT, 'plugin/skills/tidy/scan-procedures.md'));
