@@ -431,7 +431,18 @@ test('#3490: the CLI still accepts --remote-ref-only (never refused as an unknow
 
 // #3695: win32 `git worktree list --porcelain` prints forward-slash paths while the run's stamped
 // worktree path is native backslash; the lookup must still match them, and posix stays exact.
-const PORCELAIN = 'worktree D:/a/x\nHEAD 1111111\nbranch refs/heads/trunk\n\nworktree D:/a/x/feat\nHEAD 2222222\nbranch refs/heads/feat-branch\nprunable gitdir file points to non-existent location\n\n';
+const PORCELAIN = [
+  'worktree D:/a/x',
+  'HEAD 1111111',
+  'branch refs/heads/trunk',
+  '',
+  'worktree D:/a/x/feat',
+  'HEAD 2222222',
+  'branch refs/heads/feat-branch',
+  'prunable gitdir file points to non-existent location',
+  '',
+  '',
+].join('\n');
 const entries = parseWorktreeList(PORCELAIN);
 
 test('#3695 AC1: win32 — a forward-slash porcelain path resolves the backslash-stamped worktree to its branch', () => {
