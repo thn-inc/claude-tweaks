@@ -503,7 +503,9 @@ function extractSpecPaths(specText) {
     for (const line of lines) {
       if (AC_FENCE_RE.test(line)) { inFence = !inFence; continue; }
       if (inFence) continue;
-      if ((line.match(/`/g) || []).length % 2 !== 0) {
+      // An odd count, or a run of 2+ backticks (a double-backtick span the
+      // single-backtick matcher below would mis-pair), is a line we cannot read.
+      if ((line.match(/`/g) || []).length % 2 !== 0 || /``/.test(line)) {
         unparsed.push({ section: name, raw: line.trim() });
         continue;
       }

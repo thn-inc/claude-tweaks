@@ -630,29 +630,38 @@ function checkE(specText, planText) {
 // those two spec sections (never Deliverables / Acceptance Criteria, whose
 // files Check E and the Files: blocks already cover). Matching is exact after
 // normalizeRepoPath on both sides, plus a whole-segment suffix match
-// ('/' + path) so a plugin-relative citation still finds its full Files: path.
+// ('/' + path) so a plugin-relative citation still finds its full Files: path
+// — and a `Waived` line's full path covers that citation the same way.
 // There is deliberately no quoted-text fallback — #3602's report named Check
 // E's keyword noise. `unparsed` is the parser's, passed through untouched: a
 // line it could not read is a distinguishable signal, never a covered path.
 function checkF(specText, planText) {
   const { paths, unparsed } = extractSpecPaths(specText);
-  const filesPaths = new Set(extractFileEntries(planText).map((e) => normalizeRepoPath(e.path)));
+  // Both plan-side readers see the same LF text (extractFileEntries is
+  // LF-only; extractPathWaivers normalizes on its own).
+  const plan = planText.replace(/\r\n?/g, '\n');
+  const filesPaths = new Set(extractFileEntries(plan).map((e) => normalizeRepoPath(e.path)));
   const reasons = new Map();
-  for (const { path: p, reason } of extractPathWaivers(planText)) if (!reasons.has(p)) reasons.set(p, reason);
+  for (const { path: p, reason } of extractPathWaivers(plan)) if (!reasons.has(p)) reasons.set(p, reason);
+  // A waiver covers a spec path on the same rule listing uses: equal, or the
+  // waiver path ends with '/' + specPath (never the reverse direction).
+  const covers = (w, p) => w === p || w.endsWith(`/${p}`);
   const unlisted = [];
   const listed = [];
   const waived = [];
+  const coveringWaivers = new Set();
   for (const { path: p, section } of paths) {
-    if (reasons.has(p)) waived.push({ path: p, reason: reasons.get(p) });
+    const hits = [...reasons].filter(([w]) => covers(w, p));
+    hits.forEach(([w]) => coveringWaivers.add(w));
+    if (hits.length) waived.push({ path: p, reason: hits[0][1] });
     else if (filesPaths.has(p)) listed.push({ path: p, via: 'exact' });
     else if ([...filesPaths].some((f) => f.endsWith(`/${p}`))) listed.push({ path: p, via: 'suffix' });
     else unlisted.push({ path: p, section });
   }
-  // A waiver naming a path the spec parser never extracted (typo, stale path)
-  // would otherwise be silently dropped — report it, warn-only like Check E's.
-  const specPaths = new Set(paths.map((e) => e.path));
+  // A waiver covering no extracted spec path (typo, stale path) would
+  // otherwise be silently dropped — report it, warn-only like Check E's.
   const orphanWaivers = [...reasons]
-    .filter(([p]) => !specPaths.has(p))
+    .filter(([w]) => !coveringWaivers.has(w))
     .map(([p, reason]) => ({ path: p, reason }));
   return {
     ok: true, unlisted, listed, waived, unparsed, orphanWaivers,

@@ -1072,3 +1072,37 @@ test('#3602: a Key Files path the build only reads is still reported until a tas
   const r = checkF('## Technical Approach\n\n### Key Files\n\n- `src/read-only.js` — read to confirm the shape\n', fPlan(['- Modify: `src/other.js`']));
   assert.deepStrictEqual(r.unlisted, [{ path: 'src/read-only.js', section: 'Technical Approach' }]);
 });
+
+test('#3602: a full-repo-path waiver covers a plugin-relative spec citation on a whole-segment suffix and is not an orphan', () => {
+  const r = checkF('## Technical Approach\n\nSee `_shared/x.md`.\n',
+    fPlan(['- Modify: `src/other.js`'], ['Waived plugin/skills/_shared/x.md: read back only', '']));
+  assert.deepStrictEqual(r.waived, [{ path: '_shared/x.md', reason: 'read back only' }]);
+  assert.deepStrictEqual(r.unlisted, []);
+  assert.deepStrictEqual(r.orphanWaivers, []);
+});
+
+test('#3602: a waiver path that is a suffix OF the spec path does not match — direction matters: it is an orphan and the spec path stays unlisted', () => {
+  const r = checkF('## Technical Approach\n\nSee `plugin/skills/_shared/x.md`.\n',
+    fPlan(['- Modify: `src/other.js`'], ['Waived _shared/x.md: too short', '']));
+  assert.deepStrictEqual(r.waived, []);
+  assert.deepStrictEqual(r.unlisted, [{ path: 'plugin/skills/_shared/x.md', section: 'Technical Approach' }]);
+  assert.deepStrictEqual(r.orphanWaivers, [{ path: '_shared/x.md', reason: 'too short' }]);
+});
+
+test('#3602: a CRLF plan yields exactly the LF result — Files: bullets and waivers are both read', () => {
+  const lf = fPlan(['- Modify: `src/a.js`'], ['Waived src/b.js: read back', '']);
+  const crlf = lf.replace(/\n/g, '\r\n');
+  assert.deepStrictEqual(checkF(F_SPEC, crlf), checkF(F_SPEC, lf));
+  assert.deepStrictEqual(checkF(F_SPEC, lf).listed, [{ path: 'src/a.js', via: 'exact' }]);
+});
+
+test('#3602: precedence — a path both listed and waived lands in waived, not listed; the first of two waivers for one path wins', () => {
+  const r = checkF('## Technical Approach\n\nRead `src/a.js` and `src/b.js`.\n',
+    fPlan(['- Modify: `src/a.js`'], ['Waived src/a.js: first reason', 'Waived plugin/src/a.js: second reason', 'Waived src/b.js: only', '']));
+  assert.deepStrictEqual(r.waived, [
+    { path: 'src/a.js', reason: 'first reason' },
+    { path: 'src/b.js', reason: 'only' },
+  ]);
+  assert.deepStrictEqual(r.listed, []);
+  assert.deepStrictEqual(r.orphanWaivers, []);
+});

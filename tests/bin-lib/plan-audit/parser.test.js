@@ -606,6 +606,14 @@ test('AC4.1 (#3602): a line with an unbalanced code span is unparsed with its se
   });
 });
 
+test('AC4.1 (#3602): a line with a double-backtick run is unparsed, never a silent drop; its neighbours still extract', () => {
+  const spec = '## Technical Approach\n\nUse `` `x` `` and read `src/k.js`.\nThen `src/b.js`.\n';
+  assert.deepStrictEqual(extractSpecPaths(spec), {
+    paths: [{ path: 'src/b.js', section: 'Technical Approach' }],
+    unparsed: [{ section: 'Technical Approach', raw: 'Use `` `x` `` and read `src/k.js`.' }],
+  });
+});
+
 test('AC4.1 (#3602): an unclosed fence makes the section one unparsed entry, never an empty, clean result', () => {
   const spec = '## Technical Approach\n\n```js\nrequire(`src/a.js`)\n\n## Gotchas\n\n- `src/g.js`\n';
   assert.deepStrictEqual(extractSpecPaths(spec), {
