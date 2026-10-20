@@ -21,16 +21,16 @@ files:
 - **Red flags:** The session opens `pre-tool-use.js` to "fix" the guard, or files a plugin defect against it.
 
 ### 2. Find the shape in §7 — The session looks the failed command up.
-- **Action:** Scan §7's dated addenda, newest first. The 2026-10-16 (#2776) entry covers heredoc + `gh pr comment` (refused only with a runtime path variable), a `.git/` log read (a `Read(**/*.log)` permission rule, plus a path that does not resolve inside a linked worktree), and five shapes that ran unrefused.
+- **Action:** Look the failed command up by shape in §7's current-state table (Shape, Example, Verdict, Refusal wording, Workaround, Last verified). Heredoc + `gh pr comment` is refused only with a runtime path variable, a `.git/` log read is a `.log` permission rule (plus a path that does not resolve inside a linked worktree), and the rows marked `passes` ran unrefused.
 - **Should feel:** Quick. A match is one scan away, not a series of probes.
-- **Should understand:** Each entry is "last observed, not a guarantee". A shape listed as not reproducing can still be refused under a different harness build or settings file.
+- **Should understand:** Each row is "last observed, not a guarantee", with its Last-verified date. A shape listed as passing can still be refused under a different harness build or settings file.
 - **Red flags:** The `.g*t`/`.g*hub` glob workaround reached for out of habit, though the bare forms pass. A `.git/worktrees/…` path written relative to the worktree.
 
 ### 3. Re-run in the passing form — The session applies the recorded workaround.
 - **Action:** A literal path in place of `$TMPDIR` (or the `Write` tool for a comment body, then a plain `gh pr comment N --body-file /literal/path`). For the verify log: the path skill prose prescribes, `{git-dir}/claude-tweaks-verify/`, with `{git-dir}` the absolute path from `git rev-parse --git-dir`. Or read `verify.js`'s own summary of the failing region.
 - **Should feel:** Uneventful. The retry runs.
-- **Should understand:** One plain command per Bash call stays the default (§7's practical workaround). The #2776 entry narrows which shapes need special handling. It does not lift that default.
-- **Red flags:** The same refused shape retried unchanged. A path rewritten just to slip past a deny rule someone set on purpose. A new shape that §7 doesn't cover gets worked around silently, with no addendum or record filed.
+- **Should understand:** One plain command per Bash call stays the default (§7's practical workaround). The table narrows which shapes need special handling. It does not lift that default.
+- **Red flags:** The same refused shape retried unchanged. A path rewritten just to slip past a deny rule someone set on purpose. A new shape that §7 doesn't cover gets worked around silently, with no table row or record filed.
 
 ### 4. File an uncovered shape upstream — The session reports a refusal §7 doesn't record.
 - **Action:** Run `/claude-tweaks:feedback` with the refusal quoted. Before Step 1 names `pre-tool-use.js` or any plugin hook as the affected component, it greps the quote's reason clause (e.g. `too complex to verify`, never the `This session is isolated … Refusing to run it` frame) under the plugin's `bin/`. A bare `/claude-tweaks:feedback` session-evaluation batch applies the same check.
