@@ -11,7 +11,7 @@
 //
 // Scope boundary vs. sibling records: this vertical owns exactly the
 // 17-item pre-launch checklist above. #2624's security-hardening (secrets/
-// ownership/AI-endpoint guards), #2622's pre-scale hardening (query/
+// ownership/AI-endpoint guards), `focus=scale-readiness`'s pre-scale hardening (#2622) (query/
 // background-job/caching/pooling/monitoring), and #2625's GDPR/backup-
 // retention check are out of scope here — no overlapping category is
 // claimed by more than one of these verticals. See `criteria-prelaunch.md`

@@ -76,7 +76,7 @@ mistake, since every call site was bridged and verified before this line changed
 
 ## Step 2 — queue pull and per-dependency open-state check
 
-The queue pull uses the confirmed "list issues by label" mapping; the per-dependency open-state check (the `gh issue view "$DEP" --json state` loop) uses the confirmed "get single issue by number" mapping, checking the returned state field for `OPEN`. Both replace their `gh`-CLI equivalent one-for-one — no change to the surrounding `node -e` eligibility/dependency logic, which only consumes the fetched JSON shape, not how it was fetched.
+The queue pull uses the confirmed "list issues by label" mapping; the per-dependency open-state check (the `gh issue view "$DEP" --json state` loop) uses the confirmed "get single issue by number" mapping, checking the returned state field for `OPEN`. Both replace their `gh`-CLI equivalent one-for-one — no change to the surrounding `node -e` eligibility/dependency logic, which only consumes the fetched JSON shape, not how it was fetched. `list_issues`/`issue_read` return snake_case timestamps; `queue-pull-script.md` aliases them unconditionally right after each fetch (`#3691`, section below), so write the raw MCP JSON to `$DISPATCH_QUEUE_RAW` and `$DISPATCH_DEP_FRESHNESS` and run the script as written. The Write calls split the script across several Bash calls and a shell function does not survive between calls, so re-run the `alias_mcp_timestamps() { … }` definition at the top of any Bash call that calls it.
 
 ## Step 2 — `list_issues` `fields` parameter silently truncates labels (#3137)
 
@@ -104,6 +104,14 @@ Omitting `fields` entirely (the unprojected response may return full labels) is 
 mitigation. Re-open this section once a live run confirms whether omission avoids the truncation —
 at that point, promote fields-omission to the default and update `queue-pull-script.md`'s MCP-path
 note accordingly.
+
+## Step 2 — `list_issues`/`issue_read` return snake_case timestamps (#3691)
+
+**Confirmed live** (`gh`-absent firing, run `2026-10-20T022848-record-3630`, 2026-10-20): `mcp__github__list_issues` and `mcp__github__issue_read` return issue timestamps as `created_at` / `updated_at`. The dispatch consumers read camelCase `createdAt` / `updatedAt`. That firing's queue pull had to patch `dispatch-groups.json` with camelCase aliases before ranking.
+
+**Consequence.** Without the alias, nothing errors and the picks go wrong quietly. `next-ranking.md`'s oldest-first tie-break compares `new Date(undefined)` values, so every comparison is a tie and the pick falls back to array order. `bin/lib/issues/grouping.js`'s fast-lane bundling degrades the same way. The worst effect is a false queue-order cache hit: `queue-order.js`'s `buildFreshnessSignal` records `updatedAt: undefined`, `JSON.stringify` drops that key when the cache is persisted, and `signalsMatch` then compares `undefined !== undefined`, which is false. A record whose body or labels changed between two MCP firings therefore still matches the persisted signal, and the stale persisted groups are reused.
+
+**Required workaround.** Alias the timestamps once, at the queue-pull boundary, and `queue-pull-script.md` already does it: its `alias_mcp_timestamps` function runs unconditionally right after the `$DISPATCH_QUEUE_RAW` write and after each `$DISPATCH_DEP_FRESHNESS` write, before any node block reads either file. It is a no-op on gh-shaped input, so an MCP-path agent need only write the raw MCP JSON to those two paths and run the script as written, re-running the function definition at the top of any Bash call that calls it, since a shell function does not survive between Bash calls. `bin/lib/issues/mcp-issue-shape.js`'s `aliasMcpTimestamps` returns shallow copies with `createdAt` / `updatedAt` added from the string snake_case values. The snake_case originals stay, a camelCase value that is not `undefined` is kept, and a non-array input yields `[]`. Any other MCP-fetched issue array that a node block outside that script reads needs the same call.
 
 ## Step 2 — cross-PR overlap report (#1579)
 

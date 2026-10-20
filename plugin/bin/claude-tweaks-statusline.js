@@ -205,7 +205,7 @@ function parseStatusBranch(output) {
 
 function renderGit(cwd) {
   try {
-    const output = execSync('git --no-optional-locks status --porcelain -b', {
+    const output = execSync('git --no-optional-locks status --porcelain -b', { // git-path-read: not a path list (branch and dirty flag only)
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf8',
       cwd,

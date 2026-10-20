@@ -6,9 +6,12 @@
 // by replacing every character of the cwd that is not [A-Za-z0-9-] with
 // '-'. Observed pair: cwd
 //   /Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/design-1904-pipeline-ceremony
-// → ~/.claude/projects/
+// → {config-dir}/projects/
 //   -Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-design-1904-pipeline-ceremony/
 // (the space and the '.' both became '-', so a worktree cwd yields '--').
+// {config-dir} is $CLAUDE_CONFIG_DIR when set (Claude Code writes transcripts
+// there), else ~/.claude — the resolution dream-scan.js and
+// skill-load-report.js use (#3458).
 // The session's main transcript is {slug}/{sessionId}.jsonl; a sibling
 // directory named {sessionId}/ holds subagent transcripts as
 // {sessionId}/subagents/agent-{id}.jsonl + agent-{id}.meta.json, read by
@@ -32,18 +35,20 @@ function slugForCwd(cwd) {
 
 function statOrNull(fsImpl, p) { try { return fsImpl.statSync(p); } catch { return null; } }
 
-// { cwd?, sessionId?, homeDir?, fsImpl? } -> [{ path, mtimeMs }] newest first.
+// { cwd?, sessionId?, homeDir?, configDir?, fsImpl? } -> [{ path, mtimeMs }] newest first.
+// The projects root is {configDir}/projects; configDir defaults to
+// $CLAUDE_CONFIG_DIR (an empty value counts as unset), else {homeDir}/.claude (#3458).
 // Both keys absent -> []. Only the run's own keys are ever consulted.
 // A sessionId that isn't a plain file-name token (e.g. carries "/" or "..")
 // is a malformed request, not an absent one: it never falls back to a wider
 // scan (that would silently widen a targeted lookup into a directory
 // listing) — the whole call returns [] instead.
-function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), fsImpl = fs } = {}) {
+function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), configDir = process.env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude'), fsImpl = fs } = {}) {
   const sessionIdGiven = typeof sessionId === 'string';
   const sid = sessionIdGiven && /^[A-Za-z0-9._-]+$/.test(sessionId) && !sessionId.includes('..') ? sessionId : null;
   if (sessionIdGiven && !sid) return [];
   if (!cwd && !sid) return [];
-  const projects = path.join(homeDir, '.claude', 'projects');
+  const projects = path.join(configDir, 'projects');
   const projectsResolved = path.resolve(projects) + path.sep;
   // realpath: fsImpl.realpathSync pins the JS form this reader has always used
   // (path-guard defaults to .native, which would change Windows short-name
@@ -54,7 +59,7 @@ function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), fsImpl = fs
   // Containment is decided on the REAL path (symlinks resolved at every
   // component, including the leaf) — statSync/createReadStream follow
   // symlinks, so a lexical check alone lets a symlinked {sid}.jsonl or slug
-  // directory under ~/.claude/projects/ escape the sandbox (#1929 review
+  // directory under the projects root escape the sandbox (#1929 review
   // finding, [IL-150]). The lexical check stays first: it's cheap and
   // rejects a literal ".." before any filesystem call.
   const push = (p) => {
@@ -257,7 +262,7 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
       : `subagents/ directory not readable (${code}) at ${subagentsDir}`;
     return { items: [], notFound, excludedOutsideWindow: 0 };
   }
-  // A symlinked agent file could point outside ~/.claude/projects, so it is
+  // A symlinked agent file could point outside the projects root, so it is
   // never followed (the lstat twin of locateTranscripts' realpath containment,
   // IL-150), and an entry lstat cannot prove regular is treated the same way
   // (fail closed). Skipped files are never read, but their agent id is still

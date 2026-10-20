@@ -33,6 +33,7 @@
 const fs = require('fs');
 const path = require('path');
 const { runGit } = require('./lib/hooks/git-exec');
+const { splitNul } = require('./lib/git-z');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const { archiveRunDir, listSpecDirs } = require('./lib/reconcile/archive-merged');
 
@@ -68,9 +69,9 @@ function parseArgs(argv) {
 // bug this script targets.
 function hasTrackedWork(root, runDir) {
   const rel = path.relative(root, runDir);
-  const res = runGit(['ls-files', '--', rel], root);
+  const res = runGit(['ls-files', '-z', '--', rel], root);
   if (res.failure || !res.stdout) return false;
-  return res.stdout.split('\n').some((line) => /(^|\/)work\//.test(line));
+  return splitNul(res.stdout).some((p) => /(^|\/)work\//.test(p));
 }
 
 // Folds runDir's top-level events.jsonl into its archive twin's, in place,

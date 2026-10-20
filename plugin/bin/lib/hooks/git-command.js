@@ -273,7 +273,7 @@ function forEachCommandSegment(command, cwd, handler) {
 // immediately after `git`, so any other global flag (`-c ...`, `--no-pager`,
 // etc.) ahead of `worktree remove` defeated its parser entirely and silently
 // allowed tearing down a worktree still assigned to a non-terminal run.
-function skipGlobalFlags(t, i, dir) {
+function skipGlobalFlags(t, i, dir, pathImpl = path) {
   let unprovable = false;
   while (i < t.length && t[i].startsWith('-')) {
     const flag = t[i];
@@ -286,15 +286,20 @@ function skipGlobalFlags(t, i, dir) {
     // subcommand two lines below.
     if (flag === '-C' && i + 1 < t.length) {
       const raw = t[i + 1];
-      if (isUnresolvable(raw)) {
+      if (raw === '') {
+        // git leaves cwd unchanged for an empty -C, so `dir` stays verbatim.
+        // Resolving it would normalize the string and hand the worktree gate
+        // a different target than an omitted -C (e.g. `C:\repo` vs `/repo` on
+        // Windows) — #3314.
+      } else if (isUnresolvable(raw)) {
         unprovable = true;
-      } else if (path.isAbsolute(raw)) {
-        dir = path.resolve(raw);
+      } else if (pathImpl.isAbsolute(raw)) {
+        dir = pathImpl.resolve(raw);
       } else if (dir === null) {
         // Relative -C while cwd is UNKNOWN — cannot prove the target.
         unprovable = true;
       } else {
-        dir = path.resolve(dir, raw);
+        dir = pathImpl.resolve(dir, raw);
       }
       i += 2;
       continue;

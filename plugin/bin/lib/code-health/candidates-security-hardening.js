@@ -28,7 +28,7 @@
 // Scope boundary vs. sibling records (deliverable 5 of #2624, extended by
 // #2657/#2663/#2666/#2751/#2668): this vertical owns exactly the checks
 // named above.
-// #2622's pre-scale hardening (query/background-job/caching/pooling/
+// `focus=scale-readiness`'s pre-scale hardening (#2622) (query/background-job/caching/pooling/
 // monitoring) and #2625's GDPR/backup-retention check remain out of scope
 // here — no overlapping category is claimed by more than one vertical. The
 // terms-of-service and cyber-liability-insurance items #2663 also names are

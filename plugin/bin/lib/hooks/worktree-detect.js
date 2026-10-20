@@ -8,8 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { runGit, isIndeterminate } = require('./git-exec');
 
-// Returns null (not the original, unresolved path) on failure — matching
-// pre-tool-use.js's own identically-named/-purposed safeReal(). This
+// Returns null (not the original, unresolved path) on failure. This
 // project's fail-open invariant ("a recorded worktree whose path no longer
 // exists resolves to allow") depends on unresolvable paths being falsy;
 // returning the raw path here would let repoInfo() below hand back a
