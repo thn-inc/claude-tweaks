@@ -60,9 +60,10 @@ it; the steps below restate the commands so this auto branch never needs to invo
 `finishing-a-development-branch`'s own interactive Step 4 menu.
 
 The order is load-bearing: `close-run` (step 4) clears the run's protection and its worktree
-assignment, so nothing that can fail may run after it except the merge itself — the pre-merge checks
-(step 3) run first, while a failure still leaves the run open and protected, and a failure after
-`close-run` re-protects the run in the **Park** branch below.
+assignment, so every check that can run beforehand runs before it — the pre-merge checks (step 3)
+run first, while a failure still leaves the run open and protected; the merge, the step 6 verify, and
+the push necessarily follow it, and a failure after `close-run` re-protects the run in the **Park**
+branch below.
 
 **Shell state does not survive between separate Bash calls** — read every value first and substitute
 it literally into the next call; never carry it in a shell variable across calls (same warning
@@ -132,7 +133,9 @@ it literally into the next call; never carry it in a shell variable across calls
    on stdout, or a ref it cannot merge): nothing has been merged and `close-run` has not run. Log it
    via the Park branch's `log-decision.js` call, with `{conflict|failed verification}` replaced by
    `"predicted conflict: {first CONFLICT line}"`, and report `pending-review` — never attempt
-   resolution.
+   resolution. Exit 1 means a predicted conflict; any other non-zero exit means git could not run
+   the pre-check (e.g. git older than 2.38 lacks `--write-tree`) — log that as the reason, not
+   "predicted conflict".
 
 4. **Clear this run's worktree assignment before merging** — only now, once the pre-merge checks
    passed. `close-run` first, so the merge landing in the main checkout isn't denied as a
@@ -224,7 +227,7 @@ would otherwise be unprotected with its worktree assignment cleared; re-stamp it
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$RUN_DIR" "{worktree-path}"
 ```
 
-`record-worktree` fully reverses `close-run`. It prints `claude-tweaks: worktree recorded for …` when
+`record-worktree` restores the worktree assignment and `active` status. It prints `claude-tweaks: worktree recorded for …` when
 it worked; any other line (the run dir may have been archived underneath) is not ignored — carry it
 into the `--text` of the log call below. A park reached from step 2 or step 3 runs no re-stamp:
 `close-run` has not fired, so nothing was closed.

@@ -373,7 +373,7 @@ Nothing is threaded back from the second Task call beyond its `OUTCOME: ready-to
 - **`{run-dir}`** — minted in Step 4 and passed as `PIPELINE_RUN_DIR` on both Task calls.
 - **the group's issue numbers** — in this run's session-scoped `dispatch-groups.json` (`_shared/session-tmp-root.md`; `queue-pull-script.md`'s Step 2 wrote it). They are `bin/compose-subject.js`'s positional arguments below; the composer derives the subject and body itself.
 
-The order is load-bearing: `close-run` clears this run's E1 protection and worktree assignment, so every check that can fail runs first, and only the merge runs after it; the merge's own failure path re-protects the run.
+The order is load-bearing: `close-run` clears this run's E1 protection and worktree assignment, so every check that can run beforehand does; the merge and push follow, and the merge's failure path re-protects the run.
 
 **Shell state does not survive between these calls** — each Bash invocation gets a fresh shell, so a variable assigned in one is empty in the next. Read `{integration-branch}` first and substitute it, and every other placeholder, **literally** into the calls below.
 
@@ -446,6 +446,6 @@ Attach the full Review-Console-equivalent summary (whatever `/wrap-up` already p
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "{run-dir}" "{group-worktree}"
 ```
 
-`record-worktree` fully reverses `close-run`. It prints `claude-tweaks: worktree recorded for …` when it worked; log any other line to `{run-dir}/decisions.md` rather than ignoring it (the run dir may have been archived underneath). Park as below.
+`record-worktree` restores the worktree assignment and `active` status. It prints `claude-tweaks: worktree recorded for …` when it worked; log any other line to `{run-dir}/decisions.md` (the run dir may have been archived underneath). Park as below.
 
 **Parking, either case.** Conflict resolution requires judgment a headless run can't supply. Unlike the Task-call branches above, this session has no structural barrier to tearing the worktree down itself; it chooses not to: the run isn't finished, and a human must resolve the conflict before worktree removal, claim release, or run-dir archival is safe — the ordinary un-pushed `pending-review` case `dispatch/SKILL.md`'s Reporting section already parks for. Leave the worktree and run dir parked; a human resuming the run handles all three normally. Report this group's outcome as `pending-review` (not `ready-to-merge`, a transient signal, never terminal), and log why the auto-merge path was abandoned.

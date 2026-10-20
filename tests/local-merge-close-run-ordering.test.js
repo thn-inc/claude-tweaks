@@ -17,6 +17,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { readRunState } = require('../plugin/bin/lib/hooks/context');
+const { fixtureGit, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
 
 const ROOT = path.join(__dirname, '..');
 const PLUGIN_DIR = path.join(ROOT, 'plugin');
@@ -91,7 +92,7 @@ function extractFence(text, needle) {
 function runFence(body, { cwd, env = {}, vars = {} }) {
   const script = body.replace(/\{([a-z-]+)\}/g, (whole, name) => (name in vars ? vars[name] : whole));
   const r = spawnSync('bash', ['-c', script], {
-    cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', ...env },
+    cwd, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', ...env },
   });
   return { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
@@ -166,7 +167,7 @@ test('go-red: the frozen pre-change excerpt fails the ordering check', () => {
 });
 
 function git(cwd, ...args) {
-  return execFileSync('git', ['-C', cwd, '-c', 'user.email=t@example.com', '-c', 'user.name=T', ...args], { encoding: 'utf8' });
+  return fixtureGit(['-C', cwd, '-c', 'user.email=t@example.com', '-c', 'user.name=T', ...args], { encoding: 'utf8' });
 }
 
 // Main checkout on `main` with a clean `feat` branch adding b.txt. `conflict` makes both sides edit a.txt line 1.
@@ -207,7 +208,7 @@ function stubPluginRoot() {
 
 function tmpProject() {
   const dir = fs.mkdtempSync(path.join(SCRATCH, 'project-'));
-  execFileSync('git', ['-C', dir, 'init', '-q']);
+  fixtureGit(['-C', dir, 'init', '-q']);
   const run = path.join(dir, '.claude-tweaks', 'pipelines', '2026-10-20T000000-spec-1');
   fs.mkdirSync(run, { recursive: true });
   fs.writeFileSync(path.join(run, 'decisions.md'), '');
@@ -266,7 +267,7 @@ for (const site of SITES) {
     const fence = extractFence(raw, REPROTECT_NEEDLE);
     const { dir, run } = tmpProject();
     const hook = (...args) => execFileSync(process.execPath, [HOOKS, ...args], {
-      cwd: dir, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
+      cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
     });
     const wt = vars['worktree-path'] ?? vars['group-worktree'];
     hook('record-worktree', '--run', run, wt);

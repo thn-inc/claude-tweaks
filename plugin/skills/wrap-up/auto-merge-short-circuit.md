@@ -240,8 +240,8 @@ both succeed, before merging, clear this run's worktree
 assignment as `flow/worktree-merge.md`'s reconciliation does, so
 the merge, landing in the main checkout, isn't denied as a wrong-checkout
 commit. The order is load-bearing: `close-run` clears the run's E1 protection and its
-worktree assignment, so nothing that can fail may run after it except the merge itself, and the
-merge's own failure path re-protects the run.
+worktree assignment, so every check that can run beforehand runs before it — the merge and push
+necessarily follow it — and the merge's own failure path re-protects the run.
 
 **Shell state does not survive between these calls** — each Bash call gets
 a fresh shell, so a variable set in one is empty in the next. Read
@@ -358,7 +358,7 @@ above (`run-state.json` no longer holds it), its own Bash call:
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$RUN_DIR" "{worktree-path}"
 ```
 
-`record-worktree` fully reverses `close-run`. It prints `claude-tweaks: worktree recorded for …`
+`record-worktree` restores the worktree assignment and `active` status. It prints `claude-tweaks: worktree recorded for …`
 when it worked; log any other line to `decisions.md` rather than ignoring it (the run dir may have
 been archived underneath). Then fall back to rendering the console normally, exactly as for a
 failed pre-merge check, logging why the auto-merge path was abandoned.
