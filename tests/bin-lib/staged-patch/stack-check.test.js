@@ -339,18 +339,18 @@ test('I1: stackVerdicts — a same-anchor pair is ok for the first and not the s
   assert.equal(v['review-2.patch'].error.includes(dir), false, 'basenames only');
 });
 
-test('AC1.1: gitEnv on win32 uses /dev/null, never the \\\\.\\nul device path', () => {
+test('#3696 AC1.1: gitEnv on win32 uses /dev/null, never the \\\\.\\nul device path', () => {
   const env = gitEnv({ platform: 'win32', devNull: '\\\\.\\nul', env: {} });
   assert.strictEqual(env.GIT_CONFIG_GLOBAL, '/dev/null');
   assert.ok(!String(env.GIT_CONFIG_GLOBAL).includes('\\\\.\\nul'));
 });
 
-test('AC1.2: gitEnv on linux uses the platform devNull', () => {
+test('#3696 AC1.2: gitEnv on linux uses the platform devNull', () => {
   const env = gitEnv({ platform: 'linux', devNull: '/dev/null', env: {} });
   assert.strictEqual(env.GIT_CONFIG_GLOBAL, '/dev/null');
 });
 
-test('gitEnv keeps NOSYSTEM, drops repo pointers, and never mutates the input env', () => {
+test('#3696: gitEnv keeps NOSYSTEM, drops repo pointers, and never mutates the input env', () => {
   const input = { PATH: '/bin', GIT_DIR: '/x/.git', GIT_WORK_TREE: '/x', GIT_INDEX_FILE: '/x/i' };
   const env = gitEnv({ platform: 'linux', devNull: '/dev/null', env: input });
   assert.strictEqual(env.GIT_CONFIG_NOSYSTEM, '1');
