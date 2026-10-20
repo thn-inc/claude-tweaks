@@ -1032,3 +1032,13 @@ test('#3153: each log is read against its own checkout — a predicate scoped to
   const r2 = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p2 }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir2, runOne: runOne2, git: git2 });
   assert.deepStrictEqual(r2.baselineFailing, []);
 });
+
+test('a failing path the retry template cannot quote is ineligible, never run (#3676)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a b.test.js']));
+  const { git, runOne, calls } = fakes({ outcomes: {} });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: new Map([['tests', 'node --test "{file}"']]), base: 'origin/main', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git, platform: 'linux' });
+  assert.strictEqual(r.eligible, false);
+  assert.strictEqual(r.reason, 'tests failing file tests/a b.test.js cannot be handed to the shell safely (template-quotes)');
+  assert.strictEqual(calls.runs.length, 0);
+  assert.strictEqual(calls.added.length, 0);
+});
