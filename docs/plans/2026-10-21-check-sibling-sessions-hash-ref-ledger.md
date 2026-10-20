@@ -2,3 +2,6 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | SDD Task 1 minor: `normalizeRecordRef(null)` returns `"null"` — the exported helper has no null guard of its own (`plugin/bin/lib/hooks/sibling-sessions.js`) | accepted | The brief specified `String(recordRef)`. The only caller, `matchesRecordRef`, guards null/undefined before calling it, and `findConflictingSession` short-circuits null/''/undefined first. No reachable bug, and no other caller exists (grep: `normalizeRecordRef` is used only inside sibling-sessions.js and its test) |
+| 2 | build | SDD Task 1 minor: the new `AC1.1:`/`AC2.1:` test names in `tests/hooks-sibling-sessions.test.js` reuse id prefixes the existing `findLiveClaim` tests already carry (a different record's ACs) | accepted | The ids follow plan-audit's `AC{item}.{clause}` clause-id convention (Check E). `node --test` runs tests with duplicate names, and the full test titles still differ |
+| 3 | build | SDD Task 1 minor: no direct test of `matchesRecordRef(entry, null/undefined)` after the null guard was added | accepted | The guard is a one-line ternary. The public path (`findConflictingSession` with null/undefined/'') is already pinned by the existing "a missing recordRef resolves to no match" test, which short-circuits before the guard |
