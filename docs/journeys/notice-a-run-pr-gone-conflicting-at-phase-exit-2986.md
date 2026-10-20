@@ -4,6 +4,7 @@ files:
   - plugin/bin/pr-merge-state.js
   - plugin/bin/lib/reconcile/pr-state.js
   - plugin/skills/_shared/pr-early-run-lifecycle.md
+  - plugin/skills/wrap-up/execution-and-verification.md
 ---
 
 # Notice a Run's PR Gone Conflicting at a Phase Exit
@@ -28,11 +29,11 @@ files:
 - **Should feel:** Invisible when nothing is wrong. There is no prompt, and the phase is never slowed past one resolver call.
 - **Should understand:**
   - `conflicting` means `mergeStateStatus: DIRTY` or `mergeable: CONFLICTING`.
-  - `unknown` is GitHub's mergeability calculation that has not finished yet, which is common right after a push. It is never read as a conflict and never re-read.
+  - `unknown` is GitHub's mergeability calculation that has not finished yet, which is common right after a push. It is never read as a conflict and never re-read, except once, later, by wrap-up's Leave-open mergeability re-check when the wrap-up exit's read came back `unknown`.
   - `not-open` is a closed or merged PR. It is no signal, whatever its mergeability says.
 - **Red flags:**
   - The check runs after a failed push.
-  - A second read is taken because the first one came back `UNKNOWN`.
+  - A second read is taken because the first one came back `UNKNOWN`, outside wrap-up's Leave-open mergeability re-check (which takes exactly one).
   - Anything is written to `run-state.json`.
 
 ### 2. A conflicting PR is named, logged, and (in auto) caught up
@@ -46,12 +47,12 @@ files:
   - The catch-up merges and never rebases, because the branch is already public behind its PR.
   - A conflict it cannot resolve confidently is aborted (`merge --abort`) and logged as `AUTO`. The next phase then starts on the clean, un-merged branch, and the conflict is left for the merge path at merge time. The run never stops to ask.
   - If the local merge brings in nothing, GitHub's conflict state was stale. That gets logged, and nothing is pushed.
-  - `interactive` and `hybrid` only print the line and the commands. The next phase starts as it would have.
+  - `interactive` and `hybrid` only print the line and the commands. The next phase starts as it would have. The one exception is wrap-up's Leave-open mergeability re-check, which runs git's own auto-merge in every mode.
 - **Red flags:**
   - A mid-flow question in `auto`.
   - The next phase starting with `MERGE_HEAD` set or with conflict markers in the tree.
   - A rebase or force push.
-  - A catch-up attempted at wrap-up's exit (the merge path owns that case).
+  - A catch-up attempted at wrap-up's exit when the merge path runs (it owns that case); only a leave-open run catches up there, per `wrap-up/execution-and-verification.md`.
 
 ### 3. Nothing to do, or nothing could be learned
 - **URL:** `plugin/skills/_shared/git-discipline.md` `no-conflict`/`not-open`/`no-pr` and `unknown`/`read-failed`/`gh-absent` bullets

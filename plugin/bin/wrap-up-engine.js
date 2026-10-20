@@ -24,8 +24,10 @@
 // all) — 0/1/2 keep their meanings above unchanged.
 //
 // Repo-relative facts (docs/journeys/, CLAUDE.md, the skills/rules budget
-// scan) resolve against the checkout root — resolveRepoRoot(), below — never
-// against the bare process.cwd() a subcommand happens to run from (#3017).
+// scan) resolve against the facts root — resolveFactsRoot(), below (the
+// worktree/checkout --show-toplevel) — never against the bare process.cwd() a
+// subcommand happens to run from (#3017, #3431). Telemetry alone anchors to
+// the main checkout, via resolveRepoRoot().
 'use strict';
 
 const { execFileSync } = require('node:child_process');
@@ -129,6 +131,22 @@ function resolveRepoRoot(cwd) {
   }
 }
 
+// #3431: the common-dir root above is the MAIN checkout even from a linked
+// worktree, so it is right for telemetry but wrong for repo facts — those must
+// read the worktree being built. --show-toplevel is that worktree's (or the
+// checkout's) top-level, and is the same for a subdirectory cwd (#3017).
+function resolveFactsRoot(cwd) {
+  try {
+    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+    }).trim();
+    return top || cwd;
+  } catch {
+    return cwd;
+  }
+}
+
 // #3017: every caller of this function may pass a raw, possibly-subdirectory
 // process.cwd() as-is — it resolves the repo root itself via resolveRepoRoot
 // before joining anything, so a subdirectory cwd and the checkout root
@@ -209,12 +227,13 @@ function runPlan(args) {
   // CLAUDE.md) as paths under the cwd it's given — the raw process cwd is
   // wrong whenever the shell sits in a subdirectory of the checkout (e.g. an
   // app in `<worktree>/web`), since those paths live at the repo root, not
-  // the subdirectory. Resolve the repo root once (the same resolveRepoRoot
-  // already used by resolveTelemetryPath/runVerifyVerb below) and pass that,
-  // never the bare cwd, into every repo-fact read.
-  const repoRoot = resolveRepoRoot(cwd);
-  const facts = gatherFacts({ cwd: repoRoot, base: args.base });
-  const journeyFrontmatter = buildJourneyFrontmatter(repoRoot, facts.journeyFiles);
+  // the subdirectory. The facts root is the --show-toplevel of cwd, which
+  // covers both the subdirectory and the linked-worktree cases (#3431: not the
+  // common-dir root, which is the main checkout). Pass that, never the bare
+  // cwd, into every repo-fact read.
+  const factsRoot = resolveFactsRoot(cwd);
+  const facts = gatherFacts({ cwd: factsRoot, base: args.base });
+  const journeyFrontmatter = buildJourneyFrontmatter(factsRoot, facts.journeyFiles);
 
   const budgets = {};
   if (args.skillBudget !== null) budgets['skill-budget'] = Number(args.skillBudget);
@@ -513,7 +532,11 @@ function runVerifyVerb(args) {
   // picks whichever one its own fact needs: repoRoot for anything resolved
   // against the checkout (archived-run lookups), the raw cwd for a check
   // that legitimately runs relative to wherever the caller invoked from
-  // (e.g. a `gh` call, which works from any subdirectory).
+  // (e.g. a `gh` call, which works from any subdirectory). #3431 audit: the
+  // --base diff checks (carrier-commit, reference-repairs) already run git
+  // with the raw cwd, which resolves the worktree's own HEAD; repoRoot feeds
+  // only main-checkout-anchored lookups (archived runs, policy.yml), so no
+  // facts-root change belongs here.
   const repoRoot = resolveRepoRoot(process.cwd());
   const cwd = process.cwd();
   const resolvedDir = resolveArchivedRunDir(args.runDir, repoRoot);

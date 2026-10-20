@@ -9,6 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { isPathContained } = require('../shared-primitives');
 
 const TERMINAL_STATUSES = ['fixed', 'deferred', 'accepted', 'acknowledged', 'observation'];
 
@@ -37,7 +38,7 @@ function resolveLedgerPath({ runDir, worktree, explicit, deps = {} } = {}) {
     const real = (p) => { try { return realpathSync(p); } catch { return null; } };
     const target = real(explicit);
     const roots = [runDir, worktree].filter(Boolean).map(real).filter(Boolean);
-    if (!target || !roots.some((r) => target.startsWith(r + path.sep))) {
+    if (!target || !roots.some((r) => isPathContained(target, r))) {
       return { ok: false, reason: 'rejected', detail: 'outside the run directory and worktree', candidates: [explicit] };
     }
     return { ok: true, path: explicit };

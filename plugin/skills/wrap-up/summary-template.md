@@ -48,6 +48,23 @@ check) still blocks exactly as before — this carve-out is narrowly scoped to
 the two checks a live, not-yet-exited session can never pass by construction,
 never a general license to downgrade an unrelated failure.
 
+**Leave-open mergeability (#3483).** When the run left its PR open,
+`execution-and-verification.md`'s Leave-open mergeability re-check logged
+one `mergeability:` outcome — read it from that `decisions.md` line (at
+`$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/decisions.md` once
+cleanup item 8 archived the run), never from memory, and name it in the
+Verdict. `DIRTY → merged main as {sha}`
+reads as caught up ("PR #{n} left open, caught up with main as {sha} — CI
+runs on the new head"); `DIRTY → nothing to merge (forge state stale)`
+reads as caught up too, with nothing to merge. `DIRTY — conflict in {files}` makes the Verdict
+read `blocked — conflict with main in {files}`, never "everything shipped":
+a PR GitHub runs no CI on has not shipped. `DIRTY — not caught up
+({reason})` reads `blocked — PR conflicts with main, not caught up
+({reason})`. Any other outcome (`CLEAN`, `BLOCKED`, `UNKNOWN`, a failed
+read) adds nothing to the Verdict. A leave-open run whose `decisions.md`
+holds no `mergeability:` line reads "mergeability not re-checked" in the
+Verdict — never as clean.
+
 ### State
 
 Render VERBATIM from the helper — do not compose these facts from memory:

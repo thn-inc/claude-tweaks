@@ -76,6 +76,15 @@ structural heuristic (the same posture `solution:unjustified`'s judgment takes).
 `Clear` otherwise. When `Needed`, form a one-line rationale naming the open
 choice — this and the verdict feed Step 5's draft.
 
+**Bash-refusal attribution (#3338).** When the learning's evidence quotes a refused Bash call and the candidate affected component is `bin/lib/hooks/pre-tool-use.js` or any other plugin hook, first grep the quoted text under the plugin's own `bin/`: `"${CLAUDE_PLUGIN_ROOT}/bin/"` (this repo's `plugin/bin/`; the installed build's in a consumer project), e.g. `grep -rnF -- '{fragment}' "${CLAUDE_PLUGIN_ROOT}/bin/"`.
+
+- Grep the refusal's distinctive reason clause (`too complex to verify`, `computed at runtime`), never the surrounding `This session is isolated in the worktree … Refusing to run it` frame: the plugin's `post-tool-use-failure`/`bash-prefilter` hooks quote that frame to recognize harness refusals, so it matches without the plugin having emitted it.
+- Pick a fragment without the substring `git`, since the guard refuses that grep itself inside a worktree session.
+- A match on a `claude-tweaks:`-prefixed deny (`claude-tweaks: this project requires an isolated worktree…`, `claude-tweaks working-directory discipline: …`) keeps the plugin-hook attribution; telling the two apart is `docs/skill-authoring.md`'s "Harness-level worktree Bash guard vs. the plugin's PreToolUse gate" section.
+- A match on any other string: read the hit. A line that only quotes or recognizes the refusal (a regex, a signature constant) is not the plugin emitting it, so count it as no match; a line that emits the text as a deny reason keeps the plugin-hook attribution.
+- No match → the affected component is the Claude Code harness worktree guard: route it as a `_shared/scratch-worktree.md` §7 ("## 7. Shell constraint") addendum candidate (a documentation finding), never a hook defect.
+- Exception: `Permission to use Bash … has been denied` is a permission rule, per that same section.
+
 When the free-text names a preserved unfiled draft by absolute path (the
 `/claude-tweaks:feedback re-file the preserved draft at {abs path}` form `/claude-tweaks:tidy`'s
 backstop scan hands out), read that file and use its body directly as the gathered summary,

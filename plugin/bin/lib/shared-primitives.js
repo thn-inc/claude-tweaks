@@ -65,22 +65,31 @@
 //     and the retry always uses the same timeout the first attempt did (a
 //     caller's `fn` closure already has it baked in) — never a longer
 //     window, and never more than one retry.
-//   - isPathContained: the `candidate === root || candidate.startsWith(root +
-//     path.sep)` (or the strict, no-equals-branch half of it alone) idiom for
-//     "is this resolved path inside that resolved path". Previously retyped
-//     independently in `bin/lib/reconcile/reap-merged.js` (`isOwnCwd`, and its
-//     own domain-boundary check), `bin/lib/hooks/worktree-reap.js` (the same
-//     two checks), `bin/lib/timing/transcript.js`, and
+//   - isPathContained: "is this resolved path inside that resolved path" — a
+//     thin strict / `orEqual` wrapper over `path-guard`'s `isAncestorOrSelf`
+//     (#3498), so the containment comparison itself lives in one place: strict
+//     by default (the root itself is excluded), `orEqual` to include it, and an
+//     optional `pathImpl` for host-independent win32/posix tests. Previously
+//     retyped independently as a hand-rolled prefix-plus-separator `startsWith`
+//     test (with or without a `candidate === root` branch) in
+//     `bin/lib/reconcile/reap-merged.js` (`isOwnCwd`, and its own
+//     domain-boundary check), `bin/lib/hooks/worktree-reap.js` (the same two
+//     checks), `bin/lib/timing/transcript.js`, and
 //     `bin/lib/hooks/pre-tool-use.js` (two call sites, one of each shape) —
 //     found during #2324's review when its own new `--extra-file` containment
-//     check turned out to be a 6th independent copy of the pattern. Every
-//     caller passes its own already-resolved (`path.resolve`/`realpathSync`)
-//     paths in — this is a pure string check, never a filesystem call, so it
+//     check turned out to be a 6th independent copy of the pattern; #3498
+//     migrated the four sites that were still hand-rolled. Every caller passes
+//     its own already-resolved (`path.resolve`/`realpathSync`) paths in — this
+//     is pure path arithmetic (`path.relative`), never a filesystem call, so it
 //     does not change any caller's resolution strategy (lexical vs.
-//     symlink-real), only the containment comparison itself.
+//     symlink-real), only the containment comparison itself. It is not a pure
+//     string comparison: a relative argument resolves against `process.cwd()`
+//     rather than failing closed, and a null/undefined argument throws
+//     `ERR_INVALID_ARG_TYPE` — so pass absolute, already-resolved paths.
 'use strict';
 
 const path = require('path');
+const { isAncestorOrSelf } = require('./path-guard');
 
 const DEFAULT_GH_TIMEOUT_MS = 5000;
 const GH_TIMEOUT_ENV_VAR = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
@@ -196,9 +205,9 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function isPathContained(candidate, root, { orEqual = false } = {}) {
-  if (orEqual && candidate === root) return true;
-  return candidate.startsWith(root + path.sep);
+function isPathContained(candidate, root, { orEqual = false, pathImpl = path } = {}) {
+  if (!isAncestorOrSelf(root, candidate, { pathImpl })) return false;
+  return orEqual || pathImpl.relative(root, candidate) !== '';
 }
 
 // A path with every `sep` separator rewritten to `/` — the repo-display form

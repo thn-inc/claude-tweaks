@@ -198,6 +198,36 @@ test('the three local-merge fallback sections route the post-merge release-statu
   assert.match(AUTO_MERGE, /pr-first-merge-post-merge\.md` Step 4\.1/);
 });
 
+// #3297: a merged run with no console.json and pending staged/ items skips
+// reconcile with console-never-rendered-staged-pending. Step 4.2 must report it
+// as needing human action, never as converged, while keeping the transient-failure
+// sentence (AC2.1) intact.
+test('AC1.1: Step 4.2 reports a console-never-rendered-staged-pending skip as needing human action, never as converging (#3297)', () => {
+  const step42 = MERGE_POST_MERGE.indexOf('### Step 4.2: Reconcile');
+  const step5 = MERGE_POST_MERGE.indexOf('## Step 5: Delete the remote branch');
+  assert.ok(step42 > 0 && step5 > step42, 'Step 4.2 must precede Step 5');
+  const section = MERGE_POST_MERGE.slice(step42, step5);
+  assert.ok(section.includes('`console-never-rendered-staged-pending`'), 'the reason string must be named verbatim');
+  assert.match(section, /needs human action/, 'the skip must be reported as needing human action');
+  assert.match(section, /AUTO \{time\} — pr-first-merge Step 4\.2:[^\n]*console-never-rendered-staged-pending/, 'the Step 4.2 log line must name the reason');
+  assert.match(section, /\$PIPELINE_RUN_DIR\/console\.json/, 'the skip must be decided by checking this run directly, not from the aggregate summary');
+});
+
+test('AC2.1: Step 4.2 still leaves a transient failure for the next trigger point (#3297)', () => {
+  const step42 = MERGE_POST_MERGE.indexOf('### Step 4.2: Reconcile');
+  const step5 = MERGE_POST_MERGE.indexOf('## Step 5: Delete the remote branch');
+  assert.match(MERGE_POST_MERGE.slice(step42, step5), /is logged and left for the next trigger point/);
+});
+
+test('Deliverable 2: auto-merge-short-circuit records why it writes no console.json (#3297)', () => {
+  const prFirst = AUTO_MERGE.indexOf('Fast-lane auto-merge: issue #{n}, assess-agent-autonomy verdict auto-merge (see RATIONALE), pr-first-merge outcome');
+  const localMerge = AUTO_MERGE.indexOf('**`integration-model: local-merge`:**', prFirst);
+  assert.ok(prFirst > 0 && localMerge > prFirst, 'the pr-first paragraph must precede the local-merge paragraph');
+  const region = AUTO_MERGE.slice(prFirst, localMerge);
+  assert.match(region, /console\.json/, 'the pr-first region must mention console.json');
+  assert.match(region, /#3297/, 'the pr-first region must cite #3297');
+});
+
 // #1411 deliverable 4: pin Step 3 item 1's auto-merge-not-enabled classification
 // against the literal captured GitHub GraphQL wording (PR #1401, 2026-08-24:
 // `GraphQL: Auto merge is not allowed for this repository

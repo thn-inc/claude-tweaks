@@ -261,27 +261,31 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" teardown-run --run "$RUN_DIR" \
-     --merged  # or --abandoned when the branch was discarded, not merged
+     --merged --remote-ref-only  # or --abandoned --remote-ref-only when the branch was discarded, not merged
    ```
 
-   One command performs archival (idempotent if Section B already archived this run — a second
-   pass is a harmless no-op), worktree removal (skip-and-report if locked, never forced), the
+   One command performs worktree removal (skip-and-report if locked, never forced), the
    local branch delete (only under `--merged`, and only when the branch isn't the integration
    branch itself), and the remote branch delete (`pr-first-merge-post-merge.md`'s `## Step 5:
    Delete the remote branch` mechanism, verbatim) — replacing what used to be 4-5 hand-assembled
-   commands per run. A `worktree: registration pruned but directory still present at {path}` line
+   commands per run. It never archives the run directory (#3490): Sections D and E (items 6 and 7)
+   still read files under `$RUN_DIR` after this step, so archival stays Section B's job alone, last
+   (item 8, `cleanup-procedures.md`'s Ordering rule). `teardown-run` stopped archiving altogether in
+   #3490; `--remote-ref-only` says so at the call site and stays, inert, for the transition (removal
+   condition: `bin/hooks.js`'s `KNOWN_FLAGS` comment).
+   A `worktree: registration pruned but directory still present at {path}` line
    is not a completed removal: surface the path in the report and leave the directory for manual
    removal — never retry-delete it. **Own-worktree carve-out:** never call `teardown-run` against the worktree
    the session is standing in **while it is still live** — that removal path is `ExitWorktree`
    only, per step 4 above and `[IL-58]`; `teardown-run`'s own worktree-removal step is for a
    worktree this session does not occupy. Once step 4 has already removed it, step 5.5 below
-   calls a narrower form of `teardown-run` anyway, for a different reason.
+   calls `teardown-run` again anyway, for a different reason.
 5.5. **Own-worktree remote-branch delete (#3088).** Only when step 4 actually proceeded past its
    proof above and removed the worktree via `ExitWorktree` — never when step 4's proof stopped
    (no `mergeCommit`, a non-empty/differing containment check, or a non-zero ancestry check), and
    never when this spec's branch-finish outcome never reached `merged` at all. `ExitWorktree(remove)`
    in step 4 deletes the local branch along with the worktree — nothing in steps 1-4 deletes the
-   remote ref. Run `teardown-run` again, narrowed to just that one step, now that nothing live
+   remote ref. Run `teardown-run` again, now that nothing live
    remains for the rest of it to conflict with — but archival stays Section B's job alone (item 8
    always runs last, per `cleanup-procedures.md`'s Ordering rule, since Sections D/E and Section
    B's own archival all still need `$RUN_DIR` to resolve after this point):
@@ -290,7 +294,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" teardown-run --run "$RUN_DIR" --merged --remote-ref-only
    ```
 
-   `--remote-ref-only` skips archival (Step 2) only — the run directory stays exactly where it
+   `teardown-run` never archives (#3490), so the run directory stays exactly where it
    was, for Sections D, E, and B's own archival (item 8) to still find. Its state-close step is a
    harmless idempotent re-run (step 3.6 already closed it), its worktree-removal step reports "no
    worktree recorded" (already gone), and its local-branch-delete step reports a harmless failure
@@ -299,7 +303,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    exists (`teardown-run.js`'s branch resolution, #3088). This narrows, not contradicts, step 5's
    own carve-out above: that carve-out is about never routing *worktree removal* through
    `teardown-run` while the worktree is still live — calling it afterward, purely for this
-   leftover remote-ref cleanup, with archival suppressed, is the documented path.
+   leftover remote-ref cleanup, is the documented path.
 
 If no worktree exists for this spec, skip this section silently.
 

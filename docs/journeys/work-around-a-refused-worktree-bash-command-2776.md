@@ -1,6 +1,8 @@
 ---
 files:
   - plugin/skills/_shared/scratch-worktree.md
+  - plugin/skills/feedback/SKILL.md
+  - plugin/skills/feedback/bare-invocation.md
 ---
 
 # Work Around a Refused Worktree Bash Command
@@ -30,8 +32,14 @@ files:
 - **Should understand:** One plain command per Bash call stays the default (§7's practical workaround). The #2776 entry narrows which shapes need special handling. It does not lift that default.
 - **Red flags:** The same refused shape retried unchanged. A path rewritten just to slip past a deny rule someone set on purpose. A new shape that §7 doesn't cover gets worked around silently, with no addendum or record filed.
 
+### 4. File an uncovered shape upstream — The session reports a refusal §7 doesn't record.
+- **Action:** Run `/claude-tweaks:feedback` with the refusal quoted. Before Step 1 names `pre-tool-use.js` or any plugin hook as the affected component, it greps the quote's reason clause (e.g. `too complex to verify`, never the `This session is isolated … Refusing to run it` frame) under the plugin's `bin/`. A bare `/claude-tweaks:feedback` session-evaluation batch applies the same check.
+- **Should feel:** Correctly routed on the first draft, with no premise-correction reshape needed later.
+- **Should understand:** No match → the draft names the Claude Code harness worktree guard and goes in as a `_shared/scratch-worktree.md` §7 addendum candidate (a documentation finding). A `claude-tweaks:`-prefixed deny still names the plugin hook. A `Permission to use Bash … has been denied` refusal is a permission rule, not either.
+- **Red flags:** A filed record that blames `pre-tool-use.js` for a refusal string absent from `bin/`. A grep fragment containing `git`, which the guard refuses itself.
+
 ## Outcome
 
 A refused Bash call in a worktree session costs one lookup and one retry, not a dozen probes. The session knows which refusals are the harness guard, which are permission rules, and which reported shapes don't reproduce at all.
 
-_Origin: record #2776 (reshaped to doc-only: the refusals come from the harness guard, not `pre-tool-use.js`), built 2026-10-16._
+_Origin: record #2776 (reshaped to doc-only: the refusals come from the harness guard, not `pre-tool-use.js`), built 2026-10-16. Step 4 added by record #3338 (`/claude-tweaks:feedback` checks a quoted refusal against `bin/` before blaming a plugin hook), built 2026-10-20._

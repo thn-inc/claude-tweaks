@@ -764,6 +764,21 @@ function scanMarkerComments(comments, hasMarker) {
   return { trusted, ignored };
 }
 
+// #3333: the PR-side Verification Brief. A multi-spec run's shared PR carries
+// one brief per spec as `<!-- run-comment: brief:{n} -->`; a single-spec run
+// (or a brief posted before the qualified form shipped) carries the plain
+// `<!-- run-comment: brief -->`. Reads the qualified marker for this target
+// first, then falls back to the plain one; `ignored` joins both scans' notes.
+// The closing ` -->` makes `brief:90` and `brief:900` distinct markers.
+function scanPrBrief(prComments, target) {
+  const scanConfirmedBrief = (marker) =>
+    scanMarkerComments(prComments, (c) => c.body && c.body.includes(marker) && c.body.includes('### Confirmed'));
+  const qualified = scanConfirmedBrief(`<!-- run-comment: brief:${target} -->`);
+  if (qualified.trusted) return qualified;
+  const plain = scanConfirmedBrief('<!-- run-comment: brief -->');
+  return { trusted: plain.trusted, ignored: [...qualified.ignored, ...plain.ignored] };
+}
+
 // ---- acceptance labeling ---------------------------------------------------
 //
 // Reproduces execution-and-verification.md's existing per-backend,
@@ -910,7 +925,9 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
     // No full brief on the issue itself -- under pr-first (run-state.json
     // carries a `pr` object), verification-brief.md's "`pr` object present"
     // branch posts the full brief on the PR instead, leaving only a
-    // one-line pointer on the issue. Check for that form before failing.
+    // one-line pointer on the issue. Check for that form before failing. The PR
+    // brief is read spec-qualified first (`brief:{n}`), then plain -- see
+    // _shared/pr-run-comments.md's "Multi-spec brief and timing comments" read side.
     if (prNumber) {
       const pointer = scanMarkerComments(comments, (c) => c.body && c.body.includes('Verification Brief posted to PR #'));
       ignored.push(...pointer.ignored);
@@ -929,16 +946,13 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
           fail(`#${target}: could not parse PR #${prNumber} comments JSON`);
           continue;
         }
-        const prBrief = scanMarkerComments(
-          prComments,
-          (c) => c.body && c.body.includes('<!-- run-comment: brief -->') && c.body.includes('### Confirmed')
-        );
+        const prBrief = scanPrBrief(prComments, target);
         ignored.push(...prBrief.ignored);
         if (prBrief.trusted) {
           if (ignored.length) passedNotes.push({ target, ignored });
           continue;
         }
-        fail(`#${target}: pointer to PR #${prNumber} found but no confirmed Verification Brief on PR #${prNumber}`);
+        fail(`#${target}: pointer to PR #${prNumber} found but no confirmed Verification Brief on PR #${prNumber} (looked for brief:${target}, then brief)`);
         continue;
       }
     }

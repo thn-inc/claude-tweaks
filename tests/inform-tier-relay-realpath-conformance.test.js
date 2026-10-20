@@ -29,6 +29,7 @@ test('docs/donts.md [IL-150] names fs.realpathSync.native', () => {
   assert.equal(il150.length, 1);
   assert.match(il150[0], /fs\.realpathSync\.native/);
   assert.match(il150[0], /realTarget\(\)`'s leaf handling/);
+  assert.doesNotMatch(il150[0], /equality with `canonicalRepoPath` is unchanged/, 'realTarget() no longer injects the JS form (#3495)');
 });
 
 test('docs/incident-log.md IL-150 cites #3380 row 48 as the casing instance', () => {
@@ -41,6 +42,6 @@ test('docs/incident-log.md IL-150 cites #3380 row 48 as the casing instance', ()
   assert.match(section, /row 48/);
   assert.match(section, /#3406/);
   assert.match(section, /ffe20b982/);
-  assert.match(section, /realTarget\(\)` in `pre-tool-use\.js` still uses the JS form/);
+  assert.match(section, /realTarget\(\)` in `pre-tool-use\.js` still used the JS form at that point/);
   assert.match(section, /fs\.realpathSync\.native/);
 });

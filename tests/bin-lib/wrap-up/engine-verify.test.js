@@ -2024,6 +2024,42 @@ test('AC2.2: the same PR brief authored COLLABORATOR satisfies a trusted pointer
   assert.strictEqual(row.result, 'pass');
 });
 
+// #3333: in a multi-spec run the Verification Brief lands on the shared PR as
+// `<!-- run-comment: brief:{n} -->`; acceptance-labeling reads that marker
+// first and falls back to the plain `brief` marker (single-spec / pre-change).
+const QUALIFIED_BRIEF = (n) => `<!-- run-comment: brief:${n} -->\n\n## Verification Brief\n### Confirmed\n`;
+const MEMBER_POINTER = [{ body: TRUST_POINTER_BODY, url: 'https://x/p1', author: { login: 'bot' }, authorAssociation: 'MEMBER' }];
+const memberPrComment = (body, url) => ({ body, url, author: { login: 'bot' }, authorAssociation: 'MEMBER' });
+
+test('AC4.1: acceptance-labeling passes via a spec-qualified brief:{n} PR comment', () => {
+  const { row } = acceptanceTrustRow({ withPr: true, issueComments: MEMBER_POINTER,
+    prComments: [memberPrComment(QUALIFIED_BRIEF(900), 'https://x/pr1')] });
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test("AC1.1: a sibling spec's brief:{m} does not satisfy #n", () => {
+  const { row } = acceptanceTrustRow({ withPr: true, issueComments: MEMBER_POINTER,
+    prComments: [901, 9000].map((m) => memberPrComment(QUALIFIED_BRIEF(m), `https://x/pr${m}`)) });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /pointer to PR #1199 found but no confirmed Verification Brief on PR #1199/);
+  assert.match(row.detail, /looked for brief:900, then brief/);
+});
+
+test('AC3.1: acceptance-labeling falls back to the plain brief marker (single-spec / pre-change brief)', () => {
+  const { row } = acceptanceTrustRow({ withPr: true, issueComments: MEMBER_POINTER,
+    prComments: [memberPrComment(TRUST_PR_BRIEF_BODY, 'https://x/pr1')] });
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('AC4.1: an untrusted brief:{n} falls back to a trusted plain brief and names the skipped comment', () => {
+  const { row } = acceptanceTrustRow({ withPr: true, issueComments: MEMBER_POINTER, prComments: [
+    { body: QUALIFIED_BRIEF(900), url: 'https://x/q1', author: { login: 'eve' }, authorAssociation: 'NONE' },
+    memberPrComment(TRUST_PR_BRIEF_BODY, 'https://x/pr1'),
+  ] });
+  assert.strictEqual(row.result, 'pass', row.detail);
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/q1 by eve \(NONE\)/);
+});
+
 test('a trusted brief after an untrusted one passes and still names the skipped one', () => {
   const { row } = acceptanceTrustRow({
     issueComments: [

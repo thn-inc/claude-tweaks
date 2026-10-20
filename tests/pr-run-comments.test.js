@@ -16,6 +16,7 @@ const COMMENTS = read('plugin', 'skills', '_shared', 'pr-run-comments.md');
 const LIFECYCLE = read('plugin', 'skills', '_shared', 'pr-early-run-lifecycle.md');
 const SETTLE = read('plugin', 'skills', 'dispatch', 'settle-and-merge.md');
 const BRIEF = read('plugin', 'skills', 'wrap-up', 'verification-brief.md');
+const DEMO = read('plugin', 'skills', 'demo', 'entry-paths.md');
 // /review's Step 7 (verdict comment) lives in the code-mode-steps.md sub-file since the
 // #887 dispatcher split — concatenate so this asserts against the documented text wherever
 // it currently lives, same pattern as multi-agent-coordination.test.js's REVIEW_SKILL.
@@ -311,4 +312,37 @@ test('regression: a second spec\'s brief/timing post no longer collides with the
       `#2592's ${base} comment must be untouched by #2589's re-post`,
     );
   }
+});
+
+// #3333: the write side posts `brief:{n}` under a multi-spec run; the two readers (engine-verify.js's
+// acceptance-labeling check, /demo's PR run-comment lookup) must read the record's own qualified
+// marker first and fall back to the plain one, and the contract must state that order.
+// `between` fails loudly when either heading anchor is gone: a bare `split(start)[1].split(end)[0]`
+// turns a missing end anchor into "the rest of the file", which widens the region instead of emptying it.
+const between = (text, start, end) => {
+  const from = text.indexOf(start);
+  const to = from === -1 ? -1 : text.indexOf(end, from + start.length);
+  assert.ok(from !== -1 && to !== -1, `section anchors present: ${start} ... ${end}`);
+  return text.slice(from + start.length, to);
+};
+const DEMO_LOOKUP = between(DEMO, '### PR run-comment lookup', '### Full verification pointer');
+
+test("AC2.1: demo's PR lookup reads the record's own brief:{n} before the plain brief marker", () => {
+  const brief = DEMO_LOOKUP.slice(DEMO_LOOKUP.indexOf('- **Brief**'));
+  const q = brief.indexOf('<!-- run-comment: brief:{n} -->');
+  const plain = brief.indexOf('<!-- run-comment: brief -->');
+  assert.ok(q >= 0 && plain > q, 'Brief bullet names brief:{n} first, plain brief second');
+  const tryIt = DEMO_LOOKUP.slice(DEMO_LOOKUP.indexOf('- **Try it**'), DEMO_LOOKUP.indexOf('- **Brief**'));
+  const tq = tryIt.indexOf('<!-- run-comment: brief:{n} -->');
+  const tp = tryIt.indexOf('<!-- run-comment: brief -->');
+  assert.ok(tq >= 0 && tp > tq, 'Try it bullet itself names brief:{n} before the plain brief marker');
+  assert.doesNotMatch(tryIt, /else the `<!-- run-comment: brief -->` comment's/, 'Try it no longer names only the bare brief marker');
+});
+
+test('AC3.1: pr-run-comments.md states the qualified-first brief read with a plain fallback', () => {
+  const section = between(COMMENTS, '## Multi-spec brief and timing comments', '## Trusted authors');
+  assert.match(section, /engine-verify\.js/);
+  assert.match(section, /entry-paths\.md/);
+  assert.match(section, /`<!-- run-comment: brief:\{n\} -->`[\s\S]*first[\s\S]*plain `<!-- run-comment: brief -->`/);
+  assert.match(section, /sibling[\s\S]*`brief:\{m\}`/);
 });

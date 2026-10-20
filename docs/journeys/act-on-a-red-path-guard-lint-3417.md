@@ -38,7 +38,7 @@ files:
 - **Should feel:** Like a settled rule. A type question goes through `lstatType`, and a containment question goes through `resolveWithin` (on an existing target, or a write's existing parent).
 - **Should understand:**
   - `lstatType` returns `missing` only for ENOENT/ENOTDIR. Any other lstat error is `unreadable`, carrying its code, and a fail-closed caller must not treat it as absent.
-  - `canonicalRealpath` and `resolveLeaf` default to `fs.realpathSync.native`. Passing the JS `fs.realpathSync` is right only when the other side of a comparison is JS-resolved too, as `realTarget()` does for `isPolicyFile`.
+  - `canonicalRealpath` and `resolveLeaf` default to `fs.realpathSync.native`. Passing the JS `fs.realpathSync` is right only when the other side of a comparison is JS-resolved too, as `plugin/bin/lib/timing/transcript.js` does for its projects root and transcript leaves (`realTarget()` did for `isPolicyFile` until #3495).
 - **Red flags:**
   - Comparing a JS `fs.realpathSync` result with a `.native`, git-reported or un-resolved path. That mismatch is what #3380 hit on a case-insensitive volume.
   - Treating `existsSync(p)` as proof that `p` is a directory before writing under it. That is the gap #3493 tracks in `plan-audit`.

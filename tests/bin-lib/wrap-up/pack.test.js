@@ -624,6 +624,51 @@ test('gatherPack: one probe throwing degrades only its field, the pack still res
   for (const name of PROBE_NAMES.filter((n) => n !== 'residue')) assert.strictEqual(pack[name].ok, true, name);
 });
 
+test('gatherPack: a residue subprocess killed by the exec timeout reports a timeout, not "Command failed" (#3479)', async () => {
+  const deps = okDeps({ execFile: async (cmd, args) => {
+    if (String(args[0]).endsWith('residue.js')) { const e = new Error(`Command failed: node ${args[0]}`); e.killed = true; e.signal = 'SIGTERM'; e.code = null; throw e; }
+    return okDeps().execFile(cmd, args);
+  } });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['residue'], deps });
+  assert.strictEqual(pack.residue.ok, false);
+  assert.match(pack.residue.error, /^timeout after 30000ms: node residue\.js \(killed by SIGTERM\)$/);
+});
+
+test('gatherPack: a residue subprocess killed with a null signal names the timeout, never "killed by null" (#3479)', async () => {
+  const deps = okDeps({ execFile: async (cmd, args) => {
+    if (String(args[0]).endsWith('residue.js')) { const e = new Error(`Command failed: node ${args[0]}`); e.killed = true; e.signal = null; e.code = null; throw e; }
+    return okDeps().execFile(cmd, args);
+  } });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['residue'], deps });
+  assert.strictEqual(pack.residue.ok, false);
+  assert.match(pack.residue.error, /^timeout after 30000ms: node residue\.js \(killed by timeout\)$/);
+});
+
+test('gatherPack: a residue subprocess that never settles reports a timeout (#3479)', async () => {
+  const deps = okDeps({ probeTimeoutMs: 25, execFile: async (cmd, args) => (String(args[0]).endsWith('residue.js') ? new Promise(() => {}) : okDeps().execFile(cmd, args)) });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['residue'], deps });
+  assert.strictEqual(pack.residue.ok, false);
+  assert.match(pack.residue.error, /timeout after 25ms/);
+});
+
+test('gatherPack: a maxBuffer overflow is not relabeled as a timeout (#3479)', async () => {
+  const deps = okDeps({ execFile: async (cmd, args) => {
+    if (String(args[0]).endsWith('residue.js')) { const e = new Error('stdout maxBuffer length exceeded'); e.code = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'; throw e; }
+    return okDeps().execFile(cmd, args);
+  } });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['residue'], deps });
+  assert.strictEqual(pack.residue.error, 'stdout maxBuffer length exceeded');
+});
+
+test('gatherPack: a gh call killed by the exec timeout names gh and the timeout (#3479)', async () => {
+  const deps = okDeps({ execFile: async (cmd, args) => {
+    if (cmd === 'gh') { const e = new Error('Command failed: gh pr view'); e.killed = true; e.signal = 'SIGTERM'; throw e; }
+    return okDeps().execFile(cmd, args);
+  } });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['pr'], deps });
+  assert.match(pack.pr.error, /^timeout after 30000ms: gh pr \(killed by SIGTERM\)$/);
+});
+
 test('gatherPack: --only runs only the named probes and still carries inputs/generatedAt/durationMs (#1930 AC2)', async () => {
   const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['residue', 'pr'], deps: okDeps() });
   assert.deepStrictEqual(Object.keys(pack).sort(), ['durationMs', 'generatedAt', 'inputs', 'pr', 'residue']);

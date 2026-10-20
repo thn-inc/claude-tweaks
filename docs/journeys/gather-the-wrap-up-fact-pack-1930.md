@@ -9,6 +9,7 @@ files:
   - plugin/bin/lib/wrap-up/engine-verify.js
   - plugin/skills/assess-agent-autonomy/merge-check.md
   - tests/wrap-up-pack-conformance.test.js
+  - tests/bin-lib/wrap-up/pack.test.js
 ---
 
 # Gather the Wrap-Up Fact Pack Once, Then Read Fields
@@ -24,8 +25,8 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-pack.js" --run "$PIPELINE_RUN_DIR"`
 - **Action:** Invoke it exactly where `wrap-up/SKILL.md`'s "**Fact pack first.**" paragraph places it — once, before `residue-sweep.md`.
 - **Should feel:** One command, a few seconds, replacing a page of "now run X, now run Y" narration whose outputs the model used to paraphrase.
-- **Should understand:** The eight probes run concurrently and each is bounded (a 30 s subprocess timeout, a 60 s per-probe race), so the pack's wall-clock is its slowest probe, not their sum. `residue` runs with `--no-suite`: the pack never re-runs the test suite — suite state is `/claude-tweaks:test`'s pass stamp, which `residue-sweep.md` names. Exit `0` means "a pack was produced", not "every probe succeeded".
-- **Red flags:** Exit `3` — `--run` (or `--json`) resolves outside the main checkout's `.claude-tweaks/pipelines/` tree. A worktree-relative path is the usual cause (`[IL-127]`); nothing is written, so re-run with the anchored path rather than hunting for a half-written file.
+- **Should understand:** The eight probes run concurrently and each is bounded (a 30 s subprocess timeout, a 60 s per-probe race), so the pack's wall-clock is its slowest probe, not their sum. `residue` runs with `--no-suite`: the pack never re-runs the test suite — suite state is `/claude-tweaks:test`'s pass stamp, which `residue-sweep.md` names. Exit `0` means "a pack was produced", not "every probe succeeded". A subprocess killed by that 30 s timeout reports a field error naming it — `timeout after 30000ms: node residue.js (killed by SIGTERM)` — never Node's bare `Command failed: …`, which read as a crash and hid a probe running 0.5 s inside its limit (#3479); a probe outliving the 60 s race reads `timeout after 60000ms`.
+- **Red flags:** A `residue` field failing with `timeout after 30000ms` in a many-worktree checkout — the blast-radius sweep should finish in a few seconds there since #3479 (`sweep-only-your-own-residue-at-close-time.md` step 1), so a timeout points at a regression or a hung git call, not at worktree count. Exit `3` — `--run` (or `--json`) resolves outside the main checkout's `.claude-tweaks/pipelines/` tree. A worktree-relative path is the usual cause (`[IL-127]`); nothing is written, so re-run with the anchored path rather than hunting for a half-written file.
 
 ### 2. Read `inputs.sources` before trusting any record-scoped field
 - **URL:** `jq .inputs "$PIPELINE_RUN_DIR/wrap-up-pack.json"`

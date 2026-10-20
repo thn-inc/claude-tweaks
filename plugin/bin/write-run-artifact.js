@@ -6,12 +6,13 @@
 // bin/set-config.js (config.yml), bin/set-verify-expectations.js
 // (verify-expectations.json), this (the names in
 // bin/lib/run-artifact/write.js's ARTIFACT_NAMES — today
-// sdd-dispatch-sample.txt, /build's AC-forwarding sample).
+// sdd-dispatch-sample.txt, /build's AC-forwarding sample, and
+// sdd-final-review.md, the SDD final review).
 //   node bin/write-run-artifact.js --run <run-dir> --name <artifact> (--file <src> | --delete) [--help]
-// --file reads the source file as UTF-8 text (the allowlisted artifact is
-// prompt text) and writes it to <run-dir>/<artifact> (create or
-// overwrite); --delete removes it, and is idempotent — an absent file is
-// still exit 0.
+// --file reads the source file as UTF-8 text (the allowlisted artifacts
+// are text: a reviewer prompt, a review) and writes it to
+// <run-dir>/<artifact> (create or overwrite); --delete removes it, and is
+// idempotent — an absent file is still exit 0.
 // Exit 0 on success (echoes the written/removed file's path — the run dir's
 // realpath, which can differ from the --run input string; a --delete of an
 // already-absent file appends " (already absent)"); 2 on a malformed

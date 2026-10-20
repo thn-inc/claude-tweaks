@@ -4,7 +4,10 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { execFileSync, spawnSync } = require('node:child_process');
 const { run, findMergedPr, classify } = require('../tools/windows-regression/file-issue');
 const { readText } = require('./helpers/read-skill');
 
@@ -825,11 +828,96 @@ test('F2: verify compares against "$BASE"; the base step reads PUSH_BEFORE and f
   assert.ok(stepAt !== -1 && stepAt < windows.indexOf('id: verify'), 'base step precedes verify');
   const step = windows.slice(stepAt, windows.indexOf('id: verify'));
   assert.match(step, /PUSH_BEFORE:\s*\$\{\{\s*github\.event\.before\s*\}\}/);
+  assert.match(step, /EVENT_NAME:\s*\$\{\{\s*github\.event_name\s*\}\}/);
+  assert.match(step, /INTEGRATION_BRANCH:\s*\$\{\{\s*github\.event\.repository\.default_branch\s*\}\}/);
   assert.match(step, /\$PUSH_BEFORE/);
+  assert.match(step, /git merge-base HEAD/);
   assert.match(step, /git rev-parse HEAD\^1/);
   assert.match(step, /git cat-file -e/);
   assert.match(step, /GITHUB_ENV/);
   assert.match(step, /GITHUB_OUTPUT/);
+});
+
+const SKIP_NO_BASH = spawnSync('bash', ['--version'], { stdio: 'ignore' }).status === 0 ? false : 'bash not available';
+const ZERO_SHA = '0000000000000000000000000000000000000000';
+function fixtureRepo() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wr-base-'));
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=ci', '-c', 'user.email=ci@invalid.example', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' }).trim();
+  const commit = (msg) => { git('commit', '-q', '--allow-empty', '-m', msg); return git('rev-parse', 'HEAD'); };
+  git('init', '-q', '-b', 'main');
+  const A = commit('A');
+  git('checkout', '-q', '-b', 'feature');
+  const B = commit('fix');
+  commit('C');
+  git('update-ref', 'refs/remotes/origin/main', A);
+  return { dir, git, commit, A, B, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
+// Runs the literal `id: base` run body (dedented) in a fixture repo, the way the
+// runner does (bash --noprofile --norc -eo pipefail), and reads back `base=`.
+function runBaseStep({ repo, env }) {
+  const body = runScripts(stepContaining(jobBlock('windows'), 'id: base'))[0].split('\n').slice(1);
+  const indent = Math.min(...body.filter((l) => l.trim()).map((l) => l.match(/^ */)[0].length));
+  const script = body.map((l) => l.slice(indent)).join('\n');
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wr-base-out-'));
+  try {
+    const githubEnv = path.join(out, 'github_env.txt');
+    const githubOutput = path.join(out, 'github_output.txt');
+    fs.writeFileSync(githubEnv, '');
+    fs.writeFileSync(githubOutput, '');
+    const stdout = execFileSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', script], {
+      cwd: repo,
+      encoding: 'utf8',
+      env: { ...process.env, GITHUB_ENV: githubEnv, GITHUB_OUTPUT: githubOutput, ...env },
+    });
+    const base = fs.readFileSync(githubOutput, 'utf8').match(/^base=(.*)$/m);
+    return { base: base ? base[1].trim() : '', stdout };
+  } finally {
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+}
+
+test('AC1.1: a workflow_dispatch run on a feature branch baselines against the merge-base with origin/main, not HEAD^1', { skip: SKIP_NO_BASH }, (t) => {
+  const fx = fixtureRepo();
+  t.after(fx.cleanup);
+  const r = runBaseStep({ repo: fx.dir, env: { EVENT_NAME: 'workflow_dispatch', PUSH_BEFORE: '', INTEGRATION_BRANCH: 'main' } });
+  assert.equal(r.base, fx.A);
+  assert.notEqual(r.base, fx.B);
+  assert.match(r.stdout, /Comparison base: [0-9a-f]{40} \(merge-base with origin\/main\)/);
+});
+
+test('dispatch on the integration branch itself falls back to HEAD^1', { skip: SKIP_NO_BASH }, (t) => {
+  const fx = fixtureRepo();
+  t.after(fx.cleanup);
+  fx.git('checkout', '-q', 'main');
+  const M = fx.commit('M');
+  fx.git('update-ref', 'refs/remotes/origin/main', M);
+  const r = runBaseStep({ repo: fx.dir, env: { EVENT_NAME: 'workflow_dispatch', PUSH_BEFORE: '', INTEGRATION_BRANCH: 'main' } });
+  assert.equal(r.base, fx.A);
+  assert.match(r.stdout, /\(HEAD\^1 fallback\)/);
+});
+
+test('dispatch with no origin integration ref falls back to HEAD^1', { skip: SKIP_NO_BASH }, (t) => {
+  const fx = fixtureRepo();
+  t.after(fx.cleanup);
+  const r = runBaseStep({ repo: fx.dir, env: { EVENT_NAME: 'workflow_dispatch', PUSH_BEFORE: '', INTEGRATION_BRANCH: 'nope' } });
+  assert.equal(r.base, fx.B);
+  assert.match(r.stdout, /HEAD\^1 fallback/);
+});
+
+test('AC2.1: a push run still baselines against github.event.before', { skip: SKIP_NO_BASH }, (t) => {
+  const fx = fixtureRepo();
+  t.after(fx.cleanup);
+  const r = runBaseStep({ repo: fx.dir, env: { EVENT_NAME: 'push', PUSH_BEFORE: fx.A, INTEGRATION_BRANCH: 'main' } });
+  assert.equal(r.base, fx.A);
+  assert.match(r.stdout, /\(push event before\)/);
+});
+
+test('AC2.1: push with all-zero before falls back to HEAD^1', { skip: SKIP_NO_BASH }, (t) => {
+  const fx = fixtureRepo();
+  t.after(fx.cleanup);
+  const r = runBaseStep({ repo: fx.dir, env: { EVENT_NAME: 'push', PUSH_BEFORE: ZERO_SHA, INTEGRATION_BRANCH: 'main' } });
+  assert.equal(r.base, fx.B);
 });
 
 test('no ${{ }} is interpolated into any run: script body — inline or block scalar', () => {

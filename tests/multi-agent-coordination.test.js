@@ -507,6 +507,50 @@ test('reproduction (#3418): the wide band uses the same 0.2 threshold — a pair
   assert.strictEqual(above.unconfirmed.length, 0);
 });
 
+// #3326: the three observed independently worded same-line pairs, verbatim from their archived
+// review runs: lens 3c (2026-10-16T172900-spec-3072-3003), lens 3b (2026-10-16T162827-spec-3023),
+// lens 3f (2026-10-16T191151-record-3028). Each agent's rows for the paired path only.
+const QA_STAMP_A = [
+  { path: 'plugin/bin/qa-stamp.js', line: 132, severity: 'medium', text: 'A `report.json` whose top-level JSON value is `null` crashes `--write` with an uncaught TypeError instead of the documented `{written:false, reason:\'report-unreadable\'}` exit-0 contract' },
+  { path: 'plugin/bin/qa-stamp.js', line: 121, severity: 'medium', text: '`invalidateStaleStamp` silently swallows an `unlinkSync` failure, leaving a now-invalid same-HEAD stamp on disk with no diagnostic, defeating Deliverable 1\'s "a later failed run invalidates the stamp" guarantee' },
+];
+const QA_STAMP_B = [
+  { path: 'plugin/bin/qa-stamp.js', line: 132, severity: 'medium', text: '`--write` crashes with an uncaught TypeError instead of its documented graceful refusal when `report.json` parses to the JSON literal `null`' },
+  { path: 'plugin/bin/qa-stamp.js', line: 121, severity: 'medium', text: 'A failed `fs.unlinkSync` inside `invalidateStaleStamp` is swallowed, silently leaving a stale same-HEAD "pass" stamp in place after a failed QA run' },
+];
+const RELEASE_A = [
+  { path: 'plugin/bin/lib/residue/probes/release.js', line: 75, severity: 'low', text: 'merge-base --is-ancestor call omits --end-of-options before the resolved remoteRef, unlike the guarded rev-parse two lines above and run-integrity.js:195' },
+];
+const RELEASE_B = [
+  { path: 'plugin/bin/lib/residue/probes/release.js', line: 75, severity: 'low', text: 'remoteRef passed into git merge-base --is-ancestor without the --end-of-options guard the sibling rev-parse call uses for the same variable' },
+];
+const SUBJECT_TEST_A = [
+  { path: 'tests/bin-lib/compose-subject.test.js', line: 454, severity: 'low', text: 'Test checks implementation details (source string patterns) rather than behavior; would break on refactoring that preserves functionality (e.g., extracting stdio options to a variable)' },
+];
+const SUBJECT_TEST_B = [
+  { path: 'tests/bin-lib/compose-subject.test.js', line: 454, severity: 'medium', text: 'Implementation detail coupling: test reads source code for literal string `stdio: [\'ignore\', \'pipe\', \'pipe\']` instead of testing behavior. Refactoring to `const stdio = [\'ignore\', \'pipe\', \'pipe\']; runner: ... stdio ...` would make test fail despite identical behavior.' },
+];
+
+// One test per pair, so a regression reports every pair it breaks rather than only the first.
+for (const [label, agentA, agentB] of [
+  ['#3003 lens 3c', QA_STAMP_A, QA_STAMP_B],
+  ['#3023 lens 3b', RELEASE_A, RELEASE_B],
+  ['#3028 lens 3f', SUBJECT_TEST_A, SUBJECT_TEST_B],
+]) {
+  test(`AC1 reproduction (#3326): the independently worded same-line pair from ${label} is confirmed`, () => {
+    const { confirmed, unconfirmed } = c.categoriseReproduction(agentA, agentB);
+    assert.strictEqual(confirmed.length, agentA.length, 'every agent A finding should confirm');
+    assert.strictEqual(unconfirmed.length, 0, 'no finding should stay unconfirmed');
+  });
+}
+
+test('reproduction (#3326): the #3028 pair keeps agent A\'s severity', () => {
+  // low and medium share one severity bucket, so the pair keeps agent A's severity and raises no contest flag.
+  const { confirmed } = c.categoriseReproduction(SUBJECT_TEST_A, SUBJECT_TEST_B);
+  assert.strictEqual(confirmed[0].severity, 'low');
+  assert.strictEqual(confirmed[0].severityContested, undefined);
+});
+
 // #2907: pairing must not depend on the order agent A reported its findings.
 // Fixture from #2628's review (lens 3b): both agents reported the symlink
 // containment gap at one path:line, and agent A also reported a size-cap issue there.

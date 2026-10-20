@@ -12,7 +12,7 @@ When a pipeline run directory exists, apply the `/claude-tweaks:test` row from t
 
 **Auto-fix flow:** make the changes, commit, re-verify per Re-verification above. On re-verification pass, log `AUTO {time} — Step 3: auto-fixed {N} {type} failures. Reversibility: high; commit: {hash}.` and proceed. On re-verification fail or new issues, downgrade to STAGED and surface at Review Console.
 
-**Stage flow:** write the proposed fix to `staged/test-fix-{n}.patch` per `_shared/staged-patch.md` — a `Target:` / `Invariant:` / `Finding:` / `Staged-at:` preamble followed by the diff, validated with `git apply --check` from the worktree before logging (a failing check is handled per that file's Staging-time gate and surfaced here) — and log `STAGED {time} — Step 3: {N} {type} failures staged for review. Stage path: staged/test-fix-{n}.patch.`. The test gate fails until the user resolves at the Review Console, which applies the diff or, when later phases moved the target, re-derives the edit from `Invariant:`.
+**Stage flow:** write the proposed fix to `staged/test-fix-{n}.patch` per `_shared/staged-patch.md` — a `Target:` / `Invariant:` / `Finding:` / `Staged-at:` preamble followed by the diff, validated per that file's Staging-time gate — `git apply --check` from the worktree, then its Stacked check (`bin/check-staged-stack.js`) — before logging (a failing check is handled per that gate and surfaced here) — and log `STAGED {time} — Step 3: {N} {type} failures staged for review. Stage path: staged/test-fix-{n}.patch.`. The test gate fails until the user resolves at the Review Console, which applies the diff or, when later phases moved the target, re-derives the edit from `Invariant:`.
 
 ## Interactive mode
 

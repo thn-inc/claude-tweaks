@@ -4,10 +4,12 @@
 # every check in a PR's rollup, so a slow Windows job there would delay every
 # merge. The comparison base is the previous origin/main tip from the push event
 # (github.event.before) — exactly the state this push introduced a change to,
-# whether it was one squash commit, a merge commit or a multi-commit push. It
-# falls back to HEAD^1 for workflow_dispatch and a force-push, where there is no
-# usable `before` commit. main's history is not linear, so HEAD^1 alone would
-# mis-base a direct multi-commit push.
+# whether it was one squash commit, a merge commit or a multi-commit push. A
+# workflow_dispatch run uses the merge-base with the default branch instead, so
+# a branch's own earlier fix is not in its base. HEAD^1 is the fallback for a
+# force-push or new-branch push (no usable `before` commit), and for a dispatch
+# on the default branch itself. main's history is not linear, so HEAD^1 alone
+# would mis-base a direct multi-commit push.
 #
 # Two jobs, split for least privilege. `windows` runs the whole test suite — the
 # repo's own code — with a read-only token. verify.js runs the suite on this
@@ -81,10 +83,25 @@ jobs:
         id: base
         env:
           PUSH_BEFORE: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          INTEGRATION_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          B="$PUSH_BEFORE"
-          SOURCE="push event before"
-          if [ -z "$B" ] || [[ "$B" =~ ^0+$ ]] || ! git cat-file -e "$B^{commit}" 2>/dev/null; then
+          B=""
+          SOURCE=""
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            MB=$(git merge-base HEAD "origin/$INTEGRATION_BRANCH" 2>/dev/null || true)
+            if [ -n "$MB" ] && [ "$MB" != "$(git rev-parse HEAD)" ]; then
+              B="$MB"
+              SOURCE="merge-base with origin/$INTEGRATION_BRANCH"
+            fi
+          else
+            B="$PUSH_BEFORE"
+            SOURCE="push event before"
+            if [ -z "$B" ] || [[ "$B" =~ ^0+$ ]] || ! git cat-file -e "$B^{commit}" 2>/dev/null; then
+              B=""
+            fi
+          fi
+          if [ -z "$B" ]; then
             B=$(git rev-parse HEAD^1)
             SOURCE="HEAD^1 fallback"
           fi

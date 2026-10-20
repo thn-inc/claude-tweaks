@@ -191,3 +191,33 @@ test('multispec-review-console.md "When to run" step 6 no longer routes archival
   assert.doesNotMatch(section, /reaches archival only inside step 7's `teardown-run`/);
   assert.match(section, /--remote-ref-only/);
 });
+
+// --- 5. #3490: Section C step 5 passes --remote-ref-only and states why archival stays last ---
+
+function step5Bounds(text) {
+  const start = text.indexOf('5. **Steps 5-6, subsumed into one call.**');
+  const end = text.indexOf('5.5. **Own-worktree remote-branch delete');
+  assert.ok(start > 0 && end > start, 'step 5 must exist and precede step 5.5');
+  return { start, end };
+}
+
+function assertStep5KeepsArchivalLast(text) {
+  const { start, end } = step5Bounds(text);
+  const step5 = text.slice(start, end);
+  assert.match(step5, /teardown-run --run "\$RUN_DIR"[\s\\]*--merged --remote-ref-only/);
+  assert.match(step5, /never archives the\s+run directory/);
+  assert.match(step5, /items 6 and 7/);
+  assert.doesNotMatch(step5, /idempotent if Section B already archived/);
+}
+
+test('AC1.1 / AC2.1 (#3490): Section C step 5 passes --remote-ref-only and states why archival stays last', () => assertStep5KeepsArchivalLast(CLEANUP_PROCEDURES_EXECUTION));
+
+test('AC2.1 go-red control (#3490): the step 5 pin fails when the flag or the stated reason is removed', () => {
+  const { start, end } = step5Bounds(CLEANUP_PROCEDURES_EXECUTION);
+  const step5 = CLEANUP_PROCEDURES_EXECUTION.slice(start, end);
+  const splice = (replaced) => CLEANUP_PROCEDURES_EXECUTION.slice(0, start) + replaced + CLEANUP_PROCEDURES_EXECUTION.slice(end);
+  const noFlag = splice(step5.replace(/ --remote-ref-only/g, ''));
+  const noReason = splice(step5.replace(/never archives the\s+run directory/, 'archives the run directory'));
+  assert.throws(() => assertStep5KeepsArchivalLast(noFlag));
+  assert.throws(() => assertStep5KeepsArchivalLast(noReason));
+});

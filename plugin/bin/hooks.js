@@ -140,6 +140,13 @@ const KNOWN_FLAGS = {
   'record-pr': ['--run'],
   'manifest-init': ['--run', '--specs'],
   'spec-status': ['--run', '--spec', '--status', '--phase', '--now'],
+  // `--remote-ref-only` (#3088) has been inert since #3490, because teardown-run never archives.
+  // Remove it in two releases. (1) Drop it from the three skill-prose call sites
+  // (`wrap-up/cleanup-procedures-execution.md` Section C steps 5 and 5.5, `flow/multispec-review-console.md`
+  // Shared teardown step 7) and from their pins in `tests/scratch-worktree-remote-branch-delete.test.js`,
+  // and every other prose mention or pin of it (`git grep -n -F -- --remote-ref-only`), in any release after the one that ships #3490. (2) Only in a release after (1) has shipped, remove
+  // it from `KNOWN_FLAGS` and `USAGE` here. Until then a session can still hold pre-(1) prose in context
+  // while the running build's hooks.js is newer, and the unknown-flag guard would refuse that call.
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
   'resolve-console': ['--run', '--approve', '--decline'],
 };
@@ -1111,8 +1118,7 @@ async function main(argv) {
     } else if (candidates) {
       process.stdout.write(`${renderCandidateRefusal('teardown-run', candidates)}\nRun not torn down.\n`);
     } else if (runDir) {
-      const remoteRefOnly = argv.includes('--remote-ref-only');
-      const result = teardownRun(runDir, { mode, sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd(), remoteRefOnly });
+      const result = teardownRun(runDir, { mode, sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() });
       process.stdout.write(`claude-tweaks: teardown-run ${path.basename(runDir)}\n${result.lines.map((l) => `  ${l}`).join('\n')}\n`);
     } else {
       process.stdout.write('claude-tweaks: no pipeline run dir found — run not torn down\n');
