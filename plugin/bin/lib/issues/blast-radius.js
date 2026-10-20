@@ -18,6 +18,9 @@
 //   - a YAML file under a 'stories/' path segment (#3034) — this plugin's own
 //     QA story-file convention (plugin/skills/stories/SKILL.md), the files
 //     /claude-tweaks:stories writes by default
+//   - exemption (#3680): prompt prose (markdown under skills/, agents/ or
+//     commands/) is never a test file, even under a 'test/' directory — see
+//     PROMPT_PROSE_DIRS below
 // Both anchored to a '/' or string boundary so a path merely CONTAINING
 // "test" as a substring (e.g. 'src/latest/widget.js', 'src/contest.js')
 // never false-positives.
