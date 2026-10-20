@@ -794,7 +794,7 @@ function checkReviewConsoleAskGate(ctx, deps = {}) {
   ctxLib.appendEvent(ownedRun.dir, 'gate-denial', { tool: 'AskUserQuestion', gate: 'review-console-ask', ceiling, ...testTag }, ownedRun.attribution);
   // A manifest.yml marks a multi-spec parent run: its console is flow's, resolved
   // one console-resolve.js call per spec-{N}/ then the parent, not one call.
-  const multiSpec = fs.existsSync(path.join(ownedRun.dir, 'manifest.yml'));
+  const multiSpec = lstatType(path.join(ownedRun.dir, 'manifest.yml')).type === 'file';
   const consoleFile = multiSpec ? 'flow/multispec-review-console.md' : 'wrap-up/review-console.md';
   const cli = `node "${pluginRoot()}/bin/console-resolve.js"`;
   const how = multiSpec
