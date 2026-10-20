@@ -136,11 +136,12 @@ const SHARED_RULE = [
   [/`ToolSearch`\s+finds\s+none,\s+deferred\s+or\s+otherwise/, 'the no-Agent-tool fallback checks ToolSearch for a deferred Agent tool'],
   [/child\s+that\s+reports\s+a\s+failure/i, 'a child that reports a failure has reported and is handled per the dispatching skill'],
   [/write-capable\s+child[\s\S]*?never\s+redone/, 'a write-capable child silent at the bound is never redone in-session'],
+  [/returns\s+the\s+child's\s+own\s+reply[\s\S]{0,80}?that\s+child\s+has\s+reported\s+and\s+needs\s+no\s+wait/, "a call that returns the child's own reply means that child has reported"],
 ];
 
 // Each `\s+` absorbs the hard line wrapping, as in REQUIRED above.
 const KEEP_ALIVE = [
-  [/always\s+launches\s+async/i, 'a nested Agent call always launches async'],
+  [/\blaunches\s+async/i, 'a nested Agent call launches async'],
   [/keep[s]?\s+(?:its|your|the)\s+(?:own\s+)?turn\s+alive/i, 'the dispatcher keeps its own turn alive'],
   [/never\s+end[s]?\s+(?:its|your|the)\s+turn\s+with\s+(?:a|one)\s+child\s+outstanding/i, 'the dispatcher never ends its turn with a child outstanding'],
   [/no\s+`Agent`\/`Task`\s+tool/i, 'the fallback covers the no-Agent/Task-tool case'],
@@ -271,7 +272,7 @@ function item7Block(text) {
 const ITEM7 = [
   [/reply that ends without a tool call ends\s+(?:the|your)\s+turn/i, 'a reply that ends without a tool call ends the turn'],
   [/INTERIM_STATUS/, 'the #2714 interim-marker rule is kept'],
-  [/always\s+launches\s+async/i, 'a nested Agent call always launches async'],
+  [/\blaunches\s+async/i, 'a nested Agent call launches async'],
   [/`unconfirmed`/, 'the self-judged fallback marks findings unconfirmed'],
   [/never\s+end\s+your\s+turn\s+with\s+one\s+outstanding/, 'item 7 never ends the turn with a child outstanding'],
   [/Ignore\s+a\s+late\s+result/, 'item 7 ignores a late result'],
@@ -281,7 +282,7 @@ const item7Missing = missingFactsOf(ITEM7);
 const dropsNothingWakes = (block) => !/nothing wakes you/.test(block);
 
 const TEMPLATE_KEEP_ALIVE = [
-  [/always\s+launches\s+async/i, 'a nested Agent call always launches async'],
+  [/\blaunches\s+async/i, 'a nested Agent call launches async'],
   [/never\s+end\s+this\s+turn\s+with\s+(?:a|one)\s+child\s+outstanding/i, 'the turn never ends with a child outstanding'],
   [/ignore\s+that\s+child's\s+result\s+if\s+it\s+arrives\s+later/i, 'a late child result is ignored'],
   [/reply\s+that\s+ends\s+without\s+a\s+tool\s+call\s+ends\s+the\s+turn/i, 'a reply that ends without a tool call ends the turn'],
@@ -445,8 +446,12 @@ test('each core abandoned-child assertion can actually go red on its own (discri
 });
 
 // #3722: interactive 2.1.302 re-wakes a dispatched agent; what holds everywhere is "cannot count on it".
-const UNQUALIFIED = /never\s+(?:be\s+)?re-woken|nothing\s+(?:ever\s+)?re-wakes|no\s+notification\s+mechanism/i;
-const claimSites = () => ({ ...primitiveCopies(), 'build/dispatch.md': fs.readFileSync(BUILD_DISPATCH, 'utf8') });
+const UNQUALIFIED = /never\s+(?:be\s+)?(?:re-)?woken|nothing\s+(?:ever\s+)?re-wakes|no\s+notification\s+mechanism|none\s+reaches\s+a\s+dispatched\s+agent/i;
+const claimSites = () => ({
+  ...primitiveCopies(),
+  'build/dispatch.md': fs.readFileSync(BUILD_DISPATCH, 'utf8'),
+  'review/step3 Foreground note': foregroundNote(fs.readFileSync(STEP3, 'utf8')),
+});
 const unqualifiedClaimSites = (sites) => Object.entries(sites).filter(([, t]) => UNQUALIFIED.test(t)).map(([n]) => n);
 test('no copy states the never-re-woken claim unqualified (#3722)', () => {
   assert.deepEqual(unqualifiedClaimSites(claimSites()), [], 'no copy may state the never-re-woken claim unqualified (#3722)');
@@ -456,6 +461,35 @@ test('an unqualified never-re-woken claim in any one copy goes red (discriminati
   for (const name of Object.keys(sites)) {
     const doctored = { ...sites, [name]: sites[name] + ' It is never re-woken.' };
     assert.deepEqual(unqualifiedClaimSites(doctored), [name], `an unqualified claim in only ${name} must turn exactly that copy red`);
+  }
+});
+
+// The positive twin of the check above: every claim site must carry the qualified wording.
+const QUALIFIED = /cannot\s+count\s+on\s+being\s+re-woken/;
+const unqualifiedWordingSites = (sites) => Object.entries(sites).filter(([, t]) => !QUALIFIED.test(t)).map(([n]) => n);
+test('every re-wake claim site carries the qualified "cannot count on being re-woken" wording (#3722)', () => {
+  assert.deepEqual(unqualifiedWordingSites(claimSites()), [], 'every claim site must state the qualified wording (#3722)');
+});
+test('a claim site losing the qualified wording goes red (discrimination proof)', () => {
+  const sites = claimSites();
+  for (const name of Object.keys(sites)) {
+    const doctored = { ...sites, [name]: sites[name].replace(new RegExp(QUALIFIED.source, 'g'), '') };
+    assert.notEqual(doctored[name], sites[name], `anchor text for the qualified wording in ${name} not found — proof cannot discriminate`);
+    assert.deepEqual(unqualifiedWordingSites(doctored), [name], `losing the qualified wording in only ${name} must turn exactly that site red`);
+  }
+});
+
+// A synchronous nested call returns the child's own reply, so "always launches async" is false.
+const ALWAYS_ASYNC = /always\s+launches\s+async/i;
+const alwaysAsyncCopies = (copies) => Object.entries(copies).filter(([, t]) => ALWAYS_ASYNC.test(t)).map(([n]) => n);
+test('no copy says a nested Agent call always launches async (#3722)', () => {
+  assert.deepEqual(alwaysAsyncCopies(primitiveCopies()), [], 'no copy may say a nested Agent call always launches async (#3722)');
+});
+test('a copy reverting to "always launches async" goes red (discrimination proof)', () => {
+  const copies = primitiveCopies();
+  for (const name of Object.keys(copies)) {
+    const doctored = { ...copies, [name]: copies[name] + ' It always launches async.' };
+    assert.deepEqual(alwaysAsyncCopies(doctored), [name], `an "always launches async" in only ${name} must turn exactly that copy red`);
   }
 });
 

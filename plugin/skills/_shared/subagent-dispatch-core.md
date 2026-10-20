@@ -44,9 +44,10 @@ During worktree-mode pipeline runs this rule is mechanically enforced — the pl
 
 **Background work.** A dispatched agent cannot count on being re-woken once its turn ends. Measured
 on Claude Code (#3722): interactive 2.1.302 holds it open and re-wakes it when a nested child or
-`Monitor` watch it started reports; headless (`claude -p`) 2.1.299 and older never re-wake it, and
-the result goes to the top-level session instead; headless 2.1.302 and later runs a nested `Agent`
-call synchronously. So a backgrounded `Bash` call or `Monitor` watch it ends on can hang it until an
+`Monitor` watch it started reports; headless (`claude -p`) 2.1.299 and older never re-wake it for a
+nested child, whose result goes to the top-level session instead; headless 2.1.302 and later runs a
+nested `Agent` call synchronously. An agent cannot tell in advance whether it will be re-woken, so it
+never relies on one. So a backgrounded `Bash` call or `Monitor` watch it ends on can hang it until an
 outside caller intervenes. Observed as a harness-level `contract-violation` pattern: 13+ occurrences
 of agents narrating "waiting for the background task/Monitor notification" and stopping mid-turn in
 one build phase, plus 2 more in a review/wrap-up session, corrected only externally (#1965, #2271).
@@ -56,9 +57,11 @@ notification will re-wake it. `test/verification.md`'s Foreground rule and
 `dispatch/task-prompt.md`'s foreground-execution instruction are the concrete pattern; point a new
 dispatch site at them rather than re-deriving it.
 
-**Nested `Agent` children (#2644, #3078).** A nested `Agent` call from a dispatched agent always
-launches async — its tool result is launch metadata, never the child's reply — and the child's
-`<task-notification>` reaches the agent only while its turn is alive. A dispatched agent may fan
+**Nested `Agent` children (#2644, #3078).** A nested `Agent` call from a dispatched agent launches
+async — its tool result is launch metadata, not the child's reply — and the child's
+`<task-notification>` reaches the agent only while its turn is alive. When the call instead returns
+the child's own reply (headless 2.1.302 and later, above), that child has reported and needs no
+wait. A dispatched agent may fan
 out nested agents at every tier (lens pairs, single reads, curation judges), but it keeps its own
 turn alive with bounded foreground waits — repeated `sleep 20` Bash calls, at most 60 (20 minutes)
 per wave of children (the set launched together), each wait logged per the bounded-polling
@@ -76,7 +79,7 @@ from that unit `unconfirmed`. Never skip the unit or fabricate a dispatch. A chi
 self-judged at the bound is abandoned: it no longer counts as outstanding, and the agent's final
 reply still ends with `STATUS: {WORD}`; `INTERIM_STATUS:` is only for a turn that ends while a
 keep-alive wait is still in progress. An abandoned child cannot be stopped (`TaskStop` refuses a
-nested child: it is owned by the child itself), so it keeps running, and the harness may hold the
+nested child), so it keeps running, and the harness may hold the
 agent's final result until it finishes: the bound caps the wait, not the delivery. A child result
 that arrives after its unit was self-judged is ignored; it never changes a verdict already reached,
 and a late notification that re-wakes the agent after its final reply is answered by repeating its
