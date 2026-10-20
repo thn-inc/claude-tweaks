@@ -56,6 +56,7 @@ test('AC3.1 + AC3.2: the build instruction directs a ruling, not a question', ()
 test('AC2.1: the instruction sits in the SDD subagent paragraph, after the deferral gate and before the ledger carry-forward, on the same line', () => {
   const start = DISPATCH.indexOf(LABEL);
   assert.ok(start !== -1, 'the contract-beats-spec-literal label is not in dispatch.md');
+  assert.ok(DISPATCH.indexOf(REVIEW_LABEL) !== -1, 'the review-findings deferral-gate (#3004) label is not in dispatch.md');
   assert.ok(start > DISPATCH.indexOf(REVIEW_LABEL), 'the label is not after the review-findings deferral-gate label');
   assert.ok(start < DISPATCH.indexOf(CARRY_LABEL), 'the label is not before the carry-forward label');
   const lineStart = DISPATCH.lastIndexOf('\n', start - 1) + 1;
