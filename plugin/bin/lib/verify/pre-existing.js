@@ -46,10 +46,13 @@ function trackedFiles(cwd, execImpl = execFileSync) {
 // fail this run: report-only, it never feeds the verdict. Only a full-scope
 // run exercised every suite, so any narrower mode cannot claim a file passed
 // (`fixed: null` with a reason, never `[]`); an unreadable tracked list is the
-// same null. `verdict` is matchPreExisting's return value.
-function newAndFixed({ verdict, failingFiles, preExisting, mode, listTracked }) {
+// same null. `allRan` is false when any check was skipped (fail-fast stops
+// every later suite after a failure): a skipped suite proves nothing passed,
+// so it is the same null. `verdict` is matchPreExisting's return value.
+function newAndFixed({ verdict, failingFiles, preExisting, mode, allRan, listTracked }) {
   const newFiles = verdict.eligible ? [] : [...new Set(verdict.unmatched || [])];
   if (mode !== 'full') return { new: newFiles, fixed: null, fixedReason: `scope mode ${mode} did not run every suite` };
+  if (!allRan) return { new: newFiles, fixed: null, fixedReason: 'a check was skipped (fail-fast)' };
   const tracked = listTracked();
   if (tracked === null) return { new: newFiles, fixed: null, fixedReason: 'git ls-files failed' };
   const failing = new Set(failingFiles);

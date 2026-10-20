@@ -1839,6 +1839,27 @@ test('preExisting: a fixed file never changes the verdict — a fully covered ru
   assert.deepStrictEqual(report.preExistingAdjudicated.fixed, ['tests/b.test.js']);
 });
 
+test('preExisting: a fail-fast skipped suite reports fixed as not computed — its allowlisted files never ran, so none is claimed passed (#3313)', async () => {
+  const r = preExistingRepo({
+    preExisting: ['tests/known-shallow.test.js', 'tests/other.test.js'],
+    extraDecl: { checks: { tests: { unit: 'node fail.js', other: 'node -e 0' } }, rules: [{ match: 'src/**', suites: '*', static: true }] },
+  });
+  commitFile(r, 'tests/other.test.js', '// never ran: its suite was fail-fast skipped\n');
+  const args = ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', 'unit=node fail.js', '--cmd', 'other=node -e 0'];
+  const { code, stdout, stderr } = await runCli(args, { cwd: r.repo });
+  assert.strictEqual(code, 0, stderr);
+  assert.match(stdout, /^Scope: full/m);
+  assert.match(stdout, /skipped: fail-fast/);
+  assert.match(stdout, /^Pre-existing: 0 new, fixed not computed — a check was skipped \(fail-fast\)$/m);
+  assert.doesNotMatch(stdout, /^FIXED:/m);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.effectivePass, true);
+  assert.deepStrictEqual(report.preExistingAdjudicated, {
+    declared: ['tests/known-shallow.test.js', 'tests/other.test.js'], matched: ['tests/known-shallow.test.js'],
+    new: [], fixed: null, fixedReason: 'a check was skipped (fail-fast)',
+  });
+});
+
 test('preExisting: a narrowed scoped run reports fixed as not computed, never 0 fixed — the verdict is unchanged (#3313)', async () => {
   // Two declared suites, so a src/** change selecting only `unit` is a narrowed (scoped) run.
   const r = preExistingRepo({ extraDecl: { checks: { tests: { other: 'node -e 0', unit: 'node fail.js' } }, rules: [{ match: 'src/**', suites: ['unit'], static: true }] } });

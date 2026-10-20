@@ -51,7 +51,7 @@ test('newAndFixed: allowlisted tracked files that did not fail are fixed; unmatc
   const failingFiles = ['tests/real.test.js'];
   const preExisting = ['tests/a.test.js'];
   const verdict = matchPreExisting({ failingFiles, preExisting });
-  const out = newAndFixed({ verdict, failingFiles, preExisting, mode: 'full', listTracked: () => ['src/x.js', 'tests/a.test.js', 'tests/real.test.js'] });
+  const out = newAndFixed({ verdict, failingFiles, preExisting, mode: 'full', allRan: true, listTracked: () => ['src/x.js', 'tests/a.test.js', 'tests/real.test.js'] });
   assert.deepStrictEqual(out, { new: ['tests/real.test.js'], fixed: ['tests/a.test.js'] });
 });
 
@@ -60,7 +60,7 @@ test('newAndFixed: a glob entry lists only its matching files that passed (#3313
   const preExisting = ['tests/env/*.test.js'];
   const verdict = matchPreExisting({ failingFiles, preExisting });
   const out = newAndFixed({
-    verdict, failingFiles, preExisting, mode: 'full',
+    verdict, failingFiles, preExisting, mode: 'full', allRan: true,
     listTracked: () => ['tests/env/a.test.js', 'tests/env/b.test.js', 'tests/other.test.js'],
   });
   assert.deepStrictEqual(out, { new: [], fixed: ['tests/env/b.test.js'] });
@@ -83,9 +83,22 @@ test('newAndFixed: an unreadable tracked list is fixed:null, never [] (#3313)', 
   const failingFiles = ['tests/a.test.js'];
   const preExisting = ['tests/a.test.js'];
   const verdict = matchPreExisting({ failingFiles, preExisting });
-  const out = newAndFixed({ verdict, failingFiles, preExisting, mode: 'full', listTracked: () => null });
+  const out = newAndFixed({ verdict, failingFiles, preExisting, mode: 'full', allRan: true, listTracked: () => null });
   assert.strictEqual(out.fixed, null);
   assert.strictEqual(out.fixedReason, 'git ls-files failed');
+});
+
+test('newAndFixed: a fail-fast skipped check means nothing is claimed passed — fixed:null, tracked list never read (#3313)', () => {
+  const failingFiles = ['tests/a.test.js'];
+  const preExisting = ['tests/a.test.js', 'tests/b.test.js'];
+  const verdict = matchPreExisting({ failingFiles, preExisting });
+  const out = newAndFixed({
+    verdict, failingFiles, preExisting, mode: 'full', allRan: false,
+    listTracked: () => { throw new Error('listTracked must not be called when a check was skipped'); },
+  });
+  assert.deepStrictEqual(out.new, []);
+  assert.strictEqual(out.fixed, null);
+  assert.strictEqual(out.fixedReason, 'a check was skipped (fail-fast)');
 });
 
 test('trackedFiles: splits git ls-files -z on NUL, drops empties, and returns null on any throw (#3313)', () => {

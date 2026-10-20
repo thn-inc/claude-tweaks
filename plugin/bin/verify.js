@@ -629,7 +629,7 @@ async function main() {
       // #3313: report-only new/fixed beside the verdict — never read by the pass logic below.
       // sel is set whenever decl is (both need --scope).
       const split = newAndFixed({
-        verdict, failingFiles: allFailingFiles, preExisting: decl.preExisting, mode: sel.mode, listTracked: () => trackedFiles(logCwd),
+        verdict, failingFiles: allFailingFiles, preExisting: decl.preExisting, mode: sel.mode, allRan: results.every((c) => !c.skipped), listTracked: () => trackedFiles(logCwd),
       });
       preExistingAdjudicated = verdict.eligible
         ? { declared: decl.preExisting, matched: verdict.matched, ...split }
