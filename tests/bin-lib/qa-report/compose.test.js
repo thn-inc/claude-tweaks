@@ -61,6 +61,18 @@ test('rule 1 matches the repo locator syntax and respects word boundaries', () =
   assert.notEqual(classifyFailure(`locator ${'x'.repeat(200)} not found`), 'stale-selector');
 });
 
+test('rule 1 gap cap is exactly 120 characters between the noun and "not found"', () => {
+  // gap = the space, the x-run, and the space before "not found"
+  assert.equal(classifyFailure(`locator ${'x'.repeat(118)} not found`), 'stale-selector');
+  assert.equal(classifyFailure(`locator ${'x'.repeat(119)} not found`), 'code-bug');
+});
+
+test('rules apply in order and each flaky-env signal stands alone', () => {
+  assert.equal(classifyFailure('Timeout waiting; expected dialog'), 'flaky-env');
+  assert.equal(classifyFailure('net::ERR_CONNECTION_REFUSED'), 'flaky-env');
+  assert.equal(classifyFailure('navigation failed'), 'flaky-env');
+});
+
 test('FAIL findings carry severity, suggested fix and trace', () => {
   const { report } = compose([
     story('a', 'FAIL', { error: 'Locator "Submit" not found', trace: 't.zip' }),
@@ -172,6 +184,17 @@ test('validation errors', () => {
     { error: 'duplicate-story-id: s1' },
   );
   assert.deepEqual(c({ stories: [{ id: '', status: 'PASS' }] }), { error: 'story-missing-id: 0' });
+});
+
+test('wrong-typed per-story lists are rejected instead of silently dropped', () => {
+  const c = (extra) => composeQaReport({ stories: [{ id: 's1', status: 'PASS_WITH_CAVEATS', ...extra }] }, { now: NOW });
+  assert.deepEqual(c({ caveats: 'slow load' }), { error: 'invalid-caveats: s1' });
+  assert.deepEqual(c({ caveats: ['ok', ''] }), { error: 'invalid-caveats: s1' });
+  assert.deepEqual(c({ caveats: [{ text: 'x' }] }), { error: 'invalid-caveats: s1' });
+  assert.deepEqual(c({ recovered_locators: 'x' }), { error: 'invalid-recovered_locators: s1' });
+  assert.deepEqual(c({ recovered_locators: ['x'] }), { error: 'invalid-recovered_locators: s1' });
+  assert.deepEqual(c({ page_inventories: {} }), { error: 'invalid-page_inventories: s1' });
+  assert.ok(c({ caveats: null, recovered_locators: [], page_inventories: [{ url: '/' }] }).report, 'null/empty/object lists stay valid');
 });
 
 test('timing and timestamp defaults', () => {

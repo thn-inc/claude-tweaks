@@ -68,6 +68,7 @@ test('payload errors exit 1 and create no out file', () => {
     ['null', 'null', 'input-not-object'],
     ['array', '[]', 'input-not-object'],
     ['unparseable', 'not json{', 'results-unparseable'],
+    ['unparseable names the parser reason', 'not json{', 'JSON'],
     ['lowercase status', JSON.stringify({ stories: [story('s1', 'pass')] }), 'invalid-status: s1 pass'],
   ];
   for (const [label, text, expected] of cases) {

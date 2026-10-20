@@ -20,14 +20,14 @@ After collecting all agent reports, classify each failure into one of 5 categori
 
 | Category | Signal | Default Severity | Suggested Fix Pattern |
 |----------|--------|-----------------|----------------------|
-| `stale-selector` | Error has `locator` or `element` … `not found` on one line (any locator text between, e.g. `role:button "Submit"`) | Low | "Update locator in story YAML" |
+| `stale-selector` | Error has `locator` or `element` … `not found` on one line (up to 120 characters of locator text between, e.g. `role:button "Submit"`) | Low | "Update locator in story YAML" |
 | `code-bug` | Error contains "assertion" or "expected" or "verify failed" | High | "Investigate component behavior" |
 | `ux-issue` | From caveats (PASS_WITH_CAVEATS stories) | Medium | Specific to the observation |
 | `flaky-env` | Error contains "timeout" or "navigation failed" or "net::" | Low | "Re-run: `/test qa retry={RUN_DIR}`" |
 | `story-bug` | Element exists but in wrong position, or step instructions don't match current UI flow | Medium | "Regenerate story: `/stories focus={area}`" |
 
 **Classification rules (apply in order — first match wins):**
-1. Error has `locator` or `element` … `not found` on one line (case-insensitive, any locator text between, e.g. `Locator role:button "Submit" not found`) -> `stale-selector`
+1. Error has `locator` or `element` … `not found` on one line (case-insensitive, up to 120 characters of locator text between, e.g. `Locator role:button "Submit" not found`) -> `stale-selector`
 2. Error contains "timeout" or "navigation failed" or "net::" -> `flaky-env`
 3. Error contains "assertion" or "expected" or "verify failed" -> `code-bug`
 4. Error suggests the page structure changed (element exists but in wrong position) -> `story-bug`

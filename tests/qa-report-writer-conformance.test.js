@@ -10,7 +10,12 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const REPORTING = fs.readFileSync(path.join(ROOT, 'plugin/skills/test/qa-reporting.md'), 'utf8');
+const REPORTING_FULL = fs.readFileSync(path.join(ROOT, 'plugin/skills/test/qa-reporting.md'), 'utf8');
+// The Phase 5 pins read only the Phase 5 section, so a call relocated elsewhere in the file goes red.
+const PHASE5_AT = REPORTING_FULL.indexOf('## Phase 5: Report');
+const PHASE5_END = REPORTING_FULL.indexOf('## Phase 5.5');
+assert.ok(PHASE5_AT >= 0 && PHASE5_END > PHASE5_AT, 'Phase 5 section boundaries must be found');
+const PHASE5 = REPORTING_FULL.slice(PHASE5_AT, PHASE5_END);
 
 // Pre-change Phase 4 classification intro (qa-reporting.md before #3328).
 const PRE_PHASE4 = 'After collecting all agent reports, classify each failure into one of 5 categories using heuristic rules. Classification is automated — override categories in the findings table if needed.';
@@ -24,7 +29,7 @@ function pinned(live, control, pattern, msg) {
 
 test('Phase 5 invokes the report.json writer', () => {
   pinned(
-    REPORTING,
+    PHASE5,
     PRE_PHASE5,
     /bin\/qa-report\.js" --results "\{RUN_DIR\}\/story-results\.json" --out "\{RUN_DIR\}\/report\.json"/,
     'Phase 5 must run qa-report.js with --results and --out',
@@ -32,12 +37,12 @@ test('Phase 5 invokes the report.json writer', () => {
 });
 
 test('report.json is never hand-composed', () => {
-  pinned(REPORTING, PRE_PHASE5, /never compose or hand-edit `report\.json`/, 'Phase 5 must forbid hand-composing report.json');
+  pinned(PHASE5, PRE_PHASE5, /never compose or hand-edit `report\.json`/, 'Phase 5 must forbid hand-composing report.json');
 });
 
 test('the writer runs before the QA pass stamp write', () => {
-  const writerAt = REPORTING.indexOf('bin/qa-report.js" --results');
-  const stampAt = REPORTING.indexOf('bin/qa-stamp.js" --write');
+  const writerAt = PHASE5.indexOf('bin/qa-report.js" --results');
+  const stampAt = PHASE5.indexOf('bin/qa-stamp.js" --write');
   assert.ok(writerAt >= 0, 'the writer invocation must be present');
   assert.ok(stampAt >= 0, 'the stamp write must be present');
   assert.ok(writerAt < stampAt, 'report.json must be written before the stamp reads it');
@@ -45,7 +50,7 @@ test('the writer runs before the QA pass stamp write', () => {
 
 test("story-bug is routed through the results payload's category", () => {
   pinned(
-    REPORTING,
+    REPORTING_FULL,
     PRE_PHASE4,
     /`category`[^\n]{0,200}story-bug|story-bug[^\n]{0,200}`category`/,
     'Phase 4 must say story-bug is recorded as the story\'s `category` in the results payload',

@@ -65,6 +65,14 @@ function validate(input) {
     if (s.category !== undefined && s.category !== null && !CATEGORIES.has(s.category)) {
       return `invalid-category: ${s.id} ${s.category}`;
     }
+    // A wrong-typed list would otherwise be dropped by the Array.isArray guards
+    // below while the summary still counted the story — fail loud instead.
+    for (const key of ['caveats', 'recovered_locators', 'page_inventories']) {
+      const list = s[key];
+      if (list === undefined || list === null) continue;
+      const isValid = key === 'caveats' ? (e) => typeof e === 'string' && e !== '' : isObject;
+      if (!Array.isArray(list) || !list.every(isValid)) return `invalid-${key}: ${s.id}`;
+    }
   }
   return null;
 }

@@ -66,8 +66,8 @@ function run(argv, overrides = {}) {
     return fail(1, `results-unreadable: ${o.results} (${errMsg(err)})`);
   }
   let input;
-  try { input = JSON.parse(text); } catch {
-    return fail(1, `results-unparseable: ${o.results}`);
+  try { input = JSON.parse(text); } catch (err) {
+    return fail(1, `results-unparseable: ${o.results} (${errMsg(err)})`);
   }
   let composed;
   try { composed = composeQaReport(input, { now: deps.now }); } catch (err) {
