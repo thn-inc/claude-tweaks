@@ -203,7 +203,7 @@ function buildContext({
   // Pre-dispatch baselines (#3302): the reviewer compares the tree against these to tell its own
   // changes from what was already there, so they are captured here, before any lens runs.
   const baselinePath = path.join(dir, 'pre-dispatch-status.txt');
-  writeFile(baselinePath, git(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all'], { cwd: root }));
+  writeFile(baselinePath, git(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all'], { cwd: root })); // git-path-read: not a path list (display: the reviewer diffs it as text against its own status run)
   const listeners = lsof();
   const listenersPath = typeof listeners === 'string' ? path.join(dir, 'pre-dispatch-listeners.txt') : null;
   if (listenersPath) writeFile(listenersPath, listeners);
