@@ -21,8 +21,7 @@ const PLAIN_PATH = /^[A-Za-z0-9_@+:./-]+$/;
 const CONTROL_CHAR = /[\x00-\x1f\x7f]/;
 
 function substituteFile(template, file, { platform = process.platform } = {}) {
-  const splice = (value) => ({ ok: true, command: template.split('{file}').join(value) });
-  if (PLAIN_PATH.test(file)) return splice(file);
+  if (PLAIN_PATH.test(file)) return { ok: true, command: template.split('{file}').join(file) };
   if (CONTROL_CHAR.test(file)) return { ok: false, reason: 'control-character' };
   if (platform === 'win32') {
     if (/["%!]/.test(file)) return { ok: false, reason: 'cmd-unquotable' };
