@@ -20,8 +20,8 @@
 // { raw, text } where raw is the file's LF text with every \n turned into \r\n
 // (what a Windows autocrlf checkout holds) and text is that raw copy read back
 // through readText() from a temp file. A suite asserting text still finds its
-// '\n\n' paragraph breaks proves the read path, not the checkout, is what
-// makes the search CRLF-safe.
+// '\n\n' paragraph breaks proves readText() makes the search CRLF-safe (the
+// checkout is not what does).
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');

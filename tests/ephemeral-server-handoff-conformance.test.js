@@ -155,7 +155,9 @@ test('ephemeral-server: the paragraph searches still find their breaks under CRL
       assert.ok(at !== -1 && end !== -1, 'the liveness paragraph and its break must be found');
       const paragraph = block.slice(at, end);
       assert.ok(paragraph.length > 0);
-      assert.ok(paragraph.length < block.length - at, 'the paragraph must not run to the end of the block');
+      const following = block.slice(end + 2).split('\n')[0];
+      assert.ok(following.trim().length > 0, 'text must follow the liveness paragraph break');
+      assert.ok(!paragraph.includes(following), 'the paragraph must stop at its break, not run into the next paragraph');
     } else {
       const idx = text.indexOf('- **Windows:**');
       const end = text.indexOf('\n\n', idx);

@@ -110,6 +110,7 @@ test('flow-manifesto: the paragraph search still finds its break under CRLF line
   assert.ok(!raw.includes('\r\r\n'), 'the CRLF input must not contain \\r\\r\\n');
   assert.strictEqual(raw.indexOf('\n\n'), -1, 'a raw CRLF read has no LF paragraph break');
   assert.strictEqual(text, readText(FILE));
+  assert.notStrictEqual(text.indexOf(LEAD), -1, 'the paragraph lead must be found');
   const para = collapse(text.slice(text.indexOf(LEAD), text.indexOf('\n\n', text.indexOf(LEAD))));
   assert.match(para, /\*\*Ceremony profile computation\.\*\*/);
   assert.ok(para.length < collapse(text).length);
