@@ -1687,6 +1687,7 @@ function stampCheckOutcome(ctx, stamp, wtRoot, warnings, warnText, denyText, isF
 // worktree-stamp check. `deps.fsImpl` is forwarded to this gate's own
 // canonicalRealpath calls (#3682).
 function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings = []) {
+  const fsImpl = deps.fsImpl;
   const toolName = ctx.input && ctx.input.tool_name;
   const isFileTool = GATE_COVERAGE.tools.includes(toolName);
   const isGitWrite = toolName === 'Bash' && Array.isArray(commandGitTargets) && commandGitTargets.length > 0;
@@ -1748,10 +1749,10 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   // match. Only if NOT ONE target belongs to this project does the call go
   // un-gated — one in-project target is enough to keep the gate armed.
   if (isGitWrite) {
-    const mainRoot = canonicalRealpath(wtDetect.mainCheckoutRoot(wtRoot), { fsImpl: deps.fsImpl });
+    const mainRoot = canonicalRealpath(wtDetect.mainCheckoutRoot(wtRoot), { fsImpl });
     if (mainRoot) {
       const ownsATarget = commandGitTargets.some(
-        (t) => canonicalRealpath(wtDetect.mainCheckoutRoot(t.dir), { fsImpl: deps.fsImpl }) === mainRoot,
+        (t) => canonicalRealpath(wtDetect.mainCheckoutRoot(t.dir), { fsImpl }) === mainRoot,
       );
       if (!ownsATarget) return {};
     }
@@ -1803,7 +1804,7 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
       let danglingSymlink = false;
       try {
         if (fs.lstatSync(fileTargetPath).isSymbolicLink()) {
-          const real = canonicalRealpath(fileTargetPath, { fsImpl: deps.fsImpl });
+          const real = canonicalRealpath(fileTargetPath, { fsImpl });
           if (real) resolvedTargetPath = real;
           else danglingSymlink = true; // exists but unresolvable -> unprovable, fail closed
         }
@@ -1812,8 +1813,8 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
         const { repoRoot: targetRoot, indeterminate: targetIndeterminate } = wtDetect.repoInfo(resolvedTargetPath);
         if (!targetIndeterminate) {
           if (!targetRoot) return {}; // provably not a repo at all -- unconditional, matches the comment above
-          const mainRoot = canonicalRealpath(wtDetect.mainCheckoutRoot(wtRoot), { fsImpl: deps.fsImpl });
-          const targetMainRoot = mainRoot && canonicalRealpath(wtDetect.mainCheckoutRoot(targetRoot), { fsImpl: deps.fsImpl });
+          const mainRoot = canonicalRealpath(wtDetect.mainCheckoutRoot(wtRoot), { fsImpl });
+          const targetMainRoot = mainRoot && canonicalRealpath(wtDetect.mainCheckoutRoot(targetRoot), { fsImpl });
           if (targetMainRoot && targetMainRoot !== mainRoot) return {}; // provably a different repo
         }
       }
@@ -2024,12 +2025,13 @@ function checkDispatchConfigGate(ctx, commandGitTargets, deps = {}) {
   if (indeterminate || !wtRoot || !isLinkedWorktree) return {};
   const sessionId = ctx.input && typeof ctx.input.session_id === 'string' ? ctx.input.session_id : null;
   if (ctxLib.classifyOwnership({ sessionId, cwd }, state) !== 'mine') return {};
-  const bound = canonicalRealpath(wtRoot, { fsImpl: deps.fsImpl });
+  const fsImpl = deps.fsImpl;
+  const bound = canonicalRealpath(wtRoot, { fsImpl });
   if (!bound) return {};
   const topOf = deps.toplevel || toplevel;
   const hitsBound = commandGitTargets.some((t) => {
     const top = t && t.dir ? topOf(t.dir) : null;
-    return Boolean(top) && canonicalRealpath(top, { fsImpl: deps.fsImpl }) === bound;
+    return Boolean(top) && canonicalRealpath(top, { fsImpl }) === bound;
   });
   if (!hitsBound) return {};
   const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
@@ -2202,8 +2204,8 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
 // function's header comment), `fsImpl` (an fs-like object every
 // canonicalRealpath call resolves through, so a case-insensitive fake can stand
 // in for the volume, #3682), and `toplevel` (replaces the `git rev-parse
-// --show-toplevel` probe in E1 and checkDispatchConfigGate). The production call site
-// (bin/hooks.js's `main()`) calls `mod.run({...})` with a single argument, so
+// --show-toplevel` probe in E1 and checkDispatchConfigGate). The production
+// call site (bin/hooks.js's `main()`) calls `mod.run({...})` with a single argument, so
 // `deps` is always `{}` there; only a test passes a second argument. Adding
 // this parameter is what lets a test exercise checkBookkeepingStampsGate's
 // pr-first branch through run()'s own dispatch instead of calling the gate
