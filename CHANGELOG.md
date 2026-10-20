@@ -53,6 +53,41 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.149.0](https://github.com/thn-inc/claude-tweaks/compare/v6.148.0...v6.149.0) (2026-10-20)
+
+
+### Features
+
+* Add a Capable plan review before Task 1 of a Spec Mode… ([#3377](https://github.com/thn-inc/claude-tweaks/issues/3377)) ([a7b41a7](https://github.com/thn-inc/claude-tweaks/commit/a7b41a727d09cac4d42b594b7c45fabc42aa70eb))
+* Add a pre-scale hardening skill for AI-coded apps ([#2622](https://github.com/thn-inc/claude-tweaks/issues/2622)) ([5350b58](https://github.com/thn-inc/claude-tweaks/commit/5350b58b753247e24fe7e843ce30bda89e51290a))
+* Extend [#2719](https://github.com/thn-inc/claude-tweaks/issues/2719)'s concurrent-grant-divergence logging to… ([#3324](https://github.com/thn-inc/claude-tweaks/issues/3324)) ([8039e91](https://github.com/thn-inc/claude-tweaks/commit/8039e9166af5c8f93719327259bfd151d91880c9))
+* Report "N new, M fixed" from verify baseline adjudication ([#3313](https://github.com/thn-inc/claude-tweaks/issues/3313)) ([ef35bd8](https://github.com/thn-inc/claude-tweaks/commit/ef35bd81aab6267b7ccbe3d40dd28e2994d669a0))
+
+
+### Bug Fixes
+
+* archive-run archives a closed run with no rendered… ([#3668](https://github.com/thn-inc/claude-tweaks/issues/3668)) ([2704823](https://github.com/thn-inc/claude-tweaks/commit/2704823dced4fd62bd473c171eecf6b4682008a9))
+* blast-radius isTestPath classifies shipped skill prose… ([#3680](https://github.com/thn-inc/claude-tweaks/issues/3680)) ([5f3bdfa](https://github.com/thn-inc/claude-tweaks/commit/5f3bdfa5527496b21d02fd14f4702ed262aa7f3b))
+* candidates-dead-code.js loads with circular-dependency… ([#3478](https://github.com/thn-inc/claude-tweaks/issues/3478)) ([eedbe27](https://github.com/thn-inc/claude-tweaks/commit/eedbe27bfa5295f0ecd2fd04da7a586ee85d515a))
+* friction-events.js reads decisions.md local-time claim… ([#3641](https://github.com/thn-inc/claude-tweaks/issues/3641)) ([2cfc616](https://github.com/thn-inc/claude-tweaks/commit/2cfc616847b060efd64c25b4f363d28dca242496))
+* git-command: empty -C and omitted -C resolve to different… ([#3314](https://github.com/thn-inc/claude-tweaks/issues/3314)) ([2cf9a96](https://github.com/thn-inc/claude-tweaks/commit/2cf9a961b7f618a6a894393a3c1f682fa5d75717))
+* mcp-transport.md doesn't document that… ([#3691](https://github.com/thn-inc/claude-tweaks/issues/3691)) ([0e30886](https://github.com/thn-inc/claude-tweaks/commit/0e30886489c2de6d7b965d39a5c8030f7bd03339))
+* parked low-confidence review findings and reflect lessons ([#3789](https://github.com/thn-inc/claude-tweaks/issues/3789)) ([12c39e0](https://github.com/thn-inc/claude-tweaks/commit/12c39e008b5ffc52a339aaac968050f43cc14fd3))
+* phase-timing's locateTranscripts ignores… ([#3458](https://github.com/thn-inc/claude-tweaks/issues/3458)) ([4f4c795](https://github.com/thn-inc/claude-tweaks/commit/4f4c795ea43ee536f7e871ba0cc7e9f638cb24b6))
+* pr-first-merge Step 2.5: route a DIRTY PR with an empty… ([#3607](https://github.com/thn-inc/claude-tweaks/issues/3607)) ([92ed778](https://github.com/thn-inc/claude-tweaks/commit/92ed778ea4c953966c993df212091ca308726630))
+* Quote the runner-printed file path in the flaky-retry… ([#3676](https://github.com/thn-inc/claude-tweaks/issues/3676)) ([df51fb4](https://github.com/thn-inc/claude-tweaks/commit/df51fb46bf2ab92299f5cadc9236945f99b2b512))
+* Review lens dispatch tells agents to use a shell shape… ([#3675](https://github.com/thn-inc/claude-tweaks/issues/3675)) ([727f00f](https://github.com/thn-inc/claude-tweaks/commit/727f00f7fc1de0699bdc7d7e06c8bcbdc58e86a0)), closes [#3760](https://github.com/thn-inc/claude-tweaks/issues/3760)
+* review: the pre-dispatch untracked-file baseline cannot… ([#3302](https://github.com/thn-inc/claude-tweaks/issues/3302)) ([fee9ac6](https://github.com/thn-inc/claude-tweaks/commit/fee9ac600959a3f85c4cef645f6e4b70da57b786))
+* Structurally-stuck escalation record never names [#3503](https://github.com/thn-inc/claude-tweaks/issues/3503)'s… ([#3705](https://github.com/thn-inc/claude-tweaks/issues/3705)) ([44b59b5](https://github.com/thn-inc/claude-tweaks/commit/44b59b5eaa651505e44c599c20875c6542d0012f))
+* SubagentStop's immediate-after-async-signal exemption… ([#3589](https://github.com/thn-inc/claude-tweaks/issues/3589)) ([287c031](https://github.com/thn-inc/claude-tweaks/commit/287c0316575a915cccbebd6eccfd69c71ba613b6))
+* test: pipeline QA story selection reads only post-stamp… ([#3048](https://github.com/thn-inc/claude-tweaks/issues/3048)) ([bc28963](https://github.com/thn-inc/claude-tweaks/commit/bc28963e5c406b4a6cf7f1a0b4fdb270ca9c68ea))
+* verify.js stamps the HEAD it reads after the checks… ([#3757](https://github.com/thn-inc/claude-tweaks/issues/3757)) ([47e5873](https://github.com/thn-inc/claude-tweaks/commit/47e58733697a52a6ef4da1b6d491e6e683f63360))
+* visual-decide stop leaves no server-stopped marker when… ([#3265](https://github.com/thn-inc/claude-tweaks/issues/3265)) ([5d4bac7](https://github.com/thn-inc/claude-tweaks/commit/5d4bac7964c58db47f67412904a170e22a424f9b))
+* Windows regression: 3 test file(s) newly failing after… ([#3563](https://github.com/thn-inc/claude-tweaks/issues/3563)) ([fa8286f](https://github.com/thn-inc/claude-tweaks/commit/fa8286fc8703dd61adf2ccdf9f7ec01bb55baf26))
+* Windows: specify-ceremony-tally-prose.test.js reads the… ([#3587](https://github.com/thn-inc/claude-tweaks/issues/3587)) ([160e7c4](https://github.com/thn-inc/claude-tweaks/commit/160e7c4b37fb7a9d5368def4c6ff19d501b461fe))
+* wrap-up Dispatch-claim branch matches every human-run… ([#3711](https://github.com/thn-inc/claude-tweaks/issues/3711)) ([a34fe8b](https://github.com/thn-inc/claude-tweaks/commit/a34fe8bb9773dcc73df7f65cb742e3eee5f71912))
+* wrap-up Section D kills the recorded pid without… ([#3664](https://github.com/thn-inc/claude-tweaks/issues/3664)) ([904c37b](https://github.com/thn-inc/claude-tweaks/commit/904c37ba942ca243583552d94a40e6e4bf99d0b4))
+
 ## [6.148.0](https://github.com/thn-inc/claude-tweaks/compare/v6.147.1...v6.148.0) (2026-10-20)
 
 
