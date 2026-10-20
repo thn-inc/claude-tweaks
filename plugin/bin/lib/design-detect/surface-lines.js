@@ -112,6 +112,14 @@ function bPathFromQuoted(token) {
   return decoded.startsWith('b/') ? decoded.slice(2) : null;
 }
 
+// The b-side path a matched header names, or null when the match is absent or a
+// quoted token that is not a b-side path.
+function headerPath(match) {
+  if (!match) return null;
+  if (match[1] !== undefined) return match[1];
+  return bPathFromQuoted(match[2]);
+}
+
 // Parses a unified diff (`git diff -U0` output, or any diff with hunks) into
 // a per-file surface verdict. A file header's path is the raw path whether git
 // printed it plain or C-quoted (GIT_HEADER_RE / PLUS_HEADER_RE above). Never
@@ -135,8 +143,7 @@ function analyzeDiff(diffText) {
   for (const line of lines) {
     const gitHeader = GIT_HEADER_RE.exec(line);
     const plusHeader = !inHunk ? PLUS_HEADER_RE.exec(line) : null;
-    const m = gitHeader || plusHeader;
-    const file = m ? (m[1] !== undefined ? m[1] : bPathFromQuoted(m[2])) : null;
+    const file = headerPath(gitHeader || plusHeader);
     if (file) {
       current = file;
       inHunk = false;

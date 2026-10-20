@@ -231,9 +231,9 @@ function parseCatFileBatch(buf) {
 // tipSha, absent, failure}}, failure}
 // Batched counterpart to readClaimBlobGit (#2613) — replaces N per-blob `git
 // show` subprocess calls with exactly 2 total, regardless of registry size:
-// one `git ls-tree -r -z --end-of-options {tip} -- claims/` (which doubles as the full-keyspace
-// listing itself — `issue-claims-backstops.md`'s "Primary: list the claims/
-// blob keyspace" step) and one `git cat-file --batch` fed every target
+// one `git ls-tree -r -z --end-of-options {tip} -- claims/` (which doubles as
+// the full-keyspace listing itself — `issue-claims-backstops.md`'s "Primary:
+// list the claims/ blob keyspace" step) and one `git cat-file --batch` fed every target
 // blob's sha over stdin. `tip` is a caller-resolved commit sha (the same
 // `knownTip` shape #1467 established for readClaimBlobGit) — this function
 // never fetches on its own, so its own call count stays fixed at 2 whether

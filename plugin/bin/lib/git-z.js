@@ -69,6 +69,11 @@ function splitLogZ(raw, isHeader) {
   return records;
 }
 
+// A numstat count field: "-" (binary file) and anything non-numeric become 0.
+function parseNumstatCount(field) {
+  return field === '-' ? 0 : Number.parseInt(field, 10) || 0;
+}
+
 // parseNumstatZ(raw): `git diff --numstat -z` — "ADD\tDEL\tpath\0" per record,
 // "ADD\tDEL\t\0old\0new\0" for a rename or copy (the empty third field marks it
 // and the two paths follow as their own tokens). The path is everything after
@@ -84,9 +89,8 @@ function parseNumstatZ(raw) {
     const firstTab = token.indexOf('\t');
     const secondTab = firstTab < 0 ? -1 : token.indexOf('\t', firstTab + 1);
     if (secondTab < 0) { i += 1; continue; }
-    const count = (s) => (s === '-' ? 0 : Number.parseInt(s, 10) || 0);
-    const additions = count(token.slice(0, firstTab));
-    const deletions = count(token.slice(firstTab + 1, secondTab));
+    const additions = parseNumstatCount(token.slice(0, firstTab));
+    const deletions = parseNumstatCount(token.slice(firstTab + 1, secondTab));
     const rest = token.slice(secondTab + 1);
     if (rest === '') {
       if (i + 2 >= tokens.length) break; // truncated rename tail

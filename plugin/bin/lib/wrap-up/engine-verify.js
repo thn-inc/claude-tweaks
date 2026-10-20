@@ -242,6 +242,10 @@ function fsStartTimeMs(targetPath) {
   }
 }
 
+function untrackedPaths(porcelainZ) {
+  return parseStatusPorcelainZ(porcelainZ).filter((r) => r.xy === '??').map((r) => r.path);
+}
+
 // `--porcelain=v1 -z -uall` (not the default `-uno`) so a wholly-untracked
 // directory reports every file inside it individually instead of collapsing
 // to one `?? {dir}/` line the suffix/name filters below could never match.
@@ -253,7 +257,7 @@ registerCheck('plans-ledger', ({ runDir, cwd, deps }) => {
   } catch (err) {
     return { result: 'unknown', detail: `git status failed: ${err.message}` };
   }
-  const leftovers = parseStatusPorcelainZ(status).filter((r) => r.xy === '??').map((r) => r.path);
+  const leftovers = untrackedPaths(status);
   // .superpowers/sdd/ is gitignored entirely so it never shows up in `git
   // status` even with the paths above -- check it directly. Any entry
   // present there is a leftover SDD ledger workspace that should have been
@@ -310,7 +314,7 @@ registerCheck('design-caches', ({ cwd, expectations, deps }) => {
     return { result: 'unknown', detail: `git status failed: ${err.message}` };
   }
   const suffixes = ['-audit.json', '-recommendations.json', '-declined.json'];
-  const untracked = parseStatusPorcelainZ(status).filter((r) => r.xy === '??').map((r) => r.path);
+  const untracked = untrackedPaths(status);
   const matches = untracked.filter((f) => suffixes.some((suf) => f.endsWith(suf)));
   if (matches.length) return { result: 'fail', detail: `${matches.length} cache file(s) remain: ${matches.join(', ')}` };
   return { result: 'pass', detail: '' };
