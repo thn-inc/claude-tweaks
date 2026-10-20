@@ -8,7 +8,8 @@
 //
 // Why the refusals exist: on win32, cmd.exe expands `%VAR%` even inside double
 // quotes, and `"`/`!` cannot be escaped there, so such a path cannot be quoted
-// safely. For a non-plain path, a template that wraps `{file}` in quotes
+// safely; a trailing backslash is refused there too, since the closing quote
+// would read as escaped by the child's argv parser. For a non-plain path, a template that wraps `{file}` in quotes
 // (`"{file}"` on both platforms, also `'{file}'` on POSIX) has that wrapper
 // replaced by this helper's own quoting; any other quote or escape character
 // left in the template (or `${file}` on POSIX) refuses, because our quoting
@@ -24,9 +25,9 @@ function substituteFile(template, file, { platform = process.platform } = {}) {
   if (PLAIN_PATH.test(file)) return { ok: true, command: template.split('{file}').join(file) };
   if (CONTROL_CHAR.test(file)) return { ok: false, reason: 'control-character' };
   if (platform === 'win32') {
-    if (/["%!]/.test(file)) return { ok: false, reason: 'cmd-unquotable' };
+    if (/["%!]|\\$/.test(file)) return { ok: false, reason: 'cmd-unquotable' };
     const bare = template.split('"{file}"').join('{file}');
-    if (/["^]/.test(bare)) return { ok: false, reason: 'template-quotes' };
+    if (/["'^]/.test(bare)) return { ok: false, reason: 'template-quotes' };
     return { ok: true, command: bare.split('{file}').join(`"${file}"`) };
   }
   const bare = template.split('"{file}"').join('{file}').split("'{file}'").join('{file}');

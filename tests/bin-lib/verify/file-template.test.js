@@ -48,6 +48,33 @@ test('substituteFile: refusals are named', () => {
     { ok: false, reason: 'control-character' });
 });
 
+test('substituteFile: win32 refuses a path with a double quote, a bang, or a trailing backslash, and a template with a single quote', () => {
+  assert.deepStrictEqual(substituteFile('node --test {file}', 'tests/a"b.test.js', WIN32), { ok: false, reason: 'cmd-unquotable' });
+  assert.deepStrictEqual(substituteFile('node --test {file}', 'tests/a!b.test.js', WIN32), { ok: false, reason: 'cmd-unquotable' });
+  assert.deepStrictEqual(substituteFile('node --test {file}', 'tests\\dir\\', WIN32), { ok: false, reason: 'cmd-unquotable' });
+  assert.deepStrictEqual(substituteFile("node --test '{file}'", 'tests/a b.test.js', WIN32), { ok: false, reason: 'template-quotes' });
+  assert.deepStrictEqual(substituteFile('node --test {file}', 'tests\\a b.test.js', WIN32),
+    { ok: true, command: 'node --test "tests\\a b.test.js"' });
+});
+
+test('substituteFile: a control character refuses on win32 too, and outranks the win32 path refusals', () => {
+  assert.deepStrictEqual(substituteFile('node --test {file}', 'tests/a\tb.test.js', WIN32), { ok: false, reason: 'control-character' });
+  assert.deepStrictEqual(substituteFile('node --test {file}', 'tests/%a\tb.test.js', WIN32), { ok: false, reason: 'control-character' });
+});
+
+test('substituteFile: POSIX refuses a template that leaves a backtick, backslash, bare double quote, or ${file} around the path', () => {
+  for (const template of ['node --test `echo {file}`', 'node --test \\{file}', 'echo "x" {file}', 'node --test ${file}']) {
+    assert.deepStrictEqual(substituteFile(template, 'tests/a b.test.js', LINUX), { ok: false, reason: 'template-quotes' }, template);
+  }
+});
+
+test('substituteFile: every {file} in the template is substituted', () => {
+  assert.deepStrictEqual(substituteFile('cp {file} {file}.bak', 'tests/a.test.js', LINUX),
+    { ok: true, command: 'cp tests/a.test.js tests/a.test.js.bak' });
+  assert.deepStrictEqual(substituteFile('cp {file} {file}.bak', 'tests/a b.test.js', LINUX),
+    { ok: true, command: "cp 'tests/a b.test.js' 'tests/a b.test.js'.bak" });
+});
+
 test('substituteFile: a template that wraps {file} in quotes has that wrapper replaced by the helper quoting', () => {
   assert.deepStrictEqual(substituteFile('node --test "{file}"', 'tests/a b.test.js', LINUX),
     { ok: true, command: "node --test 'tests/a b.test.js'" });

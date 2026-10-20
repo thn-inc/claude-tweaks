@@ -1043,6 +1043,18 @@ test('a failing path the retry template cannot quote is ineligible, never run (#
   assert.strictEqual(calls.added.length, 0);
 });
 
+test('adjudicate hands its platform to the path quoting — a win32 percent path is refused where linux quotes it (#3676)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/%PATH%.test.js']));
+  const run = (platform) => {
+    const { git, runOne } = fakes({ outcomes: {} });
+    return adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'origin/main', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git, platform });
+  };
+  const win = await run('win32');
+  assert.strictEqual(win.eligible, false);
+  assert.strictEqual(win.reason, 'tests failing file tests/%PATH%.test.js cannot be handed to the shell safely (cmd-unquotable)');
+  assert.notStrictEqual((await run('linux')).eligible, false, 'the same path quotes fine on linux');
+});
+
 test('a quotable spaced failing path reaches the run stage as the quoted command (#3676)', async () => {
   const { p, dir } = logFile(SPEC(['tests/a b.test.js']));
   const { git, runOne, calls } = fakes({ outcomes: {} });
