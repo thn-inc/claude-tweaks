@@ -394,3 +394,9 @@ test('clearsFloor: a free-prose reason that merely contains a vocabulary word is
 test('clearsFloor: an unknown string returns false', () => {
   assert.strictEqual(clearsFloor('minor'), false);
 });
+
+test('AC1.1: bookkeepingPermissions grants no merge capability at any ceiling (#2734)', () => {
+  for (const ceiling of CEILINGS) {
+    assert.deepStrictEqual(Object.keys(bookkeepingPermissions(ceiling)).filter((k) => /merge/i.test(k)), [], ceiling);
+  }
+});
