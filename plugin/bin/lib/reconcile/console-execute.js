@@ -550,7 +550,7 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [], rev
     return { status: 'error', reason: 'marker-edit-failed', error: errorText(err) };
   }
 
-  // 3. console.json.executedAt + resolved: true, together, in one write.
+  // 3. console.json.executedAt + resolved (true only when every item cleared), together, in one write.
   // Guarded (unlike the two gh calls above, this is the only I/O in the
   // function with no injected-failure return shape of its own): by this
   // point both gh writes have already landed for real, so an uncaught throw

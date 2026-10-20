@@ -80,7 +80,8 @@ when it happens anyway, surface it rather than executing: there is nowhere to ap
 reverse. Post one reply comment (`<!-- console-item: executed -->`) summarizing per-item outcomes
 (executed / declined / reversed / reverse-failed / unexecutable / unexecutable-stale), then edit the
 console comment's first line to add `<!-- claude-tweaks-console-resolved -->`, then write
-`console.json.executedAt` and `console.json.resolved: true` together, in one write. The comment
+`console.json.executedAt` and `console.json.resolved` (`true` only when every item cleared) together,
+in one write. The comment
 marker is the source of truth; the `console.json` completion fields are the local cache. A split-brain
 (reply posted, marker edit failed partway) is repaired by the next detection pass: it keys
 "already executed" off the reply comment's presence on the PR, not off `console.json` alone, so a
