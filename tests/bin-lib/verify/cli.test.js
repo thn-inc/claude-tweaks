@@ -443,6 +443,42 @@ test('#3757: a clean start with an unreadable end-of-run status stamps dirty:nul
   assert.strictEqual(stamp.dirty, null, 'an end-of-run status that could not be read is unknown, not clean');
 });
 
+// #3799: --cwd moves only the check spawns; the stamp and report belong to
+// the invoking checkout, so a --cwd in another checkout is refused up front.
+test('#3799: a --cwd in another checkout exits 2 before any check runs and writes nothing under the invoking checkout', async () => {
+  const a = tmpGitRepo();
+  const b = tmpGitRepo();
+  const mark = `node -e "require('fs').writeFileSync('ran.marker', 'x')"`;
+  const { code, stderr } = await runCli(['--cmd', `tests=${mark}`, '--cwd', b.repo], { cwd: a.repo });
+  assert.strictEqual(code, 2);
+  assert.ok(stderr.includes(fs.realpathSync(b.gitDir)), 'names the --cwd checkout git dir');
+  assert.ok(stderr.includes(fs.realpathSync(a.gitDir)), 'names the invoking checkout git dir');
+  assert.ok(!fs.existsSync(path.join(b.repo, 'ran.marker')), 'no check spawned');
+  assert.ok(!fs.existsSync(path.join(a.gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp for the invoking checkout');
+  assert.ok(!fs.existsSync(path.join(a.gitDir, 'claude-tweaks-verify', 'report.json')), 'no report for the invoking checkout');
+});
+
+test('#3799: a --cwd outside any git checkout exits 2 and says so', async () => {
+  const a = tmpGitRepo();
+  const { code, stderr } = await runCli(['--cmd', 'tests=node -e 0', '--cwd', tmpDir()], { cwd: a.repo });
+  assert.strictEqual(code, 2);
+  assert.match(stderr, /not inside a git checkout/);
+});
+
+test('#3799: a --cwd subdirectory of the invoking checkout still runs and stamps', async () => {
+  const a = tmpGitRepo();
+  fs.mkdirSync(path.join(a.repo, 'packages', 'app'), { recursive: true });
+  const { code } = await runCli(['--cmd', 'tests=node -e 0', '--cwd', 'packages/app'], { cwd: a.repo });
+  assert.strictEqual(code, 0);
+  assert.ok(fs.existsSync(path.join(a.gitDir, 'claude-tweaks-verify-pass.json')));
+});
+
+test('#3799: the usage text says --cwd must stay inside the checkout verify.js runs from', async () => {
+  const { code, stderr } = await runCli(['--help']);
+  assert.strictEqual(code, 2);
+  assert.match(stderr, /--cwd must stay inside the checkout verify\.js runs from/);
+});
+
 test('--stamp-status recomputes dirty from the live tree — a dirty edit with no new commit is match:false (#1921 Gotchas)', async () => {
   const { repo } = tmpGitRepo();
   await runCli(['--cmd', 'tests=node -e 0'], { cwd: repo });
