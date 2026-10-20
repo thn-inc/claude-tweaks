@@ -13,7 +13,7 @@ The scan also carries a `checklist` array — one `{ id, label, group, phase, st
 | Item | Phase | Group | How it is checked |
 |---|---|---|---|
 | `queries` — Query patterns | `pre-launch` | automated | `query-in-loop`: a query call inside a loop body. `unbounded-list-query`: a `findMany`-style list read with no `take`/`limit`. `unindexed-where-field`: a Prisma `where` field with no `@id`, `@unique` or `@@index` |
-| `background-jobs` — Slow work off the request path | `pre-launch` | automated | `inline-slow-work`: an AI call, email send or third-party fetch inside a route file with no queue or background-job signal in that file |
+| `background-jobs` — Slow work off the request path | `pre-launch` | automated | `inline-slow-work`: an AI call, email send, SMS send or third-party fetch inside a route file with no queue or background-job signal in that file |
 | `load-test` — Load test | `pre-launch` | manual | See "Manual item — load test" |
 | `caching` — Cache layer | `pre-scale` | automated | `no-cache-layer`: routes run queries and neither a cache dependency nor a framework cache directive exists anywhere |
 | `pooling` — Connection pooling | `pre-scale` | automated | `per-request-db-client`: a client constructed inside a route handler. `unbounded-pool`: a pool constructed with no connection cap |
@@ -21,12 +21,14 @@ The scan also carries a `checklist` array — one `{ id, label, group, phase, st
 
 The `pre-launch` subset (`queries`, `background-jobs`, `load-test`) and the `pre-scale` subset (`caching`, `pooling`, `monitoring`) are reported separately: the first blocks a launch, the second can wait for traffic.
 
+A "route file" is a Next.js `route.*`, a `pages/api/` file, a SvelteKit `+server.*`, a module whose first statement is `"use server"` (Next.js server actions), or a file under a `routes`/`api`/`handlers`/`controllers`/`endpoints` directory whose nearest `package.json` declares a server or data-access dependency. Prisma calls are recognized on any receiver whose model segment is in the parsed schema (`ctx.db.post.findMany(`), or, with no schema, on a `prisma` or `db` receiver. Seed scripts (`seed.*`, or files under `seed/`, `seeds/` or `seeders/`) are never scanned by the query checks.
+
 ## What to flag
 
 - **`query-in-loop`** — an N+1: the loop's iteration count grows with data or request input, and each pass issues its own query. Fix by batching (`where: { id: { in: ids } }`, a join, an `include`).
 - **`unbounded-list-query`** — a list read on a table that grows with users or activity, returned or iterated with no `take`/`limit`/pagination.
 - **`unindexed-where-field`** — a filter field on a growing table with no index in the Prisma schema.
-- **`inline-slow-work`** — a request handler that waits on an AI call, an email send or a third-party fetch before responding.
+- **`inline-slow-work`** — a request handler that waits on an AI call, an email send, an SMS send or a third-party fetch before responding.
 - **`no-cache-layer`** — DB-backed routes serving read-heavy data with no cache of any kind.
 - **`per-request-db-client`** — a database client built per request, which opens a fresh connection each time.
 - **`unbounded-pool`** — a pool with no explicit cap, falling back to the driver default (which the candidate's evidence names).
@@ -36,9 +38,11 @@ The `pre-launch` subset (`queries`, `background-jobs`, `load-test`) and the `pre
 
 Judge each candidate against the generator's known limits before filing — read the surrounding code, not just the matched line:
 
-- `query-in-loop` or `unbounded-list-query` on a capitalized receiver (`COUNTRIES.find(`, `Roles.find(`) that is an in-memory constant array, not a model.
-- `query-in-loop` over a small fixed-size input (a three-item list literal, an enum's values).
-- `unbounded-list-query` on a bounded admin or seed path (a one-off script, a migration, a `prisma/seed.*`), and on a `findMany(args)` whose `take` is set where `args` is built.
+- `query-in-loop` or `unbounded-list-query` on a capitalized receiver (`COUNTRIES.find(code)`, `Roles.find(id)`) that is an in-memory constant array, not a model. A callback-argument search (`PLANS.find((p) => …)`) is already skipped.
+- `query-in-loop` or `unbounded-list-query` on a `db.<table>.<op>(` call in a repo with no Prisma schema when `db` is not a Prisma client (Dexie or another browser-side store) — the schema-less rule accepts any `db` receiver.
+- `query-in-loop` over a small fixed-size input (a three-item list literal, an enum's values, a `.map` over a constant).
+- `query-in-loop` or `unbounded-list-query` on a bounded admin or seed path the seed exclusion does not name (a one-off script, a migration, a seed script not called `seed.*` and not under a `seed/`, `seeds/` or `seeders/` directory), and `unbounded-list-query` on a `findMany(args)` whose `take` is set where `args` is built.
+- `inline-slow-work`, `per-request-db-client` or `no-cache-layer` resting on a file that is not a request handler — in a single-package full-stack app, a browser-side `api/` client counts as a route file because the package declares a server or data dependency.
 - `unindexed-where-field` when the field is the leading column of a composite `@@index` — and conversely, a field that is only a non-leading column of one is still unindexed, since a composite index covers only its leading column. Also skip a table that stays small by construction.
 - `inline-slow-work` on a `streamText`/`streamObject` response (request-bound by design), and on a call already handed to a queue the generator's signal list does not name.
 - `no-cache-layer` when a CDN or edge cache configured outside the repo (a platform setting, a Cloudflare rule) fronts the routes.
@@ -50,7 +54,7 @@ Judge each candidate against the generator's known limits before filing — read
 ## Severity calibration
 
 - **high** — `query-in-loop` or `per-request-db-client` in a route; `inline-slow-work` for an AI call on a user-facing route.
-- **medium** — `unbounded-list-query`, `unindexed-where-field`, `inline-slow-work` for an email send or a third-party fetch, `no-monitoring`, and `unbounded-pool` on serverless.
+- **medium** — `unbounded-list-query`, `unindexed-where-field`, `inline-slow-work` for an email send, an SMS send or a third-party fetch, `no-monitoring`, and `unbounded-pool` on serverless.
 - **low** — `no-cache-layer`; `query-in-loop` in a script with bounded input.
 
 ## Scope boundary

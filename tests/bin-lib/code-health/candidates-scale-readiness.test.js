@@ -646,11 +646,13 @@ test('no-cache-layer: a query outside route files does not make a route DB-backe
 });
 
 test('no-cache-layer: with no package.json the candidate anchors to the first route file', () => {
+  // A framework-explicit route: a ROUTE_DIR_RE-only file with no package.json
+  // is not a route at all.
   const root = tmpGitRepo();
-  write(root, 'routes/users.js', 'module.exports = async () => prisma.user.findMany({ take: 1 });\n');
+  write(root, 'app/api/users/route.ts', 'export async function GET() { return Response.json(await prisma.user.findMany({ take: 1 })); }\n');
   const c = ofKind(root, 'no-cache-layer');
   assert.equal(c.length, 1);
-  assert.equal(c[0].file, 'routes/users.js');
+  assert.equal(c[0].file, 'app/api/users/route.ts');
 });
 
 test('AC2.1 AC2.2 no-monitoring: a server repo with no error-tracking dependency anchors to package.json', () => {
@@ -689,4 +691,223 @@ test('a clean Express + Prisma repo passes every automated row', () => {
   const r = scanScaleReadiness(root);
   assert.deepEqual(r.candidates, []);
   assert.deepEqual(r.checklist.map((x) => x.status), ['pass', 'pass', 'manual', 'pass', 'pass', 'pass']);
+});
+
+// ---- Final-review fixes: real framework layouts --------------------------
+
+function lineOfEvidence(c) {
+  return Number(c.evidence.match(/:(\d+) /)[1]);
+}
+
+test('create-t3-app layout: ctx.db.<model> calls raise the N+1, unbounded and unindexed candidates', () => {
+  const root = tmpGitRepo();
+  write(root, 'package.json', pkg({ next: '^15', '@prisma/client': '^6', '@trpc/server': '^11', '@tanstack/react-query': '^5', zod: '^3' }));
+  write(root, 'prisma/schema.prisma', [
+    'model Post {',
+    '  id          Int      @id @default(autoincrement())',
+    '  name        String',
+    '  createdAt   DateTime @default(now())',
+    '  createdBy   User     @relation(fields: [createdById], references: [id])',
+    '  createdById String',
+    '  @@index([name])',
+    '}',
+    'model User {',
+    '  id    String @id @default(cuid())',
+    '  posts Post[]',
+    '}',
+    '',
+  ].join('\n'));
+  write(root, 'src/server/api/routers/post.ts', [
+    "import { createTRPCRouter, publicProcedure, protectedProcedure } from '~/server/api/trpc';",
+    'export const postRouter = createTRPCRouter({',
+    '  list: publicProcedure.query(async ({ ctx }) => {',
+    "    return ctx.db.post.findMany({ orderBy: { createdAt: 'desc' } });",
+    '  }),',
+    '  mine: protectedProcedure.query(async ({ ctx }) => {',
+    '    return ctx.db.post.findFirst({ where: { createdById: ctx.session.user.id } });',
+    '  }),',
+    '  authors: publicProcedure.query(async ({ ctx }) => {',
+    '    const posts = await ctx.db.post.findMany({ take: 10 });',
+    '    for (const p of posts) {',
+    '      p.author = await ctx.db.user.findUnique({ where: { id: p.createdById } });',
+    '    }',
+    '    return posts;',
+    '  }),',
+    '});',
+    '',
+  ].join('\n'));
+  write(root, 'src/app/api/trpc/[trpc]/route.ts', "import { fetchRequestHandler } from '@trpc/server/adapters/fetch';\nconst handler = (req) => fetchRequestHandler({ endpoint: '/api/trpc', req, router: appRouter });\nexport { handler as GET, handler as POST };\n");
+  write(root, 'src/server/db.ts', "import { PrismaClient } from '@prisma/client';\nexport const db = globalForPrisma.prisma ?? new PrismaClient();\n");
+  const r = scanScaleReadiness(root);
+  const rel = 'src/server/api/routers/post.ts';
+  const loop = r.candidates.filter((c) => c.kind === 'query-in-loop');
+  assert.deepEqual(loop.map((c) => [c.file, lineOfEvidence(c)]), [[rel, 12]]);
+  const unbounded = r.candidates.filter((c) => c.kind === 'unbounded-list-query');
+  assert.equal(unbounded.length, 1);
+  assert.match(unbounded[0].evidence, /post\.ts:4 ctx\.db\.post\.findMany has no take\/limit/);
+  const unindexed = r.candidates.filter((c) => c.kind === 'unindexed-where-field');
+  assert.equal(unindexed.length, 1);
+  assert.match(unindexed[0].evidence, /post\.ts:7 ctx\.db\.post\.findFirst filters on Post\.createdById/);
+  assert.equal(r.checklist.find((x) => x.id === 'queries').status, 'fail');
+  assert.equal(r.checklist.find((x) => x.id === 'caching').status, 'fail');
+});
+
+test('with no Prisma schema, prisma and db receivers (ctx.db., this.prisma.) are recognized', () => {
+  const root = tmpGitRepo();
+  write(root, 'package.json', pkg({ '@nestjs/core': '^10', '@prisma/client': '^5' }));
+  write(root, 'src/users/users.service.ts', 'export class UsersService {\n  list() {\n    return this.prisma.user.findMany();\n  }\n}\n');
+  write(root, 'src/server/api/routers/a.ts', 'for (const id of ids) {\n  await ctx.db.post.findUnique({ where: { id } });\n}\n');
+  const r = scanScaleReadiness(root);
+  const unbounded = r.candidates.filter((c) => c.kind === 'unbounded-list-query');
+  assert.equal(unbounded.length, 1);
+  assert.match(unbounded[0].evidence, /users\.service\.ts:3 this\.prisma\.user\.findMany has no take\/limit/);
+  assert.deepEqual(r.candidates.filter((c) => c.kind === 'query-in-loop').map((c) => [c.file, lineOfEvidence(c)]), [['src/server/api/routers/a.ts', 2]]);
+});
+
+test('the db SQL-driver arm still matches alongside the db.<model> arm, once per line', () => {
+  const root = tmpGitRepo();
+  write(root, 'package.json', pkg({ express: '^4', mysql2: '^3' }));
+  write(root, 'routes/a.js', 'for (const id of ids) {\n  await db.query("select 1", [id]);\n  await db.execute("select 2");\n  db.query.users;\n}\n');
+  assert.deepEqual(ofKind(root, 'query-in-loop').map(lineOfEvidence).sort(), [2, 3]);
+});
+
+test('with a parsed schema, a db.<name> call on a name that is not a model is not a query', () => {
+  const root = postRepo(POST_SCHEMA, 'export async function GET() {\n  for (const f of friends) { await db.friends.update(f.id, f); }\n  for (const p of ps) { await db.post.update({ where: { id: p }, data: {} }); }\n}\n');
+  assert.deepEqual(ofKind(root, 'query-in-loop').map(lineOfEvidence), [3]);
+});
+
+test('a Vite SPA with file routes and an API client is not applicable', () => {
+  const root = tmpGitRepo();
+  write(root, 'package.json', JSON.stringify({ name: 'spa', dependencies: { react: '^18', 'react-dom': '^18', '@tanstack/react-router': '^1' }, devDependencies: { vite: '^5' } }));
+  write(root, 'src/routes/__root.tsx', "export const Route = createRootRoute({ component: Root });\n");
+  write(root, 'src/routes/users.tsx', "export const Route = createFileRoute('/users')({ component: Users });\n");
+  write(root, 'src/api/client.ts', "export const getUsers = () => fetch('https://api.example.com/users');\n");
+  const r = scanScaleReadiness(root);
+  assert.equal(r.notApplicable, true);
+  assert.deepEqual(r.candidates, []);
+});
+
+test('monorepo: a ROUTE_DIR_RE file is a route only when its nearest package.json declares a server or data dependency', () => {
+  const root = tmpGitRepo();
+  write(root, 'package.json', JSON.stringify({ name: 'mono', private: true, workspaces: ['apps/*'], devDependencies: { turbo: '^2' } }));
+  write(root, 'apps/web/package.json', JSON.stringify({ name: 'web', dependencies: { react: '^18' }, devDependencies: { vite: '^5' } }));
+  write(root, 'apps/web/src/api/users.ts', "export const getUsers = () => fetch('https://api.example.com/users');\n");
+  write(root, 'apps/api/package.json', JSON.stringify({ name: 'api', dependencies: { express: '^4' } }));
+  write(root, 'apps/api/routes/x.js', "router.get('/', async (req, res) => {\n  res.json(await fetch('https://api.example.com/x'));\n});\n");
+  const r = scanScaleReadiness(root);
+  assert.equal(r.notApplicable, false);
+  assert.deepEqual(r.candidates.filter((c) => c.kind === 'inline-slow-work').map((c) => c.file), ['apps/api/routes/x.js']);
+});
+
+test('a ROUTE_DIR_RE file with no enclosing package.json is not a route', () => {
+  const root = tmpGitRepo();
+  write(root, 'api/x.js', "export default async () => fetch('https://api.example.com/x');\n");
+  assert.equal(scanScaleReadiness(root).notApplicable, true);
+});
+
+test('Mongoose .find limit is read from the call chain only, not the next statement', () => {
+  const root = tmpGitRepo();
+  write(root, 'package.json', EXPRESS_PKG);
+  write(root, 'routes/posts.js', [
+    "router.get('/all', async (req, res) => {",
+    '  res.json(await Post.find({}))',
+    '})',
+    "router.get('/top', async (req, res) => {",
+    '  res.json(await Post.find({}).sort({ score: -1 }).limit(5))',
+    '})',
+    '',
+  ].join('\n'));
+  assert.deepEqual(ofKind(root, 'unbounded-list-query').map(lineOfEvidence), [2]);
+});
+
+test('cache-disabling directives do not count as a cache layer', () => {
+  const query = 'export async function GET() { return Response.json(await prisma.user.findMany({ take: 10 })); }\n';
+  const disabled = [
+    'export const revalidate = 0;\n',
+    "const headers = { 'Cache-Control': 'no-store' };\n",
+    "res.set('Cache-Control', 'no-cache');\n",
+    "res.set('Cache-Control', 'public, max-age=0');\n",
+  ];
+  for (const extra of disabled) {
+    const root = repoWith({ '@prisma/client': '^5' }, { 'app/api/users/route.ts': `${extra}${query}` });
+    assert.equal(ofKind(root, 'no-cache-layer').length, 1, extra);
+  }
+  const enabled = [
+    'export const revalidate = 60;\n',
+    "res.set('Cache-Control', 'public, max-age=0, s-maxage=60');\n",
+    "const headers = { 'Cache-Control': cacheValue };\n",
+  ];
+  for (const extra of enabled) {
+    const root = repoWith({ '@prisma/client': '^5' }, { 'app/api/users/route.ts': `${extra}${query}` });
+    assert.equal(ofKind(root, 'no-cache-layer').length, 0, extra);
+  }
+});
+
+test('query-in-loop: a non-async .map callback that issues a query is an N+1', () => {
+  const root = prismaRoute('export async function GET() {\n  const users = await Promise.all(ids.map((id) => prisma.user.findUnique({ where: { id } })));\n  return Response.json(users);\n}\n');
+  const c = ofKind(root, 'query-in-loop');
+  assert.equal(c.length, 1);
+  assert.match(c[0].evidence, /route\.ts:2 query call inside a loop \(\.map\)/);
+});
+
+test('a capitalized constant array searched with a callback is not a query', () => {
+  const root = tmpGitRepo();
+  write(root, 'package.json', EXPRESS_PKG);
+  write(root, 'routes/billing.js', [
+    'const plan = PLANS.find((p) => p.id === req.body.plan);',
+    'const tier = TIERS.find(function (t) { return t.min <= n; });',
+    'for (const id of ids) { const c = COUNTRIES.find(async (x) => x.code === id); }',
+    'const posts = await Post.find({ live: true });',
+    '',
+  ].join('\n'));
+  const r = scanScaleReadiness(root);
+  assert.deepEqual(r.candidates.filter((c) => c.kind === 'unbounded-list-query').map(lineOfEvidence), [4]);
+  assert.equal(r.candidates.filter((c) => c.kind === 'query-in-loop').length, 0);
+});
+
+test('seed scripts are excluded from the per-file query scans', () => {
+  const body = 'async function main() {\n  for (const u of users) {\n    await prisma.user.create({ data: u });\n  }\n  await prisma.user.findMany();\n}\n';
+  const root = repoWith({ '@prisma/client': '^5' }, {
+    'prisma/seed.ts': body,
+    'seeds/users.js': body,
+    'db/seeders/20240101-users.js': body,
+    'lib/import.ts': body,
+  });
+  const r = scanScaleReadiness(root);
+  const queryKinds = ['query-in-loop', 'unbounded-list-query', 'unindexed-where-field'];
+  assert.deepEqual([...new Set(r.candidates.filter((c) => queryKinds.includes(c.kind)).map((c) => c.file))], ['lib/import.ts']);
+
+  const seedsOnly = repoWith({ '@prisma/client': '^5' }, { 'prisma/seed.ts': body, 'seeds/users.js': body, 'db/seeders/20240101-users.js': body });
+  const row = scanScaleReadiness(seedsOnly).checklist.find((x) => x.id === 'queries');
+  assert.equal(row.status, 'pass');
+  assert.match(row.evidence, /, 3 seed file\(s\) skipped$/);
+});
+
+test('a "use server" actions file is a handler: applicable and scanned for inline slow work', () => {
+  const root = repoWith({ next: '^15', react: '^19', ai: '^4' }, {
+    'app/actions.ts': "// server actions\n'use server';\n\nimport { generateText } from 'ai';\nexport async function summarize(text) {\n  const { text: out } = await generateText({ model, prompt: text });\n  return out;\n}\n",
+  });
+  const r = scanScaleReadiness(root);
+  assert.equal(r.notApplicable, false);
+  const c = r.candidates.filter((x) => x.kind === 'inline-slow-work');
+  assert.equal(c.length, 1);
+  assert.match(c[0].evidence, /app\/actions\.ts:6 AI call on the request path/);
+});
+
+test('a "use server" directive that is not the first statement does not make a file a handler', () => {
+  const root = repoWith({ next: '^15', react: '^19', ai: '^4' }, {
+    'app/page.tsx': "import { generateText } from 'ai';\nexport default function Page() {\n  async function act() {\n    'use server';\n    await generateText({ model });\n  }\n  return null;\n}\n",
+  });
+  assert.equal(scanScaleReadiness(root).notApplicable, true);
+});
+
+test('inline-slow-work: a Twilio messages.create is an SMS send, not an AI call', () => {
+  const root = repoWith({ express: '^4', twilio: '^5' }, {
+    'routes/sms.js': "const twilio = require('twilio')(sid, token);\nrouter.post('/', async (req, res) => {\n  await twilio.messages.create({ to, from, body });\n  res.sendStatus(201);\n});\n",
+    'routes/notify.js': "import Twilio from 'twilio';\nconst client = new Twilio(sid, token);\nexport default async (req, res) => {\n  await client.messages.create({ to, from, body });\n};\n",
+    'routes/chat.js': "import Anthropic from '@anthropic-ai/sdk';\nconst client = new Anthropic();\nexport default async (req, res) => {\n  await client.messages.create({ model, messages });\n};\n",
+  });
+  const byFile = {};
+  for (const x of ofKind(root, 'inline-slow-work')) (byFile[x.file] ||= []).push(x.evidence.match(/:\d+ (.+?) on the request path/)[1]);
+  assert.deepEqual(byFile, { 'routes/sms.js': ['SMS send'], 'routes/notify.js': ['SMS send'], 'routes/chat.js': ['AI call'] });
 });
