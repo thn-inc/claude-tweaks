@@ -146,3 +146,47 @@ test('the folded-paragraph, yield-rule and interim-marker assertions can actuall
   assert.ok(keepsInterimMarker(contract), 'anchor text INTERIM_STATUS not found in the contract');
   assert.equal(keepsInterimMarker(contract.split('INTERIM_STATUS').join('')), false, 'removing INTERIM_STATUS must turn the marker assertion red');
 });
+
+// #3078: review/step3-lens-dispatch.md's dispatched-reviewer carve-out is deleted, and its
+// Foreground note now covers the reviewer's own lens dispatches (nested-children rule + partner-died downgrade).
+const STEP3 = path.join(PLUGIN, 'skills', 'review', 'step3-lens-dispatch.md');
+const CARVE_OUT_SENTENCE = '**When the reviewing agent is itself a Task-tool subagent** (dispatched by `/claude-tweaks:dispatch` or any other orchestrator), it cannot safely wait on this dispatch\'s own completion notification — see `dispatch/task-prompt.md`\'s Async-wait discipline item. In that case, skip the Task-tool dispatch for this tier entirely and have the reviewing agent apply the Direct-verification override from the start: read the diff directly and judge 3b/3c itself, rather than dispatching and then abandoning an agent whose findings cannot be safely awaited.';
+const CARVE_OUT = [
+  [/cannot safely wait/, 'the reviewer "cannot safely wait" on its own dispatch'],
+  [/skip the Task-tool dispatch for this tier entirely/, 'the Task-tool dispatch is skipped for a dispatched reviewer at this tier'],
+];
+const carveOutPhrases = (text) => CARVE_OUT.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+
+const FOREGROUND_NOTE_PREFIX = '> **Foreground Execution Discipline:**';
+const foregroundNote = (text) => text.split('\n').find((line) => line.startsWith(FOREGROUND_NOTE_PREFIX)) || '';
+const LENS_NOTE = [
+  [/lens dispatches?/i, "the reviewer's own lens dispatches"],
+  [/subagent-dispatch-core\.md/, 'the core section it follows, cited by file'],
+  [/partner/i, 'the partner-died single-read downgrade it takes'],
+];
+const lensNoteMissing = (note) => LENS_NOTE.filter(([pattern]) => !pattern.test(note)).map(([, fact]) => fact);
+const LENS_NOTE_SENTENCE = /When the reviewer is itself a dispatched agent,.*?downgrade below\./;
+
+test('step3-lens-dispatch.md has no dispatched-reviewer carve-out (#3078)', () => {
+  const step3 = fs.readFileSync(STEP3, 'utf8');
+  assert.deepEqual(carveOutPhrases(step3), [], 'step3-lens-dispatch.md still carves out a dispatched reviewer from its lens dispatch (#3078)');
+});
+
+test("step3 Foreground note covers the reviewer's own lens dispatches (#3078)", () => {
+  const note = foregroundNote(fs.readFileSync(STEP3, 'utf8'));
+  assert.notEqual(note, '', 'the "> **Foreground Execution Discipline:**" note line was not found in step3-lens-dispatch.md');
+  assert.deepEqual(lensNoteMissing(note), [], 'the step3 Foreground note must cover the reviewer\'s own lens dispatches (#3078)');
+});
+
+test('the step3 carve-out predicate can actually go red (discrimination proof)', () => {
+  const step3 = fs.readFileSync(STEP3, 'utf8');
+  const reinserted = step3 + '\n\n' + CARVE_OUT_SENTENCE + '\n';
+  assert.notDeepEqual(carveOutPhrases(reinserted), [], 'the re-inserted carve-out sentence must turn the no-carve-out assertion red');
+});
+
+test('the step3 Foreground-note predicate can actually go red (discrimination proof)', () => {
+  const note = foregroundNote(fs.readFileSync(STEP3, 'utf8'));
+  assert.match(note, LENS_NOTE_SENTENCE, 'anchor text for the appended lens-dispatch sentence not found in the Foreground note');
+  const doctored = note.replace(LENS_NOTE_SENTENCE, '');
+  assert.notDeepEqual(lensNoteMissing(doctored), [], 'removing the appended sentence must turn the lens-coverage assertion red');
+});
