@@ -166,7 +166,7 @@ async function runRuling(items, { approve, decline, reverseFailed }) {
     writeFile: (p, content) => writeCalls.push({ path: p, content }),
   };
   const result = await resolveConsoleExecution(dir, { approve, decline, reverseFailed }, deps);
-  const markerBody =ghCalls.find((a) => a[0] === 'api').find((a) => a.startsWith('body='));
+  const markerBody = ghCalls.find((a) => a[0] === 'api').find((a) => a.startsWith('body='));
   const replyCall = ghCalls.find((a) => a[0] === 'pr' && a[1] === 'comment');
   const replyBody = replyCall[replyCall.indexOf('--body') + 1];
   return { result, markerBody, replyBody, written: JSON.parse(writeCalls[0].content) };
@@ -228,7 +228,6 @@ test('a flagged ruling named in reverseFailed reads reverse-failed, uncleared, R
   assert.equal(result.status, 'executed');
   const r1 = result.outcomes.find((o) => o.id === 'r1');
   assert.equal(r1.outcome, 'reverse-failed');
-  assert.equal(r1.note, REVERSE_FAILED_NOTE);
   assert.equal(r1.note, 'reverse not filed — see decisions.md');
   assert.equal(r1.isRulingRow, true);
   assert.equal(result.resolved, false);

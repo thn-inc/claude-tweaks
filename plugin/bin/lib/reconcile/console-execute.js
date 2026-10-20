@@ -488,7 +488,7 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [], rev
         id: item.id, kind: item.kind, outcome: 'reverse-failed', note: REVERSE_FAILED_NOTE, isMergeRow: item.isMergeRow === true, isRulingRow: true,
       };
     }
-    if (!declineSet.has(item.id)&& (approveSet.has(item.id) || ticks[item.id] === true)) {
+    if (!declineSet.has(item.id) && (approveSet.has(item.id) || ticks[item.id] === true)) {
       return { id: item.id, kind: item.kind, outcome: 'executed', isMergeRow: item.isMergeRow === true };
     }
     if (item.isRulingRow === true) {

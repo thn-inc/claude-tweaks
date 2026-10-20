@@ -12,7 +12,7 @@
 | 8 | build | AC3.1 physical-line check is wrap-sensitive and would have passed against the old prose (tests/build-sdd-ledger-residue-carryforward.test.js) | fixed | Comment marking it a regression guard only added in fix wave commit 2666eb1d7; positive pins + doesNotMatch are the discriminating checks |
 | 9 | build | Stale journey doc docs/journeys/ratify-or-reverse-an-sdd-ruling-at-the-review-console-3401.md:64-65 | fixed | Rewritten to the new behavior + red flag + #3636 Origin line in fix wave commit 2666eb1d7 |
 | 10 | build | Short wrapped lines at plugin/skills/_shared/console-execution.md:24 and :120-121 from the reflow | accepted | Cosmetic; the wrap is constrained by the AC3.1 line check (the line carrying `declined, no reason given` must not contain `ruling`) |
-| 11 | build | Spacing typos: console-execute.js `has(item.id)&& (` and tests/resolve-console.test.js runRuling `=ghCalls.find(` | open | — |
+| 11 | build | Spacing typos: console-execute.js `has(item.id)&& (` and tests/resolve-console.test.js runRuling `=ghCalls.find(` | fixed | Spacing fixed by Common Step 3 /claude-tweaks:simplify (commit "Simplify #3636 changes") |
 | 12 | build | console-execution.md resolve-console command template (Live-session accelerator) shows only --approve/--decline, not the optional --reverse-failed | open | — |
 | 13 | build | A flagged ruling both ratified and named in --reverse-failed silently becomes reverse-failed — contradictory input unpinned by a test (console-execute.js) | open | — |
 | 14 | build | Pre-existing: console-execution.md Write order says console.json `resolved: true` is written; code writes `resolved: allCleared` (false on any declined/reverse-failed item) | open | — |
