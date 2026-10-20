@@ -272,6 +272,11 @@ test('AC1.2: empty -C and omitted -C resolve to the identical dir under both pat
   }
 });
 
+test('the injected pathImpl governs the non-empty -C branches too, so AC1.2 is not satisfied by a host-bound path (#3314)', () => {
+  assert.strictEqual(skipGlobalFlags(['git', '-C', '/abs', 'commit'], 1, '/repo', path.win32).dir, path.win32.resolve('/abs'));
+  assert.strictEqual(skipGlobalFlags(['git', '-C', 'sub', 'commit'], 1, '/repo', path.win32).dir, path.win32.resolve('/repo', 'sub'));
+});
+
 test('an empty -C value leaves an UNKNOWN cwd unprovable, and a following relative -C resolves against the unchanged cwd', () => {
   assert.strictEqual(resolveGitCommand(['git', '-C', '', 'commit'], null), null);
   assert.deepStrictEqual(gitTargets('git -C "" -C b commit -m "x"', '/repo'), [{ action: 'commit', dir: path.resolve('/repo', 'b') }]);
