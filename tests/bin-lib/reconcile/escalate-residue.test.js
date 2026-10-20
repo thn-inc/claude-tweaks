@@ -315,7 +315,7 @@ test('structurallyStuckBody: the reason list names every STRUCTURALLY_STUCK_REAS
   for (const reason of UNFILEABLE_STUCK_REASONS) {
     assert.ok(!listLine.includes('`' + reason + '`'), `unfileable \`${reason}\` must not be listed as feeding the record`);
   }
-  assert.match(body, /For a `merged-partial` directory, the run's merged PR left the listed records open\. Ship them in a later PR, or close\/release them if they were abandoned; the next reconcile then archives the dir and drops it from this record\./);
+  assert.match(body, /For a `merged-partial` directory, the records the run's merged PR was meant to close \(the closing-keyword links on that PR\) are still open: ship them in a later PR, or close\/release them if they were abandoned; the next reconcile then archives the dir and drops it from this record\./);
 });
 
 test('escalateResidue: structurally-stuck re-escalating the SAME already-named path is a plain dedup-hit, never appended twice', () => {

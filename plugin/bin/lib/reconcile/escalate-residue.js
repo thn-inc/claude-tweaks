@@ -91,7 +91,7 @@ function structurallyStuckBody(paths) {
     '',
     "For a `console-never-rendered-staged-pending` directory, a merged run's `staged/` holds pending (or unreadable) items and no console was ever rendered — apply or delete the files under `staged/` (and any `spec-*/staged/`), or write a resolved `console.json`; the next reconcile then archives the dir and drops it from this record.",
     '',
-    "For a `merged-partial` directory, the run's merged PR left the listed records open. Ship them in a later PR, or close/release them if they were abandoned; the next reconcile then archives the dir and drops it from this record.",
+    "For a `merged-partial` directory, the records the run's merged PR was meant to close (the closing-keyword links on that PR) are still open: ship them in a later PR, or close/release them if they were abandoned; the next reconcile then archives the dir and drops it from this record.",
     '',
     "Each directory's exact reason is the `lastError` (`stuck at <reason>`) on its `structurally-stuck` entry under `residueFailures` in the main checkout's `.claude-tweaks/reconcile-cache.json`.",
     '',
