@@ -105,6 +105,25 @@ mitigation. Re-open this section once a live run confirms whether omission avoid
 at that point, promote fields-omission to the default and update `queue-pull-script.md`'s MCP-path
 note accordingly.
 
+## Step 2 — `list_issues`/`issue_read` return snake_case timestamps (#3691)
+
+**Confirmed live** (`gh`-absent firing, run `2026-10-20T022848-record-3630`, 2026-10-20): `mcp__github__list_issues` and `mcp__github__issue_read` return issue timestamps as `created_at` / `updated_at`. The dispatch consumers read camelCase `createdAt` / `updatedAt`. That firing's queue pull had to patch `dispatch-groups.json` with camelCase aliases before ranking.
+
+**Consequence.** Without the alias, nothing errors and the picks go wrong quietly. `next-ranking.md`'s oldest-first tie-break compares `new Date(undefined)` values, so every comparison is a tie and the pick falls back to array order. `bin/lib/issues/grouping.js`'s fast-lane bundling degrades the same way, and `queue-order.js`'s `buildFreshnessSignal` sees `updatedAt: undefined`.
+
+**Required workaround.** Alias the timestamps once, at the queue-pull boundary: right after writing `$DISPATCH_QUEUE_RAW` with the Write tool, and after any other MCP-fetched issue array a queue-pull node block reads, before the first node block of `queue-pull-script.md`. `bin/lib/issues/mcp-issue-shape.js`'s `aliasMcpTimestamps` returns shallow copies with `createdAt` / `updatedAt` added from the string snake_case values. The snake_case originals stay, a camelCase key already present is kept, and a non-array input yields `[]`. Run this heredoc over the file:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" <<NODE_EVAL_EOF
+  const fs = require('fs');
+  const { aliasMcpTimestamps } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/mcp-issue-shape.js');
+  const issues = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+  fs.writeFileSync(process.argv[1], JSON.stringify(aliasMcpTimestamps(issues)));
+NODE_EVAL_EOF
+```
+
+Running it twice is harmless, because a key already present is kept, but one pull needs one run.
+
 ## Step 2 — cross-PR overlap report (#1579)
 
 There is no confirmed MCP mapping for `gh pr list --json number,files,closingIssuesReferences` (a repo-wide open-PR listing with per-PR changed-file lists) yet. On the MCP transport, `queue-pull-script.md`'s cross-PR overlap fetch is skipped entirely and `dispatch-crosspr-overlap.json` is written as `[]` — the same fail-open posture as a `gh pr list` failure on the `gh` transport (SKILL.md Step 3's report renders nothing when its input is empty). This is a documented gap, not a silent one: the report is informational only (never a gate, per that section's AC2 fallback), so its absence on this transport costs a missed warning, not a missed exclusion.
