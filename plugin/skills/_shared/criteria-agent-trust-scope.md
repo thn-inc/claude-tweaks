@@ -78,7 +78,8 @@ its intended deny rules could not be checked at all.
   `superseded`, `proposed`, or `deprecated`, and not an `accepted` qualified as superseded or
   rejected), and that ADR's `## Decision` section names the dimension by the generator's exact
   kind literal (`registry-access`, `network-egress`, or `credential-scope`) as a risk the project
-  keeps on purpose. Read the ADR home (`docs/decisions/` by default) before filing. Report a
+  keeps on purpose (the literal and the keep-on-purpose wording may sit in different sentences of
+  that section). Read the ADR home (`docs/decisions/` by default) before filing. Report a
   match as one informational line, `accepted risk — ADR NNNN ({kind})`, never as a finding and
   never as a filed issue: a
   `/claude-tweaks:code-health` sweep puts it in its Step 10 summary, and `/claude-tweaks:review`
