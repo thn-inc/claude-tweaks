@@ -2283,8 +2283,8 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
 // function's header comment), `fsImpl` (an fs-like object every
 // canonicalRealpath call resolves through, so a case-insensitive fake can stand
 // in for the volume, #3682; it also backs checkTeardownGate's existence probe
-// and its `findRunByWorktreePath` lookup, #3769), and `toplevel` (replaces the `git rev-parse
-// --show-toplevel` probe in E1 and checkDispatchConfigGate). The production
+// and its `findRunByWorktreePath` lookup, #3769), and `toplevel` (replaces the
+// `git rev-parse --show-toplevel` probe in E1 and checkDispatchConfigGate). The production
 // call site (bin/hooks.js's `main()`) calls `mod.run({...})` with a single argument, so
 // `deps` is always `{}` there; only a test passes a second argument. Adding
 // this parameter is what lets a test exercise checkBookkeepingStampsGate's

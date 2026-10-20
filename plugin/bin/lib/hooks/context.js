@@ -568,7 +568,7 @@ function worktreeMatches(state, target, targetPath, canonical) {
 // case-insensitive volume canonicalizes to its recorded spelling, not its own.
 function findRunByWorktreePath(cwd, targetPath, opts = {}) {
   if (typeof targetPath !== 'string' || !targetPath) return null;
-  const canonical = (p) => canonicalRealpath(p, { fsImpl: opts.fsImpl });
+  function canonical(p) { return canonicalRealpath(p, { fsImpl: opts.fsImpl }); }
   const target = canonical(targetPath) || targetPath;
   for (const { dir, state } of iterRunDirsWithState(cwd)) {
     if (opts.skipAdHoc && isAdHocRunDir(dir)) continue;
