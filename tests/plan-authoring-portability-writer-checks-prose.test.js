@@ -25,21 +25,24 @@ const ALREADY_SATISFIED = '**Already-satisfied ruling check:**';
 const PORTABILITY = '**Consumer-portability check:**';
 const REAL_WRITER = '**Real-writer fixture check';
 
+function splitParagraphs(text) {
+  return text.split(/\r?\n\r?\n/);
+}
+
 function assertCheck(text, label, phrases) {
-  const hits = text.split(/\r?\n\r?\n/).filter((p) => p.startsWith(label));
+  const hits = splitParagraphs(text).filter((p) => p.startsWith(label));
   assert.strictEqual(hits.length, 1, `expected exactly one paragraph starting with ${label}`);
   for (const phrase of phrases) assert.ok(hits[0].includes(phrase), `${label} names: ${phrase}`);
 }
 
 function dropParagraph(text, label) {
-  return text.split(/\r?\n\r?\n/).filter((p) => !p.startsWith(label)).join('\n\n');
+  return splitParagraphs(text).filter((p) => !p.startsWith(label)).join('\n\n');
 }
 
 // Replaces `phrase` inside the labelled paragraph only, leaving the paragraph
 // count intact so the control reaches the phrase assertions.
 function rewordPhrase(text, label, phrase) {
-  return text
-    .split(/\r?\n\r?\n/)
+  return splitParagraphs(text)
     .map((p) => (p.startsWith(label) ? p.split(phrase).join('REWORDED') : p))
     .join('\n\n');
 }
