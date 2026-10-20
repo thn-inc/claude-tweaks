@@ -267,7 +267,7 @@ Current state, one row per shape, last observed live in a guard-isolated worktre
 | `bash script.sh`, alone or `&&`-chained, and a `.g*hub` path glob | `bash ./helper.sh && bash ./helper.sh`; `ls -d .g*hub` | passes | — | — | 2026-10-20 (#3340); first #2739 |
 | Standalone heredoc, or `cd dir && node <<'EOF'` (a heredoc after a command substitution also passes) | `cat > /abs/probe.js <<'EOF'` | passes | — | — | 2026-10-20 (#3340); first 2026-08-15 |
 | `mkdir -p` chained with a heredoc write (the standalone heredoc passes) | `mkdir -p /abs/dir && cat > /abs/dir/p.js <<'EOF'` | refused | "is too complex to verify that it stays inside the worktree" | One plain command per call: `mkdir -p`, then the heredoc (or `Write`) | 2026-10-20 (#3340); first #3519 |
-| `test a = b` (`[ a = b ]` and `test -f README.md` pass) | `test a = b` | refused | "is too complex to verify that it stays inside the worktree" | Use `[ a = b ]` | 2026-10-20 (#3340); first #3340 |
+| `test a = b` (`[ a = b ]` and `test -f package.json` pass) | `test a = b` | refused | "is too complex to verify that it stays inside the worktree" | Use `[ a = b ]` | 2026-10-20 (#3340); first #3340 |
 
 **Practical workaround:** default to one plain command per Bash call inside a worktree session. Use `Edit` to append to a file rather than a heredoc append; use the `Write` tool to create a script when multi-step logic is unavoidable, then invoke it with a single plain command. Resolve any value a later call needs explicitly and paste it in literally — it will not survive in a shell variable between calls.
 
