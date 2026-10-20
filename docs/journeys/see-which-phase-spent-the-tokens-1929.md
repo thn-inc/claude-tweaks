@@ -16,7 +16,7 @@ files:
 
 **Persona:** the maintainer deciding which of the four filed guard false-positive records deserves attention first, and which pipeline phase is burning context — an internal tooling user reading the Timing table after a run; and the agent session rendering that table, which must not invent the numbers.
 **Goal:** put a second axis beside every phase's minutes — tokens in/out, procedure bytes loaded, tool round-trips — from the session transcript's own `usage` records, plus a per-run count of guard denials, with every missing input stated as a note rather than a blank guess.
-**Entry point:** a run directory with `events.jsonl` (and `run-state.json` naming the worktree and session id), and the session transcript Claude Code writes under `~/.claude/projects/`.
+**Entry point:** a run directory with `events.jsonl` (and `run-state.json` naming the worktree and session id), and the session transcript Claude Code writes under `$CLAUDE_CONFIG_DIR/projects/` (default `~/.claude/projects/`).
 **Success state:** the Timing table reads `| Phase | Minutes | Verify | Tokens (in/out) | Proc. KB | Tool RTs |` with a `Guard denials: … gate · … wd-ambiguous · … wd-deny` footer, `timing.json` carries `totals.tokens`, `totals.procedureBytes`, `totals.toolRoundTrips`, `totals.guard`, and `transcripts[]`, and a run whose transcript cannot be found prints `tokens: transcript not found (…)` above a table with blank token columns.
 
 ## Steps
