@@ -178,13 +178,15 @@ function stampStatus(parsed) {
 // committed pipeline diff). Same base resolution as --scope: the checkout's
 // own stamp anchor when usable, else --base / --integration-branch; an
 // unresolvable base is exit 1 with a message, never an empty list.
+// --ignore-stamp (#3048) skips that stamp anchor, so a stamp written right
+// after the build's own commits cannot hide them.
 function changedFilesMode(parsed) {
   const ownGitDir = resolveGitDir();
   const priorStamp = ownGitDir ? readVerifyStamp(ownGitDir) : null;
   let base;
   try {
     base = resolveBase({
-      stamp: priorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base, requireNonDegenerate: true,
+      stamp: parsed.ignoreStamp ? null : priorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base, requireNonDegenerate: true,
     });
   } catch (err) {
     if (!(err instanceof ChangedFilesError)) throw err;
