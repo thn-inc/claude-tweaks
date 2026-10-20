@@ -79,8 +79,10 @@ function item9Scripts() {
 
 // The candidates path is spliced into JS single-quoted literals, so a native win32 path
 // must be forward-slashed first (#3699). The sep parameter lets a test pass path.win32.sep.
+// Safe to open afterwards: Node accepts "/" on win32 and production's formatPrintedPath prints it so.
 function substituteCandidates(script, candidatesFile, sep = path.sep) {
-  return script.replace(/\$PR_SCAN_UNARMED_CANDIDATES/g, toPosix(candidatesFile, sep));
+  // A function replacement keeps "$&" / "$'" / "$`" in a path from being expanded.
+  return script.replace(/\$PR_SCAN_UNARMED_CANDIDATES/g, () => toPosix(candidatesFile, sep));
 }
 
 // Every require(/readFileSync(/writeFileSync( single-quoted argument in a script (#3699).

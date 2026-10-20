@@ -57,6 +57,7 @@ function spliceLiterals(script) {
 
 // Substitutes the item-9 filter's shell-variable placeholders with concrete paths. Each path
 // is forward-slashed first (#3699) so a native win32 temp path survives the JS literal.
+// Safe to open afterwards: Node accepts "/" on win32 and production's formatPrintedPath prints it so.
 // Longer name first — $PR_SCAN_UNARMED is a prefix of $PR_SCAN_UNARMED_CANDIDATES.
 function isolateItem9(script, { candidatesPath, inputPath }, sep = path.sep) {
   return script
