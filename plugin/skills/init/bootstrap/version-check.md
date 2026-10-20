@@ -2,7 +2,7 @@
 
 Runs before Step 1, on every `/init` invocation regardless of scope — **except** when
 `$ARGUMENTS` explicitly names the `bootstrap` Phase scope, which always runs Steps 1-8.5 fully
-regardless of the marker (see the Exception in `SKILL.md`'s "Core Bootstrap Version Check").
+regardless of the marker (see the Exception in `../SKILL.md`'s "Core Bootstrap Version Check").
 
 **Read the marker and extract its version:**
 
@@ -98,7 +98,7 @@ change adds other top-level keys to this file, switch to a merge instead of an o
 
 ## When to write the marker
 
-The `worktree-always` contrast drawn below names `SKILL.md`'s "Finalizing the worktree-always
+The `worktree-always` contrast drawn below names `../SKILL.md`'s "Finalizing the worktree-always
 Decision" section, whose own procedure lives in `../worktree-policy-finalization.md`.
 
 **Write the marker** after Steps 1-8.5 have run (or been skipped) — i.e. as the last step of this whole Core Bootstrap Version Check, not before Steps 1-8.5 execute — regardless of which branch ran. Unlike the `worktree-always` decision (see "Finalizing the worktree-always Decision" below), this write creates no new gate that could deny this same invocation's own remaining steps, so there is no need to defer it further than that. Create `.claude-tweaks/` if it doesn't exist yet.

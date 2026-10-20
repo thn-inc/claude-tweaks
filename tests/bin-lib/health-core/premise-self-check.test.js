@@ -72,6 +72,32 @@ test('real shell: a hung command is killed at the timeout and dropped', () => {
   assert.ok(Date.now() - start < 4000, 'must not wait for the full sleep');
 });
 
+// #3716: on win32 the composed command crosses Node's argv quoting into MSYS
+// sh.exe, where a double quote or a backslash in the anchor is what a mangled
+// command would misread. The absent-case file holds the anchor with every quote
+// and backslash stripped, so a mangle that drops them reads "resolved" and fails.
+const QUOTING_ANCHORS = [
+  ['a double quote', 'Run "npm test" first.'],
+  ['a backslash', 'Paths look like C:\\Users\\me\\repo.'],
+  ['a single quote', "Don't skip the hook."],
+  ['a backslash before a double quote', 'Escape it as \\" inside strings.'],
+  ['a trailing backslash', 'The line continues with \\'],
+];
+
+for (const [label, anchor] of QUOTING_ANCHORS) {
+  test(`AC1.1/AC2.1/AC2.2: real shell: an anchor containing ${label} reads unresolved while absent and resolved once present`, () => {
+    const dir = tmpWithSpace();
+    const target = path.join(dir, 'guide.md');
+    fs.writeFileSync(target, `# guide\n\n${anchor.replace(/["'\\]/g, '')}\n`);
+    const command = buildPremiseCheck({ kind: 'patch', newString: anchor }, target, dir);
+    assert.strictEqual(defaultRunner(command, { cwd: dir, timeoutMs: 5000 }), 0);
+    assert.strictEqual(premiseReadsUnresolved(command, { root: dir }), true);
+    fs.writeFileSync(target, `# guide\n\n${anchor}\n`);
+    assert.strictEqual(defaultRunner(command, { cwd: dir, timeoutMs: 5000 }), 1);
+    assert.strictEqual(premiseReadsUnresolved(command, { root: dir }), false);
+  });
+}
+
 test('defaultRunner returns the exit code of a command that ran', () => {
   assert.strictEqual(defaultRunner('exit 0', { cwd: os.tmpdir(), timeoutMs: 5000 }), 0);
   assert.strictEqual(defaultRunner('exit 3', { cwd: os.tmpdir(), timeoutMs: 5000 }), 3);
