@@ -703,7 +703,7 @@ function shadowPipelineRunDir(targetPath, { fsImpl } = {}) {
   if (STANDALONE_AUDIT_RUN_RE.test(runDirName) && STANDALONE_AUDIT_TAIL_RE.test(tail)) return null;
   const runDirCandidate = path.join(pipelinesDir, runDirName);
   let exists = false;
-  try { exists = fs.statSync(runDirCandidate).isDirectory(); } catch { /* not there yet — a genuinely new shadow */ }
+  try { exists = (fsImpl || fs).statSync(runDirCandidate).isDirectory(); } catch { /* not there yet — a genuinely new shadow */ }
   if (exists) return null;
   return { worktreeRoot: repoRoot, runDirCandidate };
 }
