@@ -443,3 +443,33 @@ test('the core section records that an abandoned nested child cannot be stopped 
 test('each core abandoned-child assertion can actually go red on its own (discrimination proof)', () => {
   assertEachPatternGoesRed(coreForegroundSection(fs.readFileSync(CORE, 'utf8')), CORE_ABANDONED, coreAbandonedMissing);
 });
+
+// #3722: interactive 2.1.302 re-wakes a dispatched agent; what holds everywhere is "cannot count on it".
+const UNQUALIFIED = /never\s+(?:be\s+)?re-woken|nothing\s+(?:ever\s+)?re-wakes|no\s+notification\s+mechanism/i;
+const claimSites = () => ({ ...primitiveCopies(), 'build/dispatch.md': fs.readFileSync(BUILD_DISPATCH, 'utf8') });
+const unqualifiedClaimSites = (sites) => Object.entries(sites).filter(([, t]) => UNQUALIFIED.test(t)).map(([n]) => n);
+test('no copy states the never-re-woken claim unqualified (#3722)', () => {
+  assert.deepEqual(unqualifiedClaimSites(claimSites()), [], 'no copy may state the never-re-woken claim unqualified (#3722)');
+});
+test('an unqualified never-re-woken claim in any one copy goes red (discrimination proof)', () => {
+  const sites = claimSites();
+  for (const name of Object.keys(sites)) {
+    const doctored = { ...sites, [name]: sites[name] + ' It is never re-woken.' };
+    assert.deepEqual(unqualifiedClaimSites(doctored), [name], `an unqualified claim in only ${name} must turn exactly that copy red`);
+  }
+});
+
+const CORE_MEASURED = [
+  [/cannot\s+count\s+on\s+being\s+re-woken\s+once\s+its\s+turn\s+ends/, 'the Background work claim is qualified'],
+  [/Measured\s+on\s+Claude\s+Code\s+\(#3722\)/, 'the measured facts cite #3722'],
+  [/interactive\s+2\.1\.302\s+holds\s+it\s+open/, 'interactive 2.1.302 holds the agent open'],
+  [/headless\s+\(`claude\s+-p`\)\s+2\.1\.299\s+and\s+older\s+never\s+re-wake\s+it/, 'headless 2.1.299 and older never re-wake it'],
+  [/headless\s+2\.1\.302\s+and\s+later\s+runs\s+a\s+nested\s+`Agent`\s+call\s+synchronously/, 'headless 2.1.302+ runs nested Agent calls synchronously'],
+];
+const coreMeasuredMissing = missingFactsOf(CORE_MEASURED);
+test('the core Background work paragraph names the measured re-wake facts (#3722)', () => {
+  assert.deepEqual(coreMeasuredMissing(coreForegroundSection(fs.readFileSync(CORE, 'utf8'))), [], 'Background work must name the measured re-wake facts (#3722)');
+});
+test('each core measured-fact assertion can actually go red on its own (discrimination proof)', () => {
+  assertEachPatternGoesRed(coreForegroundSection(fs.readFileSync(CORE, 'utf8')), CORE_MEASURED, coreMeasuredMissing);
+});
