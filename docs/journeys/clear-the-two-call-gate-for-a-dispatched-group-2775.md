@@ -34,16 +34,18 @@ files:
 
 ### 3. Dispatching session runs the artifact check before the second call
 - **URL:** `plugin/skills/dispatch/two-call-gate.md` §2 "Artifact check"; `plugin/bin/lib/dispatch/first-call-artifact-check.js`
-- **Action:** **Dispatching session**, after a clean `STATUS`/`OUTCOME: build-test-ok` pair, calls `checkFirstCallArtifacts({ runDir, issueNumbers, repoSlug })`. Check 5 requires each member's header at `work/{n}-spec.md` or `spec-{n}/work/{n}-spec.md`, in the run dir or its worktree mirror — the same shapes `/wrap-up`'s record-resolution ladder reads.
+- **Action:** **Dispatching session**, after a clean `STATUS`/`OUTCOME: build-test-ok` pair, calls `checkFirstCallArtifacts({ runDir, issueNumbers, repoSlug })`. Check 5 requires each member's header at `work/{n}-spec.md` or `spec-{n}/work/{n}-spec.md`, in the run dir or its worktree mirror — the same shapes `/wrap-up`'s record-resolution ladder reads. Check 6 (#3577) runs last: `{runDir}/decisions.md` must carry the canonical `Step 2.8: claimed #n` line for every member, read through `hasCanonicalClaimLogFor`, the same line `verify-run-bookends.js` enforces.
 - **Should feel:** Mechanical and quiet on the happy path — the self-report is confirmed against files, not trusted.
 - **Should understand:**
   - A `{ ok: false, reason: 'materialized-header-missing' }` names the unmaterialized member(s). It is gated exactly like a malformed status line: the second call is never dispatched, and the group routes to §5's terminal path with one `REFUSED` decisions line.
+  - A `{ ok: false, reason: 'claim-log-missing' }` names the first member whose canonical line is absent, with the same gating. A batch-summary or paraphrased claim line does not satisfy it, even though the lenient stamps-gate reader accepts one. The `missing-config` repair branch (step 4) returns before check 6 runs.
   - The PR check (check 4) runs when the run's `config.yml` carries the `integration-model: pr-first` pin, which the Manifesto writes (#3350).
   - With no valid pin, the check emits one `first-call-artifact-check: degraded — … carries no valid integration-model pin` line on stderr and skips check 4; its result is unchanged. The dispatching session logs that line as a `SKIP` decision, never as a failure.
 - **Red flags:**
   - A second call dispatched on a self-report alone.
   - A header whose `record:` frontmatter names a different number being counted.
   - A `degraded —` line treated as a failed artifact check.
+  - A first call that skipped `verify-run-bookends.js` reaching the second call with no canonical claim line.
 
 ### 4. Dispatching session repairs a first call whose only defect is a missing config.yml
 - **URL:** `plugin/skills/dispatch/two-call-gate.md` §2 "Repair branch"; `plugin/skills/dispatch/sequential-execution.md` "Artifact check, first call only"; `plugin/bin/lib/dispatch/first-call-artifact-check.js`
@@ -63,4 +65,5 @@ files:
 - Updated during build of #3012: the bookkeeping-stamps gate now accepts a semantically equivalent paraphrased claim line, so a first call that logged a real claim in different prose no longer gets the second call denied at its first push.
 - Updated during build of #3226: step 4. A `missing-config` result with intact claim/PR evidence is classified `repairable` and repaired via call 2's `/flow` adoption, not torn down.
 - Updated during build of #3350: step 3. Check 4 now runs on a run pinned `pr-first`; an unpinned run emits a `degraded —` line that is logged as a `SKIP`.
+- Updated during build of #3577: step 3. Check 6 confirms the canonical Step 2.8 claim line per member from `decisions.md`, so the dispatching session no longer relies on the first call's own `verify-run-bookends.js` self-check.
 - Related: #2837 (introduced the first-call artifact check), #2861 (claim-log line parser), #2391 (worktree-mirror rung of the record-resolution ladder).
