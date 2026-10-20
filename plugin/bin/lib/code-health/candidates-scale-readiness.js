@@ -473,8 +473,10 @@ const QUERY_CALL_RE = new RegExp(`\\b(?:prisma|db)[?!]?\\.\\w+[?!]?\\.(?:${PRISM
 // `ctx!.prisma.`). The lookbehind makes the chain start at a whole
 // identifier, so its first segment is never a suffix of a longer one; it may
 // start after a `.`, so `(await getCtx()).prisma.post.findMany(` matches
-// from `prisma`.
-const PRISMA_CHAIN_RE = /(?<![\w$])((?:[\w$]+[?!]?\.)+)(\w+)[?!]?\.(\w+)\s*\(/g;
+// from `prisma`. The chain is capped at 8 segments: an uncapped `+` retries
+// from every `.` of a long dotted run and goes quadratic, and only the last
+// receiver segment and the model segment decide a match.
+const PRISMA_CHAIN_RE = /(?<![\w$])((?:[\w$]+[?!]?\.){1,8})(\w+)[?!]?\.(\w+)\s*\(/g;
 
 // Prisma model calls in `text`, as `{ index, parenIdx, receiver, model, op }`.
 // With a parsed schema (`models` non-empty) any receiver chain counts when the
