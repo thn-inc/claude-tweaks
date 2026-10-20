@@ -34,7 +34,9 @@ function splitMissing(items, consoleDir, exists = fs.existsSync) {
     const checkable = typeof id === 'string' && id !== '' && !id.startsWith('decision:') && path.basename(id) === id;
     if (checkable && !exists(path.join(consoleDir, 'staged', id))) {
       missing.push({ ...item, resolution: MISSING_RESOLUTION, reason: `staged file absent (was ${item.resolution})` });
-    } else kept.push(item);
+      continue;
+    }
+    kept.push(item);
   }
   return { items: kept, missing };
 }
@@ -117,7 +119,10 @@ function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, m
   if (total > count) {
     lines.push(`  … and ${total - count} more — see "${single ? consoles[0].path : dir}"`);
   }
-  const gone = [...consoles, ...missingOnly].flatMap((c) => (c.missing || []).map((m) => path.relative(dir, path.join(path.dirname(c.path), 'staged', m.id))));
+  const gone = [...consoles, ...missingOnly].flatMap((c) => {
+    const stagedDir = path.join(path.dirname(c.path), 'staged');
+    return (c.missing || []).map((m) => path.relative(dir, path.join(stagedDir, m.id)));
+  });
   if (gone.length > 0) lines.push(`  not counted — staged file(s) no longer on disk: ${gone.join(', ')}`);
   lines.push(`  mark reviewed: node "${pluginRoot}/bin/console-residue.js" --ack --run "${dir}"`);
   return lines;
