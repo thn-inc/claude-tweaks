@@ -34,9 +34,9 @@ files:
 
 ### 3. The Review Console flips rows in this run's ledger
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-engine.js" finish-console --run-dir "$PIPELINE_RUN_DIR" --approve-all`
-- **Action:** Approve the console. Step 3 of the verb resolves the ledger via `resolveLedgerPath`: `{run-dir}/ledger.md` first, otherwise the single owned `docs/plans` ledger. It then rewrites the named rows' Status and Resolution cells.
+- **Action:** Approve the console. Before its first write, the verb's ledger pre-flight resolves the ledger via `resolveLedgerPath`: `{run-dir}/ledger.md` first, otherwise the single owned `docs/plans` ledger. It flips the named rows' Status and Resolution cells in memory, and step 3 writes them.
 - **Should feel:** Like a single write to a known file. No `--ledger` flag is needed in the common case, even when `docs/plans/` holds a dozen older ledgers.
-- **Should understand:** `ambiguous` now means the branch itself owns two or more ledgers. `unattributable` means no merge base resolved or git failed. In both cases the verb exits 1 naming the reason and steps 1-2 already landed. Pass `--ledger <path>` to proceed.
+- **Should understand:** `ambiguous` now means the branch itself owns two or more ledgers. `unattributable` means no merge base resolved or git failed. In both cases the verb exits 1 naming the reason (`ledger pre-flight failed: … — nothing written`). It writes nothing: not `verify-expectations.json`, not the `decisions.md` lines, not the ledger. Pass `--ledger <path>` and re-run.
 - **Red flags:** "candidate ledgers found" listing ledgers this branch never touched. A row flipped in a ledger whose `git log` shows only another run's commits.
 
 ### 4. Cleanup deletes this run's ledger and nothing else
@@ -48,3 +48,4 @@ files:
 
 ## Origin
 - Created during the build of #3566 (`resolveLedgerPath` scoped to branch-owned `docs/plans` ledgers through the ownership helper shared with the wrap-up ledger probe; wrap-up's post-sweep re-count re-runs the probe instead of globbing), run `2026-10-20T001914-record-3566`.
+- Updated during the build of #3684 (`finish-console` resolves the ledger and flips its rows in a pre-flight before any write, so an `ambiguous` or `unattributable` ledger refuses with nothing written), run `2026-10-20T185239-record-3684`.
