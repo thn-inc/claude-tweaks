@@ -36,12 +36,14 @@ fs.mkdirSync(SUBJECT_DIR, { recursive: true });
 // `readsWorktree`: the procedure reads the worktree from run-state.json itself (settle-and-merge takes
 // `{group-worktree}` from dispatch context and has no read). `logNeedle`: the literal clause, after the
 // re-protect fence, that tells the agent to log a re-stamp that did not print "worktree recorded".
+// `worktreeVar`: the placeholder that names the worktree the re-protect fence re-stamps.
 const SITES = [
   {
     label: 'auto-merge-short-circuit.md',
     file: 'plugin/skills/wrap-up/auto-merge-short-circuit.md',
     readsWorktree: true,
     logNeedle: 'log any other line',
+    worktreeVar: 'worktree-path',
     vars: {
       'integration-branch': 'main',
       branch: 'feat',
@@ -56,6 +58,7 @@ const SITES = [
     file: 'plugin/skills/dispatch/settle-and-merge.md',
     readsWorktree: false,
     logNeedle: 'log any other line',
+    worktreeVar: 'group-worktree',
     vars: {
       'integration-branch': 'main',
       branch: 'feat',
@@ -70,6 +73,7 @@ const SITES = [
     file: 'plugin/skills/_shared/local-merge-auto-finish.md',
     readsWorktree: true,
     logNeedle: 'carry it into the `--text`',
+    worktreeVar: 'worktree-path',
     vars: {
       'base-branch': 'main',
       'feature-branch': 'feat',
@@ -243,7 +247,7 @@ function tmpProject() {
 
 for (const site of SITES) {
   const raw = readText(path.join(ROOT, site.file));
-  const { label, vars, readsWorktree, logNeedle } = site;
+  const { label, vars, readsWorktree, logNeedle, worktreeVar } = site;
 
   test(`${label}: pre-merge checks, close-run, merge, re-protect appear in that order`, () => {
     assert.deepStrictEqual(checkOrdering(raw, site), []);
@@ -324,7 +328,8 @@ for (const site of SITES) {
     const hook = (...args) => execFileSync(process.execPath, [HOOKS, ...args], {
       cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
     });
-    const wt = vars['worktree-path'] ?? vars['group-worktree'];
+    const wt = vars[worktreeVar];
+    assert.ok(wt, `SITES entry names no ${worktreeVar} fixture value`);
     hook('record-worktree', '--run', run, wt);
     hook('close-run', '--run', run);
     let state = readRunState(run);
