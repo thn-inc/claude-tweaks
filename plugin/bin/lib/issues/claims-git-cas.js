@@ -42,6 +42,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { claimFilePath, CLAIMS_BRANCH } = require('./claims');
+const { parseLsTreeZ } = require('../git-z');
 const { GIT_TIMEOUT_MS, isTimeoutError } = require('../shared-primitives');
 
 function errText(err) {
@@ -230,7 +231,7 @@ function parseCatFileBatch(buf) {
 // tipSha, absent, failure}}, failure}
 // Batched counterpart to readClaimBlobGit (#2613) — replaces N per-blob `git
 // show` subprocess calls with exactly 2 total, regardless of registry size:
-// one `git ls-tree -r {tip} -- claims/` (which doubles as the full-keyspace
+// one `git ls-tree -r -z --end-of-options {tip} -- claims/` (which doubles as the full-keyspace
 // listing itself — `issue-claims-backstops.md`'s "Primary: list the claims/
 // blob keyspace" step) and one `git cat-file --batch` fed every target
 // blob's sha over stdin. `tip` is a caller-resolved commit sha (the same
@@ -247,7 +248,7 @@ function parseCatFileBatch(buf) {
 function readClaimBlobsGitBatch({ issueNumbers = null, tip, runner = defaultRunner }) {
   let lsTreeOut;
   try {
-    lsTreeOut = runner(['ls-tree', '-r', tip, '--', 'claims/']);
+    lsTreeOut = runner(['ls-tree', '-r', '-z', '--end-of-options', tip, '--', 'claims/']);
   } catch (err) {
     return { tipSha: tip, results: null, failure: 'transport-failure', ...timedOutFlag(err) };
   }
@@ -257,13 +258,7 @@ function readClaimBlobsGitBatch({ issueNumbers = null, tip, runner = defaultRunn
   // entry the tree actually has.
   const pathToSha = new Map();
   const issueToPath = new Map();
-  for (const line of lsTreeText.split('\n')) {
-    if (!line) continue;
-    const tabIdx = line.indexOf('\t');
-    if (tabIdx === -1) continue;
-    const meta = line.slice(0, tabIdx).trim().split(/\s+/);
-    const sha = meta[2];
-    const filePath = line.slice(tabIdx + 1);
+  for (const { sha, path: filePath } of parseLsTreeZ(lsTreeText)) {
     pathToSha.set(filePath, sha);
     const m = /^claims\/issue-(\d+)\.json$/.exec(filePath);
     if (m) issueToPath.set(Number(m[1]), filePath);
