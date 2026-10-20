@@ -1808,7 +1808,7 @@ test('preExisting: a fully attributed jest log covered by the allowlist is adjud
   assert.deepStrictEqual(report.preExistingAdjudicated, { declared: ['tests/known-shallow.test.js'], matched: ['tests/known-shallow.test.js'], new: [], fixed: [] });
 });
 
-test('AC1.1 preExisting: one allowlisted file now passing and one new failure prints 1 new, 1 fixed and lists both in report.json (#3313)', async () => {
+test('#3313 AC1 preExisting: one allowlisted file now passing and one new failure prints 1 new, 1 fixed and lists both in report.json (#3313)', async () => {
   const r = preExistingRepo({ failingFile: 'tests/real.test.js', preExisting: ['tests/known-shallow.test.js'] });
   fs.mkdirSync(path.join(r.repo, 'tests'), { recursive: true });
   fs.writeFileSync(path.join(r.repo, 'tests', 'known-shallow.test.js'), '// passes now\n');
