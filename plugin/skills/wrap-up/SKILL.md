@@ -135,6 +135,8 @@ If either is true, downgrade `config.yml`'s `ceremony-profile` via the sanctione
 
 `node "${CLAUDE_PLUGIN_ROOT}/bin/set-config.js" --run "$PIPELINE_RUN_DIR" --key ceremony-profile --value standard`
 
+In a multi-spec run `$PIPELINE_RUN_DIR` is the spec's own `spec-{N}/` directory, so the downgrade writes the spec-level `config.yml` only — never the parent run dir's; `flow/multispec-batch-curation.md`'s batch pass reads every spec's value (#3595).
+
 Then log:
 
 ```
