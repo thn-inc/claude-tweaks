@@ -120,7 +120,8 @@ test('the pre-dispatch listing also snapshots local TCP listeners next to pre-di
   assert.match(para, /lsof \+c 0 -nP -iTCP -sTCP:LISTEN/);
   assert.match(para, /pre-dispatch-listeners\.txt/);
   assert.doesNotMatch(para, />\s*\{ctx-dir\}/);
-  assert.match(para, /lsof.*unavailable[\s\S]*SKIP/);
+  assert.match(para, /listenersPath. is .null.[\s\S]*SKIP[\s\S]*lsof unavailable or failed/);
+  assert.match(para, /Never write either file by hand/);
 });
 
 test('the post-fan-out sweep documents a report-only listener diff and its outputs', () => {

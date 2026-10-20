@@ -34,7 +34,7 @@ files:
 - **URL:** `/claude-tweaks:review #{n}` on a machine with no `lsof` on `PATH`
 - **Action:** run the review as usual.
 - **Should feel:** unaffected. The review completes. Only the leftover-listener check is skipped, and it says so.
-- **Should understand:** the snapshot step logs `SKIP {HH:MM:SS} — Review listener snapshot (skipped): lsof unavailable → leftover-listener check not run.` and the post-fan-out check is a no-op, because no snapshot file exists. The untracked-file sweep still runs.
+- **Should understand:** the snapshot step logs `SKIP {HH:MM:SS} — Review listener snapshot (skipped): lsof unavailable or failed → leftover-listener check not run.` and the post-fan-out check is a no-op, because no snapshot file exists. The untracked-file sweep still runs.
 - **Red flags:** the review fails or stalls because `lsof` is missing. No `SKIP` line explaining why listeners went unchecked.
 
 ## Origin

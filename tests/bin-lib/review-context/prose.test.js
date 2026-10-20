@@ -64,6 +64,8 @@ test('3302 AC: step3-lens-dispatch.md never tells the reviewer to write a file u
   const para = LENS_DISPATCH.slice(start, LENS_DISPATCH.indexOf('\n', start));
   assert.match(para, /baselinePath/);
   assert.match(para, /listenersPath/);
+  assert.match(para, /Never write either file by hand/);
+  assert.doesNotMatch(para, /\btee\b|Write tool|`Write`/, 'no non-redirect hand-write phrasing may creep in');
 });
 
 test('F5: step3-lens-dispatch.md names the per-file cap as the build.js constant in KB', () => {
