@@ -56,7 +56,10 @@ function remedyRow(autoText, label, remedy) {
   assert.strictEqual(rows.length, 1, `expected exactly one ${label} routing row for remedy: ${remedy}, found ${rows.length}`);
   return rows[0];
 }
-const backfillRow = (autoText, remedy) => remedyRow(autoText, 'Backfill', remedy);
+
+function backfillRow(autoText, remedy) {
+  return remedyRow(autoText, 'Backfill', remedy);
+}
 
 function assertTierAtEveryLevel(row) {
   assert.strictEqual(row.cells.length, 4, `routing row needs scope + three tier cells: ${row.cells[0]}`);
