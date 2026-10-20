@@ -139,6 +139,7 @@ test('a project record whose projectPath no longer exists says so instead of nam
   assert.ok(notice.includes(`mkdir -p "${gone}"`));
   assert.ok(notice.includes(`claude plugin uninstall superpowers@${MK} --scope project`));
   assert.ok(notice.includes("removes this checkout's own record"));
+  assert.ok(notice.includes('never run these removal steps yourself'));
   assert.ok(!notice.includes('run from'));
 });
 
@@ -154,6 +155,7 @@ test('a local project record whose projectPath no longer exists names the local 
   assert.ok(notice.includes(`mkdir -p "${gone}"`));
   assert.ok(notice.includes(`claude plugin uninstall superpowers@${MK} --scope local`));
   assert.ok(notice.includes("removes this checkout's own record"));
+  assert.ok(notice.includes('never run these removal steps yourself'));
   assert.ok(!notice.includes('run from'));
 });
 

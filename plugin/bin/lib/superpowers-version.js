@@ -123,7 +123,7 @@ function superpowersNotice({ effective, floor, projectDir }) {
     if (lstatType(effective.projectPath).type === 'missing') {
       // The record applies here only because its path belongs to this git checkout;
       // never name a gone directory as the place to run from; the remedy recreates it first.
-      suffix = ` (this install is recorded for ${effective.projectPath}, which no longer exists; it applies here because that path belongs to the same git checkout; the update command above, run in this checkout, updates that record; to remove it instead, run mkdir -p "${effective.projectPath}", then claude plugin uninstall superpowers@${effective.marketplace} --scope ${effective.scope} from inside that directory, then delete the directory — running that uninstall from this checkout removes this checkout's own record, not the stale one)`;
+      suffix = ` (this install is recorded for ${effective.projectPath}, which no longer exists; it applies here because that path belongs to the same git checkout; the update command above, run in this checkout, updates that record; to remove it instead, run mkdir -p "${effective.projectPath}", then claude plugin uninstall superpowers@${effective.marketplace} --scope ${effective.scope} from inside that directory, then delete the directory — running that uninstall from this checkout removes this checkout's own record, not the stale one; never run these removal steps yourself)`;
     } else if (safeRealpath(effective.projectPath, deps) !== safeRealpath(projectDir, deps)) {
       suffix = ` (run from ${effective.projectPath}, the project this install belongs to)`;
     }

@@ -34,7 +34,7 @@ files:
   - The `--scope` and the `superpowers@{marketplace}` name in the command come from the matched install, never hardcoded.
   - The "run from …" hint appears only when the matched install is recorded for a different, still-existing directory. When that directory is gone (a deleted worktree), the notice says so and names the remedy instead. The update command, run in this checkout, updates that stale record, because it picks the same first applicable record. To remove the stale record instead, recreate its directory with `mkdir -p "{path}"`, run `claude plugin uninstall superpowers@{marketplace} --scope {scope}` from inside it, then delete the directory.
 - **Red flags:**
-  - The model runs `claude plugin update` itself. The line tells it never to, and updating on the developer's behalf is out of scope.
+  - The model runs `claude plugin update`, or any step of the removal remedy, itself. The line tells it never to, and changing installs on the developer's behalf is out of scope.
   - For a deleted-worktree record, the notice suggests running `claude plugin uninstall` from this checkout. Run there, it removes this checkout's own install record and leaves the stale one, and the notice says so.
   - The line is repeated on every reply.
   - A notice when no superpowers is installed at all. Missing installs are `/claude-tweaks:init`'s concern.
