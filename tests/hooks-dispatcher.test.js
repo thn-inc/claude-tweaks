@@ -680,6 +680,38 @@ test('dispatcher: AskUserQuestion with no owned run exits 0 with no deny', () =>
   assert.doesNotMatch(result.stdout, /permissionDecision/, 'no owned run means the Review Console ask gate fails open');
 });
 
+// #3712 end-to-end: the dispatcher itself must resolve ctx.ownedRun from the
+// payload's session_id ('session' attribution, not 'fallback'), and the gate must
+// then deny. Same facts as tests/hooks-pre-tool-use.test.js's consoleRun fixture:
+// a real git repo as cwd, a non-ad-hoc run whose run-state.json names the caller's
+// session with no worktree binding (classifies 'mine' from the main checkout), and
+// autonomy: unattended in the run's config.yml (grants consoleAutoResolve).
+test('dispatcher: AskUserQuestion with the Review Console header in an owned unattended run is denied', () => {
+  const repo = gitRepo();
+  const run = path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'active', sessionId: 'sess-3712-e2e' }));
+  fs.writeFileSync(path.join(run, 'config.yml'), 'autonomy: unattended\n');
+  const result = runHook(['pre-tool-use'], {
+    input: JSON.stringify({
+      tool_name: 'AskUserQuestion',
+      tool_input: { questions: [{ header: 'Review Console', question: 'q', options: [] }] },
+      session_id: 'sess-3712-e2e',
+      cwd: repo,
+    }),
+    cwd: repo,
+  });
+  assert.strictEqual(result.code, 0);
+  assert.match(result.stdout, /permissionDecision/, 'every deny condition holds, so the dispatcher must emit a decision');
+  const spec = JSON.parse(result.stdout).hookSpecificOutput;
+  assert.strictEqual(spec.permissionDecision, 'deny');
+  assert.match(spec.permissionDecisionReason, /consoleAutoResolve/);
+  assert.match(spec.permissionDecisionReason, /console-resolve\.js/);
+  assert.ok(spec.permissionDecisionReason.includes(run), 'the reason names the owned run dir');
+  const events = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.strictEqual(events.filter((e) => e.type === 'gate-denial' && e.gate === 'review-console-ask').length, 1);
+});
+
 test("hooks.json's PreToolUse Bash handler is unconditional and the prefilter covers git worktree", () => {
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const bashEntry = config.hooks.PreToolUse.find((e) => e.matcher === 'Bash');

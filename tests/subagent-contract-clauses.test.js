@@ -318,6 +318,61 @@ test('scratch-write recipe is shell-shape-safe at every site (#3519)', () => {
   );
 });
 
+// #3675: the one-plain-command-per-Bash-call rule is named once in the dispatch contract
+// (subagent-dispatch-core.md's Working Directory Discipline), so every dispatch site inherits
+// it, and the lens dispatch's Scratch path cites it together with scratch-worktree.md §7.
+const PLAIN_COMMAND_RULE = '**One plain command per Bash call.**';
+const PLAIN_COMMAND_CITATION = "`_shared/subagent-dispatch-core.md`'s **One plain command per Bash call** rule";
+const SHELL_SHAPES_CITATION = '`_shared/scratch-worktree.md` §7';
+
+function scratchPathParagraph(text) {
+  const start = text.indexOf('**Scratch path (per dispatch).**');
+  assert.notStrictEqual(start, -1, 'step3-lens-dispatch.md must keep its Scratch path paragraph');
+  const end = text.indexOf('\n>\n', start);
+  return end === -1 ? text.slice(start) : text.slice(start, end);
+}
+
+function assertScratchPathCitesRule(paragraph) {
+  assert.ok(
+    paragraph.includes(PLAIN_COMMAND_CITATION),
+    'the lens Scratch path must cite the dispatch contract\'s one-plain-command rule (#3675)',
+  );
+  assert.ok(
+    paragraph.includes(SHELL_SHAPES_CITATION),
+    'the lens Scratch path must cite _shared/scratch-worktree.md §7 for the refused shapes (#3675)',
+  );
+}
+
+test('dispatch contract names the one-plain-command rule exactly once, in Working Directory Discipline (#3675)', () => {
+  assert.strictEqual(
+    DISPATCH_CORE.split(PLAIN_COMMAND_RULE).length - 1,
+    1,
+    'subagent-dispatch-core.md must name the one-plain-command rule exactly once (#3675)',
+  );
+  const wdd = DISPATCH_CORE.slice(
+    DISPATCH_CORE.indexOf('## Working Directory Discipline'),
+    DISPATCH_CORE.indexOf('## Foreground Execution Discipline'),
+  );
+  assert.ok(wdd.includes(PLAIN_COMMAND_RULE), 'the rule must sit in the Working Directory Discipline section (#3675)');
+  assert.ok(wdd.includes(SHELL_SHAPES_CITATION), 'the rule must cite _shared/scratch-worktree.md §7 (#3675)');
+});
+
+test('lens dispatch Scratch path cites the one-plain-command rule and scratch-worktree §7 (#3675)', () => {
+  const lens = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-lens-dispatch.md'));
+  assertScratchPathCitesRule(scratchPathParagraph(lens));
+});
+
+test('go-red control: the pre-#3675 Scratch path fails the citation assertion (#3675)', () => {
+  // Frozen tail of the pre-#3675 paragraph: shell-safe recipe present, no contract citation.
+  const OLD =
+    `**Scratch path (per dispatch).** ... instruct the agent inline to create and delete that file ${SHELL_SAFE_RECIPE} — and never \`Write\`/\`Edit\`**, which the harness's worktree-pinning guard refuses outright for a path outside the agent's worktree (\`_shared/subagent-output-contract.md\`'s Scratch rule, #2245/#2595).`;
+  assert.throws(() => assertScratchPathCitesRule(scratchPathParagraph(OLD)), /one-plain-command rule/);
+  assert.throws(
+    () => assertScratchPathCitesRule(scratchPathParagraph(`${OLD} ${PLAIN_COMMAND_CITATION}`)),
+    /scratch-worktree\.md §7/,
+  );
+});
+
 test('go-red control: the pre-#3519 recipe wording fails the shell-safe assertion (#3519)', () => {
   const OLD =
     'create and delete the file via Bash (`mkdir -p` + a shell redirect/heredoc, then `rm`), never the `Write`/`Edit` tools.';

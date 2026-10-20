@@ -76,12 +76,12 @@ function resolveBase({
     if (!degenerate) return anchor;
   }
   if (!integrationBranch) {
-    throw new ChangedFilesError('could not resolve a base: no usable stamp anchor and no --integration-branch or --base given');
+    throw new ChangedFilesError('could not resolve a base: no stamp anchor in use (none usable, or --ignore-stamp) and no --integration-branch or --base given');
   }
   const ref = preferOriginRef((args) => git(execImpl, args), integrationBranch);
   const mb = tryGit(execImpl, ['merge-base', '--end-of-options', ref, 'HEAD']);
   if (mb === null || mb.trim() === '') {
-    throw new ChangedFilesError(`could not resolve a base: no usable stamp anchor and no merge base of "${ref}" and HEAD`);
+    throw new ChangedFilesError(`could not resolve a base: no stamp anchor in use (none usable, or --ignore-stamp) and no merge base of "${ref}" and HEAD`);
   }
   return mb.trim();
 }
