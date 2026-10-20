@@ -41,7 +41,9 @@ function assertBullet(text) {
   assert.match(sec, /`BLOCKED`/);
   assert.match(sec, /one `grep -n` or `Read`/);
   assert.match(sec, /live target file/);
-  assert.match(sec, /before the STAGED write/);
+  assert.match(sec, /before any STAGED write for it/);
+  assert.match(sec, /not a bare token match/);
+  assert.match(sec, /ambiguous hit/);
   assert.match(sec, /refuted by ground-truth check/);
   assert.match(sec, /Not staged\./);
   assert.match(sec, /stays `unconfirmed`/);
