@@ -60,18 +60,27 @@ turn alive with bounded foreground waits — repeated `sleep 30` Bash calls, at 
 per wave of children (the set launched together), each wait logged per the bounded-polling
 paragraph below (what is waited on, the iteration against the bound, how many children are still
 pending), stopping as soon as every child's `<task-notification>` has arrived, never reading or
-tailing a child's `output_file` — until every child has reported, and never ends its turn with a
-child outstanding. A reply that ends without a tool call ends the turn, whatever is still in
+tailing a running child's `output_file` (a failed child's output is retrieved per Failed-agent
+retrieval below) — until every child has reported, and never ends its turn with a child
+outstanding. A reply that ends without a tool call ends the turn, whatever is still in
 flight. **Fallback:** when no `Agent`/`Task` tool exists (`ToolSearch` finds none, deferred or
 otherwise — the normal case in a cloud routine sandbox), or a child has not reported when the
 bound expires, judge that unit in-session, applying the child's own checklist or template as a
-genuinely adversarial self-review, log the downgrade (which unit, why), and mark every finding
+genuinely adversarial self-review, log the downgrade (which unit, why) to the run's `decisions.md`
+when a pipeline run directory is set, otherwise as one line in the reply, and mark every finding
 from that unit `unconfirmed`. Never skip the unit or fabricate a dispatch. A child whose unit was
 self-judged at the bound is abandoned: it no longer counts as outstanding, and the agent's final
 reply still ends with `STATUS: {WORD}`; `INTERIM_STATUS:` is only for a turn that ends while a
 keep-alive wait is still in progress. A child result that arrives after its unit was self-judged
 is ignored; it never changes a verdict already reached, and a late notification that re-wakes the
-agent after its final reply is answered by repeating that final `STATUS:` line unchanged.
+agent after its final reply is answered by repeating that final `STATUS:` line unchanged. A child
+that reports a failure (a `failed` notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply)
+has reported, so it is not outstanding: handle it per the dispatching skill's own status handling
+where one exists (`superpowers:subagent-driven-development`'s BLOCKED handling, or Failed-agent
+retrieval below), otherwise judge that unit as in the fallback. The self-judge fallback is for a
+read-only unit (a lens, a single read, a judge); a write-capable child (one that edits files)
+still silent at the bound is never redone in-session, because an abandoned child keeps running and
+may still write — stop, and end with `STATUS: BLOCKED` naming that child and its unit.
 
 **Top-level dispatchers.** A session waiting on its own `Agent`/`Task` children within its turn is
 the pattern `_shared/dispatch-waiting.md` documents; this section restricts only what a dispatched

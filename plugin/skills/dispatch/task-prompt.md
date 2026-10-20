@@ -46,13 +46,21 @@ that needs no resolution, only inclusion:
    `sleep 30` Bash calls, at most 40 (20 minutes) per wave of children (the set launched
    together), each wait logged as one line (what you wait on, the iteration against the bound, how
    many children are still pending), stopping as soon as every child's `<task-notification>` has
-   arrived, never reading or tailing a child's `output_file` — until every child you launched has
-   reported, and never end your turn with one outstanding. With no `Agent` tool, or a child still
-   silent when the bound expires, judge that unit yourself, log the downgrade, and mark its
-   findings `unconfirmed`; that child is abandoned and no longer counts as outstanding, so your
-   final reply still ends with `STATUS: {WORD}`. Ignore a late result; if a late notification
-   re-wakes you after your final reply, repeat that final `STATUS:` line unchanged. The full rule
-   is in `subagent-dispatch-core.md`'s Foreground Execution Discipline section. Give any agent you
+   arrived, never reading or tailing a running child's `output_file` — until every child you
+   launched has reported, and never end your turn with one outstanding. With no `Agent` tool
+   (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
+   expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
+   child is abandoned and no longer counts as outstanding, so your final reply still ends with
+   `STATUS: {WORD}`. Ignore a late result; if a late notification re-wakes you after your final
+   reply, repeat that final `STATUS:` line unchanged. A child that reports a failure (a `failed`
+   notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not
+   outstanding: handle it per the dispatching skill's own status handling where one exists
+   (`superpowers:subagent-driven-development`'s BLOCKED handling), otherwise judge that unit
+   yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a write-capable
+   child (one that edits files) still silent at the bound is never redone in-session, because an
+   abandoned child keeps running and may still write — stop, and end with `STATUS: BLOCKED` naming
+   that child and its unit. The full rule is in `subagent-dispatch-core.md`'s Foreground Execution
+   Discipline section. Give any agent you
    dispatch this same instruction, whether it is a nested Task/Agent call or a
    `superpowers:subagent-driven-development` or review-lens fan-out. **Mark every interim reply
    (#2714):** if a turn ends anyway while a keep-alive wait is still in progress, with a child
@@ -137,13 +145,19 @@ this turn is alive: keep the turn alive with bounded foreground waits -- repeate
 calls, at most 40 (20 minutes) per wave of children (the set launched together), each wait
 logged as one line (what you wait on, the iteration against the bound, how many children are
 still pending), stopping as soon as every child's `<task-notification>` has arrived, never
-reading or tailing a child's `output_file` -- until every child has reported, and never end this
-turn with one child outstanding. With no `Agent` tool, or a child still silent when the bound
-expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
-child is abandoned and no longer counts as outstanding, so your final reply still ends with its
-usual `STATUS:` line. Ignore that child's result if it arrives later; if a late notification
-re-wakes you after your final reply, repeat that final `STATUS:` line unchanged. A reply that
-ends without a tool call ends the turn.
+reading or tailing a running child's `output_file` -- until every child has reported, and never
+end this turn with one child outstanding. With no `Agent` tool (`ToolSearch` finds none, deferred
+or otherwise), or a child still silent when the bound expires, judge that unit yourself, log the
+downgrade, and mark its findings `unconfirmed`; that child is abandoned and no longer counts as
+outstanding, so your final reply still ends with its usual `STATUS:` line. Ignore that child's
+result if it arrives later; if a late notification re-wakes you after your final reply, repeat
+that final `STATUS:` line unchanged. A child that reports a failure (a `failed` notification, an
+API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not outstanding: handle it
+per the dispatching skill's own status handling where one exists, otherwise judge that unit
+yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a write-capable
+child (one that edits files) still silent at the bound is never redone in-session, because an
+abandoned child keeps running and may still write -- stop, and end with `STATUS: BLOCKED` naming
+that child and its unit. A reply that ends without a tool call ends the turn.
 
 {context-pack}
 
@@ -287,13 +301,19 @@ this turn is alive: keep the turn alive with bounded foreground waits -- repeate
 calls, at most 40 (20 minutes) per wave of children (the set launched together), each wait
 logged as one line (what you wait on, the iteration against the bound, how many children are
 still pending), stopping as soon as every child's `<task-notification>` has arrived, never
-reading or tailing a child's `output_file` -- until every child has reported, and never end this
-turn with one child outstanding. With no `Agent` tool, or a child still silent when the bound
-expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
-child is abandoned and no longer counts as outstanding, so your final reply still ends with its
-usual `STATUS:` line. Ignore that child's result if it arrives later; if a late notification
-re-wakes you after your final reply, repeat that final `STATUS:` line unchanged. A reply that
-ends without a tool call ends the turn.
+reading or tailing a running child's `output_file` -- until every child has reported, and never
+end this turn with one child outstanding. With no `Agent` tool (`ToolSearch` finds none, deferred
+or otherwise), or a child still silent when the bound expires, judge that unit yourself, log the
+downgrade, and mark its findings `unconfirmed`; that child is abandoned and no longer counts as
+outstanding, so your final reply still ends with its usual `STATUS:` line. Ignore that child's
+result if it arrives later; if a late notification re-wakes you after your final reply, repeat
+that final `STATUS:` line unchanged. A child that reports a failure (a `failed` notification, an
+API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not outstanding: handle it
+per the dispatching skill's own status handling where one exists, otherwise judge that unit
+yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a write-capable
+child (one that edits files) still silent at the bound is never redone in-session, because an
+abandoned child keeps running and may still write -- stop, and end with `STATUS: BLOCKED` naming
+that child and its unit. A reply that ends without a tool call ends the turn.
 
 {context-pack}
 

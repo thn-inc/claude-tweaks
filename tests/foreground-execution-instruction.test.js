@@ -8,7 +8,9 @@
 // dispatched agent (or the SDD implementer/reviewer sub-dispatches it composes) had no textual
 // reason not to background a long-running command and wait on it. This suite pins the
 // foreground-execution instruction in all three locations, and proves the check can actually go
-// red (parse-signal-discipline).
+// red (parse-signal-discipline). It also pins #3078/#3266's nested-dispatch keep-alive rule across
+// the core section, task-prompt.md's item 7 and both fenced templates, plus its output-contract and
+// review/step3 restatements, each with its own go-red proof.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -121,6 +123,9 @@ const SHARED_RULE = [
   [/no\s+longer\s+counts\s+as\s+outstanding/, 'an abandoned child no longer counts as outstanding'],
   [/final\s+reply\s+still\s+ends\s+with\s+(?:its\s+usual\s+)?`STATUS:/, 'the final reply after an abandoned child still ends with STATUS:'],
   [/re-wakes\s+(?:you|the\s+agent)\s+after\s+(?:your|its)\s+final\s+reply[^.]*?\brepeat(?:ing)?\s+that\s+final\s+`STATUS:`\s+line\s+unchanged/, 'a late re-wake after the final reply repeats the final STATUS: line unchanged'],
+  [/`ToolSearch`\s+finds\s+none,\s+deferred\s+or\s+otherwise/, 'the no-Agent-tool fallback checks ToolSearch for a deferred Agent tool'],
+  [/child\s+that\s+reports\s+a\s+failure/i, 'a child that reports a failure has reported and is handled per the dispatching skill'],
+  [/write-capable\s+child[\s\S]*?never\s+redone/, 'a write-capable child silent at the bound is never redone in-session'],
 ];
 
 // Each `\s+` absorbs the hard line wrapping, as in REQUIRED above.
@@ -130,7 +135,7 @@ const KEEP_ALIVE = [
   [/never\s+end[s]?\s+(?:its|your|the)\s+turn\s+with\s+(?:a|one)\s+child\s+outstanding/i, 'the dispatcher never ends its turn with a child outstanding'],
   [/no\s+`Agent`\/`Task`\s+tool/i, 'the fallback covers the no-Agent/Task-tool case'],
   [/`unconfirmed`/, 'findings from a self-judged unit are marked unconfirmed'],
-  [/ignored/i, 'a late child result is ignored'],
+  [/arrives\s+after\s+its\s+unit\s+was\s+self-judged\s+is\s+ignored;\s+it\s+never\s+changes\s+a\s+verdict/, 'a late child result is ignored and never changes a verdict'],
   ...SHARED_RULE,
 ];
 
@@ -138,7 +143,14 @@ const KEEP_ALIVE = [
 const missingKeepAlive = missingFactsOf(KEEP_ALIVE);
 const foldsNoTaskParagraph = (core) => !/\*\*No `Task`\/Agent tool available\.\*\*/.test(core);
 const dropsYieldRule = (contract) => !/must\s+yield\s+control\s+across\s+several\s+of\s+its\s+own\s+turns/.test(contract);
-const keepsInterimMarker = (contract) => /INTERIM_STATUS/.test(contract);
+
+// Each `\s+` absorbs the hard line wrapping. The second fact subsumes a bare INTERIM_STATUS token
+// check: it pins the marker as the rule for a turn that ends mid keep-alive wait.
+const CONTRACT_KEEP_ALIVE = [
+  [/keeps\s+its\s+turn\s+alive\s+until\s+every\s+child\s+reports/, 'a nested dispatcher keeps its turn alive until every child reports'],
+  [/End\s+every\s+such\s+interim\s+turn\s+with\s+its\s+own\s+trailing\s+marker\s+line,\s+`INTERIM_STATUS:/, 'an interim turn ends with its own INTERIM_STATUS: marker line'],
+];
+const contractKeepAliveMissing = missingFactsOf(CONTRACT_KEEP_ALIVE);
 
 test('subagent-dispatch-core.md states the nested-dispatch keep-alive rule and its fallback (#3078)', () => {
   const core = fs.readFileSync(CORE, 'utf8');
@@ -149,14 +161,14 @@ test('subagent-dispatch-core.md states the nested-dispatch keep-alive rule and i
 test('subagent-output-contract.md no longer tells a nested dispatcher to yield across turns (#3078)', () => {
   const contract = fs.readFileSync(OUTPUT_CONTRACT, 'utf8');
   assert.ok(dropsYieldRule(contract), 'the output contract still instructs nested dispatchers to yield across turns (#3078)');
-  assert.ok(keepsInterimMarker(contract), 'the output contract lost its INTERIM_STATUS marker (#3078)');
+  assert.deepEqual(contractKeepAliveMissing(contract), [], 'the output contract must state the keep-alive clause and the INTERIM_STATUS marker rule (#3078)');
 });
 
 test('each keep-alive assertion can actually go red on its own (discrimination proof)', () => {
   assertEachPatternGoesRed(coreForegroundSection(fs.readFileSync(CORE, 'utf8')), KEEP_ALIVE, missingKeepAlive);
 });
 
-test('the folded-paragraph, yield-rule and interim-marker assertions can actually go red (discrimination proof)', () => {
+test('the folded-paragraph and yield-rule assertions can actually go red (discrimination proof)', () => {
   const core = fs.readFileSync(CORE, 'utf8');
   const reinsertedHeading = '\n\n**No `Task`/Agent tool available.** Some environments expose no `Task`/Agent dispatch tool at all.\n';
   assert.equal(foldsNoTaskParagraph(core + reinsertedHeading), false, 'the re-inserted No-Task heading must turn the fold assertion red');
@@ -166,9 +178,10 @@ test('the folded-paragraph, yield-rule and interim-marker assertions can actuall
   assert.match(contract, nestedClause, 'anchor text for the nested-dispatcher clause not found');
   const yieldDoctored = contract.replace(nestedClause, 'must yield control across several of its own turns before its real final reply.');
   assert.equal(dropsYieldRule(yieldDoctored), false, 'the old yield wording must turn the no-yield assertion red');
+});
 
-  assert.ok(keepsInterimMarker(contract), 'anchor text INTERIM_STATUS not found in the contract');
-  assert.equal(keepsInterimMarker(contract.split('INTERIM_STATUS').join('')), false, 'removing INTERIM_STATUS must turn the marker assertion red');
+test('each output-contract keep-alive and interim-marker assertion can actually go red on its own (discrimination proof)', () => {
+  assertEachPatternGoesRed(fs.readFileSync(OUTPUT_CONTRACT, 'utf8'), CONTRACT_KEEP_ALIVE, contractKeepAliveMissing);
 });
 
 // #3078: review/step3-lens-dispatch.md's dispatched-reviewer carve-out is deleted, and its
@@ -185,13 +198,20 @@ const FOREGROUND_NOTE_PREFIX = '> **Foreground Execution Discipline:**';
 const foregroundNote = (text) => text.split('\n').find((line) => line.startsWith(FOREGROUND_NOTE_PREFIX)) || '';
 const LENS_NOTE = [
   [/lens dispatches?/i, "the reviewer's own lens dispatches"],
-  [/subagent-dispatch-core\.md/, 'the core section it follows, cited by file'],
-  [/unavailable/i, 'the unavailable-agents case routes to the single-read treatment'],
+  [/nested-children\s+rule\s+in\s+`_shared\/subagent-dispatch-core\.md`/, 'the nested-children rule, cited by its core file'],
+  [/agents\s+are\s+unavailable\s+\(no\s+`Agent`\s+tool\)/, 'the unavailable-agents case routes to the single-read treatment'],
   [/time out at that section's bound/, 'the timed-out-at-the-keep-alive-bound case routes to the single-read treatment'],
-  [/partner/i, 'the lost-partner case routes to the partner-died single-read treatment'],
+  [/lose\s+a\s+partner\s+to\s+a\s+session\s+limit\s+gets\s+the\s+partner-died\s+single-read\s+treatment/, 'the lost-partner case routes to the partner-died single-read treatment'],
   [/`unconfirmed`, logged/, 'the routed findings are unconfirmed and logged'],
 ];
 const lensNoteMissing = missingFactsOf(LENS_NOTE);
+
+// The hung single-read agent paragraph (2-3 minute wait + nudge) must not govern a dispatched reviewer,
+// which follows the keep-alive bound in the Foreground note and may have no SendMessage.
+const HUNG_AGENT = [
+  [/a\s+dispatched\s+reviewer\s+waits\s+its\s+keep-alive\s+bound\s+instead\s+\(the\s+Foreground\s+note\s+below\)\s+and\s+skips\s+the\s+nudge/, 'a dispatched reviewer waits its keep-alive bound and skips the SendMessage nudge'],
+];
+const hungAgentMissing = missingFactsOf(HUNG_AGENT);
 const LENS_NOTE_SENTENCE = /When the reviewer is itself a dispatched agent,.*?\(findings `unconfirmed`, logged\)\./;
 
 test('step3-lens-dispatch.md has no dispatched-reviewer carve-out (#3078)', () => {
@@ -203,6 +223,14 @@ test("step3 Foreground note covers the reviewer's own lens dispatches (#3078)", 
   const note = foregroundNote(fs.readFileSync(STEP3, 'utf8'));
   assert.notEqual(note, '', 'the "> **Foreground Execution Discipline:**" note line was not found in step3-lens-dispatch.md');
   assert.deepEqual(lensNoteMissing(note), [], 'the step3 Foreground note must cover the reviewer\'s own lens dispatches (#3078)');
+});
+
+test('step3 hung-single-read paragraph exempts a dispatched reviewer from the nudge (#3078)', () => {
+  assert.deepEqual(hungAgentMissing(fs.readFileSync(STEP3, 'utf8')), [], 'the hung single-read paragraph must route a dispatched reviewer to its keep-alive bound and skip the nudge (#3078)');
+});
+
+test('the step3 hung-single-read assertion can actually go red (discrimination proof)', () => {
+  assertEachPatternGoesRed(fs.readFileSync(STEP3, 'utf8'), HUNG_AGENT, hungAgentMissing);
 });
 
 test('the step3 carve-out predicate can actually go red (discrimination proof)', () => {
@@ -225,7 +253,8 @@ function item7Block(text) {
   const start = text.indexOf('7. **Async-wait discipline**');
   assert.notEqual(start, -1, 'task-prompt.md lost its item 7 "Async-wait discipline" heading (#3078)');
   const next = text.slice(start + 1).search(/\n(?:8\. |## )/);
-  return text.slice(start, next === -1 ? undefined : start + 1 + next);
+  if (next === -1) assert.fail('task-prompt.md: no "8. " item or "## " heading follows item 7 — its boundary is unknown, so the block would run to end-of-file (#3078)');
+  return text.slice(start, start + 1 + next);
 }
 
 const ITEM7 = [
@@ -233,6 +262,8 @@ const ITEM7 = [
   [/INTERIM_STATUS/, 'the #2714 interim-marker rule is kept'],
   [/always\s+launches\s+async/i, 'a nested Agent call always launches async'],
   [/`unconfirmed`/, 'the self-judged fallback marks findings unconfirmed'],
+  [/never\s+end\s+your\s+turn\s+with\s+one\s+outstanding/, 'item 7 never ends the turn with a child outstanding'],
+  [/Ignore\s+a\s+late\s+result/, 'item 7 ignores a late result'],
   ...SHARED_RULE,
 ];
 const item7Missing = missingFactsOf(ITEM7);
