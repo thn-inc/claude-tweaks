@@ -610,7 +610,21 @@ test('AC4.1 (#3602): an unclosed fence makes the section one unparsed entry, nev
   const spec = '## Technical Approach\n\n```js\nrequire(`src/a.js`)\n\n## Gotchas\n\n- `src/g.js`\n';
   assert.deepStrictEqual(extractSpecPaths(spec), {
     paths: [],
-    unparsed: [{ section: 'Technical Approach', raw: 'unclosed code fence in "## Technical Approach"' }],
+    unparsed: [
+      { section: 'Technical Approach', raw: 'unclosed code fence in "## Technical Approach"' },
+      { section: 'Gotchas', raw: 'unclosed code fence before "## Gotchas"' },
+    ],
+  });
+});
+
+test('AC4.1 (#3602): an unclosed fence in an earlier section swallows both headings — each is unparsed, never a clean empty result', () => {
+  const spec = '## Deliverables\n\n```js\nconst x = 1;\n\n## Technical Approach\n\nRead `src/a.js`.\n\n## Gotchas\n\n- `lib/c.js`\n';
+  assert.deepStrictEqual(extractSpecPaths(spec), {
+    paths: [],
+    unparsed: [
+      { section: 'Technical Approach', raw: 'unclosed code fence before "## Technical Approach"' },
+      { section: 'Gotchas', raw: 'unclosed code fence before "## Gotchas"' },
+    ],
   });
 });
 

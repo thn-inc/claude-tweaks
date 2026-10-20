@@ -486,9 +486,15 @@ function extractSpecPaths(specText) {
   const paths = [];
   const unparsed = [];
   const seen = new Set();
+  const specFenceCount = specText.replace(/\r\n?/g, '\n').split('\n').filter((l) => AC_FENCE_RE.test(l)).length;
   for (const name of F_SECTIONS) {
     const lines = specSectionLines(specText, new RegExp(`^##[ \\t]+${name}[ \\t]*$`, 'i'));
-    if (!lines) continue;
+    if (!lines) {
+      // null is "absent" only when no fence is left open: an earlier unclosed
+      // fence swallows this heading, and that must not read as "nothing here".
+      if (specFenceCount % 2 !== 0) unparsed.push({ section: name, raw: `unclosed code fence before "## ${name}"` });
+      continue;
+    }
     if (lines.filter((l) => AC_FENCE_RE.test(l)).length % 2 !== 0) {
       unparsed.push({ section: name, raw: `unclosed code fence in "## ${name}"` });
       continue;
