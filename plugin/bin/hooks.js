@@ -697,9 +697,22 @@ async function main(argv) {
       // not clobber a previous stamp.
       const patch = { worktree: path.resolve(worktreeArg), status: 'active' };
       if (process.env.CLAUDE_CODE_SESSION_ID) patch.sessionId = process.env.CLAUDE_CODE_SESSION_ID;
-      // Permanent for the run's lifetime: only ever written true, never
-      // false, so a later plain re-stamp (no --dispatch) cannot clear it.
-      if (dispatch) patch.dispatched = true;
+      if (dispatch) {
+        // Permanent for the run's lifetime: only ever written true, never
+        // false, so a later plain re-stamp (no --dispatch) cannot clear it.
+        patch.dispatched = true;
+        // #3711: the session that ran `--dispatch`, written ONLY by that flag. A plain
+        // re-stamp — a human resuming the run (run-resume-freshness.md) — overwrites
+        // sessionId but never writes or clears this, so bin/lib/dispatch/task-call.js
+        // can tell the dispatching session from a later resumer. With no session id it
+        // is written as null, not omitted: an absent key reads as a pre-#3711 run-state
+        // and falls back to sessionId, which a later resume re-stamps with the resumer's
+        // id — null is present but never matches, so that resume reads as human-run.
+        patch.dispatchSessionId = process.env.CLAUDE_CODE_SESSION_ID || null;
+        if (!patch.dispatchSessionId) {
+          process.stderr.write('claude-tweaks: record-worktree --dispatch without CLAUDE_CODE_SESSION_ID — dispatchSessionId recorded as null; wrap-up will treat this run as human-run\n');
+        }
+      }
       const result = ctxLib.writeRunState(runDir, patch);
       if (result) {
         process.stdout.write(`claude-tweaks: worktree recorded for ${path.basename(runDir)}\n`);

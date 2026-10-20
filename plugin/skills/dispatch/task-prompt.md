@@ -433,7 +433,7 @@ ISSUE #{n}: {failed:{gate} | blocked:retry-ceiling}
 `pending-review` are `{minted-run-dir}/context/merge.md`'s own outcome vocabulary (the composed
 `_shared/pr-first-merge.md`; if that bundle is absent, read `_shared/pr-first-merge.md` directly), reported verbatim: you
 run the merge procedure yourself, in this same call, whichever file's Auto-merge gate you reach
-(`dispatch/settle-and-merge.md` for a bundle, `wrap-up/review-console.md`'s dispatch-claim branch
+(`dispatch/settle-and-merge.md` for a bundle, `wrap-up/review-console.md`'s dispatch-call branch
 for a singleton). `merged` means you also completed claim release and run-dir archival directly
 (that procedure's Step 4) — but not worktree removal: this call inherited the worktree and never
 itself `EnterWorktree`'d it, so `ExitWorktree` is a no-op for it, the same structural constraint

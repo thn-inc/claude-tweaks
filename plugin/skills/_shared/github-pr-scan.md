@@ -386,7 +386,7 @@ Three cheap counts for the dashboard's Triage Queue section. This scope exists s
    metric counts, not headlessness: `[auto-merge]` is always dispatch-originated (singleton or
    bundle, both via `dispatch/settle-and-merge.md`'s Dispatching-session merge execution —
    genuinely headless); `[fast-lane]` (`wrap-up/review-console.md`'s Auto-merge short-circuit) is
-   reachable only by an interactive, human-run single-record `/flow` — its own dispatch-claim
+   reachable only by an interactive, human-run single-record `/flow` — its own dispatch-call
    branch redirects a dispatch-originated singleton to `[auto-merge]` instead, so a `[fast-lane]`
    commit is never headless; `[manifesto-authorized]` (`wrap-up/manifesto-authorized-merge.md`,
    the `merge-authorization` lever) is likewise human-originated, never dispatch-originated — it
