@@ -1,5 +1,5 @@
 // plugin/bin/lib/plan-audit/checks.js — Checks A/B/C/D, the headroom check,
-// and Check E (#3099) for bin/plan-audit.js (#903). Mechanizes plan-audit.md's prose checks;
+// and the warn-only Checks E (#3099) and F (#3602) for bin/plan-audit.js (#903). Mechanizes plan-audit.md's prose checks;
 // policy handling (scope-creep, scope-keywords-required) stays at the skill
 // layer — this module only reports facts.
 'use strict';
@@ -9,7 +9,10 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { composedBytesReport } = require('../skill-audit/context-cost');
 const { RAIL_BYTES } = require('../skill-audit/budgets');
-const { extractAcceptanceClauses, extractCoverageSources } = require('./parser');
+const {
+  extractAcceptanceClauses, extractCoverageSources, extractSpecPaths, extractPathWaivers,
+  extractFileEntries, normalizeRepoPath,
+} = require('./parser');
 
 const WALK_EXCLUDES = new Set(['.git', 'node_modules', '.claude', '.claude-tweaks']);
 
@@ -617,7 +620,46 @@ function checkE(specText, planText) {
   };
 }
 
+// ── Check F — Spec-named path coverage (#3602) ──────────────────────────────
+// Reports repo paths the spec's Technical Approach / Gotchas sections name
+// that no plan task's `Files:` block lists and no `Waived <path>: <reason>`
+// line covers — the plan-authoring miss where a spec says "read X back" and
+// the plan never touches X, so the build skips the verify-then-maybe-change
+// step. Warn-only (ok stays true): path extraction from prose is a heuristic,
+// and a hard gate would block builds on its false positives. It reads only
+// those two spec sections (never Deliverables / Acceptance Criteria, whose
+// files Check E and the Files: blocks already cover). Matching is exact after
+// normalizeRepoPath on both sides, plus a whole-segment suffix match
+// ('/' + path) so a plugin-relative citation still finds its full Files: path.
+// There is deliberately no quoted-text fallback — #3602's report named Check
+// E's keyword noise. `unparsed` is the parser's, passed through untouched: a
+// line it could not read is a distinguishable signal, never a covered path.
+function checkF(specText, planText) {
+  const { paths, unparsed } = extractSpecPaths(specText);
+  const filesPaths = new Set(extractFileEntries(planText).map((e) => normalizeRepoPath(e.path)));
+  const reasons = new Map();
+  for (const { path: p, reason } of extractPathWaivers(planText)) if (!reasons.has(p)) reasons.set(p, reason);
+  const unlisted = [];
+  const listed = [];
+  const waived = [];
+  for (const { path: p, section } of paths) {
+    if (reasons.has(p)) waived.push({ path: p, reason: reasons.get(p) });
+    else if (filesPaths.has(p)) listed.push({ path: p, via: 'exact' });
+    else if ([...filesPaths].some((f) => f.endsWith(`/${p}`))) listed.push({ path: p, via: 'suffix' });
+    else unlisted.push({ path: p, section });
+  }
+  // A waiver naming a path the spec parser never extracted (typo, stale path)
+  // would otherwise be silently dropped — report it, warn-only like Check E's.
+  const specPaths = new Set(paths.map((e) => e.path));
+  const orphanWaivers = [...reasons]
+    .filter(([p]) => !specPaths.has(p))
+    .map(([p, reason]) => ({ path: p, reason }));
+  return {
+    ok: true, unlisted, listed, waived, unparsed, orphanWaivers,
+  };
+}
+
 module.exports = {
-  checkA, checkB, checkC, checkD, checkE, headroomCheck, looksPassing, isGovernedMdPath,
+  checkA, checkB, checkC, checkD, checkE, checkF, headroomCheck, looksPassing, isGovernedMdPath,
   refusedVcsMutation, commandSegments, checkPremiseRefs,
 };
