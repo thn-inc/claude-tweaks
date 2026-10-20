@@ -119,9 +119,20 @@ function hasCanonicalClaimLogFor(body, n) {
 
 // A complete, model-worded claim line that names the claim step (#3665) —
 // paraphrasedClaimNumbers alone also takes a bare "#N claimed" line anywhere.
+// The anchor must belong to the entry's LOCATION (the step or script that wrote
+// the line), not just its text: a later-step line that merely mentions the claim
+// ("Step 3: ... claims-registry shows #7 claimed") is content. A line written
+// with no --step carries the `log-decision` location formatEntry defaults to, so
+// its head text is the only anchor there; a line parseEntry cannot split (the
+// timestamp-less #3012 shape) falls back to the head-text anchor too.
 function isAnchoredParaphrasedClaim(line) {
   if (!COMPLETE_RE.test(line) || paraphrasedClaimNumbers(line).length === 0) return false;
-  return CLAIM_ANCHOR_RE.test(line.slice(0, line.search(REVERSIBILITY_SPLIT_RE)));
+  const headAnchored = CLAIM_ANCHOR_RE.test(line.slice(0, line.search(REVERSIBILITY_SPLIT_RE)));
+  const entry = parseEntry(line);
+  if (!entry) return headAnchored;
+  const location = entry.location.replace(/^spec #\d+ — /, '');
+  if (location === 'log-decision') return headAnchored;
+  return CLAIM_ANCHOR_RE.test(location);
 }
 
 // decisions.md text (null = file absent) -> 'absent' | 'empty' |
@@ -130,9 +141,13 @@ function isAnchoredParaphrasedClaim(line) {
 // itself adds, and Step 2.8's own bookkeeping lines (#3665). A claim entry is
 // the exact canonical line, or a complete paraphrased one that is also
 // claim-anchored (names Step 2.8 / claim-targets / claims-registry /
-// issue-claims — an unanchored "claimed #N" elsewhere is content) (#3665). Every line
-// this cannot positively recognise is 'content' — a parse failure never reads
-// as "only claim lines".
+// issue-claims in the entry's location — an unanchored "claimed #N" elsewhere is
+// content) (#3665). The "nothing rides behind the claim" guarantee on the
+// ACTION_RE comment above is isClaimLogEntry-only: a paraphrase such as
+// "Step 2.8: claimed #7 and also wrote config.yml by hand" is accepted here, a
+// documented consequence of accepting model-worded claims. Every line this
+// cannot positively recognise is 'content' — a parse failure never reads as
+// "only claim lines".
 function classifyDecisions(text) {
   if (text === null || text === undefined) return 'absent';
   const str = String(text);

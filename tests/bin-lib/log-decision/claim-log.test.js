@@ -227,6 +227,8 @@ test('classifyDecisions: a complete paraphrased claim line counts as a claim (#3
   assert.strictEqual(classifyDecisions(`## /flow\n${PARAPHRASED}\n`), 'claim-log-only');
   assert.strictEqual(classifyDecisions(`## /flow\n${PARAPHRASED}\n${DEGRADED_SKIP}\n`), 'claim-log-only');
   assert.strictEqual(classifyDecisions('- AUTO -- Step 2.8 claim: both #1447 and #1446 claimed successfully under runId 2026-08-29T232244-record-1446 (claim-targets.js exit 0). Reversibility: high.'), 'claim-log-only');
+  assert.strictEqual(classifyDecisions("## /flow\n- AUTO 01:03:28 — Step 2.8: claimed #517, #518, #519 on claims-registry (all classified 'absent'). Reversibility: high.\n"), 'claim-log-only');
+  assert.strictEqual(classifyDecisions('## /flow\n- AUTO 10:00:00 — log-decision: Step 2.8: claimed issue #7 for this run. Reversibility: high.\n'), 'claim-log-only');
 });
 
 test('classifyDecisions: an unanchored paraphrased claim stays content (#3665)', () => {
@@ -234,7 +236,17 @@ test('classifyDecisions: an unanchored paraphrased claim stays content (#3665)',
     '- AUTO 10:00:00 — Step 3: Manifesto rendered; claimed #5 above. Reversibility: n/a.',
     '- AUTO 10:00:00 — Dispatch group [5]: claimed #5 for the group. Reversibility: high.',
     '- AUTO 10:00:00 — Step 6.1: build started on spec; claimed #5 in registry. Reversibility: high.',
+    // A later-step line that merely mentions the claim: the anchor is in its text, not its location.
+    '- AUTO 10:00:00 — Manifesto: levers written; Step 2.8 claimed #7. Reversibility: n/a.',
+    '- AUTO 10:00:00 — Step 3: config.yml written; claims-registry shows #7 claimed. Reversibility: n/a.',
+    '- AUTO 10:00:00 — Step 6: wrap-up released the claim-targets lock; claimed #7 earlier. Reversibility: n/a.',
   ]) assert.strictEqual(classifyDecisions(`## /flow\n${line}\n`), 'content', line);
+});
+
+test('classifyDecisions: a paraphrase riding behind a claim prefix is accepted — documented consequence, isClaimLogEntry stays exact (#3665)', () => {
+  const line = '- AUTO 18:42:06 — Step 2.8: claimed #7 and also wrote config.yml by hand. Reversibility: n/a.';
+  assert.strictEqual(isClaimLogEntry(line), false);
+  assert.strictEqual(classifyDecisions(`## /flow\n${line}\n`), 'claim-log-only');
 });
 
 test('classifyDecisions: the widened class still fails closed (#3665 Review Focus)', () => {
