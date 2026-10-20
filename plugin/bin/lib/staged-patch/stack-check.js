@@ -21,14 +21,20 @@ function stagedApplyOrder(names) {
   return names.filter((n) => !n.startsWith('.') && n.endsWith('.patch')).sort();
 }
 
+function gitEnv({ platform = process.platform, devNull = os.devNull, env = process.env } = {}) {
+  const out = { ...env, GIT_CONFIG_GLOBAL: platform === 'win32' ? '/dev/null' : devNull, GIT_CONFIG_NOSYSTEM: '1' };
+  delete out.GIT_DIR;
+  delete out.GIT_WORK_TREE;
+  delete out.GIT_INDEX_FILE;
+  return out;
+}
+
 // Every git call runs with the user's and system config switched off and the caller's repo
 // pointers removed: a user `diff.noprefix` or an inherited GIT_DIR would change what the check
-// reads and emits. `binary` returns stdout as a Buffer, for output that carries file bytes.
+// reads and emits. Git for Windows rejects `os.devNull` (`\\.\nul`) as a config path, so win32
+// uses `/dev/null`. `binary` returns stdout as a Buffer, for output that carries file bytes.
 function defaultGit(args, { cwd, binary = false }) {
-  const env = { ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' };
-  delete env.GIT_DIR;
-  delete env.GIT_WORK_TREE;
-  delete env.GIT_INDEX_FILE;
+  const env = gitEnv();
   const r = spawnSync('git', args, { cwd, encoding: binary ? 'buffer' : 'utf8', env, windowsHide: true });
   return { status: r.status, stdout: r.stdout || (binary ? Buffer.alloc(0) : ''), stderr: r.stderr ? r.stderr.toString() : '' };
 }
@@ -267,4 +273,4 @@ function stackVerdicts({ worktree, patches, git = defaultGit }) {
   }));
 }
 
-module.exports = { stagedApplyOrder, checkStack, rederive, stackVerdicts };
+module.exports = { stagedApplyOrder, checkStack, rederive, stackVerdicts, gitEnv };
