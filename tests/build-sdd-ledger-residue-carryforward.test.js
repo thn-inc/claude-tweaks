@@ -52,15 +52,35 @@ test('AC2.3: the run-directory branch stages each ruling through one stage-item.
   assert.match(DISPATCH, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/stage-item\.js" --run "\$PIPELINE_RUN_DIR" --id "sdd-ruling-\{N\}" --file \{tmp\}\.md --allocate --ledger "\{ledger path\}" --label "SDD ruling" --item 'SDD ruling — \{one-liner\}: ratify or reverse at the Review Console'/);
   assert.match(DISPATCH, /--id "build-deviation-\{N\}" --file \{tmp\}\.md --allocate --ledger "\{ledger path\}" --label "SDD ruling" --item 'SDD ruling — \{one-liner\}: apply or decline at the Review Console'/);
   assert.match(DISPATCH, /`Title:`.*?`Kind: sdd-ruling`.*?`Ruling:`.*?`Staged-at:`/);
-  assert.match(DISPATCH, /`Ledger: \{ledger path\}#\{item-number\}` header already filled/);
-  assert.match(DISPATCH, /STAGED \{time\} — SDD ruling carried forward: "\{Title\}"\. Stage path: staged\/sdd-ruling-\{N\}\.md\. Reversibility: high\./);
-  assert.match(DISPATCH, /never Add Item's De-duplication on Append/);
-  assert.match(DISPATCH, /the row's Item names the path the call actually wrote, after any `--allocate` renumbering/);
+  // The CLI path states what the call guarantees, not how (the ordering, dedupe bypass, and log literals are ledger.js's, unpinned copies drift).
+  assert.match(DISPATCH, ws('it stages the file with its `Ledger:` header filled, appends that row, and logs `STAGED`, so no row ever names a file that was not written'));
+  assert.doesNotMatch(cliPath(), /De-duplication on Append/, 'the CLI path no longer restates the dedupe bypass');
+});
+
+function cliPath() {
+  const start = DISPATCH.indexOf('Then carry it forward with one `stage-item.js --ledger` call');
+  const end = DISPATCH.indexOf('**No run directory**');
+  assert.ok(start !== -1 && end > start, 'the CLI path / no-run-directory boundary is not in dispatch.md');
+  return DISPATCH.slice(start, end);
+}
+
+test('I1: the exit-3 guidance branches on the degraded stderr prefix — traced and never retried, else a wrong run dir to re-resolve; exit 2 names a rejected --ledger and an unreadable --file', () => {
+  assert.match(DISPATCH, ws('exit 3 with stderr starting `stage-item.js: ledger carry-forward degraded —` is a degraded path whose trace is already in `decisions.md` — never retry the call or log it again'));
+  assert.match(DISPATCH, ws('any other exit 3 is a wrong run dir (missing, or a worktree shadow per `_shared/pipeline-run-dir.md`\'s Anchoring section) that wrote and logged nothing — re-resolve `$PIPELINE_RUN_DIR` and re-run'));
+  assert.match(DISPATCH, ws('exit 2 is a malformed invocation (a missing `--item`, `--label`, or `--allocate`, a rejected `--ledger` — not found, wrong name, or outside the run directory and worktree — or an unreadable `--file`) to fix and re-run'));
+});
+
+test('M5: {ledger path} is this build\'s active open items ledger, run-dir or repo-relative', () => {
+  assert.match(DISPATCH, ws('`{ledger path}` is this build\'s active open items ledger per `_shared/ledger-format.md`\'s resolution rule: `"$PIPELINE_RUN_DIR/ledger.md"` when that file exists, else the repo-relative `docs/plans/…-ledger.md` path'));
+  assert.doesNotMatch(DISPATCH, /`\{ledger path\}` is this build's open items ledger, repo-relative/);
 });
 
 test('the no-run-directory branch keeps the row open, stages nothing, and hands the ruling to the Step 7 handoff', () => {
   assert.match(DISPATCH, /\*\*No run directory\*\* \(standalone `\/claude-tweaks:build`, no `\$PIPELINE_RUN_DIR`\): no console will read `staged\/`, so append the ledger row with status `open` and the same Item text minus the staged path, stage nothing, and list each ruling in the Step 7 handoff's `### SDD rulings` section \(`build\/handoff-template\.md`\)/);
   assert.match(DISPATCH, /`Accept` = ratify, `Keep`\/`Defer` = reverse as a follow-up, `Fix anyway` = reverse now/);
+  // I2: the by-hand Add Item append keeps its no-dedupe rule and states its Item form explicitly.
+  const standalone = DISPATCH.slice(DISPATCH.indexOf('**No run directory**'));
+  assert.match(standalone, ws('The Item reads `SDD ruling — {one-liner}: ratify or reverse at the Review Console`, with no staged path, and Add Item\'s De-duplication on Append never skips a ruling row: two rulings sharing the template stem are distinct decisions, so every ruling gets its own row'));
   assert.match(DISPATCH, /a ruling's text states a decision, not a defect, so it does not qualify on its own/);
 });
 
@@ -124,13 +144,16 @@ test('review-console.md step 1 points an sdd-ruling-* write-back at the appendix
 });
 
 test('review #3401 → #3510: the CLI owns the failure branch; the hand-performed rewrite and ordering clauses are gone', () => {
-  assert.match(DISPATCH, /SKIP \{time\} — SDD ruling carry-forward \(degraded\): condition: staged write failed for sdd-ruling-\{N\} \(\{error\}\) → fallback: ledger row #\{item\} left open with no staged file/);
   assert.match(DISPATCH, /so no row ever names a file that was not written/);
   assert.match(DISPATCH, /the carry-forward call below escapes itself, so pass it unescaped/);
   assert.match(DISPATCH, /`--allocate` is required with `--ledger`/);
-  assert.match(DISPATCH, /Every degraded path exits 3 with its trace already in `decisions\.md`/);
   assert.doesNotMatch(DISPATCH, /same clobber reason/);
-  for (const gone of ['ledger first, then the file', 'the same operation, not an Update Item', "rewrite the row's Item text", '(1) append the ledger row']) {
+  for (const gone of [
+    'ledger first, then the file', 'the same operation, not an Update Item', "rewrite the row's Item text", '(1) append the ledger row',
+    // #3510 final review: the CLI-internal literals and orderings are ledger.js's, not dispatch.md's
+    'staged write failed for sdd-ruling-{N}', 'STAGED {time} — SDD ruling carried forward', 'numbers the row first',
+    'Every degraded path exits 3 with its trace already in', 'header already filled', "the row's Item names the path the call actually wrote",
+  ]) {
     assert.ok(!DISPATCH.includes(gone), `stale hand-performed clause still present: ${gone}`);
   }
 });

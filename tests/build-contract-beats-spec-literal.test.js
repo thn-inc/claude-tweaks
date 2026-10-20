@@ -34,6 +34,10 @@ function assertInstruction(text) {
   assert.match(text, /update-the-spec deviation/, 'the instruction does not record the departure as an update-the-spec deviation');
   assert.match(text, /build-deviation-/, 'the instruction does not stage the departure as build-deviation-{N}');
   assert.match(text, /Ruling: contract-beats-spec —/, 'the instruction does not name the ledgered Ruling: line shape');
+  assert.ok(
+    text.includes('through the `build-deviation-{N}` line of the carry-forward commands'),
+    'the instruction does not route the deviation through the build-deviation-{N} stage-item.js --ledger line of the carry-forward commands (#3510)'
+  );
   assert.match(text, /in place of `sdd-ruling-\{N\}`/, 'the instruction does not route the deviation in place of sdd-ruling-{N}');
   assert.match(text, /every `sdd-ruling` name in that procedure/, 'the instruction does not rename the sdd-ruling names in the carry-forward procedure');
   assert.match(text, /dispositions read apply \/ decline rather than ratify \/ reverse/, 'the instruction does not set apply / decline dispositions');
@@ -51,6 +55,14 @@ function assertRuling(text) {
 
 test('AC2.1: build/dispatch.md carries the contract-beats-spec-literal instruction', () => {
   assertInstruction(instructionSlice());
+});
+
+test('#3510: assertInstruction goes red when the CLI-routing phrase is removed from the slice', () => {
+  const slice = instructionSlice();
+  assert.throws(
+    () => assertInstruction(slice.replace('through the `build-deviation-{N}` line of the carry-forward commands', 'through the carry-forward procedure')),
+    /build-deviation-\{N\} stage-item\.js --ledger line/
+  );
 });
 
 test('AC3.1 + AC3.2: the build instruction directs a ruling, not a question', () => {
