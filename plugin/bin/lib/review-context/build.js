@@ -159,12 +159,12 @@ function elideDiff(diff) {
 // file's section is a one-line stub, as is a readable markdown file's at any size (its hunks
 // stay whole; a deleted or unreadable one stays an empty section), and an always-stub file's or
 // an oversize added/deleted file's diff chunk is a one-line marker; both are reported in
-// `oversizeSections`. A stub
-// points at wherever the content still lives: the diff above (hunk kept), the live file (hunk
-// elided too), or `git diff {range} -- {path}` (elided or deleted). A modified non-always-stub
-// file's hunks stay whole, so the bundle as a whole is not strictly bounded. It also writes the
-// two pre-dispatch baselines a worktree-isolated reviewer cannot capture itself: the `git status`
-// listing (`pre-dispatch-status.txt`) and the lsof listener snapshot (`pre-dispatch-listeners.txt`).
+// `oversizeSections`. A stub points at wherever the content still lives: the diff above (hunk
+// kept), the live file (hunk elided too), or `git diff {range} -- {path}` (elided or deleted).
+// A modified non-always-stub file's hunks stay whole, so the bundle as a whole is not strictly
+// bounded. It also writes the two pre-dispatch baselines a worktree-isolated reviewer cannot
+// capture itself: the `git status` listing (`pre-dispatch-status.txt`) and the lsof listener
+// snapshot (`pre-dispatch-listeners.txt`).
 function buildContext({
   base,
   branch,
