@@ -20,7 +20,7 @@ function fixture() {
   // `.git` FILE carrying a gitdir: pointer. resolveTarget's structural check keys on that.
   fs.mkdirSync(path.join(main, '.git'), { recursive: true });
   fs.writeFileSync(path.join(main, '.claude', 'worktrees', 'flow-spec-12', '.git'), 'gitdir: ../../../.git/worktrees/flow-spec-12\n');
-  return { main, run, shadow };
+  return { root, main, run, shadow };
 }
 
 function deps(main, out) {
@@ -92,6 +92,58 @@ test('malformed invocations exit 2: missing --run, bad status, empty text, missi
   const out = [];
   assert.equal(run(['--help'], deps(main, out)), 0);
   assert.match(out[0][1], /usage: log-decision\.js/);
+  assert.match(out[0][1], /--text-file <path>/);
+});
+
+test('--text-file writes the same entry --text would, for each shell-hostile content', () => {
+  for (const content of ['conflicted on "a b".md', 'conflicted on $(touch pwned) and $HOME', 'conflicted on `rm -rf x`.md and back\\slash']) {
+    const viaText = fixture();
+    const viaFile = fixture();
+    const file = path.join(viaFile.root, 'entry.txt');
+    fs.writeFileSync(file, content + '\n');
+    assert.equal(run(['--run', viaText.run, '--status', 'AUTO', '--text', content], deps(viaText.main, [])), 0, content);
+    assert.equal(run(['--run', viaFile.run, '--status', 'AUTO', '--text-file', file], deps(viaFile.main, [])), 0, content);
+    const textEntry = fs.readFileSync(path.join(viaText.run, 'decisions.md'), 'utf8');
+    const fileEntry = fs.readFileSync(path.join(viaFile.run, 'decisions.md'), 'utf8');
+    assert.equal(fileEntry, textEntry, content);
+    assert.ok(fileEntry.includes(content), content);
+  }
+});
+
+test('--text and --text-file together exit 2 and write nothing', () => {
+  const { main, root, run: runDir } = fixture();
+  const file = path.join(root, 'entry.txt');
+  fs.writeFileSync(file, 'x\n');
+  const out = [];
+  const code = run(['--run', runDir, '--status', 'AUTO', '--text', 'x', '--text-file', file], deps(main, out));
+  assert.equal(code, 2);
+  assert.match(streamOf(out, 'err'), /mutually exclusive/);
+  assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false, 'decisions.md never created');
+});
+
+test('--text-file with an interior line break exits 2 and writes nothing', () => {
+  for (const content of ['a.md\nb.md\n', 'a.md\r\nb.md']) {
+    const { main, root, run: runDir } = fixture();
+    const file = path.join(root, 'entry.txt');
+    fs.writeFileSync(file, content);
+    const out = [];
+    const code = run(['--run', runDir, '--status', 'AUTO', '--text-file', file], deps(main, out));
+    assert.equal(code, 2, JSON.stringify(content));
+    assert.match(streamOf(out, 'err'), /one line/);
+    assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false, 'decisions.md never created');
+  }
+});
+
+test('--text-file missing or empty exits 2 and writes nothing', () => {
+  const { main, root, run: runDir } = fixture();
+  const missing = path.join(root, 'no-such-file.txt');
+  const outMissing = [];
+  assert.equal(run(['--run', runDir, '--status', 'AUTO', '--text-file', missing], deps(main, outMissing)), 2);
+  assert.ok(streamOf(outMissing, 'err').includes(missing), 'the error names the missing file');
+  const blank = path.join(root, 'blank.txt');
+  fs.writeFileSync(blank, '  \n');
+  assert.equal(run(['--run', runDir, '--status', 'AUTO', '--text-file', blank], deps(main, [])), 2);
+  assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false, 'decisions.md never created');
 });
 
 const reversibilityRun = (value) => {
