@@ -51,6 +51,16 @@ function makeRunDir() {
   return fs.mkdtempSync(path.join(repoDir, 'finish-console-rundir-'));
 }
 
+// Contents of each artifact a finish-console call can write, null when absent.
+function snapshotArtifacts(runDir) {
+  const read = (p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null);
+  return {
+    expectations: read(path.join(runDir, 'verify-expectations.json')),
+    decisions: read(path.join(runDir, 'decisions.md')),
+    ledger: read(path.join(runDir, 'ledger.md')),
+  };
+}
+
 const LEDGER_SAMPLE = [
   '# Open Items — Sample',
   '',
@@ -138,14 +148,15 @@ test('finish-console applies multiple ledger updates in one call', () => {
   assert.match(ledgerText, /\| 2 \| test \| Flaky selector \| accepted \| Flake confirmed environmental \|/);
 });
 
-test('finish-console with a ledger update but no ledger file anywhere exits 1 naming the failure, verify-expectations.json still written (step 1 already completed)', () => {
+test('finish-console with a ledger update but no ledger file anywhere exits 1 naming the failure and writes nothing', () => {
   const runDir = makeRunDir();
-  const payload = JSON.stringify({ ledger: [{ item: 1, status: 'fixed', resolution: 'x' }] });
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ memory: [{ file: 'memory/foo.md', indexFile: 'MEMORY.md' }], ledger: [{ item: 1, status: 'fixed', resolution: 'x' }] });
   const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
   assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /step 3 \(ledger flips\) failed/);
-  assert.match(r.stderr, /steps 1-2 already completed/);
-  assert.ok(fs.existsSync(path.join(runDir, 'verify-expectations.json')), 'step 1 should have already landed');
+  assert.match(r.stderr, /ledger pre-flight failed: no ledger found/);
+  assert.match(r.stderr, /nothing written/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'verify-expectations.json, decisions.md and the ledger must be byte-identical (absent stays absent)');
 });
 
 test('finish-console --ledger overrides resolution to an explicit path', () => {
@@ -159,15 +170,28 @@ test('finish-console --ledger overrides resolution to an explicit path', () => {
   assert.match(ledgerText, /\| 1 \| review \| Needs a memory capture \| fixed \| Fixed directly \|/);
 });
 
-test('finish-console rejects an unknown ledger item number, nothing in the ledger file changes', () => {
+test('finish-console rejects an unknown ledger item number, and writes none of its artifacts', () => {
   const runDir = makeRunDir();
   fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE);
-  const payload = JSON.stringify({ ledger: [{ item: 99, status: 'fixed', resolution: 'x' }] });
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ memory: [{ file: 'memory/foo.md', indexFile: 'MEMORY.md' }], ledger: [{ item: 99, status: 'fixed', resolution: 'x' }] });
   const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
   assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /no ledger row for item #99/);
-  const ledgerText = fs.readFileSync(path.join(runDir, 'ledger.md'), 'utf8');
-  assert.strictEqual(ledgerText, LEDGER_SAMPLE, 'ledger file must be byte-identical — nothing partially written');
+  assert.match(r.stderr, /ledger pre-flight failed at ledger\[0\]: no ledger row for item #99/);
+  assert.match(r.stderr, /nothing written/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'verify-expectations.json, decisions.md and the ledger must be byte-identical — nothing partially written');
+});
+
+test('finish-console refuses a ledger row with an unescaped raw pipe before writing any artifact', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE.replace('Needs a memory capture', 'match a|b'));
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ memory: [{ file: 'memory/foo.md', indexFile: 'MEMORY.md' }], ledger: [{ item: 1, status: 'accepted', resolution: 'ratified' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /ledger pre-flight failed at ledger\[0\]: .*5-column shape/);
+  assert.match(r.stderr, /nothing written/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'verify-expectations.json, decisions.md and the ledger must be byte-identical');
 });
 
 test('finish-console rejects an invalid ledger status (e.g. "open") at payload validation, before any write', () => {
