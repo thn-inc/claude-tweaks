@@ -1442,15 +1442,18 @@ test('#3225 ordering fixture: out-of-order first call (#3064/#3066 shape — com
 const askInput = (questions, cwd) => ({ tool_name: 'AskUserQuestion', tool_input: { questions }, session_id: 'sess-1', cwd });
 const ownedRunAt = (dir, attribution = 'session') => ({ dir, attribution });
 const CONSOLE_Q = [{ header: 'Review Console', question: 'How do you want to handle the Review Console items?', options: [] }];
+// The run dir lives inside a REAL temp git repo and ctx.cwd is that repo: the
+// gate resolves git's toplevel and fails open when it cannot (a non-git cwd).
 function consoleRun(autonomy, name = '2026-07-01T090000-spec-1') {
-  const project = tmpProject();
-  const dir = path.join(project, '.claude-tweaks', 'pipelines', name);
+  const repo = gitRepo();
+  const dir = path.join(repo, '.claude-tweaks', 'pipelines', name);
   fs.mkdirSync(dir, { recursive: true });
   if (autonomy) fs.writeFileSync(path.join(dir, 'config.yml'), `autonomy: ${autonomy}\n`);
   return dir;
 }
+const repoOfRun = (dir) => path.resolve(dir, '..', '..', '..');
 const consoleCtx = (dir, questions, ownedRun = ownedRunAt(dir)) => ({
-  input: askInput(questions, dir), runDir: dir, runState: { status: 'active' }, ownedRun, cwd: dir,
+  input: askInput(questions, repoOfRun(dir)), runDir: dir, runState: { status: 'active' }, ownedRun, cwd: repoOfRun(dir),
 });
 
 test('AC1.1: unattended owned run denies a Review Console question', () => {
@@ -1503,10 +1506,61 @@ test('AC4.1: ceiling read failure allows', () => {
   assert.deepStrictEqual(out, {});
 });
 
-test('#3712: ceiling comes from the injected reader, not ctx.runState', () => {
-  const dir = consoleRun(null);
+test('#3712: ceiling comes from the injected reader, not the run config', () => {
+  const dir = consoleRun('supervised'); // the real reader would allow here
   const out = pre.run(consoleCtx(dir, CONSOLE_Q), { readConsoleCeiling: () => 'unattended' });
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+test('#3712: a non-git cwd fails open even with autonomy: unattended in the run config', () => {
+  const dir = consoleRun('unattended');
+  const notGit = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-nogit-')));
+  const ctx = consoleCtx(dir, CONSOLE_Q);
+  ctx.cwd = notGit;
+  ctx.input = askInput(CONSOLE_Q, notGit);
+  assert.deepStrictEqual(pre.run(ctx), {});
+});
+
+test('#3712: readConsoleCeiling matches console-resolve.js readPolicy() ceiling', () => {
+  const { readPolicy } = require('../plugin/bin/console-resolve');
+  const execFile = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: 'utf8', ...opts });
+  for (const autonomy of ['unattended', 'trusted', 'supervised', null]) {
+    const dir = consoleRun(autonomy);
+    const repo = repoOfRun(dir);
+    assert.strictEqual(
+      pre.readConsoleCeiling(dir, repo),
+      readPolicy({ execFile, cwd: repo, runDir: dir }).ceiling,
+      `autonomy=${autonomy}`,
+    );
+  }
+});
+
+test('#3712: a deny logs one gate-denial event for gate review-console-ask', () => {
+  const dir = consoleRun('unattended');
+  pre.run(consoleCtx(dir, CONSOLE_Q));
+  const lines = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const hits = lines.filter((e) => e.type === 'gate-denial' && e.gate === 'review-console-ask');
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].tool, 'AskUserQuestion');
+  assert.strictEqual(hits[0].ceiling, 'unattended');
+  assert.ok(!lines.some((e) => e.type === 'console-ask-deny'), 'no event under the unread type');
+});
+
+test('#3712: the deny reason names the console file by run shape', () => {
+  const single = consoleRun('unattended');
+  const rs = pre.run(consoleCtx(single, CONSOLE_Q)).json.hookSpecificOutput.permissionDecisionReason;
+  assert.match(rs, /wrap-up\/review-console\.md/);
+  assert.doesNotMatch(rs, /multispec-review-console/);
+  assert.match(rs, /--dry-run/);
+  assert.match(rs, /merge half/);
+  assert.match(rs, /non-zero/);
+  const multi = consoleRun('unattended');
+  fs.writeFileSync(path.join(multi, 'manifest.yml'), 'specs: []\n');
+  const rm = pre.run(consoleCtx(multi, CONSOLE_Q)).json.hookSpecificOutput.permissionDecisionReason;
+  assert.match(rm, /flow\/multispec-review-console\.md/);
+  assert.match(rm, /console-resolve\.js/);
+  assert.match(rm, /spec-\{N\}/);
+  assert.match(rm, /then once over the parent/);
 });
 
 test('#3712: malformed AskUserQuestion input allows', () => {

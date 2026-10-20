@@ -1904,7 +1904,7 @@ The session's own end-of-run finding blamed `merge-authorization: ask` and filed
 shipped the `pre-authorize-merge` `/flow` token (PR #3709, v6.148.0). The token stays: it is useful
 for `auto:build`-only records. It does not touch this failure. `_shared/autonomy-ceiling.md`'s
 zero-click claim was correct as written; the defect was enforcement. The prose said "zero
-`AskUserQuestion` calls" and the model, which read it in one run, asked anyway.
+`AskUserQuestion` calls" and the model, which read the equivalent prose in run 1, asked anyway.
 `plugin/hooks/hooks.json` registered `PreToolUse` only for `Bash`, `Edit`, `Write`, `NotebookEdit`
 and `ExitWorktree`, and `AskUserQuestion` had only a logging `PostToolUse` registration, so nothing
 mechanical stood between the model and the prompt.

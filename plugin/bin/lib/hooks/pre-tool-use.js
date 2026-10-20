@@ -753,20 +753,22 @@ function checkPipelineShadowGuard(ctx) {
 // Fails open (returns {}) on: no provably owned run (none, 'fallback'
 // attribution, or an ad-hoc run dir), a missing/malformed tool_input.questions,
 // no question headed exactly REVIEW_CONSOLE_HEADER, a ceiling-read throw, and a
-// ceiling that does not grant consoleAutoResolve. REVIEW_CONSOLE_HEADER is
+// ceiling that does not grant consoleAutoResolve. Also open by design: a session
+// whose cwd is the main checkout while the run's worktree is still live, or after
+// the worktree was removed, resolves `ownedRun` to its ad-hoc twin (resolveRun's
+// #2783 behavior) and so allows. REVIEW_CONSOLE_HEADER is
 // pinned against the console prose by tests/review-console-header-conformance.test.js.
 const REVIEW_CONSOLE_HEADER = 'Review Console';
 
-// Same fold console-resolve.js's readPolicy() applies: config.yml over
-// policy.yml via resolvePolicyConfig, then resolveCeiling. resolvePolicyConfig's
-// own catch falls back to process.cwd() when git throws — accepted, it is the
-// behavior console-resolve.js has.
+// Same fold console-resolve.js's readPolicy() applies (parity pinned by a test):
+// config.yml over policy.yml via resolvePolicyConfig, then resolveCeiling. Unlike
+// that CLI, a git failure throws here instead of letting resolvePolicyConfig guess
+// process.cwd() — the gate then fails open rather than reading some other
+// checkout's policy.yml.
 function readConsoleCeiling(runDir, cwd) {
-  const git = (args) => {
-    const r = runGit(args, cwd);
-    if (r.failure) throw new Error(r.failure);
-    return r.stdout;
-  };
+  const top = runGit(['rev-parse', '--show-toplevel'], cwd);
+  if (top.failure) throw new Error(top.failure);
+  const git = () => top.stdout;
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
   const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy'] });
   const entry = result.autonomy;
@@ -788,11 +790,23 @@ function checkReviewConsoleAskGate(ctx, deps = {}) {
     return {};
   }
   if (!bookkeepingPermissions(ceiling).consoleAutoResolve) return {};
-  ctxLib.appendEvent(ownedRun.dir, 'console-ask-deny', { ceiling });
+  const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+  ctxLib.appendEvent(ownedRun.dir, 'gate-denial', { tool: 'AskUserQuestion', gate: 'review-console-ask', ceiling, ...testTag }, ownedRun.attribution);
+  // A manifest.yml marks a multi-spec parent run: its console is flow's, resolved
+  // one console-resolve.js call per spec-{N}/ then the parent, not one call.
+  const multiSpec = fs.existsSync(path.join(ownedRun.dir, 'manifest.yml'));
+  const consoleFile = multiSpec ? 'flow/multispec-review-console.md' : 'wrap-up/review-console.md';
+  const cli = `node "${pluginRoot()}/bin/console-resolve.js"`;
+  const how = multiSpec
+    ? `run ${cli} --run "<dir>" --policy console-auto once per spec-{N}/ directory named in manifest.yml ` +
+      `(<dir> = "${ownedRun.dir}/spec-{N}"), then once over the parent ("${ownedRun.dir}"), appending --dry-run to every call when this run is --dry-run`
+    : `run ${cli} --run "${ownedRun.dir}" --policy console-auto (append --dry-run when this wrap-up runs --dry-run)`;
   return denyResult(
     `claude-tweaks: this run's autonomy ceiling is ${ceiling}, which grants consoleAutoResolve — the Review Console ` +
-    `resolves with zero AskUserQuestion calls (wrap-up/review-console.md's Auto-resolution short-circuit). ` +
-    `Resolve it instead: node "${pluginRoot()}/bin/console-resolve.js" --run "${ownedRun.dir}" --policy console-auto`,
+    `resolves with zero AskUserQuestion calls. Instead of asking, follow ${consoleFile}'s ` +
+    `"Auto-resolution short-circuit (\`consoleAutoResolve\`)" section in full: ${how}, then execute every returned ` +
+    `resolution and the merge half as that section directs; on a non-zero exit follow that section's non-zero-exit ` +
+    `rules (exit 5 means a console already rendered and awaiting a human) — never ask a Review Console question.`,
   );
 }
 
