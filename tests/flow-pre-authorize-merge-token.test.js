@@ -28,6 +28,15 @@ test('AC1.1: autonomy-ceiling.md records the #2734 decision that no ceiling sets
   assert.match(section, /#2734/);
   assert.match(section, /#1802/, 'the rationale must name the ungranted-member carve-out it protects');
   assert.ok(section.includes('`' + TOKEN + '`'), 'the section must name the per-run route that replaces the extension');
+  assert.match(section, /policySourceExcluded/, 'the why-bullet on the standing policy value must stay');
+  assert.match(section, /consoleAutoResolve/, 'the why-bullet on what unattended already merges must stay');
+  assert.match(section, /The real gap was per-run/, 'the why-bullet on the per-run gap must stay');
+});
+
+test('the retired "auto:* invariant" citation stays gone from the lever-13 sources', () => {
+  for (const rel of ['plugin/bin/lib/policy-schema.js', 'plugin/skills/_shared/autonomy-ceiling.md', 'plugin/skills/_shared/auto-mode-contract.md']) {
+    assert.doesNotMatch(read(rel), /auto:\* invariant/, rel + ' cites an invariant that no file defines');
+  }
 });
 
 test('flow SKILL.md documents the token, its dispatch-bound refusal, and that no skill composes it', () => {

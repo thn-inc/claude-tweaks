@@ -24,4 +24,4 @@ This Override semantics table is loaded only when the Manifesto runs as an appro
 | Merge verification | `off` | Merge sites merge without consulting CI (the derived value for local-merge, no-PR-CI, or non-default-integration-branch repos) |
 | Design critique | `full` | Every web-track UI diff gets the full critic roster at review time regardless of `DESIGN.md` presence |
 | Design critique | `off` | No project-local critics run at review time; Impeccable's own `critique`/`audit` and the finish reviewer are unaffected |
-| Merge authorization | `pre-authorized` | Pre-authorizes this run's own terminal merge — see `wrap-up/review-console.md`'s Auto-merge short-circuit. A live, explicit override answer; never a standing default. |
+| Merge authorization | `pre-authorized` | Pre-authorizes this run's own terminal merge — see `wrap-up/review-console.md`'s Auto-merge short-circuit. A live, explicit answer — this override or the `pre-authorize-merge` invocation token; never a standing default. |
