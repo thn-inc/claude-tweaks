@@ -100,14 +100,14 @@ test('go-red: stripping each fact reports exactly that fact', () => {
   }
 });
 
-test('AC1.1/AC3.1 twin: the reader selector picks both writer shapes and nothing else', () => {
-  const [, prefix, marker] = section.match(PREFIX_MARKER_RE);
-  const [, heading] = section.match(HEADING_RE);
+// The decisions.md fixture: both writer shapes under ## /build, a negative
+// /build SKIP line, a /review line quoting the marker, and a writer line under
+// ## /test (the section-scoping probe).
+function twinFixture() {
   const [, writer] = folded.match(WRITER_RE);
   const buildLine = `- ${writer.replace('{time}', '01:02:03')}`;
   const degradedLine = buildLine.replace('(skipped)', '(degraded)');
   assert.notEqual(degradedLine, buildLine, 'writer template carries (skipped)');
-
   const fixture = [
     '## /build',
     buildLine,
@@ -120,19 +120,35 @@ test('AC1.1/AC3.1 twin: the reader selector picks both writer shapes and nothing
     '## /test',
     `- ${writer.replace('{time}', '01:02:04')}`,
   ].join('\n');
+  return { fixture, writers: [buildLine, degradedLine] };
+}
 
-  assert.deepStrictEqual(selectRows(fixture, prefix, marker, heading), [buildLine, degradedLine]);
-});
-
-test('twin go-red: a reworded marker in the template stops matching the writer', () => {
+test('AC1.1/AC3.1 twin: the reader selector picks both writer shapes and nothing else', () => {
   const [, prefix, marker] = section.match(PREFIX_MARKER_RE);
   const [, heading] = section.match(HEADING_RE);
-  const [, writer] = folded.match(WRITER_RE);
-  const fixture = `## /build\n- ${writer.replace('{time}', '01:02:03')}`;
-  assert.deepStrictEqual(selectRows(fixture, prefix, marker, heading).length, 1, 'baseline selects the writer');
+  const { fixture, writers } = twinFixture();
+  assert.deepStrictEqual(selectRows(fixture, prefix, marker, heading), writers);
+});
 
-  const mutated = section.replace(marker, 'surfaced for review');
-  assert.notEqual(mutated, section);
-  const [, mutatedPrefix, mutatedMarker] = mutated.match(PREFIX_MARKER_RE);
-  assert.deepStrictEqual(selectRows(fixture, mutatedPrefix, mutatedMarker, heading), []);
+test('twin go-red: a reworded marker, prefix, or heading in the template stops the selector matching the writers', () => {
+  const { fixture, writers } = twinFixture();
+  const [, prefix, marker] = section.match(PREFIX_MARKER_RE);
+  const [, heading] = section.match(HEADING_RE);
+  assert.deepStrictEqual(selectRows(fixture, prefix, marker, heading), writers, 'baseline selects both writers');
+
+  const mutations = {
+    marker: section.replace(marker, 'surfaced for review'),
+    prefix: section.replace('`- SKIP` and carries', '`- AUTO` and carries'),
+    heading: section.replace('`## /build` heading', '`## /builder` heading'),
+  };
+  for (const [name, mutated] of Object.entries(mutations)) {
+    assert.notEqual(mutated, section, `${name}: mutation applied to the section string`);
+    const [, mutatedPrefix, mutatedMarker] = mutated.match(PREFIX_MARKER_RE);
+    const [, mutatedHeading] = mutated.match(HEADING_RE);
+    assert.notDeepStrictEqual(
+      selectRows(fixture, mutatedPrefix, mutatedMarker, mutatedHeading),
+      writers,
+      `${name}: selector still matches the writers`,
+    );
+  }
 });
