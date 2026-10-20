@@ -812,9 +812,9 @@ function checkReviewConsoleAskGate(ctx, deps = {}) {
     `resolves with zero AskUserQuestion calls. Instead of asking, follow ${consoleFile}'s ` +
     `"Auto-resolution short-circuit (\`consoleAutoResolve\`)" section in full: ${how}, then execute every returned ` +
     `resolution and the merge half as that section directs; on a non-zero exit follow that section's non-zero-exit ` +
-    `rules, except never by asking: exit 5 means a console is already rendered on the PR awaiting a human, so follow ` +
-    `_shared/console-on-pr.md's Headless conclusion (report pending-review with the PR URL, no question) — never ask a ` +
-    `Review Console question.`,
+    `rules, except never by asking: on exit 5, a console already rendered on the PR awaiting a human follows ` +
+    `_shared/console-on-pr.md's Headless conclusion (report pending-review with the PR URL, no question), and an ` +
+    `unparseable console.json stops and reports the CLI's stderr — never ask a Review Console question.`,
   );
 }
 
