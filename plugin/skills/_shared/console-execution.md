@@ -78,10 +78,10 @@ when it happens anyway, surface it rather than executing: there is nowhere to ap
 
 **Reply comment first, then the resolved marker edit** on the console comment itself — never the
 reverse. Post one reply comment (`<!-- console-item: executed -->`) summarizing per-item outcomes
-(executed / declined / unexecutable / unexecutable-stale), then edit the console comment's first
-line to add `<!-- claude-tweaks-console-resolved -->`, then write `console.json.executedAt` and
-`console.json.resolved: true` together, in one write. The comment marker is the source of truth;
-the `console.json` completion fields are the local cache. A split-brain
+(executed / declined / reversed / reverse-failed / unexecutable / unexecutable-stale), then edit the
+console comment's first line to add `<!-- claude-tweaks-console-resolved -->`, then write
+`console.json.executedAt` and `console.json.resolved: true` together, in one write. The comment
+marker is the source of truth; the `console.json` completion fields are the local cache. A split-brain
 (reply posted, marker edit failed partway) is repaired by the next detection pass: it keys
 "already executed" off the reply comment's presence on the PR, not off `console.json` alone, so a
 missing marker with a present reply comment is read as "executed, retry only the marker edit,"
@@ -121,7 +121,10 @@ just posted to the PR. Two surfaces, one answer: whichever resolves first wins.
   a reversed ruling counts as cleared, so it never holds Resolve unticked (a console rendered before
   the flag existed carries none, so its ruling still reads `declined`). The `decisions.md` `AUTO`
   line naming `reversed → #{new record}` (or the logged refusal cause) stays the record of which
-  reversal record was filed.
+  reversal record was filed. When the reverse was refused or never created, also pass that
+  ruling's id in `--reverse-failed`: the reply then labels it
+  `reverse not filed — see decisions.md` and Resolve stays unticked. Never let such a ruling
+  default to `reversed`.
 - **PR ticks resolve first** (a human ticked boxes on the PR while the chat prompt was still open,
   or a reconciler pass executed it in the interim): before acting on the chat answer, re-check the
   console comment for the resolved marker. If present, do not execute again and do not re-render

@@ -129,7 +129,7 @@ test('review #3401: the carry-forward names the stage-item.js failure branch, th
   assert.match(DISPATCH, /takes the staged extension from the source; the file opens with a header block `Title:`/);
 });
 
-const { DECLINED_NOTE, REVERSED_LABEL } = require('../plugin/bin/lib/reconcile/console-execute');
+const { DECLINED_NOTE, REVERSED_LABEL, REVERSE_FAILED_NOTE } = require('../plugin/bin/lib/reconcile/console-execute');
 const CONSOLE_ON_PR = read('plugin', 'skills', '_shared', 'console-on-pr.md');
 const CONSOLE_EXECUTION = read('plugin', 'skills', '_shared', 'console-execution.md');
 
@@ -158,8 +158,14 @@ test('AC3.1 #3636: console-execution.md\'s accelerator note labels a reversed ru
   assert.match(CONSOLE_EXECUTION, ws(`records a flagged ruling item (\`console.json\`'s \`isRulingRow: true\`, \`_shared/console-on-pr.md\`) as \`${REVERSED_LABEL}\``));
   assert.match(CONSOLE_EXECUTION, ws(`every other \`--decline\` id as \`${DECLINED_NOTE}\``));
   assert.doesNotMatch(CONSOLE_EXECUTION, /since `console.json` items carry no staged path/);
+  // Regression guard only: the positive pins above plus the doesNotMatch are what discriminate.
   const offending = CONSOLE_EXECUTION.split('\n').filter((l) => /no reason given/.test(l) && /ruling/i.test(l));
   assert.deepEqual(offending, [], 'the physical line naming the declined label must not describe a ruling');
+});
+
+test('#3636: console-execution.md\'s accelerator routes a refused or uncreated reverse through --reverse-failed, never to reversed', () => {
+  assert.match(CONSOLE_EXECUTION, ws(`When the reverse was refused or never created, also pass that ruling's id in \`--reverse-failed\`: the reply then labels it \`${REVERSE_FAILED_NOTE}\` and Resolve stays unticked. Never let such a ruling default to \`${REVERSED_LABEL}\``));
+  assert.match(CONSOLE_EXECUTION, ws('(executed / declined / reversed / reverse-failed / unexecutable / unexecutable-stale)'));
 });
 
 test('#3636: console-on-pr.md documents the isRulingRow flag on sdd-ruling-* items', () => {

@@ -73,9 +73,9 @@ this field entirely; it is never `false`.
 carries its two dispositions in its label, appended after the source reference:
 `— tick = ratify · untick = reverse`. Unticked at Resolve time it means reverse, never a bare
 decline (Legend below). It carries `"isRulingRow": true` on its `console.json` item object (#3636) —
-like `isMergeRow` above, omitted on every other item, never `false` — the flag `resolve-console` and
-the reconciler's detection read to record an unticked or `--decline`d ruling as `reversed`, not
-`declined`.
+like `isMergeRow` above, omitted on every other item, never `false` — the flag `resolve-console`
+reads to record an unticked or `--decline`d ruling as `reversed`, not `declined`, and the
+reconciler's detection forwards it to the executing session.
 
 ## Legend (verbatim — AC4)
 
