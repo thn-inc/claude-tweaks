@@ -92,7 +92,12 @@
 //    reacting to "a background dispatch just launched or reported in", not to
 //    genuine content it could reply to — logged as a violation, this misfires
 //    the same way #2036 does, just one dispatch level deeper. See
-//    isAsyncWaitSignal below.
+//    isAsyncWaitSignal below. (#3589) It recognizes the completion carriers
+//    completionCarrierBody names — shared with countPendingDispatches (source 6):
+//    an origin-shaped task-notification and a `queued_command` attachment whose
+//    prompt is a <task-notification> (Claude Code 2.1.283+). An api-request-blob
+//    request echo is deliberately NOT a signal: it repeats notifications already
+//    delivered through their own carrier, not a checkpoint the reply reacts to.
 // 5. (fixed, #2714) #2041 only catches an interim reply whose IMMEDIATELY
 //    PRECEDING transcript entry is itself an async signal. A nested
 //    dispatcher's interim reply composed after intervening tool calls
@@ -285,16 +290,18 @@ function isExemptAgentType(agentType) {
 // reply to — either an Agent-tool dispatch's own launch acknowledgment
 // (`toolUseResult.isAsync: true`, present on the tool_result line the SDK
 // writes back immediately, well before the dispatched agent itself finishes)
-// or an out-of-band task-notification (`origin.kind: 'task-notification'`,
-// the same wrapper the harness uses for every queued async notification, a
-// sibling dispatch's completion included)? Both shapes were confirmed against
-// this session's own live transcript (transcript-payload-verification),
-// never inferred from a fixture. Defensive on shape — an unexpected/missing
+// or an out-of-band completion notification — an origin-shaped
+// task-notification (`origin.kind: 'task-notification'`) or, Claude Code
+// 2.1.283+, a `queued_command` attachment whose prompt is a <task-notification>
+// (#3589; see completionCarrierBody), a sibling dispatch's completion included?
+// A request echo is deliberately NOT a signal (header comment, source 4). The
+// shapes were confirmed against this session's own live transcript
+// (transcript-payload-verification), never inferred from a fixture. Defensive on shape — an unexpected/missing
 // field reads as "not a signal", never throws.
 function isAsyncWaitSignal(entry) {
   if (!entry || typeof entry !== 'object') return false;
   if (entry.toolUseResult && entry.toolUseResult.isAsync === true) return true;
-  if (entry.origin && entry.origin.kind === 'task-notification') return true;
+  if (completionCarrierBody(entry) !== undefined) return true;
   return false;
 }
 
@@ -312,13 +319,23 @@ function isForkBoundary(entry) {
   return Array.isArray(content) && content.some((c) => c && c.type === 'text' && typeof c.text === 'string' && c.text.startsWith('<fork-boilerplate>'));
 }
 
-// #3015: the text a recognized completion carrier holds its <task-notification>
-// in — `undefined` when `entry` is no carrier, a non-string when the carrier's
-// body has drifted from the live-verified shape (header comment, source 6).
-function notificationCarrierBody(entry, line) {
+// #3589: the text a completion carrier holds its <task-notification> in —
+// `undefined` when `entry` is no completion carrier, a non-string when an
+// origin-shaped carrier's body has drifted from the live-verified shape (header
+// comment, source 6). Shared by isAsyncWaitSignal and notificationCarrierBody.
+function completionCarrierBody(entry) {
   if (entry.origin && entry.origin.kind === 'task-notification') return (entry.message && entry.message.content) ?? null;
   // Only a queued prompt that IS a notification; any other (a relayed message) is ignored like every tag-less line.
   if (entry.attachment && entry.attachment.type === 'queued_command' && typeof entry.attachment.prompt === 'string' && entry.attachment.prompt.includes('<task-notification>')) return entry.attachment.prompt;
+  return undefined;
+}
+
+// #3015: the text a recognized completion carrier holds its <task-notification>
+// in, including the api-request-blob echo (a carrier for counting only, never an
+// isAsyncWaitSignal) — `undefined` when `entry` is no carrier.
+function notificationCarrierBody(entry, line) {
+  const body = completionCarrierBody(entry);
+  if (body !== undefined) return body; // not `??`: an origin entry with a null body must not fall through to the blob branch
   if (entry.type === 'api-request-blob' && line.includes('<task-notification>')) return line;
   return undefined;
 }

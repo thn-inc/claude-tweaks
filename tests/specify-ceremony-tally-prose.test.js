@@ -9,11 +9,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
-const RECORD_CREATION = fs.readFileSync(
+const RECORD_CREATION = readText(
   path.join(REPO_ROOT, 'plugin/skills/specify/record-creation-subissues.md'),
-  'utf8'
 );
 
 test('manifest-accumulation entry object carries a ceremony field', () => {
@@ -101,7 +101,14 @@ function makeProject({ policy, workBackend = 'github-issues' } = {}) {
   fs.writeFileSync(path.join(cwd, 'CLAUDE.md'), `# Fixture\n\n## Work records\n\nwork-backend: ${workBackend}\n`);
   const bodyFile = path.join(root, 'body.md');
   fs.writeFileSync(bodyFile, '## Current State\n\nfixture body\n');
-  const env = { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_CODE_SESSION_ID: SESSION_ID, TMPDIR: tmp };
+  // Forward slashes: the fences interpolate this into a JS string literal
+  // inside `node -e "..."`, where a win32 backslash path would be read as escapes.
+  const env = {
+    ...process.env,
+    CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT.split(path.sep).join('/'),
+    CLAUDE_CODE_SESSION_ID: SESSION_ID,
+    TMPDIR: tmp,
+  };
   const run = (script, extra = {}) => {
     const r = spawnSync('bash', ['-c', script], { cwd, env: { ...env, ...extra }, encoding: 'utf8' });
     assert.strictEqual(r.status, 0, `fence exited ${r.status}: ${r.stderr}`);

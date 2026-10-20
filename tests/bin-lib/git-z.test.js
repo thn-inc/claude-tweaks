@@ -7,7 +7,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const { splitNul, parseNameStatusZ, splitLogZ } = require('../../plugin/bin/lib/git-z.js');
+const {
+  splitNul, parseNameStatusZ, splitLogZ,
+  parseNumstatZ, parseStatusPorcelainZ, parseLsTreeZ, unquoteCPath,
+} = require('../../plugin/bin/lib/git-z.js');
 
 const isHeader = (t) => t.startsWith('\x01');
 
@@ -96,4 +99,61 @@ test('AC1.1: real git -z output reports docs/café.md unquoted', () => {
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+test('parseNumstatZ: plain, binary and rename records from real -z output', () => {
+  assert.deepEqual(parseNumstatZ('1\t2\tdocs/café.md\u00000\t0\t\u0000docs/old.md\u0000docs/néw.md\u0000'), [
+    { path: 'docs/café.md', additions: 1, deletions: 2 },
+    { path: 'docs/néw.md', oldPath: 'docs/old.md', additions: 0, deletions: 0 },
+  ]);
+  assert.deepEqual(parseNumstatZ('-\t-\tassets/logo.png\u0000'), [{ path: 'assets/logo.png', additions: 0, deletions: 0 }]);
+  assert.deepEqual(parseNumstatZ('1\t1\tdir/a\tb.md\u0000'), [{ path: 'dir/a\tb.md', additions: 1, deletions: 1 }]);
+  assert.deepEqual(parseNumstatZ(''), []);
+  assert.deepEqual(parseNumstatZ(null), []);
+});
+
+test('parseStatusPorcelainZ: raw paths, and the new-path-first rename order', () => {
+  assert.deepEqual(parseStatusPorcelainZ(' M docs/café.md\u0000?? docs/ünt.yml\u0000'), [
+    { xy: ' M', path: 'docs/café.md' },
+    { xy: '??', path: 'docs/ünt.yml' },
+  ]);
+  assert.deepEqual(parseStatusPorcelainZ('R  docs/néw.md\u0000docs/old.md\u0000 M a.md\u0000'), [
+    { xy: 'R ', path: 'docs/néw.md', origPath: 'docs/old.md' },
+    { xy: ' M', path: 'a.md' },
+  ]);
+  assert.deepEqual(parseStatusPorcelainZ(''), []);
+});
+
+test('parseLsTreeZ: full-format records with raw names', () => {
+  const sha = '1892bdfca6755927bb5dea46d624c4dbf38e2da4';
+  assert.deepEqual(parseLsTreeZ(`100644 blob ${sha}\tdocs/café.md\u0000040000 tree ${sha}\tsub\u0000`), [
+    { mode: '100644', type: 'blob', sha, path: 'docs/café.md' },
+    { mode: '040000', type: 'tree', sha, path: 'sub' },
+  ]);
+  assert.deepEqual(parseLsTreeZ(''), []);
+});
+
+test('unquoteCPath: decodes octal UTF-8 bytes and escapes, leaves unquoted input alone', () => {
+  assert.equal(unquoteCPath('"docs/caf\\303\\251.md"'), 'docs/café.md');
+  assert.equal(unquoteCPath('"a\\tb\\"c\\\\d"'), 'a\tb"c\\d');
+  assert.equal(unquoteCPath('docs/plain.md'), 'docs/plain.md');
+});
+
+test('parseNumstatZ: a truncated rename tail yields nothing; a rename is followed by the next plain record', () => {
+  assert.deepEqual(parseNumstatZ('0\t0\t\u0000docs/old.md\u0000'), []);
+  assert.deepEqual(parseNumstatZ('0\t0\t\u0000docs/old.md\u0000docs/new.md\u00003\t4\tx.md\u0000'), [
+    { path: 'docs/new.md', oldPath: 'docs/old.md', additions: 0, deletions: 0 },
+    { path: 'x.md', additions: 3, deletions: 4 },
+  ]);
+});
+
+test('parseStatusPorcelainZ: copy and Y-column rename carry origPath; a token shorter than 4 characters is skipped', () => {
+  assert.deepEqual(parseStatusPorcelainZ('C  b.md\u0000a.md\u0000'), [{ xy: 'C ', path: 'b.md', origPath: 'a.md' }]);
+  assert.deepEqual(parseStatusPorcelainZ(' R b.md\u0000a.md\u0000'), [{ xy: ' R', path: 'b.md', origPath: 'a.md' }]);
+  assert.deepEqual(parseStatusPorcelainZ('M a\u0000 M ok.md\u0000'), [{ xy: ' M', path: 'ok.md' }]);
+});
+
+test('unquoteCPath: the remaining C escapes decode, and an unknown backslash escape is kept literally', () => {
+  assert.equal(unquoteCPath('"\\a\\b\\v\\f\\r"'), '\x07\b\v\f\r');
+  assert.equal(unquoteCPath('"a\\qb"'), 'a\\qb');
 });

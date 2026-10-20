@@ -12,6 +12,7 @@
 | `review-step-1.6` | `fast-lane` | Always under the profile | `review/code-mode-steps.md` Step 1.6, `review/cross-spec-promise-check.md` | Promise tables belong to multi-record parents; a fast-lane record's promise check re-runs at the parent's own gate |
 | `review-step-4` | `fast-lane` | Always under the profile | `review/code-mode-steps.md` Step 4 (Implementation Hindsight) | Hindsight is narrative fixed cost; Steps 2, 3, and 5 — the judgment of the diff itself — never skip |
 | `plan-audit` | `fast-lane` | Always under the profile (also: fewer than 3 file references and no `Scope keywords:`, any profile) | `build/SKILL.md` Common Step 1.5, `build/plan-audit.md` | A `ceremony-check` verdict of `fast-lane` is itself the judgment that the plan needs no scope-creep audit |
+| `plan-review` | `fast-lane` | Always under the profile (also, any profile: a trivial plan — Common Step 1.5's fewer than 3 file references and no `Scope keywords:`; design mode never runs the step) | `build/SKILL.md` Common Step 1.6, `build/plan-review.md` | A `ceremony-check` verdict of `fast-lane` is the judgment that the record is small enough for its task reviews to see whole; `/claude-tweaks:review`'s Step 3 lenses still judge the diff against the spec |
 | `architecture-alignment` | `fast-lane` | Always under the profile (also: design mode with no spec; a trivial plan) | `build/SKILL.md` Common Step 4.5, `build/architecture-alignment.md` | Alignment compares built-vs-spec prose; a fast-lane diff is small enough for the lens review to see the whole of it |
 | `reflect-light-mode` | `fast-lane` | Always under the profile | `wrap-up/SKILL.md` Reflect, `reflect/light-mode.md` | Surprises, Approach, and the tradeoff review are narrative; Near-misses, Fresh-start, and Friction still run and can still fire the escape hatch |
 | `red-team-persona` | `fast-lane` | Always under the profile (one persona instead of three) | `specify/red-team.md` | The Skeptical Reviewer persona alone covers the framing check; the other two add breadth a fast-lane record's scope does not need |
@@ -34,7 +35,7 @@
 | reflect Near-misses, Fresh-start, Friction | `reflect/light-mode.md` | The lenses that can still produce the Safety regression finding the escape hatch keys on |
 | Ceremony escape hatch | `wrap-up/SKILL.md` | The control for `[IL-145]`'s failure class |
 | `[IL-116]` cleanup floor | `wrap-up/cleanup-procedures.md` Section C, step 3.5 | Teardown ordering is a floor `cleanup-only` may never relax |
-| HARD-GATEs | `_shared/auto-mode-contract.md` | Test failures, spec compliance blocks, structural coupling, plan validation stop every mode |
+| HARD-GATEs | `_shared/auto-mode-contract.md` | Test failures, spec compliance blocks, structural coupling, plan validation, and a plan-review needs-human spec gap stop every mode |
 | `/claude-tweaks:test` Step 1.5 Design CLI gate | `test/design-gate.md` | The polish skip's safety argument leans on it |
 | `/claude-tweaks:review` Step 6.5 Design Quality Pass | `review/code-mode-steps.md` | The polish skip's safety argument leans on it |
 

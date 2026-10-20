@@ -8,6 +8,8 @@ const { execFileSync } = require('node:child_process');
 const {
   resolveDir,
   buildContext,
+  realLsof,
+  MAX_BUFFER,
   PER_FILE_CAP_BYTES,
   isAlwaysStub,
   elideDiff,
@@ -45,6 +47,7 @@ function repoDeps(repo) {
   return {
     git: (args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }),
     readFile: (p, enc) => fs.readFileSync(path.isAbsolute(p) ? p : path.join(repo, p), enc),
+    lsof: () => '',
   };
 }
 
@@ -138,6 +141,9 @@ test('CLI end-to-end: build from a fixture checkout writes the bundle and prints
   assert.deepStrictEqual(parsed.emptySections, ['doomed.txt']);
   // AC5.1: the printed line carries the new field.
   assert.ok(Array.isArray(parsed.oversizeSections));
+  // 3302: the baseline path is reported and the file is written into {ctx-dir}.
+  assert.strictEqual(parsed.baselinePath, path.join(dir, 'pre-dispatch-status.txt'));
+  assert.ok(fs.existsSync(parsed.baselinePath));
 });
 
 test('CLI end-to-end: build from a subdirectory of the checkout still reads real file content (#3017)', () => {
@@ -158,6 +164,100 @@ test('CLI end-to-end: build from a subdirectory of the checkout still reads real
   // Only the genuinely-deleted file is an empty section — not every file.
   assert.deepStrictEqual(parsed.emptySections, ['doomed.txt']);
   assert.strictEqual(parsed.files, 3);
+});
+
+test('3302: build writes the git status baseline into {ctx-dir} and reports baselinePath', () => {
+  const repo = makeFixtureRepo();
+  fs.writeFileSync(path.join(repo, 'scratch.txt'), 'x\n');
+  const dir = resolveDir({});
+  const result = buildContext({ base: 'main', branch: 'feature', dir, ...repoDeps(repo) });
+  assert.strictEqual(result.baselinePath, path.join(dir, 'pre-dispatch-status.txt'));
+  const status = fs.readFileSync(result.baselinePath, 'utf8');
+  assert.strictEqual(status, git(repo, ['status', '--porcelain', '--untracked-files=all']));
+  assert.match(status, /^\?\? scratch\.txt$/m);
+});
+
+test('3302: the status capture runs with cwd at the repo toplevel', () => {
+  const calls = [];
+  buildContext({
+    base: 'main',
+    branch: 'feature',
+    dir: resolveDir({}),
+    git: (args, opts) => {
+      calls.push({ args, opts });
+      if (args.includes('rev-parse')) return '/x\n';
+      return '';
+    },
+    readFile: () => '',
+    lsof: () => '',
+  });
+  const statusCall = calls.find((c) => c.args.includes('status'));
+  assert.deepStrictEqual(statusCall.args, ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all']);
+  assert.strictEqual(statusCall.opts.cwd, '/x');
+});
+
+test('3302: listener snapshot is written when lsof returns a listing, null when unavailable', () => {
+  const repo = makeFixtureRepo();
+  const listing = 'COMMAND PID\nnode 1 me TCP *:3000 (LISTEN)\n';
+
+  const listedDir = resolveDir({});
+  const listed = buildContext({ base: 'main', branch: 'feature', dir: listedDir, ...repoDeps(repo), lsof: () => listing });
+  assert.strictEqual(listed.listenersPath, path.join(listedDir, 'pre-dispatch-listeners.txt'));
+  assert.strictEqual(fs.readFileSync(listed.listenersPath, 'utf8'), listing);
+
+  const emptyDir = resolveDir({});
+  const empty = buildContext({ base: 'main', branch: 'feature', dir: emptyDir, ...repoDeps(repo), lsof: () => '' });
+  assert.ok(fs.existsSync(empty.listenersPath));
+  assert.strictEqual(fs.readFileSync(empty.listenersPath, 'utf8'), '');
+
+  const unavailableDir = resolveDir({});
+  const unavailable = buildContext({ base: 'main', branch: 'feature', dir: unavailableDir, ...repoDeps(repo), lsof: () => null });
+  assert.strictEqual(unavailable.listenersPath, null);
+  assert.ok(!fs.existsSync(path.join(unavailableDir, 'pre-dispatch-listeners.txt')));
+});
+
+test('3302: realLsof classifies lsof outcomes', () => {
+  const calls = [];
+  const listing = realLsof({
+    exec: (file, args, opts) => {
+      calls.push({ file, args, opts });
+      return 'L\n';
+    },
+  });
+  assert.strictEqual(listing, 'L\n');
+  assert.strictEqual(calls[0].file, 'lsof');
+  assert.deepStrictEqual(calls[0].args, ['+c', '0', '-nP', '-iTCP', '-sTCP:LISTEN']);
+  assert.deepStrictEqual(calls[0].opts, {
+    encoding: 'utf8',
+    maxBuffer: MAX_BUFFER,
+    timeout: 10000,
+    stdio: ['ignore', 'pipe', 'ignore'],
+    windowsHide: true,
+  });
+
+  const failing = (props) => () => {
+    throw Object.assign(new Error('lsof failed'), props);
+  };
+  assert.strictEqual(realLsof({ exec: failing({ code: 'ETIMEDOUT', status: null, signal: 'SIGTERM' }) }), null);
+  assert.strictEqual(realLsof({ exec: failing({ code: 'ENOENT' }) }), null);
+  assert.strictEqual(realLsof({ exec: failing({ status: 1, stdout: '' }) }), '');
+  assert.strictEqual(realLsof({ exec: failing({ status: 2, stdout: '' }) }), null);
+});
+
+test('3302 AC: build --run writes <run>/review-ctx/pre-dispatch-status.txt matching git status', () => {
+  const repo = makeFixtureRepo();
+  fs.writeFileSync(path.join(repo, 'scratch.txt'), 'x\n');
+  const run = fs.mkdtempSync(path.join(os.tmpdir(), 'review-ctx-run-cli-'));
+  const out = execFileSync('node', [CLI, 'build', '--base', 'main', '--branch', 'HEAD', '--run', run], {
+    cwd: repo,
+    encoding: 'utf8',
+  });
+  const parsed = JSON.parse(out);
+  assert.strictEqual(parsed.baselinePath, path.join(run, 'review-ctx', 'pre-dispatch-status.txt'));
+  assert.strictEqual(
+    fs.readFileSync(parsed.baselinePath, 'utf8'),
+    git(repo, ['status', '--porcelain', '--untracked-files=all']),
+  );
 });
 
 // --- Per-file cap (#3020) ---------------------------------------------------------------
@@ -388,6 +488,7 @@ test('F2: the git calls carry core.quotePath=false and explicit diff prefixes', 
       return args.includes('--name-only') ? 'a.txt\0dir/café b.txt\0' : '';
     },
     readFile: () => '',
+    lsof: () => '',
   });
   assert.strictEqual(result.files, 2, 'the git name list is split on NUL');
   const diffCall = calls.find((a) => a.includes('diff') && !a.includes('--name-only'));

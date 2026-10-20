@@ -15,6 +15,11 @@ const path = require('node:path');
 
 const { locateTranscripts, readDispatches } = require('../../../plugin/bin/lib/timing/transcript');
 
+// The developer's own CLAUDE_CONFIG_DIR would redirect every homeDir-only
+// lookup below away from its fixture (#3458) — same posture as cli.test.js's
+// fixtureHomeEnv.
+delete process.env.CLAUDE_CONFIG_DIR;
+
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'pg-callers-'));
 test.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
 let n = 0;

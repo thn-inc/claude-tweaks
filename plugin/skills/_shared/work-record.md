@@ -49,7 +49,7 @@ Stage vocabulary is exactly these three words — **backlog** (absence of stage 
 | **Scoring** | `risk:low\|medium\|high` × `size:low\|medium\|high` | Labels — at most one of each family |
 | **Stage** | backlog (no label) \| `parked` \| `ready` | Labels — backlog is the absence of stage labels |
 | **Authorization** | `auto:build`, `auto:merge`, `auto:merge-pending` | Labels — human-granted, except `auto:merge-pending` (machine-only waypoint, see Grant semantics) — absence of all three is the default not-authorized state |
-| **Bot state** | `bot:in-progress`, `bot:blocked`, `bot:parked` | Labels — machinery-owned visibility layer. `bot:blocked` = hit the retry ceiling (grants revoked); `bot:parked` = merge-verification gate parked it on a red/timed-out PR check (grants stay intact) — the two never overlap on one record |
+| **Bot state** | `bot:in-progress`, `bot:blocked`, `bot:parked` | Labels — machinery-owned visibility layer. `bot:blocked` = hit the retry ceiling, or a plan-review question awaits a human answer (`build/plan-review.md`) — grants revoked either way; `bot:parked` = merge-verification gate parked it on a red/timed-out PR check (grants stay intact) — the two never overlap on one record |
 | **Acceptance** | `demo:pending` \| `demo:approved` \| `demo:changes-requested` — or no label | Labels — `demo:pending` is written by every skill the permission matrix below grants it to (more than one, and the matrix is the list; do not restate a single writer here), resolved to `demo:approved`/`demo:changes-requested` by `/claude-tweaks:demo` alone; independent of Stage and of the issue's own open/closed state |
 | **Acceptance provenance** | `demo:approved-batch` — a modifier, always stacked alongside `demo:approved`, never on its own | Label — written only when `/claude-tweaks:demo` resolves the verdict via a `#N,#M` batch invocation rather than a dedicated single-record session (both run the same per-item walkthrough — this distinguishes invocation shape, not whether one happened); absent means single-record-backed (including every `demo:approved` label applied before this modifier existed). Sole consumer: `bin/lib/issues/trust.js`'s coverage/verdict computation, via `bin/lib/issues/acceptance.js`'s `approvalProvenance` |
 
@@ -200,7 +200,10 @@ action, ever.
   a `correctness`- or `ambiguous`-classified failure revokes `auto:merge` before retry; a
   `transient`-classified one preserves it. At the retry ceiling (`dispatch-retry-ceiling`),
   regardless of classification, machinery removes all `auto:*` labels and adds `bot:blocked` —
-  the record needs a human re-grant to run again.
+  the record needs a human re-grant to run again. `/build` Common Step 1.6's plan-review
+  needs-human stop does the same in a headless dispatch, on its first occurrence
+  (`build/plan-review.md`); resolution: answer its `<!-- plan-review-question -->` comment on the
+  record body, then re-grant `auto:build` at `/claude-tweaks:backlog refine`.
 - `auto:*` labels are only ever originated by an interactive human session, with **one
   machine-origination path**: `/claude-tweaks:backlog refine`'s headless posture
   (`backlog/refine-headless.md`, reached via `--source routine|sweep`, or the deprecated `grant`

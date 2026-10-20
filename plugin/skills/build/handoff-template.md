@@ -37,6 +37,10 @@ Render the markdown below, substituting placeholders. Generate field values from
 - {one-liner} — ledger #{item} (open; `Accept` = ratify, `Keep`/`Defer` = reverse at a standalone `/claude-tweaks:wrap-up`)
 (or omit this section: no `Ruling:` line survived SDD's Finish, or a run directory exists — the Review Console carries them as `staged/sdd-ruling-{N}.md` instead.)
 
+### Plan review amendments (standalone build, if any)
+- {clarification or plan change} — {class}; record comment {url}
+(or omit this section: Common Step 1.6 amended nothing, or a run directory exists — `decisions.md` carries them as `AUTO` entries instead.)
+
 ### Manual Steps Required
 | # | What | Where |
 |---|------|-------|

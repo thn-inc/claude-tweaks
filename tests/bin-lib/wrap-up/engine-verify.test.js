@@ -459,7 +459,7 @@ test('plans-ledger check fails when git status reports an untracked plan file, n
   const calls = [];
   const fakeGit = (args, cwd) => {
     calls.push({ args, cwd });
-    if (args[1] === 'status') return '?? docs/superpowers/plans/2099-01-01-some-topic.md\n';
+    if (args[1] === 'status') return '?? docs/superpowers/plans/2099-01-01-some-topic.md\0';
     return '';
   };
   try {
@@ -472,7 +472,7 @@ test('plans-ledger check fails when git status reports an untracked plan file, n
     // report each file individually, never collapse to one '?? {dir}/' line
     // the suffix/name filters could never match (record #900 whole-branch
     // re-review, finding #2).
-    assert.deepStrictEqual(statusCall.args, ['--no-optional-locks', 'status', '--porcelain=v1', '-uall', '--', 'docs/superpowers/plans', 'docs/plans']);
+    assert.deepStrictEqual(statusCall.args, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '-uall', '--', 'docs/superpowers/plans', 'docs/plans']);
     assert.strictEqual(statusCall.cwd, repoRoot, 'git status must run against cwd (the isolated fixture), not process.cwd()');
   } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -558,7 +558,7 @@ test('design-caches check fails when an untracked *-audit.json cache file remain
   const repoRoot = makeCleanRepoRoot();
   fs.mkdirSync(path.join(repoRoot, 'docs', 'plans'), { recursive: true });
   const fakeGit = (args) => {
-    if (args[1] === 'status') return '?? docs/plans/some-topic-audit.json\n';
+    if (args[1] === 'status') return '?? docs/plans/some-topic-audit.json\0';
     return '';
   };
   try {
@@ -938,6 +938,76 @@ test('design-caches check catches an untracked *-audit.json inside a WHOLLY-untr
   }
 });
 
+// ---- #3651 AC1.1: non-ASCII leftover names are read raw from `status -z` ----
+//
+// Without `-z` git C-quotes a non-ASCII name ("caf\303\251-ledger.md"), so the
+// detail named a path no file has and the design-caches suffix filter saw a
+// quote-terminated string. `core.quotepath true` is set explicitly in the
+// fixture so a machine whose global config says `false` cannot make these
+// pass vacuously.
+function nonAsciiRepo() {
+  const repo = gitRepo();
+  realExecFileSync('git', ['config', 'core.quotepath', 'true'], { cwd: repo });
+  return repo;
+}
+
+test('AC1.1: plans-ledger names an untracked docs/plans/café.md raw', () => {
+  const repo = nonAsciiRepo();
+  const runDir = makeTmpDir('verify-plans-ledger-nonascii-');
+  busyWaitMs(10);
+  try {
+    fs.mkdirSync(path.join(repo, 'docs', 'plans'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'docs', 'plans', 'café-ledger.md'), 'x');
+    const realGit = (args, cwd) => realExecFileSync('git', args, { cwd, encoding: 'utf8' });
+    const result = runVerify({ runDir, base: 'main', repoRoot: repo, cwd: repo, deps: { git: realGit, gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'plans-ledger');
+    assert.strictEqual(row.result, 'fail', row.detail);
+    assert.ok(row.detail.includes('docs/plans/café-ledger.md'), row.detail);
+    assert.ok(!row.detail.includes('\\303'), `C-quoted form leaked: ${row.detail}`);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1: design-caches flags an untracked docs/plans/café-audit.json', () => {
+  const repo = nonAsciiRepo();
+  const runDir = makeTmpDir('verify-design-caches-nonascii-');
+  try {
+    fs.mkdirSync(path.join(repo, 'docs', 'plans'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'docs', 'plans', 'café-audit.json'), '{}');
+    const realGit = (args, cwd) => realExecFileSync('git', args, { cwd, encoding: 'utf8' });
+    const result = runVerify({ runDir, base: 'main', repoRoot: repo, cwd: repo, deps: { git: realGit, gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'design-caches');
+    assert.strictEqual(row.result, 'fail', row.detail);
+    assert.ok(row.detail.includes('café-audit.json'), row.detail);
+    assert.ok(!row.detail.includes('\\303'), `C-quoted form leaked: ${row.detail}`);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test('plans-ledger / design-caches ignore tracked-modification and rename records in -z status output (only ?? counts)', () => {
+  const runDir = makeTmpDir('verify-status-z-nonuntracked-');
+  const repoRoot = makeCleanRepoRoot();
+  fs.mkdirSync(path.join(repoRoot, 'docs', 'plans'), { recursive: true });
+  // " M" modified, "R " rename (new path first, original as its own NUL token),
+  // then one real untracked cache file after them: the rename's trailing
+  // original-path token must not be misread as a record of its own.
+  const fakeGit = (args) => (args[1] === 'status'
+    ? ' M docs/plans/tracked-audit.json\0R  docs/plans/new-audit.json\0docs/plans/old-audit.json\0?? docs/plans/fresh-audit.json\0'
+    : '');
+  try {
+    const result = runVerify({ runDir, base: 'main', repoRoot, cwd: repoRoot, deps: { git: fakeGit, gh: () => '' } });
+    const row = result.rows.find((r) => r.check === 'design-caches');
+    assert.strictEqual(row.result, 'fail');
+    assert.match(row.detail, /1 cache file\(s\) remain: docs\/plans\/fresh-audit\.json$/);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test('plans-ledger check does not count .superpowers/sdd/.gitignore itself as a leftover', () => {
   const runDir = makeTmpDir('verify-plans-ledger-sdd-gitignore-only-');
   const repoRoot = makeCleanRepoRoot();
@@ -959,7 +1029,7 @@ test('plans-ledger check scans `cwd`, not `repoRoot`, for untracked plan-file le
   const calls = [];
   const fakeGit = (args, dir) => {
     calls.push({ args, dir });
-    if (args[1] === 'status' && dir === repoRoot) return '?? docs/superpowers/plans/leftover-at-reporoot.md\n';
+    if (args[1] === 'status' && dir === repoRoot) return '?? docs/superpowers/plans/leftover-at-reporoot.md\0';
     return '';
   };
   try {
@@ -981,7 +1051,7 @@ test('design-caches check scans `cwd`, not `repoRoot`, for untracked cache-file 
   const calls = [];
   const fakeGit = (args, dir) => {
     calls.push({ args, dir });
-    if (args[1] === 'status' && dir === cwd) return '?? docs/plans/some-topic-audit.json\n';
+    if (args[1] === 'status' && dir === cwd) return '?? docs/plans/some-topic-audit.json\0';
     return '';
   };
   try {
@@ -992,9 +1062,9 @@ test('design-caches check scans `cwd`, not `repoRoot`, for untracked cache-file 
     // plans-ledger (registered before design-caches) also issues a `status`
     // call in this same runVerify(), so a bare args[1] === 'status' find()
     // would silently grab its call instead -- design-caches's own status
-    // call has a single `docs/plans` pathspec (6 args); plans-ledger's has
-    // two pathspecs (7 args). Match on length to target design-caches alone.
-    const statusCall = calls.find((c) => c.args[1] === 'status' && c.args.length === 6);
+    // call has a single `docs/plans` pathspec (7 args); plans-ledger's has
+    // two pathspecs (8 args). Match on length to target design-caches alone.
+    const statusCall = calls.find((c) => c.args[1] === 'status' && c.args.length === 7);
     assert.strictEqual(statusCall.dir, cwd, 'design-caches must scan cwd, not repoRoot');
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });

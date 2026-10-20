@@ -22,8 +22,9 @@
 //
 // --transcript is repeatable (dispatch's two Task calls have two agent
 // transcripts; the orchestrator passes both). --auto-transcript is the
-// single-session case: it locates {home}/.claude/projects/{slug}/{sessionId}
-// .jsonl from run-state.json's worktree + sessionId (bin/lib/timing/
+// single-session case: it locates {config-dir}/projects/{slug}/{sessionId}
+// .jsonl ({config-dir} = $CLAUDE_CONFIG_DIR, default ~/.claude) from
+// run-state.json's worktree + sessionId (bin/lib/timing/
 // transcript.js), picks the newest candidate, and notes any it ignored.
 //
 // With a transcript requested, timing.json also gains `dispatches` (#3375):

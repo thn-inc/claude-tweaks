@@ -3,6 +3,7 @@ files:
   - plugin/skills/build/dispatch.md
   - plugin/skills/build/handoff-template.md
   - plugin/bin/lib/console/resolve.js
+  - plugin/bin/lib/reconcile/console-execute.js
   - plugin/skills/wrap-up/review-console-appendix.md
   - plugin/skills/wrap-up/review-console-interactive.md
   - plugin/skills/wrap-up/review-console.md
@@ -61,8 +62,8 @@ files:
 - **URL:** the run PR's console comment (`_shared/console-on-pr.md`), Pending review section
 - **Action:** Find the ruling row. Its label ends `— tick = ratify · untick = reverse`. Tick it to ratify, or leave it unticked to reverse, then tick **Resolve console** last. A live session's chat accelerator takes `ratify {#}` (passed to `resolve-console` as `--approve`) or `reverse {#}` (passed as `--decline`).
 - **Should feel:** The same binary choice as the chat console. The legend's SDD-ruling bullet says unticked at Resolve means reverse, the one exception to "unticked = declined".
-- **Should understand:** The executing session (`_shared/console-execution.md`'s Execution routing) performs the reverse per the appendix bullet. It logs an `AUTO` line naming `reversed → #{new record}` only once the record exists, and otherwise logs `REFUSED` or `SKIP` with the cause. The PR reply comment `resolve-console` posts still labels that id `declined, no reason given` and leaves Resolve unticked, because `console.json` items carry no ruling flag yet (a follow-up in #3513's run ledger). `decisions.md` is the authoritative record.
-- **Red flags:** An unticked ruling logged as a plain decline in `decisions.md`, with no reversal record and the ledger row still `open` and unexplained. A ruling row label with no `tick = ratify · untick = reverse` hint. A chat `ratify {#}` left out of `--approve` (an id in neither list is recorded `declined`).
+- **Should understand:** The executing session (`_shared/console-execution.md`'s Execution routing) performs the reverse per the appendix bullet. It logs an `AUTO` line naming `reversed → #{new record}` only once the record exists, and otherwise logs `REFUSED` or `SKIP` with the cause. The PR reply comment `resolve-console` posts labels a flagged ruling (`isRulingRow: true` on its `console.json` item, #3636) `reversed`, and a reversed ruling counts as cleared, so it never holds Resolve unticked. If the reverse was refused or never created, the session passes that ruling's id in `--reverse-failed`: the reply then reads `reverse not filed — see decisions.md` and Resolve stays unticked. A console rendered before the flag existed carries none, so its ruling still reads `declined, no reason given`. `decisions.md` is the authoritative record.
+- **Red flags:** An unticked ruling logged as a plain decline in `decisions.md`, with no reversal record and the ledger row still `open` and unexplained. A ruling row label with no `tick = ratify · untick = reverse` hint. A chat `ratify {#}` left out of `--approve` (a ruling id in neither list is recorded `reversed` and Resolve ticks, so the forgotten ratify becomes a reversal). A reply that reads `reversed` but no reversal record exists.
 
 ### 7. Multi-spec console: ratify at step 1, reverse through Queue writes
 - **URL:** `/claude-tweaks:flow`'s consolidated Review Console (`flow/multispec-review-console.md`), rows from each `spec-{N}/staged/sdd-ruling-*.md`
@@ -75,4 +76,5 @@ files:
 - Created during build of #3401 (surface load-bearing SDD `Ruling:` lines to a human at wrap-up instead of non-blocking ledger observations), run `2026-10-17T190411-spec-3401`.
 - Steps 1-5 built in #3401. Steps 2-4 describe the single-spec chat console.
 - Steps 6-7 (PR-hosted and multi-spec consoles) added by #3513, run `2026-10-19T185713-record-3513`. They are the follow-up that #3401's whole-branch review deferred.
+- Step 6's reply-comment labelling revised by #3636, run `2026-10-20T135813-record-3636`: a flagged ruling reads `reversed` and counts as cleared, a refused reverse goes in `--reverse-failed`.
 - Related: `docs/journeys/measure-sdd-final-review-value-3386.md` (reads the same rulings as evidence); `docs/journeys/resolve-the-unattended-console-in-one-process-1932.md` (the `consoleAutoResolve` path that ratifies with zero clicks).

@@ -2,7 +2,8 @@
 // tests/build-skip-degrade-trace-adoption.test.js — pins #904: the auto-decision-log's
 // degrade-trace rule (a new SKIP entry-status vocabulary member for a documented conditional
 // step that was skipped or degraded, with no staged artifact) and its adoption in /build's
-// seven documented conditional steps (Common Steps 1.7/4.5/5.5/6.5/7, Spec Steps 1/2.5).
+// eight documented conditional steps (Common Steps 1.6/1.7/4.5/5.5/6.5/7, Spec Steps 1/2.5;
+// 1.6 added by #3377).
 //
 // AC2's repo-wide vocabulary sweep is covered by the code-level pins below (STATUSES,
 // KIND_RE) plus tests/bin-lib/log-decision/{append,cli}.test.js and
@@ -59,11 +60,12 @@ test('auto-decision-log.md: worked example cites the pr-first bootstrap skip (#7
   assert.match(AUTO_DECISION_LOG, /draft-PR bootstrap \(skipped\): condition: integration-model=local-merge/);
 });
 
-// --- /build adoption: each of the 7 documented conditional steps names a SKIP-write instruction ---
+// --- /build adoption: each of the 8 documented conditional steps names a SKIP-write instruction ---
 
 const BUILD_STEP_SKIP_SITES = [
   { name: 'Spec Step 1 (pr-first draft-PR bootstrap)', source: BUILD_SKILL, pattern: /a no-op under `local-merge`\. \*\*On skip\*\* \(local-merge\), write a `SKIP` entry/ },
   { name: 'Spec Step 2.5 (Manual Steps probing)', source: BUILD_SKILL, pattern: /\*\*No Manual Steps section \(skip\):\*\* write one `SKIP` entry/ },
+  { name: 'Common Step 1.6 (Plan Review gate, #3377)', source: BUILD_SKILL, pattern: /uses the size test alone\. \*\*On skip\*\*, write a `SKIP` entry per `_shared\/auto-decision-log\.md`'s degrade-trace rule/ },
   { name: 'Common Step 1.7 (Design Pre-Build gate)', source: BUILD_SKILL, pattern: /see `design-prebuild\.md` in this skill's directory\. \*\*On skip\*\*, write a `SKIP` entry/ },
   { name: 'Common Step 4.5 (Architecture Alignment)', source: BUILD_SKILL, pattern: /\*\*On skip\*\* \(one of the three conditions fires — never for a normal run finding zero deviations\), write a `SKIP` entry/ },
   { name: 'Common Step 5.5 (Operational Checklist)', source: BUILD_SKILL, pattern: /Otherwise skip this step entirely\. \*\*On skip\*\*, write a `SKIP` entry per the degrade-trace rule \(condition: no schema\/env\/IaC\/CI\/platform-config files in diff\)/ },
@@ -79,7 +81,7 @@ for (const site of BUILD_STEP_SKIP_SITES) {
 
 test('build/SKILL.md: every SKIP-write site cites the degrade-trace rule (directly or via a sub-file pointer)', () => {
   const onSkipCount = (BUILD_SKILL.match(/\*\*On skip\*\*/g) || []).length;
-  assert.equal(onSkipCount, 6, 'expected 6 "**On skip**" sites in SKILL.md (Spec Step 1, Common Steps 1.7/4.5/5.5/6.5/7) — Spec Step 2.5 uses its own "(skip)" phrasing instead');
+  assert.equal(onSkipCount, 7, 'expected 7 "**On skip**" sites in SKILL.md (Spec Step 1, Common Steps 1.6/1.7/4.5/5.5/6.5/7) — Spec Step 2.5 uses its own "(skip)" phrasing instead');
 });
 
 // --- #3118: folded plan verification task contributes only its runner checks ---

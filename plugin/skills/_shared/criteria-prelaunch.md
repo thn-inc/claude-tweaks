@@ -56,7 +56,7 @@ The source list was described as 20 items; its body names these 17, and none wer
 
 ## Scope boundary
 
-This vertical owns exactly the 17-item checklist above. It does **not** own #2624's security-hardening (client secrets, ownership checks, AI-endpoint guards), #2622's pre-scale hardening (query performance, background jobs, caching, pooling, monitoring), or #2625's GDPR/backup-retention check. The `privacy-policy` and `cookie-banner` rows ask only whether the page and the banner exist and say the right things — not whether the data handling behind them complies.
+This vertical owns exactly the 17-item checklist above. It does **not** own #2624's security-hardening (client secrets, ownership checks, AI-endpoint guards), `focus=scale-readiness`'s pre-scale hardening (#2622) (query performance, background jobs, caching, pooling, monitoring), or #2625's GDPR/backup-retention check. The `privacy-policy` and `cookie-banner` rows ask only whether the page and the banner exist and say the right things — not whether the data handling behind them complies.
 
 ## Reporting
 

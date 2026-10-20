@@ -655,6 +655,31 @@ test('hooks.json registers a PreToolUse matcher for ExitWorktree (unfiltered, li
   assert.match(entry.hooks[0].command, /bin\/hooks\.js" pre-tool-use$/);
 });
 
+test('AC6.1: hooks.json registers a PreToolUse matcher for AskUserQuestion (unfiltered, literal tool-name match)', () => {
+  const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
+  const entry = config.hooks.PreToolUse.find((e) => e.matcher === 'AskUserQuestion');
+  assert.ok(entry, 'expected a PreToolUse AskUserQuestion matcher entry');
+  assert.strictEqual(entry.hooks.length, 1);
+  assert.strictEqual(entry.hooks[0].type, 'command');
+  assert.ok(!('if' in entry.hooks[0]), 'AskUserQuestion matcher must be a literal tool-name match, not pattern-filtered');
+  assert.match(entry.hooks[0].command, /bin\/hooks\.js" pre-tool-use$/);
+});
+
+test('dispatcher: AskUserQuestion with no owned run exits 0 with no deny', () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-disp-ask-'));
+  const result = runHook(['pre-tool-use'], {
+    input: JSON.stringify({
+      tool_name: 'AskUserQuestion',
+      tool_input: { questions: [{ header: 'Review Console', question: 'q', options: [] }] },
+      session_id: 'no-such-session',
+      cwd,
+    }),
+    cwd,
+  });
+  assert.strictEqual(result.code, 0);
+  assert.doesNotMatch(result.stdout, /permissionDecision/, 'no owned run means the Review Console ask gate fails open');
+});
+
 test("hooks.json's PreToolUse Bash handler is unconditional and the prefilter covers git worktree", () => {
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const bashEntry = config.hooks.PreToolUse.find((e) => e.matcher === 'Bash');
@@ -1320,7 +1345,7 @@ test('check-session-residue: no resolvable --run path reports the not-found line
 //
 // Note (verified during Step 3): the brief's original Bash/`git commit`
 // payload never reaches appendEvent, pre- or post-fix — E1's wd-deny path
-// requires `safeReal(ctx.runState.worktree)` to resolve, and the decoy
+// requires `canonicalRealpath(ctx.runState.worktree)` to resolve, and the decoy
 // `/tmp/wt-decoy` doesn't exist on disk, so runInner returns early before
 // ever writing. Per Step 3's fallback instruction, this uses a Write-tool
 // payload targeting a path inside the decoy repo instead (mirroring 'a
@@ -1503,7 +1528,7 @@ test('#3225: --dispatch is accepted before the worktree positional too, and neve
   assert.strictEqual(s.dispatched, true);
 });
 
-test('#3225: --dispatch preserves every pre-existing field and writes exactly what a plain record-worktree writes, plus dispatched', () => {
+test('#3225: --dispatch preserves every pre-existing field and writes exactly what a plain record-worktree writes, plus dispatched and dispatchSessionId', () => {
   const project = tmpProject();
   const seed = {
     status: 'interrupted',
@@ -1527,9 +1552,11 @@ test('#3225: --dispatch preserves every pre-existing field and writes exactly wh
   const disp = readRunState(dispRun);
   assert.strictEqual(plain.dispatched, undefined, 'a plain record-worktree must not write a dispatched key');
   assert.strictEqual(disp.dispatched, true);
-  const strip = (s) => { const { updatedAt, dispatched, ...rest } = s; return rest; };
+  assert.strictEqual(plain.dispatchSessionId, undefined, 'a plain record-worktree must not write a dispatchSessionId key');
+  assert.strictEqual(disp.dispatchSessionId, 'sess-3225');
+  const strip = (s) => { const { updatedAt, dispatched, dispatchSessionId, ...rest } = s; return rest; };
   assert.strictEqual(JSON.stringify(strip(disp)), JSON.stringify(strip(plain)),
-    'apart from dispatched/updatedAt, --dispatch must write byte-for-byte what a plain call writes');
+    'apart from dispatched/dispatchSessionId/updatedAt, --dispatch must write byte-for-byte what a plain call writes');
   assert.deepStrictEqual(disp.pr, seed.pr);
   assert.strictEqual(disp.claimExempt, true);
   assert.strictEqual(disp.prExempt, false);
@@ -1543,6 +1570,42 @@ test('#3225: dispatched is permanent — a later plain record-worktree re-stamp 
   assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-perm', '--dispatch'], { cwd: project }).code, 0);
   assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-perm'], { cwd: project }).code, 0);
   assert.strictEqual(readRunState(run).dispatched, true);
+});
+
+// #3711: dispatchSessionId is written only by `--dispatch`, so a human resuming a dispatched run from a
+// new session (a plain record-worktree re-stamp of sessionId, run-resume-freshness.md) cannot match it.
+test('#3711: a plain re-stamp from another session overwrites sessionId but never dispatchSessionId, so the resumer is not a dispatch Task call', () => {
+  const { isDispatchTaskCallForRun } = require('../plugin/bin/lib/dispatch/task-call');
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-3711', '--dispatch'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'D' } }).code, 0);
+  assert.strictEqual(isDispatchTaskCallForRun(run, 'D'), true, 'the dispatching session is a Task call');
+  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-3711'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'H' } }).code, 0);
+  const s = readRunState(run);
+  assert.strictEqual(s.sessionId, 'H');
+  assert.strictEqual(s.dispatchSessionId, 'D');
+  assert.strictEqual(s.dispatched, true);
+  assert.strictEqual(isDispatchTaskCallForRun(run, 'H'), false);
+});
+
+test('#3711: --dispatch with an empty CLAUDE_CODE_SESSION_ID records dispatchSessionId as null, so a later resume cannot pass as the dispatcher', () => {
+  const { isDispatchTaskCallForRun } = require('../plugin/bin/lib/dispatch/task-call');
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  // spawnSync, not runHook: runHook drops stderr on a zero exit, and the warning is the trace.
+  const res = require('child_process').spawnSync('node', [HOOKS, 'record-worktree', '--run', run, '/tmp/wt-3711b', '--dispatch'], {
+    cwd: project, encoding: 'utf8',
+    env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', CLAUDE_CODE_SESSION_ID: '' },
+  });
+  assert.strictEqual(res.status, 0);
+  assert.match(res.stderr, /--dispatch without CLAUDE_CODE_SESSION_ID/);
+  const s = readRunState(run);
+  assert.strictEqual(s.dispatched, true);
+  assert.strictEqual(s.dispatchSessionId, null);
+  // A human resume re-stamps sessionId; an absent dispatchSessionId would fall back to it and match.
+  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-3711b'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'H' } }).code, 0);
+  assert.strictEqual(readRunState(run).sessionId, 'H');
+  assert.strictEqual(isDispatchTaskCallForRun(run, 'H'), false);
 });
 
 // #2783: an `-adhoc-standalone` dir is never a pipeline run a mutating verb

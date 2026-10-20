@@ -47,6 +47,25 @@ test('hasTrackedWork: true when work/*.md is git-tracked under the dir, false fo
   assert.equal(hasTrackedWork(root, untracked), false);
 });
 
+// #3651 AC1.1: without `-z` git C-quotes a non-ASCII path (the whole line is
+// wrapped in `"` and the é prints as \303\251), so the per-path `work/` test
+// ran on the quoted form. This pin keeps the per-path test on the raw path;
+// core.quotepath is set explicitly so the quoting does not depend on the
+// machine's git config.
+test('hasTrackedWork: AC1.1 — a tracked work/ file is seen under a non-ASCII run dir and with a non-ASCII spec name', () => {
+  const root = makeRepo();
+  git(root, 'config', 'core.quotepath', 'true');
+  commitPath(root, '.claude-tweaks/pipelines/2026-01-01T000000-café/work/1-spec.md', '# 1\n');
+  commitPath(root, '.claude-tweaks/pipelines/2026-01-02T000000-plain/work/café-spec.md', '# 2\n');
+  commitPath(root, '.claude-tweaks/pipelines/2026-01-03T000000-café-nowork/notes.md', '# 3\n');
+
+  const dir = (n) => path.join(root, '.claude-tweaks', 'pipelines', n);
+  assert.equal(hasTrackedWork(root, dir('2026-01-01T000000-café')), true);
+  assert.equal(hasTrackedWork(root, dir('2026-01-02T000000-plain')), true);
+  // A tracked file whose only non-ASCII is in the dir name, with no work/: stays false.
+  assert.equal(hasTrackedWork(root, dir('2026-01-03T000000-café-nowork')), false);
+});
+
 test('listStrayRunDirs: every top-level dir except archive/, regardless of run-id naming shape', () => {
   const root = makeRepo();
   commitPath(root, '.claude-tweaks/pipelines/2026-08-01T090000-spec-1/work/1-spec.md', '# 1\n');
