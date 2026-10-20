@@ -29,7 +29,7 @@ Import it: `const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } 
 - Literals are returned unchanged, so a token inside generated source text or a bracket-string form (`fs['realpathSync']`) still counts.
 - An unterminated construct ends at the end of its line or the input and never throws.
 
-Fixing a stripper defect means editing the helper and adding the planted case to `tests/helpers-strip-comments.test.js`. Every scan picks the fix up. A scan carries no stripper self-tests of its own.
+Fixing a stripper defect means editing the helper and adding the planted case to `tests/helpers-strip-comments.test.js`. Every scan picks the fix up. The helper's test owns the stripper's own planted cases. Some scans also keep a fixture that proves their matcher still sees code after a literal holding a comment opener (see "Self-test the matcher").
 
 ### A mis-parse must be an offender, not a clean scan
 
@@ -63,7 +63,14 @@ Two scans get the same protection another way. The path-guard scan's exact per-f
 
 ### Self-test the matcher
 
-Each scan has a self-test that feeds hand-built lines to the matcher and asserts which ones it flags. The stripper's own planted cases (a comment holding `*/`, `'/*'` in a string, a glob in a template literal, a regex ending in an escaped slash) live once, in `tests/helpers-strip-comments.test.js`. A scan adds a planted case only for what it owns: its matcher, and any mis-parse detector it adds. Plant the offending call after a fake comment opener only where the scan reads text the stripper could blank wrongly.
+Each scan has a self-test that feeds hand-built lines to the matcher and asserts which ones it flags. The helper's test, `tests/helpers-strip-comments.test.js`, owns the stripper's own planted cases (a comment holding `*/`, `'/*'` in a string, a glob in a template literal, a regex ending in an escaped slash). A scan adds planted cases for what it owns: its matcher, and any mis-parse detector it adds. Four scans also keep a fixture that plants a fake comment opener and asserts the matcher still sees the call after it:
+
+- `tests/windows-hide-spawn-conformance.test.js`: a `// see staged/** here` comment, a `'/*'` string and a regex ending in `\/`, each followed by an unhidden spawn.
+- `tests/git-status-optional-locks.test.js`: the same three openers plus a template-literal glob, each followed by an unflagged `status` call.
+- `tests/path-guard-conformance.test.js`: a `work/*-spec.md` line comment, with live `existsSync` and `realpathSync` calls after it that must still count ("proves the single-pass stripper").
+- `tests/bin-lib/exit-code-conformance.test.js`: a guard after a string holding `/*` is still scanned. This is the exit-code scan's planted `/*` case, and it proves the guard region survives the stripper.
+
+Keep such a fixture when the scan's result depends on code that follows a literal. A new scan need not copy all of them, since the helper's own test covers the stripper itself.
 
 Include negative cases:
 
@@ -87,7 +94,7 @@ Assert the exact flagged line numbers, not just a count, because the right count
 
 | Pattern | Why It Fails in This Project |
 |---|---|
-| A hand-rolled comment stripper in a scan | A second copy drifts from the helper, and the helper is where the planted self-tests live. The two-pass form `replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')` is blind to literals and hid about 2,200 lines of `plugin/bin` from two scans in #3464 |
+| A hand-rolled comment stripper in a scan | A second copy drifts from the helper, and the helper owns the stripper's planted tests. The two-pass form `replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')` is blind to literals: a `/*` inside a line comment opened a block comment that blanked live code, and four `plugin/bin` files were undercounted that way (`tests/path-guard-conformance.test.js` header) |
 | Counting tokens in stripped text with no verdict check | A mis-parse blanks code and the scan reports zero sites over it, which looks like a clean tree |
 | Reading `stripperVerdict` `ok` as proof the text was stripped correctly | It only catches a mis-parse that breaks compilation. A misread that still compiles passes unseen |
 | Deleting comments instead of replacing them with spaces | Line numbers in offender messages no longer match the file |
