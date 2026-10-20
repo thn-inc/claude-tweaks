@@ -21,16 +21,16 @@
 // pre-change bullets are frozen below and asserted absent (`[IL-105]`).
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
 const {
   extractTemplateBody,
   splitSections,
   checkConformance,
 } = require('../plugin/bin/lib/init/claude-md-conformance');
+const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 
 const TEMPLATE_SRC = read('plugin/skills/init/claude-md-template.md');
 const CLAUDE_MD = read('CLAUDE.md');
@@ -103,4 +103,18 @@ test('/build quotes the same three sentences into implementer execution, after t
   const COMPOSITION_SENTENCE = "The quoted rule limits what an implementer changes mid-task, not a reported follow-up's disposition: `_shared/deferral-gate.md`'s fix-now test decides that before the follow-up reaches the ledger or `/claude-tweaks:capture`.";
   assert.ok(paragraph.includes(COMPOSITION_SENTENCE), 'build paragraph does not carry the deferral-gate composition sentence');
   assert.ok(paragraph.indexOf(COMPOSITION_SENTENCE) > paragraph.indexOf(EDIT_IN_PLACE_SENTENCE), 'composition sentence must sit after the quoted Working Approach text');
+});
+
+test('working-approach: the paragraph search still finds its break under CRLF line endings (#3574)', () => {
+  const FILE = path.join(ROOT, 'plugin/skills/build/SKILL.md');
+  const { raw, text } = crlfCheckoutRead(FILE);
+  assert.ok(raw.includes('\r\n'), 'the CRLF input must contain \\r\\n line breaks');
+  assert.ok(!raw.includes('\r\r\n'), 'the CRLF input must not contain \\r\\r\\n');
+  assert.strictEqual(raw.indexOf('\n\n'), -1, 'a raw CRLF read has no LF paragraph break');
+  assert.strictEqual(text, readText(FILE));
+  const start = text.indexOf('### Common Step 2: Execute the Plan');
+  const nextH3 = text.indexOf('\n### ', start + 1);
+  const step = text.slice(start, nextH3 === -1 ? undefined : nextH3);
+  const paragraph = step.slice(step.indexOf('**Scope and edit discipline (both strategies, every maturity):**')).split('\n\n')[0];
+  assert.ok(paragraph.includes('in exactly these words'));
 });

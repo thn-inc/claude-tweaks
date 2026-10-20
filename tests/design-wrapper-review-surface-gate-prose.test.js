@@ -8,14 +8,14 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const REVIEW_MD = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'modes', 'review.md');
 const DESIGN_CRAFT_MD = path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'design-craft.md');
 
 function read(p) {
-  return fs.readFileSync(p, 'utf8');
+  return readText(p);
 }
 
 function stepSlice(text, startMarker, endMarker) {
@@ -187,4 +187,14 @@ test('reference-fixture prompt (old verbatim-inlining shape) exceeds the 35 KB c
 
   const bytes = Buffer.byteLength(prompt, 'utf8');
   assert.ok(bytes >= 35 * 1024, `expected the old-shape prompt to exceed 35 KB (this proves the test can discriminate), got ${(bytes / 1024).toFixed(1)} KB`);
+});
+
+test('design-wrapper: the paragraph search still finds its break under CRLF line endings (#3574)', () => {
+  const FILE = REVIEW_MD;
+  const { raw, text } = crlfCheckoutRead(FILE);
+  assert.ok(raw.includes('\r\n'), 'the CRLF input must contain \\r\\n line breaks');
+  assert.ok(!raw.includes('\r\r\n'), 'the CRLF input must not contain \\r\\r\\n');
+  assert.strictEqual(raw.indexOf('\n\n'), -1, 'a raw CRLF read has no LF paragraph break');
+  assert.strictEqual(text, readText(FILE));
+  assert.match(extractItem6Constraint(text), /^6\. The read-only constraint, verbatim:/);
 });
