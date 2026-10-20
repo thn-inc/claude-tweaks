@@ -8,9 +8,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { readText } = require('./helpers/read-skill');
 
 function read(relPath) {
-  return fs.readFileSync(path.join(__dirname, '..', relPath), 'utf8');
+  return readText(path.join(__dirname, '..', relPath));
 }
 
 // AC1
@@ -84,11 +85,16 @@ test('update-mode.md has the port-literal-drift row; skill-graph.md ## init has 
   assert.ok(gettingStarted.includes('port-services'));
 });
 
+function extractAllocateLine(sub) {
+  const match = sub.match(/```bash\nnode "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ports\.js" allocate --services \{a,b,c\}\n```/);
+  assert.ok(match, 'the documented allocate command line must be byte-pinned in a fenced code block');
+  return match[0];
+}
+
 // AC7: the documented allocate command line is byte-pinned and actually executes.
 test('the allocate command line from the sub-file is executable end-to-end', () => {
   const sub = read('plugin/skills/init/bootstrap/step-06-5-port-isolation.md');
-  const match = sub.match(/```bash\nnode "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ports\.js" allocate --services \{a,b,c\}\n```/);
-  assert.ok(match, 'the documented allocate command line must be byte-pinned in a fenced code block');
+  extractAllocateLine(sub);
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-init-ports-home-'));
   const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-init-ports-checkout-'));
@@ -115,4 +121,17 @@ test('auto-mode-contract.md names the Step 6.5 rewrite-diff gate in its HARD-GAT
   const table = contract.slice(tableStart, tableStart + 6000);
   assert.match(table, /Step 6\.5/);
   assert.match(table, /port-rewrite diff gate/);
+});
+
+test('CRLF control (#3670): init-port-isolation-conformance extracts the same result after a CRLF round-trip through readText()', (t) => {
+  const docPath = path.join(__dirname, '..', 'plugin', 'skills', 'init', 'bootstrap', 'step-06-5-port-isolation.md');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'init-port-iso-crlf-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const lf = readText(docPath);
+  const crlf = lf.replace(/\n/g, '\r\n');
+  assert.ok(crlf.includes('\r\n'), 'CRLF build must contain \\r\\n');
+  assert.ok(!crlf.includes('\r\r\n'), 'CRLF build must not contain \\r\\r\\n');
+  const file = path.join(tmp, path.basename(docPath));
+  fs.writeFileSync(file, crlf);
+  assert.deepStrictEqual(extractAllocateLine(readText(file)), extractAllocateLine(lf));
 });
