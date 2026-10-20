@@ -304,6 +304,35 @@ When mechanizing a prose heuristic into a deterministic check:
     arm, classified by the thrown error's shape, and pin "main probe times out, precondition probe
     succeeds" with its own assertion (`tests/verify-run-bookends.test.js`'s
     `catFileTimeoutRevParseOk`).
+17. **A composer's validator owes its readers' skip set, and a batch producer owes the predicate,
+    not the throw.** When one module writes text another module parses back, every value the
+    reader silently skips must be one the writer rejects. Otherwise a value accepted when the
+    record is composed vanishes when it is read, and nothing reports it.
+    `plugin/bin/lib/issues/record.js`'s `specShapedBody` renders `keyFiles` (#2975) as a
+    `### Key Files` list that `/build`'s micro-plan gate and `grouping.js`'s file-overlap checks
+    read. Those checks skip a trailing-slash entry (a bare directory, #1420) with no warning:
+    `file.endsWith('/')` in `groupByFileOverlap`, `directOverlaps` and
+    `detectCrossPRFileOverlap`'s `isSignal`. The first `keyFilePathProblem` accepted `'tests/'`. Review caught it, and
+    `44883e90b` rejects a trailing slash or backslash as `'shape'`. Build the reject list from the
+    readers' `continue` and `return false` branches, not from what looks malformed, and pin each
+    one with its own assertion. The throw suits a hand-written caller. But the four health-sweep
+    composers fill `keyFiles` from LLM judge output, one finding after another in one run, and a
+    throw on one finding aborts the rest. So `record.js` exports the throw's own predicate,
+    `isRepoRelativeKeyFilePath`, and each producer calls it and omits `keyFiles` on failure. The
+    record still files, without the optional section. The omission leans safe in item 10's sense:
+    a record with no Key Files falls through to `/build`'s full planning. Export the predicate the
+    throw already uses rather than re-implementing it in the producer, where the two would drift.
+    Normalize before calling it, and read what each producer does from its own code, because the
+    four differ. `code-health/issue-payload.js` strips an anchor's `#symbol` suffix and trims
+    (`String(anchor).split('#')[0].trim()`). `harness-health/issue-payload.js` resolves
+    `finding.path` against `options.repoRoot` and rewrites it as a `/`-joined repo-relative path
+    with `path.relative`, so an out-of-repo target such as a memory file fails the predicate on its
+    `..` segment. `docs-health/issue-payload.js` and `journey-health/issue-payload.js` do no
+    normalizing of their own: each passes a path it assembled itself
+    (`` `docs/${finding.target}.md` ``, `` `docs/journeys/${finding.journey}.md` ``), so the
+    LLM-supplied `target` or `journey` is checked inside a fixed prefix and suffix, and only an
+    embedded `..`, backtick or line break can fail it. A new producer states its own
+    normalization from where its path comes from.
 
 ## When to use
 
@@ -317,6 +346,8 @@ When mechanizing a prose heuristic into a deterministic check:
 - Writing a check that reads the filesystem directly (`fs.readdirSync`/`readFileSync`/`existsSync`
   and the like) where catching every error the same way conflates "genuinely absent" (`ENOENT`)
   with "couldn't tell" (`EACCES`, `ENOTDIR`, and other non-ENOENT codes) (fix-shape item 11).
+- Adding a validated field to a shared body composer such as `specShapedBody` that another module
+  parses back, or that a batch producer fills from LLM output (fix-shape item 17).
 
 ## When not to use
 
