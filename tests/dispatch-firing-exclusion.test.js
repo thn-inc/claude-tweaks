@@ -138,7 +138,6 @@ test('AC5.1: bare-drain ranking never selects a group with a neighbour-in-flight
 });
 
 test('CRLF control (#3670): dispatch-firing-exclusion extracts the same result after a CRLF round-trip through readText()', (t) => {
-  const extract = extractSnippet;
   const DOC_PATH = path.join(ROOT, 'plugin/skills/dispatch/next-ranking.md');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-firing-crlf-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -148,5 +147,5 @@ test('CRLF control (#3670): dispatch-firing-exclusion extracts the same result a
   assert.ok(!crlf.includes('\r\r\n'), 'CRLF build must not contain \\r\\r\\n');
   const file = path.join(tmp, path.basename(DOC_PATH));
   fs.writeFileSync(file, crlf);
-  assert.deepStrictEqual(extract(readText(file)), extract(lf));
+  assert.deepStrictEqual(extractSnippet(readText(file)), extractSnippet(lf));
 });

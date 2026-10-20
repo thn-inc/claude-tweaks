@@ -77,7 +77,6 @@ test('the Oversight-floor gate snippet in verification-brief.md runs and records
 });
 
 test('CRLF control (#3670): verify-expectations-writer-conformance extracts the same result after a CRLF round-trip through readText()', (t) => {
-  const extract = oversightSnippet;
   const DOC_PATH = path.join(ROOT, 'plugin/skills/wrap-up/verification-brief.md');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-expectations-crlf-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -87,5 +86,5 @@ test('CRLF control (#3670): verify-expectations-writer-conformance extracts the 
   assert.ok(!crlf.includes('\r\r\n'), 'CRLF build must not contain \\r\\r\\n');
   const file = path.join(tmp, path.basename(DOC_PATH));
   fs.writeFileSync(file, crlf);
-  assert.deepStrictEqual(extract(readText(file)), extract(lf));
+  assert.deepStrictEqual(oversightSnippet(readText(file)), oversightSnippet(lf));
 });

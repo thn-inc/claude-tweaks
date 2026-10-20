@@ -115,7 +115,6 @@ test('multispec-review-console.md\'s claim-release step already documents the no
 });
 
 test('CRLF control (#3670): multispec-not-run-callsite extracts the same result after a CRLF round-trip through readText()', (t) => {
-  const extract = extractNotRunSnippet;
   const DOC_PATH = path.join(ROOT, 'plugin/skills/flow/multispec-failure-handling.md');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multispec-not-run-crlf-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -125,5 +124,5 @@ test('CRLF control (#3670): multispec-not-run-callsite extracts the same result 
   assert.ok(!crlf.includes('\r\r\n'), 'CRLF build must not contain \\r\\r\\n');
   const file = path.join(tmp, path.basename(DOC_PATH));
   fs.writeFileSync(file, crlf);
-  assert.deepStrictEqual(extract(readText(file)), extract(lf));
+  assert.deepStrictEqual(extractNotRunSnippet(readText(file)), extractNotRunSnippet(lf));
 });

@@ -8,9 +8,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const { readText } = require('./helpers/read-skill');
 const read = (rel) => readText(path.join(ROOT, rel));
 const JUDGE = read('plugin/skills/harness-health/judge-procedure.md');
 const ANALYSIS = read('plugin/skills/_shared/harness-health-analysis.md');

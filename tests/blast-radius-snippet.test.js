@@ -50,7 +50,6 @@ test('merge-check.md Step 1 snippet executes verbatim against a fixture repo', (
 });
 
 test('CRLF control (#3670): blast-radius-snippet extracts the same result after a CRLF round-trip through readText()', (t) => {
-  const extract = extractSnippet;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-crlf-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const lf = readText(DOC);
@@ -59,5 +58,5 @@ test('CRLF control (#3670): blast-radius-snippet extracts the same result after 
   assert.ok(!crlf.includes('\r\r\n'), 'CRLF build must not contain \\r\\r\\n');
   const file = path.join(tmp, path.basename(DOC));
   fs.writeFileSync(file, crlf);
-  assert.deepStrictEqual(extract(readText(file)), extract(lf));
+  assert.deepStrictEqual(extractSnippet(readText(file)), extractSnippet(lf));
 });

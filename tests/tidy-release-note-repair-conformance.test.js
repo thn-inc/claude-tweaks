@@ -145,7 +145,6 @@ test('sweep, the tidy journey, and the skill graph restate the new tier truthful
 });
 
 test('CRLF control (#3670): tidy-release-note-repair-conformance extracts the same result after a CRLF round-trip through readText()', (t) => {
-  const extract = dispatcherScript;
   const DOC_PATH = path.join(ROOT, 'plugin/skills/tidy/SKILL.md');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tidy-release-note-crlf-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -155,5 +154,5 @@ test('CRLF control (#3670): tidy-release-note-repair-conformance extracts the sa
   assert.ok(!crlf.includes('\r\r\n'), 'CRLF build must not contain \\r\\r\\n');
   const file = path.join(tmp, path.basename(DOC_PATH));
   fs.writeFileSync(file, crlf);
-  assert.deepStrictEqual(extract(readText(file)), extract(lf));
+  assert.deepStrictEqual(dispatcherScript(readText(file)), dispatcherScript(lf));
 });
