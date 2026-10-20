@@ -82,3 +82,29 @@ test('docs/getting-started.md counts the shipped verticals including agent-trust
   assert.match(docs, /`agent-trust-scope`/);
   assert.match(docs, /`app-store-readiness`/);
 });
+
+const CRITERIA_PATH = path.join(ROOT, 'plugin/skills/_shared/criteria-agent-trust-scope.md');
+
+function assertAcceptedRiskGuard(fragment) {
+  const start = fragment.indexOf('## What NOT to flag');
+  const end = fragment.indexOf('## Severity calibration', start + 1);
+  assert.ok(start >= 0 && end > start, 'fragment must have "## What NOT to flag" before "## Severity calibration"');
+  const notFlag = fragment.slice(start, end);
+  for (const needle of ['docs/decisions/', '**Status:**', '`accepted`', '## Decision', 'superseded', 'proposed',
+    'accepted risk — ADR NNNN ({kind})', 'never as a finding', 'never as a filed issue']) {
+    assert.ok(notFlag.includes(needle), `What NOT to flag is missing the accepted-risk guard element: ${needle}`);
+  }
+  const prompt = fragment.slice(fragment.indexOf('## Copy-paste prompt'));
+  assert.ok(prompt.includes('accepted risk — ADR NNNN'), 'copy-paste prompt must mirror the accepted-risk exception');
+}
+
+test('AC1.1/AC2.1/AC3.1: criteria fragment carries the accepted-risk ADR guard', () => {
+  assertAcceptedRiskGuard(readText(CRITERIA_PATH));
+});
+
+test('go-red: the accepted-risk guard check fails when the bullet is removed', () => {
+  const fragment = readText(CRITERIA_PATH);
+  const mutated = fragment.replace(/^- A dimension the project has formally accepted in an ADR[\s\S]*?(?=\n\n## Severity calibration)/m, '');
+  assert.notEqual(mutated, fragment, 'mutation did not apply — the bullet must start with "- A dimension the project has formally accepted in an ADR"');
+  assert.throws(() => assertAcceptedRiskGuard(mutated));
+});
