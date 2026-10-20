@@ -131,3 +131,25 @@ test('go-red: the Step 6.65 row check fails when the row is removed', () => {
   assert.notEqual(mutated, passes, 'mutation did not apply');
   assert.throws(() => assertStep665AcceptedRiskRow(mutated));
 });
+
+function assertStep10AcceptedRiskLine(skillMd) {
+  const start = skillMd.indexOf('**Step 10 — SUMMARIZE.**');
+  assert.ok(start >= 0, 'SKILL.md must have a "**Step 10 — SUMMARIZE.**" paragraph');
+  const next = skillMd.indexOf('\n## ', start + 1);
+  assert.ok(next > start, 'SKILL.md Step 10 must be followed by a "## " heading');
+  const step = skillMd.slice(start, next);
+  assert.ok(step.includes('accepted risk — ADR NNNN ({kind})'), 'Step 10 must carry the accepted-risk summary line');
+}
+
+const CODE_HEALTH_SKILL_PATH = path.join(ROOT, 'plugin/skills/code-health/SKILL.md');
+
+test('AC1.1: code-health Step 10 summary lists an accepted-risk candidate as its only record', () => {
+  assertStep10AcceptedRiskLine(readText(CODE_HEALTH_SKILL_PATH));
+});
+
+test('go-red: the Step 10 accepted-risk check fails when the sentence is removed', () => {
+  const skillMd = readText(CODE_HEALTH_SKILL_PATH);
+  const mutated = skillMd.split('accepted risk — ADR NNNN ({kind})').join('');
+  assert.notEqual(mutated, skillMd, 'mutation did not apply — SKILL.md must contain "accepted risk — ADR NNNN ({kind})"');
+  assert.throws(() => assertStep10AcceptedRiskLine(mutated));
+});
