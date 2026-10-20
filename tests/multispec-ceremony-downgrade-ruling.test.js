@@ -14,6 +14,8 @@ const read = (rel) => fs.readFileSync(path.join(SKILLS, rel), 'utf8').replace(/\
 test('AC4.1: both files name the spec-level config.yml and one downgraded spec runs the batch pass at standard', () => {
   const wrapUp = read('wrap-up/SKILL.md');
   assert.match(wrapUp, /the downgrade writes the spec-level `config\.yml` only — never the parent run dir's/);
+  assert.match(wrapUp, /which in a single-spec run is the only remaining consumer \(under `MULTISPEC_CURATION_DEFER=1` per-spec Phase 2 is skipped and the batch pass/);
+  assert.doesNotMatch(wrapUp, /as `--ceremony`, which is the only remaining consumer/);
 
   const batch = read('flow/multispec-batch-curation.md');
   assert.match(batch, /\*\*Batch ceremony \(#3595\)\.\*\*/);

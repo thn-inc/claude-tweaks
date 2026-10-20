@@ -143,7 +143,7 @@ Then log:
 AUTO {time} — Ceremony profile downgraded fast-lane → standard: {trigger}. Remaining wrap-up steps run at standard depth.
 ```
 
-Phase 2 passes the (possibly just-downgraded) value to the engine as `--ceremony`, which is the only remaining consumer — no other propagation needed. This never re-runs a step already skipped (the roster in `_shared/ceremony-profile.md`, the SDD whole-branch review and polish skips included): the downgrade covers only this run's remaining wrap-up steps and never rewrites the record's `ceremony:*` label — a re-run is fast-lane again.
+Phase 2 passes the (possibly just-downgraded) value to the engine as `--ceremony`, which in a single-spec run is the only remaining consumer (under `MULTISPEC_CURATION_DEFER=1` per-spec Phase 2 is skipped and the batch pass, `flow/multispec-batch-curation.md`'s Batch ceremony, reads it instead) — no other propagation needed. This never re-runs a step already skipped (the roster in `_shared/ceremony-profile.md`, the SDD whole-branch review and polish skips included): the downgrade covers only this run's remaining wrap-up steps and never rewrites the record's `ceremony:*` label — a re-run is fast-lane again.
 
 ---
 
