@@ -35,6 +35,8 @@ function assertInstruction(text) {
   assert.match(text, /build-deviation-/, 'the instruction does not stage the departure as build-deviation-{N}');
   assert.match(text, /Ruling: contract-beats-spec —/, 'the instruction does not name the ledgered Ruling: line shape');
   assert.match(text, /in place of `sdd-ruling-\{N\}`/, 'the instruction does not route the deviation in place of sdd-ruling-{N}');
+  assert.match(text, /every `sdd-ruling` name in that procedure/, 'the instruction does not rename the sdd-ruling names in the carry-forward procedure');
+  assert.match(text, /dispositions read apply \/ decline rather than ratify \/ reverse/, 'the instruction does not set apply / decline dispositions');
   assert.match(
     text,
     /never kept on the grounds that the spec spelled it out/,
@@ -69,6 +71,10 @@ test('AC2.1: the instruction sits in the SDD subagent paragraph, after the defer
 
 test('AC2.1: architecture-alignment.md does not re-stage a contract-beats-spec deviation', () => {
   const alignment = readText(path.join(ROOT, 'plugin', 'skills', 'build', 'architecture-alignment.md'));
-  assert.match(alignment, /not staged again here/, 'architecture-alignment.md does not say the deviation is not staged again');
-  assert.match(alignment, /contract-beats-spec ruling \(#3557/, 'architecture-alignment.md does not cite the contract-beats-spec ruling');
+  const start = alignment.indexOf('## Check');
+  const end = alignment.indexOf('## Classification');
+  assert.ok(start !== -1 && end > start, 'architecture-alignment.md lacks ## Check followed by ## Classification');
+  const check = alignment.slice(start, end);
+  assert.match(check, /contract-beats-spec ruling \(#3557/, 'the ## Check section does not cite the contract-beats-spec ruling');
+  assert.match(check, /in any mode/, 'the ## Check section does not apply the exclusion in any mode');
 });
