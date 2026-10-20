@@ -64,7 +64,7 @@
 
 const fs = require('fs');
 const readline = require('readline');
-const { isProcedurePath } = require('../timing/transcript');
+const { isProcedurePath, resultBytes, statTranscriptOrThrow } = require('../timing/transcript');
 
 const BASE_DIR_PREFIX = 'Base directory for this skill:';
 const COMMAND_NAME = /<command-name>\/?([^<\s]+)<\/command-name>/;
@@ -72,38 +72,10 @@ const KINDS = new Set(['main', 'subagent']);
 
 const unattributedSkill = (kind) => `(${kind}, unattributed)`;
 
-// Same rule as timing/transcript.js's resultBytes, which that module does
-// not export (and this unit does not modify): a string result, or the text
-// blocks of an array result.
-function resultBytes(content) {
-  if (typeof content === 'string') return Buffer.byteLength(content, 'utf8');
-  if (Array.isArray(content)) {
-    return content.reduce((s, b) => s + (b && typeof b.text === 'string' ? Buffer.byteLength(b.text, 'utf8') : 0), 0);
-  }
-  return 0;
-}
-
 function blocksOf(msg) {
   if (Array.isArray(msg.content)) return msg.content;
   if (typeof msg.content === 'string') return [{ type: 'text', text: msg.content }];
   return [];
-}
-
-function statOrReject(fsImpl, filePath) {
-  let st;
-  try {
-    st = fsImpl.statSync(filePath);
-  } catch (err) {
-    const code = (err && err.code) || 'EUNKNOWN';
-    const e = new Error(`transcript not readable (${code}): ${filePath}`);
-    e.code = code;
-    throw e;
-  }
-  if (!st.isFile()) {
-    const e = new Error(`transcript not readable (EISDIR): ${filePath}`);
-    e.code = 'EISDIR';
-    throw e;
-  }
 }
 
 // path, { fsImpl?, worktree?, kind } -> Promise<[{ skill, injectedBytes,
@@ -113,7 +85,7 @@ function statOrReject(fsImpl, filePath) {
 // the stream's error mid-read; malformed lines are skipped.
 async function readSkillLoads(filePath, { fsImpl = fs, worktree = null, kind } = {}) {
   if (!KINDS.has(kind)) throw new Error(`readSkillLoads: kind must be "main" or "subagent", got ${JSON.stringify(kind)}`);
-  statOrReject(fsImpl, filePath);
+  statTranscriptOrThrow(fsImpl, filePath);
   const rows = [];
   const newRow = (skill) => {
     const r = { skill, injectedBytes: 0, readBytes: 0, readPaths: [] };
