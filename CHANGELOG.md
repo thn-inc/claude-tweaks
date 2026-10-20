@@ -53,6 +53,61 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.148.0](https://github.com/thn-inc/claude-tweaks/compare/v6.147.1...v6.148.0) (2026-10-20)
+
+
+### Features
+
+* _shared/git-discipline.md phase-exit push: does not… ([#2986](https://github.com/thn-inc/claude-tweaks/issues/2986)) ([998eeab](https://github.com/thn-inc/claude-tweaks/commit/998eeabb8236f4e43d11258dfb388e7de0845d32))
+* build: an AC met only by a scratch check leaves no… ([#3079](https://github.com/thn-inc/claude-tweaks/issues/3079)) ([b60f6b0](https://github.com/thn-inc/claude-tweaks/commit/b60f6b0e899181b432b666bfbdb0827181627668))
+* Extend sdd-ruling-* ratify/reverse to the PR-hosted and… ([#3513](https://github.com/thn-inc/claude-tweaks/issues/3513)) ([c653bbf](https://github.com/thn-inc/claude-tweaks/commit/c653bbf5e076fd0c1e975b1ee6f6bcac4ce18f66))
+* Extend the load model citation grammar with plugin-root… ([#3457](https://github.com/thn-inc/claude-tweaks/issues/3457)) ([1342144](https://github.com/thn-inc/claude-tweaks/commit/1342144b14b89e1dfb66d8bdfb31a4c030c8aa05))
+* flow-preflight's pr probe omits mergeable state, so a… ([#3014](https://github.com/thn-inc/claude-tweaks/issues/3014)) ([90de4e0](https://github.com/thn-inc/claude-tweaks/commit/90de4e05e837ff0423ca6b7b058dd5100c1ab3c9))
+* Let verify.js combine --scope with --baseline… ([#3511](https://github.com/thn-inc/claude-tweaks/issues/3511)) ([2bf0283](https://github.com/thn-inc/claude-tweaks/commit/2bf02838b5080107e7a9d5c8a0af06f14b7c44fb))
+* PR-check gate: demote checks already red on the… ([#3258](https://github.com/thn-inc/claude-tweaks/issues/3258)) ([66d9e6c](https://github.com/thn-inc/claude-tweaks/commit/66d9e6c2751ad4062c940155ce84c35e31151c6b))
+* Restore flaky retry for jest/vitest suites via… ([#3480](https://github.com/thn-inc/claude-tweaks/issues/3480)) ([8152113](https://github.com/thn-inc/claude-tweaks/commit/8152113b3ba117d42a44dba92bf3c1e00de4713a))
+* review Step 6.7: an auto-applied fix wave changes the UI… ([#3047](https://github.com/thn-inc/claude-tweaks/issues/3047)) ([684104a](https://github.com/thn-inc/claude-tweaks/commit/684104a7be55fc4fa80728e221e096c43497a27f))
+
+
+### Bug Fixes
+
+* /feedback: check a quoted Bash refusal against plugin/bin… ([#3338](https://github.com/thn-inc/claude-tweaks/issues/3338)) ([79b8409](https://github.com/thn-inc/claude-tweaks/commit/79b84093f00e61f9a7bfc58b4a7d9631bbf35ba8))
+* backlog refine re-refuses records a human already resolved ([#3597](https://github.com/thn-inc/claude-tweaks/issues/3597)) ([6495f06](https://github.com/thn-inc/claude-tweaks/commit/6495f069c2249dfd21f1b1b21cc610c4e42e87a7))
+* build: review minors are carried into the ledger as… ([#3004](https://github.com/thn-inc/claude-tweaks/issues/3004)) ([8a173ed](https://github.com/thn-inc/claude-tweaks/commit/8a173ed14ccce0e52acfa31d198dff6c36603a53))
+* Check same-run staged patches stacked, not only alone, at… ([#3290](https://github.com/thn-inc/claude-tweaks/issues/3290)) ([4faf391](https://github.com/thn-inc/claude-tweaks/commit/4faf3915574f65632352b2f524b2d515237822df))
+* check-artifact-overwrite: pass a content-preserving… ([#3341](https://github.com/thn-inc/claude-tweaks/issues/3341)) ([467ac60](https://github.com/thn-inc/claude-tweaks/commit/467ac60805ea8884cc28e695850536ed2f4650a8))
+* Display-only CI readers still classify the rollup alone… ([#3469](https://github.com/thn-inc/claude-tweaks/issues/3469)) ([8a6114e](https://github.com/thn-inc/claude-tweaks/commit/8a6114ed79fbaf9ea14224722fa3ee243a336af4))
+* Fix wrap-up-engine plan reading repo facts from the main… ([#3431](https://github.com/thn-inc/claude-tweaks/issues/3431)) ([255ec75](https://github.com/thn-inc/claude-tweaks/commit/255ec7594e74b5acee06aaccc6288eea0d9cdff7))
+* flow Step 3 (Manifesto) and Step 1.8 (ledger creation)… ([#3289](https://github.com/thn-inc/claude-tweaks/issues/3289)) ([a2a493e](https://github.com/thn-inc/claude-tweaks/commit/a2a493ef215272b36d52ad7a90020880e5632fd2))
+* flow-preflight classifies a self-minted run dir as case 3… ([#3515](https://github.com/thn-inc/claude-tweaks/issues/3515)) ([a7e0ca0](https://github.com/thn-inc/claude-tweaks/commit/a7e0ca0ae4b840a612cd3683e4c4edbda3e12722))
+* flow: a freshly claimed run dir absorbs other sessions'… ([#3363](https://github.com/thn-inc/claude-tweaks/issues/3363)) ([c73608b](https://github.com/thn-inc/claude-tweaks/commit/c73608b3baa1084b0d5c18a0831373d158957858))
+* friction-events.js reads decisions.md local times as UTC… ([#3442](https://github.com/thn-inc/claude-tweaks/issues/3442)) ([4dbf60b](https://github.com/thn-inc/claude-tweaks/commit/4dbf60b8dc01edd95bd22af81df7d43b8feb4476))
+* friction-main-checkout-denial-coverage '[#2543](https://github.com/thn-inc/claude-tweaks/issues/2543) control'… ([#3575](https://github.com/thn-inc/claude-tweaks/issues/3575)) ([36c1166](https://github.com/thn-inc/claude-tweaks/commit/36c1166e3a6369e7a703cb8c90704584db3f1f6c))
+* Impeccable resolve() can report upgrade-required for a… ([#3541](https://github.com/thn-inc/claude-tweaks/issues/3541)) ([d966538](https://github.com/thn-inc/claude-tweaks/commit/d966538ca16e6d70dbdde553e2d8c33c0edb3781)), closes [#3543](https://github.com/thn-inc/claude-tweaks/issues/3543) [#3585](https://github.com/thn-inc/claude-tweaks/issues/3585)
+* Make ledger rows pipe-safe — a `|` in an Item or… ([#3512](https://github.com/thn-inc/claude-tweaks/issues/3512)) ([aa161a9](https://github.com/thn-inc/claude-tweaks/commit/aa161a91c84e6de6fd8b0a6f87dcd6a075453f99))
+* Normalize StatusContext entries in the pr-first merge… ([#3257](https://github.com/thn-inc/claude-tweaks/issues/3257)) ([ee9b260](https://github.com/thn-inc/claude-tweaks/commit/ee9b260d7847c2171f3477f674ef87af0e82baaf))
+* Post-merge reconcile reports a console-never-rendered run… ([#3297](https://github.com/thn-inc/claude-tweaks/issues/3297)) ([cf09383](https://github.com/thn-inc/claude-tweaks/commit/cf09383fee5de6f80a6a899e9b6effbdc96db1bb))
+* pr-first-merge Step 3 misses the 'Protected branch rules… ([#3269](https://github.com/thn-inc/claude-tweaks/issues/3269)) ([5225cef](https://github.com/thn-inc/claude-tweaks/commit/5225cefa5f15396ee74f127e0a26b0855817abf4))
+* reconcile: the 18 s budget starves `reap` (dispatched… ([#3026](https://github.com/thn-inc/claude-tweaks/issues/3026)) ([cdf6627](https://github.com/thn-inc/claude-tweaks/commit/cdf6627d9c1698454f2476398bfe08c6570a7e05))
+* Reconciler archives a run whose PR merged before all of… ([#3503](https://github.com/thn-inc/claude-tweaks/issues/3503)) ([6db633c](https://github.com/thn-inc/claude-tweaks/commit/6db633c048ef8c01345655e91840e5de83623e38))
+* review: a fix's re-verify rebuilds the app under the… ([#3021](https://github.com/thn-inc/claude-tweaks/issues/3021)) ([7301ac2](https://github.com/thn-inc/claude-tweaks/commit/7301ac289aefc0a89897ff589542974a1ebd4082))
+* review: categorise-reproduction splits a reproduced… ([#3326](https://github.com/thn-inc/claude-tweaks/issues/3326)) ([aaab528](https://github.com/thn-inc/claude-tweaks/commit/aaab5285f661fff1f852b4c50a78ac2d31b128dd))
+* review/step3-lens-dispatch: medium+ lens dispatch has no… ([#3078](https://github.com/thn-inc/claude-tweaks/issues/3078)) ([3647622](https://github.com/thn-inc/claude-tweaks/commit/3647622540e8e980153fd819b0a95090911a8e4e)), closes [#3266](https://github.com/thn-inc/claude-tweaks/issues/3266)
+* Route build's SDD final-review capture through… ([#3496](https://github.com/thn-inc/claude-tweaks/issues/3496)) ([dfafc03](https://github.com/thn-inc/claude-tweaks/commit/dfafc03a540100260eacc9517467b092e8716708))
+* Run config never carries the integration-model pin… ([#3350](https://github.com/thn-inc/claude-tweaks/issues/3350)) ([f103f2d](https://github.com/thn-inc/claude-tweaks/commit/f103f2d170c45b605b50ad7be8a27bfd89e062ad))
+* Stale-superpowers notice names no remedy for a record… ([#3631](https://github.com/thn-inc/claude-tweaks/issues/3631)) ([805c088](https://github.com/thn-inc/claude-tweaks/commit/805c088a5cc2f6676f803d928bfcecb84b55754c))
+* use isPathContained in check-staged-stack — restore green main ([#3692](https://github.com/thn-inc/claude-tweaks/issues/3692)) ([64158e1](https://github.com/thn-inc/claude-tweaks/commit/64158e1e86c29ea60fa257c3849f8fb50c0133bd))
+* use isPathContained in check-staged-stack's --rederive-out guard ([#3694](https://github.com/thn-inc/claude-tweaks/issues/3694)) ([d18cb00](https://github.com/thn-inc/claude-tweaks/commit/d18cb00b7cc734bf2471c6153d22a4fea27dbb32))
+* Windows regression-proof 9 prose tests that split or… ([#3574](https://github.com/thn-inc/claude-tweaks/issues/3574)) ([11d0838](https://github.com/thn-inc/claude-tweaks/commit/11d083827da9545573151b09082f877221f764c9))
+* Windows regression: 1 test file(s) newly failing after… ([#3507](https://github.com/thn-inc/claude-tweaks/issues/3507)) ([d7e6981](https://github.com/thn-inc/claude-tweaks/commit/d7e69810f627145cb542e5d725ee23202f1ee39c)), closes [#3509](https://github.com/thn-inc/claude-tweaks/issues/3509)
+* Windows regression: 1 test file(s) newly failing after… ([#3562](https://github.com/thn-inc/claude-tweaks/issues/3562)) ([c892444](https://github.com/thn-inc/claude-tweaks/commit/c892444010904fd0f7f338d7710a163c3683d147))
+* Windows regression: 1 test file(s) newly failing after… ([#3564](https://github.com/thn-inc/claude-tweaks/issues/3564)) ([e606a42](https://github.com/thn-inc/claude-tweaks/commit/e606a428bdb56286f0555b7b40d7673fe1261d21)), closes [#3565](https://github.com/thn-inc/claude-tweaks/issues/3565) [#3581](https://github.com/thn-inc/claude-tweaks/issues/3581)
+* Wrap-up ceremony derivation treats shipped skill prose as… ([#3477](https://github.com/thn-inc/claude-tweaks/issues/3477)) ([65133bd](https://github.com/thn-inc/claude-tweaks/commit/65133bdf853f79dc8a2d6f96915dff3c9d3466db))
+* wrap-up ledger-write.js resolveLedgerPath still treats a… ([#3566](https://github.com/thn-inc/claude-tweaks/issues/3566)) ([8d583ba](https://github.com/thn-inc/claude-tweaks/commit/8d583babc6fafe65c296dd3a323f0ae4ab7a3f0b))
+* wrap-up Section C step 5 teardown-run still archives the… ([#3490](https://github.com/thn-inc/claude-tweaks/issues/3490)) ([4a67158](https://github.com/thn-inc/claude-tweaks/commit/4a67158d19ff8f40acf45e1692ea3274ab3e8ba5))
+* wrap-up-pack.js residue probe runs within 0.5s of its 30s… ([#3479](https://github.com/thn-inc/claude-tweaks/issues/3479)) ([ef1a73f](https://github.com/thn-inc/claude-tweaks/commit/ef1a73f3d7dd58ae501d5a6985ca65cfec6db4c8))
+* wrap-up: spec-qualify the brief PR run comment under… ([#3333](https://github.com/thn-inc/claude-tweaks/issues/3333)) ([86e1738](https://github.com/thn-inc/claude-tweaks/commit/86e173849e02a4d5d5aa29ea28ee721e9aec1b27))
+
 ## [6.147.1](https://github.com/thn-inc/claude-tweaks/compare/v6.147.0...v6.147.1) (2026-10-19)
 
 
