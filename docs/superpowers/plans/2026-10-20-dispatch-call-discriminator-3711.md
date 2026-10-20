@@ -32,6 +32,14 @@ Scope keywords: Dispatch-claim, dispatch-claim
   - A human resume with a `review,polish,wrap-up` step list never reaches Step 4.5, so the stamp keeps the dispatching session's id, and a different human session mismatches.
 - **Fail-safe claim:** a Task call that is wrongly classified as human-run reaches the local-merge direct-merge first call. Its guard (`auto-merge-short-circuit.md` ~line 271, `CURRENT=$(git branch --show-current)` vs `{integration-branch}`) sees the worktree's feature branch and aborts. Task 2 makes that abort take the documented console fallback in so many words.
 
+- **Beneficial deviation (final whole-branch review, /build Common Step 4.5):**
+  - **The gap:** the plan's mechanism note missed a path. `_shared/run-resume-freshness.md`'s probe re-runs `record-worktree` on a resume, and that overwrites `sessionId` with the resumer's id. A `sessionId`-only predicate therefore still let a human resume pose as a Task call.
+  - **The fix:** scope was widened to `plugin/bin/hooks.js`.
+    - `record-worktree --dispatch` also stamps `dispatchSessionId`, and plain re-stamps never write it.
+    - `isDispatchTaskCall` compares against `dispatchSessionId`, falling back to `sessionId` only when the field is absent, for run-states from older builds.
+    - The fallback's removal condition is recorded inline in `task-call.js`.
+  - **Docs:** `docs/hooks.md`, `docs/skill-graph.md`, `dispatch/sibling-session-check.md`, `_shared/run-resume-freshness.md` and the #3225 journey were updated to match (620f95790).
+
 ## Review Focus
 
 1. A `run-state.json` that is present but malformed JSON must classify as human-run without the snippet crashing. Pinned in Task 1 (`AC2.1` reader test) and Task 2 (snippet run).

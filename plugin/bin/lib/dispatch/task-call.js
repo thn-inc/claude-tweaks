@@ -17,6 +17,14 @@
 // `undefined === undefined` must not count), and nothing here throws — a missing or unreadable
 // run-state.json is a genuine human-run session (false), which falls through to the direct-merge
 // path.
+//
+// Removal condition for the `sessionId` fallback (expand-contract): delete it — and compare
+// `dispatchSessionId` alone — once (a) no live run dir in this repo still carries a pre-field
+// dispatched stamp (`grep -l '"dispatched": *true' .claude-tweaks/pipelines/*/run-state.json |
+// xargs grep -L dispatchSessionId` returns nothing; archive/ excluded), and (b) the plugin
+// release that first shipped #3711 is at least 6 months old (users' in-flight runs written by
+// older builds cannot be enumerated), checked at the next minor release after both hold — the
+// same grace-period shape `_shared/policy-deprecations.md` uses.
 'use strict';
 
 const { readRunState } = require('../hooks/context');

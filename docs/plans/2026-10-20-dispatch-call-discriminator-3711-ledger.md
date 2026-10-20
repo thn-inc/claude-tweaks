@@ -11,6 +11,6 @@
 | 7 | build | SDD ruling — tests/ grep returns 8 dispatch-claim lines, not the brief's 2 (extra 6 are Task 2's frozen excerpts + one negative assertion): ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
 | 8 | build | SDD ruling — scope widened to plugin/bin/hooks.js: record-worktree --dispatch stamps dispatchSessionId, predicate falls back to sessionId when absent: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
 | 9 | build | SDD ruling — Routine-context session-id sharing left unverified, recorded in the PR description: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
-| 10 | build | Final review (parked): sessionId fallback in task-call.js has no recorded removal condition (CLAUDE.md expand-contract rule) | open | — |
-| 11 | build | Final review (parked): tests/hooks-dispatcher.test.js #3225 test title still ends "plus dispatched" | open | — |
+| 10 | build | Final review (parked): sessionId fallback in task-call.js has no recorded removal condition (CLAUDE.md expand-contract rule) | fixed | Inline removal condition (grep predicate + 6-month release grace) in plugin/bin/lib/dispatch/task-call.js header — Common Step 4.5 commit |
+| 11 | build | Final review (parked): tests/hooks-dispatcher.test.js #3225 test title still ends "plus dispatched" | fixed | Title now names dispatchSessionId — Common Step 4.5 commit |
 | 12 | build | Final review (parked): spec/plan text still describes a sessionId-only match; the dispatchSessionId scope-widening lives only in rulings | observation | Recorded in the PR description at the pre-merge refresh; the materialized spec is an audit snapshot and is not rewritten |

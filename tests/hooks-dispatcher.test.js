@@ -1503,7 +1503,7 @@ test('#3225: --dispatch is accepted before the worktree positional too, and neve
   assert.strictEqual(s.dispatched, true);
 });
 
-test('#3225: --dispatch preserves every pre-existing field and writes exactly what a plain record-worktree writes, plus dispatched', () => {
+test('#3225: --dispatch preserves every pre-existing field and writes exactly what a plain record-worktree writes, plus dispatched and dispatchSessionId', () => {
   const project = tmpProject();
   const seed = {
     status: 'interrupted',
