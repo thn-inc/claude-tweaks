@@ -78,4 +78,5 @@ test('the documented node -e composition runs and yields a diff-facts object', (
 test('a win32-shaped plugin root splices into the composition with no backslash', () => {
   const cmd = compositionFor(pluginRootFor('D:\\a\\repo', path.win32));
   assert.ok(!cmd.includes('\\'), `spliced command contains a backslash: ${cmd}`);
+  assert.ok(cmd.includes("require('D:/a/repo/plugin/bin/lib/blast-radius-cli.js')"), cmd);
 });
