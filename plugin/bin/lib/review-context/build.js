@@ -34,9 +34,7 @@ function realLsof({ exec = execFileSync } = {}) {
       windowsHide: true,
     });
   } catch (err) {
-    if (err.code === 'ENOENT') return null;
-    if (err.status === 1) return err.stdout || '';
-    return null;
+    return err.status === 1 ? err.stdout || '' : null;
   }
 }
 
