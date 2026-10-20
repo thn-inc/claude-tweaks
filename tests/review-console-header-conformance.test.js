@@ -12,12 +12,19 @@
 // is the intended action when it changes (same reasoning as
 // tests/hooks-gate-coverage.test.js). Do not generalize the pattern to prose that
 // merely happens to mention the console.
+//
+// The same reasoning covers the second contract pinned below: the gate's deny
+// reason quotes a console section heading by name, so that heading must exist,
+// verbatim, in the console file the reason names.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { REVIEW_CONSOLE_HEADER } = require('../plugin/bin/lib/hooks/pre-tool-use');
+const { execFileSync } = require('child_process');
+const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
+const { REVIEW_CONSOLE_HEADER } = pre;
 
 const CONSOLE_FILES = [
   'plugin/skills/wrap-up/review-console-interactive.md',
@@ -52,5 +59,35 @@ for (const file of CONSOLE_FILES) {
 
   test(`control: assertPinsHeader reports a missing ask distinctly for ${file}`, () => {
     assert.throws(() => assertPinsHeader('no ask here', file), /could not find the console ask/);
+  });
+}
+
+// Builds a real deny reason for one run shape (single-spec, or multi-spec via
+// manifest.yml). The run sits in a real git repo whose run-state.json names the
+// caller's session, so classifyOwnership answers 'mine'; the ceiling is injected.
+function denyReason({ multiSpec }) {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-console-heading-')));
+  execFileSync('git', ['-C', repo, 'init', '-q']);
+  const dir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'active', sessionId: 'sess-1' }));
+  if (multiSpec) fs.writeFileSync(path.join(dir, 'manifest.yml'), 'specs: []\n');
+  const ctx = {
+    input: { tool_name: 'AskUserQuestion', tool_input: { questions: [{ header: REVIEW_CONSOLE_HEADER, question: 'q', options: [] }] }, session_id: 'sess-1', cwd: repo },
+    ownedRun: { dir, attribution: 'session' },
+    cwd: repo,
+  };
+  const out = pre.checkReviewConsoleAskGate(ctx, { readConsoleCeiling: () => 'unattended' });
+  return out.json.hookSpecificOutput.permissionDecisionReason;
+}
+
+for (const multiSpec of [false, true]) {
+  test(`#3712: the deny reason's quoted section heading exists in the console file it names (${multiSpec ? 'multi-spec' : 'single-spec'})`, () => {
+    const m = /follow (\S+\.md)'s "([^"]+)" section/.exec(denyReason({ multiSpec }));
+    assert.ok(m, 'the deny reason no longer quotes a console file and section heading in the shape this test parses');
+    const [, file, heading] = m;
+    const lines = readConsole(path.join('plugin', 'skills', file)).split('\n');
+    assert.ok(lines.includes(`## ${heading}`),
+      `plugin/skills/${file} has no "## ${heading}" heading — pre-tool-use.js's checkReviewConsoleAskGate deny reason sends the model to that section by name; rename both together`);
   });
 }
