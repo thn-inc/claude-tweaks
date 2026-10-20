@@ -210,7 +210,7 @@ test('detectEntrypoints: plugin/bin/lib/hooks/*.js is NOT an implicit entrypoint
   assert.ok(!eps.has('plugin/bin/lib/hooks/session-start.js'), 'a literal (non-computed) require must not trigger the implicit-entrypoint carve-out under the nested payload root either');
 });
 
-const { extractModuleExports } = require('../../../plugin/bin/lib/code-health/candidates-dead-code');
+const { extractModuleExports } = require('../../../plugin/bin/lib/code-health/source-scan');
 
 // ── extractModuleExports ─────────────────────────────────────────────────────
 
@@ -558,7 +558,8 @@ test('referencedFileSpecifiers: finds require, static import, side-effect import
 });
 
 const { execFileSync } = require('node:child_process');
-const { candidatesDeadCode, scanDeadCode, listTrackedSourceFiles, isGlobDiscoveredTestFile } = require('../../../plugin/bin/lib/code-health/candidates-dead-code');
+const { candidatesDeadCode, scanDeadCode } = require('../../../plugin/bin/lib/code-health/candidates-dead-code');
+const { listTrackedSourceFiles, isGlobDiscoveredTestFile } = require('../../../plugin/bin/lib/code-health/source-scan');
 
 function gitInit(root) {
   execFileSync('git', ['-C', root, 'init', '-q']);
@@ -865,16 +866,18 @@ test('each candidate carries evidence naming its own file and symbol', () => {
 // check here rather than left to prose (IL-102). Comment lines are stripped
 // first so the header's illustrative `require('./a')`-style examples don't
 // count as imports.
-test('cursor-neutrality: the module imports nothing beyond fs/path/child_process/./focus-generators/../shared-primitives — never scope.js or next-slice', () => {
+test('cursor-neutrality: the module imports nothing beyond fs/path/./source-scan/./focus-generators/../shared-primitives — never scope.js or next-slice', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'code-health', 'candidates-dead-code.js'), 'utf8');
   const codeOnly = src.split('\n').filter((line) => !/^\s*\/\//.test(line)).join('\n');
   const imports = (codeOnly.match(/require\(\s*['"][^'"]+['"]\s*\)/g) || []).sort();
   // './focus-generators' is the shared framework registry this module
   // registers into (Item 6); '../shared-primitives' (#977) is a pure,
   // zero-dependency utility module (GH_TIMEOUT_MS, escapeRegExp) with no
-  // requires of its own — neither touches scope.js or next-slice, the two
-  // this guarantee actually cares about.
-  assert.deepStrictEqual(imports, ["require('../shared-primitives')", "require('./focus-generators')", "require('child_process')", "require('fs')", "require('path')"]);
+  // requires of its own; './source-scan' (#3478) is the leaf holding the
+  // shared git-ls-files/export-extraction helpers (child_process lives there
+  // now) — none touches scope.js or next-slice, the two this guarantee
+  // actually cares about.
+  assert.deepStrictEqual(imports, ["require('../shared-primitives')", "require('./focus-generators')", "require('./source-scan')", "require('fs')", "require('path')"]);
 });
 
 // Behavioral counterpart to the source-grep test above (review finding: the
