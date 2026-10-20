@@ -125,7 +125,8 @@ function coreForegroundSection(text) {
 // templates -- so each copy's list spreads this one array, and each pattern matches exactly once
 // per copy so its go-red proof removes the only occurrence.
 const SHARED_RULE = [
-  [/`sleep\s+30`\s+Bash\s+calls,\s+at\s+most\s+40\s+\(20\s+minutes\)\s+per\s+wave\s+of\s+children/, 'the sleep 30 x 40 (20 minute) per-wave bound'],
+  [/`sleep\s+20`\s+Bash\s+calls,\s+at\s+most\s+60\s+\(20\s+minutes\)\s+per\s+wave\s+of\s+children/, 'the sleep 20 x 60 (20 minute) per-wave bound'],
+  [/blocked\s+or\s+fails[^.]*?is\s+not\s+a\s+wait\s+and\s+never\s+counts\s+toward\s+the\s+bound;\s+never\s+retry\s+it\s+in\s+another\s+form/, 'a blocked or failed wait never counts and is never retried in another form'],
   [/how\s+many\s+children\s+are\s+still\s+pending/, 'each wait logs how many children are still pending'],
   [/\bis\s+abandoned\b/, 'a child self-judged at the bound is abandoned'],
   [/no\s+longer\s+counts\s+as\s+outstanding/, 'an abandoned child no longer counts as outstanding'],
@@ -370,7 +371,7 @@ test('each output-contract abandoned-child assertion can actually go red on its 
 // The primitive's numbers (sleep interval, call cap, minutes) are restated in four copies; they must
 // agree. Each copy is reduced to the one place the primitive appears in it.
 const PRIMITIVE = /`sleep\s+(\d+)`\s+Bash\s+calls,\s+at\s+most\s+(\d+)\s+\((\d+)\s+minutes\)/g;
-const EXPECTED_PRIMITIVE = '30/40/20';
+const EXPECTED_PRIMITIVE = '20/60/20';
 function primitiveCopies() {
   const taskPrompt = fs.readFileSync(TASK_PROMPT, 'utf8');
   const [firstCall, secondCall] = templateBlocks(taskPrompt);
@@ -390,16 +391,16 @@ const mismatchedPrimitiveCopies = (copies) => Object.entries(copies)
   .filter(([, text]) => !statesPrimitiveOnce(text))
   .map(([name]) => name);
 
-test('the keep-alive primitive (sleep 30, at most 40, 20 minutes) agrees across all four copies (#3078)', () => {
-  assert.deepEqual(mismatchedPrimitiveCopies(primitiveCopies()), [], 'every copy of the keep-alive primitive must state sleep 30, at most 40 (20 minutes), exactly once');
+test('the keep-alive primitive (sleep 20, at most 60, 20 minutes) agrees across all four copies (#3078)', () => {
+  assert.deepEqual(mismatchedPrimitiveCopies(primitiveCopies()), [], 'every copy of the keep-alive primitive must state sleep 20, at most 60 (20 minutes), exactly once');
 });
 
 test('a mismatched keep-alive primitive copy can actually go red (discrimination proof)', () => {
   const copies = primitiveCopies();
   for (const name of Object.keys(copies)) {
     for (const [label, doctor] of [
-      ['interval', (t) => t.replace(/`sleep\s+30`/, '`sleep 20`')],
-      ['cap', (t) => t.replace(/at\s+most\s+40/, 'at most 15')],
+      ['interval', (t) => t.replace(/`sleep\s+20`/, '`sleep 30`')],
+      ['cap', (t) => t.replace(/at\s+most\s+60/, 'at most 15')],
       ['minutes', (t) => t.replace(/\(20\s+minutes\)/, '(5 minutes)')],
     ]) {
       const doctored = doctor(copies[name]);

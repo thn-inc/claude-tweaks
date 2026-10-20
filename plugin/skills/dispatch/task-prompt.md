@@ -43,7 +43,7 @@ that needs no resolution, only inclusion:
    (e.g. the full test suite) as a normal foreground call with a large explicit timeout (#1965). A
    nested `Agent` call always launches async, and its completion notification reaches you only
    while your turn is alive: keep your turn alive with bounded foreground waits — repeated
-   `sleep 30` Bash calls, at most 40 (20 minutes) per wave of children (the set launched
+   `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children (the set launched
    together), each wait logged as one line (what you wait on, the iteration against the bound, how
    many children are still pending), stopping as soon as every child's `<task-notification>` has
    arrived, never reading or tailing a running child's `output_file` — until every child you
@@ -59,7 +59,9 @@ that needs no resolution, only inclusion:
    yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a write-capable
    child (one that edits files) still silent at the bound is never redone in-session, because an
    abandoned child keeps running and may still write — stop, and end with `STATUS: BLOCKED` naming
-   that child and its unit. The full rule is in `subagent-dispatch-core.md`'s Foreground Execution
+   that child and its unit. A wait call that is blocked or fails is not a wait and never counts
+   toward the bound; never retry it in another form (a longer, wrapped or backgrounded sleep):
+   treat every child still outstanding as silent at the bound. The full rule is in `subagent-dispatch-core.md`'s Foreground Execution
    Discipline section. Give any agent you
    dispatch this same instruction, whether it is a nested Task/Agent call or a
    `superpowers:subagent-driven-development` or review-lens fan-out. **Mark every interim reply
@@ -141,8 +143,8 @@ foreground of this turn, output redirected to a file if it's long -- never with
 started this way -- there is no notification mechanism behind either, so it is never re-woken
 and the run stalls silently (#1965). A nested `Agent` call (a lens-dispatch fan-out, a
 reproduction pair) always launches async, and its completion notification reaches you only while
-this turn is alive: keep the turn alive with bounded foreground waits -- repeated `sleep 30` Bash
-calls, at most 40 (20 minutes) per wave of children (the set launched together), each wait
+this turn is alive: keep the turn alive with bounded foreground waits -- repeated `sleep 20` Bash
+calls, at most 60 (20 minutes) per wave of children (the set launched together), each wait
 logged as one line (what you wait on, the iteration against the bound, how many children are
 still pending), stopping as soon as every child's `<task-notification>` has arrived, never
 reading or tailing a running child's `output_file` -- until every child has reported, and never
@@ -157,7 +159,10 @@ per the dispatching skill's own status handling where one exists, otherwise judg
 yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a write-capable
 child (one that edits files) still silent at the bound is never redone in-session, because an
 abandoned child keeps running and may still write -- stop, and end with `STATUS: BLOCKED` naming
-that child and its unit. A reply that ends without a tool call ends the turn.
+that child and its unit. A wait call that is blocked or fails is not a wait and never counts
+toward the bound; never retry it in another form (a longer, wrapped or backgrounded sleep):
+treat every child still outstanding as silent at the bound. A reply that ends without a tool
+call ends the turn.
 
 {context-pack}
 
@@ -297,8 +302,8 @@ foreground of this turn, output redirected to a file if it's long -- never with
 started this way -- there is no notification mechanism behind either, so it is never re-woken
 and the run stalls silently (#1965). A nested `Agent` call (a lens-dispatch fan-out, a
 reproduction pair) always launches async, and its completion notification reaches you only while
-this turn is alive: keep the turn alive with bounded foreground waits -- repeated `sleep 30` Bash
-calls, at most 40 (20 minutes) per wave of children (the set launched together), each wait
+this turn is alive: keep the turn alive with bounded foreground waits -- repeated `sleep 20` Bash
+calls, at most 60 (20 minutes) per wave of children (the set launched together), each wait
 logged as one line (what you wait on, the iteration against the bound, how many children are
 still pending), stopping as soon as every child's `<task-notification>` has arrived, never
 reading or tailing a running child's `output_file` -- until every child has reported, and never
@@ -313,7 +318,10 @@ per the dispatching skill's own status handling where one exists, otherwise judg
 yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a write-capable
 child (one that edits files) still silent at the bound is never redone in-session, because an
 abandoned child keeps running and may still write -- stop, and end with `STATUS: BLOCKED` naming
-that child and its unit. A reply that ends without a tool call ends the turn.
+that child and its unit. A wait call that is blocked or fails is not a wait and never counts
+toward the bound; never retry it in another form (a longer, wrapped or backgrounded sleep):
+treat every child still outstanding as silent at the bound. A reply that ends without a tool
+call ends the turn.
 
 {context-pack}
 

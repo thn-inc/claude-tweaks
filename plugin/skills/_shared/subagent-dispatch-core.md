@@ -56,7 +56,7 @@ instruction are the concrete pattern; point a new dispatch site at them rather t
 launches async — its tool result is launch metadata, never the child's reply — and the child's
 `<task-notification>` reaches the agent only while its turn is alive. A dispatched agent may fan
 out nested agents at every tier (lens pairs, single reads, curation judges), but it keeps its own
-turn alive with bounded foreground waits — repeated `sleep 30` Bash calls, at most 40 (20 minutes)
+turn alive with bounded foreground waits — repeated `sleep 20` Bash calls, at most 60 (20 minutes)
 per wave of children (the set launched together), each wait logged per the bounded-polling
 paragraph below (what is waited on, the iteration against the bound, how many children are still
 pending), stopping as soon as every child's `<task-notification>` has arrived, never reading or
@@ -80,7 +80,10 @@ where one exists (`superpowers:subagent-driven-development`'s BLOCKED handling, 
 retrieval below), otherwise judge that unit as in the fallback. The self-judge fallback is for a
 read-only unit (a lens, a single read, a judge); a write-capable child (one that edits files)
 still silent at the bound is never redone in-session, because an abandoned child keeps running and
-may still write — stop, and end with `STATUS: BLOCKED` naming that child and its unit.
+may still write — stop, and end with `STATUS: BLOCKED` naming that child and its unit. A wait
+call that is blocked or fails (a harness or hook refusal) is not a wait and never counts toward
+the bound; never retry it in another form (a longer, wrapped or backgrounded sleep): treat every
+child still outstanding as silent at the bound and apply the fallback above.
 
 **Top-level dispatchers.** A session waiting on its own `Agent`/`Task` children within its turn is
 the pattern `_shared/dispatch-waiting.md` documents; this section restricts only what a dispatched

@@ -17,7 +17,7 @@ files:
 
 ### 1. Fan out the lens pairs from inside the dispatched call
 - **URL:** the second Task call's `/claude-tweaks:review` Step 3 reproduction dispatch
-- **Action:** the dispatched reviewer launches each lens pair with the `Agent` tool. Every launch returns launch metadata (an async ack), never the child's reply. The reviewer then makes foreground `sleep 30` Bash calls, at most 40 per wave (20 minutes). Each wait iteration gets one line naming the lenses waited on, the iteration against the bound, and how many children are still pending. The reviewer stops as soon as every child's `<task-notification>` has arrived.
+- **Action:** the dispatched reviewer launches each lens pair with the `Agent` tool. Every launch returns launch metadata (an async ack), never the child's reply. The reviewer then makes foreground `sleep 20` Bash calls, at most 60 per wave (20 minutes); a wait call the harness blocks is never retried in another form. Each wait iteration gets one line naming the lenses waited on, the iteration against the bound, and how many children are still pending. The reviewer stops as soon as every child's `<task-notification>` has arrived.
 - **Should feel:** like ordinary progress. Each wait line shows the pending count falling, and the turn never goes quiet.
 - **Should understand:** a nested `Agent` call from a dispatched agent always launches async. The child's notification reaches the reviewer only while its turn is still alive. A reply that ends without a tool call ends the turn, whatever is still in flight. The full rule is in `_shared/subagent-dispatch-core.md`'s Foreground Execution Discipline.
 - **Red flags:**
