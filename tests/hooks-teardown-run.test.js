@@ -9,7 +9,8 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { teardownRun, defaultGhApiDelete } = require('../plugin/bin/lib/hooks/teardown-run');
+const { teardownRun, defaultGhApiDelete, findWorktreeEntry } = require('../plugin/bin/lib/hooks/teardown-run');
+const { parseWorktreeList } = require('../plugin/bin/lib/hooks/worktree-reap');
 
 function git(root, ...args) {
   return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' });
@@ -426,4 +427,30 @@ test('#3490: the CLI still accepts --remote-ref-only (never refused as an unknow
   assert.match(out, /archive: skipped — teardown-run does not archive/);
   assert.doesNotMatch(out, /claude-tweaks: usage:/);
   assert.ok(fs.existsSync(path.join(runDir, 'decisions.md')));
+});
+
+// #3695: win32 `git worktree list --porcelain` prints forward-slash paths while the run's stamped
+// worktree path is native backslash; the lookup must still match them, and posix stays exact.
+const PORCELAIN = 'worktree D:/a/x\nHEAD 1111111\nbranch refs/heads/trunk\n\nworktree D:/a/x/feat\nHEAD 2222222\nbranch refs/heads/feat-branch\nprunable gitdir file points to non-existent location\n\n';
+const entries = parseWorktreeList(PORCELAIN);
+
+test('#3695 AC1: win32 — a forward-slash porcelain path resolves the backslash-stamped worktree to its branch', () => {
+  assert.strictEqual(findWorktreeEntry(entries, 'D:\\a\\x\\feat', path.win32).branch, 'feat-branch');
+  assert.strictEqual(findWorktreeEntry(entries, 'd:\\a\\x\\feat\\', path.win32).branch, 'feat-branch');
+});
+
+test('#3695 AC2: win32 — the prunable-retry lookup finds the prunable entry', () => {
+  assert.strictEqual(findWorktreeEntry(entries, 'D:\\a\\x\\feat', path.win32).prunable, true);
+});
+
+test('#3695: posix stays case-sensitive and a falsy target never matches', () => {
+  assert.strictEqual(findWorktreeEntry([{ path: '/a/X', branch: 'b' }], '/a/x', path.posix), null);
+  assert.strictEqual(findWorktreeEntry(entries, null, path.win32), null);
+  assert.strictEqual(findWorktreeEntry(entries, '', path.win32), null);
+});
+
+test('#3695 AC3: no strict worktree-path compare remains at either call site', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'teardown-run.js'), 'utf8');
+  assert.doesNotMatch(src, /\.path === /);
+  assert.ok((src.match(/findWorktreeEntry\(/g) || []).length >= 3);
 });
