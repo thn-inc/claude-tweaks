@@ -44,6 +44,18 @@ const SITES = [
       'worktree-path': posix(WORKTREE),
     },
   },
+  {
+    label: 'settle-and-merge.md',
+    file: 'plugin/skills/dispatch/settle-and-merge.md',
+    vars: {
+      'integration-branch': 'main',
+      branch: 'feat',
+      issue: '1',
+      'second-issue': '2',
+      'subject-dir': posix(SUBJECT_DIR),
+      'group-worktree': posix(WORKTREE),
+    },
+  },
 ];
 
 const PRE_MERGE_NEEDLE = 'git merge-tree --write-tree';
@@ -242,17 +254,18 @@ for (const site of SITES) {
     const hook = (...args) => execFileSync(process.execPath, [HOOKS, ...args], {
       cwd: dir, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
     });
-    hook('record-worktree', '--run', run, vars['worktree-path']);
+    const wt = vars['worktree-path'] ?? vars['group-worktree'];
+    hook('record-worktree', '--run', run, wt);
     hook('close-run', '--run', run);
     let state = readRunState(run);
     assert.strictEqual(state.worktree, null, 'close-run clears the worktree assignment');
     assert.strictEqual(state.status, 'clean');
 
-    const r = runFence(fence, { cwd: dir, env: { CLAUDE_PLUGIN_ROOT: posix(PLUGIN_DIR), RUN_DIR: posix(run) }, vars });
+    const r = runFence(fence, { cwd: dir, env: { CLAUDE_PLUGIN_ROOT: posix(PLUGIN_DIR), RUN_DIR: posix(run) }, vars: { ...vars, 'run-dir': posix(run) } });
     assert.strictEqual(r.code, 0, r.stderr);
     assert.match(r.stdout, /worktree recorded for/);
     state = readRunState(run);
-    assert.strictEqual(state.worktree, path.resolve(vars['worktree-path']));
+    assert.strictEqual(state.worktree, path.resolve(wt));
     assert.strictEqual(state.status, 'active');
   });
 
