@@ -83,7 +83,9 @@ test('AC1.1 AC2.1: candidates-dead-code.js loads in a fresh process with no circ
   const edges = JSON.parse(result.stdout);
   const isVertical = (f) => /^candidates-.*\.js$/.test(f);
   assert.ok(edges.some(([from, id]) => from === 'candidates-dead-code.js' && id === './source-scan'), 'dead-code must take its helpers from ./source-scan');
-  assert.ok(edges.filter(([from]) => isVertical(from)).length >= 9, 'every vertical must have been loaded (vacuity guard)');
+  const loadedVerticals = [...new Set(edges.map(([from]) => from).filter(isVertical))].sort();
+  const discoveredVerticals = fs.readdirSync(CODE_HEALTH_DIR).filter(isVertical).sort();
+  assert.deepEqual(loadedVerticals, discoveredVerticals, 'every discovered candidates-*.js vertical must have been loaded in the recorded process (vacuity guard)');
   const siblingEdges = edges.filter(([from, id]) => isVertical(from) && /^\.\/candidates-/.test(id));
   assert.deepEqual(siblingEdges, [], 'a vertical requires a sibling vertical — move the shared helper into ./source-scan');
   const leafEdges = edges.filter(([from, id]) => from === 'source-scan.js' && /^\.\/(focus-generators|candidates-)/.test(id));

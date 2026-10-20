@@ -132,7 +132,6 @@ function listTrackedSourceFiles(rootDir) {
 }
 
 module.exports = {
-  SOURCE_EXTS,
   isGlobDiscoveredTestFile,
   extractModuleExports,
   listTrackedFiles,
