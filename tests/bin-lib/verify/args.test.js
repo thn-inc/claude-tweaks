@@ -62,6 +62,11 @@ test('AC3.1: --ignore-stamp on a check run is a usage error', () => {
   assert.throws(() => parseArgs(['--cmd', 'tests=x', '--scope', 'd.json', '--ignore-stamp']), expected);
 });
 
+test('#3048: a bare --ignore-stamp reports the mode conflict, not the --cmd floor', () => {
+  assert.throws(() => parseArgs(['--ignore-stamp']),
+    { message: '--ignore-stamp applies only to --changed-files' });
+});
+
 test('AC3.1: --ignore-stamp with --stamp-status is a usage error', () => {
   assert.throws(() => parseArgs(['--stamp-status', '--ignore-stamp']),
     { message: '--ignore-stamp applies only to --changed-files' });

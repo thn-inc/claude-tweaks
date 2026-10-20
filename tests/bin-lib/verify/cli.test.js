@@ -1319,7 +1319,16 @@ test('AC2.1: --ignore-stamp with a usable stamp but no --base/--integration-bran
   const run = await runCli(['--changed-files', '--ignore-stamp'], { cwd: r.repo });
   assert.strictEqual(run.code, 1);
   assert.match(run.stderr, /could not resolve a base/);
+  // A usable stamp exists here, so the message must not claim there was none.
+  assert.match(run.stderr, /or --ignore-stamp/);
   assert.strictEqual(run.stdout.trim(), '');
+});
+
+test('#3048: a bare --ignore-stamp (no --changed-files, no --cmd) is a usage error, exit 2', async () => {
+  const { r } = await stampThenBookkeeping();
+  const run = await runCli(['--ignore-stamp'], { cwd: r.repo });
+  assert.strictEqual(run.code, 2);
+  assert.match(run.stderr, /--ignore-stamp applies only to --changed-files/);
 });
 
 test('--ignore-stamp still honors an explicit --base (#3048)', async () => {
