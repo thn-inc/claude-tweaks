@@ -751,12 +751,13 @@ function checkPipelineShadowGuard(ctx) {
 // Auto-resolution short-circuit); a console question there is the #2734 stall.
 // This denies it and points at `console-resolve.js --policy console-auto`.
 // Fails open (returns {}) on: no provably owned run (none, 'fallback'
-// attribution, or an ad-hoc run dir), a missing/malformed tool_input.questions,
+// attribution, an ad-hoc run dir, or a classifyOwnership verdict other than
+// 'mine'), a missing/malformed tool_input.questions,
 // no question headed exactly REVIEW_CONSOLE_HEADER, a ceiling-read throw, and a
 // ceiling that does not grant consoleAutoResolve. Also open by design: a session
 // whose cwd is the main checkout while the run's worktree is still live, or after
 // the worktree was removed, resolves `ownedRun` to its ad-hoc twin (resolveRun's
-// #2783 behavior) and so allows. REVIEW_CONSOLE_HEADER is
+// #2783 behavior) or classifies 'indeterminate', and so allows. REVIEW_CONSOLE_HEADER is
 // pinned against the console prose by tests/review-console-header-conformance.test.js.
 const REVIEW_CONSOLE_HEADER = 'Review Console';
 
@@ -783,9 +784,14 @@ function checkReviewConsoleAskGate(ctx, deps = {}) {
   if (!questions.some((q) => q && typeof q === 'object' && q.header === REVIEW_CONSOLE_HEADER)) return {};
   const ownedRun = ctx.ownedRun;
   if (!ctxLib.isTrustedOwnedRun(ownedRun) || ctxLib.isAdHocRunDir(ownedRun.dir)) return {};
+  // resolveRun keeps 'session' attribution for an 'indeterminate' verdict too;
+  // a deny needs the run proven this caller's own.
+  const sessionId = typeof input.session_id === 'string' ? input.session_id : null;
+  const cwd = ctx.cwd || process.cwd();
+  if (ctxLib.classifyOwnership({ sessionId, cwd }, ctxLib.readRunState(ownedRun.dir)) !== 'mine') return {};
   let ceiling;
   try {
-    ceiling = (deps.readConsoleCeiling || readConsoleCeiling)(ownedRun.dir, ctx.cwd || process.cwd());
+    ceiling = (deps.readConsoleCeiling || readConsoleCeiling)(ownedRun.dir, cwd);
   } catch {
     return {};
   }
@@ -806,7 +812,9 @@ function checkReviewConsoleAskGate(ctx, deps = {}) {
     `resolves with zero AskUserQuestion calls. Instead of asking, follow ${consoleFile}'s ` +
     `"Auto-resolution short-circuit (\`consoleAutoResolve\`)" section in full: ${how}, then execute every returned ` +
     `resolution and the merge half as that section directs; on a non-zero exit follow that section's non-zero-exit ` +
-    `rules (exit 5 means a console already rendered and awaiting a human) — never ask a Review Console question.`,
+    `rules, except never by asking: exit 5 means a console is already rendered on the PR awaiting a human, so follow ` +
+    `_shared/console-on-pr.md's Headless conclusion (report pending-review with the PR URL, no question) — never ask a ` +
+    `Review Console question.`,
   );
 }
 

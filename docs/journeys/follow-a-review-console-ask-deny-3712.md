@@ -14,7 +14,7 @@ files:
 
 **Persona:** the agent session running `/claude-tweaks:wrap-up` (or `/claude-tweaks:flow`'s multi-spec console) at `autonomy: unattended`, which reaches for `AskUserQuestion` with `header: "Review Console"` instead of running the auto-resolution short-circuit. Secondary persona: the operator who later reads the run's friction events to see that the gate fired.
 **Goal:** when the model asks a Review Console question it was never supposed to ask, the ask is refused before it reaches a human, and the model resolves the console the way the skill already says to, in the same turn. The run does not park for hours on a question nobody is watching for (IL-166).
-**Entry point:** an `AskUserQuestion` call whose `questions` include one with `header: "Review Console"`, issued by a session whose own run (`ctx.ownedRun`, session- or env-attributed, not an ad-hoc twin) resolves the `unattended` ceiling, so `consoleAutoResolve` is granted.
+**Entry point:** an `AskUserQuestion` call whose `questions` include one with `header: "Review Console"`, issued by a session whose own run (`ctx.ownedRun`, session- or env-attributed, not an ad-hoc twin, and classified `mine` by `classifyOwnership`) resolves the `unattended` ceiling, so `consoleAutoResolve` is granted.
 **Success state:** the tool call is denied with a reason naming `console-resolve.js` and the right console file; the model runs the CLI, executes its resolutions, and the run ends in a merged PR or a `pending-review` report, with no question asked. `{run-dir}/events.jsonl` holds one `gate-denial` event with `gate: "review-console-ask"`.
 
 ## Steps
@@ -52,7 +52,7 @@ files:
 
 ## Known limit
 
-When the session's cwd is the main checkout while its worktree is live, or the worktree has been removed, `ctx.ownedRun` can resolve to the session's ad-hoc twin, and the gate allows the ask (#2783). The skill prose remains the only guard on that path. Whether the harness honours a PreToolUse deny for `AskUserQuestion` has not been probed live; the first real unattended console after release is that probe.
+When the session's cwd is the main checkout while its worktree is live, or the worktree has been removed, `ctx.ownedRun` can resolve to the session's ad-hoc twin (#2783) or classify `indeterminate`, and the gate allows the ask. The skill prose remains the only guard on that path. Whether the harness honours a PreToolUse deny for `AskUserQuestion` has not been probed live; the first real unattended console after release is that probe.
 
 ## Origin
 - Created during build of #3712: `pre-tool-use.js`'s `checkReviewConsoleAskGate`, registered on a new `PreToolUse` `AskUserQuestion` matcher in `plugin/hooks/hooks.json`. The record found the real cause of the stall #2734 was filed for: an `unattended` session read the console prose and asked anyway (IL-166). The whole-branch review hardened the event type, the run-shape-aware reason, and the git-failure fail-open.

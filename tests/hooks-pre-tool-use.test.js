@@ -1444,10 +1444,12 @@ const ownedRunAt = (dir, attribution = 'session') => ({ dir, attribution });
 const CONSOLE_Q = [{ header: 'Review Console', question: 'How do you want to handle the Review Console items?', options: [] }];
 // The run dir lives inside a REAL temp git repo and ctx.cwd is that repo: the
 // gate resolves git's toplevel and fails open when it cannot (a non-git cwd).
-function consoleRun(autonomy, name = '2026-07-01T090000-spec-1') {
-  const repo = gitRepo();
+// run-state.json names the caller's session with no worktree binding, so a
+// main-checkout cwd classifies 'mine'.
+function consoleRun(autonomy, name = '2026-07-01T090000-spec-1', repo = gitRepo()) {
   const dir = path.join(repo, '.claude-tweaks', 'pipelines', name);
   fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'active', sessionId: 'sess-1' }));
   if (autonomy) fs.writeFileSync(path.join(dir, 'config.yml'), `autonomy: ${autonomy}\n`);
   return dir;
 }
@@ -1500,6 +1502,40 @@ test('#3712: ad-hoc owned run allows', () => {
   assert.deepStrictEqual(pre.run(consoleCtx(dir, CONSOLE_Q)), {});
 });
 
+test('#3712: a session-attributed run not proven mine allows', () => {
+  const indeterminate = consoleRun('unattended');
+  const state = { status: 'active', sessionId: 'sess-1', worktree: path.join(os.tmpdir(), 'ct-gone-worktree-3712') };
+  fs.writeFileSync(path.join(indeterminate, 'run-state.json'), JSON.stringify(state));
+  assert.deepStrictEqual(pre.run(consoleCtx(indeterminate, CONSOLE_Q)), {}, 'main-checkout caller, bound run: indeterminate');
+  const foreign = consoleRun('unattended');
+  fs.writeFileSync(path.join(foreign, 'run-state.json'), JSON.stringify({ status: 'active', sessionId: 'sess-other' }));
+  assert.deepStrictEqual(pre.run(consoleCtx(foreign, CONSOLE_Q)), {}, 'another session: foreign');
+  const unreadable = consoleRun('unattended');
+  fs.rmSync(path.join(unreadable, 'run-state.json'));
+  assert.deepStrictEqual(pre.run(consoleCtx(unreadable, CONSOLE_Q)), {}, 'no run-state.json');
+});
+
+test('#3712: keys on ctx.ownedRun, not ctx.runDir', () => {
+  const repo = gitRepo();
+  const owned = consoleRun('unattended', '2026-07-01T090000-spec-1', repo);
+  const sibling = consoleRun('supervised', '2026-07-02T090000-spec-2', repo);
+  const denyCtx = consoleCtx(owned, CONSOLE_Q);
+  denyCtx.runDir = sibling;
+  assert.strictEqual(pre.run(denyCtx).json.hookSpecificOutput.permissionDecision, 'deny');
+  const allowCtx = consoleCtx(sibling, CONSOLE_Q);
+  allowCtx.runDir = owned;
+  assert.deepStrictEqual(pre.run(allowCtx), {});
+});
+
+test('#3712: the ceiling folds the run config over project policy.yml', () => {
+  const fromPolicy = consoleRun(null);
+  withPolicy(repoOfRun(fromPolicy), 'autonomy: unattended\n');
+  assert.strictEqual(pre.run(consoleCtx(fromPolicy, CONSOLE_Q)).json.hookSpecificOutput.permissionDecision, 'deny');
+  const overridden = consoleRun('supervised');
+  withPolicy(repoOfRun(overridden), 'autonomy: unattended\n');
+  assert.deepStrictEqual(pre.run(consoleCtx(overridden, CONSOLE_Q)), {}, 'run config outranks policy.yml');
+});
+
 test('AC4.1: ceiling read failure allows', () => {
   const dir = consoleRun('unattended');
   const out = pre.run(consoleCtx(dir, CONSOLE_Q), { readConsoleCeiling: () => { throw new Error('boom'); } });
@@ -1519,6 +1555,9 @@ test('#3712: a non-git cwd fails open even with autonomy: unattended in the run 
   ctx.cwd = notGit;
   ctx.input = askInput(CONSOLE_Q, notGit);
   assert.deepStrictEqual(pre.run(ctx), {});
+  // The gate never reaches the ceiling there (ownership is unprovable outside a
+  // repo), so pin the reader's own git-failure throw, which the gate turns into allow.
+  assert.throws(() => pre.readConsoleCeiling(dir, notGit));
 });
 
 test('#3712: readConsoleCeiling matches console-resolve.js readPolicy() ceiling', () => {
@@ -1554,6 +1593,7 @@ test('#3712: the deny reason names the console file by run shape', () => {
   assert.match(rs, /--dry-run/);
   assert.match(rs, /merge half/);
   assert.match(rs, /non-zero/);
+  assert.match(rs, /console-on-pr\.md's Headless conclusion/);
   const multi = consoleRun('unattended');
   fs.writeFileSync(path.join(multi, 'manifest.yml'), 'specs: []\n');
   const rm = pre.run(consoleCtx(multi, CONSOLE_Q)).json.hookSpecificOutput.permissionDecisionReason;
