@@ -9,7 +9,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { teardownRun, defaultGhApiDelete, findWorktreeEntry } = require('../plugin/bin/lib/hooks/teardown-run');
+const { teardownRun, defaultGhApiDelete, findWorktreeEntry, branchOfWorktree } = require('../plugin/bin/lib/hooks/teardown-run');
 const { parseWorktreeList } = require('../plugin/bin/lib/hooks/worktree-reap');
 
 function git(root, ...args) {
@@ -458,6 +458,32 @@ test('#3695: posix stays case-sensitive and a falsy target never matches', () =>
   assert.strictEqual(findWorktreeEntry([{ path: '/a/X', branch: 'b' }], '/a/x', path.posix), null);
   assert.strictEqual(findWorktreeEntry(entries, null, path.win32), null);
   assert.strictEqual(findWorktreeEntry(entries, '', path.win32), null);
+  // '' resolves to the cwd, so only an entry sitting exactly there shows the guard is load-bearing.
+  assert.strictEqual(findWorktreeEntry([{ path: path.win32.resolve(''), branch: 'b' }], '', path.win32), null);
+});
+
+// The two call sites go through findWorktreeEntry, not just the helper: on this host a stamped path
+// that differs from git's porcelain only in form (trailing separator, dot segment) must still match.
+test('#3695: the --merged branch lookup matches a stamped path that differs from porcelain only in form', () => {
+  const { root, wt } = fixtureRepo();
+  assert.strictEqual(branchOfWorktree(root, `${wt}${path.sep}`), 'feat-branch');
+  assert.strictEqual(branchOfWorktree(root, `${wt}${path.sep}..${path.sep}feat`), 'feat-branch');
+});
+
+test('#3695: the prunable retry matches a stamped path that differs from porcelain only in form', () => {
+  const { root, wt, runDir } = fixtureRepo();
+  writeRunState(runDir, { status: 'active', worktree: `${wt}${path.sep}`, sessionId: 'me' });
+  fs.rmSync(path.join(wt, '.git'), { force: true });
+
+  const calls = [];
+  const result = teardownRun(runDir, {
+    mode: 'merged', sessionId: 'me', deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
+
+  const out = result.lines.join('\n');
+  assert.match(out, /worktree: registration pruned but directory still present at /);
+  assert.match(out, /branch: deleted feat-branch/);
+  assert.strictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
 });
 
 test('#3695 AC3: no strict worktree-path compare remains at either call site', () => {
