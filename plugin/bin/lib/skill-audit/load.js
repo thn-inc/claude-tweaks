@@ -135,7 +135,9 @@ function extractCitations(text, citingFile, pluginRoot, { exists, byName }) {
         }
       }
       let hit = candidates.find((c) => withinRoot(pluginRoot, c) && exists(c));
-      if (!hit && byName) { // (f) unique name over citable files, only when (a)–(e) all miss
+      // (f) unique name over citable files, only when (a)–(e) all miss and no
+      // owner skill was named: a broken (d) citation must not reroute silently.
+      if (!hit && byName && !skill) {
         const named = byName(token);
         if (named && withinRoot(pluginRoot, named) && exists(named)) hit = named;
       }

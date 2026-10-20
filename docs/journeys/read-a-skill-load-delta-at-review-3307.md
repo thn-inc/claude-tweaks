@@ -40,7 +40,7 @@ files:
 - **URL:** the table's `New unresolved` column.
 - **Action:** Read any listed tokens.
 - **Should feel:** A short, specific list — not noise.
-- **Should understand:** It lists backticked `.md` tokens added by this branch that the citation grammar (relative to the citing file, `_shared/`, `${CLAUDE_PLUGIN_ROOT}/`, "in that skill's directory", `skills/…` (plugin-root-relative), `{skill}/…` (skills-dir-relative), or a bare name or sub-path naming exactly one file under the root's `skills/` or `agents/`) cannot resolve. Glob and placeholder tokens (`skills/*/SKILL.md`, `{n}-spec.md`) are left out. An unresolved token is never counted as 0 bytes — but if the reader really loads that file, its bytes are missing from the closure, so fix the citation form.
+- **Should understand:** It lists backticked `.md` tokens added by this branch (or a bare name the branch made ambiguous by adding a same-named file — qualify it as `{skill}/…`) that the citation grammar (relative to the citing file, `_shared/`, `${CLAUDE_PLUGIN_ROOT}/`, "in that skill's directory", `skills/…` (plugin-root-relative), `{skill}/…` (skills-dir-relative), or a bare name or sub-path naming exactly one file under the root's `skills/` or `agents/`) cannot resolve. Glob and placeholder tokens (`skills/*/SKILL.md`, `{n}-spec.md`) are left out. An unresolved token is never counted as 0 bytes — but if the reader really loads that file, its bytes are missing from the closure, so fix the citation form.
 - **Red flags:** Placeholder tokens in the list; a citation you know resolves (e.g. a sibling in the same skill directory) listed as unresolved.
 
 ## Origin

@@ -210,7 +210,8 @@ test('extractCitations rule (f): only skills/ and agents/ are citable', () => {
 });
 
 test('extractCitations rule (f): dot segments and absolute tokens never match by name', () => {
-  const lookup = load.citableNameIndex('plugin', ['plugin/skills/a/x.md']);
+  // Non-normalized entries make the eligibility guard — not path normalization — keep these null.
+  const lookup = load.citableNameIndex('plugin', ['plugin/skills/a/x.md', 'plugin/skills/a/../x.md', 'plugin/skills/a//x.md']);
   for (const token of ['./x.md', '../x.md', 'a/../x.md', '/x.md', 'a//x.md']) {
     assert.strictEqual(lookup(token), null, token);
   }
@@ -219,15 +220,25 @@ test('extractCitations rule (f): dot segments and absolute tokens never match by
 test('extractCitations rule (f) runs last: first-existing-wins order (a)–(e) is unchanged (AC2.1)', () => {
   const byName = () => 'plugin/skills/other/x.md';
   const both = load.extractCitations('`x.md`', 'plugin/skills/flow/SKILL.md', 'plugin', {
-    exists: existsIn(['plugin/skills/flow/x.md', 'plugin/skills/_shared/x.md']),
+    exists: existsIn(['plugin/skills/flow/x.md', 'plugin/skills/_shared/x.md', 'plugin/skills/other/x.md']),
     byName,
   });
   assert.deepStrictEqual(both.resolved, ['plugin/skills/flow/x.md']);
   const sharedOnly = load.extractCitations('`x.md`', 'plugin/skills/flow/SKILL.md', 'plugin', {
-    exists: existsIn(['plugin/skills/_shared/x.md']),
+    exists: existsIn(['plugin/skills/_shared/x.md', 'plugin/skills/other/x.md']),
     byName,
   });
   assert.deepStrictEqual(sharedOnly.resolved, ['plugin/skills/_shared/x.md']);
+});
+
+test('extractCitations rule (f) is skipped when rule (d) named an owner skill, so a broken (d) citation is not rerouted', () => {
+  const files = ['plugin/skills/u/x.md'];
+  const r = load.extractCitations('see `/claude-tweaks:t` then read `x.md` in that skill\'s directory', 'plugin/skills/flow/SKILL.md', 'plugin', {
+    exists: existsIn(['plugin/skills/t/SKILL.md', 'plugin/skills/u/SKILL.md', 'plugin/skills/u/x.md']),
+    byName: load.citableNameIndex('plugin', files),
+  });
+  assert.deepStrictEqual(r.resolved, []);
+  assert.deepStrictEqual(r.unresolved.map((u) => u.token), ['x.md']);
 });
 
 test('extractCitations rule (f): absent byName keeps the token unresolved', () => {
