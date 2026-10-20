@@ -142,9 +142,9 @@ Foreground execution (required): run `npm test` and every other long-running com
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
 Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
 count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
-`Agent` call (a lens-dispatch fan-out, a reproduction pair) launches async, and its
-completion notification reaches you only while this turn is alive (when the call instead returns
-the child's own reply, that child has reported and needs no wait): keep the turn alive with bounded
+`Agent` call (a lens-dispatch fan-out, a reproduction pair) launches async, and its completion
+notification reaches you only while this turn is alive (when the call instead returns the child's
+own reply, that child has reported and needs no wait): keep the turn alive with bounded
 foreground waits -- repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children
 (the set launched together), each wait logged as one line (what you wait on, the iteration against
 the bound, how many children are still pending), stopping as soon as every child's
@@ -302,9 +302,9 @@ Foreground execution (required): run `npm test` and every other long-running com
 foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
 Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
 count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
-`Agent` call (a lens-dispatch fan-out, a reproduction pair) launches async, and its
-completion notification reaches you only while this turn is alive (when the call instead returns
-the child's own reply, that child has reported and needs no wait): keep the turn alive with bounded
+`Agent` call (a lens-dispatch fan-out, a reproduction pair) launches async, and its completion
+notification reaches you only while this turn is alive (when the call instead returns the child's
+own reply, that child has reported and needs no wait): keep the turn alive with bounded
 foreground waits -- repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children
 (the set launched together), each wait logged as one line (what you wait on, the iteration against
 the bound, how many children are still pending), stopping as soon as every child's
