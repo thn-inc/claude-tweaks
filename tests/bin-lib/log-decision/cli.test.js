@@ -139,7 +139,7 @@ test('--text-file missing or empty exits 2 and writes nothing', () => {
   const missing = path.join(root, 'no-such-file.txt');
   const outMissing = [];
   assert.equal(run(['--run', runDir, '--status', 'AUTO', '--text-file', missing], deps(main, outMissing)), 2);
-  assert.match(streamOf(outMissing, 'err'), new RegExp(missing.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.ok(streamOf(outMissing, 'err').includes(missing), 'the error names the missing file');
   const blank = path.join(root, 'blank.txt');
   fs.writeFileSync(blank, '  \n');
   assert.equal(run(['--run', runDir, '--status', 'AUTO', '--text-file', blank], deps(main, [])), 2);
