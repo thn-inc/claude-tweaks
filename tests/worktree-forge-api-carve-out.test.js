@@ -103,3 +103,27 @@ test('tidy scan-execution.md: scan batch is read-only; the only worktree is Step
   assert.match(n, /Step 7\.5/);
   assert.match(n, /only read/);
 });
+
+function assertStep75Gate(text) {
+  const n = note(text, 'tidy/step-7-5-worktree-always.md');
+  assert.match(n, /worktree-setup\.md/, 'must cite the canonical carve-out file');
+  assert.match(n, /working-tree write/, 'must name the working-tree-write condition');
+  assert.match(n, /record-file/, 'record-file edits count as working-tree writes');
+  assert.match(n, /docs\/REGISTRY\.md/, 'REGISTRY.md Fix-now edits count as working-tree writes');
+  assert.match(n, /Status: specified/, 'a design-doc stamp counts even under github-issues');
+  assert.match(n, /provision no worktree/, 'all-forge set provisions nothing');
+  assert.match(n, /skip the commit/, 'all-forge set makes no commit and opens no PR');
+  assert.match(n, /local-files/, 'local-files provisioning unchanged');
+  assert.match(text, /resolves `true` and the approved Step 7 set holds at least one working-tree write/,
+    'the provisioning sentence itself must carry the condition');
+}
+
+test('AC1.1 AC2.1 AC3.1: tidy step-7-5 gates provisioning on a working-tree write and cites the carve-out', () => {
+  assertStep75Gate(skill('tidy', 'step-7-5-worktree-always.md'));
+});
+
+test('go-red: dropping the provisioning condition fails the Step 7.5 gate assertions', () => {
+  const text = skill('tidy', 'step-7-5-worktree-always.md')
+    .replace(' and the approved Step 7 set holds at least one working-tree write', '');
+  assert.throws(() => assertStep75Gate(text));
+});
