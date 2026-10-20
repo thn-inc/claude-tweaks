@@ -3,10 +3,9 @@
 // plus a size-headroom check, replacing the hand-run prose procedure that used to
 // live entirely in plugin/skills/build/plan-audit.md, and the warn-only Checks
 // E (#3099, AC clause coverage) and F (#3602, spec-named path coverage) — both
-// run only with `--spec`. Exit 0 iff every
-// gating check is ok (a `nearCeiling` headroom flag, or any Check E or Check F
-// entry, alone does not fail). `--count-tasks`
-// (#1926) is a read-only verb printing `{tasks, batched}` for /build's
+// run only with `--spec`. Exit 0 iff every gating check is ok (a `nearCeiling`
+// headroom flag, or any Check E or Check F entry, alone does not fail).
+// `--count-tasks` (#1926) is a read-only verb printing `{tasks, batched}` for /build's
 // single-task fast-lane condition — it never runs the checks.
 'use strict';
 
