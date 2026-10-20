@@ -38,10 +38,12 @@ Read:
 - Plan: {absolute path to the plan file}
 You may also read any file in the repository at {absolute worktree root}, read-only, to check what the plan integrates with. Do not create, modify, or delete any file; run no test suite, build, or server; make no git or gh call that writes.
 
-Find three classes of problem, and only these:
+Find five classes of problem, and only these:
 - spec gap — the spec does not decide something the plan must decide (a value, a rule, a precedence, what happens on failure).
 - undecided behaviour — an input class, failure mode, or UI state no task covers. If covering it needs a product decision the spec does not make, report it as a spec gap instead.
 - cross-task contract — one task produces something another consumes (a name, a shape, an order, a file, a flag) and the two disagree or the producer is missing, or a task disagrees with the spec about it.
+- missing-review-risk (#3378) — a task whose own text touches concurrency (locks, queues, async ordering, retries, transactions, shared mutable state), decision logic (branching on computed state such as permissions, eligibility, pricing, or ranking), or rendering-heavy UI (many states, layout, animation), but carries no `**Review risk:** high` line. Evidence names the signal: "touches {signal} without `Review risk: high`".
+- mischaracterized-role (#3378) — a task marked `**Role:** transcription` whose own plan text does not already contain the complete code to write (a signature-plus-tests task, or one left for the implementer to derive, is `integration`, not `transcription` — `build/plan-authoring-checks.md`'s Per-task role/review-risk markers paragraph). Evidence quotes the task's own Step 1/Step 3 text showing the gap.
 
 Do not repeat SDD's pre-flight conflict table. That scan runs later and already checks plan-internal contradictions — a task against the plan's Global Constraints, or a step the plan mandates that the review rubric forbids (example: Global Constraints say "no new dependencies" and Task 4 adds one). Your cross-task class is producer/consumer agreement between tasks, and each task against the spec (example: Task 2 returns `{ok, value}` and Task 5 reads `.result`).
 
@@ -59,7 +61,7 @@ Return ONLY a markdown table, no preamble:
 | high | spec gap | intent-resolvable | work/42-spec.md:31 | Retry count on a 429 is unset | Spec: "Retries follow the existing gh policy." | Add: "A 429 retries per _shared/github-rate-limit.md." |
 | medium | cross-task contract | — | docs/superpowers/plans/{plan}.md:120 | Task 2 returns `{ok, value}`; Task 5 reads `.result` | Task 2 Interfaces vs Task 5 Step 3 | Task 5 reads `.value` |
 
-Class: spec gap / undecided behaviour / cross-task contract
+Class: spec gap / undecided behaviour / cross-task contract / missing-review-risk / mischaracterized-role
 Severity scale: critical / high / medium / low / info
 If no findings: return literal text "No findings."
 Return at most 7 rows, needs-human rows first, then highest severity first; if more were found, append a final row reading "+N more" with the count in place of N — never omit this row when findings exceed the cap.
@@ -73,7 +75,7 @@ End your reply with one line, its last non-empty line: STATUS: {DONE | DONE_WITH
 - **`NEEDS_CONTEXT`** — re-dispatch once, adding the context it names; a second `NEEDS_CONTEXT` is treated as `BLOCKED` below.
 - **`BLOCKED`, no status line, or a table that does not parse** (after that one re-dispatch) — the review is unavailable. Log `SKIP` (`--text "condition: plan reviewer returned {word|no parseable reply} → fallback: build proceeds without a plan review"`, same command shape as the Skip logging section below) and continue to Common Step 1.7. An unusable reply is never read as "No findings." — a review that did not happen is not a clean review.
 - **`No findings.`** — log `SCANNED` (`--text "plan review: no findings"`, same command shape) and continue.
-- **A table** — route each row by its Class and Resolution, never on Severity; `low` and `info` findings are logged only and amend nothing (they ride in the `AUTO` entry's text, or, when every row is `low`/`info`, in one `SCANNED` entry naming the count). That rule governs amendments only: a `needs-human` spec-gap row triggers the HARD-GATE at any severity, `low` and `info` included. A spec-gap row is treated as `needs-human` when its Resolution is anything other than the two defined values, or when it is marked `intent-resolvable` and its Evidence quotes no spec sentence or quotes one that does not appear verbatim in the worktree's `work/{n}-spec.md` (grep it before amending — a paraphrase is not a quote) — the burden of proof is on the quote. A row whose Class is none of the three is logged only, like a `low` row. A row promoted to `needs-human` here carries no Reading A / Reading B from the reviewer: write the two readings yourself from its Suggested resolution and the unamended spec text. A `+N more` row routes nothing; carry its count into the log text.
+- **A table** — route each row by its Class and Resolution, never on Severity; `low` and `info` findings are logged only and amend nothing (they ride in the `AUTO` entry's text, or, when every row is `low`/`info`, in one `SCANNED` entry naming the count). That rule governs amendments only: a `needs-human` spec-gap row triggers the HARD-GATE at any severity, `low` and `info` included. A spec-gap row is treated as `needs-human` when its Resolution is anything other than the two defined values, or when it is marked `intent-resolvable` and its Evidence quotes no spec sentence or quotes one that does not appear verbatim in the worktree's `work/{n}-spec.md` (grep it before amending — a paraphrase is not a quote) — the burden of proof is on the quote. `missing-review-risk` and `mischaracterized-role` (#3378) never trigger the HARD-GATE — they route as plan amendments, same as `undecided behaviour`/`cross-task contract` below, regardless of severity. A row whose Class is none of the five is logged only, like a `low` row. A row promoted to `needs-human` here carries no Reading A / Reading B from the reviewer: write the two readings yourself from its Suggested resolution and the unamended spec text. A `+N more` row routes nothing; carry its count into the log text.
 
 ## Handling by class
 
@@ -101,9 +103,9 @@ In order, before Task 1:
 
 `gh issue edit` never runs against the live record, and nothing is staged for the Review Console: the amended in-run spec is the one `/claude-tweaks:test`, `/claude-tweaks:review` and `/claude-tweaks:wrap-up` judge against, so there is no staged item to apply, decline, or leave unreached. The plan review itself never re-runs, so the step cannot loop.
 
-### Undecided behaviour and cross-task contract
+### Undecided behaviour, cross-task contract, missing-review-risk, mischaracterized-role
 
-Amend the plan file — a task step, a test, an Interfaces line — commit, log the same `AUTO` entry, and re-run `plan-audit.js` once as above. When a spec-gap amendment also exists, these share its single commit, log line, and audit re-run. No record comment: the plan is not the record's contract.
+Amend the plan file — a task step, a test, an Interfaces line, or (for the two #3378 classes) the task's own `**Review risk:** high` line (add it) or `**Role:**` line (correct it to `integration` or `judgment` per the finding's Evidence) — commit, log the same `AUTO` entry, and re-run `plan-audit.js` once as above (pass `--task-markers` too when either #3378 class fired, so the corrected markers are confirmed before dispatch). When a spec-gap amendment also exists, these share its single commit, log line, and audit re-run. No record comment: the plan is not the record's contract.
 
 ### Spec gap — needs-human
 

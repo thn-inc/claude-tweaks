@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  checkA, checkB, checkC, checkD, headroomCheck, looksPassing, isGovernedMdPath, checkPremiseRefs,
+  checkA, checkB, checkC, checkD, headroomCheck, looksPassing, isGovernedMdPath, checkPremiseRefs, checkTaskMarkers,
 } = require('../../../plugin/bin/lib/plan-audit/checks');
 const { composedBytesReport } = require('../../../plugin/bin/lib/skill-audit/context-cost');
 const { RAIL_BYTES } = require('../../../plugin/bin/lib/skill-audit/budgets');
@@ -1010,4 +1010,53 @@ test('#3099: an item the parser refuses is reported unparsed and never as covere
   assert.deepStrictEqual(result.unparsed, [{ item: 2, raw: 'A `broken span here.' }]);
   assert.deepStrictEqual(result.covered.map((c) => c.id), ['AC1.1']);
   assert.deepStrictEqual(result.uncovered, []);
+});
+
+// ── #3378: checkTaskMarkers ─────────────────────────────────────────────────
+
+test('#3378: checkTaskMarkers reports ok:true with no findings when every marker value is known', () => {
+  const text = '### Task 1: A\n**Role:** transcription\n**Review risk:** high\n';
+  assert.deepStrictEqual(checkTaskMarkers(text), { ok: true, findings: [] });
+});
+
+test('#3378: checkTaskMarkers reports ok:true with no findings on a fully unmarked plan', () => {
+  const text = '### Task 1: A\nbody\n';
+  assert.deepStrictEqual(checkTaskMarkers(text), { ok: true, findings: [] });
+});
+
+test('#3378: checkTaskMarkers flags an unknown Role value, naming the task and the value', () => {
+  const text = '### Task 1: A\n**Role:** trivial\n';
+  assert.deepStrictEqual(checkTaskMarkers(text), {
+    ok: false,
+    findings: [{ taskIndex: 1, title: 'A', field: 'Role', value: 'trivial' }],
+  });
+});
+
+test('#3378: checkTaskMarkers flags an unknown Review risk value, naming the task and the value', () => {
+  const text = '### Task 1: A\n**Review risk:** medium\n';
+  assert.deepStrictEqual(checkTaskMarkers(text), {
+    ok: false,
+    findings: [{ taskIndex: 1, title: 'A', field: 'Review risk', value: 'medium' }],
+  });
+});
+
+test('#3378: checkTaskMarkers reports both findings when a task carries two unknown values', () => {
+  const text = '### Task 1: A\n**Role:** trivial\n**Review risk:** medium\n';
+  assert.deepStrictEqual(checkTaskMarkers(text), {
+    ok: false,
+    findings: [
+      { taskIndex: 1, title: 'A', field: 'Role', value: 'trivial' },
+      { taskIndex: 1, title: 'A', field: 'Review risk', value: 'medium' },
+    ],
+  });
+});
+
+test('#3378: checkTaskMarkers never flags a misspelled key — it is simply unmarked', () => {
+  const text = '### Task 1: A\n**Rol:** transcription\n';
+  assert.deepStrictEqual(checkTaskMarkers(text), { ok: true, findings: [] });
+});
+
+test('#3378: checkTaskMarkers ignores an unknown value inside a fenced code block', () => {
+  const text = '### Task 1: A\n```\n**Role:** trivial\n```\n';
+  assert.deepStrictEqual(checkTaskMarkers(text), { ok: true, findings: [] });
 });

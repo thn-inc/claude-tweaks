@@ -9,7 +9,9 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { composedBytesReport } = require('../skill-audit/context-cost');
 const { RAIL_BYTES } = require('../skill-audit/budgets');
-const { extractAcceptanceClauses, extractCoverageSources } = require('./parser');
+const {
+  extractAcceptanceClauses, extractCoverageSources, extractTaskMarkers, TASK_MARKER_ROLES, TASK_MARKER_RISKS,
+} = require('./parser');
 
 const WALK_EXCLUDES = new Set(['.git', 'node_modules', '.claude', '.claude-tweaks']);
 
@@ -617,7 +619,31 @@ function checkE(specText, planText) {
   };
 }
 
+// ── Check: unknown per-task marker value (#3378) ───────────────────────────
+// Warn-only, like Check E: `ok` reports whether any finding exists, but
+// `--task-markers` (bin/plan-audit.js) never turns this into an exit-code
+// failure — a mistyped `**Role:**`/`**Review risk:**` value is a
+// plan-authoring nit, not a build-blocking structural defect. A recognised
+// key (the line is present) with a value outside the closed set
+// (`TASK_MARKER_ROLES`/`TASK_MARKER_RISKS`, parser.js) is a finding; a
+// misspelled key is not detectable here at all (extractTaskMarkers never
+// matched the line, so the task is simply unmarked) and is correctly never
+// reported.
+function checkTaskMarkers(text) {
+  const { tasks } = extractTaskMarkers(text);
+  const findings = [];
+  for (const t of tasks) {
+    if (t.roleRaw !== null && !TASK_MARKER_ROLES.includes(t.roleRaw)) {
+      findings.push({ taskIndex: t.index, title: t.title, field: 'Role', value: t.roleRaw });
+    }
+    if (t.riskRaw !== null && !TASK_MARKER_RISKS.includes(t.riskRaw)) {
+      findings.push({ taskIndex: t.index, title: t.title, field: 'Review risk', value: t.riskRaw });
+    }
+  }
+  return { ok: findings.length === 0, findings };
+}
+
 module.exports = {
   checkA, checkB, checkC, checkD, checkE, headroomCheck, looksPassing, isGovernedMdPath,
-  refusedVcsMutation, commandSegments, checkPremiseRefs,
+  refusedVcsMutation, commandSegments, checkPremiseRefs, checkTaskMarkers,
 };

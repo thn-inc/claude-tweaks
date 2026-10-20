@@ -479,6 +479,111 @@ test('--count-tasks never runs Checks A/B/C — a plan naming a missing path sti
   }
 });
 
+// ── #3378 — --task-markers ───────────────────────────────────────────────────
+
+function runTaskMarkers(planFile) {
+  try {
+    const stdout = execFileSync('node', [CLI, planFile, '--task-markers'], { encoding: 'utf8' });
+    return { exitCode: 0, stdout, stderr: '' };
+  } catch (err) {
+    return { exitCode: err.status, stdout: err.stdout || '', stderr: err.stderr || '' };
+  }
+}
+
+test('--task-markers prints markers:false and every role/risk null for an unmarked plan (#3378 AC1)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const plan = writePlan(repo, '### Task 1: A\n**Files:**\n- Modify: `a.js`\n\n### Task 2: B\n');
+    assert.deepStrictEqual(runTaskMarkers(plan), {
+      exitCode: 0,
+      stdout: `${JSON.stringify({
+        markers: false,
+        tasks: [
+          { index: 1, title: 'A', role: null, risk: null },
+          { index: 2, title: 'B', role: null, risk: null },
+        ],
+      })}\n`,
+      stderr: '',
+    });
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('--task-markers prints markers:true and each task role/risk for a marked plan (#3378 AC1)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const plan = writePlan(repo, [
+      '### Task 1: A',
+      '**Role:** transcription',
+      '',
+      '### Task 2: B',
+      '**Role:** judgment',
+      '**Review risk:** high',
+    ].join('\n'));
+    assert.deepStrictEqual(runTaskMarkers(plan), {
+      exitCode: 0,
+      stdout: `${JSON.stringify({
+        markers: true,
+        tasks: [
+          { index: 1, title: 'A', role: 'transcription', risk: null },
+          { index: 2, title: 'B', role: 'judgment', risk: 'high' },
+        ],
+      })}\n`,
+      stderr: '',
+    });
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('--task-markers includes a findings entry for an unknown marker value (#3378 AC2)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const plan = writePlan(repo, '### Task 1: A\n**Role:** trivial\n');
+    const result = runTaskMarkers(plan);
+    assert.strictEqual(result.exitCode, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.deepStrictEqual(parsed, {
+      markers: true,
+      tasks: [{ index: 1, title: 'A', role: null, risk: null }],
+      findings: [{ taskIndex: 1, title: 'A', field: 'Role', value: 'trivial' }],
+    });
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('--task-markers exits 2 for a missing plan and for a readable plan with zero tasks, same as --count-tasks (#3378)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const missing = runTaskMarkers(path.join(repo, 'nope.md'));
+    assert.strictEqual(missing.exitCode, 2);
+    assert.match(missing.stderr, /cannot read plan file/);
+    const empty = writePlan(repo, '# A plan with no tasks\n');
+    const r = runTaskMarkers(empty);
+    assert.strictEqual(r.exitCode, 2);
+    assert.match(r.stderr, /no parseable tasks/);
+    assert.strictEqual(r.stdout, '');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('--task-markers cannot be combined with --spec (#3378)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const plan = writePlan(repo, '### Task 1: A\n');
+    const spec = path.join(repo, 'spec.md');
+    fs.writeFileSync(spec, '## Acceptance Criteria\n\n1. Fine.\n');
+    const result = runCliArgs([plan, '--spec', spec, '--task-markers']);
+    assert.strictEqual(result.exitCode, 2);
+    assert.match(result.stderr, /--spec cannot be combined with --count-tasks, --bytes, or --task-markers/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 // ── #3099 — --spec and Check E in the envelope ──────────────────────────────
 const CLI_E_SPEC = [
   '## Acceptance Criteria',

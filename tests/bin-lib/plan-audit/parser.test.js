@@ -6,6 +6,7 @@ const assert = require('node:assert');
 const {
   extractFileEntries, extractScopeKeywords, extractPremiseRefs, extractTaskBlocks,
   extractStep2Verification, extractVerificationChecks, extractUnparseableStep2s, countTasks,
+  extractTaskMarkers, TASK_MARKER_ROLES, TASK_MARKER_RISKS,
 } = require('../../../plugin/bin/lib/plan-audit/parser');
 
 test('extractFileEntries reads Create/Modify/Delete/Test bullets, backticked and bare', () => {
@@ -552,4 +553,83 @@ test('#3099: a CRLF plan yields exactly the LF result', () => {
     extractCoverageSources(COVERAGE_PLAN.replace(/\n/g, '\r\n')),
     extractCoverageSources(COVERAGE_PLAN),
   );
+});
+
+// ── #3378: extractTaskMarkers ───────────────────────────────────────────────
+
+test('#3378: extractTaskMarkers reports markers: false and every role/risk null on an unmarked plan', () => {
+  const text = '### Task 1: A\nbody\n\n### Task 2: B\nmore body\n';
+  assert.deepStrictEqual(extractTaskMarkers(text), {
+    markers: false,
+    tasks: [
+      { index: 1, title: 'A', role: null, risk: null, roleRaw: null, riskRaw: null },
+      { index: 2, title: 'B', role: null, risk: null, roleRaw: null, riskRaw: null },
+    ],
+  });
+});
+
+test('#3378: extractTaskMarkers reads a valid Role and/or Review risk marker per task', () => {
+  const text = [
+    '### Task 1: Rename a field',
+    '**Role:** transcription',
+    '',
+    '### Task 2: Add a concurrency guard',
+    '**Role:** judgment',
+    '**Review risk:** high',
+    '',
+    '### Task 3: Wire a call site',
+    '**Review risk:** high',
+    '',
+    '### Task 4: Untouched',
+    'no markers here',
+  ].join('\n');
+  const { markers, tasks } = extractTaskMarkers(text);
+  assert.strictEqual(markers, true);
+  assert.deepStrictEqual(tasks, [
+    { index: 1, title: 'Rename a field', role: 'transcription', risk: null, roleRaw: 'transcription', riskRaw: null },
+    { index: 2, title: 'Add a concurrency guard', role: 'judgment', risk: 'high', roleRaw: 'judgment', riskRaw: 'high' },
+    { index: 3, title: 'Wire a call site', role: null, risk: 'high', roleRaw: null, riskRaw: 'high' },
+    { index: 4, title: 'Untouched', role: null, risk: null, roleRaw: null, riskRaw: null },
+  ]);
+});
+
+test('#3378: extractTaskMarkers reports markers: true but role: null for a recognized key with an unknown value', () => {
+  const text = '### Task 1: A\n**Role:** trivial\n**Review risk:** medium\n';
+  const { markers, tasks } = extractTaskMarkers(text);
+  assert.strictEqual(markers, true);
+  assert.deepStrictEqual(tasks, [
+    { index: 1, title: 'A', role: null, risk: null, roleRaw: 'trivial', riskRaw: 'medium' },
+  ]);
+});
+
+test('#3378: extractTaskMarkers ignores a marker line inside a fenced code block in a task body', () => {
+  const text = [
+    '### Task 1: A',
+    '```',
+    '**Role:** transcription',
+    '```',
+    'prose',
+  ].join('\n');
+  assert.deepStrictEqual(extractTaskMarkers(text), {
+    markers: false,
+    tasks: [{ index: 1, title: 'A', role: null, risk: null, roleRaw: null, riskRaw: null }],
+  });
+});
+
+test('#3378: extractTaskMarkers does not collide with the batched-plan header marker or [batch] title', () => {
+  const text = [
+    '# Plan', '',
+    '**Execution:** batched', '',
+    '### Task 1: Same one-line fix across files [batch]',
+    '**Role:** transcription',
+  ].join('\n');
+  const { markers, tasks } = extractTaskMarkers(text);
+  assert.strictEqual(markers, true);
+  assert.strictEqual(tasks[0].role, 'transcription');
+  assert.deepStrictEqual(countTasks(text), { tasks: 1, batched: true });
+});
+
+test('#3378: TASK_MARKER_ROLES and TASK_MARKER_RISKS are the documented closed value sets', () => {
+  assert.deepStrictEqual(TASK_MARKER_ROLES, ['transcription', 'integration', 'judgment']);
+  assert.deepStrictEqual(TASK_MARKER_RISKS, ['high']);
 });

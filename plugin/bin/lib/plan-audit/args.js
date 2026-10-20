@@ -4,7 +4,7 @@
 
 class UsageError extends Error {}
 
-const USAGE = 'usage: plan-audit.js <plan-file> [--repo-root <dir>] [--spec <spec-file>] [--count-tasks] [--bytes]';
+const USAGE = 'usage: plan-audit.js <plan-file> [--repo-root <dir>] [--spec <spec-file>] [--count-tasks] [--bytes] [--task-markers]';
 
 // argv = process.argv.slice(2). Throws UsageError on any malformed input —
 // the CLI prints message + USAGE to stderr and exits non-zero.
@@ -14,6 +14,7 @@ function parseArgs(argv) {
   let spec = null;
   let countTasks = false;
   let bytes = false;
+  let taskMarkers = false;
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === '--repo-root') {
@@ -32,6 +33,7 @@ function parseArgs(argv) {
     }
     if (flag === '--count-tasks') { countTasks = true; continue; }
     if (flag === '--bytes') { bytes = true; continue; }
+    if (flag === '--task-markers') { taskMarkers = true; continue; }
     if (flag.startsWith('--')) throw new UsageError(`unknown flag: ${flag}`);
     if (planFile !== null) throw new UsageError(`unexpected extra positional argument: ${flag}`);
     planFile = flag;
@@ -39,11 +41,12 @@ function parseArgs(argv) {
   if (planFile === null) throw new UsageError('plan-file is required');
   // #3099: --spec feeds Check E, which only the full audit runs — beside a
   // single-purpose verb it would be silently ignored, so refuse the pairing.
-  if (spec !== null && (countTasks || bytes)) {
-    throw new UsageError('--spec cannot be combined with --count-tasks or --bytes');
+  // #3378: --task-markers is the same kind of single-purpose verb.
+  if (spec !== null && (countTasks || bytes || taskMarkers)) {
+    throw new UsageError('--spec cannot be combined with --count-tasks, --bytes, or --task-markers');
   }
   return {
-    planFile, repoRoot, spec, countTasks, bytes,
+    planFile, repoRoot, spec, countTasks, bytes, taskMarkers,
   };
 }
 
