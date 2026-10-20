@@ -251,4 +251,4 @@ if (require.main === module) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { process.stderr.write(`console-resolve.js: ${err && err.stack ? err.stack : err}\n`); process.exitCode = 1; });
 }
 
-module.exports = { run, parseArgs, ghReadGrants };
+module.exports = { run, parseArgs, ghReadGrants, readPolicy };

@@ -98,6 +98,50 @@ test('unknown phase throws', () => {
   assert.throws(() => setPhaseRow({ body, phase: 'deploy' }), /unknown phase/);
 });
 
+test('duplicate row: flip checks only the unchecked one', () => {
+  const dup = body.replace('- [ ] build\n', '- [x] build\n- [ ] build\n');
+  const out = setPhaseRow({ body: dup, phase: 'build' });
+  assert.equal(out.changed, true);
+  assert.equal(out.row, 'checked');
+  assert.equal(out.body, dup.replace('- [ ] build\n', '- [x] build\n'));
+});
+
+test('duplicate row: --remove deletes only the unchecked one', () => {
+  const dup = body.replace('- [ ] build\n', '- [x] build\n- [ ] build\n');
+  const out = setPhaseRow({ body: dup, phase: 'build', remove: true });
+  assert.equal(out.changed, true);
+  assert.equal(out.row, 'removed');
+  assert.equal(out.body, body.replace('- [ ] build\n', '- [x] build\n'));
+});
+
+test('uppercase X row is already checked for flip and --remove', () => {
+  const upper = body.replace('- [ ] build', '- [X] build');
+  const flip = setPhaseRow({ body: upper, phase: 'build' });
+  assert.equal(flip.changed, false);
+  assert.equal(flip.row, 'already-checked');
+  assert.equal(flip.body, upper);
+  const removed = setPhaseRow({ body: upper, phase: 'build', remove: true });
+  assert.equal(removed.changed, false);
+  assert.equal(removed.row, 'already-checked');
+  assert.equal(removed.body, upper);
+});
+
+test('unmatched HTML start marker falls back to the plain-text span', () => {
+  const noEnd = body.replace('<!-- phases-end -->\n', '');
+  const out = setPhaseRow({ body: noEnd, phase: 'build' });
+  assert.equal(out.changed, true);
+  assert.equal(out.row, 'checked');
+  assert.equal(out.body, noEnd.replace('- [ ] build', '- [x] build'));
+});
+
+test('row before the start marker is untouched while the in-span row flips', () => {
+  const prefixed = `- [ ] build\n${body}`;
+  const out = setPhaseRow({ body: prefixed, phase: 'build' });
+  assert.equal(out.changed, true);
+  assert.equal(out.row, 'checked');
+  assert.equal(out.body, `- [ ] build\n${body.replace('- [ ] build', '- [x] build')}`);
+});
+
 test('firstLineRunId reads either marker form', () => {
   assert.equal(firstLineRunId(body), 'R1');
   assert.equal(firstLineRunId('claude-tweaks-run: R2\nx'), 'R2');

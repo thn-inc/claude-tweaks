@@ -140,9 +140,12 @@ with "no memory file is ever written" under `--dry-run`.
 
 Exit code 4 (ceiling not granted) → skip the short-circuit section and proceed to "Present a real
 stop," the ordinary path. Exit code 5 (this run's `console.json` is already a console rendered on
-the PR and awaiting a human, or it will not parse — the CLI wrote nothing either way) → also
-proceed to "Present a real stop," the human path: a rendered console is somebody's open decision,
-and no flag overwrites it. Exit codes 2 and 3 (malformed invocation / `--run` not anchored) → a
+the PR and awaiting a human, or it will not parse — the CLI wrote nothing either way) → never
+"Present a real stop": exit 5 only arises once the ceiling check passed, and an `unattended`
+console never asks, human present or not (`[IL-167]` — `pre-tool-use.js` denies that question).
+A rendered console is somebody's open decision and no flag overwrites it, so a console on the PR
+follows `_shared/console-on-pr.md`'s Headless conclusion (report `pending-review` with the PR URL);
+an unparseable one stops and reports the CLI's stderr, like exits 2 and 3. Exit codes 2 and 3 (malformed invocation / `--run` not anchored) → a
 HARD-GATE failure: stop the wrap-up and report the CLI's stderr — an unattended run has nobody to
 answer a real stop. Send one consolidated `PushNotification` summarizing the run, at the same
 point the auto-merge short-circuit sends its own FYI (`_shared/autonomy-ceiling.md`'s Notification

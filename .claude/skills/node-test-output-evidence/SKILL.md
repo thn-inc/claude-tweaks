@@ -69,6 +69,15 @@ Accounting a jest or vitest log against the failure shapes a record names leaves
 
 An uncaught error from async work that outlived its test is reported as a separate file-level failure only when no test in the file failed. Beside a failing test it appears only as an `ℹ Error:` line, or as text containing `generated asynchronous activity after the test ended`. `baseline.js`'s `RUNNER_ERROR_RE` treats a log carrying either as no evidence. A bare `# Error:` line in TAP output is the test's own console output, not Node's.
 
+### A report-only list inferred from absence owes `null`, never `[]`
+
+Both adjudications report `new` and `fixed` (#3313). Neither feeds the verdict, but a reader acts on `fixed`: its `FIXED:` lines suggest dropping a `preExisting` entry. "Did not fail" is not an observed pass, so a case the run cannot prove is `fixed: null` plus a `fixedReason`. An `[]` there would read as "nothing got fixed".
+
+- **Baseline `fixed`** (`adjudicate`): per-file adjudication never runs a HEAD-passing file at base, so each failing check gets one extra full-command run in the scratch worktree. That log is evidence only when `accountedFamily` accepts it and `parseCounts(...).tests > 0`. Its file-level load failures are dropped when HEAD resolves dependencies (or the check sets `NODE_PATH`), because an uninstalled scratch worktree fails to load the same way. One check whose base run proves nothing makes `fixed` null for the whole run, because a partial union reads as complete.
+- **`preExisting` `fixed`** (`newAndFixed`): absence counts only for test files (`TEST_FILE_RE`, never a fixture an allowlist glob also covers), on a `full` scope run with no fail-fast skip, and when `git ls-files` answered (`trackedFiles` returns `null` on failure).
+
+The baseline base run adds one whole-suite run per failing check. Before adding runtime to the `verify.js --baseline` path, check its CI callers. `.github/workflows/windows-regression.yml` runs that path inside a 90-minute job budget and reads nothing from `fixed`, so it passes `--no-baseline-fixed`. The field contract is `plugin/skills/test/verification.md`'s Baseline adjudication and Declared pre-existing failures sections.
+
 ## Decision Framework
 
 | The log shows | Read it as |

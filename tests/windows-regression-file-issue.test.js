@@ -820,6 +820,11 @@ test('F4: the windows job uploads verify-report and the file job downloads it, t
   assert.match(windows, /outputs:\s*\n      base:\s*\$\{\{\s*steps\.base\.outputs\.base\s*\}\}/);
 });
 
+test('F2b: verify opts out of the base full run — nothing here reads `fixed`, and the job budget has no room for another suite (#3313)', () => {
+  const windows = jobBlock('windows');
+  assert.match(windows, /--baseline-cmd tests="node --test \{file\}"\s+--no-baseline-fixed/);
+});
+
 test('F2: verify compares against "$BASE"; the base step reads PUSH_BEFORE and falls back to HEAD^1', () => {
   const windows = jobBlock('windows');
   assert.match(windows, /--baseline "\$BASE"/);
