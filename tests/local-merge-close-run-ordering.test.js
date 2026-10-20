@@ -17,7 +17,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { readRunState } = require('../plugin/bin/lib/hooks/context');
-const { fixtureGit, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
+const { fixtureGit, gitRepo, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const PLUGIN_DIR = path.join(ROOT, 'plugin');
@@ -32,10 +33,15 @@ const SUBJECT_DIR = path.join(SCRATCH, 'subject');
 fs.mkdirSync(SUBJECT_DIR, { recursive: true });
 
 // One entry per local-merge auto-merge procedure. `vars` maps each {placeholder} to its fixture value.
+// `readsWorktree`: the procedure reads the worktree from run-state.json itself (settle-and-merge takes
+// `{group-worktree}` from dispatch context and has no read). `logNeedle`: the literal clause, after the
+// re-protect fence, that tells the agent to log a re-stamp that did not print "worktree recorded".
 const SITES = [
   {
     label: 'auto-merge-short-circuit.md',
     file: 'plugin/skills/wrap-up/auto-merge-short-circuit.md',
+    readsWorktree: true,
+    logNeedle: 'log any other line',
     vars: {
       'integration-branch': 'main',
       branch: 'feat',
@@ -48,6 +54,8 @@ const SITES = [
   {
     label: 'settle-and-merge.md',
     file: 'plugin/skills/dispatch/settle-and-merge.md',
+    readsWorktree: false,
+    logNeedle: 'log any other line',
     vars: {
       'integration-branch': 'main',
       branch: 'feat',
@@ -60,6 +68,8 @@ const SITES = [
   {
     label: 'local-merge-auto-finish.md',
     file: 'plugin/skills/_shared/local-merge-auto-finish.md',
+    readsWorktree: true,
+    logNeedle: 'carry it into the `--text`',
     vars: {
       'base-branch': 'main',
       'feature-branch': 'feat',
@@ -127,8 +137,9 @@ function locate(text) {
   return { P, C, M, R, W, closeRuns };
 }
 
-// Ordering errors; empty when pre-merge checks < close-run < merge < re-protect and no worktree read follows close-run.
-function checkOrdering(text) {
+// Ordering errors; empty when pre-merge checks < close-run < merge < re-protect and no worktree read follows
+// close-run. With `readsWorktree`, the read must also exist and precede close-run (it nulls the field).
+function checkOrdering(text, { readsWorktree = false } = {}) {
   const { P, C, M, R, W, closeRuns } = locate(text);
   const errors = [];
   if (P < 0) errors.push(`no bash fence containing ${PRE_MERGE_NEEDLE}`);
@@ -139,7 +150,24 @@ function checkOrdering(text) {
     errors.push(`order is not pre-merge checks < close-run < merge < re-protect (P=${P} C=${C} M=${M} R=${R})`);
   }
   if (W >= 0 && C >= 0 && W > C) errors.push(`the worktree is read from run-state.json after close-run nulled it (W=${W} C=${C})`);
+  if (readsWorktree && !(W >= 0 && C >= 0 && W < C)) errors.push(`the worktree read must exist and precede close-run (W=${W} C=${C})`);
   return errors;
+}
+
+// Move the close-run fence ahead of the pre-merge-checks fence: a pure permutation of two whole fences,
+// so every marker is still present exactly once and only the order changes.
+function closeRunBeforePreMerge(text) {
+  const fences = [...text.matchAll(/^[ \t]*```bash\n[\s\S]*?\n[ \t]*```/gm)];
+  const only = (needle) => {
+    const hits = fences.filter((m) => m[0].includes(needle));
+    assert.strictEqual(hits.length, 1, `expected exactly one bash fence containing ${JSON.stringify(needle)}`);
+    return hits[0];
+  };
+  const pre = only(PRE_MERGE_NEEDLE);
+  const close = only(CLOSE_RUN_NEEDLE);
+  assert.ok(pre.index < close.index, 'the live close-run fence follows the pre-merge checks fence');
+  const without = text.slice(0, close.index) + text.slice(close.index + close[0].length);
+  return `${without.slice(0, pre.index)}${close[0]}\n\n${without.slice(pre.index)}`;
 }
 
 // Frozen pre-change excerpt: the local-merge opener and the merge fence exactly as they read before
@@ -173,11 +201,10 @@ function git(cwd, ...args) {
 
 // Main checkout on `main` with a clean `feat` branch adding b.txt. `conflict` makes both sides edit a.txt line 1.
 function makeRepo({ conflict = false } = {}) {
-  const dir = fs.mkdtempSync(path.join(SCRATCH, 'repo-'));
-  git(dir, 'init', '-q', '-b', 'main');
+  const dir = gitRepo({ parent: SCRATCH, branch: 'main' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\ntwo\n');
   git(dir, 'add', 'a.txt');
-  git(dir, 'commit', '-q', '-m', 'init');
+  git(dir, 'commit', '-q', '-m', 'base');
   git(dir, 'checkout', '-q', '-b', 'feat');
   fs.writeFileSync(path.join(dir, 'b.txt'), 'b\n');
   if (conflict) fs.writeFileSync(path.join(dir, 'a.txt'), 'feat\ntwo\n');
@@ -207,8 +234,7 @@ function stubPluginRoot() {
 }
 
 function tmpProject() {
-  const dir = fs.mkdtempSync(path.join(SCRATCH, 'project-'));
-  fixtureGit(['-C', dir, 'init', '-q']);
+  const dir = gitRepo({ parent: SCRATCH });
   const run = path.join(dir, '.claude-tweaks', 'pipelines', '2026-10-20T000000-spec-1');
   fs.mkdirSync(run, { recursive: true });
   fs.writeFileSync(path.join(run, 'decisions.md'), '');
@@ -216,18 +242,40 @@ function tmpProject() {
 }
 
 for (const site of SITES) {
-  const raw = fs.readFileSync(path.join(ROOT, site.file), 'utf8');
-  const { label, vars } = site;
+  const raw = readText(path.join(ROOT, site.file));
+  const { label, vars, readsWorktree, logNeedle } = site;
 
   test(`${label}: pre-merge checks, close-run, merge, re-protect appear in that order`, () => {
-    assert.deepStrictEqual(checkOrdering(raw), []);
+    assert.deepStrictEqual(checkOrdering(raw, site), []);
+  });
+
+  test(`go-red: ${label} with the close-run fence moved ahead of the pre-merge checks fails the ordering check`, () => {
+    const permuted = closeRunBeforePreMerge(raw);
+    assert.notStrictEqual(permuted, raw, 'the permutation must change the text');
+    const { P, C, M, R, closeRuns } = locate(permuted);
+    assert.ok(P >= 0 && C >= 0 && M >= 0 && R >= 0 && closeRuns === 1, 'every marker is still present exactly once');
+    const errors = checkOrdering(permuted, site);
+    assert.ok(errors.some((e) => /order is not/.test(e)), `expected an "order is not" error, got ${JSON.stringify(errors)}`);
+  });
+
+  test(`${label}: the worktree read ${readsWorktree ? 'precedes close-run (required)' : 'is not required'}`, () => {
+    const { W, C } = locate(raw);
+    if (readsWorktree) {
+      assert.ok(W >= 0 && W < C, `expected the run-state.json worktree read before close-run (W=${W} C=${C})`);
+      const without = raw.split(WORKTREE_READ_NEEDLE).join('');
+      assert.notStrictEqual(without, raw);
+      const errors = checkOrdering(without, site);
+      assert.ok(errors.some((e) => /worktree read must exist/.test(e)), `go-red: a removed read must fail, got ${JSON.stringify(errors)}`);
+    } else {
+      assert.ok(W < 0 || W < C, 'a worktree read, if present, precedes close-run');
+    }
   });
 
   test(`${label}: a CRLF checkout yields the same fences and ordering`, () => {
     const crlf = raw.replace(/\n/g, '\r\n');
     assert.ok(fencesOf(raw).length > 0, 'expected at least one bash fence');
     assert.deepStrictEqual(fencesOf(crlf), fencesOf(raw));
-    assert.deepStrictEqual(checkOrdering(crlf), []);
+    assert.deepStrictEqual(checkOrdering(crlf, site), []);
   });
 
   test(`${label}: the pre-merge checks fence contains no close-run and no git merge --no-ff`, () => {
@@ -296,13 +344,13 @@ for (const site of SITES) {
     assert.ok(R > -1, 're-protect fence not found');
     const after = collapse(raw).slice(R, R + 600);
     assert.match(after, /worktree recorded/);
-    assert.match(after, /\blog\b/i, 'a re-stamp that fails must be logged, not ignored');
+    assert.ok(after.includes(collapse(logNeedle)), `a re-stamp that fails must be logged, not ignored: expected ${JSON.stringify(logNeedle)} within the window`);
   });
 }
 
 test('no plugin/ file still carries "Not fixed here; there is no"', () => {
   const hits = fs.readdirSync(PLUGIN_DIR, { recursive: true })
     .filter((rel) => String(rel).endsWith('.md'))
-    .filter((rel) => collapse(fs.readFileSync(path.join(PLUGIN_DIR, String(rel)), 'utf8')).includes('Not fixed here; there is no'));
+    .filter((rel) => collapse(readText(path.join(PLUGIN_DIR, String(rel)))).includes('Not fixed here; there is no'));
   assert.deepStrictEqual(hits, []);
 });

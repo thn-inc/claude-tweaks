@@ -241,7 +241,7 @@ assignment as `flow/worktree-merge.md`'s reconciliation does, so
 the merge, landing in the main checkout, isn't denied as a wrong-checkout
 commit. The order is load-bearing: `close-run` clears the run's E1 protection and its
 worktree assignment, so every check that can run beforehand runs before it — the merge and push
-necessarily follow it — and the merge's own failure path re-protects the run.
+necessarily follow it — and a failure after it (guard race, merge, push) re-protects the run.
 
 **Shell state does not survive between these calls** — each Bash call gets
 a fresh shell, so a variable set in one is empty in the next. Read
@@ -249,7 +249,7 @@ the values first and substitute them **literally** into every later call;
 don't carry them in shell variables.
 
 ```bash
-node -e "console.log(require('$RUN_DIR/run-state.json').worktree)"   # -> {worktree-path}
+node -e "const w=require('$RUN_DIR/run-state.json').worktree; if(!w){console.error('claude-tweaks: run-state.json has no worktree field — cannot resolve the worktree to merge'); process.exit(1);} console.log(w)"   # -> {worktree-path}
 git -C "{worktree-path}" branch --show-current   # -> {branch}
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-branch
 gh api "repos/{owner}/{repo}" -q .default_branch # only when the line above came back empty
@@ -260,7 +260,9 @@ The first command reads `{worktree-path}` from `run-state.json`'s own `worktree`
 actually names the worktree, unlike `$RUN_DIR` itself (**#299**: `$RUN_DIR` sits inside the main
 checkout per `_shared/pipeline-run-dir.md`'s anchoring rule, so a bare `git -C "$RUN_DIR"`
 silently resolves the main checkout's own toplevel/branch — never the feature branch). It must be
-read here, before `close-run`: `close-run` nulls that field, so a later read returns nothing. The
+read here, before `close-run`: `close-run` nulls that field, so a later read returns nothing. A failed
+read (no `worktree` field) means nothing was merged and `close-run` has not run — fall back to the
+console. The
 third and fourth commands together resolve `{integration-branch}` — the branch this project integrates
 work into, which is not always the GitHub default (see `skills/_shared/integration-branch.md` for
 the full precedence, including its git-inference rank, deliberately skipped here, which would
@@ -334,8 +336,8 @@ keyword per "Close-via-merge" in `_shared/issue-claims.md`. Still generate
 this console's full content (Auto-applied / Skill updates / Configuration
 updates sections, per `review-console-interactive.md`'s "Present the console") and attach it to a
 `PushNotification` as a non-blocking FYI. Nothing this console would have
-shown is discarded — only the wait for a live approval is skipped. After the
-push, run `_shared/pr-first-merge-post-merge.md` Step 4.1 with `--ref {integration-branch}` (staged file + closing-report line only).
+shown is discarded — only the wait for a live approval is skipped. After a
+successful push, run `_shared/pr-first-merge-post-merge.md` Step 4.1 with `--ref {integration-branch}` (staged file + closing-report line only).
 
 Console content is not all of Phase 4's execution step — acceptance labeling is neither console
 content nor a `cleanup-procedures.md` cleanup item, which is why it was silently dropped from
@@ -346,13 +348,19 @@ step against this branch explicitly; a claim true about one category is not evid
 cannot merge a ref, or the branch guard aborts): nothing was merged and `close-run` has not run, so
 there is nothing to undo and no re-stamp to do — fall back to rendering the console normally,
 exactly as an `auto:build`-only record would, logging why the auto-merge path was abandoned
-(conflict resolution requires judgment a headless run can't supply).
+(conflict resolution requires judgment a headless run can't supply). The `|| exit 1` collapses
+every `git merge-tree` failure, so tell them apart by output: a `CONFLICT` line on stdout is a
+predicted conflict; a stderr error with no `CONFLICT` line means git could not run the pre-check
+(git older than 2.38 lacks `--write-tree`, or an unknown ref) — log `pre-check failed: {first stderr
+line}`, not a conflict.
 
-**If the merge call's guard aborts or `git merge` fails** (a conflict that appeared only after the
-pre-merge checks — the race they cannot rule out): `git merge --abort` only if a merge is actually
-in progress, then re-protect the run. `close-run` already ran, so the parked run would otherwise
-be unprotected with its worktree assignment cleared; re-stamp it with the `{worktree-path}` read
-above (`run-state.json` no longer holds it), its own Bash call:
+**If the merge call's guard aborts, `git merge` fails, or the push fails** (a conflict that appeared
+only after the pre-merge checks — the race they cannot rule out — or a rejected or failed push): on
+a guard abort or merge failure, `git merge --abort` only if a merge is actually in progress; on a
+push failure do NOT `git merge --abort` and do NOT undo the local merge — a human resuming the run
+needs the merge commit to push it. Either way, re-protect the run. `close-run` already ran, so the
+parked run would otherwise be unprotected with its worktree assignment cleared; re-stamp it with the
+`{worktree-path}` read above (`run-state.json` no longer holds it), its own Bash call:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$RUN_DIR" "{worktree-path}"
@@ -361,7 +369,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$RUN_DIR" "{wor
 `record-worktree` restores the worktree assignment and `active` status. It prints `claude-tweaks: worktree recorded for …`
 when it worked; log any other line to `decisions.md` rather than ignoring it (the run dir may have
 been archived underneath). Then fall back to rendering the console normally, exactly as for a
-failed pre-merge check, logging why the auto-merge path was abandoned.
+failed pre-merge check, logging why the auto-merge path was abandoned — for a push failure, that the
+local merge commit exists but is unpushed. Step 4.1 above is not run when the push failed.
 
 Log to `decisions.md`:
 `AUTO {time} — Fast-lane auto-merge: issue #{n}, assess-agent-autonomy verdict auto-merge (see RATIONALE). Merge commit: {sha}. Reversibility: high (git revert). [lever: auto-merge-max-lines={value} ({source}); auto-merge-max-files={value} ({source}); merge-sensitive-paths={value} ({source})]` — or, on the `manifesto-authorized-merge.md` path, its own tag and log line instead

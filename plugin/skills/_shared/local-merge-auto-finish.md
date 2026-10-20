@@ -114,7 +114,8 @@ it literally into the next call; never carry it in a shell variable across calls
    run — this is not a distinct third outcome, it is the same unmergeable state the Park branch
    below handles. Log it via the Park branch's `log-decision.js` call, with
    `{conflict|failed verification}` replaced by
-   `"main checkout switched to '$CURRENT' underfoot"`, and report `pending-review` to the caller —
+   `main checkout switched to '{current-branch}' underfoot` (`{current-branch}` is the branch name the
+   guard's stderr printed, substituted literally — the shell's `$CURRENT` does not survive), and report `pending-review` to the caller —
    never a bare non-zero exit with no logged outcome, per this file's own invariant that every run
    ends in an explicit, logged outcome.
 
@@ -239,9 +240,13 @@ Then log the outcome:
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$RUN_DIR" --status AUTO \
   --section "/wrap-up" --step "Section C (local-merge-auto-finish)" \
-  --text "Local merge into {base-branch} failed ({conflict|failed verification}) — reverted, worktree and branch preserved. [outcome: pending-review]" \
+  --text 'Local merge into {base-branch} failed ({conflict|failed verification}) — reverted, worktree and branch preserved. [outcome: pending-review]' \
   --reversibility high
 ```
+
+The substituted reason can carry a filename or stderr text, so `--text` is single-quoted — never
+double-quoted, where `$(…)`, backticks and `$VAR` would execute — and any `'` in the substituted
+reason is written `'\''` (the same rule `build/dispatch.md` uses for `log-decision.js --text`).
 
 Report outcome `pending-review` to the caller. The worktree's *files* — the feature branch and its
 commits — are untouched: a human can check out the branch, resolve or investigate, and re-run
