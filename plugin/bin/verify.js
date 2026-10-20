@@ -943,6 +943,15 @@ async function main() {
     if (baselineAdjudicated.eligible) {
       const b = baselineAdjudicated;
       lines.push('', `Baseline: adjudicated against ${b.base} (${String(b.baseSha).slice(0, 9)}) — ${b.failingFiles.length} failing file(s): ${b.baselineFailing.length} also fail at base, ${b.flakyPassed.length} flaky (passed in isolation), ${b.attributable.length} attributable`);
+      // #3313: new/fixed counts; absent on an adjudication that predates them.
+      if (Array.isArray(b.new)) {
+        if (b.fixed === null) {
+          lines.push(`Baseline: ${b.new.length} new, fixed not computed — ${b.fixedReason}`);
+        } else {
+          lines.push(`Baseline: ${b.new.length} new, ${b.fixed.length} fixed`);
+          for (const file of b.fixed) lines.push(`FIXED: ${file} — fails at base, passes at HEAD`);
+        }
+      }
       for (const file of b.attributable) {
         // #3063 AC2: a timed-out base/isolated run is no evidence either
         // way — the file stays attributable, but naming the timeout here

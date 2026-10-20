@@ -2386,6 +2386,24 @@ test('--baseline: the scratch worktree is gone after the run (#3043)', async () 
   assert.strictEqual((list.match(/^worktree /gm) || []).length, 1, list);
 });
 
+test('AC2.1 --baseline: a base-failing file that passes at HEAD reports as fixed (#3313)', async () => {
+  const r = baselineRepo();
+  fs.writeFileSync(path.join(r.repo, 'tests', 'fixme.test.js'), "require('node:test')('fixme', () => { throw new Error('broken at base'); });\n");
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'add failing fixme');
+  const baseSha = r.git('rev-parse', 'HEAD').trim();
+  fs.writeFileSync(path.join(r.repo, 'tests', 'fixme.test.js'), "require('node:test')('fixme', () => {});\n");
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'fix fixme');
+  const { code, stdout } = await runCli(['--cmd', 'tests=node --test --test-reporter=tap tests/env.test.js tests/fixme.test.js tests/ok.test.js', '--baseline', baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 0, stdout);
+  assert.match(stdout, /^Baseline: 0 new, 1 fixed$/m);
+  assert.match(stdout, /^FIXED: tests\/fixme\.test\.js — fails at base, passes at HEAD$/m);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.deepStrictEqual(report.baselineAdjudicated.fixed, ['tests/fixme.test.js']);
+  assert.deepStrictEqual(report.baselineAdjudicated.new, []);
+});
+
 // #3511: --scope + --baseline. baselineRepo() on a feature branch carrying a
 // map-form declaration (unit = the failing-at-base suite) plus src/a.js.
 // The failing suite is declared AHEAD of `other` (the realistic ordering, and
