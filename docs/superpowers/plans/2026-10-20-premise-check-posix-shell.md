@@ -174,3 +174,8 @@ Run centrally by the build orchestrator after Tasks 1–3, quoting raw output in
 - [ ] **AC9.1:** `npm test` (full suite, foreground, output to a file) → `# fail 0` or every failure adjudicated as baseline by `verify.js`.
 - [ ] **Deliverable 8:** re-run `grep -rnE "'/bin/sh'|shell: true|execSync\(" plugin tests tools` and record every hit with its in/out-of-scope disposition for the PR body; check open records for `tests/verify-expectations-writer-conformance.test.js` (`gh issue list --state open --search "verify-expectations-writer-conformance"`) and file a follow-up via `/claude-tweaks:capture` when none covers it.
 - [ ] **AC2.1–AC2.7 (Windows ground truth):** after the phase-exit push, dispatch `gh workflow run windows-regression.yml --ref worktree-dispatch-record-3563 --repo thn-inc/claude-tweaks` and read the per-file results for all four files (`# fail 0`, or absent from the report's `failingFiles`) — never the run verdict alone (#3568). If the dispatch cannot run or has not finished by the end of the build call, say so explicitly and hand the run id forward; the POSIX simulation is never reported as a Windows run.
+
+## Build deviations (Common Step 4.5 — classified Beneficial)
+
+1. **Third prose site.** Deliverable 6 named two prose sites; the whole-branch review found a third, `docs/plugin-structure.md:51` ("spawns /bin/sh"), now "spawns a POSIX sh (/bin/sh, or sh from PATH on Windows)" — final-review fix wave, commit a269e3169.
+2. **Extra seam test.** Beyond Task 1's exit-0 seam pin, `defaultRunner`'s numeric-status return and no-status re-throw are pinned through an injected `exec` (commit a269e3169) — the review's Minor 2; keeps the exit-code semantics Deliverable 1 requires pinned without a real shell.
