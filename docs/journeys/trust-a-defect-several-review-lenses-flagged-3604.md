@@ -34,7 +34,7 @@ files:
 - **URL:** the Review Console's Low-confidence findings section
 - **Action:** look for the corroborated finding.
 - **Should feel:** consistent. A finding confirmed in routing is not also offered as low-confidence.
-- **Should understand:** the console builds Low-confidence rows from `STAGED … not reproduced` lines (`plugin/bin/lib/console/resolve.js`'s `coordinationItems`). The pass writes those lines only for findings still `unconfirmed` after corroboration. If the call fails, nothing is promoted. The STAGED lines are written as before, plus one `SKIP … Cross-lens corroboration (skipped)` line.
+- **Should understand:** the console builds Low-confidence rows from `STAGED … not reproduced` lines (`plugin/bin/lib/console/resolve.js`'s `coordinationItems`), and drops a STAGED line that a later `AUTO … Confirmed.` line confirmed for the same lens and `path:line`. The pass writes those lines only for findings still `unconfirmed` after corroboration. If the call fails, nothing is promoted. The STAGED lines are written as before, plus one `SKIP … Cross-lens corroboration (skipped)` line.
 - **Red flags:** the same `{path}:{line}` appears both as a confirmed routing row and as a Low-confidence console row. A failed corroboration call leaves no STAGED and no SKIP line.
 
 ## Origin
