@@ -50,6 +50,7 @@ files:
 - **Expect:** A warn-tier `systemMessage` names the removed worktree path and instructs re-anchoring to the main checkout (`cd {path}`, or a generic pointer when the root can't be resolved) before any further git-dependent command — because this repo's hooks cannot themselves clear the harness's native worktree-isolation pin, which can otherwise outlive the worktree it pointed to and refuse subsequent commands as still "isolated" (#703).
 
 ## Origin
+- Updated during build of #3769 — Step 3's assigned-run match (`findRunByWorktreePath`) also compares case-canonical real paths, so a mis-cased teardown target of an assigned worktree is denied like the correctly-cased one.
 - Updated during build of #3682 — Step 5's own-cwd guard (and E1's commit-location check) compare case-canonical real paths, so a mis-cased target or cwd is treated as the correctly-cased one.
 - Updated during build of #3025 — Step 4's `close-run --run` accepts a bare run id, and a rejected `--run` now exits 1.
 - Updated during build of #703 — a post-teardown re-anchor backstop (warn tier) now fires on every allowed teardown path Steps 3/5 already document; Step 6 added.
