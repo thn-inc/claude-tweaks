@@ -16,10 +16,11 @@
 // fall back (`--dispatch` with no session id writes null for exactly this reason). Known residual
 // of the fallback: a pre-field dispatched run that a human resumes in a new session re-stamps
 // `sessionId` and reads as a Task call, stopping at `ready-to-merge` as every run did before
-// #3711. It fails safe (a missed merge) and ends with the fallback's removal below. An absent or empty id on either side never matches (`'' === ''` and
-// `undefined === undefined` must not count), and nothing here throws — a missing or unreadable
-// run-state.json is a genuine human-run session (false), which falls through to the direct-merge
-// path.
+// #3711. It fails safe (a missed merge) and ends with the fallback's removal below.
+//
+// An absent or empty id on either side never matches (`'' === ''` and `undefined === undefined`
+// must not count), and nothing here throws — a missing or unreadable run-state.json is a genuine
+// human-run session (false), which falls through to the direct-merge path.
 //
 // Removal condition for the `sessionId` fallback (expand-contract): delete it — and compare
 // `dispatchSessionId` alone — once (a) no live run dir in this repo still carries a pre-field
