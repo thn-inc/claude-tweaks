@@ -38,6 +38,7 @@ function parseArgs(argv) {
     if (!key) return { error: `unknown argument: ${a}` };
     const v = argv[++i];
     if (v === undefined || v === '' || v.startsWith('--')) return { error: `${a} requires a value` };
+    if (o[key] !== null) return { error: `${a} given more than once` };
     o[key] = v;
   }
   if (!o.results) return { error: '--results <path> is required' };

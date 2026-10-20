@@ -41,7 +41,7 @@ function classifyFailure(error) {
 function suggestedFix(category, storyId, runDir) {
   switch (category) {
     case 'stale-selector': return 'Update locator in story YAML';
-    case 'flaky-env': return `Re-run: \`/test qa retry=${runDir}\``;
+    case 'flaky-env': return runDir === null ? 'Re-run: `/test qa`' : `Re-run: \`/test qa retry=${runDir}\``;
     case 'story-bug': return `Regenerate story: \`/stories focus=${storyId}\``;
     case 'ux-issue': return 'Review the observation';
     default: return 'Investigate component behavior';

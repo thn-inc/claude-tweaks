@@ -67,6 +67,11 @@ test('rule 1 gap cap is exactly 120 characters between the noun and "not found"'
   assert.equal(classifyFailure(`locator ${'x'.repeat(119)} not found`), 'code-bug');
 });
 
+test('a flaky-env fix without run_dir offers a plain re-run, not retry=null', () => {
+  const { report } = composeQaReport({ stories: [story('a', 'FAIL', { error: 'Timeout 30s' })] }, { now: NOW });
+  assert.equal(report.findings[0].suggested_fix, 'Re-run: `/test qa`');
+});
+
 test('rules apply in order and each flaky-env signal stands alone', () => {
   assert.equal(classifyFailure('Timeout waiting; expected dialog'), 'flaky-env');
   assert.equal(classifyFailure('net::ERR_CONNECTION_REFUSED'), 'flaky-env');

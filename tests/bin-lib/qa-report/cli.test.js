@@ -90,13 +90,25 @@ test('payload errors exit 1 and create no out file', () => {
 test('malformed invocation exits 2 with usage', () => {
   const fx = fixture();
   const p = writeResults(fx, { stories: [] });
-  const cases = [[], ['--results', p], ['--results', p, '--out'], ['--out', ''], ['--results', p, '--out', '--results'], ['--bogus']];
+  const cases = [[], ['--results', p], ['--results', p, '--out'], ['--out', ''], ['--results', p, '--out', '--results'], ['--bogus'],
+    ['--results', p, '--results', p, '--out', 'o'], ['--results', p, '--out', 'a', '--out', 'b']];
   for (const argv of cases) {
     const t = deps();
     assert.equal(run(argv, t.d), 2, JSON.stringify(argv));
     assert.ok(t.err.join('').includes('usage:'), JSON.stringify(argv));
   }
   assert.deepEqual(parseArgs(['--results', 'a', '--out', 'b']), { results: 'a', out: 'b' });
+});
+
+test('a throwing dependency exits 1 as compose-failed and writes nothing', () => {
+  const fx = fixture();
+  const p = writeResults(fx, { stories: [story('s1', 'PASS')] });
+  const t = deps();
+  t.d.now = () => { throw new Error('clock exploded'); };
+  assert.equal(run(['--results', p, '--out', fx.out], t.d), 1);
+  const msg = t.err.join('');
+  assert.ok(msg.includes('compose-failed') && msg.includes('clock exploded'), msg);
+  assert.equal(fs.existsSync(fx.out), false);
 });
 
 test('write failure exits 3 naming the path', () => {
