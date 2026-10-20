@@ -14,7 +14,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+function read(rel) {
+  return fs.readFileSync(path.join(ROOT, rel), 'utf8');
+}
 
 const SHAPING_MODE = read('plugin/skills/specify/shaping-mode.md');
 const SUBISSUES = read('plugin/skills/specify/record-creation-subissues.md');

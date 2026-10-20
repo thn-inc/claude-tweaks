@@ -15,13 +15,13 @@ const LABEL = '**Project contract beats spec-mandated literal text (#3557).**';
 const REVIEW_LABEL = '**Review findings go through the deferral gate (#3004).**';
 const CARRY_LABEL = '**Carry forward surviving SDD ledger residue';
 
-const instructionSlice = () => {
+function instructionSlice() {
   const start = DISPATCH.indexOf(LABEL);
   assert.ok(start !== -1, 'the contract-beats-spec-literal label is not in dispatch.md');
   const end = DISPATCH.indexOf(CARRY_LABEL, start);
   assert.ok(end > start, 'no following bold label after the contract-beats-spec-literal label');
   return DISPATCH.slice(start, end);
-};
+}
 
 function assertInstruction(text) {
   assert.match(
