@@ -1435,3 +1435,89 @@ test('#3225 ordering fixture: out-of-order first call (#3064/#3066 shape — com
   fs.writeFileSync(path.join(run, 'config.yml'), 'mode: auto\n'); // the remedy
   assert.deepStrictEqual(pre.run(dispatchCtx(run, wt, input)), {}, 'the identical, unchanged command now passes');
 });
+
+// #3712: Review Console ask gate. The console resolves with zero AskUserQuestion
+// calls when the run's autonomy ceiling grants consoleAutoResolve; a console
+// question at that ceiling is the #2734 stall, denied here instead.
+const askInput = (questions, cwd) => ({ tool_name: 'AskUserQuestion', tool_input: { questions }, session_id: 'sess-1', cwd });
+const ownedRunAt = (dir, attribution = 'session') => ({ dir, attribution });
+const CONSOLE_Q = [{ header: 'Review Console', question: 'How do you want to handle the Review Console items?', options: [] }];
+function consoleRun(autonomy, name = '2026-07-01T090000-spec-1') {
+  const project = tmpProject();
+  const dir = path.join(project, '.claude-tweaks', 'pipelines', name);
+  fs.mkdirSync(dir, { recursive: true });
+  if (autonomy) fs.writeFileSync(path.join(dir, 'config.yml'), `autonomy: ${autonomy}\n`);
+  return dir;
+}
+const consoleCtx = (dir, questions, ownedRun = ownedRunAt(dir)) => ({
+  input: askInput(questions, dir), runDir: dir, runState: { status: 'active' }, ownedRun, cwd: dir,
+});
+
+test('AC1.1: unattended owned run denies a Review Console question', () => {
+  const dir = consoleRun('unattended');
+  const out = pre.run(consoleCtx(dir, CONSOLE_Q));
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /console-resolve\.js/);
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /consoleAutoResolve/);
+});
+
+test('#3712: deny when any question carries the console header', () => {
+  const dir = consoleRun('unattended');
+  const out = pre.run(consoleCtx(dir, [
+    { header: 'Divergence', question: 'q1', options: [] },
+    { header: 'Review Console', question: 'q2', options: [] },
+  ]));
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+test('AC2.1: trusted and supervised ceilings allow', () => {
+  for (const tier of ['trusted', 'supervised']) {
+    const dir = consoleRun(tier);
+    assert.deepStrictEqual(pre.run(consoleCtx(dir, CONSOLE_Q)), {}, tier);
+  }
+});
+
+test('AC3.1: other headers allow at unattended', () => {
+  const dir = consoleRun('unattended');
+  assert.deepStrictEqual(pre.run(consoleCtx(dir, [{ header: 'Shape check', question: 'q', options: [] }])), {});
+});
+
+test('AC4.1: no owned run allows', () => {
+  const dir = consoleRun('unattended');
+  assert.deepStrictEqual(pre.run(consoleCtx(dir, CONSOLE_Q, { dir: null, attribution: null })), {});
+});
+
+test('#3712: fallback-attributed run allows', () => {
+  const dir = consoleRun('unattended');
+  assert.deepStrictEqual(pre.run(consoleCtx(dir, CONSOLE_Q, ownedRunAt(dir, 'fallback'))), {});
+});
+
+test('#3712: ad-hoc owned run allows', () => {
+  const dir = consoleRun('unattended', '2026-07-01T090000-adhoc-standalone');
+  assert.deepStrictEqual(pre.run(consoleCtx(dir, CONSOLE_Q)), {});
+});
+
+test('AC4.1: ceiling read failure allows', () => {
+  const dir = consoleRun('unattended');
+  const out = pre.run(consoleCtx(dir, CONSOLE_Q), { readConsoleCeiling: () => { throw new Error('boom'); } });
+  assert.deepStrictEqual(out, {});
+});
+
+test('#3712: ceiling comes from the injected reader, not ctx.runState', () => {
+  const dir = consoleRun(null);
+  const out = pre.run(consoleCtx(dir, CONSOLE_Q), { readConsoleCeiling: () => 'unattended' });
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+test('#3712: malformed AskUserQuestion input allows', () => {
+  const dir = consoleRun('unattended');
+  for (const toolInput of [undefined, {}, { questions: 'x' }, { questions: [null, 7] }]) {
+    const ctx = consoleCtx(dir, CONSOLE_Q);
+    ctx.input = { tool_name: 'AskUserQuestion', tool_input: toolInput, session_id: 'sess-1', cwd: dir };
+    assert.deepStrictEqual(pre.run(ctx), {});
+  }
+});
+
+test('#3712: REVIEW_CONSOLE_HEADER is exported as the pinned string', () => {
+  assert.strictEqual(pre.REVIEW_CONSOLE_HEADER, 'Review Console');
+});

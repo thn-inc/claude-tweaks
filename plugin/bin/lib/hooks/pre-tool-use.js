@@ -34,6 +34,7 @@ const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName }
 const { runGit, FAILURE } = require('./git-exec');
 const { parseNameStatusZ } = require('../git-z');
 const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
+const { resolveCeiling, bookkeepingPermissions } = require('../issues/autonomy');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
 const { hasClaimLogFor } = require('../log-decision/claim-log');
 const { resolveLeaf, canonicalRealpath, lstatType } = require('../path-guard');
@@ -742,6 +743,57 @@ function checkPipelineShadowGuard(ctx) {
     );
   }
   return {};
+}
+
+// Review Console ask gate (#3712, IL-166). At an autonomy ceiling whose
+// bookkeepingPermissions grant `consoleAutoResolve`, the Review Console
+// resolves with zero AskUserQuestion calls (wrap-up/review-console.md's
+// Auto-resolution short-circuit); a console question there is the #2734 stall.
+// This denies it and points at `console-resolve.js --policy console-auto`.
+// Fails open (returns {}) on: no provably owned run (none, 'fallback'
+// attribution, or an ad-hoc run dir), a missing/malformed tool_input.questions,
+// no question headed exactly REVIEW_CONSOLE_HEADER, a ceiling-read throw, and a
+// ceiling that does not grant consoleAutoResolve. REVIEW_CONSOLE_HEADER is
+// pinned against the console prose by tests/review-console-header-conformance.test.js.
+const REVIEW_CONSOLE_HEADER = 'Review Console';
+
+// Same fold console-resolve.js's readPolicy() applies: config.yml over
+// policy.yml via resolvePolicyConfig, then resolveCeiling. resolvePolicyConfig's
+// own catch falls back to process.cwd() when git throws — accepted, it is the
+// behavior console-resolve.js has.
+function readConsoleCeiling(runDir, cwd) {
+  const git = (args) => {
+    const r = runGit(args, cwd);
+    if (r.failure) throw new Error(r.failure);
+    return r.stdout;
+  };
+  const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
+  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy'] });
+  const entry = result.autonomy;
+  return resolveCeiling({ runConfig: entry && entry.error === undefined ? entry.value : null });
+}
+
+function checkReviewConsoleAskGate(ctx, deps = {}) {
+  const input = ctx.input;
+  if (!input || input.tool_name !== 'AskUserQuestion') return {};
+  const questions = input.tool_input && input.tool_input.questions;
+  if (!Array.isArray(questions)) return {};
+  if (!questions.some((q) => q && typeof q === 'object' && q.header === REVIEW_CONSOLE_HEADER)) return {};
+  const ownedRun = ctx.ownedRun;
+  if (!ctxLib.isTrustedOwnedRun(ownedRun) || ctxLib.isAdHocRunDir(ownedRun.dir)) return {};
+  let ceiling;
+  try {
+    ceiling = (deps.readConsoleCeiling || readConsoleCeiling)(ownedRun.dir, ctx.cwd || process.cwd());
+  } catch {
+    return {};
+  }
+  if (!bookkeepingPermissions(ceiling).consoleAutoResolve) return {};
+  ctxLib.appendEvent(ownedRun.dir, 'console-ask-deny', { ceiling });
+  return denyResult(
+    `claude-tweaks: this run's autonomy ceiling is ${ceiling}, which grants consoleAutoResolve — the Review Console ` +
+    `resolves with zero AskUserQuestion calls (wrap-up/review-console.md's Auto-resolution short-circuit). ` +
+    `Resolve it instead: node "${pluginRoot()}/bin/console-resolve.js" --run "${ownedRun.dir}" --policy console-auto`,
+  );
 }
 
 // git-stash worktree-hazard warn gate (#1967, widened #2065): the stash
@@ -2045,6 +2097,9 @@ function checkDispatchConfigGate(ctx, commandGitTargets) {
 // checkBookkeepingStampsGate as its own `deps` parameter. No other gate in
 // this pass currently takes an override.
 function runInner(ctx, indeterminateTargets, warnings, deps) {
+  // #3712: no other gate applies to AskUserQuestion.
+  if (ctx.input && ctx.input.tool_name === 'AskUserQuestion') return checkReviewConsoleAskGate(ctx, deps);
+
   const teardown = checkTeardownGate(ctx, warnings);
   if (teardown.json) return teardown;
 
@@ -2248,6 +2303,9 @@ module.exports = {
   DELETE_ONLY_PUSH_ALLOWLIST,
   shadowPipelineRunDir,
   checkPipelineShadowGuard,
+  REVIEW_CONSOLE_HEADER,
+  readConsoleCeiling,
+  checkReviewConsoleAskGate,
   // Exported for post-tool-use.js's post-teardown re-anchor backstop (#703)
   // to reuse rather than reimplement — the same target-resolution logic
   // this file's own checkTeardownGate already relies on.
