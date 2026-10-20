@@ -2,6 +2,8 @@
 files:
   - plugin/skills/build/dispatch.md
   - plugin/skills/build/handoff-template.md
+  - plugin/bin/stage-item.js
+  - plugin/bin/lib/stage-item/ledger.js
   - plugin/bin/lib/console/resolve.js
   - plugin/bin/lib/reconcile/console-execute.js
   - plugin/skills/wrap-up/review-console-appendix.md
@@ -78,4 +80,5 @@ files:
 - Steps 6-7 (PR-hosted and multi-spec consoles) added by #3513, run `2026-10-19T185713-record-3513`. They are the follow-up that #3401's whole-branch review deferred.
 - Step 6's reply-comment labelling revised by #3636, run `2026-10-20T135813-record-3636`: a flagged ruling reads `reversed` and counts as cleared, a refused reverse goes in `--reverse-failed`.
 - Step 1 notes the contract-beats-spec exception added by #3557, run `2026-10-20T183400-record-3557`.
+- Step 1 revised by #3510, run `2026-10-20T210418-record-3510`: the carry-forward is one `stage-item.js --ledger` call (stage, fill `Ledger:`, append, log), and its Red flags name what each degraded `SKIP` leaves behind. Verified live: this run carried its own four SDD rulings through the call (`staged/sdd-ruling-1..4.md`, ledger rows #1-#4).
 - Related: `docs/journeys/measure-sdd-final-review-value-3386.md` (reads the same rulings as evidence); `docs/journeys/resolve-the-unattended-console-in-one-process-1932.md` (the `consoleAutoResolve` path that ratifies with zero clicks).
