@@ -49,6 +49,17 @@ decline does today ("declined, no reason given" when the comment carries no free
 since a checkbox has none to read). Every executed or declined item appends its own
 `_shared/auto-decision-log.md` line.
 
+**Except an `sdd-ruling-*` item** (staged file `staged/sdd-ruling-{N}.md`, or
+`spec-{N}/staged/sdd-ruling-{N}.md` on a multi-spec bundle, #3401): unticked at
+Resolve time, or named in `resolve-console --decline`, it routes to **reverse**, never to a plain
+decline — compose and file the reversal record per `wrap-up/review-console-appendix.md`'s
+`sdd-ruling-*` bullet (ledger row → `deferred`, Resolution `reversed → #{new record}`; the row stays
+`open`, cause logged, when the record is refused or not created). Ticked, it is ratify (ledger row →
+`accepted`, per the same bullet). Log it as an `AUTO` line naming `reversed → #{new record}` only
+once the record exists; when the record is refused or not created, log that cause instead
+(`REFUSED` when `wrap-up/refused-proposals.md` refuses it, else `SKIP` — `FAILED` is reserved for
+its two refine writers) — never `declined`, and never `reversed` without a record number.
+
 **Staged-file drift check, before executing any item that reads one:** verify the item's staged
 file (`staged/...`) still exists, and re-hash its current content against `console.json`'s recorded
 `stagedHash` for that item. Missing → unexecutable, report it as such (not an error — the file may
@@ -100,6 +111,12 @@ just posted to the PR. Two surfaces, one answer: whichever resolves first wins.
   is the concrete mechanism: it performs the three coupled writes in the documented order (reusing
   `console-execute.js`'s own read/parse/decide helpers rather than re-deriving console state), so a
   later reconciler pass detects the resolved marker and no-ops rather than re-asking.
+  A ruling row's chat `ratify {#}` maps to `--approve` and `reverse {#}` to `--decline`; a ruling
+  the chat answer ratifies must be passed in `--approve` (an id in neither list is recorded
+  `declined`); perform the reverse (Execution routing above) before this call — the reply comment `resolve-console` posts
+  records a `--decline` id as `declined`, since `console.json` items carry no staged path to tell a
+  ruling apart, so the `decisions.md` `AUTO` line naming `reversed → #{new record}` (or the logged
+  refusal cause) is the authoritative record.
 - **PR ticks resolve first** (a human ticked boxes on the PR while the chat prompt was still open,
   or a reconciler pass executed it in the interim): before acting on the chat answer, re-check the
   console comment for the resolved marker. If present, do not execute again and do not re-render

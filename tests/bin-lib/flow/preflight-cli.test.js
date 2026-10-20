@@ -50,27 +50,6 @@ test('run: an anchored run dir → exit 0, preflight.json written with every fie
   assert.strictEqual(JSON.parse(out()).adoption.value.case, 1, 'the pack is printed to stdout');
 });
 
-test('AC1.1/AC1.2: the CLI reports eventsForeign and the case through preflight.json', async () => {
-  const fx = mainCheckoutWithRun();
-  fs.rmSync(path.join(fx.runDir, 'config.yml'));
-  fs.rmSync(path.join(fx.runDir, 'work'), { recursive: true, force: true });
-  fs.writeFileSync(path.join(fx.runDir, 'run-state.json'), JSON.stringify({ worktree: fx.root, status: 'active' }));
-  fs.writeFileSync(path.join(fx.runDir, 'decisions.md'), '## /flow\n- AUTO 18:42:06 — Step 2.8: claimed #7 (bin/claim-targets.js, transport: git). Reversibility: high.\n');
-  const foreign = ['Write', 'Edit'].map((tool) => JSON.stringify({ tool, path: '/Users/x/Code Workspaces/claude-tweaks/.claude/worktrees/dispatch-record-3405/.superpowers/sdd/t/task-3-report.md', ts: '2026-10-17T19:07:23.418Z', type: 'gate-exempt-gitignored' })).join('\n') + '\n';
-  const events = path.join(fx.runDir, 'events.jsonl');
-  fs.writeFileSync(events, foreign);
-  const { d } = baseDeps(fx);
-  assert.strictEqual(await run(['--run', fx.runDir, '--steps', 'build,test'], d), 0);
-  const first = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'preflight.json'), 'utf8'));
-  assert.strictEqual(first.adoption.value.case, 2, JSON.stringify(first.adoption.value));
-  assert.strictEqual(first.adoption.value.eventsForeign, 2);
-  fs.appendFileSync(events, JSON.stringify({ action: 'commit', dir: fx.root, type: 'commit' }) + '\n');
-  assert.strictEqual(await run(['--run', fx.runDir, '--steps', 'build,test'], baseDeps(fx).d), 0);
-  const second = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'preflight.json'), 'utf8'));
-  assert.strictEqual(second.adoption.value.case, 3, JSON.stringify(second.adoption.value));
-  assert.strictEqual(second.adoption.value.eventsForeign, 2);
-});
-
 test('run: a BLOCKED freshness verdict is data — still exit 0 (#1931 AC3)', async () => {
   const fx = mainCheckoutWithRun();
   const { d } = baseDeps(fx);

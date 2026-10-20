@@ -96,10 +96,10 @@ function findDirectProcessExit(guardText) {
   return guardText.match(/process\.exit\(/g) || [];
 }
 
-// The shared stripper does not model regex literals, so a mis-parse can blank
-// a guard (tests/helpers/strip-comments.js's header). A file that also exports
-// would then read as a guard-less library and be skipped silently; the scan
-// reports it instead.
+// The shared stripper reads a regex right after `)` or `}` as division
+// (tests/helpers/strip-comments.js's header), so a mis-parse can still blank
+// a guard. A file that also exports would then read as a guard-less library
+// and be skipped silently; the scan reports it instead.
 const GUARD_RE = /if\s*\(\s*require\.main\s*===\s*module\s*\)/;
 function guardBlankedByStripper(raw, stripped) {
   return GUARD_RE.test(raw) && !GUARD_RE.test(stripped);
@@ -111,10 +111,11 @@ test('a guard after a string holding /* is still scanned (proves the literal-awa
 });
 
 test('a guard the stripper blanks is reported, not skipped as a guard-less library', () => {
-  // An unescaped /* in a regex character class opens a comment that runs to
+  // The regex sits right after `)`, which the stripper reads as division (its
+  // documented ambiguity), so the /* in the class opens a comment that runs to
   // the trailing */ and blanks the guard; the module.exports line would then
   // make guardRegionFor read the file as a pure library and skip it.
-  const blanked = ['const re = /[/*]/;', 'if (require.main === module) process.exit(main());', 'module.exports = { re };', '/* x */'].join('\n');
+  const blanked = ['if (x) /[/*]/.test(x);', 'if (require.main === module) process.exit(main());', 'module.exports = {};', '/* x */'].join('\n');
   assert.strictEqual(guardBlankedByStripper(blanked, stripComments(blanked)), true);
   const intact = ['if (require.main === module) process.exitCode = main();', 'module.exports = {};'].join('\n');
   assert.strictEqual(guardBlankedByStripper(intact, stripComments(intact)), false);

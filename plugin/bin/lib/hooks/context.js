@@ -45,35 +45,45 @@ function hasRunStateFile(dir) {
 
 // An unadopted mint — a directory mkdir'd by dispatch Step 4 or flow Step 2.8
 // that no invocation ever initialized — carries neither run-state.json nor
-// decisions.md. Fallback attribution must never guess into one: a mint that
-// sorts newest absorbs foreign sessions' events until swept (#721). Skipped by
-// every fallback resolution, strict or not; a mint whose decisions.md holds
-// only claim-log lines is skipped the same way (isClaimLogOnlyMint below). Keyed on
-// BOTH files being ABSENT (file presence, not parse success — a corrupt
-// run-state.json is still an adopted run, and readRunState's null covers
-// both cases), never on config.yml — standalone run dirs legitimately carry
-// decisions.md but no config.yml. Consequence: hooks.js CLI verbs that rely
-// on this fallback with no --run (record-pr, close-run — record-worktree no
-// longer does, #1124: it now hard-requires an explicit --run, never guessing)
-// only ever resolve an adopted run — safe because every sanctioned caller
-// runs after flow Step 3 has already initialized the run dir (decisions.md
-// or run-state.json already exists by then).
+// decisions.md, or (#3363) a decisions.md holding ONLY flow Step 2.8's claim
+// line: that claim is written before Step 3 initializes anything, so a mint
+// that has only been claimed is still unadopted. Fallback attribution must
+// never guess into one: a mint that sorts newest absorbs foreign sessions'
+// events until swept (#721). Keyed on file presence and content shape, not
+// parse success — a corrupt run-state.json is still an adopted run, and
+// readRunState's null covers both cases — and never on config.yml: standalone
+// run dirs legitimately carry decisions.md but no config.yml. An empty
+// decisions.md, or one with any non-claim content, is adopted; an unreadable
+// one (non-ENOENT error) is adopted rather than guessed into. Consequence:
+// hooks.js CLI verbs that rely on this fallback with no --run (record-pr,
+// close-run — record-worktree no longer does, #1124: it now hard-requires an
+// explicit --run, never guessing) only ever resolve an adopted run — safe
+// because every sanctioned caller runs after flow Step 3 has already
+// initialized the run dir (decisions.md with more than the claim line, or
+// run-state.json, already exists by then). Exception: in `interactive` mode
+// Step 3 skips the Manifesto, so a current-branch run stays claim-log-only
+// with no run-state.json until wrap-up and its own session's events get no
+// fallback attribution — the same as an empty mint pre-#2492 (the #721 design).
 function isUnadoptedMint(dir, state) {
   if (state) return false;
   if (hasRunStateFile(dir)) return false;
-  return !fs.existsSync(path.join(dir, 'decisions.md'));
+  let text;
+  try {
+    text = fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8');
+  } catch (err) {
+    return err.code === 'ENOENT';
+  }
+  return classifyDecisions(text) === 'claim-log-only';
 }
 
-// #3515 (the #3401 incident): a freshly minted run whose decisions.md already
-// holds flow Step 2.8's claim-log lines — and nothing else — is still an
-// unadopted mint, but isUnadoptedMint above only sees "decisions.md absent", so
-// the claim log defeated it and a sibling session's events were guessed into
-// the mint. Like isUnadoptedMint, this skip applies to EVERY fallback
-// resolution — E1's non-strict runDir as well as the strict ownedRun (the
-// incident's write was pre-tool-use's gitignored-exemption breadcrumb, logged
-// against ctx.runDir): no run-state.json on disk AND a claim-log-only
-// decisions.md. A read error is not-a-mint — never skip a candidate on
-// evidence we could not read.
+// #3515 (the #3401 incident): the claim-log-only half of isUnadoptedMint above
+// (#3363), checked on its own so isSkippableFallbackCandidate can test it
+// FIRST and mark it `dropped` — a strict resolveRun then names the skipped mint
+// instead of reporting a silent 'unadopted-mint'. The skip itself applies to
+// EVERY fallback resolution — E1's non-strict runDir as well as the strict
+// ownedRun (the incident's write was pre-tool-use's gitignored-exemption
+// breadcrumb, logged against ctx.runDir). A read error is not-a-mint — never
+// skip a candidate on evidence we could not read.
 function isClaimLogOnlyMint(dir, state) {
   if (state) return false;
   if (hasRunStateFile(dir)) return false;
@@ -362,9 +372,9 @@ function isForeignWorktreeCandidate(cwd, sessionId, state) {
 // guards, (b) included. `callerRepoInfo` is the lazy memo isOtherWorktreeBound
 // reads (see there).
 function isSkippableFallbackCandidate(cwd, sessionId, dir, state, includeWorktreeForeign, strict, callerRepoInfo) {
+  if (isClaimLogOnlyMint(dir, state)) return { reason: 'claim-log-only mint', dropped: true };
   if (isUnadoptedMint(dir, state)) return { reason: 'unadopted-mint', dropped: false };
   if (isAdHocRunDir(dir)) return { reason: 'ad-hoc', dropped: false };
-  if (isClaimLogOnlyMint(dir, state)) return { reason: 'claim-log-only mint', dropped: true };
   if (includeWorktreeForeign) return null;
   if (isForeignWorktreeCandidate(cwd, sessionId, state)) return { reason: 'worktree-foreign', dropped: false };
   if (strict && isOtherWorktreeBound(callerRepoInfo, state)) return { reason: `bound to ${state.worktree}`, dropped: true };

@@ -1,0 +1,29 @@
+FAIL tests/flaky.test.js
+  ✕ flaky sometimes fails (2 ms)
+
+  ● flaky sometimes fails
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 2
+    Received: 1
+
+    > 1 | test('flaky sometimes fails', () => { expect(1).toBe(2); });
+        |                                                 ^
+      2 |
+
+      at Object.toBe (tests/flaky.test.js:1:49)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 total
+Snapshots:   0 total
+Time:        0.152 s
+Ran all test suites.
+TypeError: Jest: Got error running globalTeardown - /repo/teardown.js, reason: globalTeardown file must export a function at /repo/teardown.js
+    at /repo/node_modules/@jest/core/build/runGlobalHook.js:105:21
+    at ScriptTransformer.requireAndTranspileModule (/repo/node_modules/@jest/transform/build/ScriptTransformer.js:806:24)
+    at runGlobalHook (/repo/node_modules/@jest/core/build/runGlobalHook.js:101:9)
+    at runJest (/repo/node_modules/@jest/core/build/runJest.js:374:5)
+    at _run10000 (/repo/node_modules/@jest/core/build/cli/index.js:343:7)
+    at runCLI (/repo/node_modules/@jest/core/build/cli/index.js:198:3)
+    at Object.run (/repo/node_modules/jest-cli/build/run.js:130:37)

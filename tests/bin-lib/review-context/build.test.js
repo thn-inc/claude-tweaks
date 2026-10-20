@@ -378,16 +378,18 @@ test('F2: a non-ASCII added over-cap name is elided, stubbed, listed once under 
 
 test('F2: the git calls carry core.quotePath=false and explicit diff prefixes', () => {
   const calls = [];
-  buildContext({
+  const result = buildContext({
     base: 'main',
     branch: 'feature',
     dir: resolveDir({}),
     git: (args) => {
       calls.push(args);
-      return args.includes('rev-parse') ? '/x\n' : '';
+      if (args.includes('rev-parse')) return '/x\n';
+      return args.includes('--name-only') ? 'a.txt\0dir/café b.txt\0' : '';
     },
     readFile: () => '',
   });
+  assert.strictEqual(result.files, 2, 'the git name list is split on NUL');
   const diffCall = calls.find((a) => a.includes('diff') && !a.includes('--name-only'));
   assert.deepStrictEqual(diffCall, [
     '-c',
@@ -397,10 +399,11 @@ test('F2: the git calls carry core.quotePath=false and explicit diff prefixes', 
     '--no-ext-diff',
     '--src-prefix=a/',
     '--dst-prefix=b/',
+    '--end-of-options',
     'main...feature',
   ]);
   const namesCall = calls.find((a) => a.includes('--name-only'));
-  assert.deepStrictEqual(namesCall, ['-c', 'core.quotePath=false', 'diff', 'main...feature', '--name-only']);
+  assert.deepStrictEqual(namesCall, ['-c', 'core.quotePath=false', 'diff', '--name-only', '-z', '--end-of-options', 'main...feature']);
 });
 
 test('F3: elideDiff splits only after a line feed — a CR inside a hunk line never starts a chunk', () => {

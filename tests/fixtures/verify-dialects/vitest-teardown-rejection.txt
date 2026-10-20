@@ -1,0 +1,44 @@
+
+ RUN  v1.6.0 /repo
+
+ ❯ tests/flaky.test.js  (1 test | 1 failed) 4ms
+   ❯ tests/flaky.test.js > flaky sometimes fails
+     → expected 1 to be 2 // Object.is equality
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  12:00:00
+   Duration  179ms (transform 9ms, setup 0ms, collect 5ms, tests 4ms, environment 0ms, prepare 46ms)
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/flaky.test.js > flaky sometimes fails
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ tests/flaky.test.js:2:49
+      1| import { test, expect } from 'vitest';
+      2| test('flaky sometimes fails', () => { expect(1).toBe(2); });
+       |                                                 ^
+      3| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+/repo/gs.mjs:1
+'use strict';async (__vite_ssr_import__,__vite_ssr_dynamic_import__,__vite_ssr_exports__,__vite_ssr_exportAll__,__vite_ssr_import_meta__,require,exports,module,__filename,__dirname)=>{{function setup() { return () => { Promise.reject(new Error('teardown left a rejected promise')); }; }
+                                                                                                                                                                                                                                          ^
+
+Error: teardown left a rejected promise
+    at Object.teardown (/repo/gs.mjs:1:50)
+    at WorkspaceProject.teardownGlobalSetup (file:///repo/node_modules/vitest/dist/vendor/cli-api.E07AF1Yq.js:10514:70)
+    at file:///repo/node_modules/vitest/dist/vendor/cli-api.E07AF1Yq.js:11470:25
+    at async startVitest (file:///repo/node_modules/vitest/dist/vendor/cli-api.E07AF1Yq.js:18355:3)
+    at async start (file:///repo/node_modules/vitest/dist/vendor/cac.EdDItJD-.js:1415:17)
+    at async CAC.run (file:///repo/node_modules/vitest/dist/vendor/cac.EdDItJD-.js:1395:3)
+
+Node.js v22.23.2

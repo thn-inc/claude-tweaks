@@ -198,6 +198,36 @@ test('the three local-merge fallback sections route the post-merge release-statu
   assert.match(AUTO_MERGE, /pr-first-merge-post-merge\.md` Step 4\.1/);
 });
 
+// #3297: a merged run with no console.json and pending staged/ items skips
+// reconcile with console-never-rendered-staged-pending. Step 4.2 must report it
+// as needing human action, never as converged, while keeping the transient-failure
+// sentence (AC2.1) intact.
+test('AC1.1: Step 4.2 reports a console-never-rendered-staged-pending skip as needing human action, never as converging (#3297)', () => {
+  const step42 = MERGE_POST_MERGE.indexOf('### Step 4.2: Reconcile');
+  const step5 = MERGE_POST_MERGE.indexOf('## Step 5: Delete the remote branch');
+  assert.ok(step42 > 0 && step5 > step42, 'Step 4.2 must precede Step 5');
+  const section = MERGE_POST_MERGE.slice(step42, step5);
+  assert.ok(section.includes('`console-never-rendered-staged-pending`'), 'the reason string must be named verbatim');
+  assert.match(section, /needs human action/, 'the skip must be reported as needing human action');
+  assert.match(section, /AUTO \{time\} — pr-first-merge Step 4\.2:[^\n]*console-never-rendered-staged-pending/, 'the Step 4.2 log line must name the reason');
+  assert.match(section, /\$PIPELINE_RUN_DIR\/console\.json/, 'the skip must be decided by checking this run directly, not from the aggregate summary');
+});
+
+test('AC2.1: Step 4.2 still leaves a transient failure for the next trigger point (#3297)', () => {
+  const step42 = MERGE_POST_MERGE.indexOf('### Step 4.2: Reconcile');
+  const step5 = MERGE_POST_MERGE.indexOf('## Step 5: Delete the remote branch');
+  assert.match(MERGE_POST_MERGE.slice(step42, step5), /is logged and left for the next trigger point/);
+});
+
+test('Deliverable 2: auto-merge-short-circuit records why it writes no console.json (#3297)', () => {
+  const prFirst = AUTO_MERGE.indexOf('Fast-lane auto-merge: issue #{n}, assess-agent-autonomy verdict auto-merge (see RATIONALE), pr-first-merge outcome');
+  const localMerge = AUTO_MERGE.indexOf('**`integration-model: local-merge`:**', prFirst);
+  assert.ok(prFirst > 0 && localMerge > prFirst, 'the pr-first paragraph must precede the local-merge paragraph');
+  const region = AUTO_MERGE.slice(prFirst, localMerge);
+  assert.match(region, /console\.json/, 'the pr-first region must mention console.json');
+  assert.match(region, /#3297/, 'the pr-first region must cite #3297');
+});
+
 // #1411 deliverable 4: pin Step 3 item 1's auto-merge-not-enabled classification
 // against the literal captured GitHub GraphQL wording (PR #1401, 2026-08-24:
 // `GraphQL: Auto merge is not allowed for this repository
@@ -292,6 +322,38 @@ test('#3521: Step 3 item 1 states allow_auto_merge without branch protection sti
 test('#3521: the token-alone match yields to item 3\'s and item 4\'s signatures', () => {
   assert.match(item1Body(), /unless item 3's or item 4's signature is also present/);
   assert.doesNotMatch(PRE_3521_ITEM_1, /unless item 3's or item 4's signature/, 'pre-change text must NOT carry the precedence clause (proves the pin can go red) [IL-105]');
+});
+
+// #3269: PR #3427 (2026-10-18) captured a third arm-unavailable wording — GitHub refuses to arm a PR it could merge right now. Pin it as a literal in item 1, with a frozen pre-change control.
+const PRE_3269_ITEM_1 = `1. **Command failed with an auto-merge-not-enabled signature** — stderr contains the literal
+   captured GitHub GraphQL wording \`Auto merge is not allowed for this repository\` (captured
+   verbatim on this repo, PR #1401, 2026-08-24: \`GraphQL: Auto merge is not allowed for this
+   repository (enablePullRequestAutoMerge)\`), or the second literal
+   \`Protected branch rules not configured for this branch\` (captured verbatim on this repo,
+   PR #3450, 2026-10-18: \`GraphQL: Pull request Protected branch rules not configured for this
+   branch (enablePullRequestAutoMerge)\`), or the looser paraphrase — \`auto-merge\` and
+   (\`not allowed\` or \`not enabled\`) — for a differently-worded GitHub response to the same
+   repository setting ("Allow auto-merge") being off. \`enablePullRequestAutoMerge\` alone in the
+   error text also matches, unless item 3's or item 4's signature is also present: it is the arm
+   mutation's name, which GitHub appends to every arm-unavailable failure of an \`--auto\` call.
+   \`allow_auto_merge: true\` alone, without
+   branch protection or a ruleset on the base branch, still fails this way — the setting by
+   itself does not make \`--auto\` armable (the Step 2.5 "Why \`--auto\` alone is not a wait"
+   mechanism):`;
+
+function carriesCleanStatus(text) {
+  return text.includes('Pull request is in clean status') && text.includes('PR #3427');
+}
+
+test('#3269 AC3.1: Step 3 item 1 carries the PR #3427 clean-status literal', () => {
+  const body = item1Body();
+  assert.ok(carriesCleanStatus(body));
+  assert.ok(body.includes('PR #3427, 2026-10-18'));
+});
+
+test('#3269 AC2.1: the clean-status pin goes red on the pre-change item 1 text', () => {
+  assert.equal(carriesCleanStatus(PRE_3269_ITEM_1), false, '[IL-105]');
+  assert.ok(PRE_3269_ITEM_1.includes('Protected branch rules not configured for this branch'), 'control text is the post-#3521 paragraph');
 });
 
 test('/flow closing reports carry the release-status line verbatim (#678)', () => {

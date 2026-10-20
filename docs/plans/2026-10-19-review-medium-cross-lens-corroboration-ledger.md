@@ -1,0 +1,23 @@
+# Open Items — Review medium tier: count cross-lens agreement as corroboration for unconfirmed findings
+
+| # | Phase | Item | Status | Resolution |
+|---|-------|------|--------|------------|
+| 1 | build | CLI array-input assertion does not isolate the object/array guard (every(Array.isArray) also rejects) | deferred | |
+| 2 | build | Conformance test leaves the gate/ordering requirement, the non-zero-exit SKIP line and severityContested carry-through unpinned | deferred | |
+| 3 | build | SUBSTANCE_SIMILARITY_MIN 0.2 was calibrated on same-lens pairs (#3418); cross-lens false-merge rate unmeasured — calibration pass over archived medium-tier runs | deferred | |
+| 4 | build | Plan doc docs/superpowers/plans/2026-10-19-review-medium-cross-lens-corroboration.md lines 41 and 48 still describe the lowest-severity rule, contradicting Review Focus #4 after the highest-severity ruling | deferred | |
+| 5 | build | Unparseable-output SKIP line shape unpinned; the fewer-than-2-lenses assertion throw is untested (unreachable by construction) | deferred | |
+| 6 | build | SDD ruling — Share-a-location STAGED line also deferred at medium: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | accepted | ratified at Review Console — keeps step 4 consistent with step3-lens-dispatch.md and avoids staging a promoted finding |
+| 7 | build | SDD ruling — Corroborated row takes the highest member severity: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | accepted | ratified at Review Console — matches step3-routing.md cross-lens de-dup (keep the higher severity) and keeps Critical interrupting |
+| 8 | build | SDD ruling — Exclude every lens 3f vacuity finding from corroboration: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | accepted | ratified at Review Console — the execution-evidence rule says only an executed run re-confirms a vacuity finding |
+| 9 | build | SDD ruling — Carve chained clusters into per-representative rows: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | accepted | ratified at Review Console — keeps never silently dropped while still collapsing one defect seen by N lenses into one row |
+| 10 | review | Lens 3a: docs/skill-graph.md session-tmp-root edge and docs/plugin-structure.md review-coordination CLI line omitted the corroboration pass and the `corroborate-cross-lens` verb | fixed | `1aa2b1b98` |
+| 11 | review | Lens 3f: no test depended on the same-lens edge guard (removing it threw on a same-lens bridge), none pinned the remainder of a promoted coincidence pair keeping `nearLocation`, none distinguished same-bucket distinct severities | fixed | `1aa2b1b98` — three tests in tests/multi-agent-coordination.test.js; the guard-removed run went red |
+| 12 | review | Lens 3a/3f: step3-cross-lens-corroboration.md said `severityContested` keys on differing severities (code keys on severity buckets) and left Category's source implicit | fixed | `1aa2b1b98` |
+| 13 | review | Lens 3a: `directMatch` re-implemented `sameSubstance`'s gate | fixed | `1aa2b1b98` |
+| 14 | review | Lens 3f (reproduced): a chain row's `lenses` credits the representative's cross-lens partner although that partner is a member of another row | accepted | By design — the partner directly matches the representative, so the lens did report a matching finding; this is SDD ruling #9 (row 9) |
+| 15 | review | Lens 3a: the Failure section's SKIP lines are raw text rather than a `log-decision.js` call | accepted | Matches the sibling step3-lens-dispatch.md / step3-debate-and-refutation.md log lines, which are raw `{HH:MM:SS}` templates the orchestrator writes |
+| 16 | review | Lens 3f: the conformance test pins whole log-line sentences and exact prose phrasing | accepted | The log line naming the lenses is the acceptance criterion's literal output, so pinning it is the contract; the phrasing pins carry go-red controls |
+| 17 | review | Lens 3a: multi-agent-coordination.md restates the ±5 / 0.2 corroboration tolerances and step3-cross-lens-corroboration.md restates the output keys with no twin pin | deferred | Origin: review lens 3a, record #3604. Files: plugin/skills/_shared/multi-agent-coordination.md, plugin/skills/review/step3-cross-lens-corroboration.md, tests/review-cross-lens-corroboration-conformance.test.js. Trigger: fold into row 2's conformance follow-up |
+| 18 | wrap-up | pr — PR #3662 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | |
+| 19 | wrap-up | residue suite probe not run (skipped via --no-suite) — the suite state is the runner stamp's: full `npm test` pass at 6aa076fed (tests 13436, pass 13429, fail 0) | observation | |

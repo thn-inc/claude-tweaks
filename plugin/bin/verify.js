@@ -269,8 +269,11 @@ async function main() {
   // that are not a parsed --cmd entry itself (tool-scoped's synthesized
   // `tests`, and a flaky retry of a check), so they run in the same
   // environment as the check they stand in for.
+  // #3511: resolves through the effective check set (`cmds`, which --scope
+  // rebuilds with declared-only suites carrying their --cmd-env), falling
+  // back to the parsed --cmd entries.
   const envOf = (name) => {
-    const declared = parsed.cmds.find((c) => c.name === name);
+    const declared = cmds.find((c) => c.name === name) || parsed.cmds.find((c) => c.name === name);
     return declared && declared.env ? declared.env : null;
   };
   // #3063: a check's own --cmd-timeout, reused as the bounded default for
@@ -279,6 +282,9 @@ async function main() {
     const declared = parsed.cmds.find((c) => c.name === name);
     return declared && typeof declared.timeout === 'number' ? declared.timeout : null;
   };
+  // The per-file --baseline template map (#3043). Under --scope (#3511) the
+  // block below completes it from the declaration's retry templates.
+  const baselineCmdMap = new Map(parsed.baselineCmds.map((b) => [b.name, b.template]));
   if (parsed.scope) {
     // Every --scope usage error below shares this exit shape (message, then
     // USAGE, then exit code 2); pulled into one helper so the five sites
@@ -330,6 +336,28 @@ async function main() {
       const bad = parsed.cmds.find((c) => !allowed.has(c.name));
       if (bad) {
         scopeUsageExit(`--scope: --cmd "${bad.name}" is not types, lint, or a declared suite (${decl.suites.join(', ')})`);
+        return;
+      }
+    }
+
+    // #3511: under --scope, --baseline's templates resolve from the
+    // declaration. args.js cannot read it, so it no longer rejects a
+    // --baseline-cmd naming no --cmd, nor --baseline without any --baseline-cmd,
+    // when --scope is set; both checks live here. An explicit --baseline-cmd
+    // wins; each declared suite without one falls back to its retry template.
+    if (decl && parsed.baseline) {
+      const known = new Set([...parsed.cmds.map((c) => c.name), ...decl.suites]);
+      const stray = parsed.baselineCmds.find((b) => !known.has(b.name));
+      if (stray) {
+        const cmdNames = parsed.cmds.map((c) => c.name).join(', ');
+        scopeUsageExit(`--scope: --baseline-cmd "${stray.name}" names no --cmd or declared suite (--cmd: ${cmdNames || 'none'}; suites: ${decl.suites.join(', ') || 'none'})`);
+        return;
+      }
+      for (const name of decl.suites) {
+        if (!baselineCmdMap.has(name) && decl.retry[name]) baselineCmdMap.set(name, decl.retry[name]);
+      }
+      if (baselineCmdMap.size === 0) {
+        scopeUsageExit(`--scope: --baseline: no --baseline-cmd and the declaration has no retry template (declared suites: ${decl.suites.join(', ') || 'none'}) — pass --baseline-cmd <suite>=<template-with-{file}> or declare retry`);
         return;
       }
     }
@@ -496,7 +524,9 @@ async function main() {
     return { ...retried, retryDecision: decision };
   };
   const results = (sel && sel.mode === 'none' ? [] : (await runChecks({
-    cmds, logDir, retry: retryHook, cwd: parsed.cwd,
+    // #3511: any --baseline run needs every suite's evidence — a fail-fast
+    // skip makes the adjudicator refuse (baseline.js), so suites keep running.
+    cmds, logDir, retry: retryHook, cwd: parsed.cwd, continueSuitesAfterFailure: Boolean(parsed.baseline),
   })).map(enrich)).map((c) => {
     // #1837: countsUnparsed is real report content only when a count stamp
     // is actually in play — never disable the comparison silently, but also
@@ -528,7 +558,7 @@ async function main() {
       } else {
         baselineAdjudicated = await adjudicate({
           checks: results,
-          baselineCmds: new Map(parsed.baselineCmds.map((b) => [b.name, b.template])),
+          baselineCmds: baselineCmdMap,
           base: parsed.baseline,
           baseSha,
           cwd: parsed.cwd,

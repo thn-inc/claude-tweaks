@@ -1,12 +1,13 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
 const path = require('path');
 
 const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, stripAnsi, extractFailingFiles, countUnmatchedFailures, unattributedFailureCount, fileLevelFailures, specEntryCount,
-  failingTestsByFile, cancelledCount, testTree, tapLines,
+  failingTestsByFile, cancelledCount, testTree, tapLines, summaryDialect,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'extract.js'));
 
 const TAP_FIXTURE = [
@@ -471,7 +472,7 @@ test('unattributedFailureCount: every entry names a test file, but the entry cou
   assert.strictEqual(unattributedFailureCount(log, 'spec'), 1, 'but the entry count (2) undercounts ℹ fail (3)');
 });
 
-test('unattributedFailureCount: TAP with a stack frame naming no retryable file is unattributed (1) via countUnmatchedFailures, and every non-spec/tap family is null — no accounting guard (#3066, #3204)', () => {
+test('unattributedFailureCount: TAP with a stack frame naming no retryable file is unattributed (1) via countUnmatchedFailures, and a pytest summary log and a generic log are null (#3066, #3204, #3480)', () => {
   // "tests/helper.js" matches no retryable-file pattern (no .test./.spec.
   // suffix), so countUnmatchedFailures alone — before any counts-parsed
   // check is reached — already flags this block as unmatched.
@@ -518,6 +519,151 @@ test('unattributedFailureCount: a spec log whose summary counts never parsed fai
   const log = ['', '✖ failing tests:', '', 'test at tests/a.test.js:1:1', '✖ x (1ms)'].join('\n');
   assert.strictEqual(parseCounts(log, 'spec'), null, 'no ℹ tests/ℹ pass/ℹ fail line at all');
   assert.strictEqual(unattributedFailureCount(log, 'spec'), 1);
+});
+
+// Real jest 29.7.0 / vitest 1.6.0 / pytest 8.3.3 output (#3480), copied
+// byte-for-byte; the dialect fixtures below are the ground truth the summary
+// family's per-dialect accounting is pinned against.
+const readDialect = (name) => fs.readFileSync(path.join(__dirname, '..', '..', 'fixtures', 'verify-dialects', name), 'utf8');
+
+const DIALECT_ROWS = [
+  ['jest-attributed.txt', 0, ['tests/flaky.test.js']],
+  ['jest-suite-failed-to-run.txt', 0, ['tests/broken.test.js', 'tests/flaky.test.js']],
+  ['jest-coverage-threshold.txt', 1, ['tests/flaky.test.js']],
+  ['vitest-attributed.txt', 0, ['tests/flaky.test.js']],
+  ['vitest-failed-suite.txt', 0, ['tests/flaky.test.js', 'tests/broken.test.js']],
+  ['vitest-unhandled-error.txt', 1, ['tests/flaky.test.js']],
+  ['vitest-coverage-threshold.txt', 1, ['tests/flaky.test.js']],
+  ['jest-obsolete-snapshot.txt', 1, ['tests/flaky.test.js']],
+  ['jest-obsolete-snapshot-file.txt', 1, ['tests/flaky.test.js']],
+  ['jest-bail.txt', 1, ['tests/a-flaky.test.js']],
+  ['jest-skipped-suite.txt', 0, ['tests/flaky.test.js']],
+  ['jest-global-teardown.txt', 1, ['tests/known.test.js']],
+  ['jest-global-teardown-typeerror.txt', 1, ['tests/flaky.test.js']],
+  ['jest-teardown-rejection.txt', 1, ['tests/flaky.test.js']],
+  ['vitest-bail.txt', 1, ['tests/a-flaky.test.js']],
+  ['vitest-skipped-file.txt', 1, ['tests/a-flaky.test.js']],
+  ['vitest-global-teardown.txt', 1, ['tests/known.test.js']],
+  ['vitest-teardown-rejection.txt', 1, ['tests/flaky.test.js']],
+  ['vitest-unhandled-rejection.txt', 1, ['tests/flaky.test.js']],
+  ['pytest-attributed.txt', null, ['tests/test_flaky.py']],
+  ['pytest-collection-error.txt', null, ['tests/test_flaky.py']],
+];
+
+for (const [name, count, files] of DIALECT_ROWS) {
+  test(`captured ${name}: summary family, unattributedFailureCount ${count}, failing files ${JSON.stringify(files)} (#3480)`, () => {
+    const log = readDialect(name);
+    assert.strictEqual(sniffFamily(log), 'summary');
+    assert.strictEqual(unattributedFailureCount(log, 'summary'), count);
+    assert.deepStrictEqual(extractFailingFiles(log, 'summary'), files);
+  });
+}
+
+test('summaryDialect: jest from Test Suites:/Tests:, vitest from colon-free Test Files, pytest and mixed are null (#3480)', () => {
+  assert.strictEqual(summaryDialect(readDialect('jest-attributed.txt')), 'jest');
+  assert.strictEqual(summaryDialect(readDialect('vitest-attributed.txt')), 'vitest');
+  assert.strictEqual(summaryDialect(readDialect('pytest-collection-error.txt')), null);
+  const mixed = `${readDialect('jest-attributed.txt')}\n Test Files  1 failed (1)`;
+  assert.strictEqual(summaryDialect(mixed), null);
+  assert.strictEqual(unattributedFailureCount(mixed, 'summary'), null);
+  // A jest or vitest run followed by a pytest run in one log: pytest's failures
+  // match no FAIL line, so accounting against the first runner would read 0.
+  for (const name of ['jest-attributed.txt', 'vitest-attributed.txt']) {
+    const both = `${readDialect(name)}\n${readDialect('pytest-collection-error.txt')}`;
+    assert.strictEqual(summaryDialect(both), null, name);
+    assert.strictEqual(unattributedFailureCount(both, 'summary'), null, name);
+  }
+});
+
+test('unattributedFailureCount: a jest log with no Test Suites: line fails closed to 1, never null or 0 (#3480)', () => {
+  const log = ['FAIL tests/flaky.test.js', '  ● flaky › sometimes fails', 'Tests:       1 failed, 2 passed, 3 total'].join('\n');
+  assert.strictEqual(unattributedFailureCount(log, 'summary'), 1);
+});
+
+test('unattributedFailureCount: a jest Test Suites count above the distinct FAIL files is unattributed by the difference (#3480)', () => {
+  const log = readDialect('jest-attributed.txt').replace('Test Suites: 1 failed', 'Test Suites: 3 failed');
+  assert.strictEqual(unattributedFailureCount(log, 'summary'), 2);
+});
+
+test('unattributedFailureCount: jest repeating a FAIL line in its failing-tests summary counts the file once (#3480)', () => {
+  const log = readDialect('jest-attributed.txt').replace('Test Suites:', 'Summary of all failing tests\nFAIL tests/flaky.test.js\n  ● flaky › sometimes fails\n\nTest Suites:');
+  assert.strictEqual(unattributedFailureCount(log, 'summary'), 0);
+});
+
+test('unattributedFailureCount: a jest FAIL line naming a non-test file is unattributed (#3480)', () => {
+  // The summary's failed total stays 1 and one test file is named, so the
+  // total-vs-named difference alone is 0 — only the non-test FAIL line makes
+  // this 1.
+  const log = readDialect('jest-attributed.txt').replace('PASS tests/ok.test.js', 'FAIL src/setup.js\n  ● Test suite failed to run');
+  assert.strictEqual(unattributedFailureCount(log, 'summary'), 1);
+});
+
+test('unattributedFailureCount: a vitest Errors count is read on its own, and the larger of it and the banner counts, never their sum (#3480)', () => {
+  const attributed = readDialect('vitest-attributed.txt');
+  const errorsLine = '     Errors  2 errors\n';
+  const bare = attributed.replace('   Start at', `${errorsLine}   Start at`);
+  assert.notStrictEqual(bare, attributed, 'the Errors line was inserted');
+  assert.strictEqual(unattributedFailureCount(bare, 'summary'), 2);
+  const banner = '⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯\n';
+  assert.strictEqual(unattributedFailureCount(attributed.replace(' RUN ', `${banner} RUN `), 'summary'), 1);
+  assert.strictEqual(unattributedFailureCount(bare.replace(' RUN ', `${banner} RUN `), 'summary'), 2);
+});
+
+test('unattributedFailureCount: a vitest typecheck Source Errors banner (errors outside every test file) is unattributed (#3480)', () => {
+  // Wording from vitest 1.6's reporter source: `divider(" Source Errors ")`, "Vitest found N
+  // error(s) not related to your test files."
+  const attributed = readDialect('vitest-attributed.txt');
+  const log = attributed.replace(' RUN ', '⎯⎯⎯⎯⎯⎯ Source Errors ⎯⎯⎯⎯⎯⎯\nVitest found 1 error not related to your test files.\n\n RUN ');
+  assert.notStrictEqual(log, attributed, 'the banner was inserted');
+  assert.strictEqual(unattributedFailureCount(log, 'summary'), 1);
+});
+
+test('unattributedFailureCount: a CRLF jest or vitest log is accounted the same as its LF twin (#3480)', () => {
+  for (const name of ['jest-attributed.txt', 'vitest-attributed.txt']) {
+    const lf = readDialect(name);
+    const crlf = lf.replace(/\n/g, '\r\n');
+    assert.strictEqual(unattributedFailureCount(crlf, 'summary'), 0, name);
+    assert.deepStrictEqual(extractFailingFiles(crlf, 'summary'), extractFailingFiles(lf, 'summary'), name);
+  }
+});
+
+for (const line of [
+  'Jest: Uncovered count for lines (5) exceeds global threshold (2)',
+  'Jest: Coverage data for ./src/utils/ was not found.',
+  'DbFailure: Jest: Got error running globalTeardown - /repo/teardown.js, reason: teardown leaked a db handle',
+]) {
+  test(`unattributedFailureCount: a fully attributed jest log plus "${line}" is unattributed (#3480)`, () => {
+    assert.strictEqual(unattributedFailureCount(`${readDialect('jest-attributed.txt')}\n${line}\n`, 'summary'), 1);
+  });
+}
+
+// A throwing global setup exits before any summary prints, so the captured
+// log is refused without accounting; its wording, spliced into an attributed
+// log, still counts on its own.
+for (const [name, attributed, wording] of [
+  ['jest-global-setup.txt', 'jest-attributed.txt', 'Error: Jest: Got error running globalSetup'],
+  ['vitest-global-setup.txt', 'vitest-attributed.txt', '⎯ Error during global setup ⎯'],
+]) {
+  test(`captured ${name}: no summary, so never accounted; its global-setup line alone is unattributed (#3480)`, () => {
+    const log = readDialect(name);
+    assert.strictEqual(sniffFamily(log), 'generic');
+    assert.strictEqual(unattributedFailureCount(log, 'summary'), null);
+    const line = log.split('\n').find((l) => l.startsWith(wording));
+    assert.ok(line, `${name} carries "${wording}"`);
+    assert.strictEqual(unattributedFailureCount(`${readDialect(attributed)}\n${line}\n`, 'summary'), 1);
+  });
+}
+
+test('unattributedFailureCount: a concatenated multi-run jest or vitest log (more than one summary line) is unattributed (#3480)', () => {
+  for (const name of ['jest-attributed.txt', 'vitest-attributed.txt']) {
+    assert.strictEqual(unattributedFailureCount(`${readDialect(name)}${readDialect(name)}`, 'summary'), 1, name);
+  }
+});
+
+test('unattributedFailureCount: an ANSI-coloured vitest log is accounted the same as its plain twin (#3480)', () => {
+  const plain = readDialect('vitest-attributed.txt');
+  const coloured = plain.replace(' FAIL ', ' \x1b[31mFAIL\x1b[39m ').replace(' Test Files ', '\x1b[2m Test Files \x1b[22m');
+  assert.strictEqual(unattributedFailureCount(coloured, 'summary'), 0);
 });
 
 // node --test's real TAP shape (Node 20 and 24 alike): a failing subtest is an

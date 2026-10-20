@@ -338,7 +338,10 @@ the result:
    repository (enablePullRequestAutoMerge)`), or the second literal
    `Protected branch rules not configured for this branch` (captured verbatim on this repo,
    PR #3450, 2026-10-18: `GraphQL: Pull request Protected branch rules not configured for this
-   branch (enablePullRequestAutoMerge)`), or the looser paraphrase — `auto-merge` and
+   branch (enablePullRequestAutoMerge)`), or the third literal
+   `Pull request is in clean status` (captured verbatim on this repo, PR #3427, 2026-10-18:
+   `GraphQL: Pull request Pull request is in clean status (enablePullRequestAutoMerge)` — GitHub
+   refuses to arm a PR it could merge right now), or the looser paraphrase — `auto-merge` and
    (`not allowed` or `not enabled`) — for a differently-worded GitHub response to the same
    repository setting ("Allow auto-merge") being off. `enablePullRequestAutoMerge` alone in the
    error text also matches, unless item 3's or item 4's signature is also present: it is the arm

@@ -1,0 +1,35 @@
+FAIL tests/broken.test.js
+  ● Test suite failed to run
+
+    setup exploded at import time
+
+    > 1 | throw new Error('setup exploded at import time');
+        |                                                 ^
+      2 |
+
+      at Object.<anonymous> (tests/broken.test.js:1:49)
+
+FAIL tests/flaky.test.js
+  ● flaky › sometimes fails
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 2
+    Received: 1
+
+      1 | describe('flaky', () => {
+    > 2 |   test('sometimes fails', () => { expect(1).toBe(2); });
+        |                                             ^
+      3 |   test('passes', () => { expect(1).toBe(1); });
+      4 | });
+      5 |
+
+      at Object.toBe (tests/flaky.test.js:2:45)
+
+PASS tests/ok.test.js
+
+Test Suites: 2 failed, 1 passed, 3 total
+Tests:       1 failed, 2 passed, 3 total
+Snapshots:   0 total
+Time:        1.236 s
+Ran all test suites.

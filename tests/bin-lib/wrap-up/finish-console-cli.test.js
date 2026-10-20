@@ -14,6 +14,7 @@ const path = require('node:path');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-engine.js');
 const { runVerify } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'engine-verify'));
+const { ledgerRowCells } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'ledger-cells'));
 
 let repoDir;
 
@@ -265,4 +266,17 @@ test('AC3.1: finish-console issues reach carrier-commit on a header-less run dir
   const failRow = failing.rows.find((row) => row.check === 'carrier-commit');
   assert.strictEqual(failRow.result, 'fail');
   assert.match(failRow.detail, /900/);
+});
+
+test('AC1.1: finish-console --approve-all flips a row whose Item carries an escaped pipe, completing all three steps', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE.replace('Needs a memory capture', String.raw`SDD ruling — match a\|b`));
+  const payload = JSON.stringify({ memory: [{ file: 'memory/foo.md', indexFile: 'MEMORY.md' }], ledger: [{ item: 1, status: 'accepted', resolution: 'ratified — keep a|b' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /1 memory, 0 upstream, 1 ledger update/);
+  assert.ok(fs.existsSync(path.join(runDir, 'verify-expectations.json')), 'step 1');
+  assert.match(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), /Ledger item #1 -> accepted/, 'step 2');
+  const row = fs.readFileSync(path.join(runDir, 'ledger.md'), 'utf8').split('\n').find((l) => l.startsWith('| 1 |'));
+  assert.deepStrictEqual(ledgerRowCells(row), ['1', 'review', 'SDD ruling — match a|b', 'accepted', 'ratified — keep a|b'], 'step 3');
 });

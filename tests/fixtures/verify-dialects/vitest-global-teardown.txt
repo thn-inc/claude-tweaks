@@ -1,0 +1,44 @@
+
+ RUN  v1.6.0 /repo
+
+ ❯ tests/known.test.js  (1 test | 1 failed) 5ms
+   ❯ tests/known.test.js > known shallow failure
+     → expected 1 to be 2 // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/known.test.js > known shallow failure
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ tests/known.test.js:2:49
+      1| import { test, expect } from 'vitest';
+      2| test('known shallow failure', () => { expect(1).toBe(2); });
+       |                                                 ^
+      3| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  12:00:00
+   Duration  571ms (transform 38ms, setup 0ms, collect 60ms, tests 5ms, environment 0ms, prepare 92ms)
+
+error during global teardown of /repo/gs.mjs Error: teardown leaked a db handle
+    at Object.teardown (/repo/gs.mjs:1:47)
+    at WorkspaceProject.teardownGlobalSetup (file:///repo/node_modules/vitest/dist/vendor/cli-api.E07AF1Yq.js:10514:70)
+    at file:///repo/node_modules/vitest/dist/vendor/cli-api.E07AF1Yq.js:11470:25
+    at async startVitest (file:///repo/node_modules/vitest/dist/vendor/cli-api.E07AF1Yq.js:18355:3)
+    at async start (file:///repo/node_modules/vitest/dist/vendor/cac.EdDItJD-.js:1415:17)
+    at async CAC.run (file:///repo/node_modules/vitest/dist/vendor/cac.EdDItJD-.js:1395:3)
+Error: teardown leaked a db handle
+ ❯ Object.teardown gs.mjs:1:47
+      1| export default function setup() { return async () => { throw new Error…
+       |                                               ^
+      2| 
+

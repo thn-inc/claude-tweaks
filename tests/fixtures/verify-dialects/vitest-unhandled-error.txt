@@ -1,0 +1,53 @@
+
+ RUN  v1.6.0 /repo
+
+ ❯ tests/flaky.test.js  (2 tests | 1 failed) 4ms
+   ❯ tests/flaky.test.js > sometimes fails
+     → expected 1 to be 2 // Object.is equality
+
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+
+Vitest caught 1 unhandled error during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+     Errors  1 error
+   Start at  12:00:00
+   Duration  161ms (transform 15ms, setup 0ms, collect 5ms, tests 4ms, environment 0ms, prepare 48ms)
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/flaky.test.js > sometimes fails
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ tests/flaky.test.js:2:43
+      1| import { test, expect } from 'vitest';
+      2| test('sometimes fails', () => { expect(1).toBe(2); });
+       |                                           ^
+      3| test('leaks an unhandled rejection', () => {
+      4|   setTimeout(() => { throw new Error('async boom outside any test'); }…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+⎯⎯⎯⎯⎯ Uncaught Exception ⎯⎯⎯⎯⎯
+Error: async boom outside any test
+ ❯ Timeout._onTimeout tests/flaky.test.js:4:28
+      2| test('sometimes fails', () => { expect(1).toBe(2); });
+      3| test('leaks an unhandled rejection', () => {
+      4|   setTimeout(() => { throw new Error('async boom outside any test'); }…
+       |                            ^
+      5|   expect(1).toBe(1);
+      6| });
+ ❯ listOnTimeout node:internal/timers:585:17
+ ❯ processTimers node:internal/timers:521:7
+
+This error originated in "tests/flaky.test.js" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+

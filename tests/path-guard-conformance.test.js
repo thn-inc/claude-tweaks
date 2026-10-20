@@ -38,15 +38,12 @@ const DONTS = path.join(__dirname, '..', 'docs', 'donts.md');
 // generated source text (statusline-wrapper-source.js) and a bracket-string
 // form (`fs['realpathSync']`) still count.
 //
-// Regex literals are only partly modeled. A regex containing an escaped slash
-// (`/^https?:\/\//`, `/src\/*.js/`) no longer opens a comment, because both
-// openers carry the `(?<!\\)` guard. But a quote or backtick inside a regex can
-// pair with a later literal, and an unescaped `/*` or `//` in a character class
-// opens a comment; either can blank code after it. `evaluate` fails the lint on
-// any file whose stripped text stops compiling (`stripperVerdict`) instead of
-// counting it as zero tokens. A mis-parse whose stripped text still compiles
-// goes unseen, as the helper's header says. Computed member access
-// (`fs['realpath' + 'Sync']`, `fs[name]`) is also not seen.
+// The stripper models regex literals: a quote, backtick, `//` or `/*` inside one
+// stays code. Its one known ambiguity is a regex right after `)` or `}`, which it
+// reads as division. `evaluate` fails the lint on any file whose stripped text
+// stops compiling (`stripperVerdict`) instead of counting it as zero tokens, and
+// a misread that still compiles goes unseen, as the helper's header says.
+// Computed member access (`fs['realpath' + 'Sync']`, `fs[name]`) is also not seen.
 
 // -> { realpathSync, existsSync } token counts in `src`, comments excluded.
 // Calls, references (`{ realpath: fs.realpathSync.native }`), defaults
@@ -121,9 +118,9 @@ const ALLOWLIST = {
   'lib/flow/manifest.js': { existsSync: 1, reason: 'distinguishes an absent manifest (start a fresh one) from an unreadable one (refuse with unreadable-manifest) after readManifest already returned nothing; presence is the whole question.' },
   'lib/harness-health/scope.js': { existsSync: 3, reason: 'scope enumeration: SKILL.md present in a skill dir, CLAUDE.md present at root, first existing design-artifact search path; each only decides whether a target joins the sweep scope, and the type of the occupant is not consulted.' },
   'lib/hooks/close-run-state.js': { existsSync: 4, reason: 'work/ presence marks a run as holding unarchived work (two sites), runDir existence decides the "missing" status, and prev.worktree existence is a liveness probe for a recorded worktree; none acts on the occupant type.' },
-  'lib/hooks/context.js': { realpathSync: 7, existsSync: 3, reason: 'realpathSync sites canonicalize the compared worktree / exclude-dir / run-dir values with the same JS fs.realpathSync on both sides of every comparison, each falling back to the as-given path on throw; existsSync at 56-57 probes run-state.json / decisions.md for mint adoption and at 544 whether a recorded worktree still exists.' },
+  'lib/hooks/context.js': { realpathSync: 7, existsSync: 2, reason: 'realpathSync sites canonicalize the compared worktree / exclude-dir / run-dir values with the same JS fs.realpathSync on both sides of every comparison, each falling back to the as-given path on throw; existsSync at 65 probes run-state.json for mint adoption (decisions.md is read, not probed, since #3363) and at 557 whether a recorded worktree still exists.' },
   'lib/hooks/post-tool-use.js': { existsSync: 2, reason: 'rate-limit marker presence (306) and a guard that ctx.cwd still exists before shelling out to git worktree list (316); both are presence questions whose wrong answer only costs a skipped or repeated best-effort check.' },
-  'lib/hooks/pre-tool-use.js': { realpathSync: 2, existsSync: 1, reason: 'both realpathSync tokens are the deliberate JS form: realTarget (~195) injects fs.realpathSync into path-guard\'s resolveLeaf, and safeReal (423) wraps it; the comment at ~190 explains that both sides of isPolicyFile\'s equality must stay JS-form together, so no pair is resolved two ways. The existsSync at 1970 asks only whether the run dir already has a config.yml, any occupant counting as present.' },
+  'lib/hooks/pre-tool-use.js': { realpathSync: 1, existsSync: 1, reason: 'the one realpathSync token is safeReal (429), the JS-form helper still used by the E1/worktree-identity comparisons and the teardown gate\'s own-cwd containment (both sides of each go through safeReal); isPolicyFile no longer uses it: both sides resolve through path-guard\'s .native resolveLeaf / canonicalRealpath (#3495). The existsSync at 2018 asks only whether the run dir already has a config.yml, any occupant counting as present.' },
   'lib/hooks/resume-freshness.js': { existsSync: 1, reason: 'a recorded worktree path that no longer exists is the "worktree-gone" safe verdict; the type of whatever is there is irrelevant to that verdict.' },
   'lib/hooks/run-dir-resolve.js': { realpathSync: 1, existsSync: 1, reason: 'safeReal canonicalizes PIPELINE_RUN_DIR before the anchored-under-root check against wtDetect.safeReal (the same JS realpath); existsSync at 88 is the staleness liveness probe for a recorded worktree.' },
   'lib/hooks/run-integrity.js': { realpathSync: 1, existsSync: 2, reason: 'realpathOrSelf resolves both the target and every `git worktree list` entry with the same JS realpath before comparing; existsSync on <entry>/.git deliberately accepts a file or a directory (a linked worktree\'s .git is a file) to spot a dangling prunable entry.' },
@@ -145,13 +142,13 @@ const ALLOWLIST = {
   'lib/residue/detect-test-script.js': { realpathSync: 1, existsSync: 1, reason: 'realpath of cwd is only the walk-up start (fallback path.resolve on throw); existsSync on <dir>/.git deliberately accepts a file or directory as the repo boundary (a linked worktree\'s .git is a file).' },
   'lib/skill-audit/skill-catalog.js': { existsSync: 1, reason: 'lists skill directories that contain a SKILL.md; presence is the filter.' },
   'lib/statusline-wrapper-source.js': { existsSync: 1, reason: 'inside the generated wrapper source text: exits 0 when the resolved statusline target is absent so a statusline failure never breaks the host session; the wrapper then requires or spawns it under its own error handling.' },
-  'lib/superpowers-version.js': { realpathSync: 2, reason: 'both tokens are `fs.realpathSync.native`: the default dep (69) and the notice-time dep (123); installed-plugins.js\'s selectEntry/safeRealpath and the projectPath vs projectDir comparison at 124 all go through that one injected .native form, so a pair is never resolved two ways and a mis-cased cwd still matches.' },
+  'lib/superpowers-version.js': { realpathSync: 2, reason: 'both tokens are `fs.realpathSync.native`: the default dep (64) and the notice-time dep (113); installed-plugins.js\'s selectEntry/safeRealpath and the projectPath vs projectDir comparison at 118 all go through that one injected .native form, so a pair is never resolved two ways and a mis-cased cwd still matches.' },
   'lib/timing/transcript.js': { realpathSync: 2, reason: 'both tokens inject `fsImpl.realpathSync` (the JS form this reader has always used) into path-guard\'s canonicalRealpath / resolveLeaf, so the projects root and each transcript leaf compared by isAncestorOrSelf resolve with the same function; the isFile check follows on the resolved path.' },
   'lib/verify/baseline.js': { realpathSync: 1, existsSync: 3, reason: 'tryRealpath canonicalizes cwd, the git repo root and the scratch worktree with the same JS realpath before path.relative compares them (falling back to the given path on throw); existsSync gates whether a failing test file exists on disk / in a checkout (the file is then hashed or run, and a miss makes the entry ineligible) and verifies the scratch worktree was removed.' },
   'lib/visual-decide/cli.js': { existsSync: 2, reason: 'polls for and reads the daemon\'s server-stopped marker file (stopped vs crashed); presence of the marker is the entire signal.' },
   'lib/wrap-up/engine-verify.js': { existsSync: 13, reason: 'wrap-up verification checks: each asks whether a run artifact (verify-expectations.json, manifest.yml, engine-state.json, archive path, work/, .superpowers/sdd, docs/plans, recorded worktree) is present; absence or presence is the check result, and the reads that follow (expectations, engine-state, console.json) sit in try/catch.' },
   'lib/wrap-up/facts.js': { existsSync: 1, reason: 'records whether .claude/skills exists as a boolean fact for the wrap-up report; the directory is not read from here.' },
-  'lib/wrap-up/ledger-write.js': { realpathSync: 4, existsSync: 5, reason: 'lines 27 and 29 each hold three tokens (the `const` name, `deps.` override, `fs.` default) for the injectable existsSync/realpathSync seams; an explicit ledger path must exist (36) and then, realpath-resolved by the same injected realpathSync as the run-dir and worktree roots it is tested against (37), sit under one of them; 47 is presence of the run-dir ledger.md fast path.' },
+  'lib/wrap-up/ledger-write.js': { realpathSync: 4, existsSync: 5, reason: 'lines 29 and 31 each hold three tokens (the `const` name, `deps.` override, `fs.` default) for the injectable existsSync/realpathSync seams; an explicit ledger path must exist (38) and then, realpath-resolved by the same injected realpathSync as the run-dir and worktree roots it is tested against (39), sit under one of them; 49 is presence of the run-dir ledger.md fast path.' },
   'load-delta.js': { realpathSync: 4, reason: 'both sides of every containment check are resolved with the same JS fs.realpathSync (repo root and file or plugin root), isPathContained decides, and the read path additionally requires statSync(real).isFile().' },
   'phase-timing.js': { realpathSync: 1, reason: 'canonical() lstat-checks for a symlink first and keeps the literal path in that case, realpathing only a real directory; used to dedupe subagent dirs, with the literal path as fallback on throw.' },
   'release-local.js': { realpathSync: 2, reason: 'writeInsideRoot realpaths the root and the target\'s parent directory with the same JS realpath and refuses a parent outside the root; the leaf is then opened with O_NOFOLLOW so a symlinked leaf is refused by the kernel.' },
@@ -195,7 +192,7 @@ test('scanner does not let a /* inside a line comment swallow live code (proves 
 });
 
 test('a comment-stripper mis-parse is reported, not counted as zero tokens', () => {
-  assert.deepEqual(evaluate({ 'lib/x.js': 'const a = /"/; const b = "//"; fs.existsSync(b);' }, {}), [
+  assert.deepEqual(evaluate({ 'lib/x.js': 'if (b) /"/.test(b); const c = "//"; fs.existsSync(c);' }, {}), [
     'lib/x.js: the comment stripper mis-parsed this file: the stripped text no longer compiles, so live code was blanked and cannot be scanned — see tests/helpers/strip-comments.js',
   ]);
 });

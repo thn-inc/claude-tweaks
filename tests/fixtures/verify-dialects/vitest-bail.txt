@@ -1,0 +1,30 @@
+
+ RUN  v1.6.0 /repo
+
+ ❯ tests/a-flaky.test.js  (1 test | 1 failed) 4ms
+   ❯ tests/a-flaky.test.js > flaky sometimes fails
+     → expected 1 to be 2 // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/a-flaky.test.js > flaky sometimes fails
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ tests/a-flaky.test.js:1:49
+      1| test('flaky sometimes fails', () => { expect(1).toBe(2); });
+       |                                                 ^
+      2| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed | 2 skipped (3)
+      Tests  1 failed (1)
+   Start at  12:00:00
+   Duration  132ms (transform 9ms, setup 0ms, collect 3ms, tests 4ms, environment 0ms, prepare 50ms)
+

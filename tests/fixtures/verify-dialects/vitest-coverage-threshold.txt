@@ -1,0 +1,42 @@
+
+ RUN  v1.6.0 /repo
+      Coverage enabled with v8
+
+ ❯ tests/flaky.test.js  (1 test | 1 failed) 4ms
+   ❯ tests/flaky.test.js > sometimes fails
+     → expected 1 to be 2 // Object.is equality
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  12:00:00
+   Duration  231ms (transform 18ms, setup 0ms, collect 12ms, tests 4ms, environment 0ms, prepare 71ms)
+
+ % Coverage report from v8
+
+=============================== Coverage summary ===============================
+Statements   : 50% ( 2/4 )
+Branches     : 100% ( 1/1 )
+Functions    : 50% ( 1/2 )
+Lines        : 50% ( 2/4 )
+================================================================================
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/flaky.test.js > sometimes fails
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ tests/flaky.test.js:3:48
+      1| import { test, expect } from 'vitest';
+      2| import { used } from '../src/lib.js';
+      3| test('sometimes fails', () => { expect(used()).toBe(2); });
+       |                                                ^
+      4| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ERROR: Coverage for lines (50%) does not meet global threshold (100%)

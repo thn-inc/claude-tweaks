@@ -132,7 +132,7 @@ function main() {
   // ran:false on every invocation of a perfectly healthy repo.
   // probeRelease adapts its own bare-args call to resolveRemoteRef internally (#3023).
   const results = filterResultsByScope([
-    probeWorktrees({ scope }),
+    probeWorktrees({ scope, cliScope: opts.scope }),
     probeBranches({ scope, integrationBranch: opts.integrationBranch, run: git }),
     probeForge({ scope, run, ownPr: opts.ownPr }),
     suiteResult,

@@ -22,6 +22,12 @@ test('createBudget: remainingMs never goes negative', () => {
   assert.equal(b.remainingMs(), 0);
 });
 
+test('createBudget: an Infinity ceiling never expires (#3026)', () => {
+  const b = createBudget(Infinity, () => 1e15);
+  assert.equal(b.exceeded(), false);
+  assert.equal(b.remainingMs(), Infinity);
+});
+
 test('createBudget: nowFn defaults to Date.now when omitted', () => {
   const b = createBudget(1000);
   assert.equal(b.exceeded(), false);

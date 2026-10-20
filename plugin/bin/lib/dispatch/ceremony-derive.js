@@ -14,12 +14,30 @@
 // deletions}[]`) and the run's current `ceremony-profile` value.
 const { classifyDiffFiles, blastRadiusSummary } = require('../issues/blast-radius');
 
-// Docs-only surface: every changed file is markdown. Deliberately broader
+// Prompt prose: markdown under a Claude Code component directory (`skills/`,
+// `agents/`, `commands/`, at any prefix). It is the shipped product of a
+// plugin or a project's own harness, so it counts as production for the
+// low-surface gate. Keyed on Claude Code's directory conventions, not on
+// `plugin/`, so it is project-agnostic. Erring toward production costs only a
+// `standard` wrap-up, and, since `implFiles` also feeds `profiles.js`'s
+// diff-ceiling, can lift a small prose diff's whole-branch reviewer from
+// Standard to Capable — still the safe direction.
+// #3477: run `2026-10-17T194130-record-3005` (#3005's four prose files plus
+// one test) derived `fast-lane` when it should not have.
+// The directory names are exported so tests can pin the prose twins that
+// restate them (`build/micro-plan.md`, `wrap-up/ceremony-derivation.md`).
+const PROMPT_PROSE_DIRS = Object.freeze(['skills', 'agents', 'commands']);
+const PROMPT_PROSE_RE = new RegExp(`(^|/)(${PROMPT_PROSE_DIRS.join('|')})/.+\\.md$`, 'i');
+function isPromptProsePath(path) {
+  return PROMPT_PROSE_RE.test(path);
+}
+
+// Docs-only surface: markdown that is not prompt prose. Deliberately broader
 // than `docs/**` alone — a materialized `work/{n}-spec.md` file (itself
 // markdown) is exactly the kind of accompanying file the #1545 evidence diff
 // carried alongside its one test file, and both must count as low-surface.
 function isDocsPath(path) {
-  return /\.md$/i.test(path);
+  return /\.md$/i.test(path) && !isPromptProsePath(path);
 }
 
 // files: [{path, additions, deletions}] (blast-radius-cli.js's parseNumstat
@@ -27,7 +45,13 @@ function isDocsPath(path) {
 // future caller needing the same classification can read directly, rather
 // than re-deriving it.
 function computeDiffFacts(files) {
-  const classified = classifyDiffFiles(files || []);
+  // blast-radius's TEST_PATH_RE matches any `test/` segment, so a prompt-prose
+  // file under a `skills/test/` directory (#3477) would otherwise be counted as
+  // a test. Prompt prose is production, so it never takes the test flag.
+  const classified = classifyDiffFiles(files || []).map((f) => ({
+    ...f,
+    isTest: f.isTest && !isPromptProsePath(f.path),
+  }));
   const summary = blastRadiusSummary(classified);
   const docsFiles = classified.filter((f) => !f.isTest && isDocsPath(f.path));
   const implFiles = classified.filter((f) => !f.isTest && !isDocsPath(f.path));
@@ -78,4 +102,4 @@ function shouldDerive({ mode, ceremonyProfile } = {}) {
   return mode === 'auto' && ceremonyProfile === 'standard';
 }
 
-module.exports = { computeDiffFacts, deriveCeremonyProfile, isDocsPath, shouldDerive };
+module.exports = { computeDiffFacts, deriveCeremonyProfile, isDocsPath, isPromptProsePath, PROMPT_PROSE_DIRS, shouldDerive };

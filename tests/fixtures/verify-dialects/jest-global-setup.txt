@@ -1,0 +1,10 @@
+Error: Jest: Got error running globalSetup - /repo/setup.js, reason: setup could not reach the db
+    at module.exports (/repo/setup.js:2:9)
+    at /repo/node_modules/@jest/core/build/runGlobalHook.js:109:19
+    at ScriptTransformer.requireAndTranspileModule (/repo/node_modules/@jest/transform/build/ScriptTransformer.js:806:24)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async runGlobalHook (/repo/node_modules/@jest/core/build/runGlobalHook.js:101:9)
+    at async runJest (/repo/node_modules/@jest/core/build/runJest.js:327:5)
+    at async _run10000 (/repo/node_modules/@jest/core/build/cli/index.js:343:7)
+    at async runCLI (/repo/node_modules/@jest/core/build/cli/index.js:198:3)
+    at async Object.run (/repo/node_modules/jest-cli/build/run.js:130:37)

@@ -331,6 +331,24 @@ test('duplicate --baseline-cmd name is a usage error (#3043)', () => {
   assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--baseline', 'x', '--baseline-cmd', 'tests=a {file}', '--baseline-cmd', 'tests=b {file}']), /duplicate --baseline-cmd name: tests/);
 });
 
+test('--scope: --baseline without --baseline-cmd parses — the declaration retry template is resolved by verify.js (#3511)', () => {
+  const got = parseArgs(['--scope', 'd.json', '--integration-branch', 'main', '--baseline', 'origin/main']);
+  assert.strictEqual(got.baseline, 'origin/main');
+  assert.deepStrictEqual(got.baselineCmds, []);
+});
+test('--scope: --baseline-cmd naming a suite with no --cmd parses — verify.js checks it against the declaration (#3511)', () => {
+  const got = parseArgs(['--scope', 'd.json', '--integration-branch', 'main', '--baseline', 'x', '--baseline-cmd', 'unit=node --test {file}']);
+  assert.deepStrictEqual(got.baselineCmds.map((b) => b.name), ['unit']);
+});
+test('--scope: a --baseline-cmd template without {file} and a duplicate name are still usage errors (#3511)', () => {
+  const s = ['--scope', 'd.json', '--integration-branch', 'main', '--baseline', 'x'];
+  assert.throws(() => parseArgs([...s, '--baseline-cmd', 'unit=npm test']), /must contain \{file\}/);
+  assert.throws(() => parseArgs([...s, '--baseline-cmd', 'unit=a {file}', '--baseline-cmd', 'unit=b {file}']), /duplicate --baseline-cmd name: unit/);
+});
+test('USAGE states --baseline-cmd is optional under --scope (#3511)', () => {
+  assert.match(USAGE, /under --scope, --baseline-cmd is optional/);
+});
+
 test('--baseline and --baseline-cmd are rejected with --stamp-status and --changed-files, by the mode-conflict message (#3043)', () => {
   const conflict = /apply to a check run — not to --stamp-status or --changed-files/;
   assert.throws(() => parseArgs(['--stamp-status', '--baseline', 'x']), conflict);

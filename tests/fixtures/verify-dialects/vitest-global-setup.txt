@@ -1,0 +1,11 @@
+
+ RUN  v1.6.0 /repo
+
+
+⎯ Error during global setup ⎯⎯
+Error: setup could not reach the db
+ ❯ Object.setup gs.mjs:1:26
+      1| export default function setup() { throw new Error('setup could not rea…
+       |                          ^
+      2| 
+

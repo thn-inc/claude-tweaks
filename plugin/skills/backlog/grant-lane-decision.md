@@ -50,11 +50,41 @@ deliberate: a resolved comment must never gate a fresh one.
   caller's own Needs-decision lane heading (`refine-lanes.md`'s Needs-decision lane, or
   `refine-headless.md`'s Needs-decision rows), since a record on this branch has no higher-precedence
   lane row to attach beneath.
-- **Empty** — lane/apply it as a fresh row.
+- **Empty** — run the `resolved-refusal` check below; lane/apply a fresh row only when it does not
+  suppress.
 - **Query failed** (network error, non-zero `gh` exit) — fail closed, the same as a mismatch in
   `refine-mode.md`'s own pre-write reverify: never treat an unreadable result as "no unresolved
   comment exists." Skip this record this run, log `AUTO … skipped …` with `{what changed}` =
   `live-state fetch failed: {error}`, and report it.
+
+### Resolved-refusal check (#3597)
+
+Run only when the Idempotence query above came back empty. A human who resolved this refusal as
+`keep` or `build it myself` has settled it, so re-asking is suppressed while nothing has changed
+since:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/resolved-refusal.js" "$ISSUE"
+```
+
+It prints one JSON line: `{number, suppress, reason, choice, date, resolvedAt, changes, annotation,
+skipped}`. Both `backlog-refine` and `backlog-grant` count, because both post the identical
+grant-decision question and the same resolver (`refine-record.md`) resolves either one.
+
+- **`suppress: true`** (`reason: unchanged`) — render its `annotation`
+  (`#{n} — refusal resolved {choice} on {date}; not re-asked`) as a bare line under the caller's
+  Needs-decision heading, the same placement as the Non-empty bullet. Write nothing this run.
+- **`suppress: false`** — lane/apply a fresh row, as the Empty bullet did before this check. The
+  `reason` says why: `no-decision-comment`, `latest-unresolved`, `resolved-unparseable` (the latest
+  comment carries a `**Resolved:**` line that does not parse), `choice-not-suppressing`,
+  `changed-since-resolution` (a body or label change after the resolution instant, which is the earlier
+  of the `**Resolved:**` date's UTC start of day and the decision comment's last edit), or
+  `evidence-unavailable`.
+- **Non-zero exit** (`1`: gh or GraphQL failed, or no such issue; `2`: malformed invocation, gh absent,
+  or repo unresolvable) — the **Query failed** bullet above, fail closed. Gh-absent has no MCP
+  fallback for this read (`_shared/forge-detection.md` check 2; `backlog/mcp-transport.md` covers no
+  needs-decision path).
+- Keep the `skipped` lines in this step's output, as the second command above does.
 
 ## Write mechanics (`needs:decision` outcome only)
 

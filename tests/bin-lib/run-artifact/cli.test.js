@@ -141,3 +141,12 @@ test('the real binary runs end to end', (t) => {
   execFileSync(process.execPath, [CLI, '--run', singleDir, '--name', NAME, '--file', src], { cwd: main });
   assert.equal(fs.readFileSync(path.join(singleDir, NAME), 'utf8'), 'AC sample\nline two\n');
 });
+
+test('#3496: a worktree-isolated session writes sdd-final-review.md into the anchored run dir', (t) => {
+  const { singleDir, worktree, shadow, src } = fixture(t);
+  const { deps, out } = fakeDeps(worktree);
+  assert.equal(run(['--run', singleDir, '--name', 'sdd-final-review.md', '--file', src], deps), 0);
+  assert.equal(fs.readFileSync(path.join(singleDir, 'sdd-final-review.md'), 'utf8'), 'AC sample\nline two\n');
+  assert.ok(out.join('').includes(path.join(fs.realpathSync(singleDir), 'sdd-final-review.md')), 'the written path is echoed');
+  assert.ok(!fs.existsSync(path.join(shadow, 'sdd-final-review.md')), 'nothing is written into the worktree-local shadow');
+});

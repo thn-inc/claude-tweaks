@@ -133,7 +133,7 @@ test('scanner flags an unhidden call and accepts the hidden shapes (proves it ca
 test('a comment-stripper mis-parse is reported, not passed as a file with no calls', () => {
   assert.deepEqual(unhiddenCalls([
     "const cp = require('child_process');",
-    "const x = 'a'; const a = /'/.test(x); const b = 'p//q'; cp.execFileSync('git', [b], {});",
+    "if (cp) /'/.test(cp); const b = 'p//q'; cp.execFileSync('git', [b], {});",
   ].join('\n')), [{ line: 0, args: 'the comment stripper mis-parsed this file: the stripped text no longer compiles, so live code was blanked and cannot be scanned — see tests/helpers/strip-comments.js' }]);
   assert.deepEqual(unhiddenCalls("const cp = require('child_process'); const = ;"),
     [{ line: 0, args: 'this file does not compile as a CommonJS module, so the comment-stripper check cannot judge it — see tests/helpers/strip-comments.js' }]);

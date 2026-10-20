@@ -8,7 +8,12 @@
 // the workflow runs for the head sha (`gh run list --commit`, #3405), so a
 // workflow the rollup has not registered yet reads pending, not green.
 //
-//   node bin/pr-checks.js --run <run-dir> [--help]
+//   node bin/pr-checks.js --run <run-dir> | --pr <n> [--help]
+//
+// --pr <n> (#3469) classifies a PR by number for display-only readers that hold
+// a PR number and no local checkout of its branch: same JSON, `localHead: null`,
+// and the PR's own headRefOid stands in for local HEAD, so `stale` and `no-pr`
+// cannot occur. Exactly one of --run / --pr is required.
 //
 // Prints one JSON line: {state, failing:[{name,url,inherited?}], pending:[name],
 // headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?}. state
@@ -39,20 +44,26 @@ const { ghAvailable } = require('./lib/repo-resolve');
 const { hasPullRequestCi } = require('./lib/merge-verification');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
 
-const USAGE = 'usage: pr-checks.js --run <run-dir> [--help]\n'
+const USAGE = 'usage: pr-checks.js --run <run-dir> | --pr <n> [--help]\n'
+  + '  --pr <n> classifies a PR by number with no run dir: local HEAD is not compared (the PR\'s own head stands in), localHead is null, never stale, never no-pr\n'
   + '  prints {state, failing, pending, headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?};\n'
   + '  baseBranch: the branch compared on a red read -- the PR\'s own base, else the integration branch;\n'
   + '  state: red | inherited-red | pending | stale | green | no-ci | read-failed | no-pr | gh-absent\n'
   + '  exit 0 in every state; 2 malformed invocation; 3 run dir missing or not anchored\n';
 
 function parseArgs(argv) {
-  const o = { run: null, help: false };
+  const o = { run: null, pr: null, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') o.help = true;
     else if (a === '--run') o.run = argv[++i] ?? null;
-    else return { error: `unknown argument: ${a}` };
+    else if (a === '--pr') {
+      const v = argv[++i];
+      if (!/^[1-9]\d*$/.test(v ?? '')) return { error: `--pr needs a positive integer, got: ${v ?? '(none)'}` };
+      o.pr = Number(v);
+    } else return { error: `unknown argument: ${a}` };
   }
+  if (o.run !== null && o.pr !== null) return { error: '--run and --pr are mutually exclusive' };
   return o;
 }
 
@@ -111,6 +122,48 @@ function report(deps, body) {
   return 0;
 }
 
+// The shared tail of both modes: gh pr view -> head runs -> classify -> red-only
+// base read -> report. `localHead` is the local checkout's HEAD (--run), or null
+// (--pr, #3469): the PR's own headRefOid then stands in for it, so `stale` cannot
+// occur and the reported localHead stays null.
+function classifyPr(deps, n, localHead) {
+  let view;
+  try { view = JSON.parse(deps.gh(['pr', 'view', String(n), '--json', 'headRefOid,statusCheckRollup,baseRefName'])); } catch (e) {
+    return report(deps, { state: 'read-failed', pr: n, localHead, reason: `gh pr view failed: ${errText(e)}` });
+  }
+  // The full 40-char sha: an abbreviated --commit lists no runs (#3405).
+  const headRefOid = view && view.headRefOid;
+  const compareHead = localHead === null ? headRefOid : localHead;
+  let headRuns;
+  let runsFailure = null;
+  // A stale head skips the runs read: the classifier concludes nothing from it,
+  // so a transient runs-read failure must not turn `stale` into `read-failed`.
+  if (typeof headRefOid === 'string' && headRefOid && headRefOid === compareHead) {
+    try {
+      const rows = JSON.parse(deps.gh(['run', 'list', '--commit', headRefOid, '--limit', '100', '--json', 'name,workflowName,status,conclusion,url']));
+      if (!Array.isArray(rows)) throw new Error('not a JSON array');
+      headRuns = rows;
+    } catch (e) {
+      runsFailure = `gh run list failed: ${errText(e)}`;
+    }
+  }
+  let repoRoot = deps.cwd();
+  try { repoRoot = String(deps.git(['rev-parse', '--show-toplevel'])).trim(); } catch { repoRoot = deps.cwd(); }
+  let hasPrCi = false;
+  try { hasPrCi = Boolean(deps.hasPullRequestCi(repoRoot)); } catch { hasPrCi = false; }
+  const verdict = classifyRollup({ rollup: view && view.statusCheckRollup, headRefOid, localHead: compareHead, hasPrCi, headRuns });
+  // Only a red verdict reads the base tip (#3258): green/pending/stale never change on it.
+  let final = verdict;
+  if (verdict.state === 'red') {
+    const base = readBase(deps, repoRoot, view && view.baseRefName);
+    final = { ...applyBaseComparison(verdict, base), baseBranch: base.branch };
+  }
+  // A failed runs read cannot conclude a pass-class verdict (green/pending/inherited-red): a failing run
+  // absent from the rollup would be invisible. Only a verdict still red is conclusive on its own.
+  if (runsFailure && final.state !== 'red') return report(deps, { state: 'read-failed', pr: n, localHead, reason: runsFailure });
+  return report(deps, { ...final, localHead, pr: n });
+}
+
 function run(argv, overrides = {}) {
   // Tests pass only the seams they fake; readRunState stays the real
   // run-state.json reader unless a test overrides it.
@@ -118,7 +171,11 @@ function run(argv, overrides = {}) {
   const o = parseArgs(argv);
   if (o.error) { deps.stderr(`pr-checks.js: ${o.error}\n${USAGE}`); return 2; }
   if (o.help) { deps.stdout(USAGE); return 0; }
-  if (!o.run) { deps.stderr(`pr-checks.js: --run <run-dir> is required\n${USAGE}`); return 2; }
+  if (o.pr !== null) {
+    if (!deps.ghAvailable()) return report(deps, { state: 'gh-absent', pr: o.pr });
+    return classifyPr(deps, o.pr, null);
+  }
+  if (!o.run) { deps.stderr(`pr-checks.js: exactly one of --run <run-dir> or --pr <n> is required\n${USAGE}`); return 2; }
   const target = resolveTarget({ runDir: o.run, cwd: deps.cwd(), mainRoot: deps.mainRoot });
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`pr-checks.js: run dir does not exist: ${o.run}\n`);
@@ -134,40 +191,7 @@ function run(argv, overrides = {}) {
   try { localHead = String(deps.git(['rev-parse', 'HEAD'])).trim(); } catch (e) {
     return report(deps, { state: 'read-failed', pr: n, reason: `local HEAD unreadable: ${errText(e)}` });
   }
-  let view;
-  try { view = JSON.parse(deps.gh(['pr', 'view', String(n), '--json', 'headRefOid,statusCheckRollup,baseRefName'])); } catch (e) {
-    return report(deps, { state: 'read-failed', pr: n, localHead, reason: `gh pr view failed: ${errText(e)}` });
-  }
-  // The full 40-char sha: an abbreviated --commit lists no runs (#3405).
-  const headRefOid = view && view.headRefOid;
-  let headRuns;
-  let runsFailure = null;
-  // A stale head skips the runs read: the classifier concludes nothing from it,
-  // so a transient runs-read failure must not turn `stale` into `read-failed`.
-  if (typeof headRefOid === 'string' && headRefOid && headRefOid === localHead) {
-    try {
-      const rows = JSON.parse(deps.gh(['run', 'list', '--commit', headRefOid, '--limit', '100', '--json', 'name,workflowName,status,conclusion,url']));
-      if (!Array.isArray(rows)) throw new Error('not a JSON array');
-      headRuns = rows;
-    } catch (e) {
-      runsFailure = `gh run list failed: ${errText(e)}`;
-    }
-  }
-  let repoRoot = deps.cwd();
-  try { repoRoot = String(deps.git(['rev-parse', '--show-toplevel'])).trim(); } catch { repoRoot = deps.cwd(); }
-  let hasPrCi = false;
-  try { hasPrCi = Boolean(deps.hasPullRequestCi(repoRoot)); } catch { hasPrCi = false; }
-  const verdict = classifyRollup({ rollup: view && view.statusCheckRollup, headRefOid, localHead, hasPrCi, headRuns });
-  // Only a red verdict reads the base tip (#3258): green/pending/stale never change on it.
-  let final = verdict;
-  if (verdict.state === 'red') {
-    const base = readBase(deps, repoRoot, view && view.baseRefName);
-    final = { ...applyBaseComparison(verdict, base), baseBranch: base.branch };
-  }
-  // A failed runs read cannot conclude a pass-class verdict (green/pending/inherited-red): a failing run
-  // absent from the rollup would be invisible. Only a verdict still red is conclusive on its own.
-  if (runsFailure && final.state !== 'red') return report(deps, { state: 'read-failed', pr: n, localHead, reason: runsFailure });
-  return report(deps, { ...final, localHead, pr: n });
+  return classifyPr(deps, n, localHead);
 }
 
 module.exports = { run, parseArgs };

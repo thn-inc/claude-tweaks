@@ -134,8 +134,14 @@ async function runOrSkip(c, ctx, skip) {
 // `retry(result, ctx)` is awaited for every failed tests/unknown result
 // (never types/lint — deterministic, never retried) and may return a
 // replacement result; the default keeps the failure as is.
+// `continueSuitesAfterFailure` (#3511, set under --baseline): the suite tier —
+// `tests` and every unknown-name check — is skipped only when a stage-1
+// (types/lint) check failed; a failing suite no longer skips the suites after
+// it, because baseline adjudication refuses a run holding a skipped check and
+// needs every suite's evidence. Off (the default) is the fail-fast above.
 async function runChecks({
   cmds, logDir, spawnImpl = require('child_process').spawn, now = Date.now, retry = async (r) => r, cwd = null,
+  continueSuitesAfterFailure = false,
 }) {
   const ctx = {
     logDir, spawnImpl, now, retry, cwd,
@@ -152,13 +158,13 @@ async function runChecks({
   if (testsCmd !== null) {
     const r = await runOrSkip(testsCmd, ctx, anyFailed);
     results.push(r);
-    anyFailed = anyFailed || failed(r);
+    anyFailed = anyFailed || (!continueSuitesAfterFailure && failed(r));
   }
 
   for (const c of unknown) {
     const r = await runOrSkip(c, ctx, anyFailed);
     results.push(r);
-    anyFailed = anyFailed || failed(r);
+    anyFailed = anyFailed || (!continueSuitesAfterFailure && failed(r));
   }
 
   return results;

@@ -28,7 +28,7 @@ files:
   - The lint counts tokens, not calls. A reference (`{ realpath: fs.realpathSync }`), a default (`{ realpath = fs.realpathSync }`), a destructured alias (`const { existsSync: ex } = fs`) and a bracket form (`fs['realpathSync']`) all count. A mention inside a comment does not.
   - A count that went *down* (a call migrated to path-guard) is also red, because the allowlist is an exact audit record, not a ceiling.
 - **Red flags:**
-  - A `mis-parsed this file` line. The shared stripper (`tests/helpers/strip-comments.js`) does not model regex literals. An escaped slash is safe (`/^https?:\/\//`), but a quote or backtick inside a regex, or an unescaped `/*` or `//` in a character class (`/[/*]/`), can blank code after it. Find that regex in the named file and rewrite it rather than adjusting the allowlist: escape a `/` in a character class as `\/`, or build a regex that holds a quote or backtick with `new RegExp(...)` from a string literal: a count read through a mis-parse is wrong in an unknown direction.
+  - A `mis-parsed this file` line. The shared stripper (`tests/helpers/strip-comments.js`) models regex literals, so a mis-parse now comes from a regex placed right after `)` or `}` (for example `if (x) /re/.test(y)`), which it reads as division. Find that regex in the named file and rewrite it rather than adjusting the allowlist: assign the regex to a const first, or wrap it in parentheses. A count read through a mis-parse is wrong in an unknown direction.
   - An offender naming a file the maintainer did not touch, with no mis-parse line. A mis-parse whose stripped text still compiles is not detected, so check the file for one of those regex shapes before suspecting a real change.
   - A green run after rewriting the call as `fs['realpath' + 'Sync']`. Computed member access is not seen, so that hides the check rather than removing it.
 
@@ -38,7 +38,7 @@ files:
 - **Should feel:** Like a settled rule. A type question goes through `lstatType`, and a containment question goes through `resolveWithin` (on an existing target, or a write's existing parent).
 - **Should understand:**
   - `lstatType` returns `missing` only for ENOENT/ENOTDIR. Any other lstat error is `unreadable`, carrying its code, and a fail-closed caller must not treat it as absent.
-  - `canonicalRealpath` and `resolveLeaf` default to `fs.realpathSync.native`. Passing the JS `fs.realpathSync` is right only when the other side of a comparison is JS-resolved too, as `realTarget()` does for `isPolicyFile`.
+  - `canonicalRealpath` and `resolveLeaf` default to `fs.realpathSync.native`. Passing the JS `fs.realpathSync` is right only when the other side of a comparison is JS-resolved too, as `plugin/bin/lib/timing/transcript.js` does for its projects root and transcript leaves (`realTarget()` did for `isPolicyFile` until #3495).
 - **Red flags:**
   - Comparing a JS `fs.realpathSync` result with a `.native`, git-reported or un-resolved path. That mismatch is what #3380 hit on a case-insensitive volume.
   - Treating `existsSync(p)` as proof that `p` is a directory before writing under it. That is the gap #3493 tracks in `plan-audit`.
@@ -57,4 +57,5 @@ files:
 - Created during build of #3417. That build added the shared `plugin/bin/lib/path-guard/` module, routed `transcript.js`, `installed-plugins.js` and `pre-tool-use.js`'s `realTarget()` through it, added the token-count conformance lint, and narrowed [IL-150]/[IL-161].
 - Updated during build of #3536. The lint's comment stripper moved into the shared `tests/helpers/strip-comments.js`, so escaped-slash regexes no longer blank code. The Step 1 red flag now names the regex shapes that still can.
 - Updated during build of #3573. A file whose stripped text stops compiling now fails the lint with its own offender line (via `stripperVerdict`), instead of silently counting as zero tokens. Step 1 lists the two new offender forms and says what to do about a mis-parse.
+- Updated during build of #3585. The shared stripper now models regex literals, so a quote or backtick inside a regex no longer hides the comments after it: in 23 `plugin/bin` files the lint stopped counting tokens named only in comment text. The Step 1 mis-parse red flag now names the one shape left (a regex right after `)` or `}`) and its rewrite.
 - Related: `act-on-a-red-skill-size-guard-3311.md` (the same shape for the skill-size guard), and `notice-a-stale-superpowers-install-3380.md` (the case-canonical realpath incident).

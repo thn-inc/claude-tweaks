@@ -87,7 +87,13 @@ function renderStuckPathsBlock(paths) {
 
 function structurallyStuckBody(paths) {
   return [
-    'Reconcile has one or more run directories stuck at `structurally-stuck` (no-worktree/no-branch/no-pr) past the escalation threshold.',
+    'Reconcile has one or more run directories stuck at `structurally-stuck` past the escalation threshold. The skip reasons that feed this record are `no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending`, and `pr-not-found`.',
+    '',
+    "For a `console-never-rendered-staged-pending` directory, a merged run's `staged/` holds pending (or unreadable) items and no console was ever rendered — apply or delete the files under `staged/` (and any `spec-*/staged/`), or write a resolved `console.json`; the next reconcile then archives the dir and drops it from this record.",
+    '',
+    "Each directory's exact reason is the `lastError` (`stuck at <reason>`) on its `structurally-stuck` entry under `residueFailures` in the main checkout's `.claude-tweaks/reconcile-cache.json`.",
+    '',
+    "For a `pr-not-found` directory, the `pr.number` stamped in its `run-state.json` names a PR that GitHub confirms does not exist — correct or clear that stamp.",
     '',
     renderStuckPathsBlock(paths),
     '',

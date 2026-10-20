@@ -1231,3 +1231,34 @@ test('releaseMerged: two live claims with the commit messages swapped release ne
   }
   assert.equal(labelDeletes.length, 0);
 });
+
+// #3543: GitHub confirmed (structured GraphQL NOT_FOUND) that the stamped
+// pr.number names no PR. decideRelease skips on it — it must not fall through
+// to the pr-closed-unmerged / issue-closed paths — and needsIssueEvidence
+// treats it as decided without an issue lookup.
+test('decideRelease: pr-not-found skips with reason pr-not-found, even with a closed issue (#3543)', () => {
+  assert.deepStrictEqual(
+    decideRelease('live', 'pr-not-found', 'CLOSED', undefined),
+    { action: 'skip', reason: 'pr-not-found' },
+  );
+  assert.equal(needsIssueEvidence('pr-not-found'), false);
+});
+
+test('AC6.1: a branch-resolved candidate whose stamped pr.number resolves pr-not-found is never released via the branch PR (#3543)', { skip: PATH_STUB_SKIP }, async () => {
+  const notFoundBody = '{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","path":["repository","pullRequest"],"message":"x"}]}';
+  const fx = writeReusedBranchFixture('reused-notfound',
+    '  *"pr view 3406"*) exit 1 ;;\n'
+    + `  *"api graphql"*) printf '%s' '${notFoundBody}'; exit 1 ;;\n`);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${fx.wrapperDir}${path.delimiter}${originalPath}`;
+
+  try {
+    const result = await releaseMerged({ cwd: fx.root, ghApi: fx.ghApi });
+    assert.equal(result.released.length, 0, `a pr-not-found stamped PR must never release via the branch PR, got ${JSON.stringify(result)}`);
+    assert.ok(result.skipped.some((x) => x.issueNumber === 3375 && x.reason === 'pr-not-found'), JSON.stringify(result.skipped));
+    assert.equal(fs.existsSync(fx.putMarker), false, 'no release write may happen');
+    assert.equal(fx.labelDeletes.length, 0, 'no label may be removed');
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});

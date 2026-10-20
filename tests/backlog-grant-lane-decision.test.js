@@ -80,3 +80,33 @@ test('refine-lanes.md Needs-decision lane writes addLabels + commentFile via app
 test('refine-lanes.md lane precedence line names Needs-decision', () => {
   assert.ok(REFINE_LANES_FLAT.includes('Needs-decision'), 'the one-lane-per-record precedence statement must name the Needs-decision lane');
 });
+
+const GRANT_LANE_DECISION_FLAT = readFlat('plugin/skills/backlog/grant-lane-decision.md');
+
+test('grant-lane-decision.md runs the resolved-refusal check when no unresolved comment exists', () => {
+  assert.ok(GRANT_LANE_DECISION_FLAT.includes('bin/resolved-refusal.js'), 'Idempotence check must invoke bin/resolved-refusal.js');
+  assert.ok(GRANT_LANE_DECISION_FLAT.includes('not re-asked'), 'the suppressed-annotation text must be named');
+  assert.ok(GRANT_LANE_DECISION_FLAT.includes('keep'), 'the suppressing choice keep must be named');
+  assert.ok(GRANT_LANE_DECISION_FLAT.includes('build it myself'), 'the suppressing choice build it myself must be named');
+  const emptyBullet = GRANT_LANE_DECISION_FLAT.slice(GRANT_LANE_DECISION_FLAT.indexOf('- **Empty**'), GRANT_LANE_DECISION_FLAT.indexOf('- **Query failed**'));
+  assert.ok(emptyBullet.includes('resolved-refusal'), 'the Empty bullet must name the resolved-refusal check, not lane/apply alone');
+});
+
+// Go-red control: the pre-#3597 Empty bullet was a bare fresh-row instruction with no resolved-refusal check.
+const PRE_CHANGE_EMPTY_BULLET = '- **Empty** — lane/apply it as a fresh row.';
+
+test('go-red control: pre-change Empty bullet does not name the resolved-refusal check', () => {
+  assert.ok(!PRE_CHANGE_EMPTY_BULLET.includes('resolved-refusal'), 'control must not already name the resolved-refusal check');
+});
+
+test('refine-headless.md Needs-decision rows name the resolved-refusal check and its decisions.md line', () => {
+  assert.ok(GRANT_MODE_FLAT.includes('resolved-refusal'), 'refine-headless.md Needs-decision rows must name the resolved-refusal check');
+  assert.ok(GRANT_MODE_FLAT.includes('refusal resolved'), 'refine-headless.md must name the decisions.md refusal-resolved line');
+});
+
+test('refine-lanes.md Needs-decision lane names the resolved-refusal annotation', () => {
+  const needsDecisionIdx = REFINE_LANES_FLAT.indexOf('## Needs-decision');
+  const priorityIdx = REFINE_LANES_FLAT.indexOf('## Priority');
+  const section = REFINE_LANES_FLAT.slice(needsDecisionIdx, priorityIdx);
+  assert.ok(section.includes('not re-asked'), 'Needs-decision lane must render the resolved-refusal not re-asked annotation');
+});

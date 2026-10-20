@@ -58,6 +58,10 @@ Two findings match when **all three** hold:
 
 No outcome is "ask the user inline." Unconfirmed findings stage; the caller's Review Console handles disposition.
 
+### Cross-lens corroboration (/review medium tier)
+
+At `/review`'s `medium` tier only, the `unconfirmed` findings of *different* lenses are matched once more, by `corroborateCrossLens` (`bin/lib/coordination.js`; CLI `review-coordination.js corroborate-cross-lens`). Two findings corroborate when they come from different lenses, share an exact path, sit within ±5 lines, both carry text, and their substance similarity is at least `SUBSTANCE_SIMILARITY_MIN` (0.2) — missing text never corroborates. A corroborated finding is `confirmed`; no agents are dispatched. Procedure and log line: `review/step3-cross-lens-corroboration.md`.
+
 ### Dispatch template (inline in caller's Task() calls)
 
 ```
@@ -75,7 +79,7 @@ Per `auto-decision-log.md` schema:
 - STAGED {HH:MM:SS} — /review reproduction: finding {path}:{line} surfaced by one agent only. Stage path: staged/review-unconfirmed-{n}.patch.
 ```
 
-`staged/review-unconfirmed-{n}.patch` follows `_shared/staged-patch.md`: `Target:` / `Invariant:` / `Finding:` / `Staged-at:` preamble plus the diff, validated with `git apply --check` from the worktree before the `STAGED` entry above is written — a failing check is handled per that file's Staging-time gate and surfaced at staging, and the console re-derives from `Invariant:` when the diff has gone stale.
+`staged/review-unconfirmed-{n}.patch` follows `_shared/staged-patch.md`: `Target:` / `Invariant:` / `Finding:` / `Staged-at:` preamble plus the diff, validated per that file's Staging-time gate — `git apply --check` from the worktree, then its Stacked check (`bin/check-staged-stack.js`) — before the `STAGED` entry above is written — a failing check is handled per that gate and surfaced at staging, and the console re-derives from `Invariant:` when the diff has gone stale.
 
 ### Review Console staging format
 

@@ -12,11 +12,16 @@ const read = (rel) => readText(path.join(ROOT, rel));
 
 test('wrap-up SKILL.md calls wrap-up-pack.js --run exactly once, in Phase 3 (#1930 AC5)', () => {
   const skill = read('plugin/skills/wrap-up/SKILL.md');
-  assert.strictEqual((skill.match(/wrap-up-pack\.js" --run/g) || []).length, 1);
+  // The ledger-only `--print ledger` call is a narrowed re-count, not a second full pack (#3566).
+  const fullPack = /wrap-up-pack\.js" --run "\$PIPELINE_RUN_DIR"(?! --print)/g;
+  assert.strictEqual((skill.match(fullPack) || []).length, 1);
   const phase3 = skill.indexOf('## Phase 3');
   const phase4 = skill.indexOf('## Phase 4');
-  const call = skill.indexOf('wrap-up-pack.js" --run');
+  fullPack.lastIndex = 0;
+  const call = fullPack.exec(skill).index;
   assert.ok(phase3 < call && call < phase4, 'the call lives in Phase 3');
+  const recount = skill.indexOf('wrap-up-pack.js" --run "$PIPELINE_RUN_DIR" --print ledger');
+  assert.ok(phase3 < recount && recount < phase4, 'the ledger re-count call lives in Phase 3');
 });
 
 test('every pack-reading sub-file cites wrap-up-pack.json and states the absent-file fallback (#1930 AC5)', () => {

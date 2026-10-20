@@ -1,0 +1,46 @@
+
+ RUN  v1.6.0 /repo
+
+ ❯ tests/flaky.test.js  (2 tests | 1 failed) 5ms
+   ❯ tests/flaky.test.js > flaky > sometimes fails
+     → expected 1 to be 2 // Object.is equality
+ ✓ tests/ok.test.js  (1 test) 1ms
+ ❯ tests/broken.test.js  (0 test)
+
+ Test Files  2 failed | 1 passed (3)
+      Tests  1 failed | 2 passed (3)
+   Start at  12:00:00
+   Duration  183ms (transform 20ms, setup 0ms, collect 22ms, tests 6ms, environment 0ms, prepare 139ms)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/broken.test.js [ tests/broken.test.js ]
+Error: setup exploded at import time
+ ❯ tests/broken.test.js:1:7
+      1| throw new Error('setup exploded at import time');
+       |       ^
+      2| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/flaky.test.js > flaky > sometimes fails
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ tests/flaky.test.js:3:45
+      1| import { describe, test, expect } from 'vitest';
+      2| describe('flaky', () => {
+      3|   test('sometimes fails', () => { expect(1).toBe(2); });
+       |                                             ^
+      4|   test('passes', () => { expect(1).toBe(1); });
+      5| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+

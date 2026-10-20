@@ -28,6 +28,8 @@ const posix = path.posix;
 const PLUGIN_ROOT_PREFIX = '${CLAUDE_PLUGIN_ROOT}/';
 const BACKTICK_MD = /`([^`\n]+\.md)`/g;
 const SKILL_DIR_PHRASE = /in that skill's directory|in the `\/claude-tweaks:[a-z0-9-]+` skill's directory/g;
+// Rule (e)'s `{skill}/…` form: a first segment that is not dot-led, then more path.
+const SKILLS_DIR_TOKEN = /^([^/.][^/]*)\/./;
 const SKILL_TOKEN = /\/claude-tweaks:([a-z0-9-]+)/g;
 // A plugin root is the repo root or one directory down. Deeper trees are
 // test fixtures (evals/fixtures/…, tools/upstream-drift/fixtures/…), never a
@@ -80,6 +82,16 @@ function extractCitations(text, citingFile, pluginRoot, { exists }) {
       }
       const skill = phraseSkill(line, m.index);
       if (skill) candidates.push(posix.join(pluginRoot, 'skills', skill, token)); // (d)
+      // (e) plugin-root-relative `skills/…`, or skills-dir-relative `{skill}/…`
+      // when the first segment names an existing skill directory.
+      if (token.startsWith('skills/')) {
+        candidates.push(posix.join(pluginRoot, token));
+      } else {
+        const seg = token.match(SKILLS_DIR_TOKEN);
+        if (seg && exists(posix.join(pluginRoot, 'skills', seg[1], 'SKILL.md'))) {
+          candidates.push(posix.join(pluginRoot, 'skills', token));
+        }
+      }
       const hit = candidates.find((c) => withinRoot(pluginRoot, c) && exists(c));
       if (!hit) {
         unresolved.push({ citingFile, line: i + 1, token });

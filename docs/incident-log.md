@@ -1345,7 +1345,7 @@ restored (44/44 green). The recurring-pattern cost is that this project's own `p
 already has one hardened precedent (`realTarget()`) for exactly this bypass class, and it still had
 to be independently rediscovered rather than reused when a new exemption was authored nearby.
 
-**Second instance — casing (#3380, run ledger row 48).** The #3380 review (lens 3b) found that `superpowers-version.js`'s home exclusion and ancestor match compared JS `fs.realpathSync` paths case-sensitively. The JS form echoes the input's casing on a case-insensitive volume, so a mis-cased home entry slipped past `excludeHome`. It was fixed in PR #3406 (squash-merged as `ffe20b982`) by switching to `fs.realpathSync.native`, which returns the canonical case. The rule now names that form. `realTarget()` in `pre-tool-use.js` still uses the JS form, deliberately — see the #3417 narrowing below.
+**Second instance — casing (#3380, run ledger row 48).** The #3380 review (lens 3b) found that `superpowers-version.js`'s home exclusion and ancestor match compared JS `fs.realpathSync` paths case-sensitively. The JS form echoes the input's casing on a case-insensitive volume, so a mis-cased home entry slipped past `excludeHome`. It was fixed in PR #3406 (squash-merged as `ffe20b982`) by switching to `fs.realpathSync.native`, which returns the canonical case. The rule now names that form. `realTarget()` in `pre-tool-use.js` still used the JS form at that point, deliberately — see the #3417 narrowing and the #3495 follow-up below.
 
 **Narrowed 2026-10-18 (#3417).** The rule no longer tells an author to copy `realTarget()`'s
 three-way shape (resolved / dangling-and-unprovable / missing-passes-through); it points at
@@ -1354,6 +1354,8 @@ three-way shape (resolved / dangling-and-unprovable / missing-passes-through); i
 removal condition of its own, so nothing is retired — the copy-the-shape instruction is replaced by
 a shared primitive. `realTarget()` still passes the JS `fs.realpathSync` rather than the module's
 `.native` default, so `isPolicyFile`'s equality with `canonicalRepoPath` is unchanged.
+
+Follow-up: #3495 moved both sides of `isPolicyFile` (`realTarget()` and `canonicalRepoPath`) to path-guard's `.native` default, so `realTarget()` no longer uses the JS form, and `canonicalRepoPath` now canonicalises a regular-file leaf for its on-disk casing (a symlink or missing leaf keeps its literal basename).
 
 ## IL-151 — Working Directory Discipline sanctioned a `cd` form that trips the harness's own permission checker
 

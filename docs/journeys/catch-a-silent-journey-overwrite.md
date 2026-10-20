@@ -26,22 +26,30 @@ files:
 - **Action:** Run it and read the JSON.
 - **Should feel:** Vindicating — a shape that used to require a human ruling with `git log --numstat` as evidence now resolves itself.
 - **Should understand:** `docs/journeys/compose-a-per-run-context-bundle-1988.md` was added by #1988 and modified by six later specs (#1989, #1991, #1992, #1993, #1995, #1997), each appending its own step or reflowing the trailing "Related specs: …" bookkeeping bullet. The check reports `clean: true` — every one of those later commits passes either the same-spec self-edit test (a spec correcting its own prior line, matched via `git blame` + the commit's own `refs #{N}` trailer) or the list-reflow test (a `- ` bookkeeping entry replaced by at least as many list entries).
-- **Red flags:** `clean: false` on this exact real range — that would mean the two safety tests regressed.
+- **Red flags:** `clean: false` on this exact real range — that would mean the safety tests regressed.
 
-### 3. Read an overwrite — a later spec deletes an earlier spec's own step content
+### 3. Read a clean step-markup reformat — the #2702/#2727/#2776 case
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base d81250829 --head 80e3dad2d --path docs/journeys/ --path stories/` (this repo's own history)
+- **Action:** Run it and read the JSON.
+- **Should feel:** No HARD-GATE for a cosmetic fix — a review fix that only changed how steps are marked up passes without a normalization script or a human ruling.
+- **Should understand:** Commit `80e3dad2d` (refs #2776) converted the #2702 and #2727 journeys' numbered-list steps (`1. **Name** — text` with indented sub-bullets) to the canonical `### 1. Name — text` headers with flush sub-bullets. No step text changed, so the step-markup reformat test clears both files and the check reports `{"clean":true,"overwrites":[]}`, exit `0`. The same conversion that also drops a step, or edits a word inside one, still fails.
+- **Red flags:** `clean: false` on this range, naming either journey — the reformat test regressed; or a conversion that silently dropped a step reported clean.
+
+### 4. Read an overwrite — a later spec deletes an earlier spec's own step content
 - **URL:** a synthetic fixture, same shape as `tests/bin-lib/flow/artifact-overwrite-check.test.js`'s "cross-spec overwrite" case: spec #10 adds a journey with a Step 1 body; a later commit tagged `refs #12` deletes that Step 1 body outright (not a `- ` list entry, and not traceable via blame to a `refs #12` commit).
 - **Action:** Run the same command against that range.
 - **Should feel:** Precise, not paranoid — the tool names exactly what it found, not a vague "something changed."
 - **Should understand:** Exit `1`, and stdout's `overwrites[]` array carries one entry per offending path/commit: `{path, commit, reason}`, where `reason` names the deleted line number and the commit whose `refs` trailer it traces back to. This is the HARD-GATE case — `flow/multispec-artifact-namespacing.md` says stop before rendering the console and report this array.
 - **Red flags:** An overwrite silently merged into "clean" because only the exit code was checked and `1` was treated as "harmless — probably just a lint warning"; a console that renders anyway.
 
-### 4. Understand the two safety tests without reading the algorithm
+### 5. Understand the three safety tests without reading the algorithm
 - **URL:** `plugin/skills/flow/multispec-artifact-namespacing.md`'s "Append vs. overwrite (#2014)" section
 - **Action:** Read it instead of `plugin/bin/lib/flow/artifact-overwrite-check.js` directly.
 - **Should feel:** The prose and the code agree — reading either one gives the same mental model.
-- **Should understand:** A deletion is safe when either (1) `git blame` on the deleting commit's parent revision traces every deleted line back to a commit carrying the *same* `refs #{N}` trailer as the deleting commit (a spec editing its own prior content), or (2) every deleted line is itself a `- ` list entry and the hunk replaces it with at least as many list entries (a shared frontmatter `files:` list, or a running bookkeeping bullet every spec's commit legitimately reflows). Only a deletion failing both is a real overwrite.
+- **Should understand:** A deletion is safe when either (1) `git blame` on the deleting commit's parent revision traces every deleted line back to a commit carrying the *same* `refs #{N}` trailer as the deleting commit (a spec editing its own prior content), or (2) every deleted line is itself a `- ` list entry and the hunk replaces it with at least as many list entries (a shared frontmatter `files:` list, or a running bookkeeping bullet every spec's commit legitimately reflows), or (3) the hunk's removed and added lines are equal once journey step markup is normalized — `N. **Name** — x` and `### N. Name — x` read the same, and list indentation and blank lines are ignored (a step-markup reformat). Only a deletion failing all three is a real overwrite.
 - **Red flags:** The doc and the code disagreeing about which test applies, or which one exempts a given deletion.
 
 ## Origin
 - Created during build of #2014 (mechanize the artifact-overwrite completion check's append-vs-overwrite judgment).
+- Step 3 added, and step 5 widened to three tests, during build of #3341 (pass a content-preserving step-markup reformat).
 - Related specs: #786 (the original completion check this extends).

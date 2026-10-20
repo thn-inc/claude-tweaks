@@ -25,7 +25,7 @@ function deps(fx, overrides = {}, calls = null) {
   return {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
-    git: (args) => (args[0] === 'ls-tree' ? `x/work/7-spec.md\n` : 'feat-branch\n'),
+    git: (args) => (args[0] === 'ls-tree' ? 'x/work/7-spec.md\0' : 'feat-branch\n'),
     execFile: (cmd, args, opts) => {
       if (calls) calls.push({ cmd, args, opts });
       if (cmd === 'gh') return JSON.stringify({ state: 'OPEN', isDraft: true, body: PR_BODY });
@@ -303,7 +303,7 @@ test('specOnBranch falls back to a recursive spec-{N}/work/ listing when {run-di
       // The direct `{rel}/work/` listing is legitimately empty for a parent;
       // only the recursive `{rel}/` listing carries the per-spec headers.
       if (args[args.length - 1] === `${rel}/work/`) return '';
-      return `${rel}/spec-9/work/9-spec.md\n${rel}/spec-160/work/160-spec.md\n`;
+      return `${rel}/spec-9/work/9-spec.md\0${rel}/spec-160/work/160-spec.md\0`;
     },
   });
   const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: d });
@@ -313,6 +313,8 @@ test('specOnBranch falls back to a recursive spec-{N}/work/ listing when {run-di
   assert.ok(!lsCalls[0].includes('-r'), 'the direct {rel}/work/ listing is non-recursive');
   assert.ok(lsCalls[1].includes('-r'), 'the parent fallback must recurse — a bare {rel}/ listing returns TREE names only');
   assert.strictEqual(lsCalls[1][lsCalls[1].length - 1], `${rel}/`);
+  assert.deepStrictEqual(lsCalls[0], ['ls-tree', '--name-only', '-z', '--end-of-options', 'feat-branch', '--', `${rel}/work/`]);
+  assert.deepStrictEqual(lsCalls[1], ['ls-tree', '-r', '--name-only', '-z', '--end-of-options', 'feat-branch', '--', `${rel}/`]);
 });
 
 test('defaultDeps().resolvePolicy applies computeDerivedDefaults, so merge-verification resolves to a value with no policy.yml (#1931 I2)', () => {
@@ -398,10 +400,8 @@ test('a decisions.md that exists but cannot be read is content, never a fresh mi
   assert.strictEqual(a.hasOtherContent, true);
 });
 
-test('claim-log-only decisions.md beside an own-worktree events.jsonl line is still case 3; with config.yml it is still case 1 (#2861)', () => {
-  const own = '{"action":"commit","dir":"/w/own","hash":"abc","type":"commit"}\n';
-  const state = JSON.stringify({ worktree: '/w/own', status: 'active' });
-  assert.strictEqual(adoptionFor(CLAIM_ONLY, { 'events.jsonl': own, 'run-state.json': state }).a.case, 3);
+test('claim-log-only decisions.md beside a non-empty events.jsonl is still case 3; with config.yml it is still case 1 (#2861)', () => {
+  assert.strictEqual(adoptionFor(CLAIM_ONLY, { 'events.jsonl': '{"event":"x"}\n' }).a.case, 3);
   const withConfig = adoptionFor(CLAIM_ONLY, { 'config.yml': 'mode: auto\n' }).a;
   assert.strictEqual(withConfig.case, 1);
   assert.strictEqual(withConfig.hasOtherContent, false);
@@ -418,126 +418,36 @@ test('events.jsonl holding only fallback-attributed lines does not count as othe
   assert.strictEqual(a.note, ADOPTION_NOTES[2].replace('{path}', fs.realpathSync(fx.runDir)));
 });
 
-test('events.jsonl mixing a fallback-attributed line with an unattributed locator-less line: neither is own evidence → case 2, both foreign (#3515)', () => {
+test('events.jsonl mixing a fallback-attributed line with one non-fallback line still counts as other-run content → case 3 (unchanged)', () => {
   const mixed = '{"type":"skill_invoked","skill":"claude-tweaks:build","ts":"2026-09-06T12:01:00.000Z","attribution":"fallback"}\n'
     + '{"type":"skill_invoked","skill":"claude-tweaks:test","ts":"2026-09-06T12:02:00.000Z"}\n';
   const { a } = adoptionFor(null, { 'events.jsonl': mixed });
-  assert.strictEqual(a.case, 2, `expected case 2, got case ${a.case}`);
-  assert.strictEqual(a.hasOtherContent, false);
-  assert.strictEqual(a.eventsForeign, 2);
+  assert.strictEqual(a.case, 3, `expected case 3, got case ${a.case}`);
+  assert.strictEqual(a.hasOtherContent, true);
 });
 
 test('an unparseable events.jsonl line counts as other-run content → case 3 (fail toward the cautious case)', () => {
   const { a } = adoptionFor(null, { 'events.jsonl': 'not json\n' });
   assert.strictEqual(a.case, 3, `expected case 3, got case ${a.case}`);
   assert.strictEqual(a.hasOtherContent, true);
-  assert.strictEqual(a.eventsForeign, 0);
 });
 
-// #3515: run 2026-10-17T190411-spec-3401 was misclassified case 3 because two
-// events from a sibling worktree (dispatch-record-3405) landed in its fresh mint
-// without an attribution stamp. These are those two lines, verbatim.
-const FOREIGN_3401 = '{"tool":"Write","path":"/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/dispatch-record-3405/.superpowers/sdd/2026-10-17-partial-rollup-pending/task-3-report.md","ts":"2026-10-17T19:07:23.418Z","type":"gate-exempt-gitignored"}\n'
-  + '{"tool":"Edit","path":"/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/dispatch-record-3405/.superpowers/sdd/2026-10-17-partial-rollup-pending/task-3-report.md","ts":"2026-10-17T19:07:26.142Z","type":"gate-exempt-gitignored"}\n';
-const OWN_STATE = JSON.stringify({ worktree: '/w/own', status: 'active' });
-
-test('AC1.1: a fresh mint holding two events from another worktree classifies case 2 with eventsForeign 2', () => {
-  for (const extra of [{}, { 'run-state.json': JSON.stringify({ worktree: '/w/own', status: 'active', sessionId: 's-own' }) }]) {
-    const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': FOREIGN_3401, ...extra });
-    assert.strictEqual(a.case, 2, `expected case 2, got case ${a.case}`);
-    assert.strictEqual(a.eventsForeign, 2);
-    assert.strictEqual(a.hasOtherContent, false);
-  }
+test('AC2.1: claim-log-only decisions.md beside fallback-only events.jsonl → case 2 (#3363)', () => {
+  const fallbackOnly = '{"type":"skill_invoked","skill":"claude-tweaks:build","ts":"2026-09-06T12:01:00.000Z","attribution":"fallback"}\n'
+    + '{"type":"skill_invoked","skill":"claude-tweaks:test","ts":"2026-09-06T12:02:00.000Z","attribution":"fallback"}\n';
+  const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': fallbackOnly });
+  assert.strictEqual(a.case, 2, `expected case 2, got case ${a.case}`);
+  assert.strictEqual(a.hasOtherContent, false);
 });
 
-test('AC1.2: one own-worktree event among foreign ones classifies case 3', () => {
-  const own = '{"action":"commit","dir":"/w/own","hash":"abc","ts":"2026-10-17T19:08:00.000Z","type":"commit"}\n';
-  const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': FOREIGN_3401 + own, 'run-state.json': OWN_STATE });
-  assert.strictEqual(a.case, 3, `expected case 3, got case ${a.case}`);
-  assert.strictEqual(a.eventsForeign, 2);
-  assert.strictEqual(a.hasOtherContent, true);
-});
-
-test('AC1.2: an event under the run\'s own worktree (path inside it) counts as own; a sibling-prefix path is foreign', () => {
-  const inside = '{"type":"gate-exempt-gitignored","path":"/w/own/.superpowers/x.md"}\n';
-  const a = adoptionFor(CLAIM_ONLY, { 'events.jsonl': inside, 'run-state.json': OWN_STATE }).a;
-  assert.strictEqual(a.case, 3);
-  assert.strictEqual(a.eventsForeign, 0);
-  const sibling = '{"type":"gate-exempt-gitignored","path":"/w/own-other/x.md"}\n';
-  const b = adoptionFor(CLAIM_ONLY, { 'events.jsonl': sibling, 'run-state.json': OWN_STATE }).a;
-  assert.strictEqual(b.case, 2);
-  assert.strictEqual(b.eventsForeign, 1);
-});
-
-test('an event carrying this run\'s own sessionId counts as own → case 3; another session\'s id is foreign → case 2', () => {
-  const state = JSON.stringify({ status: 'active', sessionId: 's-own' });
-  const mine = adoptionFor(CLAIM_ONLY, { 'events.jsonl': '{"type":"pre-compact","trigger":"auto","sessionId":"s-own"}\n', 'run-state.json': state }).a;
-  assert.strictEqual(mine.case, 3);
-  const theirs = adoptionFor(CLAIM_ONLY, { 'events.jsonl': '{"type":"pre-compact","trigger":"auto","sessionId":"s-other"}\n', 'run-state.json': state }).a;
-  assert.strictEqual(theirs.case, 2);
-  assert.strictEqual(theirs.eventsForeign, 1);
-});
-
-test('every own-evidence field counts: locators dir/path/worktree/actual under the worktree, session fields sessionId/session/callerSessionId equal to run-state\'s → case 3 (#3515)', () => {
-  for (const field of ['dir', 'path', 'worktree', 'actual']) {
-    const line = `${JSON.stringify({ type: 'commit', [field]: '/w/own/sub' })}\n`;
-    const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': line, 'run-state.json': OWN_STATE });
-    assert.strictEqual(a.case, 3, `locator ${field}: expected case 3, got case ${a.case}`);
-    assert.strictEqual(a.eventsForeign, 0, `locator ${field}: expected eventsForeign 0`);
-  }
-  const sessionState = JSON.stringify({ status: 'active', sessionId: 's-own' });
-  for (const field of ['sessionId', 'session', 'callerSessionId']) {
-    const line = `${JSON.stringify({ type: 'pre-compact', [field]: 's-own' })}\n`;
-    const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': line, 'run-state.json': sessionState });
-    assert.strictEqual(a.case, 3, `session field ${field}: expected case 3, got case ${a.case}`);
-    assert.strictEqual(a.eventsForeign, 0, `session field ${field}: expected eventsForeign 0`);
-  }
-});
-
-test('a fallback-attributed line naming the own worktree is still foreign (attribution wins over locator)', () => {
-  const line = '{"type":"skill_invoked","dir":"/w/own","attribution":"fallback"}\n';
-  const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': line, 'run-state.json': OWN_STATE });
-  assert.strictEqual(a.case, 2);
-  assert.strictEqual(a.eventsForeign, 1);
-});
-
-test('a valid-JSON non-object events line counts as foreign, never throws', () => {
-  const { a } = adoptionFor(null, { 'events.jsonl': '"x"\n3\n' });
-  assert.strictEqual(a.case, 2);
-  assert.strictEqual(a.eventsForeign, 2);
-});
-
-test('a symlinked spelling of the run\'s worktree still reads as own, in either direction (ledger row 1)', () => {
-  const real = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-wt-')));
-  const link = `${real}-link`;
-  fs.symlinkSync(real, link);
-  try {
-    const viaLink = `${JSON.stringify({ type: 'gate-exempt-gitignored', path: path.join(link, 'x.md') })}\n`;
-    const viaReal = `${JSON.stringify({ type: 'gate-exempt-gitignored', path: path.join(real, 'x.md') })}\n`;
-    const stateReal = JSON.stringify({ worktree: real, status: 'active' });
-    const stateLink = JSON.stringify({ worktree: link, status: 'active' });
-    for (const [events, state] of [[viaLink, stateReal], [viaReal, stateLink]]) {
-      const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': events, 'run-state.json': state });
-      assert.strictEqual(a.case, 3, `expected case 3, got case ${a.case}`);
-      assert.strictEqual(a.eventsForeign, 0);
-    }
-    const sibling = `${JSON.stringify({ type: 'gate-exempt-gitignored', path: `${real}-other/x.md` })}\n`;
-    const { a: b } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': sibling, 'run-state.json': stateLink });
-    assert.strictEqual(b.case, 2);
-    assert.strictEqual(b.eventsForeign, 1);
-  } finally {
-    fs.unlinkSync(link);
-    fs.rmSync(real, { recursive: true, force: true });
-  }
-});
-
-test('an interrupted run\'s events with no run-state worktree or sessionId carry no own evidence → case 2 (the own-evidence rule narrows case 3 here)', () => {
-  const orphaned = '{"action":"commit","dir":"/w/own","hash":"abc","type":"commit"}\n';
-  for (const state of [{}, { 'run-state.json': JSON.stringify({ status: 'active' }) }]) {
-    const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': orphaned, ...state });
-    assert.strictEqual(a.case, 2, `expected case 2, got case ${a.case}`);
-    assert.strictEqual(a.eventsForeign, 1);
-    assert.strictEqual(a.hasOtherContent, false);
+test('AC3.1: an env- or session-attributed (untagged) events.jsonl line is still other-run content (#3363)', () => {
+  const fallbackLine = '{"type":"skill_invoked","skill":"claude-tweaks:build","ts":"2026-09-06T12:01:00.000Z","attribution":"fallback"}\n';
+  for (const other of [
+    '{"type":"skill_invoked","skill":"claude-tweaks:build","ts":"2026-09-06T12:01:00.000Z"}\n',
+    '{"type":"commit","ts":"2026-09-06T12:01:00.000Z","attribution":"session"}\n',
+  ]) {
+    const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': fallbackLine + other });
+    assert.strictEqual(a.hasOtherContent, true, other);
   }
 });
 

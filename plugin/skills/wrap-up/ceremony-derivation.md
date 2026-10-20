@@ -42,6 +42,8 @@ computation), so there is nothing here to clobber:
    regression test must still default to `standard`) — downgrade **the ceremony requirement**, i.e.
    set `config.yml`'s `ceremony-profile` to `fast-lane` via the sanctioned writer:
    `node "${CLAUDE_PLUGIN_ROOT}/bin/set-config.js" --run "$PIPELINE_RUN_DIR" --key ceremony-profile --value fast-lane`.
+
+   Markdown under a `skills/`, `agents/`, or `commands/` directory at any prefix (`plugin/skills/**`, `plugin/agents/*.md`, `.claude/skills/**`) is prompt prose — a plugin's shipped product or a project's own harness — and counts as a production file, not docs, even under a `skills/test/` directory, where it is never a test (`isPromptProsePath`, #3477); other markdown (`docs/**`, a materialized `work/{n}-spec.md`) stays docs.
 3. Log: `AUTO {time} — Ceremony profile derived from diff: low-surface ({file-count} file(s), 0 production files) — header-fold default (standard) replaced with fast-lane.`
 
 This never *upgrades* toward `standard` on its own — the diff-derived default only ever narrows a

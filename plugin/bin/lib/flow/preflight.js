@@ -20,7 +20,7 @@ const { resolvePolicyConfig } = require('../policy-schema');
 const { computeDerivedDefaults } = require('../policy-derived-defaults');
 const { resolveTarget } = require('../stage-item/write');
 const { classifyDecisions } = require('../log-decision/claim-log');
-const { canonicalRealpath } = require('../path-guard');
+const { splitNul } = require('../git-z');
 
 const BIN = path.join(__dirname, '..', '..');
 const VERIFY_JS = path.join(BIN, 'verify.js');
@@ -95,74 +95,22 @@ function configValue(text, key) {
   return m ? m[1] : null;
 }
 
-// A freshly minted run dir can pick up ANOTHER session's events.jsonl lines
-// within the mint-to-first-probe window (#3515). Own-evidence rule: a parsed
-// line is OWN only when it is a plain object, is not stamped
-// `attribution: "fallback"` (context.js's guess at ownership, not evidence),
-// and carries this run's own locator: a `dir`/`path`/`worktree`/`actual` equal
-// to or under run-state's `worktree`, or a `sessionId`/`session`/
-// `callerSessionId` equal to run-state's `sessionId`. Every other parsed line
-// is FOREIGN, including an unattributed one — pre-#2783 writes carried no
-// stamp, so a sibling session's unstamped line is as foreign as a stamped one.
-// A line that fails to parse is UNPARSEABLE and still counts as content (fail
-// toward the cautious case 3); blank lines are skipped.
-const EVENT_PATH_FIELDS = ['dir', 'path', 'worktree', 'actual'];
-const EVENT_SESSION_FIELDS = ['sessionId', 'session', 'callerSessionId'];
-
-// `worktrees` holds every spelling of the run's worktree: the lexical
-// path.resolve form plus its canonical realpath when it resolves, so a symlinked
-// spelling (/var vs /private/var) on either side still reads as the same tree.
-function isOwnEvent(ev, worktrees, sessionId) {
-  if (!ev || typeof ev !== 'object' || Array.isArray(ev) || ev.attribution === 'fallback') return false;
-  if (worktrees.length && EVENT_PATH_FIELDS.some((field) => isWithin(ev[field], worktrees))) return true;
-  return sessionId !== null && EVENT_SESSION_FIELDS.some((field) => ev[field] === sessionId);
-}
-
-function isUnder(candidate, worktrees) {
-  return worktrees.some((wt) => candidate === wt || candidate.startsWith(wt + path.sep));
-}
-
-// Realpath of the nearest existing ancestor plus the not-yet-existing tail: an
-// event's path (a deleted scratch file) or a removed worktree has no realpath of
-// its own, but its symlinked parent does.
-function canonicalWithTail(p) {
-  const tail = [];
-  for (let cur = p; ; cur = path.dirname(cur)) {
-    const real = canonicalRealpath(cur);
-    if (real !== null) return path.join(real, ...tail.reverse());
-    if (path.dirname(cur) === cur) return null;
-    tail.push(path.basename(cur));
-  }
-}
-
-function isWithin(value, worktrees) {
-  if (typeof value !== 'string' || !value) return false;
-  const resolved = path.resolve(value);
-  if (isUnder(resolved, worktrees)) return true;
-  const canonical = canonicalWithTail(resolved);
-  return canonical !== null && isUnder(canonical, worktrees);
-}
-
-function worktreeSpellings(raw) {
-  if (typeof raw !== 'string' || !raw) return [];
-  const resolved = path.resolve(raw);
-  const canonical = canonicalWithTail(resolved);
-  return canonical && canonical !== resolved ? [resolved, canonical] : [resolved];
-}
-
-function classifyEvents(deps, file, state) {
-  const out = { own: 0, foreign: 0, unparseable: 0 };
+// Ledger row 1: a freshly minted run dir can pick up ANOTHER session's
+// fallback-attributed events.jsonl line (context.js's resolveRun 'fallback'
+// arm is a guess at ownership, not evidence this run did any work) within
+// the mint-to-first-probe window. A line carrying that guess must not count
+// as other-run content on its own; any line without it, or one that fails
+// to parse, still does (fail toward the existing, more cautious case 3).
+function eventsHaveOwnContent(deps, file) {
   const t = readText(deps, file);
-  if (t === null) return out;
-  const worktree = worktreeSpellings(state && state.worktree);
-  const sessionId = state && typeof state.sessionId === 'string' && state.sessionId ? state.sessionId : null;
+  if (t === null) return false;
   for (const line of t.split('\n')) {
     if (!line.trim()) continue;
     let ev;
-    try { ev = JSON.parse(line); } catch { out.unparseable += 1; continue; }
-    if (isOwnEvent(ev, worktree, sessionId)) out.own += 1; else out.foreign += 1;
+    try { ev = JSON.parse(line); } catch { return true; }
+    if (!ev || ev.attribution !== 'fallback') return true;
   }
-  return out;
+  return false;
 }
 
 // "work/{n}-spec.md committed on the run's branch", checked from the main
@@ -178,12 +126,12 @@ function specOnBranch(deps, { mainRoot, runDirReal, state }) {
   const ls = (pathspec, recursive) => {
     const args = ['ls-tree'];
     if (recursive) args.push('-r');
-    args.push('--name-only', branch, '--', pathspec);
+    args.push('--name-only', '-z', '--end-of-options', branch, '--', pathspec);
     try { return deps.git(args, { cwd: mainRoot }); } catch { return null; }
   };
   const direct = ls(`${rel}/work/`, false);
   if (direct === null) return null;
-  if (direct.split('\n').some((l) => /(^|\/)work\/\d+-spec\.md$/.test(l))) return true;
+  if (splitNul(direct).some((l) => /(^|\/)work\/\d+-spec\.md$/.test(l))) return true;
   // Multi-spec parent (#1931 I4): /dispatch hands both calls the PARENT run
   // dir, whose spec headers live under `spec-{N}/work/` — a `{rel}/work/`
   // listing is legitimately empty there. `-r` is required: without it a
@@ -191,15 +139,15 @@ function specOnBranch(deps, { mainRoot, runDirReal, state }) {
   // path the header regex could match.
   const nested = ls(`${rel}/`, true);
   if (nested === null) return null;
-  return nested.split('\n').some((l) => /(^|\/)(spec-\d+\/)?work\/\d+-spec\.md$/.test(l));
+  return splitNul(nested).some((l) => /(^|\/)(spec-\d+\/)?work\/\d+-spec\.md$/.test(l));
 }
 
 function computeAdoption({ runDir, mainRoot, cwd, deps }) {
-  if (!runDir) return { case: 5, note: null, path: null, anchored: false, hasConfig: false, hasOtherContent: false, eventsForeign: 0, specMaterialized: null, backfills: [] };
+  if (!runDir) return { case: 5, note: null, path: null, anchored: false, hasConfig: false, hasOtherContent: false, specMaterialized: null, backfills: [] };
   const target = deps.resolveTarget({ runDir, cwd, mainRoot });
   if (!target.ok) {
     const why = target.reason === 'missing' ? 'does not exist' : 'is not anchored to the main checkout';
-    return { case: 4, note: ADOPTION_NOTES[4].replace('{path}', runDir).replace(CASE4_PLACEHOLDER, why), path: runDir, anchored: false, hasConfig: false, hasOtherContent: false, eventsForeign: 0, specMaterialized: null, backfills: [] };
+    return { case: 4, note: ADOPTION_NOTES[4].replace('{path}', runDir).replace(CASE4_PLACEHOLDER, why), path: runDir, anchored: false, hasConfig: false, hasOtherContent: false, specMaterialized: null, backfills: [] };
   }
   const real = target.dir;
   const hasConfig = readText(deps, path.join(real, 'config.yml')) !== null;
@@ -214,23 +162,22 @@ function computeAdoption({ runDir, mainRoot, cwd, deps }) {
   } catch (err) {
     decisionsHasContent = !(err && err.code === 'ENOENT');
   }
-  const { own, foreign: eventsForeign, unparseable } = classifyEvents(deps, path.join(real, 'events.jsonl'), state);
-  const hasOtherContent = decisionsHasContent || own > 0 || unparseable > 0 || specMaterialized === true;
-  if (hasConfig) return { case: 1, note: ADOPTION_NOTES[1].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, eventsForeign, specMaterialized, backfills: [] };
+  const hasOtherContent = decisionsHasContent || eventsHaveOwnContent(deps, path.join(real, 'events.jsonl')) || specMaterialized === true;
+  if (hasConfig) return { case: 1, note: ADOPTION_NOTES[1].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills: [] };
   // #3242: a dispatched first call with `dispatched: true` and no `pr`
   // adopts as case 2 (fresh) even when decisions.md carries Step 1.8 or other
   // pre-Step-3 content — a compliant call 1 logs both claim and ledger lines
   // before Step 3 runs, and a recorded `pr` is what separates the #3226 call-2
   // repair from a fresh call 1.
   if (state && state.dispatched === true && !state.pr) {
-    return { case: 2, note: ADOPTION_NOTES[2].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, eventsForeign, specMaterialized, backfills: [] };
+    return { case: 2, note: ADOPTION_NOTES[2].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills: [] };
   }
-  if (!hasOtherContent) return { case: 2, note: ADOPTION_NOTES[2].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, eventsForeign, specMaterialized, backfills: [] };
+  if (!hasOtherContent) return { case: 2, note: ADOPTION_NOTES[2].replace('{path}', real), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills: [] };
   const backfills = [];
   if (!state || typeof state.worktree !== 'string') backfills.push('worktree registration');
   if (!state || !state.pr) backfills.push('PR-early lifecycle');
   if (specMaterialized !== true) backfills.push('materialize commit');
-  return { case: 3, note: ADOPTION_NOTES[3].replace('{path}', real).replace(CASE3_PLACEHOLDER, backfills.length ? backfills.join(', ') : 'nothing'), path: real, anchored: true, hasConfig, hasOtherContent, eventsForeign, specMaterialized, backfills };
+  return { case: 3, note: ADOPTION_NOTES[3].replace('{path}', real).replace(CASE3_PLACEHOLDER, backfills.length ? backfills.join(', ') : 'nothing'), path: real, anchored: true, hasConfig, hasOtherContent, specMaterialized, backfills };
 }
 
 function parseChecklist(body) {
@@ -395,4 +342,4 @@ async function gatherPreflight({ runDir, steps = [], cwd = process.cwd(), mainRo
   return pack;
 }
 
-module.exports = { ADOPTION_NOTES, PR_CONFLICT_NOTE, LEVER_KEYS, classifyEvents, computeAdoption, parseChecklist, gatherPreflight, defaultDeps };
+module.exports = { ADOPTION_NOTES, PR_CONFLICT_NOTE, LEVER_KEYS, computeAdoption, parseChecklist, gatherPreflight, defaultDeps };

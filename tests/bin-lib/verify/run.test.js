@@ -127,6 +127,35 @@ test('unknown checks are skipped when an earlier check failed, including a prece
   assert.strictEqual(results.find((r) => r.name === 'smoke').exitCode, 3);
 });
 
+test('continueSuitesAfterFailure: a failing tests no longer skips a later unknown check, a failing lint still skips both; off, today\'s skip stands (#3511)', async () => {
+  const cmds = [
+    { name: 'lint', command: 'lint' },
+    { name: 'tests', command: 'tests' },
+    { name: 'smoke', command: 'smoke' },
+  ];
+  // Option on, failing tests: the later suite still runs.
+  const on = makeFakeSpawn({ tests: { exit: 1 } });
+  const onResults = await runChecks({
+    cmds, logDir: tmpLogDir(), spawnImpl: on.spawnImpl, continueSuitesAfterFailure: true,
+  });
+  assert.deepStrictEqual(on.spawned, ['lint', 'tests', 'smoke']);
+  assert.strictEqual(onResults.find((r) => r.name === 'smoke').skipped, undefined);
+  assert.strictEqual(onResults.find((r) => r.name === 'tests').exitCode, 1);
+  // Option on, failing lint (stage 1): both suites are still skipped.
+  const lintFail = makeFakeSpawn({ lint: { exit: 2 } });
+  const lintResults = await runChecks({
+    cmds, logDir: tmpLogDir(), spawnImpl: lintFail.spawnImpl, continueSuitesAfterFailure: true,
+  });
+  assert.deepStrictEqual(lintFail.spawned, ['lint']);
+  assert.strictEqual(lintResults.find((r) => r.name === 'tests').skipped, 'fail-fast');
+  assert.strictEqual(lintResults.find((r) => r.name === 'smoke').skipped, 'fail-fast');
+  // Option off (the default): a failing tests skips the later suite, as before.
+  const off = makeFakeSpawn({ tests: { exit: 1 } });
+  const offResults = await runChecks({ cmds, logDir: tmpLogDir(), spawnImpl: off.spawnImpl });
+  assert.deepStrictEqual(off.spawned, ['lint', 'tests']);
+  assert.strictEqual(offResults.find((r) => r.name === 'smoke').skipped, 'fail-fast');
+});
+
 test('a throwing spawnImpl records a failed check with spawnError, never a silent skip (AC6)', async () => {
   const { spawnImpl } = makeFakeSpawn({ bad: { throw: 'ENOENT: no such command' } });
   const results = await runChecks({

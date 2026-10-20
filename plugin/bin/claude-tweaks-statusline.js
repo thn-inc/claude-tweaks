@@ -5,6 +5,7 @@ const os = require('os');
 const { pathToFileURL } = require('url');
 const { execSync } = require('child_process');
 const color = require('./lib/color');
+const { splitLedgerRow } = require('./lib/wrap-up/ledger-cells');
 
 const SEPARATOR = '  ';
 
@@ -340,7 +341,7 @@ function findOpenLedger(cwd) {
     }
     for (const line of content.split('\n')) {
       if (!line.startsWith('|')) continue;
-      const cells = line.split('|').map((c) => c.trim());
+      const cells = splitLedgerRow(line).map((c) => c.trim());
       if (cells.length >= 5 && cells[4] === 'open') openCount += 1;
     }
   }

@@ -146,6 +146,70 @@ function classifyByNumberError(repoRoot) {
   };
 }
 
+// #3543: a stamped pr.number that names no PR makes `gh pr view` fail exactly
+// like an outage does. The two are told apart by a structured GraphQL probe,
+// never by gh's stderr text: `gh api graphql` exits 1 on a GraphQL error but
+// still writes the response body to stdout, so the thrown error's `stdout` is
+// the evidence. Confirmed only when the repository resolved (non-null) with a
+// null pullRequest AND a NOT_FOUND error sits at exactly [repository,
+// pullRequest] — anything else (a transport failure, a FORBIDDEN, a missing
+// repo) stays 'network-failure'. owner/name/number travel as typed variables,
+// never spliced into the query string.
+const PR_NOT_FOUND_QUERY = 'query($owner:String!,$name:String!,$number:Int!){ repository(owner:$owner,name:$name){ pullRequest(number:$number){ number } } }';
+
+function isPrNotFoundBody(stdout) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return false;
+  }
+  const repo = parsed && parsed.data && parsed.data.repository;
+  if (!repo || typeof repo !== 'object' || repo.pullRequest != null) return false;
+  return Array.isArray(parsed.errors) && parsed.errors.some((e) => e
+    && e.type === 'NOT_FOUND'
+    && Array.isArray(e.path) && e.path.length === 2 && e.path[0] === 'repository' && e.path[1] === 'pullRequest');
+}
+
+function prNotFoundProbeArgs(repoRoot, number) {
+  const slug = repoSlugOf(repoRoot);
+  if (!slug) return null;
+  const [owner, name] = slug.split('/');
+  // owner/name come from `origin` (repoSlugOf) — the same origin-is-the-base-repo
+  // assumption resolvePrStatesBulk already makes — whereas `gh pr view` resolves
+  // its own base repo. In a checkout whose gh default repo is not origin, a
+  // confirm could target a different repo: worst case a false pr-not-found
+  // escalation, never a wrong archive or release.
+  // -f for the String! variables, -F only for the Int! number (#610's shipped bug shape)
+  return ['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`, '-f', `query=${PR_NOT_FOUND_QUERY}`];
+}
+
+function probeBodyOf(e) {
+  return (e && e.stdout) || '';
+}
+
+function confirmPrNotFound(repoRoot, number) {
+  const args = prNotFoundProbeArgs(repoRoot, number);
+  if (!args) return false;
+  const body = runClassified(
+    () => execFileSync('gh', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
+    probeBodyOf,
+    { retryOnTimeout: true },
+  );
+  return isPrNotFoundBody(body);
+}
+
+async function confirmPrNotFoundAsync(repoRoot, number) {
+  const args = prNotFoundProbeArgs(repoRoot, number);
+  if (!args) return false;
+  const body = await runClassifiedAsync(
+    async () => (await execFileAsync('gh', args, { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true })).stdout,
+    probeBodyOf,
+    { retryOnTimeout: true },
+  );
+  return isPrNotFoundBody(body);
+}
+
 // #1962: archive-merged.js's main sweep derives a branch name to query by
 // (`resolvePrState` above needs one), but a run dir whose worktree is
 // confirmably gone AND whose branch has since been deleted has no branch
@@ -165,11 +229,14 @@ function classifyByNumberError(repoRoot) {
 // host and repo. Returns that object, null for a falsy number, or one of the
 // strings 'gh-absent' / 'network-failure' (transport) / 'invalid-arguments'
 // (#3029: a non-string repoRoot or a number that is not a positive integer, no
-// gh call made; or a repoRoot that names no directory).
+// gh call made; or a repoRoot that names no directory) / 'pr-not-found'
+// (#3543: the primary call failed and a structured GraphQL probe confirmed the
+// repo resolves but holds no PR with that number — never derived from stderr
+// text).
 function resolvePrStateByNumber(repoRoot, number) {
   if (!number) return null;
   if (!byNumberArgsValid(repoRoot, number)) return 'invalid-arguments';
-  return runClassified(
+  const result = runClassified(
     () => {
       const stdout = execFileSync(
         'gh',
@@ -181,6 +248,7 @@ function resolvePrStateByNumber(repoRoot, number) {
     classifyByNumberError(repoRoot),
     { retryOnTimeout: true },
   );
+  return result === 'network-failure' && confirmPrNotFound(repoRoot, number) ? 'pr-not-found' : result;
 }
 
 // #1811: archive-merged.js's no-run-state.json terminal path needs to know
@@ -244,7 +312,7 @@ async function resolvePrStateAsync(repoRoot, branch) {
 async function resolvePrStateByNumberAsync(repoRoot, number) {
   if (!number) return null;
   if (!byNumberArgsValid(repoRoot, number)) return 'invalid-arguments';
-  return runClassifiedAsync(
+  const result = await runClassifiedAsync(
     async () => {
       const { stdout } = await execFileAsync(
         'gh',
@@ -256,6 +324,7 @@ async function resolvePrStateByNumberAsync(repoRoot, number) {
     classifyByNumberError(repoRoot),
     { retryOnTimeout: true },
   );
+  return result === 'network-failure' && await confirmPrNotFoundAsync(repoRoot, number) ? 'pr-not-found' : result;
 }
 
 const BULK_TIMEOUT_MS = 15000; // one chunked call covers many branches — roomier than FETCH_TIMEOUT_MS's per-branch 5s

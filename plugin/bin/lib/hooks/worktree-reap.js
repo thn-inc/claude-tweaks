@@ -203,11 +203,11 @@ function isStale(wtPath, now = Date.now(), graceMs = ORPHAN_GRACE_MS) {
 // check would refuse to reap the common case (see #106, the same trap in
 // [IL-45]'s sha-identity check).
 //
-// An empty `git diff --name-only A B` means the two trees are identical.
+// An empty `git diff --name-only -z A B` means the two trees are identical.
 // Any failure to answer returns false: unresolvable is not identical.
 function isContentIdentical(repoRoot, branch, integration) {
   if (!branch || !integration) return false;
-  const { stdout, failure } = runGit(['diff', '--name-only', integration, branch], repoRoot);
+  const { stdout, failure } = runGit(['diff', '--name-only', '-z', '--end-of-options', integration, branch], repoRoot);
   if (failure) return false;
   return stdout.trim() === '';
 }

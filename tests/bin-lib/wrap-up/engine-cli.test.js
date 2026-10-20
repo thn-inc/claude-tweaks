@@ -165,6 +165,82 @@ test('plan run from a subdirectory of the checkout still sees the root docs/jour
   assert.strictEqual(skillsRow.gate, 'open');
 });
 
+// #3431: a linked worktree shares its main checkout's .git common dir, so the
+// repo-fact root must be the worktree's own --show-toplevel. Each test builds
+// its own fixture (the shared repoDir above stays untouched).
+function withLinkedWorktree(fn) {
+  const mainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-wt-main-'));
+  const wtParent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-wt-'));
+  const wtDir = path.join(wtParent, 'wt');
+  try {
+    git(['init', '-q'], mainDir);
+    git(['config', 'user.email', 'test@example.com'], mainDir);
+    git(['config', 'user.name', 'Test'], mainDir);
+    fs.writeFileSync(path.join(mainDir, 'CLAUDE.md'), '# Test project\n');
+    fs.mkdirSync(path.join(mainDir, 'docs', 'journeys'), { recursive: true });
+    fs.writeFileSync(
+      path.join(mainDir, 'docs', 'journeys', 'j1.md'),
+      ['---', 'title: Journey 1', 'files:', '  - src-a.js', '---', '', '# Journey 1', ''].join('\n'),
+    );
+    git(['add', '.'], mainDir);
+    git(['commit', '-q', '-m', 'base'], mainDir);
+    const baseSha = git(['rev-parse', 'HEAD'], mainDir);
+
+    git(['worktree', 'add', '-q', '-b', 'wt-branch', wtDir, 'HEAD'], mainDir);
+    fs.writeFileSync(path.join(wtDir, 'src-a.js'), 'module.exports = 1;\n');
+    // j2 exists only in the worktree, so its frontmatter is readable only if
+    // buildJourneyFrontmatter reads the worktree top-level, not the main checkout.
+    fs.writeFileSync(
+      path.join(wtDir, 'docs', 'journeys', 'j2.md'),
+      ['---', 'title: Journey 2', 'files:', '  - src-a.js', '---', '', '# Journey 2', ''].join('\n'),
+    );
+    git(['add', '.'], wtDir);
+    git(['commit', '-q', '-m', 'wt change'], wtDir);
+
+    return fn({ mainDir, wtDir, baseSha });
+  } finally {
+    try { git(['worktree', 'remove', '--force', wtDir], mainDir); } catch { /* already gone */ }
+    fs.rmSync(wtParent, { recursive: true, force: true });
+    fs.rmSync(mainDir, { recursive: true, force: true });
+  }
+}
+
+function journeyCandidatesFrom({ mainDir, baseSha }, cwd) {
+  const runDir = fs.mkdtempSync(path.join(mainDir, 'rundir-'));
+  const r = run(['plan', '--run-dir', runDir, '--base', baseSha, '--dry-run'], { cwd });
+  assert.strictEqual(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout).rows.find((row) => row.id === 'journeys').scope.candidates;
+}
+
+test('AC1/AC3: plan run from a linked worktree reports the worktree branch diff in the journeys row (#3431)', () => {
+  withLinkedWorktree((fixture) => {
+    assert.deepStrictEqual(
+      journeyCandidatesFrom(fixture, fixture.wtDir),
+      ['docs/journeys/j1.md', 'docs/journeys/j2.md'],
+    );
+  });
+});
+
+test('AC1: plan run from a subdirectory of a linked worktree still resolves the worktree top-level (#3431)', () => {
+  withLinkedWorktree((fixture) => {
+    const subdir = fs.mkdtempSync(path.join(fixture.wtDir, 'sub-'));
+    assert.deepStrictEqual(
+      journeyCandidatesFrom(fixture, subdir),
+      ['docs/journeys/j1.md', 'docs/journeys/j2.md'],
+    );
+  });
+});
+
+test('AC2: plan run from a linked worktree still appends telemetry to the main checkout (#3431)', () => {
+  withLinkedWorktree(({ mainDir, wtDir, baseSha }) => {
+    const runDir = fs.mkdtempSync(path.join(mainDir, 'rundir-'));
+    const r = run(['plan', '--run-dir', runDir, '--base', baseSha], { cwd: wtDir });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.ok(fs.existsSync(path.join(mainDir, '.claude-tweaks', 'wrap-up-outcomes.tsv')));
+    assert.strictEqual(fs.existsSync(path.join(wtDir, '.claude-tweaks', 'wrap-up-outcomes.tsv')), false);
+  });
+});
+
 test('plan without --dry-run appends telemetry under the resolved repo root', () => {
   // In this fixture, repoDir is a normal (non-worktree) checkout, so
   // `git rev-parse --git-common-dir`'s parent resolves to repoDir itself.

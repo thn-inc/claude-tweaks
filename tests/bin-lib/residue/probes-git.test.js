@@ -348,6 +348,28 @@ test('the default (no isDirty override) never crashes and preserves today\'s loc
   assert.match(done.evidence, /dirty: unknown/);
 });
 
+test('under --scope blast-radius the probe runs no per-worktree dirty or liveness check and reports no findings (#3479)', () => {
+  let dirtyCalls = 0; let pidCalls = 0;
+  const r = probeWorktrees({ scope: SCOPE, cliScope: 'blast-radius', isDirty: () => { dirtyCalls += 1; return false; }, isPidAlive: () => { pidCalls += 1; return true; } });
+  assert.strictEqual(r.ran, true);
+  assert.strictEqual(r.reason, null);
+  assert.deepStrictEqual(r.findings, []);
+  assert.strictEqual(dirtyCalls, 0);
+  assert.strictEqual(pidCalls, 0);
+});
+
+test('without cliScope, the dirty check still runs for every unlocked sibling worktree (#3479)', () => {
+  const seen = [];
+  probeWorktrees({ scope: SCOPE, isDirty: (p) => { seen.push(p); return false; } });
+  assert.deepStrictEqual(seen, ['/repo/.claude/worktrees/done', '/repo/.worktrees/fallback']);
+});
+
+test('the blast-radius short-circuit matches what filterResultsByScope would have kept (#3479)', () => {
+  const full = probeWorktrees({ scope: SCOPE, isDirty: () => false, isPidAlive: () => true });
+  const [filtered] = filterResultsByScope([full], 'blast-radius');
+  assert.deepStrictEqual(probeWorktrees({ scope: SCOPE, cliScope: 'blast-radius' }), filtered);
+});
+
 // Fixture-based: exercises the real `defaultIsDirty` (actual `git status
 // --porcelain`) against real worktrees on disk, per #1424's Deliverables.
 function tmpGitRepo() {

@@ -25,7 +25,7 @@ A `SCANNED` entry (the scan-summary log line the engine writes for any curation 
 
 A `FAILED` entry (a batch write that errored — see `_shared/auto-decision-log.md`'s Status semantics) renders in this section too, with `Status` = `Failed`, `Where` = the record ref or call site the write targeted (no commit ref — nothing landed), and the `What` cell naming the write type and the error. It is never an approve-or-revert row: nothing was applied, so Override has nothing to act on and Approve all resolves it to a no-op. It still counts as decision-bearing for the Empty-console fast path (`review-console.md`), so a run whose only decision-bearing line is a `FAILED` one renders this section with that row alone — which is the point: the operator sees the failed write and retries it from the producing skill's own closing summary (`backlog/refine-mode.md` Step 5's paste-ready retry).
 
-#### Pending review (staged — apply, skip, or modify per item)
+#### Pending review (staged — apply, skip, or modify per item; `ratify`/`reverse` an `sdd-ruling-*` row)
 
 | # | Skill | What | Detail | Patch |
 |---|---|---|---|---|

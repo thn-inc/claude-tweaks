@@ -7,6 +7,8 @@
 // reporter, #3043), generic.
 // `extractFailingFiles` (#1925) names the failing TEST files the same way,
 // ANSI-stripped, for the runner's flaky retry; `[]` when nothing parses.
+// `unattributedFailureCount` accounts spec, tap, and the jest/vitest dialects
+// of summary (#3480); pytest and an ambiguous summary log return null.
 'use strict';
 
 const MAX_REGION_LINES = 100;
@@ -195,8 +197,10 @@ const TAP_FRAME_RE = /(?:location:\s*'(.+?):\d+:\d+'|\((.+?):\d+:\d+\)|\bat\s+(.
 // for vitest/jest, `::` for pytest's `path::name` (review finding, refs
 // #1925 — `:` must not be swallowed into the capture), or end of line for a
 // bare `FAIL path` — never at a bare space, which would truncate a
-// space-containing path.
-const SUMMARY_FAIL_RE = /^\s*(?:FAIL|❯|FAILED)\s+(.+?)(?=\s>\s|\s\(|::|$)/;
+// space-containing path. ` [` also terminates it: vitest's `Failed Suites`
+// block prints ` FAIL  path [ path ]` (#3480), and without the bracket
+// terminator the suffix is swallowed into the capture.
+const SUMMARY_FAIL_RE = /^\s*(?:FAIL|❯|FAILED)\s+(.+?)(?=\s>\s|\s\(|\s\[|::|\r?$)/;
 
 // A run of backslashes is ONE separator: node's TAP `location: '...'` line is
 // YAML-quoted, so on Windows it carries `\\` per separator — read as two, the
@@ -560,6 +564,106 @@ function countUnmatchedFailures(text, family, { cwd = process.cwd(), exists } = 
     .filter(({ file }) => !isRetryableFile(relativize(file, cwd), exists)).length;
 }
 
+// The runner behind a summary-family log, from its own summary block: jest
+// prints `Test Suites:`/`Tests:` (colon), vitest a colon-free `Test Files  N`.
+// null when neither (pytest, anything unrecognized) or more than one — a log
+// carrying two runners' markers (jest and vitest, or either beside pytest's
+// `=== 1 failed in 0.02s ===` banner) is ambiguous, and accounting against
+// one runner's summary line would read the other's failures as accounted
+// (#3480). Expects ANSI-stripped text.
+function summaryDialect(text) {
+  const jest = /^Test Suites:/m.test(text) || /^Tests:/m.test(text);
+  const vitest = /^\s*Test Files\s+\d+/m.test(text);
+  const pytest = /^=+ .*\b(?:passed|failed|errors?)\b.* in [\d.]+s.*=+$/m.test(text);
+  if (pytest || jest === vitest) return null;
+  return jest ? 'jest' : 'vitest';
+}
+
+// Runner lines that fail the run yet name no test file, so retrying the named
+// files would clear a check that still fails (#3480). Each line counts one.
+// No runner-specific wording matches the other runner's output, and Node's
+// crash trailer belongs to both, so the list applies to both dialects.
+const UNATTRIBUTED_LINE_RES = [
+  // jest's three coverage-failure wordings (CoverageReporter.js: `Jest:
+  // "global" coverage threshold for lines (100%) not met: 66.66%`, a negative
+  // threshold's `Jest: Uncovered count for lines (5) exceeds global threshold
+  // (2)`, and a path/glob group with no data, `Jest: Coverage data for X was
+  // not found.`).
+  /^Jest: (?:.*coverage threshold for .* not met|Uncovered count for .* exceeds|Coverage data for .* was not found)/gm,
+  // vitest's `ERROR: Coverage for lines (50%) does not meet global threshold
+  // (100%)` (or `"glob" threshold`).
+  /^ERROR: Coverage for .* does not meet .*threshold/gm,
+  // jest's obsolete snapshots: TestScheduler.js fails the run on an unchecked
+  // snapshot or an orphaned snapshot file unless `-u` was passed, and the only
+  // trace is the summary's `Snapshots:   1 obsolete, …` / `1 file obsolete`.
+  // (vitest reports obsolete snapshots without failing the run.)
+  /^Snapshots:.*\bobsolete\b/gm,
+  // jest's global setup/teardown (runGlobalHook.js): `Error: Jest: Got error
+  // running globalTeardown - <path>, reason: …`, under whatever name the thrown
+  // error carries (`TypeError: Jest: …` for a module that exports no
+  // function), and any other `Error: Jest: ` crash jest-cli prints.
+  /^(?:[\w$.]*Error(?: \[[\w-]+\])?: Jest: |(?:[\w$.]+: )?Jest: Got error running global(?:Setup|Teardown)\b)/gm,
+  // vitest's global setup/teardown (cli-api): the `⎯ Error during global
+  // setup ⎯` banner and `error during global teardown of <file>`.
+  /^(?:⎯+ )?error during global (?:setup|teardown)\b/gim,
+  // Node's own fatal-exception trailer (`Node.js v22.23.2`): the runner
+  // process crashed after its summary printed, e.g. on an unhandled rejection
+  // a global teardown left behind.
+  /^Node\.js v\d+\.\d+\.\d+\s*$/gm,
+];
+
+// A run cut short before every test file reported (#3480). jest's bail prints
+// `Test Suites: 1 failed, 1 of 3 total`, but a skipped suite prints the same
+// `N of M` form (`1 failed, 1 skipped, 1 passed, 2 of 3 total`), so only a
+// reported count (failed + skipped + passed) below M is a cut. vitest 1.6
+// prints no bail marker: its cancelled files read `2 skipped`, so any skipped
+// file counts, a whole-file `describe.skip` included. That over-refusal only
+// falls back to the whole-suite re-run.
+function interruptedRun(summary, dialect) {
+  if (dialect === 'vitest') return /\b[1-9]\d* skipped\b/.test(summary);
+  const of = summary.match(/(\d+) of (\d+) total/);
+  if (!of) return false;
+  const reported = [...summary.matchAll(/(\d+) (?:failed|skipped|passed)\b/g)].reduce((s, m) => s + Number(m[1]), 0);
+  return reported < Number(of[2]);
+}
+
+// The summary family's per-dialect accounting (#3480) — see the comment on
+// `unattributedFailureCount`. null for pytest and an ambiguous log.
+function summaryUnattributedCount(text, { cwd }) {
+  const clean = stripAnsi(text);
+  const dialect = summaryDialect(clean);
+  if (dialect === null) return null;
+  const named = new Set();
+  let unmatched = 0;
+  for (const line of clean.split('\n')) {
+    if (!/^\s*FAIL\s/.test(line)) continue;
+    const m = line.match(SUMMARY_FAIL_RE);
+    const rel = m && relativize(m[1], cwd);
+    if (rel && isRetryableFile(rel)) named.add(rel);
+    else unmatched += 1;
+  }
+  let nonFile = UNATTRIBUTED_LINE_RES.reduce((sum, re) => sum + (clean.match(re) || []).length, 0);
+  if (dialect === 'vitest') {
+    const errors = clean.match(/^\s*Errors\s+(\d+) errors?\b/m);
+    // `Unhandled Rejection` is the banner of a main-process rejection (a
+    // reporter's `onFinished`) printed after the summary — no `Errors` line.
+    // `Source Errors` is the typecheck pool's block for errors outside every
+    // test file, which fails the run the same way.
+    const errorsCount = errors ? Number(errors[1]) : 0;
+    const hasBanner = /^⎯+ (?:Unhandled (?:Errors?|Rejections?)|Source Errors) ⎯+/m.test(clean);
+    nonFile += Math.max(errorsCount, hasBanner ? 1 : 0);
+  }
+  // More than one summary line is a concatenated multi-run log: the first
+  // run's total never accounts for the rest.
+  const totalLines = clean.match(dialect === 'jest' ? /^Test Suites:.*$/gm : /^\s*Test Files\s.*$/gm) || [];
+  if (totalLines.length > 1) nonFile += 1;
+  if (totalLines.length === 1 && interruptedRun(totalLines[0], dialect)) nonFile += 1;
+  if (unmatched + nonFile > 0) return unmatched + nonFile;
+  if (totalLines.length === 0) return 1;
+  const failed = totalLines[0].match(/(\d+) failed/);
+  return Math.abs(named.size - (failed ? Number(failed[1]) : 0));
+}
+
 // Whether a spec/tap log's failing-file list accounts for the whole
 // failure — the same accounting `baseline.js`'s `adjudicate` already
 // applies before trusting a classification, reused here so the flaky-retry
@@ -571,11 +675,20 @@ function countUnmatchedFailures(text, family, { cwd = process.cwd(), exists } = 
 // `ℹ fail`/`# fail` + `ℹ cancelled`/`# cancelled` — any of these means the
 // failing-file list used to plan a retry is an undercount, so retrying and
 // passing those named files would wrongly clear the whole check. Returns 0
-// (accounted) or a positive count (unattributed); every family other than
-// spec/tap returns null — no failure-accounting guard exists for it (the
-// same refusal `baseline.js`'s `adjudicate` applies), so a caller must never
-// read it as accounted (#3204).
+// (accounted) or a positive count (unattributed). The summary family is
+// accounted per dialect (#3480): jest compares the distinct test files on its
+// `FAIL` lines against `Test Suites: N failed`, vitest against `Test Files N
+// failed` plus its `Errors` block, and both add every `FAIL` line naming no
+// test file, every `UNATTRIBUTED_LINE_RES` line (coverage, a global hook, a
+// jest obsolete snapshot, a crashed runner), an interrupted run, and a log
+// carrying more than one summary line — failures no file accounts for.
+// pytest (collection `ERROR`s sit outside every `FAILED` line) and an
+// ambiguous summary log (more than one runner's markers, or none) return null, as
+// does every family other than spec/tap/summary — no failure-accounting guard
+// exists for it (the same refusal `baseline.js`'s `adjudicate` applies), so a
+// caller must never read null as accounted (#3204).
 function unattributedFailureCount(text, family, { cwd = process.cwd() } = {}) {
+  if (family === 'summary') return summaryUnattributedCount(text, { cwd });
   if (family !== 'spec' && family !== 'tap') return null;
   const unmatched = countUnmatchedFailures(text, family, { cwd });
   if (unmatched > 0) return unmatched;
@@ -615,7 +728,7 @@ function extractFailingFiles(text, family, { cwd = process.cwd(), exists } = {})
 
 module.exports = {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine,
-  stripAnsi, extractFailingFiles, countUnmatchedFailures, unattributedFailureCount, fileLevelFailures, failingTestsByFile, specEntryCount,
+  stripAnsi, extractFailingFiles, countUnmatchedFailures, unattributedFailureCount, summaryDialect, fileLevelFailures, failingTestsByFile, specEntryCount,
   cancelledCount, testTree, tapLines, TEST_FILE_RE,
   MAX_REGION_LINES, GENERIC_TAIL_LINES, MAX_LINE_CHARS,
 };

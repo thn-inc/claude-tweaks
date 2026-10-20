@@ -919,6 +919,50 @@ test('reconcile: no network / no remote resolves to no-remote, never crashes (AC
   assert.deepStrictEqual(r.skipped, [{ check: 'all', reason: 'no-remote' }]);
 });
 
+// #3503 F5: index.js hands archiveMerged's `unclosed` through to result.runs. A
+// real reconcile() pass over a merged PR that leaves 3311 unclosed (its issue is
+// OPEN) must report the skip with the record list, not just the reason.
+test('reconcile: an archive merged-partial skip carries unclosed through to result.runs (#3503)', async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-partial-')));
+  git(['init', '-q', '--initial-branch=main'], root);
+  git(['config', 'user.email', 'test@example.com'], root);
+  git(['config', 'user.name', 'Test'], root);
+  fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
+  git(['add', 'a.txt'], root);
+  git(['commit', '-q', '-m', 'seed'], root);
+  git(['branch', 'feat-partial'], root);
+  git(['remote', 'add', 'origin', 'git@github.com:acme/w.git'], root);
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\n');
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-10-17T062549-spec-3306-3311');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active', worktree: path.join(root, '.claude', 'worktrees', 'gone'), pr: { number: 3503100, branch: 'feat-partial' },
+  }));
+  const pr = {
+    number: 3503100, state: 'MERGED', mergedAt: '2026-10-19T00:00:00Z', updatedAt: '2026-10-19T00:00:00Z',
+    closingIssuesReferences: [{ number: 3306, repository: { name: 'w', owner: { login: 'acme' } } }],
+  };
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-partial-gh-'));
+  fs.writeFileSync(path.join(wrapperDir, 'gh'), [
+    '#!/bin/sh',
+    'if [ "$1" = "issue" ]; then echo \'{"state":"OPEN"}\'; exit 0; fi',
+    `cat <<'EOF'\n${JSON.stringify(pr)}\nEOF`,
+    '',
+  ].join('\n'), { mode: 0o755 });
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  let r;
+  try {
+    r = await reconcile({ cwd: root, checks: ['archive'], resolveIntegrationModel: () => 'pr-first' });
+  } finally {
+    process.env.PATH = originalPath;
+  }
+  assert.deepStrictEqual(r.runs, [{ runDir, action: 'skipped', reason: 'merged-partial', unclosed: [3311] }]);
+});
+
 // #3132: a fresh clone in a cloud/Routine sandbox has no local
 // refs/remotes/origin/HEAD. A plain `git clone` normally sets it, so the
 // fixture deletes it explicitly — a fixture that merely clones would pass
@@ -1641,6 +1685,92 @@ test('reconcile(): an exhausted wall-clock budget skips every remaining check in
     preflight.ghHealthCheck = originalHealth;
     preflight.ghHealthCheckAsync = originalHealthAsync;
   }
+});
+
+// --- opts.budgetMs override (#3026): an explicit --checks subset runs unbounded ---
+
+// Shared forcing for the budgetMs tests: same pr-first policy + preflight
+// stubs as the D4 test above, plus a createBudget stub that records its
+// argument and reports "exceeded" for any finite ceiling.
+async function withRecordedBudget(fn) {
+  const { mainDir } = pairedFixture();
+  fs.mkdirSync(path.join(mainDir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+  const originalHealth = preflight.ghHealthCheck;
+  const originalHealthAsync = preflight.ghHealthCheckAsync;
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
+  const budgetMod = require('../plugin/bin/lib/reconcile/budget');
+  const original = budgetMod.createBudget;
+  const seen = [];
+  budgetMod.createBudget = (ms) => {
+    seen.push(ms);
+    return { exceeded: () => ms !== Infinity, remainingMs: () => 0 };
+  };
+  try {
+    await fn({ mainDir, seen });
+  } finally {
+    budgetMod.createBudget = original;
+    preflight.ghHealthCheck = originalHealth;
+    preflight.ghHealthCheckAsync = originalHealthAsync;
+  }
+}
+
+test('AC1.1: reconcile(): opts.budgetMs reaches createBudget, so an unbounded explicit subset is never budget-skipped', async () => {
+  await withRecordedBudget(async ({ mainDir, seen }) => {
+    const r = await reconcile({ cwd: mainDir, checks: ['mirror', 'red-tip'], budgetMs: Infinity });
+    assert.deepEqual(seen, [Infinity]);
+    assert.equal(
+      (r.skipped || []).some((s) => s.reason === 'budget-exceeded'),
+      false,
+      'an Infinity budget must never skip a check as budget-exceeded',
+    );
+  });
+});
+
+test('AC2.1: reconcile(): no opts.budgetMs passes undefined to createBudget, so the 18 s default applies', async () => {
+  await withRecordedBudget(async ({ mainDir, seen }) => {
+    const r = await reconcile({ cwd: mainDir, checks: ['mirror', 'red-tip'] });
+    assert.deepEqual(seen, [undefined]);
+    assert.deepEqual(r.skipped, [{ check: 'mirror,red-tip', reason: 'budget-exceeded' }]);
+    assert.equal(require('../plugin/bin/lib/reconcile/budget').DEFAULT_BUDGET_MS, 18000);
+  });
+});
+
+test('AC3.1/AC3.2: hooks.js reconcile: an explicit --checks subset runs unbounded; an unscoped pass keeps the default budget', async () => {
+  const { main } = require('../plugin/bin/hooks');
+  const reconcileMod = require('../plugin/bin/lib/reconcile');
+  const originalReconcile = reconcileMod.reconcile;
+  const originalWrite = process.stdout.write;
+  const calls = [];
+  reconcileMod.reconcile = async (opts) => { calls.push(opts); return { skipped: [] }; };
+  process.stdout.write = () => true;
+  try {
+    await main(['node', 'hooks.js', 'reconcile', '--checks', 'reap', '--json']);
+    await main(['node', 'hooks.js', 'reconcile', '--json']);
+  } finally {
+    reconcileMod.reconcile = originalReconcile;
+    process.stdout.write = originalWrite;
+  }
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].budgetMs, Infinity);
+  assert.deepEqual(calls[0].checks, ['reap']);
+  assert.equal(calls[1].budgetMs, undefined);
+  assert.equal(calls[1].checks, undefined);
+  // An explicit subset never stamps the shared freshness key; an unscoped pass still does.
+  assert.equal(calls[0].skipCacheStamp, true);
+  assert.equal(calls[1].skipCacheStamp, undefined);
+});
+
+test('AC4.1: SessionStart and background reconcile call sites pass no budgetMs (default budget)', () => {
+  const sessionStart = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'session-start.js'), 'utf8');
+  assert.equal(sessionStart.includes('budgetMs'), false);
+  const hooksSrc = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js'), 'utf8');
+  assert.equal(hooksSrc.split('budgetMs').length - 1, 1, 'budgetMs occurs once in hooks.js — the reconcile CLI branch');
+  const bgLine = hooksSrc.split('\n').find((l) => l.includes('checks: BACKGROUND_CHECKS'));
+  assert.ok(bgLine, 'background reconcile call site found');
+  assert.equal(bgLine.includes('budgetMs'), false);
 });
 
 // --- shared fetch (#820 D2): mirror and remote-prune merge into one fetch ---

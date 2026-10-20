@@ -1450,13 +1450,14 @@ test('reference-repairs check fails when Initiative-Fix commit diff touches a fi
   }));
   const fakeGit = (args) => {
     if (args[0] === 'log' && args.includes('--grep=Initiative-Fix:')) return 'def5678 Initiative-Fix: repair refs\n';
-    if (args[0] === 'diff-tree' && args.includes('--name-only')) return 'docs/a.md\ndocs/b.md\n';
+    if (args[0] === 'diff-tree' && args.includes('--name-only')) return 'docs/a.md\0docs/b.md\0';
     return '';
   };
   const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
   const row = result.rows.find((r) => r.check === 'reference-repairs');
   assert.strictEqual(row.result, 'fail');
-  assert.match(row.detail, /docs\/b\.md/);
+  // Exact: a '\n'-split parse would fold both NUL-separated paths into one token.
+  assert.strictEqual(row.detail, 'Initiative-Fix: commit touches unrelated file(s): docs/b.md');
 });
 
 // ---- reference-repairs: pr-first verification via the PR's own (pre-squash)
@@ -2023,6 +2024,42 @@ test('AC2.2: the same PR brief authored COLLABORATOR satisfies a trusted pointer
   assert.strictEqual(row.result, 'pass');
 });
 
+// #3333: in a multi-spec run the Verification Brief lands on the shared PR as
+// `<!-- run-comment: brief:{n} -->`; acceptance-labeling reads that marker
+// first and falls back to the plain `brief` marker (single-spec / pre-change).
+const QUALIFIED_BRIEF = (n) => `<!-- run-comment: brief:${n} -->\n\n## Verification Brief\n### Confirmed\n`;
+const MEMBER_POINTER = [{ body: TRUST_POINTER_BODY, url: 'https://x/p1', author: { login: 'bot' }, authorAssociation: 'MEMBER' }];
+const memberPrComment = (body, url) => ({ body, url, author: { login: 'bot' }, authorAssociation: 'MEMBER' });
+
+test('AC4.1: acceptance-labeling passes via a spec-qualified brief:{n} PR comment', () => {
+  const { row } = acceptanceTrustRow({ withPr: true, issueComments: MEMBER_POINTER,
+    prComments: [memberPrComment(QUALIFIED_BRIEF(900), 'https://x/pr1')] });
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test("AC1.1: a sibling spec's brief:{m} does not satisfy #n", () => {
+  const { row } = acceptanceTrustRow({ withPr: true, issueComments: MEMBER_POINTER,
+    prComments: [901, 9000].map((m) => memberPrComment(QUALIFIED_BRIEF(m), `https://x/pr${m}`)) });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /pointer to PR #1199 found but no confirmed Verification Brief on PR #1199/);
+  assert.match(row.detail, /looked for brief:900, then brief/);
+});
+
+test('AC3.1: acceptance-labeling falls back to the plain brief marker (single-spec / pre-change brief)', () => {
+  const { row } = acceptanceTrustRow({ withPr: true, issueComments: MEMBER_POINTER,
+    prComments: [memberPrComment(TRUST_PR_BRIEF_BODY, 'https://x/pr1')] });
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('AC4.1: an untrusted brief:{n} falls back to a trusted plain brief and names the skipped comment', () => {
+  const { row } = acceptanceTrustRow({ withPr: true, issueComments: MEMBER_POINTER, prComments: [
+    { body: QUALIFIED_BRIEF(900), url: 'https://x/q1', author: { login: 'eve' }, authorAssociation: 'NONE' },
+    memberPrComment(TRUST_PR_BRIEF_BODY, 'https://x/pr1'),
+  ] });
+  assert.strictEqual(row.result, 'pass', row.detail);
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/q1 by eve \(NONE\)/);
+});
+
 test('a trusted brief after an untrusted one passes and still names the skipped one', () => {
   const { row } = acceptanceTrustRow({
     issueComments: [
@@ -2459,15 +2496,20 @@ test('reference-repairs check runs git log and git diff-tree against the injecte
   const fakeGit = (args, callCwd) => {
     calls.push({ args, cwd: callCwd });
     if (args[0] === 'log' && args.includes('--grep=Initiative-Fix:')) return 'def5678 Initiative-Fix: repair refs\n';
-    if (args[0] === 'diff-tree' && args.includes('--name-only')) return 'docs/a.md\n';
+    if (args[0] === 'diff-tree' && args.includes('--name-only')) return 'docs/a.md\0';
     return '';
   };
   try {
-    runVerify({ runDir, base: 'main', repoRoot, cwd, deps: { git: fakeGit, gh: () => '' } });
+    const result = runVerify({ runDir, base: 'main', repoRoot, cwd, deps: { git: fakeGit, gh: () => '' } });
+    // The fake returns only the applied file, NUL-terminated: a pass proves the NUL parse (splitNul), not a '\n' split.
+    const row = result.rows.find((r) => r.check === 'reference-repairs');
+    assert.strictEqual(row.result, 'pass');
     const logCall = calls.find((c) => c.args[0] === 'log' && c.args.includes('--grep=Initiative-Fix:'));
     const diffCall = calls.find((c) => c.args[0] === 'diff-tree');
     assert.ok(logCall, 'expected a git log call');
     assert.ok(diffCall, 'expected a git diff-tree call');
+    // -z so a non-ASCII path is read raw (not C-quoted); the sha is the fake log's one line.
+    assert.deepStrictEqual(diffCall.args, ['diff-tree', '--no-commit-id', '--name-only', '-r', '-z', '--end-of-options', 'def5678 Initiative-Fix: repair refs']);
     assert.strictEqual(logCall.cwd, cwd);
     assert.strictEqual(diffCall.cwd, cwd);
     assert.notStrictEqual(logCall.cwd, repoRoot);
