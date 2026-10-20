@@ -18,6 +18,8 @@ const path = require('node:path');
 const PLUGIN = path.join(__dirname, '..', 'plugin');
 const TASK_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'task-prompt.md');
 const BUILD_DISPATCH = path.join(PLUGIN, 'skills', 'build', 'dispatch.md');
+const CORE = path.join(PLUGIN, 'skills', '_shared', 'subagent-dispatch-core.md');
+const OUTPUT_CONTRACT = path.join(PLUGIN, 'skills', '_shared', 'subagent-output-contract.md');
 
 // The load-bearing facts a reader (human or dispatched agent) must come away with — the exact
 // failure mode #1965 documents. Each `\s+` absorbs the templates' hard line wrapping; the
@@ -81,4 +83,61 @@ test('the foreground-instruction predicate can actually go red (discrimination p
       assert.doesNotMatch(block, pattern, 'doctored block unexpectedly still matches — test cannot discriminate');
     }
   }
+});
+
+// #3078: a nested Agent child launches async, and its <task-notification> reaches the dispatcher
+// only while the dispatcher's turn is alive. The core section must state that rule and its
+// fallback; the output contract must no longer tell a nested dispatcher to yield across turns.
+function coreForegroundSection(text) {
+  const start = text.indexOf('## Foreground Execution Discipline');
+  assert.notEqual(start, -1, 'subagent-dispatch-core.md lost its "## Foreground Execution Discipline" heading (Tasks 3-4 cite it by name)');
+  const next = text.indexOf('\n## ', start + 1);
+  return text.slice(start, next === -1 ? undefined : next);
+}
+
+// Each `\s+` absorbs the hard line wrapping, as in REQUIRED above.
+const KEEP_ALIVE = [
+  [/always\s+launches\s+async/i, 'a nested Agent call always launches async'],
+  [/keep[s]?\s+(?:its|your|the)\s+(?:own\s+)?turn\s+alive/i, 'the dispatcher keeps its own turn alive'],
+  [/never\s+end[s]?\s+(?:its|your|the)\s+turn\s+with\s+(?:a|one)\s+child\s+outstanding/i, 'the dispatcher never ends its turn with a child outstanding'],
+  [/no\s+`Agent`\/`Task`\s+tool/i, 'the fallback covers the no-Agent/Task-tool case'],
+  [/`unconfirmed`/, 'findings from a self-judged unit are marked unconfirmed'],
+  [/ignored/i, 'a late child result is ignored'],
+];
+
+const OLD_YIELD_SENTENCE = 'must yield control across several of its own turns';
+
+test('subagent-dispatch-core.md states the nested-dispatch keep-alive rule and its fallback (#3078)', () => {
+  const core = fs.readFileSync(CORE, 'utf8');
+  const section = coreForegroundSection(core);
+  for (const [pattern, fact] of KEEP_ALIVE) {
+    assert.match(section, pattern, `Foreground Execution Discipline must state that ${fact} (#3078)`);
+  }
+  assert.doesNotMatch(
+    core,
+    /\*\*No `Task`\/Agent tool available\.\*\*/,
+    'the standalone No-Task paragraph must be folded into the new fallback clause (#3078)',
+  );
+});
+
+test('subagent-output-contract.md no longer tells a nested dispatcher to yield across turns (#3078)', () => {
+  const contract = fs.readFileSync(OUTPUT_CONTRACT, 'utf8');
+  assert.doesNotMatch(contract, new RegExp(OLD_YIELD_SENTENCE), 'the output contract still instructs nested dispatchers to yield across turns (#3078)');
+  assert.match(contract, /INTERIM_STATUS/);
+});
+
+test('the keep-alive predicate can actually go red (discrimination proof)', () => {
+  const paragraphs = coreForegroundSection(fs.readFileSync(CORE, 'utf8')).split(/\r?\n\r?\n/);
+  const kept = paragraphs.filter((p) => !KEEP_ALIVE[0][0].test(p));
+  assert.equal(
+    paragraphs.length - kept.length,
+    1,
+    'expected to doctor out exactly the nested-children paragraph — anchor text not found',
+  );
+  const doctored = kept.join('\n\n');
+  const failing = KEEP_ALIVE.filter(([pattern]) => !pattern.test(doctored));
+  assert.ok(failing.length > 0, 'doctored section still matches every keep-alive predicate — test cannot discriminate');
+
+  const reinserted = fs.readFileSync(OUTPUT_CONTRACT, 'utf8') + `\n${OLD_YIELD_SENTENCE}.`;
+  assert.match(reinserted, new RegExp(OLD_YIELD_SENTENCE), 'the forbidden-sentence pattern does not match the old wording');
 });

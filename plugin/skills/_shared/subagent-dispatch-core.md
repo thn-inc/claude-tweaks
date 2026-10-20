@@ -42,29 +42,34 @@ During worktree-mode pipeline runs this rule is mechanically enforced — the pl
 
 ## Foreground Execution Discipline
 
-**A dispatched agent (`Agent`/`Task`-invoked) does not receive `Monitor` or background-task
-completion notifications the way a top-level interactive session does.** Instructing it to start
-a background verification loop (a backgrounded `Bash` call, a `Monitor` watch) or a child
-`Agent`/`Task` dispatch and then end its own turn to "wait for the notification" hangs that
-agent indefinitely — nothing external ever arrives to resume a dispatched agent's turn the way a
-completion notification resumes a top-level session, so the run stalls silently until an outside
-caller intervenes. Observed as a harness-level `contract-violation` pattern: 13+ occurrences of
-an agent narrating "waiting for the background task/Monitor notification" and stopping mid-turn
-across a single build phase, plus 2 more in a separate review/wrap-up session, corrected only by
-an external coordinator (#1965, #2271).
+**Background work.** A dispatched agent is never re-woken once its turn ends, so a backgrounded
+`Bash` call or `Monitor` watch it ends on hangs it until an outside caller intervenes. Observed as
+a harness-level `contract-violation` pattern: 13+ occurrences of agents narrating "waiting for the
+background task/Monitor notification" and stopping mid-turn in one build phase, plus 2 more in a
+review/wrap-up session, corrected only externally (#1965, #2271). Run long-running commands in the
+**foreground** of the current turn — a generous timeout, output redirected to a file if it's
+long — never `run_in_background`, and never end a turn hoping a notification will re-wake it.
+`test/verification.md`'s Foreground rule and `dispatch/task-prompt.md`'s foreground-execution
+instruction are the concrete pattern; point a new dispatch site at them rather than re-deriving it.
 
-Run a verification loop, a full test suite, or any other long-running command in the
-**foreground** of the current turn instead — a generous timeout, output redirected to a file if
-it's long — never `run_in_background`, and never end a turn hoping a later notification will
-re-wake it. `test/verification.md`'s Foreground rule and `dispatch/task-prompt.md`'s
-foreground-execution instruction are the concrete pattern already applied at those call sites;
-point a new dispatch site at the same pattern rather than re-deriving it.
+**Nested `Agent` children (#2644, #3078).** A nested `Agent` call from a dispatched agent always
+launches async — its tool result is launch metadata, never the child's reply — and the child's
+`<task-notification>` reaches the agent only while its turn is alive. A dispatched agent may fan
+out nested agents at every tier (lens pairs, single reads, curation judges), but it keeps its own
+turn alive with bounded foreground waits — repeated `sleep 20` Bash calls, at most 15 (5 minutes),
+stopping as soon as every child's `<task-notification>` has arrived, never reading or tailing a
+child's `output_file` — until every child has reported, and never ends its turn with a child
+outstanding. A reply that ends without a tool call ends the turn, whatever is still in flight.
+**Fallback:** when no `Agent`/`Task` tool exists (`ToolSearch` finds none, deferred or otherwise —
+the normal case in a cloud routine sandbox), or a child has not reported when the bound expires,
+judge that unit in-session, applying the child's own checklist or template as a genuinely
+adversarial self-review, log the downgrade (which unit, why), and mark every finding from that unit
+`unconfirmed`. Never skip the unit or fabricate a dispatch. A child result that arrives after its
+unit was self-judged is ignored; it never changes a verdict already reached.
 
-This is distinct from a dispatcher waiting, within its own single turn, on the `Agent`/`Task`
-children it just dispatched in that same turn — the valid pattern `_shared/dispatch-waiting.md`
-documents. The rule above is about what a dispatched agent may instruct *itself* (or an agent it
-dispatches) to do; it never restricts the dispatcher's own read of the notifications its
-children's completions already send.
+**Top-level dispatchers.** A session waiting on its own `Agent`/`Task` children within its turn is
+the pattern `_shared/dispatch-waiting.md` documents; this section restricts only what a dispatched
+agent instructs itself or its children to do.
 
 **Bounded polling for a long external wait.** Neither pattern above fits a genuinely long
 *external* process with no completion-notification channel at all — a live CI run, a cloud
@@ -233,5 +238,3 @@ Do not add narration, headers, or summaries before or after the table.
 ```
 
 The blockquote above is the dispatch-site directive; the fenced block is what each `Task()` call's prompt actually contains.
-
-**No `Task`/Agent tool available.** Some environments expose no `Task`/Agent dispatch tool at all (`ToolSearch` finds none, deferred or otherwise) — a session that is itself a dispatched subagent with no nested-dispatch capability is the common case. When a dispatch site's own skill hits this, do not skip the step or fabricate a dispatch: execute the step directly in-session instead, applying the intended receiving agent's own checklist/template as a genuinely adversarial self-review — not a rubber stamp — and log the fallback (which step, why) rather than silently proceeding as if a real dispatch happened. Observed independently in two dispatch calls of the same run (#2644): SDD's implementer/reviewer split and review's Step 3 lens dispatch both took this path ad hoc; this note standardizes it so a third site doesn't have to reinvent the same ruling.
