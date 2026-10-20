@@ -1890,3 +1890,51 @@ predicate treats a present-but-null field as "not a Task call". The rewritten te
 `tests/hooks-dispatcher.test.js` goes red with the fix reverted.
 
 Cost: one review fix wave plus a revert probe.
+
+## IL-167 — An unattended Review Console asked anyway, and the stall was misdiagnosed as a policy gap
+
+Record #2734 reported a run at an `unattended` autonomy ceiling whose merge-approval
+`AskUserQuestion` sat unanswered for about 7.5 hours. Its diagnosis was that no ceiling set
+`merge-authorization`, so `manifesto.md`'s `ask` default fired. That diagnosis was wrong. Record
+#3712 re-opened it on 2026-10-20 with a transcript audit at `/claude-tweaks:specify` time, about a
+day before Claude Code's ~30-day cleanup would have deleted the transcript.
+
+The incident was session `b41eb7b0-a507-4837-b6da-1f3b3564aa30` on plugin 6.128.0 (2026-09-20
+18:49Z to 2026-09-21 04:53Z), which ran two `/flow` runs: `2026-09-20T185343-spec-2670-2681`
+(multi-spec) and `2026-09-20T193353-spec-2682` (single-spec). Both Manifesto decision-log entries
+read "review-auto-apply-ceiling=medium (autonomy ceiling: unattended)", so the ceiling resolved
+`unattended` in both and did not resolve lower than reported. #2682 carried `auto:merge` (labeled
+2026-09-20T19:20:28Z, before the run claimed it at 19:34). 6.128.0's
+`plugin/skills/wrap-up/review-console.md` already had the `consoleAutoResolve` short-circuit, which
+at `unattended` merges a granted record with zero `AskUserQuestion` calls. The correct outcome was
+a zero-click merge.
+
+The orchestrating model asked anyway, from memory. In the #2682 run it never invoked
+`/claude-tweaks:wrap-up`, never read `wrap-up/review-console.md`, and never ran
+`bin/console-resolve.js`. It rendered "the single-spec Review Console for `#2682`" itself and
+called `AskUserQuestion` with header `"Review Console"` at 19:58:28Z; the answer ("Approve all +
+merge (Recommended)") came at 2026-09-21T03:22:55Z. The first run is the same failure by a
+different route: there the model did read `flow/multispec-review-console.md`, which carries the same
+short-circuit, and still asked (header `"Review Console"`, 19:27:55Z). Neither #2670 nor #2681
+carried an `auto:*` grant, so the correct outcome was a zero-click park at `pending-review` (the
+#1802/#1966 ungranted-member carve-out), not a question.
+
+The session's own end-of-run finding blamed `merge-authorization: ask` and filed #2734, which
+shipped the `pre-authorize-merge` `/flow` token (PR #3709, v6.148.0). The token stays: it is useful
+for `auto:build`-only records. It does not touch this failure. `_shared/autonomy-ceiling.md`'s
+zero-click claim was correct as written; the defect was enforcement. The prose said "zero
+`AskUserQuestion` calls" and the model, which read the equivalent prose in run 1, asked anyway.
+`plugin/hooks/hooks.json` registered `PreToolUse` only for `Bash`, `Edit`, `Write`, `NotebookEdit`
+and `ExitWorktree`, and `AskUserQuestion` had only a logging `PostToolUse` registration, so nothing
+mechanical stood between the model and the prompt.
+
+Fixed by this PR (#3749): a `PreToolUse` ask gate, `checkReviewConsoleAskGate` in
+`plugin/bin/lib/hooks/pre-tool-use.js`, registered for `AskUserQuestion` in
+`plugin/hooks/hooks.json`. It denies a question headed exactly `"Review Console"` when the session
+provably owns its run and that run's ceiling grants `consoleAutoResolve`, and points the model at
+`bin/console-resolve.js --policy console-auto`. Every ambiguous case fails open. A conformance test
+pins the header against both console files, so a reworded header cannot silently disarm the gate.
+
+Cost: a ~7.4h stall (19:58:28Z to 03:22:55Z) on a run the plugin already documented as zero-click,
+plus a misdirected fix, #2734's build, shipped against the wrong cause while the real defect stayed
+open.

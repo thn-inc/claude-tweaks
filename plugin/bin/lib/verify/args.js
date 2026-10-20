@@ -9,7 +9,7 @@ const USAGE =
   + '[--cmd-env <name>=<KEY=VALUE> ...] [--cmd-timeout <name>=<ms> ...] [--json <path>] '
   + '[--log-dir <dir>] [--count-stamp <path>] [--no-stamp] [--git-dir <dir>] [--run <dir>] '
   + '[--cwd <dir>] '
-  + '[--baseline <ref> --baseline-cmd <name>=<template-with-{file}> ...] '
+  + '[--baseline <ref> --baseline-cmd <name>=<template-with-{file}> ... [--no-baseline-fixed]] '
   + '[--scope <path> [--base <ref>] [--integration-branch <name>]] '
   + '| verify.js --stamp-status [--git-dir <dir>] '
   + '| verify.js --changed-files [--base <ref>] [--integration-branch <name>] [--ignore-stamp]\n'
@@ -86,6 +86,7 @@ function tokenize(argv) {
   let gitDir = null;
   let stampStatus = false;
   let noStamp = false;
+  let noBaselineFixed = false;
   let scope = null;
   let base = null;
   let integrationBranch = null;
@@ -99,6 +100,7 @@ function tokenize(argv) {
     const flag = argv[i];
     if (flag === '--stamp-status') { stampStatus = true; continue; }
     if (flag === '--no-stamp') { noStamp = true; continue; }
+    if (flag === '--no-baseline-fixed') { noBaselineFixed = true; continue; }
     if (flag === '--changed-files') { changedFiles = true; continue; }
     if (flag === '--ignore-stamp') { ignoreStamp = true; continue; }
     if (VALUE_FLAGS.has(flag)) {
@@ -146,7 +148,7 @@ function tokenize(argv) {
   }
   return {
     cmds, cmdEnvs, cmdTimeouts, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch,
-    changedFiles, ignoreStamp, run, cwd, baseline, baselineCmds,
+    changedFiles, ignoreStamp, run, cwd, baseline, baselineCmds, noBaselineFixed,
   };
 }
 
@@ -204,11 +206,11 @@ function attachCmdEnvAndTimeout(raw) {
 function toResult(raw) {
   const {
     cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles,
-    ignoreStamp, run, cwd, baseline, baselineCmds, cmdEnvs,
+    ignoreStamp, run, cwd, baseline, baselineCmds, cmdEnvs, noBaselineFixed,
   } = raw;
   return {
     cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles,
-    ignoreStamp, run, cwd, baseline, baselineCmds,
+    ignoreStamp, run, cwd, baseline, baselineCmds, noBaselineFixed,
     // #3022: every --cmd-env entry, matched or not — verify.js's own
     // --scope block uses the unmatched ones to bind env vars onto a
     // declared-only suite (no --cmd) once it has read the declaration.
@@ -224,13 +226,17 @@ const CWD_MODE_CONFLICT = '--cwd applies to a check run — not to --stamp-statu
 // #3048: --ignore-stamp skips the stamp-driven narrowing, which only --changed-files has.
 const IGNORE_STAMP_MODE_CONFLICT = '--ignore-stamp applies only to --changed-files';
 
+function hasBaselineFlags(raw) {
+  return raw.baseline !== null || raw.baselineCmds.length > 0 || raw.noBaselineFixed;
+}
+
 // --stamp-status (#1921): a read-only mode needing no --cmd at all. Every
 // run-scoped flag is a usage error here, not a silently ignored one.
 function validateStampStatus(raw) {
   attachCmdEnvAndTimeout(raw);
   // #3043: checked first so a read-only mode carrying a baseline flag gets
   // this message, not the generic --cmd one below.
-  if (raw.baseline !== null || raw.baselineCmds.length) throw new UsageError(BASELINE_MODE_CONFLICT);
+  if (hasBaselineFlags(raw)) throw new UsageError(BASELINE_MODE_CONFLICT);
   if (raw.cmds.length) throw new UsageError('--stamp-status takes no --cmd');
   // L12 (review, #1922): --base/--integration-branch only mean anything
   // alongside --scope, and --stamp-status takes none of the three — each
@@ -248,7 +254,7 @@ function validateStampStatus(raw) {
 // (unlike --stamp-status) --base/--integration-branch are meaningful here.
 function validateChangedFiles(raw) {
   attachCmdEnvAndTimeout(raw);
-  if (raw.baseline !== null || raw.baselineCmds.length) throw new UsageError(BASELINE_MODE_CONFLICT);
+  if (hasBaselineFlags(raw)) throw new UsageError(BASELINE_MODE_CONFLICT);
   if (raw.cmds.length) throw new UsageError('--changed-files takes no --cmd');
   if (raw.scope !== null) throw new UsageError('--changed-files takes no --scope');
   if (raw.gitDir !== null) throw new UsageError('--changed-files takes no --git-dir');
@@ -262,7 +268,7 @@ function validateChangedFiles(raw) {
 // modes" — the pre-split order (#2806 review).
 function rejectBothReadOnlyModes(raw) {
   attachCmdEnvAndTimeout(raw);
-  if (raw.baseline !== null || raw.baselineCmds.length) throw new UsageError(BASELINE_MODE_CONFLICT);
+  if (hasBaselineFlags(raw)) throw new UsageError(BASELINE_MODE_CONFLICT);
   if (raw.cmds.length) throw new UsageError('--stamp-status takes no --cmd');
   if (raw.scope !== null) throw new UsageError('--changed-files takes no --scope');
   if (raw.gitDir !== null) throw new UsageError('--changed-files takes no --git-dir');
@@ -288,6 +294,7 @@ function validateCheckRun(raw) {
   // "at least one --baseline-cmd" is verify.js's scope block's check, not ours.
   if (raw.baseline !== null && raw.baselineCmds.length === 0 && !raw.scope) throw new UsageError('--baseline requires at least one --baseline-cmd');
   if (raw.baseline === null && raw.baselineCmds.length) throw new UsageError('--baseline-cmd requires --baseline');
+  if (raw.baseline === null && raw.noBaselineFixed) throw new UsageError('--no-baseline-fixed requires --baseline');
   const seenBaselineNames = new Set();
   for (const b of raw.baselineCmds) {
     // #3511: under --scope a suite may be declared only in the declaration, which

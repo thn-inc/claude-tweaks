@@ -42,19 +42,26 @@ During worktree-mode pipeline runs this rule is mechanically enforced — the pl
 
 ## Foreground Execution Discipline
 
-**Background work.** A dispatched agent is never re-woken once its turn ends, so a backgrounded
-`Bash` call or `Monitor` watch it ends on hangs it until an outside caller intervenes. Observed as
-a harness-level `contract-violation` pattern: 13+ occurrences of agents narrating "waiting for the
-background task/Monitor notification" and stopping mid-turn in one build phase, plus 2 more in a
-review/wrap-up session, corrected only externally (#1965, #2271). Run long-running commands in the
-**foreground** of the current turn — a generous timeout, output redirected to a file if it's
-long — never `run_in_background`, and never end a turn hoping a notification will re-wake it.
-`test/verification.md`'s Foreground rule and `dispatch/task-prompt.md`'s foreground-execution
-instruction are the concrete pattern; point a new dispatch site at them rather than re-deriving it.
+**Background work.** A dispatched agent cannot count on being re-woken once its turn ends. Measured
+on Claude Code (#3722): interactive 2.1.302 holds it open and re-wakes it when a nested child or
+`Monitor` watch it started reports; headless (`claude -p`) 2.1.299 and older never re-wake it for a
+nested child, whose result goes to the top-level session instead; headless 2.1.302 and later runs a
+nested `Agent` call synchronously. An agent cannot tell in advance whether it will be re-woken, so it
+never relies on one. So a backgrounded `Bash` call or `Monitor` watch it ends on can hang it until an
+outside caller intervenes. Observed as a harness-level `contract-violation` pattern: 13+ occurrences
+of agents narrating "waiting for the background task/Monitor notification" and stopping mid-turn in
+one build phase, plus 2 more in a review/wrap-up session, corrected only externally (#1965, #2271).
+Run long-running commands in the **foreground** of the current turn — a generous timeout, output
+redirected to a file if it's long — never `run_in_background`, and never end a turn hoping a
+notification will re-wake it. `test/verification.md`'s Foreground rule and
+`dispatch/task-prompt.md`'s foreground-execution instruction are the concrete pattern; point a new
+dispatch site at them rather than re-deriving it.
 
-**Nested `Agent` children (#2644, #3078).** A nested `Agent` call from a dispatched agent always
-launches async — its tool result is launch metadata, never the child's reply — and the child's
-`<task-notification>` reaches the agent only while its turn is alive. A dispatched agent may fan
+**Nested `Agent` children (#2644, #3078).** A nested `Agent` call from a dispatched agent launches
+async — its tool result is launch metadata, not the child's reply — and the child's
+`<task-notification>` reaches the agent only while its turn is alive. When the call instead returns
+the child's own reply (headless 2.1.302 and later, above), that child has reported and needs no
+wait. A dispatched agent may fan
 out nested agents at every tier (lens pairs, single reads, curation judges), but it keeps its own
 turn alive with bounded foreground waits — repeated `sleep 20` Bash calls, at most 60 (20 minutes)
 per wave of children (the set launched together), each wait logged per the bounded-polling
@@ -71,19 +78,23 @@ when a pipeline run directory is set, otherwise as one line in the reply, and ma
 from that unit `unconfirmed`. Never skip the unit or fabricate a dispatch. A child whose unit was
 self-judged at the bound is abandoned: it no longer counts as outstanding, and the agent's final
 reply still ends with `STATUS: {WORD}`; `INTERIM_STATUS:` is only for a turn that ends while a
-keep-alive wait is still in progress. A child result that arrives after its unit was self-judged
-is ignored; it never changes a verdict already reached, and a late notification that re-wakes the
-agent after its final reply is answered by repeating that final `STATUS:` line unchanged. A child
-that reports a failure (a `failed` notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply)
-has reported, so it is not outstanding: handle it per the dispatching skill's own status handling
-where one exists (`superpowers:subagent-driven-development`'s BLOCKED handling, or Failed-agent
-retrieval below), otherwise judge that unit as in the fallback. The self-judge fallback is for a
-read-only unit (a lens, a single read, a judge); a write-capable child (one that edits files)
-still silent at the bound is never redone in-session, because an abandoned child keeps running and
-may still write — stop, and end with `STATUS: BLOCKED` naming that child and its unit. A wait
-call that is blocked or fails (a harness or hook refusal) is not a wait and never counts toward
-the bound; never retry it in another form (a longer, wrapped or backgrounded sleep): treat every
-child still outstanding as silent at the bound and apply the fallback above.
+keep-alive wait is still in progress. An abandoned child cannot be stopped (`TaskStop` refuses a
+nested child), so it keeps running, and the harness may hold the
+agent's final result until it finishes: the bound caps the wait, not the delivery. A child result
+that arrives after its unit was self-judged is ignored; it never changes a verdict already reached,
+and a late notification that re-wakes the agent after its final reply is answered by repeating its
+whole final reply unchanged: the dispatcher keeps only the agent's latest reply, so a bare `STATUS:`
+line would replace the report (#3722). A child that reports a failure (a `failed` notification, an
+API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not outstanding: handle it
+per the dispatching skill's own status handling where one exists
+(`superpowers:subagent-driven-development`'s BLOCKED handling, or Failed-agent retrieval below),
+otherwise judge that unit as in the fallback. The self-judge fallback is for a read-only unit (a
+lens, a single read, a judge); a write-capable child (one that edits files) still silent at the
+bound is never redone in-session, because an abandoned child keeps running and may still write —
+stop, and end with `STATUS: BLOCKED` naming that child and its unit. A wait call that is blocked or
+fails (a harness or hook refusal) is not a wait and never counts toward the bound; never retry it in
+another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
+silent at the bound and apply the fallback above.
 
 **Top-level dispatchers.** A session waiting on its own `Agent`/`Task` children within its turn is
 the pattern `_shared/dispatch-waiting.md` documents; this section restricts only what a dispatched
@@ -93,8 +104,8 @@ agent instructs itself or its children to do.
 commands in the foreground; collecting nested `Agent` children in-turn) fits a genuinely long
 *external* process with no completion-notification channel at all — a live CI run, a cloud
 deploy — that a dispatched agent must verify finished, not just kick off. Backgrounding it and
-ending the turn to wait for a notification is the same violation as above (nothing ever re-wakes
-a dispatched agent), and the agent cannot simply block for however long the process takes
+ending the turn to wait for a notification is the same violation as above (a dispatched agent cannot
+count on being re-woken), and the agent cannot simply block for however long the process takes
 either. The compliant shape is a **bounded check-interval loop run with real foreground tool
 calls**: repeated `Bash` calls (or a `Monitor` watch over a polling script) that check the
 external condition on a fixed interval — e.g. `sleep 20 && gh run view {id} --json

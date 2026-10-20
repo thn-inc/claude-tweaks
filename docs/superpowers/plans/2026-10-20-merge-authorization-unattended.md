@@ -8,7 +8,7 @@
 
 **Tech Stack:** Markdown skill prose, Node 18 `node --test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-20T075412-record-2734/work/2734-spec.md`
+**Spec:** `.claude-tweaks/pipelines/archive/2026-10-20T075412-record-2734/work/2734-spec.md`
 
 ## Global Constraints
 

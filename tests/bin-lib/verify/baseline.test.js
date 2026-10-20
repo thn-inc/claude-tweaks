@@ -46,16 +46,18 @@ function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, i
     removeWorktree: (dir) => { calls.removed.push(dir); },
   };
   const runOne = async ({ name, command, cwd }) => {
-    const kind = name.includes('-baseline-') ? 'baseline' : (name.includes('-isolated-retry-') ? 'isolated-retry' : 'isolated');
+    const kind = name.endsWith('-base-full') ? 'base-full' : (name.includes('-baseline-') ? 'baseline' : (name.includes('-isolated-retry-') ? 'isolated-retry' : 'isolated'));
     const file = command.replace('node --test ', '');
     calls.runs.push({ kind, file, cwd });
     if (throwOn && throwOn === `${kind}:${file}`) throw new Error('boom');
     const key = `${kind}:${file}`;
-    const code = outcomes[key];
+    // An outcome may be an object ({exitCode, timedOut}) to carry a timeout.
+    const outcome = outcomes[key];
+    const code = outcome !== null && typeof outcome === 'object' ? outcome.exitCode : outcome;
     const text = key in logs ? logs[key] : (code === 0 ? PASS_LOG : SPEC([file]));
     const logPath = path.join(logRoot, `${name}.log`);
     fs.writeFileSync(logPath, text);
-    return { name, command, exitCode: code === undefined ? 1 : code, durationMs: 1, logPath };
+    return { name, command, exitCode: code === undefined ? 1 : code, ...(outcome && outcome.timedOut ? { timedOut: true } : {}), durationMs: 1, logPath };
   };
   return { git, runOne, calls };
 }
@@ -1031,6 +1033,107 @@ test('#3153: each log is read against its own checkout — a predicate scoped to
   const { git: git2, runOne: runOne2 } = fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'isolated:tests/a.test.js': 1 }, inCheckout: onlyRepo });
   const r2 = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p2 }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir2, runOne: runOne2, git: git2 });
   assert.deepStrictEqual(r2.baselineFailing, []);
+});
+
+// #3313: `fixed` — files failing in a full run at base but not at HEAD. The
+// failing check carries a `command`; its one full run at base is keyed
+// `base-full:{command}` in `outcomes`/`logs`.
+const adjudicateFixed = async (headFiles, { fakeOpts = {}, check = {}, extra = {} } = {}) => {
+  const { p, dir } = logFile(SPEC(headFiles));
+  const f = fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'base-full:npm test': 1 }, ...fakeOpts });
+  const checks = [{ name: 'tests', command: 'npm test', exitCode: 1, logPath: p, ...check }];
+  const r = await adjudicate({ checks, baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne: f.runOne, git: f.git, ...extra });
+  return { r, calls: f.calls };
+};
+
+test('fixed: a file failing in the base full run but not at HEAD is fixed; new mirrors attributable (#3313 AC2.1)', async () => {
+  const { r, calls } = await adjudicateFixed(['tests/a.test.js'], {
+    fakeOpts: { logs: { 'base-full:npm test': SPEC(['tests/a.test.js', 'tests/fixed.test.js']) } },
+  });
+  assert.strictEqual(r.verdict, 'pass');
+  assert.deepStrictEqual(r.fixed, ['tests/fixed.test.js'], 'a.test.js fails at HEAD too, so only fixed.test.js is fixed');
+  assert.deepStrictEqual(r.new, []);
+  assert.strictEqual(r.new, r.attributable);
+  assert.strictEqual('fixedReason' in r, false);
+  const full = calls.runs.filter((c) => c.kind === 'base-full');
+  assert.deepStrictEqual(full.map((c) => c.cwd), ['/scratch'], 'one full run, in the scratch worktree');
+});
+
+test('fixed: no proven base failure skips the base full run (#3313)', async () => {
+  const { r, calls } = await adjudicateFixed(['tests/a.test.js'], { fakeOpts: { outcomes: { 'baseline:tests/a.test.js': 0, 'isolated:tests/a.test.js': 1 } } });
+  assert.deepStrictEqual(r.attributable, ['tests/a.test.js']);
+  assert.strictEqual(r.fixed, null);
+  assert.strictEqual(r.fixedReason, 'no failing file classified baseline — base full run skipped');
+  assert.deepStrictEqual(r.new, ['tests/a.test.js']);
+  assert.ok(!calls.runs.some((c) => c.kind === 'base-full'), 'no base-full run');
+});
+
+test('fixed: computeFixed:false skips the base full run even with a proven base failure (#3313 --no-baseline-fixed)', async () => {
+  const { r, calls } = await adjudicateFixed(['tests/a.test.js'], {
+    fakeOpts: { logs: { 'base-full:npm test': SPEC(['tests/a.test.js', 'tests/fixed.test.js']) } },
+    extra: { computeFixed: false },
+  });
+  assert.deepStrictEqual(r.baselineFailing, ['tests/a.test.js'], 'a base failure was proven, so the default path would have run the base full run');
+  assert.strictEqual(r.verdict, 'pass', 'the opt-out never changes the verdict');
+  assert.strictEqual(r.fixed, null);
+  assert.strictEqual(r.fixedReason, 'base full run disabled (--no-baseline-fixed)');
+  assert.ok(!calls.runs.some((c) => c.kind === 'base-full'), 'no base-full run');
+});
+
+test('fixed: a timed-out base full run is fixed:null and never changes the verdict (#3313)', async () => {
+  const { r } = await adjudicateFixed(['tests/a.test.js'], { fakeOpts: { outcomes: { 'baseline:tests/a.test.js': 1, 'base-full:npm test': { exitCode: null, timedOut: true } } } });
+  assert.strictEqual(r.fixed, null);
+  assert.match(r.fixedReason, /^tests base full run exited without a numeric code \(timed out\)$/);
+  assert.strictEqual(r.verdict, 'pass');
+  assert.deepStrictEqual(r.baselineFailing, ['tests/a.test.js']);
+});
+
+test('fixed: a check with no command, or a base full log that proves nothing, is fixed:null with the reason (#3313)', async () => {
+  const noCmd = await adjudicateFixed(['tests/a.test.js'], { check: { command: undefined } });
+  assert.strictEqual(noCmd.r.fixed, null);
+  assert.strictEqual(noCmd.r.fixedReason, 'tests has no command to run at base');
+  assert.ok(!noCmd.calls.runs.some((c) => c.kind === 'base-full'));
+  const unaccounted = await adjudicateFixed(['tests/a.test.js'], { fakeOpts: { logs: { 'base-full:npm test': 'garbage' } } });
+  assert.strictEqual(unaccounted.r.fixed, null);
+  assert.match(unaccounted.r.fixedReason, /^tests base full run log does not account for its failures — see .*tests-base-full\.log$/);
+  assert.strictEqual(unaccounted.r.verdict, 'pass');
+});
+
+test('fixed: an unreadable base full log, or one that ran no tests, is fixed:null naming its log path (#3313)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  const f = fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'base-full:npm test': 1 } });
+  const lostLog = async (o) => { const r = await f.runOne(o); return o.name.endsWith('-base-full') ? { ...r, logPath: `${r.logPath}.missing` } : r; };
+  const run = (runOne) => adjudicate({ checks: [{ name: 'tests', command: 'npm test', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git: f.git });
+  const unreadable = await run(lostLog);
+  assert.strictEqual(unreadable.fixed, null);
+  assert.match(unreadable.fixedReason, /^tests base full run log unreadable — see .*tests-base-full\.log\.missing$/);
+  assert.strictEqual(unreadable.verdict, 'pass');
+  const noTests = await adjudicateFixed(['tests/a.test.js'], { fakeOpts: { logs: { 'base-full:npm test': 'ℹ tests 0\nℹ pass 0\nℹ fail 0\nℹ cancelled 0' } } });
+  assert.strictEqual(noTests.r.fixed, null);
+  assert.match(noTests.r.fixedReason, /^tests base full run ran no tests — see .*tests-base-full\.log$/);
+  assert.strictEqual(noTests.r.verdict, 'pass');
+});
+
+// A base full log failing a.test.js plus a file that cannot load (file-level).
+const BASE_FULL_WITH_LOAD_FAILURE = ['ℹ tests 9', 'ℹ pass 7', 'ℹ fail 2', 'ℹ cancelled 0', '', '✖ failing tests:', '',
+  'test at tests/a.test.js:1:1', '✖ x (1ms)', '', 'test at tests/fixed.test.js:1:1', '✖ tests/fixed.test.js (12ms)', "  'test failed'", ''].join('\n');
+
+test('fixed: a file-level base failure is not fixed when HEAD resolves dependencies (#3313)', async () => {
+  const logs = { 'base-full:npm test': BASE_FULL_WITH_LOAD_FAILURE };
+  const resolving = await adjudicateFixed(['tests/a.test.js'], { fakeOpts: { logs }, extra: { env: { NODE_PATH: '/x' } } });
+  assert.deepStrictEqual(resolving.r.fixed, [], 'a load failure in a scratch worktree may only be a missing install');
+  const bare = await adjudicateFixed(['tests/a.test.js'], { fakeOpts: { logs }, extra: { env: {} } });
+  assert.deepStrictEqual(bare.r.fixed, ['tests/fixed.test.js'], 'with no dependencies resolved at HEAD, the load failure at base is genuine');
+});
+
+test('fixed: a base-failing file absent at HEAD is not fixed (#3313)', async () => {
+  const { r } = await adjudicateFixed(['tests/a.test.js'], {
+    fakeOpts: {
+      logs: { 'base-full:npm test': SPEC(['tests/a.test.js', 'tests/gone.test.js', 'tests/fixed.test.js']) },
+      inCheckout: (dir, rel) => !(dir === '/repo' && rel === 'tests/gone.test.js'),
+    },
+  });
+  assert.deepStrictEqual(r.fixed, ['tests/fixed.test.js']);
 });
 
 test('a failing path the retry template cannot quote is ineligible, never run (#3676)', async () => {
