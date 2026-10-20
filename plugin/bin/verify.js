@@ -239,8 +239,10 @@ async function main() {
   // credit this checkout's stamp and report with checks that ran elsewhere — refused before anything runs.
   if (parsed.cwd && ownGitDir) {
     const cwdGitDir = resolveGitDir(execFileSync, path.resolve(parsed.cwd));
-    if (cwdGitDir === null || fs.realpathSync(cwdGitDir) !== fs.realpathSync(ownGitDir)) {
-      process.stderr.write(`--cwd ${parsed.cwd} resolves to git dir ${cwdGitDir ? fs.realpathSync(cwdGitDir) : 'none (not inside a git checkout)'}, not this checkout's (${fs.realpathSync(ownGitDir)}) — run verify.js from inside the target checkout so its stamp and report land there (#3799)\n${USAGE}\n`);
+    const realOwnGitDir = fs.realpathSync(ownGitDir);
+    const realCwdGitDir = cwdGitDir === null ? null : fs.realpathSync(cwdGitDir);
+    if (realCwdGitDir !== realOwnGitDir) {
+      process.stderr.write(`--cwd ${parsed.cwd} resolves to git dir ${realCwdGitDir ?? 'none (not inside a git checkout)'}, not this checkout's (${realOwnGitDir}) — run verify.js from inside the target checkout so its stamp and report land there (#3799)\n${USAGE}\n`);
       process.exitCode = 2;
       return;
     }
