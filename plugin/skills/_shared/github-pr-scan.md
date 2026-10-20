@@ -391,7 +391,8 @@ Three cheap counts for the dashboard's Triage Queue section. This scope exists s
    commit is never headless; `[manifesto-authorized]` (`wrap-up/manifesto-authorized-merge.md`,
    the `merge-authorization` lever) is likewise never headless — it requires a live human answer
    (a Manifesto `confirm`/`hybrid` override, or the human-typed `/flow` `pre-authorize-merge`
-   token, which a dispatch-bound run ignores), the same interactive precondition as `[fast-lane]`.
+   token, which a dispatch-bound run ignores — a human-authored Routine prompt or alias could
+   still carry the token, but a human authored it), the same interactive precondition as `[fast-lane]`.
    `[human-approved]` (close-out's confirmed merge) is excluded — a human decided it.
 
    ```bash

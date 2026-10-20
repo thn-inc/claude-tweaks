@@ -50,8 +50,8 @@ const POLICY_KEYS = [
   // matching auditPolicy() category, both generic on this flag rather than
   // hardcoded to this key — #839) — a project-wide standing default here
   // would remove the "a human decided, live, for this run" property the
-  // interactive-human-only auto:* invariant depends on; see
-  // _shared/auto-mode-contract.md's Bookend Architecture section.
+  // never-originates-its-own-merge-authorization invariant depends on; see
+  // _shared/auto-mode-contract.md's Merge authorization lever row.
   { key: 'merge-authorization', type: 'enum', values: ['ask', 'pre-authorized'], default: 'ask', policySourceExcluded: true, summary: "Lets a human pre-authorize, for one run, that it merges itself once every HARD-GATE is green — never a standing default.", category: 'merge-safety', tier: 'advanced' },
   { key: 'design-ceremony', type: 'enum', values: ['fast-lane', 'standard'], default: 'standard', summary: "Trims /specify's brainstorming handoff to fewer per-section approval stops once the design approach is chosen.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'dispatch-retry-ceiling', type: 'integer', default: 3, summary: "Sets how many consecutive autonomous build failures a record tolerates before it is flagged blocked and pulled from auto-pilot.", category: 'merge-safety', tier: 'advanced' },

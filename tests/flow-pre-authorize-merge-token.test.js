@@ -78,3 +78,14 @@ test('every restatement of how lever 13 is set names the token alongside confirm
   const row = POLICY_KEYS.find((k) => k.key === 'merge-authorization');
   assert.doesNotMatch(row.summary, /at Manifesto time/, 'summary still says only the Manifesto sets it');
 });
+
+test('manifesto.md applies the token on an adopted run and the Write-mechanism paragraph names both single-key callers', () => {
+  const text = read('plugin/skills/flow/manifesto.md');
+  const row = text.split('\n').find((l) => l.startsWith('| Merge authorization | `ask` |'));
+  assert.ok(row, 'manifesto.md: Merge authorization defaults row not found');
+  assert.match(row, /adopted run/);
+  assert.ok(row.includes('--key merge-authorization --value pre-authorized'));
+  const para = text.split('\n').find((l) => l.startsWith('**Write mechanism'));
+  assert.ok(para, 'manifesto.md: Write mechanism paragraph not found');
+  assert.doesNotMatch(para, /its only remaining caller/);
+});

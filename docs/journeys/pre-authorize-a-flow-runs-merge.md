@@ -1,5 +1,6 @@
 ---
 files:
+  - plugin/skills/flow/SKILL.md
   - plugin/skills/flow/manifesto.md
   - plugin/skills/flow/manifesto-overrides.md
   - plugin/skills/wrap-up/manifesto-authorized-merge.md
@@ -23,8 +24,8 @@ files:
 - **URL:** the Manifesto's `Approve all / Override / Cancel` prompt, reached by running `/claude-tweaks:flow {target} confirm` (or `hybrid`)
 - **Action:** Reply `Override` with `13=pre-authorized` in the free-text `#=value` pairs, alongside any other overrides in the same reply.
 - **Should feel:** A deliberate, one-time grant — not a setting they're leaving behind for every future run.
-- **Should understand:** This is a live answer for *this run only* — it can never be set from `.claude-tweaks/policy.yml` as a standing default (`bin/lib/policy-schema.js`'s resolver discards a policy.yml value for this key outright). Answering `pre-authorized` here is the only way to set it; the `auto`-mode default is always `ask`.
-- **Red flags:** The lever silently resolving `pre-authorized` with no override reply anywhere in the transcript — that would mean the interactive-human-only invariant broke.
+- **Should understand:** This is a live answer for *this run only* — it can never be set from `.claude-tweaks/policy.yml` as a standing default (`bin/lib/policy-schema.js`'s resolver discards a policy.yml value for this key outright). Answering `pre-authorized` here is one of two ways to set it; the other is typing the `pre-authorize-merge` token on the `/claude-tweaks:flow` invocation (default `auto` without the token stays `ask`).
+- **Red flags:** The lever silently resolving `pre-authorized` with neither an override reply nor the `pre-authorize-merge` token on the invocation anywhere in the transcript — that would mean the never-originates-its-own-merge-authorization invariant broke.
 
 ### 2a. The run merges itself — terminal, no interaction
 - **URL:** none — this happens inside `/claude-tweaks:wrap-up`'s Review Console step, unattended

@@ -206,7 +206,7 @@ Why merge stops short of the ceiling when every `unattended` capability above do
 
 So at `unattended` with `consoleAutoResolve` granted, a run ends with zero clicks either way:
 merged when its record carries `auto:merge` (or a matured `auto:merge-pending`) or its `/flow` was
-invoked with `pre-authorize-merge`, and otherwise parked at `pending-review` — never an
+invoked with `pre-authorize-merge` (under `integration-model: pr-first`), and otherwise parked at `pending-review` — never an
 `AskUserQuestion` stall. Both merge routes still pass `assess-agent-autonomy` `merge-check`.
 
 ### Floor rule (ledger narrowing)
