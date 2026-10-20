@@ -27,7 +27,7 @@ files:
   - a `run_in_background` wait.
 
 ### 2. Downgrade a lens that cannot be collected
-- **URL:** the same dispatch, when the environment has no `Agent` tool (a cloud routine sandbox) or a lens agent is still silent at the 40th wait
+- **URL:** the same dispatch, when the environment has no `Agent` tool (a cloud routine sandbox) or a lens agent is still silent when the 60-wait bound expires
 - **Action:** the reviewer judges that lens itself, applying the lens's own checklist as an adversarial self-review. It logs the downgrade with the lens and the cause, and gives the lens the partner-died single-read treatment: its findings enter `unconfirmed`. A silent child is now abandoned.
 - **Should feel:** visible and contained. One logged downgrade per affected lens, and the rest of the review carries on.
 - **Should understand:** an abandoned child no longer counts as outstanding, so the reviewer's final reply still ends with `STATUS: {WORD}`. `INTERIM_STATUS:` is only for a turn that ends while a wait is still in progress. A child result that arrives after its lens was self-judged is ignored and never changes the verdict. An abandoned child cannot be stopped (`TaskStop` refuses a nested child), so it keeps running, and the harness may hold the reviewer's final result until it finishes: the bound caps the wait, not the delivery.

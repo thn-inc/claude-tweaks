@@ -120,8 +120,8 @@ function coreForegroundSection(text) {
   return text.slice(start, next === -1 ? undefined : next);
 }
 
-// The facts the final-review fix wave added (abandoned child, final STATUS, re-wake, the 30s x 40
-// per-wave bound and its log line). Written to match every copy of the rule -- core, item 7, both
+// The facts the final-review fix wave added (abandoned child, the whole-final-reply re-wake, the
+// sleep 20 x 60 per-wave bound and its log line). Written to match every copy of the rule -- core, item 7, both
 // templates -- so each copy's list spreads this one array, and each pattern matches exactly once
 // per copy so its go-red proof removes the only occurrence.
 const SHARED_RULE = [
