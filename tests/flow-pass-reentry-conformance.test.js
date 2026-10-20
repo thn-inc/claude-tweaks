@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { REENTRY_REASONS } = require('../plugin/bin/lib/flow/consolidated-pass');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -107,12 +108,16 @@ test('#3497 every REENTRY_REASONS code is named in the re-entry section', () => 
 
 test('AC2.1 retired limit sentences are gone from every skill file', () => {
   const retired = ['no documented step re-runs the pass', 'only re-presents a console after a Halt'];
+  // Display ID: forward slashes on every OS (recursive readdirSync joins with
+  // the native separator); the fs path below stays native.
+  const hitId = (f, phrase, sep = path.sep) => `${toPosix(String(f), sep)}: ${phrase}`;
+  assert.equal(hitId('flow\\x.md', retired[0], path.win32.sep), `flow/x.md: ${retired[0]}`);
   const walk = (dir) => {
     const files = fs.readdirSync(dir, { recursive: true }).filter((f) => String(f).endsWith('.md'));
     const hits = [];
     for (const f of files) {
       const c = collapse(fs.readFileSync(path.join(dir, String(f)), 'utf8'));
-      for (const phrase of retired) if (c.includes(phrase)) hits.push(`${f}: ${phrase}`);
+      for (const phrase of retired) if (c.includes(phrase)) hits.push(hitId(f, phrase));
     }
     return { files, hits };
   };
