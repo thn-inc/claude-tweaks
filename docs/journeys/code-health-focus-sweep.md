@@ -55,3 +55,4 @@ files:
 - Created during build of #271 (code-health focus mode: candidate-driven scoping with a dead-code candidate generator)
 - All 5 steps built in this session
 - Related specs: #265 (parent — self-maintaining fleet design), #260 (routine preamble regeneration, referenced by the routine-template `focus` field)
+- Updated during build of #3478: the shared discovery helpers (`isGlobDiscoveredTestFile`, `listTrackedFiles`) moved to the leaf `source-scan.js`; no step's behavior changed
