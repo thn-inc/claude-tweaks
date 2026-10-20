@@ -183,10 +183,11 @@ function stampStatus(parsed) {
 function changedFilesMode(parsed) {
   const ownGitDir = resolveGitDir();
   const priorStamp = ownGitDir ? readVerifyStamp(ownGitDir) : null;
+  const anchorStamp = parsed.ignoreStamp ? null : priorStamp;
   let base;
   try {
     base = resolveBase({
-      stamp: parsed.ignoreStamp ? null : priorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base, requireNonDegenerate: true,
+      stamp: anchorStamp, integrationBranch: parsed.integrationBranch, base: parsed.base, requireNonDegenerate: true,
     });
   } catch (err) {
     if (!(err instanceof ChangedFilesError)) throw err;

@@ -118,12 +118,12 @@ test('test/fix-mode.md re-verifies a fix through the stamping runner, never a fa
 // #3048: pipeline QA selection and the design gate read the whole branch diff
 // (`--ignore-stamp`); `affected` / `qa affected` keep the stamp anchor.
 const IGNORE_STAMP_CMD = '--changed-files --ignore-stamp --integration-branch {ref}`';
-const lineFrom = (text, marker) => {
+function lineFrom(text, marker) {
   const start = text.indexOf(marker);
   assert.ok(start !== -1, `missing marker: ${marker}`);
   const end = text.indexOf('\n', start);
   return text.slice(start, end === -1 ? undefined : end);
-};
+}
 function assertIgnoreStampSites(skill, gate) {
   const pipeline = lineFrom(skill, '- `VERIFICATION_PASSED=true` + stories exist');
   assert.ok(pipeline.includes(IGNORE_STAMP_CMD), 'the pipeline story-selection bullet must pass --ignore-stamp');
