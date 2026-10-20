@@ -11,7 +11,7 @@ Several conventions for `plugin/bin` code are enforced by a test that walks the 
 
 - `tests/windows-hide-spawn-conformance.test.js`: every `child_process` call passes `windowsHide`.
 - `tests/git-status-optional-locks.test.js`: every read-only `git status` passes `--no-optional-locks`.
-- `tests/bin-lib/exit-code-conformance.test.js`: `process.exit(` appears only outside a `require.main === module` guard's body.
+- `tests/bin-lib/exit-code-conformance.test.js`: an entry point (a `require.main === module` guard, or a guard-less, export-less whole-script file) sets `process.exitCode` and never calls `process.exit(`; a guard-less file that exports is a library and is skipped.
 - `tests/path-guard-conformance.test.js`: no bare `realpathSync`/`existsSync` outside the per-file allowlist.
 - `tests/path-containment-conformance.test.js`: no hand-rolled `startsWith(… path.sep)` containment test; use `isPathContained`.
 

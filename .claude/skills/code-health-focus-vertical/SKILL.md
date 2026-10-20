@@ -26,7 +26,7 @@ A vertical is not shipped until every row below lands in the same change. A key 
 
 `tests/code-health-prelaunch-wiring.test.js` asserts that the pinning table and `FOCUS_GENERATORS` name exactly the same foci, in both directions. It catches a missing pinning row. It does not catch a missing Coverage pointer, fragment, or getting-started entry, so check those by hand.
 
-**Two more rows, only for a vertical that also participates in `/review`** (`security-hardening` #2624 and `agent-trust-scope` #2749 both do; `dead-code`/`abstraction-police`/`test-hygiene`/`experiment-cleanup`/`prelaunch` don't — this is a per-vertical decision, not every shipped vertical's obligation):
+**Two more rows, only for a vertical that also participates in `/review`** (`security-hardening` #2624, `agent-trust-scope` #2749 and `app-store-readiness` #2628 all do; `dead-code`/`abstraction-police`/`test-hygiene`/`experiment-cleanup`/`prelaunch` don't — this is a per-vertical decision, not every shipped vertical's obligation):
 
 | Site | What it gets |
 |---|---|

@@ -3,10 +3,12 @@
 // the Already-satisfied ruling check, the Consumer-portability check and the
 // Real-writer fixture check. Reads the live skill file. Each paragraph is
 // located by its bold label and every assertion runs on that paragraph alone.
-// One negative control per label drops that paragraph from the live text in
-// memory and runs the same assertion function the positive test runs, expecting
-// it to throw — that is the go-red proof for every pin; the skill file is never
-// edited and restored.
+// Two negative controls per label run the same assertion function the positive
+// test runs, expecting it to throw — the go-red proof for every pin; the skill
+// file is never edited and restored. The drop control removes the paragraph in
+// memory (it trips the one-paragraph count check, so it proves the label pin);
+// the reword control replaces one key phrase in the live text (it reaches the
+// phrase assertions, so it proves the content pin).
 'use strict';
 
 const { test } = require('node:test');
@@ -31,6 +33,15 @@ function assertCheck(text, label, phrases) {
 
 function dropParagraph(text, label) {
   return text.split(/\r?\n\r?\n/).filter((p) => !p.startsWith(label)).join('\n\n');
+}
+
+// Replaces `phrase` inside the labelled paragraph only, leaving the paragraph
+// count intact so the control reaches the phrase assertions.
+function rewordPhrase(text, label, phrase) {
+  return text
+    .split(/\r?\n\r?\n/)
+    .map((p) => (p.startsWith(label) ? p.split(phrase).join('REWORDED') : p))
+    .join('\n\n');
 }
 
 const CHECKS = [
@@ -60,5 +71,11 @@ for (const { name, label, phrases } of CHECKS) {
     const dropped = dropParagraph(TEXT, label);
     assert.notStrictEqual(dropped, TEXT, 'control must actually remove the paragraph');
     assert.throws(() => assertCheck(dropped, label, phrases));
+  });
+
+  test(`AC1.1 (#3773): negative control — rewording a key phrase of ${name} fails the pin`, () => {
+    const reworded = rewordPhrase(TEXT, label, phrases[1]);
+    assert.notStrictEqual(reworded, TEXT, 'control must actually change the paragraph');
+    assert.throws(() => assertCheck(reworded, label, phrases), /names:/);
   });
 }

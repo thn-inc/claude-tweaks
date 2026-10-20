@@ -314,7 +314,7 @@ When mechanizing a prose heuristic into a deterministic check:
     warning: `file.endsWith('/')` in `groupByFileOverlap`, `directOverlaps` and
     `detectCrossPRFileOverlap`'s `isSignal`. The micro-plan gate counts every listed path except
     tests and docs, so a directory entry there counts as an implementation file. The first
-    `keyFilePathProblem` accepted `'tests/'`. Review caught it, and `44883e90b` rejects a trailing
+    `keyFilePathProblem` accepted `'tests/'`. Review caught it, and `090359172` (#2975) rejects a trailing
     slash or backslash as `'shape'`. Build the reject list from the readers' `continue` and
     `return false` branches, not from what looks malformed, and pin each one with its own
     assertion. The throw suits a hand-written caller. But the four health-sweep
