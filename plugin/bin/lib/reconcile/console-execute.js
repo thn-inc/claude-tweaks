@@ -53,6 +53,9 @@ const EXECUTED_REPLY_MARKER = '<!-- console-item: executed -->';
 // Outcome notes resolveConsoleExecution records for a non-executed item.
 const DECLINED_NOTE = 'declined, no reason given';
 const REVERSED_LABEL = 'reversed';
+// A flagged ruling whose reverse was refused or never created -- named in
+// `--reverse-failed`, never defaulted to `reversed`, and NOT cleared.
+const REVERSE_FAILED_NOTE = 'reverse not filed — see decisions.md';
 
 // null = no console.json at all; undefined = present but unparseable (fails
 // closed, distinct from absent, mirroring archive-merged.js's readConsoleState).
@@ -409,9 +412,9 @@ async function consoleExecuteDetect(opts = {}) {
 //   { status: 'noop', reason: 'already-resolved' | 'claimed', executingSession? }
 //   { status: 'error', reason: 'no-console' | 'unparseable-console-json' |
 //       'no-comment-ids' | 'no-pr-number' | 'network-failure' |
-//       'comment-not-found' | 'unknown-item-ids' | 'reply-comment-failed' |
-//       'marker-edit-failed' | 'console-write-failed', ids?, error? }
-async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = {}, deps = {}) {
+//       'comment-not-found' | 'unknown-item-ids' | 'not-ruling-items' |
+//       'reply-comment-failed' | 'marker-edit-failed' | 'console-write-failed', ids?, error? }
+async function resolveConsoleExecution(runDir, { approve = [], decline = [], reverseFailed = [] } = {}, deps = {}) {
   const now = typeof deps.now === 'function' ? deps.now() : Date.now();
   const consoleJson = readConsoleJson(runDir);
   if (consoleJson === null) return { status: 'error', reason: 'no-console' };
@@ -455,13 +458,19 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = 
   // console in an inconsistent state.
   const ticks = parseItemTicks(primary.body);
   const knownIds = new Set(Object.keys(ticks));
-  const namedIds = [...new Set([...approve, ...decline])];
+  const namedIds = [...new Set([...approve, ...decline, ...reverseFailed])];
   const unknownIds = namedIds.filter((id) => !knownIds.has(id));
   if (unknownIds.length) return { status: 'error', reason: 'unknown-item-ids', ids: unknownIds };
 
   const items = Array.isArray(consoleJson.items) ? consoleJson.items : [];
+  // --reverse-failed only means something for a flagged ruling; naming any
+  // other item is a caller mistake, rejected before any write like an unknown id.
+  const rulingIds = new Set(items.filter((item) => item.isRulingRow === true).map((item) => item.id));
+  const notRulingIds = [...new Set(reverseFailed)].filter((id) => !rulingIds.has(id));
+  if (notRulingIds.length) return { status: 'error', reason: 'not-ruling-items', ids: notRulingIds };
   const approveSet = new Set(approve);
   const declineSet = new Set(decline);
+  const reverseFailedSet = new Set(reverseFailed);
   // Every item this console names gets an outcome — one explicitly declined
   // via `--decline`, one explicitly (or already-tick) approved, and
   // anything named in neither list defaults to declined ("declined, no
@@ -470,9 +479,16 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = 
   // documents) rather than silently guessing an intent nobody stated. The
   // one exception: a flagged ruling (`isRulingRow: true`, an sdd-ruling-*
   // item) that is not ratified routes to reversed instead, whether unticked
-  // or named in --decline (`_shared/console-execution.md`).
+  // or named in --decline (`_shared/console-execution.md`). A flagged ruling
+  // named in --reverse-failed outranks all of it: its reverse was refused or
+  // never created, so it reads reverse-failed and is not cleared.
   const outcomes = items.map((item) => {
-    if (!declineSet.has(item.id) && (approveSet.has(item.id) || ticks[item.id] === true)) {
+    if (item.isRulingRow === true && reverseFailedSet.has(item.id)) {
+      return {
+        id: item.id, kind: item.kind, outcome: 'reverse-failed', note: REVERSE_FAILED_NOTE, isMergeRow: item.isMergeRow === true, isRulingRow: true,
+      };
+    }
+    if (!declineSet.has(item.id)&& (approveSet.has(item.id) || ticks[item.id] === true)) {
       return { id: item.id, kind: item.kind, outcome: 'executed', isMergeRow: item.isMergeRow === true };
     }
     if (item.isRulingRow === true) {
@@ -489,7 +505,8 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = 
   // `consoleAutoResolve` section already describes for a non-floor item
   // (an isMergeRow item declined while others remain unticked leaves both
   // that item and Resolve unticked). A reversed ruling counts as cleared: a
-  // reversal is a decided outcome, not an unanswered item.
+  // reversal is a decided outcome, not an unanswered item. A reverse-failed
+  // ruling does not: no reversal record exists.
   const allCleared = outcomes.length > 0 && outcomes.every((o) => o.outcome === 'executed' || o.outcome === 'reversed');
 
   // 1. Reply comment first — the source of truth a foreign detection pass
@@ -525,8 +542,8 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = 
   }
 
   // 2. Resolved marker edit on the console comment's first line — ticking
-  // the Resolve checkbox only when every item resolved favorably.
-  const editedBody = addConsoleResolvedMarker(tickResolveBoxIfAllExecuted(primary.body, allCleared));
+  // the Resolve checkbox only when every item cleared.
+  const editedBody = addConsoleResolvedMarker(tickResolveBoxIfAllCleared(primary.body, allCleared));
   try {
     await deps.gh(['api', 'graphql', '-f', UPDATE_ISSUE_COMMENT_MUTATION, '-f', `id=${primary.id}`, '-f', `body=${editedBody}`]);
   } catch (err) {
@@ -587,11 +604,12 @@ function buildExecutedReplyBody(outcomes) {
 }
 
 // Ticks the Resolve checkbox row (isResolveTicked's own row shape, in
-// reverse) only when every item resolved favorably — a partial resolution
-// must never silently tick Resolve, since that would tell a later detection
-// pass "a human confirmed everything," which isn't true.
-function tickResolveBoxIfAllExecuted(body, allExecuted) {
-  if (!allExecuted || typeof body !== 'string') return body;
+// reverse) only when every item cleared (executed or reversed) — a partial
+// resolution, with a declined or reverse-failed item, must never silently tick
+// Resolve, since that would tell a later detection pass "a human confirmed
+// everything," which isn't true.
+function tickResolveBoxIfAllCleared(body, allCleared) {
+  if (!allCleared || typeof body !== 'string') return body;
   return body.replace(/(<!--\s*console-item:\s*resolve\s*-->\s*\n-\s*\[)[ ]?(\])/i, '$1x$2');
 }
 
@@ -619,4 +637,5 @@ module.exports = {
   RECLAIM_STALE_MS,
   DECLINED_NOTE,
   REVERSED_LABEL,
+  REVERSE_FAILED_NOTE,
 };

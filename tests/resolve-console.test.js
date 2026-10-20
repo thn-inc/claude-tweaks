@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { resolveConsoleExecution } = require('../plugin/bin/lib/reconcile/console-execute');
+const { resolveConsoleExecution, REVERSE_FAILED_NOTE } = require('../plugin/bin/lib/reconcile/console-execute');
 
 function makeRunDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-'));
@@ -155,7 +155,7 @@ const RULING_ITEMS = [
   { id: 'r1', kind: 'staged', summary: 'SDD ruling', isRulingRow: true },
 ];
 
-async function runRuling(items, { approve, decline }) {
+async function runRuling(items, { approve, decline, reverseFailed }) {
   const dir = makeRunDir();
   writeConsoleJson(dir, { items });
   const ghCalls = [];
@@ -165,8 +165,8 @@ async function runRuling(items, { approve, decline }) {
     gh: fakeGh(ghCalls, { prViewBody: primaryCommentBody(items.map((i) => i.id)) }),
     writeFile: (p, content) => writeCalls.push({ path: p, content }),
   };
-  const result = await resolveConsoleExecution(dir, { approve, decline }, deps);
-  const markerBody = ghCalls.find((a) => a[0] === 'api').find((a) => a.startsWith('body='));
+  const result = await resolveConsoleExecution(dir, { approve, decline, reverseFailed }, deps);
+  const markerBody =ghCalls.find((a) => a[0] === 'api').find((a) => a.startsWith('body='));
   const replyCall = ghCalls.find((a) => a[0] === 'pr' && a[1] === 'comment');
   const replyBody = replyCall[replyCall.indexOf('--body') + 1];
   return { result, markerBody, replyBody, written: JSON.parse(writeCalls[0].content) };
@@ -217,6 +217,55 @@ test('reversed ruling plus declined merge row leaves Resolve unticked', async ()
   assert.equal(result.resolved, false);
   assert.doesNotMatch(markerBody, /<!--\s*console-item:\s*resolve\s*-->\s*\n-\s*\[x\]/i);
   assert.equal(written.resolved, false);
+});
+
+// A refused reverse must not read as filed and cleared: a flagged ruling named in
+// reverseFailed outranks approve, decline, and ticks, and is NOT cleared.
+test('a flagged ruling named in reverseFailed reads reverse-failed, uncleared, Resolve unticked', async () => {
+  const { result, markerBody, replyBody, written } = await runRuling(RULING_ITEMS, {
+    approve: ['1', 'r1'], decline: ['r1'], reverseFailed: ['r1'],
+  });
+  assert.equal(result.status, 'executed');
+  const r1 = result.outcomes.find((o) => o.id === 'r1');
+  assert.equal(r1.outcome, 'reverse-failed');
+  assert.equal(r1.note, REVERSE_FAILED_NOTE);
+  assert.equal(r1.note, 'reverse not filed — see decisions.md');
+  assert.equal(r1.isRulingRow, true);
+  assert.equal(result.resolved, false);
+  assert.doesNotMatch(markerBody, /<!--\s*console-item:\s*resolve\s*-->\s*\n-\s*\[x\]/i);
+  assert.ok(replyBody.includes(`\`r1\`: ${REVERSE_FAILED_NOTE}`));
+  assert.equal(written.resolved, false);
+});
+
+test('an unflagged id in reverseFailed is rejected as not-ruling-items before any write', async () => {
+  const dir = makeRunDir();
+  writeConsoleJson(dir, { items: RULING_ITEMS });
+  const ghCalls = [];
+  const writeCalls = [];
+  const result = await resolveConsoleExecution(dir, { approve: ['1'], decline: [], reverseFailed: ['1', 'r1'] }, {
+    now: () => Date.now(),
+    gh: fakeGh(ghCalls, { prViewBody: primaryCommentBody(['1', 'r1']) }),
+    writeFile: (p, c) => writeCalls.push({ p, c }),
+  });
+  assert.equal(result.status, 'error');
+  assert.equal(result.reason, 'not-ruling-items');
+  assert.deepEqual(result.ids, ['1']);
+  assert.ok(ghCalls.every((a) => !(a[0] === 'pr' && a[1] === 'comment') && a[0] !== 'api'));
+  assert.equal(writeCalls.length, 0);
+});
+
+test('an id in reverseFailed that matches no console row is rejected as unknown-item-ids', async () => {
+  const dir = makeRunDir();
+  writeConsoleJson(dir, { items: RULING_ITEMS });
+  const writeCalls = [];
+  const result = await resolveConsoleExecution(dir, { approve: [], decline: [], reverseFailed: ['nope'] }, {
+    now: () => Date.now(),
+    gh: fakeGh([], { prViewBody: primaryCommentBody(['1', 'r1']) }),
+    writeFile: (p, c) => writeCalls.push({ p, c }),
+  });
+  assert.equal(result.reason, 'unknown-item-ids');
+  assert.deepEqual(result.ids, ['nope']);
+  assert.equal(writeCalls.length, 0);
 });
 
 test('non-true flag reads unflagged', async () => {

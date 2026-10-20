@@ -31,6 +31,14 @@ test('resolve-console --help prints usage and exits 0, no --run required', () =>
   const result = runHook(['resolve-console', '--help']);
   assert.equal(result.code, 0);
   assert.match(result.stdout, /resolve-console --run <dir>/);
+  assert.match(result.stdout, /\[--reverse-failed <id,id,\.\.\.>\]/);
+});
+
+// --reverse-failed is a declared flag: accepted rather than intercepted as unknown.
+test('resolve-console accepts --reverse-failed as a declared flag', () => {
+  const result = runHook(['resolve-console', '--run', '/definitely/not/a/real/path/xyz', '--reverse-failed', 'r1']);
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /--run path rejected/);
 });
 
 test('resolve-console without --run exits non-zero with a usage message, performs zero writes', () => {
