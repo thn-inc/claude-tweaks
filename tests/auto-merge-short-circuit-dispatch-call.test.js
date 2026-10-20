@@ -108,7 +108,23 @@ test('AC7.1: the branch-guard abort takes the console fallback', () => {
 test('the closing paragraph no longer says a session standing in for one', () => {
   assert.match(PRE_CHANGE, /a session standing in for one/, 'go-red guard: the pre-change text carries the phrase');
   assert.doesNotMatch(FLAT, /a session standing in for one/);
-  assert.doesNotMatch(FLAT, /dispatch-claim branch/);
+  assert.doesNotMatch(FLAT, /dispatch-claim branch/i);
+});
+
+test('AC4.1: no live dispatch-claim reference survives in plugin/ or docs/skill-graph.md, and flow/SKILL.md drops the pre-existing gap clause', () => {
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(p);
+      else if (entry.name.endsWith('.md') || entry.name.endsWith('.js')) files.push(p);
+    }
+  };
+  walk(path.join(ROOT, 'plugin'));
+  files.push(path.join(ROOT, 'docs/skill-graph.md'));
+  const hits = files.filter((f) => /dispatch-claim/i.test(fs.readFileSync(f, 'utf8')));
+  assert.deepStrictEqual(hits.map((f) => path.relative(ROOT, f)), []);
+  assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'plugin/skills/flow/SKILL.md'), 'utf8'), /pre-existing gap/);
 });
 
 test('the branch snippet, executed verbatim, answers true only for this run\'s own dispatch Task call', (t) => {
@@ -122,10 +138,11 @@ test('the branch snippet, executed verbatim, answers true only for this run\'s o
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-call-snippet-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const runState = path.join(dir, 'run-state.json');
-  const run = (sessionId) => execFileSync('bash', ['-c', snippet], {
-    encoding: 'utf8',
-    env: { ...process.env, PIPELINE_RUN_DIR: dir, CLAUDE_CODE_SESSION_ID: sessionId, CLAUDE_PLUGIN_ROOT: PLUGIN_DIR },
-  }).trim();
+  const run = (sessionId, overrides = {}) => {
+    const env = { ...process.env, PIPELINE_RUN_DIR: dir, CLAUDE_CODE_SESSION_ID: sessionId, CLAUDE_PLUGIN_ROOT: PLUGIN_DIR, ...overrides };
+    if (sessionId === undefined) delete env.CLAUDE_CODE_SESSION_ID;
+    return execFileSync('bash', ['-c', snippet], { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  };
 
   fs.writeFileSync(runState, JSON.stringify({ dispatched: true, sessionId: 'S' }));
   assert.strictEqual(run('S'), 'true', 'matching session id on a dispatched run');
@@ -134,6 +151,9 @@ test('the branch snippet, executed verbatim, answers true only for this run\'s o
   fs.writeFileSync(runState, JSON.stringify({ dispatched: true, sessionId: 'H', dispatchSessionId: 'D' }));
   assert.strictEqual(run('H'), 'false', 'a human resume that re-stamped sessionId (dispatchSessionId stays the dispatcher\'s)');
   assert.strictEqual(run('D'), 'true', 'the dispatching session');
+  assert.strictEqual(run(undefined), 'false', 'CLAUDE_CODE_SESSION_ID unset');
+  // The prose reads a non-zero exit as human-run: a helper that cannot load must exit non-zero, never print true.
+  assert.throws(() => run('D', { CLAUDE_PLUGIN_ROOT: path.join(dir, 'no-such-plugin') }), (e) => e.status !== 0 && !/true/.test(String(e.stdout)));
 
   fs.rmSync(runState);
   assert.strictEqual(run('S'), 'false', 'no run-state.json');

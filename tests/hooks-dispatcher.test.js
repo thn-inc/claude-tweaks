@@ -1563,14 +1563,24 @@ test('#3711: a plain re-stamp from another session overwrites sessionId but neve
   assert.strictEqual(isDispatchTaskCallForRun(run, 'H'), false);
 });
 
-test('#3711: --dispatch without CLAUDE_CODE_SESSION_ID omits dispatchSessionId rather than writing a null or empty value', () => {
+test('#3711: --dispatch with an empty CLAUDE_CODE_SESSION_ID records dispatchSessionId as null, so a later resume cannot pass as the dispatcher', () => {
+  const { isDispatchTaskCallForRun } = require('../plugin/bin/lib/dispatch/task-call');
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  const env = { CLAUDE_CODE_SESSION_ID: '' };
-  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-3711b', '--dispatch'], { cwd: project, env }).code, 0);
+  // spawnSync, not runHook: runHook drops stderr on a zero exit, and the warning is the trace.
+  const res = require('child_process').spawnSync('node', [HOOKS, 'record-worktree', '--run', run, '/tmp/wt-3711b', '--dispatch'], {
+    cwd: project, encoding: 'utf8',
+    env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', CLAUDE_CODE_SESSION_ID: '' },
+  });
+  assert.strictEqual(res.status, 0);
+  assert.match(res.stderr, /--dispatch without CLAUDE_CODE_SESSION_ID/);
   const s = readRunState(run);
   assert.strictEqual(s.dispatched, true);
-  assert.strictEqual('dispatchSessionId' in s, false);
+  assert.strictEqual(s.dispatchSessionId, null);
+  // A human resume re-stamps sessionId; an absent dispatchSessionId would fall back to it and match.
+  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-3711b'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'H' } }).code, 0);
+  assert.strictEqual(readRunState(run).sessionId, 'H');
+  assert.strictEqual(isDispatchTaskCallForRun(run, 'H'), false);
 });
 
 // #2783: an `-adhoc-standalone` dir is never a pipeline run a mutating verb

@@ -187,7 +187,8 @@ human-run session — fall through to the direct-merge path below. That includes
 dispatched run from a new session. Fail-safe: a Task call misread as
 human-run (for example after a failed bind) reaches the local-merge first call's branch guard,
 sees the feature branch, and aborts into the console fallback — it never merges into a wrong
-checkout. This is what routes a dispatched **singleton**'s merge decision through this file's own
+checkout, though `close-run` has already run by then (the accepted residual in the
+merge-failure paragraph below). This is what routes a dispatched **singleton**'s merge decision through this file's own
 short-circuit rather than `settle-and-merge.md`'s group-scoped Auto-merge gate.
 
 **`integration-model: pr-first`:** the checkout restriction below doesn't apply — `gh pr merge`

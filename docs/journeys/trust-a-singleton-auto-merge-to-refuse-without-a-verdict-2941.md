@@ -31,7 +31,7 @@ files:
 - **Red flags:** `latest=none` with an `error=` suffix (carried into the refusal line as `, error: …`) — the run dir or `decisions.md` path is wrong, not Layer 2 skipped; fix the path before trusting the refusal's cause. A merge whose only `#N … verdict auto-merge` text sits inside a narrative line rather than an `Auto-merge short-circuit:` entry — the anchoring has regressed.
 
 ### 3a. Confirmed — the merge proceeds, re-checked at the merge call
-- **URL:** the branch openers ("run the Verdict backstop above first") on the `pr-first` branch (before `_shared/pr-first-merge.md`), the `local-merge` branch (before `close-run` and `git merge --no-ff`), and the dispatch-claim `local-merge` relay (before `OUTCOME: ready-to-merge`)
+- **URL:** the branch openers ("run the Verdict backstop above first") on the `pr-first` branch (before `_shared/pr-first-merge.md`), the `local-merge` branch (before `close-run` and `git merge --no-ff`), and the dispatch-call `local-merge` relay (before `OUTCOME: ready-to-merge`)
 - **Action:** Acceptance labeling and ledger deletion run, then each merging branch re-runs the same check immediately before its own merge call or relay, and merges.
 - **Should feel:** Identical to the fast lane before #2941 — no added prompts, no added waits.
 - **Should understand:** A dispatched singleton under `local-merge` relays `ready-to-merge` to `dispatch/settle-and-merge.md`'s local-merge fallback, which re-runs the same module and accepts the singleton's `Auto-merge short-circuit:` marker.
