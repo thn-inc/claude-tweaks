@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets, powershellOpaqueCommand,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets, powershellOpaqueCommand, skipGlobalFlags,
 } = require('../plugin/bin/lib/hooks/git-command');
 
 test('plain commit resolves to cwd', () => {
@@ -252,12 +252,34 @@ test('fileWriteTargets: a plain read-only command yields no target', () => {
   assert.deepStrictEqual(fileWriteTargets('', '/repo'), []);
 });
 
-test('an empty -C value ("git -C \'\' commit") behaves like omitting -C entirely, not like an unparseable command', () => {
+test('AC1.1: an empty -C value ("git -C \'\' commit") behaves like omitting -C entirely — identical target, not like an unparseable command', () => {
   // A truthy check on t[i+1] treats a genuinely-present-but-empty value as
   // "no value follows", mis-consuming only the -C flag and leaving the
   // leftover '' to be misread as the subcommand — silently producing zero
   // targets for a command real git treats as fully valid.
-  assert.deepStrictEqual(gitTargets('git -C "" commit -m "msg"', '/repo'), [{ action: 'commit', dir: path.resolve('/repo') }]);
+  assert.deepStrictEqual(gitTargets('git -C "" commit -m "msg"', '/repo'), gitTargets('git commit -m "msg"', '/repo'));
+  assert.deepStrictEqual(gitTargets('git -C "" commit -m "msg"', '/repo'), [{ action: 'commit', dir: '/repo' }]);
+});
+
+test('AC1.2: empty -C and omitted -C resolve to the identical dir under both path.posix and path.win32 (#3314)', () => {
+  for (const impl of [path.posix, path.win32]) {
+    const empty = skipGlobalFlags(['git', '-C', '', 'commit'], 1, '/repo', impl);
+    const omitted = skipGlobalFlags(['git', 'commit'], 1, '/repo', impl);
+    assert.strictEqual(empty.dir, omitted.dir);
+    assert.strictEqual(empty.dir, '/repo');
+    assert.strictEqual(empty.index, 3);
+    assert.strictEqual(empty.unprovable, false);
+  }
+});
+
+test('the injected pathImpl governs the non-empty -C branches too, so AC1.2 is not satisfied by a host-bound path (#3314)', () => {
+  assert.strictEqual(skipGlobalFlags(['git', '-C', '/abs', 'commit'], 1, '/repo', path.win32).dir, path.win32.resolve('/abs'));
+  assert.strictEqual(skipGlobalFlags(['git', '-C', 'sub', 'commit'], 1, '/repo', path.win32).dir, path.win32.resolve('/repo', 'sub'));
+});
+
+test('an empty -C value leaves an UNKNOWN cwd unprovable, and a following relative -C resolves against the unchanged cwd', () => {
+  assert.strictEqual(resolveGitCommand(['git', '-C', '', 'commit'], null), null);
+  assert.deepStrictEqual(gitTargets('git -C "" -C b commit -m "x"', '/repo'), [{ action: 'commit', dir: path.resolve('/repo', 'b') }]);
 });
 
 test('an empty value for a global VALUE_FLAG (-c) does not swallow the subcommand either', () => {

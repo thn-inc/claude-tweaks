@@ -8,8 +8,9 @@
 'use strict';
 
 const { globToRegExp } = require('../issues/blast-radius');
+const { substituteFile, describePath } = require('./file-template');
 
-function planRetry({ failingFiles, flaky, retry, suite, unattributedCount = 0, family = 'unknown' }) {
+function planRetry({ failingFiles, flaky, retry, suite, unattributedCount = 0, family = 'unknown', platform = process.platform }) {
   if (!Array.isArray(failingFiles) || failingFiles.length === 0) return { retry: false, reason: 'no-parse' };
   // #3204: a family with no failure-accounting guard (`unattributedFailureCount`
   // returns null) cannot prove the named file list is complete, so refuse.
@@ -27,7 +28,15 @@ function planRetry({ failingFiles, flaky, retry, suite, unattributedCount = 0, f
   if (typeof template !== 'string') return { retry: false, reason: 'no-template' };
   if (!flaky || !(flaky.maxRetries >= 1)) return { retry: false, reason: 'max-retries-0' };
   const files = failingFiles.slice();
-  return { retry: true, files, command: files.map((file) => ({ file, cmd: template.replace(/\{file\}/g, file) })) };
+  const command = [];
+  const unsafe = [];
+  for (const file of files) {
+    const sub = substituteFile(template, file, { platform });
+    if (sub.ok) command.push({ file, cmd: sub.command });
+    else unsafe.push({ file, reason: sub.reason });
+  }
+  if (unsafe.length) return { retry: false, reason: `unsafe-path: [${unsafe.map((u) => `${describePath(u.file)} (${u.reason})`).join(', ')}]`, unsafe };
+  return { retry: true, files, command };
 }
 
 // {check}-retry-{file-slug}-{i}: per file AND per attempt, so two files

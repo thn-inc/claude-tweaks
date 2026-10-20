@@ -15,7 +15,7 @@
 // anything on its own, never fixes anything.
 //
 // Scope boundary vs. sibling records: this vertical owns exactly the ten
-// checks above. #2622's pre-scale hardening (query/background-job/caching/
+// checks above. `focus=scale-readiness`'s pre-scale hardening (#2622) (query/background-job/caching/
 // pooling/monitoring), #2624's security-hardening (client secrets, missing
 // ownership checks, unguarded AI endpoints), and #2625's GDPR/backup-
 // retention check are all out of scope here. See

@@ -31,7 +31,7 @@ Each candidate is `{ file, kind, evidence }` — `kind` is one of `missing-apple
 ## Scope boundary (#2628)
 
 This vertical owns exactly the ten checks above. It explicitly does **not** own:
-- **#2622's pre-scale hardening** (query performance, background-job reliability, caching, connection pooling, monitoring/alerting for scale) — a performance-oriented concern, unrelated to App Store submission requirements.
+- **`focus=scale-readiness`'s pre-scale hardening (#2622)** (query performance, background-job reliability, caching, connection pooling, monitoring/alerting for scale) — a performance-oriented concern, unrelated to App Store submission requirements.
 - **#2624's security-hardening checks** (client-bundle secrets, missing per-user ownership checks, unguarded AI-calling endpoints) — a pre-launch security concern, not an Apple-review concern. A Stripe-vs-IAP finding here is about payment *method* compliance, never about endpoint security.
 - **#2625's GDPR/backup-retention check** (cryptographic erasure for backup retention on account deletion) — a compliance-specific concern. This vertical's `missing-account-deletion` check only asks whether an in-app deletion path *exists at all*; it never asks whether deleted data is actually erased from backups — that question is `criteria-privacy-pii.md`'s, not this file's.
 - **Google Play's parallel review criteria** — this checklist is Apple App Store-specific; Play doesn't mandate Apple/Google sign-in parity the same way and has its own distinct review requirements, out of scope here by design.

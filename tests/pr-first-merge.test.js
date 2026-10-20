@@ -425,3 +425,58 @@ test('AC1.2: task-prompt.md second-call template cites the rule via the merge bu
   assert.match(citing[0], /\(if that bundle is absent, read `_shared\/pr-first-merge\.md` directly\)/);
   assert.doesNotMatch(second, /force-push/, 'the second-call slice cites the rule, it does not restate it');
 });
+
+// #3607: a PR that conflicts with its base gets no `pull_request` workflow runs,
+// so its rollup is empty — Step 2.5 must read the merge state before treating
+// that empty rollup as pending, or it watches 15 minutes and parks as
+// checks-pending-timeout instead of reaching the Conflict path. Frozen
+// pre-change bullet below proves the pins can go red [IL-105].
+const PRE_3607_EMPTY_ROLLUP = `- An **empty rollup** → depends on the lever: under \`merge-when-green\` or \`wait\` the repo has PR CI
+  by construction (\`_shared/policy-schema-coverage.md\`'s coverage block derives those values only when a
+  \`pull_request\`-triggered workflow exists, and an explicit value is a statement that CI is
+  expected), so an empty rollup means the checks have not *reported yet* — GitHub populates it
+  seconds after a push, not instantly — and reads as **pending**, never green; under \`off\` it is
+  simply "no CI" and proceeds as green.`;
+
+function step25Section() {
+  return MERGE.slice(MERGE.indexOf('## Step 2.5: Merge-verification gate'), MERGE.indexOf('## Step 3:'));
+}
+
+function emptyRollupBullet() {
+  const section = step25Section();
+  const start = section.indexOf('- An **empty rollup**');
+  assert.ok(start !== -1, 'Step 2.5 must carry the empty-rollup bullet');
+  return section.slice(start, section.indexOf('\n- Otherwise', start));
+}
+
+test('#3607: the Step 2.5 state read fetches mergeable alongside mergeStateStatus', () => {
+  const section = step25Section();
+  assert.ok(section.includes('--json state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup'));
+  assert.ok(section.includes('those five fields'), 'the parse-failure bullet must count the widened field list');
+});
+
+test('#3607 AC1: an empty rollup reporting DIRTY or CONFLICTING routes to the Conflict path before any pending read', () => {
+  const bullet = emptyRollupBullet();
+  for (const needle of ['`mergeStateStatus: DIRTY`', '`mergeable: CONFLICTING`', '**Conflict path**', 'checks-pending-timeout']) {
+    assert.ok(bullet.includes(needle), `empty-rollup bullet missing ${needle}`);
+  }
+  const dirty = bullet.indexOf('DIRTY');
+  const pending = bullet.indexOf('reads as **pending**');
+  const off = bullet.indexOf('under `off`');
+  assert.ok(dirty < pending && pending < off, 'the conflict routing precedes the lever split, so it applies under every lever value');
+  assert.ok(!PRE_3607_EMPTY_ROLLUP.includes('DIRTY'), 'pre-change bullet must NOT route DIRTY (proves the pin can go red) [IL-105]');
+});
+
+test('#3607 AC2: an empty rollup with any other merge state keeps the pending read', () => {
+  const bullet = emptyRollupBullet();
+  assert.ok(bullet.includes('reads as **pending**, never green'));
+  assert.ok(bullet.includes('under `off` it is\n  simply "no CI"') || bullet.includes('under `off` it is simply "no CI"'));
+  const conflictSentence = bullet.slice(0, bullet.indexOf('reads as **pending**'));
+  assert.ok(!conflictSentence.includes('UNKNOWN'), 'only DIRTY / CONFLICTING route to the Conflict path — UNKNOWN (mergeability still computing) stays pending');
+});
+
+test('#3607: a clean update-from-base entered from Step 2.5 re-enters Step 2.5, not Step 3', () => {
+  const conflict = MERGE.slice(MERGE.indexOf('## Conflict path'), MERGE.indexOf('## Outcome vocabulary'));
+  assert.ok(conflict.includes('entered from Step 2.5'), 'Conflict path must name its Step 2.5 entry');
+  assert.ok(conflict.includes('re-enter Step 2.5 from the top'), 'a pushed head from a Step 2.5 entry needs its own CI read before any merge');
+});

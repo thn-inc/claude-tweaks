@@ -13,6 +13,7 @@ const {
   shouldEscalate,
   casBackoffMs,
   createDurableState,
+  createNamespacedState,
 } = require('../../../plugin/bin/lib/health-core/durable-state');
 
 test('constants', () => {
@@ -172,7 +173,7 @@ function pushRule(behavior) {
 // `calls` must be filtered to the mktree calls first; index 0 is always the
 // skill subtree (built before the root tree — see buildRootTree's ordering).
 function mktreeEntryNames(mktreeCall) {
-  return mktreeCall.opts.input.split('\n').filter(Boolean).map((line) => line.split('\t')[1]);
+  return mktreeCall.opts.input.split('\0').filter(Boolean).map((line) => line.split('\t')[1]);
 }
 
 test('readState returns empty defaults when the branch does not exist yet (includeRemembered:true skill)', () => {
@@ -485,8 +486,8 @@ test('writeState preserves an existing file in the skill subtree that this write
     // Root tree already has an entry for this skill; its subtree already has
     // a remembered.json this write does NOT own (includeRemembered:false
     // below) — it must survive untouched in the rebuilt subtree.
-    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'ls-tree') && matchArgs(args, 'tree-sha-1'), returns: '040000 tree existing-skill-tree-sha\tharness-health\n' },
-    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'ls-tree') && matchArgs(args, 'existing-skill-tree-sha'), returns: '100644 blob stale-remembered-sha\tremembered.json\n' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'ls-tree') && matchArgs(args, 'tree-sha-1'), returns: '040000 tree existing-skill-tree-sha\tharness-health\0' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'ls-tree') && matchArgs(args, 'existing-skill-tree-sha'), returns: '100644 blob stale-remembered-sha\tremembered.json\0' },
     { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'hash-object'), returns: 'blob-sha\n' },
     { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'mktree'), returns: 'tree-sha-2\n' },
     { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'commit-tree'), returns: 'commit-sha-2\n' },
@@ -496,7 +497,7 @@ test('writeState preserves an existing file in the skill subtree that this write
   const result = ds.writeState('/repo', (current) => current);
   assert.deepStrictEqual(result, { ok: true });
   const skillTreeCall = calls.filter((c) => c.cmd === 'git' && c.args.includes('mktree'))[0];
-  const entries = skillTreeCall.opts.input.split('\n').filter(Boolean).map((line) => {
+  const entries = skillTreeCall.opts.input.split('\0').filter(Boolean).map((line) => {
     const [meta, name] = line.split('\t');
     const [mode, type, sha] = meta.split(' ');
     return { name, mode, type, sha };
@@ -515,7 +516,7 @@ test('writeState preserves existing root-tree entries for other skills when one 
     // Root tree already contains entries for both code-health and harness-health;
     // this write is via harness-health, so harness-health's subtree will be rebuilt,
     // but code-health's root entry must survive untouched.
-    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'ls-tree') && matchArgs(args, 'tree-sha-1'), returns: '040000 tree code-health-original-tree-sha\tcode-health\n040000 tree hh-original-tree-sha\tharness-health\n' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'ls-tree') && matchArgs(args, 'tree-sha-1'), returns: '040000 tree code-health-original-tree-sha\tcode-health\u0000040000 tree hh-original-tree-sha\tharness-health\0' },
     // harness-health's existing subtree (can be empty for this test)
     { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'ls-tree') && matchArgs(args, 'hh-original-tree-sha'), returns: '' },
     { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'hash-object'), returns: 'blob-sha\n' },
@@ -532,7 +533,7 @@ test('writeState preserves existing root-tree entries for other skills when one 
   assert.strictEqual(mktreeCalls.length, 2, 'two mktree calls: skill subtree, then root tree');
 
   const rootTreeCall = mktreeCalls[1]; // Second mktree call is the root tree
-  const rootEntries = rootTreeCall.opts.input.split('\n').filter(Boolean).map((line) => {
+  const rootEntries = rootTreeCall.opts.input.split('\0').filter(Boolean).map((line) => {
     const [meta, name] = line.split('\t');
     const [mode, type, sha] = meta.split(' ');
     return { name, mode, type, sha };
@@ -547,6 +548,94 @@ test('writeState preserves existing root-tree entries for other skills when one 
 
   assert.ok(hhEntry, 'root tree must contain harness-health entry');
   assert.strictEqual(hhEntry.sha, 'new-tree-sha', 'harness-health sha is the newly-built skill-subtree sha');
+});
+
+// --- Record #3651: tree reads/writes carry NUL-terminated records, so a name
+// git would C-quote (non-ASCII under core.quotepath=true) stays a raw name. ---
+
+test('AC1.1: readTreeEntries reads ls-tree with -z --end-of-options and writeTree feeds mktree -z NUL-terminated records', () => {
+  const { run, calls } = fakeRunner([
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'rev-parse') && matchArgs(args, '^{tree}'), returns: 'commit-sha-1\ntree-sha-1\n' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'fetch'), returns: '' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'show'), throws: 'fatal: path does not exist' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'ls-tree') && matchArgs(args, 'tree-sha-1'), returns: '040000 tree existing-skill-tree-sha\tharness-health\0' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'ls-tree') && matchArgs(args, 'existing-skill-tree-sha'), returns: '100644 blob cafe-sha\tcafé.json\0' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'hash-object'), returns: 'blob-sha\n' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'mktree'), returns: 'tree-sha-2\n' },
+    { match: (cmd, args) => cmd === 'git' && matchArgs(args, 'commit-tree'), returns: 'commit-sha-2\n' },
+    pushRule({ returns: '' }),
+  ]);
+  const ds = createDurableState('harness-health', { run, sleep: () => {} });
+  assert.deepStrictEqual(ds.writeState('/repo', (current) => current), { ok: true });
+
+  const lsTreeCalls = calls.filter((c) => c.cmd === 'git' && c.args.includes('ls-tree'));
+  assert.deepStrictEqual(lsTreeCalls[0].args, ['-C', '/repo', 'ls-tree', '-z', '--end-of-options', 'tree-sha-1']);
+  assert.deepStrictEqual(lsTreeCalls[1].args, ['-C', '/repo', 'ls-tree', '-z', '--end-of-options', 'existing-skill-tree-sha']);
+
+  const mktreeCalls = calls.filter((c) => c.cmd === 'git' && c.args.includes('mktree'));
+  assert.deepStrictEqual(mktreeCalls[0].args, ['-C', '/repo', 'mktree', '-z']);
+  assert.deepStrictEqual(mktreeCalls[1].args, ['-C', '/repo', 'mktree', '-z']);
+  const skillInput = mktreeCalls[0].opts.input;
+  assert.ok(skillInput.includes('100644 blob cafe-sha\tcafé.json\0'), 'the raw non-ASCII name is carried through, NUL-terminated');
+  assert.ok(skillInput.endsWith('\0'), 'every record ends with NUL');
+  assert.ok(!skillInput.includes('\n'), 'no newline separators remain');
+  assert.strictEqual(mktreeCalls[1].opts.input, '040000 tree tree-sha-2\tharness-health\0');
+});
+
+test('AC1.1: writeTree of an empty entry map feeds mktree an empty input (no trailing NUL)', () => {
+  const { run, calls } = fakeRunner([
+    ...baseWriteStateRules(),
+    pushRule({ returns: '' }),
+  ]);
+  // A namespace with no files writes an empty subtree: zero specs.
+  const ds = createNamespacedState('empty-ns', [], { run, sleep: () => {} });
+  assert.deepStrictEqual(ds.writeState('/repo', () => ({})), { ok: true });
+  const mktreeCalls = calls.filter((c) => c.cmd === 'git' && c.args.includes('mktree'));
+  assert.strictEqual(mktreeCalls[0].opts.input, '');
+  assert.deepStrictEqual(mktreeCalls[0].args, ['-C', '/repo', 'mktree', '-z']);
+});
+
+test('AC1.1: a tree entry named café.json round-trips through readTreeEntries and writeTree in a real repo (core.quotepath true)', () => {
+  const { execFileSync } = require('node:child_process');
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const g = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'durable-state-z-'));
+  try {
+    const origin = path.join(dir, 'origin.git');
+    const clone = path.join(dir, 'clone');
+    g(['init', '--bare', '-q', '-b', 'main', origin]);
+    g(['clone', '-q', origin, clone]);
+    g(['-C', clone, 'config', 'user.email', 'test@example.com']);
+    g(['-C', clone, 'config', 'user.name', 'Test']);
+    g(['-C', clone, 'config', 'core.quotepath', 'true']);
+
+    const cafeSpec = [{ key: 'cafe', file: 'café.json', default: {} }];
+    const otherSpec = [{ key: 'other', file: 'other.json', default: {} }];
+    const sleep = () => {};
+    const cafe = createNamespacedState('ns', cafeSpec, { sleep });
+    const other = createNamespacedState('ns', otherSpec, { sleep });
+
+    assert.deepStrictEqual(cafe.writeState(clone, () => ({ cafe: { n: 1 } })), { ok: true });
+    // A second writer on the same namespace rebuilds its subtree from the entry map
+    // readTreeEntries returned: café.json must survive it untouched.
+    assert.deepStrictEqual(other.writeState(clone, () => ({ other: { n: 2 } })), { ok: true });
+
+    g(['-C', clone, 'fetch', '-q', 'origin', 'health-state']);
+    const treeAfterOther = g(['-C', clone, 'rev-parse', 'origin/health-state^{tree}']).trim();
+    const names = g(['-C', clone, 'ls-tree', '-r', '-z', '--name-only', '--end-of-options', 'origin/health-state']).split('\0').filter(Boolean);
+    assert.deepStrictEqual(names.sort(), ['ns/café.json', 'ns/other.json']);
+    assert.ok(!names.some((n) => n.includes('\\303')), 'no C-quoted form of the name');
+    assert.deepStrictEqual(cafe.readState(clone), { cafe: { n: 1 } });
+
+    // Re-writing identical content through the same entry-map path yields the same tree sha.
+    assert.deepStrictEqual(cafe.writeState(clone, (cur) => cur), { ok: true });
+    g(['-C', clone, 'fetch', '-q', 'origin', 'health-state']);
+    assert.strictEqual(g(['-C', clone, 'rev-parse', 'origin/health-state^{tree}']).trim(), treeAfterOther);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // --- includeDeclined: durable persistence for the 'declined' dismissal mark

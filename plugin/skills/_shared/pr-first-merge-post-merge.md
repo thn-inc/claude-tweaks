@@ -95,7 +95,8 @@ run's own check is clean, the stuck dirs are other runs: log and report "{N} oth
 human action (console-never-rendered-staged-pending)" without attributing it to this run. Either way
 the outcome is reported as `merged`, with a needs-human-action note. Reconcile escalates such a dir
 through the consolidated `structurally-stuck` record only after it sits untouched past the 7-day
-TTL and repeated consecutive stuck passes, and only while the run is not yet closed.
+TTL and repeated consecutive stuck passes, whether or not the run is closed: a closed auto-merge
+short-circuit run escalates the same way, via reconcile's clean-status sweep (#3668).
 
 **No `git merge`, `git commit`, or `git push` runs in the main checkout anywhere in this procedure**
 — the reconciler's own `mirrorFastForward` is a strict `--ff-only`, never a merge that could
