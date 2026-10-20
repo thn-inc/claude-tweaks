@@ -9,6 +9,7 @@ const {
   resolveDir,
   buildContext,
   realLsof,
+  MAX_BUFFER,
   PER_FILE_CAP_BYTES,
   isAlwaysStub,
   elideDiff,
@@ -190,8 +191,8 @@ test('3302: the status capture runs with cwd at the repo toplevel', () => {
     readFile: () => '',
     lsof: () => '',
   });
-  const statusCall = calls.find((c) => c.args[0] === 'status');
-  assert.deepStrictEqual(statusCall.args, ['status', '--porcelain', '--untracked-files=all']);
+  const statusCall = calls.find((c) => c.args.includes('status'));
+  assert.deepStrictEqual(statusCall.args, ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all']);
   assert.strictEqual(statusCall.opts.cwd, '/x');
 });
 
@@ -226,7 +227,18 @@ test('3302: realLsof classifies lsof outcomes', () => {
   assert.strictEqual(listing, 'L\n');
   assert.strictEqual(calls[0].file, 'lsof');
   assert.deepStrictEqual(calls[0].args, ['+c', '0', '-nP', '-iTCP', '-sTCP:LISTEN']);
-  assert.deepStrictEqual(calls[0].opts, { encoding: 'utf8', windowsHide: true });
+  assert.deepStrictEqual(calls[0].opts, {
+    encoding: 'utf8',
+    maxBuffer: MAX_BUFFER,
+    timeout: 10000,
+    stdio: ['ignore', 'pipe', 'ignore'],
+    windowsHide: true,
+  });
+
+  const timedOut = () => {
+    throw Object.assign(new Error('spawnSync lsof ETIMEDOUT'), { code: 'ETIMEDOUT', status: null, signal: 'SIGTERM' });
+  };
+  assert.strictEqual(realLsof({ exec: timedOut }), null);
 
   const enoent = () => {
     throw Object.assign(new Error('x'), { code: 'ENOENT' });
@@ -494,6 +506,7 @@ test('F2: the git calls carry core.quotePath=false and explicit diff prefixes', 
       return args.includes('--name-only') ? 'a.txt\0dir/café b.txt\0' : '';
     },
     readFile: () => '',
+    lsof: () => '',
   });
   assert.strictEqual(result.files, 2, 'the git name list is split on NUL');
   const diffCall = calls.find((a) => a.includes('diff') && !a.includes('--name-only'));

@@ -21,10 +21,18 @@ function realGit(args, opts = {}) {
 
 // The TCP listeners on this host, as lsof prints them. Returns null when lsof is not installed
 // (the listener baseline is then absent, not empty), '' when lsof finds no listener (exit 1),
-// and the listing otherwise. Any other failure is null too.
+// and the listing otherwise. Any other failure is null too — including a timeout (lsof can block
+// on a stale network or FUSE mount), which throws with status null. stderr is dropped so lsof
+// warnings do not reach the CLI's own stderr.
 function realLsof({ exec = execFileSync } = {}) {
   try {
-    return exec('lsof', ['+c', '0', '-nP', '-iTCP', '-sTCP:LISTEN'], { encoding: 'utf8', windowsHide: true });
+    return exec('lsof', ['+c', '0', '-nP', '-iTCP', '-sTCP:LISTEN'], {
+      encoding: 'utf8',
+      maxBuffer: MAX_BUFFER,
+      timeout: 10000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+    });
   } catch (err) {
     if (err.code === 'ENOENT') return null;
     if (err.status === 1) return err.stdout || '';
@@ -197,7 +205,7 @@ function buildContext({
   // Pre-dispatch baselines (#3302): the reviewer compares the tree against these to tell its own
   // changes from what was already there, so they are captured here, before any lens runs.
   const baselinePath = path.join(dir, 'pre-dispatch-status.txt');
-  writeFile(baselinePath, git(['status', '--porcelain', '--untracked-files=all'], { cwd: root }));
+  writeFile(baselinePath, git(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all'], { cwd: root }));
   const listeners = lsof();
   const listenersPath = typeof listeners === 'string' ? path.join(dir, 'pre-dispatch-listeners.txt') : null;
   if (listenersPath) writeFile(listenersPath, listeners);
