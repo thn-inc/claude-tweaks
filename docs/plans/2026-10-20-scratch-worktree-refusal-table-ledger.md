@@ -2,3 +2,7 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | SDD ruling — the controller session ran the guard probes (it was the only session confirmed guard-isolated; the dispatched implementer subagent's Bash ran unguarded), and the implementer wrote §7 from that evidence: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
+| 2 | build | SDD ruling — five review Minors this build introduced (hardcoded date regex, no verdict/wording cross-check, `.log` row details, `test` row cross-reference, "addendum candidate" wording) were fixed in a fix round, not deferred: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
+| 3 | build | Table test's shape-coverage tokens `; `, `for `, `<<` are also satisfied by unrelated rows, so they would not catch that specific shape being dropped | deferred | — |
+| 4 | build | Prose outside §7 restates refusals the table now reverses: docs/donts.md:63, docs/hooks.md:55, plugin/skills/_shared/subagent-dispatch-core.md:39, docs/skill-authoring.md:178/182. worktree-setup.md:142's runtime-variable claim was not probed for CLAUDE_PLUGIN_ROOT. Dispatched subagent sessions were observed not guard-isolated, contradicting subagent-dispatch-core.md:39 | deferred | — |
