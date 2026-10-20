@@ -99,7 +99,7 @@ test('readRunResidue marks acknowledged', () => {
   const dir = tmpRun();
   fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ ...CONSOLE_2821, residueAcknowledgedAt: '2026-10-17T00:00:00Z' }));
   stageItems(dir, unresolvedItems(CONSOLE_2821));
-  const [c]= readRunResidue(dir).consoles;
+  const [c] = readRunResidue(dir).consoles;
   assert.strictEqual(c.acknowledged, true);
   assert.strictEqual(c.path, path.join(dir, 'console.json'));
   assert.strictEqual(c.items.length, 4);
@@ -262,6 +262,29 @@ test('formatResidueLines names the missing items of every console once per run, 
   assert.ok(notCounted[0].includes(path.join('staged', 'wrap-up-docs-1.md')) && notCounted[0].includes(path.join('spec-2', 'staged', 'wrap-up-docs-2.md')), notCounted[0]);
   assert.ok(lines.indexOf(notCounted[0]) > lines.findIndex((l) => l.startsWith('  … and ')), lines.join('\n'));
   assert.ok(lines.indexOf(notCounted[0]) < lines.length - 1, 'before the mark-reviewed line');
+});
+
+test('a console with only missing items is not residue but its items are named when another console is listed (#3772)', () => {
+  const dir = mixedConsole();
+  fs.mkdirSync(path.join(dir, 'spec-2'));
+  fs.writeFileSync(path.join(dir, 'spec-2', 'console.json'), JSON.stringify({ items: [{ id: 'wrap-up-docs-2.md', section: 'Pending review', resolution: 'pending', reason: 'r' }] }));
+  const found = readRunResidue(dir);
+  assert.deepStrictEqual(found.consoles.map((c) => c.path), [path.join(dir, 'console.json')]);
+  assert.deepStrictEqual(found.missingOnly.map((c) => [c.path, c.acknowledged, c.missing.map((m) => m.id)]), [[path.join(dir, 'spec-2', 'console.json'), false, ['wrap-up-docs-2.md']]]);
+  const notCounted = formatResidueLines(found, { pluginRoot: '/p' }).filter((l) => l.startsWith('  not counted'));
+  assert.strictEqual(notCounted.length, 1, notCounted.join('\n'));
+  assert.ok(notCounted[0].includes(path.join('staged', 'wrap-up-docs-1.md')) && notCounted[0].includes(path.join('spec-2', 'staged', 'wrap-up-docs-2.md')), notCounted[0]);
+});
+
+test('a run with only missing-only consoles yields no consoles and renders nothing (#3772)', () => {
+  const dir = tmpRun();
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ items: [{ id: 'wrap-up-docs-1.md', resolution: 'pending' }] }));
+  fs.mkdirSync(path.join(dir, 'spec-2'));
+  fs.writeFileSync(path.join(dir, 'spec-2', 'console.json'), JSON.stringify({ items: [{ id: 'wrap-up-docs-2.md', resolution: 'keep-staged' }] }));
+  const found = readRunResidue(dir);
+  assert.deepStrictEqual(found.consoles, []);
+  assert.strictEqual(found.missingOnly.length, 2);
+  assert.deepStrictEqual(formatResidueLines(found, { pluginRoot: '/p' }), []);
 });
 
 test('splitMissing never classifies a decision: item, an id-less item or a non-basename id as missing (#3772)', () => {

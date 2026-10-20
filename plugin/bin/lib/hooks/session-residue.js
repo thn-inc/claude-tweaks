@@ -143,8 +143,9 @@ function runIdNames(dir) {
 // without reading any state; a basename in both is kept once, top-level
 // preferred. An unresolved item whose staged file is gone is `missing`, not
 // residue (#3772): `readRunResidue` drops it from the count, so a run whose
-// every unresolved item is missing is not reported. A top-level candidate counts only when its run-state.json is
-// `clean` and its archive twin is neither clean nor freshly `archiving`
+// every unresolved item is missing is not reported. A top-level candidate
+// counts only when its run-state.json is `clean` and its archive twin is
+// neither clean nor freshly `archiving`
 // (iterRunDirsWithState's twin skip); otherwise its archive/ copy, when there
 // is one, stands in. Only consoles not yet acknowledged count — a run is kept
 // when at least one remains, and only those are listed. Reading stops as soon
@@ -180,7 +181,8 @@ function scanUnresolvedConsoles(cwd, { exclude, pluginRoot, limit = MAX_REPORTED
     const found = readRunResidue(dir, readFile ? { readFile } : undefined);
     const consoles = found.consoles.filter((c) => !c.acknowledged);
     if (!consoles.length) continue;
-    runs.push({ dir, consoles, lines: formatResidueLines({ dir, consoles }, { pluginRoot: root }) });
+    const missingOnly = found.missingOnly.filter((c) => !c.acknowledged);
+    runs.push({ dir, consoles, lines: formatResidueLines({ dir, consoles, missingOnly }, { pluginRoot: root }) });
   }
   return { runs, more };
 }

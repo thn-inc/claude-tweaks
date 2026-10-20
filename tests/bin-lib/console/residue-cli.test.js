@@ -78,6 +78,17 @@ test('AC3.5: console-residue.js --run does not count a missing-file item (#3772)
   assert.ok(!lines.some((l) => l.startsWith('  - reflect-1.md')), h.out());
 });
 
+test('console-residue.js --run names the missing items of a spec console that has no present items (#3772)', () => {
+  const f = fixture();
+  fs.mkdirSync(path.join(f.runDir, 'spec-2'));
+  fs.writeFileSync(path.join(f.runDir, 'spec-2', 'console.json'), JSON.stringify({ items: [{ id: 'wrap-up-docs-2.md', section: 'Pending review', resolution: 'pending', reason: 'r' }] }));
+  const h = harness(f.main);
+  assert.strictEqual(run(['--run', f.runDir], h.deps), 0);
+  const notCounted = h.out().split('\n').filter((l) => l.startsWith('  not counted — '));
+  assert.strictEqual(notCounted.length, 1, h.out());
+  assert.ok(notCounted[0].includes(path.join('spec-2', 'staged', 'wrap-up-docs-2.md')), notCounted[0]);
+});
+
 test('--ack writes residueAcknowledgedAt and keeps every other field', () => {
   const f = fixture();
   const h = harness(f.main);

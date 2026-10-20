@@ -155,6 +155,18 @@ test('AC3.4: the SessionStart console scan skips a run whose pending items\' sta
   assert.deepStrictEqual(residue.collectUnresolvedConsoles(project, { pluginRoot: '/p' }), []);
 });
 
+test('the SessionStart console scan names the missing items of a spec console that has no present items (#3772)', () => {
+  const project = tmpProject();
+  const run = mkArchived(project, '2026-10-19T131646-spec-3258');
+  mkConsole(run, [PENDING('wrap-up-docs-1.md')]);
+  mkConsole(path.join(run, 'spec-2'), [PENDING('wrap-up-docs-2.md')], undefined, { stage: false });
+  const entries = residue.collectUnresolvedConsoles(project, { pluginRoot: '/p' });
+  assert.strictEqual(entries.length, 1);
+  const notCounted = entries[0].lines.filter((l) => l.startsWith('  not counted — '));
+  assert.strictEqual(notCounted.length, 1, entries[0].lines.join('\n'));
+  assert.ok(notCounted[0].includes(path.join('spec-2', 'staged', 'wrap-up-docs-2.md')), notCounted[0]);
+});
+
 test('collectUnresolvedConsoles: acknowledged consoles are skipped', () => {
   const project = tmpProject();
   mkConsole(mkArchived(project, '2026-10-16T210949-spec-1'), [PENDING('a.md')], { residueAcknowledgedAt: '2026-10-17T00:00:00.000Z' });

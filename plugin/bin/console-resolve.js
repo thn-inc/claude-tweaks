@@ -25,7 +25,7 @@ const { resolvePolicyConfig } = require('./lib/policy-schema');
 const { resolveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
 const { extractPendingGrantedAt, partitionGrantComments } = require('./lib/issues/grant-maturation');
 const { writeFileAtomic } = require('./lib/atomic-write');
-const { unresolvedItems, splitMissing, formatResidueLines } =require('./lib/console/residue');
+const { unresolvedItems, splitMissing, formatResidueLines } = require('./lib/console/residue');
 
 const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]';
 

@@ -5,8 +5,9 @@
 // Pure apart from the default fs readers: read-only toward staged/ and toward
 // resolution. The only write in the feature (`--ack`) lives in the CLI.
 // An unresolved item whose staged file has since vanished (a rename, a cleanup)
-// is `missing` (#3772): there is nothing left for a human to review, so
-// `splitMissing` takes it out of the count and the banner names it once instead.
+// is `missing` (#3772): nothing exists at the id the console recorded, so there
+// is nothing a human can open from it; `splitMissing` takes it out of the count
+// and the banner names it once instead.
 'use strict';
 
 const fs = require('fs');
@@ -54,6 +55,7 @@ function readRunResidue(runDir, { readFile = defaultReadFile, readdir = defaultR
     candidates.push(path.join(runDir, name, 'console.json'));
   }
   const consoles = [];
+  const missingOnly = [];
   const unreadable = [];
   for (const p of candidates) {
     let parsed;
@@ -62,10 +64,16 @@ function readRunResidue(runDir, { readFile = defaultReadFile, readdir = defaultR
       continue;
     }
     const { items, missing } = splitMissing(unresolvedItems(parsed), path.dirname(p), exists);
-    if (items.length === 0) continue;
-    consoles.push({ path: p, items, missing, acknowledged: typeof parsed.residueAcknowledgedAt === 'string' });
+    const acknowledged = typeof parsed.residueAcknowledgedAt === 'string';
+    if (items.length === 0) {
+      // Not residue (nothing a human can open), but its missing items are still
+      // named in the run's `not counted` line when another console is listed.
+      if (missing.length > 0) missingOnly.push({ path: p, missing, acknowledged });
+      continue;
+    }
+    consoles.push({ path: p, items, missing, acknowledged });
   }
-  return { dir: runDir, consoles, unreadable };
+  return { dir: runDir, consoles, missingOnly, unreadable };
 }
 
 const shown = (v) => (v === undefined || v === null || v === '' ? '—' : v);
@@ -90,7 +98,7 @@ function itemLines(item, consoleDir) {
 
 // One header per run; `maxItems` caps item lines across the whole run, not
 // per console. With several consoles each gets a `(relative path)` sub-line.
-function formatResidueLines({ dir, consoles }, { pluginRoot, maxItems = 5 }) {
+function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, maxItems = 5 }) {
   if (!consoles || consoles.length === 0) return [];
   const single = consoles.length === 1;
   const total = consoles.reduce((n, c) => n + c.items.length, 0);
@@ -109,7 +117,7 @@ function formatResidueLines({ dir, consoles }, { pluginRoot, maxItems = 5 }) {
   if (total > count) {
     lines.push(`  … and ${total - count} more — see "${single ? consoles[0].path : dir}"`);
   }
-  const gone = consoles.flatMap((c) => (c.missing || []).map((m) => path.relative(dir, path.join(path.dirname(c.path), 'staged', m.id))));
+  const gone = [...consoles, ...missingOnly].flatMap((c) => (c.missing || []).map((m) => path.relative(dir, path.join(path.dirname(c.path), 'staged', m.id))));
   if (gone.length > 0) lines.push(`  not counted — staged file(s) no longer on disk: ${gone.join(', ')}`);
   lines.push(`  mark reviewed: node "${pluginRoot}/bin/console-residue.js" --ack --run "${dir}"`);
   return lines;
