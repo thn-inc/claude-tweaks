@@ -304,3 +304,81 @@ test('AC1.1: finish-console --approve-all flips a row whose Item carries an esca
   const row = fs.readFileSync(path.join(runDir, 'ledger.md'), 'utf8').split('\n').find((l) => l.startsWith('| 1 |'));
   assert.deepStrictEqual(ledgerRowCells(row), ['1', 'review', 'SDD ruling — match a|b', 'accepted', 'ratified — keep a|b'], 'step 3');
 });
+
+// ---- ledger pre-flight branches (#3684): each resolution/read refusal reports
+// its own detail and writes none of the three artifacts. ---------------------
+
+const PREFLIGHT_PAYLOAD = JSON.stringify({
+  memory: [{ file: 'memory/foo.md', indexFile: 'MEMORY.md' }],
+  ledger: [{ item: 1, status: 'fixed', resolution: 'x' }],
+});
+
+// A throwaway git repo on `branch` (no remote), so resolveLedgerPath's docs/plans
+// ownership read sees the same inputs a linked worktree would: `main` resolves a
+// merge base, any other name leaves it unavailable.
+function makeScratchRepo(t, branch) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finish-console-scratch-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  git(['init', '-q'], dir);
+  git(['checkout', '-q', '-b', branch], dir);
+  git(['config', 'user.email', 'test@example.com'], dir);
+  git(['config', 'user.name', 'Test'], dir);
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
+  git(['add', '.'], dir);
+  git(['commit', '-q', '-m', 'base'], dir);
+  fs.mkdirSync(path.join(dir, 'docs', 'plans'), { recursive: true });
+  return { dir, runDir: fs.mkdtempSync(path.join(dir, 'finish-console-rundir-')) };
+}
+
+function assertNothingWritten(runDir, r, detail) {
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stderr, detail);
+  assert.match(r.stderr, /nothing written/);
+  assert.deepStrictEqual(
+    snapshotArtifacts(runDir),
+    { expectations: null, decisions: null, ledger: null },
+    'verify-expectations.json, decisions.md and the ledger must all stay absent',
+  );
+}
+
+test('finish-console refuses an ambiguous docs/plans ledger before writing any artifact', (t) => {
+  const { dir, runDir } = makeScratchRepo(t, 'main');
+  fs.writeFileSync(path.join(dir, 'docs', 'plans', 'a-ledger.md'), LEDGER_SAMPLE);
+  fs.writeFileSync(path.join(dir, 'docs', 'plans', 'b-ledger.md'), LEDGER_SAMPLE);
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { cwd: dir, input: PREFLIGHT_PAYLOAD });
+  assertNothingWritten(runDir, r, /ledger pre-flight failed: 2 candidate ledgers found, cannot pick one/);
+});
+
+test('finish-console refuses a docs/plans ledger it cannot attribute to this run before writing any artifact', (t) => {
+  const { dir, runDir } = makeScratchRepo(t, 'feature');
+  fs.writeFileSync(path.join(dir, 'docs', 'plans', 'a-ledger.md'), LEDGER_SAMPLE);
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { cwd: dir, input: PREFLIGHT_PAYLOAD });
+  assertNothingWritten(runDir, r, /ledger pre-flight failed: cannot attribute docs\/plans ledgers to this run/);
+});
+
+test('finish-console refuses a --ledger whose name is not a ledger file before writing any artifact', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(path.join(runDir, 'notes.md'), LEDGER_SAMPLE);
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all', '--ledger', path.join(runDir, 'notes.md')], { input: PREFLIGHT_PAYLOAD });
+  assertNothingWritten(runDir, r, /ledger pre-flight failed: --ledger .*notes\.md rejected \(not a ledger file name/);
+});
+
+test('finish-console refuses a --ledger outside the run directory and worktree before writing any artifact', (t) => {
+  const runDir = makeRunDir();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'finish-console-outside-'));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(outside, 'ledger.md'), LEDGER_SAMPLE);
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all', '--ledger', path.join(outside, 'ledger.md')], { input: PREFLIGHT_PAYLOAD });
+  assertNothingWritten(runDir, r, /ledger pre-flight failed: --ledger .*ledger\.md rejected \(outside the run directory and worktree\)/);
+});
+
+// chmod cannot make a file unreadable on win32 or for root, where the read would succeed.
+test('finish-console refuses a ledger it cannot read before writing any artifact', { skip: process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0) }, (t) => {
+  const runDir = makeRunDir();
+  const unreadable = path.join(runDir, 'locked-ledger.md');
+  fs.writeFileSync(unreadable, LEDGER_SAMPLE);
+  fs.chmodSync(unreadable, 0o000);
+  t.after(() => fs.chmodSync(unreadable, 0o644));
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all', '--ledger', unreadable], { input: PREFLIGHT_PAYLOAD });
+  assertNothingWritten(runDir, r, /ledger pre-flight failed: could not read .*locked-ledger\.md/);
+});
