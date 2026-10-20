@@ -42,4 +42,4 @@ files:
 
 A refused Bash call in a worktree session costs one lookup and one retry, not a dozen probes. The session knows which refusals are the harness guard, which are permission rules, and which reported shapes don't reproduce at all.
 
-_Origin: record #2776 (reshaped to doc-only: the refusals come from the harness guard, not `pre-tool-use.js`), built 2026-10-16. Step 4 added by record #3338 (`/claude-tweaks:feedback` checks a quoted refusal against `bin/` before blaming a plugin hook), built 2026-10-20._
+_Origin: record #2776 (reshaped to doc-only: the refusals come from the harness guard, not `pre-tool-use.js`), built 2026-10-16. Step 4 added by record #3338 (`/claude-tweaks:feedback` checks a quoted refusal against `bin/` before blaming a plugin hook), built 2026-10-20. Step 2 repointed by record #3340 (§7's dated addenda folded into one live-re-verified current-state table), built 2026-10-20._
