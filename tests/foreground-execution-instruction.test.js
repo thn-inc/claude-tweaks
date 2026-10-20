@@ -38,7 +38,12 @@ function fencedBlocks(text) {
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
     if (!lines[i].startsWith('```')) continue;
-    if (start === -1) { start = i + 1; } else { blocks.push(lines.slice(start, i).join('\n')); start = -1; }
+    if (start === -1) {
+      start = i + 1;
+    } else {
+      blocks.push(lines.slice(start, i).join('\n'));
+      start = -1;
+    }
   }
   assert.equal(start, -1, 'unbalanced ``` fences — the last fenced block is unclosed');
   return blocks;
@@ -59,10 +64,15 @@ function assertEachPatternGoesRed(text, patterns, missingOf) {
 
 const TEMPLATE_LABELS = ['first call (build,test)', 'second call (review,polish,wrap-up)'];
 
-test('task-prompt.md: both fenced Task-prompt templates carry the foreground-execution instruction', () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+// task-prompt.md's two fenced Task-prompt templates, in TEMPLATE_LABELS order.
+function templateBlocks(text) {
   const blocks = fencedBlocks(text);
-  assert.equal(blocks.length, 2, `expected exactly two fenced Task-prompt blocks, found ${blocks.length}`);
+  assert.equal(blocks.length, TEMPLATE_LABELS.length, `expected exactly two fenced Task-prompt blocks, found ${blocks.length}`);
+  return blocks;
+}
+
+test('task-prompt.md: both fenced Task-prompt templates carry the foreground-execution instruction', () => {
+  const blocks = templateBlocks(fs.readFileSync(TASK_PROMPT, 'utf8'));
 
   for (const [index, block] of blocks.entries()) {
     const label = TEMPLATE_LABELS[index];
@@ -93,9 +103,7 @@ test('the foreground-instruction predicate can actually go red (discrimination p
     'expected to doctor out exactly the two foreground-execution paragraphs — anchor text not found',
   );
 
-  const blocks = fencedBlocks(kept.join('\n\n'));
-  assert.equal(blocks.length, 2);
-  for (const block of blocks) {
+  for (const block of templateBlocks(kept.join('\n\n'))) {
     for (const [pattern] of REQUIRED) {
       assert.doesNotMatch(block, pattern, 'doctored block unexpectedly still matches — test cannot discriminate');
     }
@@ -253,7 +261,7 @@ function item7Block(text) {
   const start = text.indexOf('7. **Async-wait discipline**');
   assert.notEqual(start, -1, 'task-prompt.md lost its item 7 "Async-wait discipline" heading (#3078)');
   const next = text.slice(start + 1).search(/\n(?:8\. |## )/);
-  if (next === -1) assert.fail('task-prompt.md: no "8. " item or "## " heading follows item 7 — its boundary is unknown, so the block would run to end-of-file (#3078)');
+  assert.notEqual(next, -1, 'task-prompt.md: no "8. " item or "## " heading follows item 7 — its boundary is unknown, so the block would run to end-of-file (#3078)');
   return text.slice(start, start + 1 + next);
 }
 
@@ -278,14 +286,14 @@ const TEMPLATE_KEEP_ALIVE = [
   [/log\s+the\s+downgrade/i, "the template's fallback logs the downgrade"],
   ...SHARED_RULE,
 ];
-// Takes the template's "Foreground execution (required):" paragraph, not the whole fenced block, so
-// a pattern's one occurrence is the paragraph's (the block mentions `unconfirmed` elsewhere).
-const templateKeepAliveMissing = missingFactsOf(TEMPLATE_KEEP_ALIVE);
 const foregroundParagraph = (block) => {
   const found = block.split(/\r?\n\r?\n/).filter((p) => p.startsWith('Foreground execution (required):'));
   assert.equal(found.length, 1, `expected exactly one "Foreground execution (required):" paragraph per template, found ${found.length}`);
   return found[0];
 };
+// Takes the template's "Foreground execution (required):" paragraph, not the whole fenced block, so
+// a pattern's one occurrence is the paragraph's (the block mentions `unconfirmed` elsewhere).
+const templateKeepAliveMissing = missingFactsOf(TEMPLATE_KEEP_ALIVE);
 const dropsInTurnCarveOut = (block) => !/It\s+does\s+not\s+cover\s+an\s+in-turn/.test(block);
 
 const dropsPrimaryResumeSignal = (text) => !/primary resume signal/.test(text);
@@ -301,8 +309,7 @@ test('task-prompt item 7 drops "nothing wakes you" and states what ends a turn (
 });
 
 test('neither fenced template keeps the in-turn carve-out (#3078)', () => {
-  const blocks = fencedBlocks(fs.readFileSync(TASK_PROMPT, 'utf8'));
-  assert.equal(blocks.length, 2, `expected exactly two fenced Task-prompt blocks, found ${blocks.length}`);
+  const blocks = templateBlocks(fs.readFileSync(TASK_PROMPT, 'utf8'));
   for (const [index, block] of blocks.entries()) {
     const label = TEMPLATE_LABELS[index];
     assert.ok(dropsInTurnCarveOut(block), `${label} template still carries the in-turn carve-out (#3078)`);
@@ -319,7 +326,7 @@ test("the #2533 rationale cites the core section, not dispatch-waiting.md's resu
 test('each task-prompt assertion can actually go red on its own (discrimination proof)', () => {
   const text = fs.readFileSync(TASK_PROMPT, 'utf8');
   assertEachPatternGoesRed(item7Block(text), ITEM7, item7Missing);
-  for (const block of fencedBlocks(text)) assertEachPatternGoesRed(foregroundParagraph(block), TEMPLATE_KEEP_ALIVE, templateKeepAliveMissing);
+  for (const block of templateBlocks(text)) assertEachPatternGoesRed(foregroundParagraph(block), TEMPLATE_KEEP_ALIVE, templateKeepAliveMissing);
   assertEachPatternGoesRed(text, RATIONALE, rationaleMissing);
 });
 
@@ -327,7 +334,7 @@ test('the task-prompt absence predicates can actually go red (discrimination pro
   const text = fs.readFileSync(TASK_PROMPT, 'utf8');
   assert.equal(dropsNothingWakes(item7Block(text) + '\n   nothing wakes you automatically.'), false, 'the re-inserted "nothing wakes you" must turn the item-7 assertion red');
 
-  const [firstCall] = fencedBlocks(text);
+  const [firstCall] = templateBlocks(text);
   assert.equal(
     dropsInTurnCarveOut(firstCall + '\n\nIt does not cover an in-turn `Agent`-tool dispatch.'),
     false,
@@ -365,7 +372,7 @@ const PRIMITIVE = /`sleep\s+(\d+)`\s+Bash\s+calls,\s+at\s+most\s+(\d+)\s+\((\d+)
 const EXPECTED_PRIMITIVE = '30/40/20';
 function primitiveCopies() {
   const taskPrompt = fs.readFileSync(TASK_PROMPT, 'utf8');
-  const [firstCall, secondCall] = fencedBlocks(taskPrompt);
+  const [firstCall, secondCall] = templateBlocks(taskPrompt);
   return {
     'subagent-dispatch-core.md': coreForegroundSection(fs.readFileSync(CORE, 'utf8')),
     'task-prompt.md item 7': item7Block(taskPrompt),
@@ -374,8 +381,12 @@ function primitiveCopies() {
   };
 }
 const primitiveOf = (text) => [...text.matchAll(PRIMITIVE)].map((m) => m.slice(1).join('/'));
+const statesPrimitiveOnce = (text) => {
+  const found = primitiveOf(text);
+  return found.length === 1 && found[0] === EXPECTED_PRIMITIVE;
+};
 const mismatchedPrimitiveCopies = (copies) => Object.entries(copies)
-  .filter(([, text]) => { const found = primitiveOf(text); return found.length !== 1 || found[0] !== EXPECTED_PRIMITIVE; })
+  .filter(([, text]) => !statesPrimitiveOnce(text))
   .map(([name]) => name);
 
 test('the keep-alive primitive (sleep 30, at most 40, 20 minutes) agrees across all four copies (#3078)', () => {
