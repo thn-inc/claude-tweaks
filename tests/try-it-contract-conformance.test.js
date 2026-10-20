@@ -42,7 +42,7 @@ test('try-it.md forbids empty and placeholder blocks and decouples from the over
 
 test('the Try it field lines live in exactly one skill file', () => {
   const owners = walk(SKILLS).filter((f) => FIELD_LINE.test(fs.readFileSync(f, 'utf8')))
-    .map((f) => path.relative(SKILLS, f));
+    .map((f) => path.relative(SKILLS, f).split(path.sep).join('/'));
   assert.deepEqual(owners, ['_shared/try-it.md']);
 });
 
