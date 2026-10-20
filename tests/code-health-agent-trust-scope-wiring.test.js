@@ -108,3 +108,26 @@ test('go-red: the accepted-risk guard check fails when the bullet is removed', (
   assert.notEqual(mutated, fragment, 'mutation did not apply — the bullet must start with "- A dimension the project has formally accepted in an ADR"');
   assert.throws(() => assertAcceptedRiskGuard(mutated));
 });
+
+function assertStep665AcceptedRiskRow(passes) {
+  const start = passes.indexOf('## Step 6.65');
+  const end = passes.indexOf('## Step 6.66', start + 1);
+  const step = passes.slice(start, end);
+  const row = step.split('\n').find((l) => l.startsWith('|') && l.includes('accepted risk — ADR NNNN ({kind})'));
+  assert.ok(row, 'Step 6.65 result-handling table has no accepted-risk row');
+  assert.match(row, /footer/);
+  assert.match(row, /Not an Agent Trust Scope finding/);
+}
+
+test('AC1.1: review Step 6.65 renders an accepted-risk candidate as a footer note naming the ADR', () => {
+  assertStep665AcceptedRiskRow(readText(path.join(ROOT, 'plugin/skills/review/focus-criterion-passes.md')));
+  const tmpl = readText(path.join(ROOT, 'plugin/skills/review/review-summary-template.md'));
+  assert.ok(tmpl.includes('accepted risk — ADR NNNN ({kind})'), 'summary template must name the accepted-risk footer note');
+});
+
+test('go-red: the Step 6.65 row check fails when the row is removed', () => {
+  const passes = readText(path.join(ROOT, 'plugin/skills/review/focus-criterion-passes.md'));
+  const mutated = passes.split('\n').filter((l) => !(l.startsWith('|') && l.includes('accepted risk — ADR NNNN'))).join('\n');
+  assert.notEqual(mutated, passes, 'mutation did not apply');
+  assert.throws(() => assertStep665AcceptedRiskRow(mutated));
+});
