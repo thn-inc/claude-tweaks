@@ -1318,6 +1318,41 @@ test('consoleReplacedByAutoMergeShortCircuit: true only for the short-circuit\'s
   assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(dir), false);
   const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-merge-sc-none-'));
   assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(bare), false);
+  // An unprovable log (a non-ENOENT read failure — here decisions.md is a directory)
+  // fails toward NOT archiving, unlike a missing one.
+  const unreadable = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-merge-sc-eisdir-'));
+  fs.mkdirSync(path.join(unreadable, 'decisions.md'));
+  assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(unreadable), true);
+});
+
+// Prose-code twin (#3668): the signal regex is a hand-copy of the log line the two
+// producer skills tell the agent to write. Extract those templates from the live prose
+// (whitespace-collapsed: the Manifesto-authorized one is hard-wrapped), fill the
+// placeholders, and require the detector to accept each. The exact count pins the
+// producer set, so a new or reworded template fails here instead of silently
+// disabling the archive-run guard.
+const REPO_ROOT = path.join(__dirname, '..', '..', '..');
+function shortCircuitLogTemplates(text) {
+  return [...text.matchAll(/`AUTO \{time\} — ((?:Fast-lane|Manifesto-authorized) auto-merge: issue #\{n\}, [^`]*)`/g)]
+    .map((m) => m[1].replace(/\s+/g, ' '))
+    .filter((t) => t.includes('assess-agent-autonomy'));
+}
+function detectsTemplate(template) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-merge-sc-twin-'));
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `- AUTO 10:00:00 — ${template.replace('{n}', '3668')}\n`);
+  return consoleReplacedByAutoMergeShortCircuit(dir);
+}
+test('consoleReplacedByAutoMergeShortCircuit: detects every log-line template the producer skills write', () => {
+  const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, 'plugin', 'skills', 'wrap-up', rel), 'utf8');
+  const fast = shortCircuitLogTemplates(read('auto-merge-short-circuit.md'));
+  const manifesto = shortCircuitLogTemplates(read('manifesto-authorized-merge.md'));
+  assert.strictEqual(fast.length, 2, 'auto-merge-short-circuit.md carries two Fast-lane log templates');
+  assert.strictEqual(manifesto.length, 1, 'manifesto-authorized-merge.md carries one Manifesto-authorized log template');
+  for (const template of [...fast, ...manifesto]) {
+    assert.strictEqual(detectsTemplate(template), true, template);
+  }
+  // Go-red control: a producer reword that drops the canonical continuation is not detected.
+  assert.strictEqual(detectsTemplate(manifesto[0].replace('verdict auto-merge', 'verdict merge')), false);
 });
 
 // Re-pin the existing exports still resolve after the refactor above touched

@@ -467,8 +467,9 @@ function hasStagedItems(runDir) {
 // issue #{n}` on the merge-authorization-lever path (wrap-up/manifesto-authorized-merge.md,
 // its "Log line" section). That is the one 'none'-console path this guard covers: other
 // terminal runs keep staged/ by design (in-terminal consoles, fleet-approved closes,
-// tidy --approve runs) and must still archive. The line's absence, or any read
-// failure, leaves the guard off. Agents reuse the bare phrase "Fast-lane
+// tidy --approve runs) and must still archive. The line's absence, or a missing
+// decisions.md (ENOENT), leaves the guard off; any other read failure is unprovable
+// and fails toward NOT archiving, like hasStagedItems and readConsoleState. Agents reuse the bare phrase "Fast-lane
 // auto-merge: issue #N" in free-form text (a short-circuit that did not fire, a
 // console that resolved afterward), so the match requires the canonical
 // continuation the short-circuit's own log template writes (`, assess-agent-
@@ -476,7 +477,7 @@ function hasStagedItems(runDir) {
 // turns the signal off: a console was presented and resolved.
 function consoleReplacedByAutoMergeShortCircuit(runDir) {
   let raw;
-  try { raw = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'); } catch { return false; }
+  try { raw = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'); } catch (err) { return !(err && err.code === 'ENOENT'); }
   if (raw.includes('Review Console: terminal decision')) return false;
   return /(?:Fast-lane|Manifesto-authorized) auto-merge: issue #\d+, assess-agent-autonomy verdict auto-merge/.test(raw);
 }
