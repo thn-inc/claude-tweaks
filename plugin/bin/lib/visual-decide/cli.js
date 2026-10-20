@@ -215,17 +215,18 @@ async function cmdStop(opts) {
     reportAlreadyStopped(stateDir);
     return;
   }
-  const settled = await waitFor(
+  await waitFor(
     () => fs.existsSync(path.join(stateDir, 'server-stopped')) || !pidAlive(info.pid),
     { timeoutMs: 3000, intervalMs: 50 },
   );
-  if (!settled) {
-    // waitFor timed out: on a zombie PID (no reaping init) pidAlive(pid)
-    // keeps answering true via kill(pid, 0) even though the process can no
-    // longer run its own SIGTERM handler to write the marker itself. Write
-    // it defensively here, matching the dead-PID branch's own behavior
-    // above -- stop is a stale-PID-tolerant contract regardless of which
-    // branch gets there.
+  // The daemon's SIGTERM handler normally writes the marker, but the wait can
+  // settle without it in two cases: a timeout on a zombie PID (no reaping
+  // init, #3130), where pidAlive(pid) keeps answering true via kill(pid, 0),
+  // and a handler-less exit (win32 SIGTERM is unconditional, outside SIGKILL;
+  // #3265), where the PID is gone without the marker ever being written. Write
+  // it here whenever it is still absent, matching the dead-PID branch above --
+  // stop is a stale-PID-tolerant contract regardless of which path gets there.
+  if (!fs.existsSync(path.join(stateDir, 'server-stopped'))) {
     writeStoppedMarker(stateDir);
   }
   process.stdout.write('stopped\n');
