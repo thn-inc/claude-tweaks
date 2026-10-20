@@ -644,10 +644,15 @@ async function main() {
   const endGit = gitInfo();
   const treeMoved = startSha !== null && endGit.sha !== startSha;
   // The verified commit is the start sha; dirty is start OR end, so edits reverted mid-run still leave the stamp dirty.
-  const git = {
-    sha: startSha,
-    dirty: startGit.dirty === null ? endGit.dirty : endGit.dirty === null ? startGit.dirty : startGit.dirty || endGit.dirty,
-  };
+  let dirty;
+  if (startGit.dirty === null) {
+    dirty = endGit.dirty;
+  } else if (endGit.dirty === null) {
+    dirty = startGit.dirty;
+  } else {
+    dirty = startGit.dirty || endGit.dirty;
+  }
+  const git = { sha: startSha, dirty };
 
   // Suite-count regression stamp (#881, IL-84): the "tests" check's own
   // parsed count is compared against the previous run's persisted count.
