@@ -36,9 +36,10 @@ function headerEnd(lines) {
 // Replaces the first `Ledger:` line inside the header block with
 // `Ledger: {ref}`; when absent, inserts it as the header block's last line.
 function fillLedgerHeader(text, ref) {
-  const lines = String(text).split('\n');
+  const source = String(text);
+  const lines = source.split('\n');
   const end = headerEnd(lines);
-  const crlf = String(text).includes('\r\n');
+  const crlf = source.includes('\r\n');
   const line = `Ledger: ${ref}`;
   for (let i = 0; i < end; i += 1) {
     if (/^Ledger:/.test(lines[i])) { lines[i] = line + (lines[i].endsWith('\r') ? '\r' : ''); return lines.join('\n'); }
