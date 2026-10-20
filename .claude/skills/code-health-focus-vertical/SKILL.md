@@ -48,6 +48,18 @@ Adding a candidate `kind` to a shipped generator adds no `FOCUS_GENERATORS` key,
 
 The last row is pitfall 5 one level up. Step 6.6 skips unless the diff touches a `CLIENT_DIR_RE` or `ROUTE_DIR_RE` path, but the #2657/#2666 JWT and secrets-lifecycle checks scan repo-wide because their targets (`src/auth/jwt.js`, `config/secrets.js`) match neither gate, so a review of a diff touching only those files never runs them.
 
+## Setting a candidate aside with an informational line
+
+A fragment's "What NOT to flag" bullet can tell the judge to drop a candidate and report one informational line instead (#3312: `agent-trust-scope` honors an accepted-risk ADR and reports `accepted risk — ADR NNNN ({kind})`). The bullet alone leaves the line with nowhere to land, so add a matching slot at every site that renders the vertical's output:
+
+| Site | What it gets |
+|---|---|
+| `plugin/skills/code-health/SKILL.md` Step 10 | One sentence listing each set-aside candidate by that exact line. A set-aside candidate never enters Step 6's findings array and `focus-mode.md` F4/F5 file nothing for a rejected one, so Step 10 is the line's only record. #3312's whole-branch review found this gap after the implementer reported DONE |
+| `plugin/skills/review/focus-criterion-passes.md` (a `/review` vertical only) | A Step 6.X result-handling row that renders it as a summary footer note, not a finding |
+| `plugin/skills/review/review-summary-template.md` (a `/review` vertical only) | The footer note's wording in that vertical's section comment |
+
+Pin each site with a wiring test that shares one line constant, and a go-red control that removes the bullet, the row, or the sentence and asserts the check fails (`tests/code-health-agent-trust-scope-wiring.test.js`). Make the guard tight: name the exact kind literal and the status that counts, so a mention in prose or a superseded record never suppresses a finding.
+
 ## Six pitfalls
 
 1. **Require `./focus-generators` before `./candidates-dead-code`.** The registry autoloads every vertical. Keep it as defense in depth; `candidates-abstraction-police.js`'s require block documents the order. The real guard is that `candidates-dead-code.js` (the registry's first autoload) publishes its `module.exports` before it requires the registry, so a vertical loaded directly gets complete exports in either order. Moving that registry require back above `module.exports` makes the shared helpers bind to `undefined` through Node's circular require; the all-modules test in `candidates-require-order.test.js` pins the export-first order for every module. #2693 shipped it reversed. Pin the order with a fresh-process test, because an in-process `require` hits the module cache and never shows the warning: `spawnSync(process.execPath, ['-e', 'require(<module path>)'])`, then assert stderr has no `inside circular dependency` (`tests/bin-lib/code-health/candidates-require-order.test.js`; #3330 added the same test to `candidates-experiment-cleanup.test.js`).
