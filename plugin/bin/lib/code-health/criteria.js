@@ -179,11 +179,14 @@ const CRITERIA = [
   // a cache layer, connection pooling, and error tracking/APM.
   // Area-gated to backend and data, the surfaces servers and schemas live
   // in; pinned directly by code-health's focus=scale-readiness
-  // (skills/code-health/focus-mode.md). Distinct from the rotating
-  // `scalability` and `observability` criteria (whole-codebase judgment,
-  // not a fixed checklist — the fragment's Scope boundary section defers to
-  // an open issue of either) and from the prelaunch, security-hardening and
-  // app-store-readiness verticals.
+  // (skills/code-health/focus-mode.md). Because appliesTo is not empty,
+  // criteriaForArea also returns it on generalist backend/data slices,
+  // alongside `scalability` (confidenceFloor high) and `observability`.
+  // That overlap is deliberate: the fragment's Scope boundary routes a
+  // generalist-slice query or monitoring finding to `scalability` /
+  // `observability` rather than this criterion, and defers to an open issue
+  // of either under focus=scale-readiness. Also distinct from the
+  // prelaunch, security-hardening and app-store-readiness verticals.
   { id: 'scale-readiness', appliesTo: ['backend', 'data'], confidenceFloor: 'medium', fragment: 'criteria-scale-readiness.md' },
 ];
 
