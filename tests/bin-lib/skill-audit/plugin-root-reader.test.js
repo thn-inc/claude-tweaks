@@ -1,7 +1,7 @@
 // tests/bin-lib/skill-audit/plugin-root-reader.test.js — pluginRootReader and
 // skillsPrefix (#3461). The reader's read semantics are headSide's, moved out
-// of load-delta.js. The one
-// deliberate change, the lazy base realpath, is pinned by the AC3.2 test.
+// of load-delta.js. The one deliberate change, the lazy base realpath, is
+// pinned by the AC3.2 test.
 'use strict';
 
 const { test } = require('node:test');
