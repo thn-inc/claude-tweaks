@@ -173,3 +173,11 @@ test('fix round 1 (#3598): the test skill contract notes the Step 3 Routing wave
   const testSkill = readText(path.join(__dirname, '..', 'plugin', 'skills', 'test', 'SKILL.md'));
   assert.ok(testSkill.includes('which also covers a Step 3 Routing fix wave (#3598)'));
 });
+
+test('#3771: the test skill contract and Step 3 Routing name every standalone --source review call', () => {
+  const testSkill = readText(path.join(__dirname, '..', 'plugin', 'skills', 'test', 'SKILL.md'));
+  assert.ok(testSkill.includes('standalone calls (Step 1.5\'s "No recent pass" auto-trigger, Step 3 Routing\'s re-verify, Step 4\'s re-run, and Step 6.7\'s `qa affected` re-run'));
+  const routing = readText(path.join(REVIEW, 'step3-routing.md'));
+  assert.ok(routing.includes('Re-verification rule (`/claude-tweaks:test --source review`)'));
+  assert.ok(routing.includes('then re-run `/claude-tweaks:test --source review`'));
+});
