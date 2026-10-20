@@ -133,8 +133,9 @@ function resolveCheckoutRoot(cwd) {
 // resolveCheckoutRoot). Shares health-core's runner and 5 s bound with the
 // filing-time self-check (#2633), so a command is read here exactly the way
 // it was read before filing. A non-zero exit is a normal outcome; no exit
-// code at all (ENOENT on /bin/sh, a timeout) re-throws for computePremise's
-// own catch to degrade to null.
+// code at all (ENOENT when no POSIX sh resolves — /bin/sh, or sh from PATH on
+// Windows — or a timeout) re-throws for computePremise's own catch to degrade
+// to null.
 function runPremiseCheckDefault(command, { cwd } = {}) {
   return runPremiseCommand(command, { cwd, timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS });
 }
