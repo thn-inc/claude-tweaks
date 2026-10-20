@@ -3,7 +3,7 @@
 // candidates-scale-readiness.js — deterministic pre-scale hardening checklist
 // generator for code-health's `focus=scale-readiness` scoping mode (see
 // skills/code-health/focus-mode.md). Reports pass/fail/needs-manual-check for
-// the six-item checklist of #2622: query patterns, slow work off the request
+// the six-item checklist of `focus=scale-readiness` (#2622): query patterns, slow work off the request
 // path, a load test, a cache layer, connection pooling and error tracking/
 // APM. Each row carries a `phase` (`pre-launch` or `pre-scale`) so the
 // summary can say which items block a launch and which can wait for traffic.

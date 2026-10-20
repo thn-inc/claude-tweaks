@@ -169,10 +169,22 @@ const CRITERIA = [
   // broken restore-purchases). Area-gated to frontend, the surface a
   // mobile app's client code lives in; pinned directly by code-health's
   // focus=app-store-readiness (skills/code-health/focus-mode.md), never
-  // selected via criteriaForArea. Distinct scope from #2622 (pre-scale),
+  // selected via criteriaForArea. Distinct scope from `focus=scale-readiness` (#2622, pre-scale),
   // #2624 (security-hardening), and #2625 (GDPR/backup-retention) — see
   // criteria-app-store-readiness.md's Scope boundary section.
   { id: 'app-store-readiness', appliesTo: ['frontend'], confidenceFloor: 'medium', fragment: 'criteria-app-store-readiness.md' },
+  // Domain: scale-readiness (#2622) → the pre-scale hardening checklist for
+  // AI-coded apps: query patterns (N+1, unpaginated lists, unindexed
+  // filters), slow work inline on the request path, a manual k6 load test,
+  // a cache layer, connection pooling, and error tracking/APM.
+  // Area-gated to backend and data, the surfaces servers and schemas live
+  // in; pinned directly by code-health's focus=scale-readiness
+  // (skills/code-health/focus-mode.md). Distinct from the rotating
+  // `scalability` and `observability` criteria (whole-codebase judgment,
+  // not a fixed checklist — the fragment's Scope boundary section defers to
+  // an open issue of either) and from the prelaunch, security-hardening and
+  // app-store-readiness verticals.
+  { id: 'scale-readiness', appliesTo: ['backend', 'data'], confidenceFloor: 'medium', fragment: 'criteria-scale-readiness.md' },
 ];
 
 // Build a lookup map once on load for O(1) getCriterion.
