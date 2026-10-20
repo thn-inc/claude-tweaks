@@ -1043,6 +1043,15 @@ test('a failing path the retry template cannot quote is ineligible, never run (#
   assert.strictEqual(calls.added.length, 0);
 });
 
+test('a failing path with a leading dash is ineligible, never run (#3676)', async () => {
+  const { p, dir } = logFile(SPEC(['-x.test.js']));
+  const { git, runOne, calls } = fakes({ outcomes: {} });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'origin/main', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git, platform: 'linux' });
+  assert.strictEqual(r.eligible, false);
+  assert.strictEqual(r.reason, 'tests failing file -x.test.js cannot be handed to the shell safely (leading-dash)');
+  assert.strictEqual(calls.runs.length, 0);
+});
+
 test('adjudicate hands its platform to the path quoting — a win32 percent path is refused where linux quotes it (#3676)', async () => {
   const { p, dir } = logFile(SPEC(['tests/%PATH%.test.js']));
   const run = (platform) => {

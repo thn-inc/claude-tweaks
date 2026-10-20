@@ -51,6 +51,13 @@ test('planRetry: a path cmd.exe cannot quote refuses with unsafe-path (#3676)', 
   });
 });
 
+test('planRetry: every unsafe path is named in the reason, and a control byte is shown escaped (#3676)', () => {
+  const plan = planRetry({ failingFiles: ['tests/%A%.test.js', 'tests/b\x1b[31m.test.js', '-x.test.js'], flaky: { files: ['**'], maxRetries: 1 }, retry: RETRY, suite: 'tests', platform: 'win32' });
+  assert.strictEqual(plan.retry, false);
+  assert.strictEqual(plan.reason, 'unsafe-path: [tests/%A%.test.js (cmd-unquotable), tests/b\\x1b[31m.test.js (control-character), -x.test.js (leading-dash)]');
+  assert.deepStrictEqual(plan.unsafe.map((u) => u.file), ['tests/%A%.test.js', 'tests/b\x1b[31m.test.js', '-x.test.js'], 'the structured list keeps the raw paths');
+});
+
 test('planRetry: one unsafe path in a mixed list refuses the whole retry (#3676)', () => {
   const plan = planRetry({ failingFiles: ['tests/a.test.js', 'tests/%PATH%.test.js'], flaky: { files: ['tests/**'], maxRetries: 1 }, retry: RETRY, suite: 'tests', platform: 'win32' });
   assert.strictEqual(plan.retry, false);

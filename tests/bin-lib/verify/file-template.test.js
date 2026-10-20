@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { execSync } = require('child_process');
 
-const { substituteFile } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'file-template.js'));
+const { substituteFile, describePath } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'file-template.js'));
 
 const LINUX = { platform: 'linux' };
 const WIN32 = { platform: 'win32' };
@@ -46,6 +46,19 @@ test('substituteFile: refusals are named', () => {
     { ok: false, reason: 'template-quotes' });
   assert.deepStrictEqual(substituteFile('node --test {file}', 'tests/a\tb.test.js', LINUX),
     { ok: false, reason: 'control-character' });
+});
+
+test('substituteFile: a path with a leading dash is refused on both platforms — quoting cannot stop an option read', () => {
+  for (const platform of ['linux', 'win32']) {
+    assert.deepStrictEqual(substituteFile('node --test {file}', '--import=./x.js', { platform }), { ok: false, reason: 'leading-dash' });
+    assert.deepStrictEqual(substituteFile('node --test {file}', '-r', { platform }), { ok: false, reason: 'leading-dash' });
+  }
+  assert.deepStrictEqual(substituteFile('node --test {file}', 'tests/-r.test.js', LINUX), { ok: true, command: 'node --test tests/-r.test.js' }, 'a dash after the first character is an ordinary path');
+});
+
+test('describePath: a control byte is shown as \\xNN and every other path is unchanged', () => {
+  assert.strictEqual(describePath('tests/a\tb\x1b[31m\n.test.js'), 'tests/a\\x09b\\x1b[31m\\x0a.test.js');
+  assert.strictEqual(describePath('tests/a b%.test.js'), 'tests/a b%.test.js');
 });
 
 test('substituteFile: win32 refuses a path with a double quote, a bang, or a trailing backslash, and a template with a single quote', () => {

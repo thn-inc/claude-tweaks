@@ -22,7 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { substituteFile } = require('./file-template');
+const { substituteFile, describePath } = require('./file-template');
 const {
   sniffFamily, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, failingTestsByFile, parseCounts, stripAnsi,
   specEntryCount, cancelledCount, testTree,
@@ -330,7 +330,7 @@ async function adjudicate({
     const headLocated = failingTestsByFile(text, family, { ...at(headDir), located: true });
     for (const file of files) {
       const subst = substituteFile(template, file, { platform });
-      if (!subst.ok) return ineligible(`${c.name} failing file ${file} cannot be handed to the shell safely (${subst.reason})`);
+      if (!subst.ok) return ineligible(`${c.name} failing file ${describePath(file)} cannot be handed to the shell safely (${subst.reason})`);
       work.push({
         check: c.name, file, command: subst.command,
         headFileLevel: headFileLevel.has(file), headTests: headTests.get(file) || [], headLocated: headLocated.get(file) || [],
