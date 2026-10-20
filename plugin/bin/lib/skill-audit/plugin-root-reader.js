@@ -1,14 +1,13 @@
 'use strict';
 
 // Head-side plugin-root reader (#3461). Two callers read a plugin root's files
-// through it: load-delta.js (its head side, moved here from headSide) and
-// skill-load-report.js (the plugin-root index it builds). Both need the same
-// rule — read only a regular file that resolves inside the base — so the rule
-// lives here once.
+// through it: load-delta.js (its head side) and skill-load-report.js (the
+// plugin-root index it builds). Both need the same rule — read only a regular
+// file that resolves inside the base — so the rule lives here once.
 //
 // The base realpath is resolved lazily, on the first readFile, not when the
-// reader is constructed: a base deleted after construction then reads as
-// absent (ENOENT -> null, listSkillMds -> []) instead of throwing.
+// reader is constructed: a base absent at construction, or deleted after it,
+// then reads as absent (ENOENT -> null, listSkillMds -> []) instead of throwing.
 
 const fs = require('fs');
 const path = require('path');
@@ -23,7 +22,7 @@ function pluginRootReader(baseAbs, root = '.') {
       // A citation that passed withinRoot's textual check can still be a committed
       // symlink to a file outside the repository, or to a device (/dev/zero) that
       // never reaches EOF — so resolve the real path and read only a regular file
-      // inside the repository; anything else is absent.
+      // inside the base; anything else is absent.
       if (realBase === null) realBase = fs.realpathSync(baseAbs);
       const real = fs.realpathSync(path.join(baseAbs, p));
       if (!isPathContained(real, realBase) || !fs.statSync(real).isFile()) return null;

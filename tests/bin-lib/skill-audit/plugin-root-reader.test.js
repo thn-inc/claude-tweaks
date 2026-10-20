@@ -64,7 +64,16 @@ test('listSkillMds lists only skill dirs whose SKILL.md is readable, under the r
   assert.deepEqual(pluginRootReader(base, 'plug').listSkillMds(), ['plug/skills/a/SKILL.md']);
 });
 
-test('AC3.2: a base deleted after construction degrades to no entries, never a throw', () => {
+test('AC3.2: a base already absent at construction degrades to no entries, never a throw', () => {
+  // Only an absent-at-construction base separates the lazy realpath from an
+  // eager one: an eager reader would throw ENOENT right here.
+  const gone = path.join(tempDir('plugin-root-reader-'), 'gone');
+  const reader = pluginRootReader(gone);
+  assert.deepEqual(reader.listSkillMds(), []);
+  assert.equal(reader.readFile('skills/a/SKILL.md'), null);
+});
+
+test('a base deleted after construction also degrades to no entries, never a throw', () => {
   const base = tempDir('plugin-root-reader-');
   writeFile(path.join(base, 'skills', 'a', 'SKILL.md'), '# a\n');
   const reader = pluginRootReader(base);
