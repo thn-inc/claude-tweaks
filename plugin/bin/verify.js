@@ -173,7 +173,7 @@ function stampStatus(parsed) {
 }
 
 // --changed-files (#1923): the read-only "what changed in this run" set the
-// skills consume — /claude-tweaks:test affected and the QA story filter read
+// skills consume — /claude-tweaks:test affected and qa affected read
 // this instead of hand-rolling `git diff --name-only` (empty for every
 // committed pipeline diff). Same base resolution as --scope: the checkout's
 // own stamp anchor when usable, else --base / --integration-branch; an
