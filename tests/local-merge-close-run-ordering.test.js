@@ -179,9 +179,8 @@ function makeRepo({ conflict = false } = {}) {
   git(dir, 'commit', '-q', '-m', 'init');
   git(dir, 'checkout', '-q', '-b', 'feat');
   fs.writeFileSync(path.join(dir, 'b.txt'), 'b\n');
-  git(dir, 'add', 'b.txt');
   if (conflict) fs.writeFileSync(path.join(dir, 'a.txt'), 'feat\ntwo\n');
-  git(dir, 'add', 'a.txt');
+  git(dir, 'add', 'a.txt', 'b.txt');
   git(dir, 'commit', '-q', '-m', 'feat');
   git(dir, 'checkout', '-q', 'main');
   if (conflict) {
