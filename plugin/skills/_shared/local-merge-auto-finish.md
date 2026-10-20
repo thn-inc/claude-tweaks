@@ -246,7 +246,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$RUN_DIR" --status AUTO 
 
 The substituted reason can carry a filename or stderr text, so `--text` is single-quoted — never
 double-quoted, where `$(…)`, backticks and `$VAR` would execute — and any `'` in the substituted
-reason is written `'\''` (the same rule `build/dispatch.md` uses for `log-decision.js --text`).
+reason is written `'\''`.
 
 Report outcome `pending-review` to the caller. The worktree's *files* — the feature branch and its
 commits — are untouched: a human can check out the branch, resolve or investigate, and re-run
