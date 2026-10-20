@@ -193,3 +193,68 @@ test('the step3 Foreground-note predicate can actually go red (discrimination pr
   const doctored = note.replace(LENS_NOTE_SENTENCE, '');
   assert.notDeepEqual(lensNoteMissing(doctored), [], 'removing the appended sentence must turn the lens-coverage assertion red');
 });
+
+// #3078 / #3266: task-prompt.md's item 7 drops the "nothing wakes you" framing and states what ends
+// a turn. Each template is inlined into a Task() prompt, so each carries the nested-Agent rule
+// itself; the #2533 rationale cites the core section instead of dispatch-waiting.md's resume signal.
+function item7Block(text) {
+  const start = text.indexOf('7. **Async-wait discipline**');
+  assert.notEqual(start, -1, 'task-prompt.md lost its item 7 "Async-wait discipline" heading (#3078)');
+  const next = text.slice(start + 1).search(/\n(?:8\. |## )/);
+  return text.slice(start, next === -1 ? undefined : start + 1 + next);
+}
+
+const ITEM7 = [
+  [/reply that ends without a tool call ends\s+(?:the|your)\s+turn/i, 'a reply that ends without a tool call ends the turn'],
+  [/INTERIM_STATUS/, 'the #2714 interim-marker rule is kept'],
+  [/always\s+launches\s+async/i, 'a nested Agent call always launches async'],
+  [/`unconfirmed`/, 'the self-judged fallback marks findings unconfirmed'],
+];
+const item7Missing = (block) => ITEM7.filter(([pattern]) => !pattern.test(block)).map(([, fact]) => fact);
+const dropsNothingWakes = (block) => !/nothing wakes you/.test(block);
+
+const TEMPLATE_KEEP_ALIVE = [
+  [/always\s+launches\s+async/i, 'a nested Agent call always launches async'],
+  [/never\s+end\s+this\s+turn\s+with\s+(?:a|one)\s+child\s+outstanding/i, 'the turn never ends with a child outstanding'],
+];
+const templateKeepAliveMissing = (block) => TEMPLATE_KEEP_ALIVE.filter(([pattern]) => !pattern.test(block)).map(([, fact]) => fact);
+const dropsInTurnCarveOut = (block) => !/It does not cover an in-turn/.test(block);
+
+const dropsPrimaryResumeSignal = (text) => !/primary resume signal/.test(text);
+const RATIONALE_CORE = /`_shared\/subagent-dispatch-core\.md`'s\s+Foreground\s+Execution\s+Discipline/;
+
+test('task-prompt item 7 drops "nothing wakes you" and states what ends a turn (#3078, #3266)', () => {
+  const item7 = item7Block(fs.readFileSync(TASK_PROMPT, 'utf8'));
+  assert.ok(dropsNothingWakes(item7), 'item 7 still says "nothing wakes you" — the framing #3266 retired (#3078)');
+  assert.deepEqual(item7Missing(item7), [], 'item 7 must state every turn-ending and keep-alive fact (#3078, #3266)');
+});
+
+test('neither fenced template keeps the in-turn carve-out (#3078)', () => {
+  const blocks = fencedBlocks(fs.readFileSync(TASK_PROMPT, 'utf8'));
+  assert.equal(blocks.length, 2, `expected exactly two fenced Task-prompt blocks, found ${blocks.length}`);
+  for (const [label, block] of [['first call (build,test)', blocks[0]], ['second call (review,polish,wrap-up)', blocks[1]]]) {
+    assert.ok(dropsInTurnCarveOut(block), `${label} template still carries the in-turn carve-out (#3078)`);
+    assert.deepEqual(templateKeepAliveMissing(block), [], `${label} template must carry the nested-Agent rule itself (#3078)`);
+  }
+});
+
+test("the #2533 rationale cites the core section, not dispatch-waiting.md's resume signal (#3078)", () => {
+  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  assert.ok(dropsPrimaryResumeSignal(text), 'task-prompt.md still cites dispatch-waiting.md\'s "primary resume signal" (#3078)');
+  assert.match(text, RATIONALE_CORE, 'the #2533 rationale must cite subagent-dispatch-core.md\'s Foreground Execution Discipline (#3078)');
+});
+
+test('the task-prompt predicates can actually go red (discrimination proof)', () => {
+  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const item7 = item7Block(text);
+  assert.equal(dropsNothingWakes(item7 + '\n   nothing wakes you automatically.'), false, 'the re-inserted "nothing wakes you" must turn the item-7 assertion red');
+
+  const [firstCall] = fencedBlocks(text);
+  assert.equal(
+    dropsInTurnCarveOut(firstCall + '\n\nIt does not cover an in-turn `Agent`-tool dispatch.'),
+    false,
+    'the appended in-turn carve-out sentence must turn the template assertion red',
+  );
+
+  assert.equal(dropsPrimaryResumeSignal(text + '\n\nSee the primary resume signal.'), false, 'the re-inserted resume-signal citation must turn the rationale assertion red');
+});
