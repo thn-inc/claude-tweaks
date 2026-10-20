@@ -12,6 +12,7 @@ const {
   MAX_BUFFER,
   PER_FILE_CAP_BYTES,
   isAlwaysStub,
+  isMarkdown,
   elideDiff,
 } = require('../../../plugin/bin/lib/review-context/build');
 
@@ -634,6 +635,72 @@ test('isAlwaysStub: named lockfiles and .jsonl match on basename; near-misses do
   for (const f of ['package.json', 'x.json', 'jsonl.txt', 'my-yarn.lock', 'yarn.lock/readme.md']) {
     assert.strictEqual(isAlwaysStub(f), false, f);
   }
+});
+
+// --- Markdown sections (#3713) ----------------------------------------------------------
+
+test('isMarkdown: .md / .markdown match case-insensitively on the basename; near-misses do not', () => {
+  for (const f of ['a.md', 'docs/X.MD', 'notes.markdown', 'a\\b\\c.md', 'plugin/skills/flow/SKILL.md']) {
+    assert.strictEqual(isMarkdown(f), true, f);
+  }
+  for (const f of ['x.mdx', 'readme.md.txt', 'a.md/file.txt', 'md', 'x.txt']) {
+    assert.strictEqual(isMarkdown(f), false, f);
+  }
+});
+
+// Three ~40 KB shared markdown files, each modified on one early line — the #2734 shape.
+function makeMarkdownRepo() {
+  const repo = initRepo('review-ctx-md-');
+  fs.mkdirSync(path.join(repo, 'docs'));
+  for (const n of [1, 2, 3]) {
+    fs.writeFileSync(path.join(repo, 'docs', `shared-${n}.md`), shortLines(40 * 1024, `# Doc ${n}\n`, LATE_MARKER));
+  }
+  fs.writeFileSync(path.join(repo, 'gone.md'), 'bye\n');
+  startFeatureBranch(repo);
+  for (const n of [1, 2, 3]) {
+    fs.writeFileSync(path.join(repo, 'docs', `shared-${n}.md`), shortLines(40 * 1024, `# Doc ${n} (edited)\n`, LATE_MARKER));
+  }
+  fs.rmSync(path.join(repo, 'gone.md'));
+  commitAll(repo, 'edit docs');
+  return repo;
+}
+
+test('AC1.1: a diff touching large shared markdown files yields a bundle within 2x the diff size', () => {
+  const { result, bundle, diffPart } = buildFrom(makeMarkdownRepo());
+  assert.ok(!bundle.includes('DISTINCTIVE-LATE-LINE-MARKER'), 'no markdown file content is inlined');
+  assert.ok(result.bytes <= 2 * Buffer.byteLength(diffPart), `bundle ${result.bytes} B vs diff ${Buffer.byteLength(diffPart)} B`);
+});
+
+test('AC2.1: a markdown stub points at the live file, keeps its hunk, and is listed in oversizeSections', () => {
+  const { result, bundle, diffPart } = buildFrom(makeMarkdownRepo());
+  const bytes = 40 * 1024;
+  assert.strictEqual(
+    sectionOf(bundle, 'docs/shared-1.md'),
+    `[section omitted: docs/shared-1.md is ${bytes} bytes of markdown, not inlined; its change is in the diff above — read the live file for full content]\n`,
+  );
+  assert.match(diffPart, /^\+# Doc 1 \(edited\)$/m, 'the markdown hunk stays whole');
+  for (const n of [1, 2, 3]) assert.ok(result.oversizeSections.includes(`docs/shared-${n}.md`));
+});
+
+test('deleted markdown: stays an empty section, never a live-file stub', () => {
+  const { result, bundle } = buildFrom(makeMarkdownRepo());
+  assert.deepStrictEqual(result.emptySections, ['gone.md']);
+  assert.ok(!result.oversizeSections.includes('gone.md'));
+  assert.strictEqual(sectionOf(bundle, 'gone.md'), '');
+});
+
+test('added over-cap markdown: diff chunk elided, stub gives the git diff pointer, listed once', () => {
+  const repo = initRepo('review-ctx-mdbig-');
+  fs.writeFileSync(path.join(repo, 'seed.txt'), 'seed\n');
+  startFeatureBranch(repo);
+  fs.writeFileSync(path.join(repo, 'big.md'), `${'m'.repeat(PER_FILE_CAP_BYTES)}\n`);
+  commitAll(repo, 'add big doc');
+  const { result, bundle, diffPart } = buildFrom(repo);
+  assert.match(diffPart, /^\[\d+ bytes of diff elided for big\.md — see oversizeSections\]$/m);
+  const section = sectionOf(bundle, 'big.md');
+  assert.ok(section.startsWith(`[section omitted: big.md is ${PER_FILE_CAP_BYTES + 1} bytes of markdown, not inlined; its diff was elided too`), section);
+  assert.strictEqual(lineCount(section), 1);
+  assert.deepStrictEqual(result.oversizeSections, ['big.md']);
 });
 
 test('CLI: malformed invocations exit 2 with usage', () => {

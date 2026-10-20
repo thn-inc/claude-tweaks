@@ -66,12 +66,14 @@ An aggregate line lists one `defer-reason` value per item, comma-separated in it
 
 ## Entry schema
 
-**`bin/log-decision.js --run <run-dir> --status <STATUS> --text "<message>" [--spec <n>] [--step <text>] [--reversibility high|med|low|n/a[" (qualifier)"]] [--lever "<key>=<value> (<source>)"] [--section "/<skill>"]`** is the
+**`bin/log-decision.js --run <run-dir> --status <STATUS> (--text "<message>" | --text-file <path>) [--spec <n>] [--step <text>] [--reversibility high|med|low|n/a[" (qualifier)"]] [--lever "<key>=<value> (<source>)"] [--section "/<skill>"]`** is the
 canonical appender for this schema — it timestamps and status-prefixes `--text` (composed by the
 caller per the shape below) and inserts it under the given `--section` heading (creating the section
 if absent) or at end of file otherwise. Every consumer of this file writes through it instead of
 hand-appending a formatted line per call site — with one documented exception: `FAILED`, which is
 hand-composed by its two writers (see the `STATUS` row below).
+
+**Text from git or a user: `--text-file`.** When the entry text interpolates anything git or a user supplied (a file name, an error message), never put it in a double-quoted `--text` — the shell expands `$(...)`, backticks and `$VAR` inside it. Instead resolve a session temp path with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" DECISION_TEXT=decision-text-{run-id}-{step-slug}.md` (it prints `DECISION_TEXT="{path}"`; see `_shared/session-tmp-root.md`), write the one-line text there with the Write tool, and pass `--text-file "{path}"`. The entry is identical to what `--text` writes. The file must hold one line; a `--text-file` with an interior line break exits 2. `--text` and `--text-file` are mutually exclusive.
 
 **Windows / Git Bash invocation note (#2549).** Under Git Bash (MSYS) on Windows with
 `MSYS_NO_PATHCONV` unset, MSYS's automatic path-conversion rewrites a leading-slash `--section`

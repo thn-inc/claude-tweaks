@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/reconcile/archive-merged.js
   - plugin/bin/lib/reconcile/index.js
+  - plugin/bin/lib/reconcile/escalate-residue.js
 ---
 
 # Keep a Run Directory Until Every Record Its Merged PR Left Open Ships
@@ -41,10 +42,10 @@ files:
 
 ### 3. Read the skip in the reconcile report: the next session start's "background reconcile" summary, or the tidy report's converge section
 - **URL:** —
-- **Action:** The maintainer sees the run under skipped with `reason: merged-partial` and `unclosed: [3311]`. The reconcile dispatcher (`reconcile/index.js`) carries the `unclosed` list through to its `runs` entries. If the run is still waiting after the 7-day structurally-stuck TTL, it enters the residue counter and escalates, like any other stuck run.
-- **Should feel:** Informative. The skip names the exact record that has not shipped yet.
-- **Should understand:** A run legitimately split across two PRs waits visibly; it never freezes silently. The same applies to a repo whose GitHub remote isn't named `origin`: it skips with the tracked reason `no-repo-slug`.
-- **Red flags:** A skip that names no record, or a waiting run that never shows up in either the archived list or the skipped list.
+- **Action:** The maintainer sees the run under skipped with `reason: merged-partial` and `unclosed: [3311]`. The reconcile dispatcher (`reconcile/index.js`) carries the `unclosed` list through to its `runs` entries. If the run is still waiting after the 7-day structurally-stuck TTL, it enters the residue counter and escalates, like any other stuck run. The consolidated `reconcile: structurally-stuck run directories` issue then lists the run dir, names `merged-partial` among its feeding reasons, and gives the remedy: the records the run's merged PR was meant to close are still open, so ship them in a later PR, or close/release them if they were abandoned (#3705).
+- **Should feel:** Informative. The skip names the exact record that has not shipped yet, and the escalated issue says what clears it.
+- **Should understand:** A run legitimately split across two PRs waits visibly; it never freezes silently. The same applies to a repo whose GitHub remote isn't named `origin`: it skips with the tracked reason `no-repo-slug`. That reason counts toward the stuck total but never reaches the escalated issue, because with no repo slug there is no repo to file it in.
+- **Red flags:** A skip that names no record, or a waiting run that never shows up in either the archived list or the skipped list. Also, an escalated stuck-runs issue whose reason list omits `merged-partial`.
 
 ### 4. Ship the last record by any route, and let the run archive itself
 - **URL:** `https://github.com/{owner}/{repo}/issues/{unfinished}`
@@ -67,6 +68,7 @@ files:
 ## Origin
 - Created during build of #3503 (Reconciler archives a run whose PR merged before all of its records were built)
 - Steps 1-5 were built in this session.
+- Updated during build of #3705: step 3's escalated issue now names `merged-partial` and its remedy, and explains why `no-repo-slug` never reaches it
 - Related specs:
   - #3412, the claim half of the same incident: `keep-an-unfinished-records-claim-when-its-bundle-pr-merges-early-3412.md`
   - #3416, run PR identity by stamped number, on the same archive paths: `keep-a-live-run-whose-reused-branch-backed-a-merged-pr-3416.md`

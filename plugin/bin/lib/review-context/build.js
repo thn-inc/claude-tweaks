@@ -60,7 +60,9 @@ function resolveDir({ dir, run, tmpdir = os.tmpdir(), mkdtemp = fs.mkdtempSync, 
 
 // A file's content is inlined in its section only up to this many bytes (#3020); larger
 // files get a one-line stub section, an added/deleted file's oversize diff chunk is elided
-// the same way, and an always-stub file's diff chunk is elided whatever its change type. All
+// the same way, and an always-stub file's diff chunk is elided whatever its change type. A
+// readable markdown file (`.md` / `.markdown`) gets the stub section at any size (#3713) — its
+// hunks stay whole in the diff, and prose is the bulk of a skill-heavy diff's bundle. All
 // are reported in `oversizeSections`.
 const PER_FILE_CAP_BYTES = 64 * 1024;
 
@@ -80,6 +82,12 @@ const ALWAYS_STUB_BASENAMES = new Set([
 function isAlwaysStub(file) {
   const base = String(file).replace(/\\/g, '/').split('/').pop();
   return ALWAYS_STUB_BASENAMES.has(base) || base.endsWith('.jsonl');
+}
+
+// True for markdown files (`.md` / `.markdown`, case-insensitive). Accepts `/`- or `\`-separated paths.
+function isMarkdown(file) {
+  const base = String(file).replace(/\\/g, '/').split('/').pop();
+  return /\.(md|markdown)$/i.test(base);
 }
 
 // `-c` pair that keeps non-ASCII names unquoted in diff headers and `--name-only` output alike.
@@ -148,13 +156,15 @@ function elideDiff(diff) {
 // A section can legitimately come out empty — a deleted file, or an unreadable path — and
 // that degrades safely rather than silently: the full diff at the top still carries that
 // file's change, and the section is reported in `emptySections`. An oversize or always-stub
-// file's section is a one-line stub, and an always-stub file's or an oversize added/deleted
-// file's diff chunk is a one-line marker; both are reported in `oversizeSections`. A stub
-// points at wherever the content still lives: the diff above (hunk kept), the live file (hunk
-// elided too), or `git diff {range} -- {path}` (elided or deleted). A modified non-always-stub
-// file's hunks stay whole, so the bundle as a whole is not strictly bounded. It also writes the
-// two pre-dispatch baselines a worktree-isolated reviewer cannot capture itself: the `git status`
-// listing (`pre-dispatch-status.txt`) and the lsof listener snapshot (`pre-dispatch-listeners.txt`).
+// file's section is a one-line stub, as is a readable markdown file's at any size (its hunks
+// stay whole; a deleted or unreadable one stays an empty section), and an always-stub file's or
+// an oversize added/deleted file's diff chunk is a one-line marker; both are reported in
+// `oversizeSections`. A stub points at wherever the content still lives: the diff above (hunk
+// kept), the live file (hunk elided too), or `git diff {range} -- {path}` (elided or deleted).
+// A modified non-always-stub file's hunks stay whole, so the bundle as a whole is not strictly
+// bounded. It also writes the two pre-dispatch baselines a worktree-isolated reviewer cannot
+// capture itself: the `git status` listing (`pre-dispatch-status.txt`) and the lsof listener
+// snapshot (`pre-dispatch-listeners.txt`).
 function buildContext({
   base,
   branch,
@@ -237,8 +247,10 @@ function buildContext({
       continue;
     }
     let content = '';
+    let readOk = false;
     try {
       content = readFile(path.join(root, f), 'utf8');
+      readOk = true;
     } catch {
       emptySections.push(f);
       // A deleted over-cap file has no content to inline and no hunk in the diff either: leave
@@ -251,6 +263,12 @@ function buildContext({
     }
     // Size comes from the content just read — readFile stays the only file seam (no stat).
     const bytes = Buffer.byteLength(content);
+    // Markdown is stubbed at any size once the read succeeded (#3713); a failed read falls through.
+    if (readOk && isMarkdown(f)) {
+      oversize.add(f);
+      out += `[section omitted: ${f} is ${bytes} bytes of markdown, not inlined; ${whereToLook(f)}]\n`;
+      continue;
+    }
     if (bytes > PER_FILE_CAP_BYTES) {
       oversize.add(f);
       out += `[section omitted: ${f} is ${bytes} bytes, over the ${PER_FILE_CAP_BYTES}-byte per-file cap; ${whereToLook(f)}]\n`;
@@ -275,4 +293,4 @@ function buildContext({
   };
 }
 
-module.exports = { resolveDir, buildContext, realLsof, MAX_BUFFER, PER_FILE_CAP_BYTES, isAlwaysStub, elideDiff };
+module.exports = { resolveDir, buildContext, realLsof, MAX_BUFFER, PER_FILE_CAP_BYTES, isAlwaysStub, isMarkdown, elideDiff };
