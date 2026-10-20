@@ -198,7 +198,8 @@ dispatch-call branch matching changes nothing about how this branch merges, only
 instead of this file's own `PushNotification`.
 
 **`integration-model: local-merge`:** the checkout restriction is real — run the Verdict backstop
-above first (anything but `{n}=1`, fall through instead of relaying). Then do not run the merge
+above first (anything but `{n}=1`: do not relay `ready-to-merge` — take the backstop's refusal
+path, logging it and going to "Any layer fails" below). Then do not run the merge
 procedure below. Stop here instead: report `OUTCOME: ready-to-merge` per `task-prompt.md`'s
 second-call template — `dispatch/settle-and-merge.md`'s local-merge fallback is what actually
 merges, in dispatch's own thread.
@@ -211,7 +212,7 @@ Skip the blocking wait and merge directly — bypass the interactive
 `/superpowers:finishing-a-development-branch` handoff entirely; a verdict already exists.
 
 **`integration-model: pr-first` (`_shared/integration-model.md`):** run the Verdict backstop above
-first (anything but `{n}=1`, stop here and fall through). Then run `_shared/pr-first-merge.md`'s
+first (anything but `{n}=1`, stop here and go to "Any layer fails" below). Then run `_shared/pr-first-merge.md`'s
 procedure now — `tag: {tag}` (see `manifesto-authorized-merge.md`'s Tag selection section) (distinct from dispatch's `auto-merge` tag; `/help`'s
 auto-merged-this-week count keys on all three, `_shared/github-pr-scan.md` `triage-queue` item 3),
 `issue-list` this one record, `summary` the record's own title. Read that procedure as one composed bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-checklist-refresh.md"`, then read `$PIPELINE_RUN_DIR/context/merge.md`; if the compose command is unavailable or exits non-zero, read the named source files directly. No checkout is needed — `gh pr
@@ -235,7 +236,7 @@ once it sits past the TTL and repeated stuck passes. A closed run escalates the 
 reconcile's clean-status sweep (#3668; `pr-first-merge-post-merge.md` Step 4.2).
 
 **`integration-model: local-merge`:** run the Verdict backstop above first (anything but `{n}=1`,
-stop here and fall through). Then, before merging, clear this run's worktree
+stop here and go to "Any layer fails" below). Then, before merging, clear this run's worktree
 assignment as `flow/worktree-merge.md`'s reconciliation does
 (`node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"`) so
 the merge, landing in the main checkout, isn't denied as a wrong-checkout

@@ -1,6 +1,6 @@
 # Step 21 — Release Bootstrap (detailed procedure)
 
-*Optional Enhancement step — see `SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
+*Optional Enhancement step — see `../SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
 
 Gives `detection-tables.md`'s release-process row (Step 2e) a destination (#2253). On a repo with no release automation, writes the release-please engine's files — the config every later phase of the release family reads, the manifest, and (pr-first only) the workflow — and seeds the two `release-*` policy keys. On a repo that already runs a competing tool, refuses and reports rather than layering a second engine on top (design stance 7: existing release automation is a conflict, not a wrap target).
 

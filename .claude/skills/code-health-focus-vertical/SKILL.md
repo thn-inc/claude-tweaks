@@ -26,11 +26,11 @@ A vertical is not shipped until every row below lands in the same change. A key 
 
 `tests/code-health-prelaunch-wiring.test.js` asserts that the pinning table and `FOCUS_GENERATORS` name exactly the same foci, in both directions. It catches a missing pinning row. It does not catch a missing Coverage pointer, fragment, or getting-started entry, so check those by hand.
 
-**Two more rows, only for a vertical that also participates in `/review`** (`security-hardening` #2624 and `agent-trust-scope` #2749 both do; `dead-code`/`abstraction-police`/`test-hygiene`/`experiment-cleanup`/`prelaunch` don't — this is a per-vertical decision, not every shipped vertical's obligation):
+**Two more rows, only for a vertical that also participates in `/review`** (`security-hardening` #2624, `agent-trust-scope` #2749 and `app-store-readiness` #2628 all do; `dead-code`/`abstraction-police`/`test-hygiene`/`experiment-cleanup`/`prelaunch` don't — this is a per-vertical decision, not every shipped vertical's obligation):
 
 | Site | What it gets |
 |---|---|
-| `plugin/skills/review/code-mode-steps.md` | A new Step 6.X pass mirroring the existing Step 6.6 pattern (pre-check, invocation, result-handling table, Routing line), plus an update to every sibling Step 6.5/6.6/6.7 "Routing (optional)" sentence and the Step 6.7 heading/category table so they name the new step |
+| `plugin/skills/review/focus-criterion-passes.md` + `code-mode-steps.md` | A new Step 6.X pass in `focus-criterion-passes.md` mirroring the existing Step 6.6 pattern there (pre-check, invocation, result-handling table, Routing line), plus, in `code-mode-steps.md`, the Steps 6.6/6.65/6.66 loader paragraph and the Step 6.7 heading/category table updated to name the new step, and every sibling "Routing (optional)" sentence updated in both files |
 | `plugin/skills/review/review-summary-template.md` | A new summary section mirroring Step 6.6's (Include/Omit conditions, a findings table, an advisory footnote) |
 
 A wiring test for this pair follows the same shape as the generator-registration test above — see `tests/code-health-agent-trust-scope-wiring.test.js` for the worked example (it also pins the `docs/getting-started.md` vertical count, so one test file covers both halves of the registration set).
@@ -44,7 +44,7 @@ Adding a candidate `kind` to a shipped generator adds no `FOCUS_GENERATORS` key,
 | The generator's module header | The new check in its check list, plus a Coverage bullet for it |
 | `plugin/skills/_shared/criteria-{vertical}.md` | The `kind` list, a What-to-flag and a What-NOT-to-flag entry, a Severity calibration placement, and a copy-paste prompt where the fragment has that section |
 | `plugin/skills/review/review-summary-template.md` (`/review` verticals only) | The new kind in that vertical's section's Kind column |
-| The vertical's Step 6.X pre-check in `plugin/skills/review/code-mode-steps.md` (`/review` verticals only) | A re-derivation of whether its path gate still admits the files the new check targets |
+| The vertical's Step 6.X pre-check in `plugin/skills/review/focus-criterion-passes.md` (`/review` verticals only) | A re-derivation of whether its path gate still admits the files the new check targets |
 
 The last row is pitfall 5 one level up. Step 6.6 skips unless the diff touches a `CLIENT_DIR_RE` or `ROUTE_DIR_RE` path, but the #2657/#2666 JWT and secrets-lifecycle checks scan repo-wide because their targets (`src/auth/jwt.js`, `config/secrets.js`) match neither gate, so a review of a diff touching only those files never runs them.
 
@@ -73,6 +73,7 @@ Settle these before the plan is written:
 | Fixing the require order only in the file that failed | Every vertical loaded directly by its own test has the same exposure |
 | Anchoring a site-level finding to a directory | `areaId` derivation and dedup expect a file |
 | A heuristic generator with only synthetic fixtures | Real layouts (`app/`, `src/routes/`, `layouts/`) are where #2693's misses were |
+| Writing the plan from the record without this skill open | #2628's plan never cited this skill, so it shipped pitfall 1's require order reversed and left out the `/review` summary-template section and the wiring test, all rows already listed here; review caught them. Take the registration set and the pitfalls into the plan as its checklist |
 
 ## Evidence
 

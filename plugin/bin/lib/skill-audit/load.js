@@ -11,6 +11,9 @@
 //   closure — floor + every file reachable from it by citation (backticked
 //             `.md` tokens, compose-context.js sources), transitively, each
 //             file counted once: the upper bound an invocation can load.
+//             A token no path rule (a)–(e) resolves still resolves under rule
+//             (f) when it names exactly one `.md` under the root's
+//             `skills/`/`agents/` (a bare name or a trailing sub-path).
 // A PR's delta on both makes a split show as a move ("floor -10 KB, closure
 // +80 B"), not a cut. Pure over an injected readFile, so the CLI
 // (bin/load-delta.js) feeds it working-tree content for head and
@@ -64,7 +67,46 @@ function phraseSkill(line, tokenIndex) {
   return names.length ? names[names.length - 1][1] : null;
 }
 
-function extractCitations(text, citingFile, pluginRoot, { exists }) {
+// Rule (f)'s citable universe: the directories a skill's citation can name.
+const CITABLE_DIRS = ['skills', 'agents'];
+
+// Rule (f): a lookup from a citation token to the one citable `.md` it names
+// by trailing path segments, or null when none or several do. `paths` is any
+// repo-relative file list; only `.md` under {pluginRoot}/{CITABLE_DIRS}/ count.
+function citableNameIndex(pluginRoot, paths) {
+  const prefixes = CITABLE_DIRS.map((d) => (pluginRoot === '.' ? `${d}/` : `${pluginRoot}/${d}/`));
+  const files = paths.map(toPosix).filter((p) => p.endsWith('.md') && prefixes.some((pre) => p.startsWith(pre)));
+  const memo = new Map();
+  return (token) => {
+    if (memo.has(token)) return memo.get(token);
+    let hit = null;
+    const eligible = !posix.isAbsolute(token) && token.split('/').every((s) => s !== '' && s !== '.' && s !== '..');
+    if (eligible) {
+      const matches = files.filter((f) => `/${f}`.endsWith(`/${token}`));
+      if (matches.length === 1) hit = matches[0];
+    }
+    memo.set(token, hit);
+    return hit;
+  };
+}
+
+// Lists repo-relative POSIX `.md` paths under each {pluginRoot}/{CITABLE_DIRS}
+// entry through an injected readdir(relDir) => [{ name, isDirectory }] that
+// returns [] for a missing directory. Keeps this module free of `fs`.
+function walkCitable(pluginRoot, readdir) {
+  const out = [];
+  const walk = (rel) => {
+    for (const e of readdir(rel)) {
+      const child = posix.join(rel, e.name);
+      if (e.isDirectory) walk(child);
+      else if (e.name.endsWith('.md')) out.push(child);
+    }
+  };
+  for (const d of CITABLE_DIRS) walk(posix.join(pluginRoot, d));
+  return out.sort();
+}
+
+function extractCitations(text, citingFile, pluginRoot, { exists, byName }) {
   const resolved = [];
   const unresolved = [];
   const seen = new Set();
@@ -92,7 +134,13 @@ function extractCitations(text, citingFile, pluginRoot, { exists }) {
           candidates.push(posix.join(pluginRoot, 'skills', token));
         }
       }
-      const hit = candidates.find((c) => withinRoot(pluginRoot, c) && exists(c));
+      let hit = candidates.find((c) => withinRoot(pluginRoot, c) && exists(c));
+      // (f) unique name over citable files, only when (a)–(e) all miss and no
+      // owner skill was named: a broken (d) citation must not reroute silently.
+      if (!hit && byName && !skill) {
+        const named = byName(token);
+        if (named && withinRoot(pluginRoot, named) && exists(named)) hit = named;
+      }
       if (!hit) {
         unresolved.push({ citingFile, line: i + 1, token });
       } else if (!seen.has(hit)) {
@@ -124,7 +172,8 @@ function composeSources(text, citingFile, pluginRoot, { exists }) {
   return { resolved, unresolved };
 }
 
-function entryPointLoads(pluginRoot, { readFile, listSkillMds }) {
+function entryPointLoads(pluginRoot, { readFile, listSkillMds, listFiles }) {
+  const byName = listFiles ? citableNameIndex(pluginRoot, listFiles()) : undefined;
   const texts = new Map();
   const read = (p) => {
     if (!texts.has(p)) texts.set(p, readFile(p));
@@ -135,7 +184,7 @@ function entryPointLoads(pluginRoot, { readFile, listSkillMds }) {
   const edgesOf = (p) => {
     if (!edges.has(p)) {
       const text = read(p) || '';
-      const cites = extractCitations(text, p, pluginRoot, { exists });
+      const cites = extractCitations(text, p, pluginRoot, { exists, byName });
       const composed = composeSources(text, p, pluginRoot, { exists });
       edges.set(p, {
         next: [...new Set([...cites.resolved, ...composed.resolved])],
@@ -213,4 +262,4 @@ function loadDelta(baseRows, headRows) {
   return out;
 }
 
-module.exports = { discoverPluginRoots, extractCitations, withinRoot, entryPointLoads, loadDelta };
+module.exports = { CITABLE_DIRS, citableNameIndex, walkCitable, discoverPluginRoots, extractCitations, withinRoot, entryPointLoads, loadDelta };

@@ -368,6 +368,81 @@ test('--stamp-status reports match/mismatch/absent as data with exit 0 (#1921 AC
   assert.ok(fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')));
 });
 
+// #3757: the stamp names the HEAD the checks ran against, never the HEAD they
+// finished on — a commit landing mid-run withholds the pass instead of
+// crediting the new commit with checks it never ran.
+test('#3757: a commit landing mid-run writes no pass stamp, --stamp-status stays unverified, and stdout names the moved tree', async () => {
+  const { repo, git, gitDir } = tmpGitRepo();
+  const startHead = git('rev-parse', 'HEAD').trim();
+  const { code, stdout } = await runCli(['--cmd', 'tests=git commit -q --allow-empty -m mid-run && node -e 0'], { cwd: repo });
+  const endHead = git('rev-parse', 'HEAD').trim();
+  assert.notStrictEqual(endHead, startHead, 'the check must have committed mid-run');
+  assert.strictEqual(code, 0, 'the verdict is unchanged: every check passed');
+  const report = JSON.parse(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.sha, startHead, 'report.json names the HEAD the checks started on, not the one they finished on');
+  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')), 'no JSON stamp for a moved tree');
+  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass')), 'no legacy twin for a moved tree');
+  assert.match(stdout, new RegExp(`tree moved during the run \\(HEAD ${startHead.slice(0, 9)} -> ${endHead.slice(0, 9)}\\); no pass stamp written`));
+  const s = JSON.parse((await runCli(['--stamp-status'], { cwd: repo })).stdout);
+  assert.strictEqual(s.present, false);
+  assert.strictEqual(s.match, false);
+  assert.strictEqual(s.verifiedHead, false);
+});
+
+test('#3757: a commit landing mid-run on a failing run also prints the moved-tree line', async () => {
+  const { repo } = tmpGitRepo();
+  const { code, stdout } = await runCli(['--cmd', 'tests=git commit -q --allow-empty -m mid-run && exit 1'], { cwd: repo });
+  assert.notStrictEqual(code, 0);
+  assert.match(stdout, /tree moved during the run \(HEAD \w{9} -> \w{9}\); no pass stamp written/);
+});
+
+// #3757: dirty alone is not a moved tree — a check that leaves an untracked
+// artifact still stamps, recording dirty:true; --stamp-status never verifies it.
+test('#3757: a check that leaves an untracked artifact mid-run still writes the stamp with dirty:true, never verified', async () => {
+  const { repo, gitDir } = tmpGitRepo();
+  const write = `node -e "require('fs').writeFileSync('artifact.txt', 'x')"`;
+  const { code, stdout } = await runCli(['--cmd', `tests=${write}`], { cwd: repo });
+  assert.strictEqual(code, 0);
+  assert.ok(!/tree moved during the run/.test(stdout), 'an untracked artifact is not a moved tree');
+  const stamp = JSON.parse(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify-pass.json'), 'utf8'));
+  assert.strictEqual(stamp.dirty, true);
+  const status = JSON.parse((await runCli(['--stamp-status'], { cwd: repo })).stdout);
+  assert.strictEqual(status.present, true);
+  assert.strictEqual(status.dirty, true);
+  assert.strictEqual(status.match, false);
+  assert.strictEqual(status.verifiedHead, false);
+});
+
+// #3757: dirty is start OR end — edits that were present when the run began and
+// reverted mid-run (HEAD unmoved) must not let the stamp claim a clean tree.
+test('#3757: a run that starts dirty and reverts the edit mid-run stamps dirty:true, never verified', async () => {
+  const { repo, git, gitDir } = tmpGitRepo();
+  fs.writeFileSync(path.join(repo, 'tracked.txt'), 'one\n');
+  git('add', 'tracked.txt');
+  git('commit', '-q', '-m', 'track');
+  fs.writeFileSync(path.join(repo, 'tracked.txt'), 'two\n');
+  const { code, stdout } = await runCli(['--cmd', 'tests=git checkout -- tracked.txt && node -e 0'], { cwd: repo });
+  assert.strictEqual(code, 0);
+  assert.strictEqual(git('status', '--porcelain').trim(), '', 'the check reverted the edit, so the tree is clean at the end');
+  assert.ok(!/tree moved during the run/.test(stdout), 'HEAD did not move');
+  const stamp = JSON.parse(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify-pass.json'), 'utf8'));
+  assert.strictEqual(stamp.dirty, true, 'the checks ran against the dirty tree');
+  const status = JSON.parse((await runCli(['--stamp-status'], { cwd: repo })).stdout);
+  assert.strictEqual(status.present, true);
+  assert.strictEqual(status.verifiedHead, false);
+});
+
+// #3757: a status read that fails at the end (HEAD still readable) must not be
+// vouched for by a clean start read — the stamp records dirty:null, never false.
+test('#3757: a clean start with an unreadable end-of-run status stamps dirty:null, never dirty:false', async () => {
+  const { repo, gitDir } = tmpGitRepo();
+  const corrupt = `node -e "require('fs').writeFileSync(require('path').join('${gitDir.replace(/\\/g, '/')}', 'index'), 'garbage')"`;
+  const { code } = await runCli(['--cmd', `tests=${corrupt}`], { cwd: repo });
+  assert.strictEqual(code, 0);
+  const stamp = JSON.parse(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify-pass.json'), 'utf8'));
+  assert.strictEqual(stamp.dirty, null, 'an end-of-run status that could not be read is unknown, not clean');
+});
+
 test('--stamp-status recomputes dirty from the live tree — a dirty edit with no new commit is match:false (#1921 Gotchas)', async () => {
   const { repo } = tmpGitRepo();
   await runCli(['--cmd', 'tests=node -e 0'], { cwd: repo });
@@ -1319,7 +1394,16 @@ test('AC2.1: --ignore-stamp with a usable stamp but no --base/--integration-bran
   const run = await runCli(['--changed-files', '--ignore-stamp'], { cwd: r.repo });
   assert.strictEqual(run.code, 1);
   assert.match(run.stderr, /could not resolve a base/);
+  // A usable stamp exists here, so the message must not claim there was none.
+  assert.match(run.stderr, /or --ignore-stamp/);
   assert.strictEqual(run.stdout.trim(), '');
+});
+
+test('#3048: a bare --ignore-stamp (no --changed-files, no --cmd) is a usage error, exit 2', async () => {
+  const { r } = await stampThenBookkeeping();
+  const run = await runCli(['--ignore-stamp'], { cwd: r.repo });
+  assert.strictEqual(run.code, 2);
+  assert.match(run.stderr, /--ignore-stamp applies only to --changed-files/);
 });
 
 test('--ignore-stamp still honors an explicit --base (#3048)', async () => {
@@ -2143,6 +2227,20 @@ test('--baseline: failures that also fail at base exit 0, stamp a baseline pass,
   assert.strictEqual(status.match, false);
   assert.strictEqual(status.baselineAdjudicated, true);
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass')), 'no legacy twin for an adjudicated pass');
+});
+
+// #3757: adjudication re-runs failing files at HEAD, so a commit landing during
+// it is a moved tree even though the first checks pass finished before it.
+test('#3757: --baseline: a commit landing during adjudication names the moved tree and writes no stamp', async () => {
+  const r = baselineRepo();
+  fs.writeFileSync(path.join(r.repo, 'README.md'), 'change\n');
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'head');
+  const startHead = r.git('rev-parse', 'HEAD').trim();
+  const { stdout } = await runCli(['--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', `tests=git commit -q --allow-empty -m adjudicating && ${PER_FILE.slice('tests='.length)}`], r.opts);
+  assert.notStrictEqual(r.git('rev-parse', 'HEAD').trim(), startHead, 'the isolated HEAD re-run must have committed');
+  assert.match(stdout, new RegExp(`tree moved during the run \\(HEAD ${startHead.slice(0, 9)} -> \\w{9}\\); no pass stamp written`));
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')), 'no JSON stamp for a moved tree');
 });
 
 // #3156: the /flow and /dispatch session shape — a linked worktree under the
