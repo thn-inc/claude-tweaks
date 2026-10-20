@@ -30,7 +30,7 @@ A vertical is not shipped until every row below lands in the same change. A key 
 
 | Site | What it gets |
 |---|---|
-| `plugin/skills/review/code-mode-steps.md` | A new Step 6.X pass mirroring the existing Step 6.6 pattern (pre-check, invocation, result-handling table, Routing line), plus an update to every sibling Step 6.5/6.6/6.7 "Routing (optional)" sentence and the Step 6.7 heading/category table so they name the new step |
+| `plugin/skills/review/focus-criterion-passes.md` and `plugin/skills/review/code-mode-steps.md` | A new Step 6.X pass in `focus-criterion-passes.md` mirroring the existing Step 6.6 pattern (pre-check, invocation, result-handling table, Routing line), plus, in `code-mode-steps.md`, the pointer sentence naming the new step, an update to every sibling Step 6.5/6.6/6.7 "Routing (optional)" sentence, and the Step 6.7 heading/category table |
 | `plugin/skills/review/review-summary-template.md` | A new summary section mirroring Step 6.6's (Include/Omit conditions, a findings table, an advisory footnote) |
 
 A wiring test for this pair follows the same shape as the generator-registration test above — see `tests/code-health-agent-trust-scope-wiring.test.js` for the worked example (it also pins the `docs/getting-started.md` vertical count, so one test file covers both halves of the registration set).
@@ -44,7 +44,7 @@ Adding a candidate `kind` to a shipped generator adds no `FOCUS_GENERATORS` key,
 | The generator's module header | The new check in its check list, plus a Coverage bullet for it |
 | `plugin/skills/_shared/criteria-{vertical}.md` | The `kind` list, a What-to-flag and a What-NOT-to-flag entry, a Severity calibration placement, and a copy-paste prompt where the fragment has that section |
 | `plugin/skills/review/review-summary-template.md` (`/review` verticals only) | The new kind in that vertical's section's Kind column |
-| The vertical's Step 6.X pre-check in `plugin/skills/review/code-mode-steps.md` (`/review` verticals only) | A re-derivation of whether its path gate still admits the files the new check targets |
+| The vertical's Step 6.X pre-check in `plugin/skills/review/focus-criterion-passes.md` (`/review` verticals only) | A re-derivation of whether its path gate still admits the files the new check targets |
 
 The last row is pitfall 5 one level up. Step 6.6 skips unless the diff touches a `CLIENT_DIR_RE` or `ROUTE_DIR_RE` path, but the #2657/#2666 JWT and secrets-lifecycle checks scan repo-wide because their targets (`src/auth/jwt.js`, `config/secrets.js`) match neither gate, so a review of a diff touching only those files never runs them.
 
