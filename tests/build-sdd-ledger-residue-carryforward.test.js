@@ -127,6 +127,9 @@ test('review #3401 → #3510: the CLI owns the failure branch; the hand-performe
   assert.match(DISPATCH, /SKIP \{time\} — SDD ruling carry-forward \(degraded\): condition: staged write failed for sdd-ruling-\{N\} \(\{error\}\) → fallback: ledger row #\{item\} left open with no staged file/);
   assert.match(DISPATCH, /so no row ever names a file that was not written/);
   assert.match(DISPATCH, /the carry-forward call below escapes itself, so pass it unescaped/);
+  assert.match(DISPATCH, /`--allocate` is required with `--ledger`/);
+  assert.match(DISPATCH, /Every degraded path exits 3 with its trace already in `decisions\.md`/);
+  assert.doesNotMatch(DISPATCH, /same clobber reason/);
   for (const gone of ['ledger first, then the file', 'the same operation, not an Update Item', "rewrite the row's Item text", '(1) append the ledger row']) {
     assert.ok(!DISPATCH.includes(gone), `stale hand-performed clause still present: ${gone}`);
   }
