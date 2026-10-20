@@ -36,6 +36,21 @@ test('planRetry: every failing file listed + a template → retry with one comma
   });
 });
 
+test('planRetry: a $(…) failing path is quoted, never shell syntax (#3676)', () => {
+  const plan = planRetry({ failingFiles: ['tests/$(touch PWNED).test.js'], flaky: { files: ['tests/**'], maxRetries: 1 }, retry: RETRY, suite: 'tests', platform: 'linux' });
+  assert.strictEqual(plan.retry, true);
+  assert.deepStrictEqual(plan.command, [{ file: 'tests/$(touch PWNED).test.js', cmd: "node --test 'tests/$(touch PWNED).test.js'" }]);
+});
+
+test('planRetry: a path cmd.exe cannot quote refuses with unsafe-path (#3676)', () => {
+  const plan = planRetry({ failingFiles: ['tests/%PATH%.test.js'], flaky: { files: ['tests/**'], maxRetries: 1 }, retry: RETRY, suite: 'tests', platform: 'win32' });
+  assert.deepStrictEqual(plan, {
+    retry: false,
+    reason: 'unsafe-path: [tests/%PATH%.test.js]',
+    unsafe: [{ file: 'tests/%PATH%.test.js', reason: 'cmd-unquotable' }],
+  });
+});
+
 test('planRetry: any unlisted failing file → no retry, and the reason names every unlisted file (AC2)', () => {
   const plan = planRetry({ failingFiles: ['tests/a.test.js', 'tests/real.test.js', 'tests/other.test.js'], flaky: FLAKY, retry: RETRY, suite: 'tests' });
   assert.strictEqual(plan.retry, false);
