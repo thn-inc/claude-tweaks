@@ -1,6 +1,6 @@
 'use strict';
 
-// Head-side plugin-root reader (#3461). Two callers read a plugin root's files
+// Plugin-root reader (#3461). Two callers read a plugin root's files
 // through it: load-delta.js (its head side) and skill-load-report.js (the
 // plugin-root index it builds). Both need the same rule — read only a regular
 // file that resolves inside the base — so the rule lives here once.
@@ -19,8 +19,8 @@ function pluginRootReader(baseAbs, root = '.') {
   let realBase = null;
   const readFile = (p) => {
     try {
-      // A citation that passed withinRoot's textual check can still be a committed
-      // symlink to a file outside the repository, or to a device (/dev/zero) that
+      // A citation that passed withinRoot's textual check can still be a
+      // symlink to a file outside the base, or to a device (/dev/zero) that
       // never reaches EOF — so resolve the real path and read only a regular file
       // inside the base; anything else is absent.
       if (realBase === null) realBase = fs.realpathSync(baseAbs);
@@ -34,13 +34,14 @@ function pluginRootReader(baseAbs, root = '.') {
   };
   const listSkillMds = () => {
     const dir = path.join(baseAbs, root, 'skills');
-    // A root discovered only via the base-tree union (ledger row 17) — all
-    // its SKILL.md files deleted, committed, at head — has no skills/
-    // directory left on disk at all; a root whose index entries are deleted
-    // in the working tree only (never committed) can hit the same ENOENT.
-    // Either way that is "no entries at head", not a crash: readdirSync's
-    // ENOENT/ENOTDIR become [], and anything else (a real permissions or I/O
-    // error) still rethrows.
+    // load-delta.js's case: a root discovered only via the base-tree union
+    // (ledger row 17) — all its SKILL.md files deleted, committed, at head —
+    // has no skills/ directory left on disk at all; a root whose index entries
+    // are deleted in the working tree only (never committed) can hit the same
+    // ENOENT. skill-load-report.js's case: a plugin root that vanishes after
+    // its skills/ check (#3461). Either way that is "no entries", not a crash:
+    // readdirSync's ENOENT/ENOTDIR become [], and anything else (a real
+    // permissions or I/O error) still rethrows.
     let entries;
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });

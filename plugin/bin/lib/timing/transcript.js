@@ -108,7 +108,7 @@ function resultBytes(content) {
 
 // fsImpl, path -> undefined. Throws the transcript stat contract shared by
 // readUsage and transcript-load.js: an Error whose code is the stat failure's
-// code (EUNKNOWN if absent), or EISDIR when the path names a directory.
+// code (EUNKNOWN if absent), or EISDIR when the path names anything but a regular file.
 function statTranscriptOrThrow(fsImpl, filePath) {
   let st;
   let code = null;

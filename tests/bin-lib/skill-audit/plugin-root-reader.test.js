@@ -1,6 +1,6 @@
 // tests/bin-lib/skill-audit/plugin-root-reader.test.js — pluginRootReader and
 // skillsPrefix (#3461). The reader's read semantics are headSide's, moved out
-// of load-delta.js; these pin them before load-delta.js switches over. The one
+// of load-delta.js. The one
 // deliberate change, the lazy base realpath, is pinned by the AC3.2 test.
 'use strict';
 
@@ -80,6 +80,12 @@ test('a base deleted after construction also degrades to no entries, never a thr
   fs.rmSync(base, { recursive: true });
   assert.deepEqual(reader.listSkillMds(), []);
   assert.equal(reader.readFile('skills/a/SKILL.md'), null);
+});
+
+test('listSkillMds returns [] when skills is a regular file (ENOTDIR)', () => {
+  const base = tempDir('plugin-root-reader-');
+  writeFile(path.join(base, 'skills'), 'not a directory\n');
+  assert.deepEqual(pluginRootReader(base).listSkillMds(), []);
 });
 
 test('skillsPrefix: the root "." is the repo-level skills/, any other root is nested', () => {

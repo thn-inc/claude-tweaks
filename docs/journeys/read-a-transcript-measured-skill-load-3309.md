@@ -2,6 +2,8 @@
 files:
   - plugin/bin/skill-load-report.js
   - plugin/bin/lib/skill-audit/transcript-load.js
+  - plugin/bin/lib/skill-audit/plugin-root-reader.js
+  - plugin/bin/lib/timing/transcript.js
   - plugin/skills/harness-health/SKILL.md
 ---
 
