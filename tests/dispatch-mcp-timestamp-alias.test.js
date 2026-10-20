@@ -239,4 +239,8 @@ test('the queue-pull MCP notes point at the #3691 alias', () => {
   assert.notStrictEqual(noteStart, -1, 'MCP-path note not found in queue-pull-script.md');
   const note = QUEUE_PULL.slice(noteStart, QUEUE_PULL.indexOf('\n', noteStart));
   assert.ok(note.includes('#3691'), 'queue-pull-script.md MCP-path note lacks the #3691 pointer');
+  // A shell function does not survive between Bash calls, and the MCP path splits the script across several.
+  const REDEFINE = 're-run the `alias_mcp_timestamps() { … }` definition at the top of any Bash call that calls it';
+  assert.ok(pull.includes(REDEFINE), 'mcp-transport.md queue-pull paragraph lacks the re-define clause');
+  assert.ok(note.includes(REDEFINE), 'queue-pull-script.md MCP-path note lacks the re-define clause');
 });
