@@ -655,6 +655,31 @@ test('hooks.json registers a PreToolUse matcher for ExitWorktree (unfiltered, li
   assert.match(entry.hooks[0].command, /bin\/hooks\.js" pre-tool-use$/);
 });
 
+test('AC6.1: hooks.json registers a PreToolUse matcher for AskUserQuestion (unfiltered, literal tool-name match)', () => {
+  const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
+  const entry = config.hooks.PreToolUse.find((e) => e.matcher === 'AskUserQuestion');
+  assert.ok(entry, 'expected a PreToolUse AskUserQuestion matcher entry');
+  assert.strictEqual(entry.hooks.length, 1);
+  assert.strictEqual(entry.hooks[0].type, 'command');
+  assert.ok(!('if' in entry.hooks[0]), 'AskUserQuestion matcher must be a literal tool-name match, not pattern-filtered');
+  assert.match(entry.hooks[0].command, /bin\/hooks\.js" pre-tool-use$/);
+});
+
+test('dispatcher: AskUserQuestion with no owned run exits 0 with no deny', () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-disp-ask-'));
+  const result = runHook(['pre-tool-use'], {
+    input: JSON.stringify({
+      tool_name: 'AskUserQuestion',
+      tool_input: { questions: [{ header: 'Review Console', question: 'q', options: [] }] },
+      session_id: 'no-such-session',
+      cwd,
+    }),
+    cwd,
+  });
+  assert.strictEqual(result.code, 0);
+  assert.doesNotMatch(result.stdout, /permissionDecision/, 'no owned run means the Review Console ask gate fails open');
+});
+
 test("hooks.json's PreToolUse Bash handler is unconditional and the prefilter covers git worktree", () => {
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const bashEntry = config.hooks.PreToolUse.find((e) => e.matcher === 'Bash');
