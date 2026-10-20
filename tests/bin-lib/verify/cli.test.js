@@ -387,6 +387,15 @@ test('#3757: a commit landing mid-run writes no pass stamp, --stamp-status stays
   assert.strictEqual(s.verifiedHead, false);
 });
 
+test('#3757: a commit landing mid-run on a failing run also names the moved tree and writes no stamp', async () => {
+  const { repo, gitDir } = tmpGitRepo();
+  const { code, stdout } = await runCli(['--cmd', 'tests=git commit -q --allow-empty -m mid-run && exit 1'], { cwd: repo });
+  assert.notStrictEqual(code, 0);
+  assert.match(stdout, /tree moved during the run \(HEAD \w{9} -> \w{9}\); no pass stamp written/);
+  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')), 'no JSON stamp');
+  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass')), 'no legacy twin');
+});
+
 // #3757: dirty alone is not a moved tree — a check that leaves an untracked
 // artifact still stamps, recording dirty:true; --stamp-status never verifies it.
 test('#3757: a check that leaves an untracked artifact mid-run still writes the stamp with dirty:true, never verified', async () => {
