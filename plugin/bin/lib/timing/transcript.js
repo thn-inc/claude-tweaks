@@ -9,7 +9,9 @@
 // → {config-dir}/projects/
 //   -Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-design-1904-pipeline-ceremony/
 // (the space and the '.' both became '-', so a worktree cwd yields '--').
-// {config-dir} is $CLAUDE_CONFIG_DIR when set (Claude Code writes transcripts there), else ~/.claude — the resolution dream-scan.js and skill-load-report.js use (#3458).
+// {config-dir} is $CLAUDE_CONFIG_DIR when set (Claude Code writes transcripts
+// there), else ~/.claude — the resolution dream-scan.js and
+// skill-load-report.js use (#3458).
 // The session's main transcript is {slug}/{sessionId}.jsonl; a sibling
 // directory named {sessionId}/ holds subagent transcripts as
 // {sessionId}/subagents/agent-{id}.jsonl + agent-{id}.meta.json, read by
