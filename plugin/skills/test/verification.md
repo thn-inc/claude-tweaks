@@ -77,6 +77,8 @@ The runner owns execution and scope (`verify.js --scope`, #1922); this table own
 | `/claude-tweaks:review` Step 1.5 standalone auto-trigger | scoped when it passes `--source review`, else full |
 | `/claude-tweaks:test affected` | the shared changed-file set (`verify.js --changed-files`) |
 
+`--changed-files --ignore-stamp` (#3048) skips the stamp anchor and resolves the base from `--base`/`--integration-branch` (same exit 1 and base-equals-HEAD warning). `affected`, `qa affected`, and scoped re-verify (`--scope`, the same stamp-anchored base) keep the anchor; this skill's pipeline QA story selection and its design CLI gate pass it, so a stamp written before bookkeeping commits never narrows them to those commits.
+
 **Scoped invocation.** A "scoped" site runs Step 2's command with the declaration and the integration branch added — one plain command (shown for a declaration whose `checks.tests` is a single command string):
 
 ```bash

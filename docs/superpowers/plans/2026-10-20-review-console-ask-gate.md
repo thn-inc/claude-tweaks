@@ -72,7 +72,7 @@ Expected: FAIL. The `#3712` deny tests fail (no deny returned) and the export te
 - `checkReviewConsoleAskGate(ctx, deps)`: return `{}` unless `ctx.input.tool_name === 'AskUserQuestion'`, `tool_input.questions` is an array containing an object whose `header === REVIEW_CONSOLE_HEADER`, and the owned run passes the Global Constraints ownership test. Then `try { ceiling = (deps.readConsoleCeiling || readConsoleCeiling)(ownedRun.dir, ctx.cwd || process.cwd()) } catch { return {}; }`. Return `{}` unless `bookkeepingPermissions(ceiling).consoleAutoResolve`. On deny, call `ctxLib.appendEvent(ownedRun.dir, 'console-ask-deny', { ceiling })`, then `return denyResult(...)` with this exact text, where `{dir}` is `ownedRun.dir` and `{root}` is `pluginRoot()`:
   `claude-tweaks: this run's autonomy ceiling is ${ceiling}, which grants consoleAutoResolve — the Review Console resolves with zero AskUserQuestion calls (wrap-up/review-console.md's Auto-resolution short-circuit). Resolve it instead: node "${root}/bin/console-resolve.js" --run "${dir}" --policy console-auto`
 - `runInner`: first statement, `if (ctx.input && ctx.input.tool_name === 'AskUserQuestion') return checkReviewConsoleAskGate(ctx, deps);`. No other gate applies to this tool.
-- Header comment on the new function: why it exists (#2734's stall, IL-166), the fail-open list, and that the header string is pinned against the console prose by `tests/review-console-header-conformance.test.js`.
+- Header comment on the new function: why it exists (#2734's stall, IL-167), the fail-open list, and that the header string is pinned against the console prose by `tests/review-console-header-conformance.test.js`.
 
 - [ ] **Step 4: Run the tests and verify they pass**
 
@@ -94,7 +94,7 @@ git commit -m "Add Review Console ask gate to pre-tool-use — deny the console 
 
 **Files:**
 - Modify: `plugin/hooks/hooks.json`: add a `PreToolUse` entry `{ "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" pre-tool-use" }] }` after the `ExitWorktree` entry, matching its formatting
-- Modify: `docs/hooks.md`: in the top "Tiered posture" bullet's block-tier list, add the Review Console ask gate. State what it keys on (`header: "Review Console"`, exact match), what it requires (provably owned run, which excludes fallback attribution and ad-hoc dirs, plus a ceiling granting `consoleAutoResolve`), that it fails open otherwise, and where the full rationale lives (`[IL-166]`)
+- Modify: `docs/hooks.md`: in the top "Tiered posture" bullet's block-tier list, add the Review Console ask gate. State what it keys on (`header: "Review Console"`, exact match), what it requires (provably owned run, which excludes fallback attribution and ad-hoc dirs, plus a ceiling granting `consoleAutoResolve`), that it fails open otherwise, and where the full rationale lives (`[IL-167]`)
 - Test: `tests/hooks-dispatcher.test.js`
 
 **Interfaces:**
@@ -160,15 +160,15 @@ git add tests/review-console-header-conformance.test.js
 git commit -m "Pin the Review Console header against the ask gate — conformance over both console prompts" -m "Refs #3712"
 ```
 
-### Task 4: IL-166 incident-log entry
+### Task 4: IL-167 incident-log entry
 
 **Files:**
-- Modify: `docs/incident-log.md`: append `## IL-166 — An unattended Review Console asked anyway, and the stall was misdiagnosed as a policy gap`
-- Modify: `docs/donts.md`: one tagged rule, matching the file's existing one-line style. Proposed: never rely on skill prose alone to keep an `unattended` console from prompting; the `PreToolUse` ask gate is the enforcement `[IL-166]`.
+- Modify: `docs/incident-log.md`: append `## IL-167 — An unattended Review Console asked anyway, and the stall was misdiagnosed as a policy gap`
+- Modify: `docs/donts.md`: one tagged rule, matching the file's existing one-line style. Proposed: never rely on skill prose alone to keep an `unattended` console from prompting; the `PreToolUse` ask gate is the enforcement `[IL-167]`.
 
 **Interfaces:**
 - Consumes: the spec's Current State (all facts below are quoted from it).
-- Produces: the `[IL-166]` tag Task 2's docs/hooks.md bullet cites.
+- Produces: the `[IL-167]` tag Task 2's docs/hooks.md bullet cites.
 
 - [ ] **Step 1: Write the entry**
 
@@ -187,7 +187,7 @@ Cost paragraph: ~7.4h stall, plus a misdirected fix (#2734's build) shipped agai
 
 - [ ] **Step 3: Verify**
 
-Run: `grep -c "IL-166" docs/incident-log.md`
+Run: `grep -c "IL-167" docs/incident-log.md`
 Expected: `1` or more.
 
 Run: `grep -c "b41eb7b0" docs/incident-log.md` (AC7.1)
@@ -197,13 +197,13 @@ Expected: `1` or more.
 
 ```bash
 git add docs/incident-log.md docs/donts.md
-git commit -m "Record IL-166 — unattended Review Console asked anyway and #2734 misdiagnosed the stall" -m "Refs #3712"
+git commit -m "Record IL-167 — unattended Review Console asked anyway and #2734 misdiagnosed the stall" -m "Refs #3712"
 ```
 
 ### Task 5 (orchestrator, not a subagent): Correct #2734's record
 
-- [ ] **Step 1:** After Task 4's commit is pushed, post one comment on #2734 with `gh issue comment 2734 --body-file <session tmp file>`. The comment says the diagnosis was wrong. It links #3712, PR #3749, and the IL-166 entry on the branch, and says the `pre-authorize-merge` token stays rather than being reverted.
-- [ ] **Step 2 (AC8.1):** Verify with `gh issue view 2734 --json comments --jq '.comments[-1].body'` that the comment contains `#3712` and `IL-166`. Log it to `decisions.md`.
+- [ ] **Step 1:** After Task 4's commit is pushed, post one comment on #2734 with `gh issue comment 2734 --body-file <session tmp file>`. The comment says the diagnosis was wrong. It links #3712, PR #3749, and the IL-167 entry on the branch, and says the `pre-authorize-merge` token stays rather than being reverted.
+- [ ] **Step 2 (AC8.1):** Verify with `gh issue view 2734 --json comments --jq '.comments[-1].body'` that the comment contains `#3712` and `IL-167`. Log it to `decisions.md`.
 
 ### Final verification
 

@@ -142,7 +142,7 @@ Exit code 4 (ceiling not granted) → skip the short-circuit section and proceed
 stop," the ordinary path. Exit code 5 (this run's `console.json` is already a console rendered on
 the PR and awaiting a human, or it will not parse — the CLI wrote nothing either way) → never
 "Present a real stop": exit 5 only arises once the ceiling check passed, and an `unattended`
-console never asks, human present or not (`[IL-166]` — `pre-tool-use.js` denies that question).
+console never asks, human present or not (`[IL-167]` — `pre-tool-use.js` denies that question).
 A rendered console is somebody's open decision and no flag overwrites it, so a console on the PR
 follows `_shared/console-on-pr.md`'s Headless conclusion (report `pending-review` with the PR URL);
 an unparseable one stops and reports the CLI's stderr, like exits 2 and 3. Exit codes 2 and 3 (malformed invocation / `--run` not anchored) → a

@@ -5,6 +5,8 @@ files:
   - plugin/skills/flow/manifesto-overrides.md
   - plugin/skills/wrap-up/manifesto-authorized-merge.md
   - plugin/skills/wrap-up/review-console.md
+  - plugin/skills/wrap-up/auto-merge-short-circuit.md
+  - plugin/bin/lib/dispatch/task-call.js
   - plugin/skills/flow/summary-template.md
   - plugin/skills/_shared/pr-first-merge.md
   - plugin/bin/compose-subject.js
@@ -39,8 +41,8 @@ files:
 - **URL:** none — this happens inside `/claude-tweaks:wrap-up`'s Review Console step, unattended
 - **Action:** Once the last HARD-GATE clears and the full suite has just passed, the Auto-merge short-circuit (`wrap-up/review-console.md`, `wrap-up/manifesto-authorized-merge.md`) fires the same merge call the terminal one-click path uses (`_shared/pr-first-merge.md` Step 3: `bin/compose-subject.js … --tag manifesto-authorized --pr {pr-number} --out-dir "{subject-dir}"`, then `gh pr merge --squash -t {title-arg} --body-file "{subject-dir}/body.md"`), and logs the decision.
 - **Should feel:** Invisible — the maintainer notices only that the PR is already merged when they check back.
-- **Should understand:** The content-judgment safety net (`assess-agent-autonomy merge-check`) still runs — the lever authorizes the merge decision, it doesn't skip the judgment that decides whether merging is safe. The squash commit's subject is Conventional-Commits shaped (`feat|fix|chore[(scope)][!]: {title} (#N)`, #2251 — the `(scope)` resolved by the composer from the `commit-scope`/`commit-scope-paths` policy keys over the PR's changed files, #3298); the `manifesto-authorized` tag now rides as a `[manifesto-authorized]` body paragraph rather than a subject prefix, which is still what `/help`'s auto-merged metric matches.
-- **Red flags:** A merge commit tagged `manifesto-authorized` with no corresponding `decisions.md` entry naming the lever; a pr-first merge that produced a merge commit instead of a single squash commit.
+- **Should understand:** The content-judgment safety net (`assess-agent-autonomy merge-check`) still runs — the lever authorizes the merge decision, it doesn't skip the judgment that decides whether merging is safe. The squash commit's subject is Conventional-Commits shaped (`feat|fix|chore[(scope)][!]: {title} (#N)`, #2251 — the `(scope)` resolved by the composer from the `commit-scope`/`commit-scope-paths` policy keys over the PR's changed files, #3298); the `manifesto-authorized` tag now rides as a `[manifesto-authorized]` body paragraph rather than a subject prefix, which is still what `/help`'s auto-merged metric matches. This holds under `integration-model: local-merge` too: the short-circuit's Dispatch-call branch treats this human-run session as one of `/claude-tweaks:dispatch`'s Task calls only when `run-state.json` carries `dispatched: true` **and** its `dispatchSessionId` equals this session's `CLAUDE_CODE_SESSION_ID` (`bin/lib/dispatch/task-call.js`). Every other run, a human resuming a dispatched run from a new session included, merges directly from the main checkout (#3711). One exception lasts until `task-call.js` drops its `sessionId` fallback: a dispatched run whose `run-state.json` predates #3711 has no `dispatchSessionId`, and a resume re-stamps `sessionId` with the resumer's id, so that resume still reads as a Task call and stops at `ready-to-merge` — the accepted residual that module names.
+- **Red flags:** A merge commit tagged `manifesto-authorized` with no corresponding `decisions.md` entry naming the lever; a pr-first merge that produced a merge commit instead of a single squash commit; a human-run `local-merge` run that ends reporting `OUTCOME: ready-to-merge` with nothing merged — that relay is reserved for dispatch's own Task calls, and no dispatcher is waiting to act on it (the one exception is the pre-#3711 resume above).
 
 ### 2b. Decline or leave it unanswered — terminal Review Console
 - **URL:** the Wrap-Up Review Console's one-click Recommended `AskUserQuestion` merge option
@@ -61,4 +63,5 @@ files:
 - Updated during wrap-up of #3298 (merge-subject scope source): step 2a's composer call carries `--pr {pr-number}`, and the subject grammar gained the optional policy-resolved `(scope)`
 - Updated during build of #3522 (guard-safe merge fences): step 2a composes with `--out-dir "{subject-dir}"` and merges with `-t {title-arg} --body-file "{subject-dir}/body.md"` — no `eval`, no `$(…)` around `gh`
 - Updated during build of #2734 (the autonomy ceiling does not set merge-authorization): new step 1b — the `pre-authorize-merge` invocation token — plus the token on step 3's resume command
+- Updated during build of #3711 (dispatch-call discriminator): step 2a now holds under `local-merge` — a human-run `/flow` merges itself instead of stopping at `ready-to-merge`; new red flag for that stop
 - Related specs: #688/6626896c (shipped the pre-existing terminal one-click Recommended merge option this journey's step 2b covers)

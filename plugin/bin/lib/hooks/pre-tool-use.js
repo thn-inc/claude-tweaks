@@ -743,7 +743,7 @@ function checkPipelineShadowGuard(ctx) {
   return {};
 }
 
-// Review Console ask gate (#3712, IL-166). At an autonomy ceiling whose
+// Review Console ask gate (#3712, IL-167). At an autonomy ceiling whose
 // bookkeepingPermissions grant `consoleAutoResolve`, the Review Console
 // resolves with zero AskUserQuestion calls (wrap-up/review-console.md's
 // Auto-resolution short-circuit); a console question there is the #2734 stall.

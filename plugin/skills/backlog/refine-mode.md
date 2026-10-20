@@ -230,9 +230,10 @@ typically small and its re-authorization recommendation needs no `grant-check` c
 `grant-check` and recommend **`re-authorize (bot:blocked)`** directly, regardless of content — a
 prior failure means the human's renewed judgment is the point, not a mechanical (or
 judgment-driven) replay: applying this row grants `auto:build` only, never bundling `auto:merge`
-automatically. Restoring `auto:merge` too requires an explicit override. `blocked` is retry-ceiling
-records only — `bot:blocked` is applied **only** at the retry ceiling (`auto:*` grants always
-stripped alongside it), so a record here is never simultaneously grant-intact. A record the
+automatically. Restoring `auto:merge` too requires an explicit override. `blocked` is `bot:blocked`
+records only — `bot:blocked` is applied **only** at the retry ceiling or by a headless plan-review
+needs-human stop (`build/plan-review.md` — answer its `<!-- plan-review-question -->` comment on the
+record body before re-authorizing), `auto:*` grants always stripped alongside it, so a record here is never simultaneously grant-intact. A record the
 merge-verification gate parked (checks red or timed out on its PR — `_shared/pr-first-merge.md`'s
 Step 2.5) carries `bot:parked` instead, a distinct label that leaves `auto:*` grants intact — it
 therefore never enters `refineWorklist`'s own `worklist` at all (`bin/lib/issues/backlog.js`'s

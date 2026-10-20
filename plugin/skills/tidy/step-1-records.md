@@ -150,9 +150,9 @@ Release Note are the main thread's (`release-note-repair.md`), never this agent'
 
 ### Shape 5 — `bot:blocked` needing re-triage
 
-`isBotBlocked(record)` (`bin/lib/issues/record-buckets.js`; `work-backend: github-issues` only — the local driver's `facets.bot.blocked` is always `false`, per `facet-shape.js`'s shared defaults, so this predicate never fires there). The record hit its retry ceiling (`_shared/issue-claims.md`, `dispatch/SKILL.md`'s Settle step) and needs a human's renewed judgment at `/claude-tweaks:backlog refine` before it can re-enter the autonomous queue.
+`isBotBlocked(record)` (`bin/lib/issues/record-buckets.js`; `work-backend: github-issues` only — the local driver's `facets.bot.blocked` is always `false`, per `facet-shape.js`'s shared defaults, so this predicate never fires there). The record hit its retry ceiling (`_shared/issue-claims.md`, `dispatch/SKILL.md`'s Settle step), or a plan-review question awaits an answer (`<!-- plan-review-question -->` comment, `build/plan-review.md`) — answer on the record body first — and needs a human's renewed judgment at `/claude-tweaks:backlog refine` before it can re-enter the autonomous queue.
 
-→ Collect each as: `[blocked] {title} — hit its retry ceiling — re-authorize at /claude-tweaks:backlog refine`
+→ Collect each as: `[blocked] {title} — {hit its retry ceiling | plan-review question awaits an answer} — re-authorize at /claude-tweaks:backlog refine`
 
 ### Shape 5.5 — record carries a retired taxonomy label
 
