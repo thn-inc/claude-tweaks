@@ -349,3 +349,50 @@ dependencies:
         sha256: "d718b48fe3c7898804d588f050a2e266d82c9f5ef51da256c8cb8b5951527757"
       - path: "skills/apple-design/SKILL.md"
         sha256: "11840b24a11d7f94f39c6aaab074750ae4e4de4ef54ee4b1dd97e16ebd485e61"
+
+  # claude-code: the harness itself. post-tool-use-failure.js and
+  # bash-prefilter.js recognize Claude Code's worktree-isolation Bash refusal by
+  # its text, so a reworded refusal would silently zero the `wd-guard-refusal`
+  # events friction-events.js counts (#3304). The assertions pin the fragments
+  # plugin/bin/lib/hooks/harness-refusal.js matches on; keep each `must-match`
+  # in lockstep with it — tests/harness-refusal-drift-pin.test.js enforces that.
+  # The artifact is a single compiled binary (268 MB at 2.1.302) whose embedded
+  # JS keeps its template literals verbatim: `noun:"This session"` (1x),
+  # ` is isolated in the worktree ` (9x), `Refusing to run it` (5x). That is why
+  # `root` resolves the binary file itself (no `root-suffix`) and every
+  # `upstream-path` is "." — path.join(file, ".") reads that file, matched as
+  # bytes, never decoded.
+  # `version-mode: floor`: Claude Code auto-updates near daily, so an exact pin
+  # would breach constantly; the assertions, not the version, carry the signal.
+  # `fixtures: []`: a headless probe that provokes a real refusal costs API
+  # tokens and depends on model behavior, while the template literal is
+  # deterministic and offline.
+  # `contract-paths` names CHANGELOG.md, the upstream repo's release notes, for
+  # the capability diff.
+  - name: claude-code
+    kind: native-cli
+    installed-probe:
+      type: command
+      run: "claude --version | cut -d ' ' -f 1"
+      root: 'readlink -f "$(command -v claude)"'
+    pinned: "2.1.302"
+    version-mode: floor
+    upstream:
+      repo: "anthropics/claude-code"
+      tag-prefix: "v"
+    contract-paths:
+      - "CHANGELOG.md"
+    assertions:
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "the isolation refusal's noun for a session-owned worktree is This session (SESSION_NOUN)"
+        upstream-path: "."
+        must-match: 'noun:"This session"'
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "the refusal names its worktree with the clause ' is isolated in the worktree ' (ISOLATION_CLAUSE)"
+        upstream-path: "."
+        must-match: " is isolated in the worktree "
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "every isolation refusal carries Refusing to run it (REFUSAL_SIGNATURE, the prefilter's gate)"
+        upstream-path: "."
+        must-match: "Refusing to run it"
+    fixtures: []
