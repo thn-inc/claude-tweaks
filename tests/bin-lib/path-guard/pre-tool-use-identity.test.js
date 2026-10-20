@@ -24,6 +24,7 @@ const fsImpl = caseInsensitiveFs({
   '/Vol': 'dir',
   '/Vol/Repo': 'dir',
   '/Vol/Repo/wt': 'dir',
+  '/Vol/Repo/wt/sub': 'dir',
   '/Vol/Repo/wt2': 'dir',
   '/Vol/Repo/other': 'dir',
 });
@@ -44,8 +45,16 @@ test('own-cwd (#3682): a mis-cased target naming the session\'s own cwd is denie
   assert.match(denyReason(out), /own working directory/);
 });
 
-test('own-cwd (#3682): a mis-cased cwd inside the target is denied', { skip: POSIX_ONLY }, () => {
-  assert.ok(isDeny(teardown('/VOL/repo/wt', '/Vol/Repo/wt')));
+test('own-cwd (#3682): a mis-cased cwd equal to the target is denied', { skip: POSIX_ONLY }, () => {
+  const out = teardown('/VOL/repo/wt', '/Vol/Repo/wt');
+  assert.ok(isDeny(out), JSON.stringify(out));
+  assert.match(denyReason(out), /own working directory/);
+});
+
+test('own-cwd (#3682): a mis-cased cwd strictly inside the target is denied', { skip: POSIX_ONLY }, () => {
+  const out = teardown('/VOL/repo/Wt/sub', '/Vol/Repo');
+  assert.ok(isDeny(out), JSON.stringify(out));
+  assert.match(denyReason(out), /own working directory/);
 });
 
 test('own-cwd: the correctly-cased self-removal is denied (control)', { skip: POSIX_ONLY }, () => {
@@ -62,10 +71,14 @@ test('own-cwd: a missing target is allowed', { skip: POSIX_ONLY }, () => {
 
 function commit(recorded, cwd, top) {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ptu-identity-'));
-  return run({
-    input: { tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, session_id: 's1' },
-    cwd, runDir, runState: { status: 'active', worktree: recorded, sessionId: 's1' },
-  }, { fsImpl, toplevel: () => top });
+  try {
+    return run({
+      input: { tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, session_id: 's1' },
+      cwd, runDir, runState: { status: 'active', worktree: recorded, sessionId: 's1' },
+    }, { fsImpl, toplevel: () => top });
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
 }
 
 test('E1 (#3682): a mis-cased recorded worktree matches the commit\'s own toplevel', { skip: POSIX_ONLY }, () => {
@@ -80,5 +93,10 @@ test('E1 (#3682): a mis-cased toplevel matches the correctly-cased recorded work
 
 test('E1: a commit outside the assigned worktree is still denied', { skip: POSIX_ONLY }, () => {
   const out = commit('/vol/repo/WT', '/Vol/Repo/other', '/Vol/Repo/other');
+  assert.ok(isDeny(out), JSON.stringify(out));
+});
+
+test('E1 (#3682): a mis-cased commit outside the assigned worktree is denied like the correctly-cased one', { skip: POSIX_ONLY }, () => {
+  const out = commit('/Vol/Repo/wt', '/VOL/Repo/OTHER', '/VOL/Repo/OTHER');
   assert.ok(isDeny(out), JSON.stringify(out));
 });

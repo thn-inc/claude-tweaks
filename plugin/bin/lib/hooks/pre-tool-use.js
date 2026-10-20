@@ -36,7 +36,7 @@ const { parseNameStatusZ } = require('../git-z');
 const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
 const { hasClaimLogFor } = require('../log-decision/claim-log');
-// Every path-identity comparison in this file resolves both operands through canonicalRealpath (#3682).
+// Every realpath resolution in this file goes through canonicalRealpath (#3682); lexical containment checks (isPipelineBookkeeping) resolve nothing.
 const { resolveLeaf, canonicalRealpath, lstatType } = require('../path-guard');
 
 function pluginRoot() {
