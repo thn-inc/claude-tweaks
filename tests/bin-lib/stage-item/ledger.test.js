@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/stage-item');
 const { splitLedgerRow } = require('../../../plugin/bin/lib/wrap-up/ledger-cells');
+const { carryForward } = require('../../../plugin/bin/lib/stage-item/ledger');
 
 const LEDGER_REL = 'docs/plans/2026-10-20-x-ledger.md';
 const LEDGER_HEAD = '# Open Items — x\n\n| # | Phase | Item | Status | Resolution |\n|---|-------|------|--------|------------|\n';
@@ -76,9 +77,10 @@ test('AC2.1: stages sdd-ruling, appends the row it numbers into the Ledger: head
 test('AC2.2: a failed staged write leaves the row open with no (staged/ suffix and logs the degraded SKIP', () => {
   const f = fixture();
   fs.writeFileSync(path.join(f.runDir, 'staged'), 'a regular file where the directory should be\n');
-  const { deps } = fakeDeps(f.main);
+  const { deps, err } = fakeDeps(f.main);
   const code = run(ARGS(f), deps);
   assert.equal(code, 3);
+  assert.match(err.join(''), /^stage-item\.js: ledger carry-forward degraded — condition: staged write failed for sdd-ruling-1 \(.+\) → fallback: ledger row #2 left open/m);
   assert.ok(f.ledgerText().includes('| 2 | build | SDD ruling — keep the guard: ratify or reverse at the Review Console | open | — |'));
   assert.equal(f.ledgerText().includes('(staged/'), false);
   assert.match(f.decisions(), /^- SKIP \d\d:\d\d:\d\d — SDD ruling carry-forward \(degraded\): condition: staged write failed for sdd-ruling-1 \(.+\) → fallback: ledger row #2 left open with no staged file; the resolve gate drills it\. Reversibility: n\/a\.$/m);
@@ -188,5 +190,111 @@ test('without --ledger, stdout and files are unchanged', () => {
   assert.equal(fs.readFileSync(path.join(f.runDir, 'staged', 'sdd-ruling-1.md'), 'utf8'), RULING);
   assert.equal(err.join(''), '');
   assert.equal(fs.existsSync(path.join(f.runDir, 'decisions.md')), false);
+  assert.equal(f.ledgerText(), before);
+});
+
+const SKIP_PERMS = process.platform === 'win32' || (process.getuid && process.getuid() === 0);
+
+function cfArgs(f, overrides = {}) {
+  return {
+    runDir: f.runDir, ledgerPath: f.ledgerPath, ledgerRef: LEDGER_REL, id: 'sdd-ruling-1', sourcePath: f.src,
+    content: RULING, allocate: true, phase: 'build', item: ITEM, label: 'SDD ruling', section: '/build', now: Date.now(), ...overrides,
+  };
+}
+
+// A reader whose first call returns the pre-race text and every later call the file as it now is on disk.
+function racingReader(staleText) {
+  let reads = 0;
+  return (p) => { reads += 1; return reads === 1 ? staleText : fs.readFileSync(p, 'utf8'); };
+}
+
+test('a row number taken between the read and the append removes the staged file, logs the SKIP, and keeps the foreign row', () => {
+  const f = fixture();
+  const stale = f.ledgerText();
+  fs.writeFileSync(f.ledgerPath, stale + '| 2 | review | foreign finding | open | — |\n');
+  const foreign = f.ledgerText();
+  const result = carryForward(cfArgs(f, { readLedger: racingReader(stale) }));
+  assert.equal(result.code, 3);
+  assert.equal(fs.existsSync(path.join(f.runDir, 'staged', 'sdd-ruling-1.md')), false);
+  assert.equal(f.ledgerText(), foreign);
+  assert.match(f.decisions(), /^- SKIP \d\d:\d\d:\d\d — SDD ruling carry-forward \(degraded\): condition: ledger row #2 in docs\/plans\/2026-10-20-x-ledger\.md was taken concurrently → fallback: staged\/sdd-ruling-1\.md removed; "keep the guard" reaches no console\. Reversibility: n\/a\.$/m);
+  assert.doesNotMatch(f.decisions(), /STAGED/);
+});
+
+test('a failed staged write appends the open row under the next free number when the planned one was taken concurrently', () => {
+  const f = fixture();
+  fs.writeFileSync(path.join(f.runDir, 'staged'), 'a regular file where the directory should be\n');
+  const stale = f.ledgerText();
+  fs.writeFileSync(f.ledgerPath, stale + '| 2 | review | foreign finding | open | — |\n');
+  const result = carryForward(cfArgs(f, { readLedger: racingReader(stale) }));
+  assert.equal(result.code, 3);
+  assert.ok(f.ledgerText().includes('| 2 | review | foreign finding | open | — |'));
+  assert.ok(f.ledgerText().includes('| 3 | build | SDD ruling — keep the guard: ratify or reverse at the Review Console | open | — |'));
+  assert.match(f.decisions(), /condition: staged write failed for sdd-ruling-1 \(.+\) → fallback: ledger row #3 left open with no staged file/);
+});
+
+test('an unreadable ledger logs an "unreadable" SKIP, not the "no ledger table" wording, and exits 3 with nothing staged', () => {
+  const f = fixture();
+  const result = carryForward(cfArgs(f, { readLedger: () => { throw new Error('EIO: boom'); } }));
+  assert.equal(result.code, 3);
+  assert.equal(fs.existsSync(path.join(f.runDir, 'staged')), false);
+  assert.match(f.decisions(), /condition: ledger docs\/plans\/2026-10-20-x-ledger\.md unreadable \(EIO: boom\) → fallback: nothing staged or appended/);
+  assert.doesNotMatch(f.decisions(), /no ledger table/);
+});
+
+test('both the staged write and the ledger append failing logs one combined SKIP and exits 3', { skip: SKIP_PERMS }, () => {
+  const f = fixture();
+  fs.writeFileSync(path.join(f.runDir, 'staged'), 'a regular file where the directory should be\n');
+  const plans = path.join(f.main, 'docs', 'plans');
+  const before = f.ledgerText();
+  fs.chmodSync(plans, 0o555);
+  let code;
+  let err;
+  try {
+    const d = fakeDeps(f.main);
+    code = run(ARGS(f), d.deps);
+    err = d.err;
+  } finally {
+    fs.chmodSync(plans, 0o755);
+  }
+  assert.equal(code, 3);
+  assert.equal(f.ledgerText(), before);
+  assert.match(f.decisions(), /^- SKIP \d\d:\d\d:\d\d — SDD ruling carry-forward \(degraded\): condition: staged write failed for sdd-ruling-1 \(.+\) and ledger append to docs\/plans\/2026-10-20-x-ledger\.md failed \(.+\) → fallback: nothing staged or appended; "keep the guard" reaches no console\. Reversibility: n\/a\.$/m);
+  assert.match(err.join(''), /ledger carry-forward degraded — condition: staged write failed/);
+});
+
+test('--item, --label, --phase or --section without --ledger is a malformed invocation (exit 2), nothing written', () => {
+  const f = fixture();
+  const before = f.ledgerText();
+  const base = ['--run', f.runDir, '--id', 'sdd-ruling-1', '--file', f.src, '--allocate'];
+  for (const stray of [['--item', 'x'], ['--label', 'x'], ['--phase', 'build'], ['--section', '/build']]) {
+    const { deps, err } = fakeDeps(f.main);
+    assert.equal(run([...base, ...stray], deps), 2);
+    assert.match(err.join(''), new RegExp(`${stray[0]} requires --ledger`));
+  }
+  assert.equal(fs.existsSync(path.join(f.runDir, 'staged')), false);
+  assert.equal(f.ledgerText(), before);
+});
+
+test('--ledger with an empty or valueless --phase or --section is a malformed invocation (exit 2), nothing written', () => {
+  const f = fixture();
+  const before = f.ledgerText();
+  for (const tail of [['--phase', ''], ['--phase'], ['--section', ''], ['--section']]) {
+    const { deps, err } = fakeDeps(f.main);
+    assert.equal(run(ARGS(f, tail), deps), 2);
+    assert.match(err.join(''), new RegExp(`${tail[0]} requires a value`));
+  }
+  assert.equal(fs.existsSync(path.join(f.runDir, 'staged')), false);
+  assert.equal(f.ledgerText(), before);
+});
+
+test('--ledger without --allocate is a malformed invocation (exit 2), nothing written', () => {
+  const f = fixture();
+  const before = f.ledgerText();
+  const { deps, err } = fakeDeps(f.main);
+  const args = ARGS(f).filter((a) => a !== '--allocate');
+  assert.equal(run(args, deps), 2);
+  assert.match(err.join(''), /--ledger requires --allocate/);
+  assert.equal(fs.existsSync(path.join(f.runDir, 'staged')), false);
   assert.equal(f.ledgerText(), before);
 });

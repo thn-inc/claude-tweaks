@@ -3,6 +3,7 @@
 // directory.
 //   node bin/stage-item.js --run <run-dir> --id <kind>-<n> --file <path> [--json <path>] [--allocate]
 //     [--ledger <path> --item <text> --label <noun> [--phase <phase>] [--section <heading>]] [--help]
+//     (--ledger requires --allocate)
 // Exit 0 on success (writes staged/<id><ext> — and, when --json was given,
 // staged/<id>.json alongside it — echoes the written path(s) to stdout, one
 // per line); 2 on a malformed invocation (missing/unsafe args, unreadable
@@ -43,7 +44,10 @@
 // `build`; Item `--item`, suffixed `(staged/{file})` with the path actually
 // written; Status `open`), and log a STAGED line under `--section` (default
 // `/build`) in decisions.md. --item and --label (the noun in the log lines) are
-// required, and --json is refused alongside it (exit 2). The ledger must be a
+// required, and --json is refused alongside it (exit 2). --allocate is required
+// too (exit 2 without it): its exclusive create is what guarantees the cleanup
+// on a failed ledger write removes only the file this call created, never an
+// earlier staged file overwritten under the same id. The ledger must be a
 // `ledger.md` / `*-ledger.md` under the run dir or the checkout, else exit 2.
 // A ledger with no table, a staged write that fails (row appended with no
 // suffix), or a ledger write that fails (staged file removed) logs a degraded
@@ -65,7 +69,7 @@ const { carryForward } = require('./lib/stage-item/ledger');
 const { resolveLedgerPath } = require('./lib/wrap-up/ledger-write');
 const { classifyStagedItem, nearestCanonicalPrefixes } = require('./lib/console/resolve');
 
-const USAGE = 'usage: stage-item.js --run <run-dir> --id <kind>-<n> --file <path> [--json <path>] [--allocate] [--ledger <path> --item <text> --label <noun> [--phase <phase>] [--section <heading>]] [--help]\n';
+const USAGE = 'usage: stage-item.js --run <run-dir> --id <kind>-<n> --file <path> [--json <path>] [--allocate] [--ledger <path> --item <text> --label <noun> [--phase <phase>] [--section <heading>] (requires --allocate)] [--help]\n';
 
 function parseArgs(argv) {
   const o = {
@@ -165,6 +169,7 @@ function run(argv, deps = realDeps) {
     if (o.phase === null || o.phase === '') return usageError('--phase requires a value');
     if (o.section === null || o.section === '') return usageError('--section requires a value');
     if (o.json !== null) return usageError('--ledger cannot be combined with --json');
+    if (!o.allocate) return usageError('--ledger requires --allocate (its exclusive create is what makes removing the staged file on a failed ledger write safe)');
   } else {
     const stray = [['--item', o.item], ['--label', o.label], ['--phase', o.phase], ['--section', o.section]].find(([, v]) => v !== undefined);
     if (stray) return usageError(`${stray[0]} requires --ledger`);

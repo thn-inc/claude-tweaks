@@ -9,7 +9,9 @@
 // change the id). Either half failing degrades to exit 3 with a SKIP line in
 // decisions.md; neither half is ever left pointing at a half that is not
 // there. The whole sequence runs under `{run-dir}/.ledger.lock` and the ledger
-// goes through atomic-write.js's tmp+rename — the pairing the *Sanctioned-writer*
+// goes through atomic-write.js's tmp+rename (the ledger is re-read right before
+// each write, so a row a concurrent writer took since the first read is never
+// overwritten, and a staged file never keeps pointing at a number someone else owns) — the pairing the *Sanctioned-writer*
 // contract asks of a writer that read-modify-writes a shared file.
 'use strict';
 
@@ -71,6 +73,7 @@ function appendLedgerRow(ledgerText, { phase, item, status }) {
 
 function carryForward({
   runDir, ledgerPath, ledgerRef, id, sourcePath, content, allocate, phase, item, label, section, now,
+  readLedger = (p) => fs.readFileSync(p, 'utf8'), // test seam: lets a test take a row between the reads
 }) {
   return withLock(path.join(runDir, '.ledger.lock'), () => {
     const warnings = [];
@@ -88,9 +91,13 @@ function carryForward({
     };
 
     let ledgerText;
+    try {
+      ledgerText = readLedger(ledgerPath);
+    } catch (err) {
+      return degraded(`condition: ledger ${ledgerRef} unreadable (${err && err.message}) → fallback: nothing staged or appended; "${summary}" reaches no console`);
+    }
     let planned;
     try {
-      ledgerText = fs.readFileSync(ledgerPath, 'utf8');
       planned = appendLedgerRow(ledgerText, { phase, item, status: 'open' });
     } catch (err) {
       return degraded(`condition: ledger ${ledgerRef} has no ledger table (${err && err.message}) → fallback: nothing staged or appended; "${summary}" reaches no console`);
@@ -104,21 +111,32 @@ function carryForward({
       });
     } catch (err) {
       const stagedMsg = err && err.message;
+      // No staged file references the planned number, so re-read and take the next free one.
+      let open;
       try {
-        writeFileAtomic(ledgerPath, planned.text);
+        open = appendLedgerRow(readLedger(ledgerPath), { phase, item, status: 'open' });
+        writeFileAtomic(ledgerPath, open.text);
       } catch (ledgerErr) {
         return degraded(`condition: staged write failed for ${id} (${stagedMsg}) and ledger append to ${ledgerRef} failed (${ledgerErr && ledgerErr.message}) → fallback: nothing staged or appended; "${summary}" reaches no console`);
       }
-      return degraded(`condition: staged write failed for ${id} (${stagedMsg}) → fallback: ledger row #${number} left open with no staged file; the resolve gate drills it`);
+      return degraded(`condition: staged write failed for ${id} (${stagedMsg}) → fallback: ledger row #${open.number} left open with no staged file; the resolve gate drills it`);
     }
 
+    // --allocate (required by the CLI) makes the create exclusive, so removing staged.file only ever removes this call's own file.
     const base = path.basename(staged.file);
+    const removeStaged = () => { try { fs.unlinkSync(staged.file); } catch { /* best-effort */ } };
+    let withPath;
     try {
-      const withPath = appendLedgerRow(ledgerText, { phase, item: `${item} (staged/${base})`, status: 'open' });
-      writeFileAtomic(ledgerPath, withPath.text);
+      // Re-read: a concurrent writer may have taken row `number` since the first read, and the staged file already names it.
+      withPath = appendLedgerRow(readLedger(ledgerPath), { phase, item: `${item} (staged/${base})`, status: 'open' });
+      if (withPath.number === number) writeFileAtomic(ledgerPath, withPath.text);
     } catch (err) {
-      try { fs.unlinkSync(staged.file); } catch { /* best-effort */ }
+      removeStaged();
       return degraded(`condition: ledger append to ${ledgerRef} failed (${err && err.message}) → fallback: staged/${base} removed; "${summary}" reaches no console`);
+    }
+    if (withPath.number !== number) {
+      removeStaged();
+      return degraded(`condition: ledger row #${number} in ${ledgerRef} was taken concurrently → fallback: staged/${base} removed; "${summary}" reaches no console`);
     }
 
     log('STAGED', `${label} carried forward`, `"${summary}". Stage path: staged/${base}`, 'high');
