@@ -88,8 +88,8 @@ function extractModuleExports(text) {
 // `.gitignore` on disk; nothing needs to be `git add`ed or committed for
 // exclusion to take effect. No extension filter — every tracked/untracked-
 // unignored path, sorted for deterministic ordering. `listTrackedSourceFiles`
-// below layers the JS/TS extension filter on top for this vertical's own
-// use; `candidates-prelaunch.js` (#2693) calls this extension-agnostic form
+// below layers the JS/TS extension filter on top for the source-only
+// verticals; `candidates-prelaunch.js` (#2693) calls this extension-agnostic form
 // directly, since a pre-launch checklist needs non-source files too
 // (`robots.txt`, `sitemap.xml`, image assets).
 //
@@ -124,8 +124,7 @@ function listTrackedFiles(rootDir) {
   return { files, discoveryFailed: false };
 }
 
-// JS/TS-only view of listTrackedFiles, for this vertical's own dead-export/
-// orphan-file scan.
+// JS/TS-only view of listTrackedFiles, for the source-only verticals' scans.
 function listTrackedSourceFiles(rootDir) {
   const discovery = listTrackedFiles(rootDir);
   if (discovery.discoveryFailed) return discovery;

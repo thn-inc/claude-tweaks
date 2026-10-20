@@ -236,7 +236,7 @@ function detectEntrypoints(rootDir, files) {
 }
 
 // Wraps an already-escaped symbol in identifier boundaries. Deliberately not
-// `\b`: `$` is a legal JS identifier character (IDENTIFIER_RE accepts it) but
+// `\b`: `$` is a legal JS identifier character (`source-scan.js`'s IDENTIFIER_RE accepts it) but
 // a NON-word character to the regex engine, so `\b` is wrong in both
 // directions around it — `\b\$fn\b` matches nothing at all (a live symbol
 // would report dead), while `\bdead\b` matches inside `$dead` (a distinct
