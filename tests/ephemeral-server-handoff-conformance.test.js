@@ -107,7 +107,7 @@ function sectionD(text) {
 
 function assertRecordGate(body) {
   assert.match(body, /A record that cannot be parsed — fewer than four fields, a pid or port that is not a positive integer, or no trailing `detached:` token — is unprovable: log `SKIP` via `log-decision\.js` naming that condition/);
-  assert.match(body, /leave the file and every process alone, signal nothing, and skip steps 3-4/);
+  assert.match(body, /leave the file and every process alone, signal nothing, and skip the rest of this step and steps 3-4\. Otherwise, \*\*detect the platform first\*\*/);
   const gate = body.indexOf('is unprovable');
   const kills = ['kill {pid}', 'taskkill'].map((s) => body.indexOf(s)).filter((i) => i !== -1);
   assert.ok(gate !== -1 && kills.length > 0 && gate < Math.min(...kills), 'the record gate must sit before the first kill {pid} / taskkill');
@@ -134,9 +134,17 @@ test("Section D's step 4 keeps the record when the port is still held after the 
 
 test('go-red: removing the record-gate sentence fails the gate predicate', () => {
   const body = sectionD(readText(CLEANUP_EXEC));
-  const mutated = body.replace(/A record that cannot be parsed[^\n]*?skip steps 3-4\. /, '');
+  const mutated = body.replace(/A record that cannot be parsed[^\n]*?skip the rest of this step and steps 3-4\. /, '');
   assert.notEqual(mutated, body);
   assert.throws(() => assertRecordGate(mutated), assert.AssertionError);
+});
+
+test('go-red: moving the record-gate sentence after the kill bullets fails the ordering assertion', () => {
+  const body = sectionD(readText(CLEANUP_EXEC));
+  const bullets = body.match(/^ {3}- \*\*win32:\*\*[^\n]*\n {3}- \*\*POSIX:\*\*[^\n]*\n/m)[0];
+  const mutated = body.replace(bullets, '').replace('2. Read `{run-dir}', bullets + '2. Read `{run-dir}');
+  assert.notEqual(mutated, body);
+  assert.throws(() => assertRecordGate(mutated), /the record gate must sit before the first kill/);
 });
 
 test('go-red: reverting step 4 to the bare sentence fails the port-still-held predicate', () => {
