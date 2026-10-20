@@ -114,8 +114,14 @@ test('newAndFixed: a fail-fast skipped check means nothing is claimed passed —
 
 test('trackedFiles: splits git ls-files -z on NUL, drops empties, and returns null on any throw (#3313)', () => {
   const calls = [];
-  const ok = trackedFiles('/repo', (cmd, args, opts) => { calls.push([cmd, args, opts.cwd]); return 'a.js\0b dir/c.js\0'; });
+  const ok = trackedFiles('/repo', (cmd, args, opts) => { calls.push([cmd, args, opts.cwd, opts.maxBuffer]); return args.includes('--deleted') ? '' : 'a.js\0b dir/c.js\0'; });
   assert.deepStrictEqual(ok, ['a.js', 'b dir/c.js']);
-  assert.deepStrictEqual(calls, [['git', ['ls-files', '-z'], '/repo']]);
+  assert.deepStrictEqual(calls.map((c) => c.slice(0, 3)), [['git', ['ls-files', '-z', '--deleted'], '/repo'], ['git', ['ls-files', '-z'], '/repo']]);
+  assert.ok(calls.every((c) => c[3] >= 64 * 1024 * 1024), 'a big checkout must not overflow the default exec buffer');
   assert.strictEqual(trackedFiles('/repo', () => { throw new Error('not a repo'); }), null);
+});
+
+test('trackedFiles: lists an unmerged path once and drops tracked files deleted from the working tree (#3313)', () => {
+  const listing = (cmd, args) => (args.includes('--deleted') ? 'gone.test.js\0' : 'a.test.js\0conflict.test.js\0conflict.test.js\0conflict.test.js\0gone.test.js\0');
+  assert.deepStrictEqual(trackedFiles('/repo', listing), ['a.test.js', 'conflict.test.js']);
 });
