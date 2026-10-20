@@ -62,4 +62,4 @@ files:
 
 ## Origin
 
-Built by #3370 (run `2026-10-17T191422-record-3370`). It surfaces the pending and contested items #2821's unattended run left unseen.
+Built by #3370 (run `2026-10-17T191422-record-3370`). It surfaces the pending and contested items #2821's unattended run left unseen. Updated by #3772: an item whose staged file has since vanished is `missing`, not counted, and named once in the `not counted —` line.
