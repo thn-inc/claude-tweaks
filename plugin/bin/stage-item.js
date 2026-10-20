@@ -7,8 +7,8 @@
 // Exit 0 on success (writes staged/<id><ext> — and, when --json was given,
 // staged/<id>.json alongside it — echoes the written path(s) to stdout, one
 // per line); 2 on a malformed invocation (missing/unsafe args, unreadable
-// --file/--json, --json content that isn't a JSON array, or --allocate with
-// an --id that isn't a "{kind}-{n}" shape); 3 when the run dir is missing or
+// --file/--json, --json content that isn't a JSON array, a rejected --ledger,
+// or --allocate with an --id that isn't a "{kind}-{n}" shape); 3 when the run dir is missing or
 // not anchored under the main checkout (a worktree-local shadow —
 // _shared/pipeline-run-dir.md's Anchoring section, [IL-127]), or a staged
 // file is unwritable. The printed path is the run dir's realpath, which can
@@ -49,9 +49,19 @@
 // on a failed ledger write removes only the file this call created, never an
 // earlier staged file overwritten under the same id. The ledger must be a
 // `ledger.md` / `*-ledger.md` under the run dir or the checkout, else exit 2.
-// A ledger with no table, a staged write that fails (row appended with no
-// suffix), or a ledger write that fails (staged file removed) logs a degraded
-// SKIP line and exits 3; a failing decisions.md write is only a stderr warning.
+// Every degraded path logs a SKIP line, prints `stage-item.js: ledger
+// carry-forward degraded — …` on stderr, and exits 3 (the one exit-3 case a
+// caller must NOT retry — a refused run dir exits 3 too, with no such prefix and
+// nothing logged): an unreadable ledger, a ledger with no table, or a ledger
+// that cannot take a new row safely (duplicate row numbers, or numbered rows
+// outside the table) stage and append nothing; a staged write that fails leaves
+// the row appended `open` with no `(staged/…)` suffix; both failing leaves
+// nothing; a ledger write that fails removes the staged file (the SKIP says
+// whether the removal succeeded). A row number another writer took since the
+// first read is not a degraded path: the staged file's header is renumbered to
+// the next free row and the call exits 0 — only if that rewrite fails is the
+// staged file removed and the call degraded. A failing decisions.md write is
+// only a stderr warning.
 // The sequence runs under `{run-dir}/.ledger.lock` (bin/lib/stage-item/ledger.js).
 // `--json` (#2612) is the machine-readable sidecar render-tidy-report.js
 // reads back — an array of `{tag, record, title, action, command}` objects,

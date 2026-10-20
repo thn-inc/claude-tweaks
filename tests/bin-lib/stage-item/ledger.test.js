@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/stage-item');
 const { splitLedgerRow } = require('../../../plugin/bin/lib/wrap-up/ledger-cells');
-const { carryForward } = require('../../../plugin/bin/lib/stage-item/ledger');
+const { carryForward, fillLedgerHeader } = require('../../../plugin/bin/lib/stage-item/ledger');
 
 const LEDGER_REL = 'docs/plans/2026-10-20-x-ledger.md';
 const LEDGER_HEAD = '# Open Items — x\n\n| # | Phase | Item | Status | Resolution |\n|---|-------|------|--------|------------|\n';
@@ -208,17 +208,53 @@ function racingReader(staleText) {
   return (p) => { reads += 1; return reads === 1 ? staleText : fs.readFileSync(p, 'utf8'); };
 }
 
-test('a row number taken between the read and the append removes the staged file, logs the SKIP, and keeps the foreign row', () => {
+test('a row number taken between the read and the append renumbers the owned staged file, appends under the next free number, and keeps the foreign row', () => {
   const f = fixture();
   const stale = f.ledgerText();
   fs.writeFileSync(f.ledgerPath, stale + '| 2 | review | foreign finding | open | — |\n');
-  const foreign = f.ledgerText();
   const result = carryForward(cfArgs(f, { readLedger: racingReader(stale) }));
+  assert.equal(result.code, 0);
+  assert.equal(result.number, 3);
+  const staged = fs.readFileSync(path.join(f.runDir, 'staged', 'sdd-ruling-1.md'), 'utf8');
+  assert.match(staged, /^Ledger: docs\/plans\/2026-10-20-x-ledger\.md#3$/m);
+  assert.equal((staged.match(/^Ledger:/gm) || []).length, 1);
+  assert.ok(f.ledgerText().includes('| 2 | review | foreign finding | open | — |'));
+  assert.ok(f.ledgerText().includes('| 3 | build | SDD ruling — keep the guard: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |'));
+  assert.match(f.decisions(), /^- STAGED \d\d:\d\d:\d\d — SDD ruling carried forward: "keep the guard"\. Stage path: staged\/sdd-ruling-1\.md\. Reversibility: high\.$/m);
+  assert.doesNotMatch(f.decisions(), /SKIP/);
+});
+
+test('a row taken concurrently AND an unwritable staged header falls back to remove-and-SKIP, keeping the foreign row', { skip: SKIP_PERMS }, () => {
+  const f = fixture();
+  const stale = f.ledgerText();
+  const stagedFile = path.join(f.runDir, 'staged', 'sdd-ruling-1.md');
+  let reads = 0;
+  const readLedger = (p) => {
+    reads += 1;
+    if (reads === 1) return stale;
+    fs.writeFileSync(f.ledgerPath, stale + '| 2 | review | foreign finding | open | — |\n');
+    fs.chmodSync(stagedFile, 0o444);
+    return fs.readFileSync(p, 'utf8');
+  };
+  const foreign = stale + '| 2 | review | foreign finding | open | — |\n';
+  const result = carryForward(cfArgs(f, { readLedger }));
   assert.equal(result.code, 3);
-  assert.equal(fs.existsSync(path.join(f.runDir, 'staged', 'sdd-ruling-1.md')), false);
+  assert.equal(fs.existsSync(stagedFile), false);
   assert.equal(f.ledgerText(), foreign);
-  assert.match(f.decisions(), /^- SKIP \d\d:\d\d:\d\d — SDD ruling carry-forward \(degraded\): condition: ledger row #2 in docs\/plans\/2026-10-20-x-ledger\.md was taken concurrently → fallback: staged\/sdd-ruling-1\.md removed; "keep the guard" reaches no console\. Reversibility: n\/a\.$/m);
+  assert.match(f.decisions(), /^- SKIP \d\d:\d\d:\d\d — SDD ruling carry-forward \(degraded\): condition: ledger row #2 in docs\/plans\/2026-10-20-x-ledger\.md was taken concurrently and the staged header could not be renumbered \(.+\) → fallback: staged\/sdd-ruling-1\.md removed; "keep the guard" reaches no console\. Reversibility: n\/a\.$/m);
   assert.doesNotMatch(f.decisions(), /STAGED/);
+});
+
+test('a failed removal of the staged file is named in the SKIP, not reported as removed', () => {
+  const f = fixture();
+  let reads = 0;
+  const readLedger = (p) => { reads += 1; if (reads === 2) throw new Error('EIO: second read'); return fs.readFileSync(p, 'utf8'); };
+  const unlink = () => { throw new Error('EPERM: nope'); };
+  const result = carryForward(cfArgs(f, { readLedger, unlink }));
+  assert.equal(result.code, 3);
+  assert.equal(fs.existsSync(path.join(f.runDir, 'staged', 'sdd-ruling-1.md')), true);
+  assert.match(f.decisions(), /staged\/sdd-ruling-1\.md could NOT be removed \(EPERM: nope\) — delete it by hand; its Ledger: header names no row of this call/);
+  assert.doesNotMatch(f.decisions(), /staged\/sdd-ruling-1\.md removed/);
 });
 
 test('a failed staged write appends the open row under the next free number when the planned one was taken concurrently', () => {
@@ -297,4 +333,66 @@ test('--ledger without --allocate is a malformed invocation (exit 2), nothing wr
   assert.match(err.join(''), /--ledger requires --allocate/);
   assert.equal(fs.existsSync(path.join(f.runDir, 'staged')), false);
   assert.equal(f.ledgerText(), before);
+});
+
+function assertRefusedLedger(f, ledger, reasonRe) {
+  const before = f.ledgerText();
+  assert.equal(before, ledger);
+  const { deps, err } = fakeDeps(f.main);
+  assert.equal(run(ARGS(f), deps), 3);
+  assert.equal(f.ledgerText(), before);
+  assert.equal(fs.existsSync(path.join(f.runDir, 'staged')), false);
+  assert.match(f.decisions(), /^- SKIP \d\d:\d\d:\d\d — SDD ruling carry-forward \(degraded\): condition: ledger docs\/plans\/2026-10-20-x-ledger\.md cannot take a new row safely/m);
+  assert.match(f.decisions(), reasonRe);
+  assert.doesNotMatch(f.decisions(), /STAGED/);
+  assert.match(err.join(''), /^stage-item\.js: ledger carry-forward degraded — condition: ledger .* cannot take a new row safely/m);
+}
+
+test('I3a: a numbered row after a blank line inside the table is never handed out twice — the call refuses (exit 3), ledger byte-unchanged, nothing staged', () => {
+  const ledger = LEDGER_HEAD + PRIOR_ROW + '| 2 | review | second | open | — |\n\n| 3 | review | stray row after a blank line | open | — |\n';
+  const f = fixture({ ledger });
+  assertRefusedLedger(f, ledger, /numbered rows exist outside the contiguous table/);
+});
+
+test('I3b: a contiguous table holding two rows with the same number is never collapsed — the call refuses (exit 3), ledger byte-unchanged, nothing staged', () => {
+  const ledger = LEDGER_HEAD + PRIOR_ROW + '| 1 | review | duplicate of row one | open | — |\n';
+  const f = fixture({ ledger });
+  assertRefusedLedger(f, ledger, /duplicate row numbers in the ledger table/);
+});
+
+test('M11: a CRLF temp file gets its Ledger: header inside the header block, line endings preserved', () => {
+  const f = fixture({ ruling: 'Title: keep the guard\r\nKind: sdd-ruling\r\nRuling: Ruling: keep the guard — cheaper\r\n\r\nratify / reverse\r\n' });
+  const { deps } = fakeDeps(f.main);
+  assert.equal(run(ARGS(f), deps), 0);
+  const staged = fs.readFileSync(path.join(f.runDir, 'staged', 'sdd-ruling-1.md'), 'utf8');
+  assert.equal(staged, 'Title: keep the guard\r\nKind: sdd-ruling\r\nRuling: Ruling: keep the guard — cheaper\r\nLedger: docs/plans/2026-10-20-x-ledger.md#2\r\n\r\nratify / reverse\r\n');
+  assert.match(f.decisions(), /"keep the guard"\. Stage path/);
+});
+
+test('M11: fillLedgerHeader replaces an existing Ledger: line in a CRLF file and keeps its \\r', () => {
+  assert.equal(
+    fillLedgerHeader('Title: t\r\nLedger: stale#9\r\n\r\nbody\r\n', 'x#2'),
+    'Title: t\r\nLedger: x#2\r\n\r\nbody\r\n',
+  );
+  assert.equal(fillLedgerHeader('Title: t\n\nbody\n', 'x#2'), 'Title: t\nLedger: x#2\n\nbody\n');
+});
+
+test('M12: a failed STAGED log write is a stderr warning only — exit 0, row and staged file present', () => {
+  const f = fixture();
+  fs.mkdirSync(path.join(f.runDir, 'decisions.md'));
+  const { deps, err } = fakeDeps(f.main);
+  assert.equal(run(ARGS(f), deps), 0);
+  assert.ok(fs.existsSync(path.join(f.runDir, 'staged', 'sdd-ruling-1.md')));
+  assert.ok(f.ledgerText().includes('(staged/sdd-ruling-1.md) | open | — |'));
+  assert.match(err.join(''), /stage-item\.js: warning: could not log STAGED entry to decisions\.md \(.+\)/);
+});
+
+test('M12: --phase and --section are honored: the row\'s Phase cell and the decisions.md heading', () => {
+  const f = fixture();
+  const { deps } = fakeDeps(f.main);
+  assert.equal(run(ARGS(f, ['--phase', 'review', '--section', '/wrap-up']), deps), 0);
+  assert.ok(f.ledgerText().includes('| 2 | review | SDD ruling — keep the guard: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |'));
+  assert.match(f.decisions(), /^## \/wrap-up$/m);
+  assert.doesNotMatch(f.decisions(), /^## \/build$/m);
+  assert.match(f.decisions(), /^- STAGED /m);
 });
