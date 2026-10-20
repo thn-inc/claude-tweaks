@@ -1,6 +1,6 @@
 # Recent-commit overlap check (canonical shape)
 
-Cited by all five filing call sites — code-health's `filing.md`, harness-health's `filing.md`, docs-health's `SKILL.md`, journey-health's `SKILL.md`, and capture's `SKILL.md` — rather than restated per caller (spec #1316's Gotchas: "duplicating the grep/similarity logic per sweep skill would drift").
+Cited by all five filing call sites — `code-health/filing.md`, `harness-health/filing.md`, `docs-health/SKILL.md`, `journey-health/SKILL.md`, and `capture/SKILL.md` — rather than restated per caller (spec #1316's Gotchas: "duplicating the grep/similarity logic per sweep skill would drift").
 
 **Why.** #1068 was filed describing exactly the symptom commit `73478c8b` (refs #959) had fixed the day before — nothing caught the near-duplicate before it reached `ready` and burned a worktree/draft PR on a build that had nothing left to do. This check is the gap-closer: before a new finding/capture reaches `ready`, screen it against recently-merged commits.
 

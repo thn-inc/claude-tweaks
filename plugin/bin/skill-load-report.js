@@ -40,7 +40,8 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { slugForCwd } = require('./lib/timing/transcript');
 const { readSkillLoads, summarizeLoads } = require('./lib/skill-audit/transcript-load');
-const { discoverPluginRoots, entryPointLoads } = require('./lib/skill-audit/load');
+const { discoverPluginRoots, entryPointLoads, walkCitable } = require('./lib/skill-audit/load');
+const { readdirUnder } = require('./lib/skill-audit/citable-readdir');
 const { isPathContained } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: skill-load-report.js [--cwd <dir>] [--sessions <n>] [--plugin-root <dir>]... [--help]\n';
@@ -139,8 +140,11 @@ function closureIndex(rootsAbs) {
       .filter((d) => d.isDirectory())
       .map((d) => `skills/${d.name}/SKILL.md`)
       .filter((p) => readFile(p) !== null);
+    // Rule (f)'s citable listing: only {rootAbs}/skills and {rootAbs}/agents
+    // are walked — a `.claude` root must never descend into worktrees/.
+    const listFiles = () => walkCitable('.', readdirUnder(rootAbs));
     const ns = pluginName(rootAbs);
-    for (const e of entryPointLoads('.', { readFile, listSkillMds })) {
+    for (const e of entryPointLoads('.', { readFile, listSkillMds, listFiles })) {
       index.set(`${ns}\0${e.entry.slice(e.entry.lastIndexOf(':') + 1)}`, e.closure);
     }
   }

@@ -42,7 +42,7 @@ When `/build` receives `{result: "ok", loaded: [...], context_size: <n>}` from `
 
 ## Caller-side pre-check (skip the `Skill()` load when the wrapper would no-op)
 
-Before invoking `/claude-tweaks:design-wrapper <mode> ...`, run the same deterministic detection the wrapper runs internally as its own Universal preconditions Step 1 (`design-wrapper/SKILL.md`) — its code twin is a standalone CLI, so a caller can reach the same verdict without paying for the wrapper's `SKILL.md` (~40KB) plus mode sub-file load when the answer is already "no-op":
+Before invoking `/claude-tweaks:design-wrapper <mode> ...`, run the same deterministic detection the wrapper runs internally as its own Universal preconditions Step 1 (`design-wrapper/SKILL.md`) — its code twin is a standalone CLI, so a caller can reach the same verdict without paying for `design-wrapper/SKILL.md` (~40KB) plus mode sub-file load when the answer is already "no-op":
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/design-detect.js" --mode <mode> --files "<comma-joined changed files>" [--surface <value>]
@@ -58,4 +58,4 @@ The CLI prints one JSON line:
 - `{"decision": "skip", "reason": "..."}` — skip the `Skill(claude-tweaks:design-wrapper)` call entirely. Report the skip in the caller's own output using the CLI's `reason` string verbatim — the same wire vocabulary the wrapper's own `{skipped: reason}` return already uses (see "Return shapes" above), so a caller's result-handling table needs no separate branch for a pre-check skip vs. a wrapper-returned skip.
 - `{"decision": "proceed", ...}` — invoke the wrapper as documented; the pre-check has proven detection would not have skipped, but the wrapper's own mode-specific procedure (availability check, CLI/LLM dispatch) still runs as normal.
 
-This pre-check reproduces the wrapper's Layers 1-3 exactly — it is the wrapper's own code (`bin/lib/design-detect`), not an approximation — so it can never diverge from what the wrapper would have decided. It never changes behavior for a case it doesn't skip; it only removes the wrapper's own `SKILL.md` (and mode sub-file) load for the cases the wrapper would have no-opped on anyway.
+This pre-check reproduces the wrapper's Layers 1-3 exactly — it is the wrapper's own code (`bin/lib/design-detect`), not an approximation — so it can never diverge from what the wrapper would have decided. It never changes behavior for a case it doesn't skip; it only removes the wrapper's own `design-wrapper/SKILL.md` (and mode sub-file) load for the cases the wrapper would have no-opped on anyway.

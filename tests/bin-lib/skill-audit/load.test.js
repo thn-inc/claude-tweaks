@@ -174,6 +174,140 @@ test('extractCitations rule (d) still wins over (e) when a {skill}/… token has
   assert.deepStrictEqual(r.resolved, ['plugin/skills/flow/build/x.md']);
 });
 
+test('extractCitations rule (f): a bare name naming exactly one citable file resolves to it (AC1.1)', () => {
+  const files = ['plugin/skills/wrap-up/cleanup-procedures.md', 'plugin/skills/flow/SKILL.md'];
+  const r = load.extractCitations('see `cleanup-procedures.md`', 'plugin/skills/flow/SKILL.md', 'plugin', {
+    exists: existsIn(['plugin/skills/wrap-up/cleanup-procedures.md']),
+    byName: load.citableNameIndex('plugin', files),
+  });
+  assert.deepStrictEqual(r.resolved, ['plugin/skills/wrap-up/cleanup-procedures.md']);
+  assert.deepStrictEqual(r.unresolved, []);
+});
+
+test('extractCitations rule (f): a sub-path resolves by trailing segments, and agents/ is citable', () => {
+  const files = ['plugin/skills/design-wrapper/modes/review.md', 'plugin/agents/qa-agent.md'];
+  const r = load.extractCitations('`modes/review.md` and `agents/qa-agent.md`', 'plugin/skills/flow/SKILL.md', 'plugin', {
+    exists: existsIn(files),
+    byName: load.citableNameIndex('plugin', files),
+  });
+  assert.deepStrictEqual(r.resolved, files);
+});
+
+test('extractCitations rule (f): an ambiguous name stays unresolved', () => {
+  const files = ['plugin/skills/code-health/filing.md', 'plugin/skills/harness-health/filing.md'];
+  const r = load.extractCitations('`filing.md`', 'plugin/skills/flow/SKILL.md', 'plugin', {
+    exists: existsIn(files),
+    byName: load.citableNameIndex('plugin', files),
+  });
+  assert.deepStrictEqual(r.resolved, []);
+  assert.strictEqual(r.unresolved.length, 1);
+});
+
+test('extractCitations rule (f): only skills/ and agents/ are citable', () => {
+  const lookup = load.citableNameIndex('plugin', ['plugin/docs/x.md', 'plugin/bin/y.md']);
+  assert.strictEqual(lookup('x.md'), null);
+  assert.strictEqual(lookup('y.md'), null);
+});
+
+test('extractCitations rule (f): dot segments and absolute tokens never match by name', () => {
+  // Non-normalized entries make the eligibility guard — not path normalization — keep these null.
+  const lookup = load.citableNameIndex('plugin', ['plugin/skills/a/x.md', 'plugin/skills/a/../x.md', 'plugin/skills/a//x.md']);
+  for (const token of ['./x.md', '../x.md', 'a/../x.md', '/x.md', 'a//x.md']) {
+    assert.strictEqual(lookup(token), null, token);
+  }
+});
+
+test('extractCitations rule (f) runs last: first-existing-wins order (a)–(e) is unchanged (AC2.1)', () => {
+  const byName = () => 'plugin/skills/other/x.md';
+  const both = load.extractCitations('`x.md`', 'plugin/skills/flow/SKILL.md', 'plugin', {
+    exists: existsIn(['plugin/skills/flow/x.md', 'plugin/skills/_shared/x.md', 'plugin/skills/other/x.md']),
+    byName,
+  });
+  assert.deepStrictEqual(both.resolved, ['plugin/skills/flow/x.md']);
+  const sharedOnly = load.extractCitations('`x.md`', 'plugin/skills/flow/SKILL.md', 'plugin', {
+    exists: existsIn(['plugin/skills/_shared/x.md', 'plugin/skills/other/x.md']),
+    byName,
+  });
+  assert.deepStrictEqual(sharedOnly.resolved, ['plugin/skills/_shared/x.md']);
+});
+
+test('extractCitations rule (f) is skipped when rule (d) named an owner skill, so a broken (d) citation is not rerouted', () => {
+  const files = ['plugin/skills/u/x.md'];
+  const r = load.extractCitations('see `/claude-tweaks:t` then read `x.md` in that skill\'s directory', 'plugin/skills/flow/SKILL.md', 'plugin', {
+    exists: existsIn(['plugin/skills/t/SKILL.md', 'plugin/skills/u/SKILL.md', 'plugin/skills/u/x.md']),
+    byName: load.citableNameIndex('plugin', files),
+  });
+  assert.deepStrictEqual(r.resolved, []);
+  assert.deepStrictEqual(r.unresolved.map((u) => u.token), ['x.md']);
+});
+
+test('extractCitations rule (f): absent byName keeps the token unresolved', () => {
+  const r = load.extractCitations('see `cleanup-procedures.md`', 'plugin/skills/flow/SKILL.md', 'plugin', {
+    exists: existsIn(['plugin/skills/wrap-up/cleanup-procedures.md']),
+  });
+  assert.deepStrictEqual(r.resolved, []);
+  assert.strictEqual(r.unresolved.length, 1);
+});
+
+test('entryPointLoads rule (f): listFiles feeds the index and the hit is walked transitively', () => {
+  const files = {
+    'plugin/skills/flow/SKILL.md': 'see `helper.md`\n',
+    'plugin/skills/wrap-up/SKILL.md': 'w\n',
+    'plugin/skills/wrap-up/helper.md': 'then `leaf.md`\n',
+    'plugin/skills/wrap-up/leaf.md': 'leaf\n',
+  };
+  const rows = load.entryPointLoads('plugin', { ...tree(files), listFiles: () => Object.keys(files) });
+  const flow = rows.find((r) => r.entry === 'plugin:flow');
+  assert.ok(flow.files.includes('plugin/skills/wrap-up/helper.md'));
+  assert.ok(flow.files.includes('plugin/skills/wrap-up/leaf.md'));
+});
+
+test('entryPointLoads rule (f) is inert without listFiles', () => {
+  const files = {
+    'plugin/skills/flow/SKILL.md': 'see `helper.md`\n',
+    'plugin/skills/wrap-up/SKILL.md': 'w\n',
+    'plugin/skills/wrap-up/helper.md': 'then `leaf.md`\n',
+    'plugin/skills/wrap-up/leaf.md': 'leaf\n',
+  };
+  const flow = load.entryPointLoads('plugin', tree(files)).find((r) => r.entry === 'plugin:flow');
+  assert.deepStrictEqual(flow.files, ['plugin/skills/flow/SKILL.md']);
+  assert.deepStrictEqual(flow.unresolved.map((u) => u.token), ['helper.md']);
+});
+
+test('walkCitable lists .md under skills/ and agents/ only, never other top-level dirs', () => {
+  const dir = (name) => ({ name, isDirectory: true });
+  const file = (name) => ({ name, isDirectory: false });
+  const mk = (prefix) => {
+    const map = {
+      [`${prefix}skills`]: [dir('s')],
+      [`${prefix}skills/s`]: [file('SKILL.md'), file('a.txt')],
+      [`${prefix}agents`]: [file('q.md')],
+      [`${prefix}worktrees`]: [file('z.md')],
+    };
+    return (rel) => map[rel] || [];
+  };
+  assert.deepStrictEqual(load.walkCitable('plugin', mk('plugin/')), ['plugin/agents/q.md', 'plugin/skills/s/SKILL.md']);
+  assert.deepStrictEqual(load.walkCitable('.', mk('')), ['agents/q.md', 'skills/s/SKILL.md']);
+});
+
+test('walkCitable walks a directory named like a file and sorts entries across skills and agents', () => {
+  const dir = (name) => ({ name, isDirectory: true });
+  const file = (name) => ({ name, isDirectory: false });
+  const map = {
+    'plugin/skills': [dir('b'), dir('a')],
+    'plugin/skills/a': [dir('notes.md'), file('z.md')],
+    'plugin/skills/a/notes.md': [file('inner.md')],
+    'plugin/skills/b': [file('SKILL.md')],
+    'plugin/agents': [file('m.md')],
+  };
+  assert.deepStrictEqual(load.walkCitable('plugin', (rel) => map[rel] || []), [
+    'plugin/agents/m.md',
+    'plugin/skills/a/notes.md/inner.md',
+    'plugin/skills/a/z.md',
+    'plugin/skills/b/SKILL.md',
+  ]);
+});
+
 test('extractCitations: an unresolvable token is recorded with its 1-based line, never counted', () => {
   const r = load.extractCitations('line one\nsee `docs/skill-graph.md` here', 'plugin/skills/flow/SKILL.md', 'plugin', { exists: () => false });
   assert.deepStrictEqual(r, {

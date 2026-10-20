@@ -1,6 +1,6 @@
 # Step 12 — Diagram Suggestions
 
-*Optional Enhancement step — see `SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
+*Optional Enhancement step — see `../SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
 
 claude-tweaks ships a native diagram-generation skill, `/claude-tweaks:visualize` — no install step, nothing external to set up. Soft-hook nudges in `/journeys`, `/specify`, and `/review` surface "consider a diagram here" recommendations when a journey, spec, or review finding describes flows or structures that benefit from a visual.
 
