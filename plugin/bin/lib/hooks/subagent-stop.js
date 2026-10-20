@@ -180,9 +180,10 @@ function detectStatus(text) {
 }
 
 // #2714: a dispatched agent that is itself a nested dispatcher (fanning out
-// further async `Agent`-tool calls) must yield control across several of its
-// own turns before its real final reply — each interim turn narrates
-// progress on the still-pending nested work (e.g. "2 of 8 back. Lens 3b-b
+// further async `Agent`-tool calls) keeps its turn alive until every child
+// reports (#3078, `_shared/subagent-dispatch-core.md`'s Foreground Execution
+// Discipline); a turn that nonetheless ends mid-wait is an interim reply that
+// narrates progress on the still-pending nested work (e.g. "2 of 8 back. Lens 3b-b
 // surfaced two HIGH findings…"). The existing `isAsyncWaitSignal`/
 // `asyncWaitCheckpoint` filter only catches the narrower case where such a
 // turn immediately follows an async signal in the transcript; an interim

@@ -5,11 +5,11 @@
 // plus read-back, and the claim-contest self-report's projection line.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 
 // The paragraph (blank-line delimited) whose first line starts with boldLead.
 function paragraphStarting(md, boldLead) {
@@ -117,4 +117,14 @@ test('pr-run-comments.md post-or-update has an MCP read-back for the run-comment
 test('issue-claims.md mirror section points MCP posts at the marker composition rule', () => {
   const section = sectionStarting(ISSUE_CLAIMS, '## The mirror');
   assert.match(section, /Marker comments on the MCP path/);
+});
+
+test('claim-mcp: the paragraph search still finds its break under CRLF line endings (#3574)', () => {
+  const FILE = path.join(ROOT, 'plugin/skills/flow/claim-targets.md');
+  const { raw, text } = crlfCheckoutRead(FILE);
+  assert.ok(raw.includes('\r\n'), 'the CRLF input must contain \\r\\n line breaks');
+  assert.ok(!raw.includes('\r\r\n'), 'the CRLF input must not contain \\r\\r\\n');
+  assert.strictEqual(raw.indexOf('\n\n'), -1, 'a raw CRLF read has no LF paragraph break');
+  assert.strictEqual(text, readText(FILE));
+  assert.match(paragraphStarting(text, '**Read back the `bot:in-progress` add (MCP, #3131).**'), /mergeLabelNames/);
 });

@@ -1,14 +1,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const c = require('../plugin/bin/lib/coordination');
 
 // Reads one live skill file under plugin/skills/. These tests assert against the real
 // shipped prose, so every read below goes through here rather than re-spelling the path.
 function readSkillFile(...segments) {
-  return fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', ...segments), 'utf8');
+  return readText(path.join(__dirname, '..', 'plugin', 'skills', ...segments));
 }
 
 const PRIMITIVE_DOC = readSkillFile('_shared', 'multi-agent-coordination.md');
@@ -1628,4 +1628,15 @@ test('prose twins state the two-tier line rule with the code\'s own values (#295
     '#1980 coincidence bullet',
     [near, wide, floor],
   );
+});
+
+test('multi-agent: the paragraph search still finds its break under CRLF line endings (#3574)', () => {
+  const FILE = path.join(__dirname, '..', 'plugin', 'skills', 'review', 'step3-routing.md');
+  const { raw, text } = crlfCheckoutRead(FILE);
+  assert.ok(raw.includes('\r\n'), 'the CRLF input must contain \\r\\n line breaks');
+  assert.ok(!raw.includes('\r\r\n'), 'the CRLF input must not contain \\r\\r\\n');
+  assert.strictEqual(raw.indexOf('\n\n'), -1, 'a raw CRLF read has no LF paragraph break');
+  assert.strictEqual(text, readText(FILE));
+  const at = text.indexOf('**Post-dispatch diff audit (mandatory).**');
+  assert.match(text.slice(at, text.indexOf('\n\n', at)), /post-fan-out (untracked-file )?sweep/i);
 });

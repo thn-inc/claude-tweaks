@@ -5,10 +5,11 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const SKILLS = path.join(ROOT, 'plugin', 'skills');
-const read = (rel) => fs.readFileSync(path.join(SKILLS, rel), 'utf8');
+const read = (rel) => readText(path.join(SKILLS, rel));
 
 function walk(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -41,7 +42,7 @@ test('try-it.md forbids empty and placeholder blocks and decouples from the over
 
 test('the Try it field lines live in exactly one skill file', () => {
   const owners = walk(SKILLS).filter((f) => FIELD_LINE.test(fs.readFileSync(f, 'utf8')))
-    .map((f) => path.relative(SKILLS, f));
+    .map((f) => path.relative(SKILLS, f).split(path.sep).join('/'));
   assert.deepEqual(owners, ['_shared/try-it.md']);
 });
 
@@ -234,4 +235,14 @@ test('demo #N lookup reads the walkthrough back from the PR before composing one
   const tryIt = between(recon, '- **Try it**');
   const prRead = tryIt.indexOf('PR run-comment');
   assert.ok(prRead >= 0 && prRead < tryIt.indexOf('_shared/try-it.md'), 'reads the PR before composing fresh');
+});
+
+test('try-it: the paragraph search still finds its break under CRLF line endings (#3574)', () => {
+  const FILE = path.join(SKILLS, 'wrap-up/verification-brief-parent-gate.md');
+  const { raw, text } = crlfCheckoutRead(FILE);
+  assert.ok(raw.includes('\r\n'), 'the CRLF input must contain \\r\\n line breaks');
+  assert.ok(!raw.includes('\r\r\n'), 'the CRLF input must not contain \\r\\r\\n');
+  assert.strictEqual(raw.indexOf('\n\n'), -1, 'a raw CRLF read has no LF paragraph break');
+  assert.strictEqual(text, readText(FILE));
+  assert.ok(paragraphAt(text, '**Return to the Try it post').text.includes('`incomplete`'));
 });

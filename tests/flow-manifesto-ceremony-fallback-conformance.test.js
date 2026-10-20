@@ -13,11 +13,11 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 const collapse = (s) => s.replace(/\s+/g, ' ');
 const paragraph = (rel, lead) => {
   const raw = read(rel);
@@ -101,4 +101,18 @@ test('control: the frozen pre-fix-wave paragraph fails every AC2.x pin', () => {
     'Approval flow logs the held verdicts',
     'verdict stands in for the label',
   ]);
+});
+
+test('flow-manifesto: the paragraph search still finds its break under CRLF line endings (#3574)', () => {
+  const FILE = path.join(ROOT, MANIFESTO);
+  const { raw, text } = crlfCheckoutRead(FILE);
+  assert.ok(raw.includes('\r\n'), 'the CRLF input must contain \\r\\n line breaks');
+  assert.ok(!raw.includes('\r\r\n'), 'the CRLF input must not contain \\r\\r\\n');
+  assert.strictEqual(raw.indexOf('\n\n'), -1, 'a raw CRLF read has no LF paragraph break');
+  assert.strictEqual(text, readText(FILE));
+  const at = text.indexOf(LEAD);
+  assert.notStrictEqual(at, -1, 'the paragraph lead must be found');
+  const para = collapse(text.slice(at, text.indexOf('\n\n', at)));
+  assert.match(para, /\*\*Ceremony profile computation\.\*\*/);
+  assert.ok(para.length < collapse(text).length);
 });

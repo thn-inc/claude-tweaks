@@ -64,7 +64,7 @@ From the held `auditPolicy()` result:
 - **`unrecognizedKeys`** — each key name.
 - **`migratableKeys`** — each entry, with its remedy from `alsoInPolicy`: `false` → "move it to policy.yml", `true` → "delete the dead CLAUDE.md copy".
 - **`renamedKeys`** — each entry, with its `replacedBy` and `suggestedValue`.
-- **`sourceExcludedKeys`** (#839) — each entry, noting it never takes effect from `policy.yml` (a resolver special case discards it, falling back to the schema default) and naming the actual way to set it when one exists — for `merge-authorization`, a live `/claude-tweaks:flow confirm`/`hybrid` Manifesto override, never a standing project default.
+- **`sourceExcludedKeys`** (#839) — each entry, noting it never takes effect from `policy.yml` (a resolver special case discards it, falling back to the schema default) and naming the actual way to set it when one exists — for `merge-authorization`, a live per-run answer — `/claude-tweaks:flow`'s `pre-authorize-merge` token or a `confirm`/`hybrid` Manifesto override — never a standing project default.
 
 When ALL five lists are empty, render exactly one line: `Policy config issues: none` — never silently skipped. Otherwise render each non-empty list (omit only the empty ones).
 

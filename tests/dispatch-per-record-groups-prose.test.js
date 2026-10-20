@@ -183,11 +183,18 @@ function poolFetchBlock() {
 }
 
 test('a failed neighbour-in-flight pool fetch writes an empty pool and says so, so nothing is excluded (#3278)', () => {
-  // PATH points at an empty dir, so gh is not found and the fetch fails.
+  // The script's first line points PATH at an empty dir, so gh is not found and the fetch fails.
+  // PATH is set inside the script, not in the spawn env: Node finds `bash` through the spawn
+  // env's PATH, and Windows has no portable absolute shell path (no /bin/sh).
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neighbour-pool-'));
   const rawPath = path.join(dir, 'in-flight-raw.json');
   try {
-    const result = spawnSync('/bin/sh', ['-c', poolFetchBlock()], { encoding: 'utf8', env: { PATH: dir, DISPATCH_IN_FLIGHT_RAW: rawPath } });
+    const script = 'PATH="$EMPTY_PATH"\n' + poolFetchBlock();
+    const result = spawnSync('bash', ['-c', script], {
+      encoding: 'utf8',
+      env: { ...process.env, EMPTY_PATH: dir, DISPATCH_IN_FLIGHT_RAW: rawPath },
+    });
+    assert.equal(result.error, undefined, `bash spawn failed: ${result.error}`);
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(fs.readFileSync(rawPath, 'utf8')), []);
     assert.match(result.stderr, /AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull/);

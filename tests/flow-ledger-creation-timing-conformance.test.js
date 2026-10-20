@@ -11,6 +11,7 @@ const path = require('node:path');
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const read = (rel) => fs.readFileSync(path.join(SKILLS, rel), 'utf8').replace(/\s+/g, ' ');
 const OLD_CONDITION = /A run with no worktree at all — `run-state\.json` carries no `worktree` field/;
+const SEQUENCING_3289 = /\*\*Sequencing \(#3289\):\*\* run this step right after Step 6 records the draft PR \(or logs its `SKIP`\)/;
 
 test('AC1.1: flow Step 1.8 creates the ledger only when no worktree is ever created or adopted', () => {
   const text = read('flow/SKILL.md');
@@ -107,4 +108,17 @@ test('flow/validation.md holds Step 2.5/2.6 ledger-bound notes until the ledger 
   assert.match(text, /Under the `worktree` strategy the open-items ledger does not exist yet at this step/);
   assert.match(text, /appended to the ledger as an `ops` row by whichever step creates it \(`build\/worktree-setup\.md` Step 4\.6, or `multi-spec\.md`'s "Shared worktree" step 1/);
   assert.doesNotMatch(text, /Continued and added ops ledger entry/);
+});
+
+test('#3289: Step 4.6 runs after Step 6 records the draft PR, not in numbered order', () => {
+  const text = read('build/worktree-setup.md');
+  assert.match(text, SEQUENCING_3289);
+  assert.match(text, /`checkBookkeepingStampsGate` denies the ledger `Write` until `run-state\.json` carries the `pr` stamp/);
+  const step6 = text.slice(text.indexOf('6. **Open the draft PR'), text.indexOf('## Cherry-pick source-branch PR check'));
+  assert.match(step6, /then run Step 4\.6 if it is still pending \(#3289\)/);
+});
+
+test('go-red proof: the pre-#3289 Step 4.6 text fails the sequencing assertion', () => {
+  const old = 'This is the first point a `docs/plans/` write can land under `worktree-always` (the reason `materialize.md` writes the spec after worktree creation), and it precedes every build task.';
+  assert.throws(() => assert.match(old, SEQUENCING_3289));
 });

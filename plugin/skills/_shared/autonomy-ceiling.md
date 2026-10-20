@@ -180,16 +180,34 @@ conditions, or merge-conflict resolution — those stay fully human-gated at eve
 ### Orthogonal to the ceiling: the Manifesto's `merge-authorization` lever
 
 `flow/manifesto.md`'s `merge-authorization` lever (#715) is **not** one of the bookkeeping
-capabilities above and is **not** gated by the `autonomy` ceiling at all — it is available at
-every ceiling tier, including `supervised`. The two mechanisms solve different problems:
-`consoleAutoResolve` (above) is a **standing, ceiling-gated** capability that, once the project
-opts into `unattended`, applies to every future run without further per-run action. This lever is
-the opposite shape: **per-run, always requiring a live answer** (an explicit Manifesto
-`confirm`/`hybrid` override — never a `policy.yml` default, per `flow/manifesto.md`'s
-Recommendation defaults note), regardless of the project's ceiling setting. A `supervised`-ceiling
-project can still pre-authorize one specific run's merge this way; an `unattended`-ceiling project
-still needs `consoleAutoResolve` (or this lever) to actually skip the terminal click — raising the
-ceiling alone does not, by itself, answer this lever.
+capabilities above, is **not** gated by the `autonomy` ceiling, and **no ceiling sets it** —
+decided at #2734, so the absence is not re-discovered as a gap. It is available at every tier,
+`supervised` included, and only a live, per-run human answer sets it: the `/flow`
+`pre-authorize-merge` token typed on the invocation, or a Manifesto `confirm`/`hybrid` override —
+never `policy.yml` (`flow/manifesto.md`'s Recommendation defaults row).
+
+Why merge stops short of the ceiling when every `unattended` capability above does not:
+
+- **The ceiling is a standing `policy.yml` value; this lever is `policySourceExcluded`.** Every
+  capability above resolves reversible bookkeeping — a ledger row, a record filing, an ack. A merge
+  is the run's one irreversible terminal action, and a standing default authorizing it is the
+  non-interactive auto-grant `_shared/auto-mode-contract.md`'s Merge authorization lever row and
+  never-reversible grant-origination entry rule out: a run never authorizes its own merge, and the
+  only machine-originated merge grant is `/backlog refine`'s per-record, content-checked,
+  double-opt-in `grant-origination-enabled` path.
+- **`unattended` already merges what a human authorized.** `consoleAutoResolve` resolves the merge
+  half to merge for a record carrying `auto:merge` or a matured `auto:merge-pending`. Deriving
+  `pre-authorized` from the ceiling would merge every `auto:build`-only record as well, erasing the
+  build/merge grant split and overturning `wrap-up/review-console.md`'s ungranted-member carve-out
+  (#1802, #1966), whose premise is that a withheld grant is itself a human decision.
+- **The real gap was per-run.** A human running `/flow` in default `auto` who wanted this one run to
+  merge had to reopen the whole Manifesto gate with `confirm`; `pre-authorize-merge` answers lever
+  13 alone, live, without reopening the rest. A dispatch-bound run ignores the token.
+
+So at `unattended` with `consoleAutoResolve` granted, a run ends with zero clicks either way:
+merged when its record carries `auto:merge` (or a matured `auto:merge-pending`) or its `/flow` was
+invoked with `pre-authorize-merge` (under `integration-model: pr-first`, `_shared/integration-model.md`), and otherwise parked at `pending-review` — never an
+`AskUserQuestion` stall. Both merge routes still pass `assess-agent-autonomy` `merge-check`.
 
 ### Floor rule (ledger narrowing)
 

@@ -1660,9 +1660,10 @@ async function main(argv) {
   //
   // `runDir`/`runState` stay owner-UNFILTERED — the newest non-terminal run
   // regardless of who owns it (the one exception: unadopted mints — bare
-  // mkdir'd dirs with neither run-state.json nor decisions.md — are skipped
-  // by resolveRun's fallback since #721, so a mint can no longer shadow an
-  // older adopted run and accidentally suppress E1's bystander warning). E1's
+  // mkdir'd dirs with neither run-state.json nor decisions.md, since #721, and
+  // claim-log-only mints, since #3515 — are skipped by resolveRun's fallback,
+  // so a mint can no longer shadow an older adopted run, suppress E1's
+  // bystander warning, or absorb a breadcrumb logged against runDir). E1's
   // working-directory gate is about this checkout, not about who owns the run:
   // its whole foreign-session branch exists to warn a bystander that the
   // checkout belongs to somebody else's worktree, which it can only do by
@@ -1675,7 +1676,18 @@ async function main(argv) {
   // subcommand, not a hook) can read it.
   const runDir = ctxLib.resolveRunDir(cwd, process.env);
   const runState = runDir ? ctxLib.readRunState(runDir) : null;
-  const ownedRun = ctxLib.resolveRun(cwd, process.env, input.session_id);
+  // #3515: ownedRun resolves STRICT — a write must not be guessed into a run
+  // bound to another worktree (the #3401 incident; the claim-log-only mint skip
+  // applies to both resolutions). The runDir above deliberately stays
+  // non-strict: E1 must still resolve a worktree-bound run it does not own.
+  // The diagnostic is one line per hook process and says only that nothing was
+  // attributed — whether the module would have written anything is its own call.
+  const ownedRun = ctxLib.resolveRun(cwd, process.env, input.session_id, { strictAttribution: true });
+  if (Array.isArray(ownedRun.dropped) && ownedRun.dropped.length) {
+    try {
+      fs.writeSync(2, `attribution: no run dir attributed — no fallback run dir matches ${cwd}; skipped ${ownedRun.dropped.join(', ')}\n`);
+    } catch { /* diagnostics never break a session */ }
+  }
   const out = (await mod.run({ input, runDir, runState, ownedRun, cwd })) || {};
   if (out.json) fs.writeSync(1, JSON.stringify(out.json));
   return typeof out.exit === 'number' ? out.exit : 0;

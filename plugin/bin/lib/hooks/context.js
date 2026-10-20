@@ -39,6 +39,10 @@ function isStaleClaim(archiveState, now = Date.now()) {
   return (now - updatedAt) > ARCHIVE_CLAIM_TTL_MS;
 }
 
+function hasRunStateFile(dir) {
+  return fs.existsSync(path.join(dir, 'run-state.json'));
+}
+
 // An unadopted mint — a directory mkdir'd by dispatch Step 4 or flow Step 2.8
 // that no invocation ever initialized — carries neither run-state.json nor
 // decisions.md, or (#3363) a decisions.md holding ONLY flow Step 2.8's claim
@@ -62,7 +66,7 @@ function isStaleClaim(archiveState, now = Date.now()) {
 // fallback attribution — the same as an empty mint pre-#2492 (the #721 design).
 function isUnadoptedMint(dir, state) {
   if (state) return false;
-  if (fs.existsSync(path.join(dir, 'run-state.json'))) return false;
+  if (hasRunStateFile(dir)) return false;
   let text;
   try {
     text = fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8');
@@ -70,6 +74,41 @@ function isUnadoptedMint(dir, state) {
     return err.code === 'ENOENT';
   }
   return classifyDecisions(text) === 'claim-log-only';
+}
+
+// #3515 (the #3401 incident): the claim-log-only half of isUnadoptedMint above
+// (#3363), checked on its own so isSkippableFallbackCandidate can test it
+// FIRST and mark it `dropped` — a strict resolveRun then names the skipped mint
+// instead of reporting a silent 'unadopted-mint'. The skip itself applies to
+// EVERY fallback resolution — E1's non-strict runDir as well as the strict
+// ownedRun (the incident's write was pre-tool-use's gitignored-exemption
+// breadcrumb, logged against ctx.runDir). A read error is not-a-mint — never
+// skip a candidate on evidence we could not read.
+function isClaimLogOnlyMint(dir, state) {
+  if (state) return false;
+  if (hasRunStateFile(dir)) return false;
+  try {
+    return classifyDecisions(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8')) === 'claim-log-only';
+  } catch { return false; }
+}
+
+// #3515 (the #3401 incident): the fallback guess may only land in a run bound
+// to the CALLER's own checkout. classifyOwnership (#1410) already skips a
+// binding provably foreign to a caller inside a different LIVE linked worktree,
+// but a caller in the main checkout — where most hook firings happen — or one
+// whose binding is gone from disk classifies 'indeterminate' and still guessed
+// in. Strict attribution skips any candidate whose recorded `worktree` is not
+// the caller's resolved toplevel. Fail-open on an unanswerable git question
+// (indeterminate, or no repo at all): no evidence, no skip. `callerRepoInfo`
+// is resolveRun's lazy per-call memo of wtDetect.repoInfo(cwd) — the caller's
+// cwd is the same for every candidate, so it is computed at most once, and
+// only once a bound candidate is actually met.
+function isOtherWorktreeBound(callerRepoInfo, state) {
+  const binding = state && typeof state.worktree === 'string' && state.worktree ? state.worktree : null;
+  if (!binding) return false;
+  const info = callerRepoInfo();
+  if (info.indeterminate || !info.repoRoot) return false;
+  return (wtDetect.safeReal(binding) || path.resolve(binding)) !== info.repoRoot;
 }
 
 // #1177: best-effort removal of a mint's own layout (staged/, decisions.md,
@@ -324,11 +363,22 @@ function isForeignWorktreeCandidate(cwd, sessionId, state) {
 // session's friction events only, reachable by that session through the
 // 'session' arm. As a guess it became ctx.runDir — E1 then denied a commit
 // from the main checkout against the ad-hoc dir's worktree.
-function isSkippableFallbackCandidate(cwd, sessionId, dir, state, includeWorktreeForeign) {
-  if (isUnadoptedMint(dir, state)) return true;
-  if (isAdHocRunDir(dir)) return true;
-  if (includeWorktreeForeign) return false;
-  return isForeignWorktreeCandidate(cwd, sessionId, state);
+//
+// Returns `{ reason, dropped }` or null, so both call sites keep testing it for
+// truthiness. `dropped: true` marks the #3515 guards: (a) claim-log-only mint,
+// applied to EVERY resolution, and (b) bound to another worktree, applied only
+// under the opt-in `strict`; a strict resolveRun reports exactly those in its
+// `dropped` list. `includeWorktreeForeign` disables the worktree-binding
+// guards, (b) included. `callerRepoInfo` is the lazy memo isOtherWorktreeBound
+// reads (see there).
+function isSkippableFallbackCandidate(cwd, sessionId, dir, state, includeWorktreeForeign, strict, callerRepoInfo) {
+  if (isClaimLogOnlyMint(dir, state)) return { reason: 'claim-log-only mint', dropped: true };
+  if (isUnadoptedMint(dir, state)) return { reason: 'unadopted-mint', dropped: false };
+  if (isAdHocRunDir(dir)) return { reason: 'ad-hoc', dropped: false };
+  if (includeWorktreeForeign) return null;
+  if (isForeignWorktreeCandidate(cwd, sessionId, state)) return { reason: 'worktree-foreign', dropped: false };
+  if (strict && isOtherWorktreeBound(callerRepoInfo, state)) return { reason: `bound to ${state.worktree}`, dropped: true };
+  return null;
 }
 function resolveRun(cwd, env, sessionId, opts = {}) {
   if (env && env.PIPELINE_RUN_DIR) {
@@ -350,6 +400,26 @@ function resolveRun(cwd, env, sessionId, opts = {}) {
   // event-attribution fallback, which is what #1410 was written for) omits
   // this and keeps the worktree filter.
   const includeWorktreeForeign = opts.includeWorktreeForeign === true;
+  // #3515: both fallback arms skip a claim-log-only mint for EVERY caller.
+  // strictAttribution is the opt-in for the WRITE path (hooks.js's ownedRun):
+  // it also skips any candidate bound to a worktree other than the caller's,
+  // and when the skips leave nothing, the null return carries `dropped` (one
+  // "<run-id> (<reason>)" per #3515 skip) so the caller can say why nothing
+  // was attributed. Non-strict callers keep the pre-#3515 return shapes (no
+  // `dropped` key).
+  const strict = opts.strictAttribution === true;
+  const dropped = [];
+  let callerInfo;
+  const callerRepoInfo = () => {
+    if (callerInfo === undefined) callerInfo = wtDetect.repoInfo(resolvedCwd);
+    return callerInfo;
+  };
+  const skipReason = (dir, state) => {
+    const skip = isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign, strict, callerRepoInfo);
+    if (skip && skip.dropped) dropped.push(`${path.basename(dir)} (${skip.reason})`);
+    return skip;
+  };
+  const noRun = () => (strict && dropped.length ? { dir: null, attribution: null, dropped } : { dir: null, attribution: null });
   // Resolve once, up front, so the worktree-binding check below always sees
   // the same cwd the candidate scan itself uses — iterRunDirsWithState falls
   // back to process.cwd() internally on a falsy cwd, but isForeignWorktreeCandidate
@@ -365,10 +435,10 @@ function resolveRun(cwd, env, sessionId, opts = {}) {
     // worktree-binding check above is a different axis and applies here too,
     // unless the caller opted out via includeWorktreeForeign.
     for (const { dir, state } of iterRunDirsWithState(resolvedCwd)) {
-      if (isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign)) continue;
+      if (skipReason(dir, state)) continue;
       return { dir, attribution: 'fallback' };
     }
-    return { dir: null, attribution: null };
+    return noRun();
   }
   let unowned = null;
   let ownAdHoc = null;
@@ -400,10 +470,10 @@ function resolveRun(cwd, env, sessionId, opts = {}) {
     }
     // Newest-first, so the first unowned, worktree-compatible run is the one
     // the old code returned unconditionally.
-    if (!owner && !unowned && !isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign)) unowned = dir;
+    if (!owner && !unowned && !skipReason(dir, state)) unowned = dir;
   }
   if (ownAdHoc) return { dir: ownAdHoc, attribution: 'session' };
-  return unowned ? { dir: unowned, attribution: 'fallback' } : { dir: null, attribution: null };
+  return unowned ? { dir: unowned, attribution: 'fallback' } : noRun();
 }
 
 function resolveRunDir(cwd, env, sessionId, opts) {

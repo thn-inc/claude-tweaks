@@ -7,8 +7,8 @@
 // already-stopped-is-not-an-error clauses.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const PLUGIN = path.join(__dirname, '..', 'plugin');
 const TASK_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'task-prompt.md');
@@ -27,13 +27,13 @@ function fencedBlocks(text) {
 }
 
 test('task-prompt.md still carries exactly two fenced Task-prompt templates (this record adds prose only, no new fences)', () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   const blocks = fencedBlocks(text);
   assert.equal(blocks.length, 2, `expected exactly two fenced Task-prompt blocks, found ${blocks.length}`);
 });
 
 test("first call's template detaches the ephemeral server and forbids deleting ephemeral-server.txt at call end", () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   const [firstCall] = fencedBlocks(text);
   assert.match(firstCall, /start it detached/);
   assert.match(firstCall, /setsid/);
@@ -43,7 +43,7 @@ test("first call's template detaches the ephemeral server and forbids deleting e
 });
 
 test("second call's template re-checks liveness before the first browser step and before trace stop, and restarts on a dead pid with the documented log line", () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   const [, secondCall] = fencedBlocks(text);
   assert.match(secondCall, /before\s+the first browser-driving step, and again before any `trace stop`/);
   assert.match(secondCall, /verify the recorded pid\s+answers on the recorded port/);
@@ -56,7 +56,7 @@ test("second call's template re-checks liveness before the first browser step an
 });
 
 test('Section D kills the process group when detached:yes and never when detached:no', () => {
-  const text = fs.readFileSync(CLEANUP_EXEC, 'utf8');
+  const text = readText(CLEANUP_EXEC);
   const idx = text.indexOf('## D. Ephemeral dev server');
   const endIdx = text.indexOf('## E. Issue claim release');
   assert.ok(idx !== -1 && endIdx !== -1 && idx < endIdx);
@@ -67,7 +67,7 @@ test('Section D kills the process group when detached:yes and never when detache
 });
 
 test('Section D logs an already-gone pid as "already stopped", never as an error', () => {
-  const text = fs.readFileSync(CLEANUP_EXEC, 'utf8');
+  const text = readText(CLEANUP_EXEC);
   const idx = text.indexOf('## D. Ephemeral dev server');
   const endIdx = text.indexOf('## E. Issue claim release');
   const body = text.slice(idx, endIdx);
@@ -79,7 +79,7 @@ test('Section D logs an already-gone pid as "already stopped", never as an error
 // #3083 — win32 has no process-group primitive, so the recorded PID is
 // stopped with a tree kill instead of a leader-only `kill`.
 test('Section D stops the recorded pid with a win32 tree kill (taskkill /T /F), independent of the detached: field, and names the platform check', () => {
-  const text = fs.readFileSync(CLEANUP_EXEC, 'utf8');
+  const text = readText(CLEANUP_EXEC);
   const idx = text.indexOf('## D. Ephemeral dev server');
   const endIdx = text.indexOf('## E. Issue claim release');
   assert.ok(idx !== -1 && endIdx !== -1 && idx < endIdx);
@@ -89,7 +89,7 @@ test('Section D stops the recorded pid with a win32 tree kill (taskkill /T /F), 
 });
 
 test('Section D treats a win32 "not found" taskkill result as already-stopped, and any other non-zero exit as a real failure', () => {
-  const text = fs.readFileSync(CLEANUP_EXEC, 'utf8');
+  const text = readText(CLEANUP_EXEC);
   const idx = text.indexOf('## D. Ephemeral dev server');
   const endIdx = text.indexOf('## E. Issue claim release');
   const body = text.slice(idx, endIdx);
@@ -100,7 +100,7 @@ test('Section D treats a win32 "not found" taskkill result as already-stopped, a
 // #3083 — the standalone stop path and the Windows Ownership bullet in
 // dev-url-detection.md also name the win32 tree kill.
 test("dev-url-detection.md's standalone stop names the win32 PID tree kill alongside the POSIX lsof port kill", () => {
-  const doc = fs.readFileSync(path.join(PLUGIN, 'skills', '_shared', 'dev-url-detection.md'), 'utf8');
+  const doc = readText(path.join(PLUGIN, 'skills', '_shared', 'dev-url-detection.md'));
   const idx = doc.indexOf('### Cleanup');
   assert.notEqual(idx, -1);
   const body = doc.slice(idx);
@@ -108,7 +108,7 @@ test("dev-url-detection.md's standalone stop names the win32 PID tree kill along
 });
 
 test("dev-url-detection.md's Windows Ownership bullet mentions the tree kill and points to Section D", () => {
-  const doc = fs.readFileSync(path.join(PLUGIN, 'skills', '_shared', 'dev-url-detection.md'), 'utf8');
+  const doc = readText(path.join(PLUGIN, 'skills', '_shared', 'dev-url-detection.md'));
   const idx = doc.indexOf('- **Windows:**');
   const nextBulletIdx = doc.indexOf('\n\n', idx);
   assert.notEqual(idx, -1);
@@ -119,14 +119,14 @@ test("dev-url-detection.md's Windows Ownership bullet mentions the tree kill and
 });
 
 test('multispec-review-console.md line still delegates to Section D without restating the kill', () => {
-  const doc = fs.readFileSync(path.join(PLUGIN, 'skills', 'flow', 'multispec-review-console.md'), 'utf8');
+  const doc = readText(path.join(PLUGIN, 'skills', 'flow', 'multispec-review-console.md'));
   assert.doesNotMatch(doc, /kill \{pid\}/);
   assert.doesNotMatch(doc, /taskkill/);
   assert.match(doc, /Section D/);
 });
 
 test('the ephemeral-server-handoff predicates can actually go red (discrimination proof)', () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   const paragraphs = text.split(/\r?\n\r?\n/);
   const kept = paragraphs.filter((p) => !p.startsWith('Ephemeral dev server'));
   assert.equal(
@@ -138,4 +138,32 @@ test('the ephemeral-server-handoff predicates can actually go red (discriminatio
   assert.equal(blocks.length, 2);
   assert.doesNotMatch(blocks[0], /start it detached/);
   assert.doesNotMatch(blocks[1], /verify the recorded pid\s+answers on the recorded port/);
+});
+
+test('ephemeral-server: the paragraph searches still find their breaks under CRLF line endings (#3574)', () => {
+  const DEV_URL_DETECTION = path.join(PLUGIN, 'skills', '_shared', 'dev-url-detection.md');
+  for (const FILE of [TASK_PROMPT, DEV_URL_DETECTION]) {
+    const { raw, text } = crlfCheckoutRead(FILE);
+    assert.ok(raw.includes('\r\n'), 'the CRLF input must contain \\r\\n line breaks');
+    assert.ok(!raw.includes('\r\r\n'), 'the CRLF input must not contain \\r\\r\\n');
+    assert.strictEqual(raw.indexOf('\n\n'), -1, 'a raw CRLF read has no LF paragraph break');
+    assert.strictEqual(text, readText(FILE));
+    if (FILE === TASK_PROMPT) {
+      const block = fencedBlocks(text)[1];
+      const at = block.indexOf('Ephemeral dev server liveness');
+      const end = block.indexOf('\n\n', at);
+      assert.ok(at !== -1 && end !== -1, 'the liveness paragraph and its break must be found');
+      const paragraph = block.slice(at, end);
+      assert.ok(paragraph.length > 0);
+      const following = block.slice(end + 2).split('\n')[0];
+      assert.ok(following.trim().length > 0, 'text must follow the liveness paragraph break');
+      assert.ok(!paragraph.includes(following), 'the paragraph must stop at its break, not run into the next paragraph');
+    } else {
+      const idx = text.indexOf('- **Windows:**');
+      const end = text.indexOf('\n\n', idx);
+      assert.notStrictEqual(idx, -1);
+      assert.notStrictEqual(end, -1);
+      assert.match(text.slice(idx, end), /stopped as a tree, not a leader-only kill/);
+    }
+  }
 });

@@ -66,10 +66,15 @@ test('multi-spec console: drain-overlap-hold carve-out sentence ends with the mi
 // AC7 (#3520): the near-duplicate Step 6 hold template that drain-pr-overlap.md gives
 // must still be read by the console auto-resolver's DRAIN_OVERLAP_HOLD_RE second reader.
 const { drainOverlapHoldPrs } = require('../plugin/bin/lib/console/resolve');
+const { readText } = require('./helpers/read-skill');
 
-function nearDuplicateHoldTemplate() {
-  const raw = fs.readFileSync(path.join(ROOT, 'plugin/skills/dispatch/drain-pr-overlap.md'), 'utf8');
-  const blocks = [...raw.matchAll(/```\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+const DRAIN_PR_OVERLAP = readText(path.join(ROOT, 'plugin/skills/dispatch/drain-pr-overlap.md'));
+
+// Normalizes again inside the extractor so the CRLF case below can go red on
+// Linux CI if this line is dropped (readText() alone hides it there).
+function nearDuplicateHoldTemplate(text = DRAIN_PR_OVERLAP) {
+  const lf = text.replace(/\r\n/g, '\n');
+  const blocks = [...lf.matchAll(/```\n([\s\S]*?)\n```/g)].map((m) => m[1]);
   const hit = blocks.find((b) => b.includes('(near-duplicate of #{partner})') && /Auto-merge gate/.test(b));
   assert.ok(hit, 'drain-pr-overlap.md has a fenced Auto-merge gate template with the near-duplicate suffix');
   return collapse(hit).trim();
@@ -84,6 +89,13 @@ function fill(template) {
     .replace('{pr}', '4123')
     .replace('{partner}', '77');
 }
+
+test('nearDuplicateHoldTemplate finds the same template in a CRLF checkout of drain-pr-overlap.md', () => {
+  const crlf = DRAIN_PR_OVERLAP.replace(/\n/g, '\r\n');
+  assert.ok(crlf.includes('\r\n'), 'the CRLF input carries \\r\\n');
+  assert.ok(!crlf.includes('\r\r\n'), 'the CRLF input is built from the normalized read, never \\r\\r\\n');
+  assert.strictEqual(nearDuplicateHoldTemplate(crlf), nearDuplicateHoldTemplate());
+});
 
 test('near-duplicate Step 6 hold template is parsed by drainOverlapHoldPrs (AC7)', () => {
   const line = fill(nearDuplicateHoldTemplate());

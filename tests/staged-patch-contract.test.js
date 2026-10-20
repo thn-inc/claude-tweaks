@@ -12,13 +12,14 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
+const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const CONTRACT = path.join(SKILLS, '_shared', 'staged-patch.md');
-const read = (...p) => fs.readFileSync(path.join(SKILLS, ...p), 'utf8');
+const read = (...p) => readText(path.join(SKILLS, ...p));
 
 test('contract file exists with its three named sections', () => {
-  const text = fs.readFileSync(CONTRACT, 'utf8');
+  const text = readText(CONTRACT);
   for (const h of ['## Artifact format', '## Staging-time gate', '## Console apply with description fallback']) {
     assert.equal(text.split('\n').filter((l) => l === h).length, 1, `${h} stated exactly once`);
   }
@@ -31,7 +32,7 @@ test('contract file exists with its three named sections', () => {
 // #879: a staged review/reflect finding applied at the console must write its outcome back to
 // the ledger file itself, not only to decisions.md — the drift a manual six-ledger audit found.
 test('contract documents ledger write-back on apply, distinct from the decisions.md log', () => {
-  const text = fs.readFileSync(CONTRACT, 'utf8');
+  const text = readText(CONTRACT);
   assert.equal(text.split('\n').filter((l) => l === '### Write-back to the ledger').length, 1, 'write-back subsection stated exactly once');
   const section = text.slice(text.indexOf('### Write-back to the ledger'));
   assert.match(section, /\|\s*1\.\s*Fast path applied\s*\|\s*`fixed`\s*\|/, 'fast-path apply maps to Status fixed');
@@ -111,7 +112,7 @@ test('the fallback procedure heading is stated once — only in the contract', (
   };
   for (const file of walk(SKILLS)) {
     if (file === CONTRACT) continue;
-    assert.ok(!/^## Console apply with description fallback$/m.test(fs.readFileSync(file, 'utf8')), `${path.relative(SKILLS, file)} restates the fallback heading`);
+    assert.ok(!/^## Console apply with description fallback$/m.test(readText(file)), `${path.relative(SKILLS, file)} restates the fallback heading`);
   }
 });
 
@@ -145,13 +146,13 @@ test('pipeline-run-dir.md Anchoring section states the staged-file invariant exa
   };
   let ownerHits = 0;
   for (const file of walk(SKILLS)) {
-    const text = normWS(fs.readFileSync(file, 'utf8'));
+    const text = normWS(readText(file));
     const count = text.split(INVARIANT_MARKER).length - 1;
     if (file === RUN_DIR_DOC) { ownerHits = count; continue; }
     assert.equal(count, 0, `${path.relative(SKILLS, file)} restates the staged-file invariant marker`);
   }
   assert.equal(ownerHits, 1, 'pipeline-run-dir.md states the staged-file invariant marker exactly once');
-  const anchoring = fs.readFileSync(RUN_DIR_DOC, 'utf8');
+  const anchoring = readText(RUN_DIR_DOC);
   const anchoringStart = anchoring.indexOf('## Anchoring');
   const nextHeadingRel = anchoring.slice(anchoringStart + 1).search(/^## /m);
   const anchoringEnd = nextHeadingRel === -1 ? anchoring.length : anchoringStart + 1 + nextHeadingRel;
@@ -164,7 +165,7 @@ test('pipeline-run-dir.md Anchoring section states the staged-file invariant exa
 });
 
 test('staged-patch.md Staging-time gate cites the pipeline-run-dir.md staged-file invariant instead of restating it', () => {
-  const text = fs.readFileSync(CONTRACT, 'utf8');
+  const text = readText(CONTRACT);
   const gate = text.slice(text.indexOf('## Staging-time gate'), text.indexOf('## Console apply with description fallback'));
   assert.ok(citesStagedFileInvariant(gate), 'Staging-time gate cites the staged-file invariant');
   assert.ok(!normWS(gate).includes('worktree-relative shadow'), 'Staging-time gate no longer restates the shadow phrase');
@@ -271,14 +272,24 @@ function assertStackedGate(text) {
 }
 
 test('AC1.1, AC2.1, AC3.1: the staging gate stacks staged patches and one apply order governs gate and console', () => {
-  assertStackedGate(fs.readFileSync(CONTRACT, 'utf8'));
+  assertStackedGate(readText(CONTRACT));
 });
 
 test('go-red control: assertStackedGate throws when the Stacked check subsection is removed', () => {
-  const text = fs.readFileSync(CONTRACT, 'utf8');
+  const text = readText(CONTRACT);
   const start = text.indexOf(STACKED_HEADING);
   assert.ok(start > 0, 'subsection present before removal');
   const end = text.indexOf(`\n${CONSOLE_HEADING}`, start);
   const mutated = text.slice(0, start) + text.slice(end + 1);
   assert.throws(() => assertStackedGate(mutated));
+});
+
+test('staged-patch contract: the paragraph search still finds its break under CRLF line endings (#3574)', () => {
+  const FILE = CONTRACT;
+  const { raw, text } = crlfCheckoutRead(FILE);
+  assert.ok(raw.includes('\r\n'), 'the CRLF input must contain \\r\\n line breaks');
+  assert.ok(!raw.includes('\r\r\n'), 'the CRLF input must not contain \\r\\r\\n');
+  assert.strictEqual(raw.indexOf('\n\n'), -1, 'a raw CRLF read has no LF paragraph break');
+  assert.strictEqual(text, readText(FILE));
+  assert.doesNotThrow(() => assertStackedGate(text));
 });
