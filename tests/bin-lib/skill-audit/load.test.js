@@ -290,6 +290,24 @@ test('walkCitable lists .md under skills/ and agents/ only, never other top-leve
   assert.deepStrictEqual(load.walkCitable('.', mk('')), ['agents/q.md', 'skills/s/SKILL.md']);
 });
 
+test('walkCitable walks a directory named like a file and sorts entries across skills and agents', () => {
+  const dir = (name) => ({ name, isDirectory: true });
+  const file = (name) => ({ name, isDirectory: false });
+  const map = {
+    'plugin/skills': [dir('b'), dir('a')],
+    'plugin/skills/a': [dir('notes.md'), file('z.md')],
+    'plugin/skills/a/notes.md': [file('inner.md')],
+    'plugin/skills/b': [file('SKILL.md')],
+    'plugin/agents': [file('m.md')],
+  };
+  assert.deepStrictEqual(load.walkCitable('plugin', (rel) => map[rel] || []), [
+    'plugin/agents/m.md',
+    'plugin/skills/a/notes.md/inner.md',
+    'plugin/skills/a/z.md',
+    'plugin/skills/b/SKILL.md',
+  ]);
+});
+
 test('extractCitations: an unresolvable token is recorded with its 1-based line, never counted', () => {
   const r = load.extractCitations('line one\nsee `docs/skill-graph.md` here', 'plugin/skills/flow/SKILL.md', 'plugin', { exists: () => false });
   assert.deepStrictEqual(r, {

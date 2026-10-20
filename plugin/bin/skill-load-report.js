@@ -41,6 +41,7 @@ const { execFileSync } = require('child_process');
 const { slugForCwd } = require('./lib/timing/transcript');
 const { readSkillLoads, summarizeLoads } = require('./lib/skill-audit/transcript-load');
 const { discoverPluginRoots, entryPointLoads, walkCitable } = require('./lib/skill-audit/load');
+const { readdirUnder } = require('./lib/skill-audit/citable-readdir');
 const { isPathContained } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: skill-load-report.js [--cwd <dir>] [--sessions <n>] [--plugin-root <dir>]... [--help]\n';
@@ -141,16 +142,7 @@ function closureIndex(rootsAbs) {
       .filter((p) => readFile(p) !== null);
     // Rule (f)'s citable listing: only {rootAbs}/skills and {rootAbs}/agents
     // are walked — a `.claude` root must never descend into worktrees/.
-    const readdir = (rel) => {
-      try {
-        return fs.readdirSync(path.join(rootAbs, rel), { withFileTypes: true })
-          .map((d) => ({ name: d.name, isDirectory: d.isDirectory() }));
-      } catch (err) {
-        if (['ENOENT', 'ENOTDIR'].includes(err.code)) return [];
-        throw err;
-      }
-    };
-    const listFiles = () => walkCitable('.', readdir);
+    const listFiles = () => walkCitable('.', readdirUnder(rootAbs));
     const ns = pluginName(rootAbs);
     for (const e of entryPointLoads('.', { readFile, listSkillMds, listFiles })) {
       index.set(`${ns}\0${e.entry.slice(e.entry.lastIndexOf(':') + 1)}`, e.closure);
