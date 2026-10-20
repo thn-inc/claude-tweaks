@@ -217,12 +217,26 @@ const TEMPLATE_KEEP_ALIVE = [
   [/always\s+launches\s+async/i, 'a nested Agent call always launches async'],
   [/never\s+end\s+this\s+turn\s+with\s+(?:a|one)\s+child\s+outstanding/i, 'the turn never ends with a child outstanding'],
   [/ignore\s+that\s+child's\s+result\s+if\s+it\s+arrives\s+later/i, 'a late child result is ignored'],
+  [/reply\s+that\s+ends\s+without\s+a\s+tool\s+call\s+ends\s+the\s+turn/i, 'a reply that ends without a tool call ends the turn'],
 ];
 const templateKeepAliveMissing = (block) => TEMPLATE_KEEP_ALIVE.filter(([pattern]) => !pattern.test(block)).map(([, fact]) => fact);
-const dropsInTurnCarveOut = (block) => !/It does not cover an in-turn/.test(block);
+const dropsInTurnCarveOut = (block) => !/It\s+does\s+not\s+cover\s+an\s+in-turn/.test(block);
 
 const dropsPrimaryResumeSignal = (text) => !/primary resume signal/.test(text);
-const RATIONALE_CORE = /`_shared\/subagent-dispatch-core\.md`'s\s+Foreground\s+Execution\s+Discipline/;
+const RATIONALE = [
+  [/`_shared\/subagent-dispatch-core\.md`'s\s+Foreground\s+Execution\s+Discipline/, 'the #2533 rationale cites the core section'],
+];
+const rationaleMissing = (text) => RATIONALE.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
+
+// Per-assertion go-red proof (the 6bb1bb695 shape): strip one pattern's matched phrase from the live
+// text, and the shared predicate must report exactly that one fact missing.
+function assertEachPatternGoesRed(text, patterns, missingOf) {
+  for (const [pattern, fact] of patterns) {
+    const doctored = text.replace(pattern, '');
+    assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
+    assert.deepEqual(missingOf(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
+  }
+}
 
 test('task-prompt item 7 drops "nothing wakes you" and states what ends a turn (#3078, #3266)', () => {
   const item7 = item7Block(fs.readFileSync(TASK_PROMPT, 'utf8'));
@@ -242,13 +256,19 @@ test('neither fenced template keeps the in-turn carve-out (#3078)', () => {
 test("the #2533 rationale cites the core section, not dispatch-waiting.md's resume signal (#3078)", () => {
   const text = fs.readFileSync(TASK_PROMPT, 'utf8');
   assert.ok(dropsPrimaryResumeSignal(text), 'task-prompt.md still cites dispatch-waiting.md\'s "primary resume signal" (#3078)');
-  assert.match(text, RATIONALE_CORE, 'the #2533 rationale must cite subagent-dispatch-core.md\'s Foreground Execution Discipline (#3078)');
+  assert.deepEqual(rationaleMissing(text), [], 'the #2533 rationale must cite subagent-dispatch-core.md\'s Foreground Execution Discipline (#3078)');
 });
 
-test('the task-prompt predicates can actually go red (discrimination proof)', () => {
+test('each task-prompt assertion can actually go red on its own (discrimination proof)', () => {
   const text = fs.readFileSync(TASK_PROMPT, 'utf8');
-  const item7 = item7Block(text);
-  assert.equal(dropsNothingWakes(item7 + '\n   nothing wakes you automatically.'), false, 'the re-inserted "nothing wakes you" must turn the item-7 assertion red');
+  assertEachPatternGoesRed(item7Block(text), ITEM7, item7Missing);
+  for (const block of fencedBlocks(text)) assertEachPatternGoesRed(block, TEMPLATE_KEEP_ALIVE, templateKeepAliveMissing);
+  assertEachPatternGoesRed(text, RATIONALE, rationaleMissing);
+});
+
+test('the task-prompt absence predicates can actually go red (discrimination proof)', () => {
+  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  assert.equal(dropsNothingWakes(item7Block(text) + '\n   nothing wakes you automatically.'), false, 'the re-inserted "nothing wakes you" must turn the item-7 assertion red');
 
   const [firstCall] = fencedBlocks(text);
   assert.equal(
@@ -256,11 +276,10 @@ test('the task-prompt predicates can actually go red (discrimination proof)', ()
     false,
     'the appended in-turn carve-out sentence must turn the template assertion red',
   );
-  const lateResultDoctored = firstCall.replace("; ignore that child's result if it arrives later", '');
-  assert.notEqual(lateResultDoctored, firstCall, 'anchor text for the late-result clause not found in the template');
-  assert.ok(
-    templateKeepAliveMissing(lateResultDoctored).includes('a late child result is ignored'),
-    'removing the late-result clause must turn the template assertion red',
+  assert.equal(
+    dropsInTurnCarveOut(firstCall + '\n\nIt does\nnot cover an in-turn `Agent`-tool dispatch.'),
+    false,
+    'a re-wrapped in-turn carve-out sentence must turn the template assertion red',
   );
 
   assert.equal(dropsPrimaryResumeSignal(text + '\n\nSee the primary resume signal.'), false, 'the re-inserted resume-signal citation must turn the rationale assertion red');
