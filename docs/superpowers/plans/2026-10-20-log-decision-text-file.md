@@ -116,3 +116,9 @@ git commit -m "Migrate git-text log-decision call sites to --text-file — drop 
 ```
 
 Headroom (RAIL_BYTES 52,500): `steps-and-gates.md` 39,075 B, `execution-and-verification.md` 17,240 B, `_shared/auto-decision-log.md` 24,173 B (+~700 B) — all well under the rail.
+
+## As-built notes (Common Step 4.5 — Beneficial deviations)
+
+1. `--text-file` rejects content with an interior line break (exit 2): an entry is one line, and a multi-line file (e.g. pasted `git diff --name-only` output) would otherwise split one entry across lines. The spec's "same entry as `--text`" equality holds for every one-line content.
+2. The text file lives in the session temp root under the per-purpose name `decision-text-{run-id}-{step-slug}.md` (`bin/session-tmp-resolve.js`), never the run dir — the run dir refuses worktree-session Writes, and a shared name would collide across callers (`_shared/session-tmp-root.md`'s per-purpose suffix rule).
+3. `_shared/auto-decision-log.md`'s Text from git or a user paragraph is pinned by `tests/auto-decision-log-worktree-gate.test.js` with a go-red control, since both migrated call sites now cite it as the single source.
