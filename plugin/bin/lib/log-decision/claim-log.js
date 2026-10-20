@@ -5,7 +5,8 @@
 // (#2526). tests/bin-lib/log-decision/claim-log.test.js pins these constants
 // to the argv claim-targets.md documents. hasClaimLogFor also accepts a line
 // the model worded in its own words (paraphrasedClaimNumbers, #3012); the
-// isClaimLogEntry/classifyDecisions shape check stays exact.
+// isClaimLogEntry shape check stays exact. classifyDecisions also accepts a
+// complete paraphrased claim line and Step 2.8's own bookkeeping lines (#3665).
 'use strict';
 
 const { parseEntry } = require('./append');
@@ -54,6 +55,26 @@ function isClaimLogEntry(line) {
   return ACTION_RE.test(entry.action);
 }
 
+// A complete entry: the `Reversibility: <value>.` suffix formatEntry always
+// appends closes the line (a qualifier such as "n/a (informational)" is fine).
+const COMPLETE_RE = /\sReversibility: [^.\s][^.]*\.$/;
+const BOOKKEEPING_LOCATION_RE = /^Step 2\.8 (?:file-overlap (?:warning|check)|bot:in-progress projection)\b/;
+const BOOKKEEPING_STATUSES = new Set(['AUTO', 'SKIP', 'SCANNED']);
+
+// Step 2.8's own non-claim lines (#3665): the file-overlap warning/check and the
+// bot:in-progress projection. claim-targets.md documents two SKIP shapes
+// ("Step 2.8 file-overlap warning (skipped)", "Step 2.8 bot:in-progress
+// projection (degraded)"); a model words the same notes as AUTO/SCANNED lines
+// ("Step 2.8 file-overlap warning: ...", "Step 2.8 file-overlap check: ..."). The
+// match is anchored on the entry's location — a `log-decision:`-located line
+// that merely mentions Step 2.8 is not bookkeeping — and on a complete entry.
+function isClaimStepBookkeepingEntry(line) {
+  const entry = parseEntry(line);
+  if (!entry || !BOOKKEEPING_STATUSES.has(entry.status)) return false;
+  if (!BOOKKEEPING_LOCATION_RE.test(entry.location.replace(/^spec #\d+ — /, ''))) return false;
+  return COMPLETE_RE.test(String(line));
+}
+
 // The record numbers one decisions.md line positively records as claimed
 // (empty when none). Only the text before the `Reversibility:` suffix counts.
 function paraphrasedClaimNumbers(line) {
@@ -98,9 +119,11 @@ function hasCanonicalClaimLogFor(body, n) {
 
 // decisions.md text (null = file absent) -> 'absent' | 'empty' |
 // 'claim-log-only' | 'content'. 'claim-log-only' needs at least one claim
-// entry and nothing else but blank lines and the section heading the writer
-// itself adds. Every line this cannot positively recognise is 'content' — a
-// parse failure never reads as "only claim lines".
+// entry and nothing else but blank lines, the section heading the writer
+// itself adds, and Step 2.8's own bookkeeping lines (#3665). A claim entry is
+// the exact canonical line, or a complete paraphrased one (#3665). Every line
+// this cannot positively recognise is 'content' — a parse failure never reads
+// as "only claim lines".
 function classifyDecisions(text) {
   if (text === null || text === undefined) return 'absent';
   const str = String(text);
@@ -110,12 +133,15 @@ function classifyDecisions(text) {
     const line = raw.trimEnd();
     if (!line) continue;
     if (line === SECTION_HEADING) continue;
-    if (!isClaimLogEntry(line)) return 'content';
-    claims += 1;
+    if (isClaimLogEntry(line) || (COMPLETE_RE.test(line) && paraphrasedClaimNumbers(line).length > 0)) {
+      claims += 1;
+    } else if (!isClaimStepBookkeepingEntry(line)) {
+      return 'content';
+    }
   }
   return claims > 0 ? 'claim-log-only' : 'content';
 }
 
 module.exports = {
-  CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText, isClaimLogEntry, hasClaimLogFor, hasCanonicalClaimLogFor, paraphrasedClaimNumbers, classifyDecisions,
+  CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText, isClaimLogEntry, isClaimStepBookkeepingEntry, hasClaimLogFor, hasCanonicalClaimLogFor, paraphrasedClaimNumbers, classifyDecisions,
 };
