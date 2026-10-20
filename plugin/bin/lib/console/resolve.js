@@ -412,7 +412,7 @@ function findingKey(line) {
 function coordinationItems(snapshot, stagedIds) {
   const out = [];
   const lines = decisionLines(snapshot.decisions);
-  const confirmedAfter = (i, key) => lines.some((l, j) => j > i && /^- AUTO /.test(l) && /\bConfirmed\b/.test(l) && findingKey(l) === key);
+  const confirmedAfter = (i, key) => lines.slice(i + 1).some((l) => /^- AUTO /.test(l) && /\bConfirmed\b/.test(l) && findingKey(l) === key);
   for (const [i, line] of lines.entries()) {
     if (!/^- STAGED /.test(line)) continue;
     const key = findingKey(line);

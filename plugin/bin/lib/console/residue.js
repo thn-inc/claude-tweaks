@@ -35,9 +35,9 @@ function splitMissing(items, consoleDir, exists = fs.existsSync) {
     const checkable = typeof id === 'string' && id !== '' && !id.includes(':') && path.basename(id) === id;
     if (checkable && !exists(path.join(consoleDir, 'staged', id))) {
       missing.push({ ...item, resolution: MISSING_RESOLUTION, reason: `staged file absent (was ${item.resolution})` });
-      continue;
+    } else {
+      kept.push(item);
     }
-    kept.push(item);
   }
   return { items: kept, missing };
 }
