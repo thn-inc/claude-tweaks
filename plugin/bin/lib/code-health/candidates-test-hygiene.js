@@ -11,7 +11,7 @@
 // are INPUT to the judge, never filed directly.
 //
 // Coverage (stated explicitly, never implied total — IL-110):
-//   - JS/TS files only (SOURCE_EXTS, shared with candidates-dead-code.js).
+//   - JS/TS files only (SOURCE_EXTS, shared via source-scan.js).
 //   - Coverage-gap detection is STRUCTURAL (file/export correspondence), not
 //     line-coverage-based — no nyc/c8 instrumentation, no dependency added.
 //   - Pairing heuristics are a FIXED priority order in v1 (never
@@ -59,20 +59,9 @@
 
 const fs = require('fs');
 const path = require('path');
-// `./focus-generators` required FIRST — see candidates-abstraction-police.js's
-// matching comment for why: it forces the registry's fixed-order autoload
-// cascade (candidates-dead-code.js first) to finish before this module's own
-// require of candidates-dead-code below, so the destructured utilities are
-// never bound to a mid-load, incomplete exports object regardless of which
-// file a caller (or a test file requiring this module directly) enters
-// through first.
 const { registerGenerator } = require('./focus-generators');
-const {
-  listTrackedSourceFiles,
-  isGlobDiscoveredTestFile,
-  extractModuleExports,
-  escapeRegExp,
-} = require('./candidates-dead-code');
+const { listTrackedSourceFiles, isGlobDiscoveredTestFile, extractModuleExports } = require('./source-scan');
+const { escapeRegExp } = require('../shared-primitives');
 const { SKIP_DIRS } = require('./scope');
 
 // ─── Assertion vocabulary (module constant — the contract; extend here only) ─

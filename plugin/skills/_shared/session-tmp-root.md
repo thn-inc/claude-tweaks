@@ -129,3 +129,6 @@ record-suffixed-caller case above), `skills/journey-health/SKILL.md`,
 `skills/_shared/harness-health-analysis.md`, `skills/wrap-up/verification-brief.md`,
 `skills/flow/summary-template.md`, and `skills/flow/multispec-summary.md` (#2821 — the three share
 one session file, `try-it-{N}.md`: wrap-up writes it and flow's Pipeline Summary reads it back).
+
+**Extended (#3671):** `skills/_shared/auto-decision-log.md`'s Text from git or a user paragraph
+(the `--text-file` entry text: `decision-text-{run-id}-{step-slug}.md`, a per-purpose suffix).

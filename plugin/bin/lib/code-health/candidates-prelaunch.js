@@ -54,7 +54,7 @@
 //     real contact info) are never machine-judged — every firing lists them
 //     as `status: 'manual'` for a human to check, regardless of repo
 //     contents.
-//   - Discovery reuses `candidates-dead-code.js`'s `listTrackedFiles` — same
+//   - Discovery reuses `source-scan.js`'s `listTrackedFiles` — same
 //     git-ls-files discovery, same `.gitignore` handling, same
 //     discoveryFailed/discoveryReason IL-115 distinction — but with no
 //     extension filter, since this vertical needs non-source files
@@ -63,11 +63,8 @@
 
 const fs = require('fs');
 const path = require('path');
-// `./focus-generators` first: requiring `./candidates-dead-code` first from
-// a direct entry leaves sibling verticals bound to an in-progress exports
-// object (candidates-abstraction-police.js's header documents the order).
 const { registerGenerator } = require('./focus-generators');
-const { listTrackedFiles } = require('./candidates-dead-code');
+const { listTrackedFiles } = require('./source-scan');
 
 const IMAGE_SIZE_LIMIT_BYTES = 500 * 1024;
 

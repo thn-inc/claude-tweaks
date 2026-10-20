@@ -23,6 +23,7 @@ const { classifyClaimBlob } = require('../issues/claims');
 const { resolvePolicyKeys, resolvePolicyConfig } = require('../policy-schema');
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
 const { worktreeMirror } = require('../wrap-up/pack');
+const { hasCanonicalClaimLogFor } = require('../log-decision/claim-log');
 
 function defaultReadFile(p) {
   return fs.readFileSync(p, 'utf8');
@@ -72,6 +73,10 @@ function resolveIntegrationModel(configRaw) {
 //      `pack.js`'s resolveRecords ladder only ever reads ONE of the two shapes per
 //      rung (its first, flat-`work/`, rung wins outright whenever it finds anything) --
 //      no current producer writes that mixed layout.
+//   6. (#3577) `{runDir}/decisions.md` carries the canonical `Step 2.8: claimed #{n}` line for
+//      every member (`hasCanonicalClaimLogFor`, `log-decision/claim-log.js`). A missing or
+//      unreadable `decisions.md` counts as empty; the batch-summary and paraphrased forms do
+//      not satisfy it.
 //
 // `repairable` (#3226): a `missing-config` first call is repairable when a re-dispatch of
 // call 2 would land in a recoverable /flow adoption case, and the claim and PR evidence
@@ -238,6 +243,15 @@ function checkFirstCallArtifacts({ runDir, issueNumbers, repoSlug }, deps = {}) 
   for (const issueNumber of issueNumbers) {
     if (!hasMaterializedHeader(readFile, bases, Number(issueNumber))) {
       return fail('materialized-header-missing', `no materialized header for issue #${issueNumber} under ${bases.join(' or ')} (work/ or spec-${issueNumber}/work/)`);
+    }
+  }
+
+  const decisionsPath = path.join(runDir, 'decisions.md');
+  let decisionsBody = '';
+  try { decisionsBody = readFile(decisionsPath); } catch { decisionsBody = ''; }
+  for (const issueNumber of issueNumbers) {
+    if (!hasCanonicalClaimLogFor(decisionsBody, Number(issueNumber))) {
+      return fail('claim-log-missing', `no canonical "Step 2.8: claimed #${issueNumber}" line in ${decisionsPath} (/flow claim-targets.md's Log the claim)`);
     }
   }
 

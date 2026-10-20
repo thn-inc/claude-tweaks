@@ -38,7 +38,7 @@
 //
 // Coverage (stated explicitly, never implied total — IL-110):
 //   - JS/TS files only for every per-file scan — one unfiltered
-//     `listTrackedFiles` discovery call (candidates-dead-code.js's
+//     `listTrackedFiles` discovery call (source-scan.js's
 //     git-ls-files helper), filtered here to the same extension set
 //     `listTrackedSourceFiles` would use, shared with the privacy-policy-
 //     mismatch check (i)'s own need for the unfiltered list (a privacy-policy
@@ -117,7 +117,7 @@
 //   - Unescaped-output/XSS sink detection (check (k), #2668) is
 //     pattern-based across several templating conventions
 //     (UNESCAPED_OUTPUT_SINK_PATTERNS) — but since this generator only
-//     scans JS/TS-extension files (SOURCE_EXTS, in candidates-dead-code.js),
+//     scans JS/TS-extension files (SOURCE_EXTS, in source-scan.js),
 //     a Vue `.vue` single-file component, a Laravel `.blade.php` view, or a
 //     Jinja/Django/Nunjucks `.html`/`.jinja2` template is invisible to this
 //     check entirely; only an occurrence of one of these sink shapes
@@ -141,7 +141,7 @@
 const fs = require('fs');
 const path = require('path');
 const { registerGenerator } = require('./focus-generators');
-const { listTrackedFiles } = require('./candidates-dead-code');
+const { listTrackedFiles } = require('./source-scan');
 
 const CLIENT_DIR_RE = /(^|\/)(client|frontend|web|public|src\/(components|pages|app))(\/|$)/i;
 const SERVER_DIR_RE = /(^|\/)(server|backend|api)(\/|$)/i;

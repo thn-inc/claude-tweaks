@@ -4,6 +4,7 @@ files:
   - plugin/bin/lib/wrap-up/ledger-write.js
   - plugin/bin/lib/wrap-up/pack.js
   - plugin/bin/claude-tweaks-statusline.js
+  - plugin/bin/wrap-up-engine.js
   - plugin/skills/_shared/ledger-format.md
   - plugin/skills/ledger/SKILL.md
   - plugin/skills/build/dispatch.md
@@ -38,7 +39,7 @@ files:
 - **Action:** Choose Approve all. The console pipes its payload, including `ledger: [{item, status, resolution}]` entries, into `finish-console`.
 - **Should feel:** One click, one result. The console finishes, with no step-3 failure message and no half-applied state to reconcile.
 - **Should understand:** `flipLedgerRow` rewrites only the Status and Resolution cells. It escapes any `|` in the resolution it writes and collapses line breaks to one space, so the flipped row stays a single 5-column line. The Item cell, `\|` included, is left byte-for-byte as it was.
-- **Red flags:** `finish-console: step 3 (ledger flips) failed … does not have the expected 5-column shape`. That error now names the `\|` rule and the Format section: it means some writer appended a raw pipe. Fix that row by escaping the pipe, then re-run.
+- **Red flags:** `finish-console: ledger pre-flight failed at ledger[i]: ledger row for item #N does not have the expected 5-column shape … — nothing written`. The error names the `\|` rule and the Format section: it means some writer appended a raw pipe. `finish-console` checks every flip before its first write, so the refusal leaves `verify-expectations.json`, `decisions.md` and the ledger untouched. Fix that row by escaping the pipe, then re-run Approve all; the re-run logs the console's decision lines once.
 
 ### 4. Confirm the flipped row reads back as written
 - **URL:** the same ledger file, the row the payload named
@@ -50,5 +51,5 @@ files:
 ## Origin
 - Created during the build of #3512 (make ledger rows pipe-safe — a `|` in an Item or Resolution cell broke `finish-console`'s step-3 flip), run `2026-10-19T232504-record-3512`.
 - All steps were built in this session. The producer that made this common is #3401's SDD ruling carry-forward, whose `Ruling:` one-liners routinely quote regexes.
-- Known limit: a row written *without* the rule (a raw pipe) still makes step 3 fail after steps 1-2 have landed. A pre-step-1 dry run of the flips is deferred (ledger row, `Defer-reason: pre-existing-outside-diff`).
+- Updated during the build of #3684, run `2026-10-20T185239-record-3684`. A row written *without* the rule (a raw pipe) used to make step 3 fail after steps 1-2 had landed. `finish-console` now pre-flights every flip before step 1, so the same row refuses with nothing written (step 3's Red flags).
 - Related: `docs/journeys/ratify-or-reverse-an-sdd-ruling-at-the-review-console-3401.md` (the ruling rows this protects) and `docs/journeys/close-a-run-whose-ledger-holds-an-incomplete-deferral-3327.md` (the same `parseLedger` reader).

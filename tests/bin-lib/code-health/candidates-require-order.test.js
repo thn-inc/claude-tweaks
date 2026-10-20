@@ -5,19 +5,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-// refs #2908 — candidates-security-hardening.js must require
-// ('./focus-generators') before require('./candidates-dead-code')
-// (.claude/skills/code-health-focus-vertical/SKILL.md pitfall 1). Reversing
-// the order emits Node's "inside circular dependency" warning on stderr
-// (listTrackedSourceFiles, isGlobDiscoveredTestFile, extractModuleExports,
-// escapeRegExp bound to undefined in that process) — #2628 fixed this exact
-// shape in candidates-app-store-readiness.js. The first two tests are scoped to
-// this one generator (candidates-experiment-cleanup.js had the same reversed
-// order and was fixed separately in #3330). The last two (refs #2869) cover
-// every module: the registry autoloads candidates-dead-code.js first, so
-// dead-code must publish its exports before it requires the registry back, or
-// all of its siblings load against an empty exports object. A new
-// candidates-*.js file is picked up by the discovery in the third test.
+// refs #2908, #2869, #3478 — the registry (focus-generators.js) autoloads every
+// vertical, so a vertical that imports a helper from a sibling vertical makes
+// the require graph a cycle that only survives through load order (the
+// "inside circular dependency" warning, helpers bound to undefined). #3478
+// removed the cause: the helpers shared across verticals live in the leaf
+// source-scan.js, and no vertical requires another. The first test is the
+// historical #2908 load check for candidates-security-hardening.js; the
+// all-modules test (refs #2869) covers every module, picking up a new
+// candidates-*.js file by discovery; the last test records every require
+// edge in a fresh process and pins the leaf property directly.
 
 const CODE_HEALTH_DIR = path.join(__dirname, '../../../plugin/bin/lib/code-health');
 const MODULE_PATH = path.join(CODE_HEALTH_DIR, 'candidates-security-hardening.js');
@@ -30,18 +27,6 @@ test('candidates-security-hardening.js loads in a fresh process with no circular
   assert.ok(
     !/inside circular dependency/i.test(result.stderr || ''),
     `candidates-security-hardening.js emitted a circular-dependency warning on load:\n${result.stderr}`
-  );
-});
-
-test('candidates-security-hardening.js requires ./focus-generators before ./candidates-dead-code', () => {
-  const source = fs.readFileSync(MODULE_PATH, 'utf8');
-  const focusGeneratorsIdx = source.indexOf("require('./focus-generators')");
-  const deadCodeIdx = source.indexOf("require('./candidates-dead-code')");
-  assert.ok(focusGeneratorsIdx !== -1, "expected a require('./focus-generators') line");
-  assert.ok(deadCodeIdx !== -1, "expected a require('./candidates-dead-code') line");
-  assert.ok(
-    focusGeneratorsIdx < deadCodeIdx,
-    "candidates-security-hardening.js must require './focus-generators' before './candidates-dead-code' — reverting this order regresses #2908 (verified by temporarily reverting it: the test above fails with the circular-dependency warning)"
   );
 });
 
@@ -80,4 +65,29 @@ test('dead-code stays registered under both load orders', () => {
 
   assert.equal(deadCodeFirst.stdout.trim(), 'function', `dead-code first: ${deadCodeFirst.stderr}`);
   assert.equal(registryOnly.stdout.trim(), 'function', `registry only: ${registryOnly.stderr}`);
+});
+
+test('AC1.1 AC2.1: candidates-dead-code.js loads in a fresh process with no circular-dependency warning and no vertical requires a sibling vertical', () => {
+  const deadCodePath = path.join(CODE_HEALTH_DIR, 'candidates-dead-code.js');
+  // Records every (requiring file basename, request) edge in a fresh process.
+  const script = [
+    "const Module = require('module'); const p = require('path');",
+    'const edges = []; const orig = Module.prototype.require;',
+    'Module.prototype.require = function (id) { edges.push([p.basename(this.filename || ""), id]); return orig.apply(this, arguments); };',
+    `require(${JSON.stringify(deadCodePath)});`,
+    'process.stdout.write(JSON.stringify(edges));',
+  ].join('\n');
+  const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+  assert.equal(result.status, 0, `load exited non-zero: ${result.stderr}`);
+  assert.doesNotMatch(result.stderr || '', /inside circular dependency/i);
+  const edges = JSON.parse(result.stdout);
+  const isVertical = (f) => /^candidates-.*\.js$/.test(f);
+  assert.ok(edges.some(([from, id]) => from === 'candidates-dead-code.js' && id === './source-scan'), 'dead-code must take its helpers from ./source-scan');
+  const loadedVerticals = [...new Set(edges.map(([from]) => from).filter(isVertical))].sort();
+  const discoveredVerticals = fs.readdirSync(CODE_HEALTH_DIR).filter(isVertical).sort();
+  assert.deepEqual(loadedVerticals, discoveredVerticals, 'every discovered candidates-*.js vertical must have been loaded in the recorded process (vacuity guard)');
+  const siblingEdges = edges.filter(([from, id]) => isVertical(from) && /^\.\/candidates-/.test(id));
+  assert.deepEqual(siblingEdges, [], 'a vertical requires a sibling vertical — move the shared helper into ./source-scan');
+  const leafEdges = edges.filter(([from, id]) => from === 'source-scan.js' && /^\.\/(focus-generators|candidates-)/.test(id));
+  assert.deepEqual(leafEdges, [], 'source-scan.js must stay a leaf: no registry or vertical requires');
 });

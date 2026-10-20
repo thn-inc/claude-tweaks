@@ -1,6 +1,6 @@
 # Step 9 — Establish GitHub Remote (detailed procedure)
 
-*Optional Enhancement step — see `SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
+*Optional Enhancement step — see `../SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
 
 Interactive-only. This step never runs under `auto`/non-interactive mode — creating a GitHub repository is a consequential, externally-visible, hard-to-reverse action, the same class of action `_shared/browser-detection.md` already bars from unattended auto-install. In `auto` mode, skip this step entirely; every downstream step falls through to its own existing gate-fails behavior unchanged.
 

@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/code-health/candidates-dead-code.js
   - plugin/bin/lib/code-health/focus-generators.js
+  - plugin/bin/lib/code-health/source-scan.js
   - plugin/skills/code-health/SKILL.md
   - plugin/skills/code-health/focus-mode.md
 ---
@@ -41,7 +42,7 @@ files:
 - **Action:** Up to the read budget (60 KB by default), candidate files are read in full and handed to the LLM judge against the existing `dead-code` criterion — the same judge every other code-health mode uses. **Check:** compare the candidate count from step 2 against the read-budget line in the output — if candidates exceed the budget, the report should say so explicitly rather than silently going quiet about the rest.
 - **Should feel:** Trustworthy — a candidate the judge rejects should file nothing.
 - **Should understand:** On a repo with many candidates, the budget is very likely to be exhausted well before every candidate is read — candidates sort alphabetically by file, so which ones get read (and which get silently deferred) depends on where they sort, not on how likely they are to be genuinely dead.
-- **Red flags:** On a large enough repo, genuine (non-noise) candidates can still exhaust the read budget before the judge reaches all of them — the deferred tail is alphabetical, not low-value. Test files matching this repo's own `*.test.js`/`*.spec.js` naming convention are excluded from orphan-file candidacy (they're loaded by `node --test`'s glob discovery, never `require`d/`import`ed by name — see `isGlobDiscoveredTestFile` in `candidates-dead-code.js`), which is what fixed the ~99%-test-file-noise problem originally observed here; a target repo using a different test-discovery convention could still see similar noise.
+- **Red flags:** On a large enough repo, genuine (non-noise) candidates can still exhaust the read budget before the judge reaches all of them — the deferred tail is alphabetical, not low-value. Test files matching this repo's own `*.test.js`/`*.spec.js` naming convention are excluded from orphan-file candidacy (they're loaded by `node --test`'s glob discovery, never `require`d/`import`ed by name — see `isGlobDiscoveredTestFile` in `source-scan.js`), which is what fixed the ~99%-test-file-noise problem originally observed here; a target repo using a different test-discovery convention could still see similar noise.
 
 ### 5. Findings are deduplicated and filed
 - **URL:** N/A
@@ -54,3 +55,4 @@ files:
 - Created during build of #271 (code-health focus mode: candidate-driven scoping with a dead-code candidate generator)
 - All 5 steps built in this session
 - Related specs: #265 (parent — self-maintaining fleet design), #260 (routine preamble regeneration, referenced by the routine-template `focus` field)
+- Updated during build of #3478: the shared discovery helpers (`isGlobDiscoveredTestFile`, `listTrackedFiles`) moved to the leaf `source-scan.js`; no step's behavior changed

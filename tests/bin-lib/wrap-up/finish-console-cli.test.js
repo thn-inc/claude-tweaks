@@ -11,6 +11,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { skipUnderRoot } = require('../../helpers/root');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-engine.js');
 const { runVerify } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'engine-verify'));
@@ -49,6 +50,16 @@ after(() => {
 
 function makeRunDir() {
   return fs.mkdtempSync(path.join(repoDir, 'finish-console-rundir-'));
+}
+
+// Contents of each artifact a finish-console call can write, null when absent.
+function snapshotArtifacts(runDir) {
+  const read = (p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null);
+  return {
+    expectations: read(path.join(runDir, 'verify-expectations.json')),
+    decisions: read(path.join(runDir, 'decisions.md')),
+    ledger: read(path.join(runDir, 'ledger.md')),
+  };
 }
 
 const LEDGER_SAMPLE = [
@@ -138,14 +149,15 @@ test('finish-console applies multiple ledger updates in one call', () => {
   assert.match(ledgerText, /\| 2 \| test \| Flaky selector \| accepted \| Flake confirmed environmental \|/);
 });
 
-test('finish-console with a ledger update but no ledger file anywhere exits 1 naming the failure, verify-expectations.json still written (step 1 already completed)', () => {
+test('finish-console with a ledger update but no ledger file anywhere exits 1 naming the failure and writes nothing', () => {
   const runDir = makeRunDir();
-  const payload = JSON.stringify({ ledger: [{ item: 1, status: 'fixed', resolution: 'x' }] });
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ memory: [{ file: 'memory/foo.md', indexFile: 'MEMORY.md' }], ledger: [{ item: 1, status: 'fixed', resolution: 'x' }] });
   const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
   assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /step 3 \(ledger flips\) failed/);
-  assert.match(r.stderr, /steps 1-2 already completed/);
-  assert.ok(fs.existsSync(path.join(runDir, 'verify-expectations.json')), 'step 1 should have already landed');
+  assert.match(r.stderr, /ledger pre-flight failed: no ledger found/);
+  assert.match(r.stderr, /nothing written/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'verify-expectations.json, decisions.md and the ledger must be byte-identical (absent stays absent)');
 });
 
 test('finish-console --ledger overrides resolution to an explicit path', () => {
@@ -159,15 +171,28 @@ test('finish-console --ledger overrides resolution to an explicit path', () => {
   assert.match(ledgerText, /\| 1 \| review \| Needs a memory capture \| fixed \| Fixed directly \|/);
 });
 
-test('finish-console rejects an unknown ledger item number, nothing in the ledger file changes', () => {
+test('finish-console rejects an unknown ledger item number, and writes none of its artifacts', () => {
   const runDir = makeRunDir();
   fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE);
-  const payload = JSON.stringify({ ledger: [{ item: 99, status: 'fixed', resolution: 'x' }] });
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ memory: [{ file: 'memory/foo.md', indexFile: 'MEMORY.md' }], ledger: [{ item: 99, status: 'fixed', resolution: 'x' }] });
   const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
   assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /no ledger row for item #99/);
-  const ledgerText = fs.readFileSync(path.join(runDir, 'ledger.md'), 'utf8');
-  assert.strictEqual(ledgerText, LEDGER_SAMPLE, 'ledger file must be byte-identical — nothing partially written');
+  assert.match(r.stderr, /ledger pre-flight failed at ledger\[0\]: no ledger row for item #99/);
+  assert.match(r.stderr, /nothing written/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'verify-expectations.json, decisions.md and the ledger must be byte-identical — nothing partially written');
+});
+
+test('finish-console refuses a ledger row with an unescaped raw pipe before writing any artifact', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE.replace('Needs a memory capture', 'match a|b'));
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ memory: [{ file: 'memory/foo.md', indexFile: 'MEMORY.md' }], ledger: [{ item: 1, status: 'accepted', resolution: 'ratified' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /ledger pre-flight failed at ledger\[0\]: .*5-column shape/);
+  assert.match(r.stderr, /nothing written/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'verify-expectations.json, decisions.md and the ledger must be byte-identical');
 });
 
 test('finish-console rejects an invalid ledger status (e.g. "open") at payload validation, before any write', () => {
@@ -279,4 +304,83 @@ test('AC1.1: finish-console --approve-all flips a row whose Item carries an esca
   assert.match(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), /Ledger item #1 -> accepted/, 'step 2');
   const row = fs.readFileSync(path.join(runDir, 'ledger.md'), 'utf8').split('\n').find((l) => l.startsWith('| 1 |'));
   assert.deepStrictEqual(ledgerRowCells(row), ['1', 'review', 'SDD ruling — match a|b', 'accepted', 'ratified — keep a|b'], 'step 3');
+});
+
+// ---- ledger pre-flight branches (#3684): each resolution/read refusal reports
+// its own detail and writes none of the three artifacts. ---------------------
+
+const PREFLIGHT_PAYLOAD = JSON.stringify({
+  memory: [{ file: 'memory/foo.md', indexFile: 'MEMORY.md' }],
+  ledger: [{ item: 1, status: 'fixed', resolution: 'x' }],
+});
+
+// A throwaway git repo on `branch` (no remote), so resolveLedgerPath's docs/plans
+// ownership read sees the same inputs a linked worktree would: `main` resolves a
+// merge base, any other name leaves it unavailable.
+function makeScratchRepo(t, branch) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finish-console-scratch-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  git(['init', '-q'], dir);
+  git(['checkout', '-q', '-b', branch], dir);
+  git(['config', 'user.email', 'test@example.com'], dir);
+  git(['config', 'user.name', 'Test'], dir);
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
+  git(['add', '.'], dir);
+  git(['commit', '-q', '-m', 'base'], dir);
+  fs.mkdirSync(path.join(dir, 'docs', 'plans'), { recursive: true });
+  return { dir, runDir: fs.mkdtempSync(path.join(dir, 'finish-console-rundir-')) };
+}
+
+function assertNothingWritten(runDir, r, detail) {
+  assert.strictEqual(r.status, 1, r.stderr);
+  assert.match(r.stderr, detail);
+  assert.match(r.stderr, /nothing written/);
+  assert.deepStrictEqual(
+    snapshotArtifacts(runDir),
+    { expectations: null, decisions: null, ledger: null },
+    'verify-expectations.json, decisions.md and the ledger must all stay absent',
+  );
+}
+
+test('finish-console refuses an ambiguous docs/plans ledger before writing any artifact', (t) => {
+  const { dir, runDir } = makeScratchRepo(t, 'main');
+  fs.writeFileSync(path.join(dir, 'docs', 'plans', 'a-ledger.md'), LEDGER_SAMPLE);
+  fs.writeFileSync(path.join(dir, 'docs', 'plans', 'b-ledger.md'), LEDGER_SAMPLE);
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { cwd: dir, input: PREFLIGHT_PAYLOAD });
+  assertNothingWritten(runDir, r, /ledger pre-flight failed: 2 candidate ledgers found, cannot pick one/);
+});
+
+test('finish-console refuses a docs/plans ledger it cannot attribute to this run before writing any artifact', (t) => {
+  const { dir, runDir } = makeScratchRepo(t, 'feature');
+  fs.writeFileSync(path.join(dir, 'docs', 'plans', 'a-ledger.md'), LEDGER_SAMPLE);
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { cwd: dir, input: PREFLIGHT_PAYLOAD });
+  assertNothingWritten(runDir, r, /ledger pre-flight failed: cannot attribute docs\/plans ledgers to this run/);
+});
+
+test('finish-console refuses a --ledger whose name is not a ledger file before writing any artifact', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(path.join(runDir, 'notes.md'), LEDGER_SAMPLE);
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all', '--ledger', path.join(runDir, 'notes.md')], { input: PREFLIGHT_PAYLOAD });
+  assertNothingWritten(runDir, r, /ledger pre-flight failed: --ledger .*notes\.md rejected \(not a ledger file name/);
+});
+
+test('finish-console refuses a --ledger outside the run directory and worktree before writing any artifact', (t) => {
+  const runDir = makeRunDir();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'finish-console-outside-'));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(outside, 'ledger.md'), LEDGER_SAMPLE);
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all', '--ledger', path.join(outside, 'ledger.md')], { input: PREFLIGHT_PAYLOAD });
+  assertNothingWritten(runDir, r, /ledger pre-flight failed: --ledger .*ledger\.md rejected \(outside the run directory and worktree\)/);
+});
+
+// chmod cannot make a file unreadable on win32 or for root, where the read would succeed.
+const unreadableSkip = process.platform === 'win32' ? { skip: 'chmod cannot make a file unreadable on win32' } : skipUnderRoot('root ignores file permissions');
+test('finish-console refuses a ledger it cannot read before writing any artifact', unreadableSkip, (t) => {
+  const runDir = makeRunDir();
+  const unreadable = path.join(runDir, 'locked-ledger.md');
+  fs.writeFileSync(unreadable, LEDGER_SAMPLE);
+  fs.chmodSync(unreadable, 0o000);
+  t.after(() => fs.chmodSync(unreadable, 0o644));
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all', '--ledger', unreadable], { input: PREFLIGHT_PAYLOAD });
+  assertNothingWritten(runDir, r, /ledger pre-flight failed: could not read .*locked-ledger\.md/);
 });

@@ -79,12 +79,22 @@ function assertLeaveOpenParagraph(text) {
   has('or `exit 2`/`exit 3` when the read printed nothing', 'AC3.1: an exit 2/3 logs the exit code as the outcome');
   // The log command.
   has('--step "Leave-open mergeability re-check"', 'log step name');
-  has('--text "mergeability: {outcome}"', 'log text shape');
-  has('Escape any `"`, `$`, backtick or `\\` in `{files}` and `{reason}` first', 'log text: git-supplied file names and errors are escaped before the double-quoted --text');
+  has('mergeability: {outcome}', 'log text shape');
+  has('--text-file', 'log text: git-supplied text goes through --text-file');
+  has("`_shared/auto-decision-log.md`'s Text from git or a user", 'cites the canonical procedure');
+  assert.doesNotMatch(p, /escape any/i, 'log text: no hand-escape instruction remains');
 }
 
 test('AC1.1/AC2.1/AC3.1: execution-and-verification.md carries the leave-open mergeability re-check', () => {
   assertLeaveOpenParagraph(EXEC);
+});
+
+test('go-red control: swapping the log call back to a double-quoted --text makes the shared assertion throw', () => {
+  const start = EXEC.indexOf(HEADING);
+  const verify = EXEC.indexOf('### Verify execution');
+  const paragraph = EXEC.slice(start, verify);
+  const mutated = assertMutated(EXEC, EXEC.slice(0, start) + paragraph.split('--text-file').join('--text') + EXEC.slice(verify));
+  assert.throws(() => assertLeaveOpenParagraph(mutated), /--text-file/);
 });
 
 test('go-red control: dropping the files-before-abort listing makes the shared assertion throw', () => {

@@ -7,6 +7,7 @@ Common Step 4.5 of `/claude-tweaks:build`. Compare what was actually built to wh
 1. Read the spec (or design doc) and identify its stated architectural approach — the "how" decisions: patterns chosen, boundaries defined, data flow described
 2. Compare against the actual implementation — scan the files created/modified for structural alignment
 3. Note any deviations
+4. Exclude any departure already staged as `build-deviation-{N}` by a contract-beats-spec ruling (#3557, `dispatch.md`'s SDD invocation) — it is not listed in the batch table or staged again here, in any mode.
 
 ## Classification
 
