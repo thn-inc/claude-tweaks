@@ -1,8 +1,0 @@
-# Open Items — pr-checklist.js: pin four untested phase-checklist transform cases
-
-| # | Phase | Item | Status | Resolution |
-|---|-------|------|--------|------------|
-| 1 | build | SDD ruling — Task 1's tests pass against unmodified pr-checklist.js; red is shown by per-test temporary mutations (restored byte-for-byte), not a red-before-green run: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
-| 2 | build | duplicate-row test (a) fixes the order checked-then-unchecked only; a reversed order or two unchecked duplicates would also catch a first-match-only regression (coverage beyond spec wording) | deferred | Origin: SDD Task 1 review (minor). Files: tests/bin-lib/flow/pr-checklist.test.js. Trigger: revisit if setPhaseRow's duplicate-row handling changes (e.g. first-match-only edits). |
-| 3 | build | implementer mutation for (a) (matched > edited) exercises the already-checked return rather than duplicate handling; reviewer confirmed a duplicate-sensitive mutation (matched === 0 guard) also goes red, so discrimination holds | deferred | Origin: SDD Task 1 review (minor). Files: tests/bin-lib/flow/pr-checklist.test.js, plugin/bin/lib/flow/pr-checklist.js. Trigger: revisit only if test (a) is rewritten; the discrimination claim is already proven by two independent mutations. |
-| 4 | build | test (c) is named "falls back to the plain-text span" but asserts only the row flip; equivalent here since both spans wrap the same rows, and the no-fallback mutation yields no-phases-span | deferred | Origin: SDD Task 1 review (minor). Files: tests/bin-lib/flow/pr-checklist.test.js. Trigger: revisit if the two marker spans can ever wrap different rows. |
