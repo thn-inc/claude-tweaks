@@ -1,6 +1,6 @@
 // bin/lib/hooks/harness-refusal.js — the text fragments of Claude Code's own
 // worktree-isolation Bash refusal ("This session is isolated in the worktree …
-// Refusing to run it — no flags"), measured 2026-10-16 against Claude Code 2.1.x
+// Refusing to run it — …"), measured 2026-10-16 against Claude Code 2.1.x
 // (#2783, #3304). This is the one place a wording update lands: both
 // post-tool-use-failure.js (the regex) and bash-prefilter.js (the signature)
 // derive from it. tools/upstream-drift/manifest.yml's `claude-code` entry asserts

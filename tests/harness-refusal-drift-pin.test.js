@@ -30,15 +30,25 @@ function assertFragmentsPinned(entry, fragments) {
   }
 }
 
-// Stand-in for the compiled binary: non-UTF-8 bytes plus the excerpt of 2.1.302's
-// embedded source that carries the refusal. The em dash is the six-character
-// backslash-u2014 sequence the minified binary holds, not the character itself.
-function binaryStandIn(refusalSignature) {
-  // Plain strings, not template literals: the excerpt's own ${...} must stay literal.
+// The em dash as the minified binary holds it: the six-character backslash-u2014
+// sequence, not the character itself.
+const DASH = '\\' + 'u2014';
+
+// Stand-in for the compiled binary: non-UTF-8 bytes plus the excerpts of 2.1.302's
+// embedded source that matter: the git-operations refusal template, one cwd-escape
+// refusal template, and an unrelated message that carries the bare fragments
+// elsewhere (which is why the fragment assertions alone cannot catch a targeted
+// rewording). Plain strings, not template literals: the ${...} must stay literal.
+function binaryStandIn({ gitVerb = 'Refusing', cwdVerb = 'Refusing' } = {}) {
   const excerpt = 'function NI(e){return x?{noun:"This session",possessive:"a worktree-isolated session\'s"}:{noun:"This agent",possessive:"a worktree-isolated agent\'s"}}'
     + '\n'
     + 'b=(Ie,De)=>`${h} is isolated in the worktree ${s}, but this command ${Ie}. '
-    + refusalSignature + ' \\u2014 ${y} git operations must target its own worktree. ${De}`';
+    + gitVerb + ' to run it ' + DASH + ' ${y} git operations must target its own worktree. ${De}`'
+    + '\n'
+    + 'c=`${h} is isolated in the worktree ${b}, but this command\'s working directory (${d}) is in a different worktree (${w}). '
+    + cwdVerb + ' to run it there ' + DASH + ' ${h} commands must run inside its own worktree. ${z}`'
+    + '\n'
+    + 'u=`This agent is isolated in the worktree ${x}, but its isolation context was lost. Refusing to run it.`';
   return Buffer.concat([Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0x80, 0xff, 0x00, 0xc3, 0x28]), Buffer.from(excerpt, 'utf8')]);
 }
 
@@ -57,25 +67,42 @@ test('AC1.1: the claude-code entry asserts every refusal fragment harness-refusa
 });
 
 test('AC1.1 go-red: a fragment absent from the manifest fails the pin', () => {
-  assert.throws(() => assertFragmentsPinned(cc, [...REFUSAL_FRAGMENTS, 'Declining to run it']));
+  assert.throws(
+    () => assertFragmentsPinned(cc, [...REFUSAL_FRAGMENTS, 'Declining to run it']),
+    { name: 'AssertionError' },
+  );
 });
 
-test('AC1.1: a reworded refusal in the installed artifact is reported as assertion drift', () => {
-  const intact = writeTemp(binaryStandIn(REFUSAL_SIGNATURE));
-  assert.strictEqual(checkAssertions(cc, { root: intact }).status, 'ok');
+// Five assertions, by position: three fragments, then the two template anchors.
+const GIT_ANCHOR = 3;
+const CWD_ANCHOR = 4;
 
-  const reworded = writeTemp(binaryStandIn('Declining to run it'));
-  const drifted = checkAssertions(cc, { root: reworded });
+// Statuses of every assertion except the one at `index`.
+function othersStatuses(result, index) {
+  return result.results.filter((_, i) => i !== index).map((r) => r.status);
+}
+
+test('AC1.1: the intact stand-in satisfies all five assertions', () => {
+  const result = checkAssertions(cc, { root: writeTemp(binaryStandIn()) });
+  assert.strictEqual(result.status, 'ok');
+  assert.deepStrictEqual(result.results.map((r) => r.status), ['ok', 'ok', 'ok', 'ok', 'ok']);
+});
+
+test('AC1.1: rewording only the git-operations template is reported as drift on its anchor', () => {
+  const drifted = checkAssertions(cc, { root: writeTemp(binaryStandIn({ gitVerb: 'Declining' })) });
   assert.strictEqual(drifted.status, 'drift');
-  // Results carry the assertion's claims and a detail naming the missing literal.
-  const signature = drifted.results.find((r) => r.detail.includes('"Refusing to run it"'));
-  assert.ok(signature, 'no result for the must-match "Refusing to run it" assertion');
-  assert.strictEqual(signature.status, 'unmatched');
-  assert.deepStrictEqual(
-    drifted.results.filter((r) => r !== signature).map((r) => r.status),
-    ['ok', 'ok'],
-    'only the reworded fragment may drift',
-  );
+  assert.match(drifted.results[GIT_ANCHOR].claims, /git-operations refusal/);
+  assert.strictEqual(drifted.results[GIT_ANCHOR].status, 'unmatched');
+  // The unrelated message still carries the bare fragments: only the anchor can see this.
+  assert.deepStrictEqual(othersStatuses(drifted, GIT_ANCHOR), ['ok', 'ok', 'ok', 'ok']);
+});
+
+test('AC1.1: rewording only the cwd template is reported as drift on its anchor', () => {
+  const drifted = checkAssertions(cc, { root: writeTemp(binaryStandIn({ cwdVerb: 'Declining' })) });
+  assert.strictEqual(drifted.status, 'drift');
+  assert.match(drifted.results[CWD_ANCHOR].claims, /cwd-escape refusals/);
+  assert.strictEqual(drifted.results[CWD_ANCHOR].status, 'unmatched');
+  assert.deepStrictEqual(othersStatuses(drifted, CWD_ANCHOR), ['ok', 'ok', 'ok', 'ok']);
 });
 
 test('AC1.1: no installed Claude Code means skipped assertions, never drift', () => {
