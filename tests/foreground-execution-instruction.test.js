@@ -162,10 +162,13 @@ const foregroundNote = (text) => text.split('\n').find((line) => line.startsWith
 const LENS_NOTE = [
   [/lens dispatches?/i, "the reviewer's own lens dispatches"],
   [/subagent-dispatch-core\.md/, 'the core section it follows, cited by file'],
-  [/partner/i, 'the partner-died single-read downgrade it takes'],
+  [/unavailable/i, 'the unavailable-agents case routes to the single-read treatment'],
+  [/time out at that section's bound/, 'the timed-out-at-the-keep-alive-bound case routes to the single-read treatment'],
+  [/partner/i, 'the lost-partner case routes to the partner-died single-read treatment'],
+  [/`unconfirmed`, logged/, 'the routed findings are unconfirmed and logged'],
 ];
 const lensNoteMissing = (note) => LENS_NOTE.filter(([pattern]) => !pattern.test(note)).map(([, fact]) => fact);
-const LENS_NOTE_SENTENCE = /When the reviewer is itself a dispatched agent,.*?downgrade below\./;
+const LENS_NOTE_SENTENCE = /When the reviewer is itself a dispatched agent,.*?\(findings `unconfirmed`, logged\)\./;
 
 test('step3-lens-dispatch.md has no dispatched-reviewer carve-out (#3078)', () => {
   const step3 = fs.readFileSync(STEP3, 'utf8');
