@@ -137,11 +137,11 @@ test('AC1.1/AC3.1 twin: the reader selector picks both writer shapes and nothing
 
 test('twin go-red: a reworded marker, prefix, or heading in the template stops the selector matching the writers', () => {
   const { fixture, writers } = twinFixture();
-  const { marker } = parseSelector(section);
-  assert.deepStrictEqual(selectRows(fixture, parseSelector(section)), writers, 'baseline selects both writers');
+  const selector = parseSelector(section);
+  assert.deepStrictEqual(selectRows(fixture, selector), writers, 'baseline selects both writers');
 
   const mutations = {
-    marker: section.replace(marker, 'surfaced for review'),
+    marker: section.replace(selector.marker, 'surfaced for review'),
     prefix: section.replace('`- SKIP` and carries', '`- AUTO` and carries'),
     heading: section.replace('`## /build` heading', '`## /builder` heading'),
   };
