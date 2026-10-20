@@ -103,3 +103,10 @@ test('AC3.1: defaultRunner spawns posixShell(platform) through the injected exec
     assert.deepStrictEqual(calls, [[shell, ['-c', 'echo hi'], { cwd: '/r', stdio: 'ignore', timeout: 7, windowsHide: true }]]);
   }
 });
+
+test('defaultRunner returns a thrown numeric status and re-throws a spawn error with no status (injected exec)', () => {
+  const exitExec = () => { throw Object.assign(new Error('exit'), { status: 3 }); };
+  assert.strictEqual(defaultRunner('cmd', { cwd: '/r', timeoutMs: 7, platform: 'linux', exec: exitExec }), 3);
+  const spawnExec = () => { throw Object.assign(new Error('spawn sh ENOENT'), { code: 'ENOENT' }); };
+  assert.throws(() => defaultRunner('cmd', { cwd: '/r', timeoutMs: 7, platform: 'win32', exec: spawnExec }), { code: 'ENOENT' });
+});
