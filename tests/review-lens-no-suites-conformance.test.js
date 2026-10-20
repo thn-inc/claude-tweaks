@@ -117,7 +117,9 @@ test('the pre-dispatch listing also snapshots local TCP listeners next to pre-di
   const d = read('review', 'step3-lens-dispatch.md');
   const para = between(d, '**Pre-dispatch listing (scratch-sweep baseline).**', '**`Path:Line` must be file-native');
   assert.match(para, /pre-dispatch-status\.txt/);
-  assert.match(para, /lsof \+c 0 -nP -iTCP -sTCP:LISTEN > \{ctx-dir\}\/pre-dispatch-listeners\.txt/);
+  assert.match(para, /lsof \+c 0 -nP -iTCP -sTCP:LISTEN/);
+  assert.match(para, /pre-dispatch-listeners\.txt/);
+  assert.doesNotMatch(para, />\s*\{ctx-dir\}/);
   assert.match(para, /lsof.*unavailable[\s\S]*SKIP/);
 });
 
