@@ -294,10 +294,9 @@ function isExemptAgentType(agentType) {
 // task-notification (`origin.kind: 'task-notification'`) or, Claude Code
 // 2.1.283+, a `queued_command` attachment whose prompt is a <task-notification>
 // (#3589; see completionCarrierBody), a sibling dispatch's completion included?
-// A request echo (`api-request-blob`) is deliberately NOT a signal: it repeats
-// notifications already delivered through their own carrier. The shapes were
-// confirmed against this session's own live transcript (transcript-payload-verification),
-// never inferred from a fixture. Defensive on shape — an unexpected/missing
+// A request echo is deliberately NOT a signal (header comment, source 4). The
+// shapes were confirmed against this session's own live transcript
+// (transcript-payload-verification), never inferred from a fixture. Defensive on shape — an unexpected/missing
 // field reads as "not a signal", never throws.
 function isAsyncWaitSignal(entry) {
   if (!entry || typeof entry !== 'object') return false;
