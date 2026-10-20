@@ -1611,6 +1611,23 @@ test('#3712: malformed AskUserQuestion input allows', () => {
   }
 });
 
+test('#3712: a near-miss console header allows — the header match is exact', () => {
+  const dir = consoleRun('unattended');
+  for (const header of ['Review console', 'Review Console ', ' Review Console', 'review console']) {
+    assert.deepStrictEqual(pre.run(consoleCtx(dir, [{ header, question: 'q', options: [] }])), {}, JSON.stringify(header));
+  }
+  // Control: the same run denies the exact header, so the allows above come from the match alone.
+  assert.strictEqual(pre.run(consoleCtx(dir, CONSOLE_Q)).json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+test('#3712: a malformed autonomy value in config.yml resolves supervised and allows', () => {
+  for (const autonomy of ['bogus', 'Unattended']) {
+    const dir = consoleRun(autonomy);
+    assert.strictEqual(pre.readConsoleCeiling(dir, repoOfRun(dir)), 'supervised', autonomy);
+    assert.deepStrictEqual(pre.run(consoleCtx(dir, CONSOLE_Q)), {}, autonomy);
+  }
+});
+
 test('#3712: REVIEW_CONSOLE_HEADER is exported as the pinned string', () => {
   assert.strictEqual(pre.REVIEW_CONSOLE_HEADER, 'Review Console');
 });

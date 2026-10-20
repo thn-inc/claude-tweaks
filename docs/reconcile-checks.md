@@ -246,18 +246,26 @@ main loop, landed via #1962/#2226/#2228/#2231):
   (`parseStuckPaths`/`renderStuckPathsBlock`) edited in place via `gh issue edit --body` on each new
   path (plus a comment, so both the record body and its thread reflect the addition) — never a
   second `issue create`. The body's fixed text names every skip reason that feeds the record
-  (`no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending` (#3297), and #3543's
+  (`no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending` (#3297), #3543's
   `pr-not-found` — a stamped `run-state.json` `pr.number` GitHub's structured GraphQL error confirms
-  names no PR, whose remedy is correcting or clearing that stamp); each path's own reason is its
+  names no PR, whose remedy is correcting or clearing that stamp), and #3503's `merged-partial` (a run
+  whose merged PR left records unclosed, carried as `unclosed` on the skip). `no-repo-slug` is also in
+  `STRUCTURALLY_STUCK_REASONS` but is not listed here: it can never be filed into this record, because
+  with no repo slug `findOrCreateIssue` returns `escalation-failed`, so it shows only in the residue
+  summary's stuck count. Each path's own reason is its
   residue entry's `lastError` (`stuck at {reason}`), not rendered per path. The body also carries
-  one fixed remedy line for `console-never-rendered-staged-pending` — a merged run that never
+  a fixed remedy line for `console-never-rendered-staged-pending` — a merged run that never
   rendered a Review Console (the fast-lane auto-merge short-circuit writes no `console.json`) while
   its `staged/` or any `spec-*/staged/` still holds pending or unreadable items: apply or delete
   those staged files, or write a resolved `console.json`, and the next reconcile archives the dir
   and drops it from the record. The clean-status sweep (`iterCleanRunDirs`) feeds this reason too
   since #3668, but only for a closed run whose `decisions.md` carries the auto-merge
   short-circuit's own log line (`consoleReplacedByAutoMergeShortCircuit`) — the same subset
-  `hooks.js archive-run` refuses; every other clean-loop skip stays untracked. `cache.js`'s per-path consecutive-failure counter (`trackResidue`,
+  `hooks.js archive-run` refuses; every other clean-loop skip stays untracked. The body's
+  `merged-partial` remedy line reads: For a `merged-partial` directory, the records the run's merged PR
+  was meant to close (the closing-keyword links on that PR) are still open: ship them in a later PR, or
+  close/release them if they were abandoned; the next reconcile then archives the dir and drops it from
+  this record. `cache.js`'s per-path consecutive-failure counter (`trackResidue`,
   `RESIDUE_ESCALATE_THRESHOLD`) is unchanged and reason-agnostic already; only the filing/resolving
   side consolidates. Resolving one path (`resolveResidue` under `reason: 'structurally-stuck'`)
   removes just that path from the shared record's body — the record only actually closes once every
