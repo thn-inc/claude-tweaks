@@ -11,6 +11,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { skipUnderRoot } = require('../../helpers/root');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-engine.js');
 const { runVerify } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'engine-verify'));
@@ -373,7 +374,8 @@ test('finish-console refuses a --ledger outside the run directory and worktree b
 });
 
 // chmod cannot make a file unreadable on win32 or for root, where the read would succeed.
-test('finish-console refuses a ledger it cannot read before writing any artifact', { skip: process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0) }, (t) => {
+const unreadableSkip = process.platform === 'win32' ? { skip: 'chmod cannot make a file unreadable on win32' } : skipUnderRoot('root ignores file permissions');
+test('finish-console refuses a ledger it cannot read before writing any artifact', unreadableSkip, (t) => {
   const runDir = makeRunDir();
   const unreadable = path.join(runDir, 'locked-ledger.md');
   fs.writeFileSync(unreadable, LEDGER_SAMPLE);
