@@ -155,7 +155,7 @@ const ALLOWLIST = {
   'resolve-profile.js': { existsSync: 2, reason: 'optional inputs (policy.yml, frontier-tally.log): absent means defaults / zero, present is parsed in try/catch or read for a line count.' },
   'skill-load-report.js': { realpathSync: 2, reason: 'realpaths the root and each file read, then isPathContained() and statSync().isFile() must both hold before the read, inside try/catch.' },
   'sweep-stray-run-dirs.js': { existsSync: 3, reason: 'archival fold: events.jsonl present in the stray dir (89), already present at the archive destination (94) so the content is appended not clobbered, and a stray dir already handled by an earlier pass (132); all three are pure presence questions.' },
-  'verify.js': { realpathSync: 1, reason: 'realpathOrNull canonicalizes both --git-dir values with the same JS realpath before the foreign-git-dir comparison; null (unresolvable) is treated as foreign, never as a match.' },
+  'verify.js': { realpathSync: 1, reason: 'realpathOrNull canonicalizes both sides of each foreign-git-dir comparison with the same JS realpath — --stamp-status\'s --git-dir against this checkout\'s, and a check run\'s --cwd git dir against this checkout\'s (#3799); null (unresolvable) is treated as foreign, never as a match.' },
   'wrap-up-engine.js': { existsSync: 1, reason: 'requireEngineState: presence of engine-state.json in the run dir, else usage error "run plan first"; a wrong-type occupant fails the read that follows.' },
 };
 
