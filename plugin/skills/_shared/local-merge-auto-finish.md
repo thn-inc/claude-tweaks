@@ -133,9 +133,11 @@ it literally into the next call; never carry it in a shell variable across calls
    on stdout, or a ref it cannot merge): nothing has been merged and `close-run` has not run. Log it
    via the Park branch's `log-decision.js` call, with `{conflict|failed verification}` replaced by
    `"predicted conflict: {first CONFLICT line}"`, and report `pending-review` — never attempt
-   resolution. Exit 1 means a predicted conflict; any other non-zero exit means git could not run
-   the pre-check (e.g. git older than 2.38 lacks `--write-tree`) — log that as the reason, not
-   "predicted conflict".
+   resolution. The `|| exit 1` collapses every `git merge-tree` failure to exit 1, so tell them apart
+   by its output, not the fence's exit code: a `CONFLICT` line on stdout is a predicted conflict; an
+   error on stderr with no `CONFLICT` line means git could not run the pre-check (e.g. git older
+   than 2.38 lacks `--write-tree`, or an unknown ref) — log `"pre-check failed: {first stderr line}"`
+   as the reason instead, not "predicted conflict".
 
 4. **Clear this run's worktree assignment before merging** — only now, once the pre-merge checks
    passed. `close-run` first, so the merge landing in the main checkout isn't denied as a

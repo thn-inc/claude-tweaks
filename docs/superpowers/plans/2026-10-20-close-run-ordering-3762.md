@@ -11,7 +11,7 @@
 4. The merge call: branch guard again as the race backstop, then `git merge --no-ff`.
 5. Push.
 
-A failure after `close-run` runs `hooks.js record-worktree --run … {worktree-path}`. That re-stamp already writes `{worktree, status: 'active', sessionId}` and so fully reverses `close-run` (`plugin/bin/hooks.js:698`, `plugin/bin/lib/hooks/close-run-state.js`), which is why no `reopen-run` verb is added. One new conformance suite pins the ordering and runs each site's pre-merge-checks fence and re-protect fence against fixture repos.
+A failure after `close-run` runs `hooks.js record-worktree --run … {worktree-path}`. That re-stamp already writes `{worktree, status: 'active', sessionId}` and so restores the worktree assignment and `active` status `close-run` cleared (`plugin/bin/hooks.js:698`, `plugin/bin/lib/hooks/close-run-state.js`), which is why no `reopen-run` verb is added. One new conformance suite pins the ordering and runs each site's pre-merge-checks fence and re-protect fence against fixture repos.
 
 **Tech Stack:** Markdown skill prose; `node --test`; bash fences executed through `child_process.execFileSync('bash', ['-c', …])`.
 
