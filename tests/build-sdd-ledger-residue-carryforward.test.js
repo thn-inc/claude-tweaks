@@ -129,6 +129,7 @@ test('review #3401: the carry-forward names the stage-item.js failure branch, th
   assert.match(DISPATCH, /takes the staged extension from the source; the file opens with a header block `Title:`/);
 });
 
+const { DECLINED_NOTE, REVERSED_LABEL, REVERSE_FAILED_NOTE } = require('../plugin/bin/lib/reconcile/console-execute');
 const CONSOLE_ON_PR = read('plugin', 'skills', '_shared', 'console-on-pr.md');
 const CONSOLE_EXECUTION = read('plugin', 'skills', '_shared', 'console-execution.md');
 
@@ -148,9 +149,28 @@ test('AC1.1 #3513: console-execution.md — an unticked or --decline sdd-ruling-
   assert.match(CONSOLE_EXECUTION, ws('Ticked, it is ratify (ledger row → `accepted`, per the same bullet)'));
   assert.match(CONSOLE_EXECUTION, ws('(staged file `staged/sdd-ruling-{N}.md`, or `spec-{N}/staged/sdd-ruling-{N}.md` on a multi-spec bundle, #3401)'));
   assert.match(CONSOLE_EXECUTION, ws('`REFUSED` when `wrap-up/refused-proposals.md` refuses it, else `SKIP`'));
-  assert.match(CONSOLE_EXECUTION, ws('a ruling the chat answer ratifies must be passed in `--approve` (an id in neither list is recorded `declined`)'));
+  assert.match(CONSOLE_EXECUTION, ws('a ruling the chat answer ratifies must be passed in `--approve` (an unticked ruling id in neither list is recorded `reversed`'));
   assert.match(CONSOLE_EXECUTION, ws('`reverse {#}` to `--decline`'));
-  assert.match(CONSOLE_EXECUTION, ws('`AUTO` line naming `reversed → #{new record}` (or the logged refusal cause) is the authoritative record'));
+  assert.match(CONSOLE_EXECUTION, ws('`AUTO` line naming `reversed → #{new record}` (or the logged refusal cause) stays the record of which reversal record was filed'));
+});
+
+test('AC3.1 #3636: console-execution.md\'s accelerator note labels a reversed ruling with console-execute.js\'s own literals', () => {
+  assert.match(CONSOLE_EXECUTION, ws(`records a flagged ruling item (\`console.json\`'s \`isRulingRow: true\`, \`_shared/console-on-pr.md\`) as \`${REVERSED_LABEL}\``));
+  assert.match(CONSOLE_EXECUTION, ws(`every other \`--decline\` id as \`${DECLINED_NOTE}\``));
+  assert.doesNotMatch(CONSOLE_EXECUTION, /since `console.json` items carry no staged path/);
+  // Regression guard only: the positive pins above plus the doesNotMatch are what discriminate.
+  const offending = CONSOLE_EXECUTION.split('\n').filter((l) => /no reason given/.test(l) && /ruling/i.test(l));
+  assert.deepEqual(offending, [], 'the physical line naming the declined label must not describe a ruling');
+});
+
+test('#3636: console-execution.md\'s accelerator routes a refused or uncreated reverse through --reverse-failed, never to reversed', () => {
+  assert.match(CONSOLE_EXECUTION, ws(`When the reverse was refused or never created, also pass that ruling's id in \`--reverse-failed\`: the reply then labels it \`${REVERSE_FAILED_NOTE}\` and Resolve stays unticked. Never let such a ruling default to \`${REVERSED_LABEL}\``));
+  assert.match(CONSOLE_EXECUTION, ws('(executed / declined / reversed / reverse-failed / unexecutable / unexecutable-stale)'));
+});
+
+test('#3636: console-on-pr.md documents the isRulingRow flag on sdd-ruling-* items', () => {
+  assert.match(CONSOLE_ON_PR, ws('carries `"isRulingRow": true` on its `console.json` item object'));
+  assert.match(CONSOLE_ON_PR, ws('omitted on every other item, never `false`'));
 });
 
 const MULTISPEC_CONSOLE = read('plugin', 'skills', 'flow', 'multispec-review-console.md');

@@ -12,7 +12,7 @@ const USAGE =
   + '[--baseline <ref> --baseline-cmd <name>=<template-with-{file}> ... [--no-baseline-fixed]] '
   + '[--scope <path> [--base <ref>] [--integration-branch <name>]] '
   + '| verify.js --stamp-status [--git-dir <dir>] '
-  + '| verify.js --changed-files [--base <ref>] [--integration-branch <name>]\n'
+  + '| verify.js --changed-files [--base <ref>] [--integration-branch <name>] [--ignore-stamp]\n'
   // #2341: exactly one --cmd name ("types", alongside "lint") gets the
   // fail-fast-before-tests tier — a monorepo with N independent typecheck
   // commands should either combine them into one compound
@@ -91,6 +91,7 @@ function tokenize(argv) {
   let base = null;
   let integrationBranch = null;
   let changedFiles = false;
+  let ignoreStamp = false;
   let run = null;
   let cwd = null;
   let baseline = null;
@@ -101,6 +102,7 @@ function tokenize(argv) {
     if (flag === '--no-stamp') { noStamp = true; continue; }
     if (flag === '--no-baseline-fixed') { noBaselineFixed = true; continue; }
     if (flag === '--changed-files') { changedFiles = true; continue; }
+    if (flag === '--ignore-stamp') { ignoreStamp = true; continue; }
     if (VALUE_FLAGS.has(flag)) {
       const value = argv[i + 1];
       i++;
@@ -146,7 +148,7 @@ function tokenize(argv) {
   }
   return {
     cmds, cmdEnvs, cmdTimeouts, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch,
-    changedFiles, run, cwd, baseline, baselineCmds, noBaselineFixed,
+    changedFiles, ignoreStamp, run, cwd, baseline, baselineCmds, noBaselineFixed,
   };
 }
 
@@ -203,12 +205,12 @@ function attachCmdEnvAndTimeout(raw) {
 // never carries it as a top-level key. cmdEnvs is the one exception (#3022).
 function toResult(raw) {
   const {
-    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run,
-    cwd, baseline, baselineCmds, cmdEnvs, noBaselineFixed,
+    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles,
+    ignoreStamp, run, cwd, baseline, baselineCmds, cmdEnvs, noBaselineFixed,
   } = raw;
   return {
-    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles, run,
-    cwd, baseline, baselineCmds, noBaselineFixed,
+    cmds, json, logDir, countStamp, gitDir, stampStatus, noStamp, scope, base, integrationBranch, changedFiles,
+    ignoreStamp, run, cwd, baseline, baselineCmds, noBaselineFixed,
     // #3022: every --cmd-env entry, matched or not — verify.js's own
     // --scope block uses the unmatched ones to bind env vars onto a
     // declared-only suite (no --cmd) once it has read the declaration.
@@ -221,6 +223,8 @@ function toResult(raw) {
 const BASELINE_MODE_CONFLICT = '--baseline/--baseline-cmd apply to a check run — not to --stamp-status or --changed-files';
 const RUN_MODE_CONFLICT = '--run applies to a check run — not to --stamp-status or --changed-files';
 const CWD_MODE_CONFLICT = '--cwd applies to a check run — not to --stamp-status or --changed-files';
+// #3048: --ignore-stamp skips the stamp-driven narrowing, which only --changed-files has.
+const IGNORE_STAMP_MODE_CONFLICT = '--ignore-stamp applies only to --changed-files';
 
 function hasBaselineFlags(raw) {
   return raw.baseline !== null || raw.baselineCmds.length > 0 || raw.noBaselineFixed;
@@ -242,6 +246,7 @@ function validateStampStatus(raw) {
   }
   if (raw.run !== null) throw new UsageError(RUN_MODE_CONFLICT);
   if (raw.cwd !== null) throw new UsageError(CWD_MODE_CONFLICT);
+  if (raw.ignoreStamp) throw new UsageError(IGNORE_STAMP_MODE_CONFLICT);
   return toResult(raw);
 }
 
@@ -274,6 +279,8 @@ function rejectBothReadOnlyModes(raw) {
 // --baseline/--scope — none of which mean anything in the two read-only
 // modes above, so they're validated only here.
 function validateCheckRun(raw) {
+  // #3048: first, so a no---cmd invocation carrying the flag reports this, not the --cmd floor.
+  if (raw.ignoreStamp) throw new UsageError(IGNORE_STAMP_MODE_CONFLICT);
   // #3022: a --scope declaration can supply every check's command itself
   // (map-form checks.tests, plus checks.types/checks.lint) — verify.js's own
   // H2 check, once the declaration is read, is what actually enforces that

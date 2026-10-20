@@ -294,7 +294,7 @@ omitted when its own condition doesn't hold; the ranked table follows:
 | #{n} | needs:decision | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} — proposed: "{Proposed line, verbatim}" |
 | #{n} | solution:unjustified | {createdAt, relative} | run /claude-tweaks:challenge #{n} for the evidence-or-accept-risk verdict on the flag |
 | #{n} | shaped:headless (no grant) | {createdAt, relative} | run /claude-tweaks:backlog refine to grant via the sweep's Grant lane (spec was headlessly shaped — no human has reviewed it) |
-| #{n} | bot:blocked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to re-authorize after the failure |
+| #{n} | bot:blocked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to re-authorize after the failure — or, for a plan-review question awaiting an answer (`<!-- plan-review-question -->` comment), answer it on the record body first |
 | #{n} | bot:parked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to review the parked PR — grants are intact; resume once its checks are green |
 | #{n} | needs:definition + solution:unjustified | {createdAt, relative} | run /claude-tweaks:specify #{n} to route through brainstorming; run /claude-tweaks:challenge #{n} for the evidence-or-accept-risk verdict on the flag |
 

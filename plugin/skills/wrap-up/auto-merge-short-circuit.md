@@ -168,20 +168,32 @@ for this step; it only ever deletes, per item 2's own "Delete via `/ledger`'s de
 text — it does not resolve or edit rows. Log to `decisions.md`:
 `AUTO {time} — Fast-lane auto-merge: deleted resolved ledger {path} for #{n} before merge. Reversibility: high (git revert restores the file).` — or, when no file existed, omit this line entirely rather than logging a no-op.
 
-**Dispatch-claim branch — check this before merging anything.** Read the claim blob at
-`claims/issue-${ISSUE}.json` on `claims-registry` (per `_shared/issue-claims.md`'s "The lock")
-and check whether its `runId` equals `basename($PIPELINE_RUN_DIR)`. A match means this record is
-claimed under the very run this session is executing — either `/claude-tweaks:dispatch` Step 4
-minting `PIPELINE_RUN_DIR` before its Task calls, or a human resuming that same claimed run — this
-call is (or stands in for) one of dispatch's own Task() calls: cwd-pinned to the worktree it
-inherited, with no path to the main checkout. This is what routes a dispatched **singleton**'s
-merge decision through this file's own short-circuit rather than `settle-and-merge.md`'s
-group-scoped Auto-merge gate. No claim, or a claim held under a different run id, means this is a
-genuine top-level human-run session — fall through to the interactive path below.
+**Dispatch-call branch — check this before merging anything.** The question is whether *this
+call* is one of dispatch's own Task() calls: cwd-pinned to the worktree it inherited, with no path
+to the main checkout. Ask `bin/lib/dispatch/task-call.js`:
+
+```bash
+node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/task-call.js').isDispatchTaskCallForRun(process.argv[1], process.env.CLAUDE_CODE_SESSION_ID))" "$PIPELINE_RUN_DIR"
+```
+
+`true` means a dispatch Task call: `run-state.json` carries `dispatched: true` and its
+`dispatchSessionId` equals this session's `CLAUDE_CODE_SESSION_ID`, both stamped by `hooks.js
+record-worktree --dispatch`, whose session id a Task call shares. Only `--dispatch` writes
+`dispatchSessionId`: a plain `record-worktree` re-stamp (a resume, `_shared/run-resume-freshness.md`)
+overwrites `sessionId` but never touches it, which is why that re-stamp cannot make a human session
+match. A run-state written before the field existed has no `dispatchSessionId` and falls back to
+comparing `sessionId`. Any other output, including a non-zero exit, means a genuine top-level,
+human-run session — fall through to the direct-merge path below. That includes a human resuming a
+dispatched run from a new session. Fail-safe: a Task call misread as
+human-run (for example after a failed bind) reaches the local-merge first call's branch guard,
+sees the feature branch, and aborts into the console fallback — it never merges into a wrong
+checkout, though `close-run` has already run by then (the accepted residual in the
+merge-failure paragraph below). This is what routes a dispatched **singleton**'s merge decision through this file's own
+short-circuit rather than `settle-and-merge.md`'s group-scoped Auto-merge gate.
 
 **`integration-model: pr-first`:** the checkout restriction below doesn't apply — `gh pr merge`
 needs no checkout. Run the merge procedure below exactly as the interactive path does — the
-dispatch-claim branch matching changes nothing about how this branch merges, only that
+dispatch-call branch matching changes nothing about how this branch merges, only that
 `task-prompt.md`'s reporting format carries the outcome back (`merged`/`armed`/`pending-review`)
 instead of this file's own `PushNotification`.
 
@@ -191,7 +203,7 @@ procedure below. Stop here instead: report `OUTCOME: ready-to-merge` per `task-p
 second-call template — `dispatch/settle-and-merge.md`'s local-merge fallback is what actually
 merges, in dispatch's own thread.
 
-Everything from here through "Release-reason mapping" below applies when the dispatch-claim branch
+Everything from here through "Release-reason mapping" below applies when the dispatch-call branch
 does **not** match (a genuine top-level, human-run session) **or** matches under `pr-first` — the
 local-merge stop-and-relay branch above is the one exception.
 
@@ -305,10 +317,12 @@ content nor a `cleanup-procedures.md` cleanup item, which is why it was silently
 auto-merge until the labeling step above was added. Check any future addition to that execution
 step against this branch explicitly; a claim true about one category is not evidence about another.
 
-**If the merge conflicts:** conflict resolution requires judgment a headless
-run can't supply — abort the merge (`git merge --abort`) and fall back to
-rendering the console normally, exactly as an `auto:build`-only record would,
-logging why the auto-merge path was abandoned.
+**If the composer call exits non-zero, the merge conflicts, or the branch guard aborts:** conflict
+resolution requires judgment a headless run can't supply — `git merge --abort` only if a merge is
+actually in progress, then fall back to rendering the console normally, exactly as an
+`auto:build`-only record would, logging why the auto-merge path was abandoned. **One accepted
+residual:** under `local-merge`, `close-run` already ran, above, before this was discovered, so the
+parked run is no longer E1-protected and its worktree assignment has been cleared too. Not fixed here; there is no "reopen-run" mechanic to reverse it.
 
 Log to `decisions.md`:
 `AUTO {time} — Fast-lane auto-merge: issue #{n}, assess-agent-autonomy verdict auto-merge (see RATIONALE). Merge commit: {sha}. Reversibility: high (git revert). [lever: auto-merge-max-lines={value} ({source}); auto-merge-max-files={value} ({source}); merge-sensitive-paths={value} ({source})]` — or, on the `manifesto-authorized-merge.md` path, its own tag and log line instead
@@ -329,12 +343,12 @@ When the failing layer is a `merge-check` verdict of `needs-human`, log it first
 
 This check does not apply to `MULTISPEC_REVIEW_DEFER=1` runs — an `auto:merge`-granted
 record still gets the normal, fully-blocking consolidated Review Console, same as any other spec
-in the batch. No dispatch-claim branch or equivalent auto-merge gate exists for the multi-spec
+in the batch. No dispatch-call branch or equivalent auto-merge gate exists for the multi-spec
 console today — it is exclusively a human-run-batch surface, never a dispatch one (dispatch
 Step 5 dispatches groups one at a time). `skills/dispatch/SKILL.md`'s own "Auto-merge gate" is
-the mechanism a dispatched group actually uses: a singleton via the dispatch-claim branch above,
+the mechanism a dispatched group actually uses: a singleton via the dispatch-call branch above,
 a bundle via `settle-and-merge.md`'s own group-scoped gate directly; this file's own direct-merge
-procedure is reachable only by an interactive, human-run single-record `/flow` (or, per the
-dispatch-claim branch above, a session standing in for one).
+procedure is reachable only by an interactive, human-run single-record `/flow` (a human resuming a
+dispatched run is itself a human-run session here, per the dispatch-call branch above).
 
 The trailing `[lever: …]` field on both log lines above follows `_shared/auto-decision-log.md`'s Lever attribution section — these are the levers the Content judgment layer's `merge-check` invocation reads (`skills/assess-agent-autonomy/merge-check.md`); `{value}` comes from that invocation's own resolver call; `{source}` needs the envelope form — re-resolve with `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" merge-sensitive-paths auto-merge-max-lines auto-merge-max-files` (no `--values`) when writing either line.

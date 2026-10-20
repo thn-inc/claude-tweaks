@@ -65,8 +65,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$GROUP_RUN_DIR"
 session the bind still runs, but the gate stays inert: its Task calls reach the worktree only through
 a `cd {worktree} &&` prefix, so the hook sees the pinned cwd rather than the worktree, and #2837's
 check is the only guard there. One call writes
-the worktree assignment, this session's id, and a permanent `dispatched: true` marker into the
-run's `run-state.json`; from then on `bin/lib/hooks/pre-tool-use.js`'s `checkDispatchConfigGate`
+the worktree assignment, this session's id, a permanent `dispatched: true` marker, and a
+`dispatchSessionId` (the same id, written only by `--dispatch`) into the run's `run-state.json`; from then on `bin/lib/hooks/pre-tool-use.js`'s `checkDispatchConfigGate`
 denies git commits and pushes (and the other git writes it classifies: `mv`, `rm`, `update-ref`, `apply`)
 in this worktree until `/claude-tweaks:flow` Step 3's Manifesto has written
 `$GROUP_RUN_DIR/config.yml` — a first call that bypasses `/claude-tweaks:flow` is stopped at its

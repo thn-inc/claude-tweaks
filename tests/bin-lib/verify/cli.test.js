@@ -1277,6 +1277,60 @@ test('--changed-files honors --base and never writes a stamp or report (#1923)',
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json')));
 });
 
+// #3048: inside a pipeline the stamp is written right after the build's source
+// commits, so a stamp-anchored set misses them. Fixture: A (integration tip,
+// the merge-base) -> B (build commit) -> full verify stamps B -> C (a later
+// bookkeeping commit).
+async function stampThenBookkeeping() {
+  const r = tmpGitRepo();
+  const integration = r.git('symbolic-ref', '--short', 'HEAD').trim();
+  const A = r.git('rev-parse', 'HEAD').trim();
+  r.git('checkout', '-q', '-b', 'feat');
+  commitFile(r, 'src/b.js', '1');
+  const B = r.git('rev-parse', 'HEAD').trim();
+  const full = await runCli(['--cmd', 'tests=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(full.code, 0, full.stderr);
+  assert.strictEqual(stampOf(r.gitDir).fullSha, B);
+  commitFile(r, 'stories/c.yaml', 'x');
+  return { r, integration, A, B };
+}
+
+test('AC1.1/AC1.2: stamp-anchored --changed-files still returns only the post-stamp bookkeeping (#3048)', async () => {
+  const { r, integration, B } = await stampThenBookkeeping();
+  const run = await runCli(['--changed-files', '--integration-branch', integration], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const out = JSON.parse(run.stdout.trim());
+  assert.strictEqual(out.base, B);
+  assert.deepStrictEqual(out.files, ['stories/c.yaml']);
+});
+
+test('AC1.1/AC1.2: --ignore-stamp returns the merge-base diff — the build commit and the bookkeeping (#3048)', async () => {
+  const { r, integration, A } = await stampThenBookkeeping();
+  const run = await runCli(['--changed-files', '--ignore-stamp', '--integration-branch', integration], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const out = JSON.parse(run.stdout.trim());
+  assert.strictEqual(out.base, A);
+  assert.deepStrictEqual(out.files, ['src/b.js', 'stories/c.yaml']);
+  assert.ok(!('warning' in out));
+});
+
+test('AC2.1: --ignore-stamp with a usable stamp but no --base/--integration-branch exits 1 — never falls back to the stamp, never an empty list', async () => {
+  const { r } = await stampThenBookkeeping();
+  const run = await runCli(['--changed-files', '--ignore-stamp'], { cwd: r.repo });
+  assert.strictEqual(run.code, 1);
+  assert.match(run.stderr, /could not resolve a base/);
+  assert.strictEqual(run.stdout.trim(), '');
+});
+
+test('--ignore-stamp still honors an explicit --base (#3048)', async () => {
+  const { r, B } = await stampThenBookkeeping();
+  const run = await runCli(['--changed-files', '--ignore-stamp', '--base', B], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const out = JSON.parse(run.stdout.trim());
+  assert.strictEqual(out.base, B);
+  assert.deepStrictEqual(out.files, ['stories/c.yaml']);
+});
+
 // #2486: a full verify pass that stamps fullSha === current HEAD (verify ran
 // after this branch's own commits already landed — the common in-pipeline
 // case, not a rewritten-history scenario) must not make --changed-files

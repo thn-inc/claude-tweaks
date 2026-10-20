@@ -31,6 +31,45 @@ test('resolve-console --help prints usage and exits 0, no --run required', () =>
   const result = runHook(['resolve-console', '--help']);
   assert.equal(result.code, 0);
   assert.match(result.stdout, /resolve-console --run <dir>/);
+  assert.match(result.stdout, /\[--reverse-failed <id,id,\.\.\.>\]/);
+});
+
+// --reverse-failed is a declared flag: accepted rather than intercepted as unknown.
+test('resolve-console accepts --reverse-failed as a declared flag', () => {
+  const result = runHook(['resolve-console', '--run', '/definitely/not/a/real/path/xyz', '--reverse-failed', 'r1']);
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /--run path rejected/);
+});
+
+// The CLI forwards --reverse-failed into resolveConsoleExecution and renders its
+// not-ruling-items refusal. A stub `gh` first on PATH answers the single `pr view`
+// read; the refusal returns before any write, so no other gh call is ever made.
+// Skipped on win32: a bare executable stub is not a launchable `gh` there.
+test('resolve-console --reverse-failed on an unflagged item is refused by the CLI with the not-ruling-items message', { skip: process.platform === 'win32' }, () => {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-rf-')));
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const runDir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-10-20T000000-rf');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    commentIds: ['IC_primary'], prNumber: 42, items: [{ id: '1', kind: 'batch', summary: 'fix A' }],
+  }));
+  const binDir = path.join(repo, 'stub-bin');
+  fs.mkdirSync(binDir);
+  const comment = { id: 'IC_primary', body: '<!-- console-item: resolve -->\n- [ ] **Resolve console**\n<!-- console-item: 1 -->\n- [ ] item 1' };
+  fs.writeFileSync(path.join(binDir, 'gh'), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`, { mode: 0o755 });
+  let result;
+  try {
+    const stdout = execFileSync('node', [HOOKS, 'resolve-console', '--run', runDir, '--reverse-failed', '1'], {
+      cwd: repo, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', PATH: `${binDir}${path.delimiter}${process.env.PATH}` },
+    });
+    result = { code: 0, stdout };
+  } catch (e) {
+    result = { code: e.status, stdout: e.stdout || '' };
+  }
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /--reverse-failed id\(s\) 1 are not sdd-ruling items/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8')).executedAt, undefined, 'a refused call writes nothing');
 });
 
 test('resolve-console without --run exits non-zero with a usage message, performs zero writes', () => {

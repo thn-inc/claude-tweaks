@@ -21,11 +21,12 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$GROUP_RUN_DIR" "{worktree}" --dispatch`, in `dispatch/sibling-session-check.md`'s Worktree-resume check, after the worktree is confirmed fresh
 - **Action:** run the bind once, then dispatch the group's first Task call.
 - **Should feel:** a single bookkeeping line. It prints `claude-tweaks: worktree recorded for {run-id}`, and a failure never blocks the dispatch.
-- **Should understand:** one `run-state.json` write records the worktree, this session's id, and a permanent `dispatched: true`. A later plain `record-worktree` re-stamp never clears that marker. Task subagents share this session's id, so their hook calls resolve this same run through `ctx.ownedRun`.
+- **Should understand:** one `run-state.json` write records the worktree, this session's id, a permanent `dispatched: true`, and a `dispatchSessionId` (that same id, written only by `--dispatch`). A later plain `record-worktree` re-stamp never clears that marker or `dispatchSessionId`. Task subagents share this session's id, so their hook calls resolve this same run through `ctx.ownedRun`.
 - **Red flags:**
   - binding a worktree the resume check found already present, because that is a sibling's run;
   - a bind failure that stops the dispatch, when it should only be logged;
-  - a missing confirmation line silently treated as success.
+  - a missing confirmation line silently treated as success;
+  - a bind that also prints `dispatchSessionId recorded as null` on stderr. The session had no `CLAUDE_CODE_SESSION_ID`, so wrap-up's auto-merge short-circuit will treat this run's Task calls as human-run: under `local-merge` the merge falls back to the console instead of relaying `ready-to-merge`.
 
 ### 2. Commit before config.yml exists — first-call agent
 - **URL:** any covered Bash git write issued from inside the bound worktree, typically `git commit -m "Materialize #{n} spec …"`
@@ -73,4 +74,5 @@ A cwd-pinned dispatching session (#447, `dispatch/sequential-execution.md`) stil
 - Created during build of #3225: dispatch binds the minted run to the group's worktree before call 1 (`record-worktree --dispatch`), and `pre-tool-use.js`'s `checkDispatchConfigGate` denies git writes there until `/claude-tweaks:flow` Step 3 writes `config.yml`. The deny text was hardened during the whole-branch review: a re-stamp never clears it, it carries no retry-budget charge, and it gives an in-flow remedy.
 - Updated during build of #3335: dispatch's Task-call `/claude-tweaks:flow` commands now pass `auto` explicitly, so a project with `auto-mode: default-off` no longer resolves a dispatched call to `interactive`. That mode skipped Step 3 and left this deny with no satisfiable remedy. The pin is `tests/dispatch-flow-explicit-auto-mode.test.js`.
 - Updated during build of #3372: `/flow` Step 1 treats a run bound `dispatched: true` as `auto` regardless of `auto-mode`, so a dispatched agent that drops the `auto` token no longer lands here. Pinned by `tests/flow-dispatched-run-auto-mode.test.js`.
+- Updated during build of #3711 (dispatch-call discriminator): step 1's bind also stamps `dispatchSessionId`, which wrap-up's auto-merge short-circuit compares against the current session to recognise dispatch's own Task calls. Wrap-up added the red flag for the null stamp written when the session has no id.
 - Related records: #2837 (post-hoc first-call artifact check, the backstop), #3212 (the dispatch firing whose first calls #3064 and #3066 committed before writing `config.yml`), #991 / IL-131 (the sibling bookkeeping-stamps gate, `recover-from-a-bookkeeping-stamp-deny.md`).

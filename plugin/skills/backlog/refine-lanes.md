@@ -60,7 +60,8 @@ mechanics — this heading is a pointer, not a restatement.
 ## Re-authorize
 
 Population: `.blocked` from `session-scoped backlog-refine-worklist.json` — records that hit the retry
-ceiling (`bot:blocked`), unaffected by Step 3's grant-check budget. Every row recommends the same
+ceiling (`bot:blocked`), or whose plan-review question awaits an answer (`<!-- plan-review-question -->`
+comment, `build/plan-review.md`) — answer on the record body first — unaffected by Step 3's grant-check budget. Every row recommends the same
 fixed action regardless of content: a prior failure means the human's renewed judgment is the
 point, never a mechanical replay (Step 3).
 
