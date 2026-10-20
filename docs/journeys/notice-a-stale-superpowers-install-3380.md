@@ -32,9 +32,10 @@ files:
   - Claude Code runs the first install record in `installed_plugins.json` order that applies to this directory: a user-scope or managed record applies everywhere; a project or local record applies to its own directory, or to any directory of the same git checkout (worktrees included). Scope is not ranked — the record listed first wins.
   - A project install recorded for the home directory is not special: it loses only when a user-scope record is listed before it.
   - The `--scope` and the `superpowers@{marketplace}` name in the command come from the matched install, never hardcoded.
-  - The "run from …" hint appears only when the matched install is recorded for a different, still-existing directory; when that directory is gone, the notice says so instead. A project-scope update acts on the project you run it from.
+  - The "run from …" hint appears only when the matched install is recorded for a different, still-existing directory. When that directory is gone (a deleted worktree), the notice says so and names the remedy instead. The update command, run in this checkout, updates that stale record, because it picks the same first applicable record. To remove the stale record instead, recreate its directory with `mkdir -p "{path}"`, run `claude plugin uninstall superpowers@{marketplace} --scope {scope}` from inside it, then delete the directory.
 - **Red flags:**
   - The model runs `claude plugin update` itself. The line tells it never to, and updating on the developer's behalf is out of scope.
+  - For a deleted-worktree record, the notice suggests running `claude plugin uninstall` from this checkout. Run there, it removes this checkout's own install record and leaves the stale one, and the notice says so.
   - The line is repeated on every reply.
   - A notice when no superpowers is installed at all. Missing installs are `/claude-tweaks:init`'s concern.
 
@@ -49,4 +50,4 @@ files:
 
 ## Origin
 
-Built by #3380 (multi-spec run `2026-10-17T144508-spec-3375-3380`). It is part of the "Build dispatch cost shape" decomposition from #3229, and its floor is the superpowers 7.0.0 re-pin from #3376. #3541 (multi-spec run `2026-10-19T170937-spec-3541-3543-3585`) replaced the install-selection rule with Claude Code's own first-applicable-in-file-order rule and stopped the notice pointing at a deleted directory.
+Built by #3380 (multi-spec run `2026-10-17T144508-spec-3375-3380`). It is part of the "Build dispatch cost shape" decomposition from #3229, and its floor is the superpowers 7.0.0 re-pin from #3376. #3541 (multi-spec run `2026-10-19T170937-spec-3541-3543-3585`) replaced the install-selection rule with Claude Code's own first-applicable-in-file-order rule and stopped the notice pointing at a deleted directory. #3631 (run `2026-10-20T071346-spec-3631`) added the remedy for a deleted-directory record, which a Claude Code 2.1.302 probe settled.
