@@ -81,7 +81,8 @@ test('the table covers every shape an addendum recorded', () => {
   const text = table().rows.join('\n');
   for (const token of [
     '${VAR:-default}', 'complete', 'GIT', 'github.com', 'mv ', '-iname', 'if RAW=$(', 'sed -i', '"$P/',
-    'mutation(', 'eval', '$TMPDIR', '.log', 'awk', 'mkdir -p', 'for ', '; ', '<<', 'runtime-computed-variable',
+    'mutation(', 'eval', '$TMPDIR', '.log', 'awk', 'mkdir -p', '`for` / `while` loop', '`;`-separated sequence',
+    'Standalone heredoc', 'runtime-computed-variable', 'script operand',
   ]) {
     assert.ok(text.includes(token), `table lost the shape token ${JSON.stringify(token)}`);
   }
