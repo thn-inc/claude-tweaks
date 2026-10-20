@@ -84,6 +84,10 @@ test('docs/getting-started.md counts the shipped verticals including agent-trust
 });
 
 const CRITERIA_PATH = path.join(ROOT, 'plugin/skills/_shared/criteria-agent-trust-scope.md');
+const FOCUS_PASSES_PATH = path.join(ROOT, 'plugin/skills/review/focus-criterion-passes.md');
+const SUMMARY_TEMPLATE_PATH = path.join(ROOT, 'plugin/skills/review/review-summary-template.md');
+const CODE_HEALTH_SKILL_PATH = path.join(ROOT, 'plugin/skills/code-health/SKILL.md');
+const ACCEPTED_RISK_LINE = 'accepted risk — ADR NNNN ({kind})';
 
 function assertAcceptedRiskGuard(fragment) {
   const start = fragment.indexOf('## What NOT to flag');
@@ -91,7 +95,7 @@ function assertAcceptedRiskGuard(fragment) {
   assert.ok(start >= 0 && end > start, 'fragment must have "## What NOT to flag" before "## Severity calibration"');
   const notFlag = fragment.slice(start, end);
   for (const needle of ['docs/decisions/', '**Status:**', '`accepted`', '## Decision', 'superseded', 'proposed',
-    'accepted risk — ADR NNNN ({kind})', 'never as a finding', 'never as a filed issue']) {
+    ACCEPTED_RISK_LINE, 'never as a finding', 'never as a filed issue']) {
     assert.ok(notFlag.includes(needle), `What NOT to flag is missing the accepted-risk guard element: ${needle}`);
   }
   const prompt = fragment.slice(fragment.indexOf('## Copy-paste prompt'));
@@ -113,20 +117,20 @@ function assertStep665AcceptedRiskRow(passes) {
   const start = passes.indexOf('## Step 6.65');
   const end = passes.indexOf('## Step 6.66', start + 1);
   const step = passes.slice(start, end);
-  const row = step.split('\n').find((l) => l.startsWith('|') && l.includes('accepted risk — ADR NNNN ({kind})'));
+  const row = step.split('\n').find((l) => l.startsWith('|') && l.includes(ACCEPTED_RISK_LINE));
   assert.ok(row, 'Step 6.65 result-handling table has no accepted-risk row');
   assert.match(row, /footer/);
   assert.match(row, /Not an Agent Trust Scope finding/);
 }
 
 test('AC1.1: review Step 6.65 renders an accepted-risk candidate as a footer note naming the ADR', () => {
-  assertStep665AcceptedRiskRow(readText(path.join(ROOT, 'plugin/skills/review/focus-criterion-passes.md')));
-  const tmpl = readText(path.join(ROOT, 'plugin/skills/review/review-summary-template.md'));
-  assert.ok(tmpl.includes('accepted risk — ADR NNNN ({kind})'), 'summary template must name the accepted-risk footer note');
+  assertStep665AcceptedRiskRow(readText(FOCUS_PASSES_PATH));
+  const tmpl = readText(SUMMARY_TEMPLATE_PATH);
+  assert.ok(tmpl.includes(ACCEPTED_RISK_LINE), 'summary template must name the accepted-risk footer note');
 });
 
 test('go-red: the Step 6.65 row check fails when the row is removed', () => {
-  const passes = readText(path.join(ROOT, 'plugin/skills/review/focus-criterion-passes.md'));
+  const passes = readText(FOCUS_PASSES_PATH);
   const mutated = passes.split('\n').filter((l) => !(l.startsWith('|') && l.includes('accepted risk — ADR NNNN'))).join('\n');
   assert.notEqual(mutated, passes, 'mutation did not apply');
   assert.throws(() => assertStep665AcceptedRiskRow(mutated));
@@ -138,10 +142,8 @@ function assertStep10AcceptedRiskLine(skillMd) {
   const next = skillMd.indexOf('\n## ', start + 1);
   assert.ok(next > start, 'SKILL.md Step 10 must be followed by a "## " heading');
   const step = skillMd.slice(start, next);
-  assert.ok(step.includes('accepted risk — ADR NNNN ({kind})'), 'Step 10 must carry the accepted-risk summary line');
+  assert.ok(step.includes(ACCEPTED_RISK_LINE), 'Step 10 must carry the accepted-risk summary line');
 }
-
-const CODE_HEALTH_SKILL_PATH = path.join(ROOT, 'plugin/skills/code-health/SKILL.md');
 
 test('AC1.1: code-health Step 10 summary lists an accepted-risk candidate as its only record', () => {
   assertStep10AcceptedRiskLine(readText(CODE_HEALTH_SKILL_PATH));
@@ -149,7 +151,7 @@ test('AC1.1: code-health Step 10 summary lists an accepted-risk candidate as its
 
 test('go-red: the Step 10 accepted-risk check fails when the sentence is removed', () => {
   const skillMd = readText(CODE_HEALTH_SKILL_PATH);
-  const mutated = skillMd.split('accepted risk — ADR NNNN ({kind})').join('');
+  const mutated = skillMd.split(ACCEPTED_RISK_LINE).join('');
   assert.notEqual(mutated, skillMd, 'mutation did not apply — SKILL.md must contain "accepted risk — ADR NNNN ({kind})"');
   assert.throws(() => assertStep10AcceptedRiskLine(mutated));
 });
