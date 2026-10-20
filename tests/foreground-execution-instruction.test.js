@@ -42,13 +42,28 @@ function fencedBlocks(text) {
   return blocks;
 }
 
+// A fact-list predicate: the facts whose pattern the text no longer matches.
+const missingFactsOf = (patterns) => (text) => patterns.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
+
+// Per-assertion go-red proof (the 6bb1bb695 shape): strip one pattern's matched phrase from the live
+// text, and the shared predicate must report exactly that one fact missing.
+function assertEachPatternGoesRed(text, patterns, missingOf) {
+  for (const [pattern, fact] of patterns) {
+    const doctored = text.replace(pattern, '');
+    assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
+    assert.deepEqual(missingOf(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
+  }
+}
+
+const TEMPLATE_LABELS = ['first call (build,test)', 'second call (review,polish,wrap-up)'];
+
 test('task-prompt.md: both fenced Task-prompt templates carry the foreground-execution instruction', () => {
   const text = fs.readFileSync(TASK_PROMPT, 'utf8');
   const blocks = fencedBlocks(text);
   assert.equal(blocks.length, 2, `expected exactly two fenced Task-prompt blocks, found ${blocks.length}`);
 
-  const [firstCall, secondCall] = blocks;
-  for (const [label, block] of [['first call (build,test)', firstCall], ['second call (review,polish,wrap-up)', secondCall]]) {
+  for (const [index, block] of blocks.entries()) {
+    const label = TEMPLATE_LABELS[index];
     for (const [pattern, fact] of REQUIRED) {
       assert.match(block, pattern, `${label} template must instruct the dispatched agent to ${fact} (#1965)`);
     }
@@ -120,7 +135,7 @@ const KEEP_ALIVE = [
 ];
 
 // Content predicates: each live assertion and its doctored-text proof call the same function.
-const missingKeepAlive = (section) => KEEP_ALIVE.filter(([pattern]) => !pattern.test(section)).map(([, fact]) => fact);
+const missingKeepAlive = missingFactsOf(KEEP_ALIVE);
 const foldsNoTaskParagraph = (core) => !/\*\*No `Task`\/Agent tool available\.\*\*/.test(core);
 const dropsYieldRule = (contract) => !/must\s+yield\s+control\s+across\s+several\s+of\s+its\s+own\s+turns/.test(contract);
 const keepsInterimMarker = (contract) => /INTERIM_STATUS/.test(contract);
@@ -138,12 +153,7 @@ test('subagent-output-contract.md no longer tells a nested dispatcher to yield a
 });
 
 test('each keep-alive assertion can actually go red on its own (discrimination proof)', () => {
-  const section = coreForegroundSection(fs.readFileSync(CORE, 'utf8'));
-  for (const [pattern, fact] of KEEP_ALIVE) {
-    const doctored = section.replace(pattern, '');
-    assert.notEqual(doctored, section, `anchor text for "${fact}" not found — test cannot discriminate`);
-    assert.deepEqual(missingKeepAlive(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
-  }
+  assertEachPatternGoesRed(coreForegroundSection(fs.readFileSync(CORE, 'utf8')), KEEP_ALIVE, missingKeepAlive);
 });
 
 test('the folded-paragraph, yield-rule and interim-marker assertions can actually go red (discrimination proof)', () => {
@@ -181,7 +191,7 @@ const LENS_NOTE = [
   [/partner/i, 'the lost-partner case routes to the partner-died single-read treatment'],
   [/`unconfirmed`, logged/, 'the routed findings are unconfirmed and logged'],
 ];
-const lensNoteMissing = (note) => LENS_NOTE.filter(([pattern]) => !pattern.test(note)).map(([, fact]) => fact);
+const lensNoteMissing = missingFactsOf(LENS_NOTE);
 const LENS_NOTE_SENTENCE = /When the reviewer is itself a dispatched agent,.*?\(findings `unconfirmed`, logged\)\./;
 
 test('step3-lens-dispatch.md has no dispatched-reviewer carve-out (#3078)', () => {
@@ -225,7 +235,7 @@ const ITEM7 = [
   [/`unconfirmed`/, 'the self-judged fallback marks findings unconfirmed'],
   ...SHARED_RULE,
 ];
-const item7Missing = (block) => ITEM7.filter(([pattern]) => !pattern.test(block)).map(([, fact]) => fact);
+const item7Missing = missingFactsOf(ITEM7);
 const dropsNothingWakes = (block) => !/nothing wakes you/.test(block);
 
 const TEMPLATE_KEEP_ALIVE = [
@@ -239,7 +249,7 @@ const TEMPLATE_KEEP_ALIVE = [
 ];
 // Takes the template's "Foreground execution (required):" paragraph, not the whole fenced block, so
 // a pattern's one occurrence is the paragraph's (the block mentions `unconfirmed` elsewhere).
-const templateKeepAliveMissing = (paragraph) => TEMPLATE_KEEP_ALIVE.filter(([pattern]) => !pattern.test(paragraph)).map(([, fact]) => fact);
+const templateKeepAliveMissing = missingFactsOf(TEMPLATE_KEEP_ALIVE);
 const foregroundParagraph = (block) => {
   const found = block.split(/\r?\n\r?\n/).filter((p) => p.startsWith('Foreground execution (required):'));
   assert.equal(found.length, 1, `expected exactly one "Foreground execution (required):" paragraph per template, found ${found.length}`);
@@ -251,17 +261,7 @@ const dropsPrimaryResumeSignal = (text) => !/primary resume signal/.test(text);
 const RATIONALE = [
   [/`_shared\/subagent-dispatch-core\.md`'s\s+Foreground\s+Execution\s+Discipline/, 'the #2533 rationale cites the core section'],
 ];
-const rationaleMissing = (text) => RATIONALE.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
-
-// Per-assertion go-red proof (the 6bb1bb695 shape): strip one pattern's matched phrase from the live
-// text, and the shared predicate must report exactly that one fact missing.
-function assertEachPatternGoesRed(text, patterns, missingOf) {
-  for (const [pattern, fact] of patterns) {
-    const doctored = text.replace(pattern, '');
-    assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
-    assert.deepEqual(missingOf(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
-  }
-}
+const rationaleMissing = missingFactsOf(RATIONALE);
 
 test('task-prompt item 7 drops "nothing wakes you" and states what ends a turn (#3078, #3266)', () => {
   const item7 = item7Block(fs.readFileSync(TASK_PROMPT, 'utf8'));
@@ -272,7 +272,8 @@ test('task-prompt item 7 drops "nothing wakes you" and states what ends a turn (
 test('neither fenced template keeps the in-turn carve-out (#3078)', () => {
   const blocks = fencedBlocks(fs.readFileSync(TASK_PROMPT, 'utf8'));
   assert.equal(blocks.length, 2, `expected exactly two fenced Task-prompt blocks, found ${blocks.length}`);
-  for (const [label, block] of [['first call (build,test)', blocks[0]], ['second call (review,polish,wrap-up)', blocks[1]]]) {
+  for (const [index, block] of blocks.entries()) {
+    const label = TEMPLATE_LABELS[index];
     assert.ok(dropsInTurnCarveOut(block), `${label} template still carries the in-turn carve-out (#3078)`);
     assert.deepEqual(templateKeepAliveMissing(foregroundParagraph(block)), [], `${label} template must carry the nested-Agent rule itself (#3078)`);
   }
@@ -316,7 +317,7 @@ const CONTRACT_ABANDONED = [
   [/\bis\s+abandoned\b/, 'a child abandoned at the bound is named'],
   [/no\s+longer\s+counts\s+as\s+outstanding/, 'an abandoned child no longer counts as outstanding'],
 ];
-const contractAbandonedMissing = (text) => CONTRACT_ABANDONED.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
+const contractAbandonedMissing = missingFactsOf(CONTRACT_ABANDONED);
 
 test('subagent-output-contract.md says an abandoned child is not outstanding, so INTERIM_STATUS is not its marker (#3078)', () => {
   const contract = fs.readFileSync(OUTPUT_CONTRACT, 'utf8');
@@ -332,10 +333,11 @@ test('each output-contract abandoned-child assertion can actually go red on its 
 const PRIMITIVE = /`sleep\s+(\d+)`\s+Bash\s+calls,\s+at\s+most\s+(\d+)\s+\((\d+)\s+minutes\)/g;
 const EXPECTED_PRIMITIVE = '30/40/20';
 function primitiveCopies() {
-  const [firstCall, secondCall] = fencedBlocks(fs.readFileSync(TASK_PROMPT, 'utf8'));
+  const taskPrompt = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const [firstCall, secondCall] = fencedBlocks(taskPrompt);
   return {
     'subagent-dispatch-core.md': coreForegroundSection(fs.readFileSync(CORE, 'utf8')),
-    'task-prompt.md item 7': item7Block(fs.readFileSync(TASK_PROMPT, 'utf8')),
+    'task-prompt.md item 7': item7Block(taskPrompt),
     'task-prompt.md first-call template': foregroundParagraph(firstCall),
     'task-prompt.md second-call template': foregroundParagraph(secondCall),
   };
