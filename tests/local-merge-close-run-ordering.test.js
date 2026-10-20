@@ -77,7 +77,8 @@ const REPROTECT_NEEDLE = 'bin/hooks.js" record-worktree --run';
 const WORKTREE_READ_NEEDLE = "run-state.json').worktree";
 
 // Bash fence bodies, dedented by the opening fence's indent (a fence inside a numbered list item is indented).
-const fencesOf = (text) => [...text.matchAll(/^([ \t]*)```bash\n([\s\S]*?)\n[ \t]*```/gm)]
+// CRLF is normalized first: a core.autocrlf Windows checkout reads every skill file with \r\n.
+const fencesOf = (text) => [...text.replace(/\r\n/g, '\n').matchAll(/^([ \t]*)```bash\n([\s\S]*?)\n[ \t]*```/gm)]
   .map((m) => m[2].split('\n').map((line) => (line.startsWith(m[1]) ? line.slice(m[1].length) : line)).join('\n'));
 
 // The body of the unique ```bash fence containing `needle`.
@@ -220,6 +221,13 @@ for (const site of SITES) {
 
   test(`${label}: pre-merge checks, close-run, merge, re-protect appear in that order`, () => {
     assert.deepStrictEqual(checkOrdering(raw), []);
+  });
+
+  test(`${label}: a CRLF checkout yields the same fences and ordering`, () => {
+    const crlf = raw.replace(/\n/g, '\r\n');
+    assert.ok(fencesOf(raw).length > 0, 'expected at least one bash fence');
+    assert.deepStrictEqual(fencesOf(crlf), fencesOf(raw));
+    assert.deepStrictEqual(checkOrdering(crlf), []);
   });
 
   test(`${label}: the pre-merge checks fence contains no close-run and no git merge --no-ff`, () => {
