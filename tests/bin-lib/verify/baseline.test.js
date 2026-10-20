@@ -1036,9 +1036,18 @@ test('#3153: each log is read against its own checkout — a predicate scoped to
 test('a failing path the retry template cannot quote is ineligible, never run (#3676)', async () => {
   const { p, dir } = logFile(SPEC(['tests/a b.test.js']));
   const { git, runOne, calls } = fakes({ outcomes: {} });
-  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: new Map([['tests', 'node --test "{file}"']]), base: 'origin/main', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git, platform: 'linux' });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: new Map([['tests', "NODE_OPTIONS='--x' node --test {file}"]]), base: 'origin/main', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git, platform: 'linux' });
   assert.strictEqual(r.eligible, false);
   assert.strictEqual(r.reason, 'tests failing file tests/a b.test.js cannot be handed to the shell safely (template-quotes)');
   assert.strictEqual(calls.runs.length, 0);
   assert.strictEqual(calls.added.length, 0);
+});
+
+test('a quotable spaced failing path reaches the run stage as the quoted command (#3676)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a b.test.js']));
+  const { git, runOne, calls } = fakes({ outcomes: {} });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'origin/main', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git, platform: 'linux' });
+  assert.notStrictEqual(r.eligible, false, 'a quotable path is not refused');
+  assert.ok(calls.runs.length > 0, 'the adjudication reached the run stage');
+  assert.ok(calls.runs.every((c) => c.file === "'tests/a b.test.js'"), 'every run got the single-quoted path');
 });
