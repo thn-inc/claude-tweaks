@@ -252,6 +252,7 @@ test('the step3 Foreground-note predicate can actually go red (discrimination pr
   assert.match(note, LENS_NOTE_SENTENCE, 'anchor text for the appended lens-dispatch sentence not found in the Foreground note');
   const doctored = note.replace(LENS_NOTE_SENTENCE, '');
   assert.notDeepEqual(lensNoteMissing(doctored), [], 'removing the appended sentence must turn the lens-coverage assertion red');
+  assertEachPatternGoesRed(note, LENS_NOTE, lensNoteMissing);
 });
 
 // #3078 / #3266: task-prompt.md's item 7 drops the "nothing wakes you" framing and states what ends
