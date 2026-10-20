@@ -112,6 +112,20 @@ test('planRetry: a vitest log with an unhandled error refuses retry even when it
   assert.deepStrictEqual(plan, { retry: false, reason: 'unattributed-failures: 1' });
 });
 
+test('planRetry: a vitest multi-project log retries the real test file, not the |unit| label (#3676)', () => {
+  const log = readDialect('vitest-multi-project.txt');
+  const family = sniffFamily(log);
+  const failingFiles = extractFailingFiles(log, family);
+  assert.deepStrictEqual(failingFiles, ['tests/flaky.test.js']);
+  const unattributedCount = unattributedFailureCount(log, family);
+  assert.strictEqual(unattributedCount, 0);
+  const plan = planRetry({
+    failingFiles, flaky: { files: ['tests/flaky.test.js'], maxRetries: 1 }, retry: { tests: 'npx vitest run {file}' }, suite: 'tests', unattributedCount, family, platform: 'linux',
+  });
+  assert.strictEqual(plan.retry, true);
+  assert.deepStrictEqual(plan.command, [{ file: 'tests/flaky.test.js', cmd: 'npx vitest run tests/flaky.test.js' }]);
+});
+
 test('planRetry: a pytest log still refuses — no-accounting-guard: summary, with or without a collection error (#3480 AC)', () => {
   for (const name of ['pytest-attributed.txt', 'pytest-collection-error.txt']) {
     const log = readDialect(name);

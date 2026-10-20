@@ -199,8 +199,10 @@ const TAP_FRAME_RE = /(?:location:\s*'(.+?):\d+:\d+'|\((.+?):\d+:\d+\)|\bat\s+(.
 // bare `FAIL path` — never at a bare space, which would truncate a
 // space-containing path. ` [` also terminates it: vitest's `Failed Suites`
 // block prints ` FAIL  path [ path ]` (#3480), and without the bracket
-// terminator the suffix is swallowed into the capture.
-const SUMMARY_FAIL_RE = /^\s*(?:FAIL|❯|FAILED)\s+(.+?)(?=\s>\s|\s\(|\s\[|::|\r?$)/;
+// terminator the suffix is swallowed into the capture. vitest's multi-project
+// workspace prefixes the path with a `|project|` label (`FAIL  |unit| tests/a.test.ts > …`,
+// #3676); the optional group skips that label so group 1 is the path alone.
+const SUMMARY_FAIL_RE = /^\s*(?:FAIL|❯|FAILED)\s+(?:\|[^|]+\|\s+)?(.+?)(?=\s>\s|\s\(|\s\[|::|\r?$)/;
 
 // A run of backslashes is ONE separator: node's TAP `location: '...'` line is
 // YAML-quoted, so on Windows it carries `\\` per separator — read as two, the
