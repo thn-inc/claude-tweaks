@@ -261,12 +261,13 @@ const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 
 async function adjudicate({
   checks, baselineCmds, base, baseSha, cwd = null, logDir, runOne, spawnImpl, now = Date.now,
-  envOf = () => null, timeoutOf = () => null, git, concurrency = 4, env = process.env,
+  envOf = () => null, timeoutOf = () => null, git, concurrency = 4, env = process.env, computeFixed = true,
   platform = process.platform,
 }) {
   const header = { base, baseSha };
   const ineligible = (reason) => ({ ...header, eligible: false, reason });
   const work = [];
+  const acceptedChecks = [];
   const headDir = tryRealpath(cwd || process.cwd());
   // Every log is read against the checkout it ran in, and only a path present
   // there names a failing file (#3153).
@@ -325,6 +326,7 @@ async function adjudicate({
         return ineligible(`${c.name} failing entries (${entries}) do not account for ${accounted}`);
       }
     }
+    acceptedChecks.push(c);
     const headFileLevel = fileLevelFailures(text, family, at(headDir));
     const headTests = failingTestsByFile(text, family, at(headDir));
     const headLocated = failingTestsByFile(text, family, { ...at(headDir), located: true });
@@ -520,6 +522,44 @@ async function adjudicate({
       }
       attributable.push(w.file);
     });
+    // #3313: files that fail at base but pass at HEAD. Per-file adjudication
+    // never runs those at base, so each failing check takes one full-command
+    // run in the scratch worktree — only once some file is proven failing at
+    // base (a scratch worktree then exists), and never touching the verdict.
+    // Any check that cannot prove its base failing set makes `fixed` null for
+    // the whole run: a partial list would read as a complete one.
+    let fixed = null;
+    let fixedReason = 'no failing file classified baseline — base full run skipped';
+    if (!computeFixed) {
+      fixedReason = 'base full run disabled (--no-baseline-fixed)';
+    } else if (baselineFailing.length > 0) {
+      const union = new Set();
+      fixedReason = null;
+      for (const c of acceptedChecks) {
+        const checkEnv = envOf(c.name);
+        if (!c.command) { fixedReason = `${c.name} has no command to run at base`; break; }
+        const r = await runOne({
+          name: `${c.name}-base-full`, command: c.command, logDir, spawnImpl, now, cwd: baseDir, env: checkEnv, timeout: timeoutOf(c.name),
+        });
+        if (typeof r.exitCode !== 'number') {
+          fixedReason = `${c.name} base full run exited without a numeric code${r.timedOut ? ' (timed out)' : ''}`; break;
+        }
+        const text = readLog(r.logPath);
+        if (text === null) { fixedReason = `${c.name} base full run log unreadable — see ${r.logPath}`; break; }
+        const family = accountedFamily(text, at(baseDir));
+        if (family === null) { fixedReason = `${c.name} base full run log does not account for its failures — see ${r.logPath}`; break; }
+        if (parseCounts(text, family).tests === 0) { fixedReason = `${c.name} base full run ran no tests — see ${r.logPath}`; break; }
+        const baseFailing = new Set(extractFailingFiles(text, family, at(baseDir)));
+        // A load failure in a scratch worktree is indistinguishable from a
+        // missing install unless HEAD resolves no dependencies either.
+        if (headResolvesDeps || (checkEnv || {}).NODE_PATH) {
+          for (const f of fileLevelFailures(text, family, at(baseDir))) baseFailing.delete(f);
+        }
+        const headFailing = new Set(failingByCheck[c.name] || []);
+        for (const f of baseFailing) if (!headFailing.has(f) && git.inCheckout(headDir, f)) union.add(f);
+      }
+      if (fixedReason === null) fixed = [...union];
+    }
     return {
       ...header,
       eligible: true,
@@ -531,6 +571,9 @@ async function adjudicate({
       flakyLogs,
       baselineIsolated,
       attributable,
+      new: attributable,
+      fixed,
+      ...(fixed === null ? { fixedReason } : {}),
       timedOut,
     };
   } finally {

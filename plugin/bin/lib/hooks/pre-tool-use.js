@@ -34,6 +34,7 @@ const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName }
 const { runGit, FAILURE } = require('./git-exec');
 const { parseNameStatusZ } = require('../git-z');
 const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
+const { resolveCeiling, bookkeepingPermissions } = require('../issues/autonomy');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
 const { hasClaimLogFor } = require('../log-decision/claim-log');
 // Every realpath resolution in this file goes through canonicalRealpath (#3682); lexical containment checks (isPipelineBookkeeping) resolve nothing.
@@ -740,6 +741,79 @@ function checkPipelineShadowGuard(ctx) {
     );
   }
   return {};
+}
+
+// Review Console ask gate (#3712, IL-167). At an autonomy ceiling whose
+// bookkeepingPermissions grant `consoleAutoResolve`, the Review Console
+// resolves with zero AskUserQuestion calls (wrap-up/review-console.md's
+// Auto-resolution short-circuit); a console question there is the #2734 stall.
+// This denies it and points at `console-resolve.js --policy console-auto`.
+// Fails open (returns {}) on: no provably owned run (none, 'fallback'
+// attribution, an ad-hoc run dir, or a classifyOwnership verdict other than
+// 'mine'), a missing/malformed tool_input.questions,
+// no question headed exactly REVIEW_CONSOLE_HEADER, a ceiling-read throw, and a
+// ceiling that does not grant consoleAutoResolve. Also open by design: a session
+// whose cwd is the main checkout while the run's worktree is still live, or after
+// the worktree was removed, resolves `ownedRun` to its ad-hoc twin (resolveRun's
+// #2783 behavior) or classifies 'indeterminate', and so allows. REVIEW_CONSOLE_HEADER is
+// pinned against the console prose by tests/review-console-header-conformance.test.js.
+const REVIEW_CONSOLE_HEADER = 'Review Console';
+
+// Same fold console-resolve.js's readPolicy() applies (parity pinned by a test):
+// config.yml over policy.yml via resolvePolicyConfig, then resolveCeiling. Unlike
+// that CLI, a git failure throws here instead of letting resolvePolicyConfig guess
+// process.cwd() — the gate then fails open rather than reading some other
+// checkout's policy.yml.
+function readConsoleCeiling(runDir, cwd) {
+  const top = runGit(['rev-parse', '--show-toplevel'], cwd);
+  if (top.failure) throw new Error(top.failure);
+  const git = () => top.stdout;
+  const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
+  const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['autonomy'] });
+  const entry = result.autonomy;
+  return resolveCeiling({ runConfig: entry && entry.error === undefined ? entry.value : null });
+}
+
+function checkReviewConsoleAskGate(ctx, deps = {}) {
+  const input = ctx.input;
+  if (!input || input.tool_name !== 'AskUserQuestion') return {};
+  const questions = input.tool_input && input.tool_input.questions;
+  if (!Array.isArray(questions)) return {};
+  if (!questions.some((q) => q && typeof q === 'object' && q.header === REVIEW_CONSOLE_HEADER)) return {};
+  const ownedRun = ctx.ownedRun;
+  if (!ctxLib.isTrustedOwnedRun(ownedRun) || ctxLib.isAdHocRunDir(ownedRun.dir)) return {};
+  // resolveRun keeps 'session' attribution for an 'indeterminate' verdict too;
+  // a deny needs the run proven this caller's own.
+  const sessionId = typeof input.session_id === 'string' ? input.session_id : null;
+  const cwd = ctx.cwd || process.cwd();
+  if (ctxLib.classifyOwnership({ sessionId, cwd }, ctxLib.readRunState(ownedRun.dir)) !== 'mine') return {};
+  let ceiling;
+  try {
+    ceiling = (deps.readConsoleCeiling || readConsoleCeiling)(ownedRun.dir, cwd);
+  } catch {
+    return {};
+  }
+  if (!bookkeepingPermissions(ceiling).consoleAutoResolve) return {};
+  const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
+  ctxLib.appendEvent(ownedRun.dir, 'gate-denial', { tool: 'AskUserQuestion', gate: 'review-console-ask', ceiling, ...testTag }, ownedRun.attribution);
+  // A manifest.yml marks a multi-spec parent run: its console is flow's, resolved
+  // one console-resolve.js call per spec-{N}/ then the parent, not one call.
+  const multiSpec = lstatType(path.join(ownedRun.dir, 'manifest.yml')).type === 'file';
+  const consoleFile = multiSpec ? 'flow/multispec-review-console.md' : 'wrap-up/review-console.md';
+  const cli = `node "${pluginRoot()}/bin/console-resolve.js"`;
+  const how = multiSpec
+    ? `run ${cli} --run "<dir>" --policy console-auto once per spec-{N}/ directory named in manifest.yml ` +
+      `(<dir> = "${ownedRun.dir}/spec-{N}"), then once over the parent ("${ownedRun.dir}"), appending --dry-run to every call when this run is --dry-run`
+    : `run ${cli} --run "${ownedRun.dir}" --policy console-auto (append --dry-run when this wrap-up runs --dry-run)`;
+  return denyResult(
+    `claude-tweaks: this run's autonomy ceiling is ${ceiling}, which grants consoleAutoResolve — the Review Console ` +
+    `resolves with zero AskUserQuestion calls. Instead of asking, follow ${consoleFile}'s ` +
+    `"Auto-resolution short-circuit (\`consoleAutoResolve\`)" section in full: ${how}, then execute every returned ` +
+    `resolution and the merge half as that section directs; on a non-zero exit follow that section's non-zero-exit ` +
+    `rules, except never by asking: on exit 5, a console already rendered on the PR awaiting a human follows ` +
+    `_shared/console-on-pr.md's Headless conclusion (report pending-review with the PR URL, no question), and an ` +
+    `unparseable console.json stops and reports the CLI's stderr — never ask a Review Console question.`,
+  );
 }
 
 // git-stash worktree-hazard warn gate (#1967, widened #2065): the stash
@@ -2047,6 +2121,9 @@ function checkDispatchConfigGate(ctx, commandGitTargets, deps = {}) {
 // checkDispatchConfigGate and checkBookkeepingStampsGate as their own `deps`
 // parameter, and read directly by E1 at the tail of this function.
 function runInner(ctx, indeterminateTargets, warnings, deps) {
+  // #3712: no other gate applies to AskUserQuestion.
+  if (ctx.input && ctx.input.tool_name === 'AskUserQuestion') return checkReviewConsoleAskGate(ctx, deps);
+
   const teardown = checkTeardownGate(ctx, warnings, deps);
   if (teardown.json) return teardown;
 
@@ -2255,6 +2332,9 @@ module.exports = {
   DELETE_ONLY_PUSH_ALLOWLIST,
   shadowPipelineRunDir,
   checkPipelineShadowGuard,
+  REVIEW_CONSOLE_HEADER,
+  readConsoleCeiling,
+  checkReviewConsoleAskGate,
   // Exported for post-tool-use.js's post-teardown re-anchor backstop (#703)
   // to reuse rather than reimplement — the same target-resolution logic
   // this file's own checkTeardownGate already relies on.

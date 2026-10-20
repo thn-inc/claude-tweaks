@@ -18,7 +18,7 @@ timestamps, not by any gate (#676).
 **This stamp never fires on a normal Task-tool subagent turn end** — only on a real `SessionEnd`
 (`bin/lib/hooks/session-end.js`; a `SubagentStop` never touches `run-state.json`). This is why
 `/claude-tweaks:dispatch`'s two-call handoff (`build,test` then `review,polish,wrap-up` against
-the same `PIPELINE_RUN_DIR`, likely under two different `CLAUDE_CODE_SESSION_ID`s) never trips
+the same `PIPELINE_RUN_DIR`, both under the dispatching session's own `CLAUDE_CODE_SESSION_ID`, which Task subagents share) never trips
 this probe: between the two calls the top-level dispatching session never ends, so `status` stays
 `active` throughout, and the probe below short-circuits to safe on its very first status check.
 

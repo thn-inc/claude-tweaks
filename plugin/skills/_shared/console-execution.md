@@ -21,7 +21,8 @@ row's tick state, and report `{ action: 'ready', runDir, prNumber, commentIds, i
 only when Resolve is ticked — an unresolved console (Resolve unticked) is reported as
 `skip: not-resolved-yet`, not surfaced as work. The returned `items` carry each item's `approved`
 boolean (its parsed tick), its declared `kind`, its `stagedHash` from `console.json`, and (for the
-one `isMergeRow: true` item, when present) that flag itself — everything the executing session
+one `isMergeRow: true` item, when present, and each `isRulingRow: true` `sdd-ruling-*` item) that
+flag itself — everything the executing session
 needs without re-reading the comment itself. `mergeGrantGap` (#1802, below) is this same
 detection's own mechanized re-fetch of every named record's live grant, not something the
 executing session derives itself.
@@ -77,10 +78,11 @@ when it happens anyway, surface it rather than executing: there is nowhere to ap
 
 **Reply comment first, then the resolved marker edit** on the console comment itself — never the
 reverse. Post one reply comment (`<!-- console-item: executed -->`) summarizing per-item outcomes
-(executed / declined / unexecutable / unexecutable-stale), then edit the console comment's first
-line to add `<!-- claude-tweaks-console-resolved -->`, then write `console.json.executedAt` and
-`console.json.resolved: true` together, in one write. The comment marker is the source of truth;
-the `console.json` completion fields are the local cache. A split-brain
+(executed / declined / reversed / reverse-failed / unexecutable / unexecutable-stale), then edit the
+console comment's first line to add `<!-- claude-tweaks-console-resolved -->`, then write
+`console.json.executedAt` and `console.json.resolved` (`true` only when every item cleared) together,
+in one write. The comment
+marker is the source of truth; the `console.json` completion fields are the local cache. A split-brain
 (reply posted, marker edit failed partway) is repaired by the next detection pass: it keys
 "already executed" off the reply comment's presence on the PR, not off `console.json` alone, so a
 missing marker with a present reply comment is read as "executed, retry only the marker edit,"
@@ -107,16 +109,23 @@ just posted to the PR. Two surfaces, one answer: whichever resolves first wins.
 
 - **Chat answers first:** execute directly via this file's Execution routing above, then perform
   the same Write order (reply comment, resolved marker, `console.json.executedAt`/`resolved`) —
-  `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-console --run {run-dir} --approve {ids} --decline {ids}`
+  `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-console --run {run-dir} --approve {ids} --decline {ids} [--reverse-failed {ids}]`
   is the concrete mechanism: it performs the three coupled writes in the documented order (reusing
   `console-execute.js`'s own read/parse/decide helpers rather than re-deriving console state), so a
   later reconciler pass detects the resolved marker and no-ops rather than re-asking.
   A ruling row's chat `ratify {#}` maps to `--approve` and `reverse {#}` to `--decline`; a ruling
-  the chat answer ratifies must be passed in `--approve` (an id in neither list is recorded
-  `declined`); perform the reverse (Execution routing above) before this call — the reply comment `resolve-console` posts
-  records a `--decline` id as `declined`, since `console.json` items carry no staged path to tell a
-  ruling apart, so the `decisions.md` `AUTO` line naming `reversed → #{new record}` (or the logged
-  refusal cause) is the authoritative record.
+  the chat answer ratifies must be passed in `--approve` (an unticked ruling id in neither list is
+  recorded `reversed`, as any other unticked id is recorded `declined`); perform the reverse
+  (Execution routing above) before this call — the reply comment `resolve-console` posts records a
+  flagged ruling item (`console.json`'s `isRulingRow: true`, `_shared/console-on-pr.md`) as
+  `reversed` and every other `--decline` id as `declined, no reason given`, and
+  a reversed ruling counts as cleared, so it never holds Resolve unticked (a console rendered before
+  the flag existed carries none, so its ruling still reads `declined`). The `decisions.md` `AUTO`
+  line naming `reversed → #{new record}` (or the logged refusal cause) stays the record of which
+  reversal record was filed. When the reverse was refused or never created, also pass that
+  ruling's id in `--reverse-failed`: the reply then labels it
+  `reverse not filed — see decisions.md` and Resolve stays unticked. Never let such a ruling
+  default to `reversed`.
 - **PR ticks resolve first** (a human ticked boxes on the PR while the chat prompt was still open,
   or a reconciler pass executed it in the interim): before acting on the chat answer, re-check the
   console comment for the resolved marker. If present, do not execute again and do not re-render

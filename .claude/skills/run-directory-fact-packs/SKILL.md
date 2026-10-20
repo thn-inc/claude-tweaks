@@ -124,6 +124,18 @@ proposed field, answer three questions against the code, at plan-authoring time:
      `worktreeAtClose` (#3023). A reader that runs after close-run, such as `engine-verify.js`'s
      `worktree-removed`, falls back to `worktreeAtClose`, its own and then the parent's. Reading
      `worktree` alone there sees `null` and skips the check.
+   - **A stamp scoped to the run, not the call.** `dispatched: true` is written only by
+     `plugin/bin/hooks.js record-worktree --dispatch` and is permanent for the run's lifetime (a
+     plain re-stamp never clears it), so it says /dispatch once bound this run, never that the
+     current call is one of dispatch's Task calls: a human resuming a dispatched run inherits it.
+     For the per-call question, call `plugin/bin/lib/dispatch/task-call.js`'s
+     `isDispatchTaskCallForRun` (#3711) rather than re-deriving it; it compares the
+     `--dispatch`-only `dispatchSessionId` against `CLAUDE_CODE_SESSION_ID`. Its fallback to
+     `sessionId` when `dispatchSessionId` is absent (a run state older than the field) is sound
+     only because `--dispatch` writes the key on every path, `null` when there is no session id.
+     #3711's first build omitted it in that case, which sent new run states down the legacy branch
+     until review caught it. A reader that falls back on a stamp's absence owes the same check of
+     every writer of that stamp.
    - **A file the parent writes with a placeholder value.** A multi-spec parent run dir (one
      holding `manifest.yml`) has its own `console.json`, but its `merge.resolution` always reads
      `leave-open` (`members-unresolved`): the parent-level call has no members, and

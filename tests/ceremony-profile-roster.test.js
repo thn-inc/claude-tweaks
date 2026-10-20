@@ -45,9 +45,9 @@ const mentions = rows(section(roster, 'Mentions that are not skips')).map((r) =>
   return { file: file.replace(/`/g, ''), contains: contains.replace(/^`|`$/g, '').replace(/\\`/g, '`') };
 });
 
-test('the roster names the nine expected skip tags and the never-skipped floor (#1926 AC1)', () => {
+test('the roster names the ten expected skip tags and the never-skipped floor (#1926 AC1, #3377 AC6.1)', () => {
   assert.deepStrictEqual(skipTags, [
-    'review-step-1', 'review-step-1.6', 'review-step-4', 'plan-audit', 'architecture-alignment',
+    'review-step-1', 'review-step-1.6', 'review-step-4', 'plan-audit', 'plan-review', 'architecture-alignment',
     'reflect-light-mode', 'red-team-persona', 'sdd-whole-branch-review', 'polish',
   ]);
   for (const literal of ['review Step 2', 'review Step 3', 'review Step 5', 'review Step 6 rendered-UI check', 'build Common Step 5', 'reflect Near-misses, Fresh-start, Friction', 'Ceremony escape hatch', '`[IL-116]` cleanup floor', 'HARD-GATEs', 'Design CLI gate', 'Step 6.5 Design Quality Pass']) {

@@ -17,6 +17,9 @@ test('review-console.md calls console-resolve.js --run exactly once, inside the 
   assert.ok(section < call && call < next, 'the call lives in the short-circuit section');
   assert.match(t, /exit code 4/);
   assert.match(t, /exit code 5/);
+  // #3712 / IL-167: an unattended console never asks, so exit 5 routes to the
+  // Headless conclusion, never to "Present a real stop".
+  assert.match(t, /exit code 5 \([^)]*\) → never ask[^;]*Headless conclusion/);
   assert.match(t, /exit codes 2 and 3/);
   assert.match(t, /HARD-GATE/);
   assert.match(t, /--dry-run/);

@@ -234,6 +234,18 @@ reply right after the last completion was graded as final (#3589). Before adding
 for each function that reads the event's marker and route them through one shared predicate
 (`completionCarrierBody`); a second copy drifts the way the first did.
 
+**Nor does one launch mode speak for another on the same version.** Record #3722 measured nested-dispatch
+re-wake behavior: interactive 2.1.302 holds a dispatched agent open and re-wakes it when a nested child or
+`Monitor` watch it started reports, headless (`claude -p`) 2.1.302 and later runs a nested `Agent` call
+synchronously, and headless 2.1.299 and older never re-wakes it for a nested child. The contract had stated
+"never re-woken" as universal, and every restatement had to be qualified once the interactive cell
+contradicted it (`tests/foreground-execution-instruction.test.js` now pins six claim sites). A `claude -p`
+probe, the throwaway-hook recipe above included, measures headless only. When
+contract prose states harness behavior, measure each launch mode and version it will run under, record each
+cell's result beside the claim with its version (`plugin/skills/_shared/subagent-dispatch-core.md`'s
+"Measured on Claude Code (#3722)" sentence), and word the rule itself as only what holds in every cell — there,
+"cannot count on being re-woken".
+
 ## When to use
 
 - Implementing a hook handler, integration, or any code that parses a tool's input/output payload

@@ -51,6 +51,12 @@
         "hooks": [
           { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" pre-tool-use" }
         ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" pre-tool-use" }
+        ]
       }
     ],
     "PostToolUse": [
