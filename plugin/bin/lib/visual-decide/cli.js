@@ -224,11 +224,11 @@ async function cmdStop(opts) {
   // init, #3130), where pidAlive(pid) keeps answering true via kill(pid, 0),
   // and a handler-less exit (win32 SIGTERM is unconditional, outside SIGKILL;
   // #3265), where the PID is gone without the marker ever being written. Write
-  // it here whenever it is still absent, matching the dead-PID branch above --
-  // stop is a stale-PID-tolerant contract regardless of which path gets there.
-  if (!fs.existsSync(path.join(stateDir, 'server-stopped'))) {
-    writeStoppedMarker(stateDir);
-  }
+  // it here unconditionally, matching the dead-PID branch above -- the marker
+  // is an empty presence-only file, so rewriting one the daemon already wrote
+  // is a no-op, and stop is a stale-PID-tolerant contract regardless of which
+  // path gets there.
+  writeStoppedMarker(stateDir);
   process.stdout.write('stopped\n');
 }
 
