@@ -73,12 +73,14 @@ its intended deny rules could not be checked at all.
   actually reach X" — the judge's `evidence` field must preserve that distinction rather than
   overclaiming reach that was never verified.
 - A dimension the project has formally accepted in an ADR. It counts only when a committed
-  `docs/decisions/*.md` file's `**Status:**` line reads `accepted` with no qualifier (not
+  `docs/decisions/*.md` file (or one in the ADR home a repo records in `doc-convention-adr` —
+  `_shared/decision-records.md`) whose `**Status:**` line reads `accepted` with no qualifier (not
   `superseded`, `proposed`, or `deprecated`, and not an `accepted` qualified as superseded or
   rejected), and that ADR's `## Decision` section names the dimension by the generator's exact
   kind literal (`registry-access`, `network-egress`, or `credential-scope`) as a risk the project
-  keeps on purpose. Read `docs/decisions/` before filing. Report a match as one informational
-  line, `accepted risk — ADR NNNN ({kind})`, never as a finding and never as a filed issue: a
+  keeps on purpose. Read the ADR home (`docs/decisions/` by default) before filing. Report a
+  match as one informational line, `accepted risk — ADR NNNN ({kind})`, never as a finding and
+  never as a filed issue: a
   `/claude-tweaks:code-health` sweep puts it in its Step 10 summary, and `/claude-tweaks:review`
   Step 6.65 puts it in the summary footer. An ADR that only mentions the kind (in its Context or
   Alternatives, or as a gap it closed with a deny rule), names it only in prose ("outbound network
