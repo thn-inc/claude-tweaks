@@ -216,6 +216,7 @@ const dropsNothingWakes = (block) => !/nothing wakes you/.test(block);
 const TEMPLATE_KEEP_ALIVE = [
   [/always\s+launches\s+async/i, 'a nested Agent call always launches async'],
   [/never\s+end\s+this\s+turn\s+with\s+(?:a|one)\s+child\s+outstanding/i, 'the turn never ends with a child outstanding'],
+  [/ignore\s+that\s+child's\s+result\s+if\s+it\s+arrives\s+later/i, 'a late child result is ignored'],
 ];
 const templateKeepAliveMissing = (block) => TEMPLATE_KEEP_ALIVE.filter(([pattern]) => !pattern.test(block)).map(([, fact]) => fact);
 const dropsInTurnCarveOut = (block) => !/It does not cover an in-turn/.test(block);
@@ -254,6 +255,12 @@ test('the task-prompt predicates can actually go red (discrimination proof)', ()
     dropsInTurnCarveOut(firstCall + '\n\nIt does not cover an in-turn `Agent`-tool dispatch.'),
     false,
     'the appended in-turn carve-out sentence must turn the template assertion red',
+  );
+  const lateResultDoctored = firstCall.replace("; ignore that child's result if it arrives later", '');
+  assert.notEqual(lateResultDoctored, firstCall, 'anchor text for the late-result clause not found in the template');
+  assert.ok(
+    templateKeepAliveMissing(lateResultDoctored).includes('a late child result is ignored'),
+    'removing the late-result clause must turn the template assertion red',
   );
 
   assert.equal(dropsPrimaryResumeSignal(text + '\n\nSee the primary resume signal.'), false, 'the re-inserted resume-signal citation must turn the rationale assertion red');

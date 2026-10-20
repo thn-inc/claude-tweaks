@@ -132,7 +132,8 @@ calls, at most 15 (5 minutes), stopping as soon as every child's `<task-notifica
 arrived, never reading or tailing a child's `output_file` -- until every child has reported, and
 never end this turn with one child outstanding. With no `Agent` tool, or a child still silent
 when the bound expires, judge that unit yourself, log the downgrade, and mark its findings
-`unconfirmed`. A reply that ends without a tool call ends the turn.
+`unconfirmed`; ignore that child's result if it arrives later. A reply that ends without a
+tool call ends the turn.
 
 {context-pack}
 
@@ -277,7 +278,8 @@ calls, at most 15 (5 minutes), stopping as soon as every child's `<task-notifica
 arrived, never reading or tailing a child's `output_file` -- until every child has reported, and
 never end this turn with one child outstanding. With no `Agent` tool, or a child still silent
 when the bound expires, judge that unit yourself, log the downgrade, and mark its findings
-`unconfirmed`. A reply that ends without a tool call ends the turn.
+`unconfirmed`; ignore that child's result if it arrives later. A reply that ends without a
+tool call ends the turn.
 
 {context-pack}
 
