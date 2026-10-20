@@ -9,7 +9,7 @@ const LIB = path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision');
 const { formatEntry, parseEntry } = require(path.join(LIB, 'append'));
 const {
   CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText, isClaimLogEntry, hasClaimLogFor, hasCanonicalClaimLogFor, classifyDecisions, paraphrasedClaimNumbers, isClaimStepBookkeepingEntry,
-} =require(path.join(LIB, 'claim-log'));
+} = require(path.join(LIB, 'claim-log'));
 
 const NOW = Date.parse('2026-10-04T12:00:00Z');
 // Verbatim from run 2026-10-04T163945-record-2861's decisions.md after Step 2.8.
@@ -227,6 +227,14 @@ test('classifyDecisions: a complete paraphrased claim line counts as a claim (#3
   assert.strictEqual(classifyDecisions(`## /flow\n${PARAPHRASED}\n`), 'claim-log-only');
   assert.strictEqual(classifyDecisions(`## /flow\n${PARAPHRASED}\n${DEGRADED_SKIP}\n`), 'claim-log-only');
   assert.strictEqual(classifyDecisions('- AUTO -- Step 2.8 claim: both #1447 and #1446 claimed successfully under runId 2026-08-29T232244-record-1446 (claim-targets.js exit 0). Reversibility: high.'), 'claim-log-only');
+});
+
+test('classifyDecisions: an unanchored paraphrased claim stays content (#3665)', () => {
+  for (const line of [
+    '- AUTO 10:00:00 — Step 3: Manifesto rendered; claimed #5 above. Reversibility: n/a.',
+    '- AUTO 10:00:00 — Dispatch group [5]: claimed #5 for the group. Reversibility: high.',
+    '- AUTO 10:00:00 — Step 6.1: build started on spec; claimed #5 in registry. Reversibility: high.',
+  ]) assert.strictEqual(classifyDecisions(`## /flow\n${line}\n`), 'content', line);
 });
 
 test('classifyDecisions: the widened class still fails closed (#3665 Review Focus)', () => {

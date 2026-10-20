@@ -117,11 +117,20 @@ function hasCanonicalClaimLogFor(body, n) {
   return new RegExp(`${STEP_SRC}: claimed #${n}\\b`).test(String(body || ''));
 }
 
+// A complete, model-worded claim line that names the claim step (#3665) —
+// paraphrasedClaimNumbers alone also takes a bare "#N claimed" line anywhere.
+function isAnchoredParaphrasedClaim(line) {
+  if (!COMPLETE_RE.test(line) || paraphrasedClaimNumbers(line).length === 0) return false;
+  return CLAIM_ANCHOR_RE.test(line.slice(0, line.search(REVERSIBILITY_SPLIT_RE)));
+}
+
 // decisions.md text (null = file absent) -> 'absent' | 'empty' |
 // 'claim-log-only' | 'content'. 'claim-log-only' needs at least one claim
 // entry and nothing else but blank lines, the section heading the writer
 // itself adds, and Step 2.8's own bookkeeping lines (#3665). A claim entry is
-// the exact canonical line, or a complete paraphrased one (#3665). Every line
+// the exact canonical line, or a complete paraphrased one that is also
+// claim-anchored (names Step 2.8 / claim-targets / claims-registry /
+// issue-claims — an unanchored "claimed #N" elsewhere is content) (#3665). Every line
 // this cannot positively recognise is 'content' — a parse failure never reads
 // as "only claim lines".
 function classifyDecisions(text) {
@@ -133,7 +142,7 @@ function classifyDecisions(text) {
     const line = raw.trimEnd();
     if (!line) continue;
     if (line === SECTION_HEADING) continue;
-    if (isClaimLogEntry(line) || (COMPLETE_RE.test(line) && paraphrasedClaimNumbers(line).length > 0)) {
+    if (isClaimLogEntry(line) || isAnchoredParaphrasedClaim(line)) {
       claims += 1;
     } else if (!isClaimStepBookkeepingEntry(line)) {
       return 'content';
