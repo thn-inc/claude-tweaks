@@ -36,7 +36,7 @@ test('report.json is never hand-composed', () => {
 });
 
 test('the writer runs before the QA pass stamp write', () => {
-  const writerAt = REPORTING.indexOf('bin/qa-report.js');
+  const writerAt = REPORTING.indexOf('bin/qa-report.js" --results');
   const stampAt = REPORTING.indexOf('bin/qa-stamp.js" --write');
   assert.ok(writerAt >= 0, 'the writer invocation must be present');
   assert.ok(stampAt >= 0, 'the stamp write must be present');

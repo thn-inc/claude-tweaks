@@ -20,12 +20,12 @@ const SEVERITY = {
 };
 
 // First match wins, case-insensitive. `story-bug` is a judgment, reachable only
-// through a story's own `category`. Rule 1 allows an optional quoted name
-// between the noun and "not found" — the reporting doc's own example is
-// `Locator "Submit" not found`, which a bare "locator not found" substring misses.
-const NAMED = '(?:\\s+(?:"[^"]*"|\'[^\']*\'|`[^`]*`))?';
+// through a story's own `category`. Rule 1 allows up to 120 non-newline chars
+// between the word-bounded noun and "not found" — the repo's own locator
+// syntax (`Locator role:button "Submit" not found`, `locator testid:x not found`)
+// sits between them, and the word boundaries keep `allocator not found` out.
 const CLASSIFY_RULES = [
-  ['stale-selector', [new RegExp(`(?:locator|element)${NAMED}\\s+not found`, 'i')]],
+  ['stale-selector', [/\b(?:locator|element)\b[^\n]{0,120}?\bnot found\b/i]],
   ['flaky-env', [/timeout/i, /navigation failed/i, /net::/i]],
   ['code-bug', [/assertion/i, /expected/i, /verify failed/i]],
 ];
@@ -102,7 +102,7 @@ function composeQaReport(input, opts) {
         story_id: s.id,
         category,
         severity: SEVERITY[category],
-        finding: s.error ?? 'Story failed with no error text',
+        finding: typeof s.error === 'string' && s.error !== '' ? s.error : 'Story failed with no error text',
         suggested_fix: suggestedFix(category, s.id, runDir),
         trace: s.trace ?? null,
       });
@@ -124,11 +124,11 @@ function composeQaReport(input, opts) {
     }
     if (Array.isArray(s.recovered_locators)) {
       for (const r of s.recovered_locators) {
-        recoveredLocators.push({ story_id: s.id, source_file: orNull(s.source_file), ...r });
+        recoveredLocators.push({ ...r, story_id: s.id, source_file: orNull(s.source_file) });
       }
     }
     if (Array.isArray(s.page_inventories)) {
-      for (const p of s.page_inventories) pageInventories.push({ story_id: s.id, ...p });
+      for (const p of s.page_inventories) pageInventories.push({ ...p, story_id: s.id });
     }
   }
 

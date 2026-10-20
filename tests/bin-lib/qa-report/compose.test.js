@@ -52,6 +52,15 @@ test('classifyFailure applies rules 1-3 and defaults to code-bug', () => {
   assert.equal(classifyFailure('Element not found after TIMEOUT'), 'stale-selector');
 });
 
+test('rule 1 matches the repo locator syntax and respects word boundaries', () => {
+  assert.equal(classifyFailure('Step 2: Locator role:button "Submit" not found'), 'stale-selector');
+  assert.equal(classifyFailure('locator testid:submit-cta not found'), 'stale-selector');
+  assert.equal(classifyFailure('element with text "Hi" not found'), 'stale-selector');
+  assert.notEqual(classifyFailure('allocator not found'), 'stale-selector');
+  assert.equal(classifyFailure('allocator not found'), 'code-bug');
+  assert.notEqual(classifyFailure(`locator ${'x'.repeat(200)} not found`), 'stale-selector');
+});
+
 test('FAIL findings carry severity, suggested fix and trace', () => {
   const { report } = compose([
     story('a', 'FAIL', { error: 'Locator "Submit" not found', trace: 't.zip' }),
@@ -79,6 +88,13 @@ test('FAIL with null error still yields a finding', () => {
   assert.equal(report.findings.length, 1);
   assert.equal(report.findings[0].category, 'code-bug');
   assert.equal(report.findings[0].severity, 'High');
+  assert.equal(report.findings[0].finding, 'Story failed with no error text');
+});
+
+test('FAIL with empty-string error yields the fallback finding text', () => {
+  const { report } = compose([story('a', 'FAIL', { error: '' })]);
+  assert.equal(report.findings.length, 1);
+  assert.equal(report.findings[0].category, 'code-bug');
   assert.equal(report.findings[0].finding, 'Story failed with no error text');
 });
 
@@ -123,6 +139,17 @@ test('recovered locators and page inventories flatten with story ids', () => {
   assert.equal('recovered_locators' in report.stories[0], false);
   assert.equal('page_inventories' in report.stories[0], false);
   assert.equal('category' in report.stories[0], false);
+});
+
+test('the composed story_id / source_file win over an entry\'s own stray keys', () => {
+  const rl = { story_id: 'bogus', source_file: 'bogus.yaml', step_index: 0 };
+  const pi = { story_id: 'bogus', url: 'http://x/' };
+  const { report } = compose([
+    story('a', 'PASS', { source_file: 'a.yaml', recovered_locators: [rl], page_inventories: [pi] }),
+  ]);
+  assert.equal(report.recovered_locators[0].story_id, 'a');
+  assert.equal(report.recovered_locators[0].source_file, 'a.yaml');
+  assert.equal(report.page_inventories[0].story_id, 'a');
 });
 
 test('stories entries default missing fields to null and caveats to []', () => {
