@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const { seedDurableState } = require('../health-core/seed-durable-state');
+const { defaultRunner, PREMISE_SELF_CHECK_TIMEOUT_MS } = require('../../../plugin/bin/lib/health-core/premise-self-check');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-health.js');
 
@@ -439,8 +440,7 @@ test('validate-findings: --root a subdirectory of a git repo composes the Premis
   assert.ok(line.includes("'packages/app/.claude/skills/auth.md'"), `expected the top-level-relative path, got: ${line}`);
   // Run the way materialize does (cwd = git top-level): the anchor is absent, so exit 0 = unresolved.
   const command = line.slice('Premise-check:'.length).trim();
-  const run = spawnSync('/bin/sh', ['-c', command], { cwd: top, encoding: 'utf8' });
-  assert.strictEqual(run.status, 0, `command must read unresolved from the git top-level, stderr: ${run.stderr}`);
+  assert.strictEqual(defaultRunner(command, { cwd: top, timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS }), 0, 'command must read unresolved from the git top-level');
 });
 
 test('validate-findings: --root a git subdirectory, removal polarity: a still-present old string in the subdir CLAUDE.md never reads resolved from the git top-level', () => {
@@ -464,8 +464,7 @@ test('validate-findings: --root a git subdirectory, removal polarity: a still-pr
   assert.ok(line, `the still-present removal must keep its Premise-check: line, got body:\n${payload.body}`);
   assert.ok(line.includes("'packages/app/CLAUDE.md'"), `expected the top-level-relative path, got: ${line}`);
   const command = line.slice('Premise-check:'.length).trim();
-  const run = spawnSync('/bin/sh', ['-c', command], { cwd: top, encoding: 'utf8' });
-  assert.strictEqual(run.status, 0, `work is not done, so the command must exit 0 (unresolved), stderr: ${run.stderr}`);
+  assert.strictEqual(defaultRunner(command, { cwd: top, timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS }), 0, 'work is not done, so the command must exit 0 (unresolved)');
 });
 
 test('validate-findings: a non-git --root composes the absolute target path (the fail-safe)', () => {
