@@ -602,36 +602,40 @@ test('AC1.1: a tree entry named café.json round-trips through readTreeEntries a
   const path = require('node:path');
   const g = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'durable-state-z-'));
-  const origin = path.join(dir, 'origin.git');
-  const clone = path.join(dir, 'clone');
-  g(['init', '--bare', '-q', '-b', 'main', origin]);
-  g(['clone', '-q', origin, clone]);
-  g(['-C', clone, 'config', 'user.email', 'test@example.com']);
-  g(['-C', clone, 'config', 'user.name', 'Test']);
-  g(['-C', clone, 'config', 'core.quotepath', 'true']);
+  try {
+    const origin = path.join(dir, 'origin.git');
+    const clone = path.join(dir, 'clone');
+    g(['init', '--bare', '-q', '-b', 'main', origin]);
+    g(['clone', '-q', origin, clone]);
+    g(['-C', clone, 'config', 'user.email', 'test@example.com']);
+    g(['-C', clone, 'config', 'user.name', 'Test']);
+    g(['-C', clone, 'config', 'core.quotepath', 'true']);
 
-  const cafeSpec = [{ key: 'cafe', file: 'café.json', default: {} }];
-  const otherSpec = [{ key: 'other', file: 'other.json', default: {} }];
-  const sleep = () => {};
-  const cafe = createNamespacedState('ns', cafeSpec, { sleep });
-  const other = createNamespacedState('ns', otherSpec, { sleep });
+    const cafeSpec = [{ key: 'cafe', file: 'café.json', default: {} }];
+    const otherSpec = [{ key: 'other', file: 'other.json', default: {} }];
+    const sleep = () => {};
+    const cafe = createNamespacedState('ns', cafeSpec, { sleep });
+    const other = createNamespacedState('ns', otherSpec, { sleep });
 
-  assert.deepStrictEqual(cafe.writeState(clone, () => ({ cafe: { n: 1 } })), { ok: true });
-  // A second writer on the same namespace rebuilds its subtree from the entry map
-  // readTreeEntries returned: café.json must survive it untouched.
-  assert.deepStrictEqual(other.writeState(clone, () => ({ other: { n: 2 } })), { ok: true });
+    assert.deepStrictEqual(cafe.writeState(clone, () => ({ cafe: { n: 1 } })), { ok: true });
+    // A second writer on the same namespace rebuilds its subtree from the entry map
+    // readTreeEntries returned: café.json must survive it untouched.
+    assert.deepStrictEqual(other.writeState(clone, () => ({ other: { n: 2 } })), { ok: true });
 
-  g(['-C', clone, 'fetch', '-q', 'origin', 'health-state']);
-  const treeAfterOther = g(['-C', clone, 'rev-parse', 'origin/health-state^{tree}']).trim();
-  const names = g(['-C', clone, 'ls-tree', '-r', '-z', '--name-only', '--end-of-options', 'origin/health-state']).split('\0').filter(Boolean);
-  assert.deepStrictEqual(names.sort(), ['ns/café.json', 'ns/other.json']);
-  assert.ok(!names.some((n) => n.includes('\\303')), 'no C-quoted form of the name');
-  assert.deepStrictEqual(cafe.readState(clone), { cafe: { n: 1 } });
+    g(['-C', clone, 'fetch', '-q', 'origin', 'health-state']);
+    const treeAfterOther = g(['-C', clone, 'rev-parse', 'origin/health-state^{tree}']).trim();
+    const names = g(['-C', clone, 'ls-tree', '-r', '-z', '--name-only', '--end-of-options', 'origin/health-state']).split('\0').filter(Boolean);
+    assert.deepStrictEqual(names.sort(), ['ns/café.json', 'ns/other.json']);
+    assert.ok(!names.some((n) => n.includes('\\303')), 'no C-quoted form of the name');
+    assert.deepStrictEqual(cafe.readState(clone), { cafe: { n: 1 } });
 
-  // Re-writing identical content through the same entry-map path yields the same tree sha.
-  assert.deepStrictEqual(cafe.writeState(clone, (cur) => cur), { ok: true });
-  g(['-C', clone, 'fetch', '-q', 'origin', 'health-state']);
-  assert.strictEqual(g(['-C', clone, 'rev-parse', 'origin/health-state^{tree}']).trim(), treeAfterOther);
+    // Re-writing identical content through the same entry-map path yields the same tree sha.
+    assert.deepStrictEqual(cafe.writeState(clone, (cur) => cur), { ok: true });
+    g(['-C', clone, 'fetch', '-q', 'origin', 'health-state']);
+    assert.strictEqual(g(['-C', clone, 'rev-parse', 'origin/health-state^{tree}']).trim(), treeAfterOther);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // --- includeDeclined: durable persistence for the 'declined' dismissal mark

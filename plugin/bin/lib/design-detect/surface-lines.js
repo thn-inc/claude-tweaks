@@ -114,11 +114,12 @@ function bPathFromQuoted(token) {
 
 // Parses a unified diff (`git diff -U0` output, or any diff with hunks) into
 // a per-file surface verdict. A file header's path is the raw path whether git
-// printed it plain or C-quoted (GIT_HEADER_RE / PLUS_HEADER_RE above). Never throws on malformed input — an
-// unparseable diff simply yields no files, which the caller (Step 3.8 (b))
-// treats as "no surface change" per this gate's fail-open-toward-skipping
-// posture only when the caller already knows files changed; see the CLI's
-// own doc comment for how an empty diff is surfaced distinctly.
+// printed it plain or C-quoted (GIT_HEADER_RE / PLUS_HEADER_RE above). Never
+// throws on malformed input — an unparseable diff simply yields no files,
+// which the caller (Step 3.8 (b)) treats as "no surface change" per this
+// gate's fail-open-toward-skipping posture only when the caller already knows
+// files changed; see the CLI's own doc comment for how an empty diff is
+// surfaced distinctly.
 function analyzeDiff(diffText) {
   const text = typeof diffText === 'string' ? diffText : '';
   const lines = text.length ? text.split(/\r?\n/) : [];

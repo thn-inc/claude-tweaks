@@ -117,6 +117,7 @@ test('AC1.1: a real repo change to docs/café.md surfaces as the raw path', () =
     git(['init', '-q']);
     git(['config', 'user.email', 't@example.com']);
     git(['config', 'user.name', 'T']);
+    git(['config', 'core.quotepath', 'true']);
     git(['config', 'commit.gpgsign', 'false']);
     fs.mkdirSync(path.join(dir, 'docs'));
     fs.writeFileSync(path.join(dir, 'docs', 'café.md'), 'one\n');

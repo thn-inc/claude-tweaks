@@ -79,8 +79,9 @@ function findMissingEndOfOptions(files) {
 // across lines, so a covered reader keeps its argv on one line.
 const PATH_LIST_TOKEN = /(['"])(?:ls-files|ls-tree|--numstat)\1/;
 const STATUS_TOKEN = /(['"])status\1/;
-const PORCELAIN_TOKEN = /(['"])--porcelain(?:=v1)?\1/;
-const EXEC_TEMPLATE_READ = /\w*[eE]xec\w*\(\s*(['"`])git [^'"`\n]*(?:ls-files|ls-tree|--numstat|status[^'"`\n]*--porcelain)[^'"`\n]*\1/;
+const PORCELAIN_TOKEN = /(['"])--porcelain(?:=v[12])?\1/;
+const SHORT_TOKEN = /(['"])(?:-s|--short)\1/;
+const EXEC_TEMPLATE_READ = /\w*[eE]xec\w*\(\s*(['"`])git [^'"`\n]*(?:ls-files|ls-tree|--numstat|status[^'"`\n]*(?:--porcelain|--short|\s-s\b))[^'"`\n]*\1/;
 const EXEMPT_MARKER = /\/\/ git-path-read: not a path list \([^)]+\)/;
 
 function findUnzippedReads(files) {
@@ -88,7 +89,7 @@ function findUnzippedReads(files) {
   for (const { path: filePath, text } of files) {
     text.split('\n').forEach((line, index) => {
       if (EXEMPT_MARKER.test(line)) return;
-      const isArgvRead = PATH_LIST_TOKEN.test(line) || (STATUS_TOKEN.test(line) && PORCELAIN_TOKEN.test(line));
+      const isArgvRead = PATH_LIST_TOKEN.test(line) || (STATUS_TOKEN.test(line) && (PORCELAIN_TOKEN.test(line) || SHORT_TOKEN.test(line)));
       const argvViolation = isArgvRead && !Z_FLAG.test(line);
       const templateMatch = EXEC_TEMPLATE_READ.exec(line);
       const templateViolation = templateMatch !== null && !TEMPLATE_Z_FLAG.test(templateMatch[0]);
@@ -161,6 +162,9 @@ test('findUnzippedReads: an ls-files/ls-tree/numstat/status argv without -z is f
     ["git(['diff', '--numstat', ref])", "git(['diff', '--numstat', '-z', ref])"],
     ["git(['status', '--porcelain'])", "git(['status', '--porcelain', '-z'])"],
     ["git(['status', '--porcelain=v1', '-uall'])", "git(['status', '--porcelain=v1', '-z', '-uall'])"],
+    ["git(['status', '--porcelain=v2', '--branch'])", "git(['status', '--porcelain=v2', '-z', '--branch'])"],
+    ["git(['status', '-s', '--', dir])", "git(['status', '-s', '-z', '--', dir])"],
+    ["git(['status', '--short', '--', dir])", "git(['status', '--short', '-z', '--', dir])"],
   ];
   for (const [bad, good] of cases) {
     assert.equal(findUnzippedReads([{ path: 'x.js', text: bad }]).length, 1, bad);
@@ -173,12 +177,16 @@ test('findUnzippedReads: an ls-files/ls-tree/numstat/status argv without -z is f
 
 test('findUnzippedReads: an exec template string is held to -z, and the marker exempts it', () => {
   const bad = "const out = execSync('git -C x status --porcelain -b', { cwd });";
+  const badShort = "const out = execSync('git -C x status --short', { cwd });";
+  const goodShort = "const out = execSync('git -C x status --short -z', { cwd });";
   const marked = `${bad} // git-path-read: not a path list (branch and dirty flag only)`;
   const good = "const out = execSync('git ls-files -z', { cwd });";
   const goodTick = 'const out = execFn(`git ls-files -z`, opts);';
   const label = "const command = opts.range ? `git ls-files ${opts.range}` : 'x';";
   assert.equal(findUnzippedReads([{ path: 'x.js', text: bad }]).length, 1);
   assert.equal(findUnzippedReads([{ path: 'x.js', text: marked }]).length, 0);
+  assert.equal(findUnzippedReads([{ path: 'x.js', text: badShort }]).length, 1);
+  assert.equal(findUnzippedReads([{ path: 'x.js', text: goodShort }]).length, 0);
   assert.equal(findUnzippedReads([{ path: 'x.js', text: good }]).length, 0);
   assert.equal(findUnzippedReads([{ path: 'x.js', text: goodTick }]).length, 0);
   assert.equal(findUnzippedReads([{ path: 'x.js', text: label }]).length, 0);
@@ -198,9 +206,11 @@ test('AC2.1 go-red: removing -z from any one covered reader is a violation', () 
 });
 
 test('AC2.1 go-red control: a mutation that leaves -z in place does not go red, so the helper can fail', () => {
+  // '--no-renames' first occurs on the numstat reader line; dropping it leaves -z
+  // there, so the only assertion that can fail is the "exactly one violation" one.
   assert.throws(
-    () => assertGoesRed(path.join('lib', 'blast-radius-cli.js'), "'--end-of-options'", "'--no-color'"),
-    assert.AssertionError,
+    () => assertGoesRed(path.join('lib', 'blast-radius-cli.js'), "'--no-renames', ", ''),
+    { name: 'AssertionError', message: /reports one violation without/ },
   );
 });
 

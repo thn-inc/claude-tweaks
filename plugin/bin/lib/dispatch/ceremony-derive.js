@@ -9,7 +9,7 @@
 // on.
 //
 // Pure — no git/fs I/O of its own. `wrap-up/SKILL.md`'s "Diff-derived
-// ceremony default" step supplies `files` (parsed `git diff --numstat`
+// ceremony default" step supplies `files` (parsed `git diff --numstat -z`
 // output, `git-z.js`'s `parseNumstatZ` shape: `{path, additions,
 // deletions}[]`) and the run's current `ceremony-profile` value.
 const { classifyDiffFiles, blastRadiusSummary } = require('../issues/blast-radius');

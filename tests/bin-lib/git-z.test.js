@@ -138,3 +138,22 @@ test('unquoteCPath: decodes octal UTF-8 bytes and escapes, leaves unquoted input
   assert.equal(unquoteCPath('"a\\tb\\"c\\\\d"'), 'a\tb"c\\d');
   assert.equal(unquoteCPath('docs/plain.md'), 'docs/plain.md');
 });
+
+test('parseNumstatZ: a truncated rename tail yields nothing; a rename is followed by the next plain record', () => {
+  assert.deepEqual(parseNumstatZ('0\t0\t\u0000docs/old.md\u0000'), []);
+  assert.deepEqual(parseNumstatZ('0\t0\t\u0000docs/old.md\u0000docs/new.md\u00003\t4\tx.md\u0000'), [
+    { path: 'docs/new.md', oldPath: 'docs/old.md', additions: 0, deletions: 0 },
+    { path: 'x.md', additions: 3, deletions: 4 },
+  ]);
+});
+
+test('parseStatusPorcelainZ: copy and Y-column rename carry origPath; a token shorter than 4 characters is skipped', () => {
+  assert.deepEqual(parseStatusPorcelainZ('C  b.md\u0000a.md\u0000'), [{ xy: 'C ', path: 'b.md', origPath: 'a.md' }]);
+  assert.deepEqual(parseStatusPorcelainZ(' R b.md\u0000a.md\u0000'), [{ xy: ' R', path: 'b.md', origPath: 'a.md' }]);
+  assert.deepEqual(parseStatusPorcelainZ('M a\u0000 M ok.md\u0000'), [{ xy: ' M', path: 'ok.md' }]);
+});
+
+test('unquoteCPath: the remaining C escapes decode, and an unknown backslash escape is kept literally', () => {
+  assert.equal(unquoteCPath('"\\a\\b\\v\\f\\r"'), '\x07\b\v\f\r');
+  assert.equal(unquoteCPath('"a\\qb"'), 'a\\qb');
+});

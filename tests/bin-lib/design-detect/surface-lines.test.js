@@ -188,6 +188,22 @@ test('analyzeDiff: a content line starting with +++ or --- is counted, not mista
   assert.equal(files[0].surface, true);
 });
 
+const QUOTED_HEADER_LOOKALIKE_DIFF = `diff --git a/src/components/Widget.tsx b/src/components/Widget.tsx
+index 1111111..2222222 100644
+--- a/src/components/Widget.tsx
++++ b/src/components/Widget.tsx
+@@ -10,2 +10,3 @@ export function Widget() {
++++ "b/src/evil.css"
++  return <div className="widget">{counter}</div>;
+`;
+
+test('analyzeDiff: a hunk line shaped like a quoted +++ header is counted as content and opens no phantom file', () => {
+  const files = sl.analyzeDiff(QUOTED_HEADER_LOOKALIKE_DIFF);
+  assert.deepEqual(files.map((f) => f.file), ['src/components/Widget.tsx']);
+  assert.equal(files[0].changedLines, 2);
+  assert.equal(files[0].surface, true);
+});
+
 test('analyzeDiff: a non-jsx/style/template file (.ts) is never surface', () => {
   const diff = `diff --git a/src/hooks/useWidget.ts b/src/hooks/useWidget.ts
 index 1111111..2222222 100644

@@ -264,11 +264,11 @@ function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep =
 
   // Parses `git ls-tree -z <treeSha>` output (NUL-terminated records: "<mode>
   // SP <type> SP <sha> TAB <name>"; -z keeps a non-ASCII name raw instead of
-  // C-quoted) into a Map keyed by name, so callers can
-  // splice in new entries without disturbing ones they don't touch. Returns
-  // an empty Map for a falsy/EMPTY_TREE_SHA treeSha or any sha git can't
-  // resolve (a not-yet-existing subtree on this namespace's very first write).
-  // Must stay paired with writeTree's `mktree -z`: both sides speak NUL records.
+  // C-quoted) into a Map keyed by name, so callers can splice in new entries
+  // without disturbing ones they don't touch. Returns an empty Map for a
+  // falsy/EMPTY_TREE_SHA treeSha or any sha git can't resolve (a
+  // not-yet-existing subtree on this namespace's very first write). Must stay
+  // paired with writeTree's `mktree -z`: both sides speak NUL records.
   function readTreeEntries(root, treeSha) {
     const entries = new Map();
     if (!treeSha || treeSha === EMPTY_TREE_SHA) return entries;
