@@ -301,6 +301,21 @@ test('AC2.2 unbounded-list-query negative: findMany with take is not flagged', (
   assert.equal(ofKind(root, 'unbounded-list-query').length, 0);
 });
 
+test('unbounded-list-query: only a top-level take/limit key bounds the call', () => {
+  const root = tmpGitRepo();
+  write(root, 'package.json', JSON.stringify({ name: 'api', dependencies: { express: '^4', '@prisma/client': '^5' } }));
+  write(root, 'routes/a.js', [
+    'const a = await prisma.user.findMany({ where: { price: { lte: limit } } });',
+    'const b = await prisma.user.findMany({ include: { posts: { take: 3 } } });',
+    'const c = await prisma.user.findMany({ limit, offset });',
+    'const d = await prisma.user.findMany({ where: { a: 1 }, take: 5 });',
+    'const e = await prisma.user.findMany();',
+    '',
+  ].join('\n'));
+  const lines = ofKind(root, 'unbounded-list-query').map((c) => Number(c.evidence.match(/:(\d+) /)[1])).sort();
+  assert.deepEqual(lines, [1, 2, 5]);
+});
+
 const POST_SCHEMA = 'model Post {\n  id Int @id\n  authorId Int\n  title String\n}\n';
 
 function postRepo(schema, route) {
@@ -373,10 +388,22 @@ test('the queries row reads pass with its source-file and schema counts when not
 });
 
 test('unbalanced brackets do not throw', () => {
-  const root = prismaRoute('for (const a of b) { await prisma.user.findMany(');
-  assert.doesNotThrow(() => scanScaleReadiness(root));
-  assert.doesNotThrow(() => scanScaleReadiness(prismaRoute('items.map(async (i) => { await User.find(')));
-  assert.doesNotThrow(() => scanScaleReadiness(postRepo(POST_SCHEMA, 'prisma.post.findMany({ where: { authorId: ')));
+  // Unbalanced input is skipped, not guessed at: each fixture yields zero
+  // candidates of the kinds that need the unmatched bracket.
+  const cases = [
+    [prismaRoute('for (const a of b) { await prisma.user.findMany('), ['query-in-loop', 'unbounded-list-query', 'unindexed-where-field']],
+    // A complete query after an unclosed loop brace / paren: only the missing
+    // close keeps it out of the loop body.
+    [prismaRoute('for (const a of b) { await prisma.user.findUnique({ where: { id: a } });\n'), ['query-in-loop']],
+    [prismaRoute('items.map(async (i) => { await User.findOne({ _id: i });\n'), ['query-in-loop']],
+    [prismaRoute('const x = await prisma.user.findMany({ where: { a: 1 }\n'), ['unbounded-list-query']],
+    [postRepo(POST_SCHEMA, 'prisma.post.findMany({ where: { authorId: '), ['query-in-loop', 'unbounded-list-query', 'unindexed-where-field']],
+  ];
+  for (const [root, kinds] of cases) {
+    let r;
+    assert.doesNotThrow(() => { r = scanScaleReadiness(root); });
+    for (const kind of kinds) assert.equal(r.candidates.filter((c) => c.kind === kind).length, 0, kind);
+  }
 });
 
 test('exports QUERY_CALL_RE, findClose and MAX_SCAN_CHARS for the pooling checks', () => {

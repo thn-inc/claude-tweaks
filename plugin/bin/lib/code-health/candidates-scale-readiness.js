@@ -325,7 +325,16 @@ function scanQueryInLoop(ctx, candidates) {
   }
 }
 
-const LIMIT_KEY_RE = /\b(?:take|limit)\s*[:,}]/;
+// True when the call's args are an object literal with a top-level `take` or
+// `limit` key (`key: v` or bare shorthand). A nested `include: { x: { take } }`
+// or a `limit` used as a value inside `where` does not bound the outer call.
+function hasTopLevelLimit(args) {
+  const trimmed = args.trim();
+  if (!trimmed.startsWith('{')) return false;
+  const inner = braceInner(trimmed, 0);
+  if (inner === null) return false;
+  return splitTopLevel(inner).some((seg) => /^['"]?(?:take|limit)['"]?\s*(?::|$)/.test(seg));
+}
 
 function scanUnboundedListQuery(ctx, candidates) {
   const listCall = /\bprisma\.(\w+)\.findMany\s*\(|\b([A-Z]\w*)\.(findAll|find)\s*\(/g;
@@ -343,7 +352,7 @@ function scanUnboundedListQuery(ctx, candidates) {
       } else {
         const close = findClose(text, parenIdx, '(', ')');
         if (close === -1) continue;
-        unbounded = !LIMIT_KEY_RE.test(text.slice(parenIdx + 1, close));
+        unbounded = !hasTopLevelLimit(text.slice(parenIdx + 1, close));
       }
       if (unbounded) {
         candidates.push({ file: rel, kind: 'unbounded-list-query', evidence: `${rel}:${lineOf(text, m.index)} ${name} has no take/limit — an unbounded list` });
