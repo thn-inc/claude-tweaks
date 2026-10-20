@@ -178,7 +178,9 @@ it literally into the next call; never carry it in a shell variable across calls
    way, this is the one point in this procedure that must never attempt resolution —
    `_shared/auto-mode-contract.md`'s "does NOT silence" table states plainly: "Resolution of merge
    conflicts in worktree finishing | Conflict resolution requires intent the model cannot infer."
-   Go to the **Park** branch below.
+   Go to the **Park** branch below, with `{conflict|failed verification}` replaced by `conflict`
+   for a merge conflict, or by `merge aborted: {first stderr line}` for the guard abort or any
+   other failure.
 
 6. **Verify on the merged result** — run the project's verification command
    (`skills/test/verification.md`'s shared procedure) against the now-merged base branch.
