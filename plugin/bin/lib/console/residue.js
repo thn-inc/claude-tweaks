@@ -23,15 +23,16 @@ function unresolvedItems(consoleJson) {
 
 // Partition unresolved items into those a human can still review and those
 // whose `staged/{id}` is gone from `consoleDir`. An item with no usable id, a
-// `decision:` item (it lives in decisions.md, not staged/), or an id that is
-// not a bare file name is never classified missing — only a plain staged-file
-// id can be proven absent.
+// `decision:` item (it lives in decisions.md, not staged/), an engine-row id
+// (`docs:CLAUDE.md` — a `{row}:{label}` item with no staged file of its own),
+// or an id that is not a bare file name is never classified missing — only a
+// plain staged-file id can be proven absent.
 function splitMissing(items, consoleDir, exists = fs.existsSync) {
   const kept = [];
   const missing = [];
   for (const item of items) {
     const id = item && item.id;
-    const checkable = typeof id === 'string' && id !== '' && !id.startsWith('decision:') && path.basename(id) === id;
+    const checkable = typeof id === 'string' && id !== '' && !id.includes(':') && path.basename(id) === id;
     if (checkable && !exists(path.join(consoleDir, 'staged', id))) {
       missing.push({ ...item, resolution: MISSING_RESOLUTION, reason: `staged file absent (was ${item.resolution})` });
       continue;

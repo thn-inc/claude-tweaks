@@ -287,7 +287,7 @@ test('a run with only missing-only consoles yields no consoles and renders nothi
   assert.deepStrictEqual(formatResidueLines(found, { pluginRoot: '/p' }), []);
 });
 
-test('splitMissing never classifies a decision: item, an id-less item or a non-basename id as missing (#3772)', () => {
+test('splitMissing never classifies a decision: item, an engine-row id, an id-less item or a non-basename id as missing (#3772)', () => {
   const never = () => false;
   const items = [
     { id: 'decision:STAGED 01:00:20 — x', resolution: 'keep-staged' },
@@ -296,6 +296,7 @@ test('splitMissing never classifies a decision: item, an id-less item or a non-b
     { id: 42, resolution: 'pending' },
     { id: '../escape.md', resolution: 'pending' },
     { id: 'sub/file.md', resolution: 'pending' },
+    { id: 'docs:CLAUDE.md', resolution: 'keep-staged' },
   ];
   assert.deepStrictEqual(splitMissing(items, '/c', never), { items, missing: [] });
   const gone = { id: 'gone.md', section: 's', resolution: 'keep-staged', reason: 'r' };
