@@ -628,7 +628,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `/help` | `/help` references `/visualize` in the workflow diagram and reference card. |
 | `/init` | Step 12 offers to enable diagram suggestions (writes `diagram-suggestions: enabled/disabled` to CLAUDE.md — no install step, this skill is native). |
 | `/journeys` | Soft-hook caller (Step 3.6) — suggests a diagram with `--source journeys`, placing it at `docs/journeys/{journey-name}-{type}.html`. |
-| `/review` | Soft-hook caller (Lens 3i-diagram) — suggests a diagram with `--source review`; ephemeral by default. |
+| `/review` | Soft-hook caller (Lens 3i-diagram) — an informational doc-freshness finding recommending `/claude-tweaks:visualize {type} {topic}`. `/visualize`'s placement table defines a `review` source (ephemeral by default) that review's prose does not currently pass. |
 | `/specify` | Soft-hook caller (Step 2.5d) — suggests a diagram with `--source specify`, placing it at `docs/plans/{spec-slug}-{type}.html`. |
 | `skills/_shared/record-queue-fetch.md` | `record-graph.md` Step A reuses this shared fetch-and-facet-parse procedure verbatim (with `body` added to `{EXTRA_FIELDS}`) — the same procedure `/help`, `/tidy`, and `/backlog` already consume. |
 

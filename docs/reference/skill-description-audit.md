@@ -1,8 +1,11 @@
 # Skill description trim audit (record #2799)
 
-External guidance for newer Claude models says to shrink skill descriptions and to stop
-pre-reading documentation stacks that were written to compensate for weaker models. This audit
-judges this plugin's skill descriptions against that guidance. Audit date: 2026-10-20. Scope: all
+OpenAI's GPT-6 Astra guidance (the source named in the record's original request) says to shrink
+skill descriptions and to stop pre-reading documentation stacks that were written to compensate for
+weaker models. It is another vendor's model guidance, so this audit applies it only where it agrees
+with Claude Code's own platform limits (the skill-listing budget, decision 0024) and this repo's
+conventions; tying re-runs to Claude model bumps is a judgment, not a transfer of the vendor's
+claim. This audit judges this plugin's skill descriptions against that guidance. Audit date: 2026-10-20. Scope: all
 39 `plugin/skills/*/SKILL.md` descriptions, plus `plugin/agents/qa-agent.md` judged separately (it
 is an agent, not a skill, so it is outside the measured totals below).
 
@@ -19,9 +22,10 @@ is an agent, not a skill, so it is outside the measured totals below).
 - **Basis for the edge trims.** CLAUDE.md's Cross-references rule: "Do not restate an edge inside a
   `SKILL.md`". A description saying "works as a step within /X" or "used by /Y" restates a
   `docs/skill-graph.md` edge. Six of the trimmed skills (`browse`, `deepen`, `journeys`, `reflect`,
-  `visual-review`, `visualize`) had no row in `docs/skill-graph.md` for those edges, so the
-  description was the only place they were recorded. The trim added 11 rows there first, so no
-  relationship was lost.
+  `visual-review`, `visualize`) lacked a row in `docs/skill-graph.md` for at least some of those
+  edges (for `browse`, only the `/stories` and `/visual-review` edges; its `/review` and `/demo`
+  edges already existed), so the description was the only place those were recorded. The trim added
+  11 rows there first, so no relationship was lost.
 
 ## Measurements
 
@@ -33,11 +37,20 @@ whose description is not part of the skill listing):
 | Before (base `7aa24bd26`) | 8,616 |
 | After | 7,709 |
 
-The listing budget from decision 0024 is 8,000 characters at 200k context and 40,000 at 1M, shared
-with every other installed plugin's skills. The skill corpus was over the 200k figure before the
-trim and is under it after, which still leaves no headroom for other plugins. The per-description
-maximum of 1,536 is untouched; the largest skill description is 260 characters. `qa-agent`, an
-agent rather than a skill, is a separate 409 characters, unchanged and in neither total.
+The listing budget from decision 0024 is 8,000 characters at 200k context and 40,000 at 1M. It is
+presumably shared with every other installed plugin's skills; that sharing is an inference, not
+something decision 0024 states. The 7,709 above counts description characters only. As
+`tests/bin-lib/skill-audit/context-cost.test.js` notes, "listing entries also carry whenToUse and
+the name, so the real listing cost is higher". The 39 `claude-tweaks:{name}` strings alone add about
+875 characters, putting the real cost at roughly 8,580 or more, still over 8,000 at 200k context.
+The trim cut about 900 characters of listing cost but did not bring the corpus under the budget; it
+stays under the 1M figure. The per-description maximum of 1,536 is untouched; the largest skill
+description was 260 characters before (`browse`, `release`) and is 259 after (`dispatch`,
+`docs-health`, `specify`, `stories`). `qa-agent`, an agent rather than a skill, is a separate 409
+characters, unchanged and in neither total.
+
+Verdicts across the 39 skills plus `qa-agent`: 11 trim, 6 needs-human-judgment (including
+`qa-agent`), 23 keep.
 
 ## Per-skill findings
 
@@ -64,14 +77,14 @@ agent rather than a skill, is a separate 409 characters, unchanged and in neithe
 | `intake` | 116 | 116 | needs-human-judgment | No "Use when/to/for" trigger form; a convention-conformance question, not a trim. |
 | `journey-health` | 255 | 255 | keep | Scope ("one journey or the due coverage scan") and "always files an issue" are behavior the selector needs. |
 | `journeys` | 152 | 93 | trim | Restated the `/build` edge. |
-| `ledger` | 226 | 226 | keep | "never invoked via the Skill tool" prevents a failing invocation. |
+| `ledger` | 226 | 226 | needs-human-judgment | "A knowledge dependency read by build/test/review/wrap-up/flow" is a consumer list of the kind trimmed elsewhere; kept pending a human call, since its "never invoked via the Skill tool" clause is a documented reason to keep and prevents a failing invocation. |
 | `pipeline-smoke-test` | 251 | 251 | keep | Scope (live git/gh state, claim-race path) is what distinguishes it from the test suite. |
 | `reflect` | 233 | 146 | trim | Restated the `/review` and `/wrap-up` edges. |
 | `release` | 260 | 100 | trim | Procedure summary; the Keywords carry the scope. |
 | `research` | 246 | 246 | keep | "via /deep-research" disambiguates from `anthropic-skills:deep-research`. |
 | `review` | 227 | 164 | trim | Dropped the restatement "The quality gate between…"; "Gates on /claude-tweaks:test passing" kept as a precondition. |
 | `routine` | 242 | 242 | keep | Create/update/status verbs and "project-agnostic template" distinguish it from `routine-kickoff`. |
-| `routine-kickoff` | 246 | 155 | trim | Procedure summary removed; the "Not user-facing" negative trigger kept. |
+| `routine-kickoff` | 246 | 155 | trim | Procedure summary removed; the "Not user-facing" negative trigger kept. Its description, like `intake`, `sweep` and `walkthrough`, has no "Use when/to/for" form; that is intentional for a machine-invoked, not-user-facing skill, so it is not grouped with those three. |
 | `simplify` | 257 | 257 | needs-human-judgment | Name collides with the built-in `simplify` skill, and its edge clause is the only claude-tweaks-lifecycle anchor, so trimming is not clear-cut. |
 | `specify` | 259 | 259 | keep | The `#N`, `#N,#M`, `#A-#B` and design-doc input forms are the trigger surface. |
 | `stories` | 259 | 259 | keep | "semantic-locator (schema v2)" and "diff-aware updates" separate it from `test`'s story validation. |
