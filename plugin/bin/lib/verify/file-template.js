@@ -8,10 +8,13 @@
 //
 // Why the refusals exist: on win32, cmd.exe expands `%VAR%` even inside double
 // quotes, and `"`/`!` cannot be escaped there, so such a path cannot be quoted
-// safely. On POSIX, a template that already quotes `{file}` (or uses `${file}`,
-// or backslashes) nests our quoting inside its own, so the quote boundaries
-// cannot be trusted. A control character in a path is refused on every
-// platform: it can break the command line and cannot be quoted reliably.
+// safely. For a non-plain path, a template that wraps `{file}` in quotes
+// (`"{file}"` on both platforms, also `'{file}'` on POSIX) has that wrapper
+// replaced by this helper's own quoting; any other quote or escape character
+// left in the template (or `${file}` on POSIX) refuses, because our quoting
+// would nest inside it and the boundaries cannot be trusted. A control
+// character in a path is refused on every platform: it can break the command
+// line and cannot be quoted reliably.
 'use strict';
 
 const PLAIN_PATH = /^[A-Za-z0-9_@+:./-]+$/;
@@ -23,11 +26,13 @@ function substituteFile(template, file, { platform = process.platform } = {}) {
   if (CONTROL_CHAR.test(file)) return { ok: false, reason: 'control-character' };
   if (platform === 'win32') {
     if (/["%!]/.test(file)) return { ok: false, reason: 'cmd-unquotable' };
-    if (/["^]/.test(template)) return { ok: false, reason: 'template-quotes' };
-    return splice(`"${file}"`);
+    const bare = template.split('"{file}"').join('{file}');
+    if (/["^]/.test(bare)) return { ok: false, reason: 'template-quotes' };
+    return { ok: true, command: bare.split('{file}').join(`"${file}"`) };
   }
-  if (/["'`\\]/.test(template) || template.includes('${file}')) return { ok: false, reason: 'template-quotes' };
-  return splice(`'${file.replace(/'/g, "'\\''")}'`);
+  const bare = template.split('"{file}"').join('{file}').split("'{file}'").join('{file}');
+  if (/["'`\\]/.test(bare) || bare.includes('${file}')) return { ok: false, reason: 'template-quotes' };
+  return { ok: true, command: bare.split('{file}').join(`'${file.replace(/'/g, "'\\''")}'`) };
 }
 
 module.exports = { substituteFile };

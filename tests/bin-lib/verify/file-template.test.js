@@ -40,17 +40,36 @@ test('substituteFile: $& in the path substitutes literally', () => {
 test('substituteFile: refusals are named', () => {
   assert.deepStrictEqual(substituteFile('node --test {file}', 'tests/%PATH%.test.js', WIN32),
     { ok: false, reason: 'cmd-unquotable' });
-  assert.deepStrictEqual(substituteFile('node --test "{file}"', 'tests/a b.test.js', LINUX),
+  assert.deepStrictEqual(substituteFile("NODE_OPTIONS='--x' node --test {file}", 'tests/a b.test.js', LINUX),
+    { ok: false, reason: 'template-quotes' });
+  assert.deepStrictEqual(substituteFile('node --test ^{file}', 'tests/a b.test.js', WIN32),
     { ok: false, reason: 'template-quotes' });
   assert.deepStrictEqual(substituteFile('node --test {file}', 'tests/a\tb.test.js', LINUX),
     { ok: false, reason: 'control-character' });
 });
 
+test('substituteFile: a template that wraps {file} in quotes has that wrapper replaced by the helper quoting', () => {
+  assert.deepStrictEqual(substituteFile('node --test "{file}"', 'tests/a b.test.js', LINUX),
+    { ok: true, command: "node --test 'tests/a b.test.js'" });
+  assert.deepStrictEqual(substituteFile('npx vitest run "{file}"', 'app/(marketing)/page.test.tsx', LINUX),
+    { ok: true, command: "npx vitest run 'app/(marketing)/page.test.tsx'" });
+  assert.deepStrictEqual(substituteFile("node --test '{file}'", 'tests/$(touch PWNED).test.js', LINUX),
+    { ok: true, command: "node --test 'tests/$(touch PWNED).test.js'" });
+  assert.deepStrictEqual(substituteFile('node --test "{file}"', 'tests/a&b.test.js', WIN32),
+    { ok: true, command: 'node --test "tests/a&b.test.js"' });
+});
+
 test('substituteFile: the quoted command runs as one literal word under a real sh', { skip: process.platform === 'win32' }, () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'file-template-'));
-  const sub = substituteFile('printf %s {file}', 'tests/$(touch PWNED).test.js', { platform: process.platform });
-  assert.strictEqual(sub.ok, true);
-  const out = execSync(sub.command, { cwd, shell: '/bin/sh', encoding: 'utf8' });
-  assert.strictEqual(out, 'tests/$(touch PWNED).test.js');
-  assert.strictEqual(fs.existsSync(path.join(cwd, 'PWNED')), false);
+  try {
+    for (const template of ['printf %s {file}', 'printf %s "{file}"']) {
+      const sub = substituteFile(template, 'tests/$(touch PWNED).test.js', { platform: process.platform });
+      assert.strictEqual(sub.ok, true);
+      const out = execSync(sub.command, { cwd, shell: '/bin/sh', encoding: 'utf8' });
+      assert.strictEqual(out, 'tests/$(touch PWNED).test.js');
+      assert.strictEqual(fs.existsSync(path.join(cwd, 'PWNED')), false);
+    }
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
 });
