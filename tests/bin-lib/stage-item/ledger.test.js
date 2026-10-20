@@ -387,6 +387,17 @@ test('M12: a failed STAGED log write is a stderr warning only — exit 0, row an
   assert.match(err.join(''), /stage-item\.js: warning: could not log STAGED entry to decisions\.md \(.+\)/);
 });
 
+test('a degraded exit 3 prints the degraded prefix as the FIRST stderr line, even when its SKIP log write also fails', () => {
+  const f = fixture();
+  fs.writeFileSync(path.join(f.runDir, 'staged'), 'a regular file where the directory should be\n');
+  fs.mkdirSync(path.join(f.runDir, 'decisions.md'));
+  const { deps, err } = fakeDeps(f.main);
+  assert.equal(run(ARGS(f), deps), 3);
+  const lines = err.join('').split('\n').filter(Boolean);
+  assert.match(lines[0], /^stage-item\.js: ledger carry-forward degraded — condition: staged write failed/);
+  assert.ok(lines.slice(1).some((l) => /^stage-item\.js: warning: could not log SKIP entry/.test(l)), 'the SKIP-log failure warning still follows');
+});
+
 test('M12: --phase and --section are honored: the row\'s Phase cell and the decisions.md heading', () => {
   const f = fixture();
   const { deps } = fakeDeps(f.main);

@@ -146,11 +146,11 @@ function runLedger(o, { id, content, target }, deps) {
     section: o.section ?? '/build',
     now: typeof deps.now === 'function' ? deps.now() : Date.now(),
   });
+  // The degraded line goes first: callers branch on stderr *starting* with
+  // this prefix (build/dispatch.md), so a log-write warning must follow it.
+  if (result.code !== 0) deps.stderr(`stage-item.js: ledger carry-forward degraded — ${result.reason}\n`);
   for (const w of result.warnings) deps.stderr(`stage-item.js: warning: ${w}\n`);
-  if (result.code !== 0) {
-    deps.stderr(`stage-item.js: ledger carry-forward degraded — ${result.reason}\n`);
-    return result.code;
-  }
+  if (result.code !== 0) return result.code;
   deps.stdout(result.file + '\n');
   if (result.renamed) {
     deps.stdout(`stage-item.js: --id ${result.requestedId} already exists in staged/ — wrote ${result.id} instead\n`);

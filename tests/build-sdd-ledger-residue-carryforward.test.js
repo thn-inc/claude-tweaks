@@ -66,6 +66,7 @@ function cliPath() {
 
 test('I1: the exit-3 guidance branches on the degraded stderr prefix — traced and never retried, else a wrong run dir to re-resolve; exit 2 names a rejected --ledger and an unreadable --file', () => {
   assert.match(DISPATCH, ws('exit 3 with stderr starting `stage-item.js: ledger carry-forward degraded —` is a degraded path whose trace is already in `decisions.md` — never retry the call or log it again'));
+  assert.match(DISPATCH, ws('unless a following `stage-item.js: warning: could not log SKIP entry` line says that trace itself failed'));
   assert.match(DISPATCH, ws('any other exit 3 is a wrong run dir (missing, or a worktree shadow per `_shared/pipeline-run-dir.md`\'s Anchoring section) that wrote and logged nothing — re-resolve `$PIPELINE_RUN_DIR` and re-run'));
   assert.match(DISPATCH, ws('exit 2 is a malformed invocation (a missing `--item`, `--label`, or `--allocate`, a rejected `--ledger` — not found, wrong name, or outside the run directory and worktree — or an unreadable `--file`) to fix and re-run'));
 });
