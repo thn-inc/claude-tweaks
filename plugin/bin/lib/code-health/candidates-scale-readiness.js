@@ -41,6 +41,24 @@
 //     alone is not a signal — a static Next.js site has no server work — and
 //     a server whose dependency this list does not name reads as not
 //     applicable.
+//   - Query checks (`query-in-loop`, `unbounded-list-query`,
+//     `unindexed-where-field`) use text-window and bracket-depth matching
+//     (`findClose`), not an AST: the depth counter has no string or comment
+//     awareness and gives up after `MAX_SCAN_CHARS`, so a loop body or call
+//     longer than that, or one with a stray bracket inside a string, is
+//     skipped silently rather than guessed at.
+//   - Recognized query shapes are Prisma (`prisma.<model>.<op>(`), a
+//     `db|pool|client|sql|knex|connection|conn` `.query`/`.execute` driver
+//     call, a capitalized-receiver model call (`User.find`, `Order.findOne`,
+//     `Post.findAll` — Mongoose/Sequelize style) and `supabase.from(`. A
+//     query reached through a wrapper function or an unlisted ORM is
+//     invisible, and a loop that reaches a query only through a helper is
+//     not seen as a loop-with-query.
+//   - The unindexed-field check is Prisma-schema-only: it needs a
+//     `.prisma` file the generator can parse and a `prisma.<model>` call in
+//     JS/TS whose `where` is an inline object literal. A `where` built in a
+//     variable, a raw SQL filter or an index defined only by a migration is
+//     not seen.
 
 const fs = require('fs');
 const path = require('path');
@@ -232,6 +250,207 @@ function candidatesScaleReadiness(rootDir) {
   return scanScaleReadiness(rootDir).candidates;
 }
 
+// ---- Query checks ----------------------------------------------------------
+
+// Bound on every bracket-matching window: a loop body or call longer than this
+// is skipped, never guessed at.
+const MAX_SCAN_CHARS = 4000;
+
+// Read and write query-call shapes (global — copy with `new RegExp(source, 'g')`
+// when a caller needs its own lastIndex): Prisma, a driver `.query`/`.execute`,
+// a capitalized-receiver model call (Mongoose/Sequelize) and Supabase.
+const QUERY_CALL_RE = /\bprisma\.\w+\.(?:findMany|findFirst|findUnique|findFirstOrThrow|findUniqueOrThrow|count|aggregate|groupBy|create|update|upsert|delete)\s*\(|\b(?:db|pool|client|sql|knex|connection|conn)\.(?:query|execute)\s*\(|\b[A-Z]\w*\.(?:find|findOne|findById|findAll|findByPk|countDocuments)\s*\(|\bsupabase\.from\s*\(/g;
+
+// Index of the `close` matching the `open` at `openIdx`, or -1. A plain depth
+// counter — no string or comment awareness — that gives up after
+// MAX_SCAN_CHARS characters or at the end of the text.
+function findClose(text, openIdx, open, close) {
+  const end = Math.min(text.length, openIdx + MAX_SCAN_CHARS);
+  let depth = 0;
+  for (let i = openIdx; i < end; i++) {
+    const ch = text[i];
+    if (ch === open) depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function lineOf(text, idx) {
+  let line = 1;
+  for (let i = 0; i < idx; i++) if (text.charCodeAt(i) === 10) line++;
+  return line;
+}
+
+const LOOP_OPENER_RE = /\bfor\s*(?:await\s*)?\(|\bwhile\s*\(|\.(?:map|forEach|flatMap)\s*\(\s*async\b/g;
+
+// `{ start, end }` of the loop body for one LOOP_OPENER_RE match, or null when
+// the brackets do not balance inside the scan window.
+function loopBody(text, m) {
+  const parenIdx = text.indexOf('(', m.index);
+  const closeParen = findClose(text, parenIdx, '(', ')');
+  if (closeParen === -1) return null;
+  if (m[0].startsWith('.')) return { start: parenIdx + 1, end: closeParen };
+  let i = closeParen + 1;
+  while (i < text.length && /\s/.test(text[i])) i++;
+  if (text[i] === '{') {
+    const closeBrace = findClose(text, i, '{', '}');
+    return closeBrace === -1 ? null : { start: i + 1, end: closeBrace };
+  }
+  const semi = text.indexOf(';', i);
+  return { start: i, end: semi === -1 ? Math.min(text.length, i + MAX_SCAN_CHARS) : semi };
+}
+
+function scanQueryInLoop(ctx, candidates) {
+  for (const { rel, text } of ctx.sourceTexts) {
+    const seen = new Set();
+    const loops = new RegExp(LOOP_OPENER_RE.source, 'g');
+    let m;
+    while ((m = loops.exec(text)) !== null) {
+      const body = loopBody(text, m);
+      if (!body) continue;
+      const opener = m[0].replace(/\s+/g, ' ').replace(/\(\s+/, '(').replace(/\s*\($/, '');
+      const queries = new RegExp(QUERY_CALL_RE.source, 'g');
+      const slice = text.slice(body.start, body.end);
+      let q;
+      while ((q = queries.exec(slice)) !== null) {
+        const line = lineOf(text, body.start + q.index);
+        if (seen.has(line)) continue;
+        seen.add(line);
+        candidates.push({ file: rel, kind: 'query-in-loop', evidence: `${rel}:${line} query call inside a loop (${opener}) — N+1 pattern` });
+      }
+    }
+  }
+}
+
+const LIMIT_KEY_RE = /\b(?:take|limit)\s*[:,}]/;
+
+function scanUnboundedListQuery(ctx, candidates) {
+  const listCall = /\bprisma\.(\w+)\.findMany\s*\(|\b([A-Z]\w*)\.(findAll|find)\s*\(/g;
+  for (const { rel, text } of ctx.sourceTexts) {
+    const calls = new RegExp(listCall.source, 'g');
+    let m;
+    while ((m = calls.exec(text)) !== null) {
+      const parenIdx = m.index + m[0].length - 1;
+      const name = m[1] ? `prisma.${m[1]}.findMany` : `${m[2]}.${m[3]}`;
+      let unbounded;
+      if (m[3] === 'find') {
+        const semi = text.indexOf(';', parenIdx);
+        const stmtEnd = semi === -1 ? text.length : semi;
+        unbounded = !/\.limit\s*\(/.test(text.slice(parenIdx, Math.min(stmtEnd, parenIdx + 300)));
+      } else {
+        const close = findClose(text, parenIdx, '(', ')');
+        if (close === -1) continue;
+        unbounded = !LIMIT_KEY_RE.test(text.slice(parenIdx + 1, close));
+      }
+      if (unbounded) {
+        candidates.push({ file: rel, kind: 'unbounded-list-query', evidence: `${rel}:${lineOf(text, m.index)} ${name} has no take/limit — an unbounded list` });
+      }
+    }
+  }
+}
+
+// Depth-0 comma-separated segments of an object/array body.
+function splitTopLevel(inner) {
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') depth--;
+    else if (ch === ',' && depth === 0) {
+      parts.push(inner.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(inner.slice(start));
+  return parts.map((p) => p.trim()).filter(Boolean);
+}
+
+// Text inside the braces of the object literal that starts at `text[idx]`
+// (which must be `{`), or null when it does not balance.
+function braceInner(text, idx) {
+  const close = findClose(text, idx, '{', '}');
+  return close === -1 ? null : text.slice(idx + 1, close);
+}
+
+// { client -> { model, fields:Set, indexed:Set, schemaRel } } for every model
+// in the given schemas; the shallowest schema wins a duplicate model name.
+function parsePrismaModels(prismaSchemas) {
+  const models = new Map();
+  let parsedSchemas = 0;
+  for (const { rel, text } of prismaSchemas) {
+    const clean = text.replace(/\r\n?/g, '\n').replace(/(^|\s)\/\/.*$/gm, '$1');
+    const blocks = [...clean.matchAll(/^\s*model\s+(\w+)\s*\{([\s\S]*?)^\s*\}/gm)];
+    if (blocks.length === 0) continue;
+    parsedSchemas++;
+    const modelNames = new Set(blocks.map((b) => b[1]));
+    for (const [, name, body] of blocks) {
+      const fields = new Set();
+      const indexed = new Set();
+      for (const line of body.split('\n')) {
+        const f = line.match(/^\s*(\w+)\s+(\w+)/);
+        if (!f || line.trim().startsWith('@@')) continue;
+        if (modelNames.has(f[2])) continue; // a relation field, not a column
+        fields.add(f[1]);
+        if (/@id\b/.test(line) || /@unique\b/.test(line)) indexed.add(f[1]);
+      }
+      for (const g of body.matchAll(/@@(?:id|unique|index)\s*\((?:[^[\]]*?\bfields\s*:\s*)?\[\s*(\w+)/g)) indexed.add(g[1]);
+      const client = name[0].toLowerCase() + name.slice(1);
+      if (!models.has(client)) models.set(client, { model: name, fields, indexed, schemaRel: rel });
+    }
+  }
+  return { models, parsedSchemas };
+}
+
+function scanUnindexedWhereField(ctx, candidates) {
+  const { models, parsedSchemas } = parsePrismaModels(ctx.prismaSchemas);
+  if (models.size > 0) {
+    for (const { rel, text } of ctx.sourceTexts) {
+      const seen = new Set();
+      const calls = /\bprisma\.(\w+)\.(\w+)\s*\(/g;
+      let m;
+      while ((m = calls.exec(text)) !== null) {
+        const info = models.get(m[1]);
+        if (!info) continue;
+        const parenIdx = m.index + m[0].length - 1;
+        const argsClose = findClose(text, parenIdx, '(', ')');
+        if (argsClose === -1) continue;
+        const args = text.slice(parenIdx + 1, argsClose).trim();
+        if (!args.startsWith('{')) continue;
+        const argsInner = braceInner(args, 0);
+        if (argsInner === null) continue;
+        const whereSeg = splitTopLevel(argsInner).find((s) => /^where\s*:\s*\{/.test(s));
+        if (!whereSeg) continue;
+        const whereInner = braceInner(whereSeg, whereSeg.indexOf('{'));
+        if (whereInner === null) continue;
+        for (const seg of splitTopLevel(whereInner)) {
+          const k = seg.match(/^['"]?(\w+)['"]?\s*(?::|$)/);
+          if (!k || /^(?:AND|OR|NOT)$/.test(k[1])) continue;
+          const field = k[1];
+          if (!info.fields.has(field) || info.indexed.has(field)) continue;
+          const key = `${info.model}.${field}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          candidates.push({
+            file: rel,
+            kind: 'unindexed-where-field',
+            evidence: `${rel}:${lineOf(text, m.index)} prisma.${m[1]}.${m[2]} filters on ${info.model}.${field}, which has no @id/@unique/@@index in ${info.schemaRel}`,
+          });
+        }
+      }
+    }
+  }
+  return { queries: `${ctx.sourceTexts.length} source file(s) checked, ${parsedSchemas} Prisma schema(s) parsed` };
+}
+
+SCANNERS.push(scanQueryInLoop);
+SCANNERS.push(scanUnboundedListQuery);
+SCANNERS.push(scanUnindexedWhereField);
+
 registerGenerator('scale-readiness', scanScaleReadiness);
 
 module.exports = {
@@ -241,4 +460,10 @@ module.exports = {
   SCANNERS,
   isRouteFile,
   NON_APP_SEGMENT_RE,
+  scanQueryInLoop,
+  scanUnboundedListQuery,
+  scanUnindexedWhereField,
+  QUERY_CALL_RE,
+  findClose,
+  MAX_SCAN_CHARS,
 };
