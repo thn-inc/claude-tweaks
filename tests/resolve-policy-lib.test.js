@@ -396,3 +396,11 @@ test('merge-authorization: an unattended autonomy ceiling alone never pre-author
   const result = resolvePolicyKeys(['merge-authorization'], { policyRaw: 'autonomy: unattended\n', runConfigRaw: null });
   assert.deepStrictEqual(result['merge-authorization'], { value: 'ask', source: 'default' });
 });
+
+test('merge-authorization: a run-config pre-authorized value wins over an unattended autonomy ceiling (#2734)', () => {
+  const result = resolvePolicyKeys(['merge-authorization'], {
+    policyRaw: 'autonomy: unattended\n',
+    runConfigRaw: 'merge-authorization: pre-authorized\n',
+  });
+  assert.deepStrictEqual(result['merge-authorization'], { value: 'pre-authorized', source: 'run-config' });
+});
