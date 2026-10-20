@@ -140,6 +140,24 @@ test('ok: a committed move-not-cut split reports one changed entry against the m
   assert.strictEqual(row.dClosure, Buffer.byteLength(POINTER) + 1);
 });
 
+test('rule (f): a bare-name citation of another skill\'s file joins the closure at head and base', () => {
+  const dir = makeRepo({
+    'plugin/skills/s/SKILL.md': 'see `other-part.md`\n',
+    'plugin/skills/t/SKILL.md': 't\n',
+    'plugin/skills/t/other-part.md': `${'x'.repeat(100)}\n`,
+  });
+  const appended = 'one more line\n';
+  fs.appendFileSync(path.join(dir, 'plugin/skills/t/other-part.md'), appended);
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-q', '-m', 'grow other-part');
+  const r = call(['--json'], dir);
+  assert.strictEqual(r.code, 0, r.stderr);
+  const j = JSON.parse(r.stdout);
+  const row = j.roots[0].entries.find((e) => e.entry === 'plugin:s');
+  assert.ok(row, JSON.stringify(j.roots[0].entries));
+  assert.strictEqual(row.dClosure, Buffer.byteLength(appended));
+});
+
 test('no-baseline: integration branch unresolved still exits 0 with absolute loads, never a zero delta or a guessed main (F2)', () => {
   const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'hello\n' }, { origin: false });
   const r = call(['--json'], dir, { resolveIntegrationBranch: () => null });

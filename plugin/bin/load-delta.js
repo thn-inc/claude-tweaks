@@ -29,7 +29,8 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { discoverPluginRoots, entryPointLoads, loadDelta } = require('./lib/skill-audit/load');
+const { discoverPluginRoots, entryPointLoads, loadDelta, walkCitable } = require('./lib/skill-audit/load');
+const { readdirUnder } = require('./lib/skill-audit/citable-readdir');
 const { corpusDir } = require('./lib/skill-audit/context-cost');
 const { resolveIntegrationBranch, bareIntegrationName } = require('./lib/hooks/worktree-reap');
 const { toPosix, escapeRegExp, isPathContained } = require('./lib/shared-primitives');
@@ -188,7 +189,10 @@ function headSide(repoRoot, root) {
       .map((d) => `${skillsPrefix(root)}${d.name}/SKILL.md`)
       .filter((p) => readFile(p) !== null);
   };
-  return { readFile, listSkillMds };
+  // The citable `.md` listing rule (f)'s bare-name resolution reads — walked
+  // from {root}/skills and {root}/agents only (never `.claude/worktrees/`).
+  const listFiles = () => walkCitable(root, readdirUnder(repoRoot));
+  return { readFile, listSkillMds, listFiles };
 }
 
 function baseSide(git, sha, baseFiles, root, batch = null) {
@@ -207,6 +211,7 @@ function baseSide(git, sha, baseFiles, root, batch = null) {
       return git(['show', '--end-of-options', `${sha}:${p}`]);
     },
     listSkillMds: () => [...baseFiles].filter((p) => re.test(p)),
+    listFiles: () => [...baseFiles],
   };
 }
 

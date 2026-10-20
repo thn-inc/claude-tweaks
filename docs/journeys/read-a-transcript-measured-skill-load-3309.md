@@ -34,7 +34,7 @@ files:
 - **Action:** Re-run the CLI for the same directory and compare the skill's `max` against its `closure`. The CLI reports byte totals, not paths, so find the extra reads in a recent session where the skill ran: compare the skill files it Read against the ones its `SKILL.md` cites, directly or through files it cites (no CLI lists closure files today; a file-set report is a staged follow-up). Then add the missing citation or remove the stray read.
 - **Should feel:** Like a lead, not a verdict. The record says this skill's real sessions read more skill prose than its static closure contains, which means #3307's citation grammar is missing a reference this skill makes.
 - **Should understand:**
-  - The closure is transitive and usually large (1–2 MB for this plugin's skills), so a record is rare. Each time one is filed, it points at a real blind spot.
+  - The closure is transitive and usually large (about 6 MB for this plugin's skills, since a bare-name citation that names exactly one file now resolves, #3634), so a record is rare. Each time one is filed, it points at a real blind spot.
   - The record carries the skill name, `max`, `median`, `closure`, `invocations` and `sessions`, never transcript excerpts.
   - A deliberately uncited read can be fine. The record exists so the gap is a decision, not an accident.
 - **Red flags:**

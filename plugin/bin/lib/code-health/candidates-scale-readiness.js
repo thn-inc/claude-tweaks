@@ -20,7 +20,7 @@
 // See `criteria-scale-readiness.md` for the judging side of this boundary.
 //
 // Coverage (stated explicitly, never implied total — IL-110):
-//   - Discovery reuses `candidates-dead-code.js`'s `listTrackedFiles` — same
+//   - Discovery reuses `source-scan.js`'s `listTrackedFiles` — same
 //     git-ls-files discovery, same `.gitignore` handling, same
 //     discoveryFailed/discoveryReason IL-115 distinction — but with no
 //     extension filter, since applicability also reads `package.json` and
@@ -161,11 +161,8 @@
 
 const fs = require('fs');
 const path = require('path');
-// `./focus-generators` first: requiring `./candidates-dead-code` first from
-// a direct entry leaves sibling verticals bound to an in-progress exports
-// object (candidates-abstraction-police.js's header documents the order).
 const { registerGenerator } = require('./focus-generators');
-const { listTrackedFiles } = require('./candidates-dead-code');
+const { listTrackedFiles } = require('./source-scan');
 
 // Directory segments whose contents never ship as the app itself — the
 // prelaunch vertical's NON_SITE_SEGMENT_RE plus mocks and framework build
