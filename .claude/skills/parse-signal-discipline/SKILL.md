@@ -310,12 +310,14 @@ When mechanizing a prose heuristic into a deterministic check:
     record is composed vanishes when it is read, and nothing reports it.
     `plugin/bin/lib/issues/record.js`'s `specShapedBody` renders `keyFiles` (#2975) as a
     `### Key Files` list that `/build`'s micro-plan gate and `grouping.js`'s file-overlap checks
-    read. Those checks skip a trailing-slash entry (a bare directory, #1420) with no warning:
-    `file.endsWith('/')` in `groupByFileOverlap`, `directOverlaps` and
-    `detectCrossPRFileOverlap`'s `isSignal`. The first `keyFilePathProblem` accepted `'tests/'`. Review caught it, and
-    `44883e90b` rejects a trailing slash or backslash as `'shape'`. Build the reject list from the
-    readers' `continue` and `return false` branches, not from what looks malformed, and pin each
-    one with its own assertion. The throw suits a hand-written caller. But the four health-sweep
+    read. Only `grouping.js` skips a trailing-slash entry (a bare directory, #1420) with no
+    warning: `file.endsWith('/')` in `groupByFileOverlap`, `directOverlaps` and
+    `detectCrossPRFileOverlap`'s `isSignal`. The micro-plan gate counts every listed path except
+    tests and docs, so a directory entry there counts as an implementation file. The first
+    `keyFilePathProblem` accepted `'tests/'`. Review caught it, and `44883e90b` rejects a trailing
+    slash or backslash as `'shape'`. Build the reject list from the readers' `continue` and
+    `return false` branches, not from what looks malformed, and pin each one with its own
+    assertion. The throw suits a hand-written caller. But the four health-sweep
     composers fill `keyFiles` from LLM judge output, one finding after another in one run, and a
     throw on one finding aborts the rest. So `record.js` exports the throw's own predicate,
     `isRepoRelativeKeyFilePath`, and each producer calls it and omits `keyFiles` on failure. The
@@ -331,7 +333,7 @@ When mechanizing a prose heuristic into a deterministic check:
     normalizing of their own: each passes a path it assembled itself
     (`` `docs/${finding.target}.md` ``, `` `docs/journeys/${finding.journey}.md` ``), so the
     LLM-supplied `target` or `journey` is checked inside a fixed prefix and suffix, and only an
-    embedded `..`, backtick or line break can fail it. A new producer states its own
+    embedded `..` segment, backtick or line break can fail it. A new producer states its own
     normalization from where its path comes from.
 
 ## When to use
