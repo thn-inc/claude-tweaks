@@ -222,13 +222,17 @@ const BASELINE_MODE_CONFLICT = '--baseline/--baseline-cmd apply to a check run �
 const RUN_MODE_CONFLICT = '--run applies to a check run — not to --stamp-status or --changed-files';
 const CWD_MODE_CONFLICT = '--cwd applies to a check run — not to --stamp-status or --changed-files';
 
+function hasBaselineFlags(raw) {
+  return raw.baseline !== null || raw.baselineCmds.length > 0 || raw.noBaselineFixed;
+}
+
 // --stamp-status (#1921): a read-only mode needing no --cmd at all. Every
 // run-scoped flag is a usage error here, not a silently ignored one.
 function validateStampStatus(raw) {
   attachCmdEnvAndTimeout(raw);
   // #3043: checked first so a read-only mode carrying a baseline flag gets
   // this message, not the generic --cmd one below.
-  if (raw.baseline !== null || raw.baselineCmds.length || raw.noBaselineFixed) throw new UsageError(BASELINE_MODE_CONFLICT);
+  if (hasBaselineFlags(raw)) throw new UsageError(BASELINE_MODE_CONFLICT);
   if (raw.cmds.length) throw new UsageError('--stamp-status takes no --cmd');
   // L12 (review, #1922): --base/--integration-branch only mean anything
   // alongside --scope, and --stamp-status takes none of the three — each
@@ -245,7 +249,7 @@ function validateStampStatus(raw) {
 // (unlike --stamp-status) --base/--integration-branch are meaningful here.
 function validateChangedFiles(raw) {
   attachCmdEnvAndTimeout(raw);
-  if (raw.baseline !== null || raw.baselineCmds.length || raw.noBaselineFixed) throw new UsageError(BASELINE_MODE_CONFLICT);
+  if (hasBaselineFlags(raw)) throw new UsageError(BASELINE_MODE_CONFLICT);
   if (raw.cmds.length) throw new UsageError('--changed-files takes no --cmd');
   if (raw.scope !== null) throw new UsageError('--changed-files takes no --scope');
   if (raw.gitDir !== null) throw new UsageError('--changed-files takes no --git-dir');
@@ -259,7 +263,7 @@ function validateChangedFiles(raw) {
 // modes" — the pre-split order (#2806 review).
 function rejectBothReadOnlyModes(raw) {
   attachCmdEnvAndTimeout(raw);
-  if (raw.baseline !== null || raw.baselineCmds.length || raw.noBaselineFixed) throw new UsageError(BASELINE_MODE_CONFLICT);
+  if (hasBaselineFlags(raw)) throw new UsageError(BASELINE_MODE_CONFLICT);
   if (raw.cmds.length) throw new UsageError('--stamp-status takes no --cmd');
   if (raw.scope !== null) throw new UsageError('--changed-files takes no --scope');
   if (raw.gitDir !== null) throw new UsageError('--changed-files takes no --git-dir');

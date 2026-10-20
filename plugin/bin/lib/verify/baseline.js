@@ -532,10 +532,10 @@ async function adjudicate({
       const union = new Set();
       fixedReason = null;
       for (const c of acceptedChecks) {
-        const env = envOf(c.name);
+        const checkEnv = envOf(c.name);
         if (!c.command) { fixedReason = `${c.name} has no command to run at base`; break; }
         const r = await runOne({
-          name: `${c.name}-base-full`, command: c.command, logDir, spawnImpl, now, cwd: baseDir, env, timeout: timeoutOf(c.name),
+          name: `${c.name}-base-full`, command: c.command, logDir, spawnImpl, now, cwd: baseDir, env: checkEnv, timeout: timeoutOf(c.name),
         });
         if (typeof r.exitCode !== 'number') {
           fixedReason = `${c.name} base full run exited without a numeric code${r.timedOut ? ' (timed out)' : ''}`; break;
@@ -548,7 +548,7 @@ async function adjudicate({
         const baseFailing = new Set(extractFailingFiles(text, family, at(baseDir)));
         // A load failure in a scratch worktree is indistinguishable from a
         // missing install unless HEAD resolves no dependencies either.
-        if (headResolvesDeps || (env || {}).NODE_PATH) {
+        if (headResolvesDeps || (checkEnv || {}).NODE_PATH) {
           for (const f of fileLevelFailures(text, family, at(baseDir))) baseFailing.delete(f);
         }
         const headFailing = new Set(failingByCheck[c.name] || []);
