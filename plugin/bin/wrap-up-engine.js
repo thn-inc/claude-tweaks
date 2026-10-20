@@ -580,15 +580,16 @@ function optionalIssuesField(payload) {
 // Atomicity (Gotchas, record #2544; pre-flight, record #3684): payload
 // validation, ledger resolution and every row flip are checked before any
 // write — a refusal there names the failing ledger row (or the reason the
-// ledger could not be resolved or read) and writes none of the three artifacts. Only a write failure (an I/O fault mid-call) can leave earlier
-// steps landed: verify-expectations.json first, then the decision log, then the
-// ledger, in that fixed order. The three writes are NOT transactional across
-// each other, and a re-run after a step-2 or step-3 write failure is not
-// idempotent: the decision log is append-only, so it appends the Approve-all
-// header and outcome lines again. This is a documented best-effort posture,
-// not a bug: building real cross-file-format transactionality for three
-// unrelated artifacts is out of scope for a bookkeeping-consolidation CLI — the
-// exit code and stderr message are the recovery contract.
+// ledger could not be resolved or read) and writes none of the three
+// artifacts. Only a write failure (an I/O fault mid-call) can leave earlier
+// steps landed: verify-expectations.json first, then the decision log, then
+// the ledger, in that fixed order. The three writes are NOT transactional
+// across each other, and a re-run after a step-2 or step-3 write failure is
+// not idempotent: the decision log is append-only, so it appends the
+// Approve-all header and outcome lines again. This is a documented best-effort
+// posture, not a bug: building real cross-file-format transactionality for
+// three unrelated artifacts is out of scope for a bookkeeping-consolidation
+// CLI — the exit code and stderr message are the recovery contract.
 function validateFinishConsolePayload(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return 'stdin JSON must be an object with optional "memory"/"upstream"/"issues"/"ledger" array fields';
