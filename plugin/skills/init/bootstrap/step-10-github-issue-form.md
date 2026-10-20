@@ -1,6 +1,6 @@
 # Step 10 — GitHub issue form template (agent-task)
 
-*Optional Enhancement step — see `SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
+*Optional Enhancement step — see `../SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
 
 Offer only when the project has a GitHub-flavored remote — same two-tier check Step 9
 documents. Check whether `.github/ISSUE_TEMPLATE/agent-task.yml` exists; if absent,
@@ -61,6 +61,6 @@ label or drop the key entirely — never ship a template that stamps retired lab
 newly filed issues by default.
 
 Write the YAML exactly as above to `.github/ISSUE_TEMPLATE/agent-task.yml`. Declining is
-fine — freeform issues still work via `/specify`'s own issue-ingestion path (`SKILL.md`
+fine — freeform issues still work via `/specify`'s own issue-ingestion path (`specify/SKILL.md`
 "Resolve the input" case 1 already handles a freeform body with "more editorializing," per
 that section); the form just removes the translation judgment.

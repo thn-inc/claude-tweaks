@@ -358,10 +358,8 @@ test('policy.yml integration: experiment-flag-patterns and experiment-flag-exclu
 });
 
 // ── fresh-process load (refs #3330) ─────────────────────────────────────────
-// candidates-experiment-cleanup.js must require './focus-generators' before
-// './candidates-dead-code' (same hazard as candidates-security-hardening.js,
-// refs #2908). An in-process require hits the module cache, so the check runs
-// in a child process.
+// An in-process require hits the module cache, so the check that this module
+// loads without a circular-dependency warning runs in a child process.
 
 const MODULE_PATH = path.join(__dirname, '../../../plugin/bin/lib/code-health/candidates-experiment-cleanup.js');
 

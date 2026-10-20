@@ -1,6 +1,6 @@
 # Step 15 — Routine Installation (detailed procedure)
 
-*Optional Enhancement step — see `SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
+*Optional Enhancement step — see `../SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
 
 claude-tweaks skills can ship a routine template (schema: `skills/_shared/routine-template-schema.md`) at `skills/{skill}/routine-template.yml`, enabling `/claude-tweaks:routine create <skill>` to instantiate a scheduled cloud Routine for this project. Examples: code-health's nightly LLM-as-judge sweep, or tidy's periodic backlog hygiene pass. This step surfaces that option right after bootstrap instead of leaving it to be discovered later.
 

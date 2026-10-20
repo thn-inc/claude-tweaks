@@ -169,7 +169,7 @@ async function run(ctx) {
         'claude-tweaks: standalone run(s) finished with unapproved staged proposal(s) under staged/:',
         lines,
         'Review and apply with /claude-tweaks:tidy --approve <dir>, or clear staged/ to dismiss.\n' +
-          'Relay this list once, in your first reply to the user, one line per run naming its tidy --approve command — do not proceed silently without mentioning it.',
+          'Relay this list once, in your first reply to the user, one line per run naming its tidy --approve command — do not proceed silently without mentioning it, and never run it yourself.',
       ));
     }
   } catch { /* best-effort */ }

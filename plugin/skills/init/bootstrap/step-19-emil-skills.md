@@ -1,6 +1,6 @@
 # Step 19 — Emil Design-Engineering Skills (detailed procedure)
 
-*Optional Enhancement step — see `SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
+*Optional Enhancement step — see `../SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
 
 claude-tweaks' craft layer (`skills/_shared/design-craft.md`) live-loads [Emil Kowalski](https://github.com/emilkowalski/skills)'s design-engineering skills as the generic-principles half of every UI-writing dispatch's design context — alongside the project's own decisions (`DESIGN.md` + the `.impeccable/design.json` sidecar). The skill set is MIT-licensed, published as plain `SKILL.md` files, and pinned by content hash in `tools/upstream-drift/manifest.yml` (the upstream repo has no version tags).
 

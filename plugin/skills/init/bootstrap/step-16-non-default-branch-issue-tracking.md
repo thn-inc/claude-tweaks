@@ -1,6 +1,6 @@
 # Step 16 — Non-default-branch issue tracking (companion workflow)
 
-*Optional Enhancement step — see `SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
+*Optional Enhancement step — see `../SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
 
 Offer only when the project has a GitHub-flavored remote — same two-tier check Step 9
 documents. Check whether

@@ -4,7 +4,7 @@ Canonical procedure for provisioning a throwaway, write-legal checkout once a fe
 worktree is already gone. Consumed by `/wrap-up`'s `residue-sweep.md` (the `remedy: auto`
 branch — an auto-fixable residue finding whose fix needs an `Edit`/`Write`/`commit`/`push`),
 by `/tidy` (record-creation writes under `work-backend: local-files`, and the Step 7
-mutations described under `worktree-always: true`), and by `/init` (`SKILL.md`'s Phase 9
+mutations described under `worktree-always: true`), and by `/init` (`init/SKILL.md`'s Phase 9
 "Isolated Write Step" and `worktree-policy-finalization.md`) — the last with a trigger that
 differs from the other two, see "1. When to provision" below.
 
@@ -64,7 +64,7 @@ already legal there.
 own Phase 9 writes (and the deferred `worktree-always` write), regardless of whether
 `worktree-always` is set at all. The goal there is broader than gate compliance — the same
 concurrent-session collision protection `worktree-always` exists to provide, applied to
-`/init`'s own output even on a project that hasn't opted into the policy — see `SKILL.md`'s
+`/init`'s own output even on a project that hasn't opted into the policy — see `init/SKILL.md`'s
 Phase 9 "Isolated Write Step" for the full rationale. Sections 2-7 below apply identically
 once `/init` decides to provision (Section 4's one-commit deviation aside — see its own note);
 only the trigger differs.
