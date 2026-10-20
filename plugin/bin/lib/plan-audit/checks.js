@@ -1,5 +1,6 @@
 // plugin/bin/lib/plan-audit/checks.js — Checks A/B/C/D, the headroom check,
-// and Check E (#3099) for bin/plan-audit.js (#903). Mechanizes plan-audit.md's prose checks;
+// Check E (#3099), and the warn-only per-task marker check (checkTaskMarkers,
+// #3378) for bin/plan-audit.js (#903). Mechanizes plan-audit.md's prose checks;
 // policy handling (scope-creep, scope-keywords-required) stays at the skill
 // layer — this module only reports facts.
 'use strict';

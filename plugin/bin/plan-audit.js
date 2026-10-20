@@ -6,7 +6,9 @@
 // gating check is ok (a `nearCeiling` headroom flag, or any Check E entry,
 // alone does not fail). `--count-tasks`
 // (#1926) is a read-only verb printing `{tasks, batched}` for /build's
-// single-task fast-lane condition — it never runs the checks.
+// single-task fast-lane condition — it never runs the checks. `--task-markers`
+// (#3378) is the same kind of read-only verb, printing each task's per-task
+// Role/Review-risk markers for dispatch.md's tier forwarding.
 'use strict';
 
 const fs = require('node:fs');
