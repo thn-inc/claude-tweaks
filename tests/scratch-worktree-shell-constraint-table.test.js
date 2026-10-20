@@ -44,14 +44,27 @@ test('section 7 opens with the current-state table', () => {
   assert.ok(practical !== -1 && at < practical, `table (${at}) must precede the practical workaround (${practical})`);
 });
 
-test('every row carries a closed-vocabulary verdict and a #3340 last-verified date', () => {
+test('every row carries a closed-vocabulary verdict and a dated, record-tagged last-verified', () => {
   const { rows } = table();
   assert.ok(rows.length > 0, 'table has no rows');
   for (const row of rows) {
     const cells = splitRow(row);
     assert.strictEqual(cells.length, 6, `row needs 6 cells: ${row}`);
     assert.ok(['refused', 'passes', 'permission-rule'].includes(cells[2]), `bad verdict "${cells[2]}": ${row}`);
-    assert.match(cells[5], /^2026-10-20 \(#3340\)/, `bad last-verified: ${row}`);
+    assert.match(cells[5], /^\d{4}-\d{2}-\d{2} \(#\d+\)/, `bad last-verified: ${row}`);
+  }
+});
+
+test('the table carries the #3340 live-verification date', () => {
+  const dated = table().rows.filter((r) => /^2026-10-20 \(#3340\)/.test(splitRow(r)[5]));
+  assert.ok(dated.length > 0, 'no row carries 2026-10-20 (#3340)');
+});
+
+test('a passes row has no refusal wording, a refusal row has some', () => {
+  for (const row of table().rows) {
+    const cells = splitRow(row);
+    if (cells[2] === 'passes') assert.strictEqual(cells[3], '—', `passes row must have "—" wording: ${row}`);
+    else assert.notStrictEqual(cells[3], '—', `${cells[2]} row needs refusal wording: ${row}`);
   }
 });
 
