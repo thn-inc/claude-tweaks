@@ -416,3 +416,17 @@ git commit -m "Wire focus=scale-readiness criterion, fragment and docs — refs 
 Waived AC1.2: an existing test (`tests/code-health-prelaunch-wiring.test.js`'s registry-equality test), re-run in Task 4 Step 4, not a new test.
 Waived AC5.1: a verification activity (Task 5 Step 1 revert probes), not a test assertion.
 Waived AC6.1: the full-suite run in Task 5 Step 3, owned by the orchestrator's Common Step 5.
+
+## Build deviations (Common Step 4.5, classified Beneficial)
+
+The spec's architecture held: one focus vertical generator registered in `FOCUS_GENERATORS`, a pinned criterion and fragment, static checks only, the six phased checklist rows. The whole-branch review's probes of real layouts produced these implementation-level deviations from this plan. Each is kept as built and disclosed in the module's Coverage block.
+
+1. A file matched only by `ROUTE_DIR_RE` counts as a route only when its nearest non-excluded `package.json` declares a `SERVER_DEPS`/`DATA_DEPS` entry. Framework-explicit shapes (`route.*`, `pages/api/`, `+server.*`) stay unconditional. This is pitfall 5: the copied directory gate read Vite/TanStack `src/routes/` and browser `src/api/` clients as server code.
+2. A module whose first statement is a `"use server"` directive is a handler (Next.js server actions).
+3. Prisma calls are recognized through any receiver chain whose segment before the op is a known schema model (T3 `ctx.db.post.findMany`), through `prisma`/`db` receivers when no schema parses, and across `?.`/`!.` separators.
+4. Seed files (`prisma/seed.*`, `seed(s)/`) are skipped by the query checks.
+5. `unbounded-list-query` accepts only a top-level `take`/`limit` key. Mongoose `.limit(` is read from the call's own chain. `CONST.find(fn)` with a function argument is not a query.
+6. Any `.map(`/`.forEach(`/`.flatMap(` callback counts as a loop body, not only an `async` one.
+7. Cache-disabling directives (`revalidate = 0`, `no-store`/`no-cache`/`max-age=0`) do not count as a cache layer.
+8. An SMS send (Twilio) is its own `inline-slow-work` category, not an AI call.
+9. The `"use server"` leading-trivia check is a linear hand-written scan. A regex alternation backtracked catastrophically on a `////…` first line.
