@@ -11,7 +11,7 @@ files:
 **Goal:** learn, once and without being interrupted, that this project's superpowers is older than the version claude-tweaks is verified against, and get the exact command that updates it.
 **Entry point:** start a new Claude Code session (`claude`) in the project, or anywhere in the same git checkout (a subdirectory or a worktree).
 **Success state:**
-- The model's first reply relays the notice once: `claude-tweaks: superpowers {old} is older than {floor}, the version claude-tweaks is verified against — update with: claude plugin update superpowers@{marketplace} --scope {project|user} …`.
+- The model's first reply relays the notice once: `claude-tweaks: superpowers {old} is older than {floor}, the version claude-tweaks is verified against — update with: claude plugin update superpowers@{marketplace} --scope {scope} …`.
 - The developer runs that command themselves.
 - The next new session says nothing.
 
@@ -40,7 +40,7 @@ files:
   - A notice when no superpowers is installed at all. Missing installs are `/claude-tweaks:init`'s concern.
 
 ### 3. Update, then confirm the notice is gone
-- **URL:** `claude plugin update superpowers@{marketplace} --scope {scope}`, run from the directory the notice named, if it named one
+- **URL:** `claude plugin update superpowers@{marketplace} --scope {scope}`, run from the directory a "run from …" hint named, if the notice carried one; otherwise from this checkout (including when the notice reports the recorded directory no longer exists)
 - **Action:** Run the suggested command. If it reports "already at the latest", run `claude plugin marketplace update {marketplace}` first and retry, then start a new session.
 - **Should feel:** Closed. The new session's context carries no superpowers notice.
 - **Should understand:**
