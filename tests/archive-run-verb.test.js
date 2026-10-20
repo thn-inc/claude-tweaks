@@ -186,11 +186,12 @@ test('archive-run: parked-dispatch handoff — refuses while the parked console 
   assert.strictEqual(fs.existsSync(runDir), false);
 });
 
-// #3668: the fast-lane auto-merge short-circuit (wrap-up/auto-merge-short-circuit.md)
-// renders no console and leaves nothing to answer, so 'none' is normally safe to
-// archive. Staged items it left behind were never shown to a human, though — so
-// that one path refuses while staged/ holds pending items. Other terminal runs
-// that retain staged/ (in-terminal consoles, fleet-approved closes) still archive.
+// #3668: the fast-lane auto-merge short-circuit
+// (wrap-up/auto-merge-short-circuit.md) renders no console and leaves nothing to
+// answer, so 'none' is normally safe to archive. Staged items it left behind
+// were never shown to a human, though — so that one path refuses while staged/
+// holds pending items. Other terminal runs that retain staged/ (in-terminal
+// consoles, fleet-approved closes) still archive.
 const FAST_LANE_FYI = '- AUTO 19:26:04 — log-decision: Fast-lane auto-merge: issue #3130, assess-agent-autonomy verdict auto-merge, pr-first-merge outcome merged.\n';
 
 test('AC1.1: archive-run refuses a terminal fast-lane run with no console.json and a pending staged/ item, naming it', () => {

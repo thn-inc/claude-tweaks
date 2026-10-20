@@ -220,7 +220,7 @@ anyone approved or discarded the staged proposals. Marking the console resolved 
 archive those proposals out of the console's sight, which is the #657/#1130 loss. Instead, a run
 left with pending `staged/` items reports `console-never-rendered-staged-pending` and escalates
 once it sits past the TTL and repeated stuck passes. A closed run escalates the same way, via
-reconcile's clean-status sweep (#3668) (`pr-first-merge-post-merge.md` Step 4.2).
+reconcile's clean-status sweep (#3668; `pr-first-merge-post-merge.md` Step 4.2).
 
 **`integration-model: local-merge`:** run the Verdict backstop above first (anything but `{n}=1`,
 stop here and fall through). Then, before merging, clear this run's worktree

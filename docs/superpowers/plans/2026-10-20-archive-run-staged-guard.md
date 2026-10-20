@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Corrected premise (logged in decisions.md, "premise reversed (supersedes the 14:49:06 line)"): the guard is scoped to runs whose `decisions.md` matches `/Fast-lane auto-merge: issue #\d+/`. A terminal run with retained `staged/` files and no such line still archives — in-terminal consoles, fleet-approved close proposals and `tidy --approve` runs retain `staged/` by design (261 archived runs in the main checkout have that shape).
+- Corrected premise (logged in decisions.md, "premise reversed (supersedes the 14:49:06 line)"): the guard is scoped to runs whose `decisions.md` matches `/(?:Fast-lane|Manifesto-authorized) auto-merge: issue #\d+, assess-agent-autonomy verdict auto-merge/` (the canonical continuation the short-circuit's log template writes — agents reuse the bare phrase in free-form text) and does not contain `Review Console: terminal decision` (a console was presented and resolved). A terminal run with retained `staged/` files and no such line still archives — in-terminal consoles, fleet-approved close proposals and `tidy --approve` runs retain `staged/` by design (261 archived runs in the main checkout have that shape).
 - Refusal stdout prefix stays `claude-tweaks: archival refused — ` (every existing refusal uses it); the reason token is `console-never-rendered-staged-pending` (the reason reconcile already uses for the same state).
 - Recovery text names the same remedies `escalate-residue.js:92` already gives: apply or delete the files under `staged/` (and any `spec-*/staged/`), or write a resolved `console.json`.
 - Dotfiles are never items; a non-ENOENT read failure counts as pending (unchanged `hasStagedItems` semantics).
