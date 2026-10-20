@@ -1,0 +1,60 @@
+'use strict';
+
+// Head-side plugin-root reader (#3461). Two callers read a plugin root's files
+// through it: load-delta.js (its head side, moved here from headSide) and
+// skill-load-report.js (the plugin-root index it builds). Both need the same
+// rule — read only a regular file that resolves inside the base — so the rule
+// lives here once.
+//
+// The base realpath is resolved lazily, on the first readFile, not when the
+// reader is constructed: a base deleted after construction then reads as
+// absent (ENOENT -> null, listSkillMds -> []) instead of throwing.
+
+const fs = require('fs');
+const path = require('path');
+const { isPathContained } = require('../shared-primitives');
+
+const skillsPrefix = (root) => (root === '.' ? 'skills/' : `${root}/skills/`);
+
+function pluginRootReader(baseAbs, root = '.') {
+  let realBase = null;
+  const readFile = (p) => {
+    try {
+      // A citation that passed withinRoot's textual check can still be a committed
+      // symlink to a file outside the repository, or to a device (/dev/zero) that
+      // never reaches EOF — so resolve the real path and read only a regular file
+      // inside the repository; anything else is absent.
+      if (realBase === null) realBase = fs.realpathSync(baseAbs);
+      const real = fs.realpathSync(path.join(baseAbs, p));
+      if (!isPathContained(real, realBase) || !fs.statSync(real).isFile()) return null;
+      return fs.readFileSync(real, 'utf8');
+    } catch (err) {
+      if (['ENOENT', 'EISDIR', 'ENOTDIR', 'ELOOP'].includes(err.code)) return null;
+      throw err;
+    }
+  };
+  const listSkillMds = () => {
+    const dir = path.join(baseAbs, root, 'skills');
+    // A root discovered only via the base-tree union (ledger row 17) — all
+    // its SKILL.md files deleted, committed, at head — has no skills/
+    // directory left on disk at all; a root whose index entries are deleted
+    // in the working tree only (never committed) can hit the same ENOENT.
+    // Either way that is "no entries at head", not a crash: readdirSync's
+    // ENOENT/ENOTDIR become [], and anything else (a real permissions or I/O
+    // error) still rethrows.
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      if (['ENOENT', 'ENOTDIR'].includes(err.code)) return [];
+      throw err;
+    }
+    return entries
+      .filter((d) => d.isDirectory())
+      .map((d) => `${skillsPrefix(root)}${d.name}/SKILL.md`)
+      .filter((p) => readFile(p) !== null);
+  };
+  return { readFile, listSkillMds };
+}
+
+module.exports = { pluginRootReader, skillsPrefix };
