@@ -1731,8 +1731,14 @@ function trackArchiveResult(cacheTarget, repoSlug, dir, result, { escalate = esc
 // other iterRunDirsWithState caller already gets, rather than this file's own
 // third hand-rolled copy of the walk.
 // #3503: this sweep is exempt from the merged-partial record check — wrap-up
-// already closed a `clean` run, so no record is still being built, and this loop
-// has no stuck tracking, so a skip here would freeze the dir silently.
+// already closed a `clean` run, so no record is still being built. #3668: this
+// loop tracks only console-never-rendered-staged-pending (see the clean loop's
+// onSkip). close-run has already run, so no later step renders a console or
+// applies those staged items, and archive-run refuses the same state — an
+// untracked skip would freeze the dir silently. The other skip reasons stay
+// untracked: a clean run already finished wrap-up, so their states (no-pr,
+// pr-open, …) have their own resolution paths or are pre-existing behavior the
+// #1733 test pins.
 function iterCleanRunDirs(root) {
   return [...iterRunDirsWithState(root, { status: 'clean' })];
 }
@@ -1837,10 +1843,11 @@ function resolveRunPrState(root, state, branch) {
 // (skip, with the caller's own onSkip hook) -> localHasMerge ->
 // (skip on not-yet-caught-up) -> dryRun short-circuit -> archiveRunDir ->
 // trackArchiveResult. `onSkip` is the one place the two callers genuinely
-// differ: the main loop also calls `trackStuckSkip` on a `decideArchiveCore`
-// skip (#1613's structurally-stuck visibility); the clean loop does not (see
-// this file's clean-loop comment for why that asymmetry is intentional, not a
-// gap to "fix").
+// differ: the main loop calls `trackStuckSkip` on every `decideArchiveCore`
+// skip (#1613's structurally-stuck visibility); the clean loop passes a hook
+// that tracks only console-never-rendered-staged-pending (#3668) — see
+// iterCleanRunDirs' comment for why that one reason, and why the rest stay
+// untracked.
 function archiveMergedRun({
   root, repoSlug, dir, branch, state, dryRun, onSkip, runner, cacheTarget = root, integration, recordCheck,
 }) {
@@ -2191,14 +2198,18 @@ function archiveMerged({
   // decisions.md's PR-early lifecycle lines) instead. Otherwise identical to
   // the main loop: decideArchiveCore's merged-PR + resolved-console gate, then
   // the same local-fast-forward check before any move — via the same
-  // archiveMergedRun helper, minus the main loop's trackStuckSkip hook (see
-  // that helper's own comment for why the asymmetry is intentional).
+  // archiveMergedRun helper. Its onSkip tracks only
+  // console-never-rendered-staged-pending: archive-run refuses that closed
+  // fast-lane state too (#3668), so an untracked skip would freeze the dir.
   for (const { dir, state } of iterCleanRunDirs(root)) {
     const branch = fallbackBranch(root, dir, state);
     if (!branch) { skipped.push({ runDir: dir, reason: 'no-branch' }); continue; }
 
     const runResult = archiveMergedRun({
       root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
+      onSkip: (reason) => {
+        if (reason === 'console-never-rendered-staged-pending') trackStuckSkip(cacheBatch, repoSlug, dir, reason, { runner });
+      },
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
     skipped.push({ runDir: dir, reason: runResult.reason });

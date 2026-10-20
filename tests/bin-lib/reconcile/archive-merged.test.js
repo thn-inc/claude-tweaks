@@ -1980,8 +1980,9 @@ test('archiveMerged: a pass processing 2 structurally-stuck dirs reads and write
 // --- #1733: archiveMergedRun's onSkip asymmetry — the one behavioral
 // difference the loop-dedup extraction had to preserve rather than "fix":
 // only the main loop's decideArchive skip feeds trackStuckSkip; the #1544
-// clean-status sweep's decideArchive skip does not. Both fixtures below
-// reach decideArchive's 'no-pr' reason (a resolvable branch with no PR found
+// clean-status sweep's no-pr decideArchive skip does not (the sweep tracks
+// console-never-rendered-staged-pending since #3668, pinned by AC3.1 below).
+// Both fixtures below reach decideArchive's 'no-pr' reason (a resolvable branch with no PR found
 // at all, `gh pr list` returning an empty array), which IS one of
 // STRUCTURALLY_STUCK_REASONS, and both dirs are backdated well past
 // STRUCTURALLY_STUCK_TTL_MS — so a residue-counter difference can only come
@@ -2041,7 +2042,38 @@ test('archiveMerged: a clean-loop decideArchive skip (no-pr) does NOT enter the 
   const failures = listResidueFailures(root);
   assert.ok(
     !failures.some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
-    'the #1544 clean-status sweep must never feed a decideArchive skip into the structurally-stuck residue counter — the onSkip asymmetry is intentional, not a gap',
+    'the #1544 clean-status sweep must never feed a decideArchive no-pr skip into the structurally-stuck residue counter — the onSkip asymmetry is intentional, not a gap',
+  );
+});
+
+// #3668 AC3.1: the clean-status sweep tracks exactly one reason —
+// console-never-rendered-staged-pending. archive-run now refuses a closed
+// fast-lane run with pending staged items, so no later step will ever apply
+// them; without tracking, the dir would freeze silently.
+test('AC3.1: the clean-status sweep tracks a console-never-rendered-staged-pending skip toward structurally-stuck escalation (#3668)', { skip: PATH_STUB_SKIP }, () => {
+  const runId = '2026-10-16T155630-record-3668-clean';
+  const { root, runDir, featureSha } = fixtureCleanUnarchivedRun({ runId, consoleResolved: false });
+  fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'staged', 'reflect-1.md'), 'x\n');
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(runDir, backdated, backdated);
+
+  const wrapper = installGhWrapper([{
+    number: 99, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z', mergeCommit: { oid: featureSha },
+  }]);
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'console-never-rendered-staged-pending');
+  assert.ok(
+    listResidueFailures(root).some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+    'the clean sweep must start the structurally-stuck residue counter for a staged-pending skip',
   );
 });
 
