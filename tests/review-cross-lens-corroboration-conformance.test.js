@@ -10,6 +10,7 @@ const path = require('node:path');
 const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
+// Pinned seam: the #3698 CRLF test reads through readAt, so keep every skill read routed here.
 const readAt = (abs) => readText(abs);
 const read = (...p) => readAt(path.join(SKILLS, ...p));
 
