@@ -363,7 +363,7 @@ registerCheck('run-dir-archived', ({ runDir, originalRunDir, repoRoot, expectati
   if (fs.existsSync(archivedWork)) {
     let tracked;
     try {
-      tracked = deps.git(['ls-files', archivedWork], repoRoot);
+      tracked = deps.git(['ls-files', archivedWork], repoRoot); // git-path-read: not a path list (emptiness only)
     } catch (err) {
       return { result: 'fail', detail: `git ls-files failed for ${archivedWork}: ${err.message}` };
     }

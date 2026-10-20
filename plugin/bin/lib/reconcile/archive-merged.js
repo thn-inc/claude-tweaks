@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { runGit } = require('../hooks/git-exec');
 const { withIndexLockRetry } = require('../git-retry');
+const { splitNul } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { isPathContained } = require('../shared-primitives');
@@ -119,7 +120,7 @@ function isAdHocStandaloneSuperseded(dir, state, worktrees, now = Date.now()) {
 // than let this helper be the one place a failed probe quietly selects the
 // bare fs rename.
 function hasTrackedContent(root, dir) {
-  const listed = runGit(['ls-files', '--', dir], root);
+  const listed = runGit(['ls-files', '--', dir], root); // git-path-read: not a path list (emptiness only)
   if (listed.failure) return true;
   return (listed.stdout || '').length > 0;
 }
@@ -582,9 +583,9 @@ function revertPlainMoves(movedPairs) {
 // "partially tracked" — so a second check confirms no untracked file exists
 // anywhere under targetPath.
 function isTracked(root, targetPath) {
-  const check = runGit(['ls-files', '--error-unmatch', targetPath], root);
+  const check = runGit(['ls-files', '--error-unmatch', targetPath], root); // git-path-read: not a path list (exit code only)
   if (check.failure) return false;
-  const untracked = runGit(['ls-files', '--others', '--exclude-standard', targetPath], root);
+  const untracked = runGit(['ls-files', '--others', '--exclude-standard', targetPath], root); // git-path-read: not a path list (emptiness only)
   return !untracked.failure && !untracked.stdout;
 }
 
@@ -611,7 +612,7 @@ function removeIfEmptyUntrackedDir(root, dir) {
     return false;
   }
   if (entries.length !== 0) return false;
-  const tracked = runGit(['ls-files', dir], root);
+  const tracked = runGit(['ls-files', dir], root); // git-path-read: not a path list (emptiness only)
   if (tracked.failure || tracked.stdout) return false;
   try { fs.rmdirSync(dir); } catch { /* best-effort — already gone, or non-empty for an unexpected reason */ }
   return true;
@@ -1286,12 +1287,10 @@ function archiveRunDir(root, runDir) {
   // tracked file this function doesn't know how to move, on either a
   // tidy-standalone run or any other — still refuses exactly as before.
   if (fs.existsSync(runDir)) {
-    const lsFiles = runGit(['ls-files', runDir], root);
+    const lsFiles = runGit(['ls-files', '-z', '--', runDir], root);
     if (lsFiles.failure) return refuseAfterMarker('ls-files-failed');
     const workDir = path.join(runDir, 'work');
-    const trackedOutsideWork = (lsFiles.stdout || '')
-      .split('\n')
-      .filter(Boolean)
+    const trackedOutsideWork = splitNul(lsFiles.stdout)
       .map((p) => path.join(root, p))
       .filter((abs) => path.relative(runDir, abs) !== '' && !isPathContained(abs, workDir, { orEqual: true }));
     if (trackedOutsideWork.length > 0) {

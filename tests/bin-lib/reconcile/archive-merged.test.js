@@ -556,6 +556,44 @@ test('archiveRunDir: non-tidy run with a stray tracked file outside work/ still 
   assert.ok(trackedFiles(root).includes(`.claude-tweaks/pipelines/${runId}/notes.md`));
 });
 
+// #3651 AC1.1: the tracked-entry guard reads `git ls-files` for the run dir
+// and exempts paths under work/. Without `-z`, git C-quotes a non-ASCII path
+// ("…/work/caf\303\251-spec.md", quotes included), so the join landed outside
+// work/ and the guard refused a path it exists to exempt. A tracked work/ file
+// still reaches the guard when work/ is gone from disk (so the git-mv batch
+// never queues it) — the shape used here. `core.quotepath true` is set
+// explicitly so the C-quoting does not depend on the machine's git config.
+for (const [label, specName] of [['ASCII control', 'cafe-spec.md'], ['non-ASCII', 'café-spec.md']]) {
+  test(`archiveRunDir: AC1.1 — a tracked ${label} spec under work/ (work/ gone from disk) does not refuse tracked-entry`, () => {
+    const root = makeRepo();
+    git(root, 'config', 'core.quotepath', 'true');
+    const runId = '2026-08-30T090000-record-3651-quotepath';
+    const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+    const relSpec = `.claude-tweaks/pipelines/${runId}/work/${specName}`;
+    commitPath(root, relSpec, '# spec\n');
+    fs.rmSync(path.join(runDir, 'work'), { recursive: true, force: true });
+    fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+    // Precondition: the spec is still tracked while work/ is gone from disk.
+    assert.ok(trackedFiles(root).some((p) => p.includes('/work/')), 'fixture must track a work/ file');
+
+    const result = archiveRunDir(root, runDir);
+    assert.notEqual(result.reason, 'tracked-entry', JSON.stringify(result));
+  });
+}
+
+test('archiveRunDir: AC1.1 — a tracked non-ASCII file outside work/ still refuses tracked-entry (the exemption is not widened)', () => {
+  const root = makeRepo();
+  git(root, 'config', 'core.quotepath', 'true');
+  const runId = '2026-08-30T090000-record-3651-quotepath-stray';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  commitPath(root, `.claude-tweaks/pipelines/${runId}/café-notes.md`, '# stray\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+
+  const result = archiveRunDir(root, runDir);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'tracked-entry');
+});
+
 // #593 deliverable 2/4: multi-spec parent run dirs nest per-record
 // spec-{N}/work/ subtrees (multi-spec.md's Run directory layout) — every one
 // of them must move via git mv too, not just a top-level work/ that a
