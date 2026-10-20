@@ -561,8 +561,9 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw } = {}) {
     // per-run property the key exists to protect (for merge-authorization,
     // "a human decided, live, for this run"). Only a source other than
     // policy.yml (today, only run-config — the /flow pre-authorize-merge
-    // token or a live Manifesto confirm/hybrid override answer) may set it; a policy.yml value is discarded, falling
-    // back to the schema default exactly as if nothing had set it at all.
+    // token or a live Manifesto confirm/hybrid override answer) may set it; a
+    // policy.yml value is discarded, falling back to the schema default
+    // exactly as if nothing had set it at all.
     // Registering a second such lever needs only this flag on its POLICY_KEYS
     // entry — no change here or in auditPolicy()'s matching category below.
     if (schemaEntry.policySourceExcluded && resolved.source === 'policy') {
