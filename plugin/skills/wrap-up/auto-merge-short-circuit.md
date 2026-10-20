@@ -262,10 +262,10 @@ checkout per `_shared/pipeline-run-dir.md`'s anchoring rule, so a bare `git -C "
 silently resolves the main checkout's own toplevel/branch — never the feature branch). It must be
 read here, before `close-run`: `close-run` nulls that field, so a later read returns nothing. A failed
 read (no `worktree` field) means nothing was merged and `close-run` has not run — fall back to the
-console. The
-third and fourth commands together resolve `{integration-branch}` — the branch this project integrates
-work into, which is not always the GitHub default (see `skills/_shared/integration-branch.md` for
-the full precedence, including its git-inference rank, deliberately skipped here, which would
+console. The third and fourth commands together resolve `{integration-branch}` — the branch this
+project integrates work into, which is not always the GitHub default (see
+`skills/_shared/integration-branch.md` for the full precedence, including its git-inference rank,
+deliberately skipped here, which would
 consider whatever branch the main checkout currently has checked out — a concurrent session
 switching that is precisely what the guard below catches). Take the resolver's output when
 non-empty; otherwise fall back to `gh api`. Substituting the wrong one here merges into a branch
