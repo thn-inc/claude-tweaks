@@ -1,8 +1,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execSync } = require('child_process');
+const os = require('os');
 const { toIssuePayload } = require('../../../plugin/bin/lib/harness-health/issue-payload');
 const { extractFingerprint, extractVerifiedAsOf, extractTemplateStamp } = require('../../../plugin/bin/lib/issues/record');
+const { defaultRunner, PREMISE_SELF_CHECK_TIMEOUT_MS } = require('../../../plugin/bin/lib/health-core/premise-self-check');
 
 function patchFinding(overrides = {}) {
   return {
@@ -283,12 +284,7 @@ test('buildPremiseCheck for a removal against a nonexistent target file composes
   const finding = removalFinding();
   const missingPath = '/definitely/missing/harness-health-premise-check-target.md';
   const cmd = buildPremiseCheck(finding, missingPath);
-  let status = 0;
-  try {
-    execSync(cmd, { shell: true, stdio: 'ignore' });
-  } catch (err) {
-    status = err.status;
-  }
+  const status = defaultRunner(cmd, { cwd: os.tmpdir(), timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS });
   assert.strictEqual(status, 0, `expected exit 0 ("still unresolved") for a missing target file, got ${status}`);
 });
 
