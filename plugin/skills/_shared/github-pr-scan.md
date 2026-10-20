@@ -389,8 +389,9 @@ Three cheap counts for the dashboard's Triage Queue section. This scope exists s
    reachable only by an interactive, human-run single-record `/flow` — its own dispatch-claim
    branch redirects a dispatch-originated singleton to `[auto-merge]` instead, so a `[fast-lane]`
    commit is never headless; `[manifesto-authorized]` (`wrap-up/manifesto-authorized-merge.md`,
-   the `merge-authorization` lever) is likewise never headless — it requires a live Manifesto
-   `confirm`/`hybrid` override, the same interactive precondition as `[fast-lane]`.
+   the `merge-authorization` lever) is likewise never headless — it requires a live human answer
+   (a Manifesto `confirm`/`hybrid` override, or the human-typed `/flow` `pre-authorize-merge`
+   token, which a dispatch-bound run ignores), the same interactive precondition as `[fast-lane]`.
    `[human-approved]` (close-out's confirmed merge) is excluded — a human decided it.
 
    ```bash

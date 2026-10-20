@@ -64,3 +64,17 @@ test('no plugin file composes a /claude-tweaks:flow invocation carrying the toke
   walk('plugin');
   assert.deepStrictEqual(offenders, []);
 });
+
+test('every restatement of how lever 13 is set names the token alongside confirm/hybrid', () => {
+  const SITES = [
+    'plugin/skills/wrap-up/manifesto-authorized-merge.md',
+    'plugin/skills/_shared/auto-mode-contract.md',
+    'plugin/skills/_shared/policy-schema.md',
+    'plugin/skills/help/policy.md',
+    'plugin/skills/_shared/github-pr-scan.md',
+  ];
+  for (const rel of SITES) assert.ok(read(rel).includes('`' + TOKEN + '`'), rel + ' does not name the token');
+  const { POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
+  const row = POLICY_KEYS.find((k) => k.key === 'merge-authorization');
+  assert.doesNotMatch(row.summary, /at Manifesto time/, 'summary still says only the Manifesto sets it');
+});

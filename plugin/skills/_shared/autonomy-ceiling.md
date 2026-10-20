@@ -191,8 +191,10 @@ Why merge stops short of the ceiling when every `unattended` capability above do
 - **The ceiling is a standing `policy.yml` value; this lever is `policySourceExcluded`.** Every
   capability above resolves reversible bookkeeping — a ledger row, a record filing, an ack. A merge
   is the run's one irreversible terminal action, and a standing default authorizing it is the
-  non-interactive auto-grant `_shared/auto-mode-contract.md`'s `auto:*` invariant forbids: an agent
-  never originates its own merge authorization.
+  non-interactive auto-grant `_shared/auto-mode-contract.md`'s Merge authorization lever row and
+  never-reversible grant-origination entry rule out: a run never authorizes its own merge, and the
+  only machine-originated merge grant is `/backlog refine`'s per-record, content-checked,
+  double-opt-in `grant-origination-enabled` path.
 - **`unattended` already merges what a human authorized.** `consoleAutoResolve` resolves the merge
   half to merge for a record carrying `auto:merge` or a matured `auto:merge-pending`. Deriving
   `pre-authorized` from the ceiling would merge every `auto:build`-only record as well, erasing the
