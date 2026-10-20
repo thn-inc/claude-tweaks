@@ -259,7 +259,8 @@ async function main() {
   const countStampPath = parsed.countStamp || (gitDir ? path.join(gitDir, 'claude-tweaks-test-count.json') : null);
   // #3757: the commit this run verifies is the HEAD it starts on — taken before
   // the --scope selection and runChecks, so selection, checks and stamp agree.
-  const startSha = gitInfo().sha;
+  const startGit = gitInfo();
+  const startSha = startGit.sha;
 
   // --scope (#1922): declaration → changed files since the anchor → pure
   // selection → filtered check set. Without --scope every value below is
@@ -543,11 +544,6 @@ async function main() {
       : rest;
   });
   const retriedFiles = [...new Set(results.flatMap((c) => c.flakyRetried || []))];
-  // #3757: moved is sha-only on purpose — checks routinely leave untracked artifacts, and --stamp-status already refuses a dirty tree.
-  const endGit = gitInfo();
-  const treeMoved = endGit.sha !== startSha;
-  // The verified commit is the start sha; dirty stays the end-of-run value, as today.
-  const git = { sha: startSha, dirty: endGit.dirty };
 
   // Baseline adjudication (#3043): only a run with a raw failure and a
   // caller-supplied --baseline re-runs the failing files (at base in a scratch
@@ -642,6 +638,16 @@ async function main() {
     }
   }
   const preExistingPass = Boolean(preExistingAdjudicated && preExistingAdjudicated.matched);
+
+  // #3757: moved is sha-only on purpose — checks routinely leave untracked artifacts, and --stamp-status already refuses a dirty tree.
+  // Read after both adjudications: they re-run failing files, so a commit landing during them must count as moved.
+  const endGit = gitInfo();
+  const treeMoved = startSha !== null && endGit.sha !== startSha;
+  // The verified commit is the start sha; dirty is start OR end, so edits reverted mid-run still leave the stamp dirty.
+  const git = {
+    sha: startSha,
+    dirty: startGit.dirty === null ? endGit.dirty : endGit.dirty === null ? startGit.dirty : startGit.dirty || endGit.dirty,
+  };
 
   // Suite-count regression stamp (#881, IL-84): the "tests" check's own
   // parsed count is compared against the previous run's persisted count.
