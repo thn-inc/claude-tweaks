@@ -1168,8 +1168,8 @@ async function main(argv) {
     // wrap-up's own flow (incl. the empty-console fast path) completed. #3668
     // narrows that: the fast-lane auto-merge short-circuit renders no console
     // and no human ever sees its staged/ items, so a 'none' run whose
-    // decisions.md carries its fast-lane line is refused while staged/ holds
-    // pending items. Other 'none' runs that keep staged/ (in-terminal consoles,
+    // decisions.md carries its auto-merge line (fast-lane or manifesto-authorized)
+    // is refused while staged/ holds pending items. Other 'none' runs that keep staged/ (in-terminal consoles,
     // fleet-approved closes, tidy --approve) still archive.
     const consoleState = readConsoleState(runDir);
     if (consoleState === 'unresolved') {

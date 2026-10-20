@@ -460,16 +460,19 @@ function hasStagedItems(runDir) {
   return listStagedItems(runDir).length > 0;
 }
 
-// #3668: the fast-lane auto-merge short-circuit (wrap-up/auto-merge-short-circuit.md,
-// whose `Fast-lane auto-merge: issue #{n}` decisions.md line is the signal) renders
-// no console, so its staged/ items were never shown to a human. That is the one
-// 'none'-console path this guard covers: other terminal runs keep staged/ by design
-// (in-terminal consoles, fleet-approved closes, tidy --approve runs) and must still
-// archive. The line's absence, or any read failure, leaves the guard off.
+// #3668: the auto-merge short-circuit renders no console, so its staged/ items were
+// never shown to a human. Its decisions.md line is the signal, and it has two
+// producers: `Fast-lane auto-merge: issue #{n}` on the auto:merge-label path
+// (wrap-up/auto-merge-short-circuit.md), and `Manifesto-authorized auto-merge:
+// issue #{n}` on the merge-authorization-lever path (wrap-up/manifesto-authorized-merge.md,
+// its "Log line" section). That is the one 'none'-console path this guard covers: other
+// terminal runs keep staged/ by design (in-terminal consoles, fleet-approved closes,
+// tidy --approve runs) and must still archive. The line's absence, or any read
+// failure, leaves the guard off.
 function consoleReplacedByFastLaneFyi(runDir) {
   let raw;
   try { raw = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'); } catch { return false; }
-  return /Fast-lane auto-merge: issue #\d+/.test(raw);
+  return /(?:Fast-lane|Manifesto-authorized) auto-merge: issue #\d+/.test(raw);
 }
 
 // #1130: gh's MERGED state is a remote fact; the local main checkout may not

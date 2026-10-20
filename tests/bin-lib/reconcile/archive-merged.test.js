@@ -1303,6 +1303,9 @@ test('consoleReplacedByFastLaneFyi: true only for the short-circuit\'s issue lin
     '- AUTO 19:26:04 — log-decision: Fast-lane auto-merge: issue #3130, assess-agent-autonomy verdict auto-merge, pr-first-merge outcome merged.\n');
   assert.strictEqual(consoleReplacedByFastLaneFyi(dir), true);
   fs.writeFileSync(path.join(dir, 'decisions.md'),
+    '- AUTO 10:00:00 — Manifesto-authorized auto-merge: issue #3668, assess-agent-autonomy verdict auto-merge (see RATIONALE), pr-first-merge outcome merged.\n');
+  assert.strictEqual(consoleReplacedByFastLaneFyi(dir), true);
+  fs.writeFileSync(path.join(dir, 'decisions.md'),
     '- AUTO 07:38:10 — log-decision: Fast-lane auto-merge: deleted resolved ledger docs/plans/x-ledger.md for #3114 before merge.\n');
   assert.strictEqual(consoleReplacedByFastLaneFyi(dir), false);
   const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'fast-lane-fyi-none-'));
