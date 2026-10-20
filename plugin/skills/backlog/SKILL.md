@@ -27,7 +27,7 @@ capture / code-health / harness-health / journey-health / docs-health   (file re
 ## When to Use
 
 - You want to sweep the backlog and make sure `priority:*`, `**Related:**`, and grants (`auto:build`/`auto:merge`) are all correctly set — `refine` mode.
-- A record hit its retry ceiling (`bot:blocked`) and needs a human's renewed judgment before it can re-enter the autonomous queue — `refine` mode.
+- A record hit its retry ceiling or awaits a plan-review answer (`bot:blocked`) and needs a human's renewed judgment before it can re-enter the autonomous queue — `refine` mode.
 - You want a synthesized read of what's in the backlog — narrative + thematic clusters, a critical/risk-value/cleanup/trust view, or a recommendation for what to build next — `overview` mode.
 - You want a copy-pasteable hand-off block to parallelize shaping or building a chosen batch across terminals — `overview` mode.
 - A scheduled Routine, `/claude-tweaks:sweep`, or a human standing in for one needs to sweep the `ready` queue and machine-grant every record whose gate chain fully clears, with no per-record decision to answer — `refine`'s **headless posture** (`--source routine`/`--source sweep`, or the deprecated `grant` alias), `github-issues` only for the grant chain, and only once a project has deliberately opted into the `autonomy: unattended` ceiling plus its `grant-origination-enabled` policy key.

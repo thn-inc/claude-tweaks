@@ -79,7 +79,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    ```
 
    - **Pending authorization** — `ready` ∧ no `auto:*` ∧ no `bot:*` (`bot:in-progress`, `bot:blocked`, or `bot:parked`). Origin-agnostic: any record any health skill, `/claude-tweaks:capture`, or a human filed counts, with or without a `by:*` label — matching `/claude-tweaks:backlog refine`'s own origin-agnostic `ready`-queue pull (`skills/backlog/refine-mode.md`), which no longer tiers any health-skill origin specially. This is a maintenance signal only — `/tidy` never grants authorization itself (`/claude-tweaks:backlog refine` owns that).
-   - **`bot:blocked`** — records that hit their retry ceiling; needs a human's renewed judgment at `/claude-tweaks:backlog refine` before re-entering the autonomous queue (same definition as `tidy/step-1-records.md`'s Shape 5). A record `_shared/pr-first-merge.md`'s Step 2.5 (Merge-verification gate) parked on a red or timed-out PR check carries `bot:parked` instead — a distinct label, since that path leaves `auto:*` grants intact (`tidy/step-1-records.md`'s Shape 5-parked) — and is not counted here.
+   - **`bot:blocked`** — records that hit their retry ceiling, or whose plan-review question awaits an answer (`<!-- plan-review-question -->` comment, `build/plan-review.md`); needs a human's renewed judgment at `/claude-tweaks:backlog refine` before re-entering the autonomous queue (same definition as `tidy/step-1-records.md`'s Shape 5). A record `_shared/pr-first-merge.md`'s Step 2.5 (Merge-verification gate) parked on a red or timed-out PR check carries `bot:parked` instead — a distinct label, since that path leaves `auto:*` grants intact (`tidy/step-1-records.md`'s Shape 5-parked) — and is not counted here.
    - **Backlog-state** — open records carrying neither `ready` nor `parked` — the default, unasserted state per `_shared/work-record.md`'s lifecycle spine.
 
    Surface all three as the `[queue]` Output Contract row below — bare counts only, per the Output Contract's own documented shape. No per-record enumeration is produced or needed here.
@@ -405,7 +405,7 @@ Three cheap counts for the dashboard's Triage Queue section. This scope exists s
    The commits endpoint defaults to the default branch when no `sha=` param is given — correct regardless of which branch/worktree `/help` itself runs from under `worktree-always`. `SINCE` is computed via `node`, not shell `date` arithmetic, which differs between BSD/macOS and GNU date.
 <!-- /when -->
 
-Render as three lines: `Pending authorization: **{N}** records awaiting your decision` / `Blocked: **{N}** records hit their retry ceiling` / `Auto-merged this week: **{N}** auto-merges` — omit any line whose count is 0.
+Render as three lines: `Pending authorization: **{N}** records awaiting your decision` / `Blocked: **{N}** records blocked (retry ceiling, or a plan-review question awaiting an answer)` / `Auto-merged this week: **{N}** auto-merges` — omit any line whose count is 0.
 
 ## Scope: `acceptance-queue` (consumed by /help Stage 4.7)
 

@@ -1,8 +1,6 @@
-# Executable-snippet pins — skill-prose-conformance-tests
+# Binding an executable snippet to a test
 
-Lazy-loaded from `SKILL.md`'s "Bind an executable snippet to a test". Read it before writing or changing a test that pins, extracts, or runs a shell or `node -e` fence from `plugin/skills/**`.
-
-## Extract-and-run first, byte-pin second
+Lazy-loaded from `SKILL.md`'s "Bind an executable snippet to a test" stub. Read it when skill prose carries a shell or `node -e` snippet the reader is told to run, and you are writing the test that pins it.
 
 When skill prose carries a shell snippet the reader is expected to execute, bind it to a `node --test` file that both pins it and runs it. `docs/skill-authoring.md`'s "Executable snippets in skill prose" names two forms and **prefers extract-and-run**: the test pulls the fence out of the doc with an anchored regex and executes exactly that string, so the doc is the only source of the executed text and the two cannot drift; the test fails loudly — *"extraction pattern is out of sync"* — when the anchor moves. Shipped instances: `tests/pipeline-run-dir-adoption-anchoring.test.js` and `tests/blast-radius-snippet.test.js`, the latter extracting `plugin/skills/assess-agent-autonomy/merge-check.md`'s Step 1 fence and running it against a fixture git repo.
 
