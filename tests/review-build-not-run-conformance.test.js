@@ -63,9 +63,16 @@ const PREFIX_MARKER_RE = /begins `([^`]+)` and carries `([^`]+)`/;
 const HEADING_RE = /under its `([^`]+)` heading/;
 const WRITER_RE = /writes `(SKIP \{time\} — [^`]+)`/;
 
+// The reader selector's three parameters, as the template section states them.
+function parseSelector(sectionText) {
+  const [, prefix, marker] = sectionText.match(PREFIX_MARKER_RE);
+  const [, heading] = sectionText.match(HEADING_RE);
+  return { prefix, marker, heading };
+}
+
 // The reader selector: lines under the given "## ..." heading that start with
 // the prefix and include the marker.
-function selectRows(text, prefix, marker, heading) {
+function selectRows(text, { prefix, marker, heading }) {
   const rows = [];
   let current = null;
   for (const line of text.split('\n')) {
@@ -124,17 +131,14 @@ function twinFixture() {
 }
 
 test('AC1.1/AC3.1 twin: the reader selector picks both writer shapes and nothing else', () => {
-  const [, prefix, marker] = section.match(PREFIX_MARKER_RE);
-  const [, heading] = section.match(HEADING_RE);
   const { fixture, writers } = twinFixture();
-  assert.deepStrictEqual(selectRows(fixture, prefix, marker, heading), writers);
+  assert.deepStrictEqual(selectRows(fixture, parseSelector(section)), writers);
 });
 
 test('twin go-red: a reworded marker, prefix, or heading in the template stops the selector matching the writers', () => {
   const { fixture, writers } = twinFixture();
-  const [, prefix, marker] = section.match(PREFIX_MARKER_RE);
-  const [, heading] = section.match(HEADING_RE);
-  assert.deepStrictEqual(selectRows(fixture, prefix, marker, heading), writers, 'baseline selects both writers');
+  const { marker } = parseSelector(section);
+  assert.deepStrictEqual(selectRows(fixture, parseSelector(section)), writers, 'baseline selects both writers');
 
   const mutations = {
     marker: section.replace(marker, 'surfaced for review'),
@@ -143,10 +147,8 @@ test('twin go-red: a reworded marker, prefix, or heading in the template stops t
   };
   for (const [name, mutated] of Object.entries(mutations)) {
     assert.notEqual(mutated, section, `${name}: mutation applied to the section string`);
-    const [, mutatedPrefix, mutatedMarker] = mutated.match(PREFIX_MARKER_RE);
-    const [, mutatedHeading] = mutated.match(HEADING_RE);
     assert.notDeepStrictEqual(
-      selectRows(fixture, mutatedPrefix, mutatedMarker, mutatedHeading),
+      selectRows(fixture, parseSelector(mutated)),
       writers,
       `${name}: selector still matches the writers`,
     );
