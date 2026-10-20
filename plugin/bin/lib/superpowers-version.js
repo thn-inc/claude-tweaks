@@ -16,6 +16,15 @@
 // keys loads is unsettled, so the keys flatten in `Object.keys` order and the
 // notice states the stale install, not that the session runs it.
 //
+// The missing-path remedy (a project or local record whose projectPath is gone)
+// rests on the Claude Code 2.1.302 probe of 2026-10-20: `update` (explicit
+// `--scope project`/`local`, or auto scope) from the main checkout updates the
+// first applicable record in file order; `uninstall --scope project`/`local`
+// from the main checkout removes the main checkout's own record (exact
+// `projectPath` match); after `mkdir -p` of the deleted path, `uninstall` run
+// from inside it removes the stale record; `uninstall --scope local` against
+// project records fails with "installed in project scope, not local".
+//
 // Placement: the SessionStart hook's inform tier. That hook already assembles
 // the inform-tier banners and has the cwd, and one small synchronous read fits
 // its inline block. This module is pure of the hook: every failure — an absent
@@ -113,8 +122,8 @@ function superpowersNotice({ effective, floor, projectDir }) {
     const deps = { realpath: fs.realpathSync.native };
     if (lstatType(effective.projectPath).type === 'missing') {
       // The record applies here only because its path belongs to this git checkout;
-      // never send the user to a directory that is gone.
-      suffix = ` (this install is recorded for ${effective.projectPath}, which no longer exists; it applies here because that path belongs to the same git checkout)`;
+      // never name a gone directory as the place to run from; the remedy recreates it first.
+      suffix = ` (this install is recorded for ${effective.projectPath}, which no longer exists; it applies here because that path belongs to the same git checkout; the update command above, run in this checkout, updates that record; to remove it instead, run mkdir -p "${effective.projectPath}", then claude plugin uninstall superpowers@${effective.marketplace} --scope ${effective.scope} from inside that directory, then delete the directory — running that uninstall from this checkout removes this checkout's own record, not the stale one)`;
     } else if (safeRealpath(effective.projectPath, deps) !== safeRealpath(projectDir, deps)) {
       suffix = ` (run from ${effective.projectPath}, the project this install belongs to)`;
     }

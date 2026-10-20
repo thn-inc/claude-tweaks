@@ -134,7 +134,26 @@ test('a project record whose projectPath no longer exists says so instead of nam
   fs.rmSync(gone, { recursive: true });
   const effective = { version: '6.3.0', scope: 'project', marketplace: MK, projectPath: gone };
   const notice = superpowersNotice({ effective, floor: SUPERPOWERS_FLOOR, projectDir: proj });
-  assert.ok(notice.includes(` (this install is recorded for ${gone}, which no longer exists; it applies here because that path belongs to the same git checkout)`));
+  assert.ok(notice.includes(` (this install is recorded for ${gone}, which no longer exists; it applies here because that path belongs to the same git checkout`));
+  assert.ok(notice.includes(`claude plugin update superpowers@${MK} --scope project`));
+  assert.ok(notice.includes(`mkdir -p "${gone}"`));
+  assert.ok(notice.includes(`claude plugin uninstall superpowers@${MK} --scope project`));
+  assert.ok(notice.includes("removes this checkout's own record"));
+  assert.ok(!notice.includes('run from'));
+});
+
+test('a local project record whose projectPath no longer exists names the local scope in both commands', () => {
+  const w = mkWorld();
+  const proj = w.dir('proj');
+  const gone = w.dir('gone');
+  fs.rmSync(gone, { recursive: true });
+  const effective = { version: '6.3.0', scope: 'local', marketplace: MK, projectPath: gone };
+  const notice = superpowersNotice({ effective, floor: SUPERPOWERS_FLOOR, projectDir: proj });
+  assert.ok(notice.includes(` (this install is recorded for ${gone}, which no longer exists; it applies here because that path belongs to the same git checkout`));
+  assert.ok(notice.includes(`claude plugin update superpowers@${MK} --scope local`));
+  assert.ok(notice.includes(`mkdir -p "${gone}"`));
+  assert.ok(notice.includes(`claude plugin uninstall superpowers@${MK} --scope local`));
+  assert.ok(notice.includes("removes this checkout's own record"));
   assert.ok(!notice.includes('run from'));
 });
 
@@ -147,6 +166,8 @@ test('a local record for an existing, different directory gets the "run from" su
   assert.ok(notice.includes('--scope local'));
   assert.ok(notice.includes(`run from ${other}`));
   assert.ok(!notice.includes('no longer exists'));
+  assert.ok(!notice.includes('mkdir'));
+  assert.ok(!notice.includes('uninstall'));
 });
 
 // ---- AC2: no notice at or above the floor; scope resolution -------------------
