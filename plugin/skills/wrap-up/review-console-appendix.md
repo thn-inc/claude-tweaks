@@ -42,7 +42,7 @@ carry the grant.
 Full mechanics behind the `console-resolve.js` call in `review-console.md`'s "Auto-resolution
 short-circuit" section. The CLI applies the stances in that section to every staged item
 (`bin/lib/console/resolve.js`'s `SECTION_STANCES`, its prefix table `SECTION_MAP`) — a staged
-patch is `git apply --check`ed first and resolves to `stale — re-derive from Invariant:` when it
+patch is `git apply --check`ed first — stacked on the earlier patches in apply order, so a re-derived patch is judged at its position — and resolves to `stale — re-derive from Invariant:` when it
 no longer applies, never applied blind, per `_shared/staged-patch.md`; an unrecognized staged
 prefix lands in Pending review as `pending — unmapped-prefix`, never auto-approved; a staged item
 named by a `REFUSED` line in `decisions.md` is classified under **Refused — no defer reason**

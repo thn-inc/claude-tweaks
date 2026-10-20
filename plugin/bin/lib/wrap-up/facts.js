@@ -10,30 +10,29 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { listClaudeMd, listRules } = require('../harness-health/scope');
+const { splitNul, parseNameStatusZ } = require('../git-z');
 
+// `trim: false` for a `-z` path stream: trimming would eat a leading space off
+// the first path.
 function makeGitRunner(cwd) {
-  return (args) => {
+  return (args, { trim = true } = {}) => {
     try {
-      return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
+      const out = execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+      return trim ? out.trim() : out;
     } catch {
       return null;
     }
   };
 }
 
+// raw is `git diff --name-status -z` output (NUL-delimited, never C-quoted).
 function parseRenamedDeleted(raw) {
-  if (!raw) return [];
-  return raw
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => {
-      const parts = line.split('\t');
-      const status = parts[0][0]; // 'R100' -> 'R'; 'D' -> 'D'
-      if (status === 'R') {
-        return { status: 'R', oldPath: parts[1], newPath: parts[2] };
-      }
-      return { status: 'D', oldPath: parts[1], newPath: null };
-    });
+  return parseNameStatusZ(raw).map(({ status, paths }) => {
+    if (status[0] === 'R') {
+      return { status: 'R', oldPath: paths[0], newPath: paths[1] };
+    }
+    return { status: 'D', oldPath: paths[0], newPath: null };
+  });
 }
 
 function dirNonEmpty(dirPath) {
@@ -170,10 +169,9 @@ function gatherFacts({ cwd, base } = {}) {
   let headingRenamed = false;
 
   if (isRepo) {
-    const diffOut = git(['diff', '--name-only', `${base}...HEAD`]);
-    changedFiles = diffOut ? diffOut.split('\n').filter(Boolean) : [];
+    changedFiles = splitNul(git(['diff', '--name-only', '-z', '--end-of-options', `${base}...HEAD`], { trim: false }));
 
-    const rdOut = git(['diff', '--diff-filter=RD', '--name-status', `${base}...HEAD`]);
+    const rdOut = git(['diff', '--diff-filter=RD', '--name-status', '-z', '--end-of-options', `${base}...HEAD`], { trim: false });
     renamedDeleted = parseRenamedDeleted(rdOut);
 
     claudeMdCommandRenamed = computeClaudeMdCommandRenamed(git, cwd, base);

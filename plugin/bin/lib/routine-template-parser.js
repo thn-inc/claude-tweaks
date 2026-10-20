@@ -246,13 +246,13 @@ function parsePorcelainNames(out) {
 // unavailable).
 function readRoutineRecordsAtRef({ cwd = process.cwd(), ref, dir = DEFAULT_RECORD_DIR, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   if (!ref) return null;
-  if (!tryGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], cwd, timeoutMs).ok) return null;
-  const ls = tryGit(['ls-tree', '-r', '--name-only', '-z', ref, '--', dir], cwd, timeoutMs);
+  if (!tryGit(['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`], cwd, timeoutMs).ok) return null;
+  const ls = tryGit(['ls-tree', '-r', '--name-only', '-z', '--end-of-options', ref, '--', dir], cwd, timeoutMs);
   if (!ls.ok) return null;
   const records = [];
   for (const p of ls.out.split('\0')) {
     if (!p.endsWith('.yml')) continue;
-    const show = tryGit(['show', `${ref}:${p}`], cwd, timeoutMs);
+    const show = tryGit(['show', '--end-of-options', `${ref}:${p}`], cwd, timeoutMs);
     if (!show.ok) continue;
     let parsed;
     try {

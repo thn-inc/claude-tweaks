@@ -15,6 +15,10 @@ const LINE_TOLERANCE_DEBATE = 5;
 // wide band no longer carries its own floor). Same value as
 // LINE_TOLERANCE_DEBATE today, kept as its own name so the two can diverge.
 const LINE_TOLERANCE_REPRODUCTION_WIDE = 5;
+// #3604: line window for cross-lens corroboration of single-read findings at
+// review's medium tier (see corroborateCrossLens below). Same value as
+// LINE_TOLERANCE_DEBATE today, kept as its own name so the two can diverge.
+const LINE_TOLERANCE_CORROBORATION = 5;
 const REPRODUCTION_AGENT_COUNT = 2;
 const DEBATE_AGENT_COUNT = 2;
 
@@ -442,6 +446,110 @@ function detectCrossLensOverlap(findingsByLens) {
   return overlaps;
 }
 
+// #3604: cross-lens corroboration for review's medium tier. A finding only one
+// agent of a lens reported stays `unconfirmed` under the single-read rule even
+// when a different lens independently reported the same defect. Two findings
+// from different lenses are an edge when they share path within
+// LINE_TOLERANCE_CORROBORATION AND known substance agreement
+// (>= SUBSTANCE_SIMILARITY_MIN; missing text never corroborates). Clusters are
+// the connected components of that edge graph (union-find) rather than a greedy
+// pairing, so no finding can be stranded by an earlier pairing choice (the
+// Greedy-assignment stranding precedent, #2907). A cluster qualifies when it
+// spans >= 2 distinct lenses; one lens never corroborates itself.
+//
+// A qualifying cluster is then carved into rows so a chain (A~B, B~C, A and C
+// apart) never silently absorbs a distinct finding: members ordered by
+// severityRank descending, then input order; the first remaining member is a
+// row's representative, and the row takes every remaining member that directly
+// matches it (same location within ±5 and known substance agreement, any lens).
+// A row's severity is its representative's — the highest, mirroring
+// step3-routing.md's cross-lens de-dup rule — so a corroborating low finding
+// never demotes a critical one. A row's `lenses` are its members' lenses plus
+// those of the representative's cross-lens edge partners.
+//
+// Input: { [lens]: Finding[] } — the findings still `unconfirmed` per lens.
+// Output: { corroborated: CorroboratedFinding[], unconfirmed: { [lens]: Finding[] } };
+// `unconfirmed` keeps every input lens key (empty array when none remain).
+function corroborateCrossLens(unconfirmedByLens) {
+  const lenses = Object.keys(unconfirmedByLens);
+  const nodes = lenses.flatMap((lens) => unconfirmedByLens[lens]
+    .map((raw) => ({ lens, finding: normalizeFinding(raw) })));
+
+  const directMatch = (i, j) => {
+    if (!sameLocation(nodes[i].finding, nodes[j].finding, LINE_TOLERANCE_CORROBORATION)) return false;
+    // Missing text (`null`) never corroborates, unlike the reproduction pairing.
+    return sameSubstance(nodes[i].finding, nodes[j].finding) === true;
+  };
+
+  const parent = nodes.map((_, i) => i);
+  const find = (i) => {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i]];
+      i = parent[i];
+    }
+    return i;
+  };
+  const partners = nodes.map(() => []); // cross-lens edge partners per node
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      if (nodes[i].lens === nodes[j].lens) continue;
+      if (!directMatch(i, j)) continue;
+      partners[i].push(j);
+      partners[j].push(i);
+      parent[find(j)] = find(i);
+    }
+  }
+
+  const clusters = new Map();
+  nodes.forEach((_, i) => {
+    const root = find(i);
+    if (!clusters.has(root)) clusters.set(root, []);
+    clusters.get(root).push(i);
+  });
+
+  const corroborated = [];
+  const consumed = new Set();
+  for (const members of clusters.values()) {
+    const clusterLenses = new Set(members.map((i) => nodes[i].lens));
+    if (clusterLenses.size < 2) continue;
+    members.forEach((i) => consumed.add(i));
+    let remaining = [...members].sort((x, y) => severityRank(nodes[y].finding.severity)
+      - severityRank(nodes[x].finding.severity) || x - y);
+    while (remaining.length > 0) {
+      const rep = remaining[0];
+      const rowMembers = [rep, ...remaining.slice(1).filter((m) => directMatch(rep, m))];
+      remaining = remaining.filter((m) => !rowMembers.includes(m));
+      const rowLenses = new Set(rowMembers.map((i) => nodes[i].lens));
+      partners[rep].forEach((p) => rowLenses.add(nodes[p].lens));
+      if (rowLenses.size < 2) {
+        throw new Error('corroborateCrossLens: a qualifying-cluster row names fewer than 2 lenses');
+      }
+      // eslint-disable-next-line no-unused-vars
+      const { nearLocation, source, ...repFinding } = nodes[rep].finding;
+      const buckets = new Set(rowMembers.map((i) => severityBucket(nodes[i].finding.severity)));
+      const row = {
+        ...repFinding,
+        severity: SEVERITY_RANK[severityRank(repFinding.severity)],
+        lenses: lenses.filter((lens) => rowLenses.has(lens)),
+        members: rowMembers.map((i) => {
+          const { lens, finding } = nodes[i];
+          return { lens, path: finding.path, line: finding.line, severity: finding.severity, text: finding.text };
+        }),
+      };
+      if (buckets.size > 1) row.severityContested = true;
+      corroborated.push(row);
+    }
+  }
+
+  const unconfirmed = {};
+  lenses.forEach((lens) => { unconfirmed[lens] = []; });
+  nodes.forEach((node, i) => {
+    if (!consumed.has(i)) unconfirmed[node.lens].push(node.finding);
+  });
+
+  return { corroborated, unconfirmed };
+}
+
 function resolveDebate(verdictA, verdictB) {
   if (verdictA === 'agree' && verdictB === 'agree') return 'confirmed';
   if (verdictA === 'disagree' && verdictB === 'disagree') return 'unconfirmed';
@@ -509,6 +617,7 @@ module.exports = {
   LINE_TOLERANCE_REPRODUCTION,
   LINE_TOLERANCE_REPRODUCTION_WIDE,
   LINE_TOLERANCE_DEBATE,
+  LINE_TOLERANCE_CORROBORATION,
   REPRODUCTION_AGENT_COUNT,
   DEBATE_AGENT_COUNT,
   RED_TEAM_PERSONAS,
@@ -524,6 +633,7 @@ module.exports = {
   findingsMatch,
   categoriseReproduction,
   detectCrossLensOverlap,
+  corroborateCrossLens,
   resolveDebate,
   resolveRefutation,
   // Dispatch shape builders (pure data — no actual Task() calls)

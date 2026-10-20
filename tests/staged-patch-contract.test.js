@@ -238,3 +238,47 @@ test('probe: a patch staged before the target moved is rejected as stale, distin
   assert.notEqual(stale.status, 0);
   assert.match(stale.stderr, /patch does not apply/);
 });
+
+// #3290: the staging gate stacks each staged patch on the patches that sort before it, and one
+// apply order (byte-wise staged/ filename sort) governs both the gate and the console apply loop.
+const GATE_HEADING = '## Staging-time gate';
+const CONSOLE_HEADING = '## Console apply with description fallback';
+const STACKED_HEADING = '### Stacked check';
+const normBody = (s) => s.replace(/\s+/g, ' ').trim();
+function assertStackedGate(text) {
+  const gate = text.slice(text.indexOf(GATE_HEADING), text.indexOf(CONSOLE_HEADING));
+  const stacked = gate.slice(gate.indexOf(STACKED_HEADING));
+  const consoleSlice = text.slice(text.indexOf(CONSOLE_HEADING), text.indexOf('### Write-back to the ledger'));
+  // AC1.1: the gate runs the stacked check and names both patches on a conflict
+  assert.ok(gate.includes(STACKED_HEADING), 'gate names the Stacked check subsection');
+  assert.ok(gate.includes('bin/check-staged-stack.js'), 'gate names the stacked-check CLI');
+  assert.ok(gate.includes('--rederive-out'), 'gate passes --rederive-out');
+  assert.ok(gate.includes('staged/{targetConflict.patch}') && gate.includes('staged/{targetConflict.conflictsWith}') && gate.includes('staged/{slug}-{n}.patch'), 'conflict STAGED line names both patches from targetConflict, plus the stage path');
+  // AC2.1: a clean stack writes only the normal STAGED entry
+  const exit0 = stacked.match(/- \*\*exit 0\*\*([\s\S]*?)(?=\n- |\n\n|$)/);
+  assert.ok(exit0, 'stacked subsection has an exit-0 bullet');
+  assert.match(normBody(exit0[1]), /normal[\s\S]*nothing else/, 'exit-0 bullet says normal entry and nothing else');
+  // AC3.1: apply order is defined once and both the gate and the console apply section use it
+  const orderLines = text.split('\n').filter((l) => /^\*\*Apply order\./.test(l));
+  assert.equal(orderLines.length, 1, 'exactly one Apply order paragraph');
+  const orderStart = text.indexOf(orderLines[0]);
+  const orderPara = text.slice(orderStart, text.indexOf('\n\n', orderStart));
+  assert.ok(orderPara.includes('byte-wise'), 'apply order paragraph names the byte-wise sort');
+  assert.ok(orderPara.includes('bin/lib/console/resolve.js'), 'apply order paragraph names the console resolver');
+  assert.ok(gate.includes('apply order'), 'gate slice uses apply order');
+  assert.ok(consoleSlice.includes('apply order'), 'console apply slice uses apply order');
+  assert.ok(!consoleSlice.includes('in the order the console lists them'), 'console apply slice no longer uses the console display order');
+}
+
+test('AC1.1, AC2.1, AC3.1: the staging gate stacks staged patches and one apply order governs gate and console', () => {
+  assertStackedGate(fs.readFileSync(CONTRACT, 'utf8'));
+});
+
+test('go-red control: assertStackedGate throws when the Stacked check subsection is removed', () => {
+  const text = fs.readFileSync(CONTRACT, 'utf8');
+  const start = text.indexOf(STACKED_HEADING);
+  assert.ok(start > 0, 'subsection present before removal');
+  const end = text.indexOf(`\n${CONSOLE_HEADING}`, start);
+  const mutated = text.slice(0, start) + text.slice(end + 1);
+  assert.throws(() => assertStackedGate(mutated));
+});

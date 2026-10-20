@@ -2,9 +2,10 @@
 
 // Characterization tests for the three readers routed through path-guard
 // (#3417). The migrations change no behavior except one named difference
-// (installed-plugins.js, below), so every test here passes against the
+// (installed-plugins.js, below), so every #3417 test here passes against the
 // pre-migration code AND the migrated code; the one intended difference is
-// the only test that is red before migration.
+// the only #3417 test that is red before migration. The `isPolicyFile (#3495)`
+// tests are the exception: they pin the case-canonical behavior #3495 added.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -159,51 +160,70 @@ test('realTarget: empty, non-string and relative targets are unprovable', () => 
 test('realTarget: a leaf whose realpath AND lstat fail with a non-ENOENT code takes the parent-only fallback', () => {
   const { root, policy } = policyRepo();
   fs.writeFileSync(policy, 'x: 1\n');
-  const realReal = fs.realpathSync;
-  const realLstat = fs.lstatSync;
   const denied = () => Object.assign(new Error('EACCES'), { code: 'EACCES' });
-  const patchedReal = (p, ...a) => { if (p === policy) throw denied(); return realReal(p, ...a); };
-  patchedReal.native = realReal.native;
-  fs.realpathSync = patchedReal;
-  fs.lstatSync = (p, ...a) => { if (p === policy) throw denied(); return realLstat(p, ...a); };
-  try {
-    assert.equal(isPolicyFile(root, policy), true);
-  } finally {
-    fs.realpathSync = realReal;
-    fs.lstatSync = realLstat;
-  }
+  const realpathSync = (p, ...a) => fs.realpathSync(p, ...a);
+  realpathSync.native = (p, ...a) => { if (p === policy) throw denied(); return fs.realpathSync.native(p, ...a); };
+  const lstatSync = (p, ...a) => { if (p === policy) throw denied(); return fs.lstatSync(p, ...a); };
+  assert.equal(isPolicyFile(root, policy, { fsImpl: { ...fs, realpathSync, lstatSync } }), true);
 });
 
 test('realTarget: a leaf that lstat reports as present but whose realpath fails with a non-ENOENT code takes the parent-only fallback', () => {
   const { root, policy } = policyRepo();
   fs.writeFileSync(policy, 'x: 1\n');
-  const realReal = fs.realpathSync;
-  const patchedReal = (p, ...a) => { if (p === policy) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); return realReal(p, ...a); };
-  patchedReal.native = realReal.native;
-  fs.realpathSync = patchedReal;
-  try {
-    assert.equal(isPolicyFile(root, policy), true);
-  } finally {
-    fs.realpathSync = realReal;
-  }
+  const realpathSync = (p, ...a) => fs.realpathSync(p, ...a);
+  realpathSync.native = (p, ...a) => { if (p === policy) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); return fs.realpathSync.native(p, ...a); };
+  assert.equal(isPolicyFile(root, policy, { fsImpl: { ...fs, realpathSync } }), true);
 });
 
-test('realTarget: resolves with the JS fs.realpathSync, never .native', () => {
+test('realTarget: routes through the injected fs\'s .native realpath, never its JS form', () => {
   const { root, policy } = policyRepo();
   fs.writeFileSync(policy, 'x: 1\n');
-  // A symlink alias, so a .native call that throws could not be masked by the
+  // A symlink alias, so a JS-form call that throws could not be masked by the
   // parent-only fallback that a plain missing leaf would take.
   const alias = path.join(root, 'alias.yml');
   fs.symlinkSync(policy, alias);
-  const realReal = fs.realpathSync;
-  const patched = (p, ...a) => realReal(p, ...a);
-  patched.native = () => { throw new Error('native realpath must not be used here'); };
-  fs.realpathSync = patched;
-  try {
-    assert.equal(isPolicyFile(root, alias), true);
-  } finally {
-    fs.realpathSync = realReal;
-  }
+  const patched = () => { throw new Error('JS realpath must not be used here'); };
+  patched.native = fs.realpathSync.native;
+  assert.equal(isPolicyFile(root, alias, { fsImpl: { ...fs, realpathSync: patched } }), true);
+});
+
+const { caseInsensitiveFs } = require('../../helpers/case-insensitive-fs');
+
+// The fake is keyed on POSIX-literal paths, but isPolicyFile runs path.resolve /
+// path.join, which prefix a drive letter and use backslashes on win32 — so the
+// lookups would miss there (tests/helpers/case-insensitive-fs.js is posix-only).
+const POSIX_ONLY = process.platform === 'win32' && 'posix-only case-insensitive fake: path.resolve/join rewrite its literal paths on win32';
+
+const CI_DIRS = {
+  '/Vol': { type: 'directory' },
+  '/Vol/Repo': { type: 'directory' },
+  '/Vol/Repo/.claude-tweaks': { type: 'directory' },
+};
+
+test('isPolicyFile (#3495): a mis-cased target to an existing policy.yml matches on a case-insensitive volume', { skip: POSIX_ONLY }, () => {
+  const fsImpl = caseInsensitiveFs({ ...CI_DIRS, '/Vol/Repo/.claude-tweaks/policy.yml': { type: 'file' } });
+  assert.equal(isPolicyFile('/Vol/Repo', '/vol/repo/.CLAUDE-TWEAKS/Policy.yml', { fsImpl }), true);
+});
+
+test('isPolicyFile (#3495): a mis-cased repoRoot still matches the correctly-cased target', { skip: POSIX_ONLY }, () => {
+  const fsImpl = caseInsensitiveFs({ ...CI_DIRS, '/Vol/Repo/.claude-tweaks/policy.yml': { type: 'file' } });
+  assert.equal(isPolicyFile('/vol/REPO', '/Vol/Repo/.claude-tweaks/policy.yml', { fsImpl }), true);
+});
+
+test('isPolicyFile (#3495): a symlink swapped in for policy.yml is still denied through a mis-cased target', { skip: POSIX_ONLY }, () => {
+  const fsImpl = caseInsensitiveFs({
+    ...CI_DIRS,
+    '/Vol/Repo/.claude-tweaks/policy.yml': { type: 'symlink', target: '/Vol/Elsewhere/evil.yml' },
+    '/Vol/Elsewhere': { type: 'directory' },
+    '/Vol/Elsewhere/evil.yml': { type: 'file' },
+  });
+  assert.equal(isPolicyFile('/Vol/Repo', '/vol/repo/.CLAUDE-TWEAKS/POLICY.yml', { fsImpl }), false);
+});
+
+test('isPolicyFile (#3495): a policy file stored as Policy.yml on disk matches both the literal and a mis-cased spelling', { skip: POSIX_ONLY }, () => {
+  const fsImpl = caseInsensitiveFs({ ...CI_DIRS, '/Vol/Repo/.claude-tweaks/Policy.yml': { type: 'file' } });
+  assert.equal(isPolicyFile('/Vol/Repo', '/Vol/Repo/.claude-tweaks/policy.yml', { fsImpl }), true);
+  assert.equal(isPolicyFile('/Vol/Repo', '/vol/repo/.claude-tweaks/POLICY.YML', { fsImpl }), true);
 });
 
 // ---- installed-plugins.js ---------------------------------------------------

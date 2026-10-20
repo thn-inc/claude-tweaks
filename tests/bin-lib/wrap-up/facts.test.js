@@ -107,6 +107,35 @@ test('gatherFacts renamedDeleted records rename shape with old and new paths', (
   assert.strictEqual(rename.newPath, 'docs/guide2.md');
 });
 
+test('AC1.1: gatherFacts reports a non-ASCII changed path unquoted', () => {
+  // Own repo: the shared one's changed-file set is asserted on by sibling tests.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-z-'));
+  try {
+    git(['init', '-q'], dir);
+    git(['config', 'user.email', 'test@example.com'], dir);
+    git(['config', 'user.name', 'Test'], dir);
+    fs.mkdirSync(path.join(dir, 'docs'));
+    fs.writeFileSync(path.join(dir, 'docs', 'ö.md'), '# Moves\n\nenough shared body text for rename detection to pair these\n');
+    git(['add', '.'], dir);
+    git(['commit', '-q', '-m', 'base'], dir);
+    const base = git(['rev-parse', 'HEAD'], dir);
+
+    fs.writeFileSync(path.join(dir, 'docs', 'café.md'), '# Cafe\n');
+    fs.writeFileSync(path.join(dir, ' lead.md'), '# Lead\n');
+    git(['mv', 'docs/ö.md', 'docs/ø.md'], dir);
+    git(['add', '.'], dir);
+    git(['commit', '-q', '-m', 'second'], dir);
+
+    const f = gatherFacts({ cwd: dir, base });
+    assert.ok(f.changedFiles.includes('docs/café.md'), `got ${JSON.stringify(f.changedFiles)}`);
+    assert.ok(f.changedFiles.includes(' lead.md'), `got ${JSON.stringify(f.changedFiles)}`);
+    assert.ok(!f.changedFiles.includes('"docs/caf\\303\\251.md"'));
+    assert.deepStrictEqual(f.renamedDeleted, [{ status: 'R', oldPath: 'docs/ö.md', newPath: 'docs/ø.md' }]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('gatherFacts journeyFiles lists the journey markdown files', () => {
   const f = gatherFacts({ cwd: repoDir, base: baseSha });
   assert.ok(f.journeyFiles.some((p) => p.endsWith('j1.md')));

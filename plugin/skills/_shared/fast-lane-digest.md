@@ -22,7 +22,7 @@ full procedure documented in each skill's own `SKILL.md` instead.
 | Step 1.6 — Cross-Spec Promise Check | **skip** | n/a — `cross-spec-promise-check.md` never opens |
 | Step 2 — Identify What Changed + Merge-Provenance Check | run | `code-mode-steps.md`, `merge-provenance-check.md` |
 | Step 2.5 — Derive Review Effort | run | `review-effort-derivation.md` |
-| Steps 3 / 3.5 / 3.6 / Step 3 Routing — Code Review, debate, refutation, routing | run | `code-mode-steps.md`, `step3-lens-dispatch.md`, `step3-debate-and-refutation.md`, `step3-doc-freshness-lens.md`, `step3-routing.md` |
+| Steps 3 / 3.5 / 3.6 / Step 3 Routing — Code Review, debate, refutation, routing | run | `code-mode-steps.md`, `step3-lens-dispatch.md`, `step3-debate-and-refutation.md`, `step3-cross-lens-corroboration.md`, `step3-doc-freshness-lens.md`, `step3-routing.md` |
 | Step 4 — Implementation Hindsight | **skip** | n/a |
 | Step 5 — Simplify Changed Code | run | `code-mode-steps.md` |
 | Step 6 — Visual Review | run (browser/dev-server permitting) | `code-mode-steps.md` |

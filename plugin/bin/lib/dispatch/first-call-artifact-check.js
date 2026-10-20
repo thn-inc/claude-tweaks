@@ -42,8 +42,8 @@ function fail(reason, message) {
 // run-config (never policy.yml) reproduces that pin, since run-config already wins
 // over policy.yml in resolvePolicyKeys' own source order whenever both are present.
 // `null` means the run's config.yml carries no resolvable value (e.g. the
-// Manifesto never ran) -- the pr-first-only check below is skipped in that case,
-// since there is nothing to confirm the model against.
+// Manifesto never ran) -- the pr-first-only check below is skipped with a degrade
+// line in that case, since there is nothing to confirm the model against.
 function resolveIntegrationModel(configRaw) {
   const resolved = resolvePolicyKeys(['integration-model'], { policyRaw: null, runConfigRaw: configRaw });
   return resolved['integration-model'].value;
@@ -194,6 +194,7 @@ function checkFirstCallArtifacts({ runDir, issueNumbers, repoSlug }, deps = {}) 
     gitRunner = defaultGitRunner,
     ghApi = defaultGhApi,
     now = Date.now(),
+    warn = (line) => process.stderr.write(line),
   } = deps;
 
   const runStatePath = path.join(runDir, 'run-state.json');
@@ -225,6 +226,9 @@ function checkFirstCallArtifacts({ runDir, issueNumbers, repoSlug }, deps = {}) 
   if (claimFail) return claimFail;
 
   const integrationModel = resolveIntegrationModel(configRaw);
+  if (integrationModel === null) {
+    warn(`first-call-artifact-check: degraded — ${configPath} carries no valid integration-model pin; PR-bookend check not run (_shared/integration-model.md's Run-scoped stability)\n`);
+  }
   if (integrationModel === 'pr-first') {
     const prFail = prFailure(parsedRunState, gitRunner);
     if (prFail) return prFail;

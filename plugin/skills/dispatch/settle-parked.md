@@ -30,11 +30,11 @@ HTML-comment form on a `gh`-present read, the plain-text companion form on a
 
 ## Step 2: Freshness probe + fresh CI read, per PR
 
-For each PR resolved in Step 1, run two checks — reusing
+For each PR resolved in Step 1, run two checks — the freshness probe reuses
 `resume-confirmation.md`'s existing mechanics rather than reimplementing them:
 
 1. **Freshness probe:** `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" check-resume-freshness --run "{run-dir}"` — same call `resume-confirmation.md` makes before its own per-PR resume.
-2. **Fresh CI/mergeability read:** `gh pr view {n} --json state,mergeStateStatus,statusCheckRollup` — the same shape `_shared/pr-first-merge.md`'s Step 2.5 state read already uses.
+2. **Fresh CI read:** `node "${CLAUDE_PLUGIN_ROOT}/bin/pr-checks.js" --pr {n}` — Step 2.5's state read plus its head-run read, classified once by `classifyRollup`, so a green rollup over a still-running head run reads `pending`, not `passing`. `--pr` because this session's own HEAD is not the parked PR's branch: `--run` would compare against it and read `stale`.
 
 **A `BLOCKED` freshness result (worktree live, or recently committed) is
 excluded from the batch table** — it is not silently dropped: report it on a
@@ -54,7 +54,7 @@ One table, one row per eligible PR from Step 2:
 ```
 
 - **Park reason** — parsed from the original park comment `_shared/pr-first-merge.md`'s Red path posted (the `reason: check-failed:{names} | checks-pending-timeout` text `_shared/pr-first-merge.md`'s Step 2.5 log line already uses).
-- **CI status** — summarized from Step 2's `statusCheckRollup` as `passing`/`failing`/`pending`, same vocabulary `resume-confirmation.md` uses.
+- **CI status** — mapped from Step 2's `state` to the vocabulary `resume-confirmation.md` uses: `pending` → `pending`; `green`/`no-ci` → `passing`; `red`/`inherited-red` → `failing`; `read-failed`/`gh-absent` → `unavailable`.
 - **Files changed** — from `gh pr diff {n} --name-only | wc -l`.
 
 Then one `AskUserQuestion` call, **multi-select** — distinct from

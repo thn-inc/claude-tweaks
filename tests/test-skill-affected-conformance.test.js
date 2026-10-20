@@ -82,3 +82,35 @@ test('test/design-gate.md resolves <changed-files> via verify.js --changed-files
   // form — that's a documented fallback, not the primary resolution this test guards.
   assert.match(invocation, /exit 1.*git diff --name-only HEAD~1\.\.HEAD/s);
 });
+
+test('verification.md Skip-if-recent Mismatch re-stamps HEAD through the runner, never a hand-rolled skip (#3284)', () => {
+  const v = read('plugin/skills/test/verification.md');
+  const start = v.indexOf('- **Mismatch**');
+  const end = v.indexOf('- **Signal absent**');
+  assert.ok(start !== -1 && end > start, 'Mismatch bullet must precede the Signal absent bullet');
+  const bullet = v.slice(start, end);
+  assert.ok(!bullet.includes('skip this procedure entirely'), 'a moved HEAD must never skip without the runner — the stamp would stay at VERIFICATION_SHA');
+  assert.ok(!bullet.includes('git diff --name-only'), 'the runner classifies the delta, not a hand-rolled git diff');
+  assert.ok(bullet.includes('scoped invocation'), 'the Mismatch case runs the scoped invocation');
+  assert.ok(bullet.includes('re-stamps HEAD'), 'the bullet states why: the runner re-stamps HEAD');
+  assert.ok(bullet.includes('#3284'));
+  assert.ok(bullet.includes('no declaration'), 'no-declaration projects fall back to the full procedure');
+  const table = v.slice(v.indexOf('### Re-verify scoping'));
+  const row = table.split('\n').find((l) => l.startsWith('|') && l.includes('`VERIFICATION_SHA` ≠ HEAD'));
+  assert.ok(row, 'the scoping table names the build→test VERIFICATION_SHA mismatch site');
+  assert.ok(row.includes('scoped (`none` on a bookkeeping-only delta)'), row);
+});
+
+test('test/fix-mode.md re-verifies a fix through the stamping runner, never a failed-checks-only re-run (#3284)', () => {
+  const f = read('plugin/skills/test/fix-mode.md');
+  assert.ok(f.includes('#3284'));
+  assert.ok(f.includes('--no-stamp'), 'a narrowed iteration run must be named as never-stamping');
+  assert.ok(f.includes('verification.md'), 'the stamped re-verification points at verification.md Step 2');
+  // A failed-checks-only re-run is a partial set: it cannot stamp, so the fix
+  // commit's HEAD would be left unstamped and the dispatched second call would
+  // re-trigger /claude-tweaks:test.
+  assert.doesNotMatch(f, /re-run the failed checks/i, 'no site may re-verify by re-running only the failed checks');
+  // Auto-fix flow + the three Interactive fix bullets each point at the one statement.
+  const pointers = f.split('re-verify per Re-verification above').length - 1;
+  assert.ok(pointers >= 4, `expected >=4 pointers to the Re-verification paragraph, got ${pointers}`);
+});

@@ -35,6 +35,7 @@ const { precheck } = require('./lib/release/precheck.js');
 const { guardReleasableTree, pushAfterAncestryCheck } = require('./lib/release/run.js');
 const { resolvePolicyKeys } = require('./lib/policy-schema.js');
 const { withIndexLockRetry } = require('./lib/git-retry.js');
+const { isPathContained } = require('./lib/shared-primitives.js');
 
 const USAGE = [
   'usage: release-local.js [--dry-run] [--root <dir>] [--branch <name>] [--release-as <version>]',
@@ -291,7 +292,7 @@ function writeInsideRoot(root, p, text) {
     if (e.code === 'ENOENT') throw new Error(`refusing to write ${p}: its directory does not exist`);
     throw e;
   }
-  if (realDir !== realRoot && !realDir.startsWith(realRoot + path.sep)) {
+  if (!isPathContained(realDir, realRoot, { orEqual: true })) {
     throw new Error(`refusing to write ${p}: its real location ${realDir} is outside the repo root`);
   }
   const { O_WRONLY, O_CREAT, O_TRUNC, O_NOFOLLOW } = fs.constants;

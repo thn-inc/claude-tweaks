@@ -32,6 +32,7 @@ Pipeline config snapshot:
 - design-intent: none
 - leftover-default: defer
 - auto-fix-threshold: lint+type
+- integration-model: pr-first
 
 ## /flow
 - AUTO 14:31:02 — Manifesto: levers written to /Users/x/project/.claude-tweaks/pipelines/2026-05-15T143207-spec-42/config.yml. (#1826/#1810: logs the absolute path so a shadow-path write is never indistinguishable from no write at all.)
@@ -58,6 +59,8 @@ Pipeline config snapshot:
 - AUTO 15:02:18 — Leftover routing: 2 sections routed to `defer` per policy (defer-reason: blocked-external, blocked-dependency). Detail: error-handling-edge-cases (cannot finish — external API spec), localization-pass (deferred to spec 45).
 - AUTO 15:02:24 — Skills row: applied 1 additive change (new anti-pattern in `auth/SKILL.md`). Restructure to `session-management/SKILL.md` staged at `staged/wrap-up-skill-restructure.md` for review.
 ```
+
+The snapshot header lists one `- {lever}: {value}` line per lever, then the `- integration-model: {v}` run-pin line (`_shared/integration-model.md`'s Run-scoped stability; absent when the pin was omitted).
 
 An aggregate line lists one `defer-reason` value per item, comma-separated in item order; single-item lines carry exactly one value — the shape `summary-template.md` parses.
 

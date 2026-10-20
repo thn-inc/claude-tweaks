@@ -240,10 +240,13 @@ function readSnapshot({ runDir, deps }) {
   if (members.length) {
     try { grants = deps.readGrants(members) || {}; } catch (err) { grantsError = err; }
   }
-  const patchChecks = {};
-  for (const item of staged) {
-    if (item.name.endsWith('.patch')) patchChecks[item.name] = deps.gitApplyCheck(item.path);
-  }
+  // A re-derived patch (#3290) applies only on top of its earlier patch, so when the caller supplies
+  // a stacked check the verdicts come from ONE walk over the .patch entries in apply order; without
+  // it, each patch is checked alone against the unmodified worktree.
+  const patchItems = staged.filter((item) => item.name.endsWith('.patch'));
+  const patchChecks = deps.checkPatchStack
+    ? deps.checkPatchStack(patchItems.map((item) => item.path))
+    : Object.fromEntries(patchItems.map((item) => [item.name, deps.gitApplyCheck(item.path)]));
   return { decisions, staged, engineState, members, grants, grantsError, patchChecks };
 }
 

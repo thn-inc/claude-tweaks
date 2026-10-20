@@ -10,6 +10,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { splitNul } = require('../git-z');
 
 // Full diffs plus touched-file contents can reach tens of MB on long branches.
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -154,16 +155,18 @@ function buildContext({
     '--no-ext-diff',
     '--src-prefix=a/',
     '--dst-prefix=b/',
+    '--end-of-options',
     range,
   ]);
 
-  const filesText = filesFrom
+  // The git list is NUL-delimited (-z) so a path with a newline or a quoted byte survives intact;
+  // the hand-written --files-from list stays newline-split and trimmed.
+  const files = filesFrom
     ? readFile(filesFrom, 'utf8')
-    : git([...GIT_UNQUOTED_PATHS, 'diff', range, '--name-only']);
-  const files = filesText
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean);
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : splitNul(git([...GIT_UNQUOTED_PATHS, 'diff', '--name-only', '-z', '--end-of-options', range]));
 
   // #3017: `files` are repo-root-relative paths (from `git diff --name-only`,
   // or a caller-supplied --files-from list following the same convention) —

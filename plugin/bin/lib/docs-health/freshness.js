@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { parseFrontmatterListField } = require('../health-core/frontmatter-list');
+const { splitLogZ } = require('../git-z');
 
 // Parses a doc's `files:` frontmatter list (repo-relative dependency
 // paths) — reuses journey docs' existing `files:` field/shape (see
@@ -18,36 +19,35 @@ function parseFilesField(content) {
 }
 
 // relPaths (repo-relative, already confirmed to exist) -> { [relPath]:
-// lastChangedMs }. A single batched `git log --name-only` walk instead of one
-// `git log -1` subprocess per path — every path's lookup is independent of
+// lastChangedMs }. A single batched `git log -z --name-only` walk instead of
+// one `git log -1` subprocess per path — every path's lookup is independent of
 // the others, so N sequential process forks for N paths (each with its own
 // 30s timeout) was pure waste for a doc with many tracked dependencies.
 // Commits are listed newest-first, so the first time a path is seen in the
 // name-only output is its most recent change — git's own pathspec filtering
 // (the trailing `--`) already restricts both which commits appear AND which
 // filenames are printed to just the given relPaths, so no manual filtering
-// is needed here. Entries absent from the returned map (git unavailable, no
-// history) are treated as "never changed" by the caller, same as before.
+// is needed here. `-z` prints paths raw (no C-quoting of non-ASCII names) and
+// makes NUL the separator, so the per-commit header marker is \x01, not NUL;
+// splitLogZ (../git-z) walks the NUL stream. Entries absent from the returned
+// map (git unavailable, no history) are treated as "never changed" by the
+// caller, same as before.
 function gitLastChangedMap(root, relPaths) {
   const result = {};
   if (!relPaths || relPaths.length === 0) return result;
   try {
     const out = execFileSync(
       'git',
-      ['-C', root, 'log', '--format=%x00%ct', '--name-only', '--', ...relPaths],
+      ['-C', root, 'log', '-z', '--format=%x01%ct', '--name-only', '--', ...relPaths],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000, windowsHide: true },
     );
-    let currentTimestampMs = null;
-    for (const line of out.split('\n')) {
-      if (line.startsWith('\0')) {
-        currentTimestampMs = parseInt(line.slice(1), 10) * 1000;
-        continue;
+    for (const { header, tokens } of splitLogZ(out, (t) => t.startsWith('\x01'))) {
+      const timestampMs = parseInt(header.slice(1), 10) * 1000;
+      for (const relPath of tokens) {
+        // First occurrence wins (newest commit first) — a later, older commit
+        // touching the same path must never overwrite it.
+        if (!(relPath in result)) result[relPath] = timestampMs;
       }
-      const relPath = line.trim();
-      if (!relPath || currentTimestampMs === null) continue;
-      // First occurrence wins (newest commit first) — a later, older commit
-      // touching the same path must never overwrite it.
-      if (!(relPath in result)) result[relPath] = currentTimestampMs;
     }
   } catch {
     // git unavailable — result stays empty, every path treated as "never

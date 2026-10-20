@@ -12,7 +12,7 @@ files:
 
 **Persona:** A developer using Claude Code with the claude-tweaks statusline wired in (`~/.claude-tweaks/bin/statusline.js`). They work in a worktree-isolated session, often with sibling sessions open in other worktrees of the same checkout. The agent runs `git add`, `git commit` and `git merge` many times as it works.
 **Goal:** Their own git writes succeed the first time. The statusline keeps showing the branch and the dirty dot, and the plugin's background sweeps keep doing their job.
-**Entry point:** Any session where the statusline renders a git segment. It re-renders around every tool call, so it runs `git --no-optional-locks status --porcelain -b` in the session's own directory over and over. A sibling session's start-up reaper, its background reconcile and its residue sweep also run read-only `git status` probes against every registered worktree, this one included.
+**Entry point:** Any session where the statusline renders a git segment. It re-renders around every tool call, so it runs `git --no-optional-locks status --porcelain -b` in the session's own directory over and over. A sibling session's start-up reaper, its background reconcile and a repo-scope residue sweep (`/tidy`'s) also run read-only `git status` probes against every registered worktree, this one included.
 **Success state:**
 - `git add`/`git commit`/`git merge` never fail with `Unable to create '.../index.lock': File exists` because of anything claude-tweaks runs, whether that is the statusline or a sibling session's background check.
 - The segment still reads `{branch}` when clean and `{branch}●` when dirty.
@@ -39,7 +39,7 @@ files:
 
 ### 3. Commit while sibling sessions sweep the worktrees
 - **URL:** the agent's Bash tool output for `git add` / `git commit`, while another Claude Code session in a sibling worktree starts up, reconciles, or wraps up.
-- **Action:** Keep working in this worktree while a sibling session opens. Its SessionStart worktree reaper and background reconcile run, and later its wrap-up residue sweep and verify runner check every registered worktree for dirty state.
+- **Action:** Keep working in this worktree while a sibling session opens. Its SessionStart worktree reaper and background reconcile run, and later its verify runner checks every registered worktree for dirty state, as a `/tidy` residue sweep (`--scope repo`) does. Its wrap-up residue sweep no longer does: under `--scope blast-radius` the worktrees probe skips the per-worktree `git status` entirely (#3479).
 - **Should feel:** Like nothing happened. The sibling's sweep is invisible here: no failed commit and no pause.
 - **Should understand:** Every read-only `git status` under `plugin/bin` passes `--no-optional-locks` as of #3464. That covers the worktree reaper, the residue worktrees probe, reconcile's classifier, the verify runner, the wrap-up engine, release and the QA stamp. Their dirty/clean answers are the same as before, but they no longer rewrite another session's index. `tests/git-status-optional-locks.test.js` fails the suite if a new status call lands without the flag.
 - **Red flags:**

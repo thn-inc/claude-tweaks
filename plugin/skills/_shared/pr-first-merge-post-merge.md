@@ -79,8 +79,24 @@ never a reason to report anything other than `merged`. (#3249: `release` and `ar
 back past a torn-down worktree or deleted branch — `fallbackBranch`, then the run's stamped PR
 number — so a run whose worktree is already gone can converge in this same pass. One exception is
 by design: a run that never rendered a console (the fast-lane auto-merge short-circuit writes no
-`console.json`) archives only when its `staged/` holds nothing pending; real staged items keep
-it in place until a human resolves them, and no later pass converges it on its own.)
+`console.json`) archives only when its `staged/` holds nothing pending.)
+
+Decide whether **this run** is that stuck run by checking it directly — never from the reconcile
+summary, which sweeps every run dir in the main checkout and carries counts, not paths. This run
+needs human action when `$PIPELINE_RUN_DIR/console.json` is absent AND `$PIPELINE_RUN_DIR/staged/`
+(or any `$PIPELINE_RUN_DIR/spec-*/staged/`) holds a non-dotfile entry — reconcile's
+`console-never-rendered-staged-pending` skip: it merged with no rendered console and pending
+`staged/` items, which a human must resolve or discard. An unreadable `staged/` (or `spec-*/staged/`)
+counts as pending, matching reconcile's fail-closed read. Log, on one line — this holds whatever the
+reconcile call itself returned, since a later pass skips this run the same way:
+`AUTO {time} — pr-first-merge Step 4.2: this run is console-never-rendered-staged-pending — needs human action (pending staged/ items, no rendered console); not left for the next trigger point. Reversibility: n/a.`
+and carry "needs human action" into the closing report. When the summary names the reason but this
+run's own check is clean, the stuck dirs are other runs: log and report "{N} other run dir(s) need
+human action (console-never-rendered-staged-pending)" without attributing it to this run. Either way
+the outcome is reported as `merged`, with a needs-human-action note. Reconcile escalates such a dir
+through the consolidated `structurally-stuck` record only after it sits untouched past the 7-day
+TTL and repeated consecutive stuck passes, and only while the run is not yet closed.
+
 **No `git merge`, `git commit`, or `git push` runs in the main checkout anywhere in this procedure**
 — the reconciler's own `mirrorFastForward` is a strict `--ff-only`, never a merge that could
 conflict, so it needs no worktree, no branch guard, and no close-run relief.
