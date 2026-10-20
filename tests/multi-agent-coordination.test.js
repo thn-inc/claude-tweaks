@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
-const c =require('../plugin/bin/lib/coordination');
+const c = require('../plugin/bin/lib/coordination');
 
 // Reads one live skill file under plugin/skills/. These tests assert against the real
 // shipped prose, so every read below goes through here rather than re-spelling the path.
