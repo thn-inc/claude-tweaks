@@ -427,7 +427,7 @@ test('AC6.2: every reason other than missing-config, and ok: true, carries no re
   writeRunDir(passRun, { runState: PR_RECORDED, config: 'integration-model: pr-first\n' });
   writeHeader(passRun, 'work', 2806);
   writeClaimLog(passRun, [2806]);
-  const pass =checkFirstCallArtifacts({ runDir: passRun, issueNumbers: [2806], repoSlug: REPO_SLUG }, {
+  const pass = checkFirstCallArtifacts({ runDir: passRun, issueNumbers: [2806], repoSlug: REPO_SLUG }, {
     ghApi: fakeGhApi({ 2806: liveClaimContent(RUN_ID) }),
     gitRunner: fakeGitRunner(['worktree-2806']),
     now: NOW,
