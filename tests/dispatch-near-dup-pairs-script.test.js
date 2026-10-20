@@ -11,23 +11,29 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const QUEUE_PULL = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'), 'utf8');
+const QUEUE_PULL = readText(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'));
+// The unquoted heredoc expands ${CLAUDE_PLUGIN_ROOT} into a JS string literal, where a Windows
+// backslash path would be read as escapes — pass it with forward slashes.
+const PLUGIN_ROOT = path.join(ROOT, 'plugin').split(path.sep).join('/');
 
 const ANCHOR = '# #1944: cross-group near-duplicate candidate warning.';
 const START = 'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js"';
 const END = 'NODE_EVAL_EOF\n';
 
 // The #1944 heredoc: from its node-eval-file.js line through its closing NODE_EVAL_EOF line.
-function heredoc() {
-  const anchor = QUEUE_PULL.indexOf(ANCHOR);
+// Normalizes again inside the extractor so the CRLF case below can go red on Linux CI.
+function heredoc(source = QUEUE_PULL) {
+  const text = source.replace(/\r\n/g, '\n');
+  const anchor = text.indexOf(ANCHOR);
   assert.notStrictEqual(anchor, -1, '#1944 anchor not found in queue-pull-script.md');
-  const from = QUEUE_PULL.indexOf(START, anchor);
+  const from = text.indexOf(START, anchor);
   assert.notStrictEqual(from, -1, 'no node-eval-file.js call after the #1944 anchor');
-  const close = QUEUE_PULL.indexOf('\n' + END, from);
+  const close = text.indexOf('\n' + END, from);
   assert.notStrictEqual(close, -1, 'the #1944 heredoc has no NODE_EVAL_EOF terminator');
-  return QUEUE_PULL.slice(from, close + 1 + END.length);
+  return text.slice(from, close + 1 + END.length);
 }
 
 function rec(number, title, anchors) {
@@ -53,13 +59,20 @@ function setup(t, groups) {
 function run(files) {
   const result = spawnSync('bash', ['-c', heredoc()], {
     encoding: 'utf8',
-    env: { ...process.env, CLAUDE_PLUGIN_ROOT: path.join(ROOT, 'plugin'), ...files },
+    env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, ...files },
   });
   assert.strictEqual(result.status, 0, `heredoc exited ${result.status}: ${result.stderr}`);
   return result;
 }
 
 const read = (files) => JSON.parse(fs.readFileSync(files.DISPATCH_NEAR_DUP_PAIRS, 'utf8'));
+
+test('heredoc() extracts the same #1944 heredoc from a CRLF checkout of queue-pull-script.md', () => {
+  const crlf = QUEUE_PULL.replace(/\n/g, '\r\n');
+  assert.ok(crlf.includes('\r\n'), 'the CRLF input carries \\r\\n');
+  assert.ok(!crlf.includes('\r\r\n'), 'the CRLF input is built from the normalized read, never \\r\\r\\n');
+  assert.strictEqual(heredoc(crlf), heredoc());
+});
 
 test('AC8.1: the heredoc warns on every cross-group pair and persists only the strong one, without a strong key', (t) => {
   const files = setup(t, [

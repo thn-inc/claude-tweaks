@@ -27,11 +27,13 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { gitRepo, fixtureGit, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const QUEUE_PULL_SCRIPT = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'), 'utf8',
-);
+const QUEUE_PULL_SCRIPT = readText(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'));
+// The unquoted heredoc expands ${CLAUDE_PLUGIN_ROOT} into a JS string literal, where a Windows
+// backslash path would be read as escapes — pass it with forward slashes.
+const PLUGIN_ROOT = path.join(ROOT, 'plugin').split(path.sep).join('/');
 
 // Structurally anchored (not a prose sentence): the first line is the require call unique to
 // this block, the last is this block's own final console.log + heredoc terminator -- both
@@ -96,7 +98,7 @@ test('queue-pull-script.md\'s named-target exclusion excludes exactly the synthe
     timeout: FIXTURE_TIMEOUT_MS,
     env: {
       ...process.env,
-      CLAUDE_PLUGIN_ROOT: path.join(ROOT, 'plugin'),
+      CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
       DISPATCH_GROUPS: dispatchGroups,
       DISPATCH_NAMED_TARGETS: namedTargets,
       DISPATCH_EXCLUSIONS: exclusions,
