@@ -432,19 +432,44 @@ function readConsoleState(runDir) {
 // the top-level staged/: where the two disagree, this check fails toward NOT
 // archiving (a pending per-spec proposal the console does not surface still
 // blocks the archive), never toward archiving it.
-function hasStagedItems(runDir) {
-  const stagedDirs = [
-    path.join(runDir, 'staged'),
-    ...listSpecDirs(runDir).map((name) => path.join(runDir, name, 'staged')),
+//
+// #3668: listStagedItems is the walk itself (names, not just a verdict) so the
+// archive-run verb can name what is pending; hasStagedItems is its non-empty
+// check. Spec dirs and names are sorted because readdir order is unspecified.
+// An unreadable staged/ is reported as one `{rel}/ (unreadable: {code})` entry,
+// so the refusal names the directory it could not prove empty.
+function listStagedItems(runDir) {
+  const stagedRels = [
+    'staged',
+    ...listSpecDirs(runDir).sort().map((name) => `${name}/staged`),
   ];
-  for (const dir of stagedDirs) {
+  const items = [];
+  for (const rel of stagedRels) {
     try {
-      if (fs.readdirSync(dir).some((n) => !n.startsWith('.'))) return true;
+      for (const n of fs.readdirSync(path.join(runDir, rel)).sort()) {
+        if (!n.startsWith('.')) items.push(`${rel}/${n}`);
+      }
     } catch (err) {
-      if (!err || err.code !== 'ENOENT') return true;
+      if (!err || err.code !== 'ENOENT') items.push(`${rel}/ (unreadable: ${(err && err.code) || 'unknown'})`);
     }
   }
-  return false;
+  return items;
+}
+
+function hasStagedItems(runDir) {
+  return listStagedItems(runDir).length > 0;
+}
+
+// #3668: the fast-lane auto-merge short-circuit (wrap-up/auto-merge-short-circuit.md,
+// whose `Fast-lane auto-merge: issue #{n}` decisions.md line is the signal) renders
+// no console, so its staged/ items were never shown to a human. That is the one
+// 'none'-console path this guard covers: other terminal runs keep staged/ by design
+// (in-terminal consoles, fleet-approved closes, tidy --approve runs) and must still
+// archive. The line's absence, or any read failure, leaves the guard off.
+function consoleReplacedByFastLaneFyi(runDir) {
+  let raw;
+  try { raw = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'); } catch { return false; }
+  return /Fast-lane auto-merge: issue #\d+/.test(raw);
 }
 
 // #1130: gh's MERGED state is a remote fact; the local main checkout may not
@@ -2204,5 +2229,6 @@ module.exports = {
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand,
   compareWorkTwin, resolveIdenticalWorkTwin, listFilesRecursive,
   isClosedSlugStuck, recordNumbersFromSlug, runRecordSet, inFlightRecords,
+  listStagedItems, hasStagedItems, consoleReplacedByFastLaneFyi,
   refusal,
 };

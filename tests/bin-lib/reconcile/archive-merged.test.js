@@ -16,6 +16,7 @@ const {
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin, resolveIdenticalWorkTwin,
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
   isClosedSlugStuck, recordNumbersFromSlug, refusal, unclosedRecords, runRecordSet, inFlightRecords,
+  listStagedItems, hasStagedItems, consoleReplacedByFastLaneFyi,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure } = require('../../../plugin/bin/lib/reconcile/cache');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
@@ -1277,6 +1278,35 @@ test('listSpecDirs: only spec-* subdirectories, ignores files and non-matching d
   fs.writeFileSync(path.join(dir, 'spec-not-a-dir.txt'), 'x');
   assert.deepEqual(listSpecDirs(dir).sort(), ['spec-1', 'spec-2']);
   assert.deepEqual(listSpecDirs(path.join(dir, 'does-not-exist')), []);
+});
+
+test('listStagedItems: names top-level and spec-N staged items, skips dotfiles, reports an unreadable dir', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'list-staged-items-'));
+  fs.mkdirSync(path.join(dir, 'staged'));
+  fs.writeFileSync(path.join(dir, 'staged', 'reflect-1.md'), 'x');
+  fs.writeFileSync(path.join(dir, 'staged', '.DS_Store'), 'x');
+  fs.mkdirSync(path.join(dir, 'spec-3375', 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'spec-3375', 'staged', 'review-1.patch'), 'x');
+  fs.mkdirSync(path.join(dir, 'spec-3380'));
+  fs.writeFileSync(path.join(dir, 'spec-3380', 'staged'), 'x');
+  assert.deepStrictEqual(listStagedItems(dir), [
+    'staged/reflect-1.md',
+    'spec-3375/staged/review-1.patch',
+    'spec-3380/staged/ (unreadable: ENOTDIR)',
+  ]);
+  assert.strictEqual(hasStagedItems(dir), true);
+});
+
+test('consoleReplacedByFastLaneFyi: true only for the short-circuit\'s issue line', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fast-lane-fyi-'));
+  fs.writeFileSync(path.join(dir, 'decisions.md'),
+    '- AUTO 19:26:04 — log-decision: Fast-lane auto-merge: issue #3130, assess-agent-autonomy verdict auto-merge, pr-first-merge outcome merged.\n');
+  assert.strictEqual(consoleReplacedByFastLaneFyi(dir), true);
+  fs.writeFileSync(path.join(dir, 'decisions.md'),
+    '- AUTO 07:38:10 — log-decision: Fast-lane auto-merge: deleted resolved ledger docs/plans/x-ledger.md for #3114 before merge.\n');
+  assert.strictEqual(consoleReplacedByFastLaneFyi(dir), false);
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'fast-lane-fyi-none-'));
+  assert.strictEqual(consoleReplacedByFastLaneFyi(bare), false);
 });
 
 // Re-pin the existing exports still resolve after the refactor above touched
