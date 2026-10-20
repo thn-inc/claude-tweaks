@@ -1063,8 +1063,20 @@ test('fixed: no proven base failure skips the base full run (#3313)', async () =
   const { r, calls } = await adjudicateFixed(['tests/a.test.js'], { fakeOpts: { outcomes: { 'baseline:tests/a.test.js': 0, 'isolated:tests/a.test.js': 1 } } });
   assert.deepStrictEqual(r.attributable, ['tests/a.test.js']);
   assert.strictEqual(r.fixed, null);
-  assert.strictEqual(r.fixedReason, 'no failing file also fails at base — base full run skipped');
+  assert.strictEqual(r.fixedReason, 'no failing file classified baseline — base full run skipped');
   assert.deepStrictEqual(r.new, ['tests/a.test.js']);
+  assert.ok(!calls.runs.some((c) => c.kind === 'base-full'), 'no base-full run');
+});
+
+test('fixed: computeFixed:false skips the base full run even with a proven base failure (#3313 --no-baseline-fixed)', async () => {
+  const { r, calls } = await adjudicateFixed(['tests/a.test.js'], {
+    fakeOpts: { logs: { 'base-full:npm test': SPEC(['tests/a.test.js', 'tests/fixed.test.js']) } },
+    extra: { computeFixed: false },
+  });
+  assert.deepStrictEqual(r.baselineFailing, ['tests/a.test.js'], 'a base failure was proven, so the default path would have run the base full run');
+  assert.strictEqual(r.verdict, 'pass', 'the opt-out never changes the verdict');
+  assert.strictEqual(r.fixed, null);
+  assert.strictEqual(r.fixedReason, 'base full run disabled (--no-baseline-fixed)');
   assert.ok(!calls.runs.some((c) => c.kind === 'base-full'), 'no base-full run');
 });
 
@@ -1083,7 +1095,7 @@ test('fixed: a check with no command, or a base full log that proves nothing, is
   assert.ok(!noCmd.calls.runs.some((c) => c.kind === 'base-full'));
   const unaccounted = await adjudicateFixed(['tests/a.test.js'], { fakeOpts: { logs: { 'base-full:npm test': 'garbage' } } });
   assert.strictEqual(unaccounted.r.fixed, null);
-  assert.strictEqual(unaccounted.r.fixedReason, 'tests base full run log does not account for its failures');
+  assert.match(unaccounted.r.fixedReason, /^tests base full run log does not account for its failures — see .*tests-base-full\.log$/);
   assert.strictEqual(unaccounted.r.verdict, 'pass');
 });
 

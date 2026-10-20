@@ -568,6 +568,7 @@ async function main() {
           envOf,
           timeoutOf,
           git: bgit,
+          computeFixed: !parsed.noBaselineFixed,
         });
       }
     } catch (err) {
@@ -988,7 +989,7 @@ async function main() {
       } else {
         lines.push(`Pre-existing: ${n} new, ${preExistingAdjudicated.fixed.length} fixed`);
         for (const file of preExistingAdjudicated.fixed) {
-          lines.push(`FIXED: ${file} — matches the preExisting allowlist but passed this run; consider removing its entry`);
+          lines.push(`FIXED: ${file} — allowlisted but did not fail this run; if its failure is not environment-specific, consider removing its entry`);
         }
       }
     }

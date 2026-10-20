@@ -1817,7 +1817,7 @@ test('AC1.1 preExisting: one allowlisted file now passing and one new failure pr
   const { code, stdout } = await runCli(r.args, { cwd: r.repo });
   assert.strictEqual(code, 1);
   assert.match(stdout, /^Pre-existing: 1 new, 1 fixed$/m);
-  assert.match(stdout, /^FIXED: tests\/known-shallow\.test\.js — matches the preExisting allowlist but passed this run; consider removing its entry$/m);
+  assert.match(stdout, /^FIXED: tests\/known-shallow\.test\.js — allowlisted but did not fail this run; if its failure is not environment-specific, consider removing its entry$/m);
   const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
   assert.deepStrictEqual(report.preExistingAdjudicated, {
     declared: ['tests/known-shallow.test.js'], eligible: false, reason: 'unlisted: [tests/real.test.js]',
@@ -2402,6 +2402,40 @@ test('AC2.1 --baseline: a base-failing file that passes at HEAD reports as fixed
   const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
   assert.deepStrictEqual(report.baselineAdjudicated.fixed, ['tests/fixme.test.js']);
   assert.deepStrictEqual(report.baselineAdjudicated.new, []);
+});
+
+test('--baseline: an attributable-only run skips the base full run and names why on stdout (#3313)', async () => {
+  const r = baselineRepo();
+  fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => { throw new Error('regressed'); });\n");
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'break ok');
+  const { code, stdout } = await runCli(['--cmd', 'tests=node --test --test-reporter=tap tests/ok.test.js', '--baseline', r.baseSha, '--baseline-cmd', PER_FILE], r.opts);
+  assert.strictEqual(code, 1, stdout);
+  assert.match(stdout, /^Baseline: 1 new, fixed not computed — no failing file classified baseline — base full run skipped$/m);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.baselineAdjudicated.fixed, null);
+  assert.strictEqual(report.baselineAdjudicated.fixedReason, 'no failing file classified baseline — base full run skipped');
+});
+
+test('--baseline --no-baseline-fixed: skips the base full run even with a base failure, verdict unchanged (#3313)', async () => {
+  const r = baselineRepo();
+  headCommit(r);
+  const { code, stdout } = await runCli(['--cmd', SUITE, '--baseline', r.baseSha, '--baseline-cmd', PER_FILE, '--no-baseline-fixed'], r.opts);
+  assert.strictEqual(code, 0, stdout);
+  assert.match(stdout, /^Baseline: 0 new, fixed not computed — base full run disabled \(--no-baseline-fixed\)$/m);
+  assert.doesNotMatch(stdout, /^FIXED:/m);
+  const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.baselineAdjudicated.verdict, 'pass');
+  assert.deepStrictEqual(report.baselineAdjudicated.baselineFailing, ['tests/env.test.js']);
+  assert.strictEqual(report.baselineAdjudicated.fixed, null);
+  assert.ok(!fs.readdirSync(path.join(r.gitDir, 'claude-tweaks-verify')).some((f) => f.includes('base-full')), 'no base full run log');
+});
+
+test('--no-baseline-fixed without --baseline exits 2 before any check runs (#3313)', async () => {
+  const r = baselineRepo();
+  const { code, stderr } = await runCli(['--cmd', SUITE, '--no-baseline-fixed'], r.opts);
+  assert.strictEqual(code, 2);
+  assert.match(stderr, /--no-baseline-fixed requires --baseline/);
 });
 
 // #3511: --scope + --baseline. baselineRepo() on a feature branch carrying a

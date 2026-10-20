@@ -8,6 +8,7 @@
 
 const { execFileSync } = require('child_process');
 const { globToRegExp } = require('../issues/blast-radius');
+const { TEST_FILE_RE } = require('./extract');
 
 // `failingFiles`: the deduped, log-order failing-file set across every
 // non-skipped failing check in the run (verify.js main() extracts this the
@@ -42,7 +43,7 @@ function trackedFiles(cwd, execImpl = execFileSync) {
 
 // #3313: the new/fixed split reported beside the adjudication verdict.
 // `new` — failing files the allowlist does not cover (empty when the run is
-// eligible). `fixed` — tracked files an allowlist entry covers that did not
+// eligible). `fixed` — tracked test files an allowlist entry covers that did not
 // fail this run: report-only, it never feeds the verdict. Only a full-scope
 // run exercised every suite, so any narrower mode cannot claim a file passed
 // (`fixed: null` with a reason, never `[]`); an unreadable tracked list is the
@@ -57,7 +58,9 @@ function newAndFixed({ verdict, failingFiles, preExisting, mode, allRan, listTra
   if (tracked === null) return { new: newFiles, fixed: null, fixedReason: 'git ls-files failed' };
   const failing = new Set(failingFiles);
   const matchers = (preExisting || []).map((entry) => globToRegExp(entry));
-  const fixed = tracked.filter((f) => !failing.has(f) && matchers.some((re) => re.test(f)));
+  // Only test files can have failed in a suite: a fixture an allowlist glob
+  // happens to cover was never a failure candidate, so it is never "fixed".
+  const fixed = tracked.filter((f) => TEST_FILE_RE.test(f) && !failing.has(f) && matchers.some((re) => re.test(f)));
   return { new: newFiles, fixed };
 }
 

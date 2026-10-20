@@ -124,12 +124,16 @@ jobs:
         # windows-latest (run 39036270004); per-file runs go 4 at a time, so up to 4
         # hung files cost suite + 3 sequential 20-min phases ~ 70 min, inside the
         # 90-min job limit — verify still writes its report and the filer still runs.
+        # --no-baseline-fixed skips the extra full `npm test` at base that
+        # computes the report-only `fixed` list: nothing here reads it, and the
+        # budget above has no room for another ~8.5 min suite run.
         run: >-
           node plugin/bin/verify.js
           --cmd tests="npm test"
           --cmd-timeout tests=1200000
           --baseline "$BASE"
           --baseline-cmd tests="node --test {file}"
+          --no-baseline-fixed
           --json "$RUNNER_TEMP/verify-report.json"
           --log-dir "$RUNNER_TEMP/verify-logs"
           --no-stamp

@@ -66,6 +66,17 @@ test('newAndFixed: a glob entry lists only its matching files that passed (#3313
   assert.deepStrictEqual(out, { new: [], fixed: ['tests/env/b.test.js'] });
 });
 
+test('newAndFixed: a non-test file an allowlist glob covers is never fixed — only a suite can fail a test file (#3313)', () => {
+  const failingFiles = ['tests/env/a.test.js'];
+  const preExisting = ['tests/env/**'];
+  const verdict = matchPreExisting({ failingFiles, preExisting });
+  const out = newAndFixed({
+    verdict, failingFiles, preExisting, mode: 'full', allRan: true,
+    listTracked: () => ['tests/env/a.test.js', 'tests/env/b.test.js', 'tests/env/fixtures/x.json', 'tests/env/helper.js'],
+  });
+  assert.deepStrictEqual(out, { new: [], fixed: ['tests/env/b.test.js'] });
+});
+
 test('newAndFixed: a narrowed scope never claims fixed (#3313)', () => {
   const failingFiles = ['tests/a.test.js'];
   const preExisting = ['tests/a.test.js'];
