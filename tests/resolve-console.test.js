@@ -201,6 +201,10 @@ test('AC2.2: an unflagged item named in --decline still reads declined', async (
   assert.equal(result.resolved, false);
 });
 
+test('a flagged ruling named in both --approve and --decline reads reversed (decline outranks approve)', async () => {
+  assertRulingReversedAndCleared(await runRuling(RULING_ITEMS, { approve: ['1', 'r1'], decline: ['r1'] }));
+});
+
 test('ratified ruling stays executed', async () => {
   const { result } = await runRuling(RULING_ITEMS, { approve: ['1', 'r1'], decline: [] });
   assert.equal(result.outcomes.find((o) => o.id === 'r1').outcome, 'executed');
