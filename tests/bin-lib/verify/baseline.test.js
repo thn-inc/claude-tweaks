@@ -1099,6 +1099,21 @@ test('fixed: a check with no command, or a base full log that proves nothing, is
   assert.strictEqual(unaccounted.r.verdict, 'pass');
 });
 
+test('fixed: an unreadable base full log, or one that ran no tests, is fixed:null naming its log path (#3313)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a.test.js']));
+  const f = fakes({ outcomes: { 'baseline:tests/a.test.js': 1, 'base-full:npm test': 1 } });
+  const lostLog = async (o) => { const r = await f.runOne(o); return o.name.endsWith('-base-full') ? { ...r, logPath: `${r.logPath}.missing` } : r; };
+  const run = (runOne) => adjudicate({ checks: [{ name: 'tests', command: 'npm test', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git: f.git });
+  const unreadable = await run(lostLog);
+  assert.strictEqual(unreadable.fixed, null);
+  assert.match(unreadable.fixedReason, /^tests base full run log unreadable — see .*tests-base-full\.log\.missing$/);
+  assert.strictEqual(unreadable.verdict, 'pass');
+  const noTests = await adjudicateFixed(['tests/a.test.js'], { fakeOpts: { logs: { 'base-full:npm test': 'ℹ tests 0\nℹ pass 0\nℹ fail 0\nℹ cancelled 0' } } });
+  assert.strictEqual(noTests.r.fixed, null);
+  assert.match(noTests.r.fixedReason, /^tests base full run ran no tests — see .*tests-base-full\.log$/);
+  assert.strictEqual(noTests.r.verdict, 'pass');
+});
+
 // A base full log failing a.test.js plus a file that cannot load (file-level).
 const BASE_FULL_WITH_LOAD_FAILURE = ['ℹ tests 9', 'ℹ pass 7', 'ℹ fail 2', 'ℹ cancelled 0', '', '✖ failing tests:', '',
   'test at tests/a.test.js:1:1', '✖ x (1ms)', '', 'test at tests/fixed.test.js:1:1', '✖ tests/fixed.test.js (12ms)', "  'test failed'", ''].join('\n');
