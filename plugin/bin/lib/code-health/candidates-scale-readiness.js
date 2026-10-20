@@ -79,9 +79,11 @@
 //     receiver chain whose segment before the method is a known model
 //     accessor (the lowerCamel model name — `prisma.post.`, `ctx.db.post.`,
 //     `this.prisma.post.`); with no parseable schema, a receiver chain ending
-//     in `prisma` or `db` (`ctx.db.`, `this.prisma.`). The schema-less `db`
-//     rule also matches a non-Prisma `db.<table>.<op>(` (Dexie in a browser),
-//     a possible false positive; a client reached as `getDb().post.` is
+//     in `prisma` or `db` (`ctx.db.`, `this.prisma.`). Chain separators may
+//     be `.`, `?.` or `!.`, and a chain may follow a call or parenthesized
+//     expression (`(await getCtx()).prisma.`). The schema-less `db` rule also
+//     matches a non-Prisma `db.<table>.<op>(` (Dexie in a browser), a possible
+//     false positive; with no schema, a client reached as `getDb().post.` is
 //     invisible. A query reached through a wrapper function or an unlisted ORM
 //     is invisible, and a loop that reaches a query only through a helper is
 //     not seen as a loop-with-query.
@@ -229,10 +231,28 @@ function isRouteFile(rel) {
   return routeShape(rel) !== null;
 }
 
-// A file whose first statement is the `"use server"` directive (comments
-// before it allowed) is a Next.js server-actions module: every export is a
-// handler the browser calls over the network.
-const USE_SERVER_RE = /^(?:\s|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*(['"])use server\1/;
+// True when a file's first statement is the `"use server"` directive (comments
+// before it allowed): a Next.js server-actions module, whose every export is a
+// handler the browser calls over the network. A hand-written skip, not a
+// regex: an alternation of whitespace, `//` and `/*` trivia is ambiguous on a
+// run of `/` characters and backtracks exponentially.
+function opensWithUseServer(text) {
+  let i = 0;
+  for (;;) {
+    while (i < text.length && /\s/.test(text[i])) i++;
+    if (text.startsWith('//', i)) {
+      const nl = text.indexOf('\n', i);
+      if (nl === -1) return false;
+      i = nl + 1;
+    } else if (text.startsWith('/*', i)) {
+      const end = text.indexOf('*/', i + 2);
+      if (end === -1) return false;
+      i = end + 2;
+    } else {
+      return /^(['"])use server\1/.test(text.slice(i, i + 12));
+    }
+  }
+}
 
 const isServerPackageDep = (d) => SERVER_DEPS.has(d) || DATA_DEPS.has(d);
 
@@ -257,7 +277,7 @@ function routeMembership(rel, text, depsByDir) {
     const deps = nearestPackageDeps(rel, depsByDir);
     if (deps && deps.some(isServerPackageDep)) return true;
   }
-  return USE_SERVER_RE.test(text);
+  return opensWithUseServer(text);
 }
 
 const byDepth = (a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b);
@@ -442,12 +462,15 @@ const OTHER_QUERY_SRC = '\\b(?:db|pool|client|sql|knex|connection|conn)\\.(?:que
 // non-Prisma shapes. Twin of `prismaCalls`' schema-less receiver rule. A
 // `db.<model>.<op>(` call needs three segments, so it never overlaps the
 // driver arm's two-segment `db.query(`/`db.execute(`.
-const QUERY_CALL_RE = new RegExp(`\\b(?:prisma|db)\\.\\w+\\.(?:${PRISMA_OPS})\\s*\\(|${OTHER_QUERY_SRC}`, 'g');
+const QUERY_CALL_RE = new RegExp(`\\b(?:prisma|db)[?!]?\\.\\w+[?!]?\\.(?:${PRISMA_OPS})\\s*\\(|${OTHER_QUERY_SRC}`, 'g');
 
 // A receiver chain, the segment before the method, the method: `ctx.db.` /
-// `post` / `findMany`. The lookbehind makes the chain start at a whole
-// identifier, so its first segment is never a suffix of a longer one.
-const PRISMA_CHAIN_RE = /(?<![\w$.])((?:[\w$]+\.)+)(\w+)\.(\w+)\s*\(/g;
+// `post` / `findMany`. A separator may be `.`, `?.` or `!.` (`ctx?.db.`,
+// `ctx!.prisma.`). The lookbehind makes the chain start at a whole
+// identifier, so its first segment is never a suffix of a longer one; it may
+// start after a `.`, so `(await getCtx()).prisma.post.findMany(` matches
+// from `prisma`.
+const PRISMA_CHAIN_RE = /(?<![\w$])((?:[\w$]+[?!]?\.)+)(\w+)[?!]?\.(\w+)\s*\(/g;
 
 // Prisma model calls in `text`, as `{ index, parenIdx, receiver, model, op }`.
 // With a parsed schema (`models` non-empty) any receiver chain counts when the
@@ -458,7 +481,7 @@ function prismaCalls(text, models, ops) {
   const re = new RegExp(PRISMA_CHAIN_RE.source, 'g');
   let m;
   while ((m = re.exec(text)) !== null) {
-    const receiver = m[1].slice(0, -1);
+    const receiver = m[1].replace(/[?!]?\.$/, '');
     const [, , model, op] = m;
     if (ops && !ops.test(op)) continue;
     const known = models.size > 0 ? models.has(model) : /(?:^|\.)(?:prisma|db)$/.test(receiver);

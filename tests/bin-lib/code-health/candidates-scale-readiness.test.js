@@ -764,6 +764,25 @@ test('with no Prisma schema, prisma and db receivers (ctx.db., this.prisma.) are
   assert.deepEqual(r.candidates.filter((c) => c.kind === 'query-in-loop').map((c) => [c.file, lineOfEvidence(c)]), [['src/server/api/routers/a.ts', 2]]);
 });
 
+test('Prisma receivers reached through ?. / !. separators or a parenthesized expression are recognized', () => {
+  const lines = [
+    'export async function GET() {',
+    '  await ctx!.db.post.findMany();',
+    '  await ctx?.prisma.post.findMany();',
+    '  await (await getCtx()).prisma.post.findMany();',
+    '  await ctx?.db.post.findFirst({ where: { authorId } });',
+    '}',
+    '',
+  ].join('\n');
+  const noSchema = prismaRoute(lines, 'app/api/posts/route.ts');
+  assert.deepEqual(ofKind(noSchema, 'unbounded-list-query').map(lineOfEvidence).sort(), [2, 3, 4]);
+  const withSchema = postRepo(POST_SCHEMA, lines);
+  assert.deepEqual(ofKind(withSchema, 'unbounded-list-query').map(lineOfEvidence).sort(), [2, 3, 4]);
+  const unindexed = ofKind(withSchema, 'unindexed-where-field');
+  assert.equal(unindexed.length, 1);
+  assert.match(unindexed[0].evidence, /route\.ts:5 ctx\?\.db\.post\.findFirst filters on Post\.authorId/);
+});
+
 test('the db SQL-driver arm still matches alongside the db.<model> arm, once per line', () => {
   const root = tmpGitRepo();
   write(root, 'package.json', pkg({ express: '^4', mysql2: '^3' }));
@@ -892,6 +911,20 @@ test('a "use server" actions file is a handler: applicable and scanned for inlin
   const c = r.candidates.filter((x) => x.kind === 'inline-slow-work');
   assert.equal(c.length, 1);
   assert.match(c[0].evidence, /app\/actions\.ts:6 AI call on the request path/);
+});
+
+test('the "use server" check is linear in leading slashes, and still sees a directive after comments', () => {
+  const slashes = tmpGitRepo();
+  write(slashes, 'package.json', pkg({ next: '^15', react: '^19' }));
+  write(slashes, 'lib/x.ts', `${'/'.repeat(200)}\nexport const x = 1;\n`);
+  const start = Date.now();
+  const r = scanScaleReadiness(slashes);
+  const elapsed = Date.now() - start;
+  assert.ok(elapsed < 1000, `scan took ${elapsed} ms`);
+  assert.equal(r.notApplicable, true);
+
+  const directive = repoWith({ next: '^15', react: '^19' }, { 'app/actions.ts': '// comment\n/* block */\n"use server";\nexport async function act() {}\n' });
+  assert.equal(scanScaleReadiness(directive).notApplicable, false);
 });
 
 test('a "use server" directive that is not the first statement does not make a file a handler', () => {
