@@ -456,6 +456,38 @@ test('#3799: a --cwd in another checkout exits 2 before any check runs and write
   assert.ok(!fs.existsSync(path.join(b.repo, 'ran.marker')), 'no check spawned');
   assert.ok(!fs.existsSync(path.join(a.gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp for the invoking checkout');
   assert.ok(!fs.existsSync(path.join(a.gitDir, 'claude-tweaks-verify', 'report.json')), 'no report for the invoking checkout');
+  assert.ok(!fs.existsSync(path.join(a.gitDir, 'claude-tweaks-test-count.json')), 'no count stamp for the invoking checkout');
+});
+
+test('#3799: a --cwd in a sibling worktree of the same repository exits 2 — each worktree owns its own stamp', async () => {
+  const a = tmpGitRepo();
+  const sibling = path.join(tmpDir(), 'sibling');
+  a.git('worktree', 'add', '-q', '-b', 'sibling', sibling);
+  const { code, stderr } = await runCli(['--cmd', 'tests=node -e 0', '--cwd', sibling], { cwd: a.repo });
+  assert.strictEqual(code, 2);
+  assert.ok(stderr.includes(fs.realpathSync(path.join(a.gitDir, 'worktrees', 'sibling'))), 'names the sibling worktree git dir');
+  assert.ok(!fs.existsSync(path.join(a.gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp for the invoking checkout');
+});
+
+test('#3799: a case-variant --cwd naming the invoking checkout still runs and stamps on a case-insensitive filesystem', async (t) => {
+  const a = tmpGitRepo();
+  const variant = path.join(path.dirname(a.repo), path.basename(a.repo).toUpperCase());
+  if (variant === a.repo || !fs.existsSync(variant)) {
+    t.skip('case-sensitive filesystem — a case variant is a different directory');
+    return;
+  }
+  const { code, stderr } = await runCli(['--cmd', 'tests=node -e 0', '--cwd', variant], { cwd: a.repo });
+  assert.strictEqual(code, 0, stderr);
+  assert.ok(fs.existsSync(path.join(a.gitDir, 'claude-tweaks-verify-pass.json')));
+});
+
+test('#3799: a symlinked --cwd resolving to the invoking checkout still runs and stamps', async () => {
+  const a = tmpGitRepo();
+  const link = path.join(tmpDir(), 'link');
+  fs.symlinkSync(a.repo, link, process.platform === 'win32' ? 'junction' : 'dir');
+  const { code, stderr } = await runCli(['--cmd', 'tests=node -e 0', '--cwd', link], { cwd: a.repo });
+  assert.strictEqual(code, 0, stderr);
+  assert.ok(fs.existsSync(path.join(a.gitDir, 'claude-tweaks-verify-pass.json')));
 });
 
 test('#3799: a --cwd outside any git checkout exits 2 and says so', async () => {
