@@ -99,3 +99,14 @@ test('go-red proof: the step-13 merge moved ahead of its delete-ledger mention f
   assert.notStrictEqual(permuted, live);
   assert.throws(() => assertLedgerBeforeMerge(permuted), /must precede the pr-first merge/);
 });
+
+test('go-red proof: the merge re-inserted into step 6 (step 13 intact) fails the step-6 clause', () => {
+  const live = read('wrap-up/review-console.md');
+  assertLedgerBeforeMerge(live);
+  const step6At = live.indexOf('6. Execute cleanup actions');
+  const step7At = live.indexOf('7. `Q#` queue writes', step6At);
+  assert.ok(step6At !== -1 && step7At > step6At);
+  const reinserted = live.slice(0, step7At) + MERGE + ' ' + live.slice(step7At);
+  assert.notStrictEqual(reinserted, live);
+  assert.throws(() => assertLedgerBeforeMerge(reinserted), /step 6 must not run the pr-first merge/);
+});
