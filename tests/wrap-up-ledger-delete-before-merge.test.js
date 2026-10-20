@@ -20,6 +20,7 @@ const STEP12 = '12. Commit with a wrap-up message';
 const STEP13 = '13. **Branch finish (`pr-first`, #3595).**';
 const MERGE = "runs `_shared/pr-first-merge.md`'s procedure";
 const STEP14 = '14. Proceed to the phase-trace report';
+const COMMIT = 'on `deleted` commit only that tracked `docs/plans/*-ledger.md` path';
 
 function assertLedgerBeforeMerge(consoleText) {
   const start = consoleText.indexOf('## On approval (option 1)');
@@ -35,6 +36,7 @@ function assertLedgerBeforeMerge(consoleText) {
     ['step 12', approval.indexOf(STEP12)],
     ['step 13', step13At],
     ['step 13 delete-ledger', step13 === '' ? -1 : step13At + step13.indexOf('delete-ledger')],
+    ['step 13 commit', step13 === '' ? -1 : step13At + step13.indexOf(COMMIT)],
     ['step 13 push', step13 === '' ? -1 : step13At + step13.indexOf('push the branch as its own Bash call')],
     ['step 13 merge', step13 === '' ? -1 : step13At + step13.indexOf(MERGE)],
     ['step 14', step14At],
@@ -45,6 +47,10 @@ function assertLedgerBeforeMerge(consoleText) {
       `${marks[i][0]} must follow ${i === 0 ? 'the section start' : marks[i - 1][0]} — item 2 delete, commit and push must precede the pr-first merge, and the merge must follow step 12's commit`,
     );
   }
+
+  assert.ok(step13.includes('when it survived the Condition filter'), 'step 13 must gate item 2 on its Condition (a non-final interactive multi-spec spec skips it)');
+  assert.ok(step13.includes('any `open` row leaves the ledger in place'), 'step 13 must leave a ledger with open rows in place');
+  assert.ok(step13.includes('A failed push skips the merge'), 'step 13 must skip the merge when the push fails');
 
   const step6 = approval.slice(approval.indexOf('6. Execute cleanup actions'), approval.indexOf('7. `Q#` queue writes'));
   assert.ok(step6.length > 0 && !step6.includes('pr-first-merge.md'), 'step 6 must not run the pr-first merge — it runs at step 13, after the ledger\'s last writers');
@@ -83,8 +89,16 @@ const PRE_FIX = [
   'For "On override" and "On stop"',
 ].join(' ');
 
-test('go-red proof: the pre-fix step-6 merge ordering fails the order pin', () => {
-  assert.throws(() => assertLedgerBeforeMerge(PRE_FIX), /must precede the pr-first merge/);
+test('go-red proof: the pre-fix text (merge in step 6, no step 13) fails the order pin', () => {
+  assert.throws(() => assertLedgerBeforeMerge(PRE_FIX), /step 13 must follow step 12/);
+});
+
+test('go-red proof: step 13 without its ledger commit fails the order pin', () => {
+  const live = read('wrap-up/review-console.md');
+  assertLedgerBeforeMerge(live);
+  const dropped = live.replace(COMMIT, 'on `deleted` leave that tracked `docs/plans/*-ledger.md` path');
+  assert.notStrictEqual(dropped, live);
+  assert.throws(() => assertLedgerBeforeMerge(dropped), /step 13 commit must follow step 13 delete-ledger/);
 });
 
 test('go-red proof: the step-13 merge moved ahead of its delete-ledger mention fails the order pin', () => {
@@ -97,7 +111,7 @@ test('go-red proof: the step-13 merge moved ahead of its delete-ledger mention f
   // Swap the "First cleanup item 2 … " clause with the merge marker: put the merge marker first.
   const permuted = live.slice(0, start) + live.slice(start, deleteAt) + MERGE + ' ' + live.slice(deleteAt, mergeAt) + live.slice(mergeAt + MERGE.length);
   assert.notStrictEqual(permuted, live);
-  assert.throws(() => assertLedgerBeforeMerge(permuted), /must precede the pr-first merge/);
+  assert.throws(() => assertLedgerBeforeMerge(permuted), /step 13 merge must follow step 13 push/);
 });
 
 test('go-red proof: the merge re-inserted into step 6 (step 13 intact) fails the step-6 clause', () => {
