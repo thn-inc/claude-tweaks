@@ -3,6 +3,7 @@ files:
   - plugin/skills/build/dispatch.md
   - plugin/skills/build/handoff-template.md
   - plugin/bin/lib/console/resolve.js
+  - plugin/bin/lib/reconcile/console-execute.js
   - plugin/skills/wrap-up/review-console-appendix.md
   - plugin/skills/wrap-up/review-console-interactive.md
   - plugin/skills/wrap-up/review-console.md
