@@ -4,10 +4,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync, spawn } = require('node:child_process');
+const { execFile, execFileSync, spawn } = require('node:child_process');
+const util = require('node:util');
 
 const BIN = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'visual-decide.js');
 const CLI_LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'visual-decide', 'cli.js');
+const execFileAsync = util.promisify(execFile);
 
 function mkTmp(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -160,6 +162,45 @@ test(
     }
   },
 );
+
+test('stop leaves server-stopped and status reports stopped when the daemon exits without running its SIGTERM handler', async () => {
+  const stateDir = mkTmp('vd-state-');
+
+  // No SIGTERM handler: SIGTERM kills this child outright, so nothing writes
+  // the marker on its behalf on any platform.
+  const victim = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore' });
+  await new Promise((resolve) => {
+    victim.once('spawn', resolve);
+  });
+
+  fs.writeFileSync(
+    path.join(stateDir, 'server-info'),
+    JSON.stringify({ pid: victim.pid, port: 0, url: 'http://127.0.0.1:0/', key: 'test' }),
+  );
+
+  try {
+    // Async, not the sync run() helper: the victim is a child of this test
+    // process, and only the event loop lets libuv reap it once it dies. An
+    // unreaped zombie still answers kill(pid, 0), so waitFor would time out
+    // and the timeout branch would write the marker, masking the handler-less
+    // exit this test is about.
+    const { stdout } = await execFileAsync(process.execPath, [BIN, 'stop', '--state', stateDir], { encoding: 'utf8' });
+    assert.equal(stdout.trim(), 'stopped');
+    assert.equal(
+      fs.existsSync(path.join(stateDir, 'server-stopped')),
+      true,
+      'server-stopped marker must be written when the PID exits without its handler running',
+    );
+    const status = run(['status', '--state', stateDir]);
+    assert.equal(status.out.trim(), 'stopped');
+  } finally {
+    try {
+      victim.kill('SIGKILL');
+    } catch {
+      // the child may already be gone
+    }
+  }
+});
 
 test('AC6 (CLI path): fractional --idle-minutes self-exits and status reflects stopped', async () => {
   const dir = mkTmp('vd-content-');

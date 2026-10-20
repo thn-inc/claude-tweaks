@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  premiseReadsUnresolved, defaultRunner, PREMISE_SELF_CHECK_TIMEOUT_MS,
+  premiseReadsUnresolved, defaultRunner, posixShell, PREMISE_SELF_CHECK_TIMEOUT_MS,
 } = require('../../../plugin/bin/lib/health-core/premise-self-check');
 const { buildPremiseCheck } = require('../../../plugin/bin/lib/harness-health/issue-payload');
 
@@ -53,6 +53,7 @@ test('real shell: an additive check whose anchor already appears in the target f
   const target = path.join(dir, 'auth.md');
   fs.writeFileSync(target, '# auth\n\nSee `src/auth/session.js`.\n');
   const command = buildPremiseCheck({ kind: 'patch', newString: 'See `src/auth/session.js`.' }, target);
+  assert.strictEqual(defaultRunner(command, { cwd: dir, timeoutMs: 5000 }), 1);
   assert.strictEqual(premiseReadsUnresolved(command, { root: dir }), false);
 });
 
@@ -86,4 +87,26 @@ test('AC4.1: real shell: a repo-relative command composed with root resolves at 
   assert.strictEqual(premiseReadsUnresolved(command, { root: dir }), true);
   fs.writeFileSync(target, '# auth\n\nSee `src/auth/session.js`.\n');
   assert.strictEqual(premiseReadsUnresolved(command, { root: dir }), false);
+});
+
+test('AC3.1: posixShell picks sh from PATH on win32 and exactly /bin/sh elsewhere', () => {
+  assert.strictEqual(posixShell('win32'), 'sh');
+  assert.strictEqual(posixShell('linux'), '/bin/sh');
+  assert.strictEqual(posixShell('darwin'), '/bin/sh');
+});
+
+test('AC3.1: defaultRunner spawns posixShell(platform) through the injected exec, with windowsHide', () => {
+  for (const [platform, shell] of [['win32', 'sh'], ['linux', '/bin/sh']]) {
+    const calls = [];
+    const exec = (...args) => { calls.push(args); };
+    assert.strictEqual(defaultRunner('echo hi', { cwd: '/r', timeoutMs: 7, platform, exec }), 0);
+    assert.deepStrictEqual(calls, [[shell, ['-c', 'echo hi'], { cwd: '/r', stdio: 'ignore', timeout: 7, windowsHide: true }]]);
+  }
+});
+
+test('defaultRunner returns a thrown numeric status and re-throws a spawn error with no status (injected exec)', () => {
+  const exitExec = () => { throw Object.assign(new Error('exit'), { status: 3 }); };
+  assert.strictEqual(defaultRunner('cmd', { cwd: '/r', timeoutMs: 7, platform: 'linux', exec: exitExec }), 3);
+  const spawnExec = () => { throw Object.assign(new Error('spawn sh ENOENT'), { code: 'ENOENT' }); };
+  assert.throws(() => defaultRunner('cmd', { cwd: '/r', timeoutMs: 7, platform: 'win32', exec: spawnExec }), { code: 'ENOENT' });
 });
