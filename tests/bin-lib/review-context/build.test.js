@@ -235,31 +235,13 @@ test('3302: realLsof classifies lsof outcomes', () => {
     windowsHide: true,
   });
 
-  const timedOut = () => {
-    throw Object.assign(new Error('spawnSync lsof ETIMEDOUT'), { code: 'ETIMEDOUT', status: null, signal: 'SIGTERM' });
+  const failing = (props) => () => {
+    throw Object.assign(new Error('lsof failed'), props);
   };
-  assert.strictEqual(realLsof({ exec: timedOut }), null);
-
-  const enoent = () => {
-    throw Object.assign(new Error('x'), { code: 'ENOENT' });
-  };
-  assert.strictEqual(realLsof({ exec: enoent }), null);
-  assert.strictEqual(
-    realLsof({
-      exec: () => {
-        throw { status: 1, stdout: '' };
-      },
-    }),
-    '',
-  );
-  assert.strictEqual(
-    realLsof({
-      exec: () => {
-        throw { status: 2, stdout: '' };
-      },
-    }),
-    null,
-  );
+  assert.strictEqual(realLsof({ exec: failing({ code: 'ETIMEDOUT', status: null, signal: 'SIGTERM' }) }), null);
+  assert.strictEqual(realLsof({ exec: failing({ code: 'ENOENT' }) }), null);
+  assert.strictEqual(realLsof({ exec: failing({ status: 1, stdout: '' }) }), '');
+  assert.strictEqual(realLsof({ exec: failing({ status: 2, stdout: '' }) }), null);
 });
 
 test('3302 AC: build --run writes <run>/review-ctx/pre-dispatch-status.txt matching git status', () => {
