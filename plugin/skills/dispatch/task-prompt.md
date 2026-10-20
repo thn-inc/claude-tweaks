@@ -52,7 +52,8 @@ that needs no resolution, only inclusion:
    expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
    child is abandoned and no longer counts as outstanding, so your final reply still ends with
    `STATUS: {WORD}`. Ignore a late result; if a late notification re-wakes you after your final
-   reply, repeat that final `STATUS:` line unchanged. A child that reports a failure (a `failed`
+   reply, repeat your whole final reply unchanged — the dispatcher keeps only your latest reply,
+   so a bare `STATUS:` line would replace the report. A child that reports a failure (a `failed`
    notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not
    outstanding: handle it per the dispatching skill's own status handling where one exists
    (`superpowers:subagent-driven-development`'s BLOCKED handling), otherwise judge that unit
@@ -153,7 +154,8 @@ or otherwise), or a child still silent when the bound expires, judge that unit y
 downgrade, and mark its findings `unconfirmed`; that child is abandoned and no longer counts as
 outstanding, so your final reply still ends with its usual `STATUS:` line. Ignore that child's
 result if it arrives later; if a late notification re-wakes you after your final reply, repeat
-that final `STATUS:` line unchanged. A child that reports a failure (a `failed` notification, an
+your whole final reply unchanged -- the dispatcher keeps only your latest reply, so a bare
+`STATUS:` line would replace the report. A child that reports a failure (a `failed` notification, an
 API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not outstanding: handle it
 per the dispatching skill's own status handling where one exists, otherwise judge that unit
 yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a write-capable
@@ -312,7 +314,8 @@ or otherwise), or a child still silent when the bound expires, judge that unit y
 downgrade, and mark its findings `unconfirmed`; that child is abandoned and no longer counts as
 outstanding, so your final reply still ends with its usual `STATUS:` line. Ignore that child's
 result if it arrives later; if a late notification re-wakes you after your final reply, repeat
-that final `STATUS:` line unchanged. A child that reports a failure (a `failed` notification, an
+your whole final reply unchanged -- the dispatcher keeps only your latest reply, so a bare
+`STATUS:` line would replace the report. A child that reports a failure (a `failed` notification, an
 API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not outstanding: handle it
 per the dispatching skill's own status handling where one exists, otherwise judge that unit
 yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a write-capable

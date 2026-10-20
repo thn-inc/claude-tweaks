@@ -131,7 +131,8 @@ const SHARED_RULE = [
   [/\bis\s+abandoned\b/, 'a child self-judged at the bound is abandoned'],
   [/no\s+longer\s+counts\s+as\s+outstanding/, 'an abandoned child no longer counts as outstanding'],
   [/final\s+reply\s+still\s+ends\s+with\s+(?:its\s+usual\s+)?`STATUS:/, 'the final reply after an abandoned child still ends with STATUS:'],
-  [/re-wakes\s+(?:you|the\s+agent)\s+after\s+(?:your|its)\s+final\s+reply[^.]*?\brepeat(?:ing)?\s+that\s+final\s+`STATUS:`\s+line\s+unchanged/, 'a late re-wake after the final reply repeats the final STATUS: line unchanged'],
+  [/re-wakes\s+(?:you|the\s+agent)\s+after\s+(?:your|its)\s+final\s+reply[^.]*?\brepeat(?:ing)?\s+(?:its|your)\s+whole\s+final\s+reply\s+unchanged/, 'a late re-wake after the final reply repeats the whole final reply unchanged'],
+  [/dispatcher\s+keeps\s+only\s+(?:the\s+agent's|your)\s+latest\s+reply/, 'the reason: the dispatcher keeps only the latest reply'],
   [/`ToolSearch`\s+finds\s+none,\s+deferred\s+or\s+otherwise/, 'the no-Agent-tool fallback checks ToolSearch for a deferred Agent tool'],
   [/child\s+that\s+reports\s+a\s+failure/i, 'a child that reports a failure has reported and is handled per the dispatching skill'],
   [/write-capable\s+child[\s\S]*?never\s+redone/, 'a write-capable child silent at the bound is never redone in-session'],
@@ -408,4 +409,37 @@ test('a mismatched keep-alive primitive copy can actually go red (discrimination
       assert.deepEqual(mismatchedPrimitiveCopies({ ...copies, [name]: doctored }), [name], `a ${label} mismatch in only ${name} must turn exactly that copy red`);
     }
   }
+});
+
+// #3722: the dispatcher keeps only the latest reply, so a re-wake answered with the bare STATUS line
+// replaced the report. No copy may keep the STATUS-only wording.
+const STATUS_ONLY = /repeat(?:ing)?\s+that\s+final\s+`STATUS:`\s+line/;
+const repeatsStatusOnlyCopies = (copies) => Object.entries(copies).filter(([, t]) => STATUS_ONLY.test(t)).map(([n]) => n);
+
+test('no copy answers a late re-wake with the STATUS line alone (#3722)', () => {
+  assert.deepEqual(repeatsStatusOnlyCopies(primitiveCopies()), [], 'no copy may answer a late re-wake with the bare STATUS line (#3722)');
+});
+
+test('a copy reverting to the STATUS-only wording goes red (discrimination proof)', () => {
+  const copies = primitiveCopies();
+  for (const name of Object.keys(copies)) {
+    const doctored = { ...copies, [name]: copies[name] + ' repeat that final `STATUS:` line unchanged.' };
+    assert.deepEqual(repeatsStatusOnlyCopies(doctored), [name], `a STATUS-only wording in only ${name} must turn exactly that copy red`);
+  }
+});
+
+const CORE_ABANDONED = [
+  [/abandoned\s+child\s+cannot\s+be\s+stopped/, 'an abandoned child cannot be stopped'],
+  [/`TaskStop`\s+refuses\s+a\s+nested\s+child/, 'TaskStop refuses a nested child'],
+  [/hold\s+the\s+agent's\s+final\s+result\s+until\s+it\s+finishes/, "the harness may hold the agent's final result until it finishes"],
+  [/bound\s+caps\s+the\s+wait,\s+not\s+the\s+delivery/, 'the bound caps the wait, not the delivery'],
+];
+const coreAbandonedMissing = missingFactsOf(CORE_ABANDONED);
+
+test('the core section records that an abandoned nested child cannot be stopped and may delay the final result (#3722)', () => {
+  assert.deepEqual(coreAbandonedMissing(coreForegroundSection(fs.readFileSync(CORE, 'utf8'))), [], 'Foreground Execution Discipline must record the abandoned-child facts (#3722)');
+});
+
+test('each core abandoned-child assertion can actually go red on its own (discrimination proof)', () => {
+  assertEachPatternGoesRed(coreForegroundSection(fs.readFileSync(CORE, 'utf8')), CORE_ABANDONED, coreAbandonedMissing);
 });

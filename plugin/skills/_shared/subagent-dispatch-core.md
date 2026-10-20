@@ -71,11 +71,15 @@ when a pipeline run directory is set, otherwise as one line in the reply, and ma
 from that unit `unconfirmed`. Never skip the unit or fabricate a dispatch. A child whose unit was
 self-judged at the bound is abandoned: it no longer counts as outstanding, and the agent's final
 reply still ends with `STATUS: {WORD}`; `INTERIM_STATUS:` is only for a turn that ends while a
-keep-alive wait is still in progress. A child result that arrives after its unit was self-judged
-is ignored; it never changes a verdict already reached, and a late notification that re-wakes the
-agent after its final reply is answered by repeating that final `STATUS:` line unchanged. A child
-that reports a failure (a `failed` notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply)
-has reported, so it is not outstanding: handle it per the dispatching skill's own status handling
+keep-alive wait is still in progress. An abandoned child cannot be stopped (`TaskStop` refuses a
+nested child: it is owned by the child itself), so it keeps running, and the harness may hold the
+agent's final result until it finishes: the bound caps the wait, not the delivery. A child result
+that arrives after its unit was self-judged is ignored; it never changes a verdict already reached,
+and a late notification that re-wakes the agent after its final reply is answered by repeating its
+whole final reply unchanged: the dispatcher keeps only the agent's latest reply, so a bare `STATUS:`
+line would replace the report (#3722). A child that reports a failure (a `failed` notification, an
+API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not outstanding: handle it
+per the dispatching skill's own status handling
 where one exists (`superpowers:subagent-driven-development`'s BLOCKED handling, or Failed-agent
 retrieval below), otherwise judge that unit as in the fallback. The self-judge fallback is for a
 read-only unit (a lens, a single read, a judge); a write-capable child (one that edits files)
