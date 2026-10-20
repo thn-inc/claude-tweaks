@@ -432,6 +432,17 @@ test('#3757: a run that starts dirty and reverts the edit mid-run stamps dirty:t
   assert.strictEqual(status.verifiedHead, false);
 });
 
+// #3757: a status read that fails at the end (HEAD still readable) must not be
+// vouched for by a clean start read — the stamp records dirty:null, never false.
+test('#3757: a clean start with an unreadable end-of-run status stamps dirty:null, never dirty:false', async () => {
+  const { repo, gitDir } = tmpGitRepo();
+  const corrupt = `node -e "require('fs').writeFileSync(require('path').join('${gitDir.replace(/\\/g, '/')}', 'index'), 'garbage')"`;
+  const { code } = await runCli(['--cmd', `tests=${corrupt}`], { cwd: repo });
+  assert.strictEqual(code, 0);
+  const stamp = JSON.parse(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify-pass.json'), 'utf8'));
+  assert.strictEqual(stamp.dirty, null, 'an end-of-run status that could not be read is unknown, not clean');
+});
+
 test('--stamp-status recomputes dirty from the live tree — a dirty edit with no new commit is match:false (#1921 Gotchas)', async () => {
   const { repo } = tmpGitRepo();
   await runCli(['--cmd', 'tests=node -e 0'], { cwd: repo });

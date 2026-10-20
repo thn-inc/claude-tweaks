@@ -644,13 +644,14 @@ async function main() {
   const endGit = gitInfo();
   const treeMoved = startSha !== null && endGit.sha !== startSha;
   // The verified commit is the start sha; dirty is start OR end, so edits reverted mid-run still leave the stamp dirty.
+  // An unreadable status on either side stays null — one clean read never vouches for a read that failed.
   let dirty;
-  if (startGit.dirty === null) {
-    dirty = endGit.dirty;
-  } else if (endGit.dirty === null) {
-    dirty = startGit.dirty;
+  if (startGit.dirty === true || endGit.dirty === true) {
+    dirty = true;
+  } else if (startGit.dirty === null || endGit.dirty === null) {
+    dirty = null;
   } else {
-    dirty = startGit.dirty || endGit.dirty;
+    dirty = false;
   }
   const git = { sha: startSha, dirty };
 
