@@ -13,7 +13,7 @@ files:
 **Persona:** A claude-tweaks maintainer who granted `auto:merge`, let a fast-lane `pr-first` run merge itself unattended, and next morning reads the closing report and `decisions.md` to decide whether anything is left to do. This is the #3130 shape: the PR merged, no review console was ever rendered, and `staged/reflect-1.md` and `staged/wrap-up-skill-1.md` sat unapproved.
 **Goal:** Tell from the run's own report whether cleanup will finish by itself or whether staged proposals are waiting on a human, without opening `.claude-tweaks/pipelines/` by hand.
 **Entry point:** `_shared/pr-first-merge-post-merge.md` Step 4.2's `node bin/hooks.js reconcile --checks mirror,release,archive`, run right after the fast-lane auto-merge short-circuit merges the PR.
-**Success state:** A run whose `staged/` still holds pending items is reported as `merged` with a "needs human action" note, never as cleanup that converges at the next trigger point. Reconcile keeps the run dir in place, and a run left untouched eventually surfaces in the consolidated `structurally-stuck` record.
+**Success state:** A run whose `staged/` still holds pending items is reported as `merged` with a "needs human action" note, never as cleanup that converges at the next trigger point. Reconcile keeps the run dir in place, and a run left untouched eventually surfaces in the consolidated `structurally-stuck` record. Wrap-up's own `archive-run` refuses to archive an auto-merge short-circuit run with pending items too, naming each pending path.
 
 ## Steps
 
