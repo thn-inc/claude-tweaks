@@ -26,7 +26,7 @@ files:
 - **Action:** Common Step 5 runs the full verification once, after Steps 6 and 6.5, and forwards `VERIFICATION_PASSED=true` with `VERIFICATION_SHA` from `report.json`.
 - **Should feel:** One full-suite wait per build, not two.
 - **Should understand:** Test-pinned docs like `docs/plugin-structure.md` are verified in the same run as the code they describe, because the doc edit is already in the tree. If a Step 5 failure needs a behavior-changing fix, re-check any journey or doc Steps 6/6.5 wrote that the fix contradicts *before* re-running verification, so the last green run still covers the final tree.
-- **Red flags:** a fix that edits a journey after the green re-run (HEAD moves past `VERIFICATION_SHA` again); verification starting before the journeys commit lands.
+- **Red flags:** a fix that edits a journey after the green re-run (HEAD moves past `VERIFICATION_SHA` again); verification starting before the journeys commit lands. A commit landing while Common Step 5's suite is still running shows as `tree moved during the run (HEAD {start} -> {end}); no pass stamp written` under the results (#3757): `VERIFICATION_SHA` is the start commit, no pass stamp covers either commit, and `/test` re-verifies through the runner instead of skipping, against an anchor older than this build's pass.
 
 ### 3. /test trusts the forwarded result
 - **URL:** `plugin/skills/test/verification.md` skip-if-recent
@@ -38,4 +38,5 @@ files:
 ## Origin
 - Created during `/claude-tweaks:build` of record #3060 (2026-10-17): Common Steps 6 and 6.5 moved ahead of Common Step 5 (numbers kept), order pinned by `tests/build-verify-after-doc-steps.test.js`. Prompted by #3043's build, where a full-suite launch was aborted and re-run after Steps 6/6.5 moved HEAD.
 - Step 3 updated during `/claude-tweaks:build` of record #3284 (2026-10-19): the moved-HEAD case now re-stamps through the runner instead of a hand-classified skip.
+- Step 2's red flags extended after #3757 (`verify.js` withholds the pass stamp when HEAD moved during the run, and `report.json`'s `sha` is the start commit): a commit landing mid-verification now shows as the `tree moved during the run` line instead of a stamp crediting it.
 - Related: `docs/journeys/run-a-deterministic-verification-check.md` (the `report.json` / pass-stamp evidence this journey relies on), `docs/journeys/declare-a-verify-scope-1924.md` (the bookkeeping classification in Step 3).

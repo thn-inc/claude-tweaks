@@ -28,6 +28,12 @@ function writeHeader(baseDir, relDir, n, recordLine = `record: ${n}`) {
   fs.writeFileSync(path.join(dir, `${n}-spec.md`), `---\n${recordLine}\n---\n# ${n}: title\n`);
 }
 
+// The /flow Step 2.8 claim line, one per member (claim-targets.md's "Log the claim").
+function writeClaimLog(runDir, issueNumbers) {
+  const lines = issueNumbers.map((n) => `- AUTO 20:02:17 — Step 2.8: claimed #${n} (bin/claim-targets.js, transport: git). Reversibility: high.`);
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), ['## /flow', ...lines, ''].join('\n'));
+}
+
 function liveClaimContent(runId) {
   return JSON.stringify({
     runId, sessionId: 's1', claimedAt: new Date(NOW).toISOString(), ttlHours: 72, host: 'h',
@@ -65,6 +71,7 @@ test('fully-formed pr-first run passes: claim live under this run, PR recorded a
     config: 'integration-model: pr-first\nautonomy: trusted\n',
   });
   writeHeader(runDir, 'work', 2806);
+  writeClaimLog(runDir, [2806]);
   const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, {
     ghApi: fakeGhApi({ 2806: liveClaimContent(RUN_ID) }),
     gitRunner: fakeGitRunner(['worktree-2806']),
@@ -161,6 +168,7 @@ test('passes for a multi-record group whose headers live under spec-{n}/work/ (#
   const deps = localMergeGroup(runDir, [2806, 2807]);
   writeHeader(runDir, path.join('spec-2806', 'work'), 2806);
   writeHeader(runDir, path.join('spec-2807', 'work'), 2807);
+  writeClaimLog(runDir, [2806, 2807]);
   const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806, 2807], repoSlug: REPO_SLUG }, deps);
   assert.deepEqual(result, { ok: true });
 });
@@ -182,6 +190,7 @@ test('passes when headers exist only in the worktree mirror of the run dir (pr-f
   const worktree = path.join(root, 'wt');
   const deps = localMergeGroup(runDir, [2806], { worktree });
   writeHeader(path.join(worktree, '.claude-tweaks', 'pipelines', RUN_ID), path.join('spec-2806', 'work'), 2806);
+  writeClaimLog(runDir, [2806]);
   const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, deps);
   assert.deepEqual(result, { ok: true });
 });
@@ -192,6 +201,7 @@ test('passes when the header lives under work/ (not spec-{n}/work/) in the workt
   const worktree = path.join(root, 'wt');
   const deps = localMergeGroup(runDir, [2806], { worktree });
   writeHeader(path.join(worktree, '.claude-tweaks', 'pipelines', RUN_ID), 'work', 2806);
+  writeClaimLog(runDir, [2806]);
   const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, deps);
   assert.deepEqual(result, { ok: true });
 });
@@ -200,6 +210,65 @@ test('a header whose record: line names a different number does not count (#2775
   const runDir = mkRunDir();
   const deps = localMergeGroup(runDir, [2806]);
   writeHeader(runDir, 'work', 2806, 'record: 9999');
+  const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, deps);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'materialized-header-missing');
+});
+
+// ---- #3577: check 6 -- the canonical Step 2.8 claim line in decisions.md ----
+
+test('fails claim-log-missing when decisions.md lacks the canonical Step 2.8 line (#3577)', () => {
+  const runDir = mkRunDir();
+  const deps = localMergeGroup(runDir, [2806]);
+  writeHeader(runDir, 'work', 2806);
+  const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, deps);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'claim-log-missing');
+  assert.match(result.message, /#2806/);
+  assert.equal(Object.prototype.hasOwnProperty.call(result, 'repairable'), false);
+});
+
+test('passes once the canonical Step 2.8 line is written (#3577)', () => {
+  const runDir = mkRunDir();
+  const deps = localMergeGroup(runDir, [2806]);
+  writeHeader(runDir, 'work', 2806);
+  assert.equal(checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, deps).reason, 'claim-log-missing');
+  writeClaimLog(runDir, [2806]);
+  const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, deps);
+  assert.deepEqual(result, { ok: true });
+});
+
+test('names only the member whose line is missing in a multi-record group (#3577)', () => {
+  const runDir = mkRunDir();
+  const deps = localMergeGroup(runDir, [2806, 2807]);
+  writeHeader(runDir, 'work', 2806);
+  writeHeader(runDir, 'work', 2807);
+  writeClaimLog(runDir, [2806]);
+  const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806, 2807], repoSlug: REPO_SLUG }, deps);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'claim-log-missing');
+  assert.match(result.message, /#2807/);
+  assert.doesNotMatch(result.message, /#2806/);
+});
+
+test('a batch-summary or paraphrased claim line does not satisfy the canonical check (#3577)', () => {
+  const runDir = mkRunDir();
+  const deps = localMergeGroup(runDir, [2806]);
+  writeHeader(runDir, 'work', 2806);
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), [
+    '## /flow',
+    '- AUTO 20:02:17 — Step 2.8: Claimed all 1 targets under run X (git). Reversibility: high.',
+    '- AUTO 20:02:18 — claimed issue #2806 for this run via claim-targets. Reversibility: high.',
+    '',
+  ].join('\n'));
+  const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, deps);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'claim-log-missing');
+});
+
+test('an earlier failure still wins over a missing claim line (#3577)', () => {
+  const runDir = mkRunDir();
+  const deps = localMergeGroup(runDir, [2806]);
   const result = checkFirstCallArtifacts({ runDir, issueNumbers: [2806], repoSlug: REPO_SLUG }, deps);
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'materialized-header-missing');
@@ -357,6 +426,7 @@ test('AC6.2: every reason other than missing-config, and ok: true, carries no re
   const passRun = mkRunDir();
   writeRunDir(passRun, { runState: PR_RECORDED, config: 'integration-model: pr-first\n' });
   writeHeader(passRun, 'work', 2806);
+  writeClaimLog(passRun, [2806]);
   const pass = checkFirstCallArtifacts({ runDir: passRun, issueNumbers: [2806], repoSlug: REPO_SLUG }, {
     ghApi: fakeGhApi({ 2806: liveClaimContent(RUN_ID) }),
     gitRunner: fakeGitRunner(['worktree-2806']),
@@ -393,6 +463,7 @@ test('AC2.1: with an integration-model: pr-first pin, the PR-bookend check runs 
 test('AC3.1: with no integration-model pin, a degrade line is emitted instead of passing silently', () => {
   const runDir = pinRun('autonomy: trusted\n');
   writeHeader(runDir, 'work', 2806);
+  writeClaimLog(runDir, [2806]);
   const { result, lines } = checkWithWarn(runDir);
   assert.deepEqual(result, { ok: true });
   assert.equal(lines.length, 1);
@@ -402,6 +473,7 @@ test('AC3.1: with no integration-model pin, a degrade line is emitted instead of
 test('AC3.1: an invalid integration-model pin emits the same degrade line', () => {
   const runDir = pinRun('integration-model: bogus\n');
   writeHeader(runDir, 'work', 2806);
+  writeClaimLog(runDir, [2806]);
   const { result, lines } = checkWithWarn(runDir);
   assert.deepEqual(result, { ok: true });
   assert.equal(lines.length, 1);
@@ -411,6 +483,7 @@ test('AC3.1: an invalid integration-model pin emits the same degrade line', () =
 test('a local-merge pin emits no degrade line', () => {
   const runDir = pinRun('integration-model: local-merge\n');
   writeHeader(runDir, 'work', 2806);
+  writeClaimLog(runDir, [2806]);
   const { result, lines } = checkWithWarn(runDir);
   assert.deepEqual(result, { ok: true });
   assert.equal(lines.length, 0);
