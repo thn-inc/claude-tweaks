@@ -679,7 +679,7 @@ function checkTeardownGate(ctx, teardownWarnings = [], deps = {}) {
 // pre-exist made the sanctioned exception unreachable by any tool-mediated
 // write. See WORK_SPEC_TAIL_RE above for exactly what this does and does
 // not cover.
-function shadowPipelineRunDir(targetPath) {
+function shadowPipelineRunDir(targetPath, { fsImpl } = {}) {
   if (typeof targetPath !== 'string' || !targetPath || !path.isAbsolute(targetPath)) return null;
   const resolved = path.resolve(targetPath);
   const { repoRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(resolved);
@@ -687,12 +687,13 @@ function shadowPipelineRunDir(targetPath) {
   // realTarget (below) now returns path-guard's case-canonical (.native) form,
   // so the root it is compared against is canonicalised the same way (#3495);
   // repoRoot is the JS form, which echoes casing on a case-insensitive volume.
-  const pipelinesDir = path.join(canonicalRealpath(repoRoot) || repoRoot, PIPELINE_STATE_DIR);
+  // Both operands resolve through the same fsImpl so they land on one filesystem.
+  const pipelinesDir = path.join(canonicalRealpath(repoRoot, { fsImpl }) || repoRoot, PIPELINE_STATE_DIR);
   // realTarget follows an existing symlink chain the same way the policy.yml
   // exemption does; falls back to the literal resolved path when nothing
   // exists yet (a brand-new mkdir target has no leaf, sometimes not even a
   // parent, to realpath).
-  const real = realTarget(resolved) || resolved;
+  const real = realTarget(resolved, { fsImpl }) || resolved;
   const relFromPipelines = path.relative(pipelinesDir, real);
   if (!relFromPipelines || relFromPipelines.startsWith('..') || path.isAbsolute(relFromPipelines)) return null;
   const relParts = relFromPipelines.split(path.sep);
@@ -707,7 +708,7 @@ function shadowPipelineRunDir(targetPath) {
   return { worktreeRoot: repoRoot, runDirCandidate };
 }
 
-function checkPipelineShadowGuard(ctx) {
+function checkPipelineShadowGuard(ctx, deps = {}) {
   const toolName = ctx.input && ctx.input.tool_name;
   const toolInput = ctx.input && ctx.input.tool_input;
   const candidates = [];
@@ -720,7 +721,7 @@ function checkPipelineShadowGuard(ctx) {
     for (const t of mkdirTargets(command, ctx.cwd)) candidates.push(t.file);
   }
   for (const candidate of candidates) {
-    const shadow = shadowPipelineRunDir(candidate);
+    const shadow = shadowPipelineRunDir(candidate, { fsImpl: deps.fsImpl });
     if (!shadow) continue;
     // #2282: previously left no friction-event trace — mirrors
     // checkWorktreeRequired's own gate-denial breadcrumb below (same
@@ -2118,7 +2119,8 @@ function checkDispatchConfigGate(ctx, commandGitTargets, deps = {}) {
 // foreign-owned run); run() attaches them all to whatever outcome is reached.
 // `deps` is run()'s own pass-through of its test-only override bag — see
 // run()'s header comment below — forwarded verbatim to checkTeardownGate,
-// checkDispatchConfigGate and checkBookkeepingStampsGate as their own `deps`
+// checkPipelineShadowGuard, checkDispatchConfigGate and
+// checkBookkeepingStampsGate as their own `deps`
 // parameter, and read directly by E1 at the tail of this function.
 function runInner(ctx, indeterminateTargets, warnings, deps) {
   // #3712: no other gate applies to AskUserQuestion.
@@ -2127,7 +2129,7 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
   const teardown = checkTeardownGate(ctx, warnings, deps);
   if (teardown.json) return teardown;
 
-  const shadow = checkPipelineShadowGuard(ctx);
+  const shadow = checkPipelineShadowGuard(ctx, deps);
   if (shadow.json) return shadow;
 
   const command = ctx.input && ctx.input.tool_name === 'Bash' && ctx.input.tool_input
