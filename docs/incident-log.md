@@ -1871,3 +1871,22 @@ reads like one.
 
 Cost: two security-lens fix commits in one run, each confirmed by a direct-verification override
 after the lens agents disagreed.
+
+## IL-166 — An omit-when-empty writer sent new run-states down the legacy branch of an absence-keyed fallback
+
+#3711 (2026-10-20) added `dispatchSessionId` to `run-state.json` so wrap-up's auto-merge
+short-circuit could tell `/claude-tweaks:dispatch`'s own Task calls from a later human resume.
+`plugin/bin/lib/dispatch/task-call.js` takes the expand-contract shape: a run-state with no
+`dispatchSessionId` predates the field, so it falls back to `sessionId`. The build's
+`hooks.js record-worktree --dispatch` wrote the field only when `CLAUDE_CODE_SESSION_ID` was
+non-empty. With the variable empty, a run-state written by the new code had no field and looked
+pre-field. The fallback then compared against `sessionId`, which a later human resume re-stamps,
+so that resume read as a Task call — the misroute #3711 exists to fix.
+
+The build's own test pinned the omission as intended behavior, so it passed task review and
+whole-branch review. `/claude-tweaks:review`'s lenses 3b and 3c caught it (direct-verified). Fixed
+in f3dae3886: the writer records `dispatchSessionId: null` with a stderr warning, and the
+predicate treats a present-but-null field as "not a Task call". The rewritten test in
+`tests/hooks-dispatcher.test.js` goes red with the fix reverted.
+
+Cost: one review fix wave plus a revert probe.
