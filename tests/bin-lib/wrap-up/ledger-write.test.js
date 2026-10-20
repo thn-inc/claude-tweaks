@@ -5,10 +5,12 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
+const fs = require('node:fs');
 
 const {
   TERMINAL_STATUSES, resolveLedgerPath, parseLedgerTable, flipLedgerRow,
 } = require('../../../plugin/bin/lib/wrap-up/ledger-write');
+const { splitLedgerRow, ledgerRowCells } = require('../../../plugin/bin/lib/wrap-up/ledger-cells');
 
 const SAMPLE = [
   '# Open Items — Sample',
@@ -21,6 +23,21 @@ const SAMPLE = [
   '',
 ].join('\n');
 
+// Ledger-ownership git fake (#3566): `owned` are the docs/plans/ paths the
+// branch's diff against the merge base names, `untracked` those present only in
+// the worktree — the same two git calls pack.js's ledger probe makes.
+function ownedGit(owned = [], untracked = []) {
+  return (args) => {
+    if (args[0] === 'diff') return owned.join('\0');
+    if (args[0] === 'ls-files') return untracked.join('\0');
+    return '';
+  };
+}
+
+function ownershipDeps(over = {}) {
+  return { existsSync: () => false, resolveBase: () => 'abc123', ...over };
+}
+
 test('resolveLedgerPath prefers {run-dir}/ledger.md when it exists', () => {
   const deps = { existsSync: (p) => p === path.join('/run', 'ledger.md') };
   const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', deps });
@@ -31,6 +48,8 @@ test('resolveLedgerPath falls back to a single docs/plans/*-ledger.md candidate'
   const deps = {
     existsSync: () => false,
     readdirSync: () => ['2026-01-01-foo-ledger.md', 'other.md'],
+    git: ownedGit(['docs/plans/2026-01-01-foo-ledger.md']),
+    resolveBase: () => 'abc123',
   };
   const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', deps });
   assert.strictEqual(r.ok, true);
@@ -47,11 +66,77 @@ test('resolveLedgerPath reports ambiguous with every candidate when 2+ exist, ne
   const deps = {
     existsSync: () => false,
     readdirSync: () => ['a-ledger.md', 'b-ledger.md'],
+    git: ownedGit(['docs/plans/a-ledger.md', 'docs/plans/b-ledger.md']),
+    resolveBase: () => 'abc123',
   };
   const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', deps });
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.reason, 'ambiguous');
   assert.strictEqual(r.candidates.length, 2);
+});
+
+test('resolveLedgerPath returns not-found when the only docs/plans ledger is inherited from the merge base', () => {
+  const deps = ownershipDeps({ readdirSync: () => ['2026-01-01-old-ledger.md'], git: ownedGit() });
+  const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', deps });
+  assert.deepStrictEqual(r, { ok: false, reason: 'not-found', candidates: [] });
+});
+
+test('resolveLedgerPath returns the owned ledger beside inherited ones', () => {
+  const deps = ownershipDeps({
+    readdirSync: () => ['a-old-ledger.md', 'b-mine-ledger.md', 'c-old-ledger.md'],
+    git: ownedGit(['docs/plans/b-mine-ledger.md']),
+  });
+  const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', deps });
+  assert.deepStrictEqual(r, { ok: true, path: path.join('/wt', 'docs', 'plans', 'b-mine-ledger.md') });
+});
+
+test('resolveLedgerPath counts an untracked ledger as owned', () => {
+  const deps = ownershipDeps({
+    readdirSync: () => ['old-ledger.md', 'new-ledger.md'],
+    git: ownedGit([], ['docs/plans/new-ledger.md']),
+  });
+  const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', deps });
+  assert.deepStrictEqual(r, { ok: true, path: path.join('/wt', 'docs', 'plans', 'new-ledger.md') });
+});
+
+test('resolveLedgerPath reports ambiguous only among owned candidates', () => {
+  const deps = ownershipDeps({
+    readdirSync: () => ['a-old-ledger.md', 'b-mine-ledger.md', 'c-mine-ledger.md'],
+    git: ownedGit(['docs/plans/b-mine-ledger.md', 'docs/plans/c-mine-ledger.md']),
+  });
+  const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', deps });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'ambiguous');
+  assert.deepStrictEqual(r.candidates, [
+    path.join('/wt', 'docs', 'plans', 'b-mine-ledger.md'),
+    path.join('/wt', 'docs', 'plans', 'c-mine-ledger.md'),
+  ]);
+});
+
+test('resolveLedgerPath fails closed as unattributable when no merge base resolves', () => {
+  const deps = ownershipDeps({ readdirSync: () => ['a-ledger.md'], git: ownedGit(['docs/plans/a-ledger.md']), resolveBase: () => null });
+  const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', deps });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'unattributable');
+  assert.strictEqual(r.path, undefined);
+  assert.deepStrictEqual(r.candidates, [path.join('/wt', 'docs', 'plans', 'a-ledger.md')]);
+});
+
+test('resolveLedgerPath fails closed as unattributable when git throws', () => {
+  const deps = ownershipDeps({ readdirSync: () => ['a-ledger.md'], git: () => { throw new Error('boom'); } });
+  const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', deps });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'unattributable');
+  assert.match(r.detail, /boom/);
+});
+
+test('resolveLedgerPath does not resolve a base when docs/plans holds no ledger', () => {
+  const deps = ownershipDeps({
+    readdirSync: () => [],
+    resolveBase: () => { throw new Error('resolveBase must not be called'); },
+  });
+  const r = resolveLedgerPath({ runDir: '/run', worktree: '/wt', deps });
+  assert.deepStrictEqual(r, { ok: false, reason: 'not-found', candidates: [] });
 });
 
 test('resolveLedgerPath honors an explicit ledger path inside the worktree', () => {
@@ -122,4 +207,46 @@ test('flipLedgerRow allows an empty resolution for status "observation"', () => 
 
 test('TERMINAL_STATUSES matches ledger-format.md\'s closed five-value enum', () => {
   assert.deepStrictEqual(TERMINAL_STATUSES, ['fixed', 'deferred', 'accepted', 'acknowledged', 'observation']);
+});
+
+// #3566: wrap-up's prose re-counts the ledger through the ledger probe, never a
+// bare docs/plans glob that also matches ledgers inherited from the base branch.
+test('wrap-up prose re-counts the ledger via the ledger probe, not a glob (#3566)', () => {
+  const skill = fs.readFileSync(path.join(__dirname, '../../../plugin/skills/wrap-up/SKILL.md'), 'utf8');
+  assert.match(skill, /re-count after the sweep by re-running the ledger probe/);
+  assert.match(skill, /wrap-up-pack\.js" --run "\$PIPELINE_RUN_DIR" --print ledger --json/);
+  const sweep = fs.readFileSync(path.join(__dirname, '../../../plugin/skills/wrap-up/residue-sweep.md'), 'utf8');
+  assert.match(sweep, /pack\.ledger.{0,80}files/s);
+  assert.match(sweep, /unattributedFiles/);
+});
+
+test('AC1.1: flipLedgerRow flips a row whose Item carries an escaped pipe, keeping the Item text intact', () => {
+  const text = SAMPLE.replace('| 1 | build | First item |', String.raw`| 1 | build | Ruling: a\|b |`);
+  const next = flipLedgerRow(text, { item: 1, status: 'accepted', resolution: 'ratified' });
+  assert.match(next, /\| 1 \| build \| Ruling: a\\\|b \| accepted \| ratified \|/);
+  const row = next.split('\n').find((l) => l.startsWith('| 1 |'));
+  assert.deepStrictEqual(ledgerRowCells(row), ['1', 'build', 'Ruling: a|b', 'accepted', 'ratified']);
+});
+
+test('flipLedgerRow escapes a pipe in the resolution text it writes', () => {
+  const next = flipLedgerRow(SAMPLE, { item: 2, status: 'accepted', resolution: 'ratified — x|y' });
+  const row = next.split('\n').find((l) => l.startsWith('| 2 |'));
+  assert.strictEqual(splitLedgerRow(row).length, 7);
+  assert.strictEqual(ledgerRowCells(row)[4], 'ratified — x|y');
+});
+
+test('flipLedgerRow collapses a newline in the resolution — the row stays on one line and a later flip still succeeds', () => {
+  const next = flipLedgerRow(SAMPLE, { item: 1, status: 'fixed', resolution: 'line1\nline2' });
+  const lines = next.split('\n');
+  const row = lines.find((l) => l.startsWith('| 1 |'));
+  assert.strictEqual(splitLedgerRow(row).length, 7);
+  assert.strictEqual(ledgerRowCells(row)[4], 'line1 line2');
+  assert.ok(!lines.includes('line2 |'), 'no continuation line');
+  const again = flipLedgerRow(next, { item: 2, status: 'accepted', resolution: 'ok' });
+  assert.ok(again.split('\n').some((l) => l.startsWith('| 2 |') && l.includes('accepted')));
+});
+
+test('flipLedgerRow still refuses a legacy row with a raw (unescaped) pipe, naming the \\| rule', () => {
+  const text = SAMPLE.replace('| 1 | build | First item |', '| 1 | build | First a|b item |');
+  assert.throws(() => flipLedgerRow(text, { item: 1, status: 'fixed', resolution: 'x' }), /5-column shape[\s\S]*\\\|[\s\S]*ledger-format\.md/);
 });

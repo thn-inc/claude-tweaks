@@ -23,6 +23,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { RUN_PINS } = require('../plugin/bin/lib/set-config/write');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const MANIFESTO_PATH = path.join(REPO_ROOT, 'plugin', 'skills', 'flow', 'manifesto.md');
@@ -79,6 +80,7 @@ function parseConfigKeys(manifestoText) {
     const m = /^([a-z0-9-]+):/.exec(line);
     if (!m) continue;
     if (m[1] === 'spec' || m[1] === 'created') break; // trailing bookkeeping keys, not levers
+    if (RUN_PINS.includes(m[1])) continue; // run pins (integration-model) sit in this block but are not levers
     keys.push(m[1]);
   }
   return keys;

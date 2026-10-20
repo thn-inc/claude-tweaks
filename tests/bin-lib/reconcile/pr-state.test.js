@@ -555,3 +555,101 @@ test('resolvePrStateByNumber/resolvePrStateByNumberAsync: request closingIssuesR
     wrapper.restore();
   }
 });
+
+// #3543: a stamped run-state.json pr.number that names no PR used to classify
+// as 'network-failure' forever. The by-number resolvers now confirm a
+// nonexistent PR with a structured GraphQL probe (never gh's stderr text):
+// `pr view` fails, then `gh api graphql` returns repository.pullRequest null
+// plus a NOT_FOUND error at path [repository, pullRequest].
+const NOT_FOUND_BODY = '{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","path":["repository","pullRequest"],"message":"x"}]}';
+
+// Fresh git repo whose origin makes repoSlugOf resolve `acme/w`.
+function makeOriginRepo() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-origin-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: dir });
+  return dir;
+}
+
+// gh stub dispatching on `$1 $2`: `pr view` prints prViewStdout and exits
+// prViewExit; `api graphql` appends one-arg-per-line argv to argvLog, prints
+// graphqlBody, and exits graphqlExit.
+function installProbeGhWrapper({ prViewStdout = '', prViewExit = 1, graphqlBody = '', graphqlExit = 1 }) {
+  const argvLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pr-state-probe-')), 'argv.log');
+  const script = `#!/bin/sh
+if [ "$1 $2" = "pr view" ]; then
+  cat <<'EOF'
+${prViewStdout}
+EOF
+  exit ${prViewExit}
+fi
+if [ "$1 $2" = "api graphql" ]; then
+  printf '%s\\n' "$@" >> "${argvLog}"
+  cat <<'EOF'
+${graphqlBody}
+EOF
+  exit ${graphqlExit}
+fi
+exit 2
+`;
+  const { restore } = installGhWrapper(script);
+  return { argvLog, restore };
+}
+
+test('AC1.1 AC1.2: a nonexistent stamped PR (pr view exit 1 + GraphQL NOT_FOUND) -> pr-not-found, sync and async (#3543)', { skip: PATH_STUB_SKIP }, async () => {
+  const repo = makeOriginRepo();
+  const wrapper = installProbeGhWrapper({ graphqlBody: NOT_FOUND_BODY });
+  try {
+    assert.equal(resolvePrStateByNumber(repo, 3406), 'pr-not-found');
+    assert.equal(await resolvePrStateByNumberAsync(repo, 3406), 'pr-not-found');
+    const lines = fs.readFileSync(wrapper.argvLog, 'utf8').split('\n');
+    assert.ok(lines.includes('number=3406'), 'number travels as a typed -F variable');
+    assert.ok(lines.includes('owner=acme') && lines.includes('name=w'), 'owner/name travel as -f variables');
+    assert.ok(lines.includes('-F') && lines.includes('-f'));
+    const query = lines.find((l) => l.startsWith('query='));
+    assert.ok(query, 'query arg present');
+    assert.ok(!query.includes('3406') && !query.includes('acme'), 'values are never spliced into the query string');
+  } finally {
+    wrapper.restore();
+  }
+});
+
+test('AC2.1: pr view failure + GraphQL transport failure (exit 1, empty stdout) -> network-failure, sync and async (#3543)', { skip: PATH_STUB_SKIP }, async () => {
+  const repo = makeOriginRepo();
+  const wrapper = installProbeGhWrapper({ graphqlBody: '', graphqlExit: 1 });
+  try {
+    assert.equal(resolvePrStateByNumber(repo, 3406), 'network-failure');
+    assert.equal(await resolvePrStateByNumberAsync(repo, 3406), 'network-failure');
+  } finally {
+    wrapper.restore();
+  }
+});
+
+for (const [label, body] of [
+  ['a non-NOT_FOUND GraphQL error', '{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"FORBIDDEN","path":["repository","pullRequest"],"message":"x"}]}'],
+  ['NOT_FOUND with a null data.repository', '{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","path":["repository","pullRequest"]}]}'],
+  ['NOT_FOUND on a different path', '{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","path":["repository"],"message":"x"}]}'],
+]) {
+  test(`#3543: ${label} -> network-failure`, { skip: PATH_STUB_SKIP }, async () => {
+    const repo = makeOriginRepo();
+    const wrapper = installProbeGhWrapper({ graphqlBody: body });
+    try {
+      assert.equal(resolvePrStateByNumber(repo, 3406), 'network-failure');
+      assert.equal(await resolvePrStateByNumberAsync(repo, 3406), 'network-failure');
+    } finally {
+      wrapper.restore();
+    }
+  });
+}
+
+test('#3543: a successful gh pr view makes no GraphQL call, sync and async', { skip: PATH_STUB_SKIP }, async () => {
+  const repo = makeOriginRepo();
+  const wrapper = installProbeGhWrapper({ prViewStdout: JSON.stringify(MERGED_PR_WITH_CLOSING_REFS), prViewExit: 0, graphqlBody: NOT_FOUND_BODY });
+  try {
+    assert.equal(resolvePrStateByNumber(repo, 9).number, 9);
+    assert.equal((await resolvePrStateByNumberAsync(repo, 9)).number, 9);
+    assert.equal(fs.existsSync(wrapper.argvLog), false, 'api graphql was never invoked');
+  } finally {
+    wrapper.restore();
+  }
+});

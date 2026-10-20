@@ -17,7 +17,9 @@
 // Acceptance Criteria).
 //
 // Reads: run-state.json (`worktree`, `pr`), this run's own `config.yml`
-// (`integration-model`) and `decisions.md` (the claim-log line) from
+// (`integration-model`, a valid pin being `pr-first` or `local-merge`; any
+// other value degrades to one stderr line, since the PR bookend is then not
+// checked) and `decisions.md` (the claim-log line) from
 // `--run <dir>`; the live claim state for each `--targets` issue via git
 // (never `gh` — `claims-git-cas.js`'s `readClaimBlobGit`, the same git-CAS
 // read `claim-store.js` already uses on the `gh`-present path, so this check
@@ -87,7 +89,9 @@ function parseTargets(raw) {
 function readConfigIntegrationModel(runDir) {
   try {
     const raw = fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8');
-    const m = raw.match(/^integration-model:\s*(\S+)/m);
+    // [^\S\n]*, not \s*: an empty `integration-model:` line must read as absent,
+    // never capture the next line's key as the value (the degrade line prints it).
+    const m = raw.match(/^integration-model:[^\S\n]*(\S+)/m);
     return m ? m[1] : null;
   } catch {
     return null;
@@ -183,6 +187,9 @@ function run(argv, deps) {
   }
 
   const integrationModel = deps.readIntegrationModel(runDir);
+  if (integrationModel !== 'pr-first' && integrationModel !== 'local-merge') {
+    deps.stderr(`verify-run-bookends: degraded — ${runDir}/config.yml carries no valid integration-model pin (${integrationModel ?? 'absent'}); PR bookend not checked (_shared/integration-model.md's Run-scoped stability)\n`);
+  }
   const prRequired = integrationModel === 'pr-first';
   if (prRequired && (!runState || !runState.pr)) {
     missing.push({

@@ -13,8 +13,9 @@ judgment. Three are shipped — `plugin/bin/lib/wrap-up/pack.js` + `plugin/bin/w
 `plugin/bin/flow-preflight.js` (`/flow`'s second call) and
 `plugin/bin/lib/release-preflight/pack.js` + `plugin/bin/release-preflight.js`
 (release preflight, eight probes) — and they agree on every rule below except
-selective-probe filtering (see the `--only` bullet) and the preamble-failure
-envelope (see its own bullet), which exactly one of the three implements.
+selective-probe filtering (see the `--only` bullet), the preamble-failure
+envelope and the timeout-kill label (see their own bullets), the last two of
+which exactly one of the three implements.
 Read them before writing a fourth.
 
 ## The shape
@@ -34,6 +35,15 @@ Read them before writing a fourth.
   is still written at exit 0 with `branch`/`tipRef` null (its "Ruling 13" comment); #2422's fix
   added a real `throw` to `prepare()` and is safe only because of it. `wrap-up/pack.js`'s
   `resolveInputs` call is uncaught — a preamble throw there exits 1. A fourth pack copies the former.
+- **A subprocess the exec bound kills degrades its field with an error naming the timeout — but
+  only one pack implements it today.** All three bound every subprocess at `EXEC_OPTS`'s 30000 ms,
+  and Node reports that kill as the generic `Command failed: …`, which reads in the degraded field
+  as a crash: it hid a residue probe running within 0.5 s of its bound (#3479). `wrap-up/pack.js`'s
+  `execBounded` routes every `deps.execFile` call through `shared-primitives.js`'s `isTimeoutError`
+  and rethrows `timeout after 30000ms: node residue.js (killed by SIGTERM)` with the original error
+  as `cause`; any other rejection (`ENOENT` for gh-absent, a maxBuffer overflow) passes through
+  unchanged. `flow/preflight.js` and `release-preflight/pack.js` still surface `Command failed:`.
+  A fourth pack copies `execBounded`.
 - **Exit vocabulary: 0 / 2 / 3 for decided outcomes, no 1 among them.** 0 the pack was produced, 2
   malformed invocation, 3 the `--run` directory (or `--json`'s parent) does not resolve under the
   main checkout. Both CLIs get the anchoring predicate by importing `lib/stage-item/write.js`'s
@@ -84,6 +94,13 @@ Read them before writing a fourth.
   whose ids belonged to an unrelated ledger while a second counted file also had rows 2-5. Qualify
   where the files are merged, keep the per-file parser returning bare ids, and pin it with a
   two-file fixture whose ids collide.
+- **A shared directory's "whose file is this" rule has one definition, used by the probe that reads
+  and the writer that mutates.** `docs/plans/` holds inherited ledgers beside the run's own;
+  `ledgerProbe` filtered by ownership (#2887) while `resolveLedgerPath` still treated a lone
+  `*-ledger.md` as the run's, so a flip or delete could hit another run's record (#3566).
+  `wrap-up/ledger-ownership.js`'s `ownedPlansFiles` is now the one definition, and the writer fails
+  closed (`unattributable`) when ownership cannot be computed. A new reader or writer of such a
+  directory imports it rather than re-deriving a filename heuristic.
 
 ## Every field owes a location, a freshness, and a phase — traced before it is written
 

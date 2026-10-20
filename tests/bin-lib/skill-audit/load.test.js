@@ -104,6 +104,76 @@ test('extractCitations rule (d): two skills named on one line, interleaved with 
   assert.deepStrictEqual(r.resolved, ['plugin/skills/stories/story.md', 'plugin/skills/build/build-notes.md']);
 });
 
+test('extractCitations rule (e): a skills/ token resolves against the plugin root', () => {
+  const r = load.extractCitations('see `skills/build/SKILL.md`', 'plugin/skills/flow/SKILL.md', 'plugin',
+    { exists: existsIn(['plugin/skills/build/SKILL.md']) });
+  assert.deepStrictEqual(r.resolved, ['plugin/skills/build/SKILL.md']);
+});
+
+test('extractCitations rule (e): a {skill}/{file}.md token resolves under skills/ when the first segment names an existing skill', () => {
+  const ex = existsIn([
+    'plugin/skills/wrap-up/SKILL.md', 'plugin/skills/wrap-up/cleanup-procedures.md',
+    'plugin/skills/design-wrapper/SKILL.md', 'plugin/skills/design-wrapper/modes/review.md',
+  ]);
+  const flat = load.extractCitations('`wrap-up/cleanup-procedures.md`', 'plugin/skills/flow/SKILL.md', 'plugin', { exists: ex });
+  assert.deepStrictEqual(flat.resolved, ['plugin/skills/wrap-up/cleanup-procedures.md']);
+  const nested = load.extractCitations('`design-wrapper/modes/review.md`', 'plugin/skills/flow/SKILL.md', 'plugin', { exists: ex });
+  assert.deepStrictEqual(nested.resolved, ['plugin/skills/design-wrapper/modes/review.md']);
+});
+
+test('extractCitations rule (e): a first segment that is not a skill directory stays unresolved', () => {
+  const notSkill = load.extractCitations('`docs/x.md`', 'plugin/skills/flow/SKILL.md', 'plugin',
+    { exists: existsIn(['plugin/skills/docs/x.md']) });
+  assert.deepStrictEqual(notSkill.resolved, []);
+  assert.strictEqual(notSkill.unresolved.length, 1);
+  const missing = load.extractCitations('`wrap-up/missing.md`', 'plugin/skills/flow/SKILL.md', 'plugin',
+    { exists: existsIn(['plugin/skills/wrap-up/SKILL.md']) });
+  assert.deepStrictEqual(missing.resolved, []);
+  assert.strictEqual(missing.unresolved.length, 1);
+});
+
+test('extractCitations rule (a) still wins over (e) for a same-named relative sibling', () => {
+  const r = load.extractCitations('`wrap-up/x.md`', 'plugin/skills/flow/SKILL.md', 'plugin', {
+    exists: existsIn(['plugin/skills/flow/wrap-up/x.md', 'plugin/skills/wrap-up/SKILL.md', 'plugin/skills/wrap-up/x.md']),
+  });
+  assert.deepStrictEqual(r.resolved, ['plugin/skills/flow/wrap-up/x.md']);
+});
+
+test('extractCitations rule (e): a token climbing out of the root stays unresolved', () => {
+  // Rules (a)/(b) normalise this token to plugin/skills/README.md, still inside
+  // the root, so a blanket `exists: () => true` would resolve via (a). Only the
+  // path rule (e) produces — README.md at the repo root — exists here.
+  const r = load.extractCitations('`skills/../../README.md`', 'plugin/skills/flow/SKILL.md', 'plugin',
+    { exists: existsIn(['README.md']) });
+  assert.deepStrictEqual(r.resolved, []);
+  assert.strictEqual(r.unresolved.length, 1);
+});
+
+test('extractCitations rule (e) works under a repo-root plugin root (".")', () => {
+  const r = load.extractCitations('`skills/build/SKILL.md` and `wrap-up/a.md`', 'skills/flow/SKILL.md', '.', {
+    exists: existsIn(['skills/build/SKILL.md', 'skills/wrap-up/SKILL.md', 'skills/wrap-up/a.md']),
+  });
+  assert.deepStrictEqual(r.resolved, ['skills/build/SKILL.md', 'skills/wrap-up/a.md']);
+});
+
+test('extractCitations rule (e): a dot-led first segment is never read as a skill directory', () => {
+  // Under a "." plugin root with a root-level SKILL.md, a "../README.md" token
+  // would otherwise build skills/../README.md = README.md and resolve. Rules
+  // (a)/(b) normalise it to skills/README.md, which the fixture lacks.
+  const r = load.extractCitations('`../README.md`', 'skills/flow/SKILL.md', '.',
+    { exists: existsIn(['SKILL.md', 'README.md']) });
+  assert.deepStrictEqual(r.resolved, []);
+  assert.strictEqual(r.unresolved.length, 1);
+});
+
+test('extractCitations rule (d) still wins over (e) when a {skill}/… token has both hits', () => {
+  const line = 'read `build/x.md` in the `/claude-tweaks:flow` skill\'s directory.';
+  const r = load.extractCitations(line, 'plugin/skills/stories/SKILL.md', 'plugin', {
+    exists: existsIn(['plugin/skills/flow/build/x.md', 'plugin/skills/build/SKILL.md', 'plugin/skills/build/x.md']),
+  });
+  assert.deepStrictEqual(r.resolved, ['plugin/skills/flow/build/x.md']);
+});
+
 test('extractCitations: an unresolvable token is recorded with its 1-based line, never counted', () => {
   const r = load.extractCitations('line one\nsee `docs/skill-graph.md` here', 'plugin/skills/flow/SKILL.md', 'plugin', { exists: () => false });
   assert.deepStrictEqual(r, {

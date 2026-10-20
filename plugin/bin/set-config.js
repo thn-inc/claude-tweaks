@@ -15,16 +15,20 @@
 // mid-batch fs failure exits 3 having already durably written the earlier
 // entries; the stderr message on that path names which keys were already
 // written (see the write loop below) so a caller isn't left guessing.
+// Run pins (RUN_PINS, currently just integration-model) are accepted on the
+// same surface with the same enum validation, but are not Manifesto levers:
+// the FYI table never shows them; the auto-batch match admits them only
+// alongside all 13 levers.
 // Exit 0 on success (echoes, per lever, the config.yml path and the
 // previous -> new value, so escape-hatch logs are evidence-based); 2 on a
 // malformed invocation (missing/conflicting args, a `--set` entry not in
 // key=value form, a key repeated within one `--set` batch, a key outside the
-// canonical Manifesto lever set, or a value outside that lever's enum —
-// batch or single, nothing is written on this exit code); 3 when the run dir
-// is missing or not anchored under the main checkout (a worktree-local
-// shadow — _shared/pipeline-run-dir.md's Anchoring section, [IL-127]), or
-// config.yml is unwritable. config.yml is the third of the sanctioned-write
-// family: bin/log-decision.js (decisions.md), bin/stage-item.js (staged/),
+// canonical Manifesto lever set and the run-pin set, or a value outside that
+// key's enum — batch or single, nothing is written on this exit code); 3 when
+// the run dir is missing or not anchored under the main checkout (a
+// worktree-local shadow — _shared/pipeline-run-dir.md's Anchoring section,
+// [IL-127]), or config.yml is unwritable. config.yml is the third of the
+// sanctioned-write family: bin/log-decision.js (decisions.md), bin/stage-item.js (staged/),
 // this (config.yml levers — the ceremony escape hatch's downgrade path, and
 // the Manifesto's own batch write).
 //
@@ -33,16 +37,17 @@
 // `-> proceeding (no approval needed)` line as visible output — but that
 // render was prose the orchestrating model had to remember to compose
 // *after* this CLI's write call, and it was observed being silently
-// skipped. When a `--set` batch supplies exactly the 13 canonical Manifesto
-// levers (any order) with `mode=auto`, this is unambiguously that write
-// call, so success also prints the FYI table itself — a mechanical side
-// effect of the write, not a separate step to forget. Any other invocation
-// shape (single-key form, a partial batch, `mode` other than `auto`) prints
-// only the existing per-lever lines, unchanged.
+// skipped. When a `--set` batch supplies the 13 canonical Manifesto levers
+// (any order), plus at most the run pins (`RUN_PINS`), with `mode=auto`,
+// this is unambiguously that write call, so success also prints the FYI
+// table itself — a mechanical side effect of the write, not a separate step
+// to forget. Any other invocation shape (single-key form, a partial batch,
+// `mode` other than `auto`) prints only the existing per-lever lines,
+// unchanged.
 'use strict';
 
 const { resolveTarget } = require('./lib/stage-item/write');
-const { MANIFESTO_LEVERS, validateLever, setConfigLever } = require('./lib/set-config/write');
+const { MANIFESTO_LEVERS, RUN_PINS, isConfigKey, validateLever, setConfigLever } = require('./lib/set-config/write');
 
 // Canonical lever numbering/labels, per manifesto.md's "Canonical lever
 // numbering" paragraph — presentation-only, so kept here rather than in
@@ -83,15 +88,19 @@ function renderManifestoFyi(results) {
 }
 
 // True only for the exact call shape the Manifesto step's batch write makes
-// (flow/manifesto.md's "Write mechanism" section): all 13 canonical levers,
-// no more, no fewer, with mode=auto. A partial batch (e.g. the ceremony
-// escape hatch's downgrade-in-place write, or steps-and-gates.md case 3's
-// recovery when the run's own mode is not auto) never matches.
+// (flow/manifesto.md's "Write mechanism" section): all 13 canonical levers
+// with mode=auto, plus at most the run pins (RUN_PINS) — the Manifesto's
+// batch may carry a run pin such as integration-model alongside the levers.
+// Any other extra key, or a missing lever, never matches. A partial batch
+// (e.g. the ceremony escape hatch's downgrade-in-place write, or
+// steps-and-gates.md case 3's recovery when the run's own mode is not auto)
+// never matches.
 function isManifestoAutoBatch(results) {
-  if (results.length !== MANIFESTO_LEVERS.length) return false;
+  if (results.length < MANIFESTO_LEVERS.length) return false;
   const keys = new Set(results.map((r) => r.key));
-  if (keys.size !== MANIFESTO_LEVERS.length) return false;
+  if (keys.size !== results.length) return false;
   for (const lever of MANIFESTO_LEVERS) if (!keys.has(lever)) return false;
+  for (const key of keys) if (!isConfigKey(key)) return false;
   const modeResult = results.find((r) => r.key === 'mode');
   return !!modeResult && modeResult.value === 'auto';
 }
@@ -191,7 +200,7 @@ function run(argv, deps = realDeps) {
     // single-key branch's message is untouched (empty prefix).
     const prefix = batchMode ? `--set entry ${JSON.stringify(`${key}=${value}`)}: ` : '';
     if (verdict.reason === 'unknown-key') {
-      problems.push(`${prefix}--key ${JSON.stringify(key)} is not a config.yml policy lever (the canonical Manifesto set: ${MANIFESTO_LEVERS.join(', ')})`);
+      problems.push(`${prefix}--key ${JSON.stringify(key)} is not a config.yml policy lever (the canonical Manifesto set: ${MANIFESTO_LEVERS.join(', ')}; run pins: ${RUN_PINS.join(', ')})`);
     } else {
       problems.push(`${prefix}--value ${JSON.stringify(value)} is not valid for ${key} (allowed: ${verdict.allowed.join(', ')})`);
     }

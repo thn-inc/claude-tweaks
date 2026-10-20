@@ -43,7 +43,7 @@ Nothing upstream computes a frontend predicate, so deleting or weakening Layer 3
 
 ## Resolution
 
-The engine module resolves the active install itself — read `installed_plugins.json`, select the best project-or-user-scope entry for the calling session's working directory, confirm the 4.2.2+ launcher exists, then probe the cached design-engine binary. Every consumer calls the same two functions (`resolve()`/`run()`, `plugin/bin/lib/impeccable-engine/index.js`) via the CLI wrapper — nothing here re-derives that procedure.
+The engine module resolves the active install itself — read `installed_plugins.json`, select the first record in `installed_plugins.json` order that applies to the calling session's working directory, confirm the 4.2.2+ launcher exists, then probe the cached design-engine binary. Every consumer calls the same two functions (`resolve()`/`run()`, `plugin/bin/lib/impeccable-engine/index.js`) via the CLI wrapper — nothing here re-derives that procedure.
 
 ### `node "${CLAUDE_PLUGIN_ROOT}/bin/impeccable-engine.js" resolve`
 
@@ -51,7 +51,7 @@ The engine module resolves the active install itself — read `installed_plugins
 
 Prints one JSON envelope to stdout:
 
-- **`{ok: true, pluginRoot, launcher, pluginVersion, engineVersion, scope}`** — `pluginRoot` is the plugin's install directory (the value `native-routing.md`'s dispatch rule reads); `launcher` is the resolved `impeccable`/`impeccable.cmd` script path; `pluginVersion`/`engineVersion` are the installed plugin's and cached engine's own version strings — informational, not a gate; `scope` is `"project"` or `"user"` (a project-scope entry wins over the user-scope install when both exist for this working directory).
+- **`{ok: true, pluginRoot, launcher, pluginVersion, engineVersion, scope}`** — `pluginRoot` is the plugin's install directory (the value `native-routing.md`'s dispatch rule reads); `launcher` is the resolved `impeccable`/`impeccable.cmd` script path; `pluginVersion`/`engineVersion` are the installed plugin's and cached engine's own version strings — informational, not a gate; `scope` is the selected record's scope (`"user"`, `"project"`, `"managed"` or `"local"`) — the first record in `installed_plugins.json` order that applies to this working directory, the rule Claude Code itself uses.
 - **`{ok: false, reason, fix?, detail?}`** — one of the six reasons in `## Degradation` below. `resolve` itself returns five of them: `not-installed`, `upgrade-required`, and `engine-not-installed` (each with a `fix`), plus `timeout` and `exec-failed` (each with a `detail`, no `fix`) when the `engine-probe` handshake itself timed out, could not launch, or exited with anything other than 127 — so a resolver miss is not always an install problem.
 
 A `run <verb>` call (`## Invocation`) resolves internally first and returns the identical `{ok: false, ...}` shape on a resolution failure — a consumer never needs to call `resolve` before `run` just to check.

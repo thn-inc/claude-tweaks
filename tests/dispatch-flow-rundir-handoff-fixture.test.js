@@ -68,6 +68,7 @@ const MANIFESTO_SET = [
   'merge-verification=merge-when-green',
   'design-critique=auto',
   'merge-authorization=ask',
+  'integration-model=pr-first',
 ].join(',');
 
 function spawn(cmdArgs, opts) {

@@ -80,9 +80,11 @@ Append a row to the ledger table.
 
 **De-duplication:** per `_shared/ledger-format.md`'s De-duplication on Append rule — same phase + substantially similar description = skip the add and say so, never silently.
 
+- **Pipes:** escape every `|` in the Item or Resolution text as `\|` — `_shared/ledger-format.md`'s Format section.
+
 ### Update Item
 
-Change an item's status and/or resolution. Legal transitions, terminality, and the per-status resolution-text requirements: `_shared/ledger-format.md`'s Status Lifecycle section (Resolution-text requirements).
+Change an item's status and/or resolution. Legal transitions, terminality, and the per-status resolution-text requirements: `_shared/ledger-format.md`'s Status Lifecycle section (Resolution-text requirements). A rewritten Resolution follows the same pipe rule (`_shared/ledger-format.md`'s Format section).
 
 ### Query
 

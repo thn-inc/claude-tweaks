@@ -5,16 +5,16 @@
 // plugin/skills/review/step3-routing.md. The routing table is the source of truth.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const OVERRIDES_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'manifesto-overrides.md');
 const ROUTING_PATH = path.join(__dirname, '..', 'plugin', 'skills', 'review', 'step3-routing.md');
-const overrides = fs.readFileSync(OVERRIDES_PATH, 'utf8');
-const routing = fs.readFileSync(ROUTING_PATH, 'utf8');
+const overrides = readText(OVERRIDES_PATH);
+const routing = readText(ROUTING_PATH);
 
 function routingColumns(md) {
-  const lines = md.split('\n');
+  const lines = md.split(/\r?\n/);
   const start = lines.indexOf('| Severity | `none` | `low` | `medium` |');
   if (start === -1) throw new Error('ceiling-keyed routing table header not found in step3-routing.md');
   const names = ['none', 'low', 'medium'];
@@ -32,7 +32,7 @@ function routingColumns(md) {
 }
 
 function ceilingRow(md, value) {
-  const line = md.split('\n').find((l) => l.startsWith(`| Review auto-apply ceiling | \`${value}\` |`));
+  const line = md.split(/\r?\n/).find((l) => l.startsWith(`| Review auto-apply ceiling | \`${value}\` |`));
   if (!line) throw new Error(`no "Review auto-apply ceiling" row for \`${value}\` in manifesto-overrides.md`);
   return line.split('|').slice(1, -1).map((c) => c.trim())[2];
 }
@@ -92,8 +92,8 @@ test('low override row exists and matches the routing table (MED and HIGH staged
 });
 
 test('manifesto.md lever-7 cells do not claim HIGH prompts', () => {
-  const manifesto = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'manifesto.md'), 'utf8');
-  const lever7 = manifesto.split('\n').filter((l) => /Review auto-apply ceiling/.test(l) && l.startsWith('|'));
+  const manifesto = readText(path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'manifesto.md'));
+  const lever7 = manifesto.split(/\r?\n/).filter((l) => /Review auto-apply ceiling/.test(l) && l.startsWith('|'));
   assert.ok(lever7.length >= 2, `expected the lever-7 table row and the Recommendation-defaults row, found ${lever7.length}`);
   lever7.forEach((l) => assertNoHighPrompts(l));
 });
@@ -121,4 +121,13 @@ test('go-red control: a low row claiming HIGH prompts fails assertLowRow', () =>
 test('go-red control: the pre-fix lever-7 wordings fail assertNoHighPrompts', () => {
   assert.throws(() => assertNoHighPrompts('`low` — LOW auto-applied, MED staged, HIGH prompts; `medium`'));
   assert.throws(() => assertNoHighPrompts('Auto LOW, stage MED, prompt HIGH; an unattended'));
+});
+
+test('CRLF parity: routingColumns and ceilingRow tolerate CRLF-terminated markdown', () => {
+  const crlfRouting = routing.replace(/\n/g, '\r\n');
+  const crlfOverrides = overrides.replace(/\n/g, '\r\n');
+  assert.deepStrictEqual(routingColumns(crlfRouting), routingColumns(routing));
+  for (const v of ['none', 'low', 'medium']) {
+    assert.strictEqual(ceilingRow(crlfOverrides, v), ceilingRow(overrides, v));
+  }
 });

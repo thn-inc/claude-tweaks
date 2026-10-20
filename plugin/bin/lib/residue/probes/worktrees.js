@@ -97,7 +97,7 @@ const IS_DIRTY_TIMEOUT_MS = 10000;
 // confirm" contract `defaultIsDirty` already documented before this split.
 function readPorcelainStatus(worktreePath) {
   try {
-    const out = execFileSync('git', ['-C', worktreePath, '--no-optional-locks', 'status', '--porcelain'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: IS_DIRTY_TIMEOUT_MS, windowsHide: true });
+    const out = execFileSync('git', ['-C', worktreePath, '--no-optional-locks', 'status', '--porcelain'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: IS_DIRTY_TIMEOUT_MS, windowsHide: true }); // git-path-read: not a path list (display only)
     const lines = out.split('\n');
     if (lines[lines.length - 1] === '') lines.pop(); // trailing newline's empty tail entry (and the empty-output case)
     return lines;
@@ -112,10 +112,16 @@ function defaultIsDirty(worktreePath) {
   return lines.length > 0;
 }
 
-function probeWorktrees({ scope, isPidAlive = defaultIsPidAlive, isDirty = defaultIsDirty } = {}) {
+// `cliScope` is the residue CLI's `--scope` value. Every finding this probe
+// emits is `scope: 'observed'` by construction, and `filterResultsByScope`
+// drops all observed findings under `blast-radius` — so the per-worktree
+// `git status` (one sequential subprocess per unlocked worktree) would be
+// discarded work under that scope. Skip it (#3479).
+function probeWorktrees({ scope, isPidAlive = defaultIsPidAlive, isDirty = defaultIsDirty, cliScope } = {}) {
   if (!scope || !scope.ran) {
     return { ran: false, reason: (scope && scope.reason) || 'scope unresolved', findings: [] };
   }
+  if (cliScope === 'blast-radius') return { ran: true, reason: null, findings: [] };
   const findings = [];
   for (const wt of scope.worktrees) {
     // The first entry of `git worktree list` is the main working tree. It is
@@ -159,6 +165,7 @@ function probeWorktrees({ scope, isPidAlive = defaultIsPidAlive, isDirty = defau
       // branch this work did not produce: another session's live worktree,
       // or a stale leftover from a prior run. Never this run's own blast
       // radius, so it is never `blast-radius`.
+      // Must stay 'observed': the #3479 blast-radius short-circuit at the top of probeWorktrees depends on it.
       scope: 'observed',
       subject: wt.path,
       remedy,

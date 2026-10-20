@@ -17,6 +17,7 @@ const { run } = require('../plugin/bin/skill-load-report');
 const { slugForCwd } = require('../plugin/bin/lib/timing/transcript');
 const { measuredTextBytes } = require('../plugin/bin/lib/skill-audit/context-cost');
 const { skipUnderRoot } = require('./helpers/root');
+const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const TS = '2026-10-17T12:00:00.000Z';
 
@@ -211,7 +212,7 @@ test('default plugin roots come from discoverPluginRoots over the cwd\'s tracked
 });
 
 test('harness-health names the Skill-load check: command, top 10, filing title, dedup, auto-close, --dry-run', () => {
-  const text = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', 'harness-health', 'SKILL.md'), 'utf8');
+  const text = readText(path.join(__dirname, '..', 'plugin', 'skills', 'harness-health', 'SKILL.md'));
   const start = text.indexOf('**Skill-load check (#3309');
   assert.ok(start >= 0, 'harness-health/SKILL.md has no Skill-load check paragraph');
   // The paragraph is its lead-in, one ```bash block, and the text after the
@@ -229,4 +230,17 @@ test('harness-health names the Skill-load check: command, top 10, filing title, 
     'never closes anything',
     '`--dry-run`',
   ]) assert.ok(para.includes(needle), `Skill-load check paragraph is missing: ${needle}`);
+});
+
+test('skill-load-report: the paragraph search still finds its break under CRLF line endings (#3574)', () => {
+  const FILE = path.join(__dirname, '..', 'plugin', 'skills', 'harness-health', 'SKILL.md');
+  const { raw, text } = crlfCheckoutRead(FILE);
+  assert.ok(raw.includes('\r\n'), 'the CRLF input must contain \\r\\n line breaks');
+  assert.ok(!raw.includes('\r\r\n'), 'the CRLF input must not contain \\r\\r\\n');
+  assert.strictEqual(raw.indexOf('\n\n'), -1, 'a raw CRLF read has no LF paragraph break');
+  assert.strictEqual(text, readText(FILE));
+  const start = text.indexOf('**Skill-load check (#3309');
+  const fenceEnd = text.indexOf('\n```\n', text.indexOf('```bash', start)) + 5;
+  const para = text.slice(start, text.indexOf('\n\n', fenceEnd));
+  assert.ok(para.includes('top 10'));
 });

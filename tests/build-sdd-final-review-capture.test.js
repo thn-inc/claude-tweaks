@@ -7,6 +7,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
+const { execFileSync } = require('node:child_process');
+const { sessionTmpRoot } = require('../plugin/bin/lib/session-tmp');
 
 const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
@@ -14,12 +18,72 @@ const read = (...p) => readText(path.join(ROOT, ...p));
 
 const DISPATCH = read('plugin', 'skills', 'build', 'dispatch.md');
 
-test('dispatch.md: SDD invocation directs the final-review capture before Finish deletes the workspace (#3386 AC1)', () => {
+const RESOLVE_CMD = 'node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" SDD_FINAL_REVIEW=sdd-final-review-{run-id}.md';
+const WRITE_CMD = 'node "${CLAUDE_PLUGIN_ROOT}/bin/write-run-artifact.js" --run "$PIPELINE_RUN_DIR" --name sdd-final-review.md --file "{review-path}"';
+const SECTION_END = '**Standing AC-forwarding verification (#496).**';
+const SECTION = DISPATCH.slice(
+  DISPATCH.indexOf("**Persist SDD's final whole-branch review before Finish (#3386):**"),
+  DISPATCH.indexOf(SECTION_END)
+);
+
+test('AC1.1: the capture resolves a session-scratch path and persists through the sanctioned writer, never a direct run-dir Write', () => {
   assert.match(DISPATCH, /\*\*Persist SDD's final whole-branch review before Finish \(#3386\):\*\*/);
-  assert.match(
-    DISPATCH,
-    /before deleting the plan's workspace, it must write `\$PIPELINE_RUN_DIR\/sdd-final-review\.md` \(the absolute run-directory path, never a worktree-relative one\)/
-  );
+  assert.ok(SECTION.includes(RESOLVE_CMD), 'resolves a session-scratch path for the review');
+  assert.ok(SECTION.includes(WRITE_CMD), 'persists the review through the sanctioned writer');
+  assert.ok(SECTION.includes('`{run-id}` is `basename "$PIPELINE_RUN_DIR"`'), '{run-id} is defined inline');
+  assert.ok(SECTION.includes('never an Edit/Write straight to the run directory'), 'forbids a direct run-dir Edit/Write');
+  assert.ok(!SECTION.includes('eval "$(node'), 'no eval: a variable set in one Bash call does not survive into the next');
+  assert.match(SECTION, /before deleting the plan's workspace/);
+});
+
+// #3496: the harness refuses a direct Edit/Write to the run directory from a worktree-isolated
+// session, so the capture's writer command must work as written from a worktree cwd. Extract it
+// from the live prose and run it, as the #496 suite does for its sample.
+test('AC1.1: the dispatch.md capture commands run from a worktree cwd and land sdd-final-review.md in the run dir', { skip: process.platform === 'win32' && 'runs dispatch.md commands through POSIX /bin/sh' }, () => {
+  const cmds = [...SECTION.matchAll(/`(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/write-run-artifact\.js"[^`]*)`/g)].map((m) => m[1]);
+  assert.equal(cmds.length, 1, 'exactly the write command');
+  assert.ok(cmds[0].endsWith('--file "{review-path}"'));
+
+  const runId = '2026-10-19T090000-record-3496';
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sddfinal-'));
+  const sessionId = `sddfinal-${path.basename(root)}`;
+  const sessionRoot = sessionTmpRoot(sessionId);
+  try {
+    const main = path.join(root, 'main');
+    const runDir = path.join(main, '.claude-tweaks', 'pipelines', runId);
+    const worktree = path.join(main, '.claude', 'worktrees', 'dispatch-record-3496');
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.mkdirSync(worktree, { recursive: true });
+    fs.mkdirSync(path.join(main, '.git'));
+    fs.writeFileSync(path.join(worktree, '.git'), 'gitdir: ../../../.git/worktrees/dispatch-record-3496\n');
+    const env = { ...process.env, PIPELINE_RUN_DIR: runDir, CLAUDE_CODE_SESSION_ID: sessionId };
+    const plugin = path.join(ROOT, 'plugin');
+    const sh = (cmd) => execFileSync('/bin/sh', ['-c', cmd.replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, plugin)], { cwd: worktree, env, encoding: 'utf8' });
+
+    // Step 1 of the documented flow: resolve the session-scratch path (no eval) and parse the printed literal.
+    const printed = sh(RESOLVE_CMD.replace('{run-id}', path.basename(runDir)));
+    const m = printed.match(/^SDD_FINAL_REVIEW=("[^"\n]+")$/m);
+    assert.ok(m, `resolve prints SDD_FINAL_REVIEW="<path>": ${printed}`);
+    const reviewPath = JSON.parse(m[1]);
+    assert.ok(reviewPath.endsWith(`sdd-final-review-${runId}.md`));
+
+    // Step 2: the Write tool puts the review at that literal path.
+    const body = 'FINAL-REVIEW-BODY: the final reviewer findings with their severities\n';
+    fs.writeFileSync(reviewPath, body);
+
+    // Step 3: persist via the writer, {review-path} substituted with the literal (a separate shell, no inherited variable).
+    sh(cmds[0].replace('{review-path}', reviewPath));
+    assert.equal(fs.readFileSync(path.join(runDir, 'sdd-final-review.md'), 'utf8'), body);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    if (sessionRoot) fs.rmSync(sessionRoot, { recursive: true, force: true });
+  }
+});
+
+test('AC2.1: the captured/absent decisions line keys on the run-dir file\'s presence, and a writer failure never blocks Finish', () => {
+  assert.match(SECTION, /A non-zero exit from the writer never blocks Finish/);
+  assert.ok(SECTION.includes('`AUTO … — SDD final review captured to sdd-final-review.md` when the file exists'));
+  assert.ok(SECTION.includes('`SKIP … — SDD final review dispatched but sdd-final-review.md absent` when it does not'));
 });
 
 // The four-item check, factored out so the doctored control can run the real assertion on mutated text.

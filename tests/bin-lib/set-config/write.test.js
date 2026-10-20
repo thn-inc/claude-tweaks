@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  MANIFESTO_LEVERS, leverValues, validateLever, setConfigLever,
+  MANIFESTO_LEVERS, RUN_PINS, leverValues, validateLever, setConfigLever,
 } = require('../../../plugin/bin/lib/set-config/write');
 
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
@@ -37,6 +37,19 @@ test('validateLever: every canonical Manifesto lever is accepted with a known-go
   for (const [key, value] of Object.entries(good)) {
     assert.deepEqual(validateLever(key, value), { ok: true }, `${key}=${value} should validate`);
   }
+});
+
+test('RUN_PINS: integration-model is a run pin, not a Manifesto lever', () => {
+  assert.deepEqual([...RUN_PINS], ['integration-model']);
+  assert.equal(MANIFESTO_LEVERS.includes('integration-model'), false);
+  assert.deepEqual(leverValues('integration-model'), ['pr-first', 'local-merge']);
+});
+
+test('validateLever: integration-model accepts pr-first/local-merge and rejects other values', () => {
+  assert.equal(validateLever('integration-model', 'pr-first').ok, true);
+  assert.deepEqual(validateLever('integration-model', 'github'), {
+    ok: false, reason: 'invalid-value', allowed: ['pr-first', 'local-merge'],
+  });
 });
 
 test('validateLever: a key outside the lever enum is refused (unknown-key) — including config.yml bookkeeping fields', () => {
@@ -74,7 +87,7 @@ test('MANIFESTO_LEVERS matches manifesto.md\'s config.yml example block (the can
   const keys = [];
   for (const rawLine of block.split('\n')) {
     const m = /^([a-z0-9-]+):/.exec(rawLine.trim());
-    if (m && m[1] !== 'spec' && m[1] !== 'created') keys.push(m[1]);
+    if (m && m[1] !== 'spec' && m[1] !== 'created' && !RUN_PINS.includes(m[1])) keys.push(m[1]);
   }
   assert.deepEqual(keys, [...MANIFESTO_LEVERS],
     'MANIFESTO_LEVERS must track manifesto.md\'s config.yml example block, in order');

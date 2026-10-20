@@ -53,6 +53,20 @@ test('detect-overlap matches the library result exactly', () => {
   assert.deepStrictEqual(JSON.parse(stdout), c.detectCrossLensOverlap(byLens));
 });
 
+test('corroborate-cross-lens matches the library result exactly', () => {
+  const byLens = {
+    '3b': [{ path: 'x.js', line: 10, severity: 'low', text: 'superseded failed run marks real PR failure inherited' }],
+    '3c': [{ path: 'x.js', line: 12, severity: 'low', text: 'superseded failed run at base marks PR failure as inherited' }],
+    '3d': [{ path: 'y.js', line: 1, severity: 'high', text: 'unrelated defect elsewhere entirely' }],
+  };
+  const p = writeFixture('unconfirmed-by-lens.json', byLens);
+  const { code, stdout } = runCli(['corroborate-cross-lens', p]);
+  assert.strictEqual(code, 0);
+  const expected = c.corroborateCrossLens(byLens);
+  assert.strictEqual(expected.corroborated.length, 1);
+  assert.deepStrictEqual(JSON.parse(stdout), JSON.parse(JSON.stringify(expected)));
+});
+
 test('resolve-debate prints the bare resolution for every verdict combination', () => {
   assert.strictEqual(runCli(['resolve-debate', 'agree', 'agree']).stdout.trim(), 'confirmed');
   assert.strictEqual(runCli(['resolve-debate', 'disagree', 'disagree']).stdout.trim(), 'unconfirmed');
@@ -81,4 +95,12 @@ test('malformed invocations exit 2: unknown command, wrong arity, missing file, 
   assert.strictEqual(runCli(['categorise-reproduction', wrongShape, b]).code, 2);
   const arrayNotObject = writeFixture('arr.json', FINDINGS_A);
   assert.strictEqual(runCli(['detect-overlap', arrayNotObject]).code, 2);
+
+  // corroborate-cross-lens: arity, non-object input, non-array lens value.
+  assert.strictEqual(runCli(['corroborate-cross-lens']).code, 2);
+  assert.strictEqual(runCli(['corroborate-cross-lens', 'a.json', 'b.json']).code, 2);
+  assert.strictEqual(runCli(['corroborate-cross-lens', arrayNotObject]).code, 2);
+  const lensNotArray = writeFixture('lens-not-array.json', { '3b': 'not-an-array' });
+  assert.strictEqual(runCli(['corroborate-cross-lens', lensNotArray]).code, 2);
+  assert.strictEqual(runCli(['corroborate-cross-lens', badJson]).code, 2);
 });

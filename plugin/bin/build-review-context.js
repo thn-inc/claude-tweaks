@@ -4,9 +4,10 @@
 //   node bin/build-review-context.js mint [--run <run-dir>] [--print-dir]
 //   node bin/build-review-context.js build --base <ref> --branch <ref> [--dir <dir>|--run <run-dir>] [--files-from <path>]
 // Prints a one-line JSON result on stdout ({dir} for mint; {dir, contextPath, bytes, files,
-// emptySections, oversizeSections} for build) by default. `mint --print-dir` instead prints the bare directory
-// path followed by a newline and nothing else — a shell-substitution convenience; `--print-dir`
-// is mint-only and rejected on build. Exit 0 ok; 2 malformed invocation; 1 git/filesystem failure.
+// emptySections, oversizeSections, baselinePath, listenersPath} for build) by default.
+// `mint --print-dir` instead prints the bare directory path followed by a newline and nothing
+// else — a shell-substitution convenience; `--print-dir` is mint-only and rejected on build.
+// Exit 0 ok; 2 malformed invocation; 1 git/filesystem failure.
 // Single plain command by design — the compound-shell recipe it replaces is refused by the
 // harness worktree guard (refs #887).
 // `build`'s per-file sections resolve against the repo toplevel, not process.cwd() (#3017).

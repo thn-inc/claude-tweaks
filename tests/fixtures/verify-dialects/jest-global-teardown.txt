@@ -1,0 +1,30 @@
+FAIL tests/known.test.js
+  ✕ known shallow failure (2 ms)
+
+  ● known shallow failure
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 2
+    Received: 1
+
+    > 1 | test('known shallow failure', () => { expect(1).toBe(2); });
+        |                                                 ^
+      2 |
+
+      at Object.toBe (tests/known.test.js:1:49)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 total
+Snapshots:   0 total
+Time:        0.215 s
+Ran all test suites.
+Error: Jest: Got error running globalTeardown - /repo/teardown.js, reason: teardown leaked a db handle
+    at module.exports (/repo/teardown.js:2:9)
+    at /repo/node_modules/@jest/core/build/runGlobalHook.js:109:19
+    at ScriptTransformer.requireAndTranspileModule (/repo/node_modules/@jest/transform/build/ScriptTransformer.js:806:24)
+    at runGlobalHook (/repo/node_modules/@jest/core/build/runGlobalHook.js:101:9)
+    at runJest (/repo/node_modules/@jest/core/build/runJest.js:374:5)
+    at _run10000 (/repo/node_modules/@jest/core/build/cli/index.js:343:7)
+    at runCLI (/repo/node_modules/@jest/core/build/cli/index.js:198:3)
+    at Object.run (/repo/node_modules/jest-cli/build/run.js:130:37)

@@ -31,9 +31,9 @@ Cleanup is silent — no user prompt. The caches are pipeline state, not user-au
 If a pipeline run directory exists for this work (see `_shared/run-dir-resolution.md` for the resolution order and bash snippet):
 
 1. **Multi-spec defer check:** if `MULTISPEC_REVIEW_DEFER=1` is set, **skip this section entirely**. The parent `/flow` orchestration owns archival of the multi-spec parent dir after its consolidated Review Console completes. The per-spec subdirectory stays in place under the parent.
-2. Verify the Review Console ran and applied/dismissed all staged items. Since #1130 this precondition is also code-enforced at both archival call sites — the reconcile sweep skips a run whose console was never rendered or is unresolved (decideArchive), and the archive-run verb below refuses a rendered-but-unresolved console.
+2. Verify the Review Console ran and applied/dismissed all staged items. Since #1130 this precondition is also code-enforced at both archival call sites — the reconcile sweep skips a run whose console was never rendered or is unresolved (decideArchive), and the archive-run verb below refuses a rendered-but-unresolved console, and an auto-merge short-circuit run (`auto:merge`-label or Manifesto-authorized) whose `staged/` still holds pending items (#3668).
 3. **Mark the run terminal, if not already closed by Section C's step 3.6** — before archiving, run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"` so close-run lifts E1 enforcement (clears the worktree assignment and marks the run clean). Idempotent: re-running it on an already-clean run (the worktree-strategy case, where Section C's step 3.6 closed it first) is a harmless no-op. E2/E3 logging for that run stops at close-run too — a terminal (clean) run is no longer resolved by the hook dispatcher, so no further events get appended. Archival (step 4) is bookkeeping that moves the directory for the audit trail — it is not the logging cutoff.
-4. **Archive the run directory** — `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "$RUN_DIR"`. This archives the tracked `work/` directory and moves every other entry (`config.yml`, `decisions.md`, `events.jsonl`, `staged/`, and anything else the run directory holds — the verb enumerates rather than assuming a fixed list) in one call. The verb refuses a non-terminal run (`active`/`interrupted`) — step 3's `close-run` call above is what makes this refusal unreachable in practice here, not a redundant check.
+4. **Archive the run directory** — `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "$RUN_DIR"`. This archives the tracked `work/` directory and moves every other entry (`config.yml`, `decisions.md`, `events.jsonl`, `staged/`, and anything else the run directory holds — the verb enumerates rather than assuming a fixed list) in one call. The verb refuses a non-terminal run (`active`/`interrupted`) — step 3's `close-run` call above is what makes this refusal unreachable in practice here, not a redundant check. An `archival refused — console-never-rendered-staged-pending` result is carried into the closing report as needs-human-action (pending `staged/` items the auto-merge short-circuit never surfaced), not retried or worked around.
 5. Skipped staged items remain in the archive; they are NOT silently dropped.
 
 Do NOT delete the run directory outright — the auto-decision log is project history (for the user's calibration of project policy), not pipeline state.
@@ -261,27 +261,31 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" teardown-run --run "$RUN_DIR" \
-     --merged  # or --abandoned when the branch was discarded, not merged
+     --merged --remote-ref-only  # or --abandoned --remote-ref-only when the branch was discarded, not merged
    ```
 
-   One command performs archival (idempotent if Section B already archived this run — a second
-   pass is a harmless no-op), worktree removal (skip-and-report if locked, never forced), the
+   One command performs worktree removal (skip-and-report if locked, never forced), the
    local branch delete (only under `--merged`, and only when the branch isn't the integration
    branch itself), and the remote branch delete (`pr-first-merge-post-merge.md`'s `## Step 5:
    Delete the remote branch` mechanism, verbatim) — replacing what used to be 4-5 hand-assembled
-   commands per run. A `worktree: registration pruned but directory still present at {path}` line
+   commands per run. It never archives the run directory (#3490): Sections D and E (items 6 and 7)
+   still read files under `$RUN_DIR` after this step, so archival stays Section B's job alone, last
+   (item 8, `cleanup-procedures.md`'s Ordering rule). `teardown-run` stopped archiving altogether in
+   #3490; `--remote-ref-only` says so at the call site and stays, inert, for the transition (removal
+   condition: `bin/hooks.js`'s `KNOWN_FLAGS` comment).
+   A `worktree: registration pruned but directory still present at {path}` line
    is not a completed removal: surface the path in the report and leave the directory for manual
    removal — never retry-delete it. **Own-worktree carve-out:** never call `teardown-run` against the worktree
    the session is standing in **while it is still live** — that removal path is `ExitWorktree`
    only, per step 4 above and `[IL-58]`; `teardown-run`'s own worktree-removal step is for a
    worktree this session does not occupy. Once step 4 has already removed it, step 5.5 below
-   calls a narrower form of `teardown-run` anyway, for a different reason.
+   calls `teardown-run` again anyway, for a different reason.
 5.5. **Own-worktree remote-branch delete (#3088).** Only when step 4 actually proceeded past its
    proof above and removed the worktree via `ExitWorktree` — never when step 4's proof stopped
    (no `mergeCommit`, a non-empty/differing containment check, or a non-zero ancestry check), and
    never when this spec's branch-finish outcome never reached `merged` at all. `ExitWorktree(remove)`
    in step 4 deletes the local branch along with the worktree — nothing in steps 1-4 deletes the
-   remote ref. Run `teardown-run` again, narrowed to just that one step, now that nothing live
+   remote ref. Run `teardown-run` again, now that nothing live
    remains for the rest of it to conflict with — but archival stays Section B's job alone (item 8
    always runs last, per `cleanup-procedures.md`'s Ordering rule, since Sections D/E and Section
    B's own archival all still need `$RUN_DIR` to resolve after this point):
@@ -290,7 +294,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" teardown-run --run "$RUN_DIR" --merged --remote-ref-only
    ```
 
-   `--remote-ref-only` skips archival (Step 2) only — the run directory stays exactly where it
+   `teardown-run` never archives (#3490), so the run directory stays exactly where it
    was, for Sections D, E, and B's own archival (item 8) to still find. Its state-close step is a
    harmless idempotent re-run (step 3.6 already closed it), its worktree-removal step reports "no
    worktree recorded" (already gone), and its local-branch-delete step reports a harmless failure
@@ -299,7 +303,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    exists (`teardown-run.js`'s branch resolution, #3088). This narrows, not contradicts, step 5's
    own carve-out above: that carve-out is about never routing *worktree removal* through
    `teardown-run` while the worktree is still live — calling it afterward, purely for this
-   leftover remote-ref cleanup, with archival suppressed, is the documented path.
+   leftover remote-ref cleanup, is the documented path.
 
 If no worktree exists for this spec, skip this section silently.
 
@@ -310,11 +314,11 @@ If no worktree exists for this spec, skip this section silently.
 If `/visual-review` or `/stories` auto-started a dev server during this run (`dev-url-detection.md` "Ephemeral server start"), it recorded the PID, port, worktree root, and detach state in `{run-dir}/ephemeral-server.txt` — read whatever it currently names, per that file's liveness-handle rule, since a dispatched second call may have restarted the server and rewritten this record since it was first written.
 
 1. **Multi-spec defer check:** if `MULTISPEC_REVIEW_DEFER=1` is set, **skip this section** — the server is shared across all specs in the run. The parent `/flow` kills it once after the consolidated Review Console (otherwise each later spec's visual review would have to restart it).
-2. Read `{run-dir}/ephemeral-server.txt` (`{pid} {port} {worktree-root} detached:{yes|no}`). **Detect the platform first** (e.g. `node -p process.platform`, reading `win32`) and stop the process accordingly:
+2. Read `{run-dir}/ephemeral-server.txt` (`{pid} {port} {worktree-root} detached:{yes|no}`). A record that cannot be parsed — fewer than four fields, a pid or port that is not a positive integer, or no trailing `detached:` token — is unprovable: log `SKIP` via `log-decision.js` naming that condition, leave the file and every process alone, signal nothing, and skip the rest of this step and steps 3-4. Otherwise, **detect the platform first** (e.g. `node -p process.platform`, reading `win32`) and stop the process accordingly:
    - **win32:** stop the recorded PID with a tree kill — `taskkill /PID {pid} /T /F` — regardless of what the `detached:` field reads. On this platform the field is always `detached:no` (`dev-url-detection.md`'s Ownership rule: no detach primitive is available there), so a leader-only stop would leave a shell-spawned dev command's children running and still holding their ports; `/T` scopes the kill to the recorded PID's own descendants, never the caller's own shell, giving the same coverage the POSIX `detached:yes` group kill gives below.
    - **POSIX:** `kill {pid}` — with a port-isolation lease (#1795), the recorded port is known and the PID kill alone is sufficient; the `lsof -ti tcp:{port} | xargs kill` fallback for a stale PID is a no-lease/POSIX-only path (see `dev-url-detection.md`'s Step 0.5). When the fourth field reads `detached:yes`, also kill the process group (`kill -- -{pid}`, the negative-pid form) so a detached dev command's own children don't outlive their leader — never do this when the field reads `detached:no`, since a non-detached server shares its process group with whatever spawned it and a group kill there could take down the caller's own shell.
 3. **An already-gone pid is not an error.** POSIX: `kill {pid}` failing with "no such process" means the server already stopped (a prior cleanup attempt, or the process died on its own) — log "already stopped: pid {pid}" and continue; never surface this as a cleanup failure. win32: `taskkill` reporting the PID was not found means the same thing — log "already stopped: pid {pid}" and continue. `taskkill /F` also exits non-zero on access-denied; only the not-found case is "already stopped" — any other non-zero exit (access-denied or otherwise) is a real cleanup failure and must be reported as one, never silently treated as already-stopped.
-4. Confirm the port is free, then delete `ephemeral-server.txt`.
+4. Confirm the port is free, then delete `ephemeral-server.txt`. **Port still held after the kill** (a leader-only stop under `detached:no`): the server is still live, so keep `ephemeral-server.txt` — do not delete it — log `SKIP` via `log-decision.js` naming that condition, and report a cleanup failure naming the survivor: the recorded pid and the port still held.
 
 This only stops servers *this pipeline started*. A dev server the user was already running (or one on the main checkout) is never touched — it was never recorded in `ephemeral-server.txt`.
 

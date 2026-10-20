@@ -1,0 +1,48 @@
+
+ RUN  v1.6.0 /repo
+
+ ❯ tests/flaky.test.js  (1 test | 1 failed) 3ms
+   ❯ tests/flaky.test.js > flaky sometimes fails
+     → expected 1 to be 2 // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/flaky.test.js > flaky sometimes fails
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ tests/flaky.test.js:2:49
+      1| import { test, expect } from 'vitest';
+      2| test('flaky sometimes fails', () => { expect(1).toBe(2); });
+       |                                                 ^
+      3|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  12:00:00
+   Duration  188ms (transform 16ms, setup 0ms, collect 11ms, tests 3ms, environment 0ms, prepare 49ms)
+
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: reporter left a rejected promise
+ ❯ R.onFinished rep.mjs:4:20
+      2|   async onFinished() {
+      3|     await new Promise((r) => setTimeout(r, 50));
+      4|     Promise.reject(new Error('reporter left a rejected promise'));
+       |                    ^
+      5|     await new Promise((r) => setTimeout(r, 50));
+      6|   }
+ ❯ Vitest.report /repo/node_modules/vitest/dist/vendor/cli-api.E07AF1Yq.js:11518:5
+ ❯ async file:///repo/node_modules/vitest/dist/vendor/cli-api.E07AF1Yq.js:11218:7
+ ❯ Vitest.runFiles /repo/node_modules/vitest/dist/vendor/cli-api.E07AF1Yq.js:11225:12
+ ❯ Vitest.start /repo/node_modules/vitest/dist/vendor/cli-api.E07AF1Yq.js:11092:7
+ ❯ startVitest /repo/node_modules/vitest/dist/vendor/cli-api.E07AF1Yq.js:18345:7
+ ❯ start /repo/node_modules/vitest/dist/vendor/cac.EdDItJD-.js:1415:17
+ ❯ CAC.run /repo/node_modules/vitest/dist/vendor/cac.EdDItJD-.js:1395:3

@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { parseStatusPorcelainZ } = require('./git-z');
 
 function stripQuotes(s) {
   const t = s.trim();
@@ -223,18 +224,15 @@ function tryGit(args, cwd, timeoutMs) {
   }
 }
 
-// Extracts the basenames of every path `git status --porcelain` reported as
-// changed. Rename entries (`R  old -> new`) name two paths; the destination is
-// the one that exists in the working tree, so it is the one that counts.
+// Extracts the basenames of every `.yml` path `git status --porcelain -z`
+// reported as changed. A rename record's `path` is already the destination --
+// the one that exists in the working tree, so it is the one that counts; the
+// original path is a separate token the parser attaches as `origPath`. `-z`
+// keeps a non-ASCII name raw instead of C-quoted (`_shared/git-path-read.md`).
 function parsePorcelainNames(out) {
   const names = new Set();
-  for (const line of (out || '').split('\n')) {
-    if (line.trim() === '') continue;
-    let p = line.slice(3);
-    const arrow = p.indexOf(' -> ');
-    if (arrow !== -1) p = p.slice(arrow + 4);
-    p = p.trim().replace(/^"(.*)"$/, '$1');
-    if (p.endsWith('.yml')) names.add(path.posix.basename(p));
+  for (const record of parseStatusPorcelainZ(out || '')) {
+    if (record.path.endsWith('.yml')) names.add(path.posix.basename(record.path));
   }
   return names;
 }
@@ -246,13 +244,13 @@ function parsePorcelainNames(out) {
 // unavailable).
 function readRoutineRecordsAtRef({ cwd = process.cwd(), ref, dir = DEFAULT_RECORD_DIR, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   if (!ref) return null;
-  if (!tryGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], cwd, timeoutMs).ok) return null;
-  const ls = tryGit(['ls-tree', '-r', '--name-only', '-z', ref, '--', dir], cwd, timeoutMs);
+  if (!tryGit(['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`], cwd, timeoutMs).ok) return null;
+  const ls = tryGit(['ls-tree', '-r', '--name-only', '-z', '--end-of-options', ref, '--', dir], cwd, timeoutMs);
   if (!ls.ok) return null;
   const records = [];
   for (const p of ls.out.split('\0')) {
     if (!p.endsWith('.yml')) continue;
-    const show = tryGit(['show', `${ref}:${p}`], cwd, timeoutMs);
+    const show = tryGit(['show', '--end-of-options', `${ref}:${p}`], cwd, timeoutMs);
     if (!show.ok) continue;
     let parsed;
     try {
@@ -335,7 +333,7 @@ function compareRoutineRecords({
   // One status call for the whole directory, not one per record: git process
   // startup dominates this comparison's cost, and the per-record form made it
   // scale with the number of routines a project has.
-  const dirtyLocally = parsePorcelainNames(tryGit(['--no-optional-locks', 'status', '--porcelain', '--', dir], cwd, timeoutMs).out);
+  const dirtyLocally = parsePorcelainNames(tryGit(['--no-optional-locks', 'status', '--porcelain', '-z', '--', dir], cwd, timeoutMs).out);
 
   for (const filename of names) {
     const local = localByName.get(filename) || null;

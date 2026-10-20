@@ -198,6 +198,36 @@ test('the three local-merge fallback sections route the post-merge release-statu
   assert.match(AUTO_MERGE, /pr-first-merge-post-merge\.md` Step 4\.1/);
 });
 
+// #3297: a merged run with no console.json and pending staged/ items skips
+// reconcile with console-never-rendered-staged-pending. Step 4.2 must report it
+// as needing human action, never as converged, while keeping the transient-failure
+// sentence (AC2.1) intact.
+test('AC1.1: Step 4.2 reports a console-never-rendered-staged-pending skip as needing human action, never as converging (#3297)', () => {
+  const step42 = MERGE_POST_MERGE.indexOf('### Step 4.2: Reconcile');
+  const step5 = MERGE_POST_MERGE.indexOf('## Step 5: Delete the remote branch');
+  assert.ok(step42 > 0 && step5 > step42, 'Step 4.2 must precede Step 5');
+  const section = MERGE_POST_MERGE.slice(step42, step5);
+  assert.ok(section.includes('`console-never-rendered-staged-pending`'), 'the reason string must be named verbatim');
+  assert.match(section, /needs human action/, 'the skip must be reported as needing human action');
+  assert.match(section, /AUTO \{time\} — pr-first-merge Step 4\.2:[^\n]*console-never-rendered-staged-pending/, 'the Step 4.2 log line must name the reason');
+  assert.match(section, /\$PIPELINE_RUN_DIR\/console\.json/, 'the skip must be decided by checking this run directly, not from the aggregate summary');
+});
+
+test('AC2.1: Step 4.2 still leaves a transient failure for the next trigger point (#3297)', () => {
+  const step42 = MERGE_POST_MERGE.indexOf('### Step 4.2: Reconcile');
+  const step5 = MERGE_POST_MERGE.indexOf('## Step 5: Delete the remote branch');
+  assert.match(MERGE_POST_MERGE.slice(step42, step5), /is logged and left for the next trigger point/);
+});
+
+test('Deliverable 2: auto-merge-short-circuit records why it writes no console.json (#3297)', () => {
+  const prFirst = AUTO_MERGE.indexOf('Fast-lane auto-merge: issue #{n}, assess-agent-autonomy verdict auto-merge (see RATIONALE), pr-first-merge outcome');
+  const localMerge = AUTO_MERGE.indexOf('**`integration-model: local-merge`:**', prFirst);
+  assert.ok(prFirst > 0 && localMerge > prFirst, 'the pr-first paragraph must precede the local-merge paragraph');
+  const region = AUTO_MERGE.slice(prFirst, localMerge);
+  assert.match(region, /console\.json/, 'the pr-first region must mention console.json');
+  assert.match(region, /#3297/, 'the pr-first region must cite #3297');
+});
+
 // #1411 deliverable 4: pin Step 3 item 1's auto-merge-not-enabled classification
 // against the literal captured GitHub GraphQL wording (PR #1401, 2026-08-24:
 // `GraphQL: Auto merge is not allowed for this repository
@@ -294,6 +324,38 @@ test('#3521: the token-alone match yields to item 3\'s and item 4\'s signatures'
   assert.doesNotMatch(PRE_3521_ITEM_1, /unless item 3's or item 4's signature/, 'pre-change text must NOT carry the precedence clause (proves the pin can go red) [IL-105]');
 });
 
+// #3269: PR #3427 (2026-10-18) captured a third arm-unavailable wording — GitHub refuses to arm a PR it could merge right now. Pin it as a literal in item 1, with a frozen pre-change control.
+const PRE_3269_ITEM_1 = `1. **Command failed with an auto-merge-not-enabled signature** — stderr contains the literal
+   captured GitHub GraphQL wording \`Auto merge is not allowed for this repository\` (captured
+   verbatim on this repo, PR #1401, 2026-08-24: \`GraphQL: Auto merge is not allowed for this
+   repository (enablePullRequestAutoMerge)\`), or the second literal
+   \`Protected branch rules not configured for this branch\` (captured verbatim on this repo,
+   PR #3450, 2026-10-18: \`GraphQL: Pull request Protected branch rules not configured for this
+   branch (enablePullRequestAutoMerge)\`), or the looser paraphrase — \`auto-merge\` and
+   (\`not allowed\` or \`not enabled\`) — for a differently-worded GitHub response to the same
+   repository setting ("Allow auto-merge") being off. \`enablePullRequestAutoMerge\` alone in the
+   error text also matches, unless item 3's or item 4's signature is also present: it is the arm
+   mutation's name, which GitHub appends to every arm-unavailable failure of an \`--auto\` call.
+   \`allow_auto_merge: true\` alone, without
+   branch protection or a ruleset on the base branch, still fails this way — the setting by
+   itself does not make \`--auto\` armable (the Step 2.5 "Why \`--auto\` alone is not a wait"
+   mechanism):`;
+
+function carriesCleanStatus(text) {
+  return text.includes('Pull request is in clean status') && text.includes('PR #3427');
+}
+
+test('#3269 AC3.1: Step 3 item 1 carries the PR #3427 clean-status literal', () => {
+  const body = item1Body();
+  assert.ok(carriesCleanStatus(body));
+  assert.ok(body.includes('PR #3427, 2026-10-18'));
+});
+
+test('#3269 AC2.1: the clean-status pin goes red on the pre-change item 1 text', () => {
+  assert.equal(carriesCleanStatus(PRE_3269_ITEM_1), false, '[IL-105]');
+  assert.ok(PRE_3269_ITEM_1.includes('Protected branch rules not configured for this branch'), 'control text is the post-#3521 paragraph');
+});
+
 test('/flow closing reports carry the release-status line verbatim (#678)', () => {
   const summary = read('plugin', 'skills', 'flow', 'summary-template.md');
   // The multi-spec closing template moved to multispec-summary.md in #724's
@@ -362,4 +424,59 @@ test('AC1.2: task-prompt.md second-call template cites the rule via the merge bu
   assert.match(citing[0], /`\{minted-run-dir\}\/context\/merge\.md`'s "Never rewrite the integration branch"/);
   assert.match(citing[0], /\(if that bundle is absent, read `_shared\/pr-first-merge\.md` directly\)/);
   assert.doesNotMatch(second, /force-push/, 'the second-call slice cites the rule, it does not restate it');
+});
+
+// #3607: a PR that conflicts with its base gets no `pull_request` workflow runs,
+// so its rollup is empty — Step 2.5 must read the merge state before treating
+// that empty rollup as pending, or it watches 15 minutes and parks as
+// checks-pending-timeout instead of reaching the Conflict path. Frozen
+// pre-change bullet below proves the pins can go red [IL-105].
+const PRE_3607_EMPTY_ROLLUP = `- An **empty rollup** → depends on the lever: under \`merge-when-green\` or \`wait\` the repo has PR CI
+  by construction (\`_shared/policy-schema-coverage.md\`'s coverage block derives those values only when a
+  \`pull_request\`-triggered workflow exists, and an explicit value is a statement that CI is
+  expected), so an empty rollup means the checks have not *reported yet* — GitHub populates it
+  seconds after a push, not instantly — and reads as **pending**, never green; under \`off\` it is
+  simply "no CI" and proceeds as green.`;
+
+function step25Section() {
+  return MERGE.slice(MERGE.indexOf('## Step 2.5: Merge-verification gate'), MERGE.indexOf('## Step 3:'));
+}
+
+function emptyRollupBullet() {
+  const section = step25Section();
+  const start = section.indexOf('- An **empty rollup**');
+  assert.ok(start !== -1, 'Step 2.5 must carry the empty-rollup bullet');
+  return section.slice(start, section.indexOf('\n- Otherwise', start));
+}
+
+test('#3607: the Step 2.5 state read fetches mergeable alongside mergeStateStatus', () => {
+  const section = step25Section();
+  assert.ok(section.includes('--json state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup'));
+  assert.ok(section.includes('those five fields'), 'the parse-failure bullet must count the widened field list');
+});
+
+test('#3607 AC1: an empty rollup reporting DIRTY or CONFLICTING routes to the Conflict path before any pending read', () => {
+  const bullet = emptyRollupBullet();
+  for (const needle of ['`mergeStateStatus: DIRTY`', '`mergeable: CONFLICTING`', '**Conflict path**', 'checks-pending-timeout']) {
+    assert.ok(bullet.includes(needle), `empty-rollup bullet missing ${needle}`);
+  }
+  const dirty = bullet.indexOf('DIRTY');
+  const pending = bullet.indexOf('reads as **pending**');
+  const off = bullet.indexOf('under `off`');
+  assert.ok(dirty < pending && pending < off, 'the conflict routing precedes the lever split, so it applies under every lever value');
+  assert.ok(!PRE_3607_EMPTY_ROLLUP.includes('DIRTY'), 'pre-change bullet must NOT route DIRTY (proves the pin can go red) [IL-105]');
+});
+
+test('#3607 AC2: an empty rollup with any other merge state keeps the pending read', () => {
+  const bullet = emptyRollupBullet();
+  assert.ok(bullet.includes('reads as **pending**, never green'));
+  assert.ok(bullet.includes('under `off` it is\n  simply "no CI"') || bullet.includes('under `off` it is simply "no CI"'));
+  const conflictSentence = bullet.slice(0, bullet.indexOf('reads as **pending**'));
+  assert.ok(!conflictSentence.includes('UNKNOWN'), 'only DIRTY / CONFLICTING route to the Conflict path — UNKNOWN (mergeability still computing) stays pending');
+});
+
+test('#3607: a clean update-from-base entered from Step 2.5 re-enters Step 2.5, not Step 3', () => {
+  const conflict = MERGE.slice(MERGE.indexOf('## Conflict path'), MERGE.indexOf('## Outcome vocabulary'));
+  assert.ok(conflict.includes('entered from Step 2.5'), 'Conflict path must name its Step 2.5 entry');
+  assert.ok(conflict.includes('re-enter Step 2.5 from the top'), 'a pushed head from a Step 2.5 entry needs its own CI read before any merge');
 });

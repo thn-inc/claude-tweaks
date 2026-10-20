@@ -48,18 +48,19 @@ function assertCrossrefFenceRunsStandalone(crossrefFence) {
     // Drop SPECIFY_DECOMP_MANIFEST from the inherited env so the machine's own environment
     // cannot mask a fence that fails to set it.
     const { SPECIFY_DECOMP_MANIFEST, ...base } = process.env;
-    const env = { ...base, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_CODE_SESSION_ID: SESSION_ID, TMPDIR: tmp };
+    // Forward slashes: the fences interpolate this into a JS string literal, where win32 backslashes read as escapes.
+    const env = { ...base, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT.split(path.sep).join('/'), CLAUDE_CODE_SESSION_ID: SESSION_ID, TMPDIR: tmp };
     const run = (script, extra = {}) => spawnSync('bash', ['-c', script], { cwd, env: { ...env, ...extra }, encoding: 'utf8' });
-    const expectOk = (r) => assert.strictEqual(r.status, 0, `fence exited ${r.status}: ${r.stderr}`);
-    expectOk(run(INIT_FENCE));
-    expectOk(run(ACCUM_FENCE, {
+    const expectOk = (label, r) => assert.strictEqual(r.status, 0, `${label} fence exited ${r.status}: ${r.stderr}`);
+    expectOk('init', run(INIT_FENCE));
+    expectOk('accumulate', run(ACCUM_FENCE, {
       SUB_ISSUE_TITLE: 'Unit 1', SUB_ISSUE_NUM: '1', SPECIFY_SUB_ISSUE_BODY: bodyFile, SUB_ISSUE_CEREMONY: 'standard',
     }));
-    expectOk(run(ACCUM_FENCE, {
+    expectOk('accumulate', run(ACCUM_FENCE, {
       SUB_ISSUE_TITLE: 'Unit 2', SUB_ISSUE_NUM: '2', SPECIFY_SUB_ISSUE_BODY: bodyFile, SUB_ISSUE_CEREMONY: 'fast-lane',
     }));
     const r = run(crossrefFence);
-    expectOk(r);
+    expectOk('cross-reference', r);
     assert.ok(Array.isArray(JSON.parse(r.stdout)), 'cross-reference fence must print a JSON array');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -90,5 +91,5 @@ test('crossReferenceKeyFiles fence runs as its own Bash call against a scratch m
 test('go-red control: the fence without its own re-resolution fails the same assertion', () => {
   const stripped = CROSSREF_FENCE.replace(/^SPECIFY_DECOMP_MANIFEST=\$\(node -e "[\s\S]*?^"\)\n/m, '');
   assert.notStrictEqual(stripped, CROSSREF_FENCE, 'the strip must actually remove the assignment');
-  assert.throws(() => assertCrossrefFenceRunsStandalone(stripped), /fence exited 1: [\s\S]*ENOENT/);
+  assert.throws(() => assertCrossrefFenceRunsStandalone(stripped), /cross-reference fence exited 1: [\s\S]*ENOENT/);
 });

@@ -1,0 +1,30 @@
+
+=============================== Coverage summary ===============================
+Statements   : 66.66% ( 2/3 )
+Branches     : 100% ( 0/0 )
+Functions    : 50% ( 1/2 )
+Lines        : 66.66% ( 2/3 )
+================================================================================
+FAIL tests/flaky.test.js
+  ✕ sometimes fails (2 ms)
+
+  ● sometimes fails
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 2
+    Received: 1
+
+      1 | const { used } = require('../src/lib');
+    > 2 | test('sometimes fails', () => { expect(used()).toBe(2); });
+        |                                                ^
+      3 |
+
+      at Object.toBe (tests/flaky.test.js:2:48)
+
+Jest: "global" coverage threshold for lines (100%) not met: 66.66%
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 total
+Snapshots:   0 total
+Time:        0.997 s
+Ran all test suites.

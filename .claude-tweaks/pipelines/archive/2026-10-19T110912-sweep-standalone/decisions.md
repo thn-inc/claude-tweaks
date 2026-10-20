@@ -7,6 +7,7 @@
 - AUTO 13:23:45 — Step 7 Delete: git rm 26 orphaned plans under docs/superpowers/plans/ — each related record closed and no repo file cites the basename (re-verified fresh in scratch worktree tidy-sweep-2026-10-19); kept: 2767 (record open), 3316 (cited by docs/reference/dispatch-cost-baseline.md). Reversibility: med. [lever: tidy-aggressiveness=moderate (default)]
 - AUTO 13:24:50 — Step 7.5 housekeeping PR: PR #3591 opened (commit 57d08bba3) and gh pr merge --auto --squash merged it immediately (no required checks on main) rather than arming — compose-subject.js has no record-less form, subject hand-composed. Reversibility: med. [lever: housekeeping-auto-merge=true (policy)]
 - AUTO 14:15:40 — Approve (--approve): digest-promotion-1 approved (user: 'do all the next actions'); premise re-verified live; filed #3595 (type:task); marked 3 [wrap-up] entry lines in #1426 → #3595 (comments 6220771816, 6242125727, 6262466601). Reversibility: med.
+- AUTO 09:13:02 — Approve (--approve): digest-promotion-1 stale — skipped: already applied 2026-10-19 (#3595 filed, 3 #1426 entry lines marked); staged/ copy reappeared via the tracked run-dir trail (#3596). Nothing left to apply; archiving. Reversibility: high.
 ## /specify
 - AUTO 13:27:21 — Claim: claimed #3414 (bare drain iteration 1, transport git). Reversibility: high.
 - AUTO 13:28:27 — Release: released claim on #3414 (routed: needs:decision #3414); labels removed: bot:in-progress. Reversibility: high.

@@ -9,18 +9,21 @@
 // that is installed but disabled still resolves; the notice describes the stale
 // install, which is a true fact, rather than claiming the session loaded it.
 //
-// Probe results (headless `claude -p` init events, verified 2026-10-17):
-//   - Confirmed: a project-scope entry applies to its `projectPath` and to every
-//     directory below it, including a worktree of that project.
-//   - Reversed: a project-scope entry whose `projectPath` is the home directory
-//     never applies — `~`, `~/Code Workspaces` and an ad-hoc directory all loaded
-//     the user-scope install. That is why selectEntry is called with
-//     `excludeHome: true`.
-//   - Observed, not encoded: two projects with exact-match project entries
-//     (6.2.0 and 6.3.0) loaded the user-scope 7.0.0. Both lack
-//     `claude-plugins-official` in the project's `extraKnownMarketplaces`. This is
-//     unexplained, so the resolver still matches such entries; the notice states
-//     the stale install, not that the session runs it.
+// Which record runs is the first applicable one in file order — the rule, and
+// the Claude Code 2.1.302 probe of 2026-10-19 behind it, are in
+// installed-plugins.js. Records keep their file order and are never sorted
+// (lastUpdated does not rank them). Which of several `superpowers@{marketplace}`
+// keys loads is unsettled, so the keys flatten in `Object.keys` order and the
+// notice states the stale install, not that the session runs it.
+//
+// The missing-path remedy (a project or local record whose projectPath is gone)
+// rests on the Claude Code 2.1.302 probe of 2026-10-20: `update` (explicit
+// `--scope project`/`local`, or auto scope) from the main checkout updates the
+// first applicable record in file order; `uninstall --scope project`/`local`
+// from the main checkout removes the main checkout's own record (exact
+// `projectPath` match); after `mkdir -p` of the deleted path, `uninstall` run
+// from inside it removes the stale record; `uninstall --scope local` against
+// project records fails with "installed in project scope, not local".
 //
 // Placement: the SessionStart hook's inform tier. That hook already assembles
 // the inform-tier banners and has the cwd, and one small synchronous read fits
@@ -32,6 +35,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readInstalledPlugins, selectEntry, safeRealpath } = require('./installed-plugins');
+const { lstatType } = require('./path-guard');
 
 // The last verified pin in tools/upstream-drift/manifest.yml. A future
 // superpowers re-pin deliberately raises the notice threshold for every project
@@ -65,7 +69,7 @@ function defaultDeps() {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     // The native realpath canonicalizes case on a case-insensitive volume (the
     // JS one echoes the input's casing), so a mis-cased cwd or projectPath still
-    // compares equal to the home directory and to its own project.
+    // compares equal to its own project.
     realpath: fs.realpathSync.native,
     homedir: os.homedir,
     env: process.env,
@@ -88,17 +92,12 @@ function effectiveSuperpowersVersion(projectDir, overrides = {}) {
       if (!m || !MARKETPLACE_RE.test(m[1]) || !Array.isArray(plugins[key])) continue;
       for (const e of plugins[key]) {
         if (!e || typeof e !== 'object') continue;
-        if (e.scope !== 'user' && e.scope !== 'project') continue;
+        if (e.scope !== 'user' && e.scope !== 'managed' && e.scope !== 'project' && e.scope !== 'local') continue;
         if (typeof e.projectPath === 'string' && CONTROL_CHAR_RE.test(e.projectPath)) continue;
         flat.push({ ...e, marketplace: m[1] });
       }
     }
-    // Latest first, so equal-length project matches (and the user fallback)
-    // resolve to the most recently updated install.
-    const stamp = (e) => (typeof e.lastUpdated === 'string' ? e.lastUpdated : '');
-    flat.sort((a, b) => (stamp(a) < stamp(b) ? 1 : stamp(a) > stamp(b) ? -1 : 0));
-
-    const chosen = selectEntry(flat, projectDir, deps, { excludeHome: true });
+    const chosen = selectEntry(flat, projectDir, deps);
     if (!chosen || typeof chosen.installPath !== 'string') return null;
 
     const pkg = JSON.parse(deps.readFile(path.join(chosen.installPath, '.claude-plugin', 'plugin.json')));
@@ -119,9 +118,13 @@ function effectiveSuperpowersVersion(projectDir, overrides = {}) {
 function superpowersNotice({ effective, floor, projectDir }) {
   if (!effective || !isOlder(effective.version, floor)) return null;
   let suffix = '';
-  if (effective.scope === 'project' && typeof effective.projectPath === 'string') {
+  if ((effective.scope === 'project' || effective.scope === 'local') && typeof effective.projectPath === 'string') {
     const deps = { realpath: fs.realpathSync.native };
-    if (safeRealpath(effective.projectPath, deps) !== safeRealpath(projectDir, deps)) {
+    if (lstatType(effective.projectPath).type === 'missing') {
+      // The record applies here only because its path belongs to this git checkout;
+      // never name a gone directory as the place to run from; the remedy recreates it first.
+      suffix = ` (this install is recorded for ${effective.projectPath}, which no longer exists; it applies here because that path belongs to the same git checkout; the update command above, run in this checkout, updates that record; to remove it instead, run mkdir -p "${effective.projectPath}", then claude plugin uninstall superpowers@${effective.marketplace} --scope ${effective.scope} from inside that directory, then delete the directory — running that uninstall from this checkout removes this checkout's own record, not the stale one; never run these removal steps yourself)`;
+    } else if (safeRealpath(effective.projectPath, deps) !== safeRealpath(projectDir, deps)) {
       suffix = ` (run from ${effective.projectPath}, the project this install belongs to)`;
     }
   }

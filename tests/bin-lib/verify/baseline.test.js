@@ -1032,3 +1032,43 @@ test('#3153: each log is read against its own checkout — a predicate scoped to
   const r2 = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p2 }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir2, runOne: runOne2, git: git2 });
   assert.deepStrictEqual(r2.baselineFailing, []);
 });
+
+test('a failing path the retry template cannot quote is ineligible, never run (#3676)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a b.test.js']));
+  const { git, runOne, calls } = fakes({ outcomes: {} });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: new Map([['tests', "NODE_OPTIONS='--x' node --test {file}"]]), base: 'origin/main', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git, platform: 'linux' });
+  assert.strictEqual(r.eligible, false);
+  assert.strictEqual(r.reason, 'tests failing file tests/a b.test.js cannot be handed to the shell safely (template-quotes)');
+  assert.strictEqual(calls.runs.length, 0);
+  assert.strictEqual(calls.added.length, 0);
+});
+
+test('a failing path with a leading dash is ineligible, never run (#3676)', async () => {
+  const { p, dir } = logFile(SPEC(['-x.test.js']));
+  const { git, runOne, calls } = fakes({ outcomes: {} });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'origin/main', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git, platform: 'linux' });
+  assert.strictEqual(r.eligible, false);
+  assert.strictEqual(r.reason, 'tests failing file -x.test.js cannot be handed to the shell safely (leading-dash)');
+  assert.strictEqual(calls.runs.length, 0);
+});
+
+test('adjudicate hands its platform to the path quoting — a win32 percent path is refused where linux quotes it (#3676)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/%PATH%.test.js']));
+  const run = (platform) => {
+    const { git, runOne } = fakes({ outcomes: {} });
+    return adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'origin/main', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git, platform });
+  };
+  const win = await run('win32');
+  assert.strictEqual(win.eligible, false);
+  assert.strictEqual(win.reason, 'tests failing file tests/%PATH%.test.js cannot be handed to the shell safely (cmd-unquotable)');
+  assert.notStrictEqual((await run('linux')).eligible, false, 'the same path quotes fine on linux');
+});
+
+test('a quotable spaced failing path reaches the run stage as the quoted command (#3676)', async () => {
+  const { p, dir } = logFile(SPEC(['tests/a b.test.js']));
+  const { git, runOne, calls } = fakes({ outcomes: {} });
+  const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'origin/main', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git, platform: 'linux' });
+  assert.notStrictEqual(r.eligible, false, 'a quotable path is not refused');
+  assert.ok(calls.runs.length > 0, 'the adjudication reached the run stage');
+  assert.ok(calls.runs.every((c) => c.file === "'tests/a b.test.js'"), 'every run got the single-quoted path');
+});

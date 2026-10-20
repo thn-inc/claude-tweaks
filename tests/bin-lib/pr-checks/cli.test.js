@@ -60,8 +60,16 @@ function makeDeps(main, over = {}) {
 }
 
 test('parseArgs: --run required, unknown flag rejected', () => {
-  assert.deepEqual(parseArgs(['--run', 'x']), { run: 'x', help: false });
+  assert.deepEqual(parseArgs(['--run', 'x']), { run: 'x', pr: null, help: false });
   assert.ok(parseArgs(['--bogus']).error);
+});
+
+test('parseArgs: --pr takes a positive integer; --pr with --run is an error', () => {
+  assert.equal(parseArgs(['--pr', '12']).pr, 12);
+  assert.ok(parseArgs(['--pr', 'abc']).error);
+  assert.ok(parseArgs(['--pr', '0']).error);
+  assert.ok(parseArgs(['--pr']).error);
+  assert.ok(parseArgs(['--pr', '7', '--run', 'x']).error);
 });
 
 test('--help prints usage and exits 0 without touching gh', () => {
@@ -260,6 +268,114 @@ test('a green rollup plus a completed failing head run is red, naming that run (
   const j = h.json();
   assert.equal(j.state, 'red');
   assert.deepEqual(j.failing, [{ name: 'lint', url: 'https://ci.example/r/2' }]);
+});
+
+// --pr <n> (#3469): classify a PR by number with no run dir. git answers only
+// `rev-parse --show-toplevel`; a `rev-parse HEAD` call throws, proving --pr never reads local HEAD.
+function prDeps(main, over = {}) {
+  return makeDeps(main, {
+    git: (args) => {
+      if (args.join(' ') === 'rev-parse --show-toplevel') return `${main}\n`;
+      throw new Error('unexpected git ' + args.join(' '));
+    },
+    ...over,
+  });
+}
+
+function prGh(headRun, ghCalls = []) {
+  return (args) => {
+    ghCalls.push(args);
+    if (args[0] === 'pr') return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [{ name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' }], baseRefName: 'main' });
+    return JSON.stringify([headRun]);
+  };
+}
+
+test('--pr and --run together is exit 2 with no gh calls', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = prDeps(main);
+  assert.equal(run(['--pr', '7', '--run', runDir], h.deps), 2);
+  assert.equal(h.ghCalls.length, 0);
+});
+
+test('--pr with a non-integer is exit 2', () => {
+  const { main } = fixture(null);
+  for (const bad of ['abc', '0']) {
+    const h = prDeps(main);
+    assert.equal(run(['--pr', bad], h.deps), 2, bad);
+    assert.equal(h.ghCalls.length, 0, bad);
+  }
+});
+
+test('AC1.1: --pr reads a green rollup with an in-progress head run as pending', () => {
+  const { main } = fixture(null);
+  const ghCalls = [];
+  const h = prDeps(main, { gh: prGh({ name: 'test', workflowName: 'test', status: 'in_progress', conclusion: '', url: 'u' }, ghCalls) });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'pending');
+  assert.ok(j.pending.includes('test'));
+  assert.equal(j.pr, 7);
+  assert.equal(j.localHead, null);
+  assert.deepEqual(ghCalls[0], ['pr', 'view', '7', '--json', 'headRefOid,statusCheckRollup,baseRefName']);
+  const runCall = ghCalls.find((a) => a[0] === 'run');
+  assert.ok(runCall.includes('--commit'));
+  assert.equal(runCall[runCall.indexOf('--commit') + 1], HEAD);
+});
+
+test('--pr green when rollup and head runs are complete', () => {
+  const { main } = fixture(null);
+  const h = prDeps(main, { gh: prGh({ name: 'test', workflowName: 'test', status: 'completed', conclusion: 'success', url: 'u' }) });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'green');
+  assert.equal(j.pr, 7);
+  assert.equal(j.localHead, null);
+});
+
+test('--pr with gh absent is gh-absent and never calls gh', () => {
+  const { main } = fixture(null);
+  const h = prDeps(main, { ghAvailable: () => false });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'gh-absent');
+  assert.equal(j.pr, 7);
+  assert.equal(h.ghCalls.length, 0);
+});
+
+test('--pr: a failed head-runs read on a non-red verdict is read-failed', () => {
+  const { main } = fixture(null);
+  const h = prDeps(main, {
+    gh: (args) => {
+      if (args[0] === 'pr') return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [{ name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' }] });
+      throw new Error('HTTP 503');
+    },
+  });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'read-failed');
+  assert.match(j.reason, /gh run list failed/);
+  assert.equal(j.pr, 7);
+});
+
+test('--pr: a red rollup still reads the base tip and can be inherited-red', () => {
+  const { main } = fixture(null);
+  const f = redWithBase(['test'], ['test']);
+  const h = prDeps(main, f.over);
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'inherited-red');
+  assert.equal(j.localHead, null);
+  assert.equal(j.pr, 7);
+});
+
+test('--pr: a failed gh pr view is read-failed with a null localHead', () => {
+  const { main } = fixture(null);
+  const h = prDeps(main, { gh: () => { throw new Error('HTTP 502'); } });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'read-failed');
+  assert.equal(j.localHead, null);
+  assert.match(j.reason, /gh pr view failed/);
 });
 
 const BASE_SHA = 'e'.repeat(40);

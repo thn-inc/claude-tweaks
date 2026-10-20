@@ -115,7 +115,7 @@ test('scanner flags an unflagged status call and ignores non-git status (proves 
 });
 
 test('a comment-stripper mis-parse is reported, not passed as a file with no status calls', () => {
-  assert.deepEqual(unflaggedStatusCalls("const re = /[/*]/; runGit(['status']); /* c */"), {
+  assert.deepEqual(unflaggedStatusCalls("if (x) /[/*]/.test(x); runGit(['status']); /* c */"), {
     matched: 0,
     offenders: [{ line: 0, text: 'the comment stripper mis-parsed this file: the stripped text no longer compiles, so live code was blanked and cannot be scanned — see tests/helpers/strip-comments.js' }],
   });

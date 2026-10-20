@@ -1,0 +1,32 @@
+
+ RUN  v1.6.0 /repo
+
+ ↓ tests/b.test.js  (1 test | 1 skipped)
+ ❯ tests/a-flaky.test.js  (1 test | 1 failed) 3ms
+   ❯ tests/a-flaky.test.js > flaky sometimes fails
+     → expected 1 to be 2 // Object.is equality
+
+ Test Files  1 failed | 1 skipped (2)
+      Tests  1 failed | 1 skipped (2)
+   Start at  12:00:00
+   Duration  190ms (transform 10ms, setup 0ms, collect 11ms, tests 3ms, environment 0ms, prepare 69ms)
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/a-flaky.test.js > flaky sometimes fails
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ tests/a-flaky.test.js:2:49
+      1| import { test, expect } from 'vitest';
+      2| test('flaky sometimes fails', () => { expect(1).toBe(2); });
+       |                                                 ^
+      3| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

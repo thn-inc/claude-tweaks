@@ -12,13 +12,17 @@ const path = require('path');
 const {
   archiveRunDir, listSpecDirs, decideArchive, decideArchiveCore, readConsoleState, isOrphanedMint, trackArchiveResult,
   archiveMerged, lastOwnEventMs, isAbandonedInterrupted, archiveOrphanedMint, ORPHAN_MINT_TTL_MS,
-  isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, isStaleDir,
+  isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS, isStaleDir,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin, resolveIdenticalWorkTwin,
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
-  isClosedSlugStuck, recordNumbersFromSlug, refusal,
+  isClosedSlugStuck, recordNumbersFromSlug, refusal, unclosedRecords, runRecordSet, inFlightRecords,
+  listStagedItems, hasStagedItems, consoleReplacedByAutoMergeShortCircuit,
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure } = require('../../../plugin/bin/lib/reconcile/cache');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
+const { serializeManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
+
+const PATH_STUB_SKIP = process.platform === 'win32' && 'win32: execFileSync("gh") never spawns a #!/bin/sh stub named gh on PATH';
 
 // #1892: stamps `worktree-always: true` in `.claude-tweaks/policy.yml` — the
 // flat kebab-case format `bin/lib/policy.js` reads directly (no YAML dep).
@@ -88,14 +92,30 @@ function ghJsonHeredoc(value) {
 // `number` is {n} (exit 1 when none matches — a probe for an unknown PR is a
 // transport-style failure); every other call, and any non-array body, prints
 // `prsJson` exactly as before.
-function installGhWrapper(prsJson) {
+// #3503: `issueStates`, when given, maps an issue number to its `gh issue view
+// {n} --json state` answer ('OPEN' | 'CLOSED', or 'FAIL' for a non-zero exit);
+// any unmapped number exits 1. Without it, `gh issue view` keeps the catch-all
+// body this wrapper has always printed.
+function installGhWrapper(prsJson, issueStates = null) {
   const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-ghwrap-'));
   const wrapperPath = path.join(wrapperDir, 'gh');
+  const issueBlock = issueStates ? [
+    'if [ "$1" = "issue" ] && [ "$2" = "view" ]; then',
+    '  case "$3" in',
+    ...Object.entries(issueStates).map(([n, st]) => (st === 'FAIL'
+      ? `    ${n}) exit 1 ;;`
+      : `    ${n}) echo '${JSON.stringify({ state: st })}' ;;`)),
+    '    *) exit 1 ;;',
+    '  esac',
+    '  exit 0',
+    'fi',
+  ] : [];
   let script;
   if (Array.isArray(prsJson)) {
     const cases = prsJson.map((pr) => `    ${pr.number}) ${ghJsonHeredoc(pr)}\n      ;;`).join('\n');
     script = [
       '#!/bin/sh',
+      ...issueBlock,
       'if [ "$1" = "pr" ] && [ "$2" = "view" ]; then',
       '  case "$3" in',
       cases,
@@ -107,7 +127,7 @@ function installGhWrapper(prsJson) {
       '',
     ].join('\n');
   } else {
-    script = `#!/bin/sh\n${ghJsonHeredoc(prsJson)}\n`;
+    script = ['#!/bin/sh', ...issueBlock, ghJsonHeredoc(prsJson), ''].join('\n');
   }
   fs.writeFileSync(wrapperPath, script);
   fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
@@ -120,8 +140,11 @@ function installGhWrapper(prsJson) {
 // printed for `gh pr list ...`; `view` maps a PR number to the JSON printed for
 // `gh pr view {n} ...`, and any unmapped number exits 1. `viewMarker`, when
 // given, is touched on every `gh pr view` call so a test can prove the
-// by-number probe never ran. Any other argv exits 1.
-function installGhPrWrapper({ list, view, viewMarker }) {
+// by-number probe never ran. `graphql`, when given as `{ body, exit }`, makes
+// `gh api graphql ...` print `body` and exit `exit` (#3543's NOT_FOUND confirm
+// probe — gh exits 1 on a GraphQL error yet still prints the body). Any other
+// argv exits 1.
+function installGhPrWrapper({ list, view, viewMarker, graphql }) {
   const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-ghprwrap-'));
   const wrapperPath = path.join(wrapperDir, 'gh');
   const cases = Object.entries(view).map(([n, pr]) => `    ${n}) ${ghJsonHeredoc(pr)}\n      ;;`).join('\n');
@@ -135,6 +158,11 @@ function installGhPrWrapper({ list, view, viewMarker }) {
     cases,
     '    *) exit 1 ;;',
     '  esac',
+    ...(graphql ? [
+      'elif [ "$1" = "api" ] && [ "$2" = "graphql" ]; then',
+      `  cat <<'EOF'\n${graphql.body}\nEOF`, // raw body — ghJsonHeredoc would JSON-quote a string
+      `  exit ${graphql.exit}`,
+    ] : []),
     'else',
     '  exit 1',
     'fi',
@@ -208,8 +236,9 @@ function mergedFeatureBranchRepo(branch) {
 // branch name is run-state.json's own `pr.branch` stamp (run-integrity.js's
 // fallbackBranch, same source #1672's own fixture uses).
 // #3416: `prNumber`, when set, stamps the run's PR identity (pr.number).
-function fixtureCleanUnarchivedRun({ runId, consoleResolved = true, prNumber } = {}) {
+function fixtureCleanUnarchivedRun({ runId, consoleResolved = true, prNumber, origin = false } = {}) {
   const { root, featureSha } = mergedFeatureBranchRepo('feat-clean-branch');
+  if (origin) git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
   const pr = prNumber ? { number: prNumber, branch: 'feat-clean-branch' } : { branch: 'feat-clean-branch' };
@@ -526,6 +555,44 @@ test('archiveRunDir: non-tidy run with a stray tracked file outside work/ still 
   // Refused before anything moved — run dir and tracked file both untouched.
   assert.equal(fs.existsSync(runDir), true);
   assert.ok(trackedFiles(root).includes(`.claude-tweaks/pipelines/${runId}/notes.md`));
+});
+
+// #3651 AC1.1: the tracked-entry guard reads `git ls-files` for the run dir
+// and exempts paths under work/. Without `-z`, git C-quotes a non-ASCII path
+// ("…/work/caf\303\251-spec.md", quotes included), so the join landed outside
+// work/ and the guard refused a path it exists to exempt. A tracked work/ file
+// still reaches the guard when work/ is gone from disk (so the git-mv batch
+// never queues it) — the shape used here. `core.quotepath true` is set
+// explicitly so the C-quoting does not depend on the machine's git config.
+for (const [label, specName] of [['ASCII control', 'cafe-spec.md'], ['non-ASCII', 'café-spec.md']]) {
+  test(`archiveRunDir: AC1.1 — a tracked ${label} spec under work/ (work/ gone from disk) does not refuse tracked-entry`, () => {
+    const root = makeRepo();
+    git(root, 'config', 'core.quotepath', 'true');
+    const runId = '2026-08-30T090000-record-3651-quotepath';
+    const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+    const relSpec = `.claude-tweaks/pipelines/${runId}/work/${specName}`;
+    commitPath(root, relSpec, '# spec\n');
+    fs.rmSync(path.join(runDir, 'work'), { recursive: true, force: true });
+    fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+    // Precondition: the spec is still tracked while work/ is gone from disk.
+    assert.ok(trackedFiles(root).some((p) => p.includes('/work/')), 'fixture must track a work/ file');
+
+    const result = archiveRunDir(root, runDir);
+    assert.notEqual(result.reason, 'tracked-entry', JSON.stringify(result));
+  });
+}
+
+test('archiveRunDir: AC1.1 — a tracked non-ASCII file outside work/ still refuses tracked-entry (the exemption is not widened)', () => {
+  const root = makeRepo();
+  git(root, 'config', 'core.quotepath', 'true');
+  const runId = '2026-08-30T090000-record-3651-quotepath-stray';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  commitPath(root, `.claude-tweaks/pipelines/${runId}/café-notes.md`, '# stray\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+
+  const result = archiveRunDir(root, runDir);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'tracked-entry');
 });
 
 // #593 deliverable 2/4: multi-spec parent run dirs nest per-record
@@ -1251,6 +1318,81 @@ test('listSpecDirs: only spec-* subdirectories, ignores files and non-matching d
   assert.deepEqual(listSpecDirs(path.join(dir, 'does-not-exist')), []);
 });
 
+test('listStagedItems: names top-level and spec-N staged items, skips dotfiles, reports an unreadable dir', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'list-staged-items-'));
+  fs.mkdirSync(path.join(dir, 'staged'));
+  fs.writeFileSync(path.join(dir, 'staged', 'reflect-1.md'), 'x');
+  fs.writeFileSync(path.join(dir, 'staged', '.DS_Store'), 'x');
+  fs.mkdirSync(path.join(dir, 'spec-3375', 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'spec-3375', 'staged', 'review-1.patch'), 'x');
+  fs.mkdirSync(path.join(dir, 'spec-3380'));
+  fs.writeFileSync(path.join(dir, 'spec-3380', 'staged'), 'x');
+  assert.deepStrictEqual(listStagedItems(dir), [
+    'staged/reflect-1.md',
+    'spec-3375/staged/review-1.patch',
+    'spec-3380/staged/ (unreadable: ENOTDIR)',
+  ]);
+  assert.strictEqual(hasStagedItems(dir), true);
+});
+
+test('consoleReplacedByAutoMergeShortCircuit: true only for the short-circuit\'s canonical issue line, never a resolved console', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-merge-sc-'));
+  const FAST = '- AUTO 19:26:04 — log-decision: Fast-lane auto-merge: issue #3130, assess-agent-autonomy verdict auto-merge, pr-first-merge outcome merged.\n';
+  fs.writeFileSync(path.join(dir, 'decisions.md'), FAST);
+  assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(dir), true);
+  fs.writeFileSync(path.join(dir, 'decisions.md'),
+    '- AUTO 10:00:00 — Manifesto-authorized auto-merge: issue #3668, assess-agent-autonomy verdict auto-merge (see RATIONALE), pr-first-merge outcome merged.\n');
+  assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(dir), true);
+  fs.writeFileSync(path.join(dir, 'decisions.md'),
+    '- AUTO 07:38:10 — log-decision: Fast-lane auto-merge: deleted resolved ledger docs/plans/x-ledger.md for #3114 before merge.\n');
+  assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(dir), false);
+  // Agent free-form reuse of the phrase, no short-circuit happened.
+  fs.writeFileSync(path.join(dir, 'decisions.md'),
+    '- AUTO 10:00:00 — log-decision: Fast-lane auto-merge: issue #1250 — the fast short-circuit did not fire; fell through to the normal Review Console.\n');
+  assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(dir), false);
+  // A console was presented and resolved after the canonical line.
+  fs.writeFileSync(path.join(dir, 'decisions.md'),
+    `${FAST}- AUTO 10:05:00 — Review Console: terminal decision approve-all-merge. Reversibility: n/a.\n`);
+  assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(dir), false);
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-merge-sc-none-'));
+  assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(bare), false);
+  // An unprovable log (a non-ENOENT read failure — here decisions.md is a directory)
+  // fails toward NOT archiving, unlike a missing one.
+  const unreadable = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-merge-sc-eisdir-'));
+  fs.mkdirSync(path.join(unreadable, 'decisions.md'));
+  assert.strictEqual(consoleReplacedByAutoMergeShortCircuit(unreadable), true);
+});
+
+// Prose-code twin (#3668): the signal regex is a hand-copy of the log line the two
+// producer skills tell the agent to write. Extract those templates from the live prose
+// (whitespace-collapsed: the Manifesto-authorized one is hard-wrapped), fill the
+// placeholders, and require the detector to accept each. The exact count pins the
+// producer set, so a new or reworded template fails here instead of silently
+// disabling the archive-run guard.
+const REPO_ROOT = path.join(__dirname, '..', '..', '..');
+function shortCircuitLogTemplates(text) {
+  return [...text.matchAll(/`AUTO \{time\} — ((?:Fast-lane|Manifesto-authorized) auto-merge: issue #\{n\}, [^`]*)`/g)]
+    .map((m) => m[1].replace(/\s+/g, ' '))
+    .filter((t) => t.includes('assess-agent-autonomy'));
+}
+function detectsTemplate(template) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-merge-sc-twin-'));
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `- AUTO 10:00:00 — ${template.replace('{n}', '3668')}\n`);
+  return consoleReplacedByAutoMergeShortCircuit(dir);
+}
+test('consoleReplacedByAutoMergeShortCircuit: detects every log-line template the producer skills write', () => {
+  const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, 'plugin', 'skills', 'wrap-up', rel), 'utf8');
+  const fast = shortCircuitLogTemplates(read('auto-merge-short-circuit.md'));
+  const manifesto = shortCircuitLogTemplates(read('manifesto-authorized-merge.md'));
+  assert.strictEqual(fast.length, 2, 'auto-merge-short-circuit.md carries two Fast-lane log templates');
+  assert.strictEqual(manifesto.length, 1, 'manifesto-authorized-merge.md carries one Manifesto-authorized log template');
+  for (const template of [...fast, ...manifesto]) {
+    assert.strictEqual(detectsTemplate(template), true, template);
+  }
+  // Go-red control: a producer reword that drops the canonical continuation is not detected.
+  assert.strictEqual(detectsTemplate(manifesto[0].replace('verdict auto-merge', 'verdict merge')), false);
+});
+
 // Re-pin the existing exports still resolve after the refactor above touched
 // the same module — a regression here would mean the export list drifted.
 test('archive-merged module still exports its pre-existing surface', () => {
@@ -1749,7 +1891,7 @@ test('archiveMerged: still skips in place on a single pass, but only starts trac
 // reconcile/index.js's createIssueListCache produces) is injected — proof
 // that archiveMerged's `runner` option actually reaches every trackStuckSkip
 // call site in its loop, not just the first one reached.
-test('archiveMerged: two dirs crossing the structurally-stuck threshold in one call share one injected runner — only one underlying issue-list call fires', () => {
+test('archiveMerged: two dirs crossing the structurally-stuck threshold in one call share one injected runner — only one underlying issue-list call fires', { skip: PATH_STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
   // escalateStructurallyStuck bails out at 'no-repo-slug' (never calling
   // `runner` at all) unless repoSlugOf(root) resolves — makeRepo()'s bare
@@ -1855,7 +1997,7 @@ test('archiveMerged: two dirs crossing the structurally-stuck threshold in one c
 // fs.{read,write}FileSync are spied at the cache file's own path so
 // unrelated reads/writes in the same pass (config.yml, run-state.json,
 // events.jsonl) never pollute the count.
-test('archiveMerged: a pass processing 2 structurally-stuck dirs reads and writes reconcile-cache.json exactly once each, not once per dir', () => {
+test('archiveMerged: a pass processing 2 structurally-stuck dirs reads and writes reconcile-cache.json exactly once each, not once per dir', { skip: PATH_STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
   git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
 
@@ -1919,13 +2061,15 @@ test('archiveMerged: a pass processing 2 structurally-stuck dirs reads and write
 // --- #1733: archiveMergedRun's onSkip asymmetry — the one behavioral
 // difference the loop-dedup extraction had to preserve rather than "fix":
 // only the main loop's decideArchive skip feeds trackStuckSkip; the #1544
-// clean-status sweep's decideArchive skip does not. Both fixtures below
-// reach decideArchive's 'no-pr' reason (a resolvable branch with no PR found
-// at all, `gh pr list` returning an empty array), which IS one of
+// clean-status sweep's no-pr decideArchive skip does not (the sweep tracks
+// console-never-rendered-staged-pending since #3668, pinned by AC3.1 below).
+// Both fixtures below reach decideArchive's 'no-pr' reason (a resolvable
+// branch with no PR found at all, `gh pr list` returning an empty array),
+// which IS one of
 // STRUCTURALLY_STUCK_REASONS, and both dirs are backdated well past
 // STRUCTURALLY_STUCK_TTL_MS — so a residue-counter difference can only come
 // from the onSkip hook itself, not from isStructurallyStuck's own gating.
-test('archiveMerged: a main-loop decideArchive skip (no-pr) enters the structurally-stuck residue counter', () => {
+test('archiveMerged: a main-loop decideArchive skip (no-pr) enters the structurally-stuck residue counter', { skip: PATH_STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
   const branch = 'feat-nopr-main-1733';
   // realpath'd for the same reason mergedFeatureBranchRepo's root is (macOS's
@@ -1962,7 +2106,7 @@ test('archiveMerged: a main-loop decideArchive skip (no-pr) enters the structura
   );
 });
 
-test('archiveMerged: a clean-loop decideArchive skip (no-pr) does NOT enter the structurally-stuck residue counter', () => {
+test('archiveMerged: a clean-loop decideArchive skip (no-pr) does NOT enter the structurally-stuck residue counter', { skip: PATH_STUB_SKIP }, () => {
   const runId = '2026-01-01T000000-nopr-clean-1733';
   const { root, runDir } = fixtureCleanUnarchivedRun({ runId });
   const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
@@ -1980,7 +2124,67 @@ test('archiveMerged: a clean-loop decideArchive skip (no-pr) does NOT enter the 
   const failures = listResidueFailures(root);
   assert.ok(
     !failures.some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
-    'the #1544 clean-status sweep must never feed a decideArchive skip into the structurally-stuck residue counter — the onSkip asymmetry is intentional, not a gap',
+    'the #1544 clean-status sweep must never feed a decideArchive no-pr skip into the structurally-stuck residue counter — the onSkip asymmetry is intentional, not a gap',
+  );
+});
+
+// #3668 AC3.1: the clean-status sweep tracks exactly one skip —
+// console-never-rendered-staged-pending on an auto-merge short-circuit run.
+// archive-run refuses exactly that closed subset, so no later step will ever
+// apply the staged items; without tracking, the dir would freeze silently.
+test('AC3.1: the clean-status sweep tracks a console-never-rendered-staged-pending skip toward structurally-stuck escalation (#3668)', { skip: PATH_STUB_SKIP }, () => {
+  const runId = '2026-10-16T155630-record-3668-clean';
+  const { root, runDir, featureSha } = fixtureCleanUnarchivedRun({ runId, consoleResolved: false });
+  fs.writeFileSync(path.join(runDir, 'decisions.md'),
+    '- AUTO 19:26:04 — log-decision: Fast-lane auto-merge: issue #3130, assess-agent-autonomy verdict auto-merge, pr-first-merge outcome merged.\n');
+  fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'staged', 'reflect-1.md'), 'x\n');
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(runDir, backdated, backdated);
+
+  const wrapper = installGhWrapper([{
+    number: 99, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z', mergeCommit: { oid: featureSha },
+  }]);
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'console-never-rendered-staged-pending');
+  assert.ok(
+    listResidueFailures(root).some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+    'the clean sweep must start the structurally-stuck residue counter for a staged-pending skip',
+  );
+});
+
+test('AC3.2: the clean-status sweep does NOT track a staged-pending skip for a closed run whose console was not replaced by the auto-merge short-circuit (#3668)', { skip: PATH_STUB_SKIP }, () => {
+  const runId = '2026-10-16T155630-record-3668-clean-noshort';
+  const { root, runDir, featureSha } = fixtureCleanUnarchivedRun({ runId, consoleResolved: false });
+  fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'staged', 'reflect-1.md'), 'x\n');
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(runDir, backdated, backdated);
+
+  const wrapper = installGhWrapper([{
+    number: 99, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z', mergeCommit: { oid: featureSha },
+  }]);
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'console-never-rendered-staged-pending');
+  assert.ok(
+    !listResidueFailures(root).some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+    'a closed no-console staged-pending run without the short-circuit line (e.g. an in-terminal console) must not escalate as structurally stuck',
   );
 });
 
@@ -2191,7 +2395,7 @@ function fixtureActiveUnstampedMergedRun({ runId, worktreeExplicitlyNull = false
   return { root, runDir, featureSha };
 }
 
-test('archiveMerged: an active run dir with no worktree stamp but a merged PR is archived via fallbackBranch, not stuck at no-worktree', () => {
+test('archiveMerged: an active run dir with no worktree stamp but a merged PR is archived via fallbackBranch, not stuck at no-worktree', { skip: PATH_STUB_SKIP }, () => {
   const runId = '2026-08-31T090000-spec-1684-unstamped';
   const { root, runDir, featureSha } = fixtureActiveUnstampedMergedRun({ runId });
   const wrapper = installGhWrapper([{
@@ -2209,7 +2413,7 @@ test('archiveMerged: an active run dir with no worktree stamp but a merged PR is
   assert.equal(fs.existsSync(runDir), false, 'original run dir must have been archived away');
 });
 
-test('archiveMerged: an active run dir with worktree explicitly null but a merged PR is still archived via fallbackBranch', () => {
+test('archiveMerged: an active run dir with worktree explicitly null but a merged PR is still archived via fallbackBranch', { skip: PATH_STUB_SKIP }, () => {
   const runId = '2026-08-31T090000-spec-1684-nullworktree';
   const { root, runDir, featureSha } = fixtureActiveUnstampedMergedRun({ runId, worktreeExplicitlyNull: true });
   const wrapper = installGhWrapper([{
@@ -2246,7 +2450,7 @@ test('archiveMerged: an active run dir with no worktree stamp AND no recoverable
 // every status:'clean' dir by design, so a run whose archive-run step never
 // followed close-run sat in pipelines/ forever.)
 
-test('archiveMerged: a status:clean run dir with a merged PR is archived (previously skipped)', () => {
+test('archiveMerged: a status:clean run dir with a merged PR is archived (previously skipped)', { skip: PATH_STUB_SKIP }, () => {
   const runId = '2026-08-01T090000-clean-1544-merged';
   const { root, runDir, featureSha } = fixtureCleanUnarchivedRun({ runId });
   const wrapper = installGhWrapper([{
@@ -2267,7 +2471,7 @@ test('archiveMerged: a status:clean run dir with a merged PR is archived (previo
 
 // The gotcha this issue names explicitly: clean-status alone is never
 // sufficient — an OPEN (not-yet-merged) PR must leave the run dir in place.
-test('archiveMerged: a status:clean run dir whose PR is still OPEN is never archived — clean status alone is not enough', () => {
+test('archiveMerged: a status:clean run dir whose PR is still OPEN is never archived — clean status alone is not enough', { skip: PATH_STUB_SKIP }, () => {
   const runId = '2026-08-01T090000-clean-1544-open';
   const { root, runDir } = fixtureCleanUnarchivedRun({ runId });
   const wrapper = installGhWrapper([{
@@ -2311,7 +2515,7 @@ test('archiveMerged: a status:clean run dir with no recoverable branch is skippe
 // knowable by number (run-state.json's `pr.number`, stamped once and never
 // cleared). The sweep now probes that PR directly and archives once its
 // console is resolved.
-test('archiveMerged: a run dir whose stamped worktree is gone and branch is unrecoverable is archived once its closed PR is confirmed by number', () => {
+test('archiveMerged: a run dir whose stamped worktree is gone and branch is unrecoverable is archived once its closed PR is confirmed by number', { skip: PATH_STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
   const runId = '2026-08-01T090000-record-1962-nobranch-closedpr';
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
@@ -2336,7 +2540,7 @@ test('archiveMerged: a run dir whose stamped worktree is gone and branch is unre
   assert.equal(fs.existsSync(archiveDir), true);
 });
 
-test('archiveMerged: same shape as above, but console is unresolved — stays in place, never archived', () => {
+test('archiveMerged: same shape as above, but console is unresolved — stays in place, never archived', { skip: PATH_STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
   const runId = '2026-08-01T090000-record-1962-nobranch-closedpr-unresolved';
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
@@ -2362,7 +2566,7 @@ test('archiveMerged: same shape as above, but console is unresolved — stays in
   assert.equal(fs.existsSync(runDir), true);
 });
 
-test('archiveMerged: same shape as above, but the PR-by-number probe reports OPEN — falls back to the ordinary no-branch skip', () => {
+test('archiveMerged: same shape as above, but the PR-by-number probe reports OPEN — falls back to the ordinary no-branch skip', { skip: PATH_STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
   const runId = '2026-08-01T090000-record-1962-nobranch-openpr';
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
@@ -2393,7 +2597,7 @@ test('archiveMerged: same shape as above, but the PR-by-number probe reports OPE
 // CLOSED (GitHub's 3-value enum never satisfies a CLOSED-only check). The
 // fallback now also recognizes MERGED, gated by the same localHasMerge
 // check the general merged-PR path below already applies.
-test('archiveMerged: a run dir whose stamped worktree is gone and branch is unrecoverable is archived once its merged PR is confirmed by number and the merge commit is locally reachable', () => {
+test('archiveMerged: a run dir whose stamped worktree is gone and branch is unrecoverable is archived once its merged PR is confirmed by number and the merge commit is locally reachable', { skip: PATH_STUB_SKIP }, () => {
   const { root, featureSha } = mergedFeatureBranchRepo('feat-1962-merged');
   git(root, 'branch', '-D', 'feat-1962-merged'); // branch ref itself is gone too — nothing left for fallbackBranch
   const runId = '2026-08-01T090000-record-1962-nobranch-mergedpr';
@@ -2422,7 +2626,7 @@ test('archiveMerged: a run dir whose stamped worktree is gone and branch is unre
   assert.equal(fs.existsSync(archiveDir), true);
 });
 
-test('archiveMerged: same shape as above, but the merge commit is not yet locally reachable — skips local-behind-merge, never archives ahead of the local checkout', () => {
+test('archiveMerged: same shape as above, but the merge commit is not yet locally reachable — skips local-behind-merge, never archives ahead of the local checkout', { skip: PATH_STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
   const runId = '2026-08-01T090000-record-1962-nobranch-mergedpr-behind';
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
@@ -2461,7 +2665,7 @@ test('archiveMerged: same shape as above, but the merge commit is not yet locall
 // permanently stuck at 'no-worktree' even though its PR is knowable by
 // number. The gate now fires whenever `state.pr.number` exists, regardless
 // of whether a worktree was ever stamped.
-test('archiveMerged: a run dir with no worktree stamp at all (never set) still reaches the #1962 by-number fallback and archives once its closed PR is confirmed', () => {
+test('archiveMerged: a run dir with no worktree stamp at all (never set) still reaches the #1962 by-number fallback and archives once its closed PR is confirmed', { skip: PATH_STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
   const runId = '2026-08-01T090000-record-1962-noworktree-closedpr';
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
@@ -2496,7 +2700,7 @@ test('archiveMerged: a run dir with no worktree stamp at all (never set) still r
 // render. The fallback now uses a distinct, tracked reason for exactly
 // this sub-case, so it escalates like no-branch/no-worktree/no-pr instead
 // of silently freezing the escalation cache.
-test('archiveMerged: a CLOSED (never-merged) PR reached via the by-number fallback with no console.json gets the distinct console-never-rendered-pr-closed reason and is tracked toward escalation', () => {
+test('archiveMerged: a CLOSED (never-merged) PR reached via the by-number fallback with no console.json gets the distinct console-never-rendered-pr-closed reason and is tracked toward escalation', { skip: PATH_STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
   const runId = '2026-08-01T090000-record-2231-closedpr-noconsole';
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
@@ -2546,7 +2750,7 @@ test('archiveMerged: a CLOSED (never-merged) PR reached via the by-number fallba
 // not "a console may still be pending". When staged/ holds nothing
 // pending (this fixture's case — no staged/ directory at all), the run
 // now archives instead.
-test('archiveMerged: a MERGED PR reached via the by-number fallback with no console.json and nothing staged now archives (#3249)', () => {
+test('archiveMerged: a MERGED PR reached via the by-number fallback with no console.json and nothing staged now archives (#3249)', { skip: PATH_STUB_SKIP }, () => {
   const { root, featureSha } = mergedFeatureBranchRepo('feat-2231-merged-noconsole');
   git(root, 'branch', '-D', 'feat-2231-merged-noconsole'); // branch ref gone too — nothing for fallbackBranch to recover
   const runId = '2026-08-01T090000-record-2231-mergedpr-noconsole';
@@ -2587,7 +2791,7 @@ test('archiveMerged: a MERGED PR reached via the by-number fallback with no cons
 // Companion (#657/#1130 protection, preserved): the SAME shape as above,
 // except staged/ holds a real pending file — this run must still skip,
 // never silently archived out from under an unresolved staged proposal.
-test('archiveMerged: a MERGED PR reached via the by-number fallback with no console.json but a pending staged/ item still skips (#3249, #657 protection)', () => {
+test('AC3.1: archiveMerged: a MERGED PR reached via the by-number fallback with no console.json but a pending staged/ item still skips with the staged-pending reason (#3249, #657 protection, #3297)', { skip: PATH_STUB_SKIP }, () => {
   const { root, featureSha } = mergedFeatureBranchRepo('feat-3249-merged-staged-pending');
   git(root, 'branch', '-D', 'feat-3249-merged-staged-pending'); // branch ref gone too — nothing for fallbackBranch to recover
   const runId = '2026-08-01T090000-record-3249-mergedpr-staged';
@@ -2619,8 +2823,17 @@ test('archiveMerged: a MERGED PR reached via the by-number fallback with no cons
   assert.ok(!result.archived.includes(runDir), 'a run with a genuinely pending staged/ item must never be archived out of sight');
   const skip = result.skipped.find((s) => s.runDir === runDir);
   assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
-  assert.equal(skip.reason, 'console-never-rendered');
+  assert.equal(skip.reason, 'console-never-rendered-staged-pending');
   assert.equal(fs.existsSync(runDir), true);
+
+  // #3297: the pending-staged skip is tracked toward escalation (its dir is
+  // already backdated past STRUCTURALLY_STUCK_TTL_MS above), so one pass
+  // starts the structurally-stuck residue counter.
+  const failures = listResidueFailures(root);
+  assert.ok(
+    failures.some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+    `expected ${runDir} to start accumulating a structurally-stuck residue count, got ${JSON.stringify(failures)}`,
+  );
 });
 
 // #3249 (whole-branch review): exercises the archiveMergedRun -> decideArchiveCore
@@ -2631,8 +2844,17 @@ test('archiveMerged: a MERGED PR reached via the by-number fallback with no cons
 // pr-first-merge-post-merge.md Step 4.2's reconcile call hits; the
 // staged-items exception must apply here too. `stagedFiles` seeds staged/
 // (absent when empty).
-function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specStaged = {}) {
+// #3503 options: `origin` stamps the remote repoSlugOf reads; `closes` (record
+// numbers) puts closingIssuesReferences on the PR; `manifestSpecs` writes
+// manifest.yml; `staleMs` backdates the run dir past the structurally-stuck TTL.
+// `runStateBefore` is run-state.json's bytes read just before archiveMerged.
+// `issueStates` answers `gh issue view` (installGhWrapper); `claudeMd` writes the
+// main checkout's CLAUDE.md.
+function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specStaged = {}, {
+  origin = false, closes = null, manifestSpecs = null, staleMs = null, issueStates = null, claudeMd = null,
+} = {}) {
   const { root, featureSha } = mergedFeatureBranchRepo(branch); // branch ref stays — fallbackBranch recovers it
+  if (origin) git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n'); // adopted — keeps isOrphanedMint out of the way
@@ -2655,18 +2877,29 @@ function fixtureOrdinaryMergedNoConsole(branch, runId, stagedFiles = [], specSta
     fs.mkdirSync(path.join(runDir, spec, 'staged'), { recursive: true });
     for (const name of entries) fs.writeFileSync(path.join(runDir, spec, 'staged', name), 'x\n');
   }
-  const wrapper = installGhWrapper([{
+  if (manifestSpecs) {
+    fs.writeFileSync(path.join(runDir, 'manifest.yml'), serializeManifestYaml({ multispec: { parent: 'parent/', specs: manifestSpecs } }));
+  }
+  const pr = {
     number: 3249100, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
     mergeCommit: { oid: featureSha },
-  }]);
+  };
+  if (closes) pr.closingIssuesReferences = closes.map((n) => ref(n));
+  if (staleMs) {
+    const stale = new Date(Date.now() - staleMs);
+    fs.utimesSync(runDir, stale, stale);
+  }
+  const runStateBefore = fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8');
+  if (claudeMd !== null) fs.writeFileSync(path.join(root, 'CLAUDE.md'), claudeMd);
+  const wrapper = installGhWrapper([pr], issueStates);
   try {
-    return { root, runDir, result: archiveMerged({ cwd: root }) };
+    return { root, runDir, runStateBefore, result: archiveMerged({ cwd: root }) };
   } finally {
     wrapper.restore();
   }
 }
 
-test('archiveMerged: ordinary branch-resolvable path — MERGED PR, worktree gone, no console.json, nothing staged archives (#3249)', () => {
+test('archiveMerged: ordinary branch-resolvable path — MERGED PR, worktree gone, no console.json, nothing staged archives (#3249)', { skip: PATH_STUB_SKIP }, () => {
   const { runDir, result } = fixtureOrdinaryMergedNoConsole('feat-3249-ordinary-empty', '2026-08-01T090000-record-3249-ordinary-empty');
   assert.ok(result.archived.includes(runDir), `expected ${runDir} archived via archiveMergedRun, got ${JSON.stringify(result)}`);
   assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
@@ -2675,20 +2908,30 @@ test('archiveMerged: ordinary branch-resolvable path — MERGED PR, worktree gon
 // Dotfiles in staged/ (a stray .DS_Store) are not staged items — the
 // console's own reader (console/resolve.js readSnapshot) filters them the
 // same way, so they must never block archiving.
-test('archiveMerged: ordinary path — a staged/ holding only dotfiles counts as nothing pending and archives (#3249)', () => {
+test('archiveMerged: ordinary path — a staged/ holding only dotfiles counts as nothing pending and archives (#3249)', { skip: PATH_STUB_SKIP }, () => {
   const { runDir, result } = fixtureOrdinaryMergedNoConsole('feat-3249-ordinary-dotfile', '2026-08-01T090000-record-3249-ordinary-dotfile', ['.DS_Store']);
   assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
 });
 
 // #657/#1130 protection on the ordinary path: a real pending staged item
-// still skips with plain 'console-never-rendered'.
-test('archiveMerged: ordinary path — a real pending staged/ item still skips console-never-rendered (#3249, #657 protection)', () => {
-  const { runDir, result } = fixtureOrdinaryMergedNoConsole('feat-3249-ordinary-pending', '2026-08-01T090000-record-3249-ordinary-pending', ['reflect-1.md']);
+// still skips with 'console-never-rendered-staged-pending'.
+test('archiveMerged: ordinary path — a real pending staged/ item still skips console-never-rendered-staged-pending (#3249, #657 protection, #3297)', { skip: PATH_STUB_SKIP }, () => {
+  const { root, runDir, result } = fixtureOrdinaryMergedNoConsole('feat-3249-ordinary-pending', '2026-08-01T090000-record-3249-ordinary-pending', ['reflect-1.md'], {}, { staleMs: STRUCTURALLY_STUCK_TTL_MS * 2 });
   assert.ok(!result.archived.includes(runDir), 'a run with a genuinely pending staged/ item must never be archived out of sight');
   const skip = result.skipped.find((s) => s.runDir === runDir);
   assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
-  assert.equal(skip.reason, 'console-never-rendered');
+  assert.equal(skip.reason, 'console-never-rendered-staged-pending');
   assert.equal(fs.existsSync(runDir), true);
+
+  // #3297: the ordinary path reports the skip through archiveMergedRun's onSkip
+  // hook, which must also start the structurally-stuck residue counter (the dir
+  // is backdated past STRUCTURALLY_STUCK_TTL_MS above) — the by-number fallback
+  // (AC3.1) tracks it through a different call site.
+  const failures = listResidueFailures(root);
+  assert.ok(
+    failures.some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+    `expected ${runDir} to start accumulating a structurally-stuck residue count, got ${JSON.stringify(failures)}`,
+  );
 });
 
 // Review finding (#3249): hasStagedItems used to catch every readdirSync
@@ -2698,7 +2941,7 @@ test('archiveMerged: ordinary path — a real pending staged/ item still skips c
 // the same signal as "genuinely absent" — it must fail closed (treated as
 // pending) rather than unlock the archive path, matching readConsoleState's
 // own fail-closed convention on an unparseable console.json.
-test('archiveMerged: ordinary path — staged/ existing as a non-directory (ENOTDIR) fails closed, never archives (#3249)', () => {
+test('archiveMerged: ordinary path — staged/ existing as a non-directory (ENOTDIR) fails closed, never archives (#3249)', { skip: PATH_STUB_SKIP }, () => {
   const branch = 'feat-3249-ordinary-staged-enotdir';
   const runId = '2026-08-01T090000-record-3249-ordinary-staged-enotdir';
   const { root, featureSha } = mergedFeatureBranchRepo(branch);
@@ -2727,7 +2970,7 @@ test('archiveMerged: ordinary path — staged/ existing as a non-directory (ENOT
   assert.ok(!result.archived.includes(runDir), 'an unreadable staged/ entry must never be treated as "nothing pending"');
   const skip = result.skipped.find((s) => s.runDir === runDir);
   assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
-  assert.equal(skip.reason, 'console-never-rendered');
+  assert.equal(skip.reason, 'console-never-rendered-staged-pending');
   assert.equal(fs.existsSync(runDir), true);
 });
 
@@ -2735,24 +2978,24 @@ test('archiveMerged: ordinary path — staged/ existing as a non-directory (ENOT
 // spec-{N}/staged/, not the top-level staged/. hasStagedItems must count them,
 // or a run with a pending per-spec proposal archives on the never-rendered
 // console fast path.
-test('AC5.1: a multi-spec run whose only staged items sit under spec-N/staged/ skips console-never-rendered (#3416)', () => {
+test('AC5.1: a multi-spec run whose only staged items sit under spec-N/staged/ skips console-never-rendered-staged-pending (#3416, #3297)', { skip: PATH_STUB_SKIP }, () => {
   const { runDir, result } = fixtureOrdinaryMergedNoConsole('feat-3416-spec-staged', '2026-10-17T144508-spec-3375-3380', [], { 'spec-3375': ['review-1.patch', 'review-2.patch', 'reflect-1.md'] });
   assert.ok(!result.archived.includes(runDir), 'a run with a pending per-spec staged item must never be archived out of sight');
   const skip = result.skipped.find((s) => s.runDir === runDir);
   assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
-  assert.equal(skip.reason, 'console-never-rendered');
+  assert.equal(skip.reason, 'console-never-rendered-staged-pending');
   assert.equal(fs.existsSync(runDir), true);
 });
 
-test('AC5.2: a multi-spec run whose spec-*/staged/ are empty or absent still archives (#3249 fast path preserved) (#3416)', () => {
-  const { runDir, result } = fixtureOrdinaryMergedNoConsole('feat-3416-spec-empty', '2026-10-17T144508-spec-3375-3381', [], { 'spec-3375': [], 'spec-3380': ['.DS_Store'], 'spec-3381': null });
+test('AC5.2: a multi-spec run whose spec-*/staged/ are empty or absent still archives (#3249 fast path preserved) (#3416)', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole('feat-3416-spec-empty', '2026-10-17T144508-spec-3375-3381', [], { 'spec-3375': [], 'spec-3380': ['.DS_Store'], 'spec-3381': null }, { origin: true, closes: [3375, 3381] });
   assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
   assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
 });
 
 // Same fail-closed rule as the top-level staged/ ENOTDIR case above, one level
 // down: a spec-N/staged that exists as a plain file is unprovable, not empty.
-test('AC5.1 fail-closed: a spec-N/staged that exists as a file (ENOTDIR) counts as pending (#3416)', () => {
+test('AC5.1 fail-closed: a spec-N/staged that exists as a file (ENOTDIR) counts as pending (#3416)', { skip: PATH_STUB_SKIP }, () => {
   const branch = 'feat-3416-spec-staged-enotdir';
   const runId = '2026-10-17T144508-spec-3375-enotdir';
   const { root, featureSha } = mergedFeatureBranchRepo(branch);
@@ -2778,7 +3021,7 @@ test('AC5.1 fail-closed: a spec-N/staged that exists as a file (ENOTDIR) counts 
   assert.ok(!result.archived.includes(runDir), 'an unreadable spec-N/staged entry must never be treated as "nothing pending"');
   const skip = result.skipped.find((s) => s.runDir === runDir);
   assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
-  assert.equal(skip.reason, 'console-never-rendered');
+  assert.equal(skip.reason, 'console-never-rendered-staged-pending');
   assert.equal(fs.existsSync(runDir), true);
 });
 
@@ -2793,9 +3036,13 @@ test('decideArchiveCore: consoleState none + MERGED + no 3rd arg still skips (un
   const decision = decideArchiveCore({ state: 'MERGED' }, 'none');
   assert.deepStrictEqual(decision, { action: 'skip', reason: 'console-never-rendered' });
 });
-test('decideArchiveCore: consoleState none + MERGED + hasStagedPending:true skips', () => {
+test('AC1.2: decideArchiveCore: consoleState none + MERGED + hasStagedPending:true skips with the staged-pending reason (#3297)', () => {
   const decision = decideArchiveCore({ state: 'MERGED' }, 'none', true);
-  assert.deepStrictEqual(decision, { action: 'skip', reason: 'console-never-rendered' });
+  assert.deepStrictEqual(decision, { action: 'skip', reason: 'console-never-rendered-staged-pending' });
+});
+test('STRUCTURALLY_STUCK_REASONS includes console-never-rendered-staged-pending but not plain console-never-rendered (#3297)', () => {
+  assert.equal(STRUCTURALLY_STUCK_REASONS.has('console-never-rendered-staged-pending'), true);
+  assert.equal(STRUCTURALLY_STUCK_REASONS.has('console-never-rendered'), false);
 });
 test('decideArchiveCore: consoleState none + MERGED + hasStagedPending:false archives (#3249)', () => {
   const decision = decideArchiveCore({ state: 'MERGED' }, 'none', false);
@@ -2807,6 +3054,397 @@ test('decideArchiveCore: consoleState unresolved still skips regardless of hasSt
 
 test('decideArchiveCore: invalid-arguments skips with reason invalid-arguments (#3416)', () => {
   assert.deepStrictEqual(decideArchiveCore('invalid-arguments', 'resolved'), { action: 'skip', reason: 'invalid-arguments' });
+});
+
+// Shape of one `closingIssuesReferences` entry from `gh pr view --json`.
+function ref(n, owner = 'acme', name = 'w') {
+  return { number: n, repository: { name, owner: { login: owner } } };
+}
+test('AC1.1 decideArchiveCore: MERGED + resolved console + a record the PR does not close skips merged-partial naming it', () => {
+  const pr = { state: 'MERGED', closingIssuesReferences: [ref(3306), ref(3307)] };
+  assert.deepStrictEqual(
+    decideArchiveCore(pr, 'resolved', false, { records: [3306, 3307, 3311], repoSlug: 'acme/w' }),
+    { action: 'skip', reason: 'merged-partial', unclosed: [3311] });
+});
+test('AC2.1 decideArchiveCore: MERGED + every record closed archives', () => {
+  const pr = { state: 'MERGED', closingIssuesReferences: [ref(3306), ref(3311)] };
+  assert.deepStrictEqual(decideArchiveCore(pr, 'none', false, { records: [3311, 3306], repoSlug: 'acme/w' }), { action: 'archive' });
+});
+test('AC4.1 decideArchiveCore: no closingIssuesReferences array skips closing-issues-unknown, never archives', () => {
+  assert.deepStrictEqual(decideArchiveCore({ state: 'MERGED' }, 'resolved', false, { records: [5], repoSlug: 'acme/w' }),
+    { action: 'skip', reason: 'closing-issues-unknown' });
+});
+test('AC4.1 decideArchiveCore: an unresolvable repo slug skips no-repo-slug (#3503 F3)', () => {
+  const pr = { state: 'MERGED', closingIssuesReferences: [ref(5)] };
+  assert.deepStrictEqual(decideArchiveCore(pr, 'resolved', false, { records: [5], repoSlug: null }),
+    { action: 'skip', reason: 'no-repo-slug' });
+});
+test('decideArchiveCore: a same-number closing reference in another repo does not count as closing', () => {
+  const pr = { state: 'MERGED', closingIssuesReferences: [ref(5, 'other', 'repo')] };
+  assert.deepStrictEqual(decideArchiveCore(pr, 'resolved', false, { records: [5], repoSlug: 'acme/w' }),
+    { action: 'skip', reason: 'merged-partial', unclosed: [5] });
+});
+test('AC3.1 decideArchiveCore: records null or recordCheck absent behaves exactly as before', () => {
+  const pr = { state: 'MERGED' };
+  assert.deepStrictEqual(decideArchiveCore(pr, 'resolved', false, { records: null, repoSlug: 'acme/w' }), { action: 'archive' });
+  assert.deepStrictEqual(decideArchiveCore(pr, 'resolved'), { action: 'archive' });
+});
+test('decideArchiveCore: existing skip reasons keep precedence over the record check', () => {
+  const check = { records: [9], repoSlug: 'acme/w' };
+  assert.deepStrictEqual(decideArchiveCore({ state: 'OPEN' }, 'resolved', false, check), { action: 'skip', reason: 'pr-open' });
+  assert.deepStrictEqual(decideArchiveCore({ state: 'MERGED' }, 'unresolved', false, check), { action: 'skip', reason: 'console-unresolved' });
+  assert.deepStrictEqual(decideArchiveCore({ state: 'MERGED' }, 'none', true, check), { action: 'skip', reason: 'console-never-rendered-staged-pending' });
+  assert.deepStrictEqual(decideArchiveCore({ state: 'MERGED' }, 'none', undefined, check), { action: 'skip', reason: 'console-never-rendered' });
+  assert.deepStrictEqual(decideArchiveCore('network-failure', 'resolved', false, check), { action: 'skip', reason: 'network-failure' });
+  assert.deepStrictEqual(decideArchiveCore('gh-absent', 'resolved', false, check), { action: 'skip', reason: 'gh-absent' });
+});
+test('STRUCTURALLY_STUCK_REASONS includes merged-partial and no-repo-slug but not closing-issues-unknown', () => {
+  assert.ok(STRUCTURALLY_STUCK_REASONS.has('merged-partial'));
+  assert.ok(STRUCTURALLY_STUCK_REASONS.has('no-repo-slug'));
+  assert.ok(!STRUCTURALLY_STUCK_REASONS.has('closing-issues-unknown'));
+});
+
+// #3503: the by-number fallback shape — the branch ref is deleted, so only the
+// run-state's pr.number reaches the merged PR. `closes` are the record numbers
+// the PR's closingIssuesReferences name.
+// `issueStates` answers `gh issue view`; `consoleResolved` writes a resolved
+// console.json.
+function fixtureByNumberMergedRecordRun({ runId, closes, issueStates = null, consoleResolved = false }) {
+  const branch = 'feat-3503-bynumber';
+  const { root, featureSha } = mergedFeatureBranchRepo(branch);
+  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  git(root, 'branch', '-D', branch); // branch ref gone too — nothing for fallbackBranch to recover
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', `gone-${runId}`),
+    pr: { number: 3503001, branch },
+  }));
+  if (consoleResolved) fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+  const wrapper = installGhWrapper({
+    number: 3503001, state: 'MERGED', mergedAt: '2026-10-19T00:00:00Z', updatedAt: '2026-10-19T00:00:00Z',
+    mergeCommit: { oid: featureSha }, closingIssuesReferences: closes.map((n) => ref(n)),
+  }, issueStates);
+  try {
+    return { root, runDir, result: archiveMerged({ cwd: root }) };
+  } finally {
+    wrapper.restore();
+  }
+}
+
+// #3503 AC1.1/AC1.2/AC5.1: a multi-spec run (the #3311 incident shape) whose
+// merged PR closes 3306 but leaves the still-running 3311 open must stay put.
+test('AC1.1/AC1.2/AC5.1 regression: a multi-spec run whose merged PR leaves a running manifest record unclosed is not archived (#3311 shape, branch-joined path)', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, runStateBefore, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3311-partial', '2026-10-17T062549-spec-3306-3311', [], {},
+    {
+      origin: true,
+      closes: [3306],
+      manifestSpecs: [
+        { id: 3306, status: 'complete', subdir: 'spec-3306/' },
+        { id: 3311, status: 'running', subdir: 'spec-3311/' },
+      ],
+    },
+  );
+  assert.ok(!result.archived.includes(runDir), `expected ${runDir} NOT archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), true, 'the run dir must stay in place');
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'merged-partial');
+  assert.deepEqual(skip.unclosed, [3311]);
+  assert.equal(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'), runStateBefore, 'run-state.json must be byte-identical');
+});
+
+test('AC1.1 by-number path: the same partial merge reached via the by-number fallback is not archived', { skip: PATH_STUB_SKIP }, () => {
+  const runId = '2026-10-19T090000-record-3503-3504';
+  const { runDir, result } = fixtureByNumberMergedRecordRun({ runId, closes: [3503] });
+  assert.ok(!result.archived.includes(runDir), `expected ${runDir} NOT archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), true, 'the run dir must stay in place');
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'merged-partial');
+  assert.deepEqual(skip.unclosed, [3504]);
+});
+
+test('AC2.1: a merged PR closing every manifest record archives on the branch-joined path', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3311-complete', '2026-10-17T062549-spec-3306-3311', [], {},
+    {
+      origin: true,
+      closes: [3311, 3306],
+      manifestSpecs: [
+        { id: 3306, status: 'complete', subdir: 'spec-3306/' },
+        { id: 3311, status: 'complete', subdir: 'spec-3311/' },
+      ],
+    },
+  );
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
+});
+
+test('AC2.1: a merged PR closing every manifest record archives on the by-number path', { skip: PATH_STUB_SKIP }, () => {
+  const runId = '2026-10-19T090000-record-3503-3504';
+  const root = fixtureByNumberMergedRecordRun({ runId, closes: [3504, 3503] }).root;
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)), true);
+});
+
+test('AC3.1: a singleton record-{n} run whose PR closes its record archives as before', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3503-singleton', '2026-10-19T090000-record-3503', [], {}, { origin: true, closes: [3503] },
+  );
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
+});
+
+test('AC4.1: a merged PR object without closingIssuesReferences skips closing-issues-unknown and is not archived', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3503-unknown', '2026-10-19T090000-record-3503', [], {}, { origin: true },
+  );
+  assert.ok(!result.archived.includes(runDir), `expected ${runDir} NOT archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), true, 'the run dir must stay in place');
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'closing-issues-unknown');
+});
+
+test('a failed manifest spec does not block archival', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3503-failed-spec', '2026-10-19T090000-spec-1-2', [], {},
+    {
+      origin: true,
+      closes: [1],
+      manifestSpecs: [
+        { id: 1, status: 'complete', subdir: 'spec-1/' },
+        { id: 2, status: 'failed', subdir: 'spec-2/' },
+      ],
+    },
+  );
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
+});
+
+test('the status:clean sweep is exempt: a clean run whose merged PR closes nothing still archives', { skip: PATH_STUB_SKIP }, () => {
+  const runId = '2026-08-01T090000-record-77';
+  const { root, runDir, featureSha } = fixtureCleanUnarchivedRun({ runId, origin: true });
+  const wrapper = installGhWrapper([{
+    number: 77, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    // A non-empty list naming some other issue: an empty list would let the
+    // empty-linkage fallback archive the run even if the sweep gained the check.
+    mergeCommit: { oid: featureSha }, closingIssuesReferences: [ref(5)],
+  }]);
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
+});
+
+test('a merged-partial skip past the TTL enters the structurally-stuck residue counter', { skip: PATH_STUB_SKIP }, () => {
+  const { root, runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3503-stuck', '2026-10-17T062549-spec-3306-3311', [], {},
+    {
+      origin: true,
+      closes: [3306],
+      manifestSpecs: [
+        { id: 3306, status: 'complete', subdir: 'spec-3306/' },
+        { id: 3311, status: 'running', subdir: 'spec-3311/' },
+      ],
+      staleMs: STRUCTURALLY_STUCK_TTL_MS * 2,
+    },
+  );
+  assert.equal(result.skipped.find((s) => s.runDir === runDir)?.reason, 'merged-partial');
+  const failures = listResidueFailures(root);
+  assert.ok(
+    failures.some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+    `expected ${runDir} to start accumulating a structurally-stuck residue count, got ${JSON.stringify(failures)}`,
+  );
+});
+
+// --- #3503 F1: a record closed by another route (a second PR, by hand, at
+// /release) satisfies the run; the issue-state probe runs in the caller. ---
+const PARTIAL_MANIFEST = [
+  { id: 3306, status: 'complete', subdir: 'spec-3306/' },
+  { id: 3311, status: 'running', subdir: 'spec-3311/' },
+];
+
+test('F1 branch-joined: a record the PR does not close but whose issue is CLOSED lets the run archive', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3503-f1-closed', '2026-10-17T062549-spec-3306-3311', [], {},
+    { origin: true, closes: [3306], manifestSpecs: PARTIAL_MANIFEST, issueStates: { 3311: 'CLOSED' } },
+  );
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+  assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
+});
+
+test('F1 branch-joined: the same shape with the issue OPEN stays merged-partial', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3503-f1-open', '2026-10-17T062549-spec-3306-3311', [], {},
+    { origin: true, closes: [3306], manifestSpecs: PARTIAL_MANIFEST, issueStates: { 3311: 'OPEN' } },
+  );
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'merged-partial');
+  assert.deepEqual(skip.unclosed, [3311]);
+  assert.equal(fs.existsSync(runDir), true);
+});
+
+test('F1 branch-joined: only the still-open records remain in unclosed after the probe', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3503-f1-narrow', '2026-10-17T062549-spec-1-2-3', [], {},
+    {
+      origin: true,
+      closes: [1],
+      manifestSpecs: [
+        { id: 1, status: 'complete', subdir: 'spec-1/' },
+        { id: 2, status: 'running', subdir: 'spec-2/' },
+        { id: 3, status: 'running', subdir: 'spec-3/' },
+      ],
+      issueStates: { 2: 'CLOSED', 3: 'OPEN' },
+    },
+  );
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'merged-partial');
+  assert.deepEqual(skip.unclosed, [3]);
+});
+
+test('F1 branch-joined: an issue-state probe failure keeps the run merged-partial (fails closed)', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3503-f1-probefail', '2026-10-17T062549-spec-3306-3311', [], {},
+    { origin: true, closes: [3306], manifestSpecs: PARTIAL_MANIFEST, issueStates: { 3311: 'FAIL' } },
+  );
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'merged-partial');
+  assert.deepEqual(skip.unclosed, [3311]);
+  assert.equal(fs.existsSync(runDir), true);
+});
+
+test('F1 by-number: a record the PR does not close but whose issue is CLOSED lets the run archive', { skip: PATH_STUB_SKIP }, () => {
+  const runId = '2026-10-19T090000-record-3503-3504';
+  const { root } = fixtureByNumberMergedRecordRun({ runId, closes: [3503], issueStates: { 3504: 'CLOSED' } });
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', runId)), false, 'the run dir must have been archived away');
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)), true);
+});
+
+test('F1 by-number: a probe failure keeps the run merged-partial', { skip: PATH_STUB_SKIP }, () => {
+  const runId = '2026-10-19T090000-record-3503-3504';
+  const { runDir, result } = fixtureByNumberMergedRecordRun({ runId, closes: [3503], issueStates: { 3504: 'FAIL' } });
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'merged-partial');
+  assert.deepEqual(skip.unclosed, [3504]);
+  assert.equal(fs.existsSync(runDir), true);
+});
+
+// --- #3503 F2a: work-backend: local-files records are not GitHub issues. ---
+test('F2a: work-backend local-files in CLAUDE.md disables the record check (archives as before)', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3503-f2a-local', '2026-10-17T062549-spec-3306-3311', [], {},
+    { origin: true, closes: [3306], manifestSpecs: PARTIAL_MANIFEST, claudeMd: '# P\n\nwork-backend: local-files\n' },
+  );
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+});
+
+test('F2a: a github-issues work-backend line keeps the record check', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3503-f2a-gh', '2026-10-17T062549-spec-3306-3311', [], {},
+    { origin: true, closes: [3306], manifestSpecs: PARTIAL_MANIFEST, claudeMd: 'work-backend: github-issues\n' },
+  );
+  assert.equal(result.skipped.find((s) => s.runDir === runDir)?.reason, 'merged-partial');
+});
+
+// --- #3503 F2b: closingIssuesReferences === [] is uninformative (a PR into a
+// non-default base never links closing keywords) — the run's own manifest status
+// decides, then the issue-state probe. ---
+test('F2b: empty closingIssuesReferences + a running manifest spec (issue OPEN) stays merged-partial for that spec', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3503-f2b-running', '2026-10-17T062549-spec-3306-3311', [], {},
+    { origin: true, closes: [], manifestSpecs: PARTIAL_MANIFEST, issueStates: { 3306: 'OPEN', 3311: 'OPEN' } },
+  );
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'merged-partial');
+  assert.deepEqual(skip.unclosed, [3311]);
+});
+
+test('F2b: empty closingIssuesReferences + every manifest spec complete archives (issues OPEN)', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3503-f2b-complete', '2026-10-17T062549-spec-3306-3311', [], {},
+    {
+      origin: true,
+      closes: [],
+      manifestSpecs: [
+        { id: 3306, status: 'complete', subdir: 'spec-3306/' },
+        { id: 3311, status: 'complete', subdir: 'spec-3311/' },
+      ],
+      issueStates: { 3306: 'OPEN', 3311: 'OPEN' },
+    },
+  );
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+});
+
+test('F2b: empty closingIssuesReferences on a manifest-less record-N singleton archives', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3503-f2b-singleton', '2026-10-19T090000-record-3503', [], {}, { origin: true, closes: [] },
+  );
+  assert.ok(result.archived.includes(runDir), `expected ${runDir} archived, got ${JSON.stringify(result)}`);
+});
+
+test('F2b by-number: empty closingIssuesReferences on a manifest-less run archives through the same helper', { skip: PATH_STUB_SKIP }, () => {
+  const runId = '2026-10-19T090000-record-3503-3504';
+  const { root } = fixtureByNumberMergedRecordRun({ runId, closes: [] });
+  assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)), true);
+});
+
+// --- #3503 F3: no resolvable repo slug is a tracked reason, not a silent freeze. ---
+test('F3: a repo with no resolvable GitHub slug skips no-repo-slug and is not archived', { skip: PATH_STUB_SKIP }, () => {
+  const { runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3503-f3', '2026-10-19T090000-record-3503', [], {}, { origin: false, closes: [3503] },
+  );
+  assert.ok(!result.archived.includes(runDir));
+  assert.equal(result.skipped.find((s) => s.runDir === runDir)?.reason, 'no-repo-slug');
+  assert.equal(fs.existsSync(runDir), true);
+});
+
+test('F3: a no-repo-slug skip past the TTL enters the structurally-stuck residue counter', { skip: PATH_STUB_SKIP }, () => {
+  const { root, runDir, result } = fixtureOrdinaryMergedNoConsole(
+    'feat-3503-f3-stuck', '2026-10-17T062549-record-3503', [], {},
+    { origin: false, closes: [3503], staleMs: STRUCTURALLY_STUCK_TTL_MS * 2 },
+  );
+  assert.equal(result.skipped.find((s) => s.runDir === runDir)?.reason, 'no-repo-slug');
+  const failures = listResidueFailures(root);
+  assert.ok(
+    failures.some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+    `expected ${runDir} to accumulate a structurally-stuck count, got ${JSON.stringify(failures)}`,
+  );
+});
+
+// --- #3503 F4: the by-number path's resolved-console guard. ---
+test('F4 by-number: a resolved console.json with a partial PR still skips merged-partial', { skip: PATH_STUB_SKIP }, () => {
+  const runId = '2026-10-19T090000-record-3503-3504';
+  const { runDir, result } = fixtureByNumberMergedRecordRun({ runId, closes: [3503], consoleResolved: true });
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'merged-partial');
+  assert.deepEqual(skip.unclosed, [3504]);
+  assert.equal(fs.existsSync(runDir), true);
+});
+
+test('decideArchiveCore: pr-not-found skips with reason pr-not-found (#3543)', () => {
+  assert.deepStrictEqual(decideArchiveCore('pr-not-found', 'resolved'), { action: 'skip', reason: 'pr-not-found' });
+});
+
+test('AC4.1 AC4.2: STRUCTURALLY_STUCK_REASONS has pr-not-found and not network-failure (#3543)', () => {
+  assert.equal(STRUCTURALLY_STUCK_REASONS.has('pr-not-found'), true);
+  assert.equal(STRUCTURALLY_STUCK_REASONS.has('network-failure'), false);
 });
 
 // #3416: a run's PR identity is its stamped run-state.json pr.number, not its
@@ -2828,7 +3466,7 @@ function fixtureReusedBranchLiveRun({ runId, prNumber, consoleResolved = false }
   return { root, runDir, featureSha };
 }
 
-test('AC1.1: archiveMerged skips pr-open a live run whose stamped pr.number is OPEN while its live worktree branch backs an older MERGED PR (#3416)', () => {
+test('AC1.1: archiveMerged skips pr-open a live run whose stamped pr.number is OPEN while its live worktree branch backs an older MERGED PR (#3416)', { skip: PATH_STUB_SKIP }, () => {
   const runId = '2026-10-17T090000-record-3416-reused-open';
   const { root, runDir, featureSha } = fixtureReusedBranchLiveRun({ runId, prNumber: 3406 });
   const wrapper = installGhPrWrapper({
@@ -2849,7 +3487,7 @@ test('AC1.1: archiveMerged skips pr-open a live run whose stamped pr.number is O
   assert.equal(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)), false);
 });
 
-test('AC1.1 orthogonal: a stamped pr.number that is MERGED archives even when the branch list returns OPEN — resolution is keyed on the number (#3416)', () => {
+test('AC1.1 orthogonal: a stamped pr.number that is MERGED archives even when the branch list returns OPEN — resolution is keyed on the number (#3416)', { skip: PATH_STUB_SKIP }, () => {
   const runId = '2026-10-17T090000-record-3416-reused-merged';
   const { root, runDir, featureSha } = fixtureReusedBranchLiveRun({ runId, prNumber: 3406, consoleResolved: true });
   const wrapper = installGhPrWrapper({
@@ -2866,7 +3504,7 @@ test('AC1.1 orthogonal: a stamped pr.number that is MERGED archives even when th
   assert.equal(fs.existsSync(runDir), false, 'the run dir must have been archived away');
 });
 
-test('AC1.1 transport failure: a by-number probe that fails skips network-failure, never falls back to the MERGED branch PR (#3416)', () => {
+test('AC1.1 transport failure: a by-number probe that fails skips network-failure, never falls back to the MERGED branch PR (#3416)', { skip: PATH_STUB_SKIP }, () => {
   const runId = '2026-10-17T090000-record-3416-reused-transport';
   const { root, runDir, featureSha } = fixtureReusedBranchLiveRun({ runId, prNumber: 3406 });
   const wrapper = installGhPrWrapper({
@@ -2886,7 +3524,117 @@ test('AC1.1 transport failure: a by-number probe that fails skips network-failur
   assert.equal(fs.existsSync(runDir), true);
 });
 
-test('AC2.1: the clean-status sweep does not archive a status:clean run whose pr.number is OPEN even when its pr.branch backs a MERGED PR (#3416)', () => {
+// #3543: a stamped pr.number that GitHub confirms names no PR (the structured
+// GraphQL NOT_FOUND probe) is a permanent, human-fixable state — it skips as
+// `pr-not-found` and rides the structurally-stuck TTL/escalation path; a bare
+// transport failure (no confirming body) stays `network-failure` and never does.
+const NOT_FOUND_BODY = '{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","path":["repository","pullRequest"],"message":"x"}]}';
+
+function runStaleStampPass({ runId, graphql }) {
+  const { root, runDir, featureSha } = fixtureReusedBranchLiveRun({ runId, prNumber: 3406, consoleResolved: true });
+  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(runDir, backdated, backdated);
+  const wrapper = installGhPrWrapper({
+    list: [{ number: 3391, state: 'MERGED', mergedAt: '2026-10-17T14:09:02Z', updatedAt: '2026-10-17T14:09:02Z', mergeCommit: { oid: featureSha } }],
+    view: {},
+    graphql,
+  });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  return { root, runDir, result };
+}
+
+test('AC5.1: a stamped pr.number resolving pr-not-found skips pr-not-found, never archives via the MERGED branch PR, and enters the stuck counter once past the TTL (#3543)', { skip: PATH_STUB_SKIP }, () => {
+  const { root, runDir, result } = runStaleStampPass({
+    runId: '2026-10-17T090000-record-3543-stale-stamp',
+    graphql: { body: NOT_FOUND_BODY, exit: 1 },
+  });
+  assert.ok(!result.archived.includes(runDir), `a nonexistent stamped PR must not fall back to the branch PR, got ${JSON.stringify(result)}`);
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'pr-not-found');
+  assert.equal(fs.existsSync(runDir), true);
+  const entry = listResidueFailures(root).find((f) => f.reason === 'structurally-stuck' && f.path === runDir);
+  assert.ok(entry, 'the stale-stamp run must enter the structurally-stuck counter');
+  assert.equal(entry.lastError, 'stuck at pr-not-found');
+});
+
+test('AC5.3: the no-branch by-number path skips pr-not-found (not no-branch/no-worktree) for a stale stamp and enters the stuck counter with "stuck at pr-not-found" (#3543)', { skip: PATH_STUB_SKIP }, () => {
+  const root = fs.realpathSync(makeRepo());
+  git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  const runId = '2026-10-17T090000-record-3543-nobranch-stale-stamp';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', 'gone-record-3543'), // stamped, but never created here
+    pr: { number: 3406, branch: 'worktree-record-3543-gone' }, // branch does not exist in this repo
+  }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'auto-mode: true\n'); // adopted — keeps the blind orphaned-mint mtime sweep off this dir
+  const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+  fs.utimesSync(runDir, backdated, backdated);
+
+  const wrapper = installGhPrWrapper({ list: [], view: {}, graphql: { body: NOT_FOUND_BODY, exit: 1 } });
+  let result;
+  try {
+    result = archiveMerged({ cwd: root });
+  } finally {
+    wrapper.restore();
+  }
+  assert.ok(!result.archived.includes(runDir), `a nonexistent stamped PR must not archive, got ${JSON.stringify(result)}`);
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'pr-not-found');
+  const entry = listResidueFailures(root).find((f) => f.reason === 'structurally-stuck' && f.path === runDir);
+  assert.ok(entry, 'the no-branch stale-stamp run must enter the structurally-stuck counter');
+  assert.equal(entry.lastError, 'stuck at pr-not-found');
+});
+
+test('AC5.2: trackStuckSkip escalates pr-not-found exactly once past the TTL with "stuck at pr-not-found" (#3543)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-notfound-'));
+  const calls = [];
+  const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
+  const stuckDir = mkDirWithMtime(STRUCTURALLY_STUCK_TTL_MS * 2);
+
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    trackStuckSkip(root, 'o/r', stuckDir, 'pr-not-found', { escalate });
+  }
+  assert.equal(calls.length, 1, `expected exactly one escalation call, got ${calls.length}`);
+  assert.equal(calls[0].lastError, 'stuck at pr-not-found');
+
+  trackStuckSkip(root, 'o/r', stuckDir, 'pr-not-found', { escalate });
+  assert.equal(calls.length, 1, 'must not re-escalate on a later still-stuck call');
+});
+
+test('#3543: a network-failure skip never escalates, even past the TTL', { skip: PATH_STUB_SKIP }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-netfail-'));
+  const calls = [];
+  const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
+  const oldDir = mkDirWithMtime(STRUCTURALLY_STUCK_TTL_MS * 2);
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD * 2; i++) {
+    trackStuckSkip(root, 'o/r', oldDir, 'network-failure', { escalate });
+  }
+  assert.equal(calls.length, 0, 'a network-failure skip must never escalate');
+  assert.deepEqual(listResidueFailures(root), [], 'a network-failure skip must not enter the residue counter');
+
+  // End to end: a failed probe with no confirming NOT_FOUND body stays network-failure.
+  const { root: root2, runDir, result } = runStaleStampPass({
+    runId: '2026-10-17T090000-record-3543-transport',
+    graphql: { body: '', exit: 1 },
+  });
+  const skip = result.skipped.find((s) => s.runDir === runDir);
+  assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+  assert.equal(skip.reason, 'network-failure');
+  assert.ok(!listResidueFailures(root2).some((f) => f.reason === 'structurally-stuck' && f.path === runDir), 'a transport failure must not enter the structurally-stuck counter');
+});
+
+test('AC2.1: the clean-status sweep does not archive a status:clean run whose pr.number is OPEN even when its pr.branch backs a MERGED PR (#3416)', { skip: PATH_STUB_SKIP }, () => {
   const runId = '2026-08-01T090000-clean-3416-open';
   const { root, runDir, featureSha } = fixtureCleanUnarchivedRun({ runId, prNumber: 3407 });
   const wrapper = installGhPrWrapper({
@@ -2906,7 +3654,7 @@ test('AC2.1: the clean-status sweep does not archive a status:clean run whose pr
   assert.equal(fs.existsSync(runDir), true);
 });
 
-test('AC4.1: a run with no stamped pr.number resolves by branch and never calls gh pr view (#3416)', () => {
+test('AC4.1: a run with no stamped pr.number resolves by branch and never calls gh pr view (#3416)', { skip: PATH_STUB_SKIP }, () => {
   const runId = '2026-08-31T090000-spec-3416-unstamped';
   const { root, runDir, featureSha } = fixtureActiveUnstampedMergedRun({ runId });
   const viewMarker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-viewmarker-')), 'pr-view-called');
@@ -3284,6 +4032,137 @@ test('recordNumbersFromSlug: null for a non-record slug (topic name, standalone,
   assert.equal(recordNumbersFromSlug('/tmp/2026-08-01T090000-tidy-standalone'), null);
 });
 
+// --- #3503: runRecordSet — the run's required record ids, the reader the
+// merged-partial archive guard feeds to decideArchiveCore's recordCheck. ---
+
+// A run dir named with a real run-dir slug, so the manifest-less path parses
+// its basename exactly as the sweep does.
+function mkRunRecordDir(slug) {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'run-record-set-'));
+  const dir = path.join(base, slug);
+  fs.mkdirSync(dir);
+  return dir;
+}
+
+function writeSpecManifest(dir, specs) {
+  fs.writeFileSync(path.join(dir, 'manifest.yml'), serializeManifestYaml({ multispec: { parent: 'parent/', specs } }));
+}
+
+function deferredLine(n) {
+  return `- AUTO 10:00:00 — spec #${n}: deferred-closure: spec #${n} closing keyword withheld (pending manual step).`;
+}
+
+test('runRecordSet: a manifest with a running spec keeps it required (the #3311 incident shape)', () => {
+  const dir = mkRunRecordDir('2026-10-17T062549-spec-3307-3311');
+  writeSpecManifest(dir, [
+    { id: 3307, status: 'complete', subdir: 'spec-3307/' },
+    { id: 3311, status: 'running', subdir: 'spec-3311/' },
+  ]);
+  const result = runRecordSet(dir);
+  assert.deepEqual(result, [3307, 3311]);
+  assert.ok(result.every((n) => Number.isInteger(n)), `expected integer ids, got ${JSON.stringify(result)}`);
+  fs.rmSync(path.dirname(dir), { recursive: true, force: true });
+});
+
+test('runRecordSet: failed and not-run specs are excluded', () => {
+  const dir = mkRunRecordDir('2026-10-17T062549-spec-1-2-3');
+  writeSpecManifest(dir, [
+    { id: 1, status: 'complete', subdir: 'spec-1/' },
+    { id: 2, status: 'failed', subdir: 'spec-2/' },
+    { id: 3, status: 'not-run', subdir: 'spec-3/' },
+  ]);
+  assert.deepEqual(runRecordSet(dir), [1]);
+  fs.rmSync(path.dirname(dir), { recursive: true, force: true });
+});
+
+test('runRecordSet: a spec with a deferred-closure entry in spec-{id}/decisions.md is excluded', () => {
+  const dir = mkRunRecordDir('2026-10-17T062549-spec-1-2');
+  writeSpecManifest(dir, [
+    { id: 1, status: 'complete', subdir: 'spec-1/' },
+    { id: 2, status: 'complete', subdir: 'spec-2/' },
+  ]);
+  fs.mkdirSync(path.join(dir, 'spec-2'));
+  fs.writeFileSync(path.join(dir, 'spec-2', 'decisions.md'), deferredLine(2) + '\n');
+  assert.deepEqual(runRecordSet(dir), [1]);
+  fs.rmSync(path.dirname(dir), { recursive: true, force: true });
+});
+
+test('runRecordSet: manifest-less record-{n} and spec-{n}-{m} slugs parse to their ids, deduplicated', () => {
+  const single = mkRunRecordDir('2026-10-19T185603-record-3503');
+  assert.deepEqual(runRecordSet(single), [3503]);
+  fs.rmSync(path.dirname(single), { recursive: true, force: true });
+
+  const multi = mkRunRecordDir('2026-08-01T090000-spec-10-11');
+  assert.deepEqual(runRecordSet(multi), [10, 11]);
+  fs.rmSync(path.dirname(multi), { recursive: true, force: true });
+
+  const repeated = mkRunRecordDir('2026-08-01T090000-record-4-4');
+  assert.deepEqual(runRecordSet(repeated), [4]);
+  fs.rmSync(path.dirname(repeated), { recursive: true, force: true });
+});
+
+test('runRecordSet: a manifest-less singleton with a top-level deferred-closure entry yields []', () => {
+  const dir = mkRunRecordDir('2026-10-19T185603-record-3503');
+  fs.writeFileSync(path.join(dir, 'decisions.md'), deferredLine(3503) + '\n');
+  assert.deepEqual(runRecordSet(dir), []);
+  fs.rmSync(path.dirname(dir), { recursive: true, force: true });
+});
+
+test('runRecordSet: topic, standalone and suffixed slugs yield null', () => {
+  const slugs = [
+    '2026-08-01T090000-meal-planning',
+    '2026-08-01T090000-record-42-standalone',
+    '2026-08-01T090000-tidy-standalone',
+    '2026-08-01T090000-record-3249-ordinary-empty',
+  ];
+  for (const slug of slugs) {
+    const dir = mkRunRecordDir(slug);
+    assert.equal(runRecordSet(dir), null, slug);
+    fs.rmSync(path.dirname(dir), { recursive: true, force: true });
+  }
+});
+
+test('runRecordSet: a manifest spec id that is not a positive-integer string makes the run unchecked (null), never NaN', () => {
+  const dir = mkRunRecordDir('2026-10-17T062549-spec-5-abc');
+  writeSpecManifest(dir, [
+    { id: 5, status: 'complete', subdir: 'spec-5/' },
+    { id: 'abc', status: 'complete', subdir: 'spec-abc/' },
+  ]);
+  assert.equal(runRecordSet(dir), null);
+  fs.rmSync(path.dirname(dir), { recursive: true, force: true });
+  for (const id of ['0x10', '1e3']) {
+    const odd = mkRunRecordDir('2026-10-17T062549-spec-5-6');
+    writeSpecManifest(odd, [
+      { id: 5, status: 'complete', subdir: 'spec-5/' },
+      { id, status: 'complete', subdir: `spec-${id}/` },
+    ]);
+    assert.equal(runRecordSet(odd), null, id);
+    fs.rmSync(path.dirname(odd), { recursive: true, force: true });
+  }
+});
+
+// --- #3503 F2b: inFlightRecords — the manifest specs the run still has pending or running. ---
+test('inFlightRecords: returns the integer ids of pending and running specs only', () => {
+  const dir = mkRunRecordDir('2026-10-17T062549-spec-1-2-3-4-5');
+  writeSpecManifest(dir, [
+    { id: 1, status: 'complete', subdir: 'spec-1/' },
+    { id: 2, status: 'running', subdir: 'spec-2/' },
+    { id: 3, status: 'pending', subdir: 'spec-3/' },
+    { id: 4, status: 'failed', subdir: 'spec-4/' },
+    { id: 5, status: 'not-run', subdir: 'spec-5/' },
+  ]);
+  const result = inFlightRecords(dir);
+  assert.deepEqual(result, [2, 3]);
+  assert.ok(result.every((n) => Number.isInteger(n)));
+  fs.rmSync(path.dirname(dir), { recursive: true, force: true });
+});
+
+test('inFlightRecords: no manifest yields []', () => {
+  const dir = mkRunRecordDir('2026-10-19T185603-record-3503');
+  assert.deepEqual(inFlightRecords(dir), []);
+  fs.rmSync(path.dirname(dir), { recursive: true, force: true });
+});
+
 function mkConfigOnlyDir(slugSuffix, ageMs) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-closedslug-'));
   const named = `${dir}-${slugSuffix}`;
@@ -3335,7 +4214,7 @@ test('isClosedSlugStuck: false for a gh-absent/network-failure probe on any one 
 // installGhWrapper idiom this file already uses for `gh pr list`/`gh pr
 // view`), and leaves it in place — still skipped, never escalated toward
 // move-failed — while any one record is still open.
-test('archiveMerged: archives a config.yml-only run dir with no run-state.json once every slug record is CLOSED', () => {
+test('archiveMerged: archives a config.yml-only run dir with no run-state.json once every slug record is CLOSED', { skip: PATH_STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
   const runId = '2026-08-27T105511-record-9001-9002';
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
@@ -3353,7 +4232,7 @@ test('archiveMerged: archives a config.yml-only run dir with no run-state.json o
   }
 });
 
-test('archiveMerged: leaves a config.yml-only run dir in place while any one slug record is still OPEN', () => {
+test('archiveMerged: leaves a config.yml-only run dir in place while any one slug record is still OPEN', { skip: PATH_STUB_SKIP }, () => {
   const root = fs.realpathSync(makeRepo());
   const runId = '2026-08-27T105511-record-9003-9004';
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);

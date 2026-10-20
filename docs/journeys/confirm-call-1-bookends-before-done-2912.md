@@ -19,10 +19,14 @@ files:
 - **URL:** `node "{plugin-root}/bin/verify-run-bookends.js" --run "{minted-run-dir}" --targets {comma-joined issue numbers}`
 - **Action:** run it once, in the foreground, from the group's worktree.
 - **Should feel:** a single mechanical confirmation that costs seconds, not a second test pass.
-- **Should understand:** the check reads `run-state.json`, `decisions.md`, the claim blob via git, and `git cat-file -e HEAD:…` for each spec. It never trusts the agent's own narrative, and it runs the same way with or without `gh`.
+- **Should understand:**
+  - The check reads `run-state.json`, `config.yml`'s `integration-model` pin, `decisions.md`, the claim blob via git, and `git cat-file -e HEAD:…` for each spec. It never trusts the agent's own narrative, and it runs the same way with or without `gh`.
+  - The Manifesto writes the pin (#3350), so on a `pr-first` run the `pr` bookend is evaluated.
+  - With no valid pin (a run older than #3350, or an invalid policy.yml value), the check prints one `verify-run-bookends: degraded — … carries no valid integration-model pin (absent)` line on stderr and leaves the PR bookend unchecked; the exit code is unchanged. The agent logs that line as a `SKIP` decision, never as a failure.
 - **Red flags:**
   - the check skipped because the run was on the `gh` path (it is required on every transport);
-  - `"pr":"n/a"` read as proof the draft PR exists (until #3350 writes the integration-model pin, the PR bookend is not evaluated on real runs).
+  - `"pr":"n/a"` read as proof the draft PR exists (it means the run is pinned `local-merge`, or unpinned);
+  - a `degraded —` stderr line ignored instead of logged as a `SKIP` decision.
 
 ### 2. Read a missing bookend — same agent
 - **URL:** the exit-1 JSON, `{"ok":false,"missing":[{"bookend","issue","reason","remedy"}]}`
@@ -54,4 +58,5 @@ files:
 
 ## Origin
 - Created during build of #2912: the trace of run `2026-10-02T182455-record-2765` showed call 1 bypassed `/flow`'s build step, so no materialize commit, no draft PR, and a free-hand claim line reached call 2. `verify-run-bookends.js` gained the `materialize` and `claim-log` bookends and a `remedy` per entry, and dispatch's first-call template now requires the check on every transport.
-- Related records: #3350 (integration-model pin; makes the `pr` bookend live), #3225 (`recover-from-a-dispatch-config-deny-3225.md`, the pre-implementation config gate), #2837 (`clear-the-two-call-gate-for-a-dispatched-group-2775.md`, the dispatcher's post-hoc artifact check), #1728 (the CLI's origin on the MCP path).
+- Updated during build of #3350: the Manifesto now writes the `integration-model` run pin, so the `pr` bookend is live on `pr-first` runs; an unpinned run prints a `degraded —` line that the agent logs as a `SKIP`.
+- Related records: #3225 (`recover-from-a-dispatch-config-deny-3225.md`, the pre-implementation config gate), #2837 (`clear-the-two-call-gate-for-a-dispatched-group-2775.md`, the dispatcher's post-hoc artifact check), #1728 (the CLI's origin on the MCP path).

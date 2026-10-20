@@ -3,3 +3,5 @@
 # them, so a core.autocrlf checkout (Windows) keeps the committed LF bytes instead of rewriting
 # them to CRLF and failing the pins.
 tools/upstream-drift/fixtures/** -text
+# Byte-exact jest/vitest/pytest captures: a CRLF line never reaches extract.js's non-multiline `$`.
+tests/fixtures/verify-dialects/** -text

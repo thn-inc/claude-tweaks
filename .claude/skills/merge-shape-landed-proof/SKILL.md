@@ -85,6 +85,14 @@ evidence for that record, not merge evidence.
   with the body edited from `Fixes #3311` to `Refs #3311`. One second later the reconciler
   released #3311's claim on `merged: reconciled from PR #3348` and removed `bot:in-progress`,
   leaving an open record mid-build unclaimed.
+- **Run archival uses the same ladder (#3503).** `plugin/bin/lib/reconcile/archive-merged.js`
+  archives a run on merged-PR evidence only when the PR closes every record the run claims
+  (`decideArchiveCore`'s `recordCheck`, via `prClosesIssue`). `false` skips as `merged-partial`
+  and `undefined` as `closing-issues-unknown`. A run can legitimately wait on a later PR, so
+  `settleMergedPartial` adds two rungs a claim release does not need: a record whose own issue
+  is CLOSED counts as satisfied (a failed probe keeps it unclosed), and an empty references array
+  (GitHub links no keyword into a non-default base) trusts only the manifest's pending/running
+  specs. The `status: clean` sweep is exempt, and `work-backend: local-files` turns the check off.
 
 ## Recurrences this skill exists to stop
 

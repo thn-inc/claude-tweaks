@@ -32,10 +32,12 @@ const policy = require('../policy');
 const wtDetect = require('./worktree-detect');
 const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName } = require('./worktree-reap');
 const { runGit, FAILURE } = require('./git-exec');
+const { parseNameStatusZ } = require('../git-z');
 const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
 const { hasClaimLogFor } = require('../log-decision/claim-log');
-const { resolveLeaf } = require('../path-guard');
+// Every realpath resolution in this file goes through canonicalRealpath (#3682); lexical containment checks (isPipelineBookkeeping) resolve nothing.
+const { resolveLeaf, canonicalRealpath, lstatType } = require('../path-guard');
 
 function pluginRoot() {
   return process.env.CLAUDE_PLUGIN_ROOT || '${CLAUDE_PLUGIN_ROOT}';
@@ -175,7 +177,7 @@ function isPipelineBookkeeping(repoRoot, targetPath) {
 
 // Resolves a write TARGET the way an already-existing file or symlink chain
 // actually behaves: if something exists at this path, follow it all the way
-// (fs.realpathSync follows every symlink, including the final component) —
+// (realpath follows every symlink, including the final component) —
 // an Edit/Write through a symlink acts on whatever it ultimately points at.
 // If nothing exists there yet (Write creating a brand-new file), there is no
 // leaf to follow: resolve only the parent directory and keep the literal
@@ -184,21 +186,18 @@ function isPipelineBookkeeping(repoRoot, targetPath) {
 // swap masquerade as a fresh Write and slip through the parent-only fallback
 // meant for genuinely new files. Non-absolute/empty/non-string input is
 // unprovable, matching isPipelineBookkeeping's own posture above.
-function realTarget(targetPath) {
+function realTarget(targetPath, { fsImpl } = {}) {
   if (typeof targetPath !== 'string' || !targetPath || !path.isAbsolute(targetPath)) return null;
   const resolved = path.resolve(targetPath);
-  // realpath: fs.realpathSync (the JS form), not path-guard's .native default:
-  // canonicalRepoPath and safeReal resolve the other side of isPolicyFile's
-  // equality with the JS form, so switching only this side to .native would
-  // turn a mis-cased allow into a deny. Moving both sides together is a
-  // separate change (#3495).
-  const leaf = resolveLeaf(resolved, { realpath: fs.realpathSync });
+  // Both sides of isPolicyFile resolve through path-guard's .native default, so
+  // a mis-cased path compares equal to the on-disk casing (#3495).
+  const leaf = resolveLeaf(resolved, { fsImpl });
   if (leaf.state === 'resolved') return leaf.path;
   if (leaf.state === 'dangling') return null;
   // 'missing' and 'unreadable' both keep the parent-only path: the pre-#3417
   // code treated every lstat failure as "nothing there yet". It is a write
   // target, so the write itself fails on the same EACCES.
-  const parentReal = safeReal(path.dirname(resolved));
+  const parentReal = canonicalRealpath(path.dirname(resolved), { fsImpl });
   if (!parentReal) return null;
   return path.join(parentReal, path.basename(resolved));
 }
@@ -212,11 +211,21 @@ function realTarget(targetPath) {
 // trivially agree on the forged destination. This side always means
 // "whatever is literally at {relPath}", never wherever a swapped-in symlink
 // currently points.
-function canonicalRepoPath(repoRoot, relPath) {
+//
+// The one refinement (#3495): when the leaf is a REGULAR file (lstat type
+// 'file' — not a symlink, not missing), it is canonicalised too, so its
+// on-disk casing (a policy file stored as `Policy.yml` on a case-insensitive
+// volume) matches what realTarget returns. A symlink leaf or a missing leaf
+// keeps the literal basename — that is the symlink-swap protection.
+function canonicalRepoPath(repoRoot, relPath, { fsImpl } = {}) {
   if (!repoRoot) return null;
   const joined = path.join(repoRoot, relPath);
-  const parentReal = safeReal(path.dirname(joined));
+  const parentReal = canonicalRealpath(path.dirname(joined), { fsImpl });
   if (!parentReal) return null;
+  if (lstatType(joined, { fsImpl }).type === 'file') {
+    const leafReal = canonicalRealpath(joined, { fsImpl });
+    if (leafReal) return leafReal;
+  }
   return path.join(parentReal, path.basename(joined));
 }
 
@@ -226,10 +235,10 @@ function canonicalRepoPath(repoRoot, relPath) {
 // equality only, never containment — so a symlink ALIAS to policy.yml
 // resolves to the same allow and policy.yml itself being SWAPPED for a
 // symlink elsewhere resolves to the same deny (see canonicalRepoPath).
-function isPolicyFile(repoRoot, targetPath) {
-  const real = realTarget(targetPath);
+function isPolicyFile(repoRoot, targetPath, { fsImpl } = {}) {
+  const real = realTarget(targetPath, { fsImpl });
   if (!real) return false;
-  const canonical = canonicalRepoPath(repoRoot, POLICY_FILE);
+  const canonical = canonicalRepoPath(repoRoot, POLICY_FILE, { fsImpl });
   if (!canonical) return false;
   return real === canonical;
 }
@@ -325,24 +334,26 @@ const POLICY_COMMIT_ALLOWLIST = Object.freeze(new RegExp(
 // `git mv <tracked-file> .claude-tweaks/policy.yml` (ungated — neither a
 // commit/push nor a WRITE_SHAPE) on a repo where policy.yml is not yet in
 // HEAD reads as "exactly policy.yml staged" and smuggles arbitrary tracked
-// content into the enforcement file (review finding). A rename renders as
-// `R<score>\told\tnew` under --name-status and is rejected on its status
-// letter; likewise Copy (C) and type-change (T). Wrapped so any exception
-// from the git spawn can never propagate out of this hook (this file's
-// header: never throw) — it falls through to "not exempt" instead.
+// content into the enforcement file (review finding). The read passes `-z`
+// (NUL-delimited, paths unquoted — see git-z.js) and `parseNameStatusZ` turns
+// it into `{ status, paths }` records: a rename renders as
+// `R<score>\0old\0new\0` under --name-status, a record with two paths, and is
+// rejected on its status letter; likewise Copy (C) and type-change (T).
+// Wrapped so any exception from the git spawn can never propagate out of this
+// hook (this file's header: never throw) — it falls through to "not exempt"
+// instead.
 const POLICY_COMMIT_STATUSES = new Set(['A', 'M', 'D']);
 function isPolicyOnlyCommit(command, cwd) {
   if (typeof command !== 'string' || !POLICY_COMMIT_ALLOWLIST.test(command)) return false;
   try {
-    const { stdout, failure } = runGit(['diff', '--cached', '--name-status'], cwd);
+    const { stdout, failure } = runGit(['diff', '--cached', '--name-status', '-z'], cwd);
     if (failure !== null || typeof stdout !== 'string') return false;
-    const rows = stdout.split('\n').filter(Boolean);
-    if (rows.length !== 1) return false;
-    const cols = rows[0].split('\t');
-    // Exactly two columns — status + one path. A rename/copy row carries three.
-    if (cols.length !== 2) return false;
-    const [status, file] = cols;
-    return POLICY_COMMIT_STATUSES.has(status) && file === toPosix(POLICY_FILE);
+    const records = parseNameStatusZ(stdout);
+    if (records.length !== 1) return false;
+    const { status, paths } = records[0];
+    // Exactly one path — a rename/copy record carries two.
+    if (paths.length !== 1) return false;
+    return POLICY_COMMIT_STATUSES.has(status) && paths[0] === toPosix(POLICY_FILE);
   } catch {
     return false;
   }
@@ -417,10 +428,6 @@ function isIntegrationBranchFastForwardPush(command, cwd) {
 // decision here. (The worktree gate is the caller that needed it.)
 function toplevel(dir) {
   return runGit(['rev-parse', '--show-toplevel'], dir).stdout;
-}
-
-function safeReal(p) {
-  try { return fs.realpathSync(p); } catch { return null; }
 }
 
 // Shared shape for every PreToolUse deny below (checkTeardownGate,
@@ -540,7 +547,8 @@ function teardownTargets(ctx) {
 // on the trailing commit (whole-branch review IMPORTANT 3). Only a genuine
 // deny still returns early — a deny is the one outcome where evaluating
 // anything further is pointless (the call is blocked).
-function checkTeardownGate(ctx, teardownWarnings = []) {
+function checkTeardownGate(ctx, teardownWarnings = [], deps = {}) {
+  const fsImpl = deps.fsImpl;
   const targets = teardownTargets(ctx);
   if (!targets.length) return {};
   // A run whose recorded `worktree` IS the main checkout (a bad record, or a
@@ -550,11 +558,11 @@ function checkTeardownGate(ctx, teardownWarnings = []) {
   // be nonsensical (whole-branch review MINOR 6). Computed only when there is
   // at least one target, since it costs an fs walk on every hook call
   // otherwise.
-  const mainRoot = safeReal(wtDetect.mainCheckoutRoot(ctx.cwd || process.cwd()));
+  const mainRoot = canonicalRealpath(wtDetect.mainCheckoutRoot(ctx.cwd || process.cwd()), { fsImpl });
   // Own-cwd guard (#693): resolved once per call, reused across targets.
-  const cwdReal = safeReal(ctx.cwd || process.cwd());
+  const cwdReal = canonicalRealpath(ctx.cwd || process.cwd(), { fsImpl });
   for (const { path: target, source } of targets) {
-    if (mainRoot && safeReal(target) === mainRoot) continue;
+    if (mainRoot && canonicalRealpath(target, { fsImpl }) === mainRoot) continue;
 
     // A raw Bash `git worktree remove` (never ExitWorktree — see teardownTargets'
     // header comment) whose target IS the session's own cwd, or a directory
@@ -567,7 +575,7 @@ function checkTeardownGate(ctx, teardownWarnings = []) {
     // incident's raw remove through. Ambiguity (unresolvable target or cwd)
     // still resolves to allow, matching this file's own posture throughout.
     if (source === 'bash') {
-      const targetReal = safeReal(target);
+      const targetReal = canonicalRealpath(target, { fsImpl });
       if (targetReal && cwdReal && isPathContained(cwdReal, targetReal, { orEqual: true })) {
         // #2282: this deny previously left no friction-event trace at all —
         // unlike the assigned-run deny below (wd-deny), which was already
@@ -675,7 +683,10 @@ function shadowPipelineRunDir(targetPath) {
   const resolved = path.resolve(targetPath);
   const { repoRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(resolved);
   if (indeterminate || !repoRoot || !isLinkedWorktree) return null;
-  const pipelinesDir = path.join(repoRoot, PIPELINE_STATE_DIR);
+  // realTarget (below) now returns path-guard's case-canonical (.native) form,
+  // so the root it is compared against is canonicalised the same way (#3495);
+  // repoRoot is the JS form, which echoes casing on a case-insensitive volume.
+  const pipelinesDir = path.join(canonicalRealpath(repoRoot) || repoRoot, PIPELINE_STATE_DIR);
   // realTarget follows an existing symlink chain the same way the policy.yml
   // exemption does; falls back to the literal resolved path when nothing
   // exists yet (a brand-new mkdir target has no leaf, sometimes not even a
@@ -1673,8 +1684,10 @@ function stampCheckOutcome(ctx, stamp, wtRoot, warnings, warnText, denyText, isF
 // GitHub-backed remote, so real resolution can only ever return 'local-merge'
 // in a test; injecting it is what lets the pr-first deny path be exercised at
 // all (gh-api-module-pattern's injectable-runner convention). Unused by the
-// worktree-stamp check.
+// worktree-stamp check. `deps.fsImpl` is forwarded to this gate's own
+// canonicalRealpath calls (#3682).
 function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings = []) {
+  const fsImpl = deps.fsImpl;
   const toolName = ctx.input && ctx.input.tool_name;
   const isFileTool = GATE_COVERAGE.tools.includes(toolName);
   const isGitWrite = toolName === 'Bash' && Array.isArray(commandGitTargets) && commandGitTargets.length > 0;
@@ -1736,10 +1749,10 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   // match. Only if NOT ONE target belongs to this project does the call go
   // un-gated — one in-project target is enough to keep the gate armed.
   if (isGitWrite) {
-    const mainRoot = safeReal(wtDetect.mainCheckoutRoot(wtRoot));
+    const mainRoot = canonicalRealpath(wtDetect.mainCheckoutRoot(wtRoot), { fsImpl });
     if (mainRoot) {
       const ownsATarget = commandGitTargets.some(
-        (t) => safeReal(wtDetect.mainCheckoutRoot(t.dir)) === mainRoot,
+        (t) => canonicalRealpath(wtDetect.mainCheckoutRoot(t.dir), { fsImpl }) === mainRoot,
       );
       if (!ownsATarget) return {};
     }
@@ -1791,7 +1804,7 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
       let danglingSymlink = false;
       try {
         if (fs.lstatSync(fileTargetPath).isSymbolicLink()) {
-          const real = safeReal(fileTargetPath);
+          const real = canonicalRealpath(fileTargetPath, { fsImpl });
           if (real) resolvedTargetPath = real;
           else danglingSymlink = true; // exists but unresolvable -> unprovable, fail closed
         }
@@ -1800,8 +1813,8 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
         const { repoRoot: targetRoot, indeterminate: targetIndeterminate } = wtDetect.repoInfo(resolvedTargetPath);
         if (!targetIndeterminate) {
           if (!targetRoot) return {}; // provably not a repo at all -- unconditional, matches the comment above
-          const mainRoot = safeReal(wtDetect.mainCheckoutRoot(wtRoot));
-          const targetMainRoot = mainRoot && safeReal(wtDetect.mainCheckoutRoot(targetRoot));
+          const mainRoot = canonicalRealpath(wtDetect.mainCheckoutRoot(wtRoot), { fsImpl });
+          const targetMainRoot = mainRoot && canonicalRealpath(wtDetect.mainCheckoutRoot(targetRoot), { fsImpl });
           if (targetMainRoot && targetMainRoot !== mainRoot) return {}; // provably a different repo
         }
       }
@@ -1996,7 +2009,7 @@ function dispatchConfigDenyReason(configPath) {
     + 'unchanged — nothing about the commit itself needs to change.';
 }
 
-function checkDispatchConfigGate(ctx, commandGitTargets) {
+function checkDispatchConfigGate(ctx, commandGitTargets, deps = {}) {
   const toolName = ctx.input && ctx.input.tool_name;
   if (toolName !== 'Bash' || !Array.isArray(commandGitTargets) || commandGitTargets.length === 0) return {};
   const owned = ctx.ownedRun || {};
@@ -2012,11 +2025,13 @@ function checkDispatchConfigGate(ctx, commandGitTargets) {
   if (indeterminate || !wtRoot || !isLinkedWorktree) return {};
   const sessionId = ctx.input && typeof ctx.input.session_id === 'string' ? ctx.input.session_id : null;
   if (ctxLib.classifyOwnership({ sessionId, cwd }, state) !== 'mine') return {};
-  const bound = safeReal(wtRoot);
+  const fsImpl = deps.fsImpl;
+  const bound = canonicalRealpath(wtRoot, { fsImpl });
   if (!bound) return {};
+  const topOf = deps.toplevel || toplevel;
   const hitsBound = commandGitTargets.some((t) => {
-    const top = t && t.dir ? toplevel(t.dir) : null;
-    return Boolean(top) && safeReal(top) === bound;
+    const top = t && t.dir ? topOf(t.dir) : null;
+    return Boolean(top) && canonicalRealpath(top, { fsImpl }) === bound;
   });
   if (!hitsBound) return {};
   const testTag = process.env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
@@ -2028,11 +2043,11 @@ function checkDispatchConfigGate(ctx, commandGitTargets) {
 // (checkTeardownGate's foreign-owned teardown, checkBookkeepingStampsGate's
 // foreign-owned run); run() attaches them all to whatever outcome is reached.
 // `deps` is run()'s own pass-through of its test-only override bag — see
-// run()'s header comment below — forwarded verbatim to
-// checkBookkeepingStampsGate as its own `deps` parameter. No other gate in
-// this pass currently takes an override.
+// run()'s header comment below — forwarded verbatim to checkTeardownGate,
+// checkDispatchConfigGate and checkBookkeepingStampsGate as their own `deps`
+// parameter, and read directly by E1 at the tail of this function.
 function runInner(ctx, indeterminateTargets, warnings, deps) {
-  const teardown = checkTeardownGate(ctx, warnings);
+  const teardown = checkTeardownGate(ctx, warnings, deps);
   if (teardown.json) return teardown;
 
   const shadow = checkPipelineShadowGuard(ctx);
@@ -2057,7 +2072,7 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
 
   // #3225: before the stamps gate — config.yml is Step 3's write, which the
   // documented order puts ahead of every stamp-bearing commit.
-  const dispatchConfig = checkDispatchConfigGate(ctx, commandGitTargets);
+  const dispatchConfig = checkDispatchConfigGate(ctx, commandGitTargets, deps);
   if (dispatchConfig.json) return dispatchConfig;
 
   const stamps = checkBookkeepingStampsGate(ctx, commandGitTargets, deps, warnings);
@@ -2067,7 +2082,9 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
   if (ctx.runState.status === 'clean') return {};
   if (ctx.input.tool_name !== 'Bash') return {};
   if (typeof command !== 'string' || !command) return {};
-  const assigned = safeReal(ctx.runState.worktree);
+  const fsImpl = deps && deps.fsImpl;
+  const topOf = (deps && deps.toplevel) || toplevel;
+  const assigned = canonicalRealpath(ctx.runState.worktree, { fsImpl });
   if (!assigned) return {};
 
   // Multi-run project: the fallback resolver in bin/hooks.js always picks the
@@ -2078,7 +2095,7 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
   const otherWorktrees = new Map(); // realpath (excluding this run's own) -> run dir
   for (const { dir, state } of ctxLib.listRunDirsWithState(ctx.cwd)) {
     if (!state || !state.worktree) continue;
-    const real = safeReal(state.worktree);
+    const real = canonicalRealpath(state.worktree, { fsImpl });
     if (!real || real === assigned) continue;
     if (!otherWorktrees.has(real)) otherWorktrees.set(real, dir);
   }
@@ -2090,7 +2107,7 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
   // each target's own main-checkout root; the guard used to skip that step,
   // and so denied a commit in an out-of-repo scratch fixture repo exactly as
   // it denied one in the wrong in-project checkout.
-  const mainRoot = safeReal(wtDetect.mainCheckoutRoot(assigned));
+  const mainRoot = canonicalRealpath(wtDetect.mainCheckoutRoot(assigned), { fsImpl });
 
   // #1431 audit: every appendEvent call in this loop (wd-ambiguous,
   // wd-push-mismatch, wd-foreign-session, wd-deny below) deliberately uses
@@ -2105,9 +2122,9 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
   // #1431 attribution-guess hazard (resolveRun's 'fallback' arm guessing at
   // an unrelated, unbound run — not what E1 resolves against here).
   for (const target of commandGitTargets || []) {
-    const top = toplevel(target.dir);
+    const top = topOf(target.dir);
     if (!top) continue; // cannot prove the target -> allow
-    const actual = safeReal(top);
+    const actual = canonicalRealpath(top, { fsImpl });
     if (!actual) continue;
     if (actual === assigned) continue;
     if (otherWorktrees.has(actual)) {
@@ -2130,7 +2147,7 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
       // provably this project's own, via its live run-state record) is never
       // reclassified as foreign merely because its own mainCheckoutRoot lookup
       // is inconclusive.
-      const actualMainRoot = safeReal(wtDetect.mainCheckoutRoot(actual));
+      const actualMainRoot = canonicalRealpath(wtDetect.mainCheckoutRoot(actual), { fsImpl });
       if (actualMainRoot !== mainRoot) continue;
     }
     if (target.action === 'push') {
@@ -2182,10 +2199,13 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
 // collected note.
 // `deps` (optional, default `{}`) is the ONE injection point run() offers a
 // caller: a bag of test-only overrides forwarded verbatim to whichever inner
-// gate declares its own `deps` parameter (today, only
-// checkBookkeepingStampsGate's `resolveIntegrationModel` override — see that
-// function's header comment). The production call site
-// (bin/hooks.js's `main()`) calls `mod.run({...})` with a single argument, so
+// gate declares its own `deps` parameter. Today that is
+// checkBookkeepingStampsGate's `resolveIntegrationModel` override (see that
+// function's header comment), `fsImpl` (an fs-like object every
+// canonicalRealpath call resolves through, so a case-insensitive fake can stand
+// in for the volume, #3682), and `toplevel` (replaces the `git rev-parse
+// --show-toplevel` probe in E1 and checkDispatchConfigGate). The production
+// call site (bin/hooks.js's `main()`) calls `mod.run({...})` with a single argument, so
 // `deps` is always `{}` there; only a test passes a second argument. Adding
 // this parameter is what lets a test exercise checkBookkeepingStampsGate's
 // pr-first branch through run()'s own dispatch instead of calling the gate

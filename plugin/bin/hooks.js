@@ -140,6 +140,13 @@ const KNOWN_FLAGS = {
   'record-pr': ['--run'],
   'manifest-init': ['--run', '--specs'],
   'spec-status': ['--run', '--spec', '--status', '--phase', '--now'],
+  // `--remote-ref-only` (#3088) has been inert since #3490, because teardown-run never archives.
+  // Remove it in two releases. (1) Drop it from the three skill-prose call sites
+  // (`wrap-up/cleanup-procedures-execution.md` Section C steps 5 and 5.5, `flow/multispec-review-console.md`
+  // Shared teardown step 7) and from their pins in `tests/scratch-worktree-remote-branch-delete.test.js`,
+  // and every other prose mention or pin of it (`git grep -n -F -- --remote-ref-only`), in any release after the one that ships #3490. (2) Only in a release after (1) has shipped, remove
+  // it from `KNOWN_FLAGS` and `USAGE` here. Until then a session can still hold pre-(1) prose in context
+  // while the running build's hooks.js is newer, and the unknown-flag guard would refuse that call.
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
   'resolve-console': ['--run', '--approve', '--decline'],
 };
@@ -1064,8 +1071,11 @@ async function main(argv) {
     // no sanctioned CLI path. --run mirrors record-pr/spec-status's shape
     // (unambiguous-only resolution, explicit --run always wins); --ledger
     // overrides resolveLedgerPath's own run-dir-first/docs-plans-fallback
-    // resolution for the rare case (2+ *-ledger.md candidates) it can't
-    // disambiguate on its own.
+    // resolution for the rare case (2+ owned *-ledger.md candidates, or
+    // ownership not computable) it can't disambiguate on its own. The
+    // fallback only considers the docs/plans ledger this branch owns
+    // (merge-base diff or untracked, #3566) — an inherited one is never
+    // deleted from here.
     const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
     const {
       runDir, invalidRunArg, rest, worktreeLocalFallback, candidates,
@@ -1086,6 +1096,8 @@ async function main(argv) {
         process.stdout.write(`claude-tweaks: delete-ledger: ${resolved.candidates.length} candidate ledgers found, cannot pick one — pass --ledger <path> explicitly:\n${resolved.candidates.map((c) => `  ${c}`).join('\n')}\nLedger not deleted.\n`);
       } else if (!resolved.ok && resolved.reason === 'rejected') {
         process.stdout.write(`claude-tweaks: delete-ledger: --ledger ${resolved.candidates[0]} rejected (${resolved.detail}) — ledger not deleted\n`);
+      } else if (!resolved.ok && resolved.reason === 'unattributable') {
+        process.stdout.write(`claude-tweaks: delete-ledger: cannot attribute docs/plans ledgers to ${path.basename(runDir)} (${resolved.detail}) — pass --ledger <path> explicitly; ledger not deleted\n`);
       } else if (!resolved.ok) {
         process.stdout.write(`claude-tweaks: delete-ledger: no ledger found for ${path.basename(runDir)} — not found\n`);
       } else {
@@ -1111,8 +1123,7 @@ async function main(argv) {
     } else if (candidates) {
       process.stdout.write(`${renderCandidateRefusal('teardown-run', candidates)}\nRun not torn down.\n`);
     } else if (runDir) {
-      const remoteRefOnly = argv.includes('--remote-ref-only');
-      const result = teardownRun(runDir, { mode, sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd(), remoteRefOnly });
+      const result = teardownRun(runDir, { mode, sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() });
       process.stdout.write(`claude-tweaks: teardown-run ${path.basename(runDir)}\n${result.lines.map((l) => `  ${l}`).join('\n')}\n`);
     } else {
       process.stdout.write('claude-tweaks: no pipeline run dir found — run not torn down\n');
@@ -1120,7 +1131,9 @@ async function main(argv) {
     return 0;
   }
   if (cmd === 'archive-run') {
-    const { archiveRunDir, readConsoleState, listSpecDirs } = require('./lib/reconcile/archive-merged');
+    const {
+      archiveRunDir, readConsoleState, listSpecDirs, listStagedItems, consoleReplacedByAutoMergeShortCircuit,
+    } = require('./lib/reconcile/archive-merged');
     const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
     const { runDir, invalidRunArg, worktreeLocalFallback } = resolveRunArg(
       argv.slice(3), process.cwd(), process.env, { allowUninitialized: true },
@@ -1150,12 +1163,26 @@ async function main(argv) {
       return 0;
     }
     // #1130 AC4: same console gate decideArchive enforces on the reconcile
-    // path. 'none' stays allowed here — terminal status means close-run ran,
-    // i.e. wrap-up's own flow (incl. the empty-console fast path) completed;
-    // only a rendered-but-unanswered console blocks a direct archival.
-    if (readConsoleState(runDir) === 'unresolved') {
+    // path. A rendered-but-unanswered console (`unresolved`) always blocks.
+    // 'none' is allowed in general — terminal status means close-run ran, i.e.
+    // wrap-up's own flow (incl. the empty-console fast path) completed. #3668
+    // narrows that: the auto-merge short-circuit renders no console and no
+    // human ever sees its staged/ items, so a 'none' run whose decisions.md
+    // carries its auto-merge line (fast-lane or manifesto-authorized) is
+    // refused while staged/ holds pending items. Other 'none' runs that keep
+    // staged/ (in-terminal consoles, fleet-approved closes, tidy --approve)
+    // still archive.
+    const consoleState = readConsoleState(runDir);
+    if (consoleState === 'unresolved') {
       process.stdout.write('claude-tweaks: archival refused — console-unresolved (console.json rendered but not resolved; answer or resolve the console first)\n');
       return 0;
+    }
+    if (consoleState === 'none' && consoleReplacedByAutoMergeShortCircuit(runDir)) {
+      const pending = listStagedItems(runDir);
+      if (pending.length) {
+        process.stdout.write(`claude-tweaks: archival refused — console-never-rendered-staged-pending (the auto-merge short-circuit rendered no console; pending: ${pending.join(', ')}) — apply or delete the pending staged/ items (and any spec-*/staged/), or write a resolved console.json, then re-run archive-run\n`);
+        return 0;
+      }
     }
     const mainRoot = wtDetect.mainCheckoutRoot(process.cwd());
     if (!mainRoot) {
@@ -1432,6 +1459,15 @@ async function main(argv) {
       cwd: process.cwd(),
       mcpReachable: args.includes('--mcp-reachable'),
       checks: checksList.length ? checksList : undefined,
+      // An explicit --checks subset is the caller naming exactly which checks
+      // must run — don't let the SessionStart hot-path time ceiling (#820 D4)
+      // skip them; an unscoped pass keeps the default ceiling (#3026).
+      budgetMs: checksList.length ? Infinity : undefined,
+      // An explicit subset cannot claim the whole fast pass ran, so it must
+      // not stamp the shared freshness key — otherwise the next SessionStart
+      // inside the TTL skips its red-tip/console checks (the #644 hazard,
+      // same opt-out reconcile-summary already uses; #3026 ledger follow-up).
+      skipCacheStamp: checksList.length ? true : undefined,
     };
     const jsonOut = args.includes('--json');
     let out;
@@ -1640,9 +1676,10 @@ async function main(argv) {
   //
   // `runDir`/`runState` stay owner-UNFILTERED — the newest non-terminal run
   // regardless of who owns it (the one exception: unadopted mints — bare
-  // mkdir'd dirs with neither run-state.json nor decisions.md — are skipped
-  // by resolveRun's fallback since #721, so a mint can no longer shadow an
-  // older adopted run and accidentally suppress E1's bystander warning). E1's
+  // mkdir'd dirs with neither run-state.json nor decisions.md, since #721, and
+  // claim-log-only mints, since #3515 — are skipped by resolveRun's fallback,
+  // so a mint can no longer shadow an older adopted run, suppress E1's
+  // bystander warning, or absorb a breadcrumb logged against runDir). E1's
   // working-directory gate is about this checkout, not about who owns the run:
   // its whole foreign-session branch exists to warn a bystander that the
   // checkout belongs to somebody else's worktree, which it can only do by
@@ -1655,7 +1692,18 @@ async function main(argv) {
   // subcommand, not a hook) can read it.
   const runDir = ctxLib.resolveRunDir(cwd, process.env);
   const runState = runDir ? ctxLib.readRunState(runDir) : null;
-  const ownedRun = ctxLib.resolveRun(cwd, process.env, input.session_id);
+  // #3515: ownedRun resolves STRICT — a write must not be guessed into a run
+  // bound to another worktree (the #3401 incident; the claim-log-only mint skip
+  // applies to both resolutions). The runDir above deliberately stays
+  // non-strict: E1 must still resolve a worktree-bound run it does not own.
+  // The diagnostic is one line per hook process and says only that nothing was
+  // attributed — whether the module would have written anything is its own call.
+  const ownedRun = ctxLib.resolveRun(cwd, process.env, input.session_id, { strictAttribution: true });
+  if (Array.isArray(ownedRun.dropped) && ownedRun.dropped.length) {
+    try {
+      fs.writeSync(2, `attribution: no run dir attributed — no fallback run dir matches ${cwd}; skipped ${ownedRun.dropped.join(', ')}\n`);
+    } catch { /* diagnostics never break a session */ }
+  }
   const out = (await mod.run({ input, runDir, runState, ownedRun, cwd })) || {};
   if (out.json) fs.writeSync(1, JSON.stringify(out.json));
   return typeof out.exit === 'number' ? out.exit : 0;

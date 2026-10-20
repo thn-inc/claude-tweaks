@@ -5,12 +5,12 @@
 // removes test cases or assertions never auto-applies.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const REVIEW = path.join(__dirname, '..', 'plugin', 'skills', 'review');
-const lensDispatch = fs.readFileSync(path.join(REVIEW, 'step3-lens-dispatch.md'), 'utf8');
-const routing = fs.readFileSync(path.join(REVIEW, 'step3-routing.md'), 'utf8');
+const lensDispatch = readText(path.join(REVIEW, 'step3-lens-dispatch.md'));
+const routing = readText(path.join(REVIEW, 'step3-routing.md'));
 
 function sectionOf(md, heading) {
   const start = md.indexOf(`\n${heading}\n`);
@@ -75,7 +75,7 @@ test('step3-routing lists the lens 3f no-execution-evidence source among unconfi
   assert.match(list, /^- Vacuity claim without execution evidence \(lens 3f/m);
 });
 
-const contract = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'auto-mode-contract.md'), 'utf8');
+const contract = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'auto-mode-contract.md'));
 
 test('step3-routing states test-removal fixes route STAGED at every ceiling, over the prose-exempt bump', () => {
   const auto = sectionOf(routing, '## Auto mode (severity-based routing)');
@@ -103,4 +103,15 @@ test('the auto-mode contract row for /review Step 3 Routing names the test-remov
   assert.ok(row, 'contract row must exist');
   assert.match(row, /removes test cases or assertions/);
   assert.match(row, /removes test cases or assertions → `STAGED` at every ceiling, `KEPT-PROMPT` when critical/);
+});
+
+test('review-vacuity: the paragraph search still finds its break under CRLF line endings (#3574)', () => {
+  const FILE = path.join(REVIEW, 'step3-routing.md');
+  const { raw, text } = crlfCheckoutRead(FILE);
+  assert.ok(raw.includes('\r\n'), 'the CRLF input must contain \\r\\n line breaks');
+  assert.ok(!raw.includes('\r\r\n'), 'the CRLF input must not contain \\r\\r\\n');
+  assert.strictEqual(raw.indexOf('\n\n'), -1, 'a raw CRLF read has no LF paragraph break');
+  assert.strictEqual(text, readText(FILE));
+  const auto = sectionOf(text, '## Auto mode (severity-based routing)');
+  assert.match(auto.slice(auto.indexOf('| **Low** |')).split('\n\n')[1], /test-removal override/);
 });

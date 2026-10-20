@@ -108,10 +108,11 @@ test('the --stamp-status read block parses clean through the real arg parser (#1
 });
 
 test('the scoped re-verify invocation parses clean through the real arg parser and names every required flag (#1923)', () => {
-  const argv = snippetArgv(extractScopedSnippet().replace('{ref}', 'main'));
+  const argv = snippetArgv(extractScopedSnippet().replace(/\{ref\}/g, 'main'));
   const parsed = parseArgs(argv);
   assert.strictEqual(parsed.scope, '.claude-tweaks/verify-scope.json');
   assert.strictEqual(parsed.integrationBranch, 'main');
+  assert.strictEqual(parsed.baseline, 'origin/main', 'a scoped site passes --baseline on the same invocation (#3511)');
   assert.ok(parsed.cmds.length >= 1, 'the scoped invocation must still pass the full --cmd set');
   assert.ok(!extractScopedSnippet().includes('$(git rev-parse'), 'the scoped invocation must not substitute a git dir');
 });
@@ -119,6 +120,12 @@ test('the scoped re-verify invocation parses clean through the real arg parser a
 test('the scoped snippet tokenizer can go red on an injected unknown flag (#1923)', () => {
   const mutated = extractScopedSnippet().replace('{ref}', 'main') + ' --bogus';
   assert.throws(() => parseArgs(snippetArgv(mutated)), UsageError);
+});
+
+test('verification.md states the map-form baseline resolution rule (#3511)', () => {
+  const section = DOC.slice(DOC.indexOf('### Baseline adjudication'), DOC.indexOf('### Declared pre-existing failures'));
+  assert.ok(section.includes('`retry.{name}`'), 'names the retry fallback');
+  assert.ok(section.includes('names no `--cmd` or declared suite'), 'names the unmatched-name usage error');
 });
 
 test('agents never write the stamp: no redirect into claude-tweaks-verify-pass remains, and the foreground rule is stated (#1921 AC6)', () => {

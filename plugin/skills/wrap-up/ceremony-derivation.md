@@ -26,15 +26,15 @@ full `standard` ceremony for a `size:low` single-module fix — 12 minutes of fu
 currently reads `standard`, the header-fold default (`flow/manifesto.md`'s Ceremony profile
 computation), so there is nothing here to clobber:
 
-1. Compute this run's diff facts: parse `git diff --numstat` against the run's own merge-base with
-   `parseNumstat` (`bin/lib/blast-radius-cli.js`), then pass the parsed `{path, additions, deletions}[]`
+1. Compute this run's diff facts: parse `git diff --numstat -z` against the run's own merge-base with
+   `parseNumstatZ` (`bin/lib/git-z.js`), then pass the parsed `{path, additions, deletions}[]`
    array — never the raw string — to `computeDiffFacts` in `bin/lib/dispatch/ceremony-derive.js` (the same facts
    shape `blast-radius-cli.js`'s `computeBlastRadius` already derives for the merge-check verdict —
    reuse `classifyDiffFiles`/`blastRadiusSummary`, don't re-derive). The one-line composition
    (substitute the run's integration branch for `origin/main`); it prints the diff-facts JSON:
 
    ```bash
-   git diff --numstat "$(git merge-base HEAD origin/main)" | node -e "const { parseNumstat } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/blast-radius-cli.js'); const { computeDiffFacts } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/ceremony-derive.js'); console.log(JSON.stringify(computeDiffFacts(parseNumstat(require('fs').readFileSync(0, 'utf8')))))"
+   git diff --numstat -z "$(git merge-base HEAD origin/main)" | node -e "const { parseNumstatZ } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/git-z.js'); const { computeDiffFacts } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/ceremony-derive.js'); console.log(JSON.stringify(computeDiffFacts(parseNumstatZ(require('fs').readFileSync(0, 'utf8')))))"
    ```
 2. When the diff touches zero production/implementation files — any mix of test and/or docs files
    only (`deriveCeremonyProfile`'s `lowSurface` classification; a test file plus a small amount of
@@ -42,6 +42,8 @@ computation), so there is nothing here to clobber:
    regression test must still default to `standard`) — downgrade **the ceremony requirement**, i.e.
    set `config.yml`'s `ceremony-profile` to `fast-lane` via the sanctioned writer:
    `node "${CLAUDE_PLUGIN_ROOT}/bin/set-config.js" --run "$PIPELINE_RUN_DIR" --key ceremony-profile --value fast-lane`.
+
+   Markdown under a `skills/`, `agents/`, or `commands/` directory at any prefix (`plugin/skills/**`, `plugin/agents/*.md`, `.claude/skills/**`) is prompt prose — a plugin's shipped product or a project's own harness — and counts as a production file, not docs, even under a `skills/test/` directory, where it is never a test (`isPromptProsePath`, #3477); other markdown (`docs/**`, a materialized `work/{n}-spec.md`) stays docs.
 3. Log: `AUTO {time} — Ceremony profile derived from diff: low-surface ({file-count} file(s), 0 production files) — header-fold default (standard) replaced with fast-lane.`
 
 This never *upgrades* toward `standard` on its own — the diff-derived default only ever narrows a

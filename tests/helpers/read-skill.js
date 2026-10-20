@@ -15,10 +15,31 @@
 // inline before this helper existed. Every prose-conformance suite that
 // reads governed markdown for a literal assertion should route its read
 // through this helper instead of a private fs.readFileSync call.
+//
+// crlfCheckoutRead(absPath) (#3574) builds the CRLF case on any OS: it returns
+// { raw, text } where raw is the file's LF text with every \n turned into \r\n
+// (what a Windows autocrlf checkout holds) and text is that raw copy read back
+// through readText() from a temp file. A suite asserting text still finds its
+// '\n\n' paragraph breaks proves readText() makes the search CRLF-safe (the
+// checkout is not what does).
 const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 function readText(absPath) {
   return fs.readFileSync(absPath, 'utf8').replace(/\r\n/g, '\n');
 }
 
-module.exports = { readText };
+function crlfCheckoutRead(absPath) {
+  const raw = readText(absPath).replace(/\n/g, '\r\n');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-crlf-'));
+  try {
+    const tmp = path.join(dir, path.basename(absPath));
+    fs.writeFileSync(tmp, raw);
+    return { raw, text: readText(tmp) };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+module.exports = { readText, crlfCheckoutRead };

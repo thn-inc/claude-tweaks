@@ -203,11 +203,11 @@ function isStale(wtPath, now = Date.now(), graceMs = ORPHAN_GRACE_MS) {
 // check would refuse to reap the common case (see #106, the same trap in
 // [IL-45]'s sha-identity check).
 //
-// An empty `git diff --name-only A B` means the two trees are identical.
+// An empty `git diff --name-only -z A B` means the two trees are identical.
 // Any failure to answer returns false: unresolvable is not identical.
 function isContentIdentical(repoRoot, branch, integration) {
   if (!branch || !integration) return false;
-  const { stdout, failure } = runGit(['diff', '--name-only', integration, branch], repoRoot);
+  const { stdout, failure } = runGit(['diff', '--name-only', '-z', '--end-of-options', integration, branch], repoRoot);
   if (failure) return false;
   return stdout.trim() === '';
 }
@@ -218,7 +218,7 @@ function isContentIdentical(repoRoot, branch, integration) {
 // else, and merge status is silent about it. Phase 1 moved claude-tweaks' own
 // run state out of the worktree; this catches everyone else's.
 function hasLocalOnlyContent(wtPath) {
-  const { stdout, failure } = runGit(['--no-optional-locks', 'status', '--porcelain', '--ignored'], wtPath);
+  const { stdout, failure } = runGit(['--no-optional-locks', 'status', '--porcelain', '--ignored'], wtPath); // git-path-read: not a path list (emptiness only)
   if (failure) return true; // can't tell -> assume yes
   return stdout.trim() !== '';
 }

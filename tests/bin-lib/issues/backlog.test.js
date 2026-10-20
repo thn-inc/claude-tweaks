@@ -96,15 +96,7 @@ test('deriveCreatedAtFromGit resolves createdAt for every record from a SINGLE b
   const calls = [];
   const execFn = (cmd) => {
     calls.push(cmd);
-    return [
-      '\x012026-01-05T12:00:00+00:00',
-      'specs/1-foo.md',
-      '',
-      '\x012026-01-01T00:00:00+00:00',
-      'specs/2-bar.md',
-      'specs/1-foo.md',
-      '',
-    ].join('\n');
+    return '\x012026-01-05T12:00:00+00:00\0\nspecs/1-foo.md\0\x012026-01-01T00:00:00+00:00\0\nspecs/2-bar.md\0specs/1-foo.md\0';
   };
   const records = [
     { number: 1, path: 'specs/1-foo.md' },
@@ -112,14 +104,21 @@ test('deriveCreatedAtFromGit resolves createdAt for every record from a SINGLE b
   ];
   const result = deriveCreatedAtFromGit(records, { execFn });
   assert.strictEqual(calls.length, 1, 'must resolve every record from a single git-log invocation, not one per record');
-  assert.match(calls[0], /^git log --name-only --format=/);
+  assert.match(calls[0], /^git log -z --name-only --format=/);
   assert.strictEqual(result[0].createdAt, '2026-01-05T12:00:00+00:00', 'must use the MOST RECENT commit touching the path (first-seen in newest-first git log order)');
   assert.strictEqual(result[0].number, 1);
   assert.strictEqual(result[1].createdAt, '2026-01-01T00:00:00+00:00');
 });
 
+test('deriveCreatedAtFromGit resolves a non-ASCII path from -z output (no C-quoting)', () => {
+  const execFn = () => '\x012026-01-05T12:00:00+00:00\0\nspecs/3-café.md\0';
+  const records = [{ number: 3, path: 'specs/3-café.md' }];
+  const result = deriveCreatedAtFromGit(records, { execFn });
+  assert.strictEqual(result[0].createdAt, '2026-01-05T12:00:00+00:00');
+});
+
 test('deriveCreatedAtFromGit falls back to the current time for a record whose path never appears in the git-log history', () => {
-  const execFn = () => '\x012026-01-01T00:00:00+00:00\nspecs/1-foo.md\n';
+  const execFn = () => '\x012026-01-01T00:00:00+00:00\0\nspecs/1-foo.md\0';
   const before = Date.now();
   const records = [{ number: 2, path: 'specs/2-missing.md' }];
   const result = deriveCreatedAtFromGit(records, { execFn });
@@ -149,14 +148,7 @@ test('deriveCreatedAtFromGit falls back to the current time for every record whe
 });
 
 test('deriveCreatedAtFromGit preserves record order and does not mutate the input records', () => {
-  const execFn = () => [
-    '\x012026-02-02T00:00:00+00:00',
-    'specs/2-bar.md',
-    '',
-    '\x012026-01-01T00:00:00+00:00',
-    'specs/1-foo.md',
-    '',
-  ].join('\n');
+  const execFn = () => '\x012026-02-02T00:00:00+00:00\0\nspecs/2-bar.md\0\x012026-01-01T00:00:00+00:00\0\nspecs/1-foo.md\0';
   const records = [
     { number: 1, path: 'specs/1-foo.md' },
     { number: 2, path: 'specs/2-bar.md' },

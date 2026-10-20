@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/skills/build/dispatch.md
+  - plugin/bin/write-run-artifact.js
 ---
 
 # Measure What SDD's Final Whole-Branch Review Caught on a Finished Run
@@ -16,8 +17,8 @@ files:
 - **URL:** `{run-dir}/sdd-final-review.md` (multi-spec: `{run-dir}/spec-{N}/sdd-final-review.md`)
 - **Action:** Open the file. If it is missing, check the run's `config.yml` (`ceremony-profile: fast-lane`) and `decisions.md` (a `SKIP … Whole-branch review skipped: fast-lane, single-task plan` line under `## /build`) for the single-task fast-lane skip, the one case in a `/flow` run where SDD dispatched no final review and nothing is written. A standalone `/build` also writes nothing, but it has no run directory to open, so it never reaches this step.
 - **Should feel:** Like a lookup, not a hunt. One file per spec, always in the same place, with an absolute run-directory path even when SDD ran inside a worktree.
-- **Should understand:** The file is maintainer evidence, not a gate. No skill blocks on it, so a missing file means either that the fast-lane skip applied or that SDD ignored the instruction. It never means the run failed.
-- **Red flags:** A copy under the worktree's `.claude-tweaks/pipelines/` instead of the main checkout's (a relative-path shadow, `[IL-127]`). A missing file whose `## /build` decisions log has a `SKIP … — SDD final review dispatched but sdd-final-review.md absent` line: the review ran, but its findings were not captured.
+- **Should understand:** The file is maintainer evidence, not a gate. No skill blocks on it, so a missing file means the fast-lane skip applied, SDD ignored the instruction, or the writer (`bin/write-run-artifact.js`) refused with a non-zero exit. It never means the run failed.
+- **Red flags:** A copy under the worktree's `.claude-tweaks/pipelines/` instead of the main checkout's (a relative-path shadow, `[IL-127]`). A controller ruling or workaround note about writing the file from a worktree: since #3496 it goes through `bin/write-run-artifact.js --name sdd-final-review.md`, so a harness refusal means `dispatch.md` was not followed. A missing file whose `## /build` decisions log has a `SKIP … — SDD final review dispatched but sdd-final-review.md absent` line: the review ran, but its findings were not captured.
 
 ### 2. Read the findings and the commits they belong to
 - **URL:** the file's header fields and its findings section
@@ -50,4 +51,5 @@ files:
 ## Origin
 - Created during build of #3386 (persist SDD's final whole-branch review findings, reviewed commit and fix range to the run directory), part of the "Build dispatch cost shape" decomposition (parent #3374).
 - Live example: run `2026-10-17T111000-spec-3376-3386`'s `spec-3386/sdd-final-review.md` (reviewed 71b6bda2f from base 7dbd57189, fix wave 71b6bda2f..c0f85208d, all re-review verdicts ADDRESSED).
-- Related: `docs/journeys/repin-an-upstream-plugin-dependency-3376.md`; #3381 consumes this measurement.
+- Updated during build of #3496: SDD now writes the record through `bin/write-run-artifact.js` (resolve a session-tmp scratch path, Write it, persist), so a worktree-isolated session no longer hits the harness's cross-checkout refusal. Live example: run `2026-10-19T195822-record-3496`'s `sdd-final-review.md`, persisted from its own worktree.
+- Related: `docs/journeys/repin-an-upstream-plugin-dependency-3376.md`; `docs/journeys/write-the-ac-forwarding-sample-from-a-worktree-3044.md` (the same writer, for the AC-forwarding sample); #3381 consumes this measurement.

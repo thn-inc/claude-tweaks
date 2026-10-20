@@ -40,9 +40,10 @@ files:
 - **URL:** the table's `New unresolved` column.
 - **Action:** Read any listed tokens.
 - **Should feel:** A short, specific list — not noise.
-- **Should understand:** It lists backticked `.md` tokens added by this branch that the citation grammar (relative to the citing file, `_shared/`, `${CLAUDE_PLUGIN_ROOT}/`, or "in that skill's directory") cannot resolve. Glob and placeholder tokens (`skills/*/SKILL.md`, `{n}-spec.md`) are left out. An unresolved token is never counted as 0 bytes — but if the reader really loads that file, its bytes are missing from the closure, so fix the citation form.
+- **Should understand:** It lists backticked `.md` tokens added by this branch that the citation grammar (relative to the citing file, `_shared/`, `${CLAUDE_PLUGIN_ROOT}/`, "in that skill's directory", `skills/…` (plugin-root-relative), or `{skill}/…` (skills-dir-relative)) cannot resolve. Glob and placeholder tokens (`skills/*/SKILL.md`, `{n}-spec.md`) are left out. An unresolved token is never counted as 0 bytes — but if the reader really loads that file, its bytes are missing from the closure, so fix the citation form.
 - **Red flags:** Placeholder tokens in the list; a citation you know resolves (e.g. a sibling in the same skill directory) listed as unresolved.
 
 ## Origin
 - Created during build of #3307 (per-invocation skill load model and review step 3j — parent #3305, skill size limits guard platform limits only).
+- Updated during build of #3457, which added citation-grammar rule (e): plugin-root-relative `skills/…` and skills-dir-relative `{skill}/…` tokens now resolve, so closures stop undercounting.
 - Related specs: #3309 (transcript-measured actual load in `/harness-health`, which consumes `entryPointLoads`), #3310 (cuts every size consumer over to the rail, load delta, and size outlier), #3311 (retires the old per-file size-ceiling code and its merge-time probe).

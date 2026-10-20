@@ -9,20 +9,23 @@
 // on.
 //
 // Pure — no git/fs I/O of its own. `wrap-up/SKILL.md`'s "Diff-derived
-// ceremony default" step supplies `files` (parsed `git diff --numstat`
-// output, `blast-radius-cli.js`'s `parseNumstat` shape: `{path, additions,
+// ceremony default" step supplies `files` (parsed `git diff --numstat -z`
+// output, `git-z.js`'s `parseNumstatZ` shape: `{path, additions,
 // deletions}[]`) and the run's current `ceremony-profile` value.
-const { classifyDiffFiles, blastRadiusSummary } = require('../issues/blast-radius');
+// isPromptProsePath and PROMPT_PROSE_DIRS live in blast-radius.js (#3680: its isTestPath
+// shares the prose classification); they are re-exported below so the prose-twin pin
+// (`build/micro-plan.md`, `wrap-up/ceremony-derivation.md`) still reads them through this module.
+const { classifyDiffFiles, blastRadiusSummary, isPromptProsePath, PROMPT_PROSE_DIRS } = require('../issues/blast-radius');
 
-// Docs-only surface: every changed file is markdown. Deliberately broader
+// Docs-only surface: markdown that is not prompt prose. Deliberately broader
 // than `docs/**` alone — a materialized `work/{n}-spec.md` file (itself
 // markdown) is exactly the kind of accompanying file the #1545 evidence diff
 // carried alongside its one test file, and both must count as low-surface.
 function isDocsPath(path) {
-  return /\.md$/i.test(path);
+  return /\.md$/i.test(path) && !isPromptProsePath(path);
 }
 
-// files: [{path, additions, deletions}] (blast-radius-cli.js's parseNumstat
+// files: [{path, additions, deletions}] (git-z.js's parseNumstatZ
 // shape). Returns the fact set both this module's own derivation and any
 // future caller needing the same classification can read directly, rather
 // than re-deriving it.
@@ -78,4 +81,4 @@ function shouldDerive({ mode, ceremonyProfile } = {}) {
   return mode === 'auto' && ceremonyProfile === 'standard';
 }
 
-module.exports = { computeDiffFacts, deriveCeremonyProfile, isDocsPath, shouldDerive };
+module.exports = { computeDiffFacts, deriveCeremonyProfile, isDocsPath, isPromptProsePath, PROMPT_PROSE_DIRS, shouldDerive };

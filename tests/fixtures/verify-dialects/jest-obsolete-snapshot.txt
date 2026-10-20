@@ -1,0 +1,27 @@
+PASS tests/snap.test.js
+ › 1 snapshot obsolete.
+   • removed 1
+FAIL tests/flaky.test.js
+  ● flaky sometimes fails
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 2
+    Received: 1
+
+    > 1 | test('flaky sometimes fails', () => { expect(1).toBe(2); });
+        |                                                 ^
+      2 |
+
+      at Object.toBe (tests/flaky.test.js:1:49)
+
+Snapshot Summary
+ › 1 snapshot obsolete from 1 test suite. To remove it, re-run jest with `-u`.
+   ↳ tests/snap.test.js
+       • removed 1
+
+Test Suites: 1 failed, 1 passed, 2 total
+Tests:       1 failed, 1 passed, 2 total
+Snapshots:   1 obsolete, 1 passed, 1 total
+Time:        0.354 s
+Ran all test suites.

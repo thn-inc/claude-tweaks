@@ -1,7 +1,7 @@
 ---
 name: flow
 description: Use when you want to run an automated build → test → review → polish → wrap-up pipeline on a work record without stopping between steps. Accepts record references (#N) only — design docs must be decomposed via /claude-tweaks:specify first.
-argument-hint: "#N[,#M...] [worktree|current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto|interactive|hybrid|confirm] [keep-going] [parallel] [cleanup-only] [step1,step2,step3]"
+argument-hint: "#N[,#M...] [worktree|current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto|interactive|hybrid|confirm] [keep-going] [parallel] [pre-authorize-merge] [cleanup-only] [step1,step2,step3]"
 ---
 
 # Flow — Automated Pipeline
@@ -29,12 +29,12 @@ Run multiple lifecycle steps in sequence without stopping between them. Each ste
 
 ## Input
 
-`$ARGUMENTS` is parsed as `#N[,#M...] [worktree|current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto|interactive|hybrid|confirm] [keep-going] [parallel] [cleanup-only] [step1,step2,step3]` — see Syntax and Arguments below for what each token resolves to.
+`$ARGUMENTS` is parsed as `#N[,#M...] [worktree|current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto|interactive|hybrid|confirm] [keep-going] [parallel] [pre-authorize-merge] [cleanup-only] [step1,step2,step3]` — see Syntax and Arguments below for what each token resolves to.
 
 ## Syntax
 
 ```
-/claude-tweaks:flow #N[,#M...] [worktree|current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto|interactive|hybrid|confirm] [keep-going] [parallel] [cleanup-only] [step1,step2,step3]
+/claude-tweaks:flow #N[,#M...] [worktree|current-branch] [no-stories] [no-polish] [no-deepen] [no-creative] [auto|interactive|hybrid|confirm] [keep-going] [parallel] [pre-authorize-merge] [cleanup-only] [step1,step2,step3]
 ```
 
 All bracketed tokens are optional and order-independent. `worktree` is the default git strategy when neither `worktree` nor `current-branch` is set. `keep-going` applies to multi-record runs only. Design doc paths are rejected at Step 2.7 — run `/claude-tweaks:specify` first.
@@ -58,6 +58,7 @@ All bracketed tokens are optional and order-independent. `worktree` is the defau
 | `hybrid` | No | Manifesto approval gate runs; downstream skills still prompt on reversibility/confidence-floor or severity-ceiling failures. Between `auto` and `interactive`. |
 | `keep-going` | No | **Multi-spec only.** Continue the run after a HARD-GATE failure in one spec — remaining specs still run, committing into the same shared worktree. Failed specs surface in the consolidated Review Console's "Not run / Failed" footer. Use when specs are genuinely independent (no `blocked-by:` edges). The default is to stop on first failure because spec N+1 may build on spec N's correctness — `keep-going` inverts that safety, so it's opt-in. See `multi-spec.md`. On a single-spec/single-record run, `keep-going` has nothing to continue past — treat it as a no-op and note: "`keep-going` has no effect on a single-target run — it only applies when multiple specs/records are given." |
 | `parallel` | No | **Multi-spec only, opt-in (#2677).** Build and test mutually independent records concurrently in per-spec worktrees, in dependency waves; review, polish and wrap-up stay sequential in the shared worktree, with one PR and one console. See `multispec-parallel-waves.md`. Without it, a multi-spec run is unchanged; it has no effect on a single-record run or under `interactive`. |
+| `pre-authorize-merge` | No | Pre-authorizes this run's own merge (#2734): the Manifesto writes lever 13 `merge-authorization: pre-authorized` (source `arg`), so wrap-up's Auto-merge short-circuit merges once every HARD-GATE is green and `merge-check` returns `auto-merge` — no `confirm` gate, no final click (under `integration-model: pr-first`; a human-run `/flow` under `local-merge` still stops at `ready-to-merge`, a pre-existing gap in wrap-up's Dispatch-claim branch). A human types it; no skill composes it. Ignored on a dispatch-bound run (`run-state.json` `dispatched: true` — rung 2's one-liner read, run for this check whatever rung decided the mode and fail-open on purpose, since a fresh human run has no `run-state.json` yet; a dispatched record's merge authority is its `auto:merge` label; the Manifesto logs a `SKIP`), and a no-op under `interactive` or on a multi-record run — treat it as one and note at Step 1: "`pre-authorize-merge` has no effect — {interactive mode runs no Manifesto | a multi-record run's consolidated console never auto-merges}." Rules: `manifesto.md`'s Merge authorization default. |
 | `cleanup-only` | No | Valid only when the resolved step list includes `wrap-up` (e.g. `/claude-tweaks:flow {target} wrap-up cleanup-only`) — a dedicated teardown-only entry point (#298): the caller's teardown-only follow-up call needs `wrap-up`'s cleanup route (`[IL-116]`) but not its full review/reflection semantics. Under `cleanup-only`, `/claude-tweaks:wrap-up` skips Phases 1-4 (reflection, routing, settle, close) and runs only `cleanup-procedures.md`'s cleanup items; `/flow`'s own Step 5 treats the run the same way it already treats a step list where `wrap-up` is *absent* — skip the nothing-left-behind ledger gate and the Creative/Depth surveys, render the "Flow: Steps Complete" note (see `steps-and-gates.md`'s "Partial step lists" section). On a step list that does not include `wrap-up`, the flag is a no-op — note it in the pipeline output, the same convention `keep-going` uses for its own no-op case: "`cleanup-only` has no effect — `wrap-up` is not in the step list." **Does not exempt Step 1.5** — this flag is read only after Step 1's materialize hard gate has already run, so routing a teardown call through `/flow {target} wrap-up cleanup-only` for a record whose triggering failure *was* that gate reproduces the identical STOP rather than reaching cleanup (`#1766`). `/claude-tweaks:dispatch`'s own teardown call sidesteps this by invoking `/claude-tweaks:wrap-up {target} cleanup-only` directly, never through `/flow` — see `dispatch/two-call-gate.md` §5. |
 | `[steps]` | No | Step argument(s). Single step = resume from that step onward. Comma-separated steps = run exactly those steps. Default (no steps): `build,test,review,polish,wrap-up` (re-verify is bundled with polish). |
 
@@ -95,6 +96,7 @@ If no UI files changed, or `no-stories` is set, the stories step is skipped.
 /claude-tweaks:flow 42,45,48                                        → multi-spec sequential, all specs in one shared worktree
 /claude-tweaks:flow 42,45,48 keep-going                             → multi-spec, continue past HARD-GATE failures (independent specs only)
 /claude-tweaks:flow 42,45,48 parallel                               → multi-spec, independent records build+test concurrently in waves; one PR
+/claude-tweaks:flow 42 pre-authorize-merge                          → full pipeline; this run merges itself once every gate is green — no confirm gate, no final click
 /claude-tweaks:flow meal planning                                   → resolve to spec by name (rejected if only design doc exists)
 /claude-tweaks:flow docs/superpowers/specs/migration-design.md      → REJECTED — run /specify first; flow only accepts record references and specs (auto does not silence this)
 ```
@@ -113,7 +115,7 @@ When a gate fails, the pipeline stops immediately and renders a failure card. Tw
 
 ### Step 1: Validate Input
 
-1. Parse `$ARGUMENTS` — extract record reference(s) (`#N` / `#A,#B`) or topic name, detect `worktree`, `current-branch`, `no-stories`, `no-polish`, `no-deepen`, `no-creative`, the mode keywords (`auto` / `interactive` / `hybrid` / `confirm`), plus optional step list. **Resolve the mode** in this order (first match wins):
+1. Parse `$ARGUMENTS` — extract record reference(s) (`#N` / `#A,#B`) or topic name, detect `worktree`, `current-branch`, `no-stories`, `no-polish`, `no-deepen`, `no-creative`, `keep-going`, `parallel`, `pre-authorize-merge`, `cleanup-only`, the mode keywords (`auto` / `interactive` / `hybrid` / `confirm`), plus optional step list. **Resolve the mode** in this order (first match wins):
    1. Explicit mode keyword in `$ARGUMENTS` — `interactive` / `hybrid` / `confirm` / `auto`. (`confirm` means "auto mode, but gate the Manifesto"; see Step 3.)
    2. **Dispatch binding → `auto`** (#3372). When `$PIPELINE_RUN_DIR` is set, resolves under `$RUN_ROOT` (`_shared/pipeline-run-dir.md`'s anchoring check, the rule Step 3's adoption applies, `[IL-127]`), and its `run-state.json` parses with `dispatched: true` (stamped by `/claude-tweaks:dispatch`'s `record-worktree --dispatch`), the mode is `auto` — whatever the `auto-mode` policy says. One fail-open read prints `dispatched` or nothing: `node -e 'try{const r=process.argv[2];if(r){const t=require(process.argv[1]+"/bin/lib/stage-item/write.js").resolveTarget({runDir:r});if(t.ok&&JSON.parse(require("fs").readFileSync(t.dir+"/run-state.json","utf8")).dispatched===true)console.log("dispatched")}}catch{}' "${CLAUDE_PLUGIN_ROOT}" "$PIPELINE_RUN_DIR"`. Any other outcome falls through to rung 3 unchanged and never stops the run: `PIPELINE_RUN_DIR` unset, a run dir that fails the `$RUN_ROOT` anchoring check, a missing or unparseable `run-state.json`, or `dispatched` absent or not `true`. Log nothing to `decisions.md` here — Step 3's adoption check tolerates only claim-log lines before the Manifesto, so the Manifesto's Mode row names this source instead (`manifesto.md`'s Source values).
    3. `auto-mode` policy — `AUTO_MODE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values auto-mode)`: `default-off` → `interactive`; `default-on` → `auto`; empty (unset) → fall through.

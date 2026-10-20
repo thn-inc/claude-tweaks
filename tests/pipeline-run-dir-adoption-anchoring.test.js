@@ -2,9 +2,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
+const { readText } = require('./helpers/read-skill');
 
 // #421: /flow's materialize step (and the shared resolution algorithm it
 // defers to) adopted an inherited $PIPELINE_RUN_DIR on existence alone — no
@@ -21,17 +23,17 @@ const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
 // git repo + linked worktree.
 
 const ROOT = path.join(__dirname, '..');
-const SHARED_DOC = fs.readFileSync(
+// readText() normalizes CRLF -> LF: on a Windows checkout (core.autocrlf=true)
+// the bare-\n extractor regexes below would otherwise match nothing.
+const SHARED_DOC = readText(
   path.join(ROOT, 'plugin', 'skills', '_shared', 'run-dir-resolution.md'),
-  'utf8',
 );
-const WRAP_UP_SKILL = fs.readFileSync(
+const WRAP_UP_SKILL = readText(
   path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'SKILL.md'),
-  'utf8',
 );
 
-function extractSnippet() {
-  const section = SHARED_DOC.match(
+function extractSnippet(text = SHARED_DOC) {
+  const section = text.match(
     /## Bash snippet \(resolution\)\n\n```bash\n([\s\S]*?)\n```/,
   );
   assert.ok(section, 'skills/_shared/run-dir-resolution.md must have a "## Bash snippet (resolution)" fenced bash block — extraction pattern is out of sync with the doc');
@@ -44,8 +46,8 @@ function extractSnippet() {
 // never touched this copy, so it silently adopted a worktree-trapped
 // $PIPELINE_RUN_DIR. Extracted verbatim, same reasoning as extractSnippet()
 // above: a future edit that drops the anchoring check breaks this test.
-function extractWrapUpSnippet() {
-  const section = WRAP_UP_SKILL.match(
+function extractWrapUpSnippet(text = WRAP_UP_SKILL) {
+  const section = text.match(
     /### Establish the run directory \(unconditional\)[\s\S]*?```bash\n([\s\S]*?)\n```/,
   );
   assert.ok(section, 'skills/wrap-up/SKILL.md must have a "### Establish the run directory (unconditional)" section with a fenced bash block — extraction pattern is out of sync with the doc');
@@ -144,5 +146,34 @@ test('step 2 (shared run-dir-resolution.md snippet): a non-canonical dir that st
 
   const resolved = runResolutionWith(extractSnippet(), { cwd: main, specSlug: 'backlog-standalone' });
 
-  assert.strictEqual(resolved, canonical);
+  // The step-2 path comes from `pwd` and is MSYS-form (/d/a/...) under Git Bash, so compare by directory name.
+  assert.strictEqual(path.basename(resolved), path.basename(canonical));
+});
+
+// Pins that the read-plus-extract path survives a CRLF checkout: the docs are
+// converted to CRLF, read back through readText(), and must yield the same
+// snippets as the LF text.
+test('CRLF control: both skill docs extract the same snippets after a CRLF round-trip through readText()', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'run-dir-crlf-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  const cases = [
+    { name: 'run-dir-resolution.md', lf: SHARED_DOC, extract: extractSnippet },
+    { name: 'wrap-up-SKILL.md', lf: WRAP_UP_SKILL, extract: extractWrapUpSnippet },
+  ];
+  for (const { name, lf, extract } of cases) {
+    const crlf = lf.replace(/\n/g, '\r\n');
+    assert.ok(crlf.includes('\r\n'), `${name}: CRLF build must contain \\r\\n`);
+    assert.ok(!crlf.includes('\r\r\n'), `${name}: CRLF build must not contain \\r\\r\\n`);
+
+    const file = path.join(tmp, name);
+    fs.writeFileSync(file, crlf);
+    const roundTripped = readText(file);
+
+    assert.strictEqual(
+      extract(roundTripped),
+      extract(lf),
+      `${name}: extractor must return the same snippet for the CRLF round-trip as for the LF text`,
+    );
+  }
 });

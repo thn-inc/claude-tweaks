@@ -326,7 +326,7 @@ function run(argv, deps = realDeps) {
     // The full base tree listing, computed once a base resolves — reused for
     // plugin-root union discovery just below and for baseSide's
     // existence/batch-prefetch logic in the 'ok' branch further down.
-    const baseFiles = base ? new Set(splitZ(git(['ls-tree', '-r', '-z', '--name-only', '--full-tree', base]))) : null;
+    const baseFiles = base ? new Set(splitZ(git(['ls-tree', '-r', '-z', '--name-only', '--full-tree', '--end-of-options', base]))) : null;
 
     let roots;
     const pluginRootsGiven = o.pluginRoots.length > 0;

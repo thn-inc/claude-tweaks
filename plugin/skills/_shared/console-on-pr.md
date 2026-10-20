@@ -69,6 +69,11 @@ object (#1294) — the one item `_shared/console-execution.md`'s `consoleAutoRes
 single out when `mergeCheckVerdict` (below) is `needs-human`. Every other item's object omits
 this field entirely; it is never `false`.
 
+**An `sdd-ruling-*` row** (Pending review, #3401 — its staged file is `staged/sdd-ruling-{N}.md`)
+carries its two dispositions in its label, appended after the source reference:
+`— tick = ratify · untick = reverse`. Unticked at Resolve time it means reverse, never a bare
+decline (Legend below).
+
 ## Legend (verbatim — AC4)
 
 Render this block, unmodified, immediately before the final Resolve checkbox:
@@ -78,11 +83,17 @@ Render this block, unmodified, immediately before the final Resolve checkbox:
 
 - **Ticked** = approved (applies that item's action).
 - **Unticked when Resolve console is ticked** = declined.
+- **Exception — an SDD ruling row** (`sdd-ruling-*`): ticked = ratify; unticked when Resolve
+  console is ticked = **reverse** (a reversal record is filed), never a bare decline.
 - Tick every item you approve, then tick **Resolve console** last to confirm — a half-ticked
   list is never read as an answer on its own.
 - **The PR itself needs no checkbox**: mark it ready and merge it = "merge"; close it =
   "discard"; leave it as-is = "keep parked".
 ```
+
+The SDD-ruling bullet is the one exception to the declined rule: the executing session performs the
+ratify or reverse write-back per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet
+(`_shared/console-execution.md`'s Execution routing).
 
 ## Resolve checkbox
 

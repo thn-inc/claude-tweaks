@@ -28,7 +28,9 @@ const USAGE =
   + '\nnote: a relative --scope path resolves against the checkout root (--cwd when given, '
   + 'else this process\'s own git toplevel) — never against process.cwd() alone (#3017). A '
   + '--scope path that still does not exist after that resolution is a usage error (exit 2), '
-  + 'not a silent full-run fallback.';
+  + 'not a silent full-run fallback.'
+  + '\nnote: under --scope, --baseline-cmd is optional and may name a declared suite — each '
+  + 'declared suite falls back to the declaration\'s retry.{suite} template (#3511).';
 
 const VALUE_FLAGS = new Set(['--cmd', '--cmd-env', '--cmd-timeout', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run', '--cwd', '--baseline', '--baseline-cmd']);
 
@@ -275,11 +277,15 @@ function validateCheckRun(raw) {
   // one" floor, never replaces H2's real check.
   if (raw.cmds.length === 0 && !raw.scope) throw new UsageError('at least one --cmd <name>=<command> is required');
   attachCmdEnvAndTimeout(raw);
-  if (raw.baseline !== null && raw.baselineCmds.length === 0) throw new UsageError('--baseline requires at least one --baseline-cmd');
+  // #3511: under --scope the retry template can come from the declaration, so
+  // "at least one --baseline-cmd" is verify.js's scope block's check, not ours.
+  if (raw.baseline !== null && raw.baselineCmds.length === 0 && !raw.scope) throw new UsageError('--baseline requires at least one --baseline-cmd');
   if (raw.baseline === null && raw.baselineCmds.length) throw new UsageError('--baseline-cmd requires --baseline');
   const seenBaselineNames = new Set();
   for (const b of raw.baselineCmds) {
-    if (!raw.cmds.some((c) => c.name === b.name)) {
+    // #3511: under --scope a suite may be declared only in the declaration, which
+    // this fs-free parser cannot read — verify.js's scope block checks the name.
+    if (!raw.scope && !raw.cmds.some((c) => c.name === b.name)) {
       throw new UsageError(`--baseline-cmd "${b.name}" names no declared --cmd (declared: ${raw.cmds.map((c) => c.name).join(', ') || 'none'})`);
     }
     if (!b.template.includes('{file}')) throw new UsageError(`--baseline-cmd ${b.name} template must contain {file}, got: ${b.template}`);

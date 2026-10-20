@@ -17,6 +17,7 @@
 
 const { execSync } = require('child_process');
 const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
+const { splitLogZ } = require('../git-z');
 const { PRIORITIES, TIERS, parseRecordFacets } = require('./record');
 const { blockersOf } = require('./ranking');
 const { evaluateGrantGate } = require('./grant-gate');
@@ -101,18 +102,19 @@ function mergeUnsyncedRecords(githubRecords, unsyncedRecords) {
   ];
 }
 
-// Sentinel byte prefixing each commit's date line in the batched `git log`
+// Sentinel byte prefixing each commit's date token in the batched `git log -z`
 // output below — a control character that can never appear at the START of
-// a real relative file path, so it unambiguously distinguishes "this line is
-// a commit-date marker" from "this line is a filename" without relying on
-// git's own (format-dependent, easy to mis-parse) blank-line conventions.
+// a real relative file path, so it unambiguously distinguishes "this token is
+// a commit-date marker" from "this token is a filename" (splitLogZ, ../git-z,
+// splits the NUL stream and applies this test). It must not be NUL: under
+// `-z` NUL is the separator.
 const COMMIT_DATE_MARKER = '\x01';
 
 // (records[], { execFn? }) -> records[]. Derives `createdAt` for every record
 // from its own last-commit date — used for records whose driver carries no
 // timestamp facet (local-files backend, and any unsynced-fallback record),
 // the same approach /tidy's Step 1 staleness clock already uses. Resolves
-// every record from a SINGLE `git log --name-only` walk of the whole
+// every record from a SINGLE `git log -z --name-only` walk of the whole
 // repository history (newest commit first, git log's default order) instead
 // of one `git log -1 -- <path>` subprocess per record: for each path, the
 // FIRST commit encountered while walking newest-to-oldest is by construction
@@ -128,18 +130,15 @@ function deriveCreatedAtFromGit(records, { execFn = execSync } = {}) {
 
   const dateByPath = {};
   try {
-    const out = execFn(`git log --name-only --format=${COMMIT_DATE_MARKER}%cI`, {
+    const out = execFn(`git log -z --name-only --format=${COMMIT_DATE_MARKER}%cI`, {
       encoding: 'utf8',
       maxBuffer: LARGE_MAX_BUFFER_BYTES,
     });
-    let currentDate = null;
-    for (const rawLine of out.split('\n')) {
-      if (rawLine.startsWith(COMMIT_DATE_MARKER)) {
-        currentDate = rawLine.slice(COMMIT_DATE_MARKER.length);
-        continue;
+    for (const { header, tokens } of splitLogZ(out, (t) => t.startsWith(COMMIT_DATE_MARKER))) {
+      const commitDate = header.slice(COMMIT_DATE_MARKER.length);
+      for (const p of tokens) {
+        if (!(p in dateByPath)) dateByPath[p] = commitDate;
       }
-      const p = rawLine.trim();
-      if (p !== '' && currentDate && !(p in dateByPath)) dateByPath[p] = currentDate;
     }
   } catch {
     // Degrade to every record falling back to now() below — same contract

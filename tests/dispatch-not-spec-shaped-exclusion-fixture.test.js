@@ -14,11 +14,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const QUEUE_PULL_SCRIPT = fs.readFileSync(
-  path.join(ROOT, 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'), 'utf8',
-);
+const QUEUE_PULL_SCRIPT = readText(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'));
 
 // Structurally anchored, not a prose sentence: the start anchor is the `if node ...` line
 // unique to this pass (named by its own $DISPATCH_SHAPE_GATE_ERR var), the end anchor is this

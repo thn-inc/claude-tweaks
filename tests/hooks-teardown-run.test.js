@@ -1,7 +1,7 @@
 // tests/hooks-teardown-run.test.js — #594: `bin/hooks.js teardown-run --run <dir>
-// [--merged|--abandoned]`, one command composing the 5 steps a finished /flow run needed
-// hand-assembled before this (close state, archive, remove worktree, delete local branch,
-// delete remote ref).
+// [--merged|--abandoned]`, one command composing the four steps a finished /flow run needed
+// hand-assembled before this (close state, remove worktree, delete local branch, delete remote
+// ref). It never archives the run dir since #3490 — `archive-run` does.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -55,7 +55,7 @@ function fakeGhApiDelete(calls, result) {
   return (args) => { calls.push(args); return result; };
 }
 
-test('AC1: a merged run with an unlocked worktree performs all 5 steps and exits archived, worktree gone, branch gone, ref-delete called', () => {
+test('AC1 (#3490): a merged run with an unlocked worktree closes state, removes the worktree, deletes branch and remote ref — and never archives the run dir', () => {
   const { root, wt, runDir, runId } = fixtureRepo();
   writeRunState(runDir, { status: 'active', worktree: wt, sessionId: 'me' });
   const calls = [];
@@ -64,20 +64,19 @@ test('AC1: a merged run with an unlocked worktree performs all 5 steps and exits
   });
 
   assert.match(result.lines.join('\n'), /state: closed/);
-  assert.match(result.lines.join('\n'), /archive: moved to archive/);
+  assert.match(result.lines.join('\n'), /archive: skipped — teardown-run does not archive/);
   assert.match(result.lines.join('\n'), /worktree: removed/);
   assert.match(result.lines.join('\n'), /branch: deleted feat-branch/);
   assert.match(result.lines.join('\n'), /remote ref: deleted refs\/heads\/feat-branch/);
 
-  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
-  assert.ok(fs.existsSync(path.join(archiveDir, 'work', '9-spec.md')));
-  assert.ok(!fs.existsSync(runDir));
+  assert.ok(fs.existsSync(path.join(runDir, 'decisions.md')), 'run dir must stay in place — archival is archive-run\'s job');
+  assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)), 'no archive/{run-id} copy may appear');
   assert.doesNotMatch(git(root, 'worktree', 'list'), /feat-branch/);
   assert.strictEqual(git(root, 'branch', '--list', 'feat-branch').trim(), '');
   assert.deepStrictEqual(calls, [['repos/acme/widgets/git/refs/heads/feat-branch']]);
 });
 
-test('AC2: a locked worktree skips step 3 (skipped — worktree locked), never throws, and does not block archival', () => {
+test('AC2: a locked worktree skips step 3 (skipped — worktree locked), never throws, and does not block the remaining steps', () => {
   const { root, wt, runDir } = fixtureRepo();
   writeRunState(runDir, { status: 'active', worktree: wt, sessionId: 'me' });
   // Lock with the CURRENT process's own pid so isPidAlive reads it as a live session.
@@ -86,7 +85,9 @@ test('AC2: a locked worktree skips step 3 (skipped — worktree locked), never t
   const result = teardownRun(runDir, { mode: null, sessionId: 'me' });
 
   assert.match(result.lines.join('\n'), /worktree: skipped — worktree locked/);
-  assert.match(result.lines.join('\n'), /archive: moved to archive/);
+  assert.match(result.lines.join('\n'), /state: closed/);
+  assert.match(result.lines.join('\n'), /branch: skipped — no --merged\/--abandoned given/);
+  assert.ok(fs.existsSync(path.join(runDir, 'decisions.md')), 'run dir must stay in place — teardown-run never archives');
   assert.match(git(root, 'worktree', 'list'), /feat-branch/);
 });
 
@@ -160,31 +161,40 @@ test('AC6: refuses to delete the integration branch itself when the run\'s recor
   assert.notStrictEqual(git(root, 'branch', '--list', 'trunk').trim(), '', 'the integration branch must survive');
 });
 
-test('AC7 (#1323): --run pointed at an already-archived path (4 levels below root, not the live 3-level pipelines/{run-id} shape) resolves root correctly and never doubles .claude-tweaks', () => {
+test('AC7 (#1323): --run pointed at an already-archived path (4 levels below root, not the live 3-level pipelines/{run-id} shape) resolves the root correctly — the integration-branch guard still reads policy.yml from it', () => {
   const { root } = fixtureRepo();
   // A run dir shaped like `{root}/.claude-tweaks/pipelines/archive/{run-id}` — one level deeper
   // than the live-run shape every other test in this file uses. The old fixed-depth
   // `path.resolve(runDir, '..', '..', '..')` only climbs 3 levels regardless of actual depth, so
-  // given this 4-level path it landed on `{root}/.claude-tweaks` instead of `{root}` and then
-  // re-joined `.claude-tweaks/pipelines/archive/{run-id}` onto that wrong root — producing
-  // `{root}/.claude-tweaks/.claude-tweaks/pipelines/archive/{run-id}`.
+  // given this 4-level path it landed on `{root}/.claude-tweaks` instead of `{root}`. Since #3490
+  // teardown-run no longer archives, so the wrong root no longer corrupts a path; what still
+  // depends on it is every root-rooted read — here `resolveIntegrationBranch(root)` loading
+  // `{root}/.claude-tweaks/policy.yml` (`integration-branch: trunk`). Under the wrong root that file
+  // is not found, `trunk` stops being recognized as the integration branch, and the refusal below
+  // turns into a real `git branch -D trunk` plus a remote-ref delete call.
   const archivedRunId = 'already-archived-run';
   const archivedRunDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', archivedRunId);
   fs.mkdirSync(path.join(archivedRunDir, 'work'), { recursive: true });
   fs.writeFileSync(path.join(archivedRunDir, 'work', 'x.md'), '# x\n');
   git(root, 'add', path.join('.claude-tweaks', 'pipelines', 'archive', archivedRunId, 'work', 'x.md'));
   git(root, 'commit', '-q', '-m', 'pre-existing archived content');
-  writeRunState(archivedRunDir, { status: 'clean', worktree: null });
+  // Move the main checkout off `trunk` so a second worktree can legitimately check `trunk` out.
+  git(root, 'checkout', '-q', '-b', 'scratch');
+  const trunkWt = path.join(root, '.claude', 'worktrees', 'trunk-copy');
+  git(root, 'worktree', 'add', '-q', trunkWt, 'trunk');
+  writeRunState(archivedRunDir, { status: 'active', worktree: trunkWt, sessionId: 'me' });
 
-  const result = teardownRun(archivedRunDir, { mode: null, sessionId: 'me' });
+  const calls = [];
+  const result = teardownRun(archivedRunDir, {
+    mode: 'merged', sessionId: 'me', deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+  });
 
-  const doubledDir = path.join(root, '.claude-tweaks', '.claude-tweaks');
-  assert.ok(!fs.existsSync(doubledDir), `must not create a doubled .claude-tweaks path: ${doubledDir}`);
-  // With root correctly resolved, `archiveDir` computed from an already-archived `runDir` lands
-  // on `runDir` itself (same basename, same parent) — a same-path collision that `git mv` refuses
-  // ("can not move directory into itself"), so archival correctly no-ops rather than corrupting
-  // anything; content stays exactly where it was, not lost and not duplicated.
-  assert.match(result.lines.join('\n'), /archive: skipped —/);
+  const out = result.lines.join('\n');
+  assert.match(out, /branch: skipped — refusing to delete the integration branch \(trunk\)/);
+  assert.match(out, /remote ref: skipped — refusing to delete the integration branch \(trunk\)/);
+  assert.strictEqual(calls.length, 0, 'the remote-ref delete must never be issued for the integration branch');
+  assert.notStrictEqual(git(root, 'branch', '--list', 'trunk').trim(), '', 'the integration branch must survive');
+  assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', '.claude-tweaks')), 'must not create a doubled .claude-tweaks path');
   assert.ok(fs.existsSync(path.join(archivedRunDir, 'work', 'x.md')), 'original content must survive untouched');
 });
 
@@ -382,7 +392,7 @@ test('AC16 (#3088): own-worktree teardown — no worktree recorded, local branch
   assert.deepStrictEqual(calls[0], ['repos/acme/widgets/git/refs/heads/feat-branch']);
 });
 
-test('AC17 (#3088): --remote-ref-only skips archival but still performs the remote-ref delete, leaving the run directory in place', () => {
+test('AC17 (#3088, #3490): --remote-ref-only is still accepted (inert) and the remote-ref delete still runs, leaving the run directory in place', () => {
   const { root, wt, runDir } = fixtureRepo();
   execFileSync('git', ['worktree', 'remove', '--force', wt], { cwd: root });
   execFileSync('git', ['branch', '-D', 'feat-branch'], { cwd: root });
@@ -398,8 +408,22 @@ test('AC17 (#3088): --remote-ref-only skips archival but still performs the remo
     deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
   });
 
-  assert.match(result.lines.join('\n'), /archive: skipped — --remote-ref-only/);
+  assert.match(result.lines.join('\n'), /archive: skipped — teardown-run does not archive/);
   assert.match(result.lines.join('\n'), /remote ref: deleted refs\/heads\/feat-branch/);
   assert.strictEqual(calls.length, 1);
   assert.ok(fs.existsSync(path.join(runDir, 'decisions.md')), 'run directory must NOT be archived away under --remote-ref-only');
+});
+
+test('#3490: the CLI still accepts --remote-ref-only (never refused as an unknown flag) and never archives', () => {
+  const { root, wt, runDir } = fixtureRepo();
+  writeRunState(runDir, { status: 'active', worktree: wt, sessionId: 'me' });
+  // --abandoned keeps the gh seam unreached, so no network call is attempted.
+  const out = execFileSync(process.execPath, [
+    path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js'), 'teardown-run', '--run', runDir, '--abandoned', '--remote-ref-only',
+  ], { cwd: root, encoding: 'utf8', env: { ...process.env, CLAUDE_CODE_SESSION_ID: 'me' } });
+
+  assert.match(out, /claude-tweaks: teardown-run 2026-08-01T090000-spec-9/);
+  assert.match(out, /archive: skipped — teardown-run does not archive/);
+  assert.doesNotMatch(out, /claude-tweaks: usage:/);
+  assert.ok(fs.existsSync(path.join(runDir, 'decisions.md')));
 });

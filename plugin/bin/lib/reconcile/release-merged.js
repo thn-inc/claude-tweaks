@@ -91,6 +91,7 @@ function decideRelease(classifiedState, prState, issueState, closesIssue) {
   if (prState === 'gh-absent') return { action: 'skip', reason: 'gh-absent' };
   if (prState === 'network-failure') return { action: 'skip', reason: 'network-failure' };
   if (prState === 'invalid-arguments') return { action: 'skip', reason: 'invalid-arguments' };
+  if (prState === 'pr-not-found') return { action: 'skip', reason: 'pr-not-found' }; // stamped number names no PR (#3543)
   if (prState && prState.state === 'MERGED') {
     if (closesIssue === true) return { action: 'release', reason: `merged: reconciled from PR #${prState.number}` };
     if (issueState === 'CLOSED') return { action: 'release', reason: 'issue-closed' };
@@ -111,8 +112,9 @@ function decideRelease(classifiedState, prState, issueState, closesIssue) {
 // all, a PR closed unmerged, or a MERGED PR not confirmed to close the issue
 // (`closesIssue` false or unknown: the issue's own state is the only remaining
 // release evidence, #3412). Everything else (OPEN, MERGED + closesIssue true,
-// gh-absent, network-failure) is decided without an issue lookup, so this is
-// what gates the extra gh api call at the call site.
+// gh-absent, network-failure, invalid-arguments, pr-not-found) is decided
+// without an issue lookup, so this is what gates the extra gh api call at the
+// call site.
 function needsIssueEvidence(prState, closesIssue) {
   if (prState === null) return true;
   if (typeof prState !== 'object') return false;
@@ -467,7 +469,10 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
   // candidate whose by-number probe fails keeps prState null so the #3249
   // issue-closed release path still applies, while a branch-resolved candidate
   // whose probe fails skips on the failure string (never releases via the
-  // branch's PR, #3416).
+  // branch's PR, #3416). That holds for every failure string, including
+  // 'pr-not-found' (#3543: GitHub confirmed the stamped number names no PR).
+  // This module has no stuck escalation of its own: the stale stamp surfaces
+  // through archive-merged for the same run dir.
   const byNumberCands = candidates.filter((c) => c.prNumber);
   const prStatesByNumber = await runWithConcurrency(
     byNumberCands,

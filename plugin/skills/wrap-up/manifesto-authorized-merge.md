@@ -15,7 +15,8 @@ short-circuit also applies when this run's `config.yml` resolves `merge-authoriz
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "$PIPELINE_RUN_DIR" --values merge-authorization
 ```
 
-`flow/manifesto.md`'s lever 13 — always a live Manifesto `confirm`/`hybrid` override answer, never
+`flow/manifesto.md`'s lever 13 — always a live per-run answer (the human-typed `/flow`
+`pre-authorize-merge` token or a Manifesto `confirm`/`hybrid` override), never
 a `.claude-tweaks/policy.yml` default (`bin/lib/policy-schema.js`'s resolver special case discards
 a `policy.yml` value for this key). When this condition is true, Layer 1 (Authorization) of the
 short-circuit's two-layer gate is satisfied by the lever alone — no `auto:merge` label is required.
@@ -39,11 +40,14 @@ if nothing had set it. This is deliberate: every other lever's project-policy so
 default a human sets once, in the repo, on behalf of every future run. This lever specifically
 authorizes an irreversible action (a merge) with zero further human interaction once the run
 reaches its terminal step — collapsing that into a project-wide, no-longer-live default would
-recreate the exact non-interactive auto-grant `_shared/auto-mode-contract.md`'s `auto:*` invariant
-forbids. The only way to set it is a live answer: an explicit Manifesto override reply
-(`confirm`/`hybrid` mode, `13=pre-authorized`) — the default `auto` mode's read-only-FYI
-Manifesto never asks, so under plain `auto` this lever always resolves `ask` unless a prior step
-in *this same run* already wrote `pre-authorized` into `config.yml`.
+recreate the exact non-interactive auto-grant that `_shared/auto-mode-contract.md`'s Merge
+authorization lever row and never-reversible grant-origination entry rule out. The only ways to set
+it are the human-typed `pre-authorize-merge` token (`flow/SKILL.md`'s Arguments row — a
+dispatch-bound run ignores it) and an explicit Manifesto override reply (`confirm`/`hybrid` mode,
+`13=pre-authorized`) — the default `auto` mode's read-only-FYI Manifesto never asks, so under plain
+`auto` without the token this lever resolves `ask` unless a prior step in *this same run* already
+wrote `pre-authorized` into `config.yml`. The `autonomy` ceiling never sets it either
+(`_shared/autonomy-ceiling.md`, #2734).
 
 ## Log line (lever-triggered case only)
 
@@ -51,10 +55,7 @@ Both the `pr-first` and `local-merge` subsections of the Auto-merge short-circui
 `AUTO {time} — Fast-lane auto-merge: issue #{n}, ...` line on the `auto:merge`-label path. On the
 `merge-authorization`-lever path (no `auto:merge` label present), log instead:
 
-`AUTO {time} — Manifesto-authorized auto-merge: issue #{n}, assess-agent-autonomy verdict
-auto-merge (see RATIONALE), pr-first-merge outcome {merged|armed|pending-review}. {Merge commit:
-{sha}. Reversibility: high (git revert). | Reversibility: n/a (nothing merged yet).} [lever:
-merge-authorization=pre-authorized (run-config)]`
+`AUTO {time} — Manifesto-authorized auto-merge: issue #{n}, assess-agent-autonomy verdict auto-merge (see RATIONALE), pr-first-merge outcome {merged|armed|pending-review}. {Merge commit: {sha}. Reversibility: high (git revert). | Reversibility: n/a (nothing merged yet).} [lever: merge-authorization=pre-authorized (run-config)]` (one line: `archive-run`'s guard matches the `verdict auto-merge` phrase on a single line)
 
 Same shape, same placement, in both the `pr-first` and `local-merge` subsections — only the tag and
 the trailing `[lever: ...]` attribution differ from the `auto:merge`-label path's existing line.

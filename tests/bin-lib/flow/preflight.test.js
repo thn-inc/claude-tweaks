@@ -25,7 +25,7 @@ function deps(fx, overrides = {}, calls = null) {
   return {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
-    git: (args) => (args[0] === 'ls-tree' ? `x/work/7-spec.md\n` : 'feat-branch\n'),
+    git: (args) => (args[0] === 'ls-tree' ? 'x/work/7-spec.md\0' : 'feat-branch\n'),
     execFile: (cmd, args, opts) => {
       if (calls) calls.push({ cmd, args, opts });
       if (cmd === 'gh') return JSON.stringify({ state: 'OPEN', isDraft: true, body: PR_BODY });
@@ -303,7 +303,7 @@ test('specOnBranch falls back to a recursive spec-{N}/work/ listing when {run-di
       // The direct `{rel}/work/` listing is legitimately empty for a parent;
       // only the recursive `{rel}/` listing carries the per-spec headers.
       if (args[args.length - 1] === `${rel}/work/`) return '';
-      return `${rel}/spec-9/work/9-spec.md\n${rel}/spec-160/work/160-spec.md\n`;
+      return `${rel}/spec-9/work/9-spec.md\0${rel}/spec-160/work/160-spec.md\0`;
     },
   });
   const a = computeAdoption({ runDir: fx.runDir, mainRoot: fx.root, cwd: fx.root, deps: d });
@@ -313,6 +313,8 @@ test('specOnBranch falls back to a recursive spec-{N}/work/ listing when {run-di
   assert.ok(!lsCalls[0].includes('-r'), 'the direct {rel}/work/ listing is non-recursive');
   assert.ok(lsCalls[1].includes('-r'), 'the parent fallback must recurse — a bare {rel}/ listing returns TREE names only');
   assert.strictEqual(lsCalls[1][lsCalls[1].length - 1], `${rel}/`);
+  assert.deepStrictEqual(lsCalls[0], ['ls-tree', '--name-only', '-z', '--end-of-options', 'feat-branch', '--', `${rel}/work/`]);
+  assert.deepStrictEqual(lsCalls[1], ['ls-tree', '-r', '--name-only', '-z', '--end-of-options', 'feat-branch', '--', `${rel}/`]);
 });
 
 test('defaultDeps().resolvePolicy applies computeDerivedDefaults, so merge-verification resolves to a value with no policy.yml (#1931 I2)', () => {
@@ -428,6 +430,25 @@ test('an unparseable events.jsonl line counts as other-run content → case 3 (f
   const { a } = adoptionFor(null, { 'events.jsonl': 'not json\n' });
   assert.strictEqual(a.case, 3, `expected case 3, got case ${a.case}`);
   assert.strictEqual(a.hasOtherContent, true);
+});
+
+test('AC2.1: claim-log-only decisions.md beside fallback-only events.jsonl → case 2 (#3363)', () => {
+  const fallbackOnly = '{"type":"skill_invoked","skill":"claude-tweaks:build","ts":"2026-09-06T12:01:00.000Z","attribution":"fallback"}\n'
+    + '{"type":"skill_invoked","skill":"claude-tweaks:test","ts":"2026-09-06T12:02:00.000Z","attribution":"fallback"}\n';
+  const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': fallbackOnly });
+  assert.strictEqual(a.case, 2, `expected case 2, got case ${a.case}`);
+  assert.strictEqual(a.hasOtherContent, false);
+});
+
+test('AC3.1: an env- or session-attributed (untagged) events.jsonl line is still other-run content (#3363)', () => {
+  const fallbackLine = '{"type":"skill_invoked","skill":"claude-tweaks:build","ts":"2026-09-06T12:01:00.000Z","attribution":"fallback"}\n';
+  for (const other of [
+    '{"type":"skill_invoked","skill":"claude-tweaks:build","ts":"2026-09-06T12:01:00.000Z"}\n',
+    '{"type":"commit","ts":"2026-09-06T12:01:00.000Z","attribution":"session"}\n',
+  ]) {
+    const { a } = adoptionFor(CLAIM_ONLY, { 'events.jsonl': fallbackLine + other });
+    assert.strictEqual(a.hasOtherContent, true, other);
+  }
 });
 
 test('AC 2: dispatched call 1 (dispatched: true, no pr, no config) with Step 1.8 ledger line → case 2', () => {
