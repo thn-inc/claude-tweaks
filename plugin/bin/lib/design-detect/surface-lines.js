@@ -16,6 +16,7 @@
 // real UI diffs.
 'use strict';
 const path = require('path');
+const { unquoteCPath } = require('../git-z');
 
 // Extensions whose *any* changed line counts as a surface change outright —
 // style and template files have no "control-flow-only" line, unlike a
@@ -94,12 +95,39 @@ function isSurfaceLine(content, kind) {
   return false; // 'other' — a non-JSX/style/template file never trips this gate
 }
 
+// git C-quotes a header path holding non-ASCII bytes (core.quotepath on) or a
+// control character: `diff --git "a/docs/caf\303\251.md" "b/docs/caf\303\251.md"`,
+// and on a rename a mixed `diff --git a/old.md "b/n\303\251w.md"`. Each side is
+// either the plain `a/…`/`b/…` form (today's greedy match, unchanged) or one
+// `"…"` token; capture 1 is the plain b-side path, capture 2 the quoted one.
+const QUOTED = '"(?:[^"\\\\]|\\\\.)*"';
+const GIT_HEADER_RE = new RegExp(`^diff --git (?:a\\/.+|${QUOTED}) (?:b\\/(.+)|(${QUOTED}))$`);
+const PLUS_HEADER_RE = new RegExp(`^\\+\\+\\+ (?:b\\/(.+)|(${QUOTED}))$`);
+
+// A quoted capture goes through unquoteCPath, then loses its leading `b/` —
+// a quoted token without that prefix is not a b-side header (null, like the
+// unquoted regexes that require `b/`).
+function bPathFromQuoted(token) {
+  const decoded = unquoteCPath(token);
+  return decoded.startsWith('b/') ? decoded.slice(2) : null;
+}
+
+// The b-side path a matched header names, or null when the match is absent or a
+// quoted token that is not a b-side path.
+function headerPath(match) {
+  if (!match) return null;
+  if (match[1] !== undefined) return match[1];
+  return bPathFromQuoted(match[2]);
+}
+
 // Parses a unified diff (`git diff -U0` output, or any diff with hunks) into
-// a per-file surface verdict. Never throws on malformed input — an
-// unparseable diff simply yields no files, which the caller (Step 3.8 (b))
-// treats as "no surface change" per this gate's fail-open-toward-skipping
-// posture only when the caller already knows files changed; see the CLI's
-// own doc comment for how an empty diff is surfaced distinctly.
+// a per-file surface verdict. A file header's path is the raw path whether git
+// printed it plain or C-quoted (GIT_HEADER_RE / PLUS_HEADER_RE above). Never
+// throws on malformed input — an unparseable diff simply yields no files,
+// which the caller (Step 3.8 (b)) treats as "no surface change" per this
+// gate's fail-open-toward-skipping posture only when the caller already knows
+// files changed; see the CLI's own doc comment for how an empty diff is
+// surfaced distinctly.
 function analyzeDiff(diffText) {
   const text = typeof diffText === 'string' ? diffText : '';
   const lines = text.length ? text.split(/\r?\n/) : [];
@@ -113,9 +141,9 @@ function analyzeDiff(diffText) {
   let inHunk = false;
 
   for (const line of lines) {
-    const gitHeader = /^diff --git a\/.+ b\/(.+)$/.exec(line);
-    const plusHeader = !inHunk ? /^\+\+\+ b\/(.+)$/.exec(line) : null;
-    const file = gitHeader ? gitHeader[1] : plusHeader ? plusHeader[1] : null;
+    const gitHeader = GIT_HEADER_RE.exec(line);
+    const plusHeader = !inHunk ? PLUS_HEADER_RE.exec(line) : null;
+    const file = headerPath(gitHeader || plusHeader);
     if (file) {
       current = file;
       inHunk = false;

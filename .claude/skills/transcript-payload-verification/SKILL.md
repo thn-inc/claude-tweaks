@@ -227,6 +227,13 @@ fail-closed outcome (`block`) passes whether the carrier is recognized or not, s
 parsed value (a count of `0`, not `null`). Keep the versions you observed beside the rule, as
 `subagent-stop.js`'s header comment does.
 
+A new carrier must reach every reader of the event, not only the one that surfaced it. #3015
+taught `countPendingDispatches` the `queued_command` shape while `isAsyncWaitSignal` (#2041), which
+asks whether the reply reacts to the same completion, still recognized only the older ones, so a
+reply right after the last completion was graded as final (#3589). Before adding a carrier, `grep`
+for each function that reads the event's marker and route them through one shared predicate
+(`completionCarrierBody`); a second copy drifts the way the first did.
+
 **Nor does one launch mode speak for another on the same version.** Record #3722 measured nested-dispatch
 re-wake behavior: interactive 2.1.302 holds a dispatched agent open and re-wakes it when a nested child or
 `Monitor` watch it started reports, headless (`claude -p`) 2.1.302 and later runs a nested `Agent` call

@@ -355,3 +355,34 @@ test('readClaimBlobsGitBatch: real defaultRunner (not the fake/fixture runner) r
   assert.equal(batch.results[50].absent, false);
   assert.equal(batch.results[50].content, prettyContent);
 });
+
+// Record #3651: the listing is read with `-z` so a path git would C-quote (a
+// non-ASCII name under core.quotepath=true) arrives raw, and `--end-of-options`
+// keeps a tip that starts with `-` from being read as a flag.
+test('AC1.1: readClaimBlobsGitBatch passes -z and --end-of-options, and parses NUL-delimited records', () => {
+  const sha7 = 'a'.repeat(40);
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (args[0] === 'ls-tree') {
+      return `100644 blob ${'b'.repeat(40)}\tclaims/café.md\u0000100644 blob ${sha7}\tclaims/issue-7.json\u0000`;
+    }
+    return Buffer.from(`${sha7} blob 2\n{}\n`);
+  };
+  const batch = readClaimBlobsGitBatch({ issueNumbers: [7, 8], tip: 'tipsha', runner });
+  assert.deepEqual(calls[0], ['ls-tree', '-r', '-z', '--end-of-options', 'tipsha', '--', 'claims/']);
+  assert.equal(batch.failure, null);
+  assert.equal(batch.results[7].absent, false, 'issue 7 resolves from the NUL-delimited record');
+  assert.equal(batch.results[7].content, '{}');
+  assert.equal(batch.results[8].absent, true, 'an issue not in the listing stays absent');
+});
+
+test('AC1.1: readClaimBlobsGitBatch with issueNumbers omitted discovers the keyspace from NUL records only', () => {
+  const sha7 = 'a'.repeat(40);
+  const runner = (args) => {
+    if (args[0] === 'ls-tree') return `100644 blob ${sha7}\tclaims/issue-7.json\u0000100644 blob ${'c'.repeat(40)}\tclaims/notes.txt\u0000`;
+    return Buffer.from(`${sha7} blob 2\n{}\n`);
+  };
+  const batch = readClaimBlobsGitBatch({ tip: 'tipsha', runner });
+  assert.deepEqual(Object.keys(batch.results), ['7']);
+});

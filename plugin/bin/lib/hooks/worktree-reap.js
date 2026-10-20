@@ -218,7 +218,7 @@ function isContentIdentical(repoRoot, branch, integration) {
 // else, and merge status is silent about it. Phase 1 moved claude-tweaks' own
 // run state out of the worktree; this catches everyone else's.
 function hasLocalOnlyContent(wtPath) {
-  const { stdout, failure } = runGit(['--no-optional-locks', 'status', '--porcelain', '--ignored'], wtPath);
+  const { stdout, failure } = runGit(['--no-optional-locks', 'status', '--porcelain', '--ignored'], wtPath); // git-path-read: not a path list (emptiness only)
   if (failure) return true; // can't tell -> assume yes
   return stdout.trim() !== '';
 }

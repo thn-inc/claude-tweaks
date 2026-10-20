@@ -7,6 +7,11 @@ const path = require('path');
 const { slugForCwd, locateTranscripts, readUsage, isProcedurePath, subagentsDirFor, readDispatches, TRANSCRIPT_SLUG_RULE } = require('../../../plugin/bin/lib/timing/transcript');
 const { aggregateDispatches } = require('../../../plugin/bin/lib/timing/derive');
 
+// The developer's own CLAUDE_CONFIG_DIR would redirect every homeDir-only
+// lookup below away from its fixture (#3458) — same posture as cli.test.js's
+// fixtureHomeEnv.
+delete process.env.CLAUDE_CONFIG_DIR;
+
 const FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'transcript-small.jsonl');
 
 // #1929 AC1 — the rule is pinned against a real observed pair, not a guess:
@@ -79,6 +84,76 @@ test('#1929 [IL-150]: locateTranscripts refuses a symlinked slug directory that 
   const projects = path.dirname(slugDir);
   fs.symlinkSync(outsideDir, path.join(projects, '-Users-x-linked'));
   assert.deepEqual(locateTranscripts({ sessionId: 'sess-7', homeDir: home }), []);
+});
+
+// ---- #3458: the projects root resolves from CLAUDE_CONFIG_DIR -------------
+
+const CWD = '/Users/x/Code/repo/.claude/worktrees/wt';
+
+// Sets (or, for undefined, deletes) CLAUDE_CONFIG_DIR for one call, then restores it.
+function withEnv(value, fn) {
+  const prior = process.env.CLAUDE_CONFIG_DIR;
+  if (value === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+  else process.env.CLAUDE_CONFIG_DIR = value;
+  try { return fn(); } finally {
+    if (prior === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = prior;
+  }
+}
+
+function fakeConfigDir() {
+  const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-transcript-cfg-'));
+  const slugDir = path.join(cfg, 'projects', slugForCwd(CWD));
+  fs.mkdirSync(slugDir, { recursive: true });
+  fs.writeFileSync(path.join(slugDir, 'sess-c.jsonl'), '{}\n');
+  return cfg;
+}
+
+test('AC1.1: with CLAUDE_CONFIG_DIR set, locateTranscripts returns the file under $CLAUDE_CONFIG_DIR/projects', () => {
+  const cfg = fakeConfigDir();
+  const out = withEnv(cfg, () => locateTranscripts({ cwd: CWD, sessionId: 'sess-c' }));
+  assert.deepEqual(out.map((c) => c.path), [fs.realpathSync(path.join(cfg, 'projects', slugForCwd(CWD), 'sess-c.jsonl'))]);
+});
+
+test('AC1.1 (symlinked root): a $CLAUDE_CONFIG_DIR/projects that is a symlink still yields its transcripts', () => {
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-transcript-real-'));
+  fs.mkdirSync(path.join(real, slugForCwd(CWD)), { recursive: true });
+  fs.writeFileSync(path.join(real, slugForCwd(CWD), 'sess-s.jsonl'), '{}\n');
+  const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-transcript-cfg-'));
+  fs.symlinkSync(real, path.join(cfg, 'projects'));
+  const out = withEnv(cfg, () => locateTranscripts({ cwd: CWD, sessionId: 'sess-s' }));
+  assert.deepEqual(out.map((c) => c.path), [fs.realpathSync(path.join(real, slugForCwd(CWD), 'sess-s.jsonl'))]);
+});
+
+test('AC1.1: CLAUDE_CONFIG_DIR wins over homeDir when both are given', () => {
+  const { home } = fakeHome();
+  const cfg = fakeConfigDir();
+  withEnv(cfg, () => {
+    assert.deepEqual(locateTranscripts({ cwd: CWD, sessionId: 'sess-1', homeDir: home }), []);
+    const c = locateTranscripts({ cwd: CWD, sessionId: 'sess-c', homeDir: home });
+    assert.equal(c.length, 1);
+    assert.equal(path.basename(c[0].path), 'sess-c.jsonl');
+  });
+});
+
+test('explicit configDir wins over CLAUDE_CONFIG_DIR', () => {
+  const cfg = fakeConfigDir();
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-transcript-empty-'));
+  const out = withEnv(empty, () => locateTranscripts({ cwd: CWD, sessionId: 'sess-c', configDir: cfg }));
+  assert.equal(out.length, 1);
+  assert.equal(path.basename(out[0].path), 'sess-c.jsonl');
+});
+
+test('empty CLAUDE_CONFIG_DIR falls back to homeDir/.claude', () => {
+  const { home, slugDir } = fakeHome();
+  const out = withEnv('', () => locateTranscripts({ cwd: CWD, sessionId: 'sess-1', homeDir: home }));
+  assert.deepEqual(out.map((c) => c.path), [fs.realpathSync(path.join(slugDir, 'sess-1.jsonl'))]);
+});
+
+test('AC2.1: with CLAUDE_CONFIG_DIR unset, lookup is unchanged (homeDir/.claude/projects)', () => {
+  const { home, slugDir } = fakeHome();
+  const out = withEnv(undefined, () => locateTranscripts({ cwd: CWD, sessionId: 'sess-2', homeDir: home }));
+  assert.deepEqual(out.map((c) => c.path), [fs.realpathSync(path.join(slugDir, 'sess-2.jsonl'))]);
 });
 
 test('#1929: isProcedurePath matches repo skills, installed-plugin skills, and nothing else', () => {

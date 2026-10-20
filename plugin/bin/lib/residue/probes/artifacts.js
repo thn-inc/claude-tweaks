@@ -156,7 +156,7 @@ function legacyShapeAndAge(rel, base) {
 // scanned (the main checkout), not at whatever worktree the CLI was invoked in.
 function trackedState({ run, rel, root }) {
   if (typeof run !== 'function') return 'unproven';
-  const out = run(['ls-files', '--', rel], { cwd: root });
+  const out = run(['ls-files', '--', rel], { cwd: root }); // git-path-read: not a path list (emptiness only)
   if (out === null || out === undefined) return 'unproven';
   return String(out).trim() === '' ? 'untracked' : 'tracked';
 }

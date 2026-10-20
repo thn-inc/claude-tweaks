@@ -50,6 +50,13 @@ const UPDATE_ISSUE_COMMENT_MUTATION = 'query=mutation($id:ID!,$body:String!){upd
 // First line of the reply comment resolveConsoleExecution posts (and finds again on a retry).
 const EXECUTED_REPLY_MARKER = '<!-- console-item: executed -->';
 
+// Outcome notes resolveConsoleExecution records for a non-executed item.
+const DECLINED_NOTE = 'declined, no reason given';
+const REVERSED_LABEL = 'reversed';
+// A flagged ruling whose reverse was refused or never created -- named in
+// `--reverse-failed`, never defaulted to `reversed`, and NOT cleared.
+const REVERSE_FAILED_NOTE = 'reverse not filed — see decisions.md';
+
 // null = no console.json at all; undefined = present but unparseable (fails
 // closed, distinct from absent, mirroring archive-merged.js's readConsoleState).
 function readConsoleJson(runDir) {
@@ -255,7 +262,7 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
     const commentId = item.commentId && commentIds.includes(item.commentId) ? item.commentId : commentIds[0];
     const ticks = ticksByComment.get(commentId) || {};
     return {
-      id: item.id, kind: item.kind, summary: item.summary, stagedHash: item.stagedHash, approved: ticks[item.id] === true, ...(item.isMergeRow === true ? { isMergeRow: true } : {}),
+      id: item.id, kind: item.kind, summary: item.summary, stagedHash: item.stagedHash, approved: ticks[item.id] === true, ...(item.isMergeRow === true ? { isMergeRow: true } : {}), ...(item.isRulingRow === true ? { isRulingRow: true } : {}),
     };
   });
 
@@ -405,9 +412,9 @@ async function consoleExecuteDetect(opts = {}) {
 //   { status: 'noop', reason: 'already-resolved' | 'claimed', executingSession? }
 //   { status: 'error', reason: 'no-console' | 'unparseable-console-json' |
 //       'no-comment-ids' | 'no-pr-number' | 'network-failure' |
-//       'comment-not-found' | 'unknown-item-ids' | 'reply-comment-failed' |
-//       'marker-edit-failed' | 'console-write-failed', ids?, error? }
-async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = {}, deps = {}) {
+//       'comment-not-found' | 'unknown-item-ids' | 'not-ruling-items' |
+//       'reply-comment-failed' | 'marker-edit-failed' | 'console-write-failed', ids?, error? }
+async function resolveConsoleExecution(runDir, { approve = [], decline = [], reverseFailed = [] } = {}, deps = {}) {
   const now = typeof deps.now === 'function' ? deps.now() : Date.now();
   const consoleJson = readConsoleJson(runDir);
   if (consoleJson === null) return { status: 'error', reason: 'no-console' };
@@ -451,33 +458,56 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = 
   // console in an inconsistent state.
   const ticks = parseItemTicks(primary.body);
   const knownIds = new Set(Object.keys(ticks));
-  const namedIds = [...new Set([...approve, ...decline])];
+  const namedIds = [...new Set([...approve, ...decline, ...reverseFailed])];
   const unknownIds = namedIds.filter((id) => !knownIds.has(id));
   if (unknownIds.length) return { status: 'error', reason: 'unknown-item-ids', ids: unknownIds };
 
   const items = Array.isArray(consoleJson.items) ? consoleJson.items : [];
+  // --reverse-failed only means something for a flagged ruling; naming any
+  // other item is a caller mistake, rejected before any write like an unknown id.
+  const rulingIds = new Set(items.filter((item) => item.isRulingRow === true).map((item) => item.id));
+  const notRulingIds = [...new Set(reverseFailed)].filter((id) => !rulingIds.has(id));
+  if (notRulingIds.length) return { status: 'error', reason: 'not-ruling-items', ids: notRulingIds };
   const approveSet = new Set(approve);
   const declineSet = new Set(decline);
+  const reverseFailedSet = new Set(reverseFailed);
   // Every item this console names gets an outcome — one explicitly declined
   // via `--decline`, one explicitly (or already-tick) approved, and
   // anything named in neither list defaults to declined ("declined, no
   // reason given" — the same Override-drill decline convention
   // `_shared/console-execution.md`'s Execution routing section already
-  // documents) rather than silently guessing an intent nobody stated.
+  // documents) rather than silently guessing an intent nobody stated. The
+  // one exception: a flagged ruling (`isRulingRow: true`, an sdd-ruling-*
+  // item) that is not ratified routes to reversed instead, whether unticked
+  // or named in --decline (`_shared/console-execution.md`). A flagged ruling
+  // named in --reverse-failed outranks all of it: its reverse was refused or
+  // never created, so it reads reverse-failed and is not cleared.
   const outcomes = items.map((item) => {
+    if (item.isRulingRow === true && reverseFailedSet.has(item.id)) {
+      return {
+        id: item.id, kind: item.kind, outcome: 'reverse-failed', note: REVERSE_FAILED_NOTE, isMergeRow: item.isMergeRow === true, isRulingRow: true,
+      };
+    }
     if (!declineSet.has(item.id) && (approveSet.has(item.id) || ticks[item.id] === true)) {
       return { id: item.id, kind: item.kind, outcome: 'executed', isMergeRow: item.isMergeRow === true };
     }
+    if (item.isRulingRow === true) {
+      return {
+        id: item.id, kind: item.kind, outcome: 'reversed', note: REVERSED_LABEL, isMergeRow: item.isMergeRow === true, isRulingRow: true,
+      };
+    }
     return {
-      id: item.id, kind: item.kind, outcome: 'declined', note: 'declined, no reason given', isMergeRow: item.isMergeRow === true,
+      id: item.id, kind: item.kind, outcome: 'declined', note: DECLINED_NOTE, isMergeRow: item.isMergeRow === true,
     };
   });
   // Resolve ticks only when every item in the console is floor-clearing —
   // matching the partial-resolution behavior `_shared/console-execution.md`'s
   // `consoleAutoResolve` section already describes for a non-floor item
   // (an isMergeRow item declined while others remain unticked leaves both
-  // that item and Resolve unticked).
-  const allExecuted = outcomes.length > 0 && outcomes.every((o) => o.outcome === 'executed');
+  // that item and Resolve unticked). A reversed ruling counts as cleared: a
+  // reversal is a decided outcome, not an unanswered item. A reverse-failed
+  // ruling does not: no reversal record exists.
+  const allCleared = outcomes.length > 0 && outcomes.every((o) => o.outcome === 'executed' || o.outcome === 'reversed');
 
   // 1. Reply comment first — the source of truth a foreign detection pass
   // keys "already executed" off, per the Write order section. Idempotent
@@ -512,15 +542,15 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = 
   }
 
   // 2. Resolved marker edit on the console comment's first line — ticking
-  // the Resolve checkbox only when every item resolved favorably.
-  const editedBody = addConsoleResolvedMarker(tickResolveBoxIfAllExecuted(primary.body, allExecuted));
+  // the Resolve checkbox only when every item cleared.
+  const editedBody = addConsoleResolvedMarker(tickResolveBoxIfAllCleared(primary.body, allCleared));
   try {
     await deps.gh(['api', 'graphql', '-f', UPDATE_ISSUE_COMMENT_MUTATION, '-f', `id=${primary.id}`, '-f', `body=${editedBody}`]);
   } catch (err) {
     return { status: 'error', reason: 'marker-edit-failed', error: errorText(err) };
   }
 
-  // 3. console.json.executedAt + resolved: true, together, in one write.
+  // 3. console.json.executedAt + resolved (true only when every item cleared), together, in one write.
   // Guarded (unlike the two gh calls above, this is the only I/O in the
   // function with no injected-failure return shape of its own): by this
   // point both gh writes have already landed for real, so an uncaught throw
@@ -528,7 +558,7 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = 
   // `.catch(() => process.exit(0))` and exit silently successful — this
   // module's own header names that exact hazard as one a sibling code path
   // was already patched to avoid.
-  const nextConsoleJson = { ...consoleJson, executedAt: new Date(now).toISOString(), resolved: allExecuted };
+  const nextConsoleJson = { ...consoleJson, executedAt: new Date(now).toISOString(), resolved: allCleared };
   try {
     deps.writeFile(path.join(runDir, 'console.json'), JSON.stringify(nextConsoleJson, null, 2));
   } catch (err) {
@@ -536,7 +566,7 @@ async function resolveConsoleExecution(runDir, { approve = [], decline = [] } = 
   }
 
   return {
-    status: 'executed', outcomes, resolved: allExecuted, prNumber: consoleJson.prNumber, skippedUntrusted,
+    status: 'executed', outcomes, resolved: allCleared, prNumber: consoleJson.prNumber, skippedUntrusted,
   };
 }
 
@@ -574,11 +604,12 @@ function buildExecutedReplyBody(outcomes) {
 }
 
 // Ticks the Resolve checkbox row (isResolveTicked's own row shape, in
-// reverse) only when every item resolved favorably — a partial resolution
-// must never silently tick Resolve, since that would tell a later detection
-// pass "a human confirmed everything," which isn't true.
-function tickResolveBoxIfAllExecuted(body, allExecuted) {
-  if (!allExecuted || typeof body !== 'string') return body;
+// reverse) only when every item cleared (executed or reversed) — a partial
+// resolution, with a declined or reverse-failed item, must never silently tick
+// Resolve, since that would tell a later detection pass "a human confirmed
+// everything," which isn't true.
+function tickResolveBoxIfAllCleared(body, allCleared) {
+  if (!allCleared || typeof body !== 'string') return body;
   return body.replace(/(<!--\s*console-item:\s*resolve\s*-->\s*\n-\s*\[)[ ]?(\])/i, '$1x$2');
 }
 
@@ -604,4 +635,7 @@ module.exports = {
   resolveConsoleExecution,
   renderExecutedLines,
   RECLAIM_STALE_MS,
+  DECLINED_NOTE,
+  REVERSED_LABEL,
+  REVERSE_FAILED_NOTE,
 };

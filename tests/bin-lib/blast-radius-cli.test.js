@@ -2,7 +2,10 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
-const { computeBlastRadius, BlastRadiusError, parseNumstat } = require(
+const fs = require('node:fs');
+const os = require('node:os');
+const { execFileSync } = require('node:child_process');
+const { computeBlastRadius, BlastRadiusError } = require(
   path.join(__dirname, '..', '..', 'plugin', 'bin', 'lib', 'blast-radius-cli.js')
 );
 
@@ -24,7 +27,7 @@ function fakeGit(handlers) {
 test('happy path: derives merge base from integration branch, classifies, resolves config', () => {
   const git = fakeGit({
     'merge-base': () => `${SHA}\n`,
-    diff: () => '10\t2\tplugin/bin/foo.js\n5\t0\ttests/foo.test.js\n',
+    diff: () => '10\t2\tplugin/bin/foo.js\u00005\t0\ttests/foo.test.js\u0000',
     'rev-parse': () => '/repo\n',
   });
   const readFile = (p) => (p.endsWith('policy.yml')
@@ -107,21 +110,56 @@ test('neither base nor integrationBranch throws BlastRadiusError', () => {
   );
 });
 
-test('binary-file numstat dashes count the file with zero lines', () => {
-  const parsed = parseNumstat('-\t-\tassets/logo.png\n3\t1\tplugin/bin/foo.js\n');
-  assert.deepStrictEqual(parsed[0], { path: 'assets/logo.png', additions: 0, deletions: 0 });
-  assert.deepStrictEqual(parsed[1], { path: 'plugin/bin/foo.js', additions: 3, deletions: 1 });
+test('AC1.1: a real repo change to docs/café.md surfaces as the raw path', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-z-'));
+  try {
+    const git = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    git(['init', '-q']);
+    git(['config', 'user.email', 't@example.com']);
+    git(['config', 'user.name', 'T']);
+    git(['config', 'core.quotepath', 'true']);
+    git(['config', 'commit.gpgsign', 'false']);
+    fs.mkdirSync(path.join(dir, 'docs'));
+    fs.writeFileSync(path.join(dir, 'docs', 'café.md'), 'one\n');
+    git(['add', '.']);
+    git(['commit', '-q', '-m', 'add']);
+    const baseSha = git(['rev-parse', 'HEAD']).trim();
+    fs.writeFileSync(path.join(dir, 'docs', 'café.md'), 'one\ntwo\n');
+    git(['commit', '-q', '-am', 'edit']);
+    const readFile = (p) => (p.endsWith('policy.yml') ? 'merge-sensitive-paths: docs/café.md\n' : null);
+    const out = computeBlastRadius({ base: baseSha }, { git, readFile });
+    assert.deepStrictEqual(out.summary.sensitiveFilesTouched, ['docs/café.md']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test('numstat rename paths with tabs survive (path is everything after the second tab)', () => {
-  const parsed = parseNumstat('1\t1\tdir/a\tb.md\n');
-  assert.deepStrictEqual(parsed[0], { path: 'dir/a\tb.md', additions: 1, deletions: 1 });
+test('the diff call passes -z and --end-of-options before the range', () => {
+  const git = fakeGit({
+    'merge-base': () => `${SHA}\n`,
+    diff: () => '',
+    'rev-parse': () => '/repo\n',
+  });
+  computeBlastRadius({ integrationBranch: 'main' }, { git, readFile: () => null });
+  const diffCall = git.calls.find((a) => a[0] === 'diff');
+  assert.deepStrictEqual(diffCall, ['diff', '--no-renames', '--numstat', '-z', '--end-of-options', `${SHA}..HEAD`]);
+});
+
+test('binary-file numstat dashes in -z output count the file with zero lines', () => {
+  const git = fakeGit({
+    'merge-base': () => `${SHA}\n`,
+    diff: () => '-\t-\tassets/logo.png\u00003\t1\tplugin/bin/foo.js\u0000',
+    'rev-parse': () => '/repo\n',
+  });
+  const out = computeBlastRadius({ integrationBranch: 'main' }, { git, readFile: () => null });
+  assert.strictEqual(out.summary.implFiles, 2);
+  assert.strictEqual(out.summary.implLines, 4);
 });
 
 test('sensitive-path hit from resolved policy lands in sensitiveFilesTouched', () => {
   const git = fakeGit({
     'merge-base': () => `${SHA}\n`,
-    diff: () => '2\t0\tplugin/bin/hooks.js\n',
+    diff: () => '2\t0\tplugin/bin/hooks.js\u0000',
     'rev-parse': () => '/repo\n',
   });
   const readFile = (p) => (p.endsWith('policy.yml') ? 'merge-sensitive-paths: plugin/bin/hooks.js\n' : null);
@@ -137,7 +175,7 @@ test('sensitive-path hit from resolved policy lands in sensitiveFilesTouched', (
 test('a plain rename (--no-renames-shaped numstat) still trips the sensitive-path floor on the old path', () => {
   const git = fakeGit({
     'merge-base': () => `${SHA}\n`,
-    diff: () => '0\t4\tplugin/bin/hooks.js\n4\t0\tplugin/bin/hooks2.js\n',
+    diff: () => '0\t4\tplugin/bin/hooks.js\u00004\t0\tplugin/bin/hooks2.js\u0000',
     'rev-parse': () => '/repo\n',
   });
   const readFile = (p) => (p.endsWith('policy.yml') ? 'merge-sensitive-paths: plugin/bin/hooks.js\n' : null);
