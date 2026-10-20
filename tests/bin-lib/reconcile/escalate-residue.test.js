@@ -5,6 +5,7 @@ const {
   escalateResidue, resolveResidue, residueFingerprint, residueBody, capDirtyFiles,
   structurallyStuckMarker, structurallyStuckBody, parseStuckPaths,
 } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
+const { STRUCTURALLY_STUCK_REASONS } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 
 test('residueFingerprint: stable for the same (reason, path), distinct across either', () => {
   const a = residueFingerprint('move-failed', '/x/run-1');
@@ -293,6 +294,28 @@ test('structurallyStuckBody: names every feeding skip reason, the cache lastErro
   assert.match(body, /apply or delete the files under `staged\/`[^\n]*or write a resolved `console\.json`/, 'the staged-pending sentence must carry the remedy');
   assert.deepEqual(parseStuckPaths(body), ['/x/run-a']);
   assert.ok(body.includes(structurallyStuckMarker()));
+});
+
+// #3705: no-repo-slug is in STRUCTURALLY_STUCK_REASONS but can never reach this
+// record. With no repo slug, escalate-residue's findOrCreateIssue returns
+// 'escalation-failed', so the consolidated issue is never filed and this body is
+// never written; that reason only shows in the residue summary's stuck count.
+const UNFILEABLE_STUCK_REASONS = new Set(['no-repo-slug']);
+
+test('structurallyStuckBody: the reason list names every STRUCTURALLY_STUCK_REASONS member except the unfileable ones (#3705)', () => {
+  const body = structurallyStuckBody([]);
+  // The reason list is the body's first line. Anchoring here, not body-wide,
+  // keeps the check discriminating: remedy paragraphs name reasons in backticks
+  // too, so a body-wide match would still pass after a reason is dropped from the list.
+  const listLine = body.split('\n')[0];
+  for (const reason of STRUCTURALLY_STUCK_REASONS) {
+    if (UNFILEABLE_STUCK_REASONS.has(reason)) continue;
+    assert.ok(listLine.includes(`\`${reason}\``), `expected reason list to name \`${reason}\`: ${listLine}`);
+  }
+  for (const reason of UNFILEABLE_STUCK_REASONS) {
+    assert.ok(!listLine.includes(`\`${reason}\``), `unfileable \`${reason}\` must not be listed as feeding the record`);
+  }
+  assert.match(body, /For a `merged-partial` directory, the records the run's merged PR was meant to close \(the closing-keyword links on that PR\) are still open: ship them in a later PR, or close\/release them if they were abandoned; the next reconcile then archives the dir and drops it from this record\./);
 });
 
 test('escalateResidue: structurally-stuck re-escalating the SAME already-named path is a plain dedup-hit, never appended twice', () => {

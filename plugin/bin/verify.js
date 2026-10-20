@@ -257,6 +257,10 @@ async function main() {
   }
   const jsonPath = parsed.json || path.join(logDir, 'report.json');
   const countStampPath = parsed.countStamp || (gitDir ? path.join(gitDir, 'claude-tweaks-test-count.json') : null);
+  // #3757: the commit this run verifies is the HEAD it starts on — taken before
+  // the --scope selection and runChecks, so selection, checks and stamp agree.
+  const startGit = gitInfo();
+  const startSha = startGit.sha;
 
   // --scope (#1922): declaration → changed files since the anchor → pure
   // selection → filtered check set. Without --scope every value below is
@@ -540,7 +544,6 @@ async function main() {
       : rest;
   });
   const retriedFiles = [...new Set(results.flatMap((c) => c.flakyRetried || []))];
-  const git = gitInfo();
 
   // Baseline adjudication (#3043): only a run with a raw failure and a
   // caller-supplied --baseline re-runs the failing files (at base in a scratch
@@ -641,6 +644,22 @@ async function main() {
     }
   }
   const preExistingPass = Boolean(preExistingAdjudicated && preExistingAdjudicated.matched);
+
+  // #3757: moved is sha-only on purpose — checks routinely leave untracked artifacts, and --stamp-status already refuses a dirty tree.
+  // Read after both adjudications: they re-run failing files, so a commit landing during them must count as moved.
+  const endGit = gitInfo();
+  const treeMoved = startSha !== null && endGit.sha !== startSha;
+  // The verified commit is the start sha; dirty is start OR end, so edits reverted mid-run still leave the stamp dirty.
+  // An unreadable status on either side stays null — one clean read never vouches for a read that failed.
+  let dirty;
+  if (startGit.dirty === true || endGit.dirty === true) {
+    dirty = true;
+  } else if (startGit.dirty === null || endGit.dirty === null) {
+    dirty = null;
+  } else {
+    dirty = false;
+  }
+  const git = { sha: startSha, dirty };
 
   // Suite-count regression stamp (#881, IL-84): the "tests" check's own
   // parsed count is compared against the previous run's persisted count.
@@ -846,9 +865,11 @@ async function main() {
   const emptyNonNoneRun = results.length === 0 && mode !== 'none';
   // An explicit --git-dir redirects logs and the count stamp only; the pass
   // stamp keys on the invoking cwd's HEAD, which may not be that repo's.
+  // #3757: a moved tree (treeMoved above) writes neither the JSON stamp nor the
+  // legacy twin — the checks cannot be credited to either snapshot.
   if (
     effectivePass && fullSet && !parsed.noStamp && gitDir && git.sha && !parsed.gitDir
-    && !unchangedHeadNoop && !emptyNonNoneRun
+    && !unchangedHeadNoop && !emptyNonNoneRun && !treeMoved
   ) {
     const suitesRun = results.filter((c) => c.name !== 'types' && c.name !== 'lint').map((c) => c.name);
     const stamp = composeStamp({
@@ -884,6 +905,9 @@ async function main() {
   }
 
   const lines = [];
+  if (treeMoved) {
+    lines.push(`tree moved during the run (HEAD ${String(startSha).slice(0, 9)} -> ${String(endGit.sha).slice(0, 9)}); no pass stamp written`);
+  }
   if (sel) {
     let suiteList = 'none';
     if (sel.suites === '*') suiteList = 'all';
