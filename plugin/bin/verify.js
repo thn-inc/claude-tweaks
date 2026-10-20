@@ -26,7 +26,7 @@ const {
   sniffFamily, extractFailingRegion, parseCounts, summaryLine, extractFailingFiles, stripAnsi, unattributedFailureCount,
 } = require('./lib/verify/extract');
 const { planRetry, runRetries, flakyCaveatLines } = require('./lib/verify/flaky');
-const { matchPreExisting } = require('./lib/verify/pre-existing');
+const { matchPreExisting, trackedFiles, newAndFixed } = require('./lib/verify/pre-existing');
 const { gitInfo, gitDir: resolveGitDir, composeReport, writeReportAtomic } = require('./lib/verify/report');
 const {
   readStamp: readCountStamp, detectRegression, caveatLine,
@@ -626,9 +626,14 @@ async function main() {
       preExistingAdjudicated = { declared: decl.preExisting, eligible: false, reason: refusal };
     } else {
       const verdict = matchPreExisting({ failingFiles: allFailingFiles, preExisting: decl.preExisting });
+      // #3313: report-only new/fixed beside the verdict — never read by the pass logic below.
+      // sel is set whenever decl is (both need --scope).
+      const split = newAndFixed({
+        verdict, failingFiles: allFailingFiles, preExisting: decl.preExisting, mode: sel.mode, listTracked: () => trackedFiles(logCwd),
+      });
       preExistingAdjudicated = verdict.eligible
-        ? { declared: decl.preExisting, matched: verdict.matched }
-        : { declared: decl.preExisting, eligible: false, reason: verdict.reason };
+        ? { declared: decl.preExisting, matched: verdict.matched, ...split }
+        : { declared: decl.preExisting, eligible: false, reason: verdict.reason, ...split };
     }
   }
   const preExistingPass = Boolean(preExistingAdjudicated && preExistingAdjudicated.matched);
@@ -965,6 +970,18 @@ async function main() {
       lines.push('', `Pre-existing: adjudicated — ${preExistingAdjudicated.matched.length} failing file(s) covered by the declared preExisting allowlist: ${preExistingAdjudicated.matched.join(', ')}`);
     } else {
       lines.push('', `Pre-existing: not adjudicated — ${preExistingAdjudicated.reason}`);
+    }
+    // #3313: new/fixed counts; absent on a refusal shape (no `new` key).
+    if (Array.isArray(preExistingAdjudicated.new)) {
+      const n = preExistingAdjudicated.new.length;
+      if (preExistingAdjudicated.fixed === null) {
+        lines.push(`Pre-existing: ${n} new, fixed not computed — ${preExistingAdjudicated.fixedReason}`);
+      } else {
+        lines.push(`Pre-existing: ${n} new, ${preExistingAdjudicated.fixed.length} fixed`);
+        for (const file of preExistingAdjudicated.fixed) {
+          lines.push(`FIXED: ${file} — matches the preExisting allowlist but passed this run; consider removing its entry`);
+        }
+      }
     }
   }
   lines.push('', `report: ${jsonPath}`);

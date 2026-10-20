@@ -6,6 +6,7 @@
 // is (verify.js's `--baseline`), without needing to re-run anything.
 'use strict';
 
+const { execFileSync } = require('child_process');
 const { globToRegExp } = require('../issues/blast-radius');
 
 // `failingFiles`: the deduped, log-order failing-file set across every
@@ -26,4 +27,35 @@ function matchPreExisting({ failingFiles, preExisting }) {
   return { eligible: true, matched: [...new Set(failingFiles)] };
 }
 
-module.exports = { matchPreExisting };
+// #3313: the tracked files of the checkout at `cwd`, or null when git cannot
+// say (not a repo, git absent) — null, never [], so a caller cannot read an
+// unreadable list as "nothing is tracked". `execImpl` is injectable like
+// report.js's gitInfo.
+function trackedFiles(cwd, execImpl = execFileSync) {
+  try {
+    const out = String(execImpl('git', ['ls-files', '-z'], { encoding: 'utf8', cwd, maxBuffer: 64 * 1024 * 1024 }));
+    return out.split('\0').filter((f) => f !== '');
+  } catch {
+    return null;
+  }
+}
+
+// #3313: the new/fixed split reported beside the adjudication verdict.
+// `new` — failing files the allowlist does not cover (empty when the run is
+// eligible). `fixed` — tracked files an allowlist entry covers that did not
+// fail this run: report-only, it never feeds the verdict. Only a full-scope
+// run exercised every suite, so any narrower mode cannot claim a file passed
+// (`fixed: null` with a reason, never `[]`); an unreadable tracked list is the
+// same null. `verdict` is matchPreExisting's return value.
+function newAndFixed({ verdict, failingFiles, preExisting, mode, listTracked }) {
+  const newFiles = verdict.eligible ? [] : [...new Set(verdict.unmatched || [])];
+  if (mode !== 'full') return { new: newFiles, fixed: null, fixedReason: `scope mode ${mode} did not run every suite` };
+  const tracked = listTracked();
+  if (tracked === null) return { new: newFiles, fixed: null, fixedReason: 'git ls-files failed' };
+  const failing = new Set(failingFiles);
+  const matchers = (preExisting || []).map((entry) => globToRegExp(entry));
+  const fixed = tracked.filter((f) => !failing.has(f) && matchers.some((re) => re.test(f)));
+  return { new: newFiles, fixed };
+}
+
+module.exports = { matchPreExisting, trackedFiles, newAndFixed };

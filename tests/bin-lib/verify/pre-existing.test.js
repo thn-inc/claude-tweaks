@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 
-const { matchPreExisting } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'pre-existing.js'));
+const { matchPreExisting, newAndFixed, trackedFiles } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'pre-existing.js'));
 
 const PRE_EXISTING = ['tests/a.test.js', 'tests/b.test.js'];
 
@@ -45,4 +45,53 @@ test('matchPreExisting: entries are globs, reusing the same engine rules[].match
   const nestedVerdict = matchPreExisting({ failingFiles: ['tests/known-shallow/nested.test.js'], preExisting: segmentBound });
   assert.strictEqual(nestedVerdict.eligible, false);
   assert.deepStrictEqual(nestedVerdict.unmatched, ['tests/known-shallow/nested.test.js']);
+});
+
+test('newAndFixed: allowlisted tracked files that did not fail are fixed; unmatched failing files are new (#3313)', () => {
+  const failingFiles = ['tests/real.test.js'];
+  const preExisting = ['tests/a.test.js'];
+  const verdict = matchPreExisting({ failingFiles, preExisting });
+  const out = newAndFixed({ verdict, failingFiles, preExisting, mode: 'full', listTracked: () => ['src/x.js', 'tests/a.test.js', 'tests/real.test.js'] });
+  assert.deepStrictEqual(out, { new: ['tests/real.test.js'], fixed: ['tests/a.test.js'] });
+});
+
+test('newAndFixed: a glob entry lists only its matching files that passed (#3313)', () => {
+  const failingFiles = ['tests/env/a.test.js'];
+  const preExisting = ['tests/env/*.test.js'];
+  const verdict = matchPreExisting({ failingFiles, preExisting });
+  const out = newAndFixed({
+    verdict, failingFiles, preExisting, mode: 'full',
+    listTracked: () => ['tests/env/a.test.js', 'tests/env/b.test.js', 'tests/other.test.js'],
+  });
+  assert.deepStrictEqual(out, { new: [], fixed: ['tests/env/b.test.js'] });
+});
+
+test('newAndFixed: a narrowed scope never claims fixed (#3313)', () => {
+  const failingFiles = ['tests/a.test.js'];
+  const preExisting = ['tests/a.test.js'];
+  const verdict = matchPreExisting({ failingFiles, preExisting });
+  const out = newAndFixed({
+    verdict, failingFiles, preExisting, mode: 'scoped',
+    listTracked: () => { throw new Error('listTracked must not be called for a narrowed scope'); },
+  });
+  assert.deepStrictEqual(out.new, []);
+  assert.strictEqual(out.fixed, null);
+  assert.strictEqual(out.fixedReason, 'scope mode scoped did not run every suite');
+});
+
+test('newAndFixed: an unreadable tracked list is fixed:null, never [] (#3313)', () => {
+  const failingFiles = ['tests/a.test.js'];
+  const preExisting = ['tests/a.test.js'];
+  const verdict = matchPreExisting({ failingFiles, preExisting });
+  const out = newAndFixed({ verdict, failingFiles, preExisting, mode: 'full', listTracked: () => null });
+  assert.strictEqual(out.fixed, null);
+  assert.strictEqual(out.fixedReason, 'git ls-files failed');
+});
+
+test('trackedFiles: splits git ls-files -z on NUL, drops empties, and returns null on any throw (#3313)', () => {
+  const calls = [];
+  const ok = trackedFiles('/repo', (cmd, args, opts) => { calls.push([cmd, args, opts.cwd]); return 'a.js\0b dir/c.js\0'; });
+  assert.deepStrictEqual(ok, ['a.js', 'b dir/c.js']);
+  assert.deepStrictEqual(calls, [['git', ['ls-files', '-z'], '/repo']]);
+  assert.strictEqual(trackedFiles('/repo', () => { throw new Error('not a repo'); }), null);
 });
