@@ -160,3 +160,15 @@ test('CRLF extraction matches LF', () => {
   const rankCrlf = NEXT_RANKING.replace(/\n/g, '\r\n');
   assert.strictEqual(heredocFrom(rankCrlf, RANK_START).replace(/\r\n/g, '\n'), heredocFrom(NEXT_RANKING, RANK_START));
 });
+
+test('the queue-pull MCP notes point at the #3691 alias step', () => {
+  const pullStart = MCP.indexOf('## Step 2 — queue pull and per-dependency open-state check');
+  assert.notStrictEqual(pullStart, -1, 'queue-pull paragraph heading not found in mcp-transport.md');
+  const pull = MCP.slice(pullStart, MCP.indexOf('\n## ', pullStart + 1));
+  assert.ok(pull.includes('#3691'), 'mcp-transport.md queue-pull paragraph lacks the #3691 pointer');
+  const queuePull = readText(path.join(ROOT, 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'));
+  const noteStart = queuePull.indexOf('**MCP path** (`gh` unavailable): see `mcp-transport.md`');
+  assert.notStrictEqual(noteStart, -1, 'MCP-path note not found in queue-pull-script.md');
+  const note = queuePull.slice(noteStart, queuePull.indexOf('\n', noteStart));
+  assert.ok(note.includes('#3691'), 'queue-pull-script.md MCP-path note lacks the #3691 pointer');
+});

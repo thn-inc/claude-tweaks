@@ -76,7 +76,7 @@ mistake, since every call site was bridged and verified before this line changed
 
 ## Step 2 — queue pull and per-dependency open-state check
 
-The queue pull uses the confirmed "list issues by label" mapping; the per-dependency open-state check (the `gh issue view "$DEP" --json state` loop) uses the confirmed "get single issue by number" mapping, checking the returned state field for `OPEN`. Both replace their `gh`-CLI equivalent one-for-one — no change to the surrounding `node -e` eligibility/dependency logic, which only consumes the fetched JSON shape, not how it was fetched.
+The queue pull uses the confirmed "list issues by label" mapping; the per-dependency open-state check (the `gh issue view "$DEP" --json state` loop) uses the confirmed "get single issue by number" mapping, checking the returned state field for `OPEN`. Both replace their `gh`-CLI equivalent one-for-one — no change to the surrounding `node -e` eligibility/dependency logic, which only consumes the fetched JSON shape, not how it was fetched. Once `$DISPATCH_QUEUE_RAW` is written, run the `#3691` timestamp-alias heredoc in the section below over it before any node block reads it, since without that alias the oldest-first tie-break silently degrades to array order.
 
 ## Step 2 — `list_issues` `fields` parameter silently truncates labels (#3137)
 
