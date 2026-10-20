@@ -1,5 +1,6 @@
 'use strict';
 const { execFileSync } = require('child_process');
+const { parseLsTreeZ } = require('../git-z');
 
 // Durable cross-firing state for the health skills, backed by a dedicated
 // git branch (never merged into main) instead of local gitignored disk —
@@ -261,25 +262,23 @@ function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep =
   // — no `gh` CLI, no MCP dependency, works identically local or in a cloud
   // Routine sandbox (see this file's header comment).
 
-  // Parses `git ls-tree <treeSha>` output (one entry per line: "<mode> SP
-  // <type> SP <sha> TAB <name>") into a Map keyed by name, so callers can
-  // splice in new entries without disturbing ones they don't touch. Returns
-  // an empty Map for a falsy/EMPTY_TREE_SHA treeSha or any sha git can't
-  // resolve (a not-yet-existing subtree on this namespace's very first write).
+  // Parses `git ls-tree -z <treeSha>` output (NUL-terminated records: "<mode>
+  // SP <type> SP <sha> TAB <name>"; -z keeps a non-ASCII name raw instead of
+  // C-quoted) into a Map keyed by name, so callers can splice in new entries
+  // without disturbing ones they don't touch. Returns an empty Map for a
+  // falsy/EMPTY_TREE_SHA treeSha or any sha git can't resolve (a
+  // not-yet-existing subtree on this namespace's very first write). Must stay
+  // paired with writeTree's `mktree -z`: both sides speak NUL records.
   function readTreeEntries(root, treeSha) {
     const entries = new Map();
     if (!treeSha || treeSha === EMPTY_TREE_SHA) return entries;
     let out;
     try {
-      out = run('git', ['-C', root, 'ls-tree', treeSha]);
+      out = run('git', ['-C', root, 'ls-tree', '-z', '--end-of-options', treeSha]);
     } catch {
       return entries;
     }
-    for (const line of out.split('\n')) {
-      if (!line) continue;
-      const tabIdx = line.indexOf('\t');
-      const [mode, type, sha] = line.slice(0, tabIdx).split(' ');
-      const name = line.slice(tabIdx + 1);
+    for (const { mode, type, sha, path: name } of parseLsTreeZ(out)) {
       entries.set(name, { mode, type, sha });
     }
     return entries;
@@ -293,7 +292,8 @@ function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep =
   }
 
   // entries: Map<name, {mode, type, sha}> (see readTreeEntries). Serializes
-  // to `git mktree`'s expected stdin format and returns the new tree sha.
+  // to `git mktree -z`'s expected stdin format (NUL-terminated records, the
+  // counterpart of readTreeEntries' `ls-tree -z`) and returns the new tree sha.
   // Sort order: plain lexicographic-by-name is sufficient here because this
   // branch's actual layout never mixes blob and tree entries at the same
   // tree level (root = one tree entry per namespace; each namespace's own
@@ -306,8 +306,8 @@ function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep =
         const { mode, type, sha } = entries.get(name);
         return `${mode} ${type} ${sha}\t${name}`;
       })
-      .join('\n') + (names.length ? '\n' : '');
-    return run('git', ['-C', root, 'mktree'], { input }).trim();
+      .join('\0') + (names.length ? '\0' : '');
+    return run('git', ['-C', root, 'mktree', '-z'], { input }).trim();
   }
 
   // parentSha: null for the very first commit on this branch (omits -p).

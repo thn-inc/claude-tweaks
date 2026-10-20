@@ -5,7 +5,9 @@
 // line, so core.quotepath cannot C-quote a non-ASCII path into a string no file
 // matches. The one non-git exemption is `gh pr diff ... --name-only`, which has
 // no -z flag (compose-subject.js). The same lines also carry --end-of-options
-// before a ref (second pin below).
+// before a ref (second pin below). ls-files, ls-tree, --numstat, and
+// status --porcelain readers are held to -z too, unless the line carries a
+// `// git-path-read: not a path list (<reason>)` marker (findUnzippedReads).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -24,7 +26,7 @@ const GH_PR_DIFF = /(['"])pr\1,\s*(['"])diff\2/;
 // NAME_FLAG to see. Only a string passed straight to an exec-named call counts, so
 // a message label that merely quotes a command is not mistaken for a read.
 const EXEC_TEMPLATE_CMD = /\w*[eE]xec\w*\(\s*`git [^`\n]*--name-(?:only|status)[^`\n]*`/;
-const TEMPLATE_Z_FLAG = /\s-z(?:\s|`)/;
+const TEMPLATE_Z_FLAG = /\s-z(?:\s|['"`])/;
 
 function findViolations(files) {
   const violations = [];
@@ -47,18 +49,68 @@ function findViolations(files) {
 // the named exemptions; a new no-ref reader joins this set deliberately.
 const NO_REF_READERS = new Set(['pre-tool-use.js', 'freshness.js']);
 const END_OF_OPTIONS = /(['"])--end-of-options\1/;
+// ls-tree always takes a tree-ish; --numstat takes a ref only under diff/log/show
+// (`apply --numstat -z <patch>` reads a patch file, not a ref).
+const LS_TREE_TOKEN = /(['"])ls-tree\1/;
+const NUMSTAT_TOKEN = /(['"])--numstat\1/;
+const REF_COMMAND_TOKEN = /(['"])(?:diff|log|show)\1/;
 
 function findMissingEndOfOptions(files) {
   const violations = [];
   for (const { path: filePath, text } of files) {
     if (NO_REF_READERS.has(path.basename(filePath))) continue;
     text.split('\n').forEach((line, index) => {
-      if (!NAME_FLAG.test(line) || !Z_FLAG.test(line) || GH_PR_DIFF.test(line)) return;
+      if (EXEMPT_MARKER.test(line)) return;
+      const nameRead = NAME_FLAG.test(line) && Z_FLAG.test(line) && !GH_PR_DIFF.test(line);
+      const treeRead = LS_TREE_TOKEN.test(line);
+      const numstatRead = NUMSTAT_TOKEN.test(line) && REF_COMMAND_TOKEN.test(line);
+      if (!nameRead && !treeRead && !numstatRead) return;
       if (END_OF_OPTIONS.test(line)) return;
       violations.push({ path: filePath, line: index + 1, text: line.trim() });
     });
   }
   return violations;
+}
+
+// Beyond --name-only/--name-status: ls-files, ls-tree, --numstat, and status --porcelain
+// print paths too, so they carry -z on the same line. A read that never turns the output
+// into a path (emptiness, exit code, display, counts for a caller-named path) says so with
+// EXEMPT_MARKER at the end of its line. A line-based pin cannot see an argv array split
+// across lines, so a covered reader keeps its argv on one line.
+const PATH_LIST_TOKEN = /(['"])(?:ls-files|ls-tree|--numstat)\1/;
+const STATUS_TOKEN = /(['"])status\1/;
+const PORCELAIN_TOKEN = /(['"])--porcelain(?:=v[12])?\1/;
+const SHORT_TOKEN = /(['"])(?:-s|--short)\1/;
+const EXEC_TEMPLATE_READ = /\w*[eE]xec\w*\(\s*(['"`])git [^'"`\n]*(?:ls-files|ls-tree|--numstat|status[^'"`\n]*(?:--porcelain|--short|\s-s\b))[^'"`\n]*\1/;
+const EXEMPT_MARKER = /\/\/ git-path-read: not a path list \([^)]+\)/;
+
+function findUnzippedReads(files) {
+  const violations = [];
+  for (const { path: filePath, text } of files) {
+    text.split('\n').forEach((line, index) => {
+      if (EXEMPT_MARKER.test(line)) return;
+      const isArgvRead = PATH_LIST_TOKEN.test(line) || (STATUS_TOKEN.test(line) && (PORCELAIN_TOKEN.test(line) || SHORT_TOKEN.test(line)));
+      const argvViolation = isArgvRead && !Z_FLAG.test(line);
+      const templateMatch = EXEC_TEMPLATE_READ.exec(line);
+      const templateViolation = templateMatch !== null && !TEMPLATE_Z_FLAG.test(templateMatch[0]);
+      if (argvViolation || templateViolation) {
+        violations.push({ path: filePath, line: index + 1, text: line.trim() });
+      }
+    });
+  }
+  return violations;
+}
+
+// Reads the live file at relFile (under plugin/bin), asserts the needle is there and that
+// the live text is clean, then asserts the text with needle -> replacement reports exactly
+// one violation. Throws when the mutation does not turn the line red.
+function assertGoesRed(relFile, needle, replacement) {
+  const file = path.join(BIN_DIR, relFile);
+  const live = fs.readFileSync(file, 'utf8');
+  assert.ok(live.includes(needle), `${relFile} contains ${needle}`);
+  assert.equal(findUnzippedReads([{ path: file, text: live }]).length, 0, `${relFile} is clean as shipped`);
+  const broken = live.replace(needle, replacement);
+  assert.equal(findUnzippedReads([{ path: file, text: broken }]).length, 1, `${relFile} reports one violation without ${needle}`);
 }
 
 function collectJsFiles(dir) {
@@ -103,12 +155,83 @@ test('AC2.1 go-red: removing -z from a real reader line is a violation', () => {
   assert.equal(findViolations([{ path: file, text: broken }]).length, 1);
 });
 
+test('findUnzippedReads: an ls-files/ls-tree/numstat/status argv without -z is flagged, with -z or the marker it passes', () => {
+  const cases = [
+    ["git(['ls-files', '--', dir])", "git(['ls-files', '-z', '--', dir])"],
+    ["git(['ls-tree', '-r', ref])", "git(['ls-tree', '-r', '-z', ref])"],
+    ["git(['diff', '--numstat', ref])", "git(['diff', '--numstat', '-z', ref])"],
+    ["git(['status', '--porcelain'])", "git(['status', '--porcelain', '-z'])"],
+    ["git(['status', '--porcelain=v1', '-uall'])", "git(['status', '--porcelain=v1', '-z', '-uall'])"],
+    ["git(['status', '--porcelain=v2', '--branch'])", "git(['status', '--porcelain=v2', '-z', '--branch'])"],
+    ["git(['status', '-s', '--', dir])", "git(['status', '-s', '-z', '--', dir])"],
+    ["git(['status', '--short', '--', dir])", "git(['status', '--short', '-z', '--', dir])"],
+  ];
+  for (const [bad, good] of cases) {
+    assert.equal(findUnzippedReads([{ path: 'x.js', text: bad }]).length, 1, bad);
+    assert.equal(findUnzippedReads([{ path: 'x.js', text: good }]).length, 0, good);
+    const marked = `${bad} // git-path-read: not a path list (emptiness only)`;
+    assert.equal(findUnzippedReads([{ path: 'x.js', text: marked }]).length, 0, marked);
+  }
+  assert.equal(findUnzippedReads([{ path: 'x.js', text: "git(['status', '-b'])" }]).length, 0, 'status without --porcelain is not a path read');
+});
+
+test('findUnzippedReads: an exec template string is held to -z, and the marker exempts it', () => {
+  const bad = "const out = execSync('git -C x status --porcelain -b', { cwd });";
+  const badShort = "const out = execSync('git -C x status --short', { cwd });";
+  const goodShort = "const out = execSync('git -C x status --short -z', { cwd });";
+  const marked = `${bad} // git-path-read: not a path list (branch and dirty flag only)`;
+  const good = "const out = execSync('git ls-files -z', { cwd });";
+  const goodTick = 'const out = execFn(`git ls-files -z`, opts);';
+  const label = "const command = opts.range ? `git ls-files ${opts.range}` : 'x';";
+  assert.equal(findUnzippedReads([{ path: 'x.js', text: bad }]).length, 1);
+  assert.equal(findUnzippedReads([{ path: 'x.js', text: marked }]).length, 0);
+  assert.equal(findUnzippedReads([{ path: 'x.js', text: badShort }]).length, 1);
+  assert.equal(findUnzippedReads([{ path: 'x.js', text: goodShort }]).length, 0);
+  assert.equal(findUnzippedReads([{ path: 'x.js', text: good }]).length, 0);
+  assert.equal(findUnzippedReads([{ path: 'x.js', text: goodTick }]).length, 0);
+  assert.equal(findUnzippedReads([{ path: 'x.js', text: label }]).length, 0);
+});
+
+test('AC2.1: no plugin/bin ls-files/ls-tree/numstat/status --porcelain read lacks -z or an exemption marker', () => {
+  const files = collectJsFiles(BIN_DIR).map((p) => ({ path: p, text: fs.readFileSync(p, 'utf8') }));
+  assert.ok(files.length > 0, 'walked at least one plugin/bin file');
+  assert.deepEqual(findUnzippedReads(files), []);
+});
+
+test('AC2.1 go-red: removing -z from any one covered reader is a violation', () => {
+  assertGoesRed(path.join('lib', 'blast-radius-cli.js'), "'--numstat', '-z'", "'--numstat'");
+  assertGoesRed(path.join('lib', 'wrap-up', 'engine-verify.js'), "'--porcelain=v1', '-z'", "'--porcelain=v1'");
+  assertGoesRed(path.join('lib', 'reconcile', 'archive-merged.js'), "'ls-files', '-z', '--', runDir", "'ls-files', '--', runDir");
+  assertGoesRed(path.join('lib', 'issues', 'claims-git-cas.js'), "'ls-tree', '-r', '-z'", "'ls-tree', '-r'");
+});
+
+test('AC2.1 go-red control: a mutation that leaves -z in place does not go red, so the helper can fail', () => {
+  // '--no-renames' first occurs on the numstat reader line; dropping it leaves -z
+  // there, so the only assertion that can fail is the "exactly one violation" one.
+  assert.throws(
+    () => assertGoesRed(path.join('lib', 'blast-radius-cli.js'), "'--no-renames', ", ''),
+    { name: 'AssertionError', message: /reports one violation without/ },
+  );
+});
+
 test('findMissingEndOfOptions: flags a ref-taking line without the separator, passes one with it', () => {
   const without = "git(['diff', '--name-only', '-z', ref])";
   const withSep = "git(['diff', '--name-only', '-z', '--end-of-options', ref])";
   assert.equal(findMissingEndOfOptions([{ path: 'x.js', text: without }]).length, 1);
   assert.equal(findMissingEndOfOptions([{ path: 'x.js', text: withSep }]).length, 0);
   assert.equal(findMissingEndOfOptions([{ path: 'lib/hooks/pre-tool-use.js', text: without }]).length, 0);
+});
+
+test('findMissingEndOfOptions: ls-tree and diff/log/show --numstat take a ref; apply --numstat and marked lines do not', () => {
+  const missing = (text) => findMissingEndOfOptions([{ path: 'x.js', text }]).length;
+  assert.equal(missing("git(['ls-tree', '-z', treeSha])"), 1);
+  assert.equal(missing("git(['ls-tree', '-z', '--end-of-options', treeSha])"), 0);
+  assert.equal(missing("git(['diff', '--numstat', '-z', range])"), 1);
+  assert.equal(missing("git(['log', '--numstat', '-z', range])"), 1);
+  assert.equal(missing("git(['show', '--numstat', '-z', sha])"), 1);
+  assert.equal(missing("git(['diff', '--numstat', '-z', '--end-of-options', range])"), 0);
+  assert.equal(missing("git(['apply', '--numstat', '-z', patch])"), 0);
+  assert.equal(missing("git(['ls-tree', '-z', treeSha]) // git-path-read: not a path list (emptiness only)"), 0);
 });
 
 test('every plugin/bin path-list argv that takes a ref also passes --end-of-options on the same line', () => {
@@ -128,7 +251,11 @@ test('--end-of-options go-red: removing it from a real reader line is a violatio
 
 test('AC3.1: the _shared contract states the rule and names the reference implementations', () => {
   const contract = fs.readFileSync(path.join(SHARED_DIR, 'git-path-read.md'), 'utf8');
-  for (const token of ['-z', '--end-of-options', 'changed-files.js', 'compose-subject.js', 'git-z.js']) {
+  const tokens = [
+    '-z', '--end-of-options', 'changed-files.js', 'compose-subject.js', 'git-z.js',
+    'parseNumstatZ', 'parseStatusPorcelainZ', 'parseLsTreeZ', 'unquoteCPath', 'git-path-read: not a path list',
+  ];
+  for (const token of tokens) {
     assert.ok(contract.includes(token), `git-path-read.md mentions ${token}`);
   }
   const discipline = fs.readFileSync(path.join(SHARED_DIR, 'git-discipline.md'), 'utf8');

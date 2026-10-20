@@ -124,9 +124,7 @@ function specOnBranch(deps, { mainRoot, runDirReal, state }) {
   if (!branch) return null;
   const rel = path.relative(mainRoot, runDirReal).split(path.sep).join('/');
   const ls = (pathspec, recursive) => {
-    const args = ['ls-tree'];
-    if (recursive) args.push('-r');
-    args.push('--name-only', '-z', '--end-of-options', branch, '--', pathspec);
+    const args = ['ls-tree', ...(recursive ? ['-r'] : []), '--name-only', '-z', '--end-of-options', branch, '--', pathspec];
     try { return deps.git(args, { cwd: mainRoot }); } catch { return null; }
   };
   const direct = ls(`${rel}/work/`, false);

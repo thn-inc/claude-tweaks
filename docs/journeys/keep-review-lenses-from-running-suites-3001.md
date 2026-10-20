@@ -27,14 +27,14 @@ files:
 - **URL:** the review summary's `### Fan-out leftovers` section (full form), or `Fan-out leftovers 0` in the compact form
 - **Action:** read what the sweep reported after the fan-out.
 - **Should feel:** trustworthy. A clean review says `None` (or `0` in compact form). When something was left listening, each new listener is named by full command name and port, so the developer knows exactly which process to inspect.
-- **Should understand:** before dispatch, the reviewer snapshots `lsof +c 0 -nP -iTCP -sTCP:LISTEN` into `{ctx-dir}/pre-dispatch-listeners.txt`, next to `pre-dispatch-status.txt`. After the fan-out it re-runs the same command and diffs by command name and port, never PID, with IPv4/IPv6 duplicates collapsed. The check is report-only: it never kills anything. It cannot attribute ownership, because another session may have started the listener, so a listed entry is a lead, not proof a lens misbehaved. A leftover listener also disqualifies the compact summary form, so it can never render `Fan-out leftovers 0` while a listener is reported.
+- **Should understand:** before dispatch, `build-review-context.js build` snapshots `lsof +c 0 -nP -iTCP -sTCP:LISTEN` into `{ctx-dir}/pre-dispatch-listeners.txt`, next to `pre-dispatch-status.txt` (the reviewer never writes either file). After the fan-out the reviewer re-runs the same command and diffs by command name and port, never PID, with IPv4/IPv6 duplicates collapsed. The check is report-only: it never kills anything. It cannot attribute ownership, because another session may have started the listener, so a listed entry is a lead, not proof a lens misbehaved. A leftover listener also disqualifies the compact summary form, so it can never render `Fan-out leftovers 0` while a listener is reported.
 - **Red flags:** `Fan-out leftovers 0` alongside a `STAGED … new listener(s)` line in `decisions.md`. A listener reported only because its PID changed. Any process killed by the review.
 
 ### 3. Run a review where `lsof` is unavailable — Windows or a minimal container
 - **URL:** `/claude-tweaks:review #{n}` on a machine with no `lsof` on `PATH`
 - **Action:** run the review as usual.
 - **Should feel:** unaffected. The review completes. Only the leftover-listener check is skipped, and it says so.
-- **Should understand:** the snapshot step logs `SKIP {HH:MM:SS} — Review listener snapshot (skipped): lsof unavailable → leftover-listener check not run.` and the post-fan-out check is a no-op, because no snapshot file exists. The untracked-file sweep still runs.
+- **Should understand:** the snapshot step logs `SKIP {HH:MM:SS} — Review listener snapshot (skipped): lsof unavailable or failed → leftover-listener check not run.` and the post-fan-out check is a no-op, because no snapshot file exists. The untracked-file sweep still runs.
 - **Red flags:** the review fails or stalls because `lsof` is missing. No `SKIP` line explaining why listeners went unchecked.
 
 ## Origin

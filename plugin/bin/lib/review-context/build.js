@@ -19,6 +19,25 @@ function realGit(args, opts = {}) {
   return execFileSync('git', args, { encoding: 'utf8', maxBuffer: MAX_BUFFER, ...opts, windowsHide: true });
 }
 
+// The TCP listeners on this host, as lsof prints them. Returns null when lsof is not installed
+// (the listener baseline is then absent, not empty), '' when lsof finds no listener (exit 1),
+// and the listing otherwise. Any other failure is null too — including a timeout (lsof can block
+// on a stale network or FUSE mount), which throws with status null. stderr is dropped so lsof
+// warnings do not reach the CLI's own stderr.
+function realLsof({ exec = execFileSync } = {}) {
+  try {
+    return exec('lsof', ['+c', '0', '-nP', '-iTCP', '-sTCP:LISTEN'], {
+      encoding: 'utf8',
+      maxBuffer: MAX_BUFFER,
+      timeout: 10000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+    });
+  } catch (err) {
+    return err.status === 1 ? err.stdout || '' : null;
+  }
+}
+
 // Precedence: explicit --dir, then run-dir-scoped (per-run unique by construction),
 // then a fresh mkdtemp dir (per-invocation unique by construction). Never a fixed
 // shared /tmp name — two concurrent reviews clobbering each other's lens outputs is
@@ -133,7 +152,9 @@ function elideDiff(diff) {
 // file's diff chunk is a one-line marker; both are reported in `oversizeSections`. A stub
 // points at wherever the content still lives: the diff above (hunk kept), the live file (hunk
 // elided too), or `git diff {range} -- {path}` (elided or deleted). A modified non-always-stub
-// file's hunks stay whole, so the bundle as a whole is not strictly bounded.
+// file's hunks stay whole, so the bundle as a whole is not strictly bounded. It also writes the
+// two pre-dispatch baselines a worktree-isolated reviewer cannot capture itself: the `git status`
+// listing (`pre-dispatch-status.txt`) and the lsof listener snapshot (`pre-dispatch-listeners.txt`).
 function buildContext({
   base,
   branch,
@@ -142,6 +163,7 @@ function buildContext({
   git = realGit,
   readFile = fs.readFileSync,
   writeFile = fs.writeFileSync,
+  lsof = realLsof,
 } = {}) {
   if (!base || !branch) throw new Error('buildContext: base and branch are both required');
   if (!dir) throw new Error('buildContext: dir is required (resolve it via resolveDir first)');
@@ -177,6 +199,14 @@ function buildContext({
   // this function already uses for the diff itself, so a test can fake both
   // without a real repo.
   const root = git(['rev-parse', '--show-toplevel']).trim();
+
+  // Pre-dispatch baselines (#3302): the reviewer compares the tree against these to tell its own
+  // changes from what was already there, so they are captured here, before any lens runs.
+  const baselinePath = path.join(dir, 'pre-dispatch-status.txt');
+  writeFile(baselinePath, git(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all'], { cwd: root }));
+  const listeners = lsof();
+  const listenersPath = typeof listeners === 'string' ? path.join(dir, 'pre-dispatch-listeners.txt') : null;
+  if (listenersPath) writeFile(listenersPath, listeners);
 
   const emptySections = [];
   const oversize = new Set();
@@ -240,7 +270,9 @@ function buildContext({
     files: files.length,
     emptySections,
     oversizeSections: [...oversize],
+    baselinePath,
+    listenersPath,
   };
 }
 
-module.exports = { resolveDir, buildContext, MAX_BUFFER, PER_FILE_CAP_BYTES, isAlwaysStub, elideDiff };
+module.exports = { resolveDir, buildContext, realLsof, MAX_BUFFER, PER_FILE_CAP_BYTES, isAlwaysStub, elideDiff };

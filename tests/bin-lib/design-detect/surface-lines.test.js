@@ -188,6 +188,22 @@ test('analyzeDiff: a content line starting with +++ or --- is counted, not mista
   assert.equal(files[0].surface, true);
 });
 
+const QUOTED_HEADER_LOOKALIKE_DIFF = `diff --git a/src/components/Widget.tsx b/src/components/Widget.tsx
+index 1111111..2222222 100644
+--- a/src/components/Widget.tsx
++++ b/src/components/Widget.tsx
+@@ -10,2 +10,3 @@ export function Widget() {
++++ "b/src/evil.css"
++  return <div className="widget">{counter}</div>;
+`;
+
+test('analyzeDiff: a hunk line shaped like a quoted +++ header is counted as content and opens no phantom file', () => {
+  const files = sl.analyzeDiff(QUOTED_HEADER_LOOKALIKE_DIFF);
+  assert.deepEqual(files.map((f) => f.file), ['src/components/Widget.tsx']);
+  assert.equal(files[0].changedLines, 2);
+  assert.equal(files[0].surface, true);
+});
+
 test('analyzeDiff: a non-jsx/style/template file (.ts) is never surface', () => {
   const diff = `diff --git a/src/hooks/useWidget.ts b/src/hooks/useWidget.ts
 index 1111111..2222222 100644
@@ -201,4 +217,55 @@ index 1111111..2222222 100644
   assert.equal(files[0].kind, 'other');
   assert.equal(files[0].surface, false);
   assert.equal(sl.hasSurfaceChange(diff), false);
+});
+
+// --- patch-header path decoding (#3651) ---
+// git C-quotes a header path holding non-ASCII bytes (core.quotepath on) or a
+// control character; analyzeDiff must name the raw path, not drop the file.
+
+test('characterization: an unquoted header with a space in the path keeps the greedy match', () => {
+  const files = sl.analyzeDiff('diff --git a/src/my comp.tsx b/src/my comp.tsx\n--- a/src/my comp.tsx\n+++ b/src/my comp.tsx\n@@ -1 +1 @@\n-<div className="a" />\n+<div className="b" />\n');
+  assert.equal(files.length, 1);
+  assert.equal(files[0].file, 'src/my comp.tsx');
+  assert.equal(files[0].surface, true);
+});
+
+test('characterization: a +++ header alone (no diff --git line) names the file; +++ /dev/null does not', () => {
+  const files = sl.analyzeDiff('--- a/src/x.css\n+++ b/src/x.css\n@@ -1 +1 @@\n-a\n+b\n');
+  assert.deepEqual(files.map((f) => f.file), ['src/x.css']);
+  assert.deepEqual(sl.analyzeDiff('--- a/src/x.css\n+++ /dev/null\n@@ -1 +0,0 @@\n-a\n'), []);
+});
+
+test('AC1.1: a C-quoted header names the raw path', () => {
+  const diff = 'diff --git "a/src/caf\\303\\251.tsx" "b/src/caf\\303\\251.tsx"\n'
+    + '--- "a/src/caf\\303\\251.tsx"\n'
+    + '+++ "b/src/caf\\303\\251.tsx"\n'
+    + '@@ -1 +1 @@\n-<div className="a" />\n+<div className="b" />\n';
+  const files = sl.analyzeDiff(diff);
+  assert.equal(files.length, 1);
+  assert.equal(files[0].file, 'src/café.tsx');
+  assert.equal(files[0].surface, true);
+  assert.equal(sl.hasSurfaceChange(diff), true);
+});
+
+test('AC1.1: a C-quoted +++ header alone names the raw path', () => {
+  const files = sl.analyzeDiff('--- "a/src/caf\\303\\251.css"\n+++ "b/src/caf\\303\\251.css"\n@@ -1 +1 @@\n-a\n+b\n');
+  assert.deepEqual(files.map((f) => f.file), ['src/café.css']);
+  assert.equal(files[0].kind, 'style');
+});
+
+test('AC1.1: a rename to a non-ASCII name with mixed quoting names the new path', () => {
+  const diff = 'diff --git a/src/old.tsx "b/src/n\\303\\251w.tsx"\n'
+    + 'similarity index 100%\nrename from src/old.tsx\nrename to "src/n\\303\\251w.tsx"\n'
+    + '@@ -1 +1 @@\n-<div className="a" />\n+<div className="b" />\n';
+  const files = sl.analyzeDiff(diff);
+  assert.equal(files.length, 1);
+  assert.equal(files[0].file, 'src/néw.tsx');
+  assert.equal(files[0].kind, 'jsx');
+  assert.equal(files[0].surface, true);
+});
+
+test('AC1.1: a quoted path with an escaped quote and tab decodes via the C escapes', () => {
+  const files = sl.analyzeDiff('diff --git "a/src/a\\"b\\tc.css" "b/src/a\\"b\\tc.css"\n@@ -1 +1 @@\n-a\n+b\n');
+  assert.deepEqual(files.map((f) => f.file), ['src/a"b\tc.css']);
 });

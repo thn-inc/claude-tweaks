@@ -186,6 +186,61 @@ test('archive-run: parked-dispatch handoff — refuses while the parked console 
   assert.strictEqual(fs.existsSync(runDir), false);
 });
 
+// #3668: the fast-lane auto-merge short-circuit
+// (wrap-up/auto-merge-short-circuit.md) renders no console and leaves nothing to
+// answer, so 'none' is normally safe to archive. Staged items it left behind
+// were never shown to a human, though — so that one path refuses while staged/
+// holds pending items. Other terminal runs that retain staged/ (in-terminal
+// consoles, fleet-approved closes) still archive.
+const FAST_LANE_FYI = '- AUTO 19:26:04 — log-decision: Fast-lane auto-merge: issue #3130, assess-agent-autonomy verdict auto-merge, pr-first-merge outcome merged.\n';
+
+test('AC1.1: archive-run refuses a terminal fast-lane run with no console.json and a pending staged/ item, naming it', () => {
+  const { root, runDir } = runDirFixture('clean');
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), FAST_LANE_FYI);
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  fs.writeFileSync(path.join(runDir, 'staged', 'reflect-1.md'), '# proposal\n');
+  fs.writeFileSync(path.join(runDir, 'staged', 'wrap-up-skill-1.md'), '# proposal\n');
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-never-rendered-staged-pending/);
+  assert.match(result.stdout, /staged\/reflect-1\.md/);
+  assert.match(result.stdout, /staged\/wrap-up-skill-1\.md/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('AC1.2: archive-run refuses when the only pending items sit under spec-N/staged/', () => {
+  const { root, runDir } = runDirFixture('clean');
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), FAST_LANE_FYI);
+  fs.mkdirSync(path.join(runDir, 'spec-3375', 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'spec-3375', 'staged', 'review-1.patch'), 'x');
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — console-never-rendered-staged-pending/);
+  assert.match(result.stdout, /spec-3375\/staged\/review-1\.patch/);
+  assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+});
+
+test('AC2.1: archive-run still archives a terminal fast-lane run with no console.json and nothing pending', () => {
+  const { root, runDir, runId } = runDirFixture('clean');
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), FAST_LANE_FYI);
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  fs.writeFileSync(path.join(runDir, 'staged', '.DS_Store'), 'x');
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /archival refused/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  assert.ok(fs.existsSync(path.join(archiveDir, 'config.yml')));
+});
+
+test('archive-run archives a terminal run with retained staged/ items and no fast-lane short-circuit line (#3668 scope)', () => {
+  const { root, runDir, runId } = runDirFixture('clean');
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  fs.writeFileSync(path.join(runDir, 'staged', 'shipped-close-3175.md'), '# proposal\n');
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.doesNotMatch(result.stdout, /archival refused/);
+  assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
+  const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId);
+  assert.ok(fs.existsSync(path.join(archiveDir, 'staged', 'shipped-close-3175.md')));
+});
+
 test('cleanup-procedures-execution.md Section B invokes archive-run instead of a hand-run recipe', () => {
   const text = fs.readFileSync(
     path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'cleanup-procedures-execution.md'),

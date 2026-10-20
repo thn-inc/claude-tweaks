@@ -36,6 +36,39 @@ test('planRetry: every failing file listed + a template → retry with one comma
   });
 });
 
+test('planRetry: a $(…) failing path is quoted, never shell syntax (#3676)', () => {
+  const plan = planRetry({ failingFiles: ['tests/$(touch PWNED).test.js'], flaky: { files: ['tests/**'], maxRetries: 1 }, retry: RETRY, suite: 'tests', platform: 'linux' });
+  assert.strictEqual(plan.retry, true);
+  assert.deepStrictEqual(plan.command, [{ file: 'tests/$(touch PWNED).test.js', cmd: "node --test 'tests/$(touch PWNED).test.js'" }]);
+});
+
+test('planRetry: a path cmd.exe cannot quote refuses with unsafe-path (#3676)', () => {
+  const plan = planRetry({ failingFiles: ['tests/%PATH%.test.js'], flaky: { files: ['tests/**'], maxRetries: 1 }, retry: RETRY, suite: 'tests', platform: 'win32' });
+  assert.deepStrictEqual(plan, {
+    retry: false,
+    reason: 'unsafe-path: [tests/%PATH%.test.js (cmd-unquotable)]',
+    unsafe: [{ file: 'tests/%PATH%.test.js', reason: 'cmd-unquotable' }],
+  });
+});
+
+test('planRetry: every unsafe path is named in the reason, and a control byte is shown escaped (#3676)', () => {
+  const plan = planRetry({ failingFiles: ['tests/%A%.test.js', 'tests/b\x1b[31m.test.js', '-x.test.js'], flaky: { files: ['**'], maxRetries: 1 }, retry: RETRY, suite: 'tests', platform: 'win32' });
+  assert.strictEqual(plan.retry, false);
+  assert.strictEqual(plan.reason, 'unsafe-path: [tests/%A%.test.js (cmd-unquotable), tests/b\\x1b[31m.test.js (control-character), -x.test.js (leading-dash)]');
+  assert.deepStrictEqual(plan.unsafe.map((u) => u.file), ['tests/%A%.test.js', 'tests/b\x1b[31m.test.js', '-x.test.js'], 'the structured list keeps the raw paths');
+});
+
+test('planRetry: one unsafe path in a mixed list refuses the whole retry (#3676)', () => {
+  const plan = planRetry({ failingFiles: ['tests/a.test.js', 'tests/%PATH%.test.js'], flaky: { files: ['tests/**'], maxRetries: 1 }, retry: RETRY, suite: 'tests', platform: 'win32' });
+  assert.strictEqual(plan.retry, false);
+  assert.strictEqual(plan.reason, 'unsafe-path: [tests/%PATH%.test.js (cmd-unquotable)]');
+});
+
+test('planRetry: maxRetries 0 keeps max-retries-0 even with an unsafe path (#3676)', () => {
+  const plan = planRetry({ failingFiles: ['tests/%PATH%.test.js'], flaky: { files: ['tests/**'], maxRetries: 0 }, retry: RETRY, suite: 'tests', platform: 'win32' });
+  assert.deepStrictEqual(plan, { retry: false, reason: 'max-retries-0' });
+});
+
 test('planRetry: any unlisted failing file → no retry, and the reason names every unlisted file (AC2)', () => {
   const plan = planRetry({ failingFiles: ['tests/a.test.js', 'tests/real.test.js', 'tests/other.test.js'], flaky: FLAKY, retry: RETRY, suite: 'tests' });
   assert.strictEqual(plan.retry, false);
@@ -95,6 +128,20 @@ test('planRetry: a vitest log with an unhandled error refuses retry even when it
     failingFiles, flaky: { files: ['tests/flaky.test.js'], maxRetries: 1 }, retry: RETRY, suite: 'tests', unattributedCount, family,
   });
   assert.deepStrictEqual(plan, { retry: false, reason: 'unattributed-failures: 1' });
+});
+
+test('planRetry: a vitest multi-project log retries the real test file, not the |unit| label (#3676)', () => {
+  const log = readDialect('vitest-multi-project.txt');
+  const family = sniffFamily(log);
+  const failingFiles = extractFailingFiles(log, family);
+  assert.deepStrictEqual(failingFiles, ['tests/flaky.test.js']);
+  const unattributedCount = unattributedFailureCount(log, family);
+  assert.strictEqual(unattributedCount, 0);
+  const plan = planRetry({
+    failingFiles, flaky: { files: ['tests/flaky.test.js'], maxRetries: 1 }, retry: { tests: 'npx vitest run {file}' }, suite: 'tests', unattributedCount, family, platform: 'linux',
+  });
+  assert.strictEqual(plan.retry, true);
+  assert.deepStrictEqual(plan.command, [{ file: 'tests/flaky.test.js', cmd: 'npx vitest run tests/flaky.test.js' }]);
 });
 
 test('planRetry: a pytest log still refuses — no-accounting-guard: summary, with or without a collection error (#3480 AC)', () => {

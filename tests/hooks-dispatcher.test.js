@@ -1320,7 +1320,7 @@ test('check-session-residue: no resolvable --run path reports the not-found line
 //
 // Note (verified during Step 3): the brief's original Bash/`git commit`
 // payload never reaches appendEvent, pre- or post-fix — E1's wd-deny path
-// requires `safeReal(ctx.runState.worktree)` to resolve, and the decoy
+// requires `canonicalRealpath(ctx.runState.worktree)` to resolve, and the decoy
 // `/tmp/wt-decoy` doesn't exist on disk, so runInner returns early before
 // ever writing. Per Step 3's fallback instruction, this uses a Write-tool
 // payload targeting a path inside the decoy repo instead (mirroring 'a

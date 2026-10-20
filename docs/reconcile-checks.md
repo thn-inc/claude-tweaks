@@ -254,7 +254,10 @@ main loop, landed via #1962/#2226/#2228/#2231):
   rendered a Review Console (the fast-lane auto-merge short-circuit writes no `console.json`) while
   its `staged/` or any `spec-*/staged/` still holds pending or unreadable items: apply or delete
   those staged files, or write a resolved `console.json`, and the next reconcile archives the dir
-  and drops it from the record. `cache.js`'s per-path consecutive-failure counter (`trackResidue`,
+  and drops it from the record. The clean-status sweep (`iterCleanRunDirs`) feeds this reason too
+  since #3668, but only for a closed run whose `decisions.md` carries the auto-merge
+  short-circuit's own log line (`consoleReplacedByAutoMergeShortCircuit`) — the same subset
+  `hooks.js archive-run` refuses; every other clean-loop skip stays untracked. `cache.js`'s per-path consecutive-failure counter (`trackResidue`,
   `RESIDUE_ESCALATE_THRESHOLD`) is unchanged and reason-agnostic already; only the filing/resolving
   side consolidates. Resolving one path (`resolveResidue` under `reason: 'structurally-stuck'`)
   removes just that path from the shared record's body — the record only actually closes once every

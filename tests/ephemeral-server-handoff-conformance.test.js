@@ -97,6 +97,63 @@ test('Section D treats a win32 "not found" taskkill result as already-stopped, a
   assert.match(body, /any other non-zero exit \(access-denied or otherwise\) is a real cleanup failure/);
 });
 
+// #3664 — one predicate per rule, shared by the live test and its go-red control.
+function sectionD(text) {
+  const idx = text.indexOf('## D. Ephemeral dev server');
+  const endIdx = text.indexOf('## E. Issue claim release');
+  assert.ok(idx !== -1 && endIdx !== -1 && idx < endIdx);
+  return text.slice(idx, endIdx);
+}
+
+function assertRecordGate(body) {
+  assert.match(body, /A record that cannot be parsed — fewer than four fields, a pid or port that is not a positive integer, or no trailing `detached:` token — is unprovable: log `SKIP` via `log-decision\.js` naming that condition/);
+  assert.match(body, /leave the file and every process alone, signal nothing, and skip the rest of this step and steps 3-4\. Otherwise, \*\*detect the platform first\*\*/);
+  const gate = body.indexOf('is unprovable');
+  const kills = ['kill {pid}', 'taskkill'].map((s) => body.indexOf(s)).filter((i) => i !== -1);
+  assert.ok(gate !== -1 && kills.length > 0 && gate < Math.min(...kills), 'the record gate must sit before the first kill {pid} / taskkill');
+}
+
+function assertPortHeldBranch(body) {
+  const bare = body.indexOf('Confirm the port is free, then delete `ephemeral-server.txt`');
+  const held = body.indexOf('**Port still held after the kill**');
+  assert.ok(bare !== -1 && held > bare, 'the port-still-held branch must follow the verbatim step 4 sentence');
+  const eol = body.indexOf('\n', held);
+  const branch = body.slice(held, eol === -1 ? undefined : eol);
+  assert.match(branch, /keep `ephemeral-server\.txt` — do not delete it/);
+  assert.match(branch, /log `SKIP` via `log-decision\.js` naming that condition/);
+  assert.match(branch, /report a cleanup failure naming the survivor: the recorded pid and the port still held/);
+}
+
+test('Section D validates the record before step 2 acts: an unparseable record is unprovable, logged SKIP, and signals nothing', () => {
+  assertRecordGate(sectionD(readText(CLEANUP_EXEC)));
+});
+
+test("Section D's step 4 keeps the record when the port is still held after the kill, and reports the survivor", () => {
+  assertPortHeldBranch(sectionD(readText(CLEANUP_EXEC)));
+});
+
+test('go-red: removing the record-gate sentence fails the gate predicate', () => {
+  const body = sectionD(readText(CLEANUP_EXEC));
+  const mutated = body.replace(/A record that cannot be parsed[^\n]*?skip the rest of this step and steps 3-4\. /, '');
+  assert.notEqual(mutated, body);
+  assert.throws(() => assertRecordGate(mutated), assert.AssertionError);
+});
+
+test('go-red: moving the record-gate sentence after the kill bullets fails the ordering assertion', () => {
+  const body = sectionD(readText(CLEANUP_EXEC));
+  const bullets = body.match(/^ {3}- \*\*win32:\*\*[^\n]*\n {3}- \*\*POSIX:\*\*[^\n]*\n/m)[0];
+  const mutated = body.replace(bullets, '').replace('2. Read `{run-dir}', bullets + '2. Read `{run-dir}');
+  assert.notEqual(mutated, body);
+  assert.throws(() => assertRecordGate(mutated), /the record gate must sit before the first kill/);
+});
+
+test('go-red: reverting step 4 to the bare sentence fails the port-still-held predicate', () => {
+  const body = sectionD(readText(CLEANUP_EXEC));
+  const mutated = body.replace(/\*\*Port still held after the kill\*\*[^\n]*?the port still held\./, '');
+  assert.notEqual(mutated, body);
+  assert.throws(() => assertPortHeldBranch(mutated), assert.AssertionError);
+});
+
 // #3083 — the standalone stop path and the Windows Ownership bullet in
 // dev-url-detection.md also name the win32 tree kill.
 test("dev-url-detection.md's standalone stop names the win32 PID tree kill alongside the POSIX lsof port kill", () => {
