@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { run } = require('../plugin/bin/set-config');
 const { MANIFESTO_LEVERS, RUN_PINS } = require('../plugin/bin/lib/set-config/write');
+const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const MANIFESTO = path.join(REPO_ROOT, 'plugin', 'skills', 'flow', 'manifesto.md');
@@ -56,7 +57,7 @@ function fakeDeps(cwd) {
 }
 
 test('AC1.1: the Manifesto batch command, run as written, leaves integration-model: pr-first in config.yml with no hand edit', () => {
-  const manifesto = fs.readFileSync(MANIFESTO, 'utf8');
+  const manifesto = readText(MANIFESTO);
   const para = writeMechanismParagraph(manifesto);
   const setMatch = /--set "([^"]*)"/.exec(para);
   assert.ok(setMatch, 'Write mechanism paragraph has no --set "..." argument');
@@ -88,7 +89,7 @@ test('AC1.1: the Manifesto batch command, run as written, leaves integration-mod
 });
 
 test('manifesto.md names how the pin value is resolved and cites the integration-model fragment', () => {
-  const manifesto = fs.readFileSync(MANIFESTO, 'utf8');
+  const manifesto = readText(MANIFESTO);
   const para = writeMechanismParagraph(manifesto);
   assert.ok(para.includes('resolve-policy.js'), 'Write mechanism paragraph must resolve the pin via resolve-policy.js');
   assert.ok(para.includes('--values integration-model'), 'Write mechanism paragraph must resolve with --values integration-model');
@@ -96,7 +97,7 @@ test('manifesto.md names how the pin value is resolved and cites the integration
 });
 
 test('the On-approval yaml example carries the integration-model pin', () => {
-  const manifesto = fs.readFileSync(MANIFESTO, 'utf8');
+  const manifesto = readText(MANIFESTO);
   const approvalIdx = manifesto.indexOf('On approval (option 1)');
   assert.notEqual(approvalIdx, -1, 'manifesto.md: "On approval (option 1)" section not found');
   const fenceStart = manifesto.indexOf('```yaml', approvalIdx);
@@ -106,14 +107,14 @@ test('the On-approval yaml example carries the integration-model pin', () => {
 });
 
 test('manifesto.md says the config snapshot header lists the integration-model pin after the levers', () => {
-  const manifesto = fs.readFileSync(MANIFESTO, 'utf8');
+  const manifesto = readText(MANIFESTO);
   const init = manifesto.split('\n').find((l) => l.startsWith('Initialize `decisions.md` in the same directory'));
   assert.ok(init, 'manifesto.md: "Initialize `decisions.md` in the same directory" paragraph not found');
   assert.match(init, /snapshot header[^\n]*`- integration-model: \{v\}`/, 'the snapshot header must list "- integration-model: {v}" after the levers');
 });
 
 test('steps-and-gates.md case 3 recovery batch carries the integration-model pin', () => {
-  const steps = fs.readFileSync(STEPS, 'utf8');
+  const steps = readText(STEPS);
   const start = steps.indexOf('### Adopting an inherited run directory');
   const end = steps.indexOf('### Partial step lists');
   assert.notEqual(start, -1, 'steps-and-gates.md: "Adopting an inherited run directory" heading not found');
@@ -123,14 +124,14 @@ test('steps-and-gates.md case 3 recovery batch carries the integration-model pin
 });
 
 test('manifesto.md Write mechanism: an empty integration-model resolve omits the pair and logs a SKIP, so the 13 levers still write', () => {
-  const para = writeMechanismParagraph(fs.readFileSync(MANIFESTO, 'utf8'));
+  const para = writeMechanismParagraph(readText(MANIFESTO));
   assert.match(para, /resolve prints an EMPTY value/, 'Write mechanism must say what to do when the pin resolve prints an empty value');
   assert.match(para, /omit that pair so the 13 levers still write/, 'Write mechanism must say the empty pin pair is omitted and the 13 levers still write');
   assert.match(para, /log-decision\.js --status SKIP/, 'Write mechanism must log the omission as a SKIP decision');
 });
 
 test('the degrade-line prefixes the readers print are the ones the skill prose tells callers to log as SKIP', () => {
-  const read = (...p) => fs.readFileSync(path.join(REPO_ROOT, ...p), 'utf8');
+  const read = (...p) => readText(path.join(REPO_ROOT, ...p));
   const sites = [
     ['plugin/bin/verify-run-bookends.js', 'verify-run-bookends: degraded —', ['plugin/skills/dispatch/task-prompt.md', 'plugin/skills/flow/claim-targets.md']],
     ['plugin/bin/lib/dispatch/first-call-artifact-check.js', 'first-call-artifact-check: degraded —', ['plugin/skills/dispatch/two-call-gate.md']],
@@ -144,9 +145,19 @@ test('the degrade-line prefixes the readers print are the ones the skill prose t
 });
 
 test('steps-and-gates.md case 3 fresh-resolve branch reaches the empty-resolve omit-and-SKIP rule', () => {
-  const steps = fs.readFileSync(STEPS, 'utf8');
+  const steps = readText(STEPS);
   const start = steps.indexOf('### Adopting an inherited run directory');
   const end = steps.indexOf('### Partial step lists');
   const region = steps.slice(start, end);
   assert.match(region, /resolved fresh as `manifesto\.md`'s Write mechanism section does, including its empty-resolve rule — omit the pair and log a `SKIP` decision/);
+});
+
+test('flow-manifesto integration-model pin: the paragraph search still finds its break under CRLF line endings (#3574)', () => {
+  const FILE = MANIFESTO;
+  const { raw, text } = crlfCheckoutRead(FILE);
+  assert.ok(raw.includes('\r\n'), 'the CRLF input must contain \\r\\n line breaks');
+  assert.ok(!raw.includes('\r\r\n'), 'the CRLF input must not contain \\r\\r\\n');
+  assert.strictEqual(raw.indexOf('\n\n'), -1, 'a raw CRLF read has no LF paragraph break');
+  assert.strictEqual(text, readText(FILE));
+  assert.match(writeMechanismParagraph(text), /--set "/);
 });
