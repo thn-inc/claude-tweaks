@@ -419,3 +419,274 @@ test('exports QUERY_CALL_RE, findClose and MAX_SCAN_CHARS for the pooling checks
   assert.equal(findClose('a(b(c', 1, '(', ')'), -1);
   assert.equal(findClose(`(${'x'.repeat(MAX_SCAN_CHARS + 10)})`, 0, '(', ')'), -1);
 });
+
+// ---- Task 3: slow work, pooling, caching, monitoring ----------------------
+
+function pkg(deps) {
+  return JSON.stringify({ name: 'app', dependencies: deps });
+}
+
+function repoWith(deps, files) {
+  const root = tmpGitRepo();
+  write(root, 'package.json', pkg(deps));
+  for (const [rel, body] of Object.entries(files)) write(root, rel, body);
+  return root;
+}
+
+test('AC2.1 AC2.2 inline-slow-work: flags an OpenAI call in an App Router route with no queue signal', () => {
+  const root = repoWith({ next: '^14', openai: '^4', '@prisma/client': '^5' }, {
+    'app/api/summarize/route.ts': 'export async function POST(req) {\n  const out = await openai.chat.completions.create({ model: "gpt-4o", messages });\n  return Response.json(out);\n}\n',
+  });
+  const c = ofKind(root, 'inline-slow-work');
+  assert.equal(c.length, 1);
+  assert.equal(c[0].file, 'app/api/summarize/route.ts');
+  assert.match(c[0].evidence, /app\/api\/summarize\/route\.ts:2 AI call on the request path with no queue\/background-job signal in the file/);
+  assert.equal(scanScaleReadiness(root).checklist.find((x) => x.id === 'background-jobs').status, 'fail');
+});
+
+test('AC2.1 AC2.2 inline-slow-work: flags an email send and a third-party fetch in an Express route', () => {
+  const root = repoWith({ express: '^4' }, {
+    'routes/signup.js': "router.post('/', async (req, res) => {\n  await resend.emails.send({ to: req.body.email });\n  await fetch('https://api.example.com/x');\n  res.sendStatus(201);\n});\n",
+  });
+  const c = ofKind(root, 'inline-slow-work');
+  assert.equal(c.length, 2);
+  assert.ok(c.every((x) => x.file === 'routes/signup.js'));
+  assert.ok(c.some((x) => /:2 email send on the request path/.test(x.evidence)));
+  assert.ok(c.some((x) => /:3 third-party fetch on the request path/.test(x.evidence)));
+});
+
+test('inline-slow-work: recognizes sendMail, axios verbs, got and the other AI call shapes; one candidate per category per file', () => {
+  const root = repoWith({ express: '^4' }, {
+    'routes/a.js': "await transporter.sendMail({});\nawait sgMail.send(msg);\nawait axios.post('https://x.test/a', body);\n",
+    'routes/b.js': "await got('https://x.test/b');\nawait generateObject({ model });\n",
+    'routes/c.js': "await anthropic.messages.create({});\nawait openai.embeddings.create({});\n",
+  });
+  const byFile = {};
+  for (const x of ofKind(root, 'inline-slow-work')) (byFile[x.file] ||= []).push(x.evidence.match(/ (AI call|email send|third-party fetch) /)[1]);
+  assert.deepEqual(byFile['routes/a.js'].sort(), ['email send', 'third-party fetch']);
+  assert.deepEqual(byFile['routes/b.js'].sort(), ['AI call', 'third-party fetch']);
+  assert.deepEqual(byFile['routes/c.js'], ['AI call']);
+});
+
+test('inline-slow-work: a relative or variable fetch URL and a prisma model named messages are not slow work', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    'routes/a.js': "await fetch('/api/internal');\nawait fetch(url);\nawait api.fetch('https://x.test');\nawait prisma.messages.create({ data });\n",
+  });
+  assert.equal(ofKind(root, 'inline-slow-work').length, 0);
+});
+
+test('AC2.2 inline-slow-work negative: a queue signal in the route suppresses it', () => {
+  const root = repoWith({ express: '^4' }, {
+    'routes/signup.js': "router.post('/', async (req, res) => {\n  await emailQueue.add('welcome', { to: req.body.email });\n  await resend.emails.send({ to: 'ops@example.com' });\n  res.sendStatus(202);\n});\n",
+  });
+  assert.equal(ofKind(root, 'inline-slow-work').length, 0);
+  assert.equal(scanScaleReadiness(root).checklist.find((x) => x.id === 'background-jobs').status, 'pass');
+});
+
+test('AC2.2 inline-slow-work negative: streamText is request-bound by design', () => {
+  const root = repoWith({ next: '^14', ai: '^3' }, {
+    'app/api/chat/route.ts': "import { streamText } from 'ai';\nexport async function POST(req) {\n  const result = await streamText({ model, messages });\n  return result.toDataStreamResponse();\n}\n",
+  });
+  assert.equal(ofKind(root, 'inline-slow-work').length, 0);
+});
+
+test('inline-slow-work: each queue-signal shape suppresses, including a scoped @trigger.dev import', () => {
+  const signals = [
+    "import { tasks } from '@trigger.dev/sdk';",
+    "import { Queue } from 'bullmq'; const q = new Queue('mail');",
+    'after(async () => { await sendEmail(x); });',
+    'waitUntil(sendEmail(x));',
+    'await enqueueWelcomeEmail(user);',
+    "await inngest.send({ name: 'x' });",
+  ];
+  for (const signal of signals) {
+    const root = repoWith({ express: '^4' }, { 'routes/a.js': `${signal}\nawait resend.emails.send({});\n` });
+    assert.equal(ofKind(root, 'inline-slow-work').length, 0, signal);
+  }
+});
+
+test('inline-slow-work ignores slow calls outside route/handler files', () => {
+  const root = repoWith({ express: '^4' }, {
+    'routes/health.js': "module.exports = (req, res) => res.send('ok');\n",
+    'lib/mailer.js': 'await resend.emails.send({});\n',
+  });
+  assert.equal(ofKind(root, 'inline-slow-work').length, 0);
+});
+
+test('AC2.1 AC2.2 per-request-db-client: flags new PrismaClient inside a handler', () => {
+  const root = repoWith({ '@prisma/client': '^5' }, {
+    'app/api/users/route.ts': 'export async function GET() {\n  const prisma = new PrismaClient();\n  return Response.json(await prisma.user.findMany({ take: 5 }));\n}\n',
+  });
+  const c = ofKind(root, 'per-request-db-client');
+  assert.equal(c.length, 1);
+  assert.equal(c[0].file, 'app/api/users/route.ts');
+  assert.match(c[0].evidence, /app\/api\/users\/route\.ts:2 new PrismaClient created inside a handler/);
+  assert.equal(scanScaleReadiness(root).checklist.find((x) => x.id === 'pooling').status, 'fail');
+});
+
+test('per-request-db-client: flags a pg Pool, a MongoClient and postgres() built inside an Express handler', () => {
+  const root = repoWith({ express: '^4', pg: '^8' }, {
+    'routes/a.js': "router.get('/', async (req, res) => {\n  const pool = new Pool({ max: 5 });\n  const m = new MongoClient(url);\n  const sql = postgres(url);\n  const c = mysql.createConnection(cfg);\n});\n",
+  });
+  const lines = ofKind(root, 'per-request-db-client').map((c) => Number(c.evidence.match(/:(\d+) /)[1])).sort();
+  assert.deepEqual(lines, [2, 3, 4, 5]);
+});
+
+test('AC2.2 per-request-db-client negative: a module-scope client is not flagged', () => {
+  const root = repoWith({ '@prisma/client': '^5' }, {
+    'app/api/users/route.ts': "const prisma = new PrismaClient();\nexport async function GET() {\n  return Response.json(await prisma.user.findMany({ take: 5 }));\n}\n",
+  });
+  assert.equal(ofKind(root, 'per-request-db-client').length, 0);
+});
+
+test('per-request-db-client: a module-scope client after a long function is still module scope', () => {
+  const filler = `export async function GET() {\n${'  // filler line that pads the handler body\n'.repeat(150)}  return Response.json([]);\n}\n`;
+  assert.ok(filler.length > MAX_SCAN_CHARS);
+  const root = repoWith({ '@prisma/client': '^5' }, { 'app/api/users/route.ts': `${filler}const prisma = new PrismaClient();\n` });
+  assert.equal(ofKind(root, 'per-request-db-client').length, 0);
+});
+
+test('per-request-db-client: a client inside a handler past the scan window is still flagged', () => {
+  const pad = '  // filler line that pads the handler body\n'.repeat(150);
+  const root = repoWith({ '@prisma/client': '^5' }, { 'app/api/users/route.ts': `export async function GET() {\n${pad}  const prisma = new PrismaClient();\n}\n` });
+  assert.equal(ofKind(root, 'per-request-db-client').length, 1);
+});
+
+test('per-request-db-client only looks in route files', () => {
+  const root = repoWith({ express: '^4' }, {
+    'routes/health.js': "module.exports = (req, res) => res.send('ok');\n",
+    'lib/db.js': 'function make() {\n  return new PrismaClient();\n}\n',
+  });
+  assert.equal(ofKind(root, 'per-request-db-client').length, 0);
+});
+
+test('AC2.1 AC2.2 unbounded-pool: flags a pg Pool with no max', () => {
+  const root = repoWith({ pg: '^8' }, {
+    'lib/db.ts': 'export const pool = new Pool({ connectionString: process.env.DATABASE_URL });\n',
+  });
+  const c = ofKind(root, 'unbounded-pool');
+  assert.equal(c.length, 1);
+  assert.equal(c[0].file, 'lib/db.ts');
+  assert.match(c[0].evidence, /lib\/db\.ts:1 new Pool\(\) sets no explicit pool cap \(pg default max 10 per instance\)/);
+});
+
+test('unbounded-pool: flags createPool without connectionLimit and MongoClient without maxPoolSize', () => {
+  const root = repoWith({ mysql2: '^3', mongodb: '^6' }, {
+    'lib/a.js': "const a = mysql.createPool({ host });\nconst b = new MongoClient(url, { retryWrites: true });\nconst c = new Pool();\n",
+  });
+  const evidence = ofKind(root, 'unbounded-pool').map((x) => x.evidence).sort();
+  assert.equal(evidence.length, 3);
+  assert.match(evidence[0], /lib\/a\.js:1 createPool\(\) sets no explicit pool cap \(mysql default connectionLimit 10 per pool\)/);
+  assert.match(evidence[1], /lib\/a\.js:2 new MongoClient\(\) sets no explicit pool cap \(mongodb default maxPoolSize 100 per client\)/);
+  assert.match(evidence[2], /lib\/a\.js:3 new Pool\(\) /);
+});
+
+test('AC2.2 unbounded-pool negative: a capped pool is not flagged', () => {
+  const root = repoWith({ pg: '^8', mysql2: '^3', mongodb: '^6' }, {
+    'lib/a.js': [
+      'const a = new Pool({ connectionString, max: 10 });',
+      'const b = mysql.createPool({ host, connectionLimit: 5 });',
+      'const c = new MongoClient(url, { maxPoolSize: 20 });',
+      'const d = new Pool({ connectionString, max });',
+      'const e = new Pool({ max: Math.min(cores, 10), idleTimeoutMillis: 1 });',
+      '',
+    ].join('\n'),
+  });
+  assert.equal(ofKind(root, 'unbounded-pool').length, 0);
+});
+
+test('unbounded-pool: an unbalanced call is skipped, not guessed at', () => {
+  const root = repoWith({ pg: '^8' }, { 'lib/a.js': 'const a = new Pool({ connectionString: x' });
+  assert.doesNotThrow(() => scanScaleReadiness(root));
+  assert.equal(ofKind(root, 'unbounded-pool').length, 0);
+});
+
+test('AC2.1 AC2.2 no-cache-layer: DB-backed routes with no cache signal anchor to package.json', () => {
+  const root = repoWith({ '@prisma/client': '^5' }, {
+    'routes/users.js': "router.get('/', async (req, res) => res.json(await prisma.user.findMany({ take: 10 })));\n",
+  });
+  const c = ofKind(root, 'no-cache-layer');
+  assert.equal(c.length, 1);
+  assert.equal(c[0].file, 'package.json');
+  assert.match(c[0].evidence, /^1 DB-backed route file\(s\) \(e\.g\. routes\/users\.js\) and no cache-layer signal \(looked for: redis, ioredis/);
+  assert.equal(scanScaleReadiness(root).checklist.find((x) => x.id === 'caching').status, 'fail');
+});
+
+test('AC2.2 no-cache-layer negative: a redis dependency or unstable_cache counts as a cache layer', () => {
+  const route = "router.get('/', async (req, res) => res.json(await prisma.user.findMany({ take: 10 })));\n";
+  const withDep = repoWith({ '@prisma/client': '^5', ioredis: '^5' }, { 'routes/users.js': route });
+  assert.equal(ofKind(withDep, 'no-cache-layer').length, 0);
+  assert.match(scanScaleReadiness(withDep).checklist.find((x) => x.id === 'caching').evidence, /ioredis/);
+
+  const withCall = repoWith({ '@prisma/client': '^5' }, {
+    'app/api/users/route.ts': "const list = unstable_cache(() => prisma.user.findMany({ take: 10 }), ['users']);\nexport async function GET() { return Response.json(await list()); }\n",
+  });
+  assert.equal(ofKind(withCall, 'no-cache-layer').length, 0);
+
+  const withHeader = repoWith({ '@prisma/client': '^5' }, {
+    'routes/users.js': `${route}res.set('Cache-Control', 'public, s-maxage=60');\n`,
+  });
+  assert.equal(ofKind(withHeader, 'no-cache-layer').length, 0);
+});
+
+test('no-cache-layer: no DB-backed route means pass with its own evidence, not a candidate', () => {
+  const root = repoWith({ express: '^4' }, { 'routes/health.js': "module.exports = (req, res) => res.send('ok');\n" });
+  assert.equal(ofKind(root, 'no-cache-layer').length, 0);
+  const row = scanScaleReadiness(root).checklist.find((x) => x.id === 'caching');
+  assert.equal(row.status, 'pass');
+  assert.equal(row.evidence, 'no DB-backed routes detected');
+});
+
+test('no-cache-layer: a query outside route files does not make a route DB-backed', () => {
+  const root = repoWith({ express: '^4', '@prisma/client': '^5' }, {
+    'routes/health.js': "module.exports = (req, res) => res.send('ok');\n",
+    'lib/repo.js': 'module.exports = () => prisma.user.findMany({ take: 1 });\n',
+  });
+  assert.equal(ofKind(root, 'no-cache-layer').length, 0);
+});
+
+test('no-cache-layer: with no package.json the candidate anchors to the first route file', () => {
+  const root = tmpGitRepo();
+  write(root, 'routes/users.js', 'module.exports = async () => prisma.user.findMany({ take: 1 });\n');
+  const c = ofKind(root, 'no-cache-layer');
+  assert.equal(c.length, 1);
+  assert.equal(c[0].file, 'routes/users.js');
+});
+
+test('AC2.1 AC2.2 no-monitoring: a server repo with no error-tracking dependency anchors to package.json', () => {
+  const root = repoWith({ express: '^4' }, { 'routes/health.js': "module.exports = (req, res) => res.send('ok');\n" });
+  const c = ofKind(root, 'no-monitoring');
+  assert.equal(c.length, 1);
+  assert.equal(c[0].file, 'package.json');
+  assert.match(c[0].evidence, /no error-tracking or APM dependency among 1 declared \(looked for: @sentry\/\*/);
+  assert.equal(scanScaleReadiness(root).checklist.find((x) => x.id === 'monitoring').status, 'fail');
+});
+
+test('AC2.2 no-monitoring negative: @sentry/node and other tracking dependencies count as monitoring', () => {
+  for (const dep of ['@sentry/node', '@bugsnag/js', 'rollbar', 'dd-trace', '@opentelemetry/api', 'newrelic', '@sentry/nextjs']) {
+    const root = repoWith({ express: '^4', [dep]: '^1' }, { 'routes/health.js': "module.exports = (req, res) => res.send('ok');\n" });
+    assert.equal(ofKind(root, 'no-monitoring').length, 0, dep);
+  }
+  const root = repoWith({ express: '^4', '@sentry/node': '^8' }, { 'routes/health.js': 'module.exports = 1;\n' });
+  assert.match(scanScaleReadiness(root).checklist.find((x) => x.id === 'monitoring').evidence, /@sentry\/node/);
+});
+
+test('a clean Express + Prisma repo passes every automated row', () => {
+  const root = tmpGitRepo();
+  write(root, 'package.json', pkg({ express: '^4', '@prisma/client': '^5', ioredis: '^5', '@sentry/node': '^8' }));
+  write(root, 'prisma/schema.prisma', 'model Post {\n  id Int @id\n  authorId Int\n  @@index([authorId])\n}\n');
+  write(root, 'lib/db.js', 'const pool = new Pool({ connectionString, max: 10 });\nmodule.exports = { pool };\n');
+  write(root, 'routes/posts.js', [
+    'const prisma = new PrismaClient();',
+    "router.post('/', async (req, res) => {",
+    '  const posts = await prisma.post.findMany({ where: { authorId: req.user.id }, take: 20 });',
+    "  await emailQueue.add('digest', { posts });",
+    "  await resend.emails.send({ to: 'ops@example.com' });",
+    '  res.json(posts);',
+    '});',
+    '',
+  ].join('\n'));
+  const r = scanScaleReadiness(root);
+  assert.deepEqual(r.candidates, []);
+  assert.deepEqual(r.checklist.map((x) => x.status), ['pass', 'pass', 'manual', 'pass', 'pass', 'pass']);
+});

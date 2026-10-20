@@ -58,7 +58,55 @@
 //     `.prisma` file the generator can parse and a `prisma.<model>` call in
 //     JS/TS whose `where` is an inline object literal. A `where` built in a
 //     variable, a raw SQL filter or an index defined only by a migration is
-//     not seen.
+//     not seen. A composite `@@index([a, b])` covers only its leading column
+//     `a`: a `where` on `b` alone still reads as unindexed, which matches how
+//     most databases use a composite index.
+//   - The capitalized-receiver shape also matches an in-memory constant array
+//     (`COUNTRIES.find(`), so a loop or an unbounded-list flag on one is a
+//     possible false positive. A `findMany(args)` whose argument is a variable
+//     rather than an object literal reads as unbounded, because a `take` set
+//     elsewhere is not visible.
+//   - `inline-slow-work` scans route files only. It looks for three categories
+//     — an AI call (`chat.completions.create`, `responses.create`,
+//     `messages.create`, `embeddings.create`, `createChatCompletion`,
+//     `generateText`, `generateObject`), an email send (`.sendMail`,
+//     `emails.send`, `sgMail.send`, `sendEmail`, `SendEmailCommand`) and a
+//     third-party fetch (`fetch`, `axios`, `axios.<verb>`, `got`, `ky` whose
+//     first argument is a string literal starting `http://` or `https://`) —
+//     and reports the first match of each category per file. `streamText` and
+//     `streamObject` are deliberately excluded: a streamed response is
+//     request-bound by design. A queue or background-job signal anywhere in
+//     the file (`bullmq`, `bee-queue`, `inngest`, `@trigger.dev`, `qstash`,
+//     `pg-boss`, `graphile-worker`, `SendMessageCommand`, `enqueue*`,
+//     `waitUntil`, `<name>Queue.add(`, `new Queue(`, `after(async`) suppresses
+//     every finding in that file, even for a slow call the signal does not
+//     cover. A client wrapped in a helper, or a fetch to a URL held in a
+//     variable, is invisible.
+//   - `per-request-db-client` scans route files for `new PrismaClient(`,
+//     `new Pool(`, `new Client(`, `new MongoClient(`, `mysql.createConnection(`,
+//     `mysql.createPool(` and `postgres(` at brace depth above zero. Depth is a
+//     `{`/`}` count from the start of the file with no string or comment
+//     awareness, and `new Client(` matches any class of that name. A client
+//     built in a module-scope factory called per request is not seen.
+//   - `unbounded-pool` scans all source for `new Pool(` without a `max`
+//     option, `createPool(` without `connectionLimit` and `new MongoClient(`
+//     without `maxPoolSize`, and names the driver default in its evidence. It
+//     inspects only the literal call arguments: a config held in a variable
+//     reads as uncapped.
+//   - `no-cache-layer` is a presence check, not a quality check. It applies
+//     when at least one route file contains a query call, and passes if any
+//     of `redis`, `ioredis`, `@upstash/redis`, `@vercel/kv`, `lru-cache`,
+//     `node-cache`, `keyv`, `cache-manager` or `memcached` is a dependency, or
+//     any source file mentions `unstable_cache`, `"use cache"`, `export const
+//     revalidate`, `Cache-Control` or `s-maxage`. It cannot tell whether the
+//     cache covers the routes that need it, and it anchors to the shallowest
+//     `package.json`.
+//   - `no-monitoring` is a presence check too: it passes if any dependency is
+//     `@sentry/*`, `@bugsnag/*`, `rollbar`, `@honeybadger-io/*`, `newrelic`,
+//     `dd-trace`, `@datadog/*`, `@opentelemetry/*`, `@highlight-run/*`,
+//     `@appsignal/*`, `elastic-apm-node`, `raygun` or `@airbrake/*`. It cannot
+//     tell whether the SDK is initialized, and a platform-level agent or a
+//     hosted log drain with no dependency reads as missing.
 
 const fs = require('fs');
 const path = require('path');
@@ -456,9 +504,128 @@ function scanUnindexedWhereField(ctx, candidates) {
   return { queries: `${ctx.sourceTexts.length} source file(s) checked, ${parsedSchemas} Prisma schema(s) parsed` };
 }
 
+// ---- Slow work, pooling, caching, monitoring -------------------------------
+
+// A queue / background-job signal anywhere in a route file suppresses every
+// inline-slow-work finding in it. `@trigger.dev` sits outside the `\b` group:
+// `\b` cannot precede `@`.
+const QUEUE_SIGNAL_RE = /\b(?:bullmq|bee-queue|inngest|qstash|pg-boss|graphile-worker|SendMessageCommand|enqueue\w*|waitUntil)\b|@trigger\.dev|\b\w*[qQ]ueue\.add\s*\(|\bnew\s+Queue\s*\(|\bafter\s*\(\s*(?:async\b|\()/;
+
+// `streamText`/`streamObject` are deliberately absent: a streamed response is
+// request-bound by design. A DB model that shares a method name
+// (`prisma.messages.create(`) is not an AI call.
+const SLOW_CALL_CATEGORIES = [
+  { category: 'AI call', re: /(?<!\bprisma\.)\b(?:chat\.completions|responses|messages|embeddings)\.create\s*\(|\bcreateChatCompletion\s*\(|\b(?:generateText|generateObject)\s*\(/ },
+  { category: 'email send', re: /\.sendMail\s*\(|\bemails\.send\s*\(|\bsgMail\.send\s*\(|\bsendEmail\s*\(|\bSendEmailCommand\b/ },
+  { category: 'third-party fetch', re: /(?<![\w$.])(?:fetch|got|ky|axios(?:\.(?:get|post|put|patch|delete|head|request))?)\s*\(\s*['"`]https?:\/\// },
+];
+
+function scanInlineSlowWork(ctx, candidates) {
+  let checked = 0;
+  for (const { rel, text } of ctx.sourceTexts) {
+    if (!ctx.routeFiles.has(rel)) continue;
+    checked++;
+    if (QUEUE_SIGNAL_RE.test(text)) continue;
+    for (const { category, re } of SLOW_CALL_CATEGORIES) {
+      const m = re.exec(text);
+      if (!m) continue;
+      candidates.push({ file: rel, kind: 'inline-slow-work', evidence: `${rel}:${lineOf(text, m.index)} ${category} on the request path with no queue/background-job signal in the file` });
+    }
+  }
+  return { 'background-jobs': `${checked} route file(s) checked for AI calls, email sends and third-party fetches` };
+}
+
+const REQUEST_CLIENT_RE = /\bnew\s+(?:PrismaClient|Pool|Client|MongoClient)\s*\(|\bmysql2?\.create(?:Connection|Pool)\s*\(|(?<![\w$.])postgres\s*\(/g;
+
+// `{` minus `}` in text[0, idx). Counted from the start of the file, not a
+// window before the match: a handler longer than MAX_SCAN_CHARS would
+// otherwise lose its opening brace and read as module scope.
+function braceDepthAt(text, idx) {
+  let depth = 0;
+  for (let i = 0; i < idx; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}') depth--;
+  }
+  return depth;
+}
+
+// [call regex, option that caps the pool, driver default named in the evidence]
+const POOL_CHECKS = [
+  { re: /\bnew\s+Pool\s*\(/g, capped: (args) => /(?:^|[\s,{])max\s*(?::|,|\}|$)/.test(args), name: 'new Pool(', note: 'pg default max 10 per instance' },
+  { re: /\bcreatePool\s*\(/g, capped: (args) => /\bconnectionLimit\b/.test(args), name: 'createPool(', note: 'mysql default connectionLimit 10 per pool' },
+  { re: /\bnew\s+MongoClient\s*\(/g, capped: (args) => /\bmaxPoolSize\b/.test(args), name: 'new MongoClient(', note: 'mongodb default maxPoolSize 100 per client' },
+];
+
+function scanPooling(ctx, candidates) {
+  let routeChecked = 0;
+  for (const { rel, text } of ctx.sourceTexts) {
+    if (ctx.routeFiles.has(rel)) {
+      routeChecked++;
+      const seen = new Set();
+      const calls = new RegExp(REQUEST_CLIENT_RE.source, 'g');
+      let m;
+      while ((m = calls.exec(text)) !== null) {
+        if (braceDepthAt(text, m.index) <= 0) continue;
+        const line = lineOf(text, m.index);
+        if (seen.has(line)) continue;
+        seen.add(line);
+        candidates.push({ file: rel, kind: 'per-request-db-client', evidence: `${rel}:${line} ${m[0].replace(/\s*\($/, '').replace(/\s+/g, ' ')} created inside a handler — a new client or pool per request instead of one shared at module scope` });
+      }
+    }
+    for (const { re, capped, name, note } of POOL_CHECKS) {
+      const calls = new RegExp(re.source, 'g');
+      let m;
+      while ((m = calls.exec(text)) !== null) {
+        const parenIdx = m.index + m[0].length - 1;
+        const close = findClose(text, parenIdx, '(', ')');
+        if (close === -1) continue;
+        if (capped(text.slice(parenIdx + 1, close))) continue;
+        candidates.push({ file: rel, kind: 'unbounded-pool', evidence: `${rel}:${lineOf(text, m.index)} ${name}) sets no explicit pool cap (${note})` });
+      }
+    }
+  }
+  return { pooling: `${routeChecked} route file(s) checked for per-request clients, ${ctx.sourceTexts.length} source file(s) checked for uncapped pools` };
+}
+
+const CACHE_DEPS = new Set(['redis', 'ioredis', '@upstash/redis', '@vercel/kv', 'lru-cache', 'node-cache', 'keyv', 'cache-manager', 'memcached']);
+const CACHE_SOURCE_RE = /unstable_cache|['"]use cache['"]|export\s+const\s+revalidate|Cache-Control|s-maxage/;
+
+function scanCacheLayer(ctx, candidates) {
+  const queryCall = new RegExp(QUERY_CALL_RE.source);
+  const dbRoutes = ctx.sourceTexts.filter(({ rel, text }) => ctx.routeFiles.has(rel) && queryCall.test(text));
+  if (dbRoutes.length === 0) return { caching: 'no DB-backed routes detected' };
+  const dep = [...ctx.deps].find((d) => CACHE_DEPS.has(d));
+  if (dep) return { caching: `cache dependency found: ${dep}` };
+  const hit = ctx.sourceTexts.find(({ text }) => CACHE_SOURCE_RE.test(text));
+  if (hit) return { caching: `cache signal found in ${hit.rel}` };
+  candidates.push({
+    file: ctx.anchorFile,
+    kind: 'no-cache-layer',
+    evidence: `${dbRoutes.length} DB-backed route file(s) (e.g. ${dbRoutes[0].rel}) and no cache-layer signal (looked for: ${[...CACHE_DEPS].join(', ')} dependencies; unstable_cache, "use cache", export const revalidate, Cache-Control, s-maxage)`,
+  });
+  return undefined;
+}
+
+const MONITORING_DEP_RE = /^(@sentry\/|@bugsnag\/|rollbar$|@honeybadger-io\/|newrelic$|dd-trace$|@datadog\/|@opentelemetry\/|@highlight-run\/|@appsignal\/|elastic-apm-node$|raygun$|@airbrake\/)/;
+
+function scanMonitoring(ctx, candidates) {
+  const dep = [...ctx.deps].find((d) => MONITORING_DEP_RE.test(d));
+  if (dep) return { monitoring: `error-tracking/APM dependency found: ${dep}` };
+  candidates.push({
+    file: ctx.anchorFile,
+    kind: 'no-monitoring',
+    evidence: `no error-tracking or APM dependency among ${ctx.deps.size} declared (looked for: @sentry/*, @bugsnag/*, rollbar, @honeybadger-io/*, newrelic, dd-trace, @datadog/*, @opentelemetry/*, @highlight-run/*, @appsignal/*, elastic-apm-node, raygun, @airbrake/*)`,
+  });
+  return undefined;
+}
+
 SCANNERS.push(scanQueryInLoop);
 SCANNERS.push(scanUnboundedListQuery);
 SCANNERS.push(scanUnindexedWhereField);
+SCANNERS.push(scanInlineSlowWork);
+SCANNERS.push(scanPooling);
+SCANNERS.push(scanCacheLayer);
+SCANNERS.push(scanMonitoring);
 
 registerGenerator('scale-readiness', scanScaleReadiness);
 
@@ -472,6 +639,10 @@ module.exports = {
   scanQueryInLoop,
   scanUnboundedListQuery,
   scanUnindexedWhereField,
+  scanInlineSlowWork,
+  scanPooling,
+  scanCacheLayer,
+  scanMonitoring,
   QUERY_CALL_RE,
   findClose,
   MAX_SCAN_CHARS,
