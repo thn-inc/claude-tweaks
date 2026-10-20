@@ -1,6 +1,6 @@
 ---
 name: review
-description: Use when a build is complete and you need analytical judgment on code quality, correctness, and simplicity before wrapping up. Gates on /claude-tweaks:test passing. The quality gate between implementation and lifecycle cleanup.
+description: Use when a build is complete and you need analytical judgment on code quality, correctness, and simplicity before wrapping up. Gates on /claude-tweaks:test passing.
 argument-hint: "[<spec-number>|<file-path>...|base:<ref>|visual <url-or-description>|journey:<name>|discover] [full] [low|medium|high|xhigh|max]"
 ---
 

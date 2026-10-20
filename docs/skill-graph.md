@@ -90,7 +90,9 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `/help` | `/help` lists `/browse` in the utility skills table and surfaces availability when scanning for browser-dependent recommendations. |
 | `/init` | Detects `playwright-cli` availability during setup and records the requirement `/browse` depends on. |
 | `/research` | Both utility skills. `/browse` is interactive browser automation, no fixed lifecycle position; `/research`'s bare-topic mode is autonomous multi-source web research, also no fixed lifecycle position — its `verify` mode is the exception, positioned before `/superpowers:brainstorming` (see the `## research` section). |
+| `/stories` | Consumer of `/browse`'s conventions — session naming, screenshot/trace paths, and the abstract operation vocabulary — when exploring a site or validating generated stories against the live DOM. Consumed as a knowledge dependency, not invoked as a workflow step. |
 | `/test` | Invokes qa-agent for QA story validation; trace paths from failed stories surface in `/test` reports. |
+| `/visual-review` | Consumer of `/browse`'s conventions when walking pages or journeys for UI quality findings. Consumed as a knowledge dependency, not invoked as a workflow step. |
 
 ## build
 
@@ -174,6 +176,8 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `/build` | Produces the modules `/deepen` evaluates. Architectural deviations `/build` catches in Common Step 4.5 can route to `/deepen` for restructuring. |
 | `/flow` | Invoked BY `/flow` at the Pipeline Summary (Step 5) in analysis-only mode — `/flow` runs the read-only depth analysis hands-off and renders the ranked candidates as a Depth Opportunities recommendation block, but never applies a refactor (the responsible boundary for low-reversibility work in an auto pipeline). Skipped by `no-deepen`. |
 | `/help` | `/help` references `/deepen` in the workflow diagram and reference card. |
+| `/reflect` | Hindsight mode (`hindsight-mode.md`) recommends `/claude-tweaks:deepen` as the follow-up when structural debt is module-level — a shallow abstraction, leaky interface, pass-through wrapper, or wrong boundary — rather than resolving restructuring inline. Line-level cleanup still routes to `/simplify`. |
+| `/review` | `step3-lens-dispatch.md`'s shallow-modules check recommends `/claude-tweaks:deepen` for a dedicated depth pass when shallow abstractions or wrong boundaries are the theme, instead of resolving module-level restructuring inline. |
 | `/wrap-up` | Hard-to-reverse interface trade-offs `/deepen` flags `[ADR-candidate]` in Step 4 are picked up by `/wrap-up`'s Decision records curation row and run through the ADR gate for possible ADR creation (see `_shared/decision-records.md`). |
 | `_shared/criteria-architecture-depth.md` | The shared depth criteria (leverage, deletion test, dependency classification, vocabulary) — single source of truth read by both `/deepen` and `/code-health`'s architecture-depth lens. |
 | `_shared/staged-patch.md` | Auto-mode collapse staging follows this contract — `staged/deepen-collapse-{n}.patch` for collapse candidates with ≤3 call sites (preamble, `git apply --check` gate, console fallback). Deepen-kind candidates are never staged as patches. |
@@ -388,6 +392,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 
 | Target | Relationship |
 |---|---|
+| `/build` | Invokes `/journeys` as a step to capture the journeys the build enables, so `/journeys` runs as a component of `/build` (Next Actions omitted when invoked from there) as well as standalone. |
 | `/flow` | `/flow`'s build step invokes `/journeys` transitively through `/build`. In a multi-spec shared worktree, `journeys/SKILL.md`'s "Multi-spec shared worktree (#786)" note namespaces generated journey filenames by spec id (`docs/journeys/{journey-name}-{N}.md`); `flow/multispec-artifact-namespacing.md` verifies from git history, before the Consolidated Review Console renders, that no spec's journey artifact was overwritten by a later spec's write. |
 | `/help` | `/help` references `/journeys` in the workflow diagram and reference card. |
 | `/journey-health` | Applies the same `_shared/journey-self-review.md` checks at audit time, on journeys nobody has touched recently. Never edits — files a GitHub issue instead of the fix-inline/stage/BLOCK routing `/journeys` uses. |
@@ -420,6 +425,8 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 |---|---|
 | `/feedback` | Insights classified via `_shared/learning-routing.md` that resolve to D5 route to `/feedback` for upstream filing; an insight whose owner is a third-party dependency instead routes inline to `/feedback --upstream <owner/name>`'s draft-only path (Step 3's "Classify first") — never a `U#` Review Console row, never `--pre-confirmed`. |
 | `/help` | `/help` references `/reflect` in the workflow diagram and reference card. |
+| `/review` | Invoked BY `/review` (Step 4) as a component skill — Next Actions omitted when invoked from there. |
+| `/wrap-up` | Invoked BY `/wrap-up` (Reflect step) as a component skill, in light mode when `ceremony-profile` is `fast-lane` and full mode otherwise, passing `--source wrap-up`. Next Actions omitted when invoked from there. |
 | `skills/_shared/causal-depth.md` | `full-mode.md`'s Near-misses lens walks this why-chain on every near-miss finding before Step 3 routing. `light-mode.md` deliberately does not inherit this — it only reuses full-mode's lens table row definitions, not the separate Chain Walk subsection added after the table; light mode intentionally trims ceremony for `fast-lane` wrap-ups. The Friction Lens subsection is the stated exception: `light-mode.md` reuses it in full (verbatim), unlike the Chain Walk. |
 | `_shared/learning-routing.md` | Routes every insight/finding through this contract's classifier instead of reflect's own destination table; hindsight mode additionally tags a D4/D5 ledger entry `[route: D4]`/`[route: D5]` for `/wrap-up`'s Skills curation row to pick up and hand on. |
 | `_shared/materiality-floor.md` | Full mode's and hindsight mode's Defer/Capture recommendation rules consult this floor before rendering — a below-floor recommendation shows "Digest — below floor," and the entry is written only once a human approves it. |
@@ -605,6 +612,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `/flow` | `/flow` invokes `/review` in full mode, which delegates to `/visual-review` for the browser portion. |
 | `/help` | Component skill — `/help` lists it in the component skills table. |
 | `/journeys` | Journey mode walks journeys created by `/journeys`; discover mode creates new journey files. |
+| `/review` | Invoked BY `/review` (Step 6) as a component skill, with mode resolved by `/review` — Next Actions omitted when invoked from there. Also runs standalone. |
 | `/test` | QA data from `/test` enriches the visual review (page inventories, caveats, screenshots). Trace-on-failure convention is shared with qa-agent. |
 | `/wrap-up` | `verification-brief.md`'s Step 2.5 safety-net gate invokes `/visual-review` directly (same mode resolution as `/review` Step 6) when an `app-route`/`rendered-page` plan reaches wrap-up without a full pass already having run. Any bug found gates `demo:pending` the same way `/review`'s Step 3 Routing gates PASS. **Not on the parent-gate path:** a record with a resolvable parent runs `verification-brief.md`'s Parent-Gate Procedure in place of Steps 1-4, and Step 2.5 sits inside that range — see that procedure's "What this path deliberately does not run" for why (no parent-scope diff or `/review` summary exists) and what covers the UI instead. |
 | `_shared/auto-mode-contract.md` | Single source of truth for auto-mode behavior — read before adding any auto-mode handling. The "Auto mode" branches in Step 1 (browser prereqs) and Step 2 (dev URL) implement the contract's auto-skip + stage-at-Review-Console pattern. |
@@ -619,6 +627,9 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `/design-wrapper` | Not invoked through the wrapper — `/visualize` reads the same `DESIGN.md` tokens (written by `/impeccable:impeccable document`) that `/design-wrapper pre-build` lazy-loads, but goes straight to the raw token data instead of a critique/audit/polish action. Both resolve it through `_shared/visual-html-output.md`'s three-path lookup. |
 | `/help` | `/help` references `/visualize` in the workflow diagram and reference card. |
 | `/init` | Step 12 offers to enable diagram suggestions (writes `diagram-suggestions: enabled/disabled` to CLAUDE.md — no install step, this skill is native). |
+| `/journeys` | Soft-hook caller (Step 3.6) — suggests a diagram with `--source journeys`, placing it at `docs/journeys/{journey-name}-{type}.html`. |
+| `/review` | Soft-hook caller (Lens 3i-diagram) — suggests a diagram with `--source review`; ephemeral by default. |
+| `/specify` | Soft-hook caller (Step 2.5d) — suggests a diagram with `--source specify`, placing it at `docs/plans/{spec-slug}-{type}.html`. |
 | `skills/_shared/record-queue-fetch.md` | `record-graph.md` Step A reuses this shared fetch-and-facet-parse procedure verbatim (with `body` added to `{EXTRA_FIELDS}`) — the same procedure `/help`, `/tidy`, and `/backlog` already consume. |
 
 ## walkthrough
