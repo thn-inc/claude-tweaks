@@ -33,6 +33,8 @@ function assertInstruction(text) {
   assert.match(text, /conforms to the contract/, 'the instruction does not require rulings to conform to the contract');
   assert.match(text, /update-the-spec deviation/, 'the instruction does not record the departure as an update-the-spec deviation');
   assert.match(text, /build-deviation-/, 'the instruction does not stage the departure as build-deviation-{N}');
+  assert.match(text, /Ruling: contract-beats-spec —/, 'the instruction does not name the ledgered Ruling: line shape');
+  assert.match(text, /in place of `sdd-ruling-\{N\}`/, 'the instruction does not route the deviation in place of sdd-ruling-{N}');
   assert.match(
     text,
     /never kept on the grounds that the spec spelled it out/,
@@ -63,4 +65,10 @@ test('AC2.1: the instruction sits in the SDD subagent paragraph, after the defer
   const lineEnd = DISPATCH.indexOf('\n', start);
   const line = DISPATCH.slice(lineStart, lineEnd === -1 ? DISPATCH.length : lineEnd);
   assert.ok(line.includes('**subagent** (default):'), 'the label is not on the same line as the SDD subagent paragraph');
+});
+
+test('AC2.1: architecture-alignment.md does not re-stage a contract-beats-spec deviation', () => {
+  const alignment = readText(path.join(ROOT, 'plugin', 'skills', 'build', 'architecture-alignment.md'));
+  assert.match(alignment, /not staged again here/, 'architecture-alignment.md does not say the deviation is not staged again');
+  assert.match(alignment, /contract-beats-spec ruling \(#3557/, 'architecture-alignment.md does not cite the contract-beats-spec ruling');
 });

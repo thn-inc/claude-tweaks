@@ -35,6 +35,8 @@ function assertCheck(text, fileLabel) {
   assert.match(slice, /`STAGED` line must name the `staged\/` artifact/);
   assert.match(slice, /`AUTO`/);
   assert.match(slice, /`SKIP` for a degrade trace/);
+  assert.match(slice, /`SCANNED`\/`KEPT-PROMPT`\/`FAILED` per their rows/);
+  assert.match(slice, /missing `staged\/` path/);
   assert.match(slice, /rewrite/i);
   assert.match(slice, /never stop mid-flow to ask/);
   assert.match(slice, /only on a mismatch|On a mismatch/);
