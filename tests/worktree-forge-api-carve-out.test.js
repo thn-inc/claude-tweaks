@@ -123,14 +123,15 @@ test('AC1.1 AC2.1 AC3.1: tidy step-7-5 gates provisioning on a working-tree writ
 });
 
 test('go-red: dropping the provisioning condition fails the Step 7.5 gate assertions', () => {
-  const text = skill('tidy', 'step-7-5-worktree-always.md')
-    .replace(' and the approved Step 7 set holds at least one working-tree write', '');
-  assert.throws(() => assertStep75Gate(text));
+  const original = skill('tidy', 'step-7-5-worktree-always.md');
+  const text = original.replace(' and the approved Step 7 set holds at least one working-tree write', '');
+  assert.notStrictEqual(text, original, 'mutation must apply');
+  assert.throws(() => assertStep75Gate(text), { message: /provisioning sentence itself must carry the condition/ });
 });
 
 test('go-red: dropping the carve-out citation fails the Step 7.5 gate assertions', () => {
-  const text = skill('tidy', 'step-7-5-worktree-always.md')
-    .replace('_shared/worktree-setup.md', '_shared/elsewhere.md');
-  assert.notStrictEqual(text, skill('tidy', 'step-7-5-worktree-always.md'), 'mutation must apply');
-  assert.throws(() => assertStep75Gate(text));
+  const original = skill('tidy', 'step-7-5-worktree-always.md');
+  const text = original.replace('_shared/worktree-setup.md', '_shared/elsewhere.md');
+  assert.notStrictEqual(text, original, 'mutation must apply');
+  assert.throws(() => assertStep75Gate(text), { message: /must cite the canonical carve-out file/ });
 });
