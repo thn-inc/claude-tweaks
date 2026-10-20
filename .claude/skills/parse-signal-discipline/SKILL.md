@@ -1,6 +1,6 @@
 ---
 name: parse-signal-discipline
-description: Use when writing or reviewing a mechanized deterministic check that parses loose, real-world prose (a plan, a record body, a free-form config value) rather than a formal grammar — the check's "I could not parse this" case must be a distinguishable signal, never silently identical to "this input legitimately does not apply." Also covers a shell-out check whose tool exits non-zero for both "no match" and "could not run", and a probe in skill prose the agent runs. Keywords - parse failure, could-not-parse, deterministic check, prose heuristic, silent null, false negative, mechanized check, plan-audit, exit code, git grep, skill-prose probe, fail closed.
+description: Use when writing or reviewing a mechanized deterministic check that parses loose, real-world prose (a plan, a record body, a free-form config value) rather than a formal grammar — the check's "I could not parse this" case must be a distinguishable signal, never silently identical to "this input legitimately does not apply." Also covers a shell-out check whose tool exits non-zero for both "no match" and "could not run", and a probe in skill prose the agent runs, and a start/end snapshot guard around a run. Keywords - snapshot guard, start/end read, parse failure, could-not-parse, deterministic check, prose heuristic, silent null, false negative, mechanized check, plan-audit, exit code, git grep, skill-prose probe, fail closed.
 ---
 
 # Parse-Signal Discipline — Distinguish "Couldn't Parse" From "Doesn't Apply"
@@ -304,7 +304,22 @@ When mechanizing a prose heuristic into a deterministic check:
     arm, classified by the thrown error's shape, and pin "main probe times out, precondition probe
     succeeds" with its own assertion (`tests/verify-run-bookends.test.js`'s
     `catFileTimeoutRevParseOk`).
-17. **A composer's validator owes its readers' skip set, and a batch producer owes the predicate,
+17. **A start/end snapshot guard sees only the window between its two reads, and each value it
+    records has an unsafe direction.** `plugin/bin/verify.js` (#3757) reads `gitInfo()` before the
+    `--scope` selection and `runChecks` and again at the end, and writes no pass stamp when HEAD
+    moved in between. Its first version took the end read straight after `runChecks`, but
+    `--baseline` adjudication and declared pre-existing adjudication run later and re-run failing
+    files against the tree, so a commit landing during them read as "not moved". Review caught it,
+    and the fix moved the end read after both adjudications. Place the second read after the
+    last phase that executes against the tree, not after the phase the record names. The same
+    version recorded `dirty` from the end read alone. Clean to dirty mid-run (a check leaves an
+    artifact) is safe to record, but dirty to clean (an edit reverted mid-run) stamped a clean
+    tree the checks never saw, so the stamp now records start OR end. For each recorded value,
+    name the direction that would wrongly vouch for the run and record it if either read shows
+    it. A read that failed (`gitInfo` returns `dirty: null` when `git status` fails) counts as
+    that direction too, per item 5, never as the other read's answer. Pin a commit landing during
+    the last tree-executing phase, and a mid-run revert, each with its own test.
+18. **A composer's validator owes its readers' skip set, and a batch producer owes the predicate,
     not the throw.** When one module writes text another module parses back, every value the
     reader silently skips must be one the writer rejects. Otherwise a value accepted when the
     record is composed vanishes when it is read, and nothing reports it.
@@ -349,7 +364,7 @@ When mechanizing a prose heuristic into a deterministic check:
   and the like) where catching every error the same way conflates "genuinely absent" (`ENOENT`)
   with "couldn't tell" (`EACCES`, `ENOTDIR`, and other non-ENOENT codes) (fix-shape item 11).
 - Adding a validated field to a shared body composer such as `specShapedBody` that another module
-  parses back, or that a batch producer fills from LLM output (fix-shape item 17).
+  parses back, or that a batch producer fills from LLM output (fix-shape item 18).
 
 ## When not to use
 
