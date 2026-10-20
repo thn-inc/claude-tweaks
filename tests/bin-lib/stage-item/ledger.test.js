@@ -7,6 +7,10 @@ const path = require('path');
 const { run } = require('../../../plugin/bin/stage-item');
 const { splitLedgerRow } = require('../../../plugin/bin/lib/wrap-up/ledger-cells');
 const { carryForward, fillLedgerHeader } = require('../../../plugin/bin/lib/stage-item/ledger');
+const { skipUnderRoot } = require('../../helpers/root');
+
+// chmod-simulated denials: win32 has no write-denying mode bits, and root ignores them (#1853).
+const SKIP_PERMS = process.platform === 'win32' ? 'chmod cannot deny a write on win32' : skipUnderRoot('chmod is ignored under root').skip;
 
 const LEDGER_REL = 'docs/plans/2026-10-20-x-ledger.md';
 const LEDGER_HEAD = '# Open Items — x\n\n| # | Phase | Item | Status | Resolution |\n|---|-------|------|--------|------------|\n';
@@ -163,7 +167,7 @@ test('a worktree-shadow --run with --ledger is refused (exit 3) before the ledge
   assert.equal(fs.existsSync(path.join(f.shadow, 'staged')), false);
 });
 
-test('a failed ledger append removes the staged file and logs the degraded SKIP', { skip: process.platform === 'win32' || (process.getuid && process.getuid() === 0) }, () => {
+test('a failed ledger append removes the staged file and logs the degraded SKIP', { skip: SKIP_PERMS }, () => {
   const f = fixture();
   const plans = path.join(f.main, 'docs', 'plans');
   fs.chmodSync(plans, 0o555);
@@ -193,7 +197,6 @@ test('without --ledger, stdout and files are unchanged', () => {
   assert.equal(f.ledgerText(), before);
 });
 
-const SKIP_PERMS = process.platform === 'win32' || (process.getuid && process.getuid() === 0);
 
 function cfArgs(f, overrides = {}) {
   return {
