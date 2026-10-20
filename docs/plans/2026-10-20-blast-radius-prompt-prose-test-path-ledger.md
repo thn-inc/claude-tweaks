@@ -1,9 +1,0 @@
-# Open Items — blast-radius isTestPath classifies shipped skill prose under skills/test/ as test files (#3680)
-
-| # | Phase | Item | Status | Resolution |
-|---|-------|------|--------|------------|
-| 1 | build | blast-radius.js header comment above TEST_PATH_RE (lines 8-21) lists test-path conventions but not the prompt-prose exemption (documented at the PROMPT_PROSE_DIRS block instead) | deferred | Origin: SDD task review Minor, #3680 Task 1. Files: plugin/bin/lib/issues/blast-radius.js. Trigger: next edit to blast-radius.js's test-path conventions. |
-| 2 | build | initiative-budget.js:33 has its own isTestPath that also matches skills/test/*.md | deferred | Origin: SDD task review Minor, #3680 Task 1. Files: plugin/bin/lib/issues/initiative-budget.js. Trigger: if auto-repair ever needs to touch skills/test prose. Classifying it as test excludes it from auto-repair, which is the conservative direction, so no change today. |
-| 3 | wrap-up | Disposition of row 1 (a `deferred` row with no staged proposal): header comment above TEST_PATH_RE now names the prompt-prose exemption | fixed | Fixed in bec0ae676 (comment-only edit to plugin/bin/lib/issues/blast-radius.js; targeted suites blast-radius + ceremony-derive 60/60). Row 1 is superseded by this row. |
-| 4 | wrap-up | Disposition of row 2 (a `deferred` row with no staged proposal): initiative-budget.js:33 isTestPath still matches skills/test/*.md | accepted | Settled ruling: initiative-budget's own classifier treating that prose as a test only excludes it from auto-repair, the conservative direction; no unsafe understatement as in merge-check. Out of #3680's scope (blast-radius.js only). Row 2 is superseded by this row. |
-| 5 | wrap-up | pr — PR #3728 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | n/a |
