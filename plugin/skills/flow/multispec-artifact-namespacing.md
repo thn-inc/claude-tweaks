@@ -45,7 +45,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base "{EXPECTED_B
 ```
 
 It re-runs the same walk and, for every `A`-then-`M` path it finds, judges each later modifying
-commit's own deletions on that path (via `git log --numstat`) by two independent tests — either
+commit's own deletions on that path (via `git log --numstat`) by three independent tests — any
 one is enough to call the commit an extension rather than an overwrite:
 
 1. **Same-spec self-edit.** Every deleted line traces, via `git blame` on the commit's parent
@@ -59,9 +59,15 @@ one is enough to call the commit an extension rather than an overwrite:
    previous "last" entry even though no single spec owns that line the way it owns its own step
    body — in the #1988–#1997 run this is exactly what happened to the journey's closing
    "Related specs: …" bullet on nearly every later spec's commit.
+3. **Step-markup reformat.** Every deleted line and added line are equal once journey step markup
+   is normalized (`N. **Name** — x` and `### N. Name — x` read the same; list indentation and blank
+   lines are ignored) — the shape a review fix produces when it converts numbered-list steps to the
+   canonical `### N.` headers (`_shared/diataxis-genre-templates.md`) with no step text changed
+   (#3341).
 
-Only a commit that deletes lines failing *both* tests — non-list content it did not itself add, or
-a list it shrinks rather than reflows — is a real overwrite. HARD-GATE: stop before rendering the
+Only a commit that deletes lines failing *all three* tests — non-list content it did not itself
+add, a list it shrinks rather than reflows, or a step-markup change that also alters step text —
+is a real overwrite. HARD-GATE: stop before rendering the
 console and report the offending path, commit, and reason (the tool's `overwrites[]` array — exit
 code `1`) plus both commits' spec ids (`refs #{N}`). A clean run (exit `0`, `overwrites: []`, or no
 `A`-then-`M` path at all) passes with no manual ruling and the console renders normally. Exit `2`
@@ -69,5 +75,5 @@ is a malformed invocation of the tool itself (never a verdict about the walk); e
 walk could not run at all (an unresolvable `{EXPECTED_BASE}`) — treat both as this check's own
 failure to run, not as a clean result, and fall back to the raw `git log --name-status` walk above
 plus a manual `git log --numstat` ruling. Algorithm: `bin/lib/flow/artifact-overwrite-check.js`;
-fixture coverage (append-only, self-correction, list reflow, and a genuine cross-spec overwrite,
-plus a live replay of the #1988–#1997 range): `tests/bin-lib/flow/artifact-overwrite-check.test.js`.
+fixture coverage (append-only, self-correction, list reflow, step-markup reformat (pass and
+drop-a-step), and a genuine cross-spec overwrite, plus a live replay of the #1988–#1997 range): `tests/bin-lib/flow/artifact-overwrite-check.test.js`.

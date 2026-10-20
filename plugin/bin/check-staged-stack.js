@@ -23,6 +23,7 @@ const fs = require('fs');
 const path = require('path');
 const { stagedApplyOrder, checkStack, rederive } = require('./lib/staged-patch/stack-check');
 const { resolveTarget } = require('./lib/stage-item/write');
+const { isPathContained } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: check-staged-stack.js --worktree <dir> --patch <run-dir>/staged/<name>.patch [--rederive-out <file>] [--help]\n';
 
@@ -84,8 +85,7 @@ function run(argv, deps = realDeps) {
   if (!isDirectory(worktree)) return usageError(`--worktree must be an existing directory: ${o.worktree}`);
   if (o.rederiveOut !== null) {
     // A re-derived file written into staged/ would become a staged proposal of its own.
-    const rel = path.relative(stagedDir, path.resolve(cwd, o.rederiveOut));
-    if (!(rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel))) {
+    if (isPathContained(path.resolve(cwd, o.rederiveOut), stagedDir, { orEqual: true })) {
       return usageError(`--rederive-out must not resolve inside the run's staged/ dir: ${o.rederiveOut}`);
     }
   }
