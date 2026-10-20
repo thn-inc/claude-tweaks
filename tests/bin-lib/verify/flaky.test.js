@@ -46,9 +46,20 @@ test('planRetry: a path cmd.exe cannot quote refuses with unsafe-path (#3676)', 
   const plan = planRetry({ failingFiles: ['tests/%PATH%.test.js'], flaky: { files: ['tests/**'], maxRetries: 1 }, retry: RETRY, suite: 'tests', platform: 'win32' });
   assert.deepStrictEqual(plan, {
     retry: false,
-    reason: 'unsafe-path: [tests/%PATH%.test.js]',
+    reason: 'unsafe-path: [tests/%PATH%.test.js (cmd-unquotable)]',
     unsafe: [{ file: 'tests/%PATH%.test.js', reason: 'cmd-unquotable' }],
   });
+});
+
+test('planRetry: one unsafe path in a mixed list refuses the whole retry (#3676)', () => {
+  const plan = planRetry({ failingFiles: ['tests/a.test.js', 'tests/%PATH%.test.js'], flaky: { files: ['tests/**'], maxRetries: 1 }, retry: RETRY, suite: 'tests', platform: 'win32' });
+  assert.strictEqual(plan.retry, false);
+  assert.strictEqual(plan.reason, 'unsafe-path: [tests/%PATH%.test.js (cmd-unquotable)]');
+});
+
+test('planRetry: maxRetries 0 keeps max-retries-0 even with an unsafe path (#3676)', () => {
+  const plan = planRetry({ failingFiles: ['tests/%PATH%.test.js'], flaky: { files: ['tests/**'], maxRetries: 0 }, retry: RETRY, suite: 'tests', platform: 'win32' });
+  assert.deepStrictEqual(plan, { retry: false, reason: 'max-retries-0' });
 });
 
 test('planRetry: any unlisted failing file → no retry, and the reason names every unlisted file (AC2)', () => {

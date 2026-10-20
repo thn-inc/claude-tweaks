@@ -35,7 +35,7 @@ function planRetry({ failingFiles, flaky, retry, suite, unattributedCount = 0, f
     if (sub.ok) command.push({ file, cmd: sub.command });
     else unsafe.push({ file, reason: sub.reason });
   }
-  if (unsafe.length) return { retry: false, reason: `unsafe-path: [${unsafe.map((u) => u.file).join(', ')}]`, unsafe };
+  if (unsafe.length) return { retry: false, reason: `unsafe-path: [${unsafe.map((u) => `${u.file} (${u.reason})`).join(', ')}]`, unsafe };
   return { retry: true, files, command };
 }
 
