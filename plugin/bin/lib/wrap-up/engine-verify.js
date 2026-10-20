@@ -34,7 +34,7 @@ const { resolvePolicyKeys } = require('../policy-schema');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
 const { resolveRecords, closingRecords } = require('./pack');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
-const { splitNul } = require('../git-z');
+const { splitNul, parseStatusPorcelainZ } = require('../git-z');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -242,17 +242,18 @@ function fsStartTimeMs(targetPath) {
   }
 }
 
-// `--porcelain=v1 -uall` (not the default `-uno`) so a wholly-untracked
+// `--porcelain=v1 -z -uall` (not the default `-uno`) so a wholly-untracked
 // directory reports every file inside it individually instead of collapsing
 // to one `?? {dir}/` line the suffix/name filters below could never match.
+// `-z` so a non-ASCII name arrives raw rather than C-quoted (`_shared/git-path-read.md`).
 registerCheck('plans-ledger', ({ runDir, cwd, deps }) => {
   let status;
   try {
-    status = deps.git(['--no-optional-locks', 'status', '--porcelain=v1', '-uall', '--', 'docs/superpowers/plans', 'docs/plans'], cwd);
+    status = deps.git(['--no-optional-locks', 'status', '--porcelain=v1', '-z', '-uall', '--', 'docs/superpowers/plans', 'docs/plans'], cwd);
   } catch (err) {
     return { result: 'unknown', detail: `git status failed: ${err.message}` };
   }
-  const leftovers = status.split('\n').filter((l) => l.startsWith('??')).map((l) => l.slice(3).trim());
+  const leftovers = parseStatusPorcelainZ(status).filter((r) => r.xy === '??').map((r) => r.path);
   // .superpowers/sdd/ is gitignored entirely so it never shows up in `git
   // status` even with the paths above -- check it directly. Any entry
   // present there is a leftover SDD ledger workspace that should have been
@@ -304,12 +305,12 @@ registerCheck('design-caches', ({ cwd, expectations, deps }) => {
   if (!fs.existsSync(cacheDir)) return { result: 'pass', detail: '' };
   let status;
   try {
-    status = deps.git(['--no-optional-locks', 'status', '--porcelain=v1', '-uall', '--', 'docs/plans'], cwd);
+    status = deps.git(['--no-optional-locks', 'status', '--porcelain=v1', '-z', '-uall', '--', 'docs/plans'], cwd);
   } catch (err) {
     return { result: 'unknown', detail: `git status failed: ${err.message}` };
   }
   const suffixes = ['-audit.json', '-recommendations.json', '-declined.json'];
-  const untracked = status.split('\n').filter((l) => l.startsWith('??')).map((l) => l.slice(3).trim());
+  const untracked = parseStatusPorcelainZ(status).filter((r) => r.xy === '??').map((r) => r.path);
   const matches = untracked.filter((f) => suffixes.some((suf) => f.endsWith(suf)));
   if (matches.length) return { result: 'fail', detail: `${matches.length} cache file(s) remain: ${matches.join(', ')}` };
   return { result: 'pass', detail: '' };
