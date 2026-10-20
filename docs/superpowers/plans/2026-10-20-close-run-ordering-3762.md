@@ -34,6 +34,8 @@ A failure after `close-run` runs `hooks.js record-worktree --run … {worktree-p
 - Bash fences stay plain enough for the worktree guard: no `&&`-chained merge-then-push. Push stays its own call.
 - Commits: `{Verb} {what} — {detail}` + `refs #3762` + the `Claude-Session:` trailer. Stage by explicit path.
 
+Waived AC4.1: the full suite runs once, centrally, at /claude-tweaks:build Common Step 5 through bin/verify.js — never per task.
+
 ## Review Focus
 
 1. `git merge-tree` on a ref it cannot merge: the pre-check must abort, not merge. Probed on git 2.56 in a scratch repo (2026-10-20):
@@ -64,7 +66,7 @@ A failure after `close-run` runs `hooks.js record-worktree --run … {worktree-p
   - `runFence(body, { cwd, env }) -> { code, stdout, stderr }`.
   - Tasks 2 and 3 append one `SITES` entry each and add nothing else.
 
-- [ ] **Step 1: Write the failing test file.**
+- [ ] **Step 1: Write the failing test file (covers AC1.1, AC2.1, AC3.1).**
 
 `checkOrdering(text)` finds these indices in collapsed text:
 - `W`: the worktree-read line (`run-state.json').worktree`). Optional; settle-and-merge has none.
