@@ -189,6 +189,28 @@ test('gatherFacts headingRenamed separates a modified heading from a deleted fil
   }
 });
 
+test('AC1.1: removing a heading from docs/café.md still sets headingRenamed (regression pin — the -U0 scan reads no path)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-heading-z-'));
+  try {
+    git(['init', '-q'], dir);
+    git(['config', 'user.email', 'test@example.com'], dir);
+    git(['config', 'user.name', 'Test'], dir);
+    git(['config', 'core.quotepath', 'true'], dir);
+    fs.mkdirSync(path.join(dir, 'docs'));
+    fs.writeFileSync(path.join(dir, 'docs', 'café.md'), '# Title\n\nbody\n');
+    git(['add', '.'], dir);
+    git(['commit', '-q', '-m', 'base'], dir);
+    const base = git(['rev-parse', 'HEAD'], dir);
+
+    fs.writeFileSync(path.join(dir, 'docs', 'café.md'), 'body\n');
+    git(['add', '.'], dir);
+    git(['commit', '-q', '-m', 'drop heading'], dir);
+    assert.strictEqual(gatherFacts({ cwd: dir, base }).headingRenamed, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('gatherFacts headingRenamed degrades to false outside a repo', () => {
   assert.strictEqual(gatherFacts({ cwd: os.tmpdir(), base: 'HEAD' }).headingRenamed, false);
 });
