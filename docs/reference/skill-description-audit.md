@@ -3,7 +3,8 @@
 External guidance for newer Claude models says to shrink skill descriptions and to stop
 pre-reading documentation stacks that were written to compensate for weaker models. This audit
 judges this plugin's skill descriptions against that guidance. Audit date: 2026-10-20. Scope: all
-39 `plugin/skills/*/SKILL.md` descriptions plus `plugin/agents/qa-agent.md`.
+39 `plugin/skills/*/SKILL.md` descriptions, plus `plugin/agents/qa-agent.md` judged separately (it
+is an agent, not a skill, so it is outside the measured totals below).
 
 ## Guidance vs this repo's conventions
 
@@ -24,7 +25,8 @@ judges this plugin's skill descriptions against that guidance. Audit date: 2026-
 
 ## Measurements
 
-Total description characters across the 40 audited descriptions (39 skills plus `qa-agent`):
+Total description characters across the 39 skill descriptions (excludes `qa-agent`, an agent
+whose description is not part of the skill listing):
 
 | | Chars |
 |---|---|
@@ -32,10 +34,10 @@ Total description characters across the 40 audited descriptions (39 skills plus 
 | After | 7,709 |
 
 The listing budget from decision 0024 is 8,000 characters at 200k context and 40,000 at 1M, shared
-with every other installed plugin's skills. The corpus was over the 200k figure before the trim
-and is under it after, which still leaves no headroom for other plugins. The per-description
-maximum of 1,536 is untouched; the largest description is 260 characters (`qa-agent` is 409 and
-was not changed).
+with every other installed plugin's skills. The skill corpus was over the 200k figure before the
+trim and is under it after, which still leaves no headroom for other plugins. The per-description
+maximum of 1,536 is untouched; the largest skill description is 260 characters. `qa-agent`, an
+agent rather than a skill, is a separate 409 characters, unchanged and in neither total.
 
 ## Per-skill findings
 
