@@ -17,13 +17,22 @@ const { execFileSync } = require('child_process');
 // defaultRunner, so the command runs there later under the same bound.
 const PREMISE_SELF_CHECK_TIMEOUT_MS = 5000;
 
-// command, { cwd, timeoutMs } -> exit code. Also materialize.js's runner:
-// a non-zero exit is a normal outcome (unwrapped from execFileSync's
-// throw); no exit code at all (timeout, spawn error) re-throws. An omitted
-// cwd runs in the process cwd.
-function defaultRunner(command, { cwd, timeoutMs }) {
+// The shell a Premise-check command runs under. On win32 a literal /bin/sh
+// resolves to `<drive>:\bin\sh` and throws ENOENT, so there the POSIX shell
+// is found on PATH instead (#3563). Pure: the platform is a parameter.
+function posixShell(platform = process.platform) {
+  return platform === 'win32' ? 'sh' : '/bin/sh';
+}
+
+// command, { cwd, timeoutMs, platform, exec } -> exit code. Also
+// materialize.js's runner: a non-zero exit is a normal outcome (unwrapped
+// from execFileSync's throw); no exit code at all (timeout, spawn error)
+// re-throws. An omitted cwd runs in the process cwd. `platform` picks the
+// shell (posixShell) and `exec` is the spawn seam — both injectable so the
+// platform split is testable without stubbing process.platform (#3563).
+function defaultRunner(command, { cwd, timeoutMs, platform = process.platform, exec = execFileSync }) {
   try {
-    execFileSync('/bin/sh', ['-c', command], { cwd, stdio: 'ignore', timeout: timeoutMs, windowsHide: true });
+    exec(posixShell(platform), ['-c', command], { cwd, stdio: 'ignore', timeout: timeoutMs, windowsHide: true });
     return 0;
   } catch (err) {
     if (typeof err.status === 'number') return err.status;
@@ -45,4 +54,4 @@ function premiseReadsUnresolved(command, {
   }
 }
 
-module.exports = { premiseReadsUnresolved, defaultRunner, PREMISE_SELF_CHECK_TIMEOUT_MS };
+module.exports = { premiseReadsUnresolved, defaultRunner, posixShell, PREMISE_SELF_CHECK_TIMEOUT_MS };
