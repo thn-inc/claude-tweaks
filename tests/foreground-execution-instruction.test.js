@@ -95,6 +95,19 @@ function coreForegroundSection(text) {
   return text.slice(start, next === -1 ? undefined : next);
 }
 
+// The facts the final-review fix wave added (abandoned child, final STATUS, re-wake, the 30s x 40
+// per-wave bound and its log line). Written to match every copy of the rule -- core, item 7, both
+// templates -- so each copy's list spreads this one array, and each pattern matches exactly once
+// per copy so its go-red proof removes the only occurrence.
+const SHARED_RULE = [
+  [/`sleep\s+30`\s+Bash\s+calls,\s+at\s+most\s+40\s+\(20\s+minutes\)\s+per\s+wave\s+of\s+children/, 'the sleep 30 x 40 (20 minute) per-wave bound'],
+  [/how\s+many\s+children\s+are\s+still\s+pending/, 'each wait logs how many children are still pending'],
+  [/\bis\s+abandoned\b/, 'a child self-judged at the bound is abandoned'],
+  [/no\s+longer\s+counts\s+as\s+outstanding/, 'an abandoned child no longer counts as outstanding'],
+  [/final\s+reply\s+still\s+ends\s+with\s+(?:its\s+usual\s+)?`STATUS:/, 'the final reply after an abandoned child still ends with STATUS:'],
+  [/re-wakes\s+(?:you|the\s+agent)\s+after\s+(?:your|its)\s+final\s+reply[^.]*?\brepeat(?:ing)?\s+that\s+final\s+`STATUS:`\s+line\s+unchanged/, 'a late re-wake after the final reply repeats the final STATUS: line unchanged'],
+];
+
 // Each `\s+` absorbs the hard line wrapping, as in REQUIRED above.
 const KEEP_ALIVE = [
   [/always\s+launches\s+async/i, 'a nested Agent call always launches async'],
@@ -103,6 +116,7 @@ const KEEP_ALIVE = [
   [/no\s+`Agent`\/`Task`\s+tool/i, 'the fallback covers the no-Agent/Task-tool case'],
   [/`unconfirmed`/, 'findings from a self-judged unit are marked unconfirmed'],
   [/ignored/i, 'a late child result is ignored'],
+  ...SHARED_RULE,
 ];
 
 // Content predicates: each live assertion and its doctored-text proof call the same function.
@@ -209,6 +223,7 @@ const ITEM7 = [
   [/INTERIM_STATUS/, 'the #2714 interim-marker rule is kept'],
   [/always\s+launches\s+async/i, 'a nested Agent call always launches async'],
   [/`unconfirmed`/, 'the self-judged fallback marks findings unconfirmed'],
+  ...SHARED_RULE,
 ];
 const item7Missing = (block) => ITEM7.filter(([pattern]) => !pattern.test(block)).map(([, fact]) => fact);
 const dropsNothingWakes = (block) => !/nothing wakes you/.test(block);
@@ -218,8 +233,18 @@ const TEMPLATE_KEEP_ALIVE = [
   [/never\s+end\s+this\s+turn\s+with\s+(?:a|one)\s+child\s+outstanding/i, 'the turn never ends with a child outstanding'],
   [/ignore\s+that\s+child's\s+result\s+if\s+it\s+arrives\s+later/i, 'a late child result is ignored'],
   [/reply\s+that\s+ends\s+without\s+a\s+tool\s+call\s+ends\s+the\s+turn/i, 'a reply that ends without a tool call ends the turn'],
+  [/`unconfirmed`/, "the template's fallback marks findings unconfirmed"],
+  [/log\s+the\s+downgrade/i, "the template's fallback logs the downgrade"],
+  ...SHARED_RULE,
 ];
-const templateKeepAliveMissing = (block) => TEMPLATE_KEEP_ALIVE.filter(([pattern]) => !pattern.test(block)).map(([, fact]) => fact);
+// Takes the template's "Foreground execution (required):" paragraph, not the whole fenced block, so
+// a pattern's one occurrence is the paragraph's (the block mentions `unconfirmed` elsewhere).
+const templateKeepAliveMissing = (paragraph) => TEMPLATE_KEEP_ALIVE.filter(([pattern]) => !pattern.test(paragraph)).map(([, fact]) => fact);
+const foregroundParagraph = (block) => {
+  const found = block.split(/\r?\n\r?\n/).filter((p) => p.startsWith('Foreground execution (required):'));
+  assert.equal(found.length, 1, `expected exactly one "Foreground execution (required):" paragraph per template, found ${found.length}`);
+  return found[0];
+};
 const dropsInTurnCarveOut = (block) => !/It\s+does\s+not\s+cover\s+an\s+in-turn/.test(block);
 
 const dropsPrimaryResumeSignal = (text) => !/primary resume signal/.test(text);
@@ -240,7 +265,7 @@ function assertEachPatternGoesRed(text, patterns, missingOf) {
 
 test('task-prompt item 7 drops "nothing wakes you" and states what ends a turn (#3078, #3266)', () => {
   const item7 = item7Block(fs.readFileSync(TASK_PROMPT, 'utf8'));
-  assert.ok(dropsNothingWakes(item7), 'item 7 still says "nothing wakes you" — the framing #3266 retired (#3078)');
+  assert.ok(dropsNothingWakes(item7), 'item 7 still says "nothing wakes you" — the framing #3078 retired (#3266)');
   assert.deepEqual(item7Missing(item7), [], 'item 7 must state every turn-ending and keep-alive fact (#3078, #3266)');
 });
 
@@ -249,7 +274,7 @@ test('neither fenced template keeps the in-turn carve-out (#3078)', () => {
   assert.equal(blocks.length, 2, `expected exactly two fenced Task-prompt blocks, found ${blocks.length}`);
   for (const [label, block] of [['first call (build,test)', blocks[0]], ['second call (review,polish,wrap-up)', blocks[1]]]) {
     assert.ok(dropsInTurnCarveOut(block), `${label} template still carries the in-turn carve-out (#3078)`);
-    assert.deepEqual(templateKeepAliveMissing(block), [], `${label} template must carry the nested-Agent rule itself (#3078)`);
+    assert.deepEqual(templateKeepAliveMissing(foregroundParagraph(block)), [], `${label} template must carry the nested-Agent rule itself (#3078)`);
   }
 });
 
@@ -262,7 +287,7 @@ test("the #2533 rationale cites the core section, not dispatch-waiting.md's resu
 test('each task-prompt assertion can actually go red on its own (discrimination proof)', () => {
   const text = fs.readFileSync(TASK_PROMPT, 'utf8');
   assertEachPatternGoesRed(item7Block(text), ITEM7, item7Missing);
-  for (const block of fencedBlocks(text)) assertEachPatternGoesRed(block, TEMPLATE_KEEP_ALIVE, templateKeepAliveMissing);
+  for (const block of fencedBlocks(text)) assertEachPatternGoesRed(foregroundParagraph(block), TEMPLATE_KEEP_ALIVE, templateKeepAliveMissing);
   assertEachPatternGoesRed(text, RATIONALE, rationaleMissing);
 });
 
@@ -283,4 +308,58 @@ test('the task-prompt absence predicates can actually go red (discrimination pro
   );
 
   assert.equal(dropsPrimaryResumeSignal(text + '\n\nSee the primary resume signal.'), false, 'the re-inserted resume-signal citation must turn the rationale assertion red');
+});
+
+// #3078 final-review fix wave: the output contract's #2714 interim-marker paragraph narrows
+// INTERIM_STATUS to a turn that ends mid keep-alive wait; an abandoned child is not outstanding.
+const CONTRACT_ABANDONED = [
+  [/\bis\s+abandoned\b/, 'a child abandoned at the bound is named'],
+  [/no\s+longer\s+counts\s+as\s+outstanding/, 'an abandoned child no longer counts as outstanding'],
+];
+const contractAbandonedMissing = (text) => CONTRACT_ABANDONED.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
+
+test('subagent-output-contract.md says an abandoned child is not outstanding, so INTERIM_STATUS is not its marker (#3078)', () => {
+  const contract = fs.readFileSync(OUTPUT_CONTRACT, 'utf8');
+  assert.deepEqual(contractAbandonedMissing(contract), [], 'the output contract must say an abandoned child no longer counts as outstanding (#3078)');
+});
+
+test('each output-contract abandoned-child assertion can actually go red on its own (discrimination proof)', () => {
+  assertEachPatternGoesRed(fs.readFileSync(OUTPUT_CONTRACT, 'utf8'), CONTRACT_ABANDONED, contractAbandonedMissing);
+});
+
+// The primitive's numbers (sleep interval, call cap, minutes) are restated in four copies; they must
+// agree. Each copy is reduced to the one place the primitive appears in it.
+const PRIMITIVE = /`sleep\s+(\d+)`\s+Bash\s+calls,\s+at\s+most\s+(\d+)\s+\((\d+)\s+minutes\)/g;
+const EXPECTED_PRIMITIVE = '30/40/20';
+function primitiveCopies() {
+  const [firstCall, secondCall] = fencedBlocks(fs.readFileSync(TASK_PROMPT, 'utf8'));
+  return {
+    'subagent-dispatch-core.md': coreForegroundSection(fs.readFileSync(CORE, 'utf8')),
+    'task-prompt.md item 7': item7Block(fs.readFileSync(TASK_PROMPT, 'utf8')),
+    'task-prompt.md first-call template': foregroundParagraph(firstCall),
+    'task-prompt.md second-call template': foregroundParagraph(secondCall),
+  };
+}
+const primitiveOf = (text) => [...text.matchAll(PRIMITIVE)].map((m) => m.slice(1).join('/'));
+const mismatchedPrimitiveCopies = (copies) => Object.entries(copies)
+  .filter(([, text]) => { const found = primitiveOf(text); return found.length !== 1 || found[0] !== EXPECTED_PRIMITIVE; })
+  .map(([name]) => name);
+
+test('the keep-alive primitive (sleep 30, at most 40, 20 minutes) agrees across all four copies (#3078)', () => {
+  assert.deepEqual(mismatchedPrimitiveCopies(primitiveCopies()), [], 'every copy of the keep-alive primitive must state sleep 30, at most 40 (20 minutes), exactly once');
+});
+
+test('a mismatched keep-alive primitive copy can actually go red (discrimination proof)', () => {
+  const copies = primitiveCopies();
+  for (const name of Object.keys(copies)) {
+    for (const [label, doctor] of [
+      ['interval', (t) => t.replace(/`sleep\s+30`/, '`sleep 20`')],
+      ['cap', (t) => t.replace(/at\s+most\s+40/, 'at most 15')],
+      ['minutes', (t) => t.replace(/\(20\s+minutes\)/, '(5 minutes)')],
+    ]) {
+      const doctored = doctor(copies[name]);
+      assert.notEqual(doctored, copies[name], `anchor text for the ${label} in ${name} not found — proof cannot discriminate`);
+      assert.deepEqual(mismatchedPrimitiveCopies({ ...copies, [name]: doctored }), [name], `a ${label} mismatch in only ${name} must turn exactly that copy red`);
+    }
+  }
 });

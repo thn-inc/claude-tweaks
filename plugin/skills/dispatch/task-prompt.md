@@ -43,17 +43,23 @@ that needs no resolution, only inclusion:
    (e.g. the full test suite) as a normal foreground call with a large explicit timeout (#1965). A
    nested `Agent` call always launches async, and its completion notification reaches you only
    while your turn is alive: keep your turn alive with bounded foreground waits — repeated
-   `sleep 20` Bash calls, at most 15 (5 minutes), stopping as soon as every child's
-   `<task-notification>` has arrived, never reading or tailing a child's `output_file` — until
-   every child you launched has reported, and never end your turn with one outstanding. With no
-   `Agent` tool, or a child still silent when the bound expires, judge that unit yourself, log the
-   downgrade, and mark its findings `unconfirmed`; ignore a late result. The full rule is in
-   `subagent-dispatch-core.md`'s Foreground Execution Discipline section. Give any agent you
+   `sleep 30` Bash calls, at most 40 (20 minutes) per wave of children (the set launched
+   together), each wait logged as one line (what you wait on, the iteration against the bound, how
+   many children are still pending), stopping as soon as every child's `<task-notification>` has
+   arrived, never reading or tailing a child's `output_file` — until every child you launched has
+   reported, and never end your turn with one outstanding. With no `Agent` tool, or a child still
+   silent when the bound expires, judge that unit yourself, log the downgrade, and mark its
+   findings `unconfirmed`; that child is abandoned and no longer counts as outstanding, so your
+   final reply still ends with `STATUS: {WORD}`. Ignore a late result; if a late notification
+   re-wakes you after your final reply, repeat that final `STATUS:` line unchanged. The full rule
+   is in `subagent-dispatch-core.md`'s Foreground Execution Discipline section. Give any agent you
    dispatch this same instruction, whether it is a nested Task/Agent call or a
    `superpowers:subagent-driven-development` or review-lens fan-out. **Mark every interim reply
-   (#2714):** if a turn ends anyway with a child still outstanding — the keep-alive rule's failure
-   path — make that reply's last non-empty line `INTERIM_STATUS: {one-line progress note}`, never
-   `STATUS: {WORD}`, which is reserved for your genuine final reply. An unmarked interim reply is
+   (#2714):** if a turn ends anyway while a keep-alive wait is still in progress, with a child
+   outstanding — the keep-alive rule's failure path — make that reply's last non-empty line
+   `INTERIM_STATUS: {one-line progress note}`, never `STATUS: {WORD}`, which is reserved for your
+   genuine final reply (an abandoned child is not outstanding; that reply is final and ends with
+   `STATUS: {WORD}`). An unmarked interim reply is
    graded by the `SubagentStop` hook as a final reply missing its status line and logged as a
    false-positive `contract-violation`, unless your own async `Agent` launches are still pending in
    your transcript (#3015) — the marker stays required, since that exemption covers only pending
@@ -127,13 +133,17 @@ foreground of this turn, output redirected to a file if it's long -- never with
 started this way -- there is no notification mechanism behind either, so it is never re-woken
 and the run stalls silently (#1965). A nested `Agent` call (a lens-dispatch fan-out, a
 reproduction pair) always launches async, and its completion notification reaches you only while
-this turn is alive: keep the turn alive with bounded foreground waits -- repeated `sleep 20` Bash
-calls, at most 15 (5 minutes), stopping as soon as every child's `<task-notification>` has
-arrived, never reading or tailing a child's `output_file` -- until every child has reported, and
-never end this turn with one child outstanding. With no `Agent` tool, or a child still silent
-when the bound expires, judge that unit yourself, log the downgrade, and mark its findings
-`unconfirmed`; ignore that child's result if it arrives later. A reply that ends without a
-tool call ends the turn.
+this turn is alive: keep the turn alive with bounded foreground waits -- repeated `sleep 30` Bash
+calls, at most 40 (20 minutes) per wave of children (the set launched together), each wait
+logged as one line (what you wait on, the iteration against the bound, how many children are
+still pending), stopping as soon as every child's `<task-notification>` has arrived, never
+reading or tailing a child's `output_file` -- until every child has reported, and never end this
+turn with one child outstanding. With no `Agent` tool, or a child still silent when the bound
+expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
+child is abandoned and no longer counts as outstanding, so your final reply still ends with its
+usual `STATUS:` line. Ignore that child's result if it arrives later; if a late notification
+re-wakes you after your final reply, repeat that final `STATUS:` line unchanged. A reply that
+ends without a tool call ends the turn.
 
 {context-pack}
 
@@ -273,13 +283,17 @@ foreground of this turn, output redirected to a file if it's long -- never with
 started this way -- there is no notification mechanism behind either, so it is never re-woken
 and the run stalls silently (#1965). A nested `Agent` call (a lens-dispatch fan-out, a
 reproduction pair) always launches async, and its completion notification reaches you only while
-this turn is alive: keep the turn alive with bounded foreground waits -- repeated `sleep 20` Bash
-calls, at most 15 (5 minutes), stopping as soon as every child's `<task-notification>` has
-arrived, never reading or tailing a child's `output_file` -- until every child has reported, and
-never end this turn with one child outstanding. With no `Agent` tool, or a child still silent
-when the bound expires, judge that unit yourself, log the downgrade, and mark its findings
-`unconfirmed`; ignore that child's result if it arrives later. A reply that ends without a
-tool call ends the turn.
+this turn is alive: keep the turn alive with bounded foreground waits -- repeated `sleep 30` Bash
+calls, at most 40 (20 minutes) per wave of children (the set launched together), each wait
+logged as one line (what you wait on, the iteration against the bound, how many children are
+still pending), stopping as soon as every child's `<task-notification>` has arrived, never
+reading or tailing a child's `output_file` -- until every child has reported, and never end this
+turn with one child outstanding. With no `Agent` tool, or a child still silent when the bound
+expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
+child is abandoned and no longer counts as outstanding, so your final reply still ends with its
+usual `STATUS:` line. Ignore that child's result if it arrives later; if a late notification
+re-wakes you after your final reply, repeat that final `STATUS:` line unchanged. A reply that
+ends without a tool call ends the turn.
 
 {context-pack}
 
