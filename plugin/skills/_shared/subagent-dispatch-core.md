@@ -71,7 +71,8 @@ unit was self-judged is ignored; it never changes a verdict already reached.
 the pattern `_shared/dispatch-waiting.md` documents; this section restricts only what a dispatched
 agent instructs itself or its children to do.
 
-**Bounded polling for a long external wait.** Neither pattern above fits a genuinely long
+**Bounded polling for a long external wait.** Neither of the two patterns above (running long
+commands in the foreground; collecting nested `Agent` children in-turn) fits a genuinely long
 *external* process with no completion-notification channel at all — a live CI run, a cloud
 deploy — that a dispatched agent must verify finished, not just kick off. Backgrounding it and
 ending the turn to wait for a notification is the same violation as above (nothing ever re-wakes

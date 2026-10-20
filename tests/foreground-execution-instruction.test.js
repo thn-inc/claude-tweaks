@@ -105,39 +105,44 @@ const KEEP_ALIVE = [
   [/ignored/i, 'a late child result is ignored'],
 ];
 
-const OLD_YIELD_SENTENCE = 'must yield control across several of its own turns';
+// Content predicates: each live assertion and its doctored-text proof call the same function.
+const missingKeepAlive = (section) => KEEP_ALIVE.filter(([pattern]) => !pattern.test(section)).map(([, fact]) => fact);
+const foldsNoTaskParagraph = (core) => !/\*\*No `Task`\/Agent tool available\.\*\*/.test(core);
+const dropsYieldRule = (contract) => !/must\s+yield\s+control\s+across\s+several\s+of\s+its\s+own\s+turns/.test(contract);
+const keepsInterimMarker = (contract) => /INTERIM_STATUS/.test(contract);
 
 test('subagent-dispatch-core.md states the nested-dispatch keep-alive rule and its fallback (#3078)', () => {
   const core = fs.readFileSync(CORE, 'utf8');
-  const section = coreForegroundSection(core);
-  for (const [pattern, fact] of KEEP_ALIVE) {
-    assert.match(section, pattern, `Foreground Execution Discipline must state that ${fact} (#3078)`);
-  }
-  assert.doesNotMatch(
-    core,
-    /\*\*No `Task`\/Agent tool available\.\*\*/,
-    'the standalone No-Task paragraph must be folded into the new fallback clause (#3078)',
-  );
+  assert.deepEqual(missingKeepAlive(coreForegroundSection(core)), [], 'Foreground Execution Discipline must state every keep-alive fact (#3078)');
+  assert.ok(foldsNoTaskParagraph(core), 'the standalone No-Task paragraph must be folded into the new fallback clause (#3078)');
 });
 
 test('subagent-output-contract.md no longer tells a nested dispatcher to yield across turns (#3078)', () => {
   const contract = fs.readFileSync(OUTPUT_CONTRACT, 'utf8');
-  assert.doesNotMatch(contract, new RegExp(OLD_YIELD_SENTENCE), 'the output contract still instructs nested dispatchers to yield across turns (#3078)');
-  assert.match(contract, /INTERIM_STATUS/);
+  assert.ok(dropsYieldRule(contract), 'the output contract still instructs nested dispatchers to yield across turns (#3078)');
+  assert.ok(keepsInterimMarker(contract), 'the output contract lost its INTERIM_STATUS marker (#3078)');
 });
 
-test('the keep-alive predicate can actually go red (discrimination proof)', () => {
-  const paragraphs = coreForegroundSection(fs.readFileSync(CORE, 'utf8')).split(/\r?\n\r?\n/);
-  const kept = paragraphs.filter((p) => !KEEP_ALIVE[0][0].test(p));
-  assert.equal(
-    paragraphs.length - kept.length,
-    1,
-    'expected to doctor out exactly the nested-children paragraph — anchor text not found',
-  );
-  const doctored = kept.join('\n\n');
-  const failing = KEEP_ALIVE.filter(([pattern]) => !pattern.test(doctored));
-  assert.ok(failing.length > 0, 'doctored section still matches every keep-alive predicate — test cannot discriminate');
+test('each keep-alive assertion can actually go red on its own (discrimination proof)', () => {
+  const section = coreForegroundSection(fs.readFileSync(CORE, 'utf8'));
+  for (const [pattern, fact] of KEEP_ALIVE) {
+    const doctored = section.replace(pattern, '');
+    assert.notEqual(doctored, section, `anchor text for "${fact}" not found — test cannot discriminate`);
+    assert.deepEqual(missingKeepAlive(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
+  }
+});
 
-  const reinserted = fs.readFileSync(OUTPUT_CONTRACT, 'utf8') + `\n${OLD_YIELD_SENTENCE}.`;
-  assert.match(reinserted, new RegExp(OLD_YIELD_SENTENCE), 'the forbidden-sentence pattern does not match the old wording');
+test('the folded-paragraph, yield-rule and interim-marker assertions can actually go red (discrimination proof)', () => {
+  const core = fs.readFileSync(CORE, 'utf8');
+  const reinsertedHeading = '\n\n**No `Task`/Agent tool available.** Some environments expose no `Task`/Agent dispatch tool at all.\n';
+  assert.equal(foldsNoTaskParagraph(core + reinsertedHeading), false, 'the re-inserted No-Task heading must turn the fold assertion red');
+
+  const contract = fs.readFileSync(OUTPUT_CONTRACT, 'utf8');
+  const nestedClause = /keeps its turn alive until every child reports \(`_shared\/subagent-dispatch-core\.md`'s Foreground Execution Discipline\)\./;
+  assert.match(contract, nestedClause, 'anchor text for the nested-dispatcher clause not found');
+  const yieldDoctored = contract.replace(nestedClause, 'must yield control across several of its own turns before its real final reply.');
+  assert.equal(dropsYieldRule(yieldDoctored), false, 'the old yield wording must turn the no-yield assertion red');
+
+  assert.ok(keepsInterimMarker(contract), 'anchor text INTERIM_STATUS not found in the contract');
+  assert.equal(keepsInterimMarker(contract.split('INTERIM_STATUS').join('')), false, 'removing INTERIM_STATUS must turn the marker assertion red');
 });
