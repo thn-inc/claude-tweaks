@@ -148,6 +148,87 @@ test('resolveConsoleExecution: a declined item is logged with the Override-drill
   assert.equal(declined[0].note, 'declined, no reason given');
 });
 
+// #3636 — an `isRulingRow: true` item (an sdd-ruling-* row) that is not
+// ratified is a reversal, not a decline: it counts as cleared for Resolve.
+const RULING_ITEMS = [
+  { id: '1', kind: 'batch', summary: 'fix A' },
+  { id: 'r1', kind: 'staged', summary: 'SDD ruling', isRulingRow: true },
+];
+
+async function runRuling(items, { approve, decline }) {
+  const dir = makeRunDir();
+  writeConsoleJson(dir, { items });
+  const ghCalls = [];
+  const writeCalls = [];
+  const deps = {
+    now: () => Date.now(),
+    gh: fakeGh(ghCalls, { prViewBody: primaryCommentBody(items.map((i) => i.id)) }),
+    writeFile: (p, content) => writeCalls.push({ path: p, content }),
+  };
+  const result = await resolveConsoleExecution(dir, { approve, decline }, deps);
+  const markerBody = ghCalls.find((a) => a[0] === 'api').find((a) => a.startsWith('body='));
+  const replyCall = ghCalls.find((a) => a[0] === 'pr' && a[1] === 'comment');
+  const replyBody = replyCall[replyCall.indexOf('--body') + 1];
+  return { result, markerBody, replyBody, written: JSON.parse(writeCalls[0].content) };
+}
+
+function assertRulingReversedAndCleared({ result, markerBody, replyBody, written }) {
+  assert.equal(result.status, 'executed');
+  const r1 = result.outcomes.find((o) => o.id === 'r1');
+  assert.equal(r1.outcome, 'reversed');
+  assert.equal(r1.note, 'reversed');
+  assert.equal(r1.isRulingRow, true);
+  assert.equal(result.resolved, true);
+  assert.match(markerBody, /<!--\s*console-item:\s*resolve\s*-->\s*\n-\s*\[x\]/i);
+  assert.ok(replyBody.includes('`r1`: reversed'));
+  assert.ok(!replyBody.includes('no reason given'));
+  assert.equal(written.resolved, true);
+}
+
+test('AC1.1: a flagged ruling item, unticked and in neither list, resolves to reversed and a cleared Resolve', async () => {
+  assertRulingReversedAndCleared(await runRuling(RULING_ITEMS, { approve: ['1'], decline: [] }));
+});
+
+test('AC2.1: the same flagged ruling named in --decline resolves to reversed', async () => {
+  assertRulingReversedAndCleared(await runRuling(RULING_ITEMS, { approve: ['1'], decline: ['r1'] }));
+});
+
+test('AC2.2: an unflagged item named in --decline still reads declined', async () => {
+  const { result } = await runRuling(RULING_ITEMS, { approve: ['r1'], decline: ['1'] });
+  const one = result.outcomes.find((o) => o.id === '1');
+  assert.equal(one.outcome, 'declined');
+  assert.equal(one.note, 'declined, no reason given');
+  assert.equal(result.resolved, false);
+});
+
+test('ratified ruling stays executed', async () => {
+  const { result } = await runRuling(RULING_ITEMS, { approve: ['1', 'r1'], decline: [] });
+  assert.equal(result.outcomes.find((o) => o.id === 'r1').outcome, 'executed');
+});
+
+test('reversed ruling plus declined merge row leaves Resolve unticked', async () => {
+  const items = [
+    { id: '1', kind: 'batch', summary: 'merge', isMergeRow: true },
+    { id: 'r1', kind: 'staged', summary: 'SDD ruling', isRulingRow: true },
+  ];
+  const { result, markerBody, written } = await runRuling(items, { approve: [], decline: ['1'] });
+  assert.equal(result.outcomes.find((o) => o.id === 'r1').outcome, 'reversed');
+  assert.equal(result.outcomes.find((o) => o.id === '1').outcome, 'declined');
+  assert.equal(result.resolved, false);
+  assert.doesNotMatch(markerBody, /<!--\s*console-item:\s*resolve\s*-->\s*\n-\s*\[x\]/i);
+  assert.equal(written.resolved, false);
+});
+
+test('non-true flag reads unflagged', async () => {
+  const items = [
+    { id: 'f', kind: 'staged', summary: 'false flag', isRulingRow: false },
+    { id: 's', kind: 'staged', summary: 'string flag', isRulingRow: 'true' },
+  ];
+  const { result } = await runRuling(items, { approve: [], decline: [] });
+  assert.equal(result.outcomes.find((o) => o.id === 'f').outcome, 'declined');
+  assert.equal(result.outcomes.find((o) => o.id === 's').outcome, 'declined');
+});
+
 // AC2 — omitting --run is a hooks.js-level concern (tested separately below
 // against the real CLI); here: the underlying function performs zero writes
 // on every error/no-op branch.
