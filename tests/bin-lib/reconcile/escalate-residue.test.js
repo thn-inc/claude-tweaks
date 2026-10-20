@@ -310,10 +310,10 @@ test('structurallyStuckBody: the reason list names every STRUCTURALLY_STUCK_REAS
   const listLine = body.split('\n')[0];
   for (const reason of STRUCTURALLY_STUCK_REASONS) {
     if (UNFILEABLE_STUCK_REASONS.has(reason)) continue;
-    assert.ok(listLine.includes('`' + reason + '`'), `expected reason list to name \`${reason}\`: ${listLine}`);
+    assert.ok(listLine.includes(`\`${reason}\``), `expected reason list to name \`${reason}\`: ${listLine}`);
   }
   for (const reason of UNFILEABLE_STUCK_REASONS) {
-    assert.ok(!listLine.includes('`' + reason + '`'), `unfileable \`${reason}\` must not be listed as feeding the record`);
+    assert.ok(!listLine.includes(`\`${reason}\``), `unfileable \`${reason}\` must not be listed as feeding the record`);
   }
   assert.match(body, /For a `merged-partial` directory, the records the run's merged PR was meant to close \(the closing-keyword links on that PR\) are still open: ship them in a later PR, or close\/release them if they were abandoned; the next reconcile then archives the dir and drops it from this record\./);
 });
