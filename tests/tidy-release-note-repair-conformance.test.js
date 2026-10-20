@@ -91,7 +91,7 @@ test('SKILL.md dispatcher block resolves a fresh session-scoped candidates path 
   const env = { ...process.env, CLAUDE_CODE_SESSION_ID: `rn-dispatch-${process.pid}` };
   const a = execFileSync('bash', ['-c', script], { env, encoding: 'utf8' }).trim();
   const b = execFileSync('bash', ['-c', script], { env, encoding: 'utf8' }).trim();
-  assert.match(a, /ct-session-rn-dispatch-\d+\/tidy-release-note-\d+\.json$/);
+  assert.match(a, /ct-session-rn-dispatch-\d+[\\/]tidy-release-note-\d+\.json$/);
   assert.notEqual(a, b, 'each run must get a fresh name');
   fs.rmSync(path.dirname(a), { recursive: true, force: true });
 });
