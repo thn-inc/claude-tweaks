@@ -10,7 +10,7 @@
 //
 // Pure — no git/fs I/O of its own. `wrap-up/SKILL.md`'s "Diff-derived
 // ceremony default" step supplies `files` (parsed `git diff --numstat`
-// output, `blast-radius-cli.js`'s `parseNumstat` shape: `{path, additions,
+// output, `git-z.js`'s `parseNumstatZ` shape: `{path, additions,
 // deletions}[]`) and the run's current `ceremony-profile` value.
 const { classifyDiffFiles, blastRadiusSummary } = require('../issues/blast-radius');
 
@@ -40,7 +40,7 @@ function isDocsPath(path) {
   return /\.md$/i.test(path) && !isPromptProsePath(path);
 }
 
-// files: [{path, additions, deletions}] (blast-radius-cli.js's parseNumstat
+// files: [{path, additions, deletions}] (git-z.js's parseNumstatZ
 // shape). Returns the fact set both this module's own derivation and any
 // future caller needing the same classification can read directly, rather
 // than re-deriving it.
