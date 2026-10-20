@@ -5,6 +5,7 @@ files:
   - plugin/skills/review/code-mode-steps.md
   - plugin/bin/lib/coordination.js
   - plugin/bin/review-coordination.js
+  - plugin/bin/lib/console/resolve.js
 ---
 
 # Trust a Defect Several Review Lenses Flagged
@@ -39,4 +40,5 @@ files:
 
 ## Origin
 - Created during build of #3604. On #3258's medium-tier review, a superseded failed workflow run at the base sha marked a real PR failure as inherited. Lens agents 3a-B (high), 3b-B (low) and 3c-A (low) each reported it independently, but it stayed `unconfirmed` in every lens because each partner agent missed it. It was fixed only through the reviewing agent's manual Direct-verification override.
+- Updated by #3772: the console now drops a STAGED low-confidence line once a later `AUTO … Confirmed.` line in the same run confirms that lens and `path:line`, closing the step 3 red flag for reproduction-pair elevations too.
 - Related journeys: `keep-review-lenses-from-running-suites-3001.md` (the same medium-tier fan-out), `ratify-or-reverse-an-sdd-ruling-at-the-review-console-3401.md` (how this build's severity and chain-carving rulings reach the console).
