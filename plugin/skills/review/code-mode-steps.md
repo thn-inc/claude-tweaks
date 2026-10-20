@@ -366,6 +366,8 @@ This pass never replays Step 3.5 (each source's findings have no peers to debate
 
 Present a structured summary covering spec compliance, test results (from `/claude-tweaks:test`), code review findings, browser review (if run), implementation hindsight, tradeoffs, simplification, and a verdict (PASS or BLOCKED). The summary must include an Actions Performed table (when autonomous fixes were applied) and a Next Actions block (always). For the complete template, the context-signal rules, and the **compact clean-PASS form** (rendered instead of the full template when the verdict is PASS with zero findings, zero actions, and zero manual steps), read `review-summary-template.md` in this skill's directory.
 
+**Not run by /build (#3767).** When `$PIPELINE_RUN_DIR` is set, collect the plan steps `/build` logged as not run from its `decisions.md` per `review-summary-template.md`'s "Not run by /build" section, before choosing the compact or full form.
+
 **Verdict comment (`run-state.json` carries a `pr` object — `_shared/pr-run-comments.md`):** once
 the verdict is final (PASS or BLOCKED), compose a comment — its first line is the marker:
 `<!-- run-comment: verdict -->` in a single-spec run, or, when `$MULTISPEC_PARENT_DIR` is set (a
