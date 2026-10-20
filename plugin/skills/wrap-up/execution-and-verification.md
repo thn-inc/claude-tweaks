@@ -83,7 +83,7 @@ every mode; only git's own auto-merge runs, so there is no judgment to surface:
 
 Log with `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --status AUTO
 --section "/wrap-up" --step "Leave-open mergeability re-check" --reversibility high --text-file
-"{path}"`, the file holding `mergeability: {outcome}` per `_shared/auto-decision-log.md`'s Text
+"{text-file}"`, the file holding `mergeability: {outcome}` per `_shared/auto-decision-log.md`'s Text
 from git or a user paragraph — `{files}` and `{reason}` are git-supplied file names and error
 text, so they never go in a double-quoted `--text`. The phase-trace report's Verdict line
 (`summary-template.md`) and `/claude-tweaks:flow`'s resume-to-merge row

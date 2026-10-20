@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // bin/log-decision.js — append one _shared/auto-decision-log.md entry to a run's decisions.md.
-//   node bin/log-decision.js --run <run-dir> --status AUTO|STAGED|KEPT-PROMPT|SCANNED|REFUSED|SKIP --text "..." | --text-file <path> \
+//   node bin/log-decision.js --run <run-dir> --status AUTO|STAGED|KEPT-PROMPT|SCANNED|REFUSED|SKIP (--text "..." | --text-file <path>) \
 //     [--spec <n>] [--step <text>] [--reversibility high|med|low|n/a[" (qualifier)"]] [--lever "<k>=<v> (<source>)"] \
 //     [--section "/<skill>"] [--help]
 // --text-file reads the entry text from a file (one line), so git- or user-supplied text never passes through shell quoting.
@@ -12,7 +12,7 @@
 const fs = require('fs');
 const { STATUSES, formatEntry, resolveTarget, appendEntry } = require('./lib/log-decision/append');
 
-const USAGE = 'usage: log-decision.js --run <run-dir> --status AUTO|STAGED|KEPT-PROMPT|SCANNED|REFUSED|SKIP --text "..." | --text-file <path> [--spec <n>] [--step <text>] [--reversibility high|med|low|n/a[" (qualifier)"]] [--lever "<k>=<v> (<source>)"] [--section "/<skill>"] [--help]\n';
+const USAGE = 'usage: log-decision.js --run <run-dir> --status AUTO|STAGED|KEPT-PROMPT|SCANNED|REFUSED|SKIP (--text "..." | --text-file <path>) [--spec <n>] [--step <text>] [--reversibility high|med|low|n/a[" (qualifier)"]] [--lever "<k>=<v> (<source>)"] [--section "/<skill>"] [--help]\n';
 const REVERSIBILITY = ['high', 'med', 'low', 'n/a'];
 // One literal space before the qualifier: \s would admit "\n"/"\t" and split one entry across lines.
 const REVERSIBILITY_RE = new RegExp(`^(?:${REVERSIBILITY.join('|')})( \\(.+\\))?$`);

@@ -48,6 +48,27 @@ test('pipeline-run-dir.md cites bin/log-decision.js for the Edit/Write refusal c
   assert.match(PIPELINE_RUN_DIR, /bin\/log-decision\.js/);
 });
 
+// #3671: the "Text from git or a user: `--text-file`" paragraph is cited by name
+// from call sites in flow/ and wrap-up/; pin that it exists and carries its
+// load-bearing elements, so a rename or deletion fails here rather than leaving
+// dangling citations.
+function assertTextFileParagraph(text) {
+  assert.ok(text.includes('**Text from git or a user: `--text-file`.**'), 'lead-in present');
+  assert.ok(text.includes('session-tmp-resolve.js'), 'names session-tmp-resolve.js');
+  assert.ok(text.includes('--text-file "{path}"'), 'shows the --text-file "{path}" form');
+  assert.ok(text.includes('mutually exclusive'), 'states --text/--text-file are mutually exclusive');
+}
+
+test('auto-decision-log.md carries the Text from git or a user --text-file paragraph', () => {
+  assertTextFileParagraph(AUTO_DECISION_LOG);
+});
+
+test('go-red control: the --text-file paragraph pin throws when the lead-in is removed', () => {
+  const mutated = AUTO_DECISION_LOG.replace('**Text from git or a user: `--text-file`.**', '');
+  assert.notStrictEqual(mutated, AUTO_DECISION_LOG);
+  assert.throws(() => assertTextFileParagraph(mutated));
+});
+
 // --- Repo-wide negative sweep (Deliverable 4) ---
 // Windowed, not a same-line-only match: a redirect/heredoc token can wrap
 // onto an adjacent line in prose (see the project's own
