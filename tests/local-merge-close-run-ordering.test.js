@@ -1,0 +1,273 @@
+'use strict';
+// Conformance suite for record #3762: the local-merge auto-merge procedures ran `hooks.js close-run`
+// BEFORE the checks that can fail (branch guard, composer, a predicted conflict), so a failed merge
+// parked a run that was already closed -- unprotected, worktree assignment cleared (since #3023
+// close-run also nulls run-state.json's `worktree`). The order is now: pre-merge checks (nothing
+// mutated) -> close-run -> merge -> push, with a re-protect (`record-worktree`) on the late-failure path.
+//
+// One SITES entry per procedure; a new site is data only. Live-corpus read (skill-prose-conformance-tests:
+// a documented convention this project wants enforced) plus extract-and-run of the two fences whose
+// behavior matters. Go-red proof [IL-105]: the ordering check also runs against a frozen pre-change
+// excerpt. Whitespace collapsed on haystack and needle [IL-66].
+
+const { test } = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync, spawnSync } = require('node:child_process');
+const { readRunState } = require('../plugin/bin/lib/hooks/context');
+
+const ROOT = path.join(__dirname, '..');
+const PLUGIN_DIR = path.join(ROOT, 'plugin');
+const HOOKS = path.join(PLUGIN_DIR, 'bin', 'hooks.js');
+const collapse = (s) => s.replace(/\s+/g, ' ');
+const posix = (p) => p.split(path.sep).join('/');
+
+const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-lm-order-'));
+process.on('exit', () => fs.rmSync(SCRATCH, { recursive: true, force: true }));
+const WORKTREE = path.join(SCRATCH, 'fixture-worktree'); // never created: record-worktree only stamps the path
+const SUBJECT_DIR = path.join(SCRATCH, 'subject');
+fs.mkdirSync(SUBJECT_DIR, { recursive: true });
+
+// One entry per local-merge auto-merge procedure. `vars` maps each {placeholder} to its fixture value.
+const SITES = [
+  {
+    label: 'auto-merge-short-circuit.md',
+    file: 'plugin/skills/wrap-up/auto-merge-short-circuit.md',
+    vars: {
+      'integration-branch': 'main',
+      branch: 'feat',
+      issue: '1',
+      tag: 'fast-lane',
+      'subject-dir': posix(SUBJECT_DIR),
+      'worktree-path': posix(WORKTREE),
+    },
+  },
+];
+
+const PRE_MERGE_NEEDLE = 'git merge-tree --write-tree';
+const CLOSE_RUN_NEEDLE = 'bin/hooks.js" close-run --run';
+const MERGE_NEEDLE = 'git merge --no-ff';
+const REPROTECT_NEEDLE = 'bin/hooks.js" record-worktree --run';
+const WORKTREE_READ_NEEDLE = "run-state.json').worktree";
+
+const fencesOf = (text) => [...text.matchAll(/```bash\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+
+// The body of the unique ```bash fence containing `needle`.
+function extractFence(text, needle) {
+  const hits = fencesOf(text).filter((body) => body.includes(needle));
+  assert.strictEqual(hits.length, 1, `expected exactly one bash fence containing ${JSON.stringify(needle)}, found ${hits.length}`);
+  return hits[0];
+}
+
+// Run a fence under bash, substituting {placeholders} from `vars`; ${CLAUDE_PLUGIN_ROOT} and $RUN_DIR
+// expand from the child env, the way an agent's shell would.
+function runFence(body, { cwd, env = {}, vars = {} }) {
+  const script = body.replace(/\{([a-z-]+)\}/g, (whole, name) => (name in vars ? vars[name] : whole));
+  const r = spawnSync('bash', ['-c', script], {
+    cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', ...env },
+  });
+  return { code: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+// Index of `needle` inside the first bash fence that contains it and sits after `from`, in the collapsed
+// text (-1 when none): prose may mention the same command inline earlier, so fences are the anchor.
+function fenceIndex(text, needle, from = -1) {
+  const flat = collapse(text);
+  let found = -1;
+  for (const body of fencesOf(text)) {
+    const at = body.indexOf(needle);
+    if (at < 0) continue;
+    const flatBody = collapse(body);
+    const flatAt = flatBody.indexOf(collapse(needle));
+    const start = flat.indexOf(flatBody);
+    if (start < 0) continue;
+    const idx = start + flatAt;
+    if (idx > from && (found < 0 || idx < found)) found = idx;
+  }
+  return found;
+}
+
+function locate(text) {
+  const flat = collapse(text);
+  const P = fenceIndex(text, PRE_MERGE_NEEDLE);
+  const C = flat.indexOf(CLOSE_RUN_NEEDLE);
+  const M = fenceIndex(text, MERGE_NEEDLE);
+  const R = M < 0 ? -1 : fenceIndex(text, REPROTECT_NEEDLE, M);
+  const W = flat.lastIndexOf(WORKTREE_READ_NEEDLE); // the LAST read: an earlier ledger-deletion read is fine
+  const closeRuns = flat.split(CLOSE_RUN_NEEDLE).length - 1;
+  return { P, C, M, R, W, closeRuns };
+}
+
+// Ordering errors; empty when pre-merge checks < close-run < merge < re-protect and no worktree read follows close-run.
+function checkOrdering(text) {
+  const { P, C, M, R, W, closeRuns } = locate(text);
+  const errors = [];
+  if (P < 0) errors.push(`no bash fence containing ${PRE_MERGE_NEEDLE}`);
+  if (closeRuns !== 1) errors.push(`expected exactly one ${CLOSE_RUN_NEEDLE}, found ${closeRuns}`);
+  if (M < 0) errors.push(`no bash fence containing ${MERGE_NEEDLE}`);
+  if (R < 0) errors.push(`no ${REPROTECT_NEEDLE} fence after the merge`);
+  if (P >= 0 && C >= 0 && M >= 0 && R >= 0 && !(P < C && C < M && M < R)) {
+    errors.push(`order is not pre-merge checks < close-run < merge < re-protect (P=${P} C=${C} M=${M} R=${R})`);
+  }
+  if (W >= 0 && C >= 0 && W > C) errors.push(`the worktree is read from run-state.json after close-run nulled it (W=${W} C=${C})`);
+  return errors;
+}
+
+// Frozen pre-change excerpt: the local-merge opener and the merge fence exactly as they read before
+// #3762 (short-circuit lines 237-242 and 283-289), close-run ahead of the guard and composer.
+const PRE_CHANGE = [
+  '**`integration-model: local-merge`:** run the Verdict backstop above first (anything but `{n}=1`,',
+  'stop here and fall through). Then, before merging, clear this run\'s worktree',
+  'assignment as `flow/worktree-merge.md`\'s reconciliation does',
+  '(`node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"`) so',
+  'the merge, landing in the main checkout, isn\'t denied as a wrong-checkout',
+  'commit.',
+  '',
+  '```bash',
+  'CURRENT=$(git branch --show-current)',
+  'if [ "$CURRENT" != "{integration-branch}" ]; then',
+  '  echo "Main checkout is on \'$CURRENT\', not \'{integration-branch}\' — a concurrent session switched it. Abort, do not merge." >&2',
+  '  exit 1',
+  'fi',
+  'node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag {tag} --range {integration-branch}...{branch} --out-dir "{subject-dir}" || exit 1',
+  'git merge --no-ff {branch} -F "{subject-dir}/message.txt"',
+  '```',
+].join('\n');
+
+test('go-red: the frozen pre-change excerpt fails the ordering check', () => {
+  assert.ok(checkOrdering(PRE_CHANGE).length > 0);
+});
+
+function git(cwd, ...args) {
+  return execFileSync('git', ['-C', cwd, '-c', 'user.email=t@example.com', '-c', 'user.name=T', ...args], { encoding: 'utf8' });
+}
+
+// Main checkout on `main` with a clean `feat` branch adding b.txt. `conflict` makes both sides edit a.txt line 1.
+function makeRepo({ conflict = false } = {}) {
+  const dir = fs.mkdtempSync(path.join(SCRATCH, 'repo-'));
+  git(dir, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'one\ntwo\n');
+  git(dir, 'add', 'a.txt');
+  git(dir, 'commit', '-q', '-m', 'init');
+  git(dir, 'checkout', '-q', '-b', 'feat');
+  fs.writeFileSync(path.join(dir, 'b.txt'), 'b\n');
+  git(dir, 'add', 'b.txt');
+  if (conflict) fs.writeFileSync(path.join(dir, 'a.txt'), 'feat\ntwo\n');
+  git(dir, 'add', 'a.txt');
+  git(dir, 'commit', '-q', '-m', 'feat');
+  git(dir, 'checkout', '-q', 'main');
+  if (conflict) {
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'main\ntwo\n');
+    git(dir, 'add', 'a.txt');
+    git(dir, 'commit', '-q', '-m', 'main edit');
+  }
+  return dir;
+}
+
+// A plugin root whose compose-subject.js stub writes <--out-dir>/message.txt and exits $STUB_EXIT.
+function stubPluginRoot() {
+  const root = fs.mkdtempSync(path.join(SCRATCH, 'stub-plugin-'));
+  fs.mkdirSync(path.join(root, 'bin'));
+  fs.writeFileSync(path.join(root, 'bin', 'compose-subject.js'), [
+    "const fs = require('fs'); const path = require('path');",
+    "const dir = process.argv[process.argv.indexOf('--out-dir') + 1];",
+    "fs.mkdirSync(dir, { recursive: true });",
+    "fs.writeFileSync(path.join(dir, 'message.txt'), 'subject\\n');",
+    'process.exit(Number(process.env.STUB_EXIT || 0));',
+  ].join('\n'));
+  return root;
+}
+
+function tmpProject() {
+  const dir = fs.mkdtempSync(path.join(SCRATCH, 'project-'));
+  execFileSync('git', ['-C', dir, 'init', '-q']);
+  const run = path.join(dir, '.claude-tweaks', 'pipelines', '2026-10-20T000000-spec-1');
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'decisions.md'), '');
+  return { dir, run };
+}
+
+for (const site of SITES) {
+  const raw = fs.readFileSync(path.join(ROOT, site.file), 'utf8');
+  const { label, vars } = site;
+
+  test(`${label}: pre-merge checks, close-run, merge, re-protect appear in that order`, () => {
+    assert.deepStrictEqual(checkOrdering(raw), []);
+  });
+
+  test(`${label}: the pre-merge checks fence contains no close-run and no git merge --no-ff`, () => {
+    const fence = extractFence(raw, PRE_MERGE_NEEDLE);
+    assert.ok(!fence.includes(CLOSE_RUN_NEEDLE), 'pre-merge checks must not close the run');
+    assert.ok(!fence.includes(MERGE_NEEDLE), 'pre-merge checks must not merge');
+  });
+
+  test(`${label}: pre-merge checks fence, run against a fixture repo`, () => {
+    const fence = extractFence(raw, PRE_MERGE_NEEDLE);
+    const plugin = stubPluginRoot();
+    const runDir = fs.mkdtempSync(path.join(SCRATCH, 'run-'));
+    const runState = JSON.stringify({ worktree: '/wt', status: 'active' });
+    fs.writeFileSync(path.join(runDir, 'run-state.json'), runState);
+    const attempt = (repo, { env = {}, overrides = {} } = {}) => {
+      fs.rmSync(SUBJECT_DIR, { recursive: true, force: true });
+      const r = runFence(fence, {
+        cwd: repo,
+        env: { CLAUDE_PLUGIN_ROOT: posix(plugin), RUN_DIR: posix(runDir), ...env },
+        vars: { ...vars, ...overrides },
+      });
+      assert.strictEqual(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'), runState, 'run-state.json must be untouched');
+      assert.strictEqual(git(repo, 'status', '--porcelain'), '', 'the pre-merge checks must leave the tree untouched');
+      return r;
+    };
+
+    const clean = attempt(makeRepo());
+    assert.strictEqual(clean.code, 0, clean.stderr);
+    assert.ok(fs.existsSync(path.join(SUBJECT_DIR, 'message.txt')), 'the composer line ran');
+
+    const other = makeRepo();
+    git(other, 'checkout', '-q', '-b', 'other');
+    const guarded = attempt(other);
+    assert.strictEqual(guarded.code, 1);
+    assert.match(guarded.stderr, /Abort, do not merge/);
+
+    assert.notStrictEqual(attempt(makeRepo({ conflict: true })).code, 0, 'a predicted conflict aborts');
+    assert.notStrictEqual(attempt(makeRepo(), { env: { STUB_EXIT: '1' } }).code, 0, 'a composer failure aborts');
+    assert.notStrictEqual(attempt(makeRepo(), { overrides: { branch: 'nope' } }).code, 0, 'an unknown ref aborts, it does not merge');
+  });
+
+  test(`${label}: the re-protect fence restores the worktree assignment after close-run`, () => {
+    const fence = extractFence(raw, REPROTECT_NEEDLE);
+    const { dir, run } = tmpProject();
+    const hook = (...args) => execFileSync(process.execPath, [HOOKS, ...args], {
+      cwd: dir, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
+    });
+    hook('record-worktree', '--run', run, vars['worktree-path']);
+    hook('close-run', '--run', run);
+    let state = readRunState(run);
+    assert.strictEqual(state.worktree, null, 'close-run clears the worktree assignment');
+    assert.strictEqual(state.status, 'clean');
+
+    const r = runFence(fence, { cwd: dir, env: { CLAUDE_PLUGIN_ROOT: posix(PLUGIN_DIR), RUN_DIR: posix(run) }, vars });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.match(r.stdout, /worktree recorded for/);
+    state = readRunState(run);
+    assert.strictEqual(state.worktree, path.resolve(vars['worktree-path']));
+    assert.strictEqual(state.status, 'active');
+  });
+
+  test(`${label}: the fallback logs a re-stamp that does not print "worktree recorded"`, () => {
+    const { R } = locate(raw);
+    assert.ok(R > -1, 're-protect fence not found');
+    const after = collapse(raw).slice(R, R + 600);
+    assert.match(after, /worktree recorded/);
+    assert.match(after, /\blog\b/i, 'a re-stamp that fails must be logged, not ignored');
+  });
+}
+
+test('no plugin/ file still carries "Not fixed here; there is no"', () => {
+  const hits = fs.readdirSync(PLUGIN_DIR, { recursive: true })
+    .filter((rel) => String(rel).endsWith('.md'))
+    .filter((rel) => collapse(fs.readFileSync(path.join(PLUGIN_DIR, String(rel)), 'utf8')).includes('Not fixed here; there is no'));
+  assert.deepStrictEqual(hits, []);
+});
