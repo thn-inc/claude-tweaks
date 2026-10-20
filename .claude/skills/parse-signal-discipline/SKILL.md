@@ -269,10 +269,11 @@ When mechanizing a prose heuristic into a deterministic check:
 15. **A transform in front of a scanner owes its own could-not-parse verdict.** A scan over
     transformed text reads whatever the transform wrongly removed as "nothing here", so a
     transform that mis-parses produces a clean scan. `tests/helpers/strip-comments.js`'s
-    `stripComments` blanks comments to spaces before the path-guard, windows-hide and git-status
-    conformance scans count tokens, and it does not model regex literals. In
-    `const a = /"/; const b = "//"; fs.existsSync(b);` the quote inside the regex pairs with a later
-    string, the `//` after it opens a line comment, and the guarded call counted as zero.
+    `stripComments` blanks comments to spaces before the path-guard, windows-hide, git-status and
+    exit-code conformance scans count tokens. It models regex literals (#3585); its residual
+    ambiguity is a regex right after `)` or `}`, which it reads as division. In
+    `if (b) /"/.test(b); const c = "//"; fs.existsSync(c);` the quote inside the regex pairs with a
+    later string, the `//` after it opens a line comment, and the guarded call counted as zero.
     `stripperVerdict` (#3573) checks the transform with an oracle the raw input already passes: it
     compiles both the raw file and the stripped text under a CommonJS wrapper with `vm.Script`. A
     blanked comment never breaks syntax, but blanked code cuts a literal short. So "raw compiles,
@@ -281,6 +282,13 @@ When mechanizing a prose heuristic into a deterministic check:
     State what the oracle cannot see, as the helper's header does: a mis-parse whose stripped text
     still compiles passes unseen. Pin the planted mis-parse through every scan that calls the
     verdict, not only through the helper's own tests.
+    To settle how accurate the heuristic transform is, measure it against an exact parser that is
+    run offline from a scratch install and never added as a dependency. #3585 compared the
+    stripper's output with `acorn` 8.14.0's comment ranges, byte for byte over the real corpus:
+    the differing `plugin/bin` files went from 23 to 0, and 0 of the 1,275 corpus files differed.
+    That turned "accurate enough" from a judgment into a count. Pair the comparison with a mutation
+    check on every branch the corpus does not reach. A `${}` brace-depth mutant survived both
+    every unit test and the whole corpus, so the corpus count says nothing about those branches.
 16. **A precondition probe does not cover the main probe's own failure to run.** Some tools exit
     with one code for both "not found" and "could not run", so item 8's exit-code branch has
     nothing to split on: `git cat-file -e HEAD:<path>` exits 128 for a path missing from HEAD and

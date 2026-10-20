@@ -38,15 +38,12 @@ const DONTS = path.join(__dirname, '..', 'docs', 'donts.md');
 // generated source text (statusline-wrapper-source.js) and a bracket-string
 // form (`fs['realpathSync']`) still count.
 //
-// Regex literals are only partly modeled. A regex containing an escaped slash
-// (`/^https?:\/\//`, `/src\/*.js/`) no longer opens a comment, because both
-// openers carry the `(?<!\\)` guard. But a quote or backtick inside a regex can
-// pair with a later literal, and an unescaped `/*` or `//` in a character class
-// opens a comment; either can blank code after it. `evaluate` fails the lint on
-// any file whose stripped text stops compiling (`stripperVerdict`) instead of
-// counting it as zero tokens. A mis-parse whose stripped text still compiles
-// goes unseen, as the helper's header says. Computed member access
-// (`fs['realpath' + 'Sync']`, `fs[name]`) is also not seen.
+// The stripper models regex literals: a quote, backtick, `//` or `/*` inside one
+// stays code. Its one known ambiguity is a regex right after `)` or `}`, which it
+// reads as division. `evaluate` fails the lint on any file whose stripped text
+// stops compiling (`stripperVerdict`) instead of counting it as zero tokens, and
+// a misread that still compiles goes unseen, as the helper's header says.
+// Computed member access (`fs['realpath' + 'Sync']`, `fs[name]`) is also not seen.
 
 // -> { realpathSync, existsSync } token counts in `src`, comments excluded.
 // Calls, references (`{ realpath: fs.realpathSync.native }`), defaults
@@ -145,7 +142,7 @@ const ALLOWLIST = {
   'lib/residue/detect-test-script.js': { realpathSync: 1, existsSync: 1, reason: 'realpath of cwd is only the walk-up start (fallback path.resolve on throw); existsSync on <dir>/.git deliberately accepts a file or directory as the repo boundary (a linked worktree\'s .git is a file).' },
   'lib/skill-audit/skill-catalog.js': { existsSync: 1, reason: 'lists skill directories that contain a SKILL.md; presence is the filter.' },
   'lib/statusline-wrapper-source.js': { existsSync: 1, reason: 'inside the generated wrapper source text: exits 0 when the resolved statusline target is absent so a statusline failure never breaks the host session; the wrapper then requires or spawns it under its own error handling.' },
-  'lib/superpowers-version.js': { realpathSync: 2, reason: 'both tokens are `fs.realpathSync.native`: the default dep (69) and the notice-time dep (123); installed-plugins.js\'s selectEntry/safeRealpath and the projectPath vs projectDir comparison at 124 all go through that one injected .native form, so a pair is never resolved two ways and a mis-cased cwd still matches.' },
+  'lib/superpowers-version.js': { realpathSync: 2, reason: 'both tokens are `fs.realpathSync.native`: the default dep (64) and the notice-time dep (113); installed-plugins.js\'s selectEntry/safeRealpath and the projectPath vs projectDir comparison at 118 all go through that one injected .native form, so a pair is never resolved two ways and a mis-cased cwd still matches.' },
   'lib/timing/transcript.js': { realpathSync: 2, reason: 'both tokens inject `fsImpl.realpathSync` (the JS form this reader has always used) into path-guard\'s canonicalRealpath / resolveLeaf, so the projects root and each transcript leaf compared by isAncestorOrSelf resolve with the same function; the isFile check follows on the resolved path.' },
   'lib/verify/baseline.js': { realpathSync: 1, existsSync: 3, reason: 'tryRealpath canonicalizes cwd, the git repo root and the scratch worktree with the same JS realpath before path.relative compares them (falling back to the given path on throw); existsSync gates whether a failing test file exists on disk / in a checkout (the file is then hashed or run, and a miss makes the entry ineligible) and verifies the scratch worktree was removed.' },
   'lib/visual-decide/cli.js': { existsSync: 2, reason: 'polls for and reads the daemon\'s server-stopped marker file (stopped vs crashed); presence of the marker is the entire signal.' },
@@ -195,7 +192,7 @@ test('scanner does not let a /* inside a line comment swallow live code (proves 
 });
 
 test('a comment-stripper mis-parse is reported, not counted as zero tokens', () => {
-  assert.deepEqual(evaluate({ 'lib/x.js': 'const a = /"/; const b = "//"; fs.existsSync(b);' }, {}), [
+  assert.deepEqual(evaluate({ 'lib/x.js': 'if (b) /"/.test(b); const c = "//"; fs.existsSync(c);' }, {}), [
     'lib/x.js: the comment stripper mis-parsed this file: the stripped text no longer compiles, so live code was blanked and cannot be scanned — see tests/helpers/strip-comments.js',
   ]);
 });

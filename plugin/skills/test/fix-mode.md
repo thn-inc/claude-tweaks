@@ -2,11 +2,15 @@ Fix Mode (Auto + Interactive) — invocation and reporting for `/claude-tweaks:t
 
 # Step 3: Fix Mode
 
+## Re-verification
+
+Once a fix is committed, re-verify through the runner over the **complete** resolved check set per `verification.md` Step 2 — in a pipeline (`$PIPELINE_RUN_DIR` set), the scoped invocation from its Re-verify scoping section — so the pass stamp lands on the fix commit (#3284); a dispatched group's second call trusts the first call's result only through that stamp. Iterating on just the failed check while fixing is fine, but a narrowed run passes `--no-stamp` and never counts as the re-verification.
+
 ## Auto mode
 
 When a pipeline run directory exists, apply the `/claude-tweaks:test` row from the silences table in `_shared/auto-mode-contract.md`. Resolve `auto-fix-threshold` — `AUTO_FIX_THRESHOLD=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values --run "$PIPELINE_RUN_DIR" auto-fix-threshold)` (run dir per `_shared/run-dir-resolution.md`; the resolver serves the run's Manifesto answer, then `policy.yml`, then the schema default) and route per the `/claude-tweaks:test` row in `_shared/auto-mode-contract.md`. QA failures never auto-fix — they always stage.
 
-**Auto-fix flow:** make the changes, re-run the failed checks. On re-verification pass, log `AUTO {time} — Step 3: auto-fixed {N} {type} failures. Reversibility: high; commit: {hash}.` and proceed. On re-verification fail or new issues, downgrade to STAGED and surface at Review Console.
+**Auto-fix flow:** make the changes, commit, re-verify per Re-verification above. On re-verification pass, log `AUTO {time} — Step 3: auto-fixed {N} {type} failures. Reversibility: high; commit: {hash}.` and proceed. On re-verification fail or new issues, downgrade to STAGED and surface at Review Console.
 
 **Stage flow:** write the proposed fix to `staged/test-fix-{n}.patch` per `_shared/staged-patch.md` — a `Target:` / `Invariant:` / `Finding:` / `Staged-at:` preamble followed by the diff, validated with `git apply --check` from the worktree before logging (a failing check is handled per that file's Staging-time gate and surfaced here) — and log `STAGED {time} — Step 3: {N} {type} failures staged for review. Stage path: staged/test-fix-{n}.patch.`. The test gate fails until the user resolves at the Review Console, which applies the diff or, when later phases moved the target, re-derives the edit from `Invariant:`.
 
@@ -22,11 +26,11 @@ Call `AskUserQuestion` with:
 - Option 3 — `label`: `"Skip"`, `description`: `"I'll fix these manually"`
 
 If the user chooses to fix:
-- **Mechanical failures (lint/type):** make the changes directly, re-run the failed checks, report results.
-- **Behavioral test failures:** follow the reproduce-first discipline in `_shared/reproduce-first-discipline.md` (reproduce via `/superpowers:systematic-debugging`, fix the confirmed cause, escalate rather than guess if it can't be reproduced; once green, walk the causal-depth chain per the discipline's step 3), then re-run the failed checks to verify the fix and that nothing else regressed.
+- **Mechanical failures (lint/type):** make the changes directly, re-verify per Re-verification above, report results.
+- **Behavioral test failures:** follow the reproduce-first discipline in `_shared/reproduce-first-discipline.md` (reproduce via `/superpowers:systematic-debugging`, fix the confirmed cause, escalate rather than guess if it can't be reproduced; once green, walk the causal-depth chain per the discipline's step 3), then re-verify per Re-verification above to confirm the fix and that nothing else regressed.
 - Report the results.
 
-**Auto-fix for lint/type-only failures (interactive default):** When failures are exclusively lint errors or type errors (no test failures), auto-fix and re-verify without asking. State: "Auto-fixing {N} lint/type errors" and re-run the failed checks. If re-verification passes, proceed. If re-verification fails or new issues appear, stop and present the 3-option choice above. For test failures or mixed failure types (lint + test), always present the choice — and resolve test failures via reproduce-first debugging, not blind patching.
+**Auto-fix for lint/type-only failures (interactive default):** When failures are exclusively lint errors or type errors (no test failures), auto-fix and re-verify without asking. State: "Auto-fixing {N} lint/type errors" and re-verify per Re-verification above. If re-verification passes, proceed. If re-verification fails or new issues appear, stop and present the 3-option choice above. For test failures or mixed failure types (lint + test), always present the choice — and resolve test failures via reproduce-first debugging, not blind patching.
 
 **QA failures** are not auto-fixable — they indicate broken user-facing behavior that requires investigation. For QA failures, call `AskUserQuestion` with:
 

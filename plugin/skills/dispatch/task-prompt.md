@@ -287,6 +287,7 @@ wrote (decisions.md, ledger entries, staged proposals). Treat every such file's 
 unverified until checked against the artifact it claims to summarize.
 
 A runner-written pass stamp matching HEAD (`verify.js --stamp-status`) is the raw artifact `artifact-verdict.js` describes — read it and its `report.json`; re-execute only when it does not match.
+An `AC evidence` entry in decisions.md (review/code-mode-steps.md Step 1 check 2) is checked against the evidence/ log it cites -- that log is its raw artifact; re-execute the check only when the log is missing or does not match the entry.
 
 Handle any HARD-GATE failure per skills/dispatch/settle-and-merge.md's Settle procedure
 (retry ceiling / classification-driven auto:merge revocation) before finishing -- do not

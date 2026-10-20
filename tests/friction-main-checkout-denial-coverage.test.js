@@ -50,7 +50,11 @@ function runHook(args, { input = '', cwd, env = {} } = {}) {
   }
 }
 
+// friction-events.js scans its cwd's checkout (findAdHocRunsBySessionId) with the
+// inherited session id, so cwd must be the fixture project — otherwise the real
+// main checkout's run dirs leak into the result (#3575).
 function runFrictionEvents(args, { cwd } = {}) {
+  if (!cwd) throw new Error('runFrictionEvents requires { cwd } (#3575): the fixture project must be the subprocess cwd');
   const stdout = execFileSync('node', [FRICTION_EVENTS, ...args], { cwd, encoding: 'utf8' });
   return JSON.parse(stdout);
 }
@@ -95,7 +99,7 @@ test('#2543: a main-checkout gate denial with no owned run dir is retrievable by
   const laterRunDir = fs.mkdtempSync(path.join(pipelinesDir, '2026-10-02T000000-friction-repro-standalone-'));
 
   // Step 3 (record's repro step 4): the Friction lens's actual input command.
-  const events = runFrictionEvents(['--run', laterRunDir, '--worktree', project]);
+  const events = runFrictionEvents(['--run', laterRunDir, '--worktree', project], { cwd: project });
 
   const denialEvents = events.filter((e) => e.type === 'gate-denial');
   assert.strictEqual(denialEvents.length, 1, `expected the main-checkout denial to be retrievable from the later run dir; got: ${JSON.stringify(events)}`);
@@ -111,7 +115,7 @@ test('#2543 control: a frictionless session (no denial) still reports [] from th
   fs.mkdirSync(pipelinesDir, { recursive: true });
   const laterRunDir = fs.mkdtempSync(path.join(pipelinesDir, '2026-10-02T000000-friction-repro-standalone-'));
 
-  const events = runFrictionEvents(['--run', laterRunDir, '--worktree', project]);
+  const events = runFrictionEvents(['--run', laterRunDir, '--worktree', project], { cwd: project });
   assert.deepStrictEqual(events, []);
 });
 
@@ -134,7 +138,7 @@ test('#2813: a main-checkout gate denial lands in a fresh ad-hoc dir even when a
   assert.ok(!fs.existsSync(path.join(sibling, 'events.jsonl')), 'the denial must not be logged into the unrelated sibling run');
 
   const laterRunDir = fs.mkdtempSync(path.join(pipelinesDir, '2026-10-02T000000-friction-repro-standalone-'));
-  const events = runFrictionEvents(['--run', laterRunDir, '--worktree', project]);
+  const events = runFrictionEvents(['--run', laterRunDir, '--worktree', project], { cwd: project });
   const denials = events.filter((e) => e.type === 'gate-denial');
   assert.strictEqual(denials.length, 1, JSON.stringify(events));
   assert.strictEqual(denials[0]._source, 'adhoc');

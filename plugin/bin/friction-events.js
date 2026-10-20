@@ -138,6 +138,10 @@ function parseRunDirMintTime(runDir) {
 // therefore always the earlier, and the only locally-readable, signal of
 // the two "real claim" markers #2989's own Acceptance Criteria names.
 //
+// #3442: the HH:MM:SS that decisions.md logs is the writer's LOCAL wall-clock
+// time, not UTC (parseRunDirMintTime's mint instant stays UTC). The claim is
+// therefore resolved against the mint's local calendar day, not a `Z` suffix.
+//
 // An event appended to events.jsonl with a `ts` earlier than this boundary
 // did not come from this run's own pipeline — #2989's own incident found 9
 // `ask-user-question` and 2 `contract-violation` entries about wholly
@@ -158,14 +162,14 @@ function computeClaimBoundary(runDir) {
   try { raw = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'); } catch { return null; }
   const entry = /^- \S+ (\d{2}:\d{2}:\d{2}) —/m.exec(raw);
   if (!entry) return null;
-  const mintDay = path.basename(runDir).slice(0, 10); // YYYY-MM-DD
-  let claimed = new Date(`${mintDay}T${entry[1]}Z`);
+  const [hh, mm, ss] = entry[1].split(':').map(Number);
+  let claimed = new Date(mint.getFullYear(), mint.getMonth(), mint.getDate(), hh, mm, ss);
   if (Number.isNaN(claimed.getTime())) return null;
   // decisions.md logs HH:MM:SS only, never the date — if the computed
   // instant lands before the run's own mint (the claim actually happened
-  // after a UTC midnight rollover from the mint day), it belongs to the
-  // following day instead.
-  if (claimed < mint) claimed = new Date(claimed.getTime() + 24 * 60 * 60 * 1000);
+  // after a local midnight rollover from the mint day, #3442), it belongs
+  // to the following local day instead.
+  if (claimed < mint) claimed = new Date(mint.getFullYear(), mint.getMonth(), mint.getDate() + 1, hh, mm, ss);
   return claimed;
 }
 

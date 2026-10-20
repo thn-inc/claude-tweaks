@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { resolve, run, defaultDeps } = require('../../../plugin/bin/lib/impeccable-engine');
+const { resolve, run, defaultDeps, FAILURE_REASONS } = require('../../../plugin/bin/lib/impeccable-engine');
 
 // A minimal fake deps object. `entries` is the array that would normally sit
 // at installed_plugins.json's plugins["impeccable@impeccable"] — the JSON
@@ -15,7 +15,10 @@ const { resolve, run, defaultDeps } = require('../../../plugin/bin/lib/impeccabl
 function fakeDeps({ entries = [], exists = () => true, spawn, readFile, realpath } = {}) {
   const data = JSON.stringify({ version: 2, plugins: { 'impeccable@impeccable': entries } });
   return {
-    readFile: readFile || (() => data),
+    readFile: readFile || ((p) => {
+      if (String(p).endsWith('installed_plugins.json')) return data;
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    }),
     exists,
     realpath: realpath || ((p) => p),
     homedir: () => '/fake-home',
@@ -52,7 +55,7 @@ test('AC2: fake launcher that exits 127 under the engine probe -> engine-not-ins
   assert.strictEqual(out.fix, `${launcherFor('/fake/user/install')} engine-probe`);
 });
 
-test('AC3a: a matching project-scope entry plus a user-scope entry -> project wins', () => {
+test('AC3a: a project-scope entry listed before the user entry wins (file order)', () => {
   const entries = [
     { scope: 'project', projectPath: '/repo', installPath: '/path/project', version: '4.5.0' },
     { scope: 'user', installPath: '/path/user', version: '4.4.0' },
@@ -85,16 +88,14 @@ test('AC3c: a non-matching project-scope entry plus a user-scope entry -> user (
   assert.strictEqual(out.pluginRoot, '/path/user');
 });
 
-test('AC3d: two matching project-scope entries -> the longer projectPath wins', () => {
+test('AC3d: a project entry for an ancestor path does not apply below it -> user', () => {
   const entries = [
     { scope: 'project', projectPath: '/repo', installPath: '/path/short', version: '4.5.0' },
-    { scope: 'project', projectPath: '/repo/sub', installPath: '/path/long', version: '4.6.0' },
+    { scope: 'user', installPath: '/path/user', version: '4.4.0' },
   ];
-  const deps = fakeDeps({ entries });
-  const out = resolve({ projectPath: '/repo/sub/deep' }, deps);
+  const out = resolve({ projectPath: '/repo/sub' }, fakeDeps({ entries }));
   assert.strictEqual(out.ok, true);
-  assert.strictEqual(out.pluginRoot, '/path/long');
-  assert.strictEqual(out.pluginVersion, '4.6.0');
+  assert.strictEqual(out.pluginRoot, '/path/user');
 });
 
 test('AC4a: no impeccable@impeccable entry at all -> not-installed with the /plugin install fix', () => {
@@ -103,6 +104,7 @@ test('AC4a: no impeccable@impeccable entry at all -> not-installed with the /plu
   assert.strictEqual(out.ok, false);
   assert.strictEqual(out.reason, 'not-installed');
   assert.ok(out.fix.startsWith('/plugin install impeccable@impeccable'));
+  assert.strictEqual(out.detail, undefined);
 });
 
 test('AC4b: malformed installed_plugins.json -> not-installed with the /plugin install fix', () => {
@@ -195,14 +197,76 @@ test('AC3.1/AC3.2: a mis-cased projectPath resolves the project-scope entry thro
   }
 });
 
-test('AC6.1: a home-directory project entry is skipped (excludeHome) -> the user entry wins', () => {
+test('AC6.1: a home-directory project entry listed after the user entry loses by file order', () => {
   const entries = [
-    { scope: 'project', projectPath: '/fake-home', installPath: '/path/home', version: '4.5.0' },
     { scope: 'user', installPath: '/path/user', version: '4.4.0' },
+    { scope: 'project', projectPath: '/fake-home', installPath: '/path/home', version: '4.5.0' },
   ];
   const out = resolve({ projectPath: '/fake-home/work' }, fakeDeps({ entries }));
   assert.strictEqual(out.ok, true);
   assert.strictEqual(out.pluginRoot, '/path/user');
+});
+
+test('AC7.1/AC7.2: memenu-app fixture — [user 4.6.0, memenu-app 3.0.6] selects the 4.6.0 install, not upgrade-required', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'imp-first-applicable-'));
+  try {
+    const cfg = path.join(root, 'cfg');
+    fs.mkdirSync(path.join(cfg, 'plugins'), { recursive: true });
+    const mkInstall = (name, version) => {
+      const dir = path.join(root, name);
+      fs.mkdirSync(path.dirname(launcherFor(dir)), { recursive: true });
+      fs.writeFileSync(launcherFor(dir), '');
+      fs.mkdirSync(path.join(dir, '.claude-plugin'));
+      fs.writeFileSync(path.join(dir, '.claude-plugin', 'plugin.json'), JSON.stringify({ version }));
+      return dir;
+    };
+    const user4_6_0Dir = mkInstall('user-4.6.0', '4.6.0');
+    const memenuDir = mkInstall('memenu-3.0.6', '3.0.6');
+    const project = path.join(root, 'memenu-app');
+    fs.mkdirSync(project);
+    fs.writeFileSync(path.join(cfg, 'plugins', 'installed_plugins.json'), JSON.stringify({
+      version: 2,
+      plugins: {
+        'impeccable@impeccable': [
+          { scope: 'user', installPath: user4_6_0Dir, version: '4.6.0' },
+          { scope: 'project', projectPath: project, installPath: memenuDir, version: '3.0.6' },
+        ],
+      },
+    }));
+    const deps = {
+      ...fakeDeps(),
+      readFile: (p) => fs.readFileSync(p, 'utf8'),
+      exists: fs.existsSync,
+      env: { CLAUDE_CONFIG_DIR: cfg },
+      realpath: fs.realpathSync,
+    };
+    const out = resolve({ projectPath: project }, deps);
+    assert.strictEqual(out.ok, true);
+    assert.strictEqual(out.pluginRoot, user4_6_0Dir);
+    assert.strictEqual(out.pluginVersion, '4.6.0');
+    assert.strictEqual(out.scope, 'user');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC8.1: records present but none applies -> not-installed with fix and a detail naming the count', () => {
+  const entries = [
+    { scope: 'project', projectPath: '/a', installPath: '/path/a', version: '4.5.0' },
+    { scope: 'project', projectPath: '/b', installPath: '/path/b', version: '4.5.0' },
+    { scope: 'project', projectPath: '/c', installPath: '/path/c', version: '4.5.0' },
+  ];
+  const out = resolve({ projectPath: '/repo' }, fakeDeps({ entries }));
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'not-installed');
+  assert.ok(out.fix.startsWith('/plugin install impeccable@impeccable'));
+  assert.match(out.detail, /^3 install records for impeccable@impeccable, none applies to \/repo /);
+  assert.ok(out.detail.includes('no user or managed record'));
+});
+
+test('AC8.2: FAILURE_REASONS is unchanged', () => {
+  assert.deepStrictEqual([...FAILURE_REASONS], ['not-installed', 'upgrade-required', 'engine-not-installed', 'shape-mismatch', 'exec-failed', 'timeout']);
+  assert.ok(Object.isFrozen(FAILURE_REASONS));
 });
 
 test('defaultDeps() injects the native realpath and process.env', () => {

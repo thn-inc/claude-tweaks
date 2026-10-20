@@ -24,7 +24,7 @@ test('close-out step 2 names the positional signature', () => {
 });
 
 test('close-out step 2 names every string result the resolver returns', () => {
-  for (const s of ['gh-absent', 'network-failure', 'invalid-arguments']) {
+  for (const s of ['gh-absent', 'network-failure', 'invalid-arguments', 'pr-not-found']) {
     assert.ok(STEP_2.includes(`'${s}'`), `missing '${s}'`);
   }
 });
