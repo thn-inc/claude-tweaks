@@ -76,7 +76,7 @@ mistake, since every call site was bridged and verified before this line changed
 
 ## Step 2 — queue pull and per-dependency open-state check
 
-The queue pull uses the confirmed "list issues by label" mapping; the per-dependency open-state check (the `gh issue view "$DEP" --json state` loop) uses the confirmed "get single issue by number" mapping, checking the returned state field for `OPEN`. Both replace their `gh`-CLI equivalent one-for-one — no change to the surrounding `node -e` eligibility/dependency logic, which only consumes the fetched JSON shape, not how it was fetched. Once `$DISPATCH_QUEUE_RAW` is written, run the `#3691` timestamp-alias heredoc in the section below over it before any node block reads it, since without that alias the oldest-first tie-break silently degrades to array order.
+The queue pull uses the confirmed "list issues by label" mapping; the per-dependency open-state check (the `gh issue view "$DEP" --json state` loop) uses the confirmed "get single issue by number" mapping, checking the returned state field for `OPEN`. Both replace their `gh`-CLI equivalent one-for-one — no change to the surrounding `node -e` eligibility/dependency logic, which only consumes the fetched JSON shape, not how it was fetched. `list_issues`/`issue_read` return snake_case timestamps; `queue-pull-script.md` aliases them unconditionally right after each fetch (`#3691`, section below), so write the raw MCP JSON to `$DISPATCH_QUEUE_RAW` and `$DISPATCH_DEP_FRESHNESS` and run the script as written.
 
 ## Step 2 — `list_issues` `fields` parameter silently truncates labels (#3137)
 
@@ -109,20 +109,9 @@ note accordingly.
 
 **Confirmed live** (`gh`-absent firing, run `2026-10-20T022848-record-3630`, 2026-10-20): `mcp__github__list_issues` and `mcp__github__issue_read` return issue timestamps as `created_at` / `updated_at`. The dispatch consumers read camelCase `createdAt` / `updatedAt`. That firing's queue pull had to patch `dispatch-groups.json` with camelCase aliases before ranking.
 
-**Consequence.** Without the alias, nothing errors and the picks go wrong quietly. `next-ranking.md`'s oldest-first tie-break compares `new Date(undefined)` values, so every comparison is a tie and the pick falls back to array order. `bin/lib/issues/grouping.js`'s fast-lane bundling degrades the same way, and `queue-order.js`'s `buildFreshnessSignal` sees `updatedAt: undefined`.
+**Consequence.** Without the alias, nothing errors and the picks go wrong quietly. `next-ranking.md`'s oldest-first tie-break compares `new Date(undefined)` values, so every comparison is a tie and the pick falls back to array order. `bin/lib/issues/grouping.js`'s fast-lane bundling degrades the same way. The worst effect is a false queue-order cache hit: `queue-order.js`'s `buildFreshnessSignal` records `updatedAt: undefined`, `JSON.stringify` drops that key when the cache is persisted, and `signalsMatch` then compares `undefined !== undefined`, which is false. A record whose body or labels changed between two MCP firings therefore still matches the persisted signal, and the stale persisted groups are reused.
 
-**Required workaround.** Alias the timestamps once, at the queue-pull boundary: right after writing `$DISPATCH_QUEUE_RAW` with the Write tool, and after any other MCP-fetched issue array a queue-pull node block reads, before the first node block of `queue-pull-script.md`. `bin/lib/issues/mcp-issue-shape.js`'s `aliasMcpTimestamps` returns shallow copies with `createdAt` / `updatedAt` added from the string snake_case values. The snake_case originals stay, a camelCase key already present is kept, and a non-array input yields `[]`. Run this heredoc over the file:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" <<NODE_EVAL_EOF
-  const fs = require('fs');
-  const { aliasMcpTimestamps } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/mcp-issue-shape.js');
-  const issues = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
-  fs.writeFileSync(process.argv[1], JSON.stringify(aliasMcpTimestamps(issues)));
-NODE_EVAL_EOF
-```
-
-Running it twice is harmless, because a key already present is kept, but one pull needs one run.
+**Required workaround.** Alias the timestamps once, at the queue-pull boundary, and `queue-pull-script.md` already does it: its `alias_mcp_timestamps` function runs unconditionally right after the `$DISPATCH_QUEUE_RAW` write and after each `$DISPATCH_DEP_FRESHNESS` write, before any node block reads either file. It is a no-op on gh-shaped input, so an MCP-path agent need only write the raw MCP JSON to those two paths and run the script as written. `bin/lib/issues/mcp-issue-shape.js`'s `aliasMcpTimestamps` returns shallow copies with `createdAt` / `updatedAt` added from the string snake_case values. The snake_case originals stay, a camelCase value that is not `undefined` is kept, and a non-array input yields `[]`. Any other MCP-fetched issue array that a node block outside that script reads needs the same call.
 
 ## Step 2 — cross-PR overlap report (#1579)
 

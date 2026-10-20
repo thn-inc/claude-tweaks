@@ -15,8 +15,8 @@ function isPlainObject(value) {
 
 // Returns a new array of shallow copies; the input is never mutated. A
 // non-array input yields []. A non-object element (null, a primitive) passes
-// through unchanged. A camelCase key is set only when the copy does not
-// already carry it and the snake_case source is a string.
+// through unchanged. A camelCase key is set only when its value on the
+// copy is undefined (any other value is kept) and the snake_case source is a string.
 function aliasMcpTimestamps(issues) {
   if (!Array.isArray(issues)) return [];
   return issues.map((issue) => {
