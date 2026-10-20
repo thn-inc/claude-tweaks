@@ -61,6 +61,6 @@ label or drop the key entirely — never ship a template that stamps retired lab
 newly filed issues by default.
 
 Write the YAML exactly as above to `.github/ISSUE_TEMPLATE/agent-task.yml`. Declining is
-fine — freeform issues still work via `/specify`'s own issue-ingestion path (`SKILL.md`
+fine — freeform issues still work via `/specify`'s own issue-ingestion path (`specify/SKILL.md`
 "Resolve the input" case 1 already handles a freeform body with "more editorializing," per
 that section); the form just removes the translation judgment.
