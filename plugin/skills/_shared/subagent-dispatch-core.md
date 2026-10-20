@@ -66,7 +66,7 @@ outstanding. A reply that ends without a tool call ends the turn, whatever is st
 flight. **Fallback:** when no `Agent`/`Task` tool exists (`ToolSearch` finds none, deferred or
 otherwise — the normal case in a cloud routine sandbox), or a child has not reported when the
 bound expires, judge that unit in-session, applying the child's own checklist or template as a
-genuinely adversarial self-review, log the downgrade (which unit, why) to the run's `decisions.md`
+genuinely adversarial self-review, log the downgrade (which unit, why) to `{run-dir}/decisions.md`
 when a pipeline run directory is set, otherwise as one line in the reply, and mark every finding
 from that unit `unconfirmed`. Never skip the unit or fabricate a dispatch. A child whose unit was
 self-judged at the bound is abandoned: it no longer counts as outstanding, and the agent's final
