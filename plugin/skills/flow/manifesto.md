@@ -21,7 +21,7 @@ In every mode except `interactive`, the Manifesto **computes the levers and writ
 
 Walk the precedence chain (see `_shared/auto-mode-contract.md`):
 
-1. Explicit CLI args from `$ARGUMENTS` (e.g., `no-polish` sets `polish: skip`)
+1. Explicit CLI args from `$ARGUMENTS` (e.g., `no-polish` sets `polish: skip`; `pre-authorize-merge` sets `merge-authorization: pre-authorized`)
 2. Pipeline-config file from a previous run that's still active in this session (rare; usually skipped)
 3. Project policy (`.claude-tweaks/policy.yml`)
 4. Hardcoded sensible defaults (last resort)
@@ -151,7 +151,7 @@ I've pre-filled recommendations from project policy + sensible defaults. The Rec
 | Tidy aggressiveness | `moderate` | Reversible git-tracked cleanups auto-apply; outward GitHub writes stage (`conservative` opts down) |
 | Model stance | `default` | No effort shift or Frontier degrade; the resolver's table applies unmodified |
 | Merge verification | derived (`resolve-policy.js --run "$PIPELINE_RUN_DIR" --values merge-verification`) | `_shared/policy-schema-coverage.md`'s coverage-block ladder already encodes the safe answer per repo shape — no hardcoded literal |
-| Merge authorization | `ask` | Never a `policy.yml` default — only a live `confirm`/`hybrid` override sets it (`wrap-up/manifesto-authorized-merge.md`'s "Why policy.yml is excluded" section) |
+| Merge authorization | `ask` | Never a `policy.yml` default, and no `autonomy` ceiling sets it (`_shared/autonomy-ceiling.md`, #2734). Only a live answer does: the `pre-authorize-merge` invocation token (`pre-authorized`, source `arg` — under `confirm`/`hybrid` it pre-fills lever 13's Recommended value, still overridable) or a `confirm`/`hybrid` override (`wrap-up/manifesto-authorized-merge.md`'s "Why policy.yml is excluded"). On a dispatch-bound run (`SKILL.md` Step 1 rung 2) or a multi-record run, write `ask` despite the token and log one `SKIP` naming which (`log-decision.js --status SKIP --step "Manifesto merge-authorization" --text "condition: pre-authorize-merge on a {dispatch-bound|multi-record} run → fallback: merge-authorization written as ask"`) |
 | Design critique | `auto` | Critics run when the project shows design investment (`DESIGN.md`) or the record asks (`Design-intent:`); `full`/`off` opt in/out explicitly |
 
 `ceremony-profile` (lever 9) has no row here — its source is always `header`, bundle-folded per the
