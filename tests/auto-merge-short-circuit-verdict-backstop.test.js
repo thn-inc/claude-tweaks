@@ -108,14 +108,14 @@ test('the backstop runs once before acceptance labeling and ledger deletion, not
   assert.ok(backstop < labeling, 'the backstop must precede acceptance labeling and ledger deletion, not just the merge calls');
 });
 
-test('local-merge: the backstop precedes the merge, and the dispatch-claim relay', () => {
+test('local-merge: the backstop precedes the merge, and the dispatch-call relay', () => {
   assertPinned(
     /\*\*`integration-model: local-merge`:\*\* run the Verdict backstop above first[\s\S]{0,300}?before merging, clear this run's worktree/,
     'local-merge branch ordering',
   );
   assertPinned(
     /\*\*`integration-model: local-merge`:\*\* the checkout restriction is real — run the Verdict backstop above first/,
-    'dispatch-claim local-merge relay ordering',
+    'dispatch-call local-merge relay ordering',
   );
   const backstop = FLAT.indexOf('**Verdict backstop — re-read before any merge (#2941).**');
   const merge = FLAT.indexOf('git merge --no-ff {branch} -F "{subject-dir}/message.txt"');

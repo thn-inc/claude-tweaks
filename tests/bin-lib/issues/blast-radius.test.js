@@ -304,3 +304,48 @@ test('globToRegExp is exported so the verify scope engine can reuse the one matc
   assert.ok(globToRegExp('apps/api/**').test('apps/api/src/a.ts'));
   assert.ok(!globToRegExp('apps/*/x.ts').test('apps/a/b/x.ts'));
 });
+
+// --- #3680: prompt prose is never a test file ---
+
+test('AC1.1: a prompt-prose file under skills/test/ is non-test and counted as implementation', () => {
+  const classified = classifyDiffFiles([{ path: 'plugin/skills/test/qa-prompts.md', additions: 5, deletions: 0 }]);
+  assert.strictEqual(classified[0].isTest, false);
+  const summary = blastRadiusSummary(classified);
+  assert.strictEqual(summary.implFiles, 1);
+  assert.strictEqual(summary.implLines, 5);
+  assert.strictEqual(summary.testFiles, 0);
+  assert.strictEqual(summary.testLines, 0);
+});
+
+test('AC2.1: tests/foo.test.js and tests/fixtures/x.json still classify as test', () => {
+  const classified = classifyDiffFiles([
+    { path: 'tests/foo.test.js', additions: 1, deletions: 0 },
+    { path: 'tests/fixtures/x.json', additions: 1, deletions: 0 },
+  ]);
+  assert.deepStrictEqual(classified.map((f) => f.isTest), [true, true]);
+});
+
+test('#3680: prompt prose under agents/ or commands/ test directories is non-test too', () => {
+  const classified = classifyDiffFiles([
+    { path: '.claude/commands/test/run.md', additions: 1, deletions: 0 },
+    { path: 'plugin/agents/test/qa.md', additions: 1, deletions: 0 },
+  ]);
+  assert.deepStrictEqual(classified.map((f) => f.isTest), [false, false]);
+});
+
+test('#3680: a non-markdown file under skills/test/ is still a test file', () => {
+  assert.strictEqual(classifyDiffFiles([{ path: 'plugin/skills/test/fixture.json', additions: 1, deletions: 0 }])[0].isTest, true);
+});
+
+test('#3680: skill-shaped markdown nested in a tests/ tree errs toward implementation (deliberate)', () => {
+  assert.strictEqual(classifyDiffFiles([{ path: 'tests/fixtures/skills/x/SKILL.md', additions: 1, deletions: 0 }])[0].isTest, false);
+});
+
+test('#3680: isPromptProsePath and PROMPT_PROSE_DIRS live in blast-radius.js and are re-exported by ceremony-derive.js', () => {
+  const br = require('../../../plugin/bin/lib/issues/blast-radius');
+  const cd = require('../../../plugin/bin/lib/dispatch/ceremony-derive');
+  assert.strictEqual(typeof br.isPromptProsePath, 'function');
+  assert.deepStrictEqual([...br.PROMPT_PROSE_DIRS], ['skills', 'agents', 'commands']);
+  assert.strictEqual(cd.isPromptProsePath, br.isPromptProsePath);
+  assert.strictEqual(cd.PROMPT_PROSE_DIRS, br.PROMPT_PROSE_DIRS);
+});

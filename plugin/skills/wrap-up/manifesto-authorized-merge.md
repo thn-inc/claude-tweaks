@@ -55,10 +55,7 @@ Both the `pr-first` and `local-merge` subsections of the Auto-merge short-circui
 `AUTO {time} — Fast-lane auto-merge: issue #{n}, ...` line on the `auto:merge`-label path. On the
 `merge-authorization`-lever path (no `auto:merge` label present), log instead:
 
-`AUTO {time} — Manifesto-authorized auto-merge: issue #{n}, assess-agent-autonomy verdict
-auto-merge (see RATIONALE), pr-first-merge outcome {merged|armed|pending-review}. {Merge commit:
-{sha}. Reversibility: high (git revert). | Reversibility: n/a (nothing merged yet).} [lever:
-merge-authorization=pre-authorized (run-config)]`
+`AUTO {time} — Manifesto-authorized auto-merge: issue #{n}, assess-agent-autonomy verdict auto-merge (see RATIONALE), pr-first-merge outcome {merged|armed|pending-review}. {Merge commit: {sha}. Reversibility: high (git revert). | Reversibility: n/a (nothing merged yet).} [lever: merge-authorization=pre-authorized (run-config)]` (one line: `archive-run`'s guard matches the `verdict auto-merge` phrase on a single line)
 
 Same shape, same placement, in both the `pr-first` and `local-merge` subsections — only the tag and
 the trailing `[lever: ...]` attribution differ from the `auto:merge`-label path's existing line.

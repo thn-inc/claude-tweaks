@@ -31,12 +31,43 @@ test('parses repeatable --cmd plus --json, --log-dir, and --count-stamp', () => 
     base: null,
     integrationBranch: null,
     changedFiles: false,
+    ignoreStamp: false,
     run: null,
     cwd: null,
     baseline: null,
     baselineCmds: [],
     cmdEnvs: [],
   });
+});
+
+test('AC3.1: --ignore-stamp parses under --changed-files', () => {
+  const got = parseArgs(['--changed-files', '--ignore-stamp', '--integration-branch', 'main']);
+  assert.strictEqual(got.ignoreStamp, true);
+});
+
+test('--ignore-stamp leaves the other --changed-files flags and conflicts unchanged', () => {
+  const got = parseArgs(['--changed-files', '--ignore-stamp', '--base', 'abc123', '--integration-branch', 'main']);
+  assert.strictEqual(got.base, 'abc123');
+  assert.strictEqual(got.integrationBranch, 'main');
+  assert.throws(() => parseArgs(['--changed-files', '--ignore-stamp', '--cmd', 'tests=x']),
+    { message: '--changed-files takes no --cmd' });
+  assert.throws(() => parseArgs(['--changed-files', '--ignore-stamp', '--scope', 'd.json']),
+    { message: '--changed-files takes no --scope' });
+});
+
+test('AC3.1: --ignore-stamp on a check run is a usage error', () => {
+  const expected = { message: '--ignore-stamp applies only to --changed-files' };
+  assert.throws(() => parseArgs(['--cmd', 'tests=npm test', '--ignore-stamp']), expected);
+  assert.throws(() => parseArgs(['--cmd', 'tests=x', '--scope', 'd.json', '--ignore-stamp']), expected);
+});
+
+test('AC3.1: --ignore-stamp with --stamp-status is a usage error', () => {
+  assert.throws(() => parseArgs(['--stamp-status', '--ignore-stamp']),
+    { message: '--ignore-stamp applies only to --changed-files' });
+});
+
+test('USAGE names --ignore-stamp on the --changed-files line', () => {
+  assert.match(USAGE, /--changed-files \[--base <ref>\] \[--integration-branch <name>\] \[--ignore-stamp\]/);
 });
 
 test('--cwd sets the cwd every --cmd spawns in (#2376)', () => {

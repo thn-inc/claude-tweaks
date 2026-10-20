@@ -120,8 +120,8 @@ function coreForegroundSection(text) {
   return text.slice(start, next === -1 ? undefined : next);
 }
 
-// The facts the final-review fix wave added (abandoned child, final STATUS, re-wake, the 30s x 40
-// per-wave bound and its log line). Written to match every copy of the rule -- core, item 7, both
+// The facts the final-review fix wave added (abandoned child, the whole-final-reply re-wake, the
+// sleep 20 x 60 per-wave bound and its log line). Written to match every copy of the rule -- core, item 7, both
 // templates -- so each copy's list spreads this one array, and each pattern matches exactly once
 // per copy so its go-red proof removes the only occurrence.
 const SHARED_RULE = [
@@ -131,15 +131,17 @@ const SHARED_RULE = [
   [/\bis\s+abandoned\b/, 'a child self-judged at the bound is abandoned'],
   [/no\s+longer\s+counts\s+as\s+outstanding/, 'an abandoned child no longer counts as outstanding'],
   [/final\s+reply\s+still\s+ends\s+with\s+(?:its\s+usual\s+)?`STATUS:/, 'the final reply after an abandoned child still ends with STATUS:'],
-  [/re-wakes\s+(?:you|the\s+agent)\s+after\s+(?:your|its)\s+final\s+reply[^.]*?\brepeat(?:ing)?\s+that\s+final\s+`STATUS:`\s+line\s+unchanged/, 'a late re-wake after the final reply repeats the final STATUS: line unchanged'],
+  [/re-wakes\s+(?:you|the\s+agent)\s+after\s+(?:your|its)\s+final\s+reply[^.]*?\brepeat(?:ing)?\s+(?:its|your)\s+whole\s+final\s+reply\s+unchanged/, 'a late re-wake after the final reply repeats the whole final reply unchanged'],
+  [/dispatcher\s+keeps\s+only\s+(?:the\s+agent's|your)\s+latest\s+reply/, 'the reason: the dispatcher keeps only the latest reply'],
   [/`ToolSearch`\s+finds\s+none,\s+deferred\s+or\s+otherwise/, 'the no-Agent-tool fallback checks ToolSearch for a deferred Agent tool'],
   [/child\s+that\s+reports\s+a\s+failure/i, 'a child that reports a failure has reported and is handled per the dispatching skill'],
   [/write-capable\s+child[\s\S]*?never\s+redone/, 'a write-capable child silent at the bound is never redone in-session'],
+  [/returns\s+the\s+child's\s+own\s+reply[\s\S]{0,80}?that\s+child\s+has\s+reported\s+and\s+needs\s+no\s+wait/, "a call that returns the child's own reply means that child has reported"],
 ];
 
 // Each `\s+` absorbs the hard line wrapping, as in REQUIRED above.
 const KEEP_ALIVE = [
-  [/always\s+launches\s+async/i, 'a nested Agent call always launches async'],
+  [/\blaunches\s+async/i, 'a nested Agent call launches async'],
   [/keep[s]?\s+(?:its|your|the)\s+(?:own\s+)?turn\s+alive/i, 'the dispatcher keeps its own turn alive'],
   [/never\s+end[s]?\s+(?:its|your|the)\s+turn\s+with\s+(?:a|one)\s+child\s+outstanding/i, 'the dispatcher never ends its turn with a child outstanding'],
   [/no\s+`Agent`\/`Task`\s+tool/i, 'the fallback covers the no-Agent/Task-tool case'],
@@ -270,7 +272,7 @@ function item7Block(text) {
 const ITEM7 = [
   [/reply that ends without a tool call ends\s+(?:the|your)\s+turn/i, 'a reply that ends without a tool call ends the turn'],
   [/INTERIM_STATUS/, 'the #2714 interim-marker rule is kept'],
-  [/always\s+launches\s+async/i, 'a nested Agent call always launches async'],
+  [/\blaunches\s+async/i, 'a nested Agent call launches async'],
   [/`unconfirmed`/, 'the self-judged fallback marks findings unconfirmed'],
   [/never\s+end\s+your\s+turn\s+with\s+one\s+outstanding/, 'item 7 never ends the turn with a child outstanding'],
   [/Ignore\s+a\s+late\s+result/, 'item 7 ignores a late result'],
@@ -280,7 +282,7 @@ const item7Missing = missingFactsOf(ITEM7);
 const dropsNothingWakes = (block) => !/nothing wakes you/.test(block);
 
 const TEMPLATE_KEEP_ALIVE = [
-  [/always\s+launches\s+async/i, 'a nested Agent call always launches async'],
+  [/\blaunches\s+async/i, 'a nested Agent call launches async'],
   [/never\s+end\s+this\s+turn\s+with\s+(?:a|one)\s+child\s+outstanding/i, 'the turn never ends with a child outstanding'],
   [/ignore\s+that\s+child's\s+result\s+if\s+it\s+arrives\s+later/i, 'a late child result is ignored'],
   [/reply\s+that\s+ends\s+without\s+a\s+tool\s+call\s+ends\s+the\s+turn/i, 'a reply that ends without a tool call ends the turn'],
@@ -408,4 +410,100 @@ test('a mismatched keep-alive primitive copy can actually go red (discrimination
       assert.deepEqual(mismatchedPrimitiveCopies({ ...copies, [name]: doctored }), [name], `a ${label} mismatch in only ${name} must turn exactly that copy red`);
     }
   }
+});
+
+// #3722: the dispatcher keeps only the latest reply, so a re-wake answered with the bare STATUS line
+// replaced the report. No copy may keep the STATUS-only wording.
+const STATUS_ONLY = /repeat(?:ing)?\s+that\s+final\s+`STATUS:`\s+line/;
+const repeatsStatusOnlyCopies = (copies) => Object.entries(copies).filter(([, t]) => STATUS_ONLY.test(t)).map(([n]) => n);
+
+test('no copy answers a late re-wake with the STATUS line alone (#3722)', () => {
+  assert.deepEqual(repeatsStatusOnlyCopies(primitiveCopies()), [], 'no copy may answer a late re-wake with the bare STATUS line (#3722)');
+});
+
+test('a copy reverting to the STATUS-only wording goes red (discrimination proof)', () => {
+  const copies = primitiveCopies();
+  for (const name of Object.keys(copies)) {
+    const doctored = { ...copies, [name]: copies[name] + ' repeat that final `STATUS:` line unchanged.' };
+    assert.deepEqual(repeatsStatusOnlyCopies(doctored), [name], `a STATUS-only wording in only ${name} must turn exactly that copy red`);
+  }
+});
+
+const CORE_ABANDONED = [
+  [/abandoned\s+child\s+cannot\s+be\s+stopped/, 'an abandoned child cannot be stopped'],
+  [/`TaskStop`\s+refuses\s+a\s+nested\s+child/, 'TaskStop refuses a nested child'],
+  [/hold\s+the\s+agent's\s+final\s+result\s+until\s+it\s+finishes/, "the harness may hold the agent's final result until it finishes"],
+  [/bound\s+caps\s+the\s+wait,\s+not\s+the\s+delivery/, 'the bound caps the wait, not the delivery'],
+];
+const coreAbandonedMissing = missingFactsOf(CORE_ABANDONED);
+
+test('the core section records that an abandoned nested child cannot be stopped and may delay the final result (#3722)', () => {
+  assert.deepEqual(coreAbandonedMissing(coreForegroundSection(fs.readFileSync(CORE, 'utf8'))), [], 'Foreground Execution Discipline must record the abandoned-child facts (#3722)');
+});
+
+test('each core abandoned-child assertion can actually go red on its own (discrimination proof)', () => {
+  assertEachPatternGoesRed(coreForegroundSection(fs.readFileSync(CORE, 'utf8')), CORE_ABANDONED, coreAbandonedMissing);
+});
+
+// #3722: interactive 2.1.302 re-wakes a dispatched agent; what holds everywhere is "cannot count on it".
+const UNQUALIFIED = /never\s+(?:be\s+)?(?:re-)?woken|nothing\s+(?:ever\s+)?re-wakes|no\s+notification\s+mechanism|none\s+reaches\s+a\s+dispatched\s+agent/i;
+const claimSites = () => ({
+  ...primitiveCopies(),
+  'build/dispatch.md': fs.readFileSync(BUILD_DISPATCH, 'utf8'),
+  'review/step3 Foreground note': foregroundNote(fs.readFileSync(STEP3, 'utf8')),
+});
+const unqualifiedClaimSites = (sites) => Object.entries(sites).filter(([, t]) => UNQUALIFIED.test(t)).map(([n]) => n);
+test('no copy states the never-re-woken claim unqualified (#3722)', () => {
+  assert.deepEqual(unqualifiedClaimSites(claimSites()), [], 'no copy may state the never-re-woken claim unqualified (#3722)');
+});
+test('an unqualified never-re-woken claim in any one copy goes red (discrimination proof)', () => {
+  const sites = claimSites();
+  for (const name of Object.keys(sites)) {
+    const doctored = { ...sites, [name]: sites[name] + ' It is never re-woken.' };
+    assert.deepEqual(unqualifiedClaimSites(doctored), [name], `an unqualified claim in only ${name} must turn exactly that copy red`);
+  }
+});
+
+// The positive twin of the check above: every claim site must carry the qualified wording.
+const QUALIFIED = /cannot\s+count\s+on\s+being\s+re-woken/;
+const unqualifiedWordingSites = (sites) => Object.entries(sites).filter(([, t]) => !QUALIFIED.test(t)).map(([n]) => n);
+test('every re-wake claim site carries the qualified "cannot count on being re-woken" wording (#3722)', () => {
+  assert.deepEqual(unqualifiedWordingSites(claimSites()), [], 'every claim site must state the qualified wording (#3722)');
+});
+test('a claim site losing the qualified wording goes red (discrimination proof)', () => {
+  const sites = claimSites();
+  for (const name of Object.keys(sites)) {
+    const doctored = { ...sites, [name]: sites[name].replace(new RegExp(QUALIFIED.source, 'g'), '') };
+    assert.notEqual(doctored[name], sites[name], `anchor text for the qualified wording in ${name} not found — proof cannot discriminate`);
+    assert.deepEqual(unqualifiedWordingSites(doctored), [name], `losing the qualified wording in only ${name} must turn exactly that site red`);
+  }
+});
+
+// A synchronous nested call returns the child's own reply, so "always launches async" is false.
+const ALWAYS_ASYNC = /always\s+launches\s+async/i;
+const alwaysAsyncCopies = (copies) => Object.entries(copies).filter(([, t]) => ALWAYS_ASYNC.test(t)).map(([n]) => n);
+test('no copy says a nested Agent call always launches async (#3722)', () => {
+  assert.deepEqual(alwaysAsyncCopies(primitiveCopies()), [], 'no copy may say a nested Agent call always launches async (#3722)');
+});
+test('a copy reverting to "always launches async" goes red (discrimination proof)', () => {
+  const copies = primitiveCopies();
+  for (const name of Object.keys(copies)) {
+    const doctored = { ...copies, [name]: copies[name] + ' It always launches async.' };
+    assert.deepEqual(alwaysAsyncCopies(doctored), [name], `an "always launches async" in only ${name} must turn exactly that copy red`);
+  }
+});
+
+const CORE_MEASURED = [
+  [/cannot\s+count\s+on\s+being\s+re-woken\s+once\s+its\s+turn\s+ends/, 'the Background work claim is qualified'],
+  [/Measured\s+on\s+Claude\s+Code\s+\(#3722\)/, 'the measured facts cite #3722'],
+  [/interactive\s+2\.1\.302\s+holds\s+it\s+open/, 'interactive 2.1.302 holds the agent open'],
+  [/headless\s+\(`claude\s+-p`\)\s+2\.1\.299\s+and\s+older\s+never\s+re-wake\s+it/, 'headless 2.1.299 and older never re-wake it'],
+  [/headless\s+2\.1\.302\s+and\s+later\s+runs\s+a\s+nested\s+`Agent`\s+call\s+synchronously/, 'headless 2.1.302+ runs nested Agent calls synchronously'],
+];
+const coreMeasuredMissing = missingFactsOf(CORE_MEASURED);
+test('the core Background work paragraph names the measured re-wake facts (#3722)', () => {
+  assert.deepEqual(coreMeasuredMissing(coreForegroundSection(fs.readFileSync(CORE, 'utf8'))), [], 'Background work must name the measured re-wake facts (#3722)');
+});
+test('each core measured-fact assertion can actually go red on its own (discrimination proof)', () => {
+  assertEachPatternGoesRed(coreForegroundSection(fs.readFileSync(CORE, 'utf8')), CORE_MEASURED, coreMeasuredMissing);
 });

@@ -62,7 +62,22 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_EXCLUSIONS" <<NODE
   fs.writeFileSync(process.argv[1], JSON.stringify(kept));
 NODE_EVAL_EOF
 
+# #3691: the MCP list_issues/issue_read tools return snake_case created_at/updated_at;
+# every reader below wants camelCase createdAt/updatedAt. This adds the camelCase keys
+# in place to each JSON file it is given, unconditionally after each fetch -- a no-op
+# on gh-shaped input, so the gh and MCP paths run the same line.
+alias_mcp_timestamps() {
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$@" <<NODE_EVAL_EOF
+  const fs = require('fs');
+  const { aliasMcpTimestamps } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/mcp-issue-shape.js');
+  for (const file of process.argv.slice(1)) {
+    fs.writeFileSync(file, JSON.stringify(aliasMcpTimestamps(JSON.parse(fs.readFileSync(file, 'utf8')))));
+  }
+NODE_EVAL_EOF
+}
+
 gh issue list --label auto:build --state open --json number,title,body,labels,createdAt,updatedAt,state --limit 500 > "$DISPATCH_QUEUE_RAW"
+alias_mcp_timestamps "$DISPATCH_QUEUE_RAW"
 QUEUE_RAW_COUNT=$(node -e "console.log(require(process.argv[1]).length)" "$DISPATCH_QUEUE_RAW")
 if [ "$QUEUE_RAW_COUNT" -ge 500 ]; then
   echo "Warning: the auto:build queue pull returned exactly the --limit cap (500) — this repo may have more open auto:build records than fetched. gh issue list returns newest-first, so any records beyond the cap are the OLDEST same-priority ones, exactly what next's own oldest-first tie-break (Step 3) exists to surface first. Consider raising the cap, or filing this as a signal to re-triage the queue down." >&2
@@ -96,6 +111,7 @@ echo '[]' > "$DISPATCH_FASTLANE_BUNDLES"
 if [ -n "$DISPATCH_DEP_NUMBERS" ]; then
   gh issue list --search "$(echo "$DISPATCH_DEP_NUMBERS" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || echo '[]' > "$DISPATCH_DEP_FRESHNESS"
 fi
+alias_mcp_timestamps "$DISPATCH_DEP_FRESHNESS"
 CACHE_HIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPATCH_DEP_FRESHNESS" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" "$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values dispatch-group-size-guard)" "$DISPATCH_FASTLANE_BUNDLES" <<NODE_EVAL_EOF
   const { mainCheckoutRoot } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/hooks/worktree-detect.js');
   const { readOrder, buildFreshnessSignal, cacheUsable } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/queue-order.js');
@@ -263,6 +279,7 @@ echo '[]' > "$DISPATCH_DEP_FRESHNESS"
 if [ -n "$DISPATCH_ALL_DEP_NUMBERS" ]; then
   gh issue list --search "$(echo "$DISPATCH_ALL_DEP_NUMBERS" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || echo '[]' > "$DISPATCH_DEP_FRESHNESS"
 fi
+alias_mcp_timestamps "$DISPATCH_DEP_FRESHNESS"
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPATCH_DEP_FRESHNESS" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_FASTLANE_BUNDLES" <<NODE_EVAL_EOF
   const { mainCheckoutRoot } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/hooks/worktree-detect.js');
   const path = require('path');
@@ -690,6 +707,6 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
 NODE_EVAL_EOF
 ```
 
-**MCP path** (`gh` unavailable): see `mcp-transport.md` in this skill's directory for the queue pull and the per-dependency open-state check. Both replace their `gh`-CLI equivalent one-for-one — no change to the surrounding `node -e` eligibility/dependency logic, which only consumes the fetched JSON shape, not how it was fetched. **That file's own `#3137` subsection documents a `list_issues` `fields`-triggered label-truncation gotcha and its required per-candidate cross-check mitigation — read it before trusting this pull's labels for any eligibility/exclusion decision.**
+**MCP path** (`gh` unavailable): see `mcp-transport.md` in this skill's directory for the queue pull and the per-dependency open-state check. Both replace their `gh`-CLI equivalent one-for-one — no change to the surrounding `node -e` eligibility/dependency logic, which only consumes the fetched JSON shape, not how it was fetched. **That file's own `#3137` subsection documents a `list_issues` `fields`-triggered label-truncation gotcha and its required per-candidate cross-check mitigation — read it before trusting this pull's labels for any eligibility/exclusion decision.** `list_issues`/`issue_read` return snake_case `created_at`/`updated_at`; this script's `alias_mcp_timestamps` calls (`#3691`) alias both `$DISPATCH_QUEUE_RAW` and `$DISPATCH_DEP_FRESHNESS` unconditionally, so write the raw MCP JSON to those paths and run the script as written (see `mcp-transport.md`'s `#3691` subsection). The Write calls split the script across several Bash calls and a shell function does not survive between calls, so re-run the `alias_mcp_timestamps() { … }` definition at the top of any Bash call that calls it.
 
 **Queue-pull notes.** Read `queue-pull-notes.md` in this skill's directory when this repo sets `work-links: native` (the `bin/resolve-blockers.js` branch above), or when either pull returns exactly its `--limit` cap — it covers why the two bulk calls plus the bounded per-dependency fallback are shaped this way, what a truncated pull silently drops on each and which one has no per-record recovery, and the native query's fail-safe posture (including the `gh`-absent case). It changes nothing in the script above; skip it otherwise.

@@ -75,7 +75,7 @@ function parseArgs(argv) {
 // clean (dirty !== false blocks the stamp the same as a real dirty tree).
 function computeDirty(execImpl = execFileSync, cwd = process.cwd()) {
   try {
-    const out = String(execImpl('git', ['--no-optional-locks', 'status', '--porcelain', '--', '.', ':(exclude).claude-tweaks/artifacts'], { encoding: 'utf8', cwd })).trim();
+    const out = String(execImpl('git', ['--no-optional-locks', 'status', '--porcelain', '--', '.', ':(exclude).claude-tweaks/artifacts'], { encoding: 'utf8', cwd })).trim(); // git-path-read: not a path list (emptiness only)
     return out !== '';
   } catch {
     return null;

@@ -138,7 +138,7 @@ Never as `off`: an unreadable lever must not become the one value that skips the
 **Read state first — never parse stderr first.** Before any merge attempt, regardless of value:
 
 ```bash
-gh pr view {pr-number} --repo {owner}/{repo} --json state,mergeStateStatus,headRefOid,statusCheckRollup
+gh pr view {pr-number} --repo {owner}/{repo} --json state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup
 ```
 
 Then read the workflow runs for the PR head. The rollup lists only the checks GitHub has registered so far, so a partial rollup — some workflows reported, others not yet registered — reads green while a sibling workflow is still pending. Pass the full 40-char sha (an abbreviated `--commit` returns `[]`):
@@ -153,7 +153,7 @@ A failed or unparseable runs read is the `state-read-failed` report, same as the
 
 Classify from both reads, in this order:
 
-- The command failed, or its output is not parseable JSON with those four fields → report
+- The command failed, or its output is not parseable JSON with those five fields → report
   (`pending-review`, reason `state-read-failed`) and stop — never merge on a state this gate could
   not read (the same posture the bounded watch takes for an unknown `gh pr checks` exit). A read
   failure is not "no CI".
@@ -166,7 +166,11 @@ Classify from both reads, in this order:
   (today's behavior); the red classification is logged and shown, not acted on.
 - Any entry with `status` not `COMPLETED` (or `conclusion` null while `status: IN_PROGRESS`/`QUEUED`/`PENDING`), or any head run whose `status` is not `completed`
   → **pending**. A partial rollup (some workflows reported, others not yet registered) is not green.
-- An **empty rollup** → depends on the lever: under `merge-when-green` or `wait` the repo has PR CI
+- An **empty rollup** → read the merge state first: `mergeStateStatus: DIRTY` (or `mergeable: CONFLICTING`)
+  → **conflict** — take the **Conflict path** below now, under every lever value, with no bounded
+  watch. A branch that conflicts with its base gets no `pull_request` workflow runs, so its rollup
+  stays empty and waiting only parks it as `checks-pending-timeout` (#3607). Any other merge state
+  depends on the lever: under `merge-when-green` or `wait` the repo has PR CI
   by construction (`_shared/policy-schema-coverage.md`'s coverage block derives those values only when a
   `pull_request`-triggered workflow exists, and an explicit value is a statement that CI is
   expected), so an empty rollup means the checks have not *reported yet* — GitHub populates it
@@ -434,7 +438,9 @@ git -C "{worktree-path}" fetch origin {integration-branch}
 git -C "{worktree-path}" merge origin/{integration-branch}
 ```
 
-- **Clean** (no conflict markers): push and retry the merge once, from the top of Step 3:
+- **Clean** (no conflict markers): push and retry the merge once, from the top of Step 3 — or,
+  when this path was entered from Step 2.5 (no merge attempted yet), re-enter Step 2.5 from the top
+  instead: the pushed head has its own CI to read before any merge:
 
   ```bash
   git -C "{worktree-path}" push origin {branch}

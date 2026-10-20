@@ -112,7 +112,7 @@ const USAGE = {
   'delete-ledger': 'delete-ledger --run <dir> [--ledger <path>]',
   'teardown-run': 'teardown-run [--run <dir>] [--merged|--abandoned] [--remote-ref-only]',
   'archive-run': 'archive-run [--run <dir>]',
-  'resolve-console': 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>]',
+  'resolve-console': 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>]',
   'check-resume-freshness': 'check-resume-freshness [--run <dir>]',
   'check-staged-inventory': 'check-staged-inventory [--run <dir>]',
   'check-session-residue': 'check-session-residue [--run <dir>]',
@@ -148,13 +148,13 @@ const KNOWN_FLAGS = {
   // it from `KNOWN_FLAGS` and `USAGE` here. Until then a session can still hold pre-(1) prose in context
   // while the running build's hooks.js is newer, and the unknown-flag guard would refuse that call.
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
-  'resolve-console': ['--run', '--approve', '--decline'],
+  'resolve-console': ['--run', '--approve', '--decline', '--reverse-failed'],
 };
 
 // Declared flags that consume the following token as a value — the
 // unknown-flag scan below must skip that token rather than risk misreading
 // it as a flag itself (an argument value could itself start with "--").
-const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--ledger']);
+const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--ledger']);
 
 // First `--*`-shaped token in `args` that isn't declared for this verb, or
 // null when every `--*` token is declared (or there are none). Scans the
@@ -697,9 +697,22 @@ async function main(argv) {
       // not clobber a previous stamp.
       const patch = { worktree: path.resolve(worktreeArg), status: 'active' };
       if (process.env.CLAUDE_CODE_SESSION_ID) patch.sessionId = process.env.CLAUDE_CODE_SESSION_ID;
-      // Permanent for the run's lifetime: only ever written true, never
-      // false, so a later plain re-stamp (no --dispatch) cannot clear it.
-      if (dispatch) patch.dispatched = true;
+      if (dispatch) {
+        // Permanent for the run's lifetime: only ever written true, never
+        // false, so a later plain re-stamp (no --dispatch) cannot clear it.
+        patch.dispatched = true;
+        // #3711: the session that ran `--dispatch`, written ONLY by that flag. A plain
+        // re-stamp — a human resuming the run (run-resume-freshness.md) — overwrites
+        // sessionId but never writes or clears this, so bin/lib/dispatch/task-call.js
+        // can tell the dispatching session from a later resumer. With no session id it
+        // is written as null, not omitted: an absent key reads as a pre-#3711 run-state
+        // and falls back to sessionId, which a later resume re-stamps with the resumer's
+        // id — null is present but never matches, so that resume reads as human-run.
+        patch.dispatchSessionId = process.env.CLAUDE_CODE_SESSION_ID || null;
+        if (!patch.dispatchSessionId) {
+          process.stderr.write('claude-tweaks: record-worktree --dispatch without CLAUDE_CODE_SESSION_ID — dispatchSessionId recorded as null; wrap-up will treat this run as human-run\n');
+        }
+      }
       const result = ctxLib.writeRunState(runDir, patch);
       if (result) {
         process.stdout.write(`claude-tweaks: worktree recorded for ${path.basename(runDir)}\n`);
@@ -1131,7 +1144,9 @@ async function main(argv) {
     return 0;
   }
   if (cmd === 'archive-run') {
-    const { archiveRunDir, readConsoleState, listSpecDirs } = require('./lib/reconcile/archive-merged');
+    const {
+      archiveRunDir, readConsoleState, listSpecDirs, listStagedItems, consoleReplacedByAutoMergeShortCircuit,
+    } = require('./lib/reconcile/archive-merged');
     const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
     const { runDir, invalidRunArg, worktreeLocalFallback } = resolveRunArg(
       argv.slice(3), process.cwd(), process.env, { allowUninitialized: true },
@@ -1161,12 +1176,26 @@ async function main(argv) {
       return 0;
     }
     // #1130 AC4: same console gate decideArchive enforces on the reconcile
-    // path. 'none' stays allowed here — terminal status means close-run ran,
-    // i.e. wrap-up's own flow (incl. the empty-console fast path) completed;
-    // only a rendered-but-unanswered console blocks a direct archival.
-    if (readConsoleState(runDir) === 'unresolved') {
+    // path. A rendered-but-unanswered console (`unresolved`) always blocks.
+    // 'none' is allowed in general — terminal status means close-run ran, i.e.
+    // wrap-up's own flow (incl. the empty-console fast path) completed. #3668
+    // narrows that: the auto-merge short-circuit renders no console and no
+    // human ever sees its staged/ items, so a 'none' run whose decisions.md
+    // carries its auto-merge line (fast-lane or manifesto-authorized) is
+    // refused while staged/ holds pending items. Other 'none' runs that keep
+    // staged/ (in-terminal consoles, fleet-approved closes, tidy --approve)
+    // still archive.
+    const consoleState = readConsoleState(runDir);
+    if (consoleState === 'unresolved') {
       process.stdout.write('claude-tweaks: archival refused — console-unresolved (console.json rendered but not resolved; answer or resolve the console first)\n');
       return 0;
+    }
+    if (consoleState === 'none' && consoleReplacedByAutoMergeShortCircuit(runDir)) {
+      const pending = listStagedItems(runDir);
+      if (pending.length) {
+        process.stdout.write(`claude-tweaks: archival refused — console-never-rendered-staged-pending (the auto-merge short-circuit rendered no console; pending: ${pending.join(', ')}) — apply or delete the pending staged/ items (and any spec-*/staged/), or write a resolved console.json, then re-run archive-run\n`);
+        return 0;
+      }
     }
     const mainRoot = wtDetect.mainCheckoutRoot(process.cwd());
     if (!mainRoot) {
@@ -1244,6 +1273,7 @@ async function main(argv) {
     const splitIds = (raw) => (raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : []);
     const approve = splitIds(flagVal(argv.slice(3), '--approve'));
     const decline = splitIds(flagVal(argv.slice(3), '--decline'));
+    const reverseFailed = splitIds(flagVal(argv.slice(3), '--reverse-failed'));
 
     const mainRoot = wtDetect.mainCheckoutRoot(process.cwd()) || process.cwd();
     const execFileAsync = promisify(execFile);
@@ -1259,7 +1289,7 @@ async function main(argv) {
       },
     };
     const { resolveConsoleExecution, renderExecutedLines } = require('./lib/reconcile/console-execute');
-    const result = await resolveConsoleExecution(runDir, { approve, decline }, deps);
+    const result = await resolveConsoleExecution(runDir, { approve, decline, reverseFailed }, deps);
     if (result.status === 'executed') {
       process.stdout.write(renderExecutedLines(result, path.basename(runDir)));
       return 0;
@@ -1270,6 +1300,10 @@ async function main(argv) {
     }
     if (result.reason === 'unknown-item-ids') {
       process.stdout.write(`claude-tweaks: unknown item id(s) ${result.ids.join(', ')} — no matching console-item row found, console not resolved\n`);
+      return 1;
+    }
+    if (result.reason === 'not-ruling-items') {
+      process.stdout.write(`claude-tweaks: --reverse-failed id(s) ${result.ids.join(', ')} are not sdd-ruling items (no isRulingRow flag), console not resolved\n`);
       return 1;
     }
     process.stdout.write(`claude-tweaks: console resolution failed for ${path.basename(runDir)} — ${result.reason}${result.error ? `: ${result.error}` : ''}\n`);

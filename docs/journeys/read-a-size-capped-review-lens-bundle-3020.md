@@ -10,7 +10,7 @@ files:
 **Persona:** the `/claude-tweaks:review` controller at Step 3 on an ordinary feature branch: a dozen-plus changed files, one of them a regenerated `package-lock.json` and another a captured-API `.jsonl` fixture. It has just built the shared context bundle and must decide whether to hand that one path to every lens agent. A dispatched lens agent then reads the bundle.
 **Goal:** get a bundle a lens agent can read in one or two calls, with every file that was left out named, so nobody has to drop the bundle and improvise a file-list hand-off.
 **Entry point:** `node "${CLAUDE_PLUGIN_ROOT}/bin/build-review-context.js" build --base <ref> --branch HEAD --run "$PIPELINE_RUN_DIR"`, as `step3-lens-dispatch.md` directs.
-**Success state:** the printed JSON line is `{dir, contextPath, bytes, files, emptySections, oversizeSections}`. `oversizeSections` names every file whose section was stubbed or whose diff hunk was elided, each listed once. The bundle at `contextPath` carries the diff with every modified hand-written file's hunks whole, then one section per file.
+**Success state:** the printed JSON line is `{dir, contextPath, bytes, files, emptySections, oversizeSections, baselinePath, listenersPath}`. `oversizeSections` names every file whose section was stubbed or whose diff hunk was elided, each listed once. The bundle at `contextPath` carries the diff with every modified hand-written file's hunks whole, then one section per file.
 
 ## Steps
 

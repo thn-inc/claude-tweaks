@@ -54,7 +54,18 @@ test('AC7.1-AC7.2: step3-lens-dispatch.md and docs/plugin-structure.md both name
   const plugStructure = fs.readFileSync(path.join(ROOT, 'docs', 'plugin-structure.md'), 'utf8');
   assert.ok(LENS_DISPATCH.includes('oversizeSections'), 'step3-lens-dispatch.md must name oversizeSections');
   assert.ok(plugStructure.includes('oversizeSections'), 'docs/plugin-structure.md must name oversizeSections');
-  assert.match(LENS_DISPATCH, /\{dir, contextPath, bytes, files, emptySections, oversizeSections\}/);
+  assert.match(LENS_DISPATCH, /\{dir, contextPath, bytes, files, emptySections, oversizeSections, baselinePath, listenersPath\}/);
+});
+
+test('3302 AC: step3-lens-dispatch.md never tells the reviewer to write a file under {ctx-dir} by hand', () => {
+  assert.ok(!/>\s*\{ctx-dir\}\//.test(LENS_DISPATCH), 'no > {ctx-dir}/ redirect may remain');
+  const start = LENS_DISPATCH.indexOf('**Pre-dispatch listing (scratch-sweep baseline).**');
+  assert.notEqual(start, -1, 'pre-dispatch listing paragraph must exist');
+  const para = LENS_DISPATCH.slice(start, LENS_DISPATCH.indexOf('\n', start));
+  assert.match(para, /baselinePath/);
+  assert.match(para, /listenersPath/);
+  assert.match(para, /Never write either file by hand/);
+  assert.doesNotMatch(para, /\btee\b|Write tool|`Write`/, 'no non-redirect hand-write phrasing may creep in');
 });
 
 test('F5: step3-lens-dispatch.md names the per-file cap as the build.js constant in KB', () => {

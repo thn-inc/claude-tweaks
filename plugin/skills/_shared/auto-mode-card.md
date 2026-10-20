@@ -33,7 +33,7 @@ Regardless of `auto` state, these always require explicit user input — or, for
 - Upstream feedback filing (`/claude-tweaks:feedback`, `U#`) — folded into the Review Console's "Approve all" at `supervised`/`trusted`, auto-resolved under `consoleAutoResolve` at `unattended` — see the contract's tiered stance
 - Marking records `parked`
 - `/init` Phase 4/8/9 and its scope-selection gate
-- HARD-GATE / BLOCKED / STOP conditions (spec compliance, test gate, design-doc rejection, plan validation, plan-audit hard-fails)
+- HARD-GATE / BLOCKED / STOP conditions (spec compliance, test gate, design-doc rejection, plan validation, plan-audit hard-fails, plan-review needs-human spec gap)
 - Any skill's own local-files Preflight-stop or equivalent explicit authorization gate
 - Hard validation failures (uncommitted changes, missing prereqs, malformed input)
 - Final pipeline failure cards

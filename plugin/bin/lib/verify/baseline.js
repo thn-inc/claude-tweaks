@@ -22,6 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { substituteFile, describePath } = require('./file-template');
 const {
   sniffFamily, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, failingTestsByFile, parseCounts, stripAnsi,
   specEntryCount, cancelledCount, testTree,
@@ -261,6 +262,7 @@ const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 async function adjudicate({
   checks, baselineCmds, base, baseSha, cwd = null, logDir, runOne, spawnImpl, now = Date.now,
   envOf = () => null, timeoutOf = () => null, git, concurrency = 4, env = process.env,
+  platform = process.platform,
 }) {
   const header = { base, baseSha };
   const ineligible = (reason) => ({ ...header, eligible: false, reason });
@@ -327,8 +329,10 @@ async function adjudicate({
     const headTests = failingTestsByFile(text, family, at(headDir));
     const headLocated = failingTestsByFile(text, family, { ...at(headDir), located: true });
     for (const file of files) {
+      const subst = substituteFile(template, file, { platform });
+      if (!subst.ok) return ineligible(`${c.name} failing file ${describePath(file)} cannot be handed to the shell safely (${subst.reason})`);
       work.push({
-        check: c.name, file, command: template.replace(/\{file\}/g, file),
+        check: c.name, file, command: subst.command,
         headFileLevel: headFileLevel.has(file), headTests: headTests.get(file) || [], headLocated: headLocated.get(file) || [],
       });
     }

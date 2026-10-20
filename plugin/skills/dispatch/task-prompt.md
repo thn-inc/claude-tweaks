@@ -37,12 +37,13 @@ that needs no resolution, only inclusion:
 
 6. **Worktree shell constraint** — the Claude Code harness enforces limits on Bash commands in a single call, independent of filesystem effect (see `_shared/scratch-worktree.md` §7 ("Shell constraint") for the full boundary description, if that bundle is absent, read `_shared/scratch-worktree.md` directly). Avoid these shapes: quoted JSON containing `git`; a `for`/`while` loop variable; a glob argument; a `gh api` call inside an `if RAW=$(...)`; `sed -i` on a variable path; `cat "$P/…"` or `sed -n 'a,bp' "$P/…"` where `$P` is a runtime-computed path variable. Use `Write`/`Edit`/`Read` tools instead of equivalent shell commands, separate commands instead of loops or compound constructs, and literal file paths instead of variables. One plain command per Bash call is the general pattern.
 
-7. **Async-wait discipline** — you are a subagent, not a top-level session. Once your turn ends
-   nothing re-wakes you: a reply that ends without a tool call ends your turn, whatever is still in
-   flight, so a progress note rides alongside a tool call or is skipped (#3266). Run a long command
-   (e.g. the full test suite) as a normal foreground call with a large explicit timeout (#1965). A
-   nested `Agent` call always launches async, and its completion notification reaches you only
-   while your turn is alive: keep your turn alive with bounded foreground waits — repeated
+7. **Async-wait discipline** — you are a subagent, not a top-level session. Once your turn ends you
+   cannot count on being re-woken: a reply that ends without a tool call ends your turn, whatever is
+   still in flight, so a progress note rides alongside a tool call or is skipped (#3266). Run a long
+   command (e.g. the full test suite) as a normal foreground call with a large explicit timeout
+   (#1965). A nested `Agent` call launches async, and its completion notification reaches you only
+   while your turn is alive (when the call instead returns the child's own reply, that child has
+   reported and needs no wait): keep your turn alive with bounded foreground waits — repeated
    `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children (the set launched
    together), each wait logged as one line (what you wait on, the iteration against the bound, how
    many children are still pending), stopping as soon as every child's `<task-notification>` has
@@ -52,29 +53,29 @@ that needs no resolution, only inclusion:
    expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
    child is abandoned and no longer counts as outstanding, so your final reply still ends with
    `STATUS: {WORD}`. Ignore a late result; if a late notification re-wakes you after your final
-   reply, repeat that final `STATUS:` line unchanged. A child that reports a failure (a `failed`
+   reply, repeat your whole final reply unchanged — the dispatcher keeps only your latest reply, so
+   a bare `STATUS:` line would replace the report. A child that reports a failure (a `failed`
    notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not
    outstanding: handle it per the dispatching skill's own status handling where one exists
    (`superpowers:subagent-driven-development`'s BLOCKED handling), otherwise judge that unit
-   yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a write-capable
-   child (one that edits files) still silent at the bound is never redone in-session, because an
-   abandoned child keeps running and may still write — stop, and end with `STATUS: BLOCKED` naming
-   that child and its unit. A wait call that is blocked or fails is not a wait and never counts
-   toward the bound; never retry it in another form (a longer, wrapped or backgrounded sleep):
-   treat every child still outstanding as silent at the bound. The full rule is in `subagent-dispatch-core.md`'s Foreground Execution
-   Discipline section. Give any agent you
+   yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a
+   write-capable child (one that edits files) still silent at the bound is never redone in-session,
+   because an abandoned child keeps running and may still write — stop, and end with
+   `STATUS: BLOCKED` naming that child and its unit. A wait call that is blocked or fails is not a
+   wait and never counts toward the bound; never retry it in another form (a longer, wrapped or
+   backgrounded sleep): treat every child still outstanding as silent at the bound. The full rule is
+   in `subagent-dispatch-core.md`'s Foreground Execution Discipline section. Give any agent you
    dispatch this same instruction, whether it is a nested Task/Agent call or a
    `superpowers:subagent-driven-development` or review-lens fan-out. **Mark every interim reply
    (#2714):** if a turn ends anyway while a keep-alive wait is still in progress, with a child
    outstanding — the keep-alive rule's failure path — make that reply's last non-empty line
    `INTERIM_STATUS: {one-line progress note}`, never `STATUS: {WORD}`, which is reserved for your
    genuine final reply (an abandoned child is not outstanding; that reply is final and ends with
-   `STATUS: {WORD}`). An unmarked interim reply is
-   graded by the `SubagentStop` hook as a final reply missing its status line and logged as a
-   false-positive `contract-violation`, unless your own async `Agent` launches are still pending in
-   your transcript (#3015) — the marker stays required, since that exemption covers only pending
-   launches. Forward this marker rule, with the rest of this item, to any nested dispatch that
-   itself dispatches.
+   `STATUS: {WORD}`). An unmarked interim reply is graded by the `SubagentStop` hook as a final
+   reply missing its status line and logged as a false-positive `contract-violation`, unless your
+   own async `Agent` launches are still pending in your transcript (#3015) — the marker stays
+   required, since that exemption covers only pending launches. Forward this marker rule, with the
+   rest of this item, to any nested dispatch that itself dispatches.
 8. **Selected at** (#3131) — one literal line, `Selected at: {ISO}`: the modification time of
    this firing's session-scoped `dispatch-groups.json` (`queue-pull-script.md`'s output, resolved
    via `sessionTmpPath` as `next-ranking.md` does). That pull already dropped every
@@ -138,31 +139,32 @@ a separate Task call handles those. If you reference any of these issue numbers 
 intermediate commit message, write "refs #N" -- never "closes #N" or "fixes #N".
 
 Foreground execution (required): run `npm test` and every other long-running command in the
-foreground of this turn, output redirected to a file if it's long -- never with
-`run_in_background`. Never end this turn waiting on a background test run or fix-round you
-started this way -- there is no notification mechanism behind either, so it is never re-woken
-and the run stalls silently (#1965). A nested `Agent` call (a lens-dispatch fan-out, a
-reproduction pair) always launches async, and its completion notification reaches you only while
-this turn is alive: keep the turn alive with bounded foreground waits -- repeated `sleep 20` Bash
-calls, at most 60 (20 minutes) per wave of children (the set launched together), each wait
-logged as one line (what you wait on, the iteration against the bound, how many children are
-still pending), stopping as soon as every child's `<task-notification>` has arrived, never
-reading or tailing a running child's `output_file` -- until every child has reported, and never
-end this turn with one child outstanding. With no `Agent` tool (`ToolSearch` finds none, deferred
-or otherwise), or a child still silent when the bound expires, judge that unit yourself, log the
-downgrade, and mark its findings `unconfirmed`; that child is abandoned and no longer counts as
-outstanding, so your final reply still ends with its usual `STATUS:` line. Ignore that child's
-result if it arrives later; if a late notification re-wakes you after your final reply, repeat
-that final `STATUS:` line unchanged. A child that reports a failure (a `failed` notification, an
-API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not outstanding: handle it
-per the dispatching skill's own status handling where one exists, otherwise judge that unit
-yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a write-capable
-child (one that edits files) still silent at the bound is never redone in-session, because an
-abandoned child keeps running and may still write -- stop, and end with `STATUS: BLOCKED` naming
-that child and its unit. A wait call that is blocked or fails is not a wait and never counts
-toward the bound; never retry it in another form (a longer, wrapped or backgrounded sleep):
-treat every child still outstanding as silent at the bound. A reply that ends without a tool
-call ends the turn.
+foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
+Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
+count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
+`Agent` call (a lens-dispatch fan-out, a reproduction pair) launches async, and its completion
+notification reaches you only while this turn is alive (when the call instead returns the child's
+own reply, that child has reported and needs no wait): keep the turn alive with bounded
+foreground waits -- repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children
+(the set launched together), each wait logged as one line (what you wait on, the iteration against
+the bound, how many children are still pending), stopping as soon as every child's
+`<task-notification>` has arrived, never reading or tailing a running child's `output_file` --
+until every child has reported, and never end this turn with one child outstanding. With no `Agent`
+tool (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
+expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
+child is abandoned and no longer counts as outstanding, so your final reply still ends with its
+usual `STATUS:` line. Ignore that child's result if it arrives later; if a late notification
+re-wakes you after your final reply, repeat your whole final reply unchanged -- the dispatcher keeps
+only your latest reply, so a bare `STATUS:` line would replace the report. A child that reports a
+failure (a `failed` notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so
+it is not outstanding: handle it per the dispatching skill's own status handling where one exists,
+otherwise judge that unit yourself. Self-judging is for a read-only unit (a lens, a single read, a
+judge); a write-capable child (one that edits files) still silent at the bound is never redone
+in-session, because an abandoned child keeps running and may still write -- stop, and end with
+`STATUS: BLOCKED` naming that child and its unit. A wait call that is blocked or fails is not a
+wait and never counts toward the bound; never retry it in another form (a longer, wrapped or
+backgrounded sleep): treat every child still outstanding as silent at the bound. A reply that ends
+without a tool call ends the turn.
 
 {context-pack}
 
@@ -297,31 +299,32 @@ path) feeding flow/SKILL.md Step 3's adopt-if-set branch. You need no other inpu
 the prior call did or found.
 
 Foreground execution (required): run `npm test` and every other long-running command in the
-foreground of this turn, output redirected to a file if it's long -- never with
-`run_in_background`. Never end this turn waiting on a background test run or fix-round you
-started this way -- there is no notification mechanism behind either, so it is never re-woken
-and the run stalls silently (#1965). A nested `Agent` call (a lens-dispatch fan-out, a
-reproduction pair) always launches async, and its completion notification reaches you only while
-this turn is alive: keep the turn alive with bounded foreground waits -- repeated `sleep 20` Bash
-calls, at most 60 (20 minutes) per wave of children (the set launched together), each wait
-logged as one line (what you wait on, the iteration against the bound, how many children are
-still pending), stopping as soon as every child's `<task-notification>` has arrived, never
-reading or tailing a running child's `output_file` -- until every child has reported, and never
-end this turn with one child outstanding. With no `Agent` tool (`ToolSearch` finds none, deferred
-or otherwise), or a child still silent when the bound expires, judge that unit yourself, log the
-downgrade, and mark its findings `unconfirmed`; that child is abandoned and no longer counts as
-outstanding, so your final reply still ends with its usual `STATUS:` line. Ignore that child's
-result if it arrives later; if a late notification re-wakes you after your final reply, repeat
-that final `STATUS:` line unchanged. A child that reports a failure (a `failed` notification, an
-API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not outstanding: handle it
-per the dispatching skill's own status handling where one exists, otherwise judge that unit
-yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a write-capable
-child (one that edits files) still silent at the bound is never redone in-session, because an
-abandoned child keeps running and may still write -- stop, and end with `STATUS: BLOCKED` naming
-that child and its unit. A wait call that is blocked or fails is not a wait and never counts
-toward the bound; never retry it in another form (a longer, wrapped or backgrounded sleep):
-treat every child still outstanding as silent at the bound. A reply that ends without a tool
-call ends the turn.
+foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
+Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
+count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
+`Agent` call (a lens-dispatch fan-out, a reproduction pair) launches async, and its completion
+notification reaches you only while this turn is alive (when the call instead returns the child's
+own reply, that child has reported and needs no wait): keep the turn alive with bounded
+foreground waits -- repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children
+(the set launched together), each wait logged as one line (what you wait on, the iteration against
+the bound, how many children are still pending), stopping as soon as every child's
+`<task-notification>` has arrived, never reading or tailing a running child's `output_file` --
+until every child has reported, and never end this turn with one child outstanding. With no `Agent`
+tool (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
+expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
+child is abandoned and no longer counts as outstanding, so your final reply still ends with its
+usual `STATUS:` line. Ignore that child's result if it arrives later; if a late notification
+re-wakes you after your final reply, repeat your whole final reply unchanged -- the dispatcher keeps
+only your latest reply, so a bare `STATUS:` line would replace the report. A child that reports a
+failure (a `failed` notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so
+it is not outstanding: handle it per the dispatching skill's own status handling where one exists,
+otherwise judge that unit yourself. Self-judging is for a read-only unit (a lens, a single read, a
+judge); a write-capable child (one that edits files) still silent at the bound is never redone
+in-session, because an abandoned child keeps running and may still write -- stop, and end with
+`STATUS: BLOCKED` naming that child and its unit. A wait call that is blocked or fails is not a
+wait and never counts toward the bound; never retry it in another form (a longer, wrapped or
+backgrounded sleep): treat every child still outstanding as silent at the bound. A reply that ends
+without a tool call ends the turn.
 
 {context-pack}
 
@@ -433,7 +436,7 @@ ISSUE #{n}: {failed:{gate} | blocked:retry-ceiling}
 `pending-review` are `{minted-run-dir}/context/merge.md`'s own outcome vocabulary (the composed
 `_shared/pr-first-merge.md`; if that bundle is absent, read `_shared/pr-first-merge.md` directly), reported verbatim: you
 run the merge procedure yourself, in this same call, whichever file's Auto-merge gate you reach
-(`dispatch/settle-and-merge.md` for a bundle, `wrap-up/review-console.md`'s dispatch-claim branch
+(`dispatch/settle-and-merge.md` for a bundle, `wrap-up/review-console.md`'s dispatch-call branch
 for a singleton). `merged` means you also completed claim release and run-dir archival directly
 (that procedure's Step 4) — but not worktree removal: this call inherited the worktree and never
 itself `EnterWorktree`'d it, so `ExitWorktree` is a no-op for it, the same structural constraint

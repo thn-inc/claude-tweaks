@@ -73,7 +73,7 @@ test('findPolicyFile: policy file present at the target\'s own directory returns
   assert.strictEqual(findPolicyFile(path.join(dir, 'a.txt')), dir);
 });
 
-test('safeReal: returns null (not the raw, unresolved path) when realpathSync fails — matches pre-tool-use.js\'s own identically-named helper', () => {
+test('safeReal: returns null (not the raw, unresolved path) when realpathSync fails', () => {
   // This project's fail-open invariant ("a recorded worktree whose path no
   // longer exists resolves to allow") depends on unresolvable paths being
   // falsy. Returning the raw path here instead would let repoInfo() hand
