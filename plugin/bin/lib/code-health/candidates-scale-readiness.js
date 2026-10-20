@@ -254,7 +254,9 @@ function opensWithUseServer(text) {
   }
 }
 
-const isServerPackageDep = (d) => SERVER_DEPS.has(d) || DATA_DEPS.has(d);
+function isServerPackageDep(dep) {
+  return SERVER_DEPS.has(dep) || DATA_DEPS.has(dep);
+}
 
 // Dependency names of the nearest package.json at or above `rel`'s directory
 // (the root one counts), or null when no enclosing package.json is tracked.
@@ -280,7 +282,9 @@ function routeMembership(rel, text, depsByDir) {
   return opensWithUseServer(text);
 }
 
-const byDepth = (a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b);
+function byDepth(a, b) {
+  return a.split('/').length - b.split('/').length || a.localeCompare(b);
+}
 
 function checklistRows(status, evidence) {
   return CHECKLIST_ITEMS.map((item) => ({ id: item.id, label: item.label, group: item.group, phase: item.phase, status, evidence }));
@@ -684,6 +688,26 @@ function parsePrismaModels(prismaSchemas) {
   return { models, parsedSchemas };
 }
 
+// Field names filtered by the inline `where: { … }` of a call's arguments, in
+// order, excluding `AND`/`OR`/`NOT`. Empty when the arguments are not an object
+// literal with a balanced inline `where` object.
+function whereFieldNames(args) {
+  if (!args.startsWith('{')) return [];
+  const argsInner = braceInner(args, 0);
+  if (argsInner === null) return [];
+  const whereSeg = splitTopLevel(argsInner).find((s) => /^where\s*:\s*\{/.test(s));
+  if (!whereSeg) return [];
+  const whereInner = braceInner(whereSeg, whereSeg.indexOf('{'));
+  if (whereInner === null) return [];
+  const fields = [];
+  for (const seg of splitTopLevel(whereInner)) {
+    const k = seg.match(/^['"]?(\w+)['"]?\s*(?::|$)/);
+    if (!k || /^(?:AND|OR|NOT)$/.test(k[1])) continue;
+    fields.push(k[1]);
+  }
+  return fields;
+}
+
 function scanUnindexedWhereField(ctx, candidates) {
   const models = ctx.prismaModels;
   if (models.size > 0) {
@@ -693,18 +717,7 @@ function scanUnindexedWhereField(ctx, candidates) {
         const info = models.get(model);
         const argsClose = findClose(text, parenIdx, '(', ')');
         if (argsClose === -1) continue;
-        const args = text.slice(parenIdx + 1, argsClose).trim();
-        if (!args.startsWith('{')) continue;
-        const argsInner = braceInner(args, 0);
-        if (argsInner === null) continue;
-        const whereSeg = splitTopLevel(argsInner).find((s) => /^where\s*:\s*\{/.test(s));
-        if (!whereSeg) continue;
-        const whereInner = braceInner(whereSeg, whereSeg.indexOf('{'));
-        if (whereInner === null) continue;
-        for (const seg of splitTopLevel(whereInner)) {
-          const k = seg.match(/^['"]?(\w+)['"]?\s*(?::|$)/);
-          if (!k || /^(?:AND|OR|NOT)$/.test(k[1])) continue;
-          const field = k[1];
+        for (const field of whereFieldNames(text.slice(parenIdx + 1, argsClose).trim())) {
           if (!info.fields.has(field) || info.indexed.has(field)) continue;
           const key = `${info.model}.${field}`;
           if (seen.has(key)) continue;
