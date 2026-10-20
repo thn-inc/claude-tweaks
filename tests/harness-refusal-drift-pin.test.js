@@ -7,7 +7,7 @@
 // friction-events.js counts. The manifest entry asserts each fragment against the
 // installed binary, so a rewording surfaces as upstream drift instead.
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -52,8 +52,14 @@ function binaryStandIn({ gitVerb = 'Refusing', cwdVerb = 'Refusing' } = {}) {
   return Buffer.concat([Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0x80, 0xff, 0x00, 0xc3, 0x28]), Buffer.from(excerpt, 'utf8')]);
 }
 
+const tempDirs = [];
+after(() => {
+  for (const dir of tempDirs) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 function writeTemp(bytes) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-refusal-drift-'));
+  tempDirs.push(dir);
   const file = path.join(dir, 'claude');
   fs.writeFileSync(file, bytes);
   return file;

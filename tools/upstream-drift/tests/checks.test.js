@@ -305,7 +305,8 @@ test('checkAssertions: never decodes the file to a string (reads a Buffer)', () 
   const end = source.indexOf('// ─── replayFixtures');
   assert.ok(start !== -1 && end > start, 'could not slice the checkAssertions body out of checks.js');
   const body = source.slice(start, end);
-  assert.ok(!/readFileSync\(fullPath,\s*'utf8'\)/.test(body), "checkAssertions must read raw bytes, not readFileSync(fullPath, 'utf8')");
+  assert.ok(!/readFileSync\(fullPath,/.test(body), 'checkAssertions must read raw bytes: readFileSync(fullPath) takes no encoding argument');
+  assert.ok(!/\.toString\(|\.setEncoding\(|\bencoding\b/.test(body), 'checkAssertions must not decode the Buffer it reads');
 });
 
 // ─── replayFixtures ──────────────────────────────────────────────────────

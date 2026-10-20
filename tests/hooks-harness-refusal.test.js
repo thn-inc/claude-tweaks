@@ -41,7 +41,8 @@ test('harness-refusal: neither hook module spells the refusal text itself (one-p
     const raw = fs.readFileSync(path.join(HOOKS_DIR, file), 'utf8');
     const stripped = stripComments(raw);
     assert.strictEqual(stripperVerdict(raw, stripped), 'ok', `${file}: comment stripper must parse cleanly`);
-    for (const literal of ['Refusing to run it', 'is isolated in the worktree', 'This session']) {
+    // Shorter respellings too: a partial copy ('Refusing to run') must not slip through either.
+    for (const literal of ['Refusing to run', 'isolated in the worktree', 'This session']) {
       assert.ok(!stripped.includes(literal), `${file} spells "${literal}" in code instead of deriving it`);
     }
     assert.ok(raw.includes("require('./harness-refusal')"), `${file} must require ./harness-refusal`);
