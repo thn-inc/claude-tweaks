@@ -26,7 +26,7 @@ files:
 - **Action:** Reply `Override` with `13=pre-authorized` in the free-text `#=value` pairs, alongside any other overrides in the same reply.
 - **Should feel:** A deliberate, one-time grant — not a setting they're leaving behind for every future run.
 - **Should understand:** This is a live answer for *this run only* — it can never be set from `.claude-tweaks/policy.yml` as a standing default (`bin/lib/policy-schema.js`'s resolver discards a policy.yml value for this key outright). Answering `pre-authorized` here is one of two ways to set it; the other is typing the `pre-authorize-merge` token on the `/claude-tweaks:flow` invocation (default `auto` without the token stays `ask`).
-- **Red flags:** The lever silently resolving `pre-authorized` with neither an override reply nor the `pre-authorize-merge` token on the invocation anywhere in the transcript — that would mean the never-originates-its-own-merge-authorization invariant broke.
+- **Red flags:** The lever silently resolving `pre-authorized` with neither an override reply nor the `pre-authorize-merge` token on the invocation anywhere in the transcript — that would mean a run originated its own merge authorization (`_shared/auto-mode-contract.md`'s Merge authorization lever row).
 
 ### 1b. Or type the token — `/claude-tweaks:flow {target} pre-authorize-merge`
 - **URL:** the `/claude-tweaks:flow` invocation itself, in default `auto` — no Manifesto approval stop
