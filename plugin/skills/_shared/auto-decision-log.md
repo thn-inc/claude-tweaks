@@ -62,7 +62,7 @@ Pipeline config snapshot:
 
 The snapshot header lists one `- {lever}: {value}` line per lever, then the `- integration-model: {v}` run-pin line (`_shared/integration-model.md`'s Run-scoped stability; absent when the pin was omitted).
 
-An aggregate line lists one `defer-reason` value per item, comma-separated in item order; single-item lines carry exactly one value — the shape `summary-template.md` parses.
+An aggregate line lists one `defer-reason` value per item, comma-separated in item order; single-item lines carry exactly one value — the shape `wrap-up/summary-template.md` parses.
 
 ## Entry schema
 

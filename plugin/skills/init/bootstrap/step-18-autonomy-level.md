@@ -1,6 +1,6 @@
 # Step 18 — Autonomy Level (detailed procedure)
 
-*Optional Enhancement step — see `SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
+*Optional Enhancement step — see `../SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
 
 Neither `autonomy` nor the now-retired `unattended-tier` has ever had an init-time question — both
 default to their most conservative value on every project that never manually edits

@@ -2,7 +2,7 @@
 
 Runs before Step 1, on every `/init` invocation regardless of scope — **except** when
 `$ARGUMENTS` explicitly names the `bootstrap` Phase scope, which always runs Steps 1-8.5 fully
-regardless of the marker (see the Exception in `SKILL.md`'s "Core Bootstrap Version Check").
+regardless of the marker (see the Exception in `../SKILL.md`'s "Core Bootstrap Version Check").
 
 **Read the marker and extract its version:**
 

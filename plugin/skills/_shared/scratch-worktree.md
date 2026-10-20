@@ -4,7 +4,7 @@ Canonical procedure for provisioning a throwaway, write-legal checkout once a fe
 worktree is already gone. Consumed by `/wrap-up`'s `residue-sweep.md` (the `remedy: auto`
 branch — an auto-fixable residue finding whose fix needs an `Edit`/`Write`/`commit`/`push`),
 by `/tidy` (record-creation writes under `work-backend: local-files`, and the Step 7
-mutations described under `worktree-always: true`), and by `/init` (`SKILL.md`'s Phase 9
+mutations described under `worktree-always: true`), and by `/init` (`init/SKILL.md`'s Phase 9
 "Isolated Write Step" and `worktree-policy-finalization.md`) — the last with a trigger that
 differs from the other two, see "1. When to provision" below.
 

@@ -1,6 +1,6 @@
 # Step 10 — GitHub issue form template (agent-task)
 
-*Optional Enhancement step — see `SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
+*Optional Enhancement step — see `../SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
 
 Offer only when the project has a GitHub-flavored remote — same two-tier check Step 9
 documents. Check whether `.github/ISSUE_TEMPLATE/agent-task.yml` exists; if absent,

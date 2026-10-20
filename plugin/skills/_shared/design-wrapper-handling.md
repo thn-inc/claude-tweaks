@@ -42,7 +42,7 @@ When `/build` receives `{result: "ok", loaded: [...], context_size: <n>}` from `
 
 ## Caller-side pre-check (skip the `Skill()` load when the wrapper would no-op)
 
-Before invoking `/claude-tweaks:design-wrapper <mode> ...`, run the same deterministic detection the wrapper runs internally as its own Universal preconditions Step 1 (`design-wrapper/SKILL.md`) — its code twin is a standalone CLI, so a caller can reach the same verdict without paying for the wrapper's `SKILL.md` (~40KB) plus mode sub-file load when the answer is already "no-op":
+Before invoking `/claude-tweaks:design-wrapper <mode> ...`, run the same deterministic detection the wrapper runs internally as its own Universal preconditions Step 1 (`design-wrapper/SKILL.md`) — its code twin is a standalone CLI, so a caller can reach the same verdict without paying for `design-wrapper/SKILL.md` (~40KB) plus mode sub-file load when the answer is already "no-op":
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/design-detect.js" --mode <mode> --files "<comma-joined changed files>" [--surface <value>]
