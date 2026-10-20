@@ -127,3 +127,10 @@ test('go-red: dropping the provisioning condition fails the Step 7.5 gate assert
     .replace(' and the approved Step 7 set holds at least one working-tree write', '');
   assert.throws(() => assertStep75Gate(text));
 });
+
+test('go-red: dropping the carve-out citation fails the Step 7.5 gate assertions', () => {
+  const text = skill('tidy', 'step-7-5-worktree-always.md')
+    .replace('_shared/worktree-setup.md', '_shared/elsewhere.md');
+  assert.notStrictEqual(text, skill('tidy', 'step-7-5-worktree-always.md'), 'mutation must apply');
+  assert.throws(() => assertStep75Gate(text));
+});

@@ -202,7 +202,7 @@ After all actions are applied, verify every decision was fully executed. Present
 
 If any verification fails, fix it before committing. Do not commit partial state.
 
-**Extracted — read `step-7-5-worktree-always.md` in this skill's directory.** Covers the scratch-worktree procedure for Step 7's mutations and the tidy-up commit under `worktree-always: true`: provisioning (only when the approved set holds a working-tree write), the `local-merge` vs `pr-first` branches, arming a `pr-first` PR before `ExitWorktree`, the commit itself (including the `pr-first` run-dir-copy step), and the `housekeeping-auto-merge` grant / `<!-- tidy-housekeeping-pr -->` marker. Read it whole when `worktree-always` resolves `true`; skip it entirely otherwise (Step 7 never mutates or commits without it, and no worktree is ever provisioned).
+**Extracted — read `step-7-5-worktree-always.md` in this skill's directory.** Covers the scratch-worktree procedure for Step 7's mutations and the tidy-up commit under `worktree-always: true`: provisioning (only when the approved set holds a working-tree write), the `local-merge` vs `pr-first` branches, arming a `pr-first` PR before `ExitWorktree`, the commit itself (including the `pr-first` run-dir-copy step), and the `housekeeping-auto-merge` grant / `<!-- tidy-housekeeping-pr -->` marker. Read it whole when `worktree-always` resolves `true`; skip it entirely otherwise (no worktree is ever provisioned, and Step 7 runs from the checkout it is in).
 
 ## Routine Configuration
 
