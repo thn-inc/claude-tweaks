@@ -1344,6 +1344,9 @@ test('check-session-residue: an unreviewed-console backlog past MAX_REPORTED add
       resolved: true,
       items: [{ id: `review-${i}-x.md`, section: 'Pending review', resolution: 'pending', reason: 'unmapped-prefix' }],
     }));
+    // #3772: an item whose staged file is gone is `missing`, not residue.
+    fs.mkdirSync(path.join(dir, 'staged'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'staged', `review-${i}-x.md`), 'x');
   };
   const overflow = /^- … more run\(s\) may have unreviewed console items \(newest 3 shown\)\.$/m;
   const ackAll = /^To dismiss every listed and older unreviewed item at once after reviewing \(a human decision\): node ".*\/bin\/console-residue\.js" --ack-all$/m;

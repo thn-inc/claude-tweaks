@@ -141,7 +141,9 @@ function runIdNames(dir) {
 // by basename, capped at `limit` (default MAX_REPORTED). Candidates are the
 // newest `window` run-id names of the top level and archive/ merged, listed
 // without reading any state; a basename in both is kept once, top-level
-// preferred. A top-level candidate counts only when its run-state.json is
+// preferred. An unresolved item whose staged file is gone is `missing`, not
+// residue (#3772): `readRunResidue` drops it from the count, so a run whose
+// every unresolved item is missing is not reported. A top-level candidate counts only when its run-state.json is
 // `clean` and its archive twin is neither clean nor freshly `archiving`
 // (iterRunDirsWithState's twin skip); otherwise its archive/ copy, when there
 // is one, stands in. Only consoles not yet acknowledged count — a run is kept

@@ -120,9 +120,12 @@ test('collectApprovableStandalone: exclude drops the named run dir from the resu
 
 // #3370: closed and archived runs whose unattended Review Console left
 // pending / keep-staged items no human has reviewed.
-function mkConsole(runDir, items, extra) {
+// #3772: an item whose staged file is gone is `missing`, not residue — so each
+// fixture item gets the staged file it names, unless `{ stage: false }`.
+function mkConsole(runDir, items, extra, { stage = true } = {}) {
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true, items, ...extra }));
+  if (stage) for (const { id } of items) mkStagedFile(runDir, id, 'x');
 }
 function mkArchived(project, name) {
   return path.join(project, '.claude-tweaks', 'pipelines', 'archive', name);
@@ -144,6 +147,12 @@ test('collectUnresolvedConsoles surfaces an archived run\'s unmapped-prefix and 
   assert.match(text, /review-debate-deviation\.md/);
   assert.ok(entries[0].lines.includes(`    cat "${path.join(run, 'staged', 'review-13-record.md')}"`));
   assert.ok(entries[0].lines.includes(`  mark reviewed: node "/plugins/claude-tweaks/bin/console-residue.js" --ack --run "${run}"`));
+});
+
+test('AC3.4: the SessionStart console scan skips a run whose pending items\' staged files are all gone (#3772)', () => {
+  const project = tmpProject();
+  mkConsole(mkArchived(project, '2026-10-19T131646-spec-3258'), [PENDING('wrap-up-docs-1.md')], undefined, { stage: false });
+  assert.deepStrictEqual(residue.collectUnresolvedConsoles(project, { pluginRoot: '/p' }), []);
 });
 
 test('collectUnresolvedConsoles: acknowledged consoles are skipped', () => {

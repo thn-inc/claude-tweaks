@@ -4,16 +4,38 @@
 // `pending` / `keep-staged`; nothing re-surfaced them once the run archived.
 // Pure apart from the default fs readers: read-only toward staged/ and toward
 // resolution. The only write in the feature (`--ack`) lives in the CLI.
+// An unresolved item whose staged file has since vanished (a rename, a cleanup)
+// is `missing` (#3772): there is nothing left for a human to review, so
+// `splitMissing` takes it out of the count and the banner names it once instead.
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 
 const UNRESOLVED_RESOLUTIONS = new Set(['pending', 'keep-staged']);
+const MISSING_RESOLUTION = 'missing';
 
 function unresolvedItems(consoleJson) {
   if (!consoleJson || typeof consoleJson !== 'object' || !Array.isArray(consoleJson.items)) return [];
   return consoleJson.items.filter((i) => i && UNRESOLVED_RESOLUTIONS.has(i.resolution));
+}
+
+// Partition unresolved items into those a human can still review and those
+// whose `staged/{id}` is gone from `consoleDir`. An item with no usable id, a
+// `decision:` item (it lives in decisions.md, not staged/), or an id that is
+// not a bare file name is never classified missing — only a plain staged-file
+// id can be proven absent.
+function splitMissing(items, consoleDir, exists = fs.existsSync) {
+  const kept = [];
+  const missing = [];
+  for (const item of items) {
+    const id = item && item.id;
+    const checkable = typeof id === 'string' && id !== '' && !id.startsWith('decision:') && path.basename(id) === id;
+    if (checkable && !exists(path.join(consoleDir, 'staged', id))) {
+      missing.push({ ...item, resolution: MISSING_RESOLUTION, reason: `staged file absent (was ${item.resolution})` });
+    } else kept.push(item);
+  }
+  return { items: kept, missing };
 }
 
 const defaultReadFile = (p) => fs.readFileSync(p, 'utf8');
@@ -26,7 +48,7 @@ const defaultReaddir = (p) => {
 // silent; one that exists but cannot be read or parsed is listed in
 // `unreadable` instead, so a caller can say its items could not be checked
 // rather than let it read as "no residue".
-function readRunResidue(runDir, { readFile = defaultReadFile, readdir = defaultReaddir } = {}) {
+function readRunResidue(runDir, { readFile = defaultReadFile, readdir = defaultReaddir, exists } = {}) {
   const candidates = [path.join(runDir, 'console.json')];
   for (const name of readdir(runDir).filter((n) => /^spec-/.test(n)).sort()) {
     candidates.push(path.join(runDir, name, 'console.json'));
@@ -39,9 +61,9 @@ function readRunResidue(runDir, { readFile = defaultReadFile, readdir = defaultR
       if (!(err && err.code === 'ENOENT')) unreadable.push(p);
       continue;
     }
-    const items = unresolvedItems(parsed);
+    const { items, missing } = splitMissing(unresolvedItems(parsed), path.dirname(p), exists);
     if (items.length === 0) continue;
-    consoles.push({ path: p, items, acknowledged: typeof parsed.residueAcknowledgedAt === 'string' });
+    consoles.push({ path: p, items, missing, acknowledged: typeof parsed.residueAcknowledgedAt === 'string' });
   }
   return { dir: runDir, consoles, unreadable };
 }
@@ -87,8 +109,10 @@ function formatResidueLines({ dir, consoles }, { pluginRoot, maxItems = 5 }) {
   if (total > count) {
     lines.push(`  … and ${total - count} more — see "${single ? consoles[0].path : dir}"`);
   }
+  const gone = consoles.flatMap((c) => (c.missing || []).map((m) => path.relative(dir, path.join(path.dirname(c.path), 'staged', m.id))));
+  if (gone.length > 0) lines.push(`  not counted — staged file(s) no longer on disk: ${gone.join(', ')}`);
   lines.push(`  mark reviewed: node "${pluginRoot}/bin/console-residue.js" --ack --run "${dir}"`);
   return lines;
 }
 
-module.exports = { UNRESOLVED_RESOLUTIONS, unresolvedItems, readRunResidue, formatResidueLines };
+module.exports = { UNRESOLVED_RESOLUTIONS, MISSING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines };
