@@ -12,6 +12,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { run, readEvents } = require('../plugin/bin/friction-events');
+const { formatEntry, appendEntry } = require('../plugin/bin/lib/log-decision/append');
 
 function fakeDeps(overrides = {}) {
   const calls = { findRunsByWorktreePath: [], findAdHocRunsBySessionId: [], stdout: [], stderr: [] };
@@ -363,6 +364,61 @@ test('#3442: a claim logged after local midnight, past a mint before it, rolls t
   const events = readEvents(dir, 'primary');
   assert.equal(events.length, 1, 'the pre-claim event (21:55Z, 23:55 local) must be excluded; the post-claim event kept');
   assert.equal(events[0].ts, '2026-10-17T22:10:00.000Z');
+}));
+
+// #3641: the claim time is stamped through the real log-decision writer, so the
+// decisions.md line carries the local HH:MM:SS that formatEntry renders. These
+// pin the claim-boundary read on two non-UTC zones, so a revert to a `Z`
+// (UTC) reading of the claim time fails here.
+
+test('#3641 AC1.1: a log-decision-stamped claim under TZ=Europe/Copenhagen keeps a later wd-guard-refusal', () => withTz('Europe/Copenhagen', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  // Minted at 18:58:00Z; claimed at 18:59:10Z, which is 20:59:10 local.
+  const dir = path.join(parent, '2026-10-19T185800-record-999');
+  fs.mkdirSync(dir);
+  appendEntry({
+    runDir: dir,
+    section: '/flow',
+    entry: formatEntry({ status: 'AUTO', now: Date.UTC(2026, 9, 19, 18, 59, 10), step: 'Step 2.8', text: 'claimed #999', reversibility: 'high' }),
+  });
+  fs.writeFileSync(
+    path.join(dir, 'events.jsonl'),
+    [
+      '{"type":"wd-guard-refusal","ts":"2026-10-19T18:58:30.000Z"}',
+      '{"type":"wd-guard-refusal","ts":"2026-10-19T19:05:00.000Z"}',
+    ].join('\n') + '\n',
+  );
+  assert.match(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'), /^- AUTO 20:59:10 —/m);
+  const deps = fakeDeps({ readEvents });
+  assert.equal(run(['--run', dir, '--worktree', dir], deps), 0);
+  const out = JSON.parse(deps.calls.stdout.join(''));
+  assert.deepEqual(out.map((e) => e.ts), ['2026-10-19T19:05:00.000Z'], 'the pre-claim event (18:58:30Z) must be excluded; the post-claim event kept');
+}));
+
+test('#3641 AC2.1: under TZ=America/Los_Angeles a pre-claim event is still excluded', () => withTz('America/Los_Angeles', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  // Minted at 05:00:00Z on 2026-10-19 (22:00 local on 10-18, PDT); claimed at
+  // 05:01:00Z, which is 22:01:00 local on 10-18. The UTC date in the name is
+  // one day ahead of the local calendar day the claim belongs to.
+  const dir = path.join(parent, '2026-10-19T050000-record-999');
+  fs.mkdirSync(dir);
+  appendEntry({
+    runDir: dir,
+    section: '/flow',
+    entry: formatEntry({ status: 'AUTO', now: Date.UTC(2026, 9, 19, 5, 1, 0), step: 'Step 2.8', text: 'claimed #999', reversibility: 'high' }),
+  });
+  fs.writeFileSync(
+    path.join(dir, 'events.jsonl'),
+    [
+      '{"type":"wd-guard-refusal","ts":"2026-10-19T05:00:30.000Z"}',
+      '{"type":"wd-guard-refusal","ts":"2026-10-19T05:05:00.000Z"}',
+    ].join('\n') + '\n',
+  );
+  assert.match(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'), /^- AUTO 22:01:00 —/m);
+  const deps = fakeDeps({ readEvents });
+  assert.equal(run(['--run', dir, '--worktree', dir], deps), 0);
+  const out = JSON.parse(deps.calls.stdout.join(''));
+  assert.deepEqual(out.map((e) => e.ts), ['2026-10-19T05:05:00.000Z'], 'the pre-claim event (05:00:30Z) must be excluded; the post-claim event kept');
 }));
 
 // --- friction-lens vocabulary filter (#2016) --------------------------------

@@ -18,6 +18,9 @@
 //   - a YAML file under a 'stories/' path segment (#3034) — this plugin's own
 //     QA story-file convention (plugin/skills/stories/SKILL.md), the files
 //     /claude-tweaks:stories writes by default
+//   - exemption (#3680): prompt prose (markdown under skills/, agents/ or
+//     commands/) is never a test file, even under a 'test/' directory — see
+//     PROMPT_PROSE_DIRS below
 // Both anchored to a '/' or string boundary so a path merely CONTAINING
 // "test" as a substring (e.g. 'src/latest/widget.js', 'src/contest.js')
 // never false-positives.
@@ -28,7 +31,29 @@ const TEST_SUFFIX_RE = /\.(test|spec)\.(jsx?|tsx?)$|_test\.go$|(^|\/)test_[^/]+\
 // content (a CMS or docs site's 'stories/' pages) in downstream projects.
 const STORY_PATH_RE = /(^|\/)stories\/.*\.ya?ml$/;
 
+// Prompt prose: markdown under a Claude Code component directory (`skills/`,
+// `agents/`, `commands/`, at any prefix). It is the shipped product of a
+// plugin or a project's own harness, so it counts as production for the
+// low-surface gate. Keyed on Claude Code's directory conventions, not on
+// `plugin/`, so it is project-agnostic. Erring toward production costs only a
+// `standard` wrap-up, and, since `implFiles` also feeds `profiles.js`'s
+// diff-ceiling, can lift a small prose diff's whole-branch reviewer from
+// Standard to Capable — still the safe direction.
+// #3477: run `2026-10-17T194130-record-3005` (#3005's four prose files plus
+// one test) derived `fast-lane` when it should not have.
+// The directory names are exported so tests can pin the prose twins that
+// restate them (`build/micro-plan.md`, `wrap-up/ceremony-derivation.md`).
+// isTestPath also consults it (#3680): a prose file under a `skills/test/`
+// directory would otherwise match TEST_PATH_RE and understate implementation
+// blast radius in merge-check.
+const PROMPT_PROSE_DIRS = Object.freeze(['skills', 'agents', 'commands']);
+const PROMPT_PROSE_RE = new RegExp(`(^|/)(${PROMPT_PROSE_DIRS.join('|')})/.+\\.md$`, 'i');
+function isPromptProsePath(path) {
+  return PROMPT_PROSE_RE.test(path);
+}
+
 function isTestPath(path) {
+  if (isPromptProsePath(path)) return false;
   return TEST_PATH_RE.test(path) || TEST_SUFFIX_RE.test(path) || STORY_PATH_RE.test(path);
 }
 
@@ -132,4 +157,4 @@ function blastRadiusSummary(classifiedFiles) {
   return summary;
 }
 
-module.exports = { classifyDiffFiles, blastRadiusSummary, isSensitivePath, globToRegExp };
+module.exports = { classifyDiffFiles, blastRadiusSummary, isSensitivePath, globToRegExp, isPromptProsePath, PROMPT_PROSE_DIRS };

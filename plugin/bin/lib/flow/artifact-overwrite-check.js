@@ -276,7 +276,7 @@ function checkArtifactOverwrite(opts) {
       if (event.status !== 'M') continue;
       const { commit } = event;
 
-      const numstatOut = git(['log', '--numstat', '-1', '--format=', commit, '--', path], cwd);
+      const numstatOut = git(['log', '--numstat', '-1', '--format=', commit, '--', path], cwd); // git-path-read: not a path list (counts for a caller-named path)
       const deletions = parseNumstatDeletions(numstatOut);
       if (deletions === null) {
         // Unreadable numstat (binary, or an unexpected shape) — fail closed.

@@ -2,6 +2,7 @@
 files:
   - plugin/skills/review/step3-lens-dispatch.md
   - plugin/skills/review/step3-debate-and-refutation.md
+  - plugin/bin/lib/review-context/build.js
 ---
 
 # Run a Review from a Worktree-Isolated Session
@@ -27,6 +28,14 @@ files:
 - **Should understand:** `{ctx-dir}` still holds the context bundle and the pre/post-fan-out status snapshots; only the orchestrator-written coordination inputs moved. The fan-out leftover sweep's `{ctx-dir}` exclusion no longer names `lens-*.json` or `findings-by-lens.json`, because they are no longer there.
 - **Red flags:** `detect-overlap` invoked on a `{ctx-dir}/findings-by-lens.json` path; the leftover sweep reporting a findings JSON file as a fan-out leftover.
 
+### 3. Capture the pre-dispatch baselines — worktree-isolated session
+- **URL:** Step 3's `build-review-context.js build --run "$PIPELINE_RUN_DIR"` call, before any lens dispatch
+- **Action:** the orchestrator runs the one `build` command and reads its JSON line. `baselinePath` names `{ctx-dir}/pre-dispatch-status.txt`, and `listenersPath` names `{ctx-dir}/pre-dispatch-listeners.txt` (or is `null` when `lsof` is unavailable). The post-fan-out sweep diffs against those files.
+- **Should feel:** a single command. The orchestrator makes no follow-up redirect, needs no scratchpad copy of the baseline, and gets no refusal.
+- **Should understand:** the CLI writes both baselines itself, running `git status --porcelain --untracked-files=all` at the worktree's toplevel, so untracked files that already existed are in the baseline and never reported as leftovers. The reviewer never writes a file under `{ctx-dir}` by hand.
+- **Red flags:** a `git status … > {ctx-dir}/pre-dispatch-status.txt` redirect attempted (and refused); a baseline kept in a scratchpad because the documented file never existed; a pre-existing untracked file reported as a fan-out leftover.
+
 ## Origin
 - Created during build of #2956. On plugin 6.133.0, an unattended `/claude-tweaks:flow` review step in a worktree-isolated session hit 3 refused tool calls (about 2 minutes) writing `{ctx-dir}/lens-*.json` under the main-checkout run directory, and only finished by writing the JSON elsewhere by hand. The fix moves the orchestrator-written inputs to per-review names in the session temp dir; `review-coordination.js` and `build-review-context.js` are unchanged.
+- Step 3 added during build of #3302. #2783's review hit the same refusal for the pre-dispatch status baseline, and the reviewer kept the baseline in its own scratchpad. `build-review-context.js build` now writes both baselines and reports them as `baselinePath`/`listenersPath`.
 - Related journeys: `confirm-coverage-findings-across-reproduction-pairs-3049.md` (the same reproduction pairs' matcher), `keep-review-lenses-from-running-suites-3001.md` (the same fan-out's leftover sweep).

@@ -211,6 +211,69 @@ test('an uncommitted local edit keeps the working copy authoritative even when b
   assert.deepEqual(r.onlyUpstream, ['proj-tidy-weekly.yml']);
 });
 
+test('AC1.1: an uncommitted edit to a non-ASCII record name counts as dirty', () => {
+  // A dedicated remote (the shared one is read by every other test). The record
+  // must exist on BOTH sides, behind upstream, so authority falls to the dirty
+  // check alone: local-only would be 'local' regardless and prove nothing.
+  const dir = caseDir();
+  const remote = path.join(dir, 'remote.git');
+  const repo = path.join(dir, 'repo');
+  git(dir, 'init', '--bare', '--initial-branch=main', remote);
+  git(dir, 'clone', '--quiet', remote, repo);
+  // Explicit, so a global core.quotepath=false cannot make this pass vacuously.
+  git(repo, 'config', 'core.quotepath', 'true');
+
+  const base = { routine_id: 'trig_ddd', template: 'code-health', template_version: 1, created_at: '2026-03-01T00:00:00Z' };
+  writeRecord(repo, 'café.yml', { ...base, schedule: '0 6 * * *' });
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'Add café record');
+  git(repo, 'push', '-q', 'origin', 'main');
+  writeRecord(repo, 'café.yml', { ...base, schedule: '0 7 * * *' });
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'Move café record schedule');
+  git(repo, 'push', '-q', 'origin', 'main');
+  // Behind by one commit, with origin/main still pointing at the newer one.
+  git(repo, 'reset', '-q', '--hard', 'HEAD~1');
+
+  // The premise the fixture rests on: git really does C-quote this name.
+  assert.match(git(repo, 'ls-files', '--', RECORD_DIR), /caf\\303\\251\.yml/);
+
+  writeRecord(repo, 'café.yml', { ...base, schedule: '30 5 * * *' });
+  const r = compareRoutineRecords({ cwd: repo, branch: 'main' });
+  assert.equal(r.verified, true);
+  assert.equal(r.behind, 1);
+  const rec = r.records.find((x) => x.filename === 'café.yml');
+  assert.ok(rec, 'the non-ASCII record is in the union');
+  assert.equal(rec.uncommitted, true);
+  assert.equal(rec.authority, 'local', 'the working copy wins over a behind checkout, as for an ASCII name');
+});
+
+test('a renamed record counts its destination as dirty, never the rename source (origPath)', () => {
+  const dir = caseDir();
+  const remote = path.join(dir, 'remote.git');
+  const repo = path.join(dir, 'repo');
+  git(dir, 'init', '--bare', '--initial-branch=main', remote);
+  git(dir, 'clone', '--quiet', remote, repo);
+  git(repo, 'config', 'core.quotepath', 'true');
+  const base = { routine_id: 'trig_eee', template: 'code-health', template_version: 1, created_at: '2026-03-01T00:00:00Z', schedule: '0 6 * * *' };
+  // The rename source lives in a subdirectory and shares its basename with a
+  // committed-clean top-level record: the dirty set is keyed by basename, so
+  // counting the porcelain `origPath` would flag `same-name.yml` uncommitted.
+  fs.mkdirSync(path.join(repo, RECORD_DIR, 'sub'), { recursive: true });
+  writeRecord(repo, 'same-name.yml', base);
+  writeRecord(repo, path.join('sub', 'same-name.yml'), { ...base, routine_id: 'trig_fff' });
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'Add records');
+  git(repo, 'push', '-q', 'origin', 'main');
+  // Staged rename: porcelain -z emits "R  new\0old\0".
+  git(repo, 'mv', path.join(RECORD_DIR, 'sub', 'same-name.yml'), path.join(RECORD_DIR, 'new-name.yml'));
+  assert.match(git(repo, 'status', '--porcelain'), /^R /, 'fixture precondition: git reports a rename');
+  const r = compareRoutineRecords({ cwd: repo, branch: 'main' });
+  const byName = Object.fromEntries(r.records.map((x) => [x.filename, x]));
+  assert.equal(byName['new-name.yml'].uncommitted, true, 'the rename destination is the dirty one');
+  assert.equal(byName['same-name.yml'].uncommitted, false, 'the rename source (origPath) is not what is dirty');
+});
+
 test('a model-only difference between local and upstream is reported as a significant field', () => {
   // A dedicated remote, not the shared FIXTURE one: the shared bare repo is
   // read by every other test in this file via `origin/main`, and pushing a

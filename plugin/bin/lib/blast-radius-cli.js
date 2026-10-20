@@ -13,6 +13,7 @@ const fs = require('fs');
 const { execFileSync } = require('child_process');
 const { classifyDiffFiles, blastRadiusSummary } = require('./issues/blast-radius.js');
 const { resolvePolicyConfig } = require('./policy-schema.js');
+const { parseNumstatZ } = require('./git-z.js');
 
 class BlastRadiusError extends Error {
   constructor(...args) {
@@ -32,23 +33,6 @@ function defaultReadFile(filePath) {
     if (err.code === 'ENOENT') return null;
     throw err;
   }
-}
-
-// git diff --numstat: "<additions>\t<deletions>\t<path>" per line; binary files
-// report "-" for both counts (counted as a changed file with zero lines); a
-// path may itself contain tabs, so it is everything after the second tab.
-function parseNumstat(raw) {
-  return raw
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => {
-      const [additions, deletions, ...pathParts] = line.split('\t');
-      return {
-        path: pathParts.join('\t'),
-        additions: Number.parseInt(additions, 10) || 0,
-        deletions: Number.parseInt(deletions, 10) || 0,
-      };
-    });
 }
 
 function resolveConfig({ git, readFile, runDir }) {
@@ -131,16 +115,16 @@ function computeBlastRadius(opts = {}, deps = {}) {
 
   let diffRaw;
   try {
-    diffRaw = git(['diff', '--no-renames', '--numstat', `${mergeBase}..HEAD`]);
+    diffRaw = git(['diff', '--no-renames', '--numstat', '-z', '--end-of-options', `${mergeBase}..HEAD`]);
   } catch (err) {
     throw new BlastRadiusError(`git diff --numstat failed: ${err.message}`);
   }
-  const files = parseNumstat(diffRaw);
+  const files = parseNumstatZ(diffRaw);
   const config = resolveConfig({ git, readFile, runDir });
   const summary = blastRadiusSummary(classifyDiffFiles(files, config.mergeSensitivePaths));
   return { mergeBase, config, summary };
 }
 
 module.exports = {
-  computeBlastRadius, parseNumstat, BlastRadiusError, preferOriginRef,
+  computeBlastRadius, BlastRadiusError, preferOriginRef,
 };
