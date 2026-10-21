@@ -179,6 +179,16 @@ function renderEffort(input) {
   return `eff: ${level}`;
 }
 
+// The figure is Claude Code's own list-price estimate from stdin (not a bill;
+// it resets on /clear). Thresholds are decided on the raw value, not the rounded one.
+function renderCost(input) {
+  const usd = input.cost && input.cost.total_cost_usd;
+  if (typeof usd !== 'number' || !Number.isFinite(usd) || usd < 0.005) return null;
+  if (usd < 10) return `$${usd.toFixed(2)}`;
+  if (usd < 100) return `$${usd.toFixed(1)}`;
+  return `$${usd.toFixed(0)}`;
+}
+
 // `git --no-optional-locks status --porcelain -b` returns the branch and dirty
 // status in one call instead of two separate `symbolic-ref` + `status
 // --porcelain` spawns.
@@ -420,6 +430,7 @@ async function main() {
     renderRateLimit('week', rateLimits.seven_day, now),
     findActiveSpec(cwd),
     findOpenLedger(cwd),
+    renderCost(input),
     renderAccount(input),
   ].filter((s) => s !== null && s !== undefined && s !== '');
 
@@ -437,6 +448,7 @@ module.exports = {
   githubRepoUrl,
   renderContext,
   renderEffort,
+  renderCost,
   renderGit,
   renderPorts,
   nearestGitToplevel,
