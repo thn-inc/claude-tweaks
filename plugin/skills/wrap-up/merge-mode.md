@@ -37,3 +37,11 @@ Before accepting branch 5's `pending-review` (for example `--auto` rejected with
 Report `merged`, `armed`, or `pending-review` in `pr-first-merge.md`'s Outcome vocabulary.
 
 ## Conflict
+
+Runs when `pr-first-merge.md`'s Conflict path — its single update-from-base merge, inside the run's own worktree — leaves conflict markers. `pr-first-merge.md` points here; no other caller reads this section.
+
+- Resolve a conflict only where both sides' intent can be kept and stated in one line per file.
+- An incident-number collision (`docs/incident-log.md`'s `IL-{N}`) renumbers the branch's own entry and every citation the branch added, never the integration branch's.
+- Stage the result and run the full suite through `verify.js` (`test/verification.md`'s runner).
+- Green: commit, push (`git -C "{worktree-path}" push origin {branch}`), and re-enter Step 2.5 from the top — the pushed head has its own CI to read before any merge.
+- A conflict that needs a judgment between the two sides' intent, or a red suite: run `git merge --abort` in the worktree (`git -C "{worktree-path}"`), leave the PR ready, and report `pending-review` naming the conflicted files and the reason.

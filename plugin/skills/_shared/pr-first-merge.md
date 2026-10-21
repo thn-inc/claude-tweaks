@@ -451,6 +451,9 @@ git -C "{worktree-path}" merge origin/{integration-branch}
   explaining the conflict, and report outcome `pending-review`. A human resolves it the ordinary
   way — check out the branch, resolve, push — no scratch-worktree ceremony needed, since the
   conflict already surfaced inside the run's own real worktree, not a throwaway one.
+- **Attended branch (merge mode only).** A human-confirmed merge (`/claude-tweaks:wrap-up #{n} merge`)
+  resolves instead of stopping — procedure in `wrap-up/merge-mode.md`'s `## Conflict`. Every other
+  caller keeps the stop-at-markers bullet above.
 
 **Sequential multi-branch merges** (`flow/worktree-merge.md`'s reconciliation): the invoking
 session serializes them one at a time. Each later branch's own single update-from-base attempt

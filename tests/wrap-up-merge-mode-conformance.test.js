@@ -102,3 +102,71 @@ test('wrap-up grammar surfaces carry the merge token', () => {
   const takes = row.split(/(?<!\\)\|/)[3].trim().replace(/^`|`$/g, '').replace(/\\\|/g, '|');
   assert.strictEqual(takes, HINT);
 });
+
+// Task 2: the attended Conflict-path branch. The procedure lives in merge-mode.md's
+// `## Conflict` (merge mode's only reader); `_shared/pr-first-merge.md` carries a pointer
+// bullet only, because the composed `merge` bundle has too little rail headroom for it.
+const ATTENDED_FACTS = {
+  'both-intents': /both sides' intent can be kept and stated in one line per file/,
+  renumber: /renumbers the branch's own entry and every citation the branch added, never the integration branch's/,
+  suite: /`verify\.js`/,
+  reenter: /re-enter Step 2\.5 from the top/,
+  abort: /`git merge --abort`/,
+};
+const POINTER_FACTS = {
+  scope: /\*\*Attended branch \(merge mode only\)\.\*\*/,
+  owner: /`wrap-up\/merge-mode\.md`'s `## Conflict`/,
+  'headless-unchanged': /- \*\*Conflict markers remain\*\*: this is what "unresolvable headlessly" means — stop, do not attempt resolution\./,
+  'other-callers': /Every other caller keeps the stop-at-markers bullet above/,
+};
+
+function conflictRegion() {
+  const raw = read('plugin', 'skills', 'wrap-up', 'merge-mode.md');
+  const start = raw.indexOf('## Conflict');
+  assert.notEqual(start, -1, 'merge-mode.md must carry a `## Conflict` heading');
+  const next = raw.indexOf('\n## ', start + 1);
+  return flat(next === -1 ? raw.slice(start) : raw.slice(start, next));
+}
+
+function conflictPathRegion() {
+  const raw = read('plugin', 'skills', '_shared', 'pr-first-merge.md');
+  const start = raw.indexOf('## Conflict path');
+  const end = raw.indexOf('## Outcome vocabulary');
+  assert.notEqual(start, -1, 'pr-first-merge.md must carry a `## Conflict path` heading');
+  assert.notEqual(end, -1, 'pr-first-merge.md must carry a `## Outcome vocabulary` heading');
+  return flat(raw.slice(start, end));
+}
+
+test('merge-mode.md Conflict section carries the attended procedure', () => {
+  assert.deepStrictEqual(missingFactsOf(conflictRegion(), ATTENDED_FACTS), []);
+});
+
+test('attended Conflict facts each go red when stripped', () => {
+  assertEachFactGoesRed(conflictRegion(), ATTENDED_FACTS);
+});
+
+test('pr-first-merge.md Conflict path carries the pointer and keeps the headless bullet', () => {
+  assert.deepStrictEqual(missingFactsOf(conflictPathRegion(), POINTER_FACTS), []);
+});
+
+test('pointer facts each go red when stripped', () => {
+  assertEachFactGoesRed(conflictPathRegion(), POINTER_FACTS);
+});
+
+test('the pointer bullet stays within its 400 B budget', () => {
+  const m = /- \*\*Attended branch \(merge mode only\)\.\*\*[\s\S]*?(?=\n\n|\n- |\n#)/.exec(
+    read('plugin', 'skills', '_shared', 'pr-first-merge.md'),
+  );
+  assert.ok(m, 'pointer bullet present');
+  assert.ok(Buffer.byteLength(m[0], 'utf8') <= 400, `pointer is ${Buffer.byteLength(m[0], 'utf8')} B`);
+});
+
+test('the composed merge bundle stays within the read-limit rail', () => {
+  const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
+  const { composedBytesReport } = require('../plugin/bin/lib/skill-audit/context-cost');
+  const rows = composedBytesReport(path.join(ROOT, 'plugin')).filter((r) => r.step === 'merge');
+  assert.ok(rows.length > 0, 'at least one compose call site names --step merge');
+  for (const r of rows) {
+    assert.ok(r.max <= RAIL_BYTES, `${r.file}:${r.line} composes ${r.max} B > ${RAIL_BYTES}`);
+  }
+});
