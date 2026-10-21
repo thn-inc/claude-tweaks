@@ -64,6 +64,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
      const PR_CHECKS = require('path').join(process.env.PLUGIN_ROOT, 'bin', 'pr-checks.js');
      const NON_BLOCKING = new Set(['SUCCESS', 'SKIPPED', 'NEUTRAL']);
      const FAILURE = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
+     const STATUS_BY_STATE = new Map([['green', 'passing'], ['no-ci', 'passing'], ['pending', 'pending'], ['red', 'failing'], ['inherited-red', 'failing']]);
      require('$PR_SCAN_OPEN').forEach((pr) => {
        const checks = pr.statusCheckRollup || [];
        const verdict = (c) => c.conclusion || c.state;
@@ -71,7 +72,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
        if (checks.every((c) => NON_BLOCKING.has(verdict(c)))) {
          let state;
          try { state = JSON.parse(execFileSync('node', [PR_CHECKS, '--pr', String(pr.number)], { encoding: 'utf8' })).state; } catch (e) { state = 'read-failed'; }
-         status = state === 'green' || state === 'no-ci' ? 'passing' : state === 'pending' ? 'pending' : state === 'red' || state === 'inherited-red' ? 'failing' : 'unavailable';
+         status = STATUS_BY_STATE.get(state) || 'unavailable';
        } else {
          status = checks.some((c) => FAILURE.has(verdict(c))) ? 'failing' : 'pending';
        }

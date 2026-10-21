@@ -121,12 +121,16 @@ test('AC1.1: item 9 CI filter keeps green/no-ci, drops pending, red and a failed
   }
 });
 
-function currentPrItem3Slice() {
+function prScanSlice(startMarker, endMarker, label) {
   const t = read(PR_SCAN);
-  const start = t.indexOf('3. **CI checks**');
-  const end = t.indexOf('4. **Repo-wide stale count', start);
-  assert.ok(start >= 0 && end > start, 'current-pr item 3 slice is found');
+  const start = t.indexOf(startMarker);
+  const end = t.indexOf(endMarker, start);
+  assert.ok(start >= 0 && end > start, `${label} slice is found`);
   return t.slice(start, end);
+}
+
+function currentPrItem3Slice() {
+  return prScanSlice('3. **CI checks**', '4. **Repo-wide stale count', 'current-pr item 3');
 }
 
 // Pins each state-to-count pairing in the current-pr item 3 CI read, not just the tokens.
@@ -150,11 +154,7 @@ test('AC1.1: pr-scan current-pr item 3 reads CI through pr-checks.js --pr and ma
 });
 
 function repoWideItem1Slice() {
-  const t = read(PR_SCAN);
-  const start = t.indexOf('1. **Open PRs**');
-  const end = t.indexOf('2. **Unresolved threads per open PR**', start);
-  assert.ok(start >= 0 && end > start, 'repo-wide item 1 slice is found');
-  return t.slice(start, end);
+  return prScanSlice('1. **Open PRs**', '2. **Unresolved threads per open PR**', 'repo-wide item 1');
 }
 
 test('AC1.1: pr-scan repo-wide item 1 calls pr-checks.js --pr only for rollup-green PRs', () => {
