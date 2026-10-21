@@ -93,7 +93,7 @@ function pluginRoot() {
 // #1143: usage strings for every documented `hooks.js` subcommand (the
 // dispatch table's own record-worktree/close-run/teardown-run/archive-run/
 // resolve-run-dir/record-pr/spec-status/manifest-init/check-resume-freshness/check-staged-
-// inventory/check-sibling-sessions/sweep-shadow/adopt-run-dir/reconcile/
+// inventory/check-pass-reentry/check-sibling-sessions/sweep-shadow/adopt-run-dir/reconcile/
 // reconcile-background/reconcile-summary set — see docs/plugin-structure.md's
 // hooks.js line). Doubles as the membership table for the `--help`/`-h` intercept
 // below: a verb absent from this map gets no guard, by design — the six
@@ -118,6 +118,7 @@ const USAGE = {
   'check-resume-freshness': 'check-resume-freshness [--run <dir>]',
   'check-staged-inventory': 'check-staged-inventory [--run <dir>]',
   'check-session-residue': 'check-session-residue [--run <dir>]',
+  'check-pass-reentry': 'check-pass-reentry --run <dir> [--online]',
   'check-sibling-sessions': 'check-sibling-sessions --record <id-or-slug>',
   reconcile: 'reconcile [--dry-run] [--json] [--mcp-reachable] [--checks <c1,c2,...>]',
   'reconcile-summary': 'reconcile-summary',
@@ -151,6 +152,7 @@ const KNOWN_FLAGS = {
   // while the running build's hooks.js is newer, and the unknown-flag guard would refuse that call.
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
   'resolve-console': ['--run', '--approve', '--decline', '--reverse-failed'],
+  'check-pass-reentry': ['--run', '--online'],
 };
 
 // Declared flags that consume the following token as a value — the
@@ -1406,6 +1408,41 @@ async function main(argv) {
     process.stdout.write(
       `claude-tweaks: pending residue from session start still unresolved:\n${blocks.join('\n')}\n`,
     );
+    return 0;
+  }
+  if (cmd === 'check-pass-reentry') {
+    // #3553: prints consolidated-pass.js's checkPassReentry verdict for
+    // flow/multispec-review-console.md's re-entry step. Unlike its sibling
+    // check-* verbs this exits 1 on refusal (nothing on stdout): that caller
+    // treats a non-zero exit or non-JSON stdout as a stop, so a refused --run
+    // must never read as a verdict.
+    const {
+      runDir, invalidRunArg, worktreeLocalFallback, explicit,
+    } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
+    if (!explicit) {
+      process.stderr.write('claude-tweaks: check-pass-reentry requires --run — pass re-entry not checked\n');
+      return 1;
+    }
+    if (invalidRunArg) {
+      process.stderr.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — pass re-entry not checked\n`);
+      return 1;
+    }
+    // Same disclosure as reportWorktreeLocalFallback, on stderr: that helper
+    // writes stdout, which this verb reserves for the verdict JSON alone.
+    if (worktreeLocalFallback) {
+      process.stderr.write(`claude-tweaks: --run ${runDir} resolved via the worktree-local fallback (#280) — no anchored copy exists under the main checkout; this run's state lives only in this worktree until merge.\n`);
+    }
+    let verdict;
+    try {
+      verdict = require('./lib/flow/consolidated-pass').checkPassReentry(runDir, {
+        online: argv.slice(3).includes('--online'),
+        sessionId: process.env.CLAUDE_CODE_SESSION_ID,
+      });
+    } catch (e) {
+      process.stderr.write(`claude-tweaks: check-pass-reentry failed — ${e.message}\n`);
+      return 1;
+    }
+    await new Promise((resolve) => process.stdout.write(`${JSON.stringify(verdict)}\n`, resolve));
     return 0;
   }
   if (cmd === 'check-sibling-sessions') {
