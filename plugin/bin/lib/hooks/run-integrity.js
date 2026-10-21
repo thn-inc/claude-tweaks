@@ -9,12 +9,14 @@
 //
 // Measured boundaries inherited from #371's ledger (see that spec's
 // work/task0-findings.md): skill_invoked events exist only for MODEL-INITIATED
-// Skill tool calls — a human typing /claude-tweaks:wrap-up leaves no event, and
-// runs predating the ledger have none at all. Both are why the verdict requires
-// at least one skill_invoked of any kind (pre-ledger precondition) and treats a
-// present wrap-up event as proof the procedure ran; absence of a wrap-up event
-// alone is never a verdict. Subagent Skill calls ARE visible (parent-session
-// hooks, agent-tagged in the payload), so dispatch-driven wrap-ups do register.
+// Skill tool calls — since the UserPromptSubmit ledger (`user-prompt-submit.js`),
+// a human typing `/claude-tweaks:wrap-up` leaves a `source: "user"` event, which
+// counts as proof like any other; runs predating either ledger have none at all.
+// Both are why the verdict requires at least one skill_invoked of any kind
+// (pre-ledger precondition) and treats a present wrap-up event as proof the
+// procedure ran; absence of a wrap-up event alone is never a verdict. Subagent
+// Skill calls ARE visible (parent-session hooks, agent-tagged in the payload),
+// so dispatch-driven wrap-ups do register.
 'use strict';
 const fs = require('fs');
 const path = require('path');

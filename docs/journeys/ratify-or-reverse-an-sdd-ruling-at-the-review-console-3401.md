@@ -2,6 +2,8 @@
 files:
   - plugin/skills/build/dispatch.md
   - plugin/skills/build/handoff-template.md
+  - plugin/bin/stage-item.js
+  - plugin/bin/lib/stage-item/ledger.js
   - plugin/bin/lib/console/resolve.js
   - plugin/bin/lib/reconcile/console-execute.js
   - plugin/skills/wrap-up/review-console-appendix.md
@@ -25,10 +27,10 @@ files:
 
 ### 1. See the ruling arrive from the build
 - **URL:** the run's `decisions.md` under `## /build`, and `staged/sdd-ruling-{N}.md`
-- **Action:** After SDD's Finish step, read the `STAGED {time} — SDD ruling carried forward: "{one-liner}". Stage path: staged/sdd-ruling-{N}.md.` line and open the staged file. Its header carries `Kind: sdd-ruling`, the `progress.md` line verbatim under `Ruling:`, and `Ledger: {ledger path}#{item}` naming the `open` ledger row appended just before it.
+- **Action:** After SDD's Finish step, read the `STAGED {time} — SDD ruling carried forward: "{one-liner}". Stage path: staged/sdd-ruling-{N}.md.` line and open the staged file. Its header carries `Kind: sdd-ruling`, the `progress.md` line verbatim under `Ruling:`, and `Ledger: {ledger path}#{item}` naming the `open` ledger row the same `stage-item.js --ledger` call appended right after it.
 - **Should feel:** Like a decision was logged for you, not hidden from you. The one-liner and the verbatim ruling are both there; nothing has been paraphrased.
-- **Should understand:** Only a line whose first marker match is `Ruling:` is load-bearing. A `parked —` line (first match `parked —`) stays an `observation`; a `minor (deferred):` line stays `deferred`. A `Ruling: contract-beats-spec —` line (#3557) is the one exception. It stages as `build-deviation-{N}` with apply / decline dispositions, not as `sdd-ruling-{N}` (`docs/journeys/keep-a-spec-mandated-decision-line-on-the-contract-3557.md`). The ledger row was written first so the staged file can name its item number, and the path in the STAGED line is the one `stage-item.js` actually wrote even when `--allocate` had to renumber it.
-- **Red flags:** A ruling row with status `observation` (the pre-#3401 silent form). A `Ledger:` header naming an item that does not exist. A `staged/sdd-ruling-{N}` file with no `.md` extension. A `SKIP {time} — SDD ruling carry-forward (degraded): …` line under `## /build`: `stage-item.js` failed, so that ruling has no staged file and will not reach the console — its ledger row stays `open` with no `(staged/…)` suffix, and the resolve gate drills it instead.
+- **Should understand:** Only a line whose first marker match is `Ruling:` is load-bearing. A `parked —` line (first match `parked —`) stays an `observation`; a `minor (deferred):` line stays `deferred`. A `Ruling: contract-beats-spec —` line (#3557) is the one exception. It stages as `build-deviation-{N}` with apply / decline dispositions, not as `sdd-ruling-{N}` (`docs/journeys/keep-a-spec-mandated-decision-line-on-the-contract-3557.md`). The one `stage-item.js --ledger` call numbers the row before writing the staged file, so the file names its item number, and appends the row only once the file exists; the path in the STAGED line and the row is the one it actually wrote even when `--allocate` had to renumber it.
+- **Red flags:** A ruling row with status `observation` (the pre-#3401 silent form). A `Ledger:` header naming an item that does not exist. A `staged/sdd-ruling-{N}` file with no `.md` extension. A `SKIP {time} — SDD ruling carry-forward (degraded): …` line under `## /build`: `stage-item.js --ledger` degraded. Only the staged-write-failure SKIP leaves an `open` ledger row with no `(staged/…)` suffix, which the resolve gate drills instead; every other SKIP means nothing was carried forward (no row), and the SKIP line itself is the only trace — when it says a staged file `could NOT be removed`, delete that file by hand, since its `Ledger:` header names no row.
 
 ### 2. Find the row in the console's Pending review section
 - **URL:** the Review Console's Pending review section
@@ -78,4 +80,5 @@ files:
 - Steps 6-7 (PR-hosted and multi-spec consoles) added by #3513, run `2026-10-19T185713-record-3513`. They are the follow-up that #3401's whole-branch review deferred.
 - Step 6's reply-comment labelling revised by #3636, run `2026-10-20T135813-record-3636`: a flagged ruling reads `reversed` and counts as cleared, a refused reverse goes in `--reverse-failed`.
 - Step 1 notes the contract-beats-spec exception added by #3557, run `2026-10-20T183400-record-3557`.
+- Step 1 revised by #3510, run `2026-10-20T210418-record-3510`: the carry-forward is one `stage-item.js --ledger` call (stage, fill `Ledger:`, append, log), and its Red flags name what each degraded `SKIP` leaves behind. Verified live: this run carried its own four SDD rulings through the call (`staged/sdd-ruling-1..4.md`, ledger rows #1-#4).
 - Related: `docs/journeys/measure-sdd-final-review-value-3386.md` (reads the same rulings as evidence); `docs/journeys/resolve-the-unattended-console-in-one-process-1932.md` (the `consoleAutoResolve` path that ratifies with zero clicks).

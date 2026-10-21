@@ -1,0 +1,114 @@
+Ignoring 1 permissions.allow entry from .claude/settings.json: this workspace has not been trusted. Run Claude Code interactively here once and accept the trust dialog, or set projects["/home/user/claude-tweaks"].hasTrustDialogAccepted: true in /root/.claude.json.
+# Prompt audit: `plugin/`
+
+I found nine fixes worth proposing and a few items to flag, but I audited by signal, not line by line. I changed no files. Bash is disabled in this session, so I couldn't run `git blame` (Step 2). I used Grep, Glob and targeted reads instead, and reads of the long matched lines were selective. The surface is roughly 500 markdown files.
+
+**Assumptions**
+- **Scope:** all of `plugin/`. That covers `skills/**`, `skills/_shared/**`, `agents/qa-agent.md`, the `routine-template.yml` files, and the `bin/` code that builds or embeds prompt text. I skipped `~/.claude`, settings files and `.mcp.json`.
+- **Target model:** Claude Sonnet 5.5, the model running this audit. `qa-agent.md` pins the alias `model: sonnet`, which is the same family. The profile table uses family aliases (haiku/sonnet/opus/fable), so I treated `haiku` and `opus` dispatches as current-generation.
+
+**Overall:** the surface is largely clean, and most findings are fossils (pinned versions, probe dates) or stale facts.
+- **Highest impact:** `qa-agent.md:236` tells the agent to run `set viewport`, a command the same file replaced with `resize` at line 72. A legacy-format story would run the wrong CLI command.
+- **Next:** dated probe results and pinned model names are written into rules as if they were permanent facts. The main cases are `subagent-dispatch-core.md:156`, `subagent-output-contract.md:47` and nine `routine-template.yml` pins.
+- **Time-sensitive:** a transitional guard in `pipeline-run-dir.md` and the wrap-up appendix reaches its recorded sunset on 2026-11-07, 17 days from today.
+
+| Group | Findings |
+|---|---|
+| 1a Pressure language | 2 medium (`capture`, `build`); 2 low |
+| 1b–1c Scaffolds, over-specification | none. I found no "think step by step" or scratchpad tags, no prefill, no `budget_tokens`/`temperature`, and no word caps. The only numeric limits are format contracts, such as `≤ 50 characters` in table titles. |
+| 1d Fossils | 4 medium; 2 flag |
+| 2 Config files | 1 high, 1 medium |
+| 3 Tool descriptions | not applicable (the plugin ships no API `tools` array) |
+| 4 Request config | not applicable. `bin/` makes no Anthropic API calls; the two grep hits are detection patterns. |
+
+## Findings, highest confidence first
+
+| # | Location | Evidence | Pattern | Why obsolete | Conf. | Action |
+|---|---|---|---|---|---|---|
+| 1 | `agents/qa-agent.md:236` | "apply viewport via `set viewport` (the story's value…)" | Group 2, stale command | Line 72, `qa-prompts.md:123` and `browse/playwright-cli-reference.md:75` all say the Playwright CLI form is `resize <w> <h>`. `set viewport` is the old backend's form. | High | rewrite |
+| 2 | `agents/qa-agent.md:70` | "The flag is cross-platform — no shell-specific env-var workarounds needed." | Group 2, stale fact | It describes the old backend's viewport flag and env-var workaround. `resize` is a plain command, so the sentence refers to something that no longer exists. | Medium | remove |
+| 3 | `skills/_shared/subagent-dispatch-core.md:156` and `skills/build/dispatch.md:19` | "Probed 2026-08-17 … self-reported running as Haiku 4.5, not Sonnet … Single-observation confidence" / "probed 2026-08-17" | Group 2 history narrative; 1d fossil | It's a dated experiment pinned to specific model versions. The rule it supports (an explicit `model` overrides the ambient one) stands on its own. | Medium | rewrite |
+| 4 | `skills/_shared/subagent-output-contract.md:47` | "Sonnet 5's tokenizer emits roughly 30% more tokens … than its predecessor" | Group 2 volatile specifics; pinned model name | A per-model token ratio goes stale at the next release. The instruction ("keep CLAUDE.md lean") doesn't need it. | Medium | rewrite |
+| 5 | 9× `skills/*/routine-template.yml:7` (code-health is at line 14), plus `_shared/routine-template-schema.md:20` and `_shared/routine-diagnostic-probe.md:39` | `model: claude-sonnet-5` | Group 1d, model-version pin | `claude-sonnet-5` is the previous Sonnet generation. The current one is `claude-sonnet-5-5`. See the caveat below the table. | Medium | rewrite |
+| 6 | `skills/capture/SKILL.md:383` | "don't overthink — capture the essence." | 1b, thinking-depth prose | On Sonnet 5.5 at `medium` effort or above, a request to think less has almost no effect. The positive half carries the intent. | Medium | rewrite |
+| 7 | `skills/build/SKILL.md:162-164` | `<IMPORTANT> Design mode has no spec with structured acceptance criteria… </IMPORTANT>` | 1a, emphasis wrapper | The sentence already states its reason ("no spec with structured acceptance criteria"). The wrapper adds volume, not information. | Medium | rewrite |
+| 8 | `skills/dispatch/task-prompt.md:213, 341` | `CRITICAL: before reporting DONE…` / `CRITICAL: your review step must re-derive…` | 1a | Both carry a reason, so they're scoped fixes rather than a loud register. I can't tell without provenance whether the failure still reproduces. | Low | flag |
+| 9 | `skills/_shared/pipeline-run-dir.md:121`, `skills/wrap-up/cleanup-procedures-execution-appendix.md:23` | "sunset 2026-11-07" / "Step 3.5: Transitional guard" | 1d, date-conditional guidance | The guard's sunset is 17 days away. It has a recorded removal condition, which is the sanctioned form. Schedule its removal (and the code twin at `bin/lib/hooks/pre-tool-use.js:668`). | Low | flag |
+| 10 | `skills/_shared/subagent-dispatch-core.md:154` | "`[Effort: {level} — apply {level}-level reasoning depth to this task.]`" | 1b, prose steering depth | Effort is the real control. The text itself says the Agent tool has no per-dispatch parameter yet and records an adopt-when-available watch item, so the prose is a documented stopgap. | Low | flag |
+| 11 | 141 `[IL-nn]` tags across 77 skill files, plus `#NNNN` refs (for example `qa-agent.md:117, 249`) | `(#2670)`, `[IL-46]` | Group 2, history narratives | `CLAUDE.md` makes these deliberate pointers to `docs/incident-log.md`. They state a rule's source and don't narrate the incident, so I'm flagging them without proposing an edit. | Low | flag |
+| 12 | `skills/build/dispatch.md:19` | one paragraph of roughly 9K characters stacking eight sub-rules, each tied to an incident | 1d, patch accretion | The sub-rules don't contradict each other, so this is an organisation preference (keep-list item 8). It's worth splitting into labelled bullets if the file is touched for other reasons. | Low | flag |
+
+**Caveat on #5:** moving the template pin changes the `model` field that `routine status` compares. Every user's already-instantiated routine would report as Drifted. `CLAUDE.md` requires expand-contract for contract changes, so decide on a `template_version` bump before applying it. The shipped templates are the only things that change. The tests pin their own fixture strings, not the shipped YAML.
+
+**Kept on purpose**
+- The `NEVER`/`ALWAYS` rules in `git-discipline.md` and `stories/SKILL.md:270-271`. Each carries its reason, such as "Other processes may be committing".
+- The exact-command and escaping rules in `qa-agent.md`, which guard a fragile shell-interpolation boundary.
+- The `READ-ONLY REVIEW` line in `subagent-dispatch-core.md`, which cites an observed failure.
+- The `NEEDS_CONTEXT`/status-line contract.
+- The referenced paths in `qa-agent.md` and the shared contracts all resolve. I checked the spot-checked ones.
+
+## Proposed diff
+
+I applied nothing. Take hunks selectively.
+
+**Hunk 1** (#1, `plugin/agents/qa-agent.md:236`)
+```diff
+-apply viewport via `set viewport` (the story's value if set, else the `1440x1600` default)
++apply viewport via `resize <w> <h>` (the story's value if set, else the `1440x1600` default)
+```
+
+**Hunk 2** (#2, `plugin/agents/qa-agent.md:70`)
+```diff
+-... since `click`/`find` never auto-scrolls a target into view (`skills/browse/playwright-cli-reference.md`'s Operation vocabulary note). The flag is cross-platform — no shell-specific env-var workarounds needed.
++... since `click`/`find` never auto-scrolls a target into view (`skills/browse/playwright-cli-reference.md`'s Operation vocabulary note).
+```
+
+**Hunk 3** (#3, `plugin/skills/_shared/subagent-dispatch-core.md:156`)
+```diff
+-`CLAUDE_CODE_SUBAGENT_MODEL` and the session's `/model`/`/effort` are harness-level and always win — the plugin defers to them **only when a dispatch omits the Agent tool's `model` parameter entirely**. Probed 2026-08-17 (one throwaway Agent dispatch, explicit `model: 'haiku'`, from a session running Sonnet 5 with no `CLAUDE_CODE_SUBAGENT_MODEL` set: the dispatched agent self-reported running as Haiku 4.5, not Sonnet): an explicit per-invocation `model` value **does** override the session's own ambient model — "the plugin defers to them" describes a choice not to pass `model`, not a structural limit on passing it. Single-observation confidence (…). This is what licenses `build/SKILL.md`'s whole-branch-review model-resolution step — see there for the one site that acts on it.
++`CLAUDE_CODE_SUBAGENT_MODEL` and the session's `/model`/`/effort` are harness-level; the plugin defers to them **only when a dispatch omits the Agent tool's `model` parameter entirely**. An explicit per-invocation `model` value overrides the session's ambient model, so deferring is a choice not to pass `model`, not a structural limit on passing it. This is what licenses `build/SKILL.md`'s whole-branch-review model-resolution step — see there for the one site that acts on it.
+```
+
+**Hunk 3b** (#3, `plugin/skills/build/dispatch.md:19`)
+```diff
+-An explicit per-invocation `model` overrides the session's own `/model`/effort (that file's Overrides section, probed 2026-08-17) — this is what keeps
++An explicit per-invocation `model` overrides the session's own `/model`/effort (that file's Overrides section) — this is what keeps
+```
+
+**Hunk 4** (#4, `plugin/skills/_shared/subagent-output-contract.md:47`)
+```diff
+-... the lever for the inherited term is keeping `CLAUDE.md` itself lean. Sonnet 5's tokenizer emits roughly 30% more tokens for the same text than its predecessor, so the inherited payload's cost rose with it — the lever is unchanged: keep CLAUDE.md lean.
++... the lever for the inherited term is keeping `CLAUDE.md` itself lean.
+```
+
+**Hunk 5** (#5, one per file; gate on the `template_version` decision)
+```diff
+ # plugin/skills/{backlog,code-health,dispatch,docs-health,harness-health,journey-health,release,specify,tidy}/routine-template.yml
+-model: claude-sonnet-5
++model: claude-sonnet-5-5
+ # plugin/skills/_shared/routine-template-schema.md:20  e.g. `claude-sonnet-5` → `claude-sonnet-5-5`
+ # plugin/skills/_shared/routine-diagnostic-probe.md:39 "model": "claude-sonnet-5" → "claude-sonnet-5-5"
+```
+
+**Hunk 6** (#6, `plugin/skills/capture/SKILL.md:383`)
+```diff
+-Both drivers run Backend Selection above; don't overthink — capture the essence.
++Both drivers run Backend Selection above; capture the essence of the idea.
+```
+
+**Hunk 7** (#7, `plugin/skills/build/SKILL.md:162-164`)
+```diff
+-<IMPORTANT>
+-Design mode has no spec with structured acceptance criteria. When providing context to `/superpowers:writing-plans`, extract testable outcomes from the design doc's decisions and recommendations. If the design doc lacks clear success criteria, ask the user to confirm what "done" looks like before proceeding.
+-</IMPORTANT>
++Design mode has no spec with structured acceptance criteria, so extract testable outcomes from the design doc's decisions and recommendations when providing context to `/superpowers:writing-plans`. If the design doc lacks clear success criteria, ask the user to confirm what "done" looks like before proceeding.
+```
+
+Before applying any hunk, grep `tests/` for the exact strings, since several skill files are byte-pinned. The `tests/skill-prose-conformance` suites may pin `<IMPORTANT>`, `set viewport` or the probe wording.
+
+## Pipeline runs still open
+
+The SessionStart hook reported these runs, and I haven't touched them. Only the session that owns a run should close it. Closing one that's live in a sibling session ends its enforcement and event logging mid-flight.
+- `2026-10-21T001740-record-3056` (interrupted, PR https://github.com/thn-inc/claude-tweaks/pull/3842): `node "/root/.claude/plugins/cache/claude-tweaks-marketplace/claude-tweaks/6.148.0/bin/hooks.js" close-run --run .claude-tweaks/pipelines/2026-10-21T001740-record-3056`
+- `2026-10-21T001455-dispatch-standalone` (unknown): same command with `--run .claude-tweaks/pipelines/2026-10-21T001455-dispatch-standalone`
+- `2026-10-20T224802-record-3768` (unknown): same command with `--run .claude-tweaks/pipelines/2026-10-20T224802-record-3768`

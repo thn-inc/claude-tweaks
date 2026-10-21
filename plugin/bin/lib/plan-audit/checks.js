@@ -1,17 +1,19 @@
 // plugin/bin/lib/plan-audit/checks.js — Checks A/B/C/D, the headroom check,
-// Check E (#3099), and the warn-only per-task marker check (checkTaskMarkers,
-// #3378) for bin/plan-audit.js (#903). Mechanizes plan-audit.md's prose checks;
-// policy handling (scope-creep, scope-keywords-required) stays at the skill
+// the warn-only Checks E (#3099) and F (#3602), and the warn-only per-task
+// marker check (checkTaskMarkers, #3378) for bin/plan-audit.js (#903).
+// Mechanizes plan-audit.md's prose checks; policy handling (scope-creep, scope-keywords-required) stays at the skill
 // layer — this module only reports facts.
 'use strict';
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { composedBytesReport } = require('../skill-audit/context-cost');
+const { lstatType, resolveLeaf } = require('../path-guard');
+const { composedBytesReport, measuredBytes } = require('../skill-audit/context-cost');
 const { RAIL_BYTES } = require('../skill-audit/budgets');
 const {
-  extractAcceptanceClauses, extractCoverageSources, extractTaskMarkers, TASK_MARKER_ROLES, TASK_MARKER_RISKS,
+  extractAcceptanceClauses, extractCoverageSources, extractSpecPaths, extractPathWaivers,
+  extractFileEntries, normalizeRepoPath, extractTaskMarkers, TASK_MARKER_ROLES, TASK_MARKER_RISKS,
 } = require('./parser');
 
 const WALK_EXCLUDES = new Set(['.git', 'node_modules', '.claude', '.claude-tweaks']);
@@ -44,14 +46,34 @@ function ancestorDirs(absPath) {
   return dirs;
 }
 
-function nearestExistingAncestor(dir) {
+// #3493: a parent counts only when it is a directory (or a symlink resolving
+// to one). existsSync answered "is something there" and accepted a regular file.
+function isDirectory(p) {
+  const leaf = lstatType(p);
+  if (leaf.type === 'directory') return true;
+  if (leaf.type !== 'symlink') return false;
+  const resolved = resolveLeaf(p);
+  return resolved.state === 'resolved' && lstatType(resolved.path).type === 'directory';
+}
+
+function nearestAncestorWhere(dir, accepts) {
   let cur = dir;
-  while (!fs.existsSync(cur)) {
+  while (!accepts(cur)) {
     const parent = path.dirname(cur);
     if (parent === cur) break;
     cur = parent;
   }
   return cur;
+}
+
+// Nearest ancestor-or-self present on disk in any form (lstatType reports
+// ENOENT and ENOTDIR alike as `missing`).
+function nearestPresentAncestor(dir) {
+  return nearestAncestorWhere(dir, (p) => lstatType(p).type !== 'missing');
+}
+
+function nearestExistingAncestor(dir) {
+  return nearestAncestorWhere(dir, isDirectory);
 }
 
 function checkA(entries, repoRoot) {
@@ -62,27 +84,32 @@ function checkA(entries, repoRoot) {
     const abs = path.resolve(repoRoot, relPath);
     if (type === 'Create' || type === 'Test') {
       const parentAbs = path.dirname(abs);
-      if (fs.existsSync(parentAbs)) continue;
-      // #2745: a Create/Test bullet whose immediate parent directory is
-      // missing, but whose grandparent DOES exist, passes on its own —
-      // exactly one new directory level. Writing the file creates that
-      // single new directory as a side effect of the same task; nothing
-      // else in the plan needs to pre-create it or separately reference it
-      // (the standing workaround this closes: "mkdir the new module dir
-      // before auditing"). A path missing more than one directory level
-      // still falls through to the cross-reference check below, since a
-      // multi-level gap reads more like a typo than an intentional new
-      // module directory — see the #1999 tests this file still pins.
-      const grandparentAbs = path.dirname(parentAbs);
-      if (grandparentAbs !== parentAbs && fs.existsSync(grandparentAbs)) continue;
-      const createdDirs = new Set();
-      for (let j = 0; j < entries.length; j++) {
-        if (j === i) continue;
-        const other = entries[j];
-        if (other.type !== 'Create' && other.type !== 'Test') continue;
-        for (const d of ancestorDirs(path.resolve(repoRoot, other.path))) createdDirs.add(d);
+      if (isDirectory(parentAbs)) continue;
+      // #3493: a parent whose nearest present ancestor is a regular file, an
+      // unreadable entry, or any other non-directory can never hold the new
+      // file, so neither fallback below may rescue it.
+      if (isDirectory(nearestPresentAncestor(parentAbs))) {
+        // #2745: a Create/Test bullet whose immediate parent directory is
+        // missing, but whose grandparent DOES exist, passes on its own —
+        // exactly one new directory level. Writing the file creates that
+        // single new directory as a side effect of the same task; nothing
+        // else in the plan needs to pre-create it or separately reference it
+        // (the standing workaround this closes: "mkdir the new module dir
+        // before auditing"). A path missing more than one directory level
+        // still falls through to the cross-reference check below, since a
+        // multi-level gap reads more like a typo than an intentional new
+        // module directory — see the #1999 tests this file still pins.
+        const grandparentAbs = path.dirname(parentAbs);
+        if (grandparentAbs !== parentAbs && isDirectory(grandparentAbs)) continue;
+        const createdDirs = new Set();
+        for (let j = 0; j < entries.length; j++) {
+          if (j === i) continue;
+          const other = entries[j];
+          if (other.type !== 'Create' && other.type !== 'Test') continue;
+          for (const d of ancestorDirs(path.resolve(repoRoot, other.path))) createdDirs.add(d);
+        }
+        if (createdDirs.has(parentAbs)) continue;
       }
-      if (createdDirs.has(parentAbs)) continue;
       missing.push(relPath);
       missingDetail.push({
         path: relPath,
@@ -469,6 +496,9 @@ function composedHeadroom(governedPaths, repoRoot, { report = composedBytesRepor
 // `nearCeiling` and `composedNearCeiling` keep their pre-rail names because
 // they are JSON-envelope keys plan-audit's consumers read (#3310); both now
 // mean "within 10% of RAIL_BYTES, not over it".
+// Per-file bytes come from context-cost.js's `measuredBytes` — CRLF-normalized,
+// `when:` marker lines stripped — the same measurement the Read rail (`rail.js`)
+// uses, so plan-audit never stops on a file the `rail:` tests would pass (#3459).
 function headroomCheck(entries, repoRoot, deps = {}) {
   const nearCeiling = [];
   const breaches = [];
@@ -483,7 +513,7 @@ function headroomCheck(entries, repoRoot, deps = {}) {
     const abs = path.resolve(repoRoot, relPath);
     let bytes;
     try {
-      bytes = fs.statSync(abs).size;
+      bytes = measuredBytes(abs).bytes;
     } catch {
       continue; // Check A already reports this path as missing
     }
@@ -644,7 +674,55 @@ function checkTaskMarkers(text) {
   return { ok: findings.length === 0, findings };
 }
 
+// ── Check F — Spec-named path coverage (#3602) ──────────────────────────────
+// Reports repo paths the spec's Technical Approach / Gotchas sections name
+// that no plan task's `Files:` block lists and no `Waived <path>: <reason>`
+// line covers — the plan-authoring miss where a spec says "read X back" and
+// the plan never touches X, so the build skips the verify-then-maybe-change
+// step. Warn-only (ok stays true): path extraction from prose is a heuristic,
+// and a hard gate would block builds on its false positives. It reads only
+// those two spec sections (never Deliverables / Acceptance Criteria, whose
+// files Check E and the Files: blocks already cover). Matching is exact after
+// normalizeRepoPath on both sides, plus a whole-segment suffix match
+// ('/' + path) so a plugin-relative citation still finds its full Files: path
+// — and a `Waived` line's full path covers that citation the same way.
+// There is deliberately no quoted-text fallback — #3602's report named Check
+// E's keyword noise. `unparsed` is the parser's, passed through untouched: a
+// line it could not read is a distinguishable signal, never a covered path.
+function checkF(specText, planText) {
+  const { paths, unparsed } = extractSpecPaths(specText);
+  // Both plan-side readers see the same LF text (extractFileEntries is
+  // LF-only; extractPathWaivers normalizes on its own).
+  const plan = planText.replace(/\r\n?/g, '\n');
+  const filesPaths = new Set(extractFileEntries(plan).map((e) => normalizeRepoPath(e.path)));
+  const reasons = new Map();
+  for (const { path: p, reason } of extractPathWaivers(plan)) if (!reasons.has(p)) reasons.set(p, reason);
+  // A waiver covers a spec path on the same rule listing uses: equal, or the
+  // waiver path ends with '/' + specPath (never the reverse direction).
+  const covers = (w, p) => w === p || w.endsWith(`/${p}`);
+  const unlisted = [];
+  const listed = [];
+  const waived = [];
+  const coveringWaivers = new Set();
+  for (const { path: p, section } of paths) {
+    const hits = [...reasons].filter(([w]) => covers(w, p));
+    hits.forEach(([w]) => coveringWaivers.add(w));
+    if (hits.length) waived.push({ path: p, reason: hits[0][1] });
+    else if (filesPaths.has(p)) listed.push({ path: p, via: 'exact' });
+    else if ([...filesPaths].some((f) => f.endsWith(`/${p}`))) listed.push({ path: p, via: 'suffix' });
+    else unlisted.push({ path: p, section });
+  }
+  // A waiver covering no extracted spec path (typo, stale path) would
+  // otherwise be silently dropped — report it, warn-only like Check E's.
+  const orphanWaivers = [...reasons]
+    .filter(([w]) => !coveringWaivers.has(w))
+    .map(([p, reason]) => ({ path: p, reason }));
+  return {
+    ok: true, unlisted, listed, waived, unparsed, orphanWaivers,
+  };
+}
+
 module.exports = {
-  checkA, checkB, checkC, checkD, checkE, headroomCheck, looksPassing, isGovernedMdPath,
+  checkA, checkB, checkC, checkD, checkE, checkF, headroomCheck, looksPassing, isGovernedMdPath,
   refusedVcsMutation, commandSegments, checkPremiseRefs, checkTaskMarkers,
 };

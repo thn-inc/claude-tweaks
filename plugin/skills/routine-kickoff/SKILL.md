@@ -1,6 +1,6 @@
 ---
 name: routine-kickoff
-description: Machine-invoked by cloud-Routine kernels — the firing-lifecycle home. Runs the stale-docs guard, plugin-list dump, and reconcile, then invokes the target skill. Not user-facing. Keywords - routine kickoff, firing lifecycle, kernel, cloud routine.
+description: Machine-invoked by cloud-Routine kernels — the firing-lifecycle home. Not user-facing. Keywords - routine kickoff, firing lifecycle, kernel, cloud routine.
 argument-hint: "<skill> [args...]"
 ---
 

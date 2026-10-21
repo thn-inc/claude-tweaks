@@ -177,7 +177,10 @@ line (`detached:yes`/`detached:no`). Write this record via a plain Bash redirect
 %s %s detached:%s\n' "$PID" "$PORT" "$WORKTREE_ROOT" "$DETACHED" > "{minted-run-dir}/ephemeral-server.txt"`),
 never the Edit/Write tool -- the run dir is anchored under the main checkout, and this worktree
 session's Edit/Write attempt against it is refused by the harness's own cross-checkout
-write-pinning, while a plain Bash write into `.claude-tweaks/pipelines/` is not. Never delete `ephemeral-server.txt` at the end of this call, whether or not the server is still alive -- the record belongs to the run, not to this call, and the second call's own liveness re-check depends
+write-pinning, while a plain Bash write into `.claude-tweaks/pipelines/` is not.
+`{minted-run-dir}` is the run's server-record location for a bundle too -- the parent run dir
+`/flow` exports as `MULTISPEC_PARENT_DIR`, never a `spec-{N}/` subdirectory.
+Never delete `ephemeral-server.txt` at the end of this call, whether or not the server is still alive -- the record belongs to the run, not to this call, and the second call's own liveness re-check depends
 on it still being there.
 
 If the build or test step hits a HARD-GATE, handle it per
@@ -336,7 +339,9 @@ reachable), rewrite `ephemeral-server.txt` via a plain Bash redirect (never the 
 same reason as the first call's own record write: this run dir is anchored under the main
 checkout, and Edit/Write against it is refused by the harness's cross-checkout write-pinning),
 and log `AUTO {time} -- ephemeral server restarted:
-recorded pid {old} dead, new pid {new} on port {port}`.
+recorded pid {old} dead, new pid {new} on port {port}`. `{minted-run-dir}` is the run's
+server-record location for a bundle too -- the parent run dir `/flow` exports as
+`MULTISPEC_PARENT_DIR`, never a `spec-{N}/` subdirectory.
 
 CRITICAL: your review step must re-derive its verdict from raw artifacts -- the actual diff,
 the actual test-output log in the run directory -- never from a prior claim, whether that

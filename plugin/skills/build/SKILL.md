@@ -81,7 +81,12 @@ Search `docs/superpowers/plans/` for a plan matching this spec (by number, topic
 
 - Read it and compare against the spec — has the spec evolved since the plan was written?
 - Check what's already implemented (search codebase for files, routes, tests referenced in the plan)
-- If the plan is still valid and work remains, skip to Common Step 2
+- If the plan is still valid and work remains, resume at Common Step 1.5, not Common Step 2 (#3666) — each pre-execution step is re-decided, never jumped:
+  - **Common Step 1.5 (plan audit):** re-run under its own skip gate — a cheap, read-only re-check of the plan against today's repo. A Check C finding on a task this step found already implemented (its commits in `git log`) is expected, not a stop (`plan-audit.md`).
+  - **Common Step 1.6 (plan review):** skip only when this run's `decisions.md` already records a completed review of this plan (an `AUTO` or `SCANNED` Common Step 1.6 entry) and neither the plan nor the worktree's `work/{n}-spec.md` changed after it — no commit to either since that entry (`git log -1` on each); log that skip as `SKIP` with condition `resumed build: plan already reviewed this run, spec and plan unchanged since`; otherwise re-run it under its own skip gate.
+  - **Common Step 1.7 (design pre-build):** re-run under its own skip conditions — the references it loads live in implementer prompts a resumed session no longer holds.
+
+  Then run Common Step 2 from the next incomplete task.
 - If the plan is stale (spec changed, codebase diverged), proceed to Spec Step 3
 
 #### If no plan exists:
@@ -148,7 +153,7 @@ Proceed to **Common Step 2**.
 
 Search `docs/superpowers/plans/` for an execution plan matching this design doc (by topic or date). Follow the same evaluation procedure as Spec Step 2 above, substituting the design doc for the spec as the comparison artifact: read the plan and compare it against the design doc (has the design evolved since?), check what's already implemented, and decide stale vs. valid.
 
-- If a plan exists and is still valid → skip to Common Step 2
+- If a plan exists and is still valid → resume at Common Step 1.5, running Common Steps 1.5 and 1.7 as Spec Step 2's resume branch states (1.6 is Spec Mode only), then Common Step 2
 - If no plan or plan is stale → proceed to Design Step 3
 
 ### Design Step 3: Create the Plan
@@ -181,7 +186,7 @@ If the user did not specify `worktree`, skip this step.
 
 ### Common Step 1.5: Plan Audit
 
-Audit the plan against the actual repo before dispatching execution, via `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-audit.js" {plan-file} [--repo-root {dir}] [--spec {spec-file}] [--count-tasks] [--bytes] [--task-markers]` — a mechanized CLI (#903), not hand-run greps. When a materialized spec exists (record mode), pass it as `--spec {spec-file}` — in worktree mode the worktree's copy of `work/{n}-spec.md`, since `$PIPELINE_RUN_DIR` holds no `work/` — to add the warn-only Check E, AC-clause coverage (`plan-audit.md`). Five checks:
+Audit the plan against the actual repo before dispatching execution, via `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-audit.js" {plan-file} [--repo-root {dir}] [--spec {spec-file}] [--count-tasks] [--bytes] [--task-markers]` — a mechanized CLI (#903), not hand-run greps. When a materialized spec exists (record mode), pass it as `--spec {spec-file}` — in worktree mode the worktree's copy of `work/{n}-spec.md`, since `$PIPELINE_RUN_DIR` holds no `work/` — to add the warn-only Check E (AC-clause coverage) and Check F (spec-named path coverage) (`plan-audit.md`). Five checks:
 - **Check A (always):** verify every path in the plan's Files: sections exists (or its parent directory exists for Create/Test, or is created by another Create/Test entry in the same plan).
 - **Check B (conditional):** when the plan declares `Scope keywords:`, an fs-walk sweeps the repo for each keyword and lists any matched files not in the plan.
 - **Check C (always):** pre-run each task's own declared Step 2 `Run:`/`Expected: FAIL` verification command once, read-only, against current repo state before dispatch; stop unconditionally if a command already exhibits a passing signature despite declaring `Expected: FAIL`. An append-shaped task (Step 1 appends to an existing, already-passing file) is not a finding — reported under `appendShaped` instead. A `warnings` entry (Step 2 present but unparseable) is informational only — never a stop, even though the summary line names Check C.

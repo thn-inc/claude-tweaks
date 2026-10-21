@@ -2,8 +2,8 @@
 
 Canonical for every merge site under `integration-model: pr-first` (`_shared/integration-model.md`):
 `dispatch/settle-and-merge.md`'s Auto-merge gate, `wrap-up/review-console.md`'s Auto-merge
-short-circuit, `flow/worktree-merge.md`'s reconciliation, and `release/execute.md`
-Step 5. Supersedes and closes
+short-circuit, `wrap-up/merge-mode.md`, `flow/worktree-merge.md`'s reconciliation, and
+`release/execute.md` Step 5. Supersedes and closes
 #335 (the two independently-authored auto-merge implementations these three files carried) and
 #299 (the fast-lane `git -C "$RUN_DIR"` worktree/branch anchoring defect — obsolete once merge
 needs no checkout at all).
@@ -37,6 +37,9 @@ its `Fixes` lines, so labeling must land while every record is still open. A cal
 before labeling silently drops acceptance sign-off the same way the pre-#410 fast-lane path once
 did for a different reason (`wrap-up/review-console.md`'s own "console content is not all of
 Phase 4" note) — this procedure states the ordering explicitly so it is never re-dropped.
+Labeling has not landed when `{run-dir}/verify.json` (each `spec-{N}/` copy, multi-spec) is missing
+or its `acceptance-labeling` row's `result` is anything but `pass`/`skip` — `dispatch/close-out.md`
+step 3 also accepts live labels or brief comments — whichever caller reached this merge.
 
 ## Step 1.5: Curation-apply completeness guard (#1465)
 
@@ -451,6 +454,9 @@ git -C "{worktree-path}" merge origin/{integration-branch}
   explaining the conflict, and report outcome `pending-review`. A human resolves it the ordinary
   way — check out the branch, resolve, push — no scratch-worktree ceremony needed, since the
   conflict already surfaced inside the run's own real worktree, not a throwaway one.
+- **Attended branch (merge mode only).** A human-confirmed merge (`/claude-tweaks:wrap-up #{n} merge`)
+  resolves instead of stopping — procedure in `wrap-up/merge-mode.md`'s `## Conflict`. Every other
+  caller keeps the stop-at-markers bullet above.
 
 **Sequential multi-branch merges** (`flow/worktree-merge.md`'s reconciliation): the invoking
 session serializes them one at a time. Each later branch's own single update-from-base attempt

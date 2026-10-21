@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/hooks/post-tool-use.js
   - plugin/bin/lib/hooks/post-tool-use-failure.js
+  - plugin/bin/lib/hooks/harness-refusal.js
   - plugin/bin/lib/hooks/pre-tool-use.js
   - plugin/bin/lib/hooks/context.js
   - plugin/hooks/hooks.json
@@ -57,3 +58,4 @@ files:
 - Created during build of #2783 (absorbs #2813's main-checkout and session-resume reproduction cases)
 - Steps 1-4 built in this session
 - Related specs: #500 / #1333 (ad-hoc stamping), #2351 / #2543 (main-checkout denial coverage), #2989 (pre-claim event exclusion on the same read side)
+- Updated during build of #3304: step 2's refusal text now lives in `plugin/bin/lib/hooks/harness-refusal.js`, and a Claude Code rewording surfaces as upstream drift (see `notice-a-reworded-isolation-refusal-3304.md`)

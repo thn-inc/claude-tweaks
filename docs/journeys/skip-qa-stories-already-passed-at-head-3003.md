@@ -2,6 +2,8 @@
 files:
   - plugin/bin/qa-stamp.js
   - plugin/bin/lib/verify/qa-stamp.js
+  - plugin/bin/qa-report.js
+  - plugin/bin/lib/qa-report/compose.js
   - plugin/skills/test/SKILL.md
   - plugin/skills/test/qa-reporting.md
 ---
@@ -17,10 +19,10 @@ files:
 
 ### 1. The first call's QA run writes the stamp
 - **URL:** `plugin/skills/test/qa-reporting.md` Phase 5, "QA pass stamp (pipeline runs, #3003)"
-- **Action:** The story run goes through `qa-procedures.md` Phases 1-5.5 — every pipeline story run does, scoped or full — so Phase 5 writes `{RUN_DIR}/report.json`. Immediately after, the agent runs `qa-stamp.js --write --report "{RUN_DIR}/report.json"`. The CLI writes `{git-dir}/claude-tweaks-qa-pass.json` (`{sha, dirty: false, stories: [{id, file, sha256}], storiesDir, at, reportPath}`) and prints `{written: true, …}`.
+- **Action:** The story run goes through `qa-procedures.md` Phases 1-5.5 — every pipeline story run does, scoped or full. In Phase 5 the agent writes every selected story's result (SKIPPED ones included) to `{RUN_DIR}/story-results.json` and runs `qa-report.js --results "{RUN_DIR}/story-results.json" --out "{RUN_DIR}/report.json"` (#3328), which machine-writes `report.json` with its `summary` counted from its `stories` array; the agent never composes or hand-edits `report.json`. Immediately after, the agent runs `qa-stamp.js --write --report "{RUN_DIR}/report.json"`. The CLI writes `{git-dir}/claude-tweaks-qa-pass.json` (`{sha, dirty: false, stories: [{id, file, sha256}], storiesDir, at, reportPath}`) and prints `{written: true, …}`.
 - **Should feel:** Like a receipt — one line confirming what passed at which commit, no extra prompt.
 - **Should understand:** The stamp is written only for a clean tree where every story is PASS or PASS_WITH_CAVEATS and the report's summary agrees with its stories array. QA's own screenshots under `.claude-tweaks/artifacts/` don't count as dirty; any other untracked or modified file does. Each story is bound to its YAML file's sha256, so a story edited later — including by Phase 4.5's own selector recovery — is never covered. The stamp lives per worktree, beside the verification stamp, so both dispatch calls in one group worktree see it and a sibling worktree never does.
-- **Red flags:** A stamp written on a dirty tree or with a failed or skipped story; no `report.json` in a pipeline QA run directory (the stamp write would then refuse with `report-unreadable`).
+- **Red flags:** A stamp written on a dirty tree or with a failed or skipped story; no `report.json` in a pipeline QA run directory (the stamp write would then refuse with `report-unreadable`); a `report.json` hand-written instead of produced by `qa-report.js`, or a `qa-report.js` exit 1 (invalid payload) left unfixed instead of corrected and re-run.
 
 ### 2. A refusal says why instead of failing silently
 - **URL:** `plugin/skills/test/qa-reporting.md` Phase 5; `plugin/bin/qa-stamp.js` header
@@ -38,4 +40,5 @@ files:
 
 ## Origin
 - Created during build of #3003 (QA pass stamp: `plugin/bin/lib/verify/qa-stamp.js`, `plugin/bin/qa-stamp.js`, `/claude-tweaks:test` pipeline routing through `qa-procedures.md`) — reported from a 6.136.0 dispatch run where fourteen stories ran twice on the same commit and the first call's QA run directory held no `report.json`.
+- Updated during build of #3328: Phase 5's `report.json` is now written by the deterministic `plugin/bin/qa-report.js` writer (composer `plugin/bin/lib/qa-report/compose.js`) instead of agent prose, so the artifact the stamp reads exists whenever the stories ran.
 - Related: #2486 (`verify.js --changed-files --integration-branch` falls through an anchor equal to HEAD — why "changed since the last pass" could not answer the QA question), #3013 (PR-check gate that still applies on the skip path).

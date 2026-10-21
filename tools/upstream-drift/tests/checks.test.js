@@ -261,6 +261,54 @@ test('checkAssertions: must-match containing regex metacharacters matches as a L
   assert.strictEqual(result.results[0].status, 'ok');
 });
 
+test('checkAssertions: matches an ASCII literal embedded in non-UTF-8 binary bytes', () => {
+  const root = tmpDir();
+  fs.writeFileSync(
+    path.join(root, 'claude.bin'),
+    Buffer.concat([Buffer.from([0xff, 0xfe, 0x00, 0xc3]), Buffer.from('noun:"This session"'), Buffer.from([0x80, 0x00])]),
+  );
+  const entryFor = (mustMatch) => ({
+    name: 'claude-code',
+    assertions: [{ file: 'x.md', claims: 'y', 'upstream-path': 'claude.bin', 'must-match': mustMatch }],
+  });
+  assert.strictEqual(checkAssertions(entryFor('noun:"This session"'), { root }).results[0].status, 'ok');
+  assert.strictEqual(checkAssertions(entryFor('noun:"This agent"'), { root }).results[0].status, 'unmatched');
+});
+
+test('checkAssertions: a root that is itself a file is read when upstream-path is "."', () => {
+  const root = tmpDir();
+  const file = writeFile(root, 'claude', 'binary-ish noun:"This session" tail');
+  const entry = {
+    name: 'claude-code',
+    assertions: [{ file: 'x.md', claims: 'y', 'upstream-path': '.', 'must-match': 'noun:"This session"' }],
+  };
+  const result = checkAssertions(entry, { root: file });
+  assert.strictEqual(result.status, 'ok');
+  assert.strictEqual(result.results[0].status, 'ok');
+});
+
+test('checkAssertions: a multi-byte UTF-8 literal still matches byte-for-byte', () => {
+  const root = tmpDir();
+  writeFile(root, 'msg.txt', 'Refusing to run it — a worktree-isolated session\n');
+  const entry = {
+    name: 'claude-code',
+    assertions: [{ file: 'x.md', claims: 'y', 'upstream-path': 'msg.txt', 'must-match': 'run it — a' }],
+  };
+  const result = checkAssertions(entry, { root });
+  assert.strictEqual(result.status, 'ok');
+  assert.strictEqual(result.results[0].status, 'ok');
+});
+
+test('checkAssertions: never decodes the file to a string (reads a Buffer)', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'checks.js'), 'utf8');
+  const start = source.indexOf('function checkAssertions');
+  const end = source.indexOf('// ─── replayFixtures');
+  assert.ok(start !== -1 && end > start, 'could not slice the checkAssertions body out of checks.js');
+  const body = source.slice(start, end);
+  assert.ok(!/readFileSync\(fullPath,/.test(body), 'checkAssertions must read raw bytes: readFileSync(fullPath) takes no encoding argument');
+  assert.ok(!/\.toString\(|\.setEncoding\(|\bencoding\b/.test(body), 'checkAssertions must not decode the Buffer it reads');
+});
+
 // ─── replayFixtures ──────────────────────────────────────────────────────
 
 test('replayFixtures: ok on a matching fixture', () => {

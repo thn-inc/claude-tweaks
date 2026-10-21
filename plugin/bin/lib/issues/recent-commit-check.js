@@ -88,7 +88,7 @@ function findRecentCommitOverlap({
 
   let out;
   try {
-    out = String(execImpl('git', args, { encoding: 'utf8' }));
+    out = String(execImpl('git', args, { encoding: 'utf8', windowsHide: true }));
   } catch {
     return null;
   }
