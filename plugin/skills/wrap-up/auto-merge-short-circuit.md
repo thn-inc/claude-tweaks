@@ -238,9 +238,9 @@ reconcile's clean-status sweep (#3668; `pr-first-merge-post-merge.md` Step 4.2).
 **`integration-model: local-merge`:** run the Verdict backstop above first (anything but `{n}=1`,
 stop here and go to "Any layer fails" below). Then read the values and run the pre-merge checks
 below; only once both succeed, before merging, clear this run's worktree
-assignment as `flow/worktree-merge.md`'s reconciliation does, so
-the merge, landing in the main checkout, isn't denied as a wrong-checkout
-commit. The order is load-bearing: `close-run` clears the run's E1 protection and its
+assignment as `flow/worktree-merge.md`'s reconciliation does — the run is finishing, and
+`close-run` marks it `clean` so its worktree is released for teardown once the branch lands.
+The working-directory hook does not gate `git merge`, so the merge needs nothing closed first. The order is load-bearing: `close-run` clears the run's E1 protection and its
 worktree assignment, so every check that can run beforehand runs before it — the merge and push
 necessarily follow it — and a failure after it (guard race, merge, push) re-protects the run.
 
