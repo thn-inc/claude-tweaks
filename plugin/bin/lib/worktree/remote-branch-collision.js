@@ -17,10 +17,18 @@
 // Ancestry is the mechanical distinction: a remote tip contained in local
 // HEAD is this branch's own history and a push fast-forwards it; a remote
 // tip that is not contained would reject the push.
+//
+// #3887: a dispatched retry is the one adopt-path run whose fresh local branch
+// legitimately meets its own record's earlier, failed attempt on origin (PR
+// closed, branch left behind) — `foreign` by ancestry, though not unrelated.
+// `findPriorAttemptPr` recognizes it by PR identity, and checks that the closed
+// PR's head is an ancestor of origin's tip (not that the tip equals it): commits
+// pushed after the PR closed must still count as the same attempt (Review Focus 1).
 'use strict';
 
 const { execFileSync } = require('child_process');
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
+const { firstLineRunId } = require('../flow/pr-checklist');
 
 // Throws on a non-zero exit; the thrown error carries `.status`.
 function defaultGit(args) {
@@ -123,12 +131,45 @@ function findPrsForBranch({ branch, repo, gh = defaultGh }) {
   try {
     const out = gh([
       'pr', 'list', '--repo', repo, '--head', branch, '--state', 'all',
-      '--json', 'number,url,state,isDraft',
+      '--json', 'number,url,state,isDraft,headRefOid,closingIssuesReferences,body',
     ]);
     return { ok: true, prs: JSON.parse(out || '[]') };
   } catch (err) {
     return { ok: false, error: err, prs: [] };
   }
+}
+
+// Record numbers a PR links: GitHub's closing references plus every
+// `Fixes #N` line of its body.
+function linkedRecords(pr) {
+  const linked = new Set();
+  for (const ref of Array.isArray(pr.closingIssuesReferences) ? pr.closingIssuesReferences : []) {
+    if (ref && Number.isInteger(ref.number)) linked.add(ref.number);
+  }
+  for (const m of String(pr.body || '').matchAll(/^Fixes #(\d+)\s*$/gm)) linked.add(Number(m[1]));
+  return linked;
+}
+
+// The first CLOSED claude-tweaks PR (run marker on its body's first line) that
+// links one of `records` and whose head is an ancestor of `remoteSha` — the
+// record's own earlier attempt — as `{ number, url }`, else null. Any doubt
+// (failed lookup, bad sha, ancestry error) is null: the branch stays foreign.
+function findPriorAttemptPr({ remoteSha, prLookup, records, git = defaultGit }) {
+  const wanted = (Array.isArray(records) ? records : []).filter(Number.isInteger);
+  if (!SHA_RE.test(remoteSha || '') || wanted.length === 0) return null;
+  if (!prLookup || !prLookup.ok || !Array.isArray(prLookup.prs)) return null;
+  for (const pr of prLookup.prs) {
+    if (!pr || pr.state !== 'CLOSED' || !firstLineRunId(pr.body)) continue;
+    if (!wanted.some((n) => linkedRecords(pr).has(n))) continue;
+    if (!SHA_RE.test(pr.headRefOid || '')) continue;
+    try {
+      git(['merge-base', '--is-ancestor', pr.headRefOid, remoteSha]);
+    } catch {
+      continue;
+    }
+    return { number: pr.number, url: pr.url };
+  }
+  return null;
 }
 
 function describePrs(prLookup) {
@@ -167,5 +208,6 @@ module.exports = {
   readRemoteTip,
   classifyRemoteBranch,
   findPrsForBranch,
+  findPriorAttemptPr,
   formatStopCard,
 };
