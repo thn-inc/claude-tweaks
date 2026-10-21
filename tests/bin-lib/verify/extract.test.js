@@ -593,6 +593,10 @@ test('unattributedFailureCount: a crash line after a --silent Time: line or a wr
   const crash = 'Error: results processor could not write the report';
   const silent = readDialect('jest-silent.txt');
   assert.strictEqual(unattributedFailureCount(`${silent}${crash}\n`, 'summary'), 1);
+  // The two accepted endings compose: a --silent run under yarn ends on Time: then the wrapper lines.
+  const yarn = 'error Command failed with exit code 1.\ninfo Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.\n';
+  assert.strictEqual(unattributedFailureCount(`${silent}${yarn}`, 'summary'), 0);
+  assert.strictEqual(unattributedFailureCount(`${silent}${yarn}${crash}\n`, 'summary'), 1);
   for (const name of ['jest-yarn-wrapper.txt', 'jest-pnpm-wrapper.txt']) {
     const log = readDialect(name);
     assert.ok(log.includes('Ran all test suites.\n'), name);
@@ -601,7 +605,7 @@ test('unattributedFailureCount: a crash line after a --silent Time: line or a wr
   }
 });
 
-test('vitest has no stable closing line: the same captured run ends on either stream, and both account (#3674)', () => {
+test('vitest has no stable closing line: the same fixture project, captured twice, ends on either stream, and both account (#3674)', () => {
   const last = (name) => readDialect(name).split(/\r?\n/).filter((l) => l.trim()).pop();
   assert.match(last('vitest-attributed.txt'), /^⎯+\[1\/1\]⎯$/);
   assert.match(last('vitest-summary-last.txt'), /^ {3}Duration /);
