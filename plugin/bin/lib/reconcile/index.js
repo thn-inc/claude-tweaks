@@ -38,6 +38,38 @@ const { formatReconcileSummary, archivedCountFromRunsResult } = require('./resid
 // determine dispatch order.
 const ALL_CHECKS = ['mirror', 'red-tip', 'reap', 'release', 'archive', 'archive-branches', 'remote-prune', 'console'];
 
+// Checks that read state another check produces (#3630). A requested check
+// whose `check` is neither requested itself nor covered by a `satisfiedBy`
+// member is expanded with it before dispatch — see expandChecks. Execution
+// order is still DISPATCH_ORDER's job, not this table's.
+const PREREQUISITES = {
+  // archive-merged.js's localHasMerge reads refs/heads/{integration}, then
+  // origin/{integration}; only the shared fetch refreshes the latter.
+  // remote-prune's `--prune` shared fetch refreshes origin/{integration} too.
+  archive: { check: 'mirror', satisfiedBy: ['remote-prune'] },
+  // red-tip.js reads origin/{integration} right after the shared fetch.
+  // remote-prune's `--prune` shared fetch refreshes origin/{integration} too.
+  'red-tip': { check: 'mirror', satisfiedBy: ['remote-prune'] },
+};
+
+// Pure: returns a new array — the caller's checks in caller order,
+// deduplicated, with each missing prerequisite inserted immediately before the
+// first check that needs it. A prerequisite counts as present when the check
+// itself or any `satisfiedBy` member appears anywhere in the caller's list.
+function expandChecks(checks) {
+  const requested = new Set(checks);
+  const out = [];
+  for (const c of checks) {
+    if (out.includes(c)) continue;
+    const pre = PREREQUISITES[c];
+    if (pre && !requested.has(pre.check) && !pre.satisfiedBy.some((s) => requested.has(s)) && !out.includes(pre.check)) {
+      out.push(pre.check);
+    }
+    out.push(c);
+  }
+  return out;
+}
+
 // opts: { dryRun?: boolean, checks?: string[], cwd?: string, sessionId?: string, budgetMs?: number }
 // -> { mirror, worktrees, claims, runs, branches, console, skipped }
 // `sessionId`, when the caller has one, threads through to archiveMerged's
@@ -52,6 +84,7 @@ const ALL_CHECKS = ['mirror', 'red-tip', 'reap', 'release', 'archive', 'archive-
 async function reconcile(opts = {}) {
   const dryRun = !!opts.dryRun;
   let checks = Array.isArray(opts.checks) && opts.checks.length ? opts.checks : ALL_CHECKS;
+  checks = expandChecks(checks);
   const cwd = opts.cwd || process.cwd();
   const result = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: [] };
 
@@ -303,10 +336,11 @@ async function reconcile(opts = {}) {
   // without error — sharedFetchOk alone defaults to `true` even when the
   // block below never executes at all (neither mirror nor remote-prune
   // requested), which would let red-tip's gate below silently read a
-  // never-refreshed local ref if a future `checks` subset ever requests
-  // red-tip without either (#820 review — currently unreachable, since
-  // every caller's FAST_CHECKS/ALL_CHECKS pairs red-tip with mirror, but the
-  // gate should say so rather than rely on that pairing holding forever).
+  // never-refreshed local ref if `checks` ever requests red-tip without
+  // either (#820 review). Currently unreachable because expandChecks adds
+  // mirror ahead of any red-tip that names neither (#3630), not because
+  // callers happen to pair them; the gate stays as the backstop for a
+  // PREREQUISITES edit that drops that entry.
   const fetchRan = wantsMirror || wantsRemotePrune;
   if (fetchRan) {
     const fetched = concurrentFetch || sharedFetch(root, { integration, mirror: wantsMirror, remotePrune: wantsRemotePrune });
@@ -491,4 +525,4 @@ async function reconcile(opts = {}) {
   return result;
 }
 
-module.exports = { reconcile, ALL_CHECKS, formatReconcileSummary };
+module.exports = { reconcile, ALL_CHECKS, PREREQUISITES, expandChecks, formatReconcileSummary };

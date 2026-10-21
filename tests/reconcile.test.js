@@ -953,13 +953,21 @@ test('reconcile: an archive merged-partial skip carries unclosed through to resu
     '',
   ].join('\n'), { mode: 0o755 });
   const originalPath = process.env.PATH;
+  const originalSshCommand = process.env.GIT_SSH_COMMAND;
   process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  // #3630: ['archive'] now also runs mirror's shared fetch, and this origin is a
+  // real-looking SSH URL — `false` makes that fetch fail fast instead of going
+  // out over the network. mirror skips as fetch-failed; archive still runs.
+  process.env.GIT_SSH_COMMAND = 'false';
   let r;
   try {
     r = await reconcile({ cwd: root, checks: ['archive'], resolveIntegrationModel: () => 'pr-first' });
   } finally {
     process.env.PATH = originalPath;
+    if (originalSshCommand === undefined) delete process.env.GIT_SSH_COMMAND;
+    else process.env.GIT_SSH_COMMAND = originalSshCommand;
   }
+  assert.ok(r.skipped.some((s) => s.check.split(',').includes('mirror') && s.reason === 'fetch-failed'), JSON.stringify(r.skipped));
   assert.deepStrictEqual(r.runs, [{ runDir, action: 'skipped', reason: 'merged-partial', unclosed: [3311] }]);
 });
 
@@ -1185,26 +1193,127 @@ test('reconcile: red-tip dispatches immediately after mirror in source order (lo
 });
 
 // #820 review: sharedFetchOk alone can't distinguish "fetch ran and
-// succeeded" from "fetch never ran" (it defaults to true) — a caller
-// requesting red-tip without mirror/remote-prune must not silently read a
-// never-refreshed local ref. Currently unreachable via FAST_CHECKS/
-// BACKGROUND_CHECKS (both always pair red-tip with mirror), but the gate
-// itself must hold regardless of which caller exercises it.
-test('reconcile(): red-tip requested alone (no mirror/remote-prune) skips rather than reading a stale ref', async () => {
+// succeeded" from "fetch never ran" (it defaults to true) — red-tip reading
+// a never-refreshed local ref is the hazard. #3630: expandChecks() now adds
+// mirror ahead of a red-tip that names neither mirror nor remote-prune, so
+// the `no-fetch-this-pass` gate is unreachable through reconcile() — a
+// red-tip-alone request gets its fetch instead of a skip.
+test('reconcile(): red-tip requested alone pulls in mirror\'s fetch rather than reading a stale ref (#3630)', async () => {
   const { mainDir } = pairedFixture();
   fs.mkdirSync(path.join(mainDir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
 
   const preflight = require('../plugin/bin/lib/reconcile/preflight');
   const originalHealth = preflight.ghHealthCheck;
+  const originalHealthAsync = preflight.ghHealthCheckAsync;
   preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
   try {
-    const r = await reconcile({ cwd: mainDir, checks: ['red-tip'] });
-    assert.equal(r.redTip, null, 'red-tip must never dispatch without a fetch this pass');
-    assert.deepEqual(r.skipped, [{ check: 'red-tip', reason: 'no-fetch-this-pass' }]);
+    let r;
+    const calls = await withFetchArgvLog(async () => { r = await reconcile({ cwd: mainDir, checks: ['red-tip'] }); });
+    const fetches = calls.filter((c) => /fetch .*origin main$/.test(c));
+    assert.equal(fetches.length, 1, `expected exactly one shared fetch, saw ${JSON.stringify(calls)}`);
+    assert.notEqual(r.mirror, null, 'the added mirror prerequisite must have run');
+    assert.ok(!r.skipped.some((s) => s.reason === 'no-fetch-this-pass'), JSON.stringify(r.skipped));
   } finally {
     preflight.ghHealthCheck = originalHealth;
+    preflight.ghHealthCheckAsync = originalHealthAsync;
   }
+});
+
+test('expandChecks (#3630): adds mirror ahead of archive/red-tip and widens nothing else', () => {
+  const { expandChecks, PREREQUISITES, ALL_CHECKS } = require('../plugin/bin/lib/reconcile');
+  assert.deepEqual(expandChecks(['archive']), ['mirror', 'archive']);
+  assert.deepEqual(expandChecks(['red-tip']), ['mirror', 'red-tip']);
+  assert.deepEqual(expandChecks(['reap']), ['reap']);
+  assert.deepEqual(expandChecks(['release', 'archive', 'reap']), ['release', 'mirror', 'archive', 'reap']);
+  assert.deepEqual(expandChecks(['archive', 'remote-prune']), ['archive', 'remote-prune']);
+  assert.deepEqual(expandChecks(['archive', 'archive']), ['mirror', 'archive']);
+  assert.deepEqual(expandChecks(ALL_CHECKS), ALL_CHECKS);
+  const { FAST_CHECKS } = require('../plugin/bin/lib/hooks/session-start');
+  const { BACKGROUND_CHECKS } = require('../plugin/bin/hooks');
+  assert.deepEqual(expandChecks(FAST_CHECKS), FAST_CHECKS);
+  assert.deepEqual(expandChecks(BACKGROUND_CHECKS), BACKGROUND_CHECKS);
+  const input = ['archive'];
+  expandChecks(input);
+  assert.deepEqual(input, ['archive'], 'input must not be mutated');
+  assert.deepEqual(Object.keys(PREREQUISITES).sort(), ['archive', 'red-tip']);
+});
+
+// #3630 behavioral scaffolding: origin's main is one commit (NEW) ahead of the
+// clone's local main, as when GitHub merges a PR asynchronously. archive/
+// release/reap are stubbed; the archive stub records what local main and
+// localHasMerge looked like at the moment it was called.
+async function reconcileWithAsyncMerge(checks) {
+  const { seedDir, mainDir } = pairedFixture();
+  writePolicyViaSeedAndPull(seedDir, mainDir, 'integration-model: pr-first\n');
+  fs.writeFileSync(path.join(seedDir, 'merged.txt'), 'merged\n');
+  git(['add', 'merged.txt'], seedDir);
+  git(['commit', '-q', '-m', 'async merge'], seedDir);
+  git(['push', '-q', 'origin', 'main'], seedDir);
+  const NEW = git(['rev-parse', 'HEAD'], seedDir).trim();
+
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+  const archiveMod = require('../plugin/bin/lib/reconcile/archive-merged');
+  const releaseMod = require('../plugin/bin/lib/reconcile/release-merged');
+  const reapMod = require('../plugin/bin/lib/reconcile/reap-merged');
+  const original = {
+    health: preflight.ghHealthCheck,
+    healthAsync: preflight.ghHealthCheckAsync,
+    archive: archiveMod.archiveMerged,
+    release: releaseMod.releaseMerged,
+    reap: reapMod.reapMerged,
+  };
+  const out = { NEW, seenAtArchive: null, archiveCalled: false, reapCalled: false, r: null, fetchCalls: null };
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
+  archiveMod.archiveMerged = () => {
+    out.archiveCalled = true;
+    out.seenAtArchive = {
+      localMain: git(['rev-parse', 'main'], mainDir).trim(),
+      hasMerge: localHasMerge(mainDir, { oid: NEW }, 'main'),
+    };
+    return { archived: [], skipped: [] };
+  };
+  releaseMod.releaseMerged = () => ({ released: [], skipped: [] });
+  reapMod.reapMerged = () => {
+    out.reapCalled = true;
+    return { reaped: [], skipped: [], portsRelease: [] };
+  };
+  const indexPath = require.resolve('../plugin/bin/lib/reconcile/index');
+  try {
+    delete require.cache[indexPath];
+    const { reconcile: reconcileFresh } = require(indexPath);
+    out.fetchCalls = await withFetchArgvLog(async () => { out.r = await reconcileFresh({ cwd: mainDir, checks }); });
+  } finally {
+    preflight.ghHealthCheck = original.health;
+    preflight.ghHealthCheckAsync = original.healthAsync;
+    archiveMod.archiveMerged = original.archive;
+    releaseMod.releaseMerged = original.release;
+    reapMod.reapMerged = original.reap;
+    delete require.cache[indexPath];
+  }
+  return out;
+}
+
+test('AC1 (#3630): reconcile({ checks: [\'archive\'] }) runs mirror before archive', async () => {
+  const { r, seenAtArchive, NEW } = await reconcileWithAsyncMerge(['archive']);
+  assert.equal(seenAtArchive.localMain, NEW, 'mirror must have fast-forwarded local main before archive ran');
+  assert.ok(r.mirror && r.mirror.action === 'fast-forwarded', JSON.stringify(r.mirror));
+});
+
+test('AC1 (#3630): reconcile({ checks: [\'reap\'] }) runs only reap — no fetch, no mirror', async () => {
+  const { r, fetchCalls, archiveCalled, reapCalled } = await reconcileWithAsyncMerge(['reap']);
+  assert.deepEqual(fetchCalls, []);
+  assert.equal(r.mirror, null);
+  assert.equal(archiveCalled, false);
+  assert.equal(reapCalled, true);
+});
+
+test('AC2 (#3630): dispatch-style checks release,archive,reap sees the asynchronously merged commit at archive time', async () => {
+  const { r, seenAtArchive } = await reconcileWithAsyncMerge(['release', 'archive', 'reap']);
+  assert.equal(seenAtArchive.hasMerge, true, 'localHasMerge must see the merge — no local-behind-merge from a missing fetch');
+  assert.ok(r.mirror && r.mirror.action === 'fast-forwarded', JSON.stringify(r.mirror));
 });
 
 // --- hooks.js verb: garbage-stdin invariant + JSON shape (AC5) ---
@@ -1577,9 +1686,9 @@ test('reconcile(): creates exactly one issue-list cache per pass and passes its 
   };
   // 'archive'/'reap' are both gh-dependent checks, so reconcile()'s own
   // GitHub-health preflight would otherwise run a real `gh api rate_limit`
-  // call here (no 'mirror' in `checks`, so the concurrent fastChecksShape
-  // path doesn't apply — the sequential ghHealthCheck() branch runs
-  // instead). Stub both the sync and async forms — mirroring the existing
+  // call here (expandChecks turns ['archive', 'reap'] into ['mirror',
+  // 'archive', 'reap'] (#3630), so the concurrent fastChecksShape path runs
+  // the async ghHealthCheckAsync). Stub both the sync and async forms — mirroring the existing
   // preflight-stub idiom elsewhere in this file (e.g. the red-tip/
   // FAST_CHECKS tests above) — so this test stays hermetic and never
   // depends on live gh auth/network; an unstubbed preflight failure would
