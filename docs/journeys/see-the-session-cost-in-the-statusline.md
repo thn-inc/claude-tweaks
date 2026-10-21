@@ -10,7 +10,7 @@ files:
 **Goal:** A glanceable running figure in the statusline, with no extra step and no file to maintain.
 **Entry point:** Any session where Claude Code sends `cost.total_cost_usd` on stdin. The statusline re-renders around every tool call and reads the figure from that payload.
 **Success state:**
-- A `$0.42`-style segment appears once the session has cost at least a cent, before the hub segment and before `acct:`.
+- A `$0.42`-style segment appears once the session has cost at least half a cent, before the hub segment and before `acct:`.
 - It is plain text with or without `NO_COLOR`.
 
 ## Steps
@@ -19,7 +19,7 @@ files:
 - **URL:** the Claude Code statusline.
 - **Action:** Send a message and let the agent answer.
 - **Should feel:** Unremarkable. A small `$0.0x` shows up before the hub segment.
-- **Should understand:** The number is Claude Code's own client-side list-price estimate for this session. It is not a bill, and it is not the hub's priced figure. On a subscription it is the API-equivalent view of the usage.
+- **Should understand:** The number is Claude Code's own client-side list-price estimate for this session. It is not a bill, and it is not the hub's priced figure. Whether Claude Code populates the figure on a subscription (Max/Pro) session is undocumented; the segment is simply absent when the figure is missing or zero.
 - **Red flags:**
   - `$0.00` showing. A session that has cost nothing, or less than half a cent, shows no segment.
   - A `$` followed by an escape sequence under `NO_COLOR`. The segment is plain text either way.
@@ -36,7 +36,7 @@ files:
 ### 3. Clear the session and see it vanish
 - **URL:** the Claude Code statusline.
 - **Action:** Run `/clear`.
-- **Should feel:** Like a fresh start. The segment disappears until the new session has cost a cent.
+- **Should feel:** Like a fresh start. The segment disappears until the new session has cost half a cent.
 - **Should understand:** The figure resets with the session, because Claude Code resets it. The statusline keeps no running total of its own.
 - **Red flags:**
   - The old figure surviving a `/clear`.
