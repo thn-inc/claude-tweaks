@@ -59,11 +59,11 @@ const PREREQUISITES = {
 function expandChecks(checks) {
   const requested = new Set(checks);
   const out = [];
-  for (const c of checks) {
-    if (out.includes(c)) continue;
+  for (const c of requested) {
     const pre = PREREQUISITES[c];
-    if (pre && !requested.has(pre.check) && !pre.satisfiedBy.some((s) => requested.has(s)) && !out.includes(pre.check)) {
-      out.push(pre.check);
+    if (pre) {
+      const covered = [pre.check, ...pre.satisfiedBy].some((s) => requested.has(s));
+      if (!covered && !out.includes(pre.check)) out.push(pre.check);
     }
     out.push(c);
   }
@@ -83,8 +83,7 @@ function expandChecks(checks) {
 // `_shared/integration-model.md`).
 async function reconcile(opts = {}) {
   const dryRun = !!opts.dryRun;
-  let checks = Array.isArray(opts.checks) && opts.checks.length ? opts.checks : ALL_CHECKS;
-  checks = expandChecks(checks);
+  let checks = expandChecks(Array.isArray(opts.checks) && opts.checks.length ? opts.checks : ALL_CHECKS);
   const cwd = opts.cwd || process.cwd();
   const result = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: [] };
 
