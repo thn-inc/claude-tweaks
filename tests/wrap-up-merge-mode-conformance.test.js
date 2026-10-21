@@ -35,7 +35,7 @@ const MERGE_MODE_FACTS = {
   'precondition-open': /PR is not `OPEN`/,
   'precondition-pr': /`run-state\.json` carries no `pr` object/,
   'precondition-model': /`integration-model: pr-first`/,
-  'steps-1-3': /`_shared\/pr-first-merge\.md` Steps 1 through 3/,
+  'steps-1-4': /`_shared\/pr-first-merge\.md` Steps 1 through 4/,
   'step-4-1': /Step 4\.1/,
   'section-c': /Section C steps 3\.6-5\.5/,
   'section-e': /Section E/,
@@ -45,6 +45,13 @@ const MERGE_MODE_FACTS = {
   'needs-record': /`merge` with no record reference stops/,
   outcomes: /`merged`, `armed`, or `pending-review`/,
   bundle: /--step merge/,
+};
+
+// SKILL.md's router bullet: `merge` routes on the token alone, so a bare `merge` reaches
+// merge-mode.md's no-record stop instead of being stripped as a flag.
+const ROUTER_FACTS = {
+  'routes-on-token': /If `\$ARGUMENTS` carries the literal `merge` token anywhere \(`#42 merge` or `merge #42`\), with or without a record reference, read `merge-mode\.md`/,
+  'routing-not-flag': /`merge` is a routing token handled before the flag strip, never a flag/,
 };
 
 // The region is merge-mode.md before its `## Conflict` heading, so the Conflict body
@@ -75,8 +82,17 @@ test('wrap-up grammar surfaces carry the merge token', () => {
   assert.ok(parseLine, 'SKILL.md ## Input has a parse-line code span');
   assert.strictEqual(parseLine[1], HINT);
 
-  assert.match(skill, /merge-mode\.md/);
-  assert.match(read('plugin', 'skills', 'wrap-up', 'flags.md'), /^- \*\*`merge`\*\*/m);
+  assert.deepStrictEqual(missingFactsOf(flat(skill), ROUTER_FACTS), []);
+  assertEachFactGoesRed(flat(skill), ROUTER_FACTS);
+
+  // `merge` is not a flag: the flag strip list must not name it.
+  const stripLine = /^Flags \(([^)]*)\) may appear anywhere/m.exec(skill);
+  assert.ok(stripLine, 'SKILL.md has the flag strip sentence');
+  assert.ok(!/`merge`/.test(stripLine[1]), 'the flag strip list must not include `merge`');
+
+  const flagsMd = read('plugin', 'skills', 'wrap-up', 'flags.md');
+  assert.match(flagsMd, /^- \*\*`merge`\*\*/m);
+  assert.match(flat(flagsMd), /a routing token, not a flag/);
 
   const card = read('plugin', 'skills', 'help', 'reference-card.md');
   const row = card.split('\n').find((l) => l.startsWith('| `/claude-tweaks:wrap-up` |'));

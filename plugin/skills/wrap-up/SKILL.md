@@ -48,12 +48,12 @@ Determine what type of work was completed:
 
 #### If `$ARGUMENTS` is provided:
 
-- If it is a record reference followed by the literal `merge` token, read `merge-mode.md` in this skill's directory and follow it in place of Phases 1-4.
+- If `$ARGUMENTS` carries the literal `merge` token anywhere (`#42 merge` or `merge #42`), with or without a record reference, read `merge-mode.md` in this skill's directory and follow it in place of Phases 1-4. It owns the no-record stop and the `cleanup-only` rejection, so `merge` is a routing token handled before the flag strip, never a flag.
 - If it's exactly `resume` (case-insensitive), this is not conversation-based work — see "Resuming a halted Review Console" below instead of falling through to the branches below.
 - If it's a `#`-prefixed record reference (e.g., `#42` — the primary form) or a bare record id under `work-backend: local-files` (e.g., "42", "73"), strip the leading `#` if present, then proceed as **record-based work**.
 - Otherwise, use it as context for **conversation-based work**.
 
-Flags (`--dry-run`, `--skill-budget <n>`, `--doc-budget <n>`, `merge`) may appear anywhere in `$ARGUMENTS` alongside any of the above forms — strip them before applying the branches above. See "Flags" below.
+Flags (`--dry-run`, `--skill-budget <n>`, `--doc-budget <n>`) may appear anywhere in `$ARGUMENTS` alongside any of the above forms — strip them before applying the branches above. See "Flags" below.
 
 #### Resuming a halted Review Console
 
