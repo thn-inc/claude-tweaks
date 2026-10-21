@@ -2,10 +2,10 @@
 // Conformance suite for record #3762: the local-merge auto-merge procedures ran `hooks.js close-run`
 // BEFORE the checks that can fail (branch guard, composer, a predicted conflict), so a failed merge
 // parked a run that was already closed -- unprotected, worktree assignment cleared (since #3023
-// close-run also nulls run-state.json's `worktree`).
-// #3809 adds the human-present multi-run reconciliation (flow/worktree-merge.md): each branch's run closes only after that branch's own pre-merge checks.
-// The order is now: pre-merge checks (nothing
+// close-run also nulls run-state.json's `worktree`). The order is now: pre-merge checks (nothing
 // mutated) -> close-run -> merge -> push, with a re-protect (`record-worktree`) on the late-failure path.
+// #3809 extends this to the human-present multi-run reconciliation (flow/worktree-merge.md): each branch's
+// run closes only after that branch's own pre-merge checks.
 //
 // One SITES entry per procedure; a new site is data only. Live-corpus read (skill-prose-conformance-tests:
 // a documented convention this project wants enforced) plus extract-and-run of the two fences whose
