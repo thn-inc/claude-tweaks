@@ -132,6 +132,22 @@ those events stay in the earlier session's ad-hoc dir, unread; and since every s
 session shares its id, a sibling subagent's dir is unioned too once its worktree was removed (one
 whose worktree still exists is skipped).
 
+**Write/Edit isolation refusals are not observable at all (#3301, measured 2026-10-21).** The
+harness guard above also refuses a `Write`/`Edit` call aimed at a shared-checkout path from inside
+a worktree session, with different wording ("This session is isolated in the worktree `<path>`.
+Edit the worktree copy of this file instead of the shared-checkout path.") — but this refusal
+never fires `PostToolUseFailure` at all, unlike the Bash case. Confirmed with a throwaway-hook
+probe (`claude -p --worktree`, a scratch settings file registering `PostToolUseFailure` with no
+matcher restriction): a `Write` refused with that exact wording produced zero captured events,
+reproduced twice; the identical harness/capture setup correctly captured a `Bash` refusal's
+`PostToolUseFailure` payload (`tool_name: "Bash"`, `error` carrying the Bash guard's text) in the
+same run, ruling out a broken capture mechanism as the explanation. There is therefore no event
+for `bin/lib/hooks/post-tool-use-failure.js` to widen its matcher onto, and nothing for
+`friction-events.js` to surface — this refusal class is a true observability gap, not a logging
+gap: `/claude-tweaks:reflect`'s Friction Lens cannot see a worktree-isolated session's refused
+file edits, only its refused shell commands. Re-open this if a future harness version starts
+firing `PostToolUseFailure` for this case too.
+
 **Main-checkout denial coverage (#2351, confirmed still current by #2543).** The fallback above
 fires only on an `EnterWorktree` call or `ctx.cwd` resolving to a worktree distinct from the main
 repo root — deliberately excluding the main checkout itself, since firing on every ordinary
