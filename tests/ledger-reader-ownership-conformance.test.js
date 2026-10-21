@@ -47,7 +47,7 @@ test('AC1.1: ledger-format.md resolves this run\'s ledger through the ledger pro
 
 test('AC2.1 go-red: the pre-#3687 resolution rule fails the probe-first assertions', () => {
   const PRE = flat('**Resolution rule for a caller reading "the active ledger for this run":** when a run dir resolves (`$PIPELINE_RUN_DIR` or the most-recent-matching run), check `{run-dir}/ledger.md` for existence first — if it exists, that\'s the active ledger; if not, fall back to the `docs/plans/*-ledger.md` glob.');
-  assert.throws(() => assertRuleIsProbeFirst(PRE));
+  assert.throws(() => assertRuleIsProbeFirst(PRE), /rule runs the ledger probe/);
 });
 
 test('AC2.1 go-red: a bare glob lookup sentence fails, a fallback/inherited sentence passes', () => {
