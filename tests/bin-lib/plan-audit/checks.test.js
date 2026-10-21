@@ -288,6 +288,36 @@ test('#3493: a parent that is a symlink to a real directory still passes', (t) =
   }
 });
 
+test('#3493: a Modify bullet under a regular file names the enclosing directory as the nearest existing ancestor', () => {
+  const repo = makeTmpRepo();
+  fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'plugin', 'bin', 'tool.js'), '');
+  try {
+    const result = checkA([{ type: 'Modify', path: 'plugin/bin/tool.js/x.js' }], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missingDetail, [{ path: 'plugin/bin/tool.js/x.js', nearestExistingAncestor: path.join('plugin', 'bin') }]);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#3493: a parent that is a dangling symlink is reported, not accepted', (t) => {
+  const repo = makeTmpRepo();
+  try {
+    try {
+      fs.symlinkSync(path.join(repo, 'gone'), path.join(repo, 'dangling'), 'dir');
+    } catch (err) {
+      t.skip(`cannot create a directory symlink here (${err.code})`);
+      return;
+    }
+    const result = checkA([{ type: 'Create', path: 'dangling/new.js' }], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missing, ['dangling/new.js']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 // ── Check B ──────────────────────────────────────────────────────────────
 
 test('checkB is a no-op (ok, empty) when the plan declares no Scope keywords', () => {

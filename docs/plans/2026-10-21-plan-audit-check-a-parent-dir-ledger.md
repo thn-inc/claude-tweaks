@@ -2,5 +2,5 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
-| 1 | build | nearestExistingAncestor shared with Modify/Delete missingDetail — a Modify under a regular file now names the enclosing directory; untested | deferred | Origin: SDD task review of aa378474f (minor). Files: plugin/bin/lib/plan-audit/checks.js, tests/bin-lib/plan-audit/checks.test.js. Trigger: /review of #3493 — candidate fix-now as one pin test; behavior already matches plan-audit.md line 19 ("nearest directory that does exist"). |
-| 2 | build | dangling-symlink parent is now rejected by checkA (fail-closed); no test covers it | deferred | Origin: SDD task review of aa378474f (minor). Files: plugin/bin/lib/plan-audit/checks.js, tests/bin-lib/plan-audit/checks.test.js. Trigger: /review of #3493 — candidate fix-now as one pin test. |
+| 1 | build | nearestExistingAncestor shared with Modify/Delete missingDetail — a Modify under a regular file now names the enclosing directory; untested | fixed | Fixed in wrap-up of #3493: pin test added in tests/bin-lib/plan-audit/checks.test.js (Modify under a regular file names the enclosing directory); red against main's checks.js, green on the branch. |
+| 2 | build | dangling-symlink parent is now rejected by checkA (fail-closed); no test covers it | fixed | Fixed in wrap-up of #3493: pin test added in tests/bin-lib/plan-audit/checks.test.js (dangling-symlink parent reported); red against main's checks.js, green on the branch. |
