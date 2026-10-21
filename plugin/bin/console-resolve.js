@@ -25,7 +25,7 @@ const { resolvePolicyConfig } = require('./lib/policy-schema');
 const { resolveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
 const { extractPendingGrantedAt, partitionGrantComments } = require('./lib/issues/grant-maturation');
 const { writeFileAtomic } = require('./lib/atomic-write');
-const { unresolvedItems, formatResidueLines } = require('./lib/console/residue');
+const { unresolvedItems, splitMissing, formatResidueLines } = require('./lib/console/residue');
 
 const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]';
 
@@ -33,12 +33,15 @@ class UsageError extends Error {}
 
 // #3370: the human-facing block for items a console left pending/keep-staged,
 // or '' when there are none. Read-only: nothing here applies or resolves them.
+// Items whose staged file is gone (#3772) are not counted — they are named in
+// the block's `not counted` line instead.
 function needsAHumanBlock(unresolved, runDir, consolePath) {
-  if (unresolved.length === 0) return '';
+  const { items, missing } = splitMissing(unresolved, path.dirname(consolePath));
+  if (items.length === 0) return '';
   const pluginRoot = path.resolve(__dirname, '..');
-  const lines = formatResidueLines({ dir: runDir, consoles: [{ path: consolePath, items: unresolved }] }, { pluginRoot });
+  const lines = formatResidueLines({ dir: runDir, consoles: [{ path: consolePath, items, missing }] }, { pluginRoot });
   lines.push(`  paths move when the run is archived; current paths: node "${pluginRoot}/bin/console-residue.js" --run "${runDir}"`);
-  return `\nNeeds a human — ${unresolved.length} item(s) this console did not resolve (never auto-applied):\n${lines.join('\n')}\n`;
+  return `\nNeeds a human — ${items.length} item(s) this console did not resolve (never auto-applied):\n${lines.join('\n')}\n`;
 }
 
 function parseArgs(argv) {

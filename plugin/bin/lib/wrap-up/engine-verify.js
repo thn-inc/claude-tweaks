@@ -35,6 +35,7 @@ const { readRunStateWithParent, readRunState } = require('../hooks/context');
 const { resolveRecords, closingRecords } = require('./pack');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { splitNul, parseStatusPorcelainZ } = require('../git-z');
+const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
@@ -464,14 +465,15 @@ function resolvedIssueNumbers(runDir) {
 // #2676 -- GitHub recognizes a broader closing-keyword set than the literal
 // `Fixes #N` this check used to grep for: close/closes/closed, fix/fixes/
 // fixed, resolve/resolves/resolved, case-insensitive, optionally qualified
-// with an `owner/repo` prefix before the `#N`. Built once (shared by the
-// branch-log match and the PR-body fallback, per the record's Technical
-// Approach) rather than inlined twice. `\b` on both sides of `#${n}` makes
-// it a WHOLE reference match -- `#12` never matches inside `#123`, since a
-// digit is a word character and `\b` requires a class transition.
-const CLOSING_KEYWORDS_PATTERN = 'close[sd]?|fix(?:e[sd])?|resolve[sd]?';
+// with an `owner/repo` prefix before the `#N`. The keyword set is
+// `issue-branch-tracking.js`'s shared `CLOSING_KEYWORD_ALTERNATION` (#3595),
+// not a copy here. Built once (shared by the branch-log match and the
+// PR-body fallback, per the record's Technical Approach) rather than inlined
+// twice. `\b` on both sides of `#${n}` makes it a WHOLE reference match --
+// `#12` never matches inside `#123`, since a digit is a word character and
+// `\b` requires a class transition.
 function closingKeywordMatches(text, n) {
-  const re = new RegExp(`\\b(?:${CLOSING_KEYWORDS_PATTERN})\\s+(?:[\\w.-]+/[\\w.-]+)?#${n}\\b`, 'i');
+  const re = new RegExp(`\\b${CLOSING_KEYWORD_ALTERNATION}\\s+(?:[\\w.-]+/[\\w.-]+)?#${n}\\b`, 'i');
   return re.test(text || '');
 }
 

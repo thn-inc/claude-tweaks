@@ -10,6 +10,7 @@ const { execFileSync } = require('child_process');
 const { findRunByWorktreePath, readRunState } = require('../plugin/bin/lib/hooks/context');
 const { fixtureGit } = require('./helpers/git-fixtures');
 const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
+const { caseInsensitiveFs } = require('./helpers/case-insensitive-fs');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -150,6 +151,57 @@ test('corrupt run-state.json returns null for that run without throwing', () => 
     const result = findRunByWorktreePath(root, wt);
     assert.strictEqual(result, null);
   });
+});
+
+// --- #3769: a mis-cased teardown target resolves to its run ----------------
+// The injected fake models a case-insensitive volume (macOS APFS): its
+// realpathSync.native returns the on-disk casing, its JS realpathSync echoes
+// the input. On Linux the real fs would miss the mis-cased spelling outright.
+const POSIX_ONLY = process.platform === 'win32' && 'posix-only case-insensitive fake: path.resolve/join rewrite its literal paths on win32';
+
+function caseFixture3769() {
+  const root = fixtureRoot();
+  const wt = path.join(root, 'wt-case');
+  fs.mkdirSync(wt);
+  const fsImpl = caseInsensitiveFs({ [root]: 'dir', [wt]: 'dir' });
+  return { root, wt, misCased: path.join(root, 'WT-CASE'), fsImpl };
+}
+
+// Runs `git worktree remove {removeTarget}` through the dispatcher against a
+// non-terminal run assigned to the fixture worktree, and asserts the deny.
+function assertRemovalDenied3769({ root, wt, fsImpl }, removeTarget) {
+  const runDir = makeRun(root, JSON.stringify({ status: 'active', worktree: wt, sessionId: 's1' }));
+  const out = preToolUse.run({
+    input: { tool_name: 'Bash', tool_input: { command: `git worktree remove ${removeTarget}` }, session_id: 's1' },
+    cwd: root, runDir: null, runState: null,
+  }, { fsImpl });
+  assert.ok(out.json && out.json.hookSpecificOutput, JSON.stringify(out));
+  assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+  const reason = out.json.hookSpecificOutput.permissionDecisionReason;
+  assert.match(reason, /still assigned to non-terminal pipeline run/);
+  assert.ok(reason.includes(path.basename(runDir)), 'deny reason must name the run dir');
+}
+
+test('AC1.1 (#3769): a mis-cased git worktree remove of an assigned, non-own-cwd worktree is denied', { skip: POSIX_ONLY }, () => {
+  const fixture = caseFixture3769();
+  assertRemovalDenied3769(fixture, fixture.misCased);
+});
+
+test('AC2.1 (#3769): the exact-case removal of the same assigned worktree is denied (control)', { skip: POSIX_ONLY }, () => {
+  const fixture = caseFixture3769();
+  assertRemovalDenied3769(fixture, fixture.wt);
+});
+
+test('findRunByWorktreePath (#3769): a mis-cased target resolves to its run through an injected case-insensitive fs', { skip: POSIX_ONLY }, () => {
+  const { root, wt, misCased, fsImpl } = caseFixture3769();
+  const runDir = makeRun(root, JSON.stringify({ status: 'active', worktree: wt }));
+  assert.strictEqual(findRunByWorktreePath(root, misCased, { fsImpl }).runDir, runDir);
+});
+
+test('findRunByWorktreePath (#3769): a mis-cased recorded worktree matches the correctly-cased target', { skip: POSIX_ONLY }, () => {
+  const { root, wt, misCased, fsImpl } = caseFixture3769();
+  const runDir = makeRun(root, JSON.stringify({ status: 'active', worktree: misCased }));
+  assert.strictEqual(findRunByWorktreePath(root, wt, { fsImpl }).runDir, runDir);
 });
 
 // --- Task 3: the deny/allow matrix at the dispatcher level ------------------

@@ -8,6 +8,7 @@ const { runGit } = require('./git-exec');
 const { parseWorktreeList } = require('./worktree-reap');
 const runDirResolve = require('./run-dir-resolve');
 const { classifyDecisions } = require('../log-decision/claim-log');
+const { canonicalRealpath } = require('../path-guard');
 
 function readStdin() {
   try { return fs.readFileSync(0, 'utf8'); } catch { return ''; }
@@ -59,7 +60,8 @@ function hasRunStateFile(dir) {
 // close-run — record-worktree no longer does, #1124: it now hard-requires an
 // explicit --run, never guessing) only ever resolve an adopted run — safe
 // because every sanctioned caller runs after flow Step 3 has already
-// initialized the run dir (decisions.md with more than the claim line, or
+// initialized the run dir (decisions.md with more than Step 2.8's claim-log
+// lines (claim plus bookkeeping, #3665), or
 // run-state.json, already exists by then). Exception: in `interactive` mode
 // Step 3 skips the Manifesto, so a current-branch run stays claim-log-only
 // with no run-state.json until wrap-up and its own session's events get no
@@ -540,10 +542,16 @@ function classifyOwnership(caller, runState) {
 // both sides where they exist on disk (recorded assignments are already
 // absolute; a torn-down worktree's path may no longer resolve, so the raw
 // string is kept as a fallback comparison rather than failing the match).
-function worktreeMatches(state, target, targetPath) {
+// The optional 4th `canonical` (#3769) resolves the recorded side through the
+// caller's canonicalizer; omitted, the JS fs.realpathSync form is used.
+function worktreeMatches(state, target, targetPath, canonical) {
   if (!state || typeof state.worktree !== 'string' || !state.worktree) return false;
   let recorded = state.worktree;
-  try { recorded = fs.realpathSync(recorded); } catch { /* keep recorded form */ }
+  if (canonical) {
+    recorded = canonical(state.worktree) || state.worktree;
+  } else {
+    try { recorded = fs.realpathSync(recorded); } catch { /* keep recorded form */ }
+  }
   return recorded === target || state.worktree === targetPath;
 }
 
@@ -556,13 +564,16 @@ function worktreeMatches(state, target, targetPath) {
 // friction events, never pipeline state, yet EnterWorktree mints it AFTER
 // /flow's formal run, so it sorts newer and would otherwise win the match.
 // Callers asking "which pipeline run is this worktree assigned to?" opt in.
+// `opts.fsImpl` (#3769) is forwarded to path-guard's canonicalRealpath, which
+// asks the OS for on-disk casing (`.native`): a mis-cased teardown target on a
+// case-insensitive volume canonicalizes to its recorded spelling, not its own.
 function findRunByWorktreePath(cwd, targetPath, opts = {}) {
   if (typeof targetPath !== 'string' || !targetPath) return null;
-  let target = targetPath;
-  try { target = fs.realpathSync(targetPath); } catch { /* keep as-resolved */ }
+  function canonical(p) { return canonicalRealpath(p, { fsImpl: opts.fsImpl }); }
+  const target = canonical(targetPath) || targetPath;
   for (const { dir, state } of iterRunDirsWithState(cwd)) {
     if (opts.skipAdHoc && isAdHocRunDir(dir)) continue;
-    if (worktreeMatches(state, target, targetPath)) return { runDir: dir, state };
+    if (worktreeMatches(state, target, targetPath, canonical)) return { runDir: dir, state };
   }
   return null;
 }

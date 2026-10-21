@@ -13,6 +13,7 @@
 // locked worktree doesn't block branch/ref cleanup that doesn't depend on it.
 'use strict';
 const fs = require('fs');
+const path = require('path');
 const { closeRunState } = require('./close-run-state');
 const { runGit } = require('./git-exec');
 const { parseWorktreeList, isWorktreeLocked, resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
@@ -71,6 +72,21 @@ function repoSpecOf(root) {
   return parseRepo(remote.stdout);
 }
 
+// #3695: on win32, `git worktree list --porcelain` prints forward-slash paths (`D:/a/x/feat`) while
+// the run's stamped worktree path is native (`D:\a\x\feat`), so a strict `===` never matched there.
+// Both sides go through pathImpl.resolve, not realpath: the prunable retry runs after a half-removed
+// worktree, which may no longer exist on disk to resolve. Case folds only on win32 (sep `\`), where
+// the filesystem is case-insensitive; posix stays exact.
+function findWorktreeEntry(entries, target, pathImpl = path) {
+  if (!target) return null;
+  const key = (p) => {
+    const resolved = pathImpl.resolve(p);
+    return pathImpl.sep === '\\' ? resolved.toLowerCase() : resolved;
+  };
+  const wanted = key(target);
+  return entries.find((entry) => key(entry.path) === wanted) || null;
+}
+
 // Branch registered for `worktreePath` in `git worktree list --porcelain`, or null when the
 // worktree isn't registered at all. Deliberately independent from run-integrity.js's own
 // deriveBranch — that one derives branch to build shipped-unclosed EVIDENCE and stays scoped to
@@ -79,10 +95,8 @@ function branchOfWorktree(root, worktreePath) {
   if (!worktreePath) return null;
   const list = runGit(['worktree', 'list', '--porcelain'], root);
   if (list.failure || list.stdout === null) return null;
-  for (const entry of parseWorktreeList(list.stdout)) {
-    if (entry.path === worktreePath) return entry.branch || null;
-  }
-  return null;
+  const entry = findWorktreeEntry(parseWorktreeList(list.stdout), worktreePath);
+  return entry ? (entry.branch || null) : null;
 }
 
 // `runDir` — the run directory (already resolved/anchored by the caller, same contract as
@@ -254,7 +268,7 @@ function teardownRun(runDir, opts = {}) {
       // than being masked by a prune that wouldn't have helped it anyway.
       const listAfter = runGit(['worktree', 'list', '--porcelain'], root);
       const entryAfter = (!listAfter.failure && listAfter.stdout !== null)
-        ? parseWorktreeList(listAfter.stdout).find((w) => w.path === effectiveWorktreePath)
+        ? findWorktreeEntry(parseWorktreeList(listAfter.stdout), effectiveWorktreePath)
         : null;
       if (entryAfter && entryAfter.prunable) {
         const prune = runGit(['worktree', 'prune'], root);
@@ -311,4 +325,4 @@ function teardownRun(runDir, opts = {}) {
   return { lines };
 }
 
-module.exports = { teardownRun, branchOfWorktree, repoSpecOf, defaultGhApiDelete, describeGitFailure };
+module.exports = { teardownRun, branchOfWorktree, repoSpecOf, defaultGhApiDelete, describeGitFailure, findWorktreeEntry };

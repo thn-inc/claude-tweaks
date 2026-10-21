@@ -112,7 +112,9 @@ fires `PreToolUse` before and `PostToolUseFailure` after, with `error` holding t
 text; the module's header comment records the result and its measurement date. When the captured
 value is prose rather than a structured field, two limits follow. The match pattern
 (`HARNESS_ISOLATION_REFUSAL_RE`) fits only that one wording, so a harness rewording stops the
-logging with no error. And the wording differs by tool: the Write/Edit refusal reads "Edit the
+logging until the constant is updated; it now surfaces as upstream drift on the `claude-code`
+manifest entry (assertions anchored in `plugin/bin/lib/hooks/harness-refusal.js`) when the
+upstream-drift sweep runs. And the wording differs by tool: the Write/Edit refusal reads "Edit the
 worktree copy…", not "Refusing to run it", and whether it fires `PostToolUseFailure` at all is
 still unmeasured. Capture one scenario per tool the pattern is meant to match, and keep the
 measurement date beside the pattern.

@@ -19,11 +19,12 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" check-sibling-sessions --record {n}`
 - **Action:** Dispatch runs the check before any run-dir mint or claim write. It checks local locked worktrees first. Only when none matches does it read the record's claims-registry blob: one single-ref `git fetch` of `claims-registry`, with a contents-API fallback.
 - **Should feel:** Like the usual quick check when nothing is wrong. The extra read happens only when no local sibling was found.
-- **Should understand:** The worktree-lock line still wins and prints unchanged when a local locked worktree names the record. The claim read is the remote-facing half for siblings this host cannot see.
+- **Should understand:** The worktree-lock line still wins and prints unchanged when a local locked worktree names the record. The claim read is the remote-facing half for siblings this host cannot see. `--record` accepts the record as `{n}` or `#{n}`. One leading `#` on a numeric ref is stripped before both halves run, so `--record "#77"` finds a live worktree on `worktree-dispatch-record-77` exactly as `--record 77` does. A slug ref is matched as written.
 - **Red flags:**
   - The claim read running even though a local worktree already matched.
   - The worktree-lock line's wording changing.
   - A slug ref (`flow-spec-12`) triggering any network read.
+  - `--record "#{n}"` printing `no sibling-session conflict found` (or reaching the claim read) while `--record {n}` reports a live worktree for the same record.
 
 ### 2. Read the live-claim line (terminal)
 - **URL:** the check's stdout, `claude-tweaks: sibling session may already hold record {n} — live claim by run {run-id} (session {id}, host {host}, claimed {iso}); verify before claiming`
@@ -45,4 +46,5 @@ files:
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #3030 (2026-10-19). #3131 was a live instance of the late contest: the sibling's claim surfaced only at flow Step 2.8, after dispatch had minted a run dir, created a worktree and launched the Task.
-- Related specs: #308 (added the worktree-lock check), #2838 (worktree-resume window), #3393 (unresolved-slug claim reads)
+- Updated during `/claude-tweaks:build` of record #3768 (2026-10-21). The worktree-lock half now strips a leading `#` from a numeric `--record`. Before this, `#{n}` silently missed a live local worktree.
+- Related specs: #308 (added the worktree-lock check), #2838 (worktree-resume window), #3393 (unresolved-slug claim reads), #3768 (`#`-prefixed ref normalization)

@@ -23,6 +23,7 @@ const TIDY_STEP75_WORKTREE = read('plugin', 'skills', 'tidy', 'step-7-5-worktree
 const ACTIONS_GH = read('plugin', 'skills', 'tidy', 'actions-github-issues.md');
 const POLICY_SCHEMA_MD = read('plugin', 'skills', '_shared', 'policy-schema.md');
 const { POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 // --- Extract and syntax-check every `node -e "..."` script in the two new items ---
 
@@ -47,6 +48,21 @@ function extractNodeScripts(section) {
     scripts.push(m[1].replace(/\\"/g, '"').replace(/\\\$/g, '$'));
   }
   return scripts;
+}
+
+// Every require(/readFileSync(/writeFileSync( single-quoted argument in a script (#3699).
+function spliceLiterals(script) {
+  return [...script.matchAll(/(?:require|readFileSync|writeFileSync)\(\s*'([^']*)'/g)].map((m) => m[1]);
+}
+
+// Substitutes the item-9 filter's shell-variable placeholders with concrete paths. Each path
+// is forward-slashed first (#3699) so a native win32 temp path survives the JS literal.
+// Safe to open afterwards: Node accepts "/" on win32 and production's formatPrintedPath prints it so.
+// Longer name first — $PR_SCAN_UNARMED is a prefix of $PR_SCAN_UNARMED_CANDIDATES.
+function isolateItem9(script, { candidatesPath, inputPath }, sep = path.sep) {
+  return script
+    .split('$PR_SCAN_UNARMED_CANDIDATES').join(toPosix(candidatesPath, sep))
+    .split('$PR_SCAN_UNARMED').join(toPosix(inputPath, sep));
 }
 
 function assertAllSyntaxValid(scripts, label) {
@@ -96,11 +112,8 @@ test("item 9's green-check filter treats SKIPPED as non-blocking, not a failure 
   // github-pr-scan.md's own `eval "$(session-tmp-resolve.js ...)"` line
   // resolves (_shared/session-tmp-root.md), never literal paths, so running
   // it standalone here (outside that bash fence) requires substituting them
-  // ourselves first. Longer name first — $PR_SCAN_UNARMED is a prefix of
-  // $PR_SCAN_UNARMED_CANDIDATES.
-  const isolatedScript = filterScript
-    .split('$PR_SCAN_UNARMED_CANDIDATES').join(candidatesPath)
-    .split('$PR_SCAN_UNARMED').join(inputPath);
+  // ourselves first.
+  const isolatedScript = isolateItem9(filterScript, { candidatesPath, inputPath });
 
   // Comfortably older than the pr-unarmed-age-hours default (24h) used below,
   // so the age filter doesn't trip first and mask the conclusion-filter
@@ -176,10 +189,7 @@ test("item 9's filter script treats a wrap-up-residue-pr-marked PR as a housekee
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-item9-residue-'));
   const inputPath = path.join(tmpDir, 'pr-scan-unarmed.json');
   const candidatesPath = path.join(tmpDir, 'pr-scan-unarmed-candidates.json');
-  // Longer name first — $PR_SCAN_UNARMED is a prefix of $PR_SCAN_UNARMED_CANDIDATES.
-  const isolatedScript = filterScript
-    .split('$PR_SCAN_UNARMED_CANDIDATES').join(candidatesPath)
-    .split('$PR_SCAN_UNARMED').join(inputPath);
+  const isolatedScript = isolateItem9(filterScript, { candidatesPath, inputPath });
 
   const oldEnough = new Date(Date.now() - 25 * 3600000).toISOString();
   fs.writeFileSync(inputPath, JSON.stringify([{
@@ -374,5 +384,18 @@ test('every new/edited file mentioning integration-model cites the shared fragme
       assert.ok(text.includes(FRAGMENT), `${name} mentions integration-model without citing ${FRAGMENT}`);
     }
   }
+});
+
+test('#3699 AC1.1: the item-9 filter splices win32 temp paths with forward slashes', () => {
+  const dir = path.win32.join('D:\\a\\_temp', 'ct-item9-x');
+  const s = isolateItem9(extractNodeScripts(ITEM9)[0], {
+    candidatesPath: path.win32.join(dir, 'pr-scan-unarmed-candidates.json'),
+    inputPath: path.win32.join(dir, 'pr-scan-unarmed.json'),
+  }, path.win32.sep);
+  const lits = spliceLiterals(s);
+  assert.ok(lits.includes('D:/a/_temp/ct-item9-x/pr-scan-unarmed.json'), 'the input path is forward-slashed');
+  assert.ok(lits.includes('D:/a/_temp/ct-item9-x/pr-scan-unarmed-candidates.json'), 'the candidates path is forward-slashed');
+  assert.ok(lits.every((l) => !l.includes('\\')), 'no spliced literal keeps a backslash');
+  assert.ok(!s.includes('$PR_SCAN_UNARMED'), 'every placeholder is substituted');
 });
 
