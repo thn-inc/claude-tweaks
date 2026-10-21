@@ -128,6 +128,7 @@ files:
     - unparsed counts, or spec entries that do not add up to `ℹ fail` plus `ℹ cancelled` (a cancelled test is listed but not counted as failed)
     - a TAP block naming no file
     - a base that already contains HEAD
+    - a ref sharing no merge-base with HEAD (`no merge-base between HEAD and {ref} — …`; on a shallow clone that never fetched the fork point, the reason names `shallow clone, fork point not fetched` instead, #3810)
     - a check with no numeric exit (signal-killed)
     - an unreadable check log
     - a spec failing entry naming no test file
@@ -140,6 +141,7 @@ files:
   - An exit 0 while any `ATTRIBUTABLE:` line printed.
   - A pass over a failure in a file that does not exist at base.
   - A pass when `--baseline` names HEAD itself.
+  - An `ATTRIBUTABLE:` line for a file that already failed at the fork point, only because `origin/main` has since fixed it — or a `report.json` `baselineAdjudicated.base` naming `origin/main`'s tip rather than the merge-base (#3810).
   - A file covered as "baseline" when HEAD fails a test in it that base does not.
   - A flaky verdict with no CAVEAT line.
   - A scratch worktree left behind with no stderr line naming it and the `git worktree remove --force` command.
@@ -208,3 +210,4 @@ files:
 - Steps 3 and 7 extended after #3757 (`verify.js` reads HEAD once before the `--scope` selection and `runChecks`, and every field naming the verified commit — report `sha`, stamp `sha`/`fullSha`, count-stamp and verify-event `sha` — takes that start snapshot; a HEAD that moved by the end of the run withholds the pass stamp and prints the `tree moved during the run` line): a commit landing mid-run no longer inherits a pass, nor a later `still-verified` skip anchored on it.
 - Step 7 extended after #3799 (`verify.js` resolves the `--cwd` side's git dir and refuses a mismatch with exit 2 before any check spawns; `args.js` USAGE and `docs/plugin-structure.md` state the rule): a `--cwd` in another checkout can no longer credit the invoking checkout's pass stamp with checks that ran elsewhere.
 - Step 10 and Step 15 extended by #3674 (`extract.js`'s `JEST_TRAILER_RE` guard: a jest log ending in none of a normal run's closing lines — the `Ran all test suites…` trailer, or a `--silent` run's `Time:` line, either optionally followed by a yarn/pnpm failure trailer — counts as one unattributed failure, only when no other unattributed signal already fired): `unattributed-failures: {N}` refuses it; vitest keeps its enumerated list, having no stable closing line.
+- Step 11 extended by #3810 (`verify.js` adjudicates against `git merge-base HEAD {ref}` via `realGit.mergeBase`, reports it as `baselineAdjudicated.base`/`baseSha` beside the passed `baseRef`, and refuses a ref with no merge-base — naming a shallow clone's missing fork point): a failure inherited from where the branch forked no longer reads as attributable once the integration branch fixes it.
