@@ -565,26 +565,23 @@ async function main() {
   const rawPass = results.filter((c) => !c.skipped).every((c) => c.exitCode === 0);
   let baselineAdjudicated = null;
   if (parsed.baseline && !rawPass) {
+    function notAdjudicated(reason) {
+      return { base: parsed.baseline, baseSha, baseRef: parsed.baseline, eligible: false, reason };
+    }
     try {
       // A base that equals or contains HEAD (`--baseline HEAD`, the branch's
       // own pushed remote, a post-merge integration branch) fails exactly
       // where HEAD fails — comparing against it would pass everything.
       if (bgit.isAncestor('HEAD', baseSha)) {
-        baselineAdjudicated = {
-          base: parsed.baseline, baseSha, baseRef: parsed.baseline, eligible: false,
-          reason: `base ${parsed.baseline} (${baseSha.slice(0, 9)}) already contains HEAD — nothing to compare against`,
-        };
+        baselineAdjudicated = notAdjudicated(`base ${parsed.baseline} (${baseSha.slice(0, 9)}) already contains HEAD — nothing to compare against`);
       } else {
         const mergeBaseSha = bgit.mergeBase('HEAD', baseSha);
         if (mergeBaseSha === null) {
           // #3810: no fork point to adjudicate against — unrelated histories, or
           // a shallow clone that never fetched it (worded for the cause).
-          baselineAdjudicated = {
-            base: parsed.baseline, baseSha, baseRef: parsed.baseline, eligible: false,
-            reason: bgit.isShallow()
-              ? `no merge-base between HEAD and ${parsed.baseline} — shallow clone, fork point not fetched (deepen or unshallow the fetch)`
-              : `no merge-base between HEAD and ${parsed.baseline} — nothing to compare against`,
-          };
+          baselineAdjudicated = notAdjudicated(bgit.isShallow()
+            ? `no merge-base between HEAD and ${parsed.baseline} — shallow clone, fork point not fetched (deepen or unshallow the fetch)`
+            : `no merge-base between HEAD and ${parsed.baseline} — nothing to compare against`);
         } else {
           // #3810: adjudicate against the merge-base with HEAD (the fork point),
           // not the ref's tip — a moved integration branch that fixed a failure
@@ -611,9 +608,7 @@ async function main() {
     } catch (err) {
       // Fail closed: an adjudicator crash (e.g. the scratch worktree could not
       // be created) is "not adjudicated", never a pass and never a lost report.
-      baselineAdjudicated = {
-        base: parsed.baseline, baseSha, baseRef: parsed.baseline, eligible: false, reason: `adjudication error: ${String((err && err.message) || err)}`,
-      };
+      baselineAdjudicated = notAdjudicated(`adjudication error: ${String((err && err.message) || err)}`);
     }
   }
   const adjudicatedPass = Boolean(baselineAdjudicated && baselineAdjudicated.verdict === 'pass');
