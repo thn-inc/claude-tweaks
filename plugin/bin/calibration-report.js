@@ -67,7 +67,7 @@ function loadRuns(root) {
 // spawn it with `root` as the child process's cwd.
 function resolveAutonomyCeiling(root, runner = execFileSync) {
   try {
-    return runner('node', [path.join(__dirname, 'resolve-policy.js'), '--values', 'autonomy'], { encoding: 'utf8', cwd: root }).trim();
+    return runner('node', [path.join(__dirname, 'resolve-policy.js'), '--values', 'autonomy'], { encoding: 'utf8', cwd: root, windowsHide: true }).trim();
   } catch {
     return 'unknown';
   }

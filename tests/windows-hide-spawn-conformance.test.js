@@ -77,6 +77,12 @@ function unhiddenCalls(raw) {
   }
   const objs = new Set();
   for (const m of src.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*require\(\s*['"](?:node:)?child_process['"]\s*\)/g)) objs.add(m[1]);
+  // A parameter default or alias bound to a child_process function (`execImpl = execFileSync`,
+  // `run = cp.execFileSync`) spawns the same way, so its identifier joins the bare-name alternation.
+  const refs = [...local, ...[...objs].map((o) => `${o}\\.(?:${FNS.join('|')})`)];
+  if (refs.length) {
+    for (const m of src.matchAll(new RegExp(`([A-Za-z_$][\\w$]*)\\s*=\\s*(?:${refs.join('|')})\\s*[,)};]`, 'g'))) local.add(m[1]);
+  }
   const alts = [`require\\(\\s*['"](?:node:)?child_process['"]\\s*\\)\\.(?:${FNS.join('|')})`];
   if (objs.size) alts.push(`\\b(?:${[...objs].join('|')})\\.(?:${FNS.join('|')})`);
   if (local.size) alts.push(`(?<![.\\w])(?:${[...local].join('|')})`);
@@ -137,6 +143,30 @@ test('a comment-stripper mis-parse is reported, not passed as a file with no cal
   ].join('\n')), [{ line: 0, args: 'the comment stripper mis-parsed this file: the stripped text no longer compiles, so live code was blanked and cannot be scanned — see tests/helpers/strip-comments.js' }]);
   assert.deepEqual(unhiddenCalls("const cp = require('child_process'); const = ;"),
     [{ line: 0, args: 'this file does not compile as a CommonJS module, so the comment-stripper check cannot judge it — see tests/helpers/strip-comments.js' }]);
+});
+
+test('scanner sees a child_process function reached through a parameter default or alias (#3854)', () => {
+  const lines = (src) => unhiddenCalls(src).map((f) => f.line);
+  const defaulted = "const { execFileSync } = require('child_process');\nfunction gitInfo(execImpl = execFileSync) { execImpl('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }); }";
+  assert.deepEqual(lines(defaulted), [2]);
+  assert.deepEqual(lines(defaulted.replace("{ encoding: 'utf8' }", "{ encoding: 'utf8', windowsHide: true }")), []);
+  assert.deepEqual(lines("const cp = require('child_process');\nfunction f(run = cp.execFileSync) { run('git', []); }"), [2]);
+  assert.deepEqual(lines("const { execFileSync } = require('child_process');\nconst run = execFileSync;\nrun('git', ['x']);"), [3]);
+  // `exec` aliased to a child_process function: method calls on other objects
+  // (`/x/.exec(`, `other.exec(`) must not match the bare alias.
+  assert.deepEqual(lines("const { execFileSync } = require('child_process');\nconst exec = execFileSync;\nconst m = /x/.exec(text);\nother.exec('a', {});\nexec('git', ['x'], {});"), [5]);
+});
+
+test('report.js carries windowsHide on all three git spawns, and removing any one is caught (#3854)', () => {
+  const raw = fs.readFileSync(path.join(BIN_ROOT, 'lib', 'verify', 'report.js'), 'utf8');
+  const needle = 'windowsHide: true';
+  const at = [];
+  for (let i = raw.indexOf(needle); i !== -1; i = raw.indexOf(needle, i + 1)) at.push(i);
+  assert.strictEqual(at.length, 3);
+  for (const i of at) {
+    const variant = raw.slice(0, i).replace(/,\s*$/, '') + raw.slice(i + needle.length);
+    assert.strictEqual(unhiddenCalls(variant).length, 1, `removing the occurrence at offset ${i} must leave exactly one unhidden call`);
+  }
 });
 
 test('every child_process call under plugin/bin/ passes windowsHide', () => {

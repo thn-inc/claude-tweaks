@@ -23,7 +23,7 @@ const STAGE1 = ['types', 'lint'];
 function killTree(child, { platform = process.platform, kill = process.kill, execImpl = execFileSync } = {}) {
   if (child && typeof child.pid === 'number') {
     try {
-      if (platform === 'win32') execImpl('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+      if (platform === 'win32') execImpl('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
       else kill(-child.pid, 'SIGKILL');
       return;
     } catch { /* fall through to the plain kill below */ }
