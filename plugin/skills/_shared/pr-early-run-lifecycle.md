@@ -105,13 +105,16 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
   gate's first-push exemption can match it against the push it precedes:
   `AUTO {time} — PR-early run lifecycle: reopened PR #{number} for {branch} (retry). Reversibility: high.`
 
-  **Rebind a retry's body (#3887).** When the reopened body's first line names a different run
-  than this one — a retry that adopted a prior attempt's branch
-  (`build/adopted-branch-collision-check.md`'s `prior-attempt` state) — compose this run's body
-  per Step 3 and write it with
+  **Rebind a retry's body (#3887).** When this run reached this reopen by adopting a prior
+  attempt's branch (`build/adopted-branch-collision-check.md`'s `prior-attempt` state — its
+  `adopted prior attempt` line is in `decisions.md`), the reopened body names the old run: rebind
+  it unconditionally. Compose this run's body per Step 3 (that step's "Skipped when Step 1 found a
+  reusable open PR" header does not apply to this compose) and write it with
   `gh pr edit {number} --repo {host}/{owner}/{repo} --body-file "$PR_EARLY_BODY"` before Step 2's
   push: `bin/pr-checklist.js` refuses every phase-checklist update on a body naming another run
-  (exit 4), which would freeze this run's checklist. Log
+  (exit 4), which would freeze this run's checklist. With `gh` absent, write the same body via
+  `mcp__github__update_pull_request` (`_shared/github-write-transport.md`'s Pull Request
+  create/update exception). Log
   `AUTO {time} — PR-early run lifecycle: rebound reopened PR #{number} to run {run-id}. Reversibility: high.`
 
   **Reopen fails** (the branch was force-pushed out from under it, or some other state GitHub
@@ -144,14 +147,14 @@ same gap in the other direction — a same-name branch left on `origin` by a pri
 human decision before `EnterWorktree` ever runs, rather than letting it surface only via this
 step's own reopen logic or a later rejected push. With both collision directions closed at their
 root, the branch this step queries is always freshly created, so `gh pr list --head {branch}` only
-ever matches a PR this exact run itself opened (resume case) — the CLOSED-match reopen branch above
-still exists for that legitimate resume, just never for a same-name-collision retry anymore.
+ever matches a PR this exact run itself opened (resume case) — so on the creation path the
+CLOSED-match reopen branch above serves that legitimate resume only, never a same-name collision.
 That holds on the creation path only: a run that adopted its worktree (a dispatched group, a
 multi-spec shared worktree) skips Steps 1.5/1.6 with the rest of worktree creation, so
 `build/adopted-branch-collision-check.md` covers it instead — it stops on a same-name `origin`
 branch whose tip is not in the adopted worktree's history, before this file's Step 2 push (#2844).
-It adopts the record's own failed earlier attempt instead of stopping on it (#3887), so a dispatch
-retry also reaches the CLOSED-match reopen above.
+That check adopts the record's own failed earlier attempt instead of stopping on it (#3887), so a
+dispatch retry on the adopt path does reach the CLOSED-match reopen above.
 
 ### Step 2: Push the branch
 

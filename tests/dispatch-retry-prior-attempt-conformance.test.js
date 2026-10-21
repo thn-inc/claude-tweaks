@@ -19,9 +19,16 @@ const norm = (text) => text.replace(/\s+/g, ' ');
 
 const PR_EARLY = read('plugin', 'skills', '_shared', 'pr-early-run-lifecycle.md');
 const SETTLE = read('plugin', 'skills', 'dispatch', 'settle-and-merge.md');
+const CHECK = read('plugin', 'skills', 'build', 'adopted-branch-collision-check.md');
+const SHIPPED = read('plugin', 'skills', 'build', 'already-shipped-assessment.md');
 
 const REBIND_SENTENCE = /\*\*Rebind a retry's body \(#3887\)\.\*\*.*?Reversibility: high\./s;
-const SETTLE_SENTENCE = /A retry adopts that branch \(.*?so the failure reason may say a plan commit is kept for the retry — name its sha\./s;
+const SETTLE_SENTENCE = /A retry adopts that branch \(.*?so the failure reason may say a plan commit is kept for the retry\./s;
+const SHIPPED_SENTENCE = /After a `prior-attempt` adoption.*?never evidence the record shipped\. /s;
+const CHECK_SHIPPED_SENTENCE = /After this adoption, "already shipped".*?never evidence the record shipped\./s;
+const GH_ABSENT_SENTENCE = /With `gh` absent there is no PR lookup.*?tracked follow-up\./s;
+const MCP_REBIND_SENTENCE = /With `gh` absent, write the same body via .*?exception\)\. /s;
+const STALE_CLAUSE = 'just never for a same-name-collision retry anymore';
 
 function assertRebind(text) {
   const t = norm(text);
@@ -32,6 +39,9 @@ function assertRebind(text) {
   assert.match(t, /exit 4/);
   assert.match(t, /prior-attempt/);
   assert.match(t, /PR-early run lifecycle: rebound reopened PR #\{number\} to run \{run-id\}/);
+  assert.match(t, /rebind it unconditionally/);
+  assert.match(t, /"Skipped when Step 1 found a reusable open PR" header does not apply to this compose/);
+  assert.match(t, /Rebind a retry's body.*?mcp__github__update_pull_request.*?github-write-transport\.md.*?Pull Request create\/update exception.*?Reversibility: high\./);
 }
 
 function assertSettle(text) {
@@ -40,12 +50,33 @@ function assertSettle(text) {
   assert.match(t, /build\/adopted-branch-collision-check\.md/);
   assert.match(t, /prior-attempt/);
   assert.match(t, /plan commit/);
+  assert.doesNotMatch(t, /name its sha/);
+  const at = t.indexOf('A retry adopts that branch');
+  const composeStart = t.indexOf('5. Compose the failure comment');
+  const tempPaths = t.indexOf("Resolve this run's session-scoped temp paths first", composeStart);
+  assert.ok(composeStart !== -1 && at > composeStart && at < tempPaths, 'adopt sentence must open step 5, before the reason is composed');
 }
 
 function assertCollisionParagraph(text) {
   const t = norm(text);
   assert.match(t, /That holds on the creation path only/);
   assert.match(t, /own failed earlier attempt/);
+  assert.match(t, /That check adopts the record's own failed earlier attempt/);
+  assert.ok(!t.includes(STALE_CLAUSE), 'the creation-path clause must not contradict the adopt-path sentence');
+}
+
+function assertShippedAgainstOrigin(text, { diffClause }) {
+  const t = norm(text);
+  assert.match(t, /against `origin\/\{integration-branch\}` only/);
+  assert.match(t, /never evidence the record shipped/);
+  if (diffClause) assert.match(t, /git diff origin\/\{integration-branch\}\.\.\.HEAD/);
+}
+
+function assertGhAbsentLimitation(text) {
+  const t = norm(text);
+  assert.match(t, /With `gh` absent there is no PR lookup/);
+  assert.match(t, /stays `foreign` and stops \(fail closed\)/);
+  assert.match(t, /MCP-fed lookup is a tracked follow-up/);
 }
 
 test('AC1.1: a reopened retry PR is rebound to this run before any checklist update', () => {
@@ -83,4 +114,54 @@ test('go-red: assertCollisionParagraph throws once the prior-attempt clause is r
   const stripped = norm(PR_EARLY).replace(/own failed earlier attempt/g, 'x');
   assert.notStrictEqual(stripped, norm(PR_EARLY), 'control did not remove anything');
   assert.throws(() => assertCollisionParagraph(stripped));
+});
+
+test('an adopted prior attempt is never evidence the record already shipped (already-shipped-assessment.md)', () => {
+  assertShippedAgainstOrigin(SHIPPED, { diffClause: true });
+});
+
+test('the adoption item states the same already-shipped rule (adopted-branch-collision-check.md item 5)', () => {
+  assertShippedAgainstOrigin(CHECK, { diffClause: false });
+});
+
+test('the adoption item states the gh-absent limitation plainly', () => {
+  assertGhAbsentLimitation(CHECK);
+});
+
+test('go-red: assertShippedAgainstOrigin throws once the already-shipped-assessment sentence is removed', () => {
+  const without = norm(SHIPPED).replace(SHIPPED_SENTENCE, '');
+  assert.notStrictEqual(without, norm(SHIPPED), 'control did not remove anything');
+  assert.throws(() => assertShippedAgainstOrigin(without, { diffClause: true }));
+});
+
+test('go-red: assertShippedAgainstOrigin throws once item 5\'s sentence is removed', () => {
+  const without = norm(CHECK).replace(CHECK_SHIPPED_SENTENCE, '');
+  assert.notStrictEqual(without, norm(CHECK), 'control did not remove anything');
+  assert.throws(() => assertShippedAgainstOrigin(without, { diffClause: false }));
+});
+
+test('go-red: assertGhAbsentLimitation throws once the limitation sentence is removed', () => {
+  const without = norm(CHECK).replace(GH_ABSENT_SENTENCE, '');
+  assert.notStrictEqual(without, norm(CHECK), 'control did not remove anything');
+  assert.throws(() => assertGhAbsentLimitation(without));
+});
+
+test('go-red: assertRebind throws once the MCP equivalent is removed', () => {
+  const without = norm(PR_EARLY).replace(MCP_REBIND_SENTENCE, '');
+  assert.notStrictEqual(without, norm(PR_EARLY), 'control did not remove anything');
+  assert.throws(() => assertRebind(without));
+});
+
+test('go-red: assertCollisionParagraph throws once the stale creation-path clause is restored', () => {
+  const stale = norm(PR_EARLY).replace('That check adopts', `${STALE_CLAUSE}. That check adopts`);
+  assert.notStrictEqual(stale, norm(PR_EARLY), 'control did not change anything');
+  assert.throws(() => assertCollisionParagraph(stale));
+});
+
+test('go-red: assertSettle throws when the adopt sentence sits after the reason is composed', () => {
+  const t = norm(SETTLE);
+  const sentence = t.match(SETTLE_SENTENCE)[0];
+  const moved = t.replace(SETTLE_SENTENCE, '').replace('Leave the branch and worktree in place;', (m) => `${m} ${sentence}`);
+  assert.notStrictEqual(moved, t, 'control did not change anything');
+  assert.throws(() => assertSettle(moved));
 });

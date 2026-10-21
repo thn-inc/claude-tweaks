@@ -199,6 +199,7 @@ const closedPr = (over) => ({
   number: 9,
   url: 'https://example.test/pr/9',
   state: 'CLOSED',
+  isCrossRepository: false,
   headRefOid: SHA_B,
   closingIssuesReferences: [{ number: 42 }],
   body: '<!-- claude-tweaks-run: 2026-10-21T000000-record-42 -->\nclaude-tweaks-run: 2026-10-21T000000-record-42\n\nFixes #42\n',
@@ -239,6 +240,15 @@ test('AC2.1: an open or merged PR never matches', () => {
   }
 });
 
+test('AC2.1: a fork PR on the same branch name never matches, nor does one with no isCrossRepository', () => {
+  for (const isCrossRepository of [true, undefined]) {
+    const calls = [];
+    const prLookup = { ok: true, prs: [closedPr({ isCrossRepository })] };
+    assert.equal(priorAttempt({ prLookup, git: ancestorGit(calls) }), null, String(isCrossRepository));
+    assert.equal(calls.length, 0);
+  }
+});
+
 test('AC2.1: a PR head that is not an ancestor of origin\'s tip, or an ancestry error, never matches', () => {
   for (const status of [1, 128]) {
     const git = () => { throw exitWith(status); };
@@ -265,7 +275,7 @@ test('findPriorAttemptPr: links by a Fixes line when closingIssuesReferences is 
 test('findPrsForBranch: requests the fields findPriorAttemptPr reads', () => {
   let seen;
   findPrsForBranch({ branch: 'b', repo: 'o/r', gh: (args) => { seen = args; return '[]'; } });
-  assert.equal(seen[seen.indexOf('--json') + 1], 'number,url,state,isDraft,headRefOid,closingIssuesReferences,body');
+  assert.equal(seen[seen.indexOf('--json') + 1], 'number,url,state,isDraft,headRefOid,closingIssuesReferences,body,isCrossRepository');
 });
 
 test('AC1.1: a retry\'s fresh branch is foreign by ancestry but prior-attempt by PR, and adopting it lets the push fast-forward', (t) => {

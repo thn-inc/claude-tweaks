@@ -131,7 +131,7 @@ function findPrsForBranch({ branch, repo, gh = defaultGh }) {
   try {
     const out = gh([
       'pr', 'list', '--repo', repo, '--head', branch, '--state', 'all',
-      '--json', 'number,url,state,isDraft,headRefOid,closingIssuesReferences,body',
+      '--json', 'number,url,state,isDraft,headRefOid,closingIssuesReferences,body,isCrossRepository',
     ]);
     return { ok: true, prs: JSON.parse(out || '[]') };
   } catch (err) {
@@ -159,7 +159,8 @@ function findPriorAttemptPr({ remoteSha, prLookup, records, git = defaultGit }) 
   if (!SHA_RE.test(remoteSha || '') || wanted.length === 0) return null;
   if (!prLookup || !prLookup.ok || !Array.isArray(prLookup.prs)) return null;
   for (const pr of prLookup.prs) {
-    if (!pr || pr.state !== 'CLOSED' || !firstLineRunId(pr.body)) continue;
+    // `gh pr list --head` also matches fork PRs; only a same-repo PR is this record's own.
+    if (!pr || pr.state !== 'CLOSED' || pr.isCrossRepository !== false || !firstLineRunId(pr.body)) continue;
     if (!wanted.some((n) => linkedRecords(pr).has(n))) continue;
     if (!SHA_RE.test(pr.headRefOid || '')) continue;
     try {

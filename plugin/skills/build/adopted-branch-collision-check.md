@@ -106,7 +106,11 @@ then treat it as `unreachable` with reason `no-output` (item 3). Branch on `stat
    `AUTO {time} — Adopted-branch collision check: adopted prior attempt {short sha} from closed PR #{number} for {branch}. Reversibility: high (merge commit on an unpushed branch).`
    The push then fast-forwards, and `_shared/pr-early-run-lifecycle.md` Step 1 reopens and rebinds
    that PR. Anything else — another record's PR, a human's, an open or merged PR, a failed lookup —
-   stays `foreign` (item 4).
+   stays `foreign` (item 4). With `gh` absent there is no PR lookup, so an own prior attempt stays
+   `foreign` and stops (fail closed) — an MCP-fed lookup is a tracked follow-up. After this
+   adoption, "already shipped" (`build/already-shipped-assessment.md`) is judged against
+   `origin/{integration-branch}` only — the adopted attempt's commits are this run's own unmerged
+   work, never evidence the record shipped.
 
 **Out of scope:** the creation path (Step 1.6 owns it), and cleaning up stale remote branches a
 failed attempt leaves behind — it does not delete anything; it reports an unrelated collision and
