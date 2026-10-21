@@ -22,6 +22,7 @@ const { readRunStateWithParent } = require('../hooks/context');
 const { ownedPlansFiles } = require('./ledger-ownership');
 const { ledgerRowCells } = require('./ledger-cells');
 const { isTimeoutError } = require('../shared-primitives');
+const { parseWorkBackend } = require('../work-backend');
 
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
 const BIN = path.join(__dirname, '..', '..');
@@ -58,17 +59,9 @@ const PROBE_TIMEOUT_MS = 60000;
 // The policy levers the pack reads, resolved ONCE per run in resolveInputs and
 // stored on inputs.policy — no probe resolves policy for itself (#1930 review
 // I8: three synchronous resolve-policy.js spawns, one of them mid-fan-out).
-// work-backend is deliberately NOT here: see WORK_BACKEND_RE below.
+// work-backend is deliberately NOT here: it is not in policy.yml (read from
+// CLAUDE.md by resolveWorkBackend below), so resolve-policy.js would answer unknown-key.
 const POLICY_KEYS = ['integration-branch', 'work-links'];
-
-// work-backend does not live in policy.yml. `_shared/work-record-config.md`'s
-// "Where these live" states it is read from CLAUDE.md and is absent from
-// policy-schema.js's POLICY_KEYS — so resolve-policy.js answers
-// `{"error":"unknown-key"}` for it, and the pack's original policy lookup
-// resolved '' on every repo, silently degrading every forge probe to
-// `no-forge` (#1930 review E1). No reader for this key exists anywhere in
-// bin/lib, so this three-line one stays local.
-const WORK_BACKEND_RE = /^work-backend:\s*(\S+)\s*$/m;
 
 // stderr is piped rather than inherited or ignored: a failing call cannot
 // spray the CLI's own stderr, and its diagnostic still survives on
@@ -141,9 +134,9 @@ function readText(deps, file) {
 // `local-files` made a GitHub-backed project with no declaration report an
 // empty `unblocked` list — a clean empty standing in for an unresolved input,
 // the exact shape C2 rejected elsewhere (#1930 review E3).
-function readWorkBackend(deps, worktree) {
-  const m = WORK_BACKEND_RE.exec(readText(deps, path.join(worktree, 'CLAUDE.md')) || '');
-  return m ? { value: m[1], source: 'claude-md' } : { value: null, source: 'unconfigured' };
+function resolveWorkBackend(deps, worktree) {
+  const value = parseWorkBackend(readText(deps, path.join(worktree, 'CLAUDE.md')));
+  return value !== null ? { value, source: 'claude-md' } : { value: null, source: 'unconfigured' };
 }
 
 function sortedUnique(nums) {
@@ -343,7 +336,7 @@ function resolveInputs({ runDir, cwd, deps }) {
   const pr = hasPrNumber(state) ? state.pr.number : null;
   sources.pr = pr === null ? 'unavailable' : 'run-state.json';
   const values = deps.resolvePolicy(POLICY_KEYS, worktree) || {};
-  const backend = readWorkBackend(deps, worktree);
+  const backend = resolveWorkBackend(deps, worktree);
   sources.workBackend = backend.source;
   const policy = {
     integrationBranch: values['integration-branch'] || '',

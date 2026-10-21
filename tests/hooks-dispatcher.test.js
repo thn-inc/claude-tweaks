@@ -72,7 +72,7 @@ function writeWorktreeAlwaysPolicy(project) {
 }
 
 test('invariant: every event exits 0 on garbage stdin, no stdout noise', () => {
-  for (const ev of ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'post-tool-use-failure', 'subagent-stop']) {
+  for (const ev of ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'post-tool-use-failure', 'subagent-stop', 'user-prompt-submit']) {
     const r = runHook([ev], { input: '%%%not json%%%' });
     assert.strictEqual(r.code, 0, `${ev} must exit 0 on garbage stdin`);
     if (r.stdout.trim()) assert.doesNotThrow(() => JSON.parse(r.stdout), `${ev} stdout must be empty or valid JSON`);
@@ -759,6 +759,15 @@ test('hooks.json registers a PostToolUse matcher for Write (unfiltered, literal 
   assert.strictEqual(writeEntry.hooks[0].type, 'command');
   assert.ok(!('if' in writeEntry.hooks[0]), 'Write matcher must be a literal tool-name match, not pattern-filtered');
   assert.match(writeEntry.hooks[0].command, /bin\/hooks\.js" post-tool-use$/);
+});
+
+test('hooks.json registers a matcher-less UserPromptSubmit group invoking hooks.js user-prompt-submit', () => {
+  const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
+  const groups = config.hooks.UserPromptSubmit;
+  assert.ok(Array.isArray(groups), 'expected a UserPromptSubmit array');
+  assert.strictEqual(groups.length, 1);
+  assert.ok(!('matcher' in groups[0]), 'Claude Code ignores matchers for UserPromptSubmit, so none is registered');
+  assert.ok(groups[0].hooks.some((h) => h.type === 'command' && h.command.includes('hooks.js" user-prompt-submit')));
 });
 
 test('hooks.json registers ONE unconditional PostToolUse handler for Bash (#3074)', () => {

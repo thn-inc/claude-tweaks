@@ -13,7 +13,9 @@
 // nesting into an unrelated phase). A maintainer adding a new nested-skill
 // call site inside review/wrap-up/build must add its name here, or every
 // run will grow a spurious top-level phase — tests/timing-nested-parent-roster.test.js
-// pins this against the corpus.
+// pins this against the corpus. A `source: "user"` event (the typed-command
+// ledger) is top-level only for a PHASES member (and `flow`), since typed
+// commands are not governed by the skill-body corpus the roster test scans.
 'use strict';
 
 const { PROFILES } = require('../model-profiles/profiles');
@@ -74,7 +76,10 @@ function unionMs(spans) {
   return total;
 }
 function skillName(ev) { return typeof ev.skill === 'string' && ev.skill.startsWith(NS) ? ev.skill.slice(NS.length) : null; }
-function isTopLevel(ev) { const n = skillName(ev); return n !== null && !(n in NESTED_PARENT); }
+function isTopLevel(ev) {
+  const n = skillName(ev);
+  return n !== null && (ev.source === 'user' ? (n === 'flow' || PHASES.includes(n)) : !(n in NESTED_PARENT));
+}
 
 // { events, manifest?, runState?, now? } -> { phases, totals }
 function derivePhases({ events, manifest = null, runState = null, now = new Date() } = {}) {

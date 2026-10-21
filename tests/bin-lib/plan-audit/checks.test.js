@@ -213,6 +213,111 @@ test('checkA still fails a Modify bullet whose path no task Create:s (ledger row
   }
 });
 
+// #3493: Check A used fs.existsSync as proof that a Create/Test bullet's
+// parent is a directory, so a plan creating a file under a path that is
+// currently a regular file passed the audit and failed only at write time.
+test('AC1.1 (#3493): checkA reports a Create bullet whose parent path is a regular file', () => {
+  const repo = makeTmpRepo();
+  fs.writeFileSync(path.join(repo, 'README.md'), '');
+  try {
+    const result = checkA([{ type: 'Create', path: 'README.md/new.js' }], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missing, ['README.md/new.js']);
+    assert.deepStrictEqual(result.missingDetail, [{ path: 'README.md/new.js', nearestExistingAncestor: '.' }]);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#3493: checkA reports a Test bullet whose parent path is a regular file', () => {
+  const repo = makeTmpRepo();
+  fs.writeFileSync(path.join(repo, 'tests'), '');
+  try {
+    const result = checkA([{ type: 'Test', path: 'tests/new.test.js' }], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missing, ['tests/new.test.js']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#3493: a regular file two levels up is rescued neither by the one-new-level rule nor by a sibling bullet', () => {
+  const repo = makeTmpRepo();
+  fs.writeFileSync(path.join(repo, 'notes.txt'), '');
+  try {
+    const result = checkA([
+      { type: 'Create', path: 'notes.txt/sub/a.js' },
+      { type: 'Create', path: 'notes.txt/sub/b.js' },
+    ], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missing, ['notes.txt/sub/a.js', 'notes.txt/sub/b.js']);
+    assert.deepStrictEqual(result.missingDetail.map((d) => d.nearestExistingAncestor), ['.', '.']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#3493: a regular-file parent under a real directory names that directory as the nearest existing ancestor', () => {
+  const repo = makeTmpRepo();
+  fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'plugin', 'bin', 'tool.js'), '');
+  try {
+    const result = checkA([{ type: 'Create', path: 'plugin/bin/tool.js/new.js' }], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missingDetail, [{ path: 'plugin/bin/tool.js/new.js', nearestExistingAncestor: path.join('plugin', 'bin') }]);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#3493: a parent that is a symlink to a real directory still passes', (t) => {
+  const repo = makeTmpRepo();
+  try {
+    fs.mkdirSync(path.join(repo, 'real'));
+    try {
+      fs.symlinkSync(path.join(repo, 'real'), path.join(repo, 'linked'), 'dir');
+    } catch (err) {
+      t.skip(`cannot create a directory symlink here (${err.code})`);
+      return;
+    }
+    const result = checkA([{ type: 'Create', path: 'linked/new.js' }], repo);
+    assert.strictEqual(result.ok, true);
+    assert.deepStrictEqual(result.missing, []);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#3493: a Modify bullet under a regular file names the enclosing directory as the nearest existing ancestor', () => {
+  const repo = makeTmpRepo();
+  fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'plugin', 'bin', 'tool.js'), '');
+  try {
+    const result = checkA([{ type: 'Modify', path: 'plugin/bin/tool.js/x.js' }], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missingDetail, [{ path: 'plugin/bin/tool.js/x.js', nearestExistingAncestor: path.join('plugin', 'bin') }]);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#3493: a parent that is a dangling symlink is reported, not accepted', (t) => {
+  const repo = makeTmpRepo();
+  try {
+    try {
+      fs.symlinkSync(path.join(repo, 'gone'), path.join(repo, 'dangling'), 'dir');
+    } catch (err) {
+      t.skip(`cannot create a directory symlink here (${err.code})`);
+      return;
+    }
+    const result = checkA([{ type: 'Create', path: 'dangling/new.js' }], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missing, ['dangling/new.js']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 // ── Check B ──────────────────────────────────────────────────────────────
 
 test('checkB is a no-op (ok, empty) when the plan declares no Scope keywords', () => {
@@ -676,6 +781,51 @@ test('headroomCheck measures against the Read-limit rail: breach above RAIL_BYTE
       fs.rmSync(repo, { recursive: true, force: true });
     }
   }
+});
+
+// #3459 — headroomCheck measures like the Read rail (context-cost.js's
+// measuredBytes): `when:` marker lines stripped, CRLF normalized to LF.
+const MARKER_PAIR = '<!-- when: mode=auto -->\n<!-- /when -->\n';
+
+function headroomFor(content) {
+  const repo = makeTmpRepo();
+  const rel = 'plugin/skills/demo/measured.md';
+  const abs = path.join(repo, rel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, content);
+  try {
+    return { raw: fs.statSync(abs).size, result: headroomCheck([{ type: 'Modify', path: rel }], repo) };
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+}
+
+test('AC1.1: a file RAIL_BYTES + 100 raw, carrying > 100 B of when-marker lines, reports no breach (#3459)', () => {
+  const markers = MARKER_PAIR.repeat(4);
+  assert.ok(Buffer.byteLength(markers) > 100);
+  const { raw, result } = headroomFor(markers + 'x'.repeat(RAIL_BYTES + 100 - Buffer.byteLength(markers)));
+  assert.strictEqual(raw, RAIL_BYTES + 100);
+  assert.deepStrictEqual(result.breaches, []);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.nearCeiling[0].bytes, RAIL_BYTES + 100 - Buffer.byteLength(markers));
+});
+
+test('AC2.1: the same file with its marker lines removed, padded to stay over RAIL_BYTES, still breaches (#3459)', () => {
+  const { result } = headroomFor('x'.repeat(RAIL_BYTES + 100));
+  assert.strictEqual(result.breaches.length, 1);
+  assert.strictEqual(result.breaches[0].bytes, RAIL_BYTES + 100);
+  assert.strictEqual(result.ok, false);
+});
+
+test('AC3.1: a CRLF copy of a file at exactly RAIL_BYTES LF bytes reports no breach (#3459)', () => {
+  let lf = ('x'.repeat(99) + '\n').repeat(Math.floor(RAIL_BYTES / 100));
+  lf += 'x'.repeat(RAIL_BYTES - Buffer.byteLength(lf));
+  assert.strictEqual(Buffer.byteLength(lf), RAIL_BYTES);
+  const { raw, result } = headroomFor(lf.replace(/\n/g, '\r\n'));
+  assert.ok(raw > RAIL_BYTES, 'CRLF fixture must be over the rail raw');
+  assert.deepStrictEqual(result.breaches, []);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.nearCeiling[0].bytes, RAIL_BYTES);
 });
 
 test('a clean plan (no missing paths, no scope keywords, no FAIL findings, no headroom issues) passes every check', () => {

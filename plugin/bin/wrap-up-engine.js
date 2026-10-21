@@ -6,7 +6,7 @@
 // (correct an already-recorded row without hand-editing engine-state.json),
 // `render` (produce the Phase 2 phase-trace table or the Review Console's
 // engine-fed sections), `verify` (run the closure-gate checks against a run
-// dir).
+// dir, persisting the rows to verify.json).
 //
 // Exit codes: 0 for success (including a `render --strict` completeness
 // failure is the one deliberate exception — see below); 1 when the
@@ -51,6 +51,7 @@ const {
   renderTrace, renderConsoleSections, renderConsoleSectionsMulti, strictCheck, worklistRows, resolveProcedureHeadPath,
 } = require('./lib/wrap-up/engine-render');
 const { runVerify, renderVerifyTable, resolveArchivedRunDir } = require('./lib/wrap-up/engine-verify');
+const { writeVerifyResults } = require('./lib/wrap-up/verify-results');
 const { resolveLedgerPath, flipLedgerRow, TERMINAL_STATUSES } = require('./lib/wrap-up/ledger-write');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { writeFileAtomic } = require('./lib/atomic-write');
@@ -542,6 +543,18 @@ function runVerifyVerb(args) {
   const resolvedDir = resolveArchivedRunDir(args.runDir, repoRoot);
   const { rows, exitCode } = runVerify({ runDir: resolvedDir, originalRunDir: args.runDir, base: args.base, repoRoot, cwd, deps: {} });
   process.stdout.write(`${renderVerifyTable(rows)}\n`);
+  // #3783: persist the rows beside the run's other artifacts. Only into
+  // resolvedDir -- the dir that was actually verified (the archived copy when
+  // the original is gone). Never args.runDir: writeVerifyResults' lock
+  // bootstrap would recreate a missing parent, resurrecting a stale original.
+  // A write failure is reported, never the verdict.
+  if (resolvedDir !== null) {
+    try {
+      writeVerifyResults({ runDir: resolvedDir, rows, base: args.base });
+    } catch (e) {
+      process.stderr.write(`wrap-up-engine.js verify: could not write verify.json in ${resolvedDir}: ${e.message}\n`);
+    }
+  }
   // Never process.exit() right after a large write -- can truncate stdout on
   // a pipe (see MEMORY.md's async-write-vs-process-exit-race incident).
   process.exitCode = exitCode;

@@ -124,8 +124,9 @@ function closeRunState(runDir, {
 
   // Warn-tier check (#373): closing a run whose ledger never recorded a wrap-up
   // invocation. Warn, never block — dispatch's close-before-merge is sanctioned,
-  // and a human-typed /claude-tweaks:wrap-up leaves no event at all (measured,
-  // #371 finding (e)), so absence is not proof the procedure was skipped.
+  // and a typed `/claude-tweaks:wrap-up` is recorded with `source: "user"` and
+  // counts here; a bare `/wrap-up` and runs predating the ledger leave none,
+  // so absence is not proof the procedure was skipped.
   // #2553: a run whose run-state.json already reads `status: clean` at this
   // point is already closed (clean) and mid-archival elsewhere (e.g. wrap-up's
   // own flow calling close-run a second time, or ExitWorktree racing a close

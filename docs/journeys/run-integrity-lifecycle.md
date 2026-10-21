@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/lib/hooks/skill-invocation.js
+  - plugin/bin/lib/hooks/user-prompt-submit.js
   - plugin/bin/lib/hooks/run-integrity.js
   - plugin/bin/lib/hooks/pre-tool-use.js
   - plugin/bin/lib/hooks/session-start.js
@@ -21,8 +22,8 @@ files:
 ## Steps
 
 ### 1. Work happens — the ledger writes itself
-- **Action:** Run any pipeline (`/claude-tweaks:flow`, `/claude-tweaks:build`): every model-initiated Skill-tool call is appended to the owned run's `events.jsonl` as `{"skill": ..., "ts": ..., "type": "skill_invoked"}` by the PostToolUse hook.
-- **Expect:** No visible output — log tier. Boundary (measured): user-typed slash commands and failed calls leave no event; subagent Skill calls do land, so a flow-driven wrap-up always registers. Since `#1410` there is a third boundary: the event never lands in a *sibling worktree's* run. A run dir provably bound to a different, still-live worktree than the session's own cwd is skipped when the runtime has to guess an owner, so the event is appended to this session's own run or to none at all — never to an unrelated concurrent run's `events.jsonl`. A run with no provable worktree binding is still guessed into exactly as before. Since `#2783` an `-adhoc-standalone` dir (a friction-only placeholder `EnterWorktree` mints) is never a guess candidate either; only the session that owns it reaches it, through its own session match. Since `#3515`:
+- **Action:** Run any pipeline (`/claude-tweaks:flow`, `/claude-tweaks:build`): every skill invocation is appended to the owned run's `events.jsonl` as `{"skill": ..., "ts": ..., "type": "skill_invoked"}` by one of two writers: a model-initiated Skill-tool call by the PostToolUse hook (no `source` field), and a typed `/claude-tweaks:<skill>` first line by the UserPromptSubmit hook (`source: "user"`).
+- **Expect:** No visible output — log tier. Boundary (measured): a bare `/<skill>`, a typed command for a non-existent skill, and failed Skill calls leave no event; subagent Skill calls do land, so a flow-driven wrap-up always registers. Since `#1410` there is a third boundary: the event never lands in a *sibling worktree's* run. A run dir provably bound to a different, still-live worktree than the session's own cwd is skipped when the runtime has to guess an owner, so the event is appended to this session's own run or to none at all — never to an unrelated concurrent run's `events.jsonl`. A run with no provable worktree binding is still guessed into exactly as before. Since `#2783` an `-adhoc-standalone` dir (a friction-only placeholder `EnterWorktree` mints) is never a guess candidate either; only the session that owns it reaches it, through its own session match. Since `#3515`:
   - A freshly minted run dir whose `decisions.md` holds only Step 2.8 claim-log lines — its claim (canonical, or a complete claim-anchored paraphrase) and its file-overlap / `bot:in-progress` projection notes, #3665 — (no `run-state.json` yet) is never a guess candidate, for any hook resolution.
   - When the runtime guesses an owner for an event write, it also skips a run bound to any worktree other than the session's own resolved toplevel. That includes a session in the main checkout, and a binding whose worktree is gone from disk.
   - When nothing is left, the event is not written, and the hook prints one stderr line: `attribution: no run dir attributed — no fallback run dir matches {cwd}; skipped {run-id} ({reason}), …`.
