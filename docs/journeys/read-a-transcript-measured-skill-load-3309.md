@@ -29,7 +29,7 @@ files:
   - `unreadable` counts transcript files that could not be read.
 - **Red flags:**
   - `status: "no-data"` read as "zero load". It means no transcript was found here, as in a cloud sandbox or a fresh clone.
-  - Transcript text appearing anywhere in the report. Only skill names and byte counts belong there.
+  - Transcript text appearing anywhere in the report. Only skill names, byte counts and root-relative `skills/…` paths belong there.
   - The same project-local skill split across two rows. A `.claude/worktrees/{x}:` prefix should be folded into the bare name.
 
 ### 2. Act on an outside-closure record
@@ -58,6 +58,7 @@ files:
 
 ## Origin
 - Created during build of #3309 (transcript-measured skill load, parent #3305's visibility mechanism for skill-size creep).
+- Updated during build of #3460: records file on `outsideClosure` (a file-set comparison, origin-anchored) instead of the byte comparison `overClosure`, which could not fire on real data. Project-local skills join via `--optional-plugin-root .claude`.
 - Related:
   - `read-a-skill-load-delta-at-review-3307.md`: the static floor/closure model this measurement is compared against.
   - `act-on-a-red-read-limit-rail-3306.md`: the hard per-file limit.
