@@ -37,8 +37,17 @@ const MERGE_MODE_FACTS = {
   'precondition-model': /`integration-model: pr-first`/,
   'steps-1-4': /`_shared\/pr-first-merge\.md` Steps 1 through 4/,
   'step-4-1': /Step 4\.1/,
-  'section-c': /Section C steps 3\.6-5\.5/,
-  'section-e': /Section E/,
+  'section-c': /Section C steps 3\.5-5\.5/,
+  'pack-before-teardown': /When `\{run-dir\}\/wrap-up-pack\.json` is absent, produce it before any teardown/,
+  'release-reason': /with reason `merged: spec \{n\}` and `\$LINK` set to the merge commit sha/,
+  'human-turn': /The confirmation holds only on a human's own turn: a subagent, a scheduled Routine, or any other headless caller that reaches this file stops and reports `pending-review`, reason `no-human-confirmation`/,
+  'record-binding': /bind the adopted run to the typed record: its `config\.yml` `spec:` value must equal `\{n\}`/,
+  'merged-pr-next': /names `\/claude-tweaks:wrap-up #\{n\} cleanup-only` as the next step/,
+  'budget-ignored': /they have no effect here and the report says they were ignored/,
+  'branch5-once': /This happens once per invocation: a second branch-5 error accepts `pending-review`/,
+  'other-stops': /Any other stop inside `pr-first-merge\.md` before the merge — Step 1\.5's curation guard, a non-zero `compose-subject` exit — reports `pending-review` naming that step/,
+  'cleanup-failure': /keeps the `merged` outcome and adds one `cleanup: \{step\} failed — \{reason\}` line per failure/,
+  'section-e': /and Section E's claim release/,
   'reconcile-last': /Step 4\.2's reconcile runs last/,
   'reread-merge-state': /re-read `mergeStateStatus`/,
   'rejects-cleanup-only': /`merge` with `cleanup-only` is rejected/,
@@ -120,8 +129,14 @@ test('wrap-up grammar surfaces carry the merge token', () => {
 const ATTENDED_FACTS = {
   'both-intents': /both sides' intent can be kept and stated in one line per file/,
   renumber: /renumbers the branch's own entry and every citation the branch added, never the integration branch's/,
-  suite: /`verify\.js`/,
+  'line-per-file-reported': /each file's line goes into the commit message and the closing report/,
+  suite: /Stage the result and run the full suite through `verify\.js`/,
+  cwd: /with `--cwd "\{worktree-path\}"`, so it checks the resolved merge/,
+  'green-gate': /Green: commit, push/,
   reenter: /re-enter Step 2\.5 from the top/,
+  'push-failed': /A failed push reports `pending-review`, reason `push-failed`/,
+  'red-suite': /A conflict that needs a judgment between the two sides' intent, or a red suite/,
+  'no-worktree': /report `pending-review`, reason `no-worktree`, and run no merge in any checkout/,
   'one-attempt': /This re-entry is the Conflict path's one attempt: a second `DIRTY` after the attended push reports `pending-review`, reason `moving-target`, with the PR ready/,
   abort: /`git merge --abort`/,
 };
@@ -179,6 +194,7 @@ test('the composed merge bundle stays within the read-limit rail', () => {
   const rows = composedBytesReport(path.join(ROOT, 'plugin')).filter((r) => r.step === 'merge');
   assert.ok(rows.length > 0, 'at least one compose call site names --step merge');
   for (const r of rows) {
+    assert.ok(!r.error, `${r.file}:${r.line} failed to compose: ${r.error}`);
     assert.ok(r.max <= RAIL_BYTES, `${r.file}:${r.line} composes ${r.max} B > ${RAIL_BYTES}`);
   }
 });
@@ -189,9 +205,18 @@ test('the composed merge bundle stays within the read-limit rail', () => {
 const SUMMARY_FACTS = {
   condition: /grants `consoleAutoResolve`/,
   predicate: /`bookkeepingPermissions\(ceiling\)\.consoleAutoResolve`/,
-  'merge-row': /`\/claude-tweaks:wrap-up "\{target\}" merge` — merge the parked PR in this session, PR #\{n\} \{is ready \| is blocked\} — mergeability: \{outcome\}/,
+  'merge-row': /`\/claude-tweaks:wrap-up \{target\} merge` — merge the parked PR in this session, PR #\{n\} \{is ready \| is blocked\} — mergeability: \{outcome\}/,
+  'bare-target': /`\{target\}` renders bare there, as the record's `#\{record\}` reference/,
   'other-ceilings': /Every other ceiling keeps the row above/,
 };
+
+// The prose names this predicate as the row's condition; pin that it exists and means `unattended` only.
+test('the summary row predicate resolves to unattended only', () => {
+  const { bookkeepingPermissions } = require('../plugin/bin/lib/issues/autonomy');
+  assert.strictEqual(bookkeepingPermissions('unattended').consoleAutoResolve, true);
+  assert.strictEqual(bookkeepingPermissions('trusted').consoleAutoResolve, false);
+  assert.strictEqual(bookkeepingPermissions('supervised').consoleAutoResolve, false);
+});
 const OLD_RESUME_ROW = '`PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}" wrap-up` — resume to re-offer the merge decision, PR #{n} {is ready | is blocked} — mergeability: {outcome}';
 
 function summaryText() {
@@ -240,8 +265,11 @@ test('summary-template.md keeps the existing resume row in both places', () => {
 // Final-review fixes: the caller list, the graph rows, the structure row, and the Next Actions line.
 test('pr-first-merge.md header lists merge mode among its callers', () => {
   const raw = read('plugin', 'skills', '_shared', 'pr-first-merge.md');
-  const header = flat(raw.slice(0, raw.indexOf('**The shape:**')));
-  assert.match(header, /Canonical for every merge site[^]*`wrap-up\/merge-mode\.md`/);
+  const end = raw.indexOf('**The shape:**');
+  assert.notEqual(end, -1, 'pr-first-merge.md must carry the **The shape:** lead-in');
+  const header = flat(raw.slice(0, end));
+  // Bounded by the list's last entry, so a later header mention cannot stand in for the caller-list entry.
+  assert.match(header, /Canonical for every merge site[^]*?`wrap-up\/merge-mode\.md`[^]*?`release\/execute\.md` Step 5\./);
 });
 
 test('docs/skill-graph.md counts three /wrap-up merge sites and names merge-mode.md in both rows', () => {

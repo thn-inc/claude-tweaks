@@ -98,7 +98,7 @@ Close the template's fence above, then assemble the applicable lines (the base 2
 `/claude-tweaks:deepen {changed-paths}` — act on the {N} depth opportunit{y/ies} surfaced above — when the depth survey surfaced candidates
 `/claude-tweaks:release` — cut the release — per `_shared/release-recommendation-gate.md`
 `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}" wrap-up` — resume to re-offer the merge decision, PR #{n} {is ready | is blocked} — mergeability: {outcome} — when this run's own outcome is armed/pending-review under pr-first
-`/claude-tweaks:wrap-up "{target}" merge` — merge the parked PR in this session, PR #{n} {is ready | is blocked} — mergeability: {outcome} — in place of the row above when this run's ceiling grants `consoleAutoResolve`
+`/claude-tweaks:wrap-up {target} merge` — merge the parked PR in this session, PR #{n} {is ready | is blocked} — mergeability: {outcome} — in place of the row above when this run's ceiling grants `consoleAutoResolve`
 
 **Release row.** Run `_shared/release-recommendation-gate.md`'s pack call and gate against its table — since `wrap-up` ran as an inherited step in this pipeline (it never renders its own Next Actions block in that case, `wrap-up/SKILL.md`'s Component-Skill Contract), this is this run's own call, not a re-read of one `wrap-up` already made.
 
@@ -108,9 +108,9 @@ Close the template's fence above, then assemble the applicable lines (the base 2
 
 `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}" wrap-up` — resume to re-offer the merge decision, PR #{n} {is ready | is blocked} — mergeability: {outcome}
 
-When this run's resolved `autonomy` ceiling (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "$PIPELINE_RUN_DIR" --values autonomy`) grants `consoleAutoResolve` (`bookkeepingPermissions(ceiling).consoleAutoResolve`, `bin/lib/issues/autonomy.js`, true at `unattended` only), render this merge row instead, because a resume there re-resolves the Review Console with no question and re-parks the PR. Its `{is ready | is blocked}` and suffix rules are the same as the row above's:
+When this run's resolved `autonomy` ceiling (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "$PIPELINE_RUN_DIR" --values autonomy`) grants `consoleAutoResolve` (`bookkeepingPermissions(ceiling).consoleAutoResolve`, `bin/lib/issues/autonomy.js`, true at `unattended` only), render this merge row instead, because a resume there re-resolves the Review Console with no question and re-parks the PR. `{target}` renders bare there, as the record's `#{record}` reference, because wrap-up's router reads a `#`-prefixed record reference and a quoted `"#42"` is not one. Its `{is ready | is blocked}` and suffix rules are the same as the row above's:
 
-`/claude-tweaks:wrap-up "{target}" merge` — merge the parked PR in this session, PR #{n} {is ready | is blocked} — mergeability: {outcome}
+`/claude-tweaks:wrap-up {target} merge` — merge the parked PR in this session, PR #{n} {is ready | is blocked} — mergeability: {outcome}
 
 Every other ceiling keeps the row above.
 

@@ -14,7 +14,7 @@ files:
 
 **Goal:** the PR merges now, in this session. That means acceptance labeling, the merge-verification gate, worktree teardown, claim release, and archival, with no Review Console question and no hand-run merge procedure. If the PR has gone `DIRTY` since the run parked, the agent resolves the conflict when both sides' intent survives, and otherwise stops cleanly.
 
-**Entry point:** the flow summary's Resume-to-merge row, which under `consoleAutoResolve` reads `/claude-tweaks:wrap-up "{target}" merge`.
+**Entry point:** the flow summary's Resume-to-merge row, which under `consoleAutoResolve` reads `/claude-tweaks:wrap-up {target} merge`.
 
 **Success state:**
 - The PR is squash-merged under a `human-approved` subject.
