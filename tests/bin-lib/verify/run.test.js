@@ -407,7 +407,7 @@ test('runChecks gives each check only its own env; a check without one spawns ex
   assert.strictEqual(optsOf('cmd-foo').env.MY_VAR, '1');
   assert.ok(!('MY_VAR' in optsOf('cmd-bar').env));
   // The --cmd-only spawn is byte-for-byte the pre-flag options object.
-  assert.deepStrictEqual(optsOf('cmd-bar'), { shell: true, env: { NO_COLOR: '1', FORCE_COLOR: '0', ...process.env } });
+  assert.deepStrictEqual(optsOf('cmd-bar'), { shell: true, env: { NO_COLOR: '1', FORCE_COLOR: '0', ...process.env }, windowsHide: true });
   // The env map never leaks into a recorded result (and so never into report.json).
   for (const r of results) assert.ok(!('env' in r));
 });

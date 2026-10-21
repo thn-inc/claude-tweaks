@@ -83,11 +83,13 @@ function unhiddenCalls(raw) {
   const objs = new Set();
   for (const m of src.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*require\(\s*['"](?:node:)?child_process['"]\s*\)/g)) objs.add(m[1]);
   // A parameter default or alias bound to a child_process function (`execImpl = execFileSync`,
-  // `run = cp.execFileSync`) spawns the same way, so its identifier joins the bare-name alternation.
-  const refs = [...local, ...[...objs].map((o) => `${o}\\.(?:${FNS.join('|')})`)];
-  if (refs.length) {
-    for (const m of src.matchAll(new RegExp(`([A-Za-z_$][\\w$]*)\\s*=\\s*(?:${refs.join('|')})\\s*[,)};]`, 'g'))) local.add(m[1]);
-  }
+  // `run = cp.execFileSync`, `exec = deps.execFileSync || execFileSync`,
+  // `spawnImpl = require('child_process').spawn`) spawns the same way, so its identifier joins
+  // the bare-name alternation. A line end also terminates the binding (a semicolon-less alias).
+  const refs = [...local, ...[...objs].map((o) => `${o}\\.(?:${FNS.join('|')})`),
+    `require\\(\\s*['"](?:node:)?child_process['"]\\s*\\)\\.(?:${FNS.join('|')})`];
+  const binding = new RegExp(`([A-Za-z_$][\\w$]*)\\s*=\\s*(?:[^=;,\\n]*?(?:\\|\\||\\?\\?)\\s*)?(?:${refs.join('|')})\\s*[,)};\\n]`, 'g');
+  for (const m of src.matchAll(binding)) local.add(m[1]);
   const alts = [`require\\(\\s*['"](?:node:)?child_process['"]\\s*\\)\\.(?:${FNS.join('|')})`];
   if (objs.size) alts.push(`\\b(?:${[...objs].join('|')})\\.(?:${FNS.join('|')})`);
   if (local.size) alts.push(`(?<![.\\w])(?:${[...local].join('|')})`);
@@ -160,6 +162,12 @@ test('scanner sees a child_process function reached through a parameter default 
   // `exec` aliased to a child_process function: method calls on other objects
   // (`/x/.exec(`, `other.exec(`) must not match the bare alias.
   assert.deepEqual(lines("const { execFileSync } = require('child_process');\nconst exec = execFileSync;\nconst m = /x/.exec(text);\nother.exec('a', {});\nexec('git', ['x'], {});"), [5]);
+  // An injectable fallback (`deps.x || fn`, `deps.x ?? fn`), a require-expression
+  // default, and a semicolon-less alias bind the same way.
+  assert.deepEqual(lines("const { execFileSync } = require('child_process');\nfunction g(deps = {}) {\n  const exec = deps.execFileSync || execFileSync;\n  exec('gh', ['--version'], { stdio: 'ignore' });\n}"), [4]);
+  assert.deepEqual(lines("const { execFileSync } = require('child_process');\nconst run = deps.run ?? execFileSync;\nrun('git', []);"), [3]);
+  assert.deepEqual(lines("function r({ spawnImpl = require('child_process').spawn } = {}) {\n  spawnImpl('npm test', { shell: true });\n}"), [2]);
+  assert.deepEqual(lines("const { execFileSync } = require('child_process')\nconst run = execFileSync\nrun('git', ['x'])"), [3]);
 });
 
 test('report.js carries windowsHide on all three git spawns, and removing any one is caught (#3854)', () => {

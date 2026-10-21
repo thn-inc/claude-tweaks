@@ -80,7 +80,7 @@ function runOne({
       for (const k of Object.keys(inherited)) if (mine.has(k.toUpperCase())) delete inherited[k];
     }
     const env = { ...inherited, ...checkEnv };
-    const opts = { shell: true, env };
+    const opts = { shell: true, env, windowsHide: true };
     if (cwd) opts.cwd = cwd;
     // detached:true makes the spawned shell the leader of its own POSIX
     // process group, so killTree's negative-pid kill below reaches every
