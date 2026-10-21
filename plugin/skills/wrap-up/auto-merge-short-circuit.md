@@ -171,7 +171,7 @@ error — skip silently, there is nothing to delete. A ledger file that still ca
 row needing more than deletion (there is none, by the Phase 3 precondition above) is out of scope
 for this step; it only ever deletes, per item 2's own "Delete via `/ledger`'s delete operation"
 text — it does not resolve or edit rows. On a `deleted ledger {path}` report, log to `decisions.md`:
-`AUTO {time} — Fast-lane auto-merge: deleted resolved ledger {path} for #{n} before merge. Reversibility: high (git revert restores a committed docs/plans ledger; a gitignored run-dir ledger is not restorable).` — for every other report omit this line: `not found` is a no-op and the rest are covered by the `SKIP` line above.
+`AUTO {time} — Fast-lane auto-merge: deleted resolved ledger {path} for #{n} before merge. Reversibility: high (git revert restores a committed docs/plans ledger; a gitignored run-dir ledger is not restorable).` — for every other report omit this line: `not found` is a no-op and the rest are logged as above.
 
 **Dispatch-call branch — check this before merging anything.** The question is whether *this
 call* is one of dispatch's own Task() calls: cwd-pinned to the worktree it inherited, with no path
