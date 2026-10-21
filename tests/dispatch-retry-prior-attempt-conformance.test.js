@@ -26,8 +26,8 @@ const REBIND_SENTENCE = /\*\*Rebind a retry's body \(#3887\)\.\*\*.*?Reversibili
 const SETTLE_SENTENCE = /A retry adopts that branch \(.*?so the failure reason may say a plan commit is kept for the retry\./s;
 const SHIPPED_SENTENCE = /After a `prior-attempt` adoption.*?never evidence the record shipped\. /s;
 const CHECK_SHIPPED_SENTENCE = /After this adoption, "already shipped".*?never evidence the record shipped\./s;
-const GH_ABSENT_SENTENCE = /With `gh` absent there is no PR lookup.*?tracked follow-up\./s;
-const MCP_REBIND_SENTENCE = /With `gh` absent, write the same body via .*?exception\)\. /s;
+const GH_ABSENT_SENTENCE = /With `gh` absent there is no PR lookup.*?tracked follow-up \(#3915\)\./s;
+const MCP_REBIND_SENTENCE = /With `gh` absent, write the same body via .*?section\)\. /s;
 const STALE_CLAUSE = 'just never for a same-name-collision retry anymore';
 
 function assertRebind(text) {
@@ -41,7 +41,7 @@ function assertRebind(text) {
   assert.match(t, /PR-early run lifecycle: rebound reopened PR #\{number\} to run \{run-id\}/);
   assert.match(t, /rebind it unconditionally/);
   assert.match(t, /"Skipped when Step 1 found a reusable open PR" header does not apply to this compose/);
-  assert.match(t, /Rebind a retry's body.*?mcp__github__update_pull_request.*?github-write-transport\.md.*?Pull Request create\/update exception.*?Reversibility: high\./);
+  assert.match(t, /Rebind a retry's body.*?mcp__github__update_pull_request.*?github-write-transport\.md.*?Exception: PR create\/update \(#929\)" section.*?Reversibility: high\./);
 }
 
 function assertSettle(text) {
@@ -164,4 +164,34 @@ test('go-red: assertSettle throws when the adopt sentence sits after the reason 
   const moved = t.replace(SETTLE_SENTENCE, '').replace('Leave the branch and worktree in place;', (m) => `${m} ${sentence}`);
   assert.notStrictEqual(moved, t, 'control did not change anything');
   assert.throws(() => assertSettle(moved));
+});
+
+// Review follow-up (#3887): the three fail-safe clauses the adoption path owes
+// beyond the happy path — a conflict aborts back to the foreign card, a failed
+// rebind degrades, a multi-PR reopen targets the verified number.
+const CONFLICT_CLAUSE = /its "ask the user" fallback does not apply in `auto`.*?take item 4's `foreign` stop card instead/s;
+const REBIND_FAIL_CLAUSE = /A failed rebind \(edit rejected, network, MCP error\) is a degrade, never a stop.*?until its body names run \{run-id\}\. Reversibility: n\/a\./s;
+const REOPEN_NUMBER_CLAUSE = /reopen that number, the one the collision check verified/;
+
+function assertFailSafeClauses({ check, prEarly }) {
+  assert.match(norm(check), CONFLICT_CLAUSE);
+  assert.match(norm(check), /git merge --abort/);
+  assert.match(norm(prEarly), REBIND_FAIL_CLAUSE);
+  assert.match(norm(prEarly), REOPEN_NUMBER_CLAUSE);
+}
+
+test('the adoption path states its conflict abort, rebind degrade, and verified-number reopen', () => {
+  assertFailSafeClauses({ check: CHECK, prEarly: PR_EARLY });
+});
+
+test('go-red: assertFailSafeClauses throws once any one clause is removed', () => {
+  const cases = [
+    { check: norm(CHECK).replace(CONFLICT_CLAUSE, ''), prEarly: PR_EARLY },
+    { check: CHECK, prEarly: norm(PR_EARLY).replace(REBIND_FAIL_CLAUSE, '') },
+    { check: CHECK, prEarly: norm(PR_EARLY).replace(REOPEN_NUMBER_CLAUSE, '') },
+  ];
+  for (const c of cases) assert.throws(() => assertFailSafeClauses(c));
+  assert.notStrictEqual(cases[0].check, norm(CHECK), 'control did not remove the conflict clause');
+  assert.notStrictEqual(cases[1].prEarly, norm(PR_EARLY), 'control did not remove the rebind clause');
+  assert.notStrictEqual(cases[2].prEarly, norm(PR_EARLY), 'control did not remove the reopen clause');
 });

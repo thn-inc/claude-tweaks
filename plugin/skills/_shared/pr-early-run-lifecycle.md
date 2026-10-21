@@ -93,7 +93,9 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
 - **A match with `state: CLOSED`**: this is a retry — by construction, nothing else in this
   design closes a run's PR except `_shared/pr-run-comments.md`'s failure tombstone (a prior
   attempt's HARD-GATE failure). Reopen it rather than starting fresh, so the new attempt's
-  comments land in the same thread as the prior failure(s):
+  comments land in the same thread as the prior failure(s) — when more than one CLOSED PR matches
+  and `decisions.md` carries an `adopted prior attempt … from closed PR #{number}` line (#3887),
+  reopen that number, the one the collision check verified:
 
   ```bash
   gh pr reopen {number} --repo {host}/{owner}/{repo}
@@ -113,9 +115,13 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
   `gh pr edit {number} --repo {host}/{owner}/{repo} --body-file "$PR_EARLY_BODY"` before Step 2's
   push: `bin/pr-checklist.js` refuses every phase-checklist update on a body naming another run
   (exit 4), which would freeze this run's checklist. With `gh` absent, write the same body via
-  `mcp__github__update_pull_request` (`_shared/github-write-transport.md`'s Pull Request
-  create/update exception). Log
+  `mcp__github__update_pull_request` (`_shared/github-write-transport.md`'s "Exception: PR
+  create/update (#929)" section). Log
   `AUTO {time} — PR-early run lifecycle: rebound reopened PR #{number} to run {run-id}. Reversibility: high.`
+  A failed rebind (edit rejected, network, MCP error) is a degrade, never a stop: keep the reopened
+  PR, record it via `record-pr`, and log `SKIP {time} — PR-early run lifecycle: rebind of reopened
+  PR #{number} failed ({error}); phase-checklist updates will exit 4 until its body names run
+  {run-id}. Reversibility: n/a.`
 
   **Reopen fails** (the branch was force-pushed out from under it, or some other state GitHub
   rejects): fall through to creation below. The fresh PR reuses the same title/body template;

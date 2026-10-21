@@ -102,12 +102,14 @@ then treat it as `unreachable` with reason `no-output` (item 3). Branch on `stat
    `Fixes #{n}` line, and whose head is an ancestor of origin's tip — the shape
    `dispatch/settle-and-merge.md` Step 6 step 5 leaves: branch kept, PR closed as a tombstone). Adopt
    it, never stop on it: `git merge --no-edit {remoteSha}` as its own Bash call (a conflict goes to
-   `_shared/git-discipline.md`'s Merge conflict resolution), then log
+   `_shared/git-discipline.md`'s Merge conflict resolution; its "ask the user" fallback does not
+   apply in `auto` — when the conflict cannot be resolved confidently, run `git merge --abort` as
+   its own Bash call and take item 4's `foreign` stop card instead), then log
    `AUTO {time} — Adopted-branch collision check: adopted prior attempt {short sha} from closed PR #{number} for {branch}. Reversibility: high (merge commit on an unpushed branch).`
    The push then fast-forwards, and `_shared/pr-early-run-lifecycle.md` Step 1 reopens and rebinds
    that PR. Anything else — another record's PR, a human's, an open or merged PR, a failed lookup —
    stays `foreign` (item 4). With `gh` absent there is no PR lookup, so an own prior attempt stays
-   `foreign` and stops (fail closed) — an MCP-fed lookup is a tracked follow-up. After this
+   `foreign` and stops (fail closed) — an MCP-fed lookup is a tracked follow-up (#3915). After this
    adoption, "already shipped" (`build/already-shipped-assessment.md`) is judged against
    `origin/{integration-branch}` only — the adopted attempt's commits are this run's own unmerged
    work, never evidence the record shipped.

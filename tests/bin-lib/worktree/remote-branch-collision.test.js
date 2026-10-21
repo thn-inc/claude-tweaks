@@ -272,6 +272,29 @@ test('findPriorAttemptPr: links by a Fixes line when closingIssuesReferences is 
   assert.deepEqual(priorAttempt({ prLookup }), { number: 9, url: 'https://example.test/pr/9' });
 });
 
+test('findPriorAttemptPr: links by closingIssuesReferences alone when the body has no Fixes line', () => {
+  const prLookup = { ok: true, prs: [closedPr({ body: '<!-- claude-tweaks-run: 2026-10-21T000000-record-42 -->\n' })] };
+  assert.deepEqual(priorAttempt({ prLookup }), { number: 9, url: 'https://example.test/pr/9' });
+});
+
+test('findPriorAttemptPr: skips non-matching closed PRs ahead of the record\'s own and returns the own one', () => {
+  const OTHER_HEAD = 'c'.repeat(40);
+  const prLookup = {
+    ok: true,
+    prs: [
+      closedPr({ number: 1, closingIssuesReferences: [{ number: 43 }], body: closedPr().body.replace('#42', '#43') }),
+      closedPr({ number: 2, isCrossRepository: true }),
+      closedPr({ number: 3, headRefOid: OTHER_HEAD }),
+      closedPr({ number: 9, url: 'https://example.test/pr/9' }),
+    ],
+  };
+  const git = (args) => {
+    if (args[2] === OTHER_HEAD) throw exitWith(1);
+    return '';
+  };
+  assert.deepEqual(priorAttempt({ prLookup, git }), { number: 9, url: 'https://example.test/pr/9' });
+});
+
 test('findPrsForBranch: requests the fields findPriorAttemptPr reads', () => {
   let seen;
   findPrsForBranch({ branch: 'b', repo: 'o/r', gh: (args) => { seen = args; return '[]'; } });
