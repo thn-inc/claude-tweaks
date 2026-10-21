@@ -303,3 +303,11 @@ git commit -m "Point flow's resume-to-merge row at wrap-up merge mode under cons
 - AC5 (each pin red against `origin/main`): Step 2 of every task runs against a tree equal to `origin/main` plus earlier tasks. Then, after Task 3, run the suite once more with each changed file replaced in memory by `git show origin/main:{file}`. A throwaway scratch script in the session scratchpad reads `git show` output and calls the same fact tables; nothing in the tree is mutated. Expected: every fact table reports its full list missing (`headless-unchanged` excepted).
 - AC6: full suite through `verify.js` (Common Step 5), never a bare `npm test`.
 - Size: `wc -c` on the four edited skill files and `merge-mode.md`; each must be under 52,500.
+
+## Build deviations (Common Step 4.5, Beneficial — applied)
+
+- **Token-rule hardening.** The router routes on `merge` only when `$ARGUMENTS` is nothing but `merge`, at most one record reference, and the skill's own tokens. Merge mode rejects `merge` with `cleanup-only`, `--dry-run` or `resume`, and never mints a run dir (`resolve-run-dir` without `--create`).
+  - Why: per-task and whole-branch review found that a bare `merge` bypassed its stop rule, that free text containing "merge" was captured, and that `--dry-run` would run a real merge.
+  - Commits: `f21443642`, `ceb8e15f0`, `52f3bc520`.
+- **Conflict re-entry bound.** The attended push is the Conflict path's one attempt. A second `DIRTY` reports `pending-review`, reason `moving-target` (`52f3bc520`).
+- **Three spec-literal deviations are staged** as `staged/build-deviation-{1,2,3}.md` (Update the spec): AC3's procedure placement, AC4's `"{target}"` token, and Gotcha 1's stale signature claim.
