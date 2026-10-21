@@ -28,4 +28,4 @@ function readWorkBackend(root, { readFile = fs.readFileSync } = {}) {
   }
 }
 
-module.exports = { WORK_BACKEND_RE, parseWorkBackend, readWorkBackend };
+module.exports = { parseWorkBackend, readWorkBackend };

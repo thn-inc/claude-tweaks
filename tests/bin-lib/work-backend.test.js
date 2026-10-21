@@ -23,33 +23,33 @@ test('parseWorkBackend: no line / non-string → null', () => {
   assert.equal(parseWorkBackend(null), null);
 });
 
-test('readWorkBackend: reads root/CLAUDE.md', () => {
+function withTempRoot(fn) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'work-backend-'));
   try {
-    fs.writeFileSync(path.join(root, 'CLAUDE.md'), 'work-backend: local-files\n');
-    assert.equal(readWorkBackend(root), 'local-files');
+    fn(root);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+}
+
+test('readWorkBackend: reads root/CLAUDE.md', () => {
+  withTempRoot((root) => {
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), 'work-backend: local-files\n');
+    assert.equal(readWorkBackend(root), 'local-files');
+  });
 });
 
 test('readWorkBackend: absent CLAUDE.md → null', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'work-backend-'));
-  try {
+  withTempRoot((root) => {
     assert.equal(readWorkBackend(root), null);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
+  });
 });
 
 test('readWorkBackend: CLAUDE.md is a directory → null (does not throw)', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'work-backend-'));
-  try {
+  withTempRoot((root) => {
     fs.mkdirSync(path.join(root, 'CLAUDE.md'));
     assert.equal(readWorkBackend(root), null);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
+  });
 });
 
 test('readWorkBackend: injected readFile that throws → null', () => {
