@@ -344,22 +344,72 @@ test('AC3.2: a plugin root deleted entirely at the same point degrades the same 
   assert.deepStrictEqual(r.rows.map((x) => [x.skill, x.closure]), [['demo:alpha', null]]);
 });
 
-test('harness-health names the Skill-load check: command, top 10, filing title, dedup, auto-close, --dry-run', () => {
-  const text = readText(path.join(__dirname, '..', 'plugin', 'skills', 'harness-health', 'SKILL.md'));
+const HARNESS_HEALTH = path.join(__dirname, '..', 'plugin', 'skills', 'harness-health', 'SKILL.md');
+
+// The Skill-load check paragraph is its lead-in, one ```bash block, and the
+// text after the fence up to the next blank line.
+function skillLoadParagraph(text) {
   const start = text.indexOf('**Skill-load check (#3309');
   assert.ok(start >= 0, 'harness-health/SKILL.md has no Skill-load check paragraph');
-  // The paragraph is its lead-in, one ```bash block, and the text after the
-  // fence up to the next blank line.
   const fenceEnd = text.indexOf('\n```\n', text.indexOf('```bash', start)) + 5;
-  const para = text.slice(start, text.indexOf('\n\n', fenceEnd));
+  return text.slice(start, text.indexOf('\n\n', fenceEnd));
+}
+
+// The paragraph's documented command with ${CLAUDE_PLUGIN_ROOT} replaced by
+// `pluginRootDir`, as the argv run() takes: split on spaces outside double
+// quotes, quotes stripped, the leading `node <script>` tokens dropped.
+function documentedArgv(pluginRootDir) {
+  const para = skillLoadParagraph(readText(HARNESS_HEALTH));
+  const line = para.split('\n').find((l) => l.startsWith('node ') && l.includes('skill-load-report.js'));
+  assert.ok(line, 'the Skill-load check paragraph has no skill-load-report.js command line');
+  const tokens = [];
+  let cur = '';
+  let quoted = false;
+  for (const ch of line.split('${CLAUDE_PLUGIN_ROOT}').join(pluginRootDir)) {
+    if (ch === '"') quoted = !quoted;
+    else if (ch === ' ' && !quoted) { if (cur) tokens.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  if (cur) tokens.push(cur);
+  return tokens.slice(2);
+}
+
+test('AC3.1: a project-local skill invoked from a worktree joins its .claude/skills closure under the harness-health command as written', async () => {
+  const { cwd, transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(cwd, '.claude/skills/alpha/SKILL.md', `# Alpha\n\n${'a'.repeat(1000)}\n`);
+  withFile(cwd, '.claude/skills/alpha/notes.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('.claude/worktrees/wt:alpha', 't1', 100),
+    readUse(path.join(cwd, '.claude/skills/alpha/notes.md'), 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(documentedArgv(root), deps), 0);
+  const row = json().rows.find((r) => r.skill === 'alpha');
+  assert.ok(row, 'no alpha row');
+  assert.strictEqual(typeof row.closure, 'number');
+  assert.deepStrictEqual(row.outsideClosure, ['skills/alpha/notes.md']);
+});
+
+test('the harness-health command runs in a project with no .claude/skills', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), invocation('demo:alpha', 't1', 100));
+  assert.strictEqual(await run(documentedArgv(root), deps), 0);
+  assert.strictEqual(json().status, 'ok');
+});
+
+test('harness-health names the Skill-load check: command, top 10, filing title, dedup, auto-close, --dry-run', () => {
+  const para = skillLoadParagraph(readText(HARNESS_HEALTH));
   for (const needle of [
-    'node "${CLAUDE_PLUGIN_ROOT}/bin/skill-load-report.js" --plugin-root "${CLAUDE_PLUGIN_ROOT}"',
+    'node "${CLAUDE_PLUGIN_ROOT}/bin/skill-load-report.js" --plugin-root "${CLAUDE_PLUGIN_ROOT}" --optional-plugin-root .claude',
     'top 10',
-    '"Skill load exceeds its static closure: {skill}"',
+    'non-empty `outsideClosure`',
+    '"Skill reads files outside its static closure: {skill}"',
     'open `by:harness-health` issue already carries that exact title',
     '`status: "ok"`',
-    '`max ≤ closure`',
-    'Back within its static closure: max {max} B ≤ closure {closure} B over {sessions} sessions',
+    'empty `outsideClosure`',
+    'Back within its static closure: no outside reads over {sessions} sessions',
     'never closes anything',
     '`--dry-run`',
   ]) assert.ok(para.includes(needle), `Skill-load check paragraph is missing: ${needle}`);
@@ -372,8 +422,5 @@ test('skill-load-report: the paragraph search still finds its break under CRLF l
   assert.ok(!raw.includes('\r\r\n'), 'the CRLF input must not contain \\r\\r\\n');
   assert.strictEqual(raw.indexOf('\n\n'), -1, 'a raw CRLF read has no LF paragraph break');
   assert.strictEqual(text, readText(FILE));
-  const start = text.indexOf('**Skill-load check (#3309');
-  const fenceEnd = text.indexOf('\n```\n', text.indexOf('```bash', start)) + 5;
-  const para = text.slice(start, text.indexOf('\n\n', fenceEnd));
-  assert.ok(para.includes('top 10'));
+  assert.ok(skillLoadParagraph(text).includes('top 10'));
 });
