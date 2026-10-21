@@ -205,6 +205,20 @@ function groupRows(rows) {
   return [...groups.values()];
 }
 
+function range(values) {
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  return lo === hi ? fmt(lo) : `${fmt(lo)}–${fmt(hi)}`;
+}
+
+function groupEntryCell(members) {
+  const named = (m) => `${m.entry}${entryMark(m)}`;
+  if (members.length === 1) return named(members[0]);
+  const names = members.slice(0, 3).map(named).join(', ');
+  const more = members.length > 3 ? `, … +${members.length - 3} more` : '';
+  return `${members.length} entries: ${names}${more}`;
+}
+
 function renderText(result, changedFiles, { pluginRootsGiven = false } = {}) {
   if (result.roots.length === 0 && !pluginRootsGiven) {
     let line = 'Skill load delta: no plugin roots discovered — skipped (pass --plugin-root <dir>)';
@@ -244,21 +258,9 @@ function renderText(result, changedFiles, { pluginRootsGiven = false } = {}) {
     '| Entry | Floor | ΔFloor | Closure | ΔClosure | New unresolved |',
     '|---|---|---|---|---|---|',
   ];
-  const range = (xs) => {
-    const lo = Math.min(...xs);
-    const hi = Math.max(...xs);
-    return lo === hi ? fmt(lo) : `${fmt(lo)}–${fmt(hi)}`;
-  };
   for (const members of groupRows(rows)) {
     const first = members[0];
-    const miss = newUnresolvedCell(first.newUnresolved);
-    if (members.length === 1) {
-      lines.push(`| ${first.entry}${entryMark(first)} | ${fmt(first.floor)} | ${signed(first.dFloor)} | ${fmt(first.closure)} | ${signed(first.dClosure)} | ${miss} |`);
-      continue;
-    }
-    const names = members.slice(0, 3).map((m) => `${m.entry}${entryMark(m)}`).join(', ');
-    const more = members.length > 3 ? `, … +${members.length - 3} more` : '';
-    lines.push(`| ${members.length} entries: ${names}${more} | ${range(members.map((m) => m.floor))} | ${signed(first.dFloor)} | ${range(members.map((m) => m.closure))} | ${signed(first.dClosure)} | ${miss} |`);
+    lines.push(`| ${groupEntryCell(members)} | ${range(members.map((m) => m.floor))} | ${signed(first.dFloor)} | ${range(members.map((m) => m.closure))} | ${signed(first.dClosure)} | ${newUnresolvedCell(first.newUnresolved)} |`);
   }
   return `${lines.join('\n')}\n`;
 }
