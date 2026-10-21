@@ -107,6 +107,19 @@ test('gitInfo derives sha and dirty from the injected exec', () => {
   assert.deepStrictEqual(gitInfo(clean), { sha: 'abc123', dirty: false });
 });
 
+test('gitInfo and gitDir pass windowsHide on every git spawn, gitDir keeps cwd (#3854)', () => {
+  const calls = [];
+  const fake = (cmd, args, opts) => {
+    calls.push([cmd, args, opts]);
+    return 'abc123\n';
+  };
+  gitInfo(fake);
+  gitDir(fake, '/repo');
+  assert.strictEqual(calls.length, 3);
+  for (const [, , opts] of calls) assert.strictEqual(opts.windowsHide, true);
+  assert.strictEqual(calls[2][2].cwd, '/repo');
+});
+
 test('testCountRegression is omitted when null (#881, mirrors counts-never-guessed convention)', () => {
   const report = composeReport({
     checks: [PASSING], startedAt: 'x', durationMs: 1, git: { sha: null, dirty: null },

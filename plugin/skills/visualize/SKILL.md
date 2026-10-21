@@ -1,6 +1,6 @@
 ---
 name: visualize
-description: Use for a themed diagram (architecture, flowchart, sequence, state, ER — see argument-hint) or a live diagram of this project's open queue. Standalone, or a soft-hook suggestion from /journeys, /specify, /review.
+description: Use for a themed diagram (architecture, flowchart, sequence, state, ER — see argument-hint) or a live diagram of this project's open queue.
 argument-hint: "<architecture|flowchart|sequence|state|er|timeline|swimlane|quadrant|nested|tree|org-chart|layers|venn|pyramid|record-graph> [topic] [--source <caller>] [--ephemeral]"
 ---
 

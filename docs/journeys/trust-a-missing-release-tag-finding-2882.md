@@ -4,6 +4,7 @@ files:
   - plugin/bin/residue.js
   - plugin/bin/lib/residue/render.js
   - plugin/skills/tidy/scan-procedures.md
+  - plugin/skills/tidy/step-6-auto.md
 ---
 
 # Trust a Missing-Release-Tag Finding
@@ -36,6 +37,13 @@ files:
 - **Should understand:** When `ls-remote` fails, the probe still returns `ran: true` using the local tags only. Its result `reason` names the fallback: `remote tag list unavailable (git ls-remote failed) — checked local tags only`. A finding there may reflect the checkout's lag rather than real history.
 - **Red flags:** The release check reporting `ran: false` (silently skipped) on a failed remote read. A fallback run with no `degraded:` line in the rendered table, or no `reason` on its result, saying it checked only local tags.
 
+### 4. See where tidy puts each release finding
+- **URL:** `/claude-tweaks:tidy` in auto mode, at `conservative`, `moderate`, or `aggressive` (`tidy-aggressiveness` in `.claude-tweaks/policy.yml`)
+- **Action:** Read the Tidy Report's sections for the `[git] … — Backfill` rows, and check `step-6-auto.md`'s two **Backfill** routing rows when a row lands somewhere unexpected.
+- **Should feel:** Predictable. Each tier puts a given release finding in the same section every run.
+- **Should understand:** A missing-tag finding (`remedy: record`) always lands in **Yours**, never auto-applied at any tier. Choosing the commit to tag, and pushing the tag, are a human's call. A missing-heading finding (`remedy: auto`) lands in **Approve** at `conservative` and `moderate`. Only `aggressive` writes the CHANGELOG heading unreviewed. `tests/tidy-scan-action-routing.test.js` fails if any scan verb loses its routing row (#3291).
+- **Red flags:** A missing-tag row under **Applied automatically**. A Backfill row that stages run after run because no routing row names its tier.
+
 ## Origin
 
-Created by `/claude-tweaks:build` for record #2882 (2026-10-16): the release probe now unions remote and local tags, falls back to local tags with a named reason, and marks missing-tag findings `remedy: record`.
+Created by `/claude-tweaks:build` for record #2882 (2026-10-16): the release probe now unions remote and local tags, falls back to local tags with a named reason, and marks missing-tag findings `remedy: record`. Updated by `/claude-tweaks:build` for record #3291 (2026-10-20): step 4 covers tidy's per-tier routing of both release flavors.

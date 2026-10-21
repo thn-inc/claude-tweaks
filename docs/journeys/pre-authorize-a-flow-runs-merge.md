@@ -55,8 +55,8 @@ files:
 - **URL:** the terminal `## Next Actions` block's resume-to-merge line, rendered only under `integration-model: pr-first` when this run's own outcome is `armed`/`pending-review`
 - **Action:** Copy-paste the printed command: `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}" wrap-up`.
 - **Should feel:** Reassuring, not a dead end — the PR reference and run state are still there, waiting.
-- **Should understand:** This line only appears when there's genuinely something to resume — a `merged` outcome, or a `local-merge` project with no PR to resume toward, renders nothing here. Appending `pre-authorize-merge` to that resume command pre-authorizes the merge on the adopted run too (one `set-config.js` write, logged), so the resumed wrap-up merges without a click.
-- **Red flags:** The line appearing after the run already merged (nothing left to resume), or a resume command that doesn't actually re-offer the merge decision.
+- **Should understand:** This line only appears when there's genuinely something to resume — a `merged` outcome, or a `local-merge` project with no PR to resume toward, renders nothing here. Appending `pre-authorize-merge` to that resume command pre-authorizes the merge on the adopted run too (one `set-config.js` write, logged), so the resumed wrap-up merges without a click. When the run's `autonomy` ceiling grants `consoleAutoResolve` (`unattended` only), the line prints `/claude-tweaks:wrap-up #{n} merge` in its place, because at that ceiling the resume re-resolves the Review Console with no question and re-parks the PR; running it merges in the same session with the typed command as the human confirmation (`merge-a-parked-unattended-pr-3784.md`).
+- **Red flags:** The line appearing after the run already merged (nothing left to resume), or a resume command that doesn't actually re-offer the merge decision. An `unattended` run's summary printing the `/claude-tweaks:flow … wrap-up` resume instead of the `/claude-tweaks:wrap-up #{n} merge` row.
 
 ## Origin
 - Created during build of #715 (Merge authorization at unattended: Manifesto-time lever, or one-click Recommended at the terminal summary?)
@@ -64,4 +64,5 @@ files:
 - Updated during build of #3522 (guard-safe merge fences): step 2a composes with `--out-dir "{subject-dir}"` and merges with `-t {title-arg} --body-file "{subject-dir}/body.md"` — no `eval`, no `$(…)` around `gh`
 - Updated during build of #2734 (the autonomy ceiling does not set merge-authorization): new step 1b — the `pre-authorize-merge` invocation token — plus the token on step 3's resume command
 - Updated during build of #3711 (dispatch-call discriminator): step 2a now holds under `local-merge` — a human-run `/flow` merges itself instead of stopping at `ready-to-merge`; new red flag for that stop
+- Updated during wrap-up of #3784 (wrap-up merge mode): step 3's resume line renders `/claude-tweaks:wrap-up #{n} merge` instead when the ceiling grants `consoleAutoResolve`
 - Related specs: #688/6626896c (shipped the pre-existing terminal one-click Recommended merge option this journey's step 2b covers)

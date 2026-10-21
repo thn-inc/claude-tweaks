@@ -74,6 +74,11 @@ means there:
   *pull-request* number and returns the PR's title, so a `(#N)` commit-subject suffix from a default
   squash names the PR, not a record — only an `/issues/N` payload carrying `pull_request`
   distinguishes them (row 108).
+- **Bind an adopted target to the identity the caller named before anything irreversible acts on
+  it.** A lookup that adopts a run dir or record — an inherited `PIPELINE_RUN_DIR`, a
+  `resolve-run-dir --spec-slug` match — can return a neighbour: the slug match is a substring, so
+  `spec-378` also matches a `spec-3784` dir. Re-read the target's own identity field and stop on a
+  mismatch, naming both (`plugin/skills/wrap-up/merge-mode.md`'s `config.yml` `spec:` check, #3784).
 - **A gate's own evidence is weaker than a direct read.** Screen with the bulk/cached value, then
   re-confirm per item before anything destructive.
 
@@ -92,6 +97,7 @@ means there:
 | Treating a write call's success return as proof the change landed, when the transport reports no per-item failure (MCP `issue_write` has no `labelFailures`, so a silent no-op label add looks like success) | Read the world back after the write, retry once through the same write, then trace a still-missing result as `SKIP (degraded)` — never `STAGED`, which needs a `staged/` artifact (`_shared/auto-decision-log.md`'s Degrade-trace rule). `plugin/skills/flow/claim-targets.md`'s "Read back the `bot:in-progress` add" is the instance (#3131: #1350 was re-selected because its label never landed) |
 | Repairing a defective landed mutation by rewriting what landed — force-push, `git reset` or `commit-tree`-and-push on the published integration branch to fix a garbled `gh pr merge` squash message | Leave it as landed, log it, and report `DONE_WITH_CONCERNS` naming the sha and the defect for a human: the PR's `mergeCommit`, landed-proofs and release tooling key on the commit the engine created, so a rewrite orphans them (`plugin/skills/_shared/pr-first-merge.md`'s "Never rewrite the integration branch", #3347) |
 | Attributing a sweep engine's summary to this run — reconcile sweeps every run dir in the main checkout and returns reason counts with no paths, so a stuck reason in its summary can belong to an older run | Decide this run's state by reading its own artifacts directly; report a summary-only hit as "{N} other run dir(s)" without attributing it to this run (`plugin/skills/_shared/pr-first-merge-post-merge.md` Step 4.2's own-run `console.json` + `staged/` check, #3297) |
+| Re-entering an earlier gate with no stated bound — after an engine error the driver does not recognize, or after it resolves and pushes something itself | Allow one re-entry per invocation and name the outcome the second hit reports. An unbounded re-entry loops on a deterministic engine error, and on a base that keeps moving. #3784 shipped both re-entries unbounded, and SDD and its final review each caught one: `plugin/skills/wrap-up/merge-mode.md`'s branch-5 `CLEAN`-green re-entry now runs once, then reports `pending-review`; its Conflict path's attended push gets one attempt, then reports `pending-review`, reason `moving-target` |
 
 ## When not to use
 

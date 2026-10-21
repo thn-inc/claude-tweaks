@@ -8,7 +8,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILL = path.join(__dirname, '..', 'plugin', 'skills', 'capture', 'SKILL.md');
 
@@ -25,7 +27,7 @@ function bashFences(section) {
   return [...section.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]).join('\n');
 }
 
-const branch = typeBranch(fs.readFileSync(SKILL, 'utf8'));
+const branch = typeBranch(readText(SKILL));
 const commands = bashFences(branch);
 
 test('the native branch never wraps a gh call in `if VAR=$(gh …)` — a shape the worktree guard refuses', () => {
@@ -48,4 +50,18 @@ test('every native-branch failure has a stated outcome — a failed fallback sto
   assert.match(branch, /Non-zero → \*\*stop\*\* and surface gh's stderr; nothing was filed/);
   assert.match(branch, /filed but untyped: no native issue type/);
   assert.match(branch, /filed but untyped: \{gh's stderr\}/);
+});
+
+test('CRLF control (#3670): capture-native-branch-guard-shapes extracts the same result after a CRLF round-trip through readText()', (t) => {
+  const extract = (text) => bashFences(typeBranch(text));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'capture-native-crlf-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const lf = readText(SKILL);
+  const crlf = lf.replace(/\n/g, '\r\n');
+  assert.ok(crlf.includes('\r\n'), 'CRLF build must contain \\r\\n');
+  assert.ok(!crlf.includes('\r\r\n'), 'CRLF build must not contain \\r\\r\\n');
+  const file = path.join(tmp, path.basename(SKILL));
+  fs.writeFileSync(file, crlf);
+  assert.ok(extract(lf).length > 0, 'the LF side must extract at least one bash fence, so an empty-vs-empty match cannot pass');
+  assert.deepStrictEqual(extract(readText(file)), extract(lf));
 });

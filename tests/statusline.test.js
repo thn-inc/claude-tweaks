@@ -517,6 +517,55 @@ test('renderEffort: hides on default/unset/missing', () => {
   assert.strictEqual(sl.renderEffort({ effort: { level: 'high' } }), 'eff: high');
 });
 
+test('renderCost: two decimals under $10, one from $10, none from $100', () => {
+  const cases = [
+    [0.42, '$0.42'],
+    [0.006, '$0.01'],
+    [9.99, '$9.99'],
+    [10, '$10.0'],
+    [42.567, '$42.6'],
+    [100, '$100'],
+    [123.49, '$123'],
+    [1234.4, '$1234'],
+  ];
+  for (const [usd, expected] of cases) {
+    assert.strictEqual(sl.renderCost({ cost: { total_cost_usd: usd } }), expected, String(usd));
+  }
+});
+
+test('renderCost: omitted when absent, zero, sub-cent, negative or not a number', () => {
+  const inputs = [
+    {},
+    { cost: {} },
+    { cost: null },
+    { cost: { total_cost_usd: 0 } },
+    { cost: { total_cost_usd: 0.004 } },
+    { cost: { total_cost_usd: -1 } },
+    { cost: { total_cost_usd: '0.42' } },
+    { cost: { total_cost_usd: NaN } },
+    { cost: { total_cost_usd: {} } },
+  ];
+  for (const input of inputs) {
+    assert.strictEqual(sl.renderCost(input), null, JSON.stringify(input));
+  }
+});
+
+test('renderCost: plain text, identical with and without NO_COLOR', () => {
+  const orig = process.env.NO_COLOR;
+  try {
+    for (const set of [true, false]) {
+      if (set) process.env.NO_COLOR = '1';
+      else delete process.env.NO_COLOR;
+      const r = sl.renderCost({ cost: { total_cost_usd: 0.42 } });
+      assert.strictEqual(r, '$0.42');
+      assert.ok(!r.includes('\x1b'));
+    }
+  } finally {
+    if (orig === undefined) delete process.env.NO_COLOR;
+    else process.env.NO_COLOR = orig;
+  }
+});
+
 test('renderRateLimit: formats reset countdown at minute/hour/day scales', () => {
   const now = 1_700_000_000_000;
   const sec = Math.floor(now / 1000);
@@ -888,6 +937,19 @@ test('end-to-end: default ~/.claude layout renders the acct segment from ~/.clau
       ),
   );
   assert.ok(out.endsWith('acct: a@outlook.com'), `expected acct segment at end: ${out}`);
+});
+
+test('end-to-end: the cost segment sits just before acct:', () => {
+  const seedHome = (home) =>
+    fs.writeFileSync(
+      path.join(home, '.claude.json'),
+      JSON.stringify({ oauthAccount: { emailAddress: 'a@example.com' } }),
+    );
+  const base = { session_id: 'sess-1', transcript_path: '/Users/x/.claude/projects/foo/s.jsonl' };
+  const out = runStatusline({ ...base, cost: { total_cost_usd: 0.42 } }, { NO_COLOR: '1' }, seedHome);
+  assert.ok(stripLinks(out).endsWith('$0.42  acct: a@example.com'), `expected cost before acct: ${out}`);
+  const zero = runStatusline({ ...base, cost: { total_cost_usd: 0 } }, { NO_COLOR: '1' }, seedHome);
+  assert.ok(!zero.includes('$'), `zero cost must render nothing: ${zero}`);
 });
 
 test('end-to-end: NO_COLOR strips ANSI codes even at high context', () => {

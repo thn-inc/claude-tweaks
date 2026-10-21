@@ -187,6 +187,38 @@ function newUnresolvedCell(list) {
   return `${list.length}: ${shown}${ellipsis}`;
 }
 
+// Rows that move identically (same entry mark, ΔFloor, ΔClosure, and New
+// unresolved set) share one group, so a _shared/*.md edit that shifts N entry
+// points by the same amount prints one row. Groups keep first-appearance order.
+function groupRows(rows) {
+  const groups = new Map();
+  for (const r of rows) {
+    const key = [
+      entryMark(r),
+      r.dFloor,
+      r.dClosure,
+      ...r.newUnresolved.map((u) => `${u.citingFile}\u0000${u.token}`).sort(),
+    ].join('\u0001');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  return [...groups.values()];
+}
+
+function range(values) {
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  return lo === hi ? fmt(lo) : `${fmt(lo)}–${fmt(hi)}`;
+}
+
+function groupEntryCell(members) {
+  const named = (m) => `${m.entry}${entryMark(m)}`;
+  if (members.length === 1) return named(members[0]);
+  const names = members.slice(0, 3).map(named).join(', ');
+  const more = members.length > 3 ? `, … +${members.length - 3} more` : '';
+  return `${members.length} entries: ${names}${more}`;
+}
+
 function renderText(result, changedFiles, { pluginRootsGiven = false } = {}) {
   if (result.roots.length === 0 && !pluginRootsGiven) {
     let line = 'Skill load delta: no plugin roots discovered — skipped (pass --plugin-root <dir>)';
@@ -226,10 +258,12 @@ function renderText(result, changedFiles, { pluginRootsGiven = false } = {}) {
     '| Entry | Floor | ΔFloor | Closure | ΔClosure | New unresolved |',
     '|---|---|---|---|---|---|',
   ];
-  for (const r of rows) {
-    const mark = entryMark(r);
-    const miss = newUnresolvedCell(r.newUnresolved);
-    lines.push(`| ${r.entry}${mark} | ${fmt(r.floor)} | ${signed(r.dFloor)} | ${fmt(r.closure)} | ${signed(r.dClosure)} | ${miss} |`);
+  for (const members of groupRows(rows)) {
+    const first = members[0];
+    const floors = range(members.map((m) => m.floor));
+    const closures = range(members.map((m) => m.closure));
+    const miss = newUnresolvedCell(first.newUnresolved);
+    lines.push(`| ${groupEntryCell(members)} | ${floors} | ${signed(first.dFloor)} | ${closures} | ${signed(first.dClosure)} | ${miss} |`);
   }
   return `${lines.join('\n')}\n`;
 }

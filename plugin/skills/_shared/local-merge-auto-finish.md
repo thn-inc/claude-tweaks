@@ -141,9 +141,10 @@ it literally into the next call; never carry it in a shell variable across calls
    as the reason instead, not "predicted conflict".
 
 4. **Clear this run's worktree assignment before merging** — only now, once the pre-merge checks
-   passed. `close-run` first, so the merge landing in the main checkout isn't denied as a
-   wrong-checkout commit (same as `auto-merge-short-circuit.md`'s local-merge branch), as its own
-   Bash call:
+   passed. The run is finishing: `close-run` marks it `clean` so its worktree is released for
+   teardown once the branch lands (same as `auto-merge-short-circuit.md`'s local-merge branch); the
+   working-directory hook does not gate `git merge`, so the merge itself needs nothing closed. Run it
+   as its own Bash call:
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"

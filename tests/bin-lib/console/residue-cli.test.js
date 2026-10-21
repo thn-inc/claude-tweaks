@@ -288,3 +288,68 @@ test('--run on a run with no console.json at all stays silent', () => {
   assert.strictEqual(run(['--run', f.runDir], h.deps), 0);
   assert.strictEqual(h.out(), '');
 });
+
+// #3783 — --require-verify: name the verify command when a run never wrote verify.json.
+const { writeVerifyResults } = require('../../../plugin/bin/lib/wrap-up/verify-results');
+
+test('AC4.1: --require-verify prints the missing-verify line and paste-ready command when verify.json is absent', () => {
+  const f = fixture();
+  const h = harness(f.main);
+  assert.strictEqual(run(['--run', f.runDir, '--require-verify', 'origin/main'], h.deps), 0);
+  assert.ok(h.out().includes("verify.json missing — wrap-up's Verify execution never ran, or its write failed"), h.out());
+  // The command names the resolved target (macOS tmpdir is a symlink), not the argv spelling.
+  assert.ok(h.out().includes(`wrap-up-engine.js" verify --run-dir "${fs.realpathSync(f.runDir)}" --base origin/main`), h.out());
+  assert.ok(h.out().indexOf('verify.json missing') > h.out().indexOf('review-13-record.md'), 'verify lines follow the residue lines');
+});
+
+test('AC4.2: --require-verify prints nothing for verify when verify.json is present', () => {
+  const f = fixture();
+  writeVerifyResults({ runDir: f.runDir, rows: [{ check: 'tests', result: 'pass', detail: '' }], base: 'origin/main' });
+  const h = harness(f.main);
+  assert.strictEqual(run(['--run', f.runDir, '--require-verify', 'origin/main'], h.deps), 0);
+  assert.ok(!h.out().includes('verify.json missing'), h.out());
+});
+
+test('--require-verify treats an unparseable verify.json as missing', () => {
+  const f = fixture();
+  fs.writeFileSync(path.join(f.runDir, 'verify.json'), '{ truncated');
+  const h = harness(f.main);
+  assert.strictEqual(run(['--run', f.runDir, '--require-verify', 'origin/main'], h.deps), 0);
+  assert.ok(h.out().includes('verify.json missing'), h.out());
+});
+
+test('--require-verify checks each spec-*/ dir of a multi-spec parent, never the parent itself', () => {
+  const f = fixture();
+  const parent = path.join(f.archive, '2026-10-21T000000-multispec-parent');
+  fs.mkdirSync(path.join(parent, 'spec-1'), { recursive: true });
+  fs.mkdirSync(path.join(parent, 'spec-2'), { recursive: true });
+  writeVerifyResults({ runDir: path.join(parent, 'spec-1'), rows: [], base: 'origin/main' });
+  const h = harness(f.main);
+  assert.strictEqual(run(['--run', parent, '--require-verify', 'origin/main'], h.deps), 0);
+  const missing = h.out().split('\n').filter((l) => l.includes('verify.json missing'));
+  assert.strictEqual(missing.length, 1, h.out());
+  assert.ok(missing[0].includes('spec-2'), missing[0]);
+  assert.ok(h.out().includes(`--run-dir "${path.join(fs.realpathSync(parent), 'spec-2')}"`), h.out());
+});
+
+test('--run without --require-verify never mentions verify.json', () => {
+  const f = fixture();
+  const h = harness(f.main);
+  assert.strictEqual(run(['--run', f.runDir], h.deps), 0);
+  assert.ok(!h.out().includes('verify.json'), h.out());
+});
+
+test('--require-verify usage errors', () => {
+  const f = fixture();
+  for (const [argv, message] of [
+    [['--run', f.runDir, '--require-verify'], /--require-verify requires a value/],
+    [['--run', f.runDir, '--require-verify', ''], /--require-verify requires a value/],
+    [['--run', f.runDir, '--require-verify', '--ack'], /--require-verify requires a value/],
+    [['--ack', '--run', f.runDir, '--require-verify', 'b'], /--require-verify takes neither --ack nor --ack-all/],
+    [['--ack-all', '--require-verify', 'b'], /--ack-all takes neither --run nor --ack|--require-verify takes neither/],
+  ]) {
+    const h = harness(f.main);
+    assert.strictEqual(run(argv, h.deps), 2, argv.join(' '));
+    assert.match(h.err(), message, argv.join(' '));
+  }
+});

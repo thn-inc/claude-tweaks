@@ -5,10 +5,15 @@
 // `--ack`, which adds `residueAcknowledgedAt` to a console.json and preserves
 // every other field.
 //   console-residue.js --run <dir>             print the residue block (nothing when none)
+//   console-residue.js --run <dir> --require-verify <base>
+//                                              also name the wrap-up-engine.js verify command
+//                                              for each checked dir with no valid verify.json (#3783)
 //   console-residue.js --ack --run <dir>       mark that run's consoles reviewed
 //   console-residue.js --ack-all               mark every run with unacknowledged residue
-// Exit 0 done; 2 malformed (unknown flag, --run without a value, --ack without
-// --run, --ack-all with --run or --ack, neither --run nor --ack-all); 3 --run
+// Exit 0 done; 2 malformed (unknown flag, --run without a value, --require-verify
+// without a value or with an empty one, --require-verify with --ack or --ack-all,
+// --ack without --run, --ack-all with --run or --ack, neither --run nor
+// --ack-all); 3 --run
 // missing or not anchored under the main checkout ([IL-127]), or a console.json
 // that could not be written (the remaining consoles are still tried, and the
 // summary line says how many failed). A missing --run whose basename exists
@@ -25,13 +30,14 @@ const { collectUnresolvedConsoles } = require('./lib/hooks/session-residue');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const { writeFileAtomic } = require('./lib/atomic-write');
+const { readVerifyResults } = require('./lib/wrap-up/verify-results');
 
-const USAGE = 'usage: console-residue.js (--run <dir> | --ack --run <dir> | --ack-all)';
+const USAGE = 'usage: console-residue.js (--run <dir> [--require-verify <base>] | --ack --run <dir> | --ack-all)';
 
 class UsageError extends Error {}
 
 function parseArgs(argv) {
-  const out = { run: null, ack: false, ackAll: false };
+  const out = { run: null, ack: false, ackAll: false, requireVerify: null };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === '--run') {
@@ -39,11 +45,17 @@ function parseArgs(argv) {
       if (value === undefined || value.startsWith('--')) throw new UsageError('--run requires a value');
       out.run = value;
       i += 1;
+    } else if (flag === '--require-verify') {
+      const value = argv[i + 1];
+      if (value === undefined || value === '' || value.startsWith('--')) throw new UsageError('--require-verify requires a value');
+      out.requireVerify = value;
+      i += 1;
     } else if (flag === '--ack') out.ack = true;
     else if (flag === '--ack-all') out.ackAll = true;
     else throw new UsageError(`unknown flag: ${flag}`);
   }
   if (out.ackAll && (out.run || out.ack)) throw new UsageError('--ack-all takes neither --run nor --ack');
+  if (out.requireVerify && (out.ackAll || out.ack)) throw new UsageError('--require-verify takes neither --ack nor --ack-all');
   if (out.ack && !out.run) throw new UsageError('--ack requires --run <dir>');
   if (!out.ackAll && !out.run) throw new UsageError('--run <dir> or --ack-all is required');
   return out;
@@ -83,6 +95,29 @@ function ackConsoles(consoles, at, io, stderr) {
 // Trailing note for a summary line: skips and failures are never silent.
 function tallyNote({ skipped, failed }) {
   return `${skipped ? ` (${skipped} skipped — already acknowledged or no longer valid JSON)` : ''}${failed ? ` (${failed} could not be written)` : ''}`;
+}
+
+// #3783: the dirs whose verify.json is required — each spec-*/ subdirectory of a
+// multi-spec parent when any exist, else the run dir itself. Two lines per dir
+// with no readable verify.json (absent and unparseable both count as missing):
+// what is wrong, then the paste-ready command that fixes it.
+function missingVerifyLines(runDir, base, pluginRoot) {
+  let specs = [];
+  try {
+    specs = fs.readdirSync(runDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name.startsWith('spec-')).map((e) => e.name).sort();
+  } catch { /* unreadable dir — treat as a single-spec run */ }
+  const runLabel = path.basename(runDir);
+  const checked = specs.length
+    ? specs.map((s) => ({ dir: path.join(runDir, s), label: `${runLabel}/${s}` }))
+    : [{ dir: runDir, label: runLabel }];
+  const lines = [];
+  for (const c of checked) {
+    if (readVerifyResults(c.dir)) continue;
+    lines.push(`- ${c.label}: verify.json missing — wrap-up's Verify execution never ran, or its write failed`);
+    lines.push(`  run: node "${pluginRoot}/bin/wrap-up-engine.js" verify --run-dir "${c.dir}" --base ${base}`);
+  }
+  return lines;
 }
 
 function run(argv, deps = {}) {
@@ -140,6 +175,7 @@ function run(argv, deps = {}) {
     if (!lines.length) lines.push(`- ${path.basename(target.dir)}: console.json could not be checked for unreviewed items`);
     for (const p of found.unreadable) lines.push(`  ! ${path.relative(target.dir, p)} is not valid JSON — any pending items in it cannot be listed`);
   }
+  if (o.requireVerify) lines.push(...missingVerifyLines(target.dir, o.requireVerify, pluginRoot));
   if (lines.length) stdout(`${lines.join('\n')}\n`);
   return 0;
 }

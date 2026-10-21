@@ -31,11 +31,11 @@ files:
 - **Red flags:** "no skill files changed" on a diff that plainly edits a `SKILL.md`; a delta row of all zeros (unchanged entries are never listed); a review verdict that changed because of 3j.
 
 ### 3. Tell a move from a cut
-- **URL:** the table rows for the entry the branch edited.
+- **URL:** the table row naming the entry the branch edited — its own row, or a grouped `{count} entries: {e1}, {e2}, {e3}, … +{k} more` row.
 - **Action:** Compare ΔFloor with ΔClosure.
-- **Should feel:** Honest — a split that only moved text no longer reads as a saving.
-- **Should understand:** Moving 10 KB of `SKILL.md` into a sibling the `SKILL.md` tells the reader to load shows floor ≈ −10,000 and closure up by just the pointer line: a move. A real cut lowers closure too. A change to one `_shared/*.md` file shows the same ΔClosure on every entry point whose closure contains it — in this corpus that is nearly all of them (one `_shared/integration-branch.md` row moved all 39 `plugin` entries by +347), so the closure column is an upper bound that fans out widely; floor is the per-invocation number.
-- **Red flags:** A closure that went down after a "split"; ΔClosure differing between two entries that both cite only the changed `_shared` file.
+- **Should feel:** Honest — a split that only moved text no longer reads as a saving. Short — a shared-file edit is one row, not a wall of identical ones.
+- **Should understand:** Moving 10 KB of `SKILL.md` into a sibling the `SKILL.md` tells the reader to load shows floor ≈ −10,000 and closure up by just the pointer line: a move. A real cut lowers closure too. A change to one `_shared/*.md` file shows the same ΔClosure on every entry point whose closure contains it — in this corpus that is nearly all of them (one `_shared/integration-branch.md` row moved 38 of 39 `plugin` entries by +347) — so entry points with the same ΔFloor, ΔClosure, and New unresolved share one row naming how many they are, with the first three names and a `… +{k} more` tail, and Floor/Closure show the `min–max` range across them. An entry point on its own row moved by a different amount. The closure column is an upper bound that fans out widely; floor is the per-invocation number.
+- **Red flags:** A closure that went down after a "split"; two entries that both cite only the changed `_shared` file landing on separate rows (their ΔClosure differs); a grouped row whose range collapses to one value when its members' sizes plainly differ.
 
 ### 4. Check the new unresolved citations
 - **URL:** the table's `New unresolved` column.
@@ -48,4 +48,5 @@ files:
 - Created during build of #3307 (per-invocation skill load model and review step 3j — parent #3305, skill size limits guard platform limits only).
 - Updated during build of #3457, which added citation-grammar rule (e): plugin-root-relative `skills/…` and skills-dir-relative `{skill}/…` tokens now resolve, so closures stop undercounting.
 - Updated during build of #3634, which added citation-grammar rule (f): a bare name or sub-path that names exactly one `.md` file under the root's `skills/` or `agents/` now resolves.
+- Updated during build of #3456, which groups entry points that moved by an identical ΔFloor, ΔClosure, and New unresolved into one table row (text output only; `--json` stays per-entry).
 - Related specs: #3309 (transcript-measured actual load in `/harness-health`, which consumes `entryPointLoads`), #3310 (cuts every size consumer over to the rail, load delta, and size outlier), #3311 (retires the old per-file size-ceiling code and its merge-time probe).

@@ -48,7 +48,7 @@ const { closeRunState } = require('./lib/hooks/close-run-state');
 const { teardownRun } = require('./lib/hooks/teardown-run');
 const { deriveBranch, repoRootOf } = require('./lib/hooks/run-integrity');
 
-const EVENTS = ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'post-tool-use-failure', 'subagent-stop'];
+const EVENTS = ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'post-tool-use-failure', 'subagent-stop', 'user-prompt-submit'];
 
 // The write-only, janitorial half of reconcile/index.js's ALL_CHECKS — run
 // by the `reconcile-background` subcommand below, off session-start.js's hot
@@ -72,6 +72,7 @@ const EVENT_MODULES = {
   'post-tool-use': () => require('./lib/hooks/post-tool-use'),
   'post-tool-use-failure': () => require('./lib/hooks/post-tool-use-failure'),
   'subagent-stop': () => require('./lib/hooks/subagent-stop'),
+  'user-prompt-submit': () => require('./lib/hooks/user-prompt-submit'),
 };
 
 function loadModule(event) {

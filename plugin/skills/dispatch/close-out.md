@@ -55,13 +55,32 @@ touching shared state runs one member at a time.
    this mode never performs it any more than item 11's own sweep does — flag-only holds at
    close-out time too, not just at discovery time. `mergeStateStatus: BLOCKED` with nothing else
    wrong is the forge waiting on required checks/reviews, not a conflict — proceed.
-3. **Convert draft to ready, if needed (AC2).** When `isDraft`, run `_shared/pr-first-merge.md`'s
-   Step 2 (Mark ready) now, before the confirmation gate — the gate's own question states the PR's
-   current state, and "still draft" would already be stale by the time a human reads it otherwise.
-   Step 1 (Acceptance labeling) needs no separate run here: a `pending-review` PR only exists
-   because `/wrap-up`'s own Phase 4 execution already ran it for every member before the group
-   could reach the Review Console at all (same precondition `actions-github-issues.md`'s `## Arm
-   ready PR` action states for its own already-green candidates).
+3. **Convert draft to ready, if needed (AC2).** **Acceptance labeling first** — this check, and
+   any Step 1 run it leads to, precedes the Mark-ready call below, keeping
+   `_shared/pr-first-merge.md`'s own Step 1 → Step 2 order:
+   - **Resolve the run dir** from the PR body's `claude-tweaks-run: {run-id}` marker (validated as
+     `flow/claim-targets.md` validates it): `$RUN_ROOT/.claude-tweaks/pipelines/{run-id}/`, else
+     `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/`. When no valid marker resolves, or
+     neither path exists, stop this candidate and report
+     `stopped: acceptance labeling unverifiable — no run dir` — never guess a run dir.
+   - **Read `verify.json`.** A multi-spec PR's marker names the parent run, and `verify` writes only
+     `{parent}/spec-{N}/verify.json`: when the run dir has `spec-*/` subdirectories, read every
+     `spec-*/verify.json`; otherwise read the run dir's own. Labeling has landed only when every
+     file read exists and its `acceptance-labeling` row's `result` is `pass`/`skip`.
+   - **Not landed — check live forge state before re-running.** `wrap-up/verification-brief.md`'s
+     issue pointer comment is a plain post that duplicates on a re-run, so labeling still counts as
+     landed when every record in the PR's `Fixes` lines carries `demo:pending`, or the PR already
+     carries a trusted `<!-- run-comment: brief -->` or `<!-- run-comment: try-it -->` run comment
+     (or its multi-spec `brief:{N}`/`try-it:{N}` form; trusted per `_shared/pr-run-comments.md`'s
+     Trusted authors). Only otherwise run `_shared/pr-first-merge.md` Step 1 before the
+     confirmation gate, with `PIPELINE_RUN_DIR` = the resolved run (or archive) dir and
+     `CLOSING_SUB_ISSUES` = the PR's `Fixes` record numbers — in a multi-spec run, once per
+     not-landed member, with `PIPELINE_RUN_DIR` = its `spec-{N}/` dir and `MULTISPEC_PARENT_DIR` =
+     the parent.
+
+   Then, when `isDraft`, run `_shared/pr-first-merge.md`'s Step 2 (Mark ready) now, before the
+   confirmation gate — the gate's own question states the PR's current state, and "still draft"
+   would already be stale by the time a human reads it otherwise.
 4. **Confirmation gate.** Read `close-out-confirmation.md` in this skill's directory and follow it
    (AC4). Declining stops here — the PR stays `pending-review` exactly as it was, and nothing below
    runs for this candidate.
@@ -89,9 +108,9 @@ touching shared state runs one member at a time.
 ## Reporting
 
 One line per candidate: `#{number} — {outcome}` where `{outcome}` is one of `merged`, `armed`,
-`stopped: CI {status}`, `stopped: mergeStateStatus DIRTY — rebase and re-verify first`, or
-`declined at confirmation gate`. The bare form's summary line names how many candidates were
-found, merged/armed, stopped, and declined. This mode is never headless-self-reporting like bare
+`stopped: CI {status}`, `stopped: mergeStateStatus DIRTY — rebase and re-verify first`,
+`stopped: acceptance labeling unverifiable — no run dir`, or `declined at confirmation gate`.
+The bare form's summary line names how many candidates were found, merged/armed, stopped, and declined. This mode is never headless-self-reporting like bare
 `/dispatch`'s own Preflight failures (`_shared/headless-self-report.md`) — its confirmation gate
 (step 4) requires a human present by construction (`close-out-confirmation.md`'s no-carve-out
 note), so a Routine-fired invocation with nobody present would simply stall at the first candidate

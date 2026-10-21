@@ -19,7 +19,7 @@ const STEP11 = '11. Write `verify-expectations.json`';
 const STEP12 = '12. Commit with a wrap-up message';
 const STEP13 = '13. **Branch finish (`pr-first`, #3595).**';
 const MERGE = "runs `_shared/pr-first-merge.md`'s procedure";
-const STEP14 = '14. Proceed to the phase-trace report';
+const STEP14 = "14. Proceed to Phase 4's execution step, then the phase-trace report";
 const COMMIT = 'on `deleted` commit only that tracked `docs/plans/*-ledger.md` path';
 
 function assertLedgerBeforeMerge(consoleText) {

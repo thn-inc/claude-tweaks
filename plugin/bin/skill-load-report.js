@@ -8,7 +8,8 @@
 // runs it every firing; it never gates.
 //
 // Usage: skill-load-report.js [--cwd <dir>] [--sessions <n>]
-//                             [--plugin-root <dir>]... [--help]
+//                             [--plugin-root <dir>]...
+//                             [--optional-plugin-root <dir>]... [--help]
 //   --cwd          the directory whose transcripts are read (default: the
 //                  process cwd). Transcripts live under
 //                  {config-dir}/projects/{slug}/ — {config-dir} is
@@ -21,16 +22,27 @@
 //   --plugin-root  repeatable; a directory holding skills/ (default: every
 //                  tracked skills/*/SKILL.md root at the cwd or one directory
 //                  down — load.js's discoverPluginRoots)
+//   --optional-plugin-root  repeatable; like --plugin-root, but a directory
+//                  with no skills/ is skipped silently instead of exiting 2
+//                  (the project-local .claude root a project may not have)
 //
 // Output: one JSON line — { status: "ok" | "no-data", transcriptDir,
 // sessions, unreadable, rows: [{ skill, invocations, median, max, closure,
-// overClosure }] }, rows sorted by max descending, then skill ascending.
+// outsideClosure }] }, rows sorted by max descending, then skill ascending.
 // `closure` is the static closure of the same skill under a root whose
 // .claude-plugin/plugin.json `name` equals the invoked skill's namespace (a
 // bare or path-namespaced skill name matches a root with no plugin.json —
 // the project-local .claude/skills form); any other skill gets
-// closure null and overClosure false. "no-data" means no main transcript was
-// read — never zero load reported as measured.
+// closure null and outsideClosure null. `outsideClosure` is the sorted,
+// distinct root-relative paths the skill's invocations Read that the matched
+// root holds but its static closure does not list. Only skill-file Reads
+// (a path with a skills/ segment) are recorded and compared, and a Read counts
+// only when the text before its final skills/ segment is that root itself or,
+// for a root whose plugin.json names it, an installed copy of it
+// (plugins/cache/{marketplace}/{name}/{version}/) — a same-relative-path file
+// from any other origin is dropped.
+// "no-data" means no main transcript was read — never zero load reported as
+// measured.
 // Exit: 0 success (including no-data); 2 malformed invocation or a
 // --plugin-root with no skills/; 1 an unexpected error.
 'use strict';
@@ -43,19 +55,20 @@ const { readSkillLoads, summarizeLoads } = require('./lib/skill-audit/transcript
 const { discoverPluginRoots, entryPointLoads } = require('./lib/skill-audit/load');
 const { pluginRootReader } = require('./lib/skill-audit/plugin-root-reader');
 
-const USAGE = 'usage: skill-load-report.js [--cwd <dir>] [--sessions <n>] [--plugin-root <dir>]... [--help]\n';
+const USAGE = 'usage: skill-load-report.js [--cwd <dir>] [--sessions <n>] [--plugin-root <dir>]... [--optional-plugin-root <dir>]... [--help]\n';
 const DEFAULT_SESSIONS = 20;
 
 function parseArgs(argv) {
-  const o = { cwd: null, sessions: DEFAULT_SESSIONS, pluginRoots: [], help: false };
+  const o = { cwd: null, sessions: DEFAULT_SESSIONS, pluginRoots: [], optionalRoots: [], help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') o.help = true;
-    else if (a === '--cwd' || a === '--sessions' || a === '--plugin-root') {
+    else if (a === '--cwd' || a === '--sessions' || a === '--plugin-root' || a === '--optional-plugin-root') {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) return { error: `${a} needs a value` };
       if (a === '--cwd') o.cwd = v;
       else if (a === '--plugin-root') o.pluginRoots.push(v);
+      else if (a === '--optional-plugin-root') o.optionalRoots.push(v);
       else {
         if (!/^[1-9]\d*$/.test(v)) return { error: `--sessions must be a positive integer, got: ${v}` };
         o.sessions = Number(v);
@@ -118,16 +131,21 @@ function pluginName(rootAbs) {
   }
 }
 
-// Map `${namespace}\0${skill}` -> closure bytes for every entry point under
-// every root. A citation is read only when it resolves (symlinks included)
-// to a regular file inside its root — the shared plugin-root-reader.js rule
-// (load-delta.js's head side reads through the same reader).
+// Map `${namespace}\0${skill}` -> { closure bytes, files: Set of the closure's
+// root-relative paths, rootFiles: Set of every citable file the root holds }
+// for every entry point under every root. A citation is read only when it
+// resolves (symlinks included) to a regular file inside its root — the shared
+// plugin-root-reader.js rule (load-delta.js's head side reads through the same
+// reader).
 function closureIndex(rootsAbs) {
   const index = new Map();
   for (const rootAbs of rootsAbs) {
     const ns = pluginName(rootAbs);
-    for (const e of entryPointLoads('.', pluginRootReader(rootAbs))) {
-      index.set(`${ns}\0${e.entry.slice(e.entry.lastIndexOf(':') + 1)}`, e.closure);
+    const originAbs = `${path.resolve(rootAbs).replace(/\\/g, '/')}/`;
+    const reader = pluginRootReader(rootAbs);
+    const rootFiles = new Set(reader.listFiles());
+    for (const e of entryPointLoads('.', reader)) {
+      index.set(`${ns}\0${e.entry.slice(e.entry.lastIndexOf(':') + 1)}`, { closure: e.closure, files: new Set(e.files), rootFiles, originAbs, ns });
     }
   }
   return index;
@@ -142,6 +160,38 @@ function closureIndex(rootsAbs) {
 function foldPathNamespace(skill) {
   const i = skill.indexOf(':');
   return i >= 0 && skill.slice(0, i).includes('/') ? skill.slice(i + 1) : skill;
+}
+
+// A Read's file_path -> { origin, rel }: rel is the root-relative form closure
+// files use (the suffix from the last "/skills/" segment), origin the text
+// before it, trailing "/" included; null without such a segment. No nested
+// skills/ directory exists under a skills tree, so the last segment is the
+// root's.
+function splitAtSkills(readPath) {
+  const i = readPath.lastIndexOf('/skills/');
+  return i >= 0 ? { origin: readPath.slice(0, i + 1), rel: readPath.slice(i + 1) } : null;
+}
+
+// Whether a Read's origin is the matched root itself, or — for a root whose
+// plugin.json names it — an installed copy of that plugin, so a same-relative-path
+// file of another root (another plugin, ~/.claude/skills, a project's .claude)
+// is never compared against this one.
+function originMatches(entry, origin) {
+  if (origin === entry.originAbs) return true;
+  if (!entry.ns) return false;
+  const name = entry.ns.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`/plugins/cache/[^/]+/${name}/[^/]+/$`).test(origin);
+}
+
+// The sorted, distinct root-relative paths among `readPaths` that the matched
+// root holds but the skill's static closure does not list.
+function outsideReads(entry, readPaths) {
+  const outside = new Set();
+  for (const p of readPaths) {
+    const read = splitAtSkills(p);
+    if (read && originMatches(entry, read.origin) && entry.rootFiles.has(read.rel) && !entry.files.has(read.rel)) outside.add(read.rel);
+  }
+  return [...outside].sort();
 }
 
 // Plain `{ns}:{name}` / bare-name split — every row's skill is already
@@ -161,11 +211,13 @@ async function run(argv, deps = realDeps) {
   const cwd = path.resolve(deps.cwd, o.cwd || '.');
   const rootsAbs = (o.pluginRoots.length ? o.pluginRoots : discoverPluginRoots(() => deps.listFiles(cwd)))
     .map((r) => path.resolve(cwd, r));
+  const hasSkills = (r) => {
+    try { return fs.statSync(path.join(r, 'skills')).isDirectory(); } catch { return false; }
+  };
   for (const r of rootsAbs) {
-    let isDir = false;
-    try { isDir = fs.statSync(path.join(r, 'skills')).isDirectory(); } catch { isDir = false; }
-    if (!isDir) { deps.stderr(`skill-load-report.js: --plugin-root has no skills/ directory: ${r}\n`); return 2; }
+    if (!hasSkills(r)) { deps.stderr(`skill-load-report.js: --plugin-root has no skills/ directory: ${r}\n`); return 2; }
   }
+  for (const r of o.optionalRoots.map((x) => path.resolve(cwd, x))) if (hasSkills(r)) rootsAbs.push(r);
   const transcriptDir = path.join(deps.configDir(), 'projects', slugForCwd(cwd));
   const mains = (jsonlFiles(transcriptDir) || []).slice(0, o.sessions);
   const rows = [];
@@ -200,11 +252,17 @@ async function run(argv, deps = realDeps) {
     return 0;
   }
   for (const r of rows) r.skill = foldPathNamespace(r.skill);
-  const index = closureIndex(rootsAbs);
+  const index = closureIndex([...new Set(rootsAbs)]);
+  const readsBySkill = new Map();
+  for (const r of rows) {
+    if (!readsBySkill.has(r.skill)) readsBySkill.set(r.skill, new Set());
+    for (const p of r.readPaths) readsBySkill.get(r.skill).add(p);
+  }
   const out = summarizeLoads(rows)
     .map((r) => {
-      const closure = closureOf(index, r.skill);
-      return { ...r, closure, overClosure: closure !== null && r.max > closure };
+      const entry = closureOf(index, r.skill);
+      if (!entry) return { ...r, closure: null, outsideClosure: null };
+      return { ...r, closure: entry.closure, outsideClosure: outsideReads(entry, readsBySkill.get(r.skill)) };
     })
     .sort((a, b) => b.max - a.max || (a.skill < b.skill ? -1 : a.skill > b.skill ? 1 : 0));
   deps.stdout(`${JSON.stringify({ status: 'ok', transcriptDir, sessions, unreadable, rows: out })}\n`);

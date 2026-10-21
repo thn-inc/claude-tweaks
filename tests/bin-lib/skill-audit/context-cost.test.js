@@ -243,11 +243,12 @@ test('parseComposeCallLine: a bare repo-relative source is unparsed as install-d
   });
 });
 
-test('findComposeCallSites: finds both real merge sites in the shipped corpus', () => {
+test('findComposeCallSites: finds all three real merge sites in the shipped corpus', () => {
   const sites = findComposeCallSites(REPO).filter((s) => s.step === 'merge');
   const files = sites.map((s) => s.file).sort();
   assert.deepStrictEqual(files, [
     'wrap-up/auto-merge-short-circuit.md',
+    'wrap-up/merge-mode.md',
     'wrap-up/review-console.md',
   ]);
   for (const site of sites) {

@@ -1,6 +1,6 @@
 ---
 name: reflect
-description: Use when you want to step back and evaluate recent work through structured lenses — approach correctness, structural debt, surprises, near-misses. Works standalone or as a step within /claude-tweaks:review and /claude-tweaks:wrap-up.
+description: Use when you want to step back and evaluate recent work through structured lenses — approach correctness, structural debt, surprises, near-misses.
 argument-hint: "[hindsight|full|light] [<spec-number>|<file-path>...]"
 ---
 

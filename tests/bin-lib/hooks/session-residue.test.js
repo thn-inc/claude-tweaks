@@ -364,6 +364,38 @@ test('AC5.1 eligible multi-spec parent line ends with the review-console command
   assert.ok(entries[0].line.endsWith(reentrySuffix(runDir)), entries[0].line);
 });
 
+test('AC1.1 local-files CLAUDE.md -> suffix lists bare ids', () => {
+  const { root, runDir } = reentryFixture();
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# P\n\nwork-backend: local-files\n');
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.ok(entries[0].line.endsWith(` — consolidated pass never ran: PIPELINE_RUN_DIR="${runDir}" /claude-tweaks:flow 11,12 review-console`), entries[0].line);
+});
+
+test('AC1.2 github-issues CLAUDE.md keeps the # ids', () => {
+  const { root, runDir } = reentryFixture();
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# P\n\nwork-backend: github-issues\n');
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.ok(entries[0].line.endsWith(reentrySuffix(runDir)), entries[0].line);
+});
+
+test('#3554 unknown work-backend keeps the # ids', () => {
+  const { root, runDir } = reentryFixture();
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# P\n\nwork-backend: jira\n');
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.ok(entries[0].line.endsWith(reentrySuffix(runDir)), entries[0].line);
+});
+
+test('#3554 the suffix reads the main checkout CLAUDE.md, not the worktree one', () => {
+  const { wt, runDir } = reentryFixture();
+  fs.writeFileSync(path.join(wt, 'CLAUDE.md'), '# P\n\nwork-backend: local-files\n');
+  const entries = residue.collectStaleRuns(wt, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.ok(entries[0].line.endsWith(reentrySuffix(runDir)), entries[0].line);
+});
+
 test('#3497 review a non-integer manifest id suppresses the suffix', () => {
   const { root, runDir } = reentryFixture();
   const text = fs.readFileSync(path.join(runDir, 'manifest.yml'), 'utf8').replace('- id: 12', '- id: 12; rm -rf x');

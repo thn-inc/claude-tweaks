@@ -119,6 +119,24 @@ test('closeRunState: a live worktree with a recorded, matching sessionId still c
   }
 });
 
+// A typed /claude-tweaks:wrap-up is recorded by the UserPromptSubmit hook with
+// source "user" — the same proof as a model-initiated one, so the close is not
+// flagged as skipping the procedure.
+test('closeRunState: a typed (source:"user") wrap-up counts as wrapupSeen and writes no close-without-wrapup', () => {
+  const dir = makeTmpRunDir();
+  try {
+    fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'active', sessionId: 's' }));
+    fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"skill":"claude-tweaks:wrap-up","source":"user","ts":"2026-08-01T09:50:00.000Z","type":"skill_invoked"}\n');
+    const r = closeRunState(dir, { explicit: false, callerIdentity: { sessionId: 's' } });
+    assert.strictEqual(r.status, 'closed');
+    assert.strictEqual(r.wrapupSeen, true);
+    const events = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8');
+    assert.ok(!events.includes('"type":"close-without-wrapup"'), 'a typed wrap-up must not log close-without-wrapup');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // #3198: a run dir already archived (or otherwise removed) between
 // resolution and this call must never be recreated by a write attempt —
 // matching log-decision.js's own refusal instead of writing fresh

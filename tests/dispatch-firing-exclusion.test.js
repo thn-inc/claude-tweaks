@@ -2,10 +2,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const { sessionTmpPath } = require('../plugin/bin/lib/session-tmp');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
+const { readText } = require('./helpers/read-skill');
 
 // A bare-drain firing's own re-selection guard: a group whose attempt this
 // firing did not end in a live-held or resolved disposition (claim-contest/
@@ -21,13 +24,12 @@ const { sessionTmpPath } = require('../plugin/bin/lib/session-tmp');
 // excluded.json file) is read and actually changes the pick.
 
 const ROOT = path.join(__dirname, '..');
-const NEXT_RANKING = fs.readFileSync(
+const NEXT_RANKING = readText(
   path.join(ROOT, 'plugin', 'skills', 'dispatch', 'next-ranking.md'),
-  'utf8',
 );
 
-function extractSnippet() {
-  const m = NEXT_RANKING.match(/```bash\n([\s\S]*?)\n```/);
+function extractSnippet(doc = NEXT_RANKING) {
+  const m = doc.match(/```bash\n([\s\S]*?)\n```/);
   assert.ok(m, 'next-ranking.md must have a fenced bash block -- extraction pattern is out of sync with the doc');
   return m[1];
 }
@@ -58,7 +60,7 @@ function runRanking({ groups, oversizedExcluded = [], firingExcluded, extraEntri
   execFileSync('bash', ['-c', SNIPPET], {
     env: {
       ...process.env,
-      CLAUDE_PLUGIN_ROOT: process.env.CLAUDE_PLUGIN_ROOT || path.join(ROOT, 'plugin'),
+      CLAUDE_PLUGIN_ROOT: toPosix(process.env.CLAUDE_PLUGIN_ROOT || path.join(ROOT, 'plugin')),
       CLAUDE_CODE_SESSION_ID: sessionId,
       PRIORITY_FILTER: priorityFilter,
     },
@@ -133,4 +135,17 @@ test('AC5.1: bare-drain ranking never selects a group with a neighbour-in-flight
   });
   assert.ok(pick, 'expected a pick');
   assert.strictEqual(pick[0].number, 300);
+});
+
+test('CRLF control (#3670): dispatch-firing-exclusion extracts the same result after a CRLF round-trip through readText()', (t) => {
+  const DOC_PATH = path.join(ROOT, 'plugin/skills/dispatch/next-ranking.md');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-firing-crlf-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const lf = readText(DOC_PATH);
+  const crlf = lf.replace(/\n/g, '\r\n');
+  assert.ok(crlf.includes('\r\n'), 'CRLF build must contain \\r\\n');
+  assert.ok(!crlf.includes('\r\r\n'), 'CRLF build must not contain \\r\\r\\n');
+  const file = path.join(tmp, path.basename(DOC_PATH));
+  fs.writeFileSync(file, crlf);
+  assert.deepStrictEqual(extractSnippet(readText(file)), extractSnippet(lf));
 });
