@@ -8,7 +8,9 @@
 const fs = require('fs');
 const path = require('path');
 
-const WORK_BACKEND_RE = /^work-backend:\s*(\S+)\s*$/m;
+// Horizontal whitespace only: `\s` also matches a newline, so a blank
+// `work-backend:` line would borrow the next single-token line as its value.
+const WORK_BACKEND_RE = /^work-backend:[ \t]*(\S+)[ \t]*$/m;
 
 // The `work-backend:` value from CLAUDE.md text, or null when the input is not
 // a string or no line matches.
