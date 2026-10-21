@@ -278,6 +278,38 @@ test('an unreadable decisions.md (non-ENOENT read error) is adopted, not an unad
   assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir, attribution: 'fallback' });
 });
 
+// #3665: Step 2.8's degraded-path bookkeeping (file-overlap / bot:in-progress
+// projection skip lines, a paraphrased claim line) is still a fresh mint. The
+// reader inherits the widened claim-log-only class from classifyDecisions.
+const OVERLAP_SKIP_LINE = '- SKIP 18:42:05 — Step 2.8 file-overlap warning (skipped): condition: preflight-records.js exited non-zero or gh unavailable → fallback: overlap warning not computed; claim proceeds on the named targets only. Reversibility: n/a.\n';
+const DEGRADED_SKIP_LINE = "- SKIP 18:42:07 — Step 2.8 bot:in-progress projection (degraded): condition: label still absent on #7 after one mergeLabelNames retry → fallback: claim kept; dispatch's label pre-filter will not see this hold. Reversibility: n/a.\n";
+const PARAPHRASED_ONLY = '## /flow\n- AUTO 07:42:07 — spec #7 — flow/claim-targets: Claimed issue #7 for this run (claims-registry blob write, state: absent -> live). Reversibility: high.\n';
+const DEGRADED_MINTS = [
+  ['overlap-skip', `${CLAIM_ONLY}${OVERLAP_SKIP_LINE}`],
+  ['degraded-projection-skip', `${CLAIM_ONLY}${DEGRADED_SKIP_LINE}`],
+  ['paraphrased-claim', PARAPHRASED_ONLY],
+];
+
+for (const [kind, text] of DEGRADED_MINTS) {
+  test(`fallback never selects a degraded Step 2.8 mint: ${kind} (no run-state.json) (#3665)`, () => {
+    const cwd = project();
+    const real = mkRun(cwd, '2026-07-01T090000-real', { status: 'active' });
+    const mint = mkRun(cwd, '2026-07-02T090000-mint', null);
+    fs.writeFileSync(path.join(mint, 'decisions.md'), text);
+
+    assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir: real, attribution: 'fallback' });
+    assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, null), { dir: real, attribution: 'fallback' });
+  });
+}
+
+test('a degraded Step 2.8 mint plus a Manifesto line is adopted (#3665)', () => {
+  const cwd = project();
+  const mint = mkRun(cwd, '2026-07-02T090000-mint', null);
+  fs.writeFileSync(path.join(mint, 'decisions.md'), `${CLAIM_ONLY}${OVERLAP_SKIP_LINE}- AUTO 18:43:00 — Manifesto: levers written. Reversibility: n/a.\n`);
+
+  assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir: mint, attribution: 'fallback' });
+});
+
 // ─── worktree-bound foreign candidates (#1402) ─────────────────────────────
 //
 // #1033's own events.jsonl accumulated six events belonging to unrelated,

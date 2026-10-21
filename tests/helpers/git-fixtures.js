@@ -58,9 +58,11 @@ function fixtureGit(args, opts = {}) {
 }
 
 // A git repo initialized with one empty commit, so it always has a HEAD.
-function gitRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wtd-'));
-  fixtureGit(['-C', dir, 'init', '-q']);
+// Optional `{ parent, branch }`: the directory the repo's temp dir is created
+// in (default os.tmpdir()) and the initial branch name (default: git's own).
+function gitRepo({ parent = os.tmpdir(), branch } = {}) {
+  const dir = fs.mkdtempSync(path.join(parent, 'ct-wtd-'));
+  fixtureGit(['-C', dir, 'init', '-q', ...(branch ? ['-b', branch] : [])]);
   fixtureGit(['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
   return fs.realpathSync(dir);
 }

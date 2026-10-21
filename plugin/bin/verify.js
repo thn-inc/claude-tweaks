@@ -15,7 +15,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 
 const { parseArgs, UsageError, USAGE } = require('./lib/verify/args');
 const { runChecks, runOne } = require('./lib/verify/run');
@@ -42,6 +42,7 @@ const { selectScope } = require('./lib/verify/scope');
 const { resolveTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { appendEvent } = require('./lib/hooks/context');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
+const { canonicalRealpath } = require('./lib/path-guard');
 
 const KNOWN_SCOPES = new Set(['full', 'scoped', 'none', 'static-only', 'tool-scoped']);
 
@@ -99,10 +100,6 @@ function statusOf(check) {
   return check.exitCode === 0 ? 'pass' : 'fail';
 }
 
-function realpathOrNull(targetPath) {
-  try { return fs.realpathSync(targetPath); } catch { return null; }
-}
-
 // --stamp-status (#1921): a read of the runner's own artifact. Status is data,
 // never a failure — exit 0 in every case, including "no checkout at all".
 // `dirty` and `head` are recomputed fresh from the live tree, never echoed
@@ -121,8 +118,8 @@ function stampStatus(parsed) {
   // reported, but never trusted as verifying THIS cwd's HEAD — otherwise a
   // sibling checkout sitting at the same commit could read match:true for a
   // verification it never ran (review finding, refs #1921).
-  const requestedGitDir = parsed.gitDir ? realpathOrNull(parsed.gitDir) : null;
-  const resolvedOwnGitDir = ownGitDir ? realpathOrNull(ownGitDir) : null;
+  const requestedGitDir = parsed.gitDir ? canonicalRealpath(parsed.gitDir) : null;
+  const resolvedOwnGitDir = ownGitDir ? canonicalRealpath(ownGitDir) : null;
   const foreignGitDir = Boolean(parsed.gitDir)
     && (requestedGitDir === null || resolvedOwnGitDir === null || requestedGitDir !== resolvedOwnGitDir);
   // A stamp recorded against a dirty tree (stored dirty !== false) can never
@@ -235,6 +232,21 @@ async function main() {
   // anchor read below (M5) needs this exact own-git-dir value too, never a
   // --git-dir override, so it is resolved here rather than a second time.
   const ownGitDir = resolveGitDir();
+  // #3799: --cwd moves only the check spawns, so a --cwd in another checkout would
+  // credit this checkout's stamp and report with checks that ran elsewhere — refused before anything runs.
+  if (parsed.cwd && ownGitDir) {
+    const cwdGitDir = resolveGitDir(execFileSync, path.resolve(parsed.cwd));
+    // OS-cased on both sides (#3417's canonicalRealpath), so a case-variant --cwd
+    // into this same checkout matches. An unresolvable side is foreign, never a
+    // match — stampStatus()'s --git-dir rule.
+    const realOwnGitDir = canonicalRealpath(ownGitDir);
+    const realCwdGitDir = cwdGitDir === null ? null : canonicalRealpath(cwdGitDir);
+    if (realCwdGitDir === null || realOwnGitDir === null || realCwdGitDir !== realOwnGitDir) {
+      process.stderr.write(`--cwd ${parsed.cwd} resolves to git dir ${realCwdGitDir ?? cwdGitDir ?? 'none (not inside a git checkout)'}, not this checkout's (${realOwnGitDir ?? ownGitDir}) — run verify.js from inside the target checkout so its stamp and report land there (#3799)\n${USAGE}\n`);
+      process.exitCode = 2;
+      return;
+    }
+  }
   const gitDir = parsed.gitDir || ownGitDir;
   const logDir = parsed.logDir
     || (gitDir ? path.join(gitDir, 'claude-tweaks-verify') : fs.mkdtempSync(path.join(os.tmpdir(), 'claude-tweaks-verify-')));

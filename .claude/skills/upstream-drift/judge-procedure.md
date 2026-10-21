@@ -55,6 +55,8 @@ If `checkVersion` reported **several** installed versions (a `plugin-cache-glob`
 
 **An upstream repository's layout is not the installed artifact's layout, and assuming they match is the single most likely way to produce a worthless report.** Resolve the mapping before diffing anything, per dependency, from evidence.
 
+**An entry with an empty `contract-paths` has no capability half** (today: `claude-code`, whose installed artifact is a compiled binary with no upstream source subtree to diff). Skip steps 3-5 for it and report its drift class only.
+
 Take one path from the entry's `contract-paths`. Those paths are **installed-root-relative** — `checkAssertions` joins them onto the installed root, so that is the only thing they are known to be relative to. Find where that same file lives in the upstream tree:
 
 ```bash

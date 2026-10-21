@@ -55,6 +55,7 @@ Two findings match when **all three** hold:
 |---|---|---|
 | Both agents surface a matching finding | `confirmed` | Surface to caller; treat as real |
 | Only one agent surfaces a finding (path/line/severity mismatch) | `unconfirmed` | STAGED to Review Console — never silently dropped |
+| /review only: the unpaired side asserts code is absent and one `grep -n`/`Read` of the live file finds the named construct | refuted | AUTO-logged, not staged — see `review/step3-lens-dispatch.md`'s absence-claim bullet |
 
 No outcome is "ask the user inline." Unconfirmed findings stage; the caller's Review Console handles disposition.
 
