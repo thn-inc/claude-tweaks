@@ -128,6 +128,12 @@ test('verification.md states the map-form baseline resolution rule (#3511)', () 
   assert.ok(section.includes('names no `--cmd` or declared suite'), 'names the unmatched-name usage error');
 });
 
+test('verification.md states --baseline adjudicates against the merge-base with HEAD (#3810)', () => {
+  const section = DOC.slice(DOC.indexOf('### Baseline adjudication'), DOC.indexOf('### Declared pre-existing failures'));
+  assert.ok(section.includes('`git merge-base HEAD {ref}`'), 'names the merge-base resolution');
+  assert.ok(section.includes('baseRef'), 'names the baseRef report field');
+});
+
 test('agents never write the stamp: no redirect into claude-tweaks-verify-pass remains, and the foreground rule is stated (#1921 AC6)', () => {
   assert.ok(!/>\s*"?\$\(git rev-parse --git-dir\)\/claude-tweaks-verify-pass/.test(DOC), 'a write into the bare stamp file remains');
   assert.ok(!/git rev-parse HEAD > /.test(DOC), 'the agent-side stamp write command remains');
