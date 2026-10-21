@@ -105,13 +105,13 @@ test('AC1.2 multispec-review-console.md has the re-entry section, placed after L
   assert.ok(halt < c.indexOf('checkPassReentry'), 'the Halt resume must come before the eligibility call');
 });
 
-test('AC2.1: re-entry step 2 calls the check-pass-reentry verb and carries no node -e', () => {
+test('#3553 re-entry step 2 calls the check-pass-reentry verb and carries no node -e', () => {
   assertReentryVerb(reentrySection(CONSOLE));
 });
 
-test('AC2.2 #3553 negative control: a node -e snippet in the re-entry section fails the verb pin', () => {
+test('#3553 negative control: a node -e snippet in the re-entry section fails the verb pin', () => {
   const doctored = reentrySection(CONSOLE) + '\n`node -e "require(1)"`\n';
-  assert.throws(() => assertReentryVerb(doctored));
+  assert.throws(() => assertReentryVerb(doctored), /must not carry a node -e snippet/);
 });
 
 test('#3497 every REENTRY_REASONS code is named in the re-entry section', () => {

@@ -582,9 +582,9 @@ function resolveRunArg(args, cwd, env, resolveOpts) {
 // `worktreeLocalFallback` flag calls for — shared by every call site so a
 // future one can't silently omit it the way six of the seven did before this
 // fix (review finding: the disclosure was wired only at record-worktree).
-function reportWorktreeLocalFallback(runDir, worktreeLocalFallback) {
+function reportWorktreeLocalFallback(runDir, worktreeLocalFallback, stream = process.stdout) {
   if (!worktreeLocalFallback) return;
-  process.stdout.write(`claude-tweaks: --run ${runDir} resolved via the worktree-local fallback (#280) — no anchored copy exists under the main checkout; this run's state lives only in this worktree until merge.\n`);
+  stream.write(`claude-tweaks: --run ${runDir} resolved via the worktree-local fallback (#280) — no anchored copy exists under the main checkout; this run's state lives only in this worktree until merge.\n`);
 }
 
 // #2409: copies exactly `decisions.md`, `report.md` (each if present), and
@@ -641,7 +641,7 @@ async function main(argv) {
   if (KNOWN_FLAGS[cmd]) {
     // -h is a single-dash short flag, so firstUnknownFlag's `--`-prefixed
     // scan never sees it as a token to classify — checked separately here,
-    // same as --help itself (also never declared for any of these five
+    // same as --help itself (also never declared for any of these
     // verbs, so it always falls out as "unknown" via the scan below too).
     const argsAfterCmd = argv.slice(3);
     if (argsAfterCmd.includes('-h') || firstUnknownFlag(KNOWN_FLAGS[cmd], argsAfterCmd)) {
@@ -1426,11 +1426,8 @@ async function main(argv) {
       process.stderr.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — pass re-entry not checked\n`);
       return 1;
     }
-    // Same disclosure as reportWorktreeLocalFallback, on stderr: that helper
-    // writes stdout, which this verb reserves for the verdict JSON alone.
-    if (worktreeLocalFallback) {
-      process.stderr.write(`claude-tweaks: --run ${runDir} resolved via the worktree-local fallback (#280) — no anchored copy exists under the main checkout; this run's state lives only in this worktree until merge.\n`);
-    }
+    // Disclosure goes to stderr: stdout is reserved for the verdict JSON alone.
+    reportWorktreeLocalFallback(runDir, worktreeLocalFallback, process.stderr);
     let verdict;
     try {
       verdict = require('./lib/flow/consolidated-pass').checkPassReentry(runDir, {
