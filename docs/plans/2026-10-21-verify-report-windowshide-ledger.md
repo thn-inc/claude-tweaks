@@ -10,3 +10,5 @@
 | 6 | review | Lens 3c (medium): scanner binding regex missed `deps.x \|\| fn` fallbacks — plugin/bin/lib/repo-resolve.js:38 `gh --version` spawn was unhidden and invisible | fixed | fb2636837 — regex collects `\|\|`/`??` fallbacks; spawn hidden; self-test added (RED before, GREEN after) |
 | 7 | review | Lens 3c (low): require-form default `spawnImpl = require('child_process').spawn` not collected — plugin/bin/lib/verify/run.js:91 check-runner spawn unhidden | fixed | fb2636837 — require-form default collected; opts carry windowsHide; run.test.js pin updated |
 | 8 | review | Lens 3c (low): a semicolon-less alias binding was not collected | fixed | fb2636837 — a line end now terminates a binding; self-test added |
+| 9 | wrap-up | Reflect near-miss: widening a structural matcher to one binding shape left neighbouring shapes unseen — enumerate every syntactic variant before planning (staged/reflect-1.md) | open | — |
+| 10 | wrap-up | Reflect friction: log-decision.js rejects the `enum (note)` reversibility ~75 skill templates prescribe — backlog candidate (staged/reflect-2.md) | open | — |
