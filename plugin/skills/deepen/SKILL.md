@@ -1,6 +1,6 @@
 ---
 name: deepen
-description: Use for an architectural-depth pass on recently changed code — finds shallow modules and proposes deepening or collapsing them, ranked by leverage. Standalone, or surfaced by /review and /reflect.
+description: Use for an architectural-depth pass on recently changed code — finds shallow modules and proposes deepening or collapsing them, ranked by leverage.
 argument-hint: "[<file-or-dir>...|<spec-number>] [--kind deepen|collapse]"
 ---
 

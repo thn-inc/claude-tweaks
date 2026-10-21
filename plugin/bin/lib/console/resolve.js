@@ -396,10 +396,27 @@ function engineItems(snapshot, stagedIds) {
 // decisions.md STAGED lines from review coordination that have no staged/
 // file of their own (single-read unconfirmed findings). A line naming a
 // staged/ path that exists is the same item as that file.
+//
+// A STAGED line is superseded (no item) when a LATER `- AUTO` line in the same
+// decisions.md carries the same finding key (lens + first path:line) and the
+// producer's `Confirmed` sentence — review step 3 stages a finding as
+// low-confidence, then logs the elevation as AUTO once reproduced (#3772).
+// Case-sensitive so `not confirmed` never matches; a keyless line is never
+// superseded.
+function findingKey(line) {
+  const lens = /\blens\s+"?([A-Za-z0-9_-]+)"?/i.exec(line);
+  const loc = /([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+)/.exec(line);
+  return lens && loc ? `${lens[1]}|${loc[1]}:${loc[2]}` : null;
+}
+
 function coordinationItems(snapshot, stagedIds) {
   const out = [];
-  for (const line of decisionLines(snapshot.decisions)) {
+  const lines = decisionLines(snapshot.decisions);
+  const confirmedAfter = (i, key) => lines.slice(i + 1).some((l) => /^- AUTO /.test(l) && /\bConfirmed\b/.test(l) && findingKey(l) === key);
+  for (const [i, line] of lines.entries()) {
     if (!/^- STAGED /.test(line)) continue;
+    const key = findingKey(line);
+    if (key && confirmedAfter(i, key)) continue;
     // Extension-anchored so trailing sentence punctuation (a period ending
     // the decisions.md line right after ".md") is never captured into the
     // filename — `.` is deliberately excluded from the body class.

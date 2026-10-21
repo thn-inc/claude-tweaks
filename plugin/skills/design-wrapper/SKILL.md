@@ -1,6 +1,6 @@
 ---
 name: design-wrapper
-description: Use when a lifecycle skill (/test, /review, /build, /flow, /visual-review, /specify, /tidy) needs to invoke Impeccable design-quality commands. Wrapper that encapsulates "when, how, and whether to invoke Impeccable" so caller skills don't have to know.
+description: Use when a lifecycle skill (/test, /review, /build, /flow, /visual-review, /specify, /tidy) needs to invoke Impeccable design-quality commands.
 argument-hint: "<shape|pre-build|test|review|polish|survey|doctor|reset-recommendations|live|explore> [target] [<surface-topic>] [--screenshots <paths>] [--source <parent-skill>] [--description <text>] [--dry-run] [--limit <n>] [--scope <identity|layout>]"
 ---
 

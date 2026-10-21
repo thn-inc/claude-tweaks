@@ -40,9 +40,8 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { slugForCwd } = require('./lib/timing/transcript');
 const { readSkillLoads, summarizeLoads } = require('./lib/skill-audit/transcript-load');
-const { discoverPluginRoots, entryPointLoads, walkCitable } = require('./lib/skill-audit/load');
-const { readdirUnder } = require('./lib/skill-audit/citable-readdir');
-const { isPathContained } = require('./lib/shared-primitives');
+const { discoverPluginRoots, entryPointLoads } = require('./lib/skill-audit/load');
+const { pluginRootReader } = require('./lib/skill-audit/plugin-root-reader');
 
 const USAGE = 'usage: skill-load-report.js [--cwd <dir>] [--sessions <n>] [--plugin-root <dir>]... [--help]\n';
 const DEFAULT_SESSIONS = 20;
@@ -121,30 +120,13 @@ function pluginName(rootAbs) {
 
 // Map `${namespace}\0${skill}` -> closure bytes for every entry point under
 // every root. A citation is read only when it resolves (symlinks included)
-// to a regular file inside its root — load-delta.js's headSide rule.
+// to a regular file inside its root — the shared plugin-root-reader.js rule
+// (load-delta.js's head side reads through the same reader).
 function closureIndex(rootsAbs) {
   const index = new Map();
   for (const rootAbs of rootsAbs) {
-    const realRoot = fs.realpathSync(rootAbs);
-    const readFile = (p) => {
-      try {
-        const real = fs.realpathSync(path.join(rootAbs, p));
-        if (!isPathContained(real, realRoot) || !fs.statSync(real).isFile()) return null;
-        return fs.readFileSync(real, 'utf8');
-      } catch (err) {
-        if (['ENOENT', 'EISDIR', 'ENOTDIR', 'ELOOP'].includes(err.code)) return null;
-        throw err;
-      }
-    };
-    const listSkillMds = () => fs.readdirSync(path.join(rootAbs, 'skills'), { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => `skills/${d.name}/SKILL.md`)
-      .filter((p) => readFile(p) !== null);
-    // Rule (f)'s citable listing: only {rootAbs}/skills and {rootAbs}/agents
-    // are walked — a `.claude` root must never descend into worktrees/.
-    const listFiles = () => walkCitable('.', readdirUnder(rootAbs));
     const ns = pluginName(rootAbs);
-    for (const e of entryPointLoads('.', { readFile, listSkillMds, listFiles })) {
+    for (const e of entryPointLoads('.', pluginRootReader(rootAbs))) {
       index.set(`${ns}\0${e.entry.slice(e.entry.lastIndexOf(':') + 1)}`, e.closure);
     }
   }

@@ -106,6 +106,25 @@ function resultBytes(content) {
   return 0;
 }
 
+// fsImpl, path -> undefined. Throws the transcript stat contract shared by
+// readUsage and transcript-load.js: an Error whose code is the stat failure's
+// code (EUNKNOWN if absent), or EISDIR when the path names anything but a regular file.
+function statTranscriptOrThrow(fsImpl, filePath) {
+  let st;
+  let code = null;
+  try {
+    st = fsImpl.statSync(filePath);
+  } catch (err) {
+    code = (err && err.code) || 'EUNKNOWN';
+  }
+  if (!code && !st.isFile()) code = 'EISDIR';
+  if (code) {
+    const e = new Error(`transcript not readable (${code}): ${filePath}`);
+    e.code = code;
+    throw e;
+  }
+}
+
 // path, { fsImpl?, worktree? } -> Promise<rows>. Streams line by line;
 // malformed lines (bad JSON, no timestamp, no message.role) are skipped.
 // Rejects when the file cannot be opened, with the real stat failure's
@@ -115,25 +134,7 @@ function resultBytes(content) {
 // mid-file I/O error) — with whatever code the stream/readline error
 // carries.
 async function readUsage(filePath, { fsImpl = fs, worktree = null } = {}) {
-  await new Promise((resolve, reject) => {
-    let st;
-    try {
-      st = fsImpl.statSync(filePath);
-    } catch (err) {
-      const code = (err && err.code) || 'EUNKNOWN';
-      const e = new Error(`transcript not readable (${code}): ${filePath}`);
-      e.code = code;
-      reject(e);
-      return;
-    }
-    if (!st.isFile()) {
-      const e = new Error(`transcript not readable (EISDIR): ${filePath}`);
-      e.code = 'EISDIR';
-      reject(e);
-      return;
-    }
-    resolve();
-  });
+  statTranscriptOrThrow(fsImpl, filePath);
   const rows = [];
   const procedureReads = new Set(); // tool_use ids of Reads on procedure files
   // Claude Code writes one JSONL line per content block of an assistant
@@ -354,4 +355,4 @@ async function readDispatches(subagentsDir, { fsImpl = fs, window = null } = {})
   return { items: built.map((x) => x.d), notFound: null, excludedOutsideWindow };
 }
 
-module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, isProcedurePath, subagentsDirFor, readDispatches };
+module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, readUsage, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches };

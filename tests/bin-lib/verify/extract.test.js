@@ -546,6 +546,11 @@ const DIALECT_ROWS = [
   ['vitest-global-teardown.txt', 1, ['tests/known.test.js']],
   ['vitest-teardown-rejection.txt', 1, ['tests/flaky.test.js']],
   ['vitest-unhandled-rejection.txt', 1, ['tests/flaky.test.js']],
+  ['jest-results-processor-crash.txt', 1, ['tests/flaky.test.js']],
+  ['jest-silent.txt', 0, ['tests/flaky.test.js']],
+  ['jest-yarn-wrapper.txt', 0, ['tests/flaky.test.js']],
+  ['jest-pnpm-wrapper.txt', 0, ['tests/flaky.test.js']],
+  ['vitest-summary-last.txt', 0, ['tests/flaky.test.js']],
   ['vitest-multi-project.txt', 0, ['tests/flaky.test.js']],
   ['pytest-attributed.txt', null, ['tests/test_flaky.py']],
   ['pytest-collection-error.txt', null, ['tests/test_flaky.py']],
@@ -559,6 +564,55 @@ for (const [name, count, files] of DIALECT_ROWS) {
     assert.deepStrictEqual(extractFailingFiles(log, 'summary'), files);
   });
 }
+
+test('AC1.1, AC3.1: unattributedFailureCount: a jest log whose last line is not the Ran all test suites trailer is unattributed, though no enumerated channel matches (#3674)', () => {
+  const log = readDialect('jest-results-processor-crash.txt');
+  // The crash is a plain Error after the summary: no FAIL line, coverage,
+  // global-hook, Node.js trailer, or second summary line names it.
+  assert.ok(log.includes('Ran all test suites.\nError: results processor could not write the report'));
+  assert.strictEqual(unattributedFailureCount(log, 'summary'), 1);
+  // The same log cut at the trailer is fully accounted: the guard alone refuses it.
+  const cut = log.slice(0, log.indexOf('Ran all test suites.') + 'Ran all test suites.'.length);
+  assert.strictEqual(unattributedFailureCount(cut, 'summary'), 0);
+});
+
+test('unattributedFailureCount: every jest trailer form, coloured or not, ends a normal run; text after it refuses (#3674)', () => {
+  const attributed = readDialect('jest-attributed.txt');
+  const trailer = 'Ran all test suites matching /tests\\/flaky|tests\\/ok/i.';
+  assert.ok(attributed.includes(trailer));
+  for (const form of ['Ran all test suites with tests matching "sometimes".', 'Ran all test suites in 2 projects.',
+    'Ran all test suites within paths "tests/flaky.test.js".', 'Ran all test suites related to changed files.',
+    '\x1b[2mRan all test suites\x1b[22m\x1b[2m.\x1b[22m']) {
+    assert.strictEqual(unattributedFailureCount(attributed.replace(trailer, form), 'summary'), 0, form);
+  }
+  const openHandle = `${attributed}Jest did not exit one second after the test run has completed.\n`;
+  assert.strictEqual(unattributedFailureCount(openHandle, 'summary'), 1);
+});
+
+test('unattributedFailureCount: a crash line after a --silent Time: line or a wrapper trailer still refuses (#3674)', () => {
+  const crash = 'Error: results processor could not write the report';
+  const silent = readDialect('jest-silent.txt');
+  assert.strictEqual(unattributedFailureCount(`${silent}${crash}\n`, 'summary'), 1);
+  // The two accepted endings compose: a --silent run under yarn ends on Time: then the wrapper lines.
+  const yarn = 'error Command failed with exit code 1.\ninfo Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.\n';
+  assert.strictEqual(unattributedFailureCount(`${silent}${yarn}`, 'summary'), 0);
+  assert.strictEqual(unattributedFailureCount(`${silent}${yarn}${crash}\n`, 'summary'), 1);
+  for (const name of ['jest-yarn-wrapper.txt', 'jest-pnpm-wrapper.txt']) {
+    const log = readDialect(name);
+    assert.ok(log.includes('Ran all test suites.\n'), name);
+    assert.strictEqual(unattributedFailureCount(log.replace('Ran all test suites.\n', `Ran all test suites.\n${crash}\n`), 'summary'), 1, name);
+    assert.strictEqual(unattributedFailureCount(`${log}${crash}\n`, 'summary'), 1, `${name} + trailing crash`);
+  }
+});
+
+test('vitest has no stable closing line: the same fixture project, captured twice, ends on either stream, and both account (#3674)', () => {
+  const last = (name) => readDialect(name).split(/\r?\n/).filter((l) => l.trim()).pop();
+  assert.match(last('vitest-attributed.txt'), /^⎯+\[1\/1\]⎯$/);
+  assert.match(last('vitest-summary-last.txt'), /^ {3}Duration /);
+  for (const name of ['vitest-attributed.txt', 'vitest-summary-last.txt']) {
+    assert.strictEqual(unattributedFailureCount(readDialect(name), 'summary'), 0, name);
+  }
+});
 
 test('summaryDialect: jest from Test Suites:/Tests:, vitest from colon-free Test Files, pytest and mixed are null (#3480)', () => {
   assert.strictEqual(summaryDialect(readDialect('jest-attributed.txt')), 'jest');

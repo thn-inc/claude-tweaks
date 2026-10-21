@@ -360,6 +360,22 @@ When mechanizing a prose heuristic into a deterministic check:
     LLM-supplied `target` or `journey` is checked inside a fixed prefix and suffix, and only an
     embedded `..` segment, backtick or line break can fail it. A new producer states its own
     normalization from where its path comes from.
+19. **An enumerated list of failure channels reads every unlisted channel as "none"; a positive
+    recogniser at the tail closes that class, but only once the legitimate endings are captured.**
+    `plugin/bin/lib/verify/extract.js`'s `summaryUnattributedCount` (#3480) accounts a jest or
+    vitest log by listing the channels that count as unattributed. The list was incomplete three
+    times in one build, each channel found only by reading runner source or capturing a real log,
+    and every miss read as a false 0, the unsafe direction for a flaky retry or a `preExisting`
+    waiver. #3674 added the positive twin for jest: `endsLikeNormalJestRun` counts the log as
+    unattributed unless its last line is `Ran all test suites…` or a `--silent` run's `Time:`
+    line, optionally followed by a captured yarn or pnpm failure trailer. It fires only when no
+    enumerated channel already counted, so one failure is never counted twice. The first version
+    accepted only the trailer and over-refused every `--silent` and yarn/pnpm project. The
+    whole-branch review caught it from `SummaryReporter.js`, and each accepted ending now has a
+    captured fixture. Capture every real ending from the runner before shipping the guard, and keep
+    the enumerated list where no stable ending exists: vitest writes its summary to stdout and its
+    failure blocks to stderr, so either can end a piped log. The recogniser is a backstop behind
+    the list, not a replacement for it.
 
 ## When to use
 

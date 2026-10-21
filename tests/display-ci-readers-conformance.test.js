@@ -68,13 +68,16 @@ function item9Slice() {
 }
 
 // The extraction sweep-backstop.test.js uses: node -e bodies closing on a bare `"` line.
-function item9Scripts() {
+function nodeEScripts(section) {
   const scripts = [];
   const re = /node -e "\n([\s\S]*?)\n\s*"/g;
-  const section = item9Slice();
   let m;
   while ((m = re.exec(section)) !== null) scripts.push(m[1].replace(/\\"/g, '"').replace(/\\\$/g, '$'));
   return scripts;
+}
+
+function item9Scripts() {
+  return nodeEScripts(item9Slice());
 }
 
 // The candidates path is spliced into JS single-quoted literals, so a native win32 path
@@ -127,6 +130,99 @@ test('AC1.1: item 9 CI filter keeps green/no-ci, drops pending, red and a failed
     assert.match(res.stderr, /PR #4 not offered: CI red/);
     assert.match(res.stderr, /PR #5 not offered: CI read-failed/);
     assert.ok(!/PR #[12] /.test(res.stderr), 'kept PRs are not reported');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+function prScanSlice(startMarker, endMarker, label) {
+  const t = read(PR_SCAN);
+  const start = t.indexOf(startMarker);
+  const end = t.indexOf(endMarker, start);
+  assert.ok(start >= 0 && end > start, `${label} slice is found`);
+  return t.slice(start, end);
+}
+
+function currentPrItem3Slice() {
+  return prScanSlice('3. **CI checks**', '4. **Repo-wide stale count', 'current-pr item 3');
+}
+
+// Pins each state-to-count pairing in the current-pr item 3 CI read, not just the tokens.
+function assertPrScanCiPairings(slice) {
+  assert.match(slice, /`red`\/`inherited-red` → failing \(`failing\.length`\)/, 'red/inherited-red map to failing');
+  assert.match(slice, /`pending` → pending \(`pending\.length`\)/, 'pending maps to pending');
+  assert.match(slice, /`green`\/`no-ci` → passing \(0 failing, 0 pending\)/, 'green/no-ci map to passing');
+  assert.match(slice, /`read-failed`\/`gh-absent` → `CI unavailable`/, 'read-failed/gh-absent map to CI unavailable');
+}
+
+test('AC1.1: pr-scan current-pr item 3 reads CI through pr-checks.js --pr and maps its states', () => {
+  const slice = currentPrItem3Slice();
+  assert.ok(slice.includes('pr-checks.js" --pr {number}'), 'the CI read runs pr-checks.js --pr {number}');
+  assert.ok(!slice.includes('gh pr checks'), 'the gh pr checks read is retired');
+  assert.ok(!slice.includes('Exit code 8'), 'the exit-code-8 sentence is dropped');
+  assertPrScanCiPairings(slice);
+  // Negative control: the same assertions must throw when pending is mapped to passing.
+  const doctored = slice.replace('`pending` → pending (`pending.length`)', '`pending` → passing (`pending.length`)');
+  assert.notStrictEqual(doctored, slice, 'the doctoring changed the item');
+  assert.throws(() => assertPrScanCiPairings(doctored), /pending/, 'a pending -> passing mapping is rejected');
+});
+
+function repoWideItem1Slice() {
+  return prScanSlice('1. **Open PRs**', '2. **Unresolved threads per open PR**', 'repo-wide item 1');
+}
+
+test('AC1.1: pr-scan repo-wide item 1 calls pr-checks.js --pr only for rollup-green PRs', () => {
+  const slice = repoWideItem1Slice();
+  assert.match(slice, /gh pr list --state open --json [^\n]*statusCheckRollup[^\n]*--limit 100/, 'the open-PR list fetches statusCheckRollup');
+  assert.ok(slice.includes('PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" node -e "'), 'the CI script receives the plugin root through the environment');
+  assert.ok(!slice.includes('gh pr checks'), 'the gh pr checks read is retired');
+});
+
+test('AC1.1: item 1 CI script maps a pending head run under a green rollup to pending', () => {
+  const scripts = nodeEScripts(repoWideItem1Slice());
+  assert.strictEqual(scripts.length, 1, 'item 1 has one CI script');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-display-ci-item1-'));
+  try {
+    fs.mkdirSync(path.join(tmp, 'bin'));
+    fs.writeFileSync(path.join(tmp, 'bin', 'pr-checks.js'), [
+      "const fs = require('fs');",
+      'const a = process.argv;',
+      "if (a[2] !== '--pr') process.exit(2);",
+      'const n = a[3];',
+      "fs.appendFileSync(process.env.PR_CHECKS_LOG, n + '\\n');",
+      "if (n === '5') process.exit(1);",
+      "const state = { 1: 'pending', 2: 'green', 3: 'no-ci', 4: 'red' }[n];",
+      'console.log(JSON.stringify({ state }));',
+    ].join('\n'));
+    const callLog = path.join(tmp, 'pr-checks-calls.txt');
+    const prsFile = path.join(tmp, 'open-prs.json');
+    const green = [{ conclusion: 'SUCCESS' }];
+    fs.writeFileSync(prsFile, JSON.stringify([
+      { number: 1, title: 'a', statusCheckRollup: green },
+      { number: 2, title: 'b', statusCheckRollup: green },
+      { number: 3, title: 'c', statusCheckRollup: [] },
+      { number: 4, title: 'd', statusCheckRollup: green },
+      { number: 5, title: 'e', statusCheckRollup: green },
+      { number: 6, title: 'f', statusCheckRollup: [{ conclusion: '', state: 'IN_PROGRESS' }] },
+      { number: 7, title: 'g', statusCheckRollup: [{ conclusion: 'SUCCESS' }, { conclusion: 'FAILURE' }] },
+    ]));
+    const script = scripts[0].replace(/\$PR_SCAN_OPEN/g, prsFile);
+    assert.ok(!script.includes('CLAUDE_PLUGIN_ROOT'), 'the CI script body does not interpolate CLAUDE_PLUGIN_ROOT into JS');
+    const scriptFile = path.join(tmp, 'item1-ci.js');
+    fs.writeFileSync(scriptFile, script);
+    const res = spawnSync('node', [scriptFile], { encoding: 'utf8', env: { ...process.env, PLUGIN_ROOT: tmp, PR_CHECKS_LOG: callLog } });
+    assert.strictEqual(res.status, 0, `item 1 CI script exits 0: ${res.stderr}`);
+    assert.deepStrictEqual(res.stdout.trim().split('\n'), [
+      '#1 CI pending',
+      '#2 CI passing',
+      '#3 CI passing',
+      '#4 CI failing',
+      '#5 CI unavailable',
+      '#6 CI pending',
+      '#7 CI failing',
+    ]);
+    const calls = fs.existsSync(callLog) ? fs.readFileSync(callLog, 'utf8').trim().split('\n') : [];
+    assert.deepStrictEqual(calls, ['1', '2', '3', '4', '5'], 'pr-checks.js is called only for rollup-green PRs');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

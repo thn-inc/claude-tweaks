@@ -225,6 +225,31 @@ test('default plugin roots come from discoverPluginRoots over the cwd\'s tracked
   assert.deepStrictEqual(json().rows.map((r) => [r.skill, r.closure]), [['demo:alpha', closure]]);
 });
 
+// run() checks skills/ first, then calls deps.configDir() before closureIndex,
+// so a configDir that removes the root's skills/ (or the root) is the hook for
+// a plugin root vanishing between the check and the index build.
+test('AC3.2: a plugin root\'s skills/ deleted between the skills/ check and the index build degrades instead of throwing', async () => {
+  const { configDir, transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), invocation('demo:alpha', 't1', 100));
+  deps.configDir = () => { fs.rmSync(path.join(root, 'skills'), { recursive: true }); return configDir; };
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  const r = json();
+  assert.strictEqual(r.status, 'ok');
+  assert.deepStrictEqual(r.rows.map((x) => [x.skill, x.closure]), [['demo:alpha', null]]);
+});
+
+test('AC3.2: a plugin root deleted entirely at the same point degrades the same way', async () => {
+  const { configDir, transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), invocation('demo:alpha', 't1', 100));
+  deps.configDir = () => { fs.rmSync(root, { recursive: true }); return configDir; };
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  const r = json();
+  assert.strictEqual(r.status, 'ok');
+  assert.deepStrictEqual(r.rows.map((x) => [x.skill, x.closure]), [['demo:alpha', null]]);
+});
+
 test('harness-health names the Skill-load check: command, top 10, filing title, dedup, auto-close, --dry-run', () => {
   const text = readText(path.join(__dirname, '..', 'plugin', 'skills', 'harness-health', 'SKILL.md'));
   const start = text.indexOf('**Skill-load check (#3309');

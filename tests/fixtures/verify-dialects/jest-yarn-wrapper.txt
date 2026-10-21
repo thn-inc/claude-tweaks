@@ -1,0 +1,25 @@
+yarn run v1.22.22
+$ jest --ci
+FAIL tests/flaky.test.js
+  ✕ flaky sometimes fails (2 ms)
+
+  ● flaky sometimes fails
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 2
+    Received: 1
+
+    > 1 | test('flaky sometimes fails', () => { expect(1).toBe(2); });
+        |                                                 ^
+      2 |
+
+      at Object.toBe (tests/flaky.test.js:1:49)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 total
+Snapshots:   0 total
+Time:        0.1 s, estimated 1 s
+Ran all test suites.
+error Command failed with exit code 1.
+info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.

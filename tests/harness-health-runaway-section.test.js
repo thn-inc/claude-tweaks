@@ -8,9 +8,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 const JUDGE = read('plugin/skills/harness-health/judge-procedure.md');
 const ANALYSIS = read('plugin/skills/_shared/harness-health-analysis.md');
 const TEMPLATE = read('plugin/skills/init/claude-md-template.md');
@@ -97,4 +98,19 @@ test('init CLAUDE.md template states the specific-past-failure principle and cit
   assert.match(TEMPLATE, /\*\*Each rule names a specific past failure, not a vague preference\*\*/);
   assert.match(TEMPLATE, /"The new rules of context engineering for Claude 5 generation models"/);
   assert.match(TEMPLATE, /"A global CLAUDE\.md and its best pieces"/);
+});
+
+test('CRLF control (#3670): harness-health-runaway-section extracts the same snippet after a CRLF round-trip through readText()', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hh-runaway-crlf-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  for (const rel of ['plugin/skills/harness-health/judge-procedure.md', 'plugin/skills/_shared/harness-health-analysis.md']) {
+    const docPath = path.join(ROOT, rel);
+    const lf = readText(docPath);
+    const crlf = lf.replace(/\n/g, '\r\n');
+    assert.ok(crlf.includes('\r\n'), 'CRLF build must contain \\r\\n');
+    assert.ok(!crlf.includes('\r\r\n'), 'CRLF build must not contain \\r\\r\\n');
+    const file = path.join(tmp, `${path.basename(path.dirname(docPath))}-${path.basename(docPath)}`);
+    fs.writeFileSync(file, crlf);
+    assert.deepStrictEqual(snippet(readText(file)), snippet(lf), rel);
+  }
 });
