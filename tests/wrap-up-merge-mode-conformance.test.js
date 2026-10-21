@@ -170,3 +170,57 @@ test('the composed merge bundle stays within the read-limit rail', () => {
     assert.ok(r.max <= RAIL_BYTES, `${r.file}:${r.line} composes ${r.max} B > ${RAIL_BYTES}`);
   }
 });
+
+// Task 3: flow's Resume-to-merge row under `consoleAutoResolve`. Under that ceiling the
+// existing `flow ... wrap-up` resume re-resolves the Review Console with no question and
+// re-parks the PR, so the row points at merge mode instead. The old row stays (both places).
+const SUMMARY_FACTS = {
+  condition: /grants `consoleAutoResolve`/,
+  predicate: /`bookkeepingPermissions\(ceiling\)\.consoleAutoResolve`/,
+  'merge-row': /`\/claude-tweaks:wrap-up "\{target\}" merge` — merge the parked PR in this session, PR #\{n\} \{is ready \| is blocked\} — mergeability: \{outcome\}/,
+  'other-ceilings': /Every other ceiling keeps the row above/,
+};
+const OLD_RESUME_ROW = '`PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}" wrap-up` — resume to re-offer the merge decision, PR #{n} {is ready | is blocked} — mergeability: {outcome}';
+
+function summaryText() {
+  return flat(read('plugin', 'skills', 'flow', 'summary-template.md'));
+}
+
+// The paragraph is the last section of the file, so there may be no following bold lead-in.
+function summaryParagraphRegion() {
+  const text = summaryText();
+  const start = text.indexOf('**Resume-to-merge row.**');
+  assert.notEqual(start, -1, 'summary-template.md must carry the Resume-to-merge row paragraph');
+  const rest = text.slice(start);
+  const next = rest.indexOf(' **', 1);
+  return next === -1 ? rest : rest.slice(0, next);
+}
+
+function summaryNextActionsRegion() {
+  const text = summaryText();
+  const start = text.indexOf('### Next Actions');
+  const end = text.indexOf('**Release row.**');
+  assert.notEqual(start, -1, 'summary-template.md must carry ### Next Actions');
+  assert.notEqual(end, -1, 'summary-template.md must carry the Release row paragraph');
+  return text.slice(start, end);
+}
+
+test('summary-template.md Resume-to-merge paragraph carries the consoleAutoResolve merge row', () => {
+  assert.deepStrictEqual(missingFactsOf(summaryParagraphRegion(), SUMMARY_FACTS), []);
+});
+
+test('summary-template.md consoleAutoResolve facts each go red when stripped', () => {
+  assertEachFactGoesRed(summaryParagraphRegion(), SUMMARY_FACTS);
+});
+
+test('summary-template.md Next Actions list carries the merge row once', () => {
+  const matches = summaryNextActionsRegion().match(new RegExp(SUMMARY_FACTS['merge-row'].source, 'g')) || [];
+  assert.strictEqual(matches.length, 1);
+});
+
+test('summary-template.md keeps the existing resume row in both places', () => {
+  const text = summaryText();
+  const first = text.indexOf(OLD_RESUME_ROW);
+  assert.notEqual(first, -1, 'old resume row missing from Next Actions');
+  assert.notEqual(text.indexOf(OLD_RESUME_ROW, first + 1), -1, 'old resume row missing from the paragraph');
+});
