@@ -135,13 +135,15 @@ If either is true, downgrade `config.yml`'s `ceremony-profile` via the sanctione
 
 `node "${CLAUDE_PLUGIN_ROOT}/bin/set-config.js" --run "$PIPELINE_RUN_DIR" --key ceremony-profile --value standard`
 
+In a multi-spec run `$PIPELINE_RUN_DIR` is the spec's own `spec-{N}/` directory, so the downgrade writes the spec-level `config.yml` only — never the parent run dir's; `skills/flow/multispec-batch-curation.md`'s batch pass reads every spec's value (#3595).
+
 Then log:
 
 ```
 AUTO {time} — Ceremony profile downgraded fast-lane → standard: {trigger}. Remaining wrap-up steps run at standard depth.
 ```
 
-Phase 2 passes the (possibly just-downgraded) value to the engine as `--ceremony`, which is the only remaining consumer — no other propagation needed. This never re-runs a step already skipped (the roster in `_shared/ceremony-profile.md`, the SDD whole-branch review and polish skips included): the downgrade covers only this run's remaining wrap-up steps and never rewrites the record's `ceremony:*` label — a re-run is fast-lane again.
+Phase 2 passes the (possibly just-downgraded) value to the engine as `--ceremony`, which in a single-spec run is the only remaining consumer (under `MULTISPEC_CURATION_DEFER=1` per-spec Phase 2 is skipped and the batch pass, `skills/flow/multispec-batch-curation.md`'s Batch ceremony, reads it instead) — no other propagation needed. This never re-runs a step already skipped (the roster in `_shared/ceremony-profile.md`, the SDD whole-branch review and polish skips included): the downgrade covers only this run's remaining wrap-up steps and never rewrites the record's `ceremony:*` label — a re-run is fast-lane again.
 
 ---
 

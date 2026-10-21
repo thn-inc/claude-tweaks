@@ -67,8 +67,14 @@ function containsSubsequence(haystack, needle) {
   return false;
 }
 
+// A numeric `#77` needle never equals branch token `77`, so the `#` is stripped
+// here. findLiveClaim already accepts `#N`, so both halves must agree on it.
+function normalizeRecordRef(recordRef) {
+  return String(recordRef).replace(/^#(?=[1-9]\d*$)/, '');
+}
+
 function matchesRecordRef(entry, recordRef) {
-  const needle = tokenize(recordRef);
+  const needle = tokenize(recordRef == null ? '' : normalizeRecordRef(recordRef));
   if (needle.length === 0) return false;
   return containsSubsequence(tokenize(entry.branch), needle) || containsSubsequence(tokenize(entry.path), needle);
 }
@@ -245,4 +251,4 @@ function cleanClaimField(value) {
   return value.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').slice(0, 200);
 }
 
-module.exports = { findConflictingSession, findLiveClaim, matchesRecordRef, tokenize };
+module.exports = { findConflictingSession, findLiveClaim, matchesRecordRef, normalizeRecordRef, tokenize };

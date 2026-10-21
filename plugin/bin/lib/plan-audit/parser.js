@@ -269,13 +269,13 @@ const AC_HTML_ENTITY_RE = /&(?:[a-zA-Z]+|#\d+|#x[0-9a-fA-F]+);/g;
 // what-follows lowercase check below, regardless of what follows the label.
 const AC_SUB_LABEL_END_RE = /\b\d+[a-z]\.$/;
 
-function acceptanceSectionLines(specText) {
+function specSectionLines(specText, headingRe) {
   const lines = specText.replace(/\r\n?/g, '\n').split('\n');
   let inFence = false;
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
     if (AC_FENCE_RE.test(lines[i])) { inFence = !inFence; continue; }
-    if (!inFence && AC_HEADING_RE.test(lines[i])) { start = i + 1; break; }
+    if (!inFence && headingRe.test(lines[i])) { start = i + 1; break; }
   }
   if (start === -1) return null;
   const section = [];
@@ -286,6 +286,10 @@ function acceptanceSectionLines(specText) {
     section.push(lines[i]);
   }
   return section;
+}
+
+function acceptanceSectionLines(specText) {
+  return specSectionLines(specText, AC_HEADING_RE);
 }
 
 // Returns the item's clauses (trimmed, a trailing `;` dropped), or null when
@@ -417,7 +421,13 @@ function extractAcceptanceClauses(specText) {
 //   is an accepted source, never an expected one.
 const STEP_HEADING_RE = /^[-*]?[ \t]*(?:\[[ xX]?\][ \t]*)?\*\*Step[ \t]+\d+:([^*\n]*)\*\*/;
 const TEST_STEP_TITLE_RE = /\btests?\b|\bverif/i;
-const WAIVER_RE = /^[ \t]*(?:[-*][ \t]+)?Waived[ \t]+(AC\d+\.\d+)[ \t]*:[ \t]*(\S.*?)[ \t]*$/;
+// One waiver-line shape, two targets: an AC clause id (Check E) or a repo path
+// (Check F, #3602). `targetPattern` supplies the single capture group.
+function waiverLineRe(targetPattern) {
+  return new RegExp(`^[ \\t]*(?:[-*][ \\t]+)?Waived[ \\t]+${targetPattern}[ \\t]*:[ \\t]*(\\S.*?)[ \\t]*$`);
+}
+const WAIVER_RE = waiverLineRe('(AC\\d+\\.\\d+)');
+const PATH_WAIVER_RE = waiverLineRe('`?([^\\s`:]+(?::\\d+(?:-\\d+)?)?)`?');
 
 function extractCoverageSources(planText) {
   const waivers = [];
@@ -453,10 +463,92 @@ function extractCoverageSources(planText) {
   return { waivers, testSteps: testSteps.map((s) => s.join('\n')), mapRows };
 }
 
+// ── Check F inputs: repo paths the spec's Technical Approach / Gotchas name (#3602) ──
+//
+// extractSpecPaths reads the backticked spans of those two sections (Key Files
+// is a `###` under Technical Approach, so it is included) and keeps the ones
+// that look like a repo-relative file path. It never returns a silent empty:
+// a line with an unbalanced backtick, or a section with an unclosed fence, is
+// reported in `unparsed` so the caller can tell "could not read" from "names
+// no paths". An absent section contributes nothing (both are optional).
+const F_SECTIONS = ['Technical Approach', 'Gotchas'];
+const REPO_PATH_RE = /^(?:\.\/)?[A-Za-z0-9_.@-]+(?:\/[A-Za-z0-9_.@-]+)+\.[A-Za-z0-9]+(?::\d+(?:-\d+)?)?$/;
+
+function looksLikeRepoPath(span) {
+  return REPO_PATH_RE.test(span);
+}
+
+function normalizeRepoPath(p) {
+  return p.replace(/^(?:\.\/)+/, '').replace(/:\d+(?:-\d+)?$/, '');
+}
+
+function hasUnclosedFence(lines) {
+  return lines.filter((l) => AC_FENCE_RE.test(l)).length % 2 !== 0;
+}
+
+function extractSpecPaths(specText) {
+  const paths = [];
+  const unparsed = [];
+  const seen = new Set();
+  const specHasUnclosedFence = hasUnclosedFence(specText.replace(/\r\n?/g, '\n').split('\n'));
+  for (const name of F_SECTIONS) {
+    const lines = specSectionLines(specText, new RegExp(`^##[ \\t]+${name}[ \\t]*$`, 'i'));
+    if (!lines) {
+      // null is "absent" only when no fence is left open: an earlier unclosed
+      // fence swallows this heading, and that must not read as "nothing here".
+      if (specHasUnclosedFence) unparsed.push({ section: name, raw: `unclosed code fence before "## ${name}"` });
+      continue;
+    }
+    if (hasUnclosedFence(lines)) {
+      unparsed.push({ section: name, raw: `unclosed code fence in "## ${name}"` });
+      continue;
+    }
+    let inFence = false;
+    for (const line of lines) {
+      if (AC_FENCE_RE.test(line)) { inFence = !inFence; continue; }
+      if (inFence) continue;
+      // An odd count, or a run of 2+ backticks (a double-backtick span the
+      // single-backtick matcher below would mis-pair), is a line we cannot read.
+      if ((line.match(/`/g) || []).length % 2 !== 0 || /``/.test(line)) {
+        unparsed.push({ section: name, raw: line.trim() });
+        continue;
+      }
+      for (const m of line.matchAll(/`([^`]+)`/g)) {
+        const span = m[1].trim();
+        if (!looksLikeRepoPath(span)) continue;
+        const path = normalizeRepoPath(span);
+        if (seen.has(path)) continue;
+        seen.add(path);
+        paths.push({ path, section: name });
+      }
+    }
+  }
+  return { paths, unparsed };
+}
+
+// `Waived {path}: {reason}` lines in the plan — the Check F counterpart of
+// Check E's `Waived AC{item}.{clause}: {reason}`. A fenced line is an example,
+// not a waiver; a target that is not a repo path (e.g. an AC id) is skipped.
+function extractPathWaivers(planText) {
+  const waivers = [];
+  let inFence = false;
+  for (const line of planText.replace(/\r\n?/g, '\n').split('\n')) {
+    if (AC_FENCE_RE.test(line)) { inFence = !inFence; continue; }
+    if (inFence) continue;
+    const m = line.match(PATH_WAIVER_RE);
+    if (m && looksLikeRepoPath(m[1])) waivers.push({ path: normalizeRepoPath(m[1]), reason: m[2] });
+  }
+  return waivers;
+}
+
 module.exports = {
   extractAcceptanceClauses,
   splitClauses,
   extractCoverageSources,
+  looksLikeRepoPath,
+  normalizeRepoPath,
+  extractSpecPaths,
+  extractPathWaivers,
   extractFileEntries,
   extractScopeKeywords,
   extractPremiseRefs,

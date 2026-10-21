@@ -122,6 +122,9 @@ test('#3370: an archived run with unreviewed console items gets its own banner n
       { id: 'review-debate-deviation.md', section: 'Contested findings', resolution: 'keep-staged', reason: 'debate inconclusive' },
     ],
   }));
+  // #3772: an item whose staged file is gone is `missing`, not residue.
+  mkStagedFile(archived, 'review-13-record.md');
+  mkStagedFile(archived, 'review-debate-deviation.md');
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /claude-tweaks: closed or archived run\(s\) whose unattended Review Console left item\(s\) no human has reviewed:/);
@@ -153,6 +156,7 @@ function mkArchivedResidue(project, n) {
       resolved: true,
       items: [{ id: `review-${i}-x.md`, section: 'Pending review', resolution: 'pending', reason: 'unmapped-prefix' }],
     }));
+    mkStagedFile(dir, `review-${i}-x.md`); // #3772: a vanished staged file is `missing`, not residue
   }
 }
 const OVERFLOW = /^- … more run\(s\) may have unreviewed console items \(newest 3 shown\)\.$/m;
