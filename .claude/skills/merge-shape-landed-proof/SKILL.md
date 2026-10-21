@@ -80,7 +80,10 @@ evidence for that record, not merge evidence.
   `PR_LIST_ARGS` and `PR_VIEW_JSON_FIELDS` do. A new keyword matcher takes its keyword set from
   `CLOSING_KEYWORD_ALTERNATION` in `plugin/bin/lib/issue-branch-tracking.js` and never retypes
   it. Only the grammar around the set may differ: `prClosesIssue` anchors at line start and
-  uses `[ \t]`, not `\s`, so `Fixes` and `#N` on separate lines never match.
+  uses `[ \t]`, not `\s`, so `Fixes` and `#N` on separate lines never match. The same call also
+  answers "does this CLOSED, unmerged PR belong to record N?" — `findPriorAttemptPr`
+  (`plugin/bin/lib/worktree/remote-branch-collision.js`, #3887) passes the PR body as the message
+  and treats only `true` as a link, so a PR read without `closingIssuesReferences` stays foreign.
 - **Recurrence.** #3412: PR #3348 was squash-merged while its run was still building #3311,
   with the body edited from `Fixes #3311` to `Refs #3311`. One second later the reconciler
   released #3311's claim on `merged: reconciled from PR #3348` and removed `bot:in-progress`,
