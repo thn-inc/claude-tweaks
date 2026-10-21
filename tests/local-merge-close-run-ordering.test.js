@@ -2,7 +2,9 @@
 // Conformance suite for record #3762: the local-merge auto-merge procedures ran `hooks.js close-run`
 // BEFORE the checks that can fail (branch guard, composer, a predicted conflict), so a failed merge
 // parked a run that was already closed -- unprotected, worktree assignment cleared (since #3023
-// close-run also nulls run-state.json's `worktree`). The order is now: pre-merge checks (nothing
+// close-run also nulls run-state.json's `worktree`).
+// #3809 adds the human-present multi-run reconciliation (flow/worktree-merge.md): each branch's run closes only after that branch's own pre-merge checks.
+// The order is now: pre-merge checks (nothing
 // mutated) -> close-run -> merge -> push, with a re-protect (`record-worktree`) on the late-failure path.
 //
 // One SITES entry per procedure; a new site is data only. Live-corpus read (skill-prose-conformance-tests:
@@ -78,6 +80,21 @@ const SITES = [
       'base-branch': 'main',
       'feature-branch': 'feat',
       issue: '1',
+      'subject-dir': posix(SUBJECT_DIR),
+      'worktree-path': posix(WORKTREE),
+    },
+  },
+  {
+    label: 'worktree-merge.md',
+    file: 'plugin/skills/flow/worktree-merge.md',
+    readsWorktree: true,
+    logNeedle: 'log any other line',
+    worktreeVar: 'worktree-path',
+    vars: {
+      'base-branch': 'main',
+      branch: 'feat',
+      issue: '1',
+      'second-issue': '2',
       'subject-dir': posix(SUBJECT_DIR),
       'worktree-path': posix(WORKTREE),
     },
@@ -352,6 +369,27 @@ for (const site of SITES) {
     assert.ok(after.includes(collapse(logNeedle)), `a re-stamp that fails must be logged, not ignored: expected ${JSON.stringify(logNeedle)} within the window`);
   });
 }
+
+const KEEPS_RUN = 'keeps its worktree assignment and `active` status';
+function skipAbortKeepsRun(text) {
+  const flat = collapse(text);
+  const errors = [];
+  for (const label of ['**Skip this branch** →', '**Abort remaining merges** →']) {
+    const at = flat.indexOf(label);
+    if (at < 0) { errors.push(`no ${label} bullet`); continue; }
+    if (!flat.slice(at, at + 300).includes(KEEPS_RUN)) errors.push(`${label} does not keep its run`);
+  }
+  return errors;
+}
+
+test("AC2.1: worktree-merge.md's Skip and Abort bullets keep the run", () => {
+  const live = readText(path.join(ROOT, 'plugin/skills/flow/worktree-merge.md'));
+  assert.deepStrictEqual(skipAbortKeepsRun(live), []);
+  const flat = collapse(live);
+  const skipAt = flat.indexOf('**Skip this branch** →');
+  const mutated = flat.slice(0, skipAt) + flat.slice(skipAt).replace(KEEPS_RUN, 'is closed');
+  assert.ok(skipAbortKeepsRun(mutated).some((e) => /Skip this branch/.test(e)), 'go-red: a Skip bullet that closes the run must fail');
+});
 
 test('no plugin/ file still carries "Not fixed here; there is no"', () => {
   const hits = fs.readdirSync(PLUGIN_DIR, { recursive: true })
