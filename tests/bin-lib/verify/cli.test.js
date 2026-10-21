@@ -2424,6 +2424,8 @@ test('--baseline <branch>: a failure inherited from the merge-base and fixed on 
   const stamp = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json'), 'utf8'));
   assert.strictEqual(stamp.baseline.base, r.baseSha);
   assert.match(stdout, new RegExp(`Baseline: adjudicated against ${r.baseSha.slice(0, 9)} \\(merge-base of HEAD and ${r.integ}\\)`));
+  // The table's Status cell names the ref as passed, not the merge-base sha (the two differ on this fixture).
+  assert.ok(stdout.includes(`pass (baseline-adjudicated vs ${r.integ}: `), stdout);
 });
 
 test('--baseline <branch>: a file passing at the merge-base and failing on the branch stays attributable while the integration tip has moved (#3810 AC2)', async () => {
