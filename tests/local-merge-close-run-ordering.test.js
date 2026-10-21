@@ -428,6 +428,7 @@ test("AC2.1: worktree-merge.md's Skip and Abort bullets keep the run", () => {
 const REPROTECT_TRIGGERS = ['branch-guard abort', 'merge failure', 'abandoned or stopped before it lands', 'push failure'];
 const REPROTECT_SITES = [
   ['**The branch guard aborted** (stderr ends', "re-protect this branch's run", 200],
+  ['**Failed** — if a `MERGE_HEAD` exists', "re-protect this branch's run", 120],
   ['abandoned or stopped before it lands', 're-protect every run closed for it', 200],
   ['**On push failure**', 're-protect every run step 3 closed', 300],
 ];
@@ -454,6 +455,25 @@ test("AC3: worktree-merge.md re-protects after every failure that can follow clo
   const dropSite = live.replace("re-protect this branch's run (**Re-protect** below), then stop", 'stop');
   assert.notStrictEqual(dropSite, live);
   assert.ok(reprotectCoverage(dropSite).some((e) => /branch guard aborted/.test(e)), 'go-red: a guard abort with no re-protect must fail');
+  const dropFailed = live.replace("Then re-protect this branch's run (**Re-protect** below). A conflict", 'A conflict');
+  assert.notStrictEqual(dropFailed, live);
+  assert.ok(reprotectCoverage(dropFailed).some((e) => /Failed/.test(e)), 'go-red: a merge failure with no re-protect must fail');
+});
+
+// The Skip bullet says a predicted conflict never closed the run (step 3 runs only after step 2's checks pass).
+const SKIP_NEVER_CLOSED = 'never closed when step 2 predicted the conflict';
+function skipNeverClosed(text) {
+  const flat = collapse(text);
+  const at = flat.indexOf('**Skip this branch** →');
+  return at > -1 && flat.slice(at, at + 250).includes(SKIP_NEVER_CLOSED);
+}
+
+test("AC2.1: worktree-merge.md's Skip bullet says a predicted conflict never closed the run", () => {
+  const live = readText(path.join(ROOT, 'plugin/skills/flow/worktree-merge.md'));
+  assert.ok(skipNeverClosed(live), 'Skip bullet does not say a predicted conflict never closed the run');
+  const mutated = live.replace(SKIP_NEVER_CLOSED, 'closed when step 2 predicted the conflict');
+  assert.notStrictEqual(mutated, live);
+  assert.ok(!skipNeverClosed(mutated), 'go-red: a Skip bullet that drops the clause must fail');
 });
 
 // AC3's log call takes its text from a file: the branch name and the hook's output never pass through shell quoting.
