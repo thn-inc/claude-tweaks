@@ -180,12 +180,15 @@ test('pointer facts each go red when stripped', () => {
   assertEachFactGoesRed(conflictPathRegion(), POINTER_FACTS);
 });
 
-test('the pointer bullet stays within its 400 B budget', () => {
+// A pointer stub stays a pointer: it carries none of the procedure it points at (the composed
+// merge bundle's own rail is the size gate, in the test below).
+test('the pointer bullet carries none of the attended procedure', () => {
   const m = /- \*\*Attended branch \(merge mode only\)\.\*\*[\s\S]*?(?=\n\n|\n- |\n#)/.exec(
     read('plugin', 'skills', '_shared', 'pr-first-merge.md'),
   );
   assert.ok(m, 'pointer bullet present');
-  assert.ok(Buffer.byteLength(m[0], 'utf8') <= 400, `pointer is ${Buffer.byteLength(m[0], 'utf8')} B`);
+  const leaked = missingFactsOf(flat(m[0]), ATTENDED_FACTS);
+  assert.deepStrictEqual(leaked.sort(), Object.keys(ATTENDED_FACTS).sort(), 'pointer restates attended-procedure text');
 });
 
 test('the composed merge bundle stays within the read-limit rail', () => {
