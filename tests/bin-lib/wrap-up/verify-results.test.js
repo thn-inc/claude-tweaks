@@ -23,8 +23,8 @@ test('writeVerifyResults round-trips through readVerifyResults', () => {
   assert.equal(file, path.join(runDir, FILE_NAME));
   assert.equal(FILE_NAME, 'verify.json');
   assert.equal(VERSION, 1);
-  assert.deepEqual(readVerifyResults(runDir), data);
   const read = readVerifyResults(runDir);
+  assert.deepEqual(read, data);
   assert.equal(read.version, 1);
   assert.equal(read.base, 'abc123');
   assert.equal(read.writtenAt, '2026-10-21T00:00:00.000Z');
@@ -37,7 +37,6 @@ test('a second write replaces the first whole, leaving no prior row behind', () 
   const second = [{ check: 'issues', result: 'fail', detail: 'open' }];
   writeVerifyResults({ runDir, rows: second, base: 'b' });
   const read = readVerifyResults(runDir);
-  assert.equal(read.checks.length, 1);
   assert.deepEqual(read.checks, second);
   assert.equal(read.base, 'b');
 });

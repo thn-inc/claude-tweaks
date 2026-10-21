@@ -107,8 +107,10 @@ function missingVerifyLines(runDir, base, pluginRoot) {
     specs = fs.readdirSync(runDir, { withFileTypes: true })
       .filter((e) => e.isDirectory() && e.name.startsWith('spec-')).map((e) => e.name).sort();
   } catch { /* unreadable dir — treat as a single-spec run */ }
-  const checked = specs.length ? specs.map((s) => ({ dir: path.join(runDir, s), label: `${path.basename(runDir)}/${s}` }))
-    : [{ dir: runDir, label: path.basename(runDir) }];
+  const runLabel = path.basename(runDir);
+  const checked = specs.length
+    ? specs.map((s) => ({ dir: path.join(runDir, s), label: `${runLabel}/${s}` }))
+    : [{ dir: runDir, label: runLabel }];
   const lines = [];
   for (const c of checked) {
     if (readVerifyResults(c.dir)) continue;

@@ -296,7 +296,6 @@ test('AC4.1: --require-verify prints the missing-verify line and paste-ready com
   const f = fixture();
   const h = harness(f.main);
   assert.strictEqual(run(['--run', f.runDir, '--require-verify', 'origin/main'], h.deps), 0);
-  assert.ok(h.out().includes('verify.json missing'), h.out());
   assert.ok(h.out().includes("verify.json missing — wrap-up's Verify execution never ran, or its write failed"), h.out());
   // The command names the resolved target (macOS tmpdir is a symlink), not the argv spelling.
   assert.ok(h.out().includes(`wrap-up-engine.js" verify --run-dir "${fs.realpathSync(f.runDir)}" --base origin/main`), h.out());
