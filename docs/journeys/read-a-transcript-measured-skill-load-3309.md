@@ -37,7 +37,7 @@ files:
 - **Action:** Read the `outsideClosure` paths in the record, or re-run the CLI for the same directory and read the skill's row. Each path is a file its sessions Read that its `SKILL.md` does not cite, directly or through files it cites. Then add the missing citation or remove the stray read.
 - **Should feel:** Like a lead, not a verdict. The record says this skill's real sessions read skill files its static closure does not contain, which means #3307's citation grammar is missing a reference this skill makes.
 - **Should understand:**
-  - A record is a lead, not always a missing citation. The first real run filed two, `claude-tweaks:reflect` and `claude-tweaks:review`, each reading `skills/simplify/SKILL.md`. The comparison is by file, so one read of a file the citations do not reach is enough to list it.
+  - A record is a lead, not always a missing citation. The first CLI run over this repo's own transcripts listed two skills with outside reads, `claude-tweaks:reflect` and `claude-tweaks:review`, each reading `skills/simplify/SKILL.md`; harness-health files a record for each such row on its next firing. The comparison is by file, so one read of a file the citations do not reach is enough to list it.
   - The record carries the skill name, its `outsideClosure` paths, `invocations` and `sessions`, never transcript excerpts.
   - A deliberately uncited read can be fine. The record exists so the gap is a decision, not an accident.
 - **Red flags:**
