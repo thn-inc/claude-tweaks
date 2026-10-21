@@ -77,7 +77,7 @@ test('--help prints usage and exits 0', async () => {
 });
 
 test('malformed invocations exit 2 with no stdout', async () => {
-  for (const argv of [['--bogus'], ['--sessions', '0'], ['--sessions', 'abc'], ['--cwd'], ['--plugin-root', '--cwd']]) {
+  for (const argv of [['--bogus'], ['--sessions', '0'], ['--sessions', 'abc'], ['--cwd'], ['--plugin-root', '--cwd'], ['--optional-plugin-root']]) {
     const { out, deps } = setup();
     assert.strictEqual(await run(argv, deps), 2, argv.join(' '));
     assert.strictEqual(out.stdout, '');
@@ -148,8 +148,8 @@ test('closure joins on namespace + skill: over its closure is flagged, another p
   assert.strictEqual(r.status, 'ok');
   assert.strictEqual(r.sessions, 1);
   assert.deepStrictEqual(r.rows, [
-    { skill: 'demo:alpha', invocations: 1, median: closure + 500, max: closure + 500, closure, overClosure: true },
-    { skill: 'other:alpha', invocations: 1, median: 300, max: 300, closure: null, overClosure: false },
+    { skill: 'demo:alpha', invocations: 1, median: closure + 500, max: closure + 500, closure, outsideClosure: [] },
+    { skill: 'other:alpha', invocations: 1, median: 300, max: 300, closure: null, outsideClosure: null },
   ]);
 });
 
@@ -164,17 +164,111 @@ test('a project-local root (no plugin.json) folds path-namespaced names into the
   ]);
   await run(['--plugin-root', root], deps);
   assert.deepStrictEqual(json().rows, [
-    { skill: 'alpha', invocations: 2, median: 150, max: 200, closure, overClosure: false },
-    { skill: 'demo:alpha', invocations: 1, median: 50, max: 50, closure: null, overClosure: false },
+    { skill: 'alpha', invocations: 2, median: 150, max: 200, closure, outsideClosure: [] },
+    { skill: 'demo:alpha', invocations: 1, median: 50, max: 50, closure: null, outsideClosure: null },
   ]);
 });
 
-test('overClosure is false when max equals the closure exactly', async () => {
+const CACHE = '/home/u/.claude/plugins/cache/m/demo/1.0.0';
+const withFile = (root, rel, text) => {
+  fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+  fs.writeFileSync(path.join(root, rel), text);
+};
+const outsideOf = (r, skill) => r.rows.find((x) => x.skill === skill).outsideClosure;
+
+test('AC1.1: a read of a root file outside the closure is listed in outsideClosure', async () => {
   const { transcriptDir, deps, json } = setup();
-  const { root, closure } = pluginRoot();
-  writeJsonl(path.join(transcriptDir, 's1.jsonl'), invocation('demo:alpha', 't1', closure));
-  await run(['--plugin-root', root], deps);
-  assert.deepStrictEqual(json().rows.map((r) => [r.max, r.closure, r.overClosure]), [[closure, closure, false]]);
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse(`${CACHE}/skills/alpha/extra.md`, 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), ['skills/alpha/extra.md']);
+});
+
+test('AC1.2: reading only closure files leaves outsideClosure empty', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse(`${CACHE}/skills/alpha/SKILL.md`, 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), []);
+});
+
+test('cross-root reads are not comparable', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse('/repo/.claude/skills/other/SKILL.md', 'r1'),
+    readResult('r1', 40),
+    readUse('/home/u/.claude/plugins/cache/m2/other/2.0.0/skills/beta/SKILL.md', 'r2'),
+    readResult('r2', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), []);
+});
+
+test('outsideClosure is distinct and sorted', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/z.md', 'z\n');
+  withFile(root, 'skills/alpha/b.md', 'b\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse(`${CACHE}/skills/alpha/z.md`, 'r1'),
+    readResult('r1', 10),
+    readUse(`${CACHE}/skills/alpha/b.md`, 'r2'),
+    readResult('r2', 10),
+    ...invocation('demo:alpha', 't2', 100),
+    readUse(`${CACHE}/skills/alpha/z.md`, 'r3'),
+    readResult('r3', 10),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), ['skills/alpha/b.md', 'skills/alpha/z.md']);
+});
+
+test('null closure gives null outsideClosure', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    readUse(`${CACHE}/skills/alpha/extra.md`, 'r0'),
+    readResult('r0', 10),
+    ...invocation('other:alpha', 't1', 100),
+    readUse(`${CACHE}/skills/alpha/extra.md`, 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  const rows = json().rows;
+  assert.deepStrictEqual(rows.map((r) => r.skill).sort(), ['(main, unattributed)', 'other:alpha']);
+  for (const r of rows) assert.deepStrictEqual([r.closure, r.outsideClosure], [null, null], r.skill);
+});
+
+test('--optional-plugin-root without skills/ is skipped, not exit 2', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), invocation('demo:alpha', 't1', 100));
+  assert.strictEqual(await run(['--plugin-root', root, '--optional-plugin-root', tmp('slr-noskills-')], deps), 0);
+  assert.strictEqual(json().status, 'ok');
+});
+
+test('--optional-plugin-root with skills/ joins its closure', async () => {
+  const { cwd, transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  fs.cpSync(root, path.join(cwd, '.claude'), { recursive: true, filter: (src) => path.basename(src) !== '.claude-plugin' });
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), invocation('alpha', 't1', 100));
+  assert.strictEqual(await run(['--optional-plugin-root', '.claude'], deps), 0);
+  const row = json().rows.find((r) => r.skill === 'alpha');
+  assert.strictEqual(typeof row.closure, 'number');
+  assert.deepStrictEqual(row.outsideClosure, []);
 });
 
 test('closure counts a bare-name citation of another skill\'s file', async () => {
