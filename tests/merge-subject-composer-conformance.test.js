@@ -6,6 +6,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
+const fs = require('node:fs');
+const os = require('node:os');
 
 const { readText } = require('./helpers/read-skill');
 
@@ -149,4 +151,63 @@ test('go-red proof: the frozen pre-change local-merge forms match the stale patt
   assert.doesNotMatch(PRE_RANGELESS_CALL, PR_FIRST_COMPOSER_CALL);
   assert.doesNotMatch(PRE_WORKTREE_RANGELESS_CALL, LOCAL_COMPOSER_CALL);
   assert.doesNotMatch(PRE_WORKTREE_RANGELESS_CALL, PR_FIRST_COMPOSER_CALL);
+});
+
+// AC1 (#3537): a whole-tree sweep, not the five named files above. Walks `root` for *.md
+// (skipping node_modules) and flags every fenced block that runs compose-subject.js and evals
+// its output — `--shell`, `SUBJECT_EXPORTS`, or a bare `eval`. Fences are read line by line so an
+// indented or list-nested fence opens and closes the same way a top-level one does.
+function sweepShellEvalFences(root) {
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules') continue;
+      const abs = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(abs);
+      else if (entry.name.endsWith('.md')) files.push(abs);
+    }
+  };
+  walk(root);
+  const hits = [];
+  for (const abs of files) {
+    let fence = null;
+    for (const line of readText(abs).split('\n')) {
+      if (fence === null) {
+        if (/^\s*```/.test(line)) fence = [line];
+        continue;
+      }
+      fence.push(line);
+      if (!/^\s*```\s*$/.test(line)) continue;
+      const body = fence.join('\n');
+      fence = null;
+      if (body.includes('compose-subject.js') && (body.includes('--shell') || body.includes('SUBJECT_EXPORTS') || /\beval\b/.test(body))) {
+        hits.push({ file: path.relative(root, abs), fence: body });
+      }
+    }
+  }
+  return { files: files.map((abs) => path.relative(root, abs)), hits };
+}
+
+test('AC1.1: no fenced block anywhere in plugin/skills/** evals compose-subject.js --shell output', () => {
+  const skillsRoot = path.join(ROOT, 'plugin/skills');
+  const { files, hits } = sweepShellEvalFences(skillsRoot);
+  for (const rel of [PR_FIRST, ...LOCAL_SITES]) {
+    assert.ok(files.includes(path.relative(skillsRoot, path.join(ROOT, rel))), `sweep reached ${rel}`);
+  }
+  assert.deepEqual(hits, []);
+});
+
+test('AC1.1 go-red: the same sweep flags a frozen pre-#3522 eval fence, indented and nested', () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-eval-sweep-'));
+  try {
+    fs.mkdirSync(path.join(tmpRoot, 'nested', 'dir'), { recursive: true });
+    fs.writeFileSync(path.join(tmpRoot, 'nested', 'dir', 'a.md'), `1. Merge:\n\n   \`\`\`bash\n${PRE_EVAL_LOCAL_SITE}\n   \`\`\`\n`);
+    fs.writeFileSync(path.join(tmpRoot, 'b.md'), `\`\`\`bash\n${PRE_EVAL_PR_FIRST_SITE}\n\`\`\`\n`);
+    fs.writeFileSync(path.join(tmpRoot, 'c.md'), '```bash\nnode "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --out-dir "{subject-dir}" || exit 1\n```\n');
+    const { hits } = sweepShellEvalFences(tmpRoot);
+    assert.equal(hits.length, 2);
+    assert.deepEqual(hits.map((h) => h.file).sort(), ['b.md', path.join('nested', 'dir', 'a.md')]);
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
 });
