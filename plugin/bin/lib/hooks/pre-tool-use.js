@@ -35,7 +35,10 @@ const { runGit, FAILURE } = require('./git-exec');
 const { parseNameStatusZ } = require('../git-z');
 const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
 const { resolveCeiling, bookkeepingPermissions } = require('../issues/autonomy');
-const { isPathContained, escapeRegExp } = require('../shared-primitives');
+// toPosix: git always reports/accepts forward-slash paths regardless of
+// platform — used for GATE_COVERAGE's prose-facing rendering and for comparing
+// against `git diff --cached --name-only` output in isPolicyOnlyCommit below.
+const { isPathContained, escapeRegExp, toPosix } = require('../shared-primitives');
 const { hasClaimLogFor } = require('../log-decision/claim-log');
 // Every realpath resolution in this file goes through canonicalRealpath (#3682); lexical containment checks (isPipelineBookkeeping) resolve nothing.
 const { resolveLeaf, canonicalRealpath, lstatType } = require('../path-guard');
@@ -103,13 +106,6 @@ const WORK_SPEC_TAIL_RE = /^(?:spec-[^/\\]+[/\\])?work(?:[/\\]\d+-spec\.md)?$/;
 // `runDirName` is always the top-level segment (relParts[0]) by construction.
 const STANDALONE_AUDIT_RUN_RE = /-(?:tidy|sweep)-standalone/;
 const STANDALONE_AUDIT_TAIL_RE = /^(?:decisions\.md|report\.md|staged(?:[/\\].+)?)$/;
-
-// git always reports/accepts forward-slash paths regardless of platform —
-// used for GATE_COVERAGE's prose-facing rendering and for comparing against
-// `git diff --cached --name-only` output in isPolicyOnlyCommit below.
-function toPosix(p) {
-  return p.split(path.sep).join('/');
-}
 
 // The single machine-readable statement of what the worktree-always gate
 // covers. `skills/_shared/policy-schema-coverage.md`'s `worktree-always`

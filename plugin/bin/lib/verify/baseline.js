@@ -23,6 +23,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { substituteFile, describePath } = require('./file-template');
+const { toPosix } = require('../shared-primitives');
 const {
   sniffFamily, extractFailingFiles, countUnmatchedFailures, fileLevelFailures, failingTestsByFile, parseCounts, stripAnsi,
   specEntryCount, cancelledCount, testTree,
@@ -348,7 +349,7 @@ async function adjudicate({
   // Realpath'd like headDir (#3167), or a symlinked toplevel spelling would
   // put an ordinary in-repo cwd outside the repository root.
   const root = tryRealpath(git.repoRoot());
-  const sub = path.relative(root, headDir).replace(/\\/g, '/');
+  const sub = toPosix(path.relative(root, headDir));
   if (sub === '..' || sub.startsWith('../') || path.isAbsolute(sub)) {
     return ineligible(`working directory ${headDir} does not resolve under the repository root ${root}`);
   }
