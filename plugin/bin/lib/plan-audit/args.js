@@ -37,7 +37,7 @@ function parseArgs(argv) {
     planFile = flag;
   }
   if (planFile === null) throw new UsageError('plan-file is required');
-  // #3099: --spec feeds Check E, which only the full audit runs — beside a
+  // #3099: --spec feeds Checks E and F (#3602), which only the full audit runs — beside a
   // single-purpose verb it would be silently ignored, so refuse the pairing.
   if (spec !== null && (countTasks || bytes)) {
     throw new UsageError('--spec cannot be combined with --count-tasks or --bytes');

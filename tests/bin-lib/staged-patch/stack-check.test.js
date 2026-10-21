@@ -10,7 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { FIXTURE_TIMEOUT_MS } = require('../../helpers/git-fixtures');
-const { checkStack, rederive, stagedApplyOrder, stackVerdicts } = require('../../../plugin/bin/lib/staged-patch/stack-check');
+const { checkStack, gitEnv, rederive, stagedApplyOrder, stackVerdicts } = require('../../../plugin/bin/lib/staged-patch/stack-check');
 
 const FIXTURE_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 const BASE = ['l1', 'l2', 'l3', 'l4', 'anchor', 'a1', 'a2', 'a3'].join('\n') + '\n';
@@ -337,4 +337,24 @@ test('I1: stackVerdicts — a same-anchor pair is ok for the first and not the s
   assert.equal(v['review-2.patch'].ok, false);
   assert.match(v['review-2.patch'].error, /patch failed|does not apply/);
   assert.equal(v['review-2.patch'].error.includes(dir), false, 'basenames only');
+});
+
+test('#3696 AC1.1: gitEnv on win32 uses /dev/null, never the \\\\.\\nul device path', () => {
+  const env = gitEnv({ platform: 'win32', devNull: '\\\\.\\nul', env: {} });
+  assert.strictEqual(env.GIT_CONFIG_GLOBAL, '/dev/null');
+  assert.ok(!String(env.GIT_CONFIG_GLOBAL).includes('\\\\.\\nul'));
+});
+
+test('#3696 AC1.2: gitEnv on linux uses the platform devNull', () => {
+  const env = gitEnv({ platform: 'linux', devNull: '/dev/null', env: {} });
+  assert.strictEqual(env.GIT_CONFIG_GLOBAL, '/dev/null');
+});
+
+test('#3696: gitEnv keeps NOSYSTEM, drops repo pointers, and never mutates the input env', () => {
+  const input = { PATH: '/bin', GIT_DIR: '/x/.git', GIT_WORK_TREE: '/x', GIT_INDEX_FILE: '/x/i' };
+  const env = gitEnv({ platform: 'linux', devNull: '/dev/null', env: input });
+  assert.strictEqual(env.GIT_CONFIG_NOSYSTEM, '1');
+  assert.strictEqual(env.PATH, '/bin');
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) assert.ok(!(k in env), k);
+  assert.deepStrictEqual(input, { PATH: '/bin', GIT_DIR: '/x/.git', GIT_WORK_TREE: '/x', GIT_INDEX_FILE: '/x/i' });
 });
