@@ -133,3 +133,8 @@ Expected: exactly the five Modify files above (AC2.1).
 git add plugin/skills/_shared/pr-run-comments.md plugin/skills/tidy/digest-sweep.md plugin/skills/tidy/scan-procedures.md plugin/skills/backlog/grant-lane-decision.md plugin/skills/specify/shaping-mode-stamping.md tests/comment-trust-conformance.test.js
 git commit -m "Re-paste the dual-transport trusted-author jq into every skill copy — refs #3823"
 ```
+
+## As-built deviations (Common Step 4.5)
+
+- Beneficial — final whole-branch review fix wave (16b9517dd): `.claude/skills/prose-code-twin-pin/SKILL.md` copy-derivation grep re-pointed at the new-form needle `(.authorAssociation // .author_association) == "OWNER"` (the old needle returned zero files after Task 2); the AC2.1 sweep also rejects `== "OWNER"` / `== "MEMBER"` / `== "COLLABORATOR"` remainders, with a go-red control for a COLLABORATOR-dropped and a spelling-swapped new-form copy. Neither was in Task 2; both close the record's own stale-copy failure mode.
+- Beneficial — `pr-run-comments.md` sentence reads "so they work on either comment shape" (plan said "on every transport"; the Find-step commands are gh-only, so the plan wording overclaimed).
