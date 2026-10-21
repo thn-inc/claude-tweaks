@@ -245,11 +245,12 @@ test('probe: a patch staged before the target moved is rejected as stale, distin
 const GATE_HEADING = '## Staging-time gate';
 const CONSOLE_HEADING = '## Console apply with description fallback';
 const STACKED_HEADING = '### Stacked check';
+const CONSOLE_END = '### Write-back to the ledger';
 const normBody = (s) => s.replace(/\s+/g, ' ').trim();
 function assertStackedGate(text) {
   const gate = text.slice(text.indexOf(GATE_HEADING), text.indexOf(CONSOLE_HEADING));
   const stacked = gate.slice(gate.indexOf(STACKED_HEADING));
-  const consoleSlice = text.slice(text.indexOf(CONSOLE_HEADING), text.indexOf('### Write-back to the ledger'));
+  const consoleSlice = text.slice(text.indexOf(CONSOLE_HEADING), text.indexOf(CONSOLE_END));
   // AC1.1: the gate runs the stacked check and names both patches on a conflict
   assert.ok(gate.includes(STACKED_HEADING), 'gate names the Stacked check subsection');
   assert.ok(gate.includes('bin/check-staged-stack.js'), 'gate names the stacked-check CLI');
@@ -289,7 +290,6 @@ test('AC1.1, AC2.1, AC3.1: the staging gate stacks staged patches and one apply 
 
 // One go-red control per assertion: each runs the same assertStackedGate on a text mutated inside
 // only the slice that assertion reads, so every earlier assertion still passes and the named one fires.
-const CONSOLE_END = '### Write-back to the ledger';
 function mutateSpan(text, startMarker, endMarker, fn) {
   const s = text.indexOf(startMarker);
   assert.ok(s >= 0, `span start present: ${startMarker}`);
@@ -310,6 +310,9 @@ const STACKED_CONTROLS = [
   ['the stacked-check CLI is renamed in the gate', (t) => inGate(t, swap('bin/check-staged-stack.js', 'bin/x.js')), /gate names the stacked-check CLI/],
   ['--rederive-out is dropped from the gate', (t) => inGate(t, swap('--rederive-out', '')), /gate passes --rederive-out/],
   ['the conflict STAGED line stops naming conflictsWith', (t) => inGate(t, swap('staged/{targetConflict.conflictsWith}', 'staged/{x}')), /conflict STAGED line names both patches/],
+  ['the conflict STAGED line stops naming targetConflict.patch', (t) => inGate(t, swap('staged/{targetConflict.patch}', 'staged/{x}')), /conflict STAGED line names both patches/],
+  ['the conflict STAGED line stops naming the stage path', (t) => inGate(t, swap('staged/{slug}-{n}.patch', 'staged/{x}')), /conflict STAGED line names both patches/],
+  ['the exit-0 bullet loses its bold lead', (t) => inGate(t, swap('- **exit 0**', '- **exit zero**')), /stacked subsection has an exit-0 bullet/],
   ['the exit-0 bullet stops saying nothing else', (t) => inExit0(t, swap('nothing else', 'more')), /exit-0 bullet says normal entry and nothing else/],
   ['a second Apply order paragraph is appended', (t) => `${t}\n\n**Apply order.** x\n`, /exactly one Apply order paragraph/],
   ['the Apply order paragraph stops naming the byte-wise sort', (t) => inOrderPara(t, swap('byte-wise', 'natural')), /names the byte-wise sort/],
@@ -321,8 +324,10 @@ const STACKED_CONTROLS = [
   }, /lives in the gate's Stacked check subsection/],
   ['the console apply slice stops saying apply order', (t) => inConsole(t, swap('apply order', 'listed order')), /console apply slice uses apply order/],
   ['the console apply slice regains the display order', (t) => inConsole(t, (s) => s.replace('\n', '\nin the order the console lists them\n')), /no longer uses the console display order/],
+  ['the exit-1-rederived bullet loses its bold lead', (t) => inGate(t, swap('- **exit 1 with `rederived`**', '- **exit 1 rederived**')), /stacked subsection has an exit-1-rederived bullet/],
   ['the exit-1-rederived bullet loses its once', (t) => inRederived(t, swap('stacked check, once', 'stacked check')), /bounds the re-run to once/],
   ['the exit-1-rederived bullet loses its no-second-re-derive', (t) => inRederived(t, swap('never re-derives again', '')), /bounds the re-run to once/],
+  ['the exit-1-null bullet loses its bold lead', (t) => inGate(t, swap('- **exit 1, `rederived` null**', '- **exit 1 null**')), /stacked subsection has an exit-1-null bullet/],
   ['the exit-1-null bullet loses its re-anchor condition', (t) => inRederivedNull(t, swap('admits another anchor', 'allows it')), /states the re-anchor condition/],
   ['the exit-1-null bullet loses its re-run-once', (t) => inRederivedNull(t, swap('re-run both checks once', 're-run both checks')), /states the re-anchor condition/],
 ];

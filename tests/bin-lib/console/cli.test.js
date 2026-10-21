@@ -499,7 +499,9 @@ test('AC1.1: run() wires the stacked check — a same-anchor pair the per-patch 
     'review-2.patch': preamble + captureInsertAboveAnchor('new2'),
   } });
   fs.writeFileSync(path.join(fx.root, 'f.txt'), STACK_BASE);
-  // fakeExec answers the solo `git apply --check` with ok for both, so only the stacked check can flag review-2.
+  // Without the wiring, the per-patch fallback (`gitApplyCheck`, answered ok by fakeExec) passes both
+  // patches, so only the stacked check can flag review-2. In the wired run the solo check is never
+  // called (resolve.js:247-249).
   const { d } = baseDeps(fx, []);
   assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
   const cj = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
