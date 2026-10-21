@@ -104,9 +104,10 @@ fallback, which a multi-spec run never writes, can be shared.
 A comment is writable by anyone who can comment on the PR or issue, so a marker in its body proves
 nothing about who wrote it. A marker or heading comment counts only when its author association is
 `OWNER`, `MEMBER`, or `COLLABORATOR`. `gh` returns it as `authorAssociation`; the REST and MCP
-transports return it as `author_association`. The filters below read either spelling, so they work on every transport. A missing field is untrusted — a comment with neither field is skipped. An untrusted
-marker comment takes the same path as no such comment — create fresh, fall back, or fail the check —
-never the trusted path.
+transports return it as `author_association`. The filters below read either spelling, so they work
+on either comment shape. A missing field is untrusted — a comment with neither field is skipped.
+An untrusted marker comment takes the same path as no such comment — create fresh, fall back, or
+fail the check — never the trusted path.
 
 There is no viewer lookup. Anyone with write access can already push to the PR branch, so a narrower
 rule adds no protection, while matching the viewer rejects a comment read by a different maintainer or
