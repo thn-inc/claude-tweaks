@@ -44,7 +44,7 @@
 - Create: `plugin/bin/lib/work-backend.js`
 - Test: `tests/bin-lib/work-backend.test.js`
 - Modify: `plugin/bin/lib/hooks/pre-tool-use.js` (remove `WORK_BACKEND_RE` at :76-80 and `readWorkBackendValue` at :1450-1462; call site :1912)
-- Modify: `plugin/bin/lib/wrap-up/pack.js` (remove `WORK_BACKEND_RE` + its comment at :63-71; `readWorkBackend` at :144 parses via the shared parser)
+- Modify: `plugin/bin/lib/wrap-up/pack.js` (remove `WORK_BACKEND_RE` + its comment at :63-71; `resolveWorkBackend` (formerly `readWorkBackend`) at :144 parses via the shared parser)
 - Modify: `plugin/bin/lib/reconcile/archive-merged.js` (remove `WORK_BACKEND_RE` + local `readWorkBackend` at :1796-1810; call site :1899)
 - Modify: `docs/hooks.md:37` ("mirroring `bin/lib/wrap-up/pack.js`'s own `readWorkBackend`" → names `bin/lib/work-backend.js`'s shared reader)
 
@@ -70,7 +70,7 @@
 
 - [ ] **Step 3: Implement `plugin/bin/lib/work-backend.js`** with the Interfaces above. A header comment states that it is the one CLAUDE.md `work-backend:` reader (#3554). The key lives in CLAUDE.md, not `policy.yml` (`_shared/work-record-config.md`), and an absent line is *unconfigured*, so the reader returns `null` and never applies a default. Then migrate:
   - `pre-tool-use.js`: `const { readWorkBackend } = require('../work-backend');`. The call site becomes `readWorkBackend(wtRoot)`. Delete the local regex, `readWorkBackendValue`, and the "#2526: … mirrors" comment block (fold its one useful sentence, "`local-files` has no claim infrastructure, only `github-issues` arms the check", into the call-site comment that already says this).
-  - `pack.js`: `const { parseWorkBackend } = require('../work-backend');`. `readWorkBackend(deps, worktree)` keeps its `{value, source}` shape and its `deps.readText` seam, calling `parseWorkBackend(readText(...))`. Delete the local regex and the stale "No reader for this key exists anywhere in bin/lib" comment, keeping the "not in policy.yml" rationale in one line next to `POLICY_KEYS`.
+  - `pack.js`: `const { parseWorkBackend } = require('../work-backend');`. `resolveWorkBackend(deps, worktree)` (renamed from `readWorkBackend` to avoid clashing with the shared reader) keeps its `{value, source}` shape and its `deps.readText` seam, calling `parseWorkBackend(readText(...))`. Delete the local regex and the stale "No reader for this key exists anywhere in bin/lib" comment, keeping the "not in policy.yml" rationale in one line next to `POLICY_KEYS`.
   - `archive-merged.js`: `const { readWorkBackend } = require('../work-backend');`. Delete the local regex and function. The call site stays `readWorkBackend(root) !== 'local-files'`, and the #3503 comment is kept.
   - `docs/hooks.md:37`: point the parenthetical at `bin/lib/work-backend.js`'s shared `readWorkBackend`.
 

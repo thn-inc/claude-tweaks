@@ -62,6 +62,7 @@ function collectStaleRuns(cwd, { cache, exclude, pluginRoot } = {}) {
     stale.push(entry);
     if (stale.length >= MAX_REPORTED) break;
   }
+  if (!stale.length) return [];
   const sigil = readWorkBackend(wtDetect.mainCheckoutRoot(cwd) || cwd) === 'local-files' ? '' : '#';
   return stale.map(({ dir, state }) => {
     const prSuffix = state && state.pr && state.pr.url ? ` — PR ${state.pr.url}` : '';

@@ -60,7 +60,7 @@ const PROBE_TIMEOUT_MS = 60000;
 // stored on inputs.policy — no probe resolves policy for itself (#1930 review
 // I8: three synchronous resolve-policy.js spawns, one of them mid-fan-out).
 // work-backend is deliberately NOT here: it is not in policy.yml (read from
-// CLAUDE.md by readWorkBackend below), so resolve-policy.js would answer unknown-key.
+// CLAUDE.md by resolveWorkBackend below), so resolve-policy.js would answer unknown-key.
 const POLICY_KEYS = ['integration-branch', 'work-links'];
 
 // stderr is piped rather than inherited or ignored: a failing call cannot
@@ -134,7 +134,7 @@ function readText(deps, file) {
 // `local-files` made a GitHub-backed project with no declaration report an
 // empty `unblocked` list — a clean empty standing in for an unresolved input,
 // the exact shape C2 rejected elsewhere (#1930 review E3).
-function readWorkBackend(deps, worktree) {
+function resolveWorkBackend(deps, worktree) {
   const value = parseWorkBackend(readText(deps, path.join(worktree, 'CLAUDE.md')));
   return value !== null ? { value, source: 'claude-md' } : { value: null, source: 'unconfigured' };
 }
@@ -336,7 +336,7 @@ function resolveInputs({ runDir, cwd, deps }) {
   const pr = hasPrNumber(state) ? state.pr.number : null;
   sources.pr = pr === null ? 'unavailable' : 'run-state.json';
   const values = deps.resolvePolicy(POLICY_KEYS, worktree) || {};
-  const backend = readWorkBackend(deps, worktree);
+  const backend = resolveWorkBackend(deps, worktree);
   sources.workBackend = backend.source;
   const policy = {
     integrationBranch: values['integration-branch'] || '',
