@@ -11,6 +11,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { skipUnderRoot } = require('../../helpers/root');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-engine.js');
 const { runVerify, resolveArchivedRunDir } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
@@ -115,7 +116,9 @@ test('verify-json not written when run dir not found', () => {
   assert.ok(!fs.existsSync(runDir), 'the original path was not created');
 });
 
-test('verify-json write failure leaves the verdict alone', { skip: process.platform === 'win32' || (process.getuid && process.getuid() === 0) }, () => {
+const unwritableSkip = process.platform === 'win32' ? { skip: 'chmod cannot make a directory unwritable on win32' } : skipUnderRoot('root ignores directory permissions');
+
+test('verify-json write failure leaves the verdict alone', unwritableSkip, () => {
   const repo = makeRepo();
   const runDir = path.join(pipelinesDir(repo), RUN_ID);
   fs.mkdirSync(runDir, { recursive: true });
