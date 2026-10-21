@@ -1,7 +1,7 @@
 ---
 name: wrap-up
 description: Use when /claude-tweaks:review passes and you need to capture learnings, clean up specs/plans, update skills, and decide next steps. The lifecycle closure step.
-argument-hint: "[#N|<spec>|<context>|resume] [--dry-run] [--skill-budget <n>] [--doc-budget <n>] [cleanup-only]"
+argument-hint: "[#N|<spec>|<context>|resume] [--dry-run] [--skill-budget <n>] [--doc-budget <n>] [cleanup-only] [merge]"
 ---
 
 # Wrap-Up — Capture learnings, clean up, and close the lifecycle
@@ -19,7 +19,7 @@ Lifecycle: `/claude-tweaks:review` → **`/claude-tweaks:wrap-up`** — last ste
 
 ## Input
 
-`$ARGUMENTS` is parsed as `[#N|<spec>|<context>|resume] [--dry-run] [--skill-budget <n>] [--doc-budget <n>] [cleanup-only]` — see Overview, the Flags subsection below, and the Phase sections for what each token resolves to.
+`$ARGUMENTS` is parsed as `[#N|<spec>|<context>|resume] [--dry-run] [--skill-budget <n>] [--doc-budget <n>] [cleanup-only] [merge]` — see Overview, the Flags subsection below, and the Phase sections for what each token resolves to.
 
 ## Overview
 
@@ -48,11 +48,12 @@ Determine what type of work was completed:
 
 #### If `$ARGUMENTS` is provided:
 
+- If it is a record reference followed by the literal `merge` token, read `merge-mode.md` in this skill's directory and follow it in place of Phases 1-4.
 - If it's exactly `resume` (case-insensitive), this is not conversation-based work — see "Resuming a halted Review Console" below instead of falling through to the branches below.
 - If it's a `#`-prefixed record reference (e.g., `#42` — the primary form) or a bare record id under `work-backend: local-files` (e.g., "42", "73"), strip the leading `#` if present, then proceed as **record-based work**.
 - Otherwise, use it as context for **conversation-based work**.
 
-Flags (`--dry-run`, `--skill-budget <n>`, `--doc-budget <n>`) may appear anywhere in `$ARGUMENTS` alongside any of the above forms — strip them before applying the branches above. See "Flags" below.
+Flags (`--dry-run`, `--skill-budget <n>`, `--doc-budget <n>`, `merge`) may appear anywhere in `$ARGUMENTS` alongside any of the above forms — strip them before applying the branches above. See "Flags" below.
 
 #### Resuming a halted Review Console
 
@@ -60,7 +61,7 @@ See `resume-halted-run.md`, this skill's directory, for the full `resume` recove
 
 #### Flags
 
-See `flags.md`, this skill's directory, for `--dry-run`, `cleanup-only`, `--skill-budget <n>`, and `--doc-budget <n>`.
+See `flags.md`, this skill's directory, for `--dry-run`, `cleanup-only`, `merge`, `--skill-budget <n>`, and `--doc-budget <n>`.
 
 #### If no arguments, detect from context:
 
