@@ -44,16 +44,19 @@ test('a second write replaces the first whole, leaving no prior row behind', () 
 test('readVerifyResults returns null for a missing, malformed, or wrong-shape file', () => {
   const missing = tmpRunDir();
   assert.equal(readVerifyResults(missing), null);
-  for (const body of ['{', '[]', JSON.stringify({ version: 2, checks: [] }), JSON.stringify({ version: 1 })]) {
+  for (const body of [
+    '{', '[]', JSON.stringify({ version: 2, checks: [] }), JSON.stringify({ version: 1 }),
+    JSON.stringify({ version: 1, checks: [null] }), JSON.stringify({ version: 1, checks: [{ check: 'issues' }] }),
+  ]) {
     const runDir = tmpRunDir();
     fs.writeFileSync(path.join(runDir, FILE_NAME), body);
     assert.equal(readVerifyResults(runDir), null, body);
   }
 });
 
-test('writeVerifyResults throws on an unwritable run dir', () => {
-  // A run dir nested under a regular file can never be created (the lock's
-  // bootstrap mkdir only makes missing directories, not through a file).
+test('writeVerifyResults throws when the run dir path runs through a regular file', () => {
+  // The up-front statSync guard fails with ENOTDIR before the lock is taken;
+  // the unwritable-dir (EACCES) case is covered by verify-json-cli.test.js.
   const blocker = path.join(tmpRunDir(), 'blocker');
   fs.writeFileSync(blocker, 'x');
   const runDir = path.join(blocker, 'run');

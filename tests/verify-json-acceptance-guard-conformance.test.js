@@ -50,7 +50,8 @@ const CLOSE_OUT_PINS = [
   /`CLOSING_SUB_ISSUES` = the PR's `Fixes` record numbers/,
 ];
 const MERGE_PINS = [/verify\.json/, /acceptance-labeling/, /not landed/, /pass.{0,12}skip/];
-const RESIDUE_PIN = /console-residue\.js" --run "\$(PIPELINE_RUN_DIR|MULTISPEC_PARENT_DIR)" --require-verify/;
+// Pins the flag's {base} value too: the CLI exits 2 on a bare --require-verify.
+const RESIDUE_PIN = /console-residue\.js" --run "\$(PIPELINE_RUN_DIR|MULTISPEC_PARENT_DIR)" --require-verify \{base\}/;
 
 // The inserted sentences, located by their opening and closing words so the
 // negative control removes exactly what this task added.
@@ -129,5 +130,6 @@ test('AC4.1: both flow summary templates pass --require-verify to console-residu
 test('AC4.1: negative control — stripping --require-verify fails the pin', () => {
   for (const text of [SUMMARY, MULTI_SUMMARY]) {
     assert.doesNotMatch(text.replace(/ --require-verify/g, ''), RESIDUE_PIN);
+    assert.doesNotMatch(text.replace(/ --require-verify \{base\}/g, ' --require-verify'), RESIDUE_PIN);
   }
 });

@@ -41,12 +41,13 @@ function writeVerifyResults({ runDir, rows, base, now = Date.now }) {
 }
 
 // runDir -> the stored object, or null when absent / unparseable / not an
-// object / not version 1 / `checks` not an array.
+// object / not version 1 / `checks` not an array of {check, result} rows.
 function readVerifyResults(runDir) {
   let data;
   try { data = JSON.parse(fs.readFileSync(path.join(runDir, FILE_NAME), 'utf8')); } catch { return null; }
   if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
   if (data.version !== VERSION || !Array.isArray(data.checks)) return null;
+  if (!data.checks.every((r) => r && typeof r.check === 'string' && typeof r.result === 'string')) return null;
   return data;
 }
 
