@@ -21,8 +21,8 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/check-staged-stack.js" --worktree "$WORKTREE" --patch "$STAGE_PATH" --rederive-out "{session tmp}/rederive-{slug}-{n}.patch"`
 - **Action:** The staging site follows `_shared/staged-patch.md`'s Staging-time gate past the solo check into its Stacked check. The CLI copies every file the run's patches touch into a throwaway scratch repo and applies `staged/*.patch` in apply order (byte-wise filename sort, `review-1` < `review-10` < `review-2`).
 - **Should feel:** Invisible when nothing conflicts — exit 0, one JSON line, nothing on stderr, and the site writes exactly the `STAGED` line it always wrote.
-- **Should understand:** The check never touches the worktree or `staged/`; the only write is `--rederive-out`, which may not point inside `staged/`. It runs with user and system git config switched off, so a `diff.noprefix` setting cannot change its verdict.
-- **Red flags:** A `STAGED` line written straight after the solo check with no stacked check run. Extra log lines on a clean stack. Any modified file in `git status` after the check.
+- **Should understand:** The check never touches the worktree or `staged/`; the only write is `--rederive-out`, which may not point inside `staged/`. It runs with user and system git config switched off, so a `diff.noprefix` setting cannot change its verdict — on Windows too, where the global config is pointed at `/dev/null` because Git for Windows rejects the native null device (`\\.\nul`).
+- **Red flags:** A `STAGED` line written straight after the solo check with no stacked check run. Extra log lines on a clean stack. Any modified file in `git status` after the check. On Windows, a single clean patch reported as not applicable (exit 2, every patch in `skipped`) — git refused the config path before it read a patch (#3696).
 
 ### 2. Read a conflict naming both patches
 - **URL:** the CLI's exit 1, its stderr line, and its JSON `targetConflict`
@@ -48,3 +48,4 @@ files:
 ## Origin
 - Created during build of #3290 (check same-run staged patches stacked, not only alone, at staging time), run `2026-10-19T205809-record-3290`.
 - Related: `docs/journeys/resolve-the-unattended-console-in-one-process-1932.md` (the unattended console now takes the stacked verdict).
+- Updated during build of #3696 (Windows: the stack check's git calls failed on the `\\.\nul` config path, so every staged patch read as not applicable), run `2026-10-20T124821-spec-3599-3602-3695-3696-3698-3699-3595`.

@@ -114,7 +114,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    itself is in question, never needed to execute this step correctly.
 3. **`integration-model: pr-first` (`_shared/integration-model.md`): skip this step entirely.** The
    Review Console's own terminal decision already routed the merge — `review-console.md`'s "On
-   approval" step 6 ran `_shared/pr-first-merge.md` directly (or deliberately skipped it, "leave PR
+   approval" step 13 ran `_shared/pr-first-merge.md` directly (or deliberately skipped it, "leave PR
    open") before this cleanup step is reached. Calling `/superpowers:finishing-a-development-branch`
    here too would re-ask a decision already made — the same improvised-third-stop pattern
    `_shared/auto-mode-contract.md` forbids, mirroring the split `flow/worktree-merge.md` and
