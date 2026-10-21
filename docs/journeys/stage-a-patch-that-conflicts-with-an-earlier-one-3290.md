@@ -26,7 +26,7 @@ files:
 
 ### 2. Read a conflict naming both patches
 - **URL:** the CLI's exit 1, its stderr line, and its JSON `targetConflict`
-- **Action:** Read `check-staged-stack.js: staged/{patch} does not apply on top of staged/{conflictsWith} in apply order ({error})`. The new patch may be either side: a new `review-10.patch` sorts before an existing `review-2.patch`, so the existing one can be the one that fails.
+- **Action:** Read `check-staged-stack.js: staged/{patch} does not apply on top of staged/{conflictsWith} in apply order ({error})`. The new patch may be either side: a new `review-10.patch` sorts before an existing `review-2.patch`, so the existing one can be the one that fails. When more than one conflict involves `--patch`, the same line carries each one, joined by `; `.
 - **Should feel:** Specific. Two file names and git's own error, not "a patch conflicted".
 - **Should understand:** A patch that does not apply even alone is the solo gate's business (exit 2 here), never reported as a conflict. Exit 4 means the check could not run, never "clean".
 - **Red flags:** A conflict line naming only one patch. Exit 0 when `--patch` was never among the walked names.

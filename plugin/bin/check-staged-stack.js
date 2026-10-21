@@ -5,7 +5,8 @@
 // reads the run dir's staged/ and writes nothing there. Its only write is --rederive-out.
 //   node bin/check-staged-stack.js --worktree <dir> --patch <run-dir>/staged/<name>.patch [--rederive-out <file>] [--help]
 // Exit 0 no conflict involves --patch — one JSON line on stdout, nothing on stderr; 1 a conflict
-// involves --patch — the JSON on stdout, one stderr line naming both staged/ paths; 2 a malformed
+// involves --patch — the JSON on stdout, one stderr line naming every conflict that involves
+// --patch (joined by `; `, in walk order); 2 a malformed
 // invocation (missing/valueless flags, --patch not a .patch directly under a staged/ dir, a
 // missing --patch file, --worktree not a directory, --rederive-out resolving inside staged/, --patch
 // not among staged/'s walked .patch entries — a dotfile, say), or --patch does not apply at its
@@ -156,8 +157,9 @@ function run(argv, deps = realDeps) {
     return 2;
   }
   if (result.targetConflict !== null) {
-    const c = result.targetConflict;
-    deps.stderr(`check-staged-stack.js: staged/${c.patch} does not apply on top of staged/${c.conflictsWith} in apply order (${c.error})\n`);
+    const involved = result.conflicts.filter((c) => c.patch === targetName || c.conflictsWith === targetName);
+    const lines = involved.map((c) => `staged/${c.patch} does not apply on top of staged/${c.conflictsWith} in apply order (${c.error})`);
+    deps.stderr(`check-staged-stack.js: ${lines.join('; ')}\n`);
     return 1;
   }
   return 0;
