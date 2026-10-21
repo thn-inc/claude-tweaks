@@ -168,5 +168,5 @@ function writeStagedSidecar({ runDir, id, content }) {
 }
 
 module.exports = {
-  resolveTarget, sanitizeId, writeStagedItem, writeStagedSidecar, parseNumberedKind, listExistingNumbers,
+  resolveTarget, sanitizeId, writeStagedItem, writeStagedSidecar, parseNumberedKind, listExistingNumbers, findGitRoot,
 };

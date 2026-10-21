@@ -290,7 +290,7 @@ run is truly a no-op for all persistence.
 
 **Step 10 — SUMMARIZE.**
 
-Report: how many findings were emitted, how many survived dedup, how many issues were filed / skipped / remembered. List any new issue URLs. Always include the throttle line per `_shared/health-filing-digest.md`'s SUMMARIZE step: `filed: N, digested: M, cap: {CAP}, materiality: K` — report it even when `M` and `K` are both `0`, so the throttle is visible rather than inferred.
+Report: how many findings were emitted, how many survived dedup, how many issues were filed / skipped / remembered. List any new issue URLs. Always include the throttle line per `_shared/health-filing-digest.md`'s SUMMARIZE step: `filed: N, digested: M, cap: {CAP}, materiality: K` — report it even when `M` and `K` are both `0`, so the throttle is visible rather than inferred. List every candidate the judge set aside under a criterion fragment's accepted-risk rule (`_shared/criteria-agent-trust-scope.md`) as `accepted risk — ADR NNNN ({kind})`: it is not a finding and never enters Step 6's array, so this summary line is its only record.
 
 Also report the slice's read coverage, so the summary can never imply more coverage than the sweep had: the slice id, whether it was read recursively or own-files-only (Step 1's `recursive`), bytes read, and — if Step 3's read budget was reached — every **deferred** file with its size, under a `Deferred (read budget)` heading. When nothing was deferred, say so in one line rather than omitting the section; an absent section is indistinguishable from a forgotten one. Under focus mode, there is no slice id or `recursive` flag — report `focus-mode.md`'s scanned-file and skipped-file counts instead (Step F2).
 

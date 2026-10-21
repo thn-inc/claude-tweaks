@@ -147,7 +147,7 @@ These challenge the project's DESIGN.md, not the diff — the wrapper never edit
 
 ### Agent Trust Scope (from Step 6.65, code-health's `focus=agent-trust-scope`)
 
-{Include when Step 6.65's pre-check found `.claude/settings.json` or `.claude-tweaks/policy.yml` in scope and at least one candidate survived judgment. Omit when the pre-check skipped (neither config file in the diff scope), when the result was `notApplicable: true` (no `.claude-tweaks/policy.yml`), when zero candidates came back (note in the summary footer instead: "Agent Trust Scope pass ran clean."), or when candidates were found but none survived judgment (note in the summary footer instead: "Agent Trust Scope pass ran — no actionable findings.").}
+{Include when Step 6.65's pre-check found `.claude/settings.json` or `.claude-tweaks/policy.yml` in scope and at least one candidate survived judgment. Omit when the pre-check skipped (neither config file in the diff scope), when the result was `notApplicable: true` (no `.claude-tweaks/policy.yml`), when zero candidates came back (note in the summary footer instead: "Agent Trust Scope pass ran clean."), or when candidates were found but none survived judgment (note in the summary footer instead: "Agent Trust Scope pass ran — no actionable findings."); whenever an accepted-risk ADR applies, also add the summary footer note: "Agent Trust Scope: accepted risk — ADR NNNN ({kind})." — in place of the "no actionable findings" note when nothing else survived judgment}
 
 | File | Dimension | Severity | Finding |
 |------|-----------|----------|---------|
