@@ -213,6 +213,81 @@ test('checkA still fails a Modify bullet whose path no task Create:s (ledger row
   }
 });
 
+// #3493: Check A used fs.existsSync as proof that a Create/Test bullet's
+// parent is a directory, so a plan creating a file under a path that is
+// currently a regular file passed the audit and failed only at write time.
+test('AC1.1 (#3493): checkA reports a Create bullet whose parent path is a regular file', () => {
+  const repo = makeTmpRepo();
+  fs.writeFileSync(path.join(repo, 'README.md'), '');
+  try {
+    const result = checkA([{ type: 'Create', path: 'README.md/new.js' }], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missing, ['README.md/new.js']);
+    assert.deepStrictEqual(result.missingDetail, [{ path: 'README.md/new.js', nearestExistingAncestor: '.' }]);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#3493: checkA reports a Test bullet whose parent path is a regular file', () => {
+  const repo = makeTmpRepo();
+  fs.writeFileSync(path.join(repo, 'tests'), '');
+  try {
+    const result = checkA([{ type: 'Test', path: 'tests/new.test.js' }], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missing, ['tests/new.test.js']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#3493: a regular file two levels up is rescued neither by the one-new-level rule nor by a sibling bullet', () => {
+  const repo = makeTmpRepo();
+  fs.writeFileSync(path.join(repo, 'notes.txt'), '');
+  try {
+    const result = checkA([
+      { type: 'Create', path: 'notes.txt/sub/a.js' },
+      { type: 'Create', path: 'notes.txt/sub/b.js' },
+    ], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missing, ['notes.txt/sub/a.js', 'notes.txt/sub/b.js']);
+    assert.deepStrictEqual(result.missingDetail.map((d) => d.nearestExistingAncestor), ['.', '.']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#3493: a regular-file parent under a real directory names that directory as the nearest existing ancestor', () => {
+  const repo = makeTmpRepo();
+  fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'plugin', 'bin', 'tool.js'), '');
+  try {
+    const result = checkA([{ type: 'Create', path: 'plugin/bin/tool.js/new.js' }], repo);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(result.missingDetail, [{ path: 'plugin/bin/tool.js/new.js', nearestExistingAncestor: path.join('plugin', 'bin') }]);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#3493: a parent that is a symlink to a real directory still passes', (t) => {
+  const repo = makeTmpRepo();
+  try {
+    fs.mkdirSync(path.join(repo, 'real'));
+    try {
+      fs.symlinkSync(path.join(repo, 'real'), path.join(repo, 'linked'), 'dir');
+    } catch (err) {
+      t.skip(`cannot create a directory symlink here (${err.code})`);
+      return;
+    }
+    const result = checkA([{ type: 'Create', path: 'linked/new.js' }], repo);
+    assert.strictEqual(result.ok, true);
+    assert.deepStrictEqual(result.missing, []);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 // ── Check B ──────────────────────────────────────────────────────────────
 
 test('checkB is a no-op (ok, empty) when the plan declares no Scope keywords', () => {
