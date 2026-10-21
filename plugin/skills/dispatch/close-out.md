@@ -58,10 +58,12 @@ touching shared state runs one member at a time.
 3. **Convert draft to ready, if needed (AC2).** When `isDraft`, run `_shared/pr-first-merge.md`'s
    Step 2 (Mark ready) now, before the confirmation gate — the gate's own question states the PR's
    current state, and "still draft" would already be stale by the time a human reads it otherwise.
-   Step 1 (Acceptance labeling) needs no separate run here: a `pending-review` PR only exists
-   because `/wrap-up`'s own Phase 4 execution already ran it for every member before the group
-   could reach the Review Console at all (same precondition `actions-github-issues.md`'s `## Arm
-   ready PR` action states for its own already-green candidates).
+   Step 1 (Acceptance labeling) is guarded by the run's results file: resolve the run dir from the
+   PR body's `claude-tweaks-run: {run-id}` marker (validated as `flow/claim-targets.md` validates
+   it) and read `$RUN_ROOT/.claude-tweaks/pipelines/{run-id}/verify.json`, then
+   `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/verify.json`. When `verify.json` is
+   missing, no valid marker resolves, or its `acceptance-labeling` row has not landed (a `result`
+   other than `pass`/`skip`), run `_shared/pr-first-merge.md` Step 1 before the confirmation gate.
 4. **Confirmation gate.** Read `close-out-confirmation.md` in this skill's directory and follow it
    (AC4). Declining stops here — the PR stays `pending-review` exactly as it was, and nothing below
    runs for this candidate.
