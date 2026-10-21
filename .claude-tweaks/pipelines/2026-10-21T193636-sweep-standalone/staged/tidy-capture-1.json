@@ -1,0 +1,1 @@
+[{"tag":"pr","record":null,"title":"github-pr-scan item 4 closed/merged premise wrong","action":"Capture a backlog record to fix the item 4 note","command":"/claude-tweaks:capture github-pr-scan repo-wide item 4: --state closed includes merged PRs"}]

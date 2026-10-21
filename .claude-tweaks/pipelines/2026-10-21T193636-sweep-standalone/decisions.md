@@ -2,3 +2,119 @@
 - SCANNED 21:38:16 — 4.5: reconcile --json: mirror dirty (no action); console.ready empty; 3 claims skipped (2987/3002 no-run-state, 3687 pr-open); archive-branches/remote-prune/reap skipped budget-exceeded. Reversibility: n/a.
 - AUTO 21:43:10 — Step 6: archived 69 clean un-archived run dirs via hooks.js archive-run (4 with tracked work/ committed d48c523e0 6cf4efb34 325facfe8 d447003fe). Reversibility: high. [lever: tidy-aggressiveness=moderate (default)]
 - AUTO 21:43:10 — Step 6: removed merged clean worktrees closeout-session, dispatch-record-2734; deleted merged branches worktree-closeout-session, worktree-dispatch-record-2734, tmp-sync-main (re-verified merged into main, clean, unlocked). Reversibility: med. [lever: tidy-aggressiveness=moderate (default)]
+- AUTO 21:45:28 — Step 7.5: deleted 156 orphaned plans (re-verified closed + uncited); PR #3895 opened and armed --auto (housekeeping-auto-merge: explicit) — merged immediately (no required checks pending). Reversibility: med. [lever: housekeeping-auto-merge=true (policy)]
+- AUTO 21:52:27 — Step 6: removed clean worktrees with MERGED PRs (PR-state override): dispatch-record-3276 (#3833), -3642 (#3891), -3661 (#3888), -3766 (#3808); branches left for reconcile archive-branches (squash-merged, -d cannot prove). Reversibility: med. [lever: tidy-aggressiveness=moderate (default)]
+- STAGED 21:53:49 — Step 6: release stale claims #2987, #3002 (needs:decision marked). Stage path: staged/tidy-claim-releases-1.md. Reversibility: low.
+- STAGED 21:53:49 — Step 5.6: propose digest cluster promotion from #1426. Stage path: staged/digest-promotion-1.md. Reversibility: n/a.
+- STAGED 21:53:50 — Step 5.6: propose digest cluster promotion from #1426. Stage path: staged/digest-promotion-2.md. Reversibility: n/a.
+- STAGED 21:53:50 — Step 5.6: propose digest cluster promotion from #1426. Stage path: staged/digest-promotion-3.md. Reversibility: n/a.
+- STAGED 21:53:50 — Step 5.6: propose digest cluster promotion from #1426. Stage path: staged/digest-promotion-4.md. Reversibility: n/a.
+- STAGED 21:53:50 — Step 5.6: propose digest cluster promotion from #1426. Stage path: staged/digest-promotion-5.md. Reversibility: n/a.
+- STAGED 21:53:50 — Step 4.8: capture github-pr-scan item 4 closed/merged premise fix. Stage path: staged/tidy-capture-1.md. Reversibility: n/a.
+- AUTO 22:50:21 — Approve: Propose digest cluster [hooks]: filed #3900 "hooks: resolve 3 accumulated below-floor digest findings"; appended → #3900 to 3 entry lines in #1426. Reversibility: high.
+- AUTO 22:50:29 — Approve: Propose digest cluster [dispatch]: filed #3901 "dispatch: resolve 3 accumulated below-floor digest findings"; appended → #3901 to 3 entry lines in #1426. Reversibility: high.
+- AUTO 22:50:40 — Approve: Propose digest cluster [docs]: filed #3902 "docs: resolve 4 accumulated below-floor digest findings"; appended → #3902 to 4 entry lines in #1426. Reversibility: high.
+- AUTO 22:50:46 — Approve: Propose digest cluster [code-health]: filed #3903 "code-health: resolve 9 accumulated below-floor digest findings"; appended → #3903 to 9 entry lines in #1426. Reversibility: high.
+- AUTO 22:50:53 — Approve: Propose digest cluster [tidy]: filed #3904 "tidy: resolve 3 accumulated below-floor digest findings"; appended → #3904 to 3 entry lines in #1426. Reversibility: high.
+- AUTO 22:51:05 — Approve: Released stale claim on #2987 (run 2026-10-16T222103-record-2987, past 72h TTL); resolved 1 needs-decision: tidy comment(s); needs:decision removed. Reversibility: high.
+- AUTO 22:51:19 — Approve: Released stale claim on #3002 (run 2026-10-16T222103-record-2987, past 72h TTL); resolved 1 needs-decision: tidy comment(s); needs:decision removed. Reversibility: high.
+- AUTO 22:52:15 — Approve: Capture (approved): filed #3905 github-pr-scan item 4 closed/merged premise (by:capture, type:bug, route keep). Step 7.5 verified all 8 approved items live: #3900-#3904 open with 22 #1426 entry lines marked, #3905 open, #2987/#3002 claims tombstoned and needs:decision cleared. Reversibility: high.
+## /specify
+- AUTO 21:57:48 — spec #3702 — Claim: claimed #3702 for bare-drain shaping (attempt 1). Reversibility: high.
+- AUTO 22:01:39 — Release: released claim on #3702 (shaped: #3702); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:01:59 — spec #3703 — Claim: claimed #3703 for bare-drain shaping (attempt 2). Reversibility: high.
+- AUTO 22:03:27 — Release: released claim on #3703 (shaped: #3703); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:03:44 — spec #3721 — Claim: claimed #3721 for bare-drain shaping (attempt 3). Reversibility: high.
+- AUTO 22:05:01 — Release: released claim on #3721 (shaped: #3721); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:05:38 — spec #3742 — Claim: claimed #3742 for bare-drain shaping (attempt 4). Reversibility: high.
+- AUTO 22:06:32 — Release: released claim on #3742 (shaped: #3742); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:06:45 — spec #3751 — Claim: claimed #3751 for bare-drain shaping (attempt 5). Reversibility: high.
+- AUTO 22:08:53 — Release: released claim on #3751 (shaped: #3751); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:09:06 — spec #3776 — Claim: claimed #3776 for bare-drain shaping (attempt 6). Reversibility: high.
+- AUTO 22:09:59 — Release: released claim on #3776 (shaped: #3776); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:10:11 — spec #3797 — Claim: claimed #3797 for bare-drain shaping (attempt 7). Reversibility: high.
+- AUTO 22:11:02 — Release: released claim on #3797 (shaped: #3797); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:11:16 — spec #3802 — Claim: claimed #3802 for bare-drain shaping (attempt 8). Reversibility: high.
+- AUTO 22:12:00 — Release: released claim on #3802 (shaped: #3802); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:12:14 — spec #3857 — Claim: claimed #3857 for bare-drain shaping (attempt 9). Reversibility: high.
+- AUTO 22:13:23 — Release: released claim on #3857 (shaped: #3857); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:13:35 — spec #3871 — Claim: claimed #3871 for bare-drain shaping (attempt 10). Reversibility: high.
+- AUTO 22:14:55 — Release: released claim on #3871 (shaped: #3871); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:15:07 — spec #3886 — Claim: claimed #3886 for bare-drain shaping (attempt 11). Reversibility: high.
+- AUTO 22:16:03 — Release: released claim on #3886 (shaped: #3886); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:16:15 — spec #3890 — Claim: claimed #3890 for bare-drain shaping (attempt 12). Reversibility: high.
+- AUTO 22:17:00 — Release: released claim on #3890 (shaped: #3890); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:17:13 — spec #3894 — Claim: claimed #3894 for bare-drain shaping (attempt 13). Reversibility: high.
+- AUTO 22:17:55 — Release: released claim on #3894 (shaped: #3894); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:18:10 — Close-out: bare drain --budget all: {shaped: 13, routed: 0, failed: 0}; shaped #3702,#3703,#3721,#3742,#3751,#3776,#3797,#3802,#3857,#3871,#3886,#3890,#3894; eligible set drained. Reversibility: n/a.
+## /backlog
+- AUTO 22:23:01 — Grant chain: Backlog grant: zero-eligible short-circuit — 14 candidate(s), 0 needing grant-check: trust: 12, needs-label: 2. Reversibility: high.
+- AUTO 22:23:01 — Grant chain: Backlog grant: skipped #3887 — trust: class producer:capture|elevated verdict is mixed — only a clean class earns a machine-originated grant. Reversibility: high.
+- AUTO 22:23:01 — Grant chain: Backlog grant: skipped #3859 — trust: class producer:harness-health|low verdict is mixed — only a clean class earns a machine-originated grant. Reversibility: high.
+- AUTO 22:23:01 — Grant chain: Backlog grant: skipped #3848 — trust: class producer:capture|low verdict is mixed — only a clean class earns a machine-originated grant. Reversibility: high.
+- AUTO 22:23:01 — Grant chain: Backlog grant: skipped #3847 — trust: class producer:capture|elevated verdict is mixed — only a clean class earns a machine-originated grant. Reversibility: high.
+- AUTO 22:23:01 — Grant chain: Backlog grant: skipped #3846 — trust: class producer:capture|elevated verdict is mixed — only a clean class earns a machine-originated grant. Reversibility: high.
+- AUTO 22:23:01 — Grant chain: Backlog grant: skipped #3845 — trust: class producer:capture|elevated verdict is mixed — only a clean class earns a machine-originated grant. Reversibility: high.
+- AUTO 22:23:01 — Grant chain: Backlog grant: skipped #3844 — trust: class producer:capture|low verdict is mixed — only a clean class earns a machine-originated grant. Reversibility: high.
+- AUTO 22:23:01 — Grant chain: Backlog grant: skipped #3843 — trust: class producer:capture|low verdict is mixed — only a clean class earns a machine-originated grant. Reversibility: high.
+- AUTO 22:23:01 — Grant chain: Backlog grant: skipped #3744 — trust: class producer:capture|low verdict is mixed — only a clean class earns a machine-originated grant. Reversibility: high.
+- AUTO 22:23:01 — Grant chain: Backlog grant: skipped #3740 — trust: class producer:capture|elevated verdict is mixed — only a clean class earns a machine-originated grant. Reversibility: high.
+- AUTO 22:23:01 — Grant chain: Backlog grant: skipped #3723 — trust: class producer:capture|low verdict is mixed — only a clean class earns a machine-originated grant. Reversibility: high.
+- AUTO 22:23:01 — Grant chain: Backlog grant: skipped #3706 — needs-label: record carries needs:decision — a headless unit is waiting on a human decision; see the record's newest unresolved decision comment. Reversibility: high.
+- AUTO 22:23:01 — Grant chain: Backlog grant: skipped #3690 — trust: class producer:capture|elevated verdict is mixed — only a clean class earns a machine-originated grant. Reversibility: high.
+- AUTO 22:23:01 — Grant chain: Backlog grant: skipped #3256 — needs-label: record carries needs:decision — a headless unit is waiting on a human decision; see the record's newest unresolved decision comment. Reversibility: high.
+- AUTO 22:23:01 — Labeling lanes: Backlog refine: labeling-lanes batch auto-applied (headless posture, refineAutoApply) — 40 priority rows, 4 Related groups, 0 flag-back, 0 dependency-repair. Reversibility: high.
+- AUTO 22:23:26 — apply-refine-labels: #3721: applied +priority:medium. Reversibility: high.
+- AUTO 22:23:31 — apply-refine-labels: #3723: applied +priority:medium. Reversibility: high.
+- AUTO 22:23:35 — apply-refine-labels: #3731: applied +priority:low. Reversibility: high.
+- AUTO 22:23:39 — apply-refine-labels: #3736: applied +priority:medium. Reversibility: high.
+- AUTO 22:23:42 — apply-refine-labels: #3737: applied +priority:medium. Reversibility: high.
+- AUTO 22:23:46 — apply-refine-labels: #3740: applied +priority:medium. Reversibility: high.
+- AUTO 22:23:50 — apply-refine-labels: #3742: applied +priority:low. Reversibility: high.
+- AUTO 22:23:54 — apply-refine-labels: #3744: applied +priority:medium. Reversibility: high.
+- AUTO 22:23:58 — apply-refine-labels: #3751: applied +priority:low. Reversibility: high.
+- AUTO 22:24:02 — apply-refine-labels: #3754: applied +priority:low. Reversibility: high.
+- AUTO 22:24:06 — apply-refine-labels: #3758: applied +priority:medium. Reversibility: high.
+- AUTO 22:24:09 — apply-refine-labels: #3759: applied +priority:medium. Reversibility: high.
+- AUTO 22:24:13 — apply-refine-labels: #3763: applied +priority:low. Reversibility: high.
+- AUTO 22:24:17 — apply-refine-labels: #3764: applied +priority:low. Reversibility: high.
+- AUTO 22:24:21 — apply-refine-labels: #3765: applied +priority:low. Reversibility: high.
+- AUTO 22:24:24 — apply-refine-labels: #3776: applied +priority:low. Reversibility: high.
+- AUTO 22:24:28 — apply-refine-labels: #3788: applied +priority:low. Reversibility: high.
+- AUTO 22:24:32 — apply-refine-labels: #3792: applied +priority:medium. Reversibility: high.
+- AUTO 22:24:35 — apply-refine-labels: #3795: applied +priority:low. Reversibility: high.
+- AUTO 22:24:40 — apply-refine-labels: #3797: applied +priority:low. Reversibility: high.
+- AUTO 22:24:43 — apply-refine-labels: #3802: applied +priority:low. Reversibility: high.
+- AUTO 22:24:47 — apply-refine-labels: #3810: applied +priority:high. Reversibility: high.
+- AUTO 22:24:51 — apply-refine-labels: #3811: applied +priority:medium. Reversibility: high.
+- AUTO 22:24:55 — apply-refine-labels: #3812: applied +priority:medium. Reversibility: high.
+- AUTO 22:24:58 — apply-refine-labels: #3813: applied +priority:medium. Reversibility: high.
+- AUTO 22:25:02 — apply-refine-labels: #3815: applied +priority:medium. Reversibility: high.
+- AUTO 22:25:06 — apply-refine-labels: #3816: applied +priority:low. Reversibility: high.
+- AUTO 22:25:10 — apply-refine-labels: #3817: applied +priority:low. Reversibility: high.
+- AUTO 22:25:13 — apply-refine-labels: #3818: applied +priority:low. Reversibility: high.
+- AUTO 22:25:17 — apply-refine-labels: #3819: applied +priority:low. Reversibility: high.
+- AUTO 22:25:20 — apply-refine-labels: #3820: applied +priority:low. Reversibility: high.
+- AUTO 22:25:24 — apply-refine-labels: #3822: applied +priority:medium. Reversibility: high.
+- AUTO 22:25:28 — apply-refine-labels: #3823: applied +priority:medium. Reversibility: high.
+- AUTO 22:25:32 — apply-refine-labels: #3827: applied +priority:low. Reversibility: high.
+- AUTO 22:25:35 — apply-refine-labels: #3829: applied +priority:low. Reversibility: high.
+- AUTO 22:25:39 — apply-refine-labels: #3831: applied +priority:low. Reversibility: high.
+- AUTO 22:25:42 — apply-refine-labels: #3834: applied +priority:medium. Reversibility: high.
+- AUTO 22:25:46 — apply-refine-labels: #3835: applied +priority:medium. Reversibility: high.
+- AUTO 22:25:50 — apply-refine-labels: #3836: applied +priority:medium. Reversibility: high.
+- AUTO 22:25:54 — apply-refine-labels: #3843: applied +priority:medium. Reversibility: high.
+- AUTO 22:25:55 — Related: Backlog refine: updated **Related:** on #3736 to reference #3836, #3811. Reversibility: high.
+- AUTO 22:25:57 — Related: Backlog refine: updated **Related:** on #3751 to reference #3754. Reversibility: high.
+- AUTO 22:26:00 — Related: Backlog refine: updated **Related:** on #3754 to reference #3751. Reversibility: high.
+- AUTO 22:26:02 — Related: Backlog refine: updated **Related:** on #3811 to reference #3736, #3836. Reversibility: high.
+- AUTO 22:26:04 — Related: Backlog refine: updated **Related:** on #3815 to reference #3816. Reversibility: high.
+- AUTO 22:26:06 — Related: Backlog refine: updated **Related:** on #3816 to reference #3815. Reversibility: high.
+- AUTO 22:26:08 — Related: Backlog refine: updated **Related:** on #3818 to reference #3820. Reversibility: high.
+- AUTO 22:26:10 — Related: Backlog refine: updated **Related:** on #3820 to reference #3818. Reversibility: high.
+- AUTO 22:26:11 — Related: Backlog refine: updated **Related:** on #3836 to reference #3736, #3811. Reversibility: high.
+- SCANNED 22:26:11 — Dependency repair: Backlog refine: dependency-repair scan (native blocked-by attach + findUnresolvedDependencyProse) flagged #3374, #3305, #3212, #2826 — all parent-issue records whose prose describes their leaves' blockers in Leaves tables, not their own; no repair applies, nothing written. Reversibility: n/a.
+## /sweep
+- AUTO 22:27:03 — Close-out: Sweep summary: tidy {applied: 10 rows (69 runs archived, PR #3895 merged, 6 worktrees reaped), staged: 7 items / 8 approve rows, yours: 48, clean: 6}; specify {shaped: 13, routed: 0, failed: 0}; refine {granted: 0, re-authorized: 0, needs-decision: 0, skipped: 14 (trust: 12, needs-label: 2); labeling: 40 priority set, 9 Related updated, 0 flag-back, 0 dependency-repair}. Reversibility: n/a.
+- AUTO 22:51:00 — Section E: released claim on #2987 (swept: stale claim) (swept from run 2026-10-16T222103-record-2987); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:51:13 — Section E: released claim on #3002 (swept: stale claim) (swept from run 2026-10-16T222103-record-2987); labels removed: bot:in-progress. Reversibility: high.
