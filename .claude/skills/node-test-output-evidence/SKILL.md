@@ -83,7 +83,7 @@ The baseline base run adds one whole-suite run per failing check. Before adding 
 | The log shows | Read it as |
 |---|---|
 | A family other than spec or tap (baseline adjudication), or pytest and an ambiguous summary log (flaky retry, `preExisting`) | No failure-accounting guard. Refuse to classify |
-| A jest/vitest log whose `FAIL` test files ≠ the summary's failed-suite count, or that carries any other unattributed signal (a coverage or global-hook failure line, a crash trailer, an obsolete snapshot, an interrupted or concatenated run, vitest's `Errors` block or a skipped file, a jest log not ending in `Ran all test suites…`) | An undercount. Refuse with `unattributed-failures: {N}` (#3480) |
+| A jest/vitest log whose `FAIL` test files ≠ the summary's failed-suite count, or that carries any other unattributed signal (a coverage or global-hook failure line, a crash trailer, an obsolete snapshot, an interrupted or concatenated run, vitest's `Errors` block or a skipped file, a jest log ending in none of a normal run's closing lines — the `Ran all test suites…` trailer, or a `--silent` run's `Time:` line, either optionally followed by a yarn/pnpm failure trailer) | An undercount. Refuse with `unattributed-failures: {N}` (#3480) |
 | Spec entries ≠ `ℹ fail N` + `ℹ cancelled N`, or a failing entry naming no test file | An undercount. Refuse |
 | A failing entry or TAP block naming only paths absent from the checkout its log ran in | Not a file of this run. Refuse with `absent-from-checkout` |
 | A non-zero cancelled count in the full run | Not a refusal by itself. Each cancelled test is held to the per-file evidence: it fails at base, or shows its own pass in isolation |
