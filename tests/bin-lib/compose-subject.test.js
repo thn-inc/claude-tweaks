@@ -18,6 +18,7 @@ const RECORDS = {
   2266: { number: 2266, title: 'Shaping-mode record', body: '## Current State\n\nToday X is Y. More.\n\n## Release Note\n\nUpdated shaping-mode current state.\n', labels: [{ name: 'type:task' }], issueType: null },
   2270: { number: 2270, title: 'Second task in an all-task bundle', body: '## Overview\n\nAnother task.\n\n## Release Note\n\nAdded another task path.\n', labels: [{ name: 'type:task' }], issueType: null },
   2250: { number: 2250, title: 'Lowest is a task', body: '## Overview\n\nTask overview.\n\n## Release Note\n\nAdded task overview support.\n', labels: [{ name: 'type:task' }], issueType: null },
+  2267: { number: 2267, title: "It's Bob's `x` $(echo PWNED)", body: '## Overview\n\nShell metacharacters in the title.\n\n## Release Note\n\nAdded metacharacter-safe titles.\n', labels: [{ name: 'type:bug' }], issueType: null },
   2290: { number: 2290, title: 'No release note', body: '## Overview\n\nSomething.\n', labels: [{ name: 'type:task' }], issueType: null },
 };
 
@@ -646,6 +647,23 @@ test('AC2.2: --out-dir stdout is the single-quoted title on one line', () => {
   assert.equal(out.stdout, shellQuote(title) + '\n');
   assert.equal(out.stdout.split('\n').length - 1, 1, 'exactly one newline');
   assert.equal(shellQuote("a'b"), "'a'\\''b'");
+  assert.equal(out.stdout, "'fix: It'\\''s quoted (#2262)'\n");
+});
+
+// The shipped fences paste this stdout line verbatim as `gh pr merge ... -t {title-arg}` — prove it
+// through a real sh, not shellQuote against itself: two quotes, a backtick, and a command substitution.
+test('AC2.2: --out-dir stdout round-trips through a real sh to the exact JSON title', () => {
+  const { spawnSync } = require('node:child_process');
+  const json = fakeDeps();
+  assert.equal(run(['2267'], json.deps), 0, json.out.stderr);
+  const { title } = JSON.parse(json.out.stdout);
+  assert.ok(title.includes("It's Bob's `x` $(echo PWNED)"), title);
+
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2267', '--out-dir', '/x/subj'], deps), 0, out.stderr);
+  const r = spawnSync('sh', ['-c', 'printf %s ' + out.stdout.trimEnd()], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, title);
 });
 
 test('--shell is retired (#3537): an unknown argument, exit 1, nothing composed or written', () => {
