@@ -18,6 +18,10 @@ All three must hold, checked in this order (cheapest first):
    exclusion `bin/lib/dispatch/ceremony-derive.js`'s `computeDiffFacts` already applies to a diff,
    read here against the spec's own file list instead of a diff). Zero implementation files still
    qualifies (a docs-only or test-only record) — the gate is "at most one," not "exactly one."
+   An entry whose own description marks it read-only (`read only`, `read-only`, `no change`) is
+   not counted either: the build reads it and changes nothing, so it adds no task structure. #3696's
+   one-file fix went through the full `/superpowers:writing-plans` path because
+   `check-staged-stack.js — CLI exit path (read only, no change)` was counted as a second file.
 
 **Any other header shape** — `ceremony: standard`, `size: medium`/`high`/absent, or two or more
 implementation files in `### Key Files` — **falls through to today's path unchanged**: proceed to
@@ -53,7 +57,8 @@ directory, so every downstream reader — `plan-audit.js`, `dispatch.md`'s `--co
 **Files:**
 {one line per ### Key Files entry — `Create:` for a path the repo does not yet have, `Modify:`
 otherwise (probe with a plain file-existence check, not a guess); a test file from ### Key Files
-or implied by the Acceptance Criteria is its own `Test:` line}
+or implied by the Acceptance Criteria is its own `Test:` line; a read-only entry is a
+`Waived {path}: {its Key Files description}` line, never `Modify:`}
 
 - [ ] **Step 1: Failing test** — write the test(s) the spec's `## Acceptance Criteria` describe.
 - [ ] **Step 2: Implement** — satisfy every `## Deliverables` checkbox against the files above.

@@ -132,7 +132,8 @@ function run(argv, deps = {}) {
     stdout(`claude-tweaks: marked ${tally.marked} console(s) reviewed for ${path.basename(target.dir)}${tallyNote(tally)}\n`);
     return tally.failed > 0 ? 3 : 0;
   }
-  const lines = formatResidueLines({ dir: target.dir, consoles: unacknowledged }, { pluginRoot });
+  const missingOnly = found.missingOnly.filter((c) => !c.acknowledged);
+  const lines = formatResidueLines({ dir: target.dir, consoles: unacknowledged, missingOnly }, { pluginRoot });
   // A console.json that exists but is not valid JSON hides its items: say so
   // here, where the Pipeline Summary renders stdout, instead of printing nothing.
   if (found.unreadable.length) {

@@ -9,9 +9,14 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const ROOT = path.join(__dirname, '..');
-const PLUGIN = path.join(ROOT, 'plugin');
+// pluginRootFor(root, pathImpl): the plugin root as it is spliced into script text. Native `join`
+// on a Windows host yields backslashes that a JS single-quoted literal in the composition eats,
+// so the spliced form is forward-slashed; `ROOT` itself stays native for the readText calls.
+const pluginRootFor = (root, pathImpl = path) => toPosix(pathImpl.join(root, 'plugin'), pathImpl.sep);
+const PLUGIN = pluginRootFor(ROOT);
 const read = (...p) => readText(path.join(ROOT, ...p));
 
 const DISPATCH = read('plugin', 'skills', 'build', 'dispatch.md');
@@ -51,15 +56,27 @@ test('negative control: the assertion throws on each way a paragraph can fail to
   assert.throws(() => assertNamesParser('… `parseNumstatZ` first, then `computeDiffFacts` …', 'control'));
 });
 
-test('the documented node -e composition runs and yields a diff-facts object', () => {
+// compositionFor(pluginRoot): the documented `node -e` command from ceremony-derivation.md with
+// `${CLAUDE_PLUGIN_ROOT}` replaced by `pluginRoot`.
+function compositionFor(pluginRoot) {
   const line = CEREMONY.split('\n').find((l) => l.includes('parseNumstatZ') && l.includes('node -e'));
   assert.ok(line, 'ceremony-derivation.md has no line with both parseNumstatZ and node -e');
   const nodeStart = line.indexOf('| node -e');
   assert.ok(nodeStart >= 0, 'the composition line must pipe the numstat output into `node -e`');
-  const cmd = line.slice(nodeStart + 2).split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN);
+  return line.slice(nodeStart + 2).split('${CLAUDE_PLUGIN_ROOT}').join(pluginRoot);
+}
+
+test('the documented node -e composition runs and yields a diff-facts object', () => {
+  const cmd = compositionFor(PLUGIN);
   const res = spawnSync('sh', ['-c', cmd], { input: '3\t1\tsrc/a.js\u0000', encoding: 'utf8' });
   assert.equal(res.status, 0, `snippet exited ${res.status}: ${res.stderr}`);
   const facts = JSON.parse(res.stdout);
   assert.equal(facts.fileCount, 1);
   assert.equal(facts.implFiles, 1);
+});
+
+test('a win32-shaped plugin root splices into the composition with no backslash', () => {
+  const cmd = compositionFor(pluginRootFor('D:\\a\\repo', path.win32));
+  assert.ok(!cmd.includes('\\'), `spliced command contains a backslash: ${cmd}`);
+  assert.ok(cmd.includes("require('D:/a/repo/plugin/bin/lib/git-z.js')"), cmd);
 });

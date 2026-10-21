@@ -349,3 +349,69 @@ dependencies:
         sha256: "d718b48fe3c7898804d588f050a2e266d82c9f5ef51da256c8cb8b5951527757"
       - path: "skills/apple-design/SKILL.md"
         sha256: "11840b24a11d7f94f39c6aaab074750ae4e4de4ef54ee4b1dd97e16ebd485e61"
+
+  # claude-code: the harness itself. post-tool-use-failure.js and
+  # bash-prefilter.js recognize Claude Code's worktree-isolation Bash refusal by
+  # its text, so a reworded refusal would silently zero the `wd-guard-refusal`
+  # events friction-events.js counts (#3304). Five assertions, two kinds:
+  # - The first three are the fragments plugin/bin/lib/hooks/harness-refusal.js
+  #   matches on; keep each `must-match` in lockstep with it —
+  #   tests/harness-refusal-drift-pin.test.js enforces that. They are not unique
+  #   to the matched templates: at 2.1.302 `noun:"This session"` occurs 1x,
+  #   ` is isolated in the worktree ` 9x and `Refusing to run it` 5x, the rest in
+  #   unrelated messages. So rewording only the templates the hook matches would
+  #   leave all three passing.
+  # - The last two anchor on text unique to those templates: `Refusing to run it`
+  #   + a dash occurs 1x (the git-operations refusal, the "too complex to verify"
+  #   family the hook logs), `Refusing to run it there` 2x (the two cwd-escape
+  #   refusals). The dash is the minified source's six-character backslash-u2014
+  #   escape, which is how the binary holds it; a toolchain change that emits a
+  #   raw em dash instead shows up as loud false drift, never a silent miss.
+  # Limit: literal substring matching cannot prove how a message is assembled, so
+  # a change that keeps every asserted literal somewhere in the binary still
+  # passes.
+  # The artifact is a single compiled binary (268 MB at 2.1.302) whose embedded
+  # JS keeps its template literals verbatim. That is why `root` resolves the
+  # binary file itself (no `root-suffix`) and every `upstream-path` is "." —
+  # path.join(file, ".") reads that file, matched as bytes, never decoded.
+  # `version-mode: floor`: Claude Code auto-updates near daily, so an exact pin
+  # would breach constantly; the assertions, not the version, carry the signal.
+  # `fixtures: []`: a headless probe that provokes a real refusal costs API
+  # tokens and depends on model behavior, while the template literal is
+  # deterministic and offline.
+  # `contract-paths: []`: claude-code is drift-only. A compiled binary has no
+  # upstream source subtree to diff, so the capability half does not apply.
+  - name: claude-code
+    kind: native-cli
+    installed-probe:
+      type: command
+      run: "claude --version | cut -d ' ' -f 1"
+      root: 'readlink -f "$(command -v claude)"'
+    pinned: "2.1.302"
+    version-mode: floor
+    upstream:
+      repo: "anthropics/claude-code"
+      tag-prefix: "v"
+    contract-paths: []
+    assertions:
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "the isolation refusal's noun for a session-owned worktree is This session (SESSION_NOUN)"
+        upstream-path: "."
+        must-match: 'noun:"This session"'
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "the refusal names its worktree with the clause ' is isolated in the worktree ' (ISOLATION_CLAUSE)"
+        upstream-path: "."
+        must-match: " is isolated in the worktree "
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "every isolation refusal carries Refusing to run it (REFUSAL_SIGNATURE, the prefilter's gate)"
+        upstream-path: "."
+        must-match: "Refusing to run it"
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "the git-operations refusal the hook logs keeps its Refusing to run it + dash wording"
+        upstream-path: "."
+        must-match: 'Refusing to run it \u2014 '
+      - file: "plugin/bin/lib/hooks/harness-refusal.js"
+        claims: "the cwd-escape refusals the hook logs keep their Refusing to run it there wording"
+        upstream-path: "."
+        must-match: "Refusing to run it there"
+    fixtures: []

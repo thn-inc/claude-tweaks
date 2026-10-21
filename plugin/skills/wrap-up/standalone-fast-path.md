@@ -38,7 +38,7 @@ file's only scope is Phase 4's **cleanup execution** step, for the narrow item s
 
 **Item 2 (ledger)** — delete via `/ledger`'s delete operation, only after Phase 3's ledger gate
 confirmed zero open items. Already "simple enough to execute inline" per
-`cleanup-procedures.md` — no further procedure needed.
+`cleanup-procedures.md` — no further procedure needed (a run-dir ledger is gitignored, so there is nothing to commit; `cleanup-procedures.md`'s Item 2 commit applies only to a tracked `docs/plans/` ledger).
 
 **Item 6 (ephemeral dev server)** — only reachable if this conversation-based, no-worktree run
 still triggered a frontend visual review that auto-started a dev server

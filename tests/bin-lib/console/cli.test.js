@@ -444,3 +444,33 @@ test('an already-resolved console.json re-renders the Needs a human block too, a
   assert.ok(!after.includes('wrap-up-memory-1.md'), 'a resolved item is not residue');
   assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), rawBefore, 'console.json is not rewritten');
 });
+
+// #3772: a fresh resolve builds its items from the current staged/ listing, so only a
+// re-rendered console.json can carry an unresolved item whose staged file has vanished.
+function storedConsole(ids) {
+  return `${JSON.stringify({
+    resolved: true, mode: 'auto-resolve', at: '2026-09-06T11:00:00.000Z', ceiling: 'unattended',
+    items: ids.map((id) => ({ id, section: 'Pending review', resolution: 'pending', reason: 'unmapped-prefix' })),
+    merge: { resolution: 'leave-open', reason: 'lacks auto:merge' },
+  }, null, 2)}\n`;
+}
+
+test('AC3.6: a re-rendered console counts only items whose staged file still exists (#3772)', async () => {
+  const fx = mainCheckoutWithRun({ staged: { 'review-13-record.md': 'x' }, consoleJson: storedConsole(['review-13-record.md', 'review-14-record.md']) });
+  const { d, out } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  assert.match(out(), /Needs a human — 1 item\(s\)/);
+  const after = out().slice(out().indexOf('Needs a human'));
+  assert.ok(after.includes('review-13-record.md'), after);
+  const notCounted = after.split('\n').filter((l) => l.startsWith('  not counted — '));
+  assert.strictEqual(notCounted.length, 1, after);
+  assert.ok(notCounted[0].includes('review-14-record.md'), notCounted[0]);
+});
+
+test('AC3.6: a re-rendered console whose every unresolved item is missing prints no Needs a human block (#3772)', async () => {
+  const fx = mainCheckoutWithRun({ staged: {}, consoleJson: storedConsole(['review-13-record.md', 'review-14-record.md']) });
+  const { d, out } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  assert.match(out(), /already records a resolved console/);
+  assert.ok(!/Needs a human/.test(out()), out());
+});
