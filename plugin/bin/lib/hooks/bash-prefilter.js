@@ -26,7 +26,9 @@
 //
 // Dependency-light by contract: fs, git-command.js (which requires only path)
 // and harness-refusal.js (which requires nothing). Adding a heavier require here
-// moves cost onto EVERY Bash call.
+// moves cost onto EVERY Bash call. The same holds for user-prompt-submit: it fires
+// on every human prompt and Claude Code waits for it, so it is governed here too,
+// by a raw substring test on `claude-tweaks:` with no JSON parse.
 'use strict';
 const fs = require('fs');
 const { GUARDED_PROGRAM_WORDS, forEachCommandSegment, redirectWriteTargets } = require('./git-command');
@@ -125,9 +127,14 @@ function failureCarriesRefusal(raw, input) {
 // every event this filter does not govern.
 function earlyGate(event, readRaw = () => fs.readFileSync(0, 'utf8')) {
   const isFailure = event === 'post-tool-use-failure';
-  if (!wordsFor(event) && !isFailure) return null;
+  const isPrompt = event === 'user-prompt-submit';
+  if (!wordsFor(event) && !isFailure && !isPrompt) return null;
   let raw = '';
   try { raw = readRaw(); } catch { raw = ''; }
+  // JSON never escapes `/` or `:`, so `claude-tweaks:` is a superset of every
+  // payload user-prompt-submit.js can record; the handler makes the real call.
+  // Unreadable or unparseable stdin skips: the handler would do nothing with it.
+  if (isPrompt) return { raw, skip: !raw.includes('claude-tweaks:') };
   let input = null;
   try { input = JSON.parse(raw); } catch { input = null; }
   if (isFailure) {

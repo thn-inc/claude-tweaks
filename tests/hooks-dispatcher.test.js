@@ -761,6 +761,15 @@ test('hooks.json registers a PostToolUse matcher for Write (unfiltered, literal 
   assert.match(writeEntry.hooks[0].command, /bin\/hooks\.js" post-tool-use$/);
 });
 
+test('hooks.json registers a matcher-less UserPromptSubmit group invoking hooks.js user-prompt-submit', () => {
+  const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
+  const groups = config.hooks.UserPromptSubmit;
+  assert.ok(Array.isArray(groups), 'expected a UserPromptSubmit array');
+  assert.strictEqual(groups.length, 1);
+  assert.ok(!('matcher' in groups[0]), 'Claude Code ignores matchers for UserPromptSubmit, so none is registered');
+  assert.ok(groups[0].hooks.some((h) => h.type === 'command' && h.command.includes('hooks.js" user-prompt-submit')));
+});
+
 test('hooks.json registers ONE unconditional PostToolUse handler for Bash (#3074)', () => {
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const bashEntry = config.hooks.PostToolUse.find((e) => e.matcher === 'Bash');

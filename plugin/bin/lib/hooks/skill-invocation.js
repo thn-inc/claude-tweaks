@@ -35,8 +35,9 @@
 //       matcher-less control capture showing only Read/ToolSearch tool use).
 //       Measured headless (`claude -p`) only; interactive CLI uses the same
 //       slash-expansion path but was not measured non-interactively. This
-//       ledger therefore records MODEL-INITIATED Skill tool calls only — a
-//       human typing a slash command leaves no event.
+//       ledger therefore records MODEL-INITIATED Skill tool calls only: the
+//       typed form is recorded by user-prompt-submit.js with `source: "user"`,
+//       and this module's lines carry no `source`, meaning model-initiated.
 'use strict';
 const ctxLib = require('./context');
 
