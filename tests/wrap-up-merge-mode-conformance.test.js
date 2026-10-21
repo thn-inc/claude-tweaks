@@ -50,8 +50,10 @@ const MERGE_MODE_FACTS = {
 // SKILL.md's router bullet: `merge` routes on the token alone, so a bare `merge` reaches
 // merge-mode.md's no-record stop instead of being stripped as a flag.
 const ROUTER_FACTS = {
-  'routes-on-token': /If `\$ARGUMENTS` carries the literal `merge` token anywhere \(`#42 merge` or `merge #42`\), with or without a record reference, read `merge-mode\.md`/,
+  'routes-on-token': /If `\$ARGUMENTS` consists of nothing but the literal `merge` token, at most one record reference \(`#42 merge` or `merge #42`\), and this skill's own flags \(`--dry-run`, `--skill-budget <n>`, `--doc-budget <n>`, `cleanup-only`\), read `merge-mode\.md`/,
+  'bare-and-cleanup-route': /A bare `merge` and `merge` with `cleanup-only` route there too/,
   'routing-not-flag': /`merge` is a routing token handled before the flag strip, never a flag/,
+  'free-text-falls-through': /Free text that merely contains the word merge \(`fix the merge bug`\) does not route there and falls through to the branches below/,
 };
 
 // The region is merge-mode.md before its `## Conflict` heading, so the Conflict body
