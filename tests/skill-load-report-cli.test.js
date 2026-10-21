@@ -136,7 +136,7 @@ test('an unreadable subagents/ directory is counted and the run continues', CHMO
   }
 });
 
-test('closure joins on namespace + skill: over its closure is flagged, another plugin\'s same-named skill gets closure null', async () => {
+test('closure joins on namespace + skill: demo:alpha gets its closure, another plugin\'s same-named skill gets closure null', async () => {
   const { transcriptDir, deps, json } = setup();
   const { root, closure } = pluginRoot();
   writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
@@ -214,6 +214,75 @@ test('cross-root reads are not comparable', async () => {
   ]);
   assert.strictEqual(await run(['--plugin-root', root], deps), 0);
   assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), []);
+});
+
+// Origin anchoring: a read counts only when the text before its final
+// "skills/" segment is the matched root itself or, for a named plugin, an
+// installed copy of it under plugins/cache/{marketplace}/{name}/{version}/.
+test('origin: a same-relative-path read under no root is not counted', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse('/proj/.claude/skills/alpha/extra.md', 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), []);
+});
+
+test('origin: an installed copy of the same plugin at another version is counted', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse('/home/u/.claude/plugins/cache/m/demo/9.9.9/skills/alpha/extra.md', 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), ['skills/alpha/extra.md']);
+});
+
+test('origin: a cache path of a different plugin name is not counted', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse('/home/u/.claude/plugins/cache/m/other/1.0.0/skills/alpha/extra.md', 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), []);
+});
+
+test('origin: a read under the root\'s own absolute path is counted', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse(path.join(root, 'skills/alpha/extra.md'), 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), ['skills/alpha/extra.md']);
+});
+
+test('origin: a root with no plugin.json accepts no installed-copy path', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  fs.rmSync(path.join(root, '.claude-plugin'), { recursive: true });
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('alpha', 't1', 100),
+    readUse(`${CACHE}/skills/alpha/extra.md`, 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'alpha'), []);
 });
 
 test('outsideClosure is distinct and sorted', async () => {
@@ -409,8 +478,9 @@ test('harness-health names the Skill-load check: command, top 10, filing title, 
     'open `by:harness-health` issue already carries that exact title',
     '`status: "ok"`',
     'empty `outsideClosure`',
-    'Back within its static closure: no outside reads over {sessions} sessions',
+    'No outside reads observed over the last {sessions} sessions',
     'never closes anything',
+    'reopen',
     '`--dry-run`',
   ]) assert.ok(para.includes(needle), `Skill-load check paragraph is missing: ${needle}`);
 });

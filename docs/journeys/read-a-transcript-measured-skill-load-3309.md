@@ -37,7 +37,7 @@ files:
 - **Action:** Read the `outsideClosure` paths in the record, or re-run the CLI for the same directory and read the skill's row. Each path is a file its sessions Read that its `SKILL.md` does not cite, directly or through files it cites. Then add the missing citation or remove the stray read.
 - **Should feel:** Like a lead, not a verdict. The record says this skill's real sessions read skill files its static closure does not contain, which means #3307's citation grammar is missing a reference this skill makes.
 - **Should understand:**
-  - The closure is transitive and usually large (about 6 MB for this plugin's skills, since a bare-name citation that names exactly one file now resolves, #3634), so a record is rare. Each time one is filed, it points at a real blind spot.
+  - A record is a lead, not always a missing citation. The first real run filed two, `claude-tweaks:reflect` and `claude-tweaks:review`, each reading `skills/simplify/SKILL.md`. The comparison is by file, so one read of a file the citations do not reach is enough to list it.
   - The record carries the skill name, its `outsideClosure` paths, `invocations` and `sessions`, never transcript excerpts.
   - A deliberately uncited read can be fine. The record exists so the gap is a decision, not an accident.
 - **Red flags:**
@@ -46,11 +46,12 @@ files:
 
 ### 3. Watch it close itself
 - **URL:** the same issue, on a later harness-health firing.
-- **Action:** Nothing. Once a firing with `status: "ok"` observes the skill again with an empty `outsideClosure`, harness-health comments and closes the record.
-- **Should feel:** Self-maintaining. The comment reads `Back within its static closure: no outside reads over {sessions} sessions`.
+- **Action:** Nothing. Once a firing with `status: "ok"` lists the skill in `rows` with an empty `outsideClosure`, harness-health comments and closes the record.
+- **Should feel:** Self-maintaining. The comment reads `No outside reads observed over the last {sessions} sessions`. It states only what was observed.
 - **Should understand:**
   - A `no-data` firing, a firing where the skill was not invoked, or a skill whose `outsideClosure` is `null` never closes anything.
-  - Under `--dry-run` nothing is filed or closed. The firing only prints what it would do.
+  - An empty `outsideClosure` does not prove a citation was added: outside reads are sparse, and a read can roll out of the 20-session window. If the read comes back, the closed record is reopened with a comment naming the current paths, not duplicated. An open record's body is not refreshed when the paths change.
+  - Under `--dry-run` nothing is filed, closed, or reopened. The firing only prints what it would do.
 - **Red flags:**
   - A record closed on a `no-data` firing.
   - A record closed while its skill does not appear in that firing's rows.

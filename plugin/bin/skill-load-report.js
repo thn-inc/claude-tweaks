@@ -35,9 +35,12 @@
 // the project-local .claude/skills form); any other skill gets
 // closure null and outsideClosure null. `outsideClosure` is the sorted,
 // distinct root-relative paths the skill's invocations Read that the matched
-// root holds as citable files (skills/**, agents/**) but its static closure
-// does not list; a Read of any file that root does not hold (another plugin's
-// cache, a project-local .claude/skills) is not comparable and is dropped.
+// root holds but its static closure does not list. Only skill-file Reads
+// (a path with a skills/ segment) are recorded and compared, and a Read counts
+// only when the text before its final skills/ segment is that root itself or,
+// for a root whose plugin.json names it, an installed copy of it
+// (plugins/cache/{marketplace}/{name}/{version}/) — a same-relative-path file
+// from any other origin is dropped.
 // "no-data" means no main transcript was read — never zero load reported as
 // measured.
 // Exit: 0 success (including no-data); 2 malformed invocation or a
@@ -138,10 +141,11 @@ function closureIndex(rootsAbs) {
   const index = new Map();
   for (const rootAbs of rootsAbs) {
     const ns = pluginName(rootAbs);
+    const originAbs = `${path.resolve(rootAbs).replace(/\\/g, '/')}/`;
     const reader = pluginRootReader(rootAbs);
     const rootFiles = new Set(reader.listFiles());
     for (const e of entryPointLoads('.', reader)) {
-      index.set(`${ns}\0${e.entry.slice(e.entry.lastIndexOf(':') + 1)}`, { closure: e.closure, files: new Set(e.files), rootFiles });
+      index.set(`${ns}\0${e.entry.slice(e.entry.lastIndexOf(':') + 1)}`, { closure: e.closure, files: new Set(e.files), rootFiles, originAbs, ns });
     }
   }
   return index;
@@ -158,15 +162,25 @@ function foldPathNamespace(skill) {
   return i >= 0 && skill.slice(0, i).includes('/') ? skill.slice(i + 1) : skill;
 }
 
-// A Read's file_path -> the root-relative form closure files use: the suffix
-// from the last "/skills/" segment, the path itself when it already starts
-// with "skills/", else null. No nested skills/ directory exists under a skills
-// tree, so the last segment is the root's.
-function closureRelative(readPath) {
-  const p = readPath.replace(/\\/g, '/');
-  if (p.startsWith('skills/')) return p;
-  const i = p.lastIndexOf('/skills/');
-  return i >= 0 ? p.slice(i + 1) : null;
+// A Read's file_path -> { origin, rel }: rel is the root-relative form closure
+// files use (the suffix from the last "/skills/" segment), origin the text
+// before it, trailing "/" included; null without such a segment. No nested
+// skills/ directory exists under a skills tree, so the last segment is the
+// root's.
+function splitAtSkills(readPath) {
+  const i = readPath.lastIndexOf('/skills/');
+  return i >= 0 ? { origin: readPath.slice(0, i + 1), rel: readPath.slice(i + 1) } : null;
+}
+
+// Whether a Read's origin is the matched root itself, or — for a root whose
+// plugin.json names it — an installed copy of that plugin, so a same-relative-path
+// file of another root (another plugin, ~/.claude/skills, a project's .claude)
+// is never compared against this one.
+function originMatches(entry, origin) {
+  if (origin === entry.originAbs) return true;
+  if (!entry.ns) return false;
+  const name = entry.ns.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`/plugins/cache/[^/]+/${name}/[^/]+/$`).test(origin);
 }
 
 // Plain `{ns}:{name}` / bare-name split — every row's skill is already
@@ -239,8 +253,8 @@ async function run(argv, deps = realDeps) {
       const outside = new Set();
       if (entry) {
         for (const p of readsBySkill.get(r.skill)) {
-          const rel = closureRelative(p);
-          if (rel !== null && entry.rootFiles.has(rel) && !entry.files.has(rel)) outside.add(rel);
+          const read = splitAtSkills(p);
+          if (read && originMatches(entry, read.origin) && entry.rootFiles.has(read.rel) && !entry.files.has(read.rel)) outside.add(read.rel);
         }
       }
       return { ...r, closure: entry ? entry.closure : null, outsideClosure: entry ? [...outside].sort() : null };
