@@ -114,7 +114,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    itself is in question, never needed to execute this step correctly.
 3. **`integration-model: pr-first` (`_shared/integration-model.md`): skip this step entirely.** The
    Review Console's own terminal decision already routed the merge — `review-console.md`'s "On
-   approval" step 6 ran `_shared/pr-first-merge.md` directly (or deliberately skipped it, "leave PR
+   approval" step 13 ran `_shared/pr-first-merge.md` directly (or deliberately skipped it, "leave PR
    open") before this cleanup step is reached. Calling `/superpowers:finishing-a-development-branch`
    here too would re-ask a decision already made — the same improvised-third-stop pattern
    `_shared/auto-mode-contract.md` forbids, mirroring the split `flow/worktree-merge.md` and
@@ -133,13 +133,15 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
      presents that skill's interactive menu, and every outcome it produces is already logged per
      `_shared/auto-decision-log.md`'s canonical schema. Map its outcome onto this branch structure:
      - **`merged`** → proceed to step 4, same as "Merged, PR created, or discarded" below.
-     - **`pending-review`** → a merge conflict or a failed merged-result verification — do NOT
-       proceed to step 4. Skip steps 3.5, 3.6, 4, and 5 below entirely for this spec (do NOT close
-       the run, do NOT remove the worktree, do NOT delete the branch) and skip Section E (issue
-       claim release) — same posture as "Kept as-is" below, since the worktree and branch are
-       exactly as `local-merge-auto-finish.md` left them: unmerged, unmodified, awaiting a human.
-       Note in the wrap-up summary that this spec parked pending resolution of a merge conflict or
-       failed post-merge verification, distinct from a deliberate keep-as-is.
+     - **`pending-review`** → any of that file's Park reasons (an abort, a composer failure, a
+       predicted or actual merge conflict, a failed merged-result verification, or a push failure)
+       — do NOT proceed to step 4. Skip steps 3.5, 3.6, 4, and 5 below entirely for this spec (do
+       NOT close the run, do NOT remove the worktree, do NOT delete the branch) and skip Section E
+       (issue claim release) — same posture as "Kept as-is" below, since the worktree and branch
+       are exactly as `local-merge-auto-finish.md` left them, awaiting a human: unmerged — except
+       after a push failure, where the local merge commit stays in the main checkout, unpushed.
+       Note in the wrap-up summary that this spec parked pending resolution of the reason that
+       file logged, distinct from a deliberate keep-as-is.
 
      When the Precondition does not hold (an `interactive` or standalone run — no `config.yml` in
      this run's directory), run `/superpowers:finishing-a-development-branch` now (do not stop and

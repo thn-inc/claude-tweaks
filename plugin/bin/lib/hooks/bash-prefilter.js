@@ -24,11 +24,13 @@
 // Known limit: a program name produced by command substitution (`$(echo git)
 // push`) is not reached, and the handler cannot resolve it either.
 //
-// Dependency-light by contract: fs plus git-command.js (which requires only
-// path). Adding a heavier require here moves cost onto EVERY Bash call.
+// Dependency-light by contract: fs, git-command.js (which requires only path)
+// and harness-refusal.js (which requires nothing). Adding a heavier require here
+// moves cost onto EVERY Bash call.
 'use strict';
 const fs = require('fs');
 const { GUARDED_PROGRAM_WORDS, forEachCommandSegment, redirectWriteTargets } = require('./git-command');
+const { REFUSAL_SIGNATURE } = require('./harness-refusal');
 
 // Both word sets come from git-command.js, where the parsers that key on these
 // words live (#3092): pre-tool-use runs every guard family, post-tool-use only the
@@ -109,10 +111,10 @@ function shouldRunFull(event, input) {
 
 // #2783: post-tool-use-failure fires on EVERY failed Bash call, yet its handler
 // only acts on the harness worktree-isolation refusal, whose text always carries
-// this phrase (post-tool-use-failure.js's HARNESS_ISOLATION_REFUSAL_RE). Matched
+// this phrase (harness-refusal.js's REFUSAL_SIGNATURE, the tail of
+// post-tool-use-failure.js's HARNESS_ISOLATION_REFUSAL_RE). Matched
 // on the raw payload OR the parsed `error`, so a JSON-escaped spelling still runs.
 // Unparseable input skips: the handler does nothing with it either.
-const REFUSAL_SIGNATURE = 'Refusing to run it';
 function failureCarriesRefusal(raw, input) {
   if (raw.includes(REFUSAL_SIGNATURE)) return true;
   return Boolean(input && typeof input.error === 'string' && input.error.includes(REFUSAL_SIGNATURE));

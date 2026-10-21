@@ -100,6 +100,7 @@ Assert the exact flagged line numbers, not just a count, because the right count
 | Deleting comments instead of replacing them with spaces | Line numbers in offender messages no longer match the file |
 | A scan with no floor on matched sites | A pattern that stops matching reports zero offenders, and that looks like a clean tree |
 | Self-tests that cover only the happy path | The right count can come from the wrong lines, and a matcher can go dead without a negative case failing |
+| Reading a green token-count scan as proof that a new call follows the convention | A count-based scan sees tokens, not call sites, so a new call through a wrapper the file already has allowlisted adds no token and passes. #3799's first fix sent `verify.js`'s new git-dir comparison through the file's own `realpathOrNull`, a JS `fs.realpathSync` wrapper holding the one allowlisted token. `tests/path-guard-conformance.test.js` went green, and review then reproduced a case-variant `--cwd` into the same checkout being refused on a case-insensitive volume. The fix resolved both sides through path-guard's `canonicalRealpath` and removed the allowlist entry. When a count scan goes red, decide what the new call must answer before restoring the count |
 
 ## Reference
 

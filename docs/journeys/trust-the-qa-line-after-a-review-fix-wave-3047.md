@@ -34,10 +34,10 @@ files:
 
 ### 3. Read the re-run's result on the QA line
 - **URL:** The review summary's `### QA Validation (from /test)` status, and the PR's `<!-- run-comment: verdict -->` comment.
-- **Action:** When the intersection is non-empty, `/claude-tweaks:test qa affected` re-runs the stories. Re-run stories take their new result, the rest keep their pre-wave result, and the status is recomputed over all stories.
-- **Should feel:** Current. The line describes the UI being merged.
-- **Should understand:** A re-run reporting PARTIAL FAILURE or ALL FAILED makes the verdict BLOCKED, as Step 1.5's test gate would. The verdict comment copies the summary's QA line word for word, with no separate wording.
-- **Red flags:** Verdict PASS beside a failing QA line. A status computed only over the re-run subset, which hides a pre-wave failure. A verdict comment whose QA wording differs from the summary's.
+- **Action:** When the intersection is non-empty, `/claude-tweaks:test qa affected --source review` re-runs the stories. Re-run stories take their new result, the rest keep their pre-wave result, and the status is recomputed over all stories.
+- **Should feel:** Current. The line describes the UI being merged. The re-run reads as one step inside the review, not as a second skill's report.
+- **Should understand:** A re-run reporting PARTIAL FAILURE or ALL FAILED makes the verdict BLOCKED, as Step 1.5's test gate would. The verdict comment copies the summary's QA line word for word, with no separate wording. `--source review` is the parent signal for a standalone `/review` that has no `$PIPELINE_RUN_DIR`. It is the same form Step 1.5's auto-trigger uses, and it keeps `/test` from rendering its own `## Next Actions` block (#3771).
+- **Red flags:** Verdict PASS beside a failing QA line. A status computed only over the re-run subset, which hides a pre-wave failure. A verdict comment whose QA wording differs from the summary's. `/test`'s own Next Actions block appearing in the middle of a standalone review's report.
 
 ### 4. Read the stale qualifier when the re-run cannot happen
 - **URL:** The same QA Validation status line and verdict comment.
@@ -56,4 +56,5 @@ files:
 ## Origin
 - Created during build of #3047, which added the review Step 6.7 post-fix-wave QA re-run and the stale-QA qualifier.
 - Extended during build of #3598. Step 3 Routing fix waves joined the same single re-run under one review-wide `WAVE_BASE`. The capture became dirty-tree-safe (`git stash create`, falling back to HEAD). Untracked files joined the touched set. The wider `qa affected` selection was accepted. Step 5's never-run rule was added.
+- Updated during build of #3771. The Step 6.7 re-run now passes `--source review`, so a standalone review gets no nested `/test` Next Actions block.
 - Related: #3048. Out of scope here: running `design-wrapper review` before `/test`'s QA.

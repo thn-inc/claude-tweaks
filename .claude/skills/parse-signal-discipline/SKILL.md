@@ -151,6 +151,16 @@ When mechanizing a prose heuristic into a deterministic check:
    added `quoteMatchesWholeWord`: a clause under three words is never matched by its text, and a
    longer one must match on a word boundary at both ends. Give a text-match recogniser a minimum
    length and a boundary at each end, and pin a short input hidden inside a longer word.
+   Lifting a lenient reader's predicate to widen a recogniser imports that reader's looseness.
+   #3665 let `classifyDecisions` count a model-worded claim line by calling
+   `paraphrasedClaimNumbers`, which accepts a bare "claimed #N" anywhere in an `AUTO` line. A
+   later-step line such as `Step 3: config.yml written; claims-registry shows #7 claimed.` then read
+   as a claim, so a run directory that had moved past the claim step still classified as a fresh
+   mint. Whole-branch review caught it, and `59e200225` anchored the paraphrase on the parsed
+   entry's location (the head text only for a `log-decision`-located or unparseable line). When a
+   fail-closed classifier needs a lenient reader's recognition, anchor on a field the writer
+   controls, such as the entry's location, never on words a later line can repeat, and pin a
+   later-step line that merely mentions the thing.
 7. **A parsed list that feeds a pass verdict owes an independent count to reconcile against.** An
    extractor that returns N items cannot say it missed one more, so an undercount reads exactly
    like a complete list. That is the same silent false negative as a merged `null`, one level up.
@@ -350,6 +360,22 @@ When mechanizing a prose heuristic into a deterministic check:
     LLM-supplied `target` or `journey` is checked inside a fixed prefix and suffix, and only an
     embedded `..` segment, backtick or line break can fail it. A new producer states its own
     normalization from where its path comes from.
+19. **An enumerated list of failure channels reads every unlisted channel as "none"; a positive
+    recogniser at the tail closes that class, but only once the legitimate endings are captured.**
+    `plugin/bin/lib/verify/extract.js`'s `summaryUnattributedCount` (#3480) accounts a jest or
+    vitest log by listing the channels that count as unattributed. The list was incomplete three
+    times in one build, each channel found only by reading runner source or capturing a real log,
+    and every miss read as a false 0, the unsafe direction for a flaky retry or a `preExisting`
+    waiver. #3674 added the positive twin for jest: `endsLikeNormalJestRun` counts the log as
+    unattributed unless its last line is `Ran all test suites…` or a `--silent` run's `Time:`
+    line, optionally followed by a captured yarn or pnpm failure trailer. It fires only when no
+    enumerated channel already counted, so one failure is never counted twice. The first version
+    accepted only the trailer and over-refused every `--silent` and yarn/pnpm project. The
+    whole-branch review caught it from `SummaryReporter.js`, and each accepted ending now has a
+    captured fixture. Capture every real ending from the runner before shipping the guard, and keep
+    the enumerated list where no stable ending exists: vitest writes its summary to stdout and its
+    failure blocks to stderr, so either can end a piped log. The recogniser is a backstop behind
+    the list, not a replacement for it.
 
 ## When to use
 

@@ -1,0 +1,26 @@
+
+> jestprobe@1.0.0 test /repo
+> jest --ci
+
+FAIL tests/flaky.test.js
+  ✕ flaky sometimes fails (2 ms)
+
+  ● flaky sometimes fails
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 2
+    Received: 1
+
+    > 1 | test('flaky sometimes fails', () => { expect(1).toBe(2); });
+        |                                                 ^
+      2 |
+
+      at Object.toBe (tests/flaky.test.js:1:49)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 total
+Snapshots:   0 total
+Time:        0.105 s, estimated 1 s
+Ran all test suites.
+ ELIFECYCLE  Test failed. See above for more details.

@@ -8,6 +8,7 @@ files:
   - plugin/bin/lib/hooks/context.js
   - plugin/bin/hooks.js
   - plugin/bin/lib/hooks/post-tool-use.js
+  - plugin/bin/lib/log-decision/claim-log.js
 ---
 
 # Run-Integrity Lifecycle: Detect, Remediate, and Gate Bypassed Pipeline Closures
@@ -22,7 +23,7 @@ files:
 ### 1. Work happens — the ledger writes itself
 - **Action:** Run any pipeline (`/claude-tweaks:flow`, `/claude-tweaks:build`): every model-initiated Skill-tool call is appended to the owned run's `events.jsonl` as `{"skill": ..., "ts": ..., "type": "skill_invoked"}` by the PostToolUse hook.
 - **Expect:** No visible output — log tier. Boundary (measured): user-typed slash commands and failed calls leave no event; subagent Skill calls do land, so a flow-driven wrap-up always registers. Since `#1410` there is a third boundary: the event never lands in a *sibling worktree's* run. A run dir provably bound to a different, still-live worktree than the session's own cwd is skipped when the runtime has to guess an owner, so the event is appended to this session's own run or to none at all — never to an unrelated concurrent run's `events.jsonl`. A run with no provable worktree binding is still guessed into exactly as before. Since `#2783` an `-adhoc-standalone` dir (a friction-only placeholder `EnterWorktree` mints) is never a guess candidate either; only the session that owns it reaches it, through its own session match. Since `#3515`:
-  - A freshly minted run dir whose `decisions.md` holds only Step 2.8 claim-log lines (no `run-state.json` yet) is never a guess candidate, for any hook resolution.
+  - A freshly minted run dir whose `decisions.md` holds only Step 2.8 claim-log lines — its claim (canonical, or a complete claim-anchored paraphrase) and its file-overlap / `bot:in-progress` projection notes, #3665 — (no `run-state.json` yet) is never a guess candidate, for any hook resolution.
   - When the runtime guesses an owner for an event write, it also skips a run bound to any worktree other than the session's own resolved toplevel. That includes a session in the main checkout, and a binding whose worktree is gone from disk.
   - When nothing is left, the event is not written, and the hook prints one stderr line: `attribution: no run dir attributed — no fallback run dir matches {cwd}; skipped {run-id} ({reason}), …`.
   - E1's enforcement resolution still sees a worktree-bound run from the main checkout.
@@ -43,13 +44,15 @@ files:
 
 ### 5. A second, independent deny — a raw `git worktree remove` on your own cwd
 - **Action:** From inside a worktree, run a raw Bash `git worktree remove <that-worktree-path>` (never `ExitWorktree`) whose target is the session's own cwd, or a directory containing it — including via a `cd <elsewhere> && git worktree remove <own-cwd>` compound.
-- **Expect:** Denied, naming `ExitWorktree` as the sanctioned remediation. This own-cwd guard fires independent of any pipeline-run assignment: unlike Step 3's deny, Step 4's `close-run` does NOT lift it — `close-run` only clears the run-assignment deny, and deleting the shell's own live working directory is the failure regardless of whether a run owns it. The `cd` in the compound form does not launder the target; it is still denied. The same raw `git worktree remove` targeting a *different* worktree from elsewhere (e.g. the main checkout) is unaffected and allowed, and `ExitWorktree` removing the session's own cwd is unaffected by this guard — it remains the one sanctioned way to do exactly that. On a case-insensitive volume, a target or cwd typed with different letter casing (`/repo/WT` for `/repo/wt`) is the same directory and is denied the same way (#3682): both sides resolve through path-guard's case-canonical `canonicalRealpath`. Step 3's assigned-run match is not yet case-canonical — it lives in `context.js`'s `findRunByWorktreePath`, which #3682 left JS-form and routed to a follow-up.
+- **Expect:** Denied, naming `ExitWorktree` as the sanctioned remediation. This own-cwd guard fires independent of any pipeline-run assignment: unlike Step 3's deny, Step 4's `close-run` does NOT lift it — `close-run` only clears the run-assignment deny, and deleting the shell's own live working directory is the failure regardless of whether a run owns it. The `cd` in the compound form does not launder the target; it is still denied. The same raw `git worktree remove` targeting a *different* worktree from elsewhere (e.g. the main checkout) is unaffected and allowed, and `ExitWorktree` removing the session's own cwd is unaffected by this guard — it remains the one sanctioned way to do exactly that. On a case-insensitive volume, a target or cwd typed with different letter casing (`/repo/WT` for `/repo/wt`) is the same directory and is denied the same way (#3682): both sides resolve through path-guard's case-canonical `canonicalRealpath`. Step 3's assigned-run match is case-canonical too as of #3769: `context.js`'s `findRunByWorktreePath` resolves both sides through path-guard's `.native` `canonicalRealpath`.
 
 ### 6. After an allowed teardown — a re-anchor reminder, not a deny
 - **Action:** After any of Steps 3-5's *allowed* teardown paths actually completes (`ExitWorktree` `action: "remove"`, or the sanctioned own-cwd Bash `git worktree remove`).
 - **Expect:** A warn-tier `systemMessage` names the removed worktree path and instructs re-anchoring to the main checkout (`cd {path}`, or a generic pointer when the root can't be resolved) before any further git-dependent command — because this repo's hooks cannot themselves clear the harness's native worktree-isolation pin, which can otherwise outlive the worktree it pointed to and refuse subsequent commands as still "isolated" (#703).
 
 ## Origin
+- Updated during build of #3769 — Step 3's assigned-run match (`findRunByWorktreePath`) also compares case-canonical real paths, so a mis-cased teardown target of an assigned worktree is denied like the correctly-cased one.
+- Updated during build of #3665 — a degraded Step 2.8 mint (claim plus file-overlap / `bot:in-progress` projection notes, or a claim-anchored paraphrased claim) is still never a fallback guess candidate.
 - Updated during build of #3682 — Step 5's own-cwd guard (and E1's commit-location check) compare case-canonical real paths, so a mis-cased target or cwd is treated as the correctly-cased one.
 - Updated during build of #3025 — Step 4's `close-run --run` accepts a bare run id, and a rejected `--run` now exits 1.
 - Updated during build of #703 — a post-teardown re-anchor backstop (warn tier) now fires on every allowed teardown path Steps 3/5 already document; Step 6 added.

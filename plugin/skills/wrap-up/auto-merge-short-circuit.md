@@ -185,10 +185,10 @@ match. A run-state written before the field existed has no `dispatchSessionId` a
 comparing `sessionId`. Any other output, including a non-zero exit, means a genuine top-level,
 human-run session — fall through to the direct-merge path below. That includes a human resuming a
 dispatched run from a new session. Fail-safe: a Task call misread as
-human-run (for example after a failed bind) reaches the local-merge first call's branch guard,
+human-run (for example after a failed bind) reaches the local-merge pre-merge checks' branch guard,
 sees the feature branch, and aborts into the console fallback — it never merges into a wrong
-checkout, though `close-run` has already run by then (the accepted residual in the
-merge-failure paragraph below). This is what routes a dispatched **singleton**'s merge decision through this file's own
+checkout, and the guard is a pre-merge check, so the run is still open when it aborts (nothing has
+been closed). This is what routes a dispatched **singleton**'s merge decision through this file's own
 short-circuit rather than `settle-and-merge.md`'s group-scoped Auto-merge gate.
 
 **`integration-model: pr-first`:** the checkout restriction below doesn't apply — `gh pr merge`
@@ -236,29 +236,21 @@ once it sits past the TTL and repeated stuck passes. A closed run escalates the 
 reconcile's clean-status sweep (#3668; `pr-first-merge-post-merge.md` Step 4.2).
 
 **`integration-model: local-merge`:** run the Verdict backstop above first (anything but `{n}=1`,
-stop here and go to "Any layer fails" below). Then, before merging, clear this run's worktree
-assignment as `flow/worktree-merge.md`'s reconciliation does
-(`node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"`) so
+stop here and go to "Any layer fails" below). Then read the values and run the pre-merge checks
+below; only once both succeed, before merging, clear this run's worktree
+assignment as `flow/worktree-merge.md`'s reconciliation does, so
 the merge, landing in the main checkout, isn't denied as a wrong-checkout
-commit.
+commit. The order is load-bearing: `close-run` clears the run's E1 protection and its
+worktree assignment, so every check that can run beforehand runs before it — the merge and push
+necessarily follow it — and a failure after it (guard race, merge, push) re-protects the run.
 
-`close-run` satisfies E1 only. Under `worktree-always: true` the separate,
-run-independent gate applies, covering `git push` and `git commit` — so
-the push below **cannot** run from the main checkout and **must not** be
-chained onto the merge (the gate inspects the whole command string up front,
-so a compound call is denied and the merge never runs either). `git merge`
-itself isn't covered, so it runs in the main checkout normally. Same two-call
-shape as `dispatch/settle-and-merge.md`'s local-merge fallback;
-`_shared/policy-schema-coverage.md`'s `worktree-always` block lists what the gate
-intercepts.
-
-**Shell state does not survive between the two calls** — each Bash call gets
-a fresh shell, so a variable set in the first is empty in the second. Read
-the values first and substitute them **literally** into the second call;
+**Shell state does not survive between these calls** — each Bash call gets
+a fresh shell, so a variable set in one is empty in the next. Read
+the values first and substitute them **literally** into every later call;
 don't carry them in shell variables.
 
 ```bash
-node -e "console.log(require('$RUN_DIR/run-state.json').worktree)"   # -> {worktree-path}
+node -e "const w=require('$RUN_DIR/run-state.json').worktree; if(!w){console.error('claude-tweaks: run-state.json has no worktree field — cannot resolve the worktree to merge'); process.exit(1);} console.log(w)"   # -> {worktree-path}
 git -C "{worktree-path}" branch --show-current   # -> {branch}
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-branch
 gh api "repos/{owner}/{repo}" -q .default_branch # only when the line above came back empty
@@ -268,16 +260,19 @@ The first command reads `{worktree-path}` from `run-state.json`'s own `worktree`
 `record-worktree` (`build/worktree-setup.md` Step 4.5) stamped it there; it is the one value that
 actually names the worktree, unlike `$RUN_DIR` itself (**#299**: `$RUN_DIR` sits inside the main
 checkout per `_shared/pipeline-run-dir.md`'s anchoring rule, so a bare `git -C "$RUN_DIR"`
-silently resolves the main checkout's own toplevel/branch — never the feature branch). The third
-and fourth commands together resolve `{integration-branch}` — the branch this project integrates
-work into, which is not always the GitHub default (see `skills/_shared/integration-branch.md` for
-the full precedence, including its git-inference rank, deliberately skipped here, which would
+silently resolves the main checkout's own toplevel/branch — never the feature branch). It must be
+read here, before `close-run`: `close-run` nulls that field, so a later read returns nothing. A failed
+read (no `worktree` field) means nothing was merged and `close-run` has not run — fall back to the
+console. The third and fourth commands together resolve `{integration-branch}` — the branch this
+project integrates work into, which is not always the GitHub default (see
+`skills/_shared/integration-branch.md` for the full precedence, including its git-inference rank,
+deliberately skipped here, which would
 consider whatever branch the main checkout currently has checked out — a concurrent session
 switching that is precisely what the guard below catches). Take the resolver's output when
 non-empty; otherwise fall back to `gh api`. Substituting the wrong one here merges into a branch
 nobody develops on (#132).
 
-**First call — merge, from the main checkout.** `{integration-branch}` is the value
+**Pre-merge checks — from the main checkout, nothing mutated.** `{integration-branch}` is the value
 just resolved:
 
 ```bash
@@ -287,12 +282,44 @@ if [ "$CURRENT" != "{integration-branch}" ]; then
   exit 1
 fi
 node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag {tag} --range {integration-branch}...{branch} --out-dir "{subject-dir}" || exit 1
+git merge-tree --write-tree --name-only {integration-branch} {branch} || exit 1
+```
+
+Any non-zero exit — the guard, the composer, a predicted conflict, or a ref `git merge-tree`
+cannot merge — aborts. `git merge-tree` writes only unreferenced objects, never the working tree,
+the index, or a ref.
+`{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3.
+
+Only now clear the worktree assignment, its own Bash call:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"
+```
+
+`close-run` satisfies E1 only. Under `worktree-always: true` the separate,
+run-independent gate applies, covering `git push` and `git commit` — so
+the push below **cannot** run from the main checkout and **must not** be
+chained onto the merge (the gate inspects the whole command string up front,
+so a compound call is denied and the merge never runs either). `git merge`
+itself isn't covered, so it runs in the main checkout normally. Same shape
+as `dispatch/settle-and-merge.md`'s local-merge fallback: pre-merge checks,
+then `close-run`, then the merge, then the push as its own call;
+`_shared/policy-schema-coverage.md`'s `worktree-always` block lists what the gate
+intercepts.
+
+**Merge — from the main checkout.** The guard repeats the pre-merge check as the race backstop: a
+concurrent session may have switched the checkout since:
+
+```bash
+CURRENT=$(git branch --show-current)
+if [ "$CURRENT" != "{integration-branch}" ]; then
+  echo "Main checkout is on '$CURRENT', not '{integration-branch}' — a concurrent session switched it. Abort, do not merge." >&2
+  exit 1
+fi
 git merge --no-ff {branch} -F "{subject-dir}/message.txt"
 ```
 
-`{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3.
-
-**Second call — push, from inside the worktree.** Both placeholders are the
+**Push — from inside the worktree.** Both placeholders are the
 literal values read above:
 
 ```bash
@@ -300,7 +327,7 @@ git -C "{worktree-path}" push origin {integration-branch}
 ```
 
 Naming the branch explicitly is required: a bare `git push` from the worktree would push the
-*feature* branch, since that is what is checked out there. Pushing the same branch the first call
+*feature* branch, since that is what is checked out there. Pushing the same branch the merge call
 merged into is what publishes the merge; a different one leaves it stranded locally.
 
 The explicit `--no-ff` guarantees a real merge commit exists even when the
@@ -310,20 +337,41 @@ keyword per "Close-via-merge" in `_shared/issue-claims.md`. Still generate
 this console's full content (Auto-applied / Skill updates / Configuration
 updates sections, per `review-console-interactive.md`'s "Present the console") and attach it to a
 `PushNotification` as a non-blocking FYI. Nothing this console would have
-shown is discarded — only the wait for a live approval is skipped. After the
-push, run `_shared/pr-first-merge-post-merge.md` Step 4.1 with `--ref {integration-branch}` (staged file + closing-report line only).
+shown is discarded — only the wait for a live approval is skipped. After a
+successful push, run `_shared/pr-first-merge-post-merge.md` Step 4.1 with `--ref {integration-branch}` (staged file + closing-report line only).
 
 Console content is not all of Phase 4's execution step — acceptance labeling is neither console
 content nor a `cleanup-procedures.md` cleanup item, which is why it was silently dropped from
 auto-merge until the labeling step above was added. Check any future addition to that execution
 step against this branch explicitly; a claim true about one category is not evidence about another.
 
-**If the composer call exits non-zero, the merge conflicts, or the branch guard aborts:** conflict
-resolution requires judgment a headless run can't supply — `git merge --abort` only if a merge is
-actually in progress, then fall back to rendering the console normally, exactly as an
-`auto:build`-only record would, logging why the auto-merge path was abandoned. **One accepted
-residual:** under `local-merge`, `close-run` already ran, above, before this was discovered, so the
-parked run is no longer E1-protected and its worktree assignment has been cleared too. Not fixed here; there is no "reopen-run" mechanic to reverse it.
+**If a pre-merge check fails** (the composer exits non-zero, `git merge-tree` predicts a conflict or
+cannot merge a ref, or the branch guard aborts): nothing was merged and `close-run` has not run, so
+there is nothing to undo and no re-stamp to do — fall back to rendering the console normally,
+exactly as an `auto:build`-only record would, logging why the auto-merge path was abandoned
+(conflict resolution requires judgment a headless run can't supply). The `|| exit 1` collapses
+every `git merge-tree` failure, so tell them apart by output: a `CONFLICT` line on stdout is a
+predicted conflict; a stderr error with no `CONFLICT` line means git could not run the pre-check
+(git older than 2.38 lacks `--write-tree`, or an unknown ref) — log `pre-check failed: {first stderr
+line}`, not a conflict.
+
+**If the merge call's guard aborts, `git merge` fails, or the push fails** (a conflict that appeared
+only after the pre-merge checks — the race they cannot rule out — or a rejected or failed push): on
+a guard abort or merge failure, `git merge --abort` only if a merge is actually in progress; on a
+push failure do NOT `git merge --abort` and do NOT undo the local merge — a human resuming the run
+needs the merge commit to push it. Either way, re-protect the run. `close-run` already ran, so the
+parked run would otherwise be unprotected with its worktree assignment cleared; re-stamp it with the
+`{worktree-path}` read above (`run-state.json` no longer holds it), its own Bash call:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$RUN_DIR" "{worktree-path}"
+```
+
+`record-worktree` restores the worktree assignment and `active` status. It prints `claude-tweaks: worktree recorded for …`
+when it worked; log any other line to `decisions.md` rather than ignoring it (the run dir may have
+been archived underneath). Then fall back to rendering the console normally, exactly as for a
+failed pre-merge check, logging why the auto-merge path was abandoned — for a push failure, that the
+local merge commit exists but is unpushed. Step 4.1 above is not run when the push failed.
 
 Log to `decisions.md`:
 `AUTO {time} — Fast-lane auto-merge: issue #{n}, assess-agent-autonomy verdict auto-merge (see RATIONALE). Merge commit: {sha}. Reversibility: high (git revert). [lever: auto-merge-max-lines={value} ({source}); auto-merge-max-files={value} ({source}); merge-sensitive-paths={value} ({source})]` — or, on the `manifesto-authorized-merge.md` path, its own tag and log line instead

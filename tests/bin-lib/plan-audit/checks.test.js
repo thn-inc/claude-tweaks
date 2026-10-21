@@ -1011,3 +1011,98 @@ test('#3099: an item the parser refuses is reported unparsed and never as covere
   assert.deepStrictEqual(result.covered.map((c) => c.id), ['AC1.1']);
   assert.deepStrictEqual(result.uncovered, []);
 });
+
+const { checkF } = require('../../../plugin/bin/lib/plan-audit/checks');
+
+const F_SPEC = ['## Technical Approach', '', 'Read `src/a.js` and `src/b.js` back; change them only if the model change breaks them.', ''].join('\n');
+
+function fPlan(filesLines, extraLines = []) {
+  return [...extraLines, '### Task 1: Build it', '', '**Files:**', ...filesLines, '', '- [ ] **Step 1: Write the failing test**', ''].join('\n');
+}
+
+test('AC1.1 (#3602): a plan listing neither Technical Approach path reports both unlisted, and ok stays true', () => {
+  const r = checkF(F_SPEC, fPlan(['- Modify: `src/other.js`']));
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.unlisted, [
+    { path: 'src/a.js', section: 'Technical Approach' },
+    { path: 'src/b.js', section: 'Technical Approach' },
+  ]);
+});
+
+test('AC1.2 (#3602): a task listing src/a.js plus a Waived src/b.js line reports neither', () => {
+  const r = checkF(F_SPEC, fPlan(['- Modify: `src/a.js`'], ['Waived src/b.js: read back by the existing reader test', '']));
+  assert.deepStrictEqual(r.unlisted, []);
+  assert.deepStrictEqual(r.listed, [{ path: 'src/a.js', via: 'exact' }]);
+  assert.deepStrictEqual(r.waived, [{ path: 'src/b.js', reason: 'read back by the existing reader test' }]);
+  assert.deepStrictEqual(r.orphanWaivers, []);
+});
+
+test('AC2.1 (#3602): a path named only in ## Acceptance Criteria or ## Deliverables is never reported', () => {
+  const spec = ['## Deliverables', '', '1. Change `src/d.js`.', '', '## Acceptance Criteria', '', '1. `src/ac.js` works.', '', F_SPEC].join('\n');
+  assert.deepStrictEqual(checkF(spec, fPlan(['- Modify: `src/a.js`', '- Modify: `src/b.js`'])).unlisted, []);
+});
+
+test('AC4.1 (#3602): an unreadable spec line passes through as unparsed, never as covered, and ok stays true', () => {
+  const r = checkF('## Technical Approach\n\nRead `src/a.js and stop.\n', fPlan(['- Modify: `src/other.js`']));
+  assert.deepStrictEqual(r.unparsed, [{ section: 'Technical Approach', raw: 'Read `src/a.js and stop.' }]);
+  assert.deepStrictEqual(r.listed, []);
+  assert.strictEqual(r.ok, true);
+});
+
+test('#3602: ./ prefixes and :NN line suffixes on either side still match exactly', () => {
+  const r = checkF('## Gotchas\n\n- `./src/a.js:88`\n', fPlan(['- Modify: `./src/a.js:10-20`']));
+  assert.deepStrictEqual(r.listed, [{ path: 'src/a.js', via: 'exact' }]);
+  assert.deepStrictEqual(r.unlisted, []);
+});
+
+test('#3602: a plugin-relative citation matches a Files path on a whole-segment suffix, never mid-segment', () => {
+  const r = checkF('## Technical Approach\n\nSee `_shared/x.md` and `lib/y.js`.\n',
+    fPlan(['- Modify: `plugin/skills/_shared/x.md`', '- Modify: `plugin/bin/mylib/y.js`']));
+  assert.deepStrictEqual(r.listed, [{ path: '_shared/x.md', via: 'suffix' }]);
+  assert.deepStrictEqual(r.unlisted, [{ path: 'lib/y.js', section: 'Technical Approach' }]);
+});
+
+test('#3602: a path waiver naming no extracted path is an orphan; a Check E AC waiver is never a Check F waiver', () => {
+  const r = checkF(F_SPEC, fPlan(['- Modify: `src/a.js`'], ['Waived src/b.js: read back', 'Waived src/typo.js: stale', 'Waived AC1.1: a Check E waiver', '']));
+  assert.deepStrictEqual(r.orphanWaivers, [{ path: 'src/typo.js', reason: 'stale' }]);
+  assert.deepStrictEqual(r.waived, [{ path: 'src/b.js', reason: 'read back' }]);
+});
+
+test('#3602: a Key Files path the build only reads is still reported until a task names it or a waiver covers it', () => {
+  const r = checkF('## Technical Approach\n\n### Key Files\n\n- `src/read-only.js` — read to confirm the shape\n', fPlan(['- Modify: `src/other.js`']));
+  assert.deepStrictEqual(r.unlisted, [{ path: 'src/read-only.js', section: 'Technical Approach' }]);
+});
+
+test('#3602: a full-repo-path waiver covers a plugin-relative spec citation on a whole-segment suffix and is not an orphan', () => {
+  const r = checkF('## Technical Approach\n\nSee `_shared/x.md`.\n',
+    fPlan(['- Modify: `src/other.js`'], ['Waived plugin/skills/_shared/x.md: read back only', '']));
+  assert.deepStrictEqual(r.waived, [{ path: '_shared/x.md', reason: 'read back only' }]);
+  assert.deepStrictEqual(r.unlisted, []);
+  assert.deepStrictEqual(r.orphanWaivers, []);
+});
+
+test('#3602: a waiver path that is a suffix OF the spec path does not match — direction matters: it is an orphan and the spec path stays unlisted', () => {
+  const r = checkF('## Technical Approach\n\nSee `plugin/skills/_shared/x.md`.\n',
+    fPlan(['- Modify: `src/other.js`'], ['Waived _shared/x.md: too short', '']));
+  assert.deepStrictEqual(r.waived, []);
+  assert.deepStrictEqual(r.unlisted, [{ path: 'plugin/skills/_shared/x.md', section: 'Technical Approach' }]);
+  assert.deepStrictEqual(r.orphanWaivers, [{ path: '_shared/x.md', reason: 'too short' }]);
+});
+
+test('#3602: a CRLF plan yields exactly the LF result — Files: bullets and waivers are both read', () => {
+  const lf = fPlan(['- Modify: `src/a.js`'], ['Waived src/b.js: read back', '']);
+  const crlf = lf.replace(/\n/g, '\r\n');
+  assert.deepStrictEqual(checkF(F_SPEC, crlf), checkF(F_SPEC, lf));
+  assert.deepStrictEqual(checkF(F_SPEC, lf).listed, [{ path: 'src/a.js', via: 'exact' }]);
+});
+
+test('#3602: precedence — a path both listed and waived lands in waived, not listed; the first of two waivers for one path wins', () => {
+  const r = checkF('## Technical Approach\n\nRead `src/a.js` and `src/b.js`.\n',
+    fPlan(['- Modify: `src/a.js`'], ['Waived src/a.js: first reason', 'Waived plugin/src/a.js: second reason', 'Waived src/b.js: only', '']));
+  assert.deepStrictEqual(r.waived, [
+    { path: 'src/a.js', reason: 'first reason' },
+    { path: 'src/b.js', reason: 'only' },
+  ]);
+  assert.deepStrictEqual(r.listed, []);
+  assert.deepStrictEqual(r.orphanWaivers, []);
+});
