@@ -54,4 +54,37 @@ test('AC2.1 go-red: a bare glob lookup sentence fails, a fallback/inherited sent
   assert.doesNotThrow(() => assertNoBareGlob(flat('Fallback: the `docs/plans/*-ledger.md` glob. It also matches inherited ledgers in `docs/plans/*-ledger.md`.'), 'fixture'));
 });
 
+const RULE_CITE = "`_shared/ledger-format.md`'s resolution rule";
+const READERS = ['ledger/SKILL.md', 'review/code-mode-steps.md', 'wrap-up/auto-merge-short-circuit.md'];
+
+test('AC1.1/AC2.1: every repointed reader cites the resolution rule and carries no bare glob lookup', () => {
+  for (const rel of READERS) {
+    const text = read(rel);
+    assert.ok(text.includes(RULE_CITE), `${rel} cites ${RULE_CITE}`);
+    assertNoBareGlob(text, rel);
+  }
+});
+
+test('ledger resolve never defaults to another run\'s ledger when a run dir resolves', () => {
+  const text = read('ledger/SKILL.md');
+  assert.match(text, /when the rule finds none, report `No ledger found for this run` rather than resolving another run's/);
+});
+
+test('auto-merge short-circuit deletes only value.files entries and fails closed on ok: false', () => {
+  const text = read('wrap-up/auto-merge-short-circuit.md');
+  assert.ok(text.includes('wrap-up-pack.js" --run "$RUN_DIR" --print ledger --json "$RUN_DIR/wrap-up-pack-ledger.json"'));
+  assert.match(text, /For each `docs\/plans\/` path in the printed `value\.files`/);
+  assert.match(text, /On `ok: false`, delete nothing and log one `SKIP` line/);
+});
+
+test('AC2.1 go-red: the pre-#3687 reader sentences fail the no-bare-glob assertion', () => {
+  const PRE = [
+    '1. Find active ledger files: glob `docs/plans/*-ledger.md`. When a run dir resolves for this invocation, also check `{run-dir}/ledger.md`.',
+    'Otherwise, resolve against `docs/plans/*-ledger.md` the same way the `{feature-name}` form does above.',
+    'After confirming `TEST_PASSED`, read the open items ledger (`docs/plans/*-ledger.md`, or the run-dir-scoped alternate) and filter for entries with phase `test/qa`:',
+    'LEDGER_FILE=$(git -C "$WORKTREE_PATH" ls-files "docs/plans/*-record-{n}-ledger.md")',
+  ];
+  for (const s of PRE) assert.throws(() => assertNoBareGlob(flat(s), 'pre-change'), `must go red: ${s}`);
+});
+
 module.exports = { assertNoBareGlob, read };

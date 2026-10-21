@@ -130,8 +130,8 @@ bypasses Phase 4's execution step, which is where item 2 (Open items ledger) nor
 re-implement it here, the same way acceptance labeling above is re-implemented rather than
 skipped. Phase 3's ledger gate has already confirmed zero `open` rows by the time this branch is
 reached (`/review` passing is itself gated on that), so item 2's own stated precondition is
-satisfied by construction — no re-check needed here. Locate this run's ledger file in the
-worktree and, when one exists, delete it and commit that deletion **before** the merge call below
+satisfied by construction — no re-check needed here. Locate this run's ledger per `_shared/ledger-format.md`'s resolution rule
+and, when one exists, delete it and commit that deletion **before** the merge call below
 so it lands inside the same merge (`local-merge`) or the same PR (`pr-first`) that closes the
 record — never as a trailing, separate commit the merge could omit. This runs regardless of
 `integration-model` and regardless of which branch below resolves `{worktree-path}` for its own
@@ -142,12 +142,17 @@ as before the `local-merge` branch's own later resolution:
 
 ```bash
 WORKTREE_PATH=$(node -e "console.log(require('$RUN_DIR/run-state.json').worktree)")
-LEDGER_FILE=$(git -C "$WORKTREE_PATH" ls-files "docs/plans/*-record-{n}-ledger.md")
-if [ -n "$LEDGER_FILE" ]; then
-  git -C "$WORKTREE_PATH" rm "$LEDGER_FILE"
-  git -C "$WORKTREE_PATH" commit -m "Wrap-up: delete resolved open items ledger for #{n} — auto-merge short-circuit"
-fi
+node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-pack.js" --run "$RUN_DIR" --print ledger --json "$RUN_DIR/wrap-up-pack-ledger.json"
 ```
+
+For each `docs/plans/` path in the printed `value.files`, as `LEDGER_FILE`, `git rm` it, then commit once (a `ledger.md` entry is the gitignored run-dir file — nothing to commit; archival takes it):
+
+```bash
+git -C "$WORKTREE_PATH" rm "$LEDGER_FILE"
+git -C "$WORKTREE_PATH" commit -m "Wrap-up: delete resolved open items ledger for #{n} — auto-merge short-circuit"
+```
+
+This is a delete, so it never takes the resolution rule's reader fallback: a glob here can remove a ledger inherited from the integration branch — another run's. On `ok: false`, delete nothing and log one `SKIP` line via `log-decision.js` naming the probe error; the ledger stays for `/claude-tweaks:tidy`'s ledger sweep (`tidy/scan-procedures.md`).
 
 **`integration-model: pr-first` only — push this commit now**, its own Bash call: `gh pr merge`
 below merges the PR's remote head, not this worktree's local state, so a commit left unpushed
