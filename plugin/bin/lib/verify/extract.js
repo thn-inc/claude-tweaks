@@ -722,7 +722,8 @@ function summaryUnattributedCount(text, { cwd }) {
 // failed` plus its `Errors` block, and both add every `FAIL` line naming no
 // test file, every `UNATTRIBUTED_LINE_RES` line (coverage, a global hook, a
 // jest obsolete snapshot, a crashed runner), an interrupted run, a jest log
-// whose last line is not its `Ran all test suites` trailer (#3674), and a log
+// that does not end on its `Ran all test suites` trailer or a `--silent`
+// run's `Time:` line, bar a yarn/pnpm failure trailer (#3674), and a log
 // carrying more than one summary line — failures no file accounts for.
 // pytest (collection `ERROR`s sit outside every `FAILED` line) and an
 // ambiguous summary log (more than one runner's markers, or none) return null, as
