@@ -14,20 +14,17 @@
 // bin/lib/release/subject.js's composeSubject() output. Skill prose reaches
 // the composer only through this CLI — the pure module has no shell surface.
 //
-// Usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--shell] [--out-dir <dir>] [--help]
+// Usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--out-dir <dir>] [--help]
 // Numbers may be comma-joined and/or space-separated; the subject record is
 // the lowest number, and the body carries one `Fixes #n` line per number.
-// Output: JSON {"title","body"} by default; `--shell` prints two POSIX sh
-// assignments, SUBJECT_TITLE='…' then SUBJECT_BODY='…' (single-quoted, '
-// escaped as '\''); the body value spans physical lines, so consume it with
-// `eval "$(…)"`, never by line splitting. `--out-dir <dir>` (mutually
-// exclusive with --shell) instead writes <dir>/title.txt, <dir>/body.md and
-// <dir>/message.txt (= title, blank line, body; no trailing newline on any
-// of them), creating <dir> recursively, and prints only the single-quoted
-// title on one line. It exists because the Claude Code worktree Bash guard
-// refuses `eval` and `$(…)` wrapped around `gh`, which the --shell form needs
-// (#3522); a merge fence consumes the files with `-F`/`--body-file` instead.
-// `--shell` is kept as a manual/debug surface; no shipped merge fence consumes it since #3522.
+// Output: JSON {"title","body"} by default; `--out-dir <dir>` instead writes
+// <dir>/title.txt, <dir>/body.md and <dir>/message.txt (= title, blank line,
+// body; no trailing newline on any of them), creating <dir> recursively, and
+// prints only the single-quoted title on one line. It exists because the
+// Claude Code worktree Bash guard refuses `eval` and `$(…)` wrapped around
+// `gh` (#3522); a merge fence consumes the files with `-F`/`--body-file`.
+// `--shell` (eval-able SUBJECT_TITLE=/SUBJECT_BODY= assignments) was retired
+// in #3537 after #3522 moved every fence to `--out-dir`.
 // Exit codes (Split-1/2, mirroring bin/resolve-blockers.js): 0 composed; 1
 // malformed invocation (including --range with --pr, or commit-scope-paths
 // set with neither) OR a policy misconfiguration (a malformed
@@ -70,7 +67,7 @@ const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./shared-primitives');
 const { readCommitScope, readListKey } = require('./policy');
 const { parseScopePaths, resolveCommitScope, CommitScopeError } = require('./commit-scope');
 
-const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--shell] [--out-dir <dir>] [--help]\n';
+const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--out-dir <dir>] [--help]\n';
 // Decision (#2319): kept at the single-call convention, not widened. Each
 // `gh issue view` call below fetches exactly one record — unlike
 // fetch-sub-issues.js's 30000ms bound, which covers a single batched
@@ -94,11 +91,10 @@ function errMessage(err) {
 }
 
 function parseArgs(argv) {
-  const opts = { numbers: [], repo: null, tag: null, scope: null, range: null, pr: null, outDir: null, shell: false, help: false };
+  const opts = { numbers: [], repo: null, tag: null, scope: null, range: null, pr: null, outDir: null, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { opts.help = true; return opts; }
-    if (a === '--shell') { opts.shell = true; continue; }
     if (a === '--repo' || a === '--tag' || a === '--scope' || a === '--range' || a === '--pr' || a === '--out-dir') {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) return { error: `missing value for ${a}` };
@@ -117,7 +113,6 @@ function parseArgs(argv) {
   }
   if (opts.numbers.length === 0) return { error: 'missing <n> argument' };
   if (opts.range !== null && opts.pr !== null) return { error: '--range and --pr are mutually exclusive' };
-  if (opts.outDir !== null && opts.shell) return { error: '--out-dir and --shell are mutually exclusive' };
   opts.numbers = [...new Set(opts.numbers)].sort((a, b) => a - b);
   return opts;
 }
@@ -379,8 +374,6 @@ function run(argv, deps = realDeps) {
       return 3;
     }
     deps.stdout(shellQuote(composed.title) + '\n');
-  } else if (opts.shell) {
-    deps.stdout(`SUBJECT_TITLE=${shellQuote(composed.title)}\nSUBJECT_BODY=${shellQuote(composed.body)}\n`);
   } else {
     deps.stdout(`${JSON.stringify(composed)}\n`);
   }
