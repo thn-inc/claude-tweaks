@@ -212,7 +212,9 @@ numbered sequence instead of skipped.
    on the issue above — then close the PR: a visible tombstone with a resume command (the PR
    body's own `### Resume` section from `_shared/pr-early-run-lifecycle.md`) instead of an
    invisible dead worktree. Leave the branch and worktree in place; nothing else in this step tears
-   them down.
+   them down. A retry adopts that branch (`build/adopted-branch-collision-check.md`'s
+   `prior-attempt` state), so the failure reason may say a plan commit is kept for the retry — name
+   its sha.
 
    ```bash
    eval "$(node -e "

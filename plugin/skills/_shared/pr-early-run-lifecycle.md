@@ -105,6 +105,15 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
   gate's first-push exemption can match it against the push it precedes:
   `AUTO {time} — PR-early run lifecycle: reopened PR #{number} for {branch} (retry). Reversibility: high.`
 
+  **Rebind a retry's body (#3887).** When the reopened body's first line names a different run
+  than this one — a retry that adopted a prior attempt's branch
+  (`build/adopted-branch-collision-check.md`'s `prior-attempt` state) — compose this run's body
+  per Step 3 and write it with
+  `gh pr edit {number} --repo {host}/{owner}/{repo} --body-file "$PR_EARLY_BODY"` before Step 2's
+  push: `bin/pr-checklist.js` refuses every phase-checklist update on a body naming another run
+  (exit 4), which would freeze this run's checklist. Log
+  `AUTO {time} — PR-early run lifecycle: rebound reopened PR #{number} to run {run-id}. Reversibility: high.`
+
   **Reopen fails** (the branch was force-pushed out from under it, or some other state GitHub
   rejects): fall through to creation below. The fresh PR reuses the same title/body template;
   its new number/url overwrites the stale one via `record-pr` (Step 4), and — only if a pointer
@@ -141,6 +150,8 @@ That holds on the creation path only: a run that adopted its worktree (a dispatc
 multi-spec shared worktree) skips Steps 1.5/1.6 with the rest of worktree creation, so
 `build/adopted-branch-collision-check.md` covers it instead — it stops on a same-name `origin`
 branch whose tip is not in the adopted worktree's history, before this file's Step 2 push (#2844).
+It adopts the record's own failed earlier attempt instead of stopping on it (#3887), so a dispatch
+retry also reaches the CLOSED-match reopen above.
 
 ### Step 2: Push the branch
 
