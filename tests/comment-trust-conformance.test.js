@@ -615,3 +615,46 @@ for (const [file, doc, frozen] of [
     assert.strictEqual(/console\.log\(JSON\.stringify\(result\)\);\r?\n\s*"\r?\n\s*```\r?\n\r?\n\s*(Carry each skipped-comment line)/.test(frozen), false, 'the extractor must not match the pre-change text');
   });
 }
+
+// ---- AC2.1 (#3823): every jq trust filter under plugin/skills is the generator output ----
+
+function listMarkdown(dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) return listMarkdown(p);
+    return e.name.endsWith('.md') ? [p] : [];
+  });
+}
+
+// Counts the generator-output copies in one text, deleting the note first and then the
+// select, and throws when the remainder still carries a stale or hand-edited predicate.
+function sweepJqTrustCopies(text, label) {
+  const note = untrustedJqNote();
+  const select = trustedJqSelect();
+  const notes = text.split(note).length - 1;
+  const afterNotes = text.split(note).join('');
+  const selects = afterNotes.split(select).length - 1;
+  const rest = afterNotes.split(select).join('');
+  for (const stale of ['authorAssociation ==', 'author_association ==', '"no association"']) {
+    assert.ok(!rest.includes(stale), `${label}: a stale or hand-edited jq trust copy remains (${stale})`);
+  }
+  return { selects, notes };
+}
+
+test('AC2.1: every jq trust filter in plugin/skills is the generator output', () => {
+  assert.ok(trustedJqSelect().includes('.author_association'), 'the generator must be the dual-transport form');
+  let selects = 0;
+  let notes = 0;
+  for (const file of listMarkdown(SKILLS)) {
+    const r = sweepJqTrustCopies(fs.readFileSync(file, 'utf8'), path.relative(SKILLS, file));
+    selects += r.selects;
+    notes += r.notes;
+  }
+  assert.strictEqual(selects, 6, 'select copies across plugin/skills');
+  assert.strictEqual(notes, 5, 'note copies across plugin/skills');
+});
+
+test('the AC2.1 sweep goes red on a stale copy', () => {
+  const frozen = 'gh pr view 1 --json comments --jq \'.comments[] | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")\'';
+  assert.throws(() => sweepJqTrustCopies(frozen, 'frozen'), /stale or hand-edited/);
+});
