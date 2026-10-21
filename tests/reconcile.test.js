@@ -1358,6 +1358,62 @@ test('AC2 (#3630): dispatch-style checks release,archive,reap sees the asynchron
   assert.ok(r.mirror && r.mirror.action === 'fast-forwarded', JSON.stringify(r.mirror));
 });
 
+// AC2 end to end: the real archiveMerged (no stub) over a PR GitHub merged
+// asynchronously — origin's main holds the merge commit, the clone's local main
+// does not. Without the added mirror, the run skips as local-behind-merge.
+async function archiveAsyncMergedRun(checks) {
+  const { seedDir, mainDir } = pairedFixture();
+  writePolicyViaSeedAndPull(seedDir, mainDir, 'integration-model: pr-first\nintegration-branch: main\n');
+  fs.writeFileSync(path.join(seedDir, 'merged.txt'), 'merged\n');
+  git(['add', 'merged.txt'], seedDir);
+  git(['commit', '-q', '-m', 'async merge'], seedDir);
+  git(['push', '-q', 'origin', 'main'], seedDir);
+  const NEW = git(['rev-parse', 'HEAD'], seedDir).trim();
+  git(['branch', 'feat-async'], mainDir);
+  // Real checkouts gitignore run dirs; without this the untracked run dir makes mirror read the tree as dirty.
+  fs.appendFileSync(path.join(mainDir, '.git', 'info', 'exclude'), '.claude-tweaks/pipelines/\n');
+  const runDir = path.join(mainDir, '.claude-tweaks', 'pipelines', '2026-10-17T062549-spec-3630');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active', worktree: path.join(mainDir, '.claude', 'worktrees', 'gone'), pr: { number: 3630100, branch: 'feat-async' },
+  }));
+  const pr = {
+    number: 3630100, state: 'MERGED', mergedAt: '2026-10-19T00:00:00Z', updatedAt: '2026-10-19T00:00:00Z',
+    mergeCommit: { oid: NEW }, closingIssuesReferences: [],
+  };
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-async-gh-'));
+  fs.writeFileSync(path.join(wrapperDir, 'gh'), [
+    '#!/bin/sh',
+    'if [ "$1" = "issue" ]; then echo \'{"state":"CLOSED"}\'; exit 0; fi',
+    `cat <<'EOF'\n${JSON.stringify(pr)}\nEOF`,
+    '',
+  ].join('\n'), { mode: 0o755 });
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+  const original = { health: preflight.ghHealthCheck, healthAsync: preflight.ghHealthCheckAsync, path: process.env.PATH };
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
+  process.env.PATH = `${wrapperDir}${path.delimiter}${original.path}`;
+  let r;
+  try {
+    r = await reconcile({ cwd: mainDir, checks });
+  } finally {
+    process.env.PATH = original.path;
+    preflight.ghHealthCheck = original.health;
+    preflight.ghHealthCheckAsync = original.healthAsync;
+  }
+  return { r, runDir, mainDir, NEW };
+}
+
+test('AC2 end to end (#3630): reconcile checks archive archives a PR GitHub merged asynchronously', async () => {
+  const { r, runDir } = await archiveAsyncMergedRun(['archive']);
+  assert.ok(r.mirror && r.mirror.action === 'fast-forwarded', JSON.stringify(r.mirror));
+  assert.ok(!(r.runs || []).some((x) => x.reason === 'local-behind-merge'), JSON.stringify(r.runs));
+  // basename, not the path: reconcile reports the realpath of the temp dir (/private/var on macOS).
+  assert.deepEqual((r.runs || []).map((x) => ({ run: path.basename(x.runDir), action: x.action })), [{ run: path.basename(runDir), action: 'archived' }]);
+});
+
 test('(#3630): dryRun with an added mirror prerequisite moves nothing but archive still sees origin\'s merge', async () => {
   const { r, seenAtArchive, NEW, mainDir } = await reconcileWithAsyncMerge(['archive'], { dryRun: true });
   assert.deepEqual(r.mirror, { state: 'behind', action: 'skipped', reason: 'dry-run' });
