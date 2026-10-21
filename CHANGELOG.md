@@ -53,6 +53,29 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.151.0](https://github.com/thn-inc/claude-tweaks/compare/v6.150.1...v6.151.0) (2026-10-21)
+
+
+### Features
+
+* Add a security-hardening vertical row to the routine fleet ([#3276](https://github.com/thn-inc/claude-tweaks/issues/3276)) ([259be05](https://github.com/thn-inc/claude-tweaks/commit/259be052140a89cf43e735ed30887cb55245c25d))
+* add the session-hub phase 2 plugin side — statusline cost segment and typed-skill UserPromptSubmit ledger ([#3862](https://github.com/thn-inc/claude-tweaks/issues/3862)) ([32377b6](https://github.com/thn-inc/claude-tweaks/commit/32377b60a8bcfd396b452c504de7628422807d14))
+* Forward per-task implementer and review tiers for marked… ([#3378](https://github.com/thn-inc/claude-tweaks/issues/3378)) ([b0620af](https://github.com/thn-inc/claude-tweaks/commit/b0620afac1f1c730c982bd981368a1ca65b8821b))
+* Group identical fan-out rows in the skill load delta table ([#3456](https://github.com/thn-inc/claude-tweaks/issues/3456)) ([25df6bc](https://github.com/thn-inc/claude-tweaks/commit/25df6bc55b4f606550c12a5a02a41253d89d1606))
+* Let agent-trust-scope judges honor an accepted-risk ADR… ([#3312](https://github.com/thn-inc/claude-tweaks/issues/3312)) ([d92ed71](https://github.com/thn-inc/claude-tweaks/commit/d92ed7131006dce3939c40f04ef4e6c8287492b2))
+
+
+### Bug Fixes
+
+* Digest dedup trusts a materiality-fingerprint marker from… ([#3766](https://github.com/thn-inc/claude-tweaks/issues/3766)) ([a865b2f](https://github.com/thn-inc/claude-tweaks/commit/a865b2ffab392860f6fe8d55aacb1c330291be47))
+* flow multi-spec: ephemeral-server.txt is written per… ([#3656](https://github.com/thn-inc/claude-tweaks/issues/3656)) ([b2fbd0e](https://github.com/thn-inc/claude-tweaks/commit/b2fbd0e97ead964cfc3fdcdbd9cccbe9d5e45f5f))
+* flow worktree-merge closes every run before the multi-run… ([#3809](https://github.com/thn-inc/claude-tweaks/issues/3809)) ([3820a30](https://github.com/thn-inc/claude-tweaks/commit/3820a300972f6ffca8deb60dd0816a98cdf88208))
+* friction-events: worktree-isolation refusals of… ([#3301](https://github.com/thn-inc/claude-tweaks/issues/3301)) ([d41c5c4](https://github.com/thn-inc/claude-tweaks/commit/d41c5c4c19c05b2db7005c7a44f99117ff094fa1))
+* plan-audit Check A accepts a regular file as a… ([#3493](https://github.com/thn-inc/claude-tweaks/issues/3493)) ([73151a3](https://github.com/thn-inc/claude-tweaks/commit/73151a3396f7acc8eacb252051b9d936eb7f7162))
+* Re-entry banner uses the # sigil under work-backend… ([#3554](https://github.com/thn-inc/claude-tweaks/issues/3554)) ([f6d2517](https://github.com/thn-inc/claude-tweaks/commit/f6d2517de820dc050ffac4f39a0a6d3bc7b3d769))
+* Resumed /build with a valid plan skips Common Steps… ([#3666](https://github.com/thn-inc/claude-tweaks/issues/3666)) ([cb7c605](https://github.com/thn-inc/claude-tweaks/commit/cb7c60519e5e607dceec7e6281aa91372cebcc33))
+* verify report.js git calls omit windowsHide, and the… ([#3854](https://github.com/thn-inc/claude-tweaks/issues/3854)) ([70dc35c](https://github.com/thn-inc/claude-tweaks/commit/70dc35ca6e4c9c1b73cd60133fb5ecab99cff237))
+
 ## [6.150.1](https://github.com/thn-inc/claude-tweaks/compare/v6.150.0...v6.150.1) (2026-10-21)
 
 
