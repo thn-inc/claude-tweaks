@@ -14,3 +14,4 @@
 | 10 | build | rebind paragraph lacked a read/trigger and Step 3 header note | fixed | a1829ee74 (trigger = run logged `adopted prior attempt`; Step 3 skip header excluded) |
 | 11 | build | collision-paragraph go-red control near-tautological | deferred | Origin: SDD Task 3 review; file tests/dispatch-retry-prior-attempt-conformance.test.js; final review triaged leave (acceptable for a prose pin); revisit when that paragraph is next reworded |
 | 12 | build | older gh without closingIssuesReferences degrades the stop card to "PR status unknown" | observation | Final review Minor 8 (note only); installed gh 2.102.0 supports the field; the `Fixes #N` body fallback still links records |
+| 13 | build | linkedRecords(pr) computed once per PR in findPriorAttemptPr (supersedes item 1) | fixed | 113837f82 (Common Step 3 simplify) |
