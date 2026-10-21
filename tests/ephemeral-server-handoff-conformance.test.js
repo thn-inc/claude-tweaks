@@ -263,7 +263,7 @@ function walkMarkdown(dir) {
 
 function assertNoPositionalReader(entries) {
   const offenders = entries
-    .filter(({ text }) => /\b(?:fourth|third) field\b/i.test(text))
+    .filter(({ text }) => /\b(?:fourth|third|4th|3rd) (?:field|token|column|word)\b|\$[34]\b/i.test(text))
     .map(({ file }) => file);
   assert.deepEqual(offenders, [], `server-record readers that take the flag or root by position: ${offenders.join(', ')}`);
 }
@@ -306,4 +306,44 @@ test('#3657 go-red: a synthetic corpus entry with a positional fourth-field read
     assert.AssertionError,
   );
   assert.doesNotThrow(() => assertNoPositionalReader([{ file: 'synthetic/ok.md', text: 'read ephemeral-server.txt by its trailing detached: token' }]));
+});
+
+test('#3657 go-red: the sweep predicate also catches an ordinal or awk-variable spelling of a positional read', () => {
+  for (const text of ['the 4th token of ephemeral-server.txt is the flag', 'the third column holds the root', 'awk \'{print $4}\' ephemeral-server.txt']) {
+    assert.throws(() => assertNoPositionalReader([{ file: 'synthetic/spelling.md', text }]), assert.AssertionError, text);
+  }
+});
+
+// Each required clause is proven individually: dropping one clause must fail on that clause's own
+// assertion (the message carries the failing regex), never merely on a sibling assertion.
+function assertFailsOn(predicate, mutated, fragment) {
+  assert.throws(predicate.bind(null, mutated), (err) => err instanceof assert.AssertionError && err.message.includes(fragment));
+}
+
+test('#3657 go-red: each required Section D clause fails on its own assertion when dropped', () => {
+  const body = sectionD(readText(CLEANUP_EXEC));
+  const cases = [
+    { drop: 'Parse it by token, not by whitespace position', fragment: 'Parse it by token' },
+    { drop: 'the worktree root is everything between the port and that trailing token', fragment: 'everything between the port and that trailing token' },
+    { drop: 'When the trailing `detached:` token reads `detached:yes`', fragment: 'When the trailing' },
+  ];
+  for (const { drop, fragment } of cases) {
+    assert.ok(body.includes(drop), `anchor text missing from Section D: ${drop}`);
+    assertFailsOn(assertTrailingTokenSectionD, body.replace(drop, 'REMOVED'), fragment);
+  }
+});
+
+test('#3657 go-red: each required dispatch-template clause fails on its own assertion when dropped', () => {
+  const text = readText(TASK_PROMPT);
+  const cases = [
+    { drop: 'end the recorded line with a trailing', fragment: 'end the recorded line with a trailing' },
+    { drop: 'the worktree root is everything between the port and the', fragment: 'everything between the port and the trailing' },
+  ];
+  for (const { drop, fragment } of cases) {
+    // task-prompt.md is hard-wrapped, so the phrase may break across lines: match it whitespace-tolerantly.
+    const phrase = new RegExp(drop.split(' ').join('\\s+'));
+    const mutated = text.replace(phrase, 'REMOVED');
+    assert.notEqual(mutated, text, `anchor text missing from task-prompt.md: ${drop}`);
+    assertFailsOn(assertTrailingTokenTaskPrompt, mutated, fragment);
+  }
 });

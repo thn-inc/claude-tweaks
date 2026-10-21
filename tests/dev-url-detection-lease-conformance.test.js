@@ -133,11 +133,11 @@ test('Ephemeral server start states the ownership rule (background task dies wit
   assert.match(body, /\*\*Ownership\.\*\*/);
   assert.match(body, /belongs to the agent turn that spawned it/);
   assert.match(body, /\*\*POSIX:\*\*.*setsid/s);
-  assert.match(body, /Record `detached: yes`/);
-  assert.match(body, /\*\*Windows:\*\*.*Record `detached: no`/s);
+  assert.match(body, /Record `detached:yes`/);
+  assert.match(body, /\*\*Windows:\*\*.*Record `detached:no`/s);
 });
 
-test("Ephemeral server start's record line names a fourth `detached:{yes|no}` field", () => {
+test("Ephemeral server start's record line ends with a trailing `detached:{yes|no}` token", () => {
   const doc = read(DOC);
   const idx = doc.indexOf('#### Ephemeral server start');
   const outputIdx = doc.indexOf('### Output');
