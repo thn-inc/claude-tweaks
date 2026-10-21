@@ -14,13 +14,15 @@ the record in hand has a resolvable parent.
 Every step from **Enumerate the parent's sub-issues** onward is shared, unchanged, by every caller
 — only how the caller arrives at `$PARENT_NUM` differs, and there are exactly two shapes:
 
-- **Sub-issue-side entry** — the three mid-close callers in the Routing table at the top of
-  `verification-brief.md` (`/claude-tweaks:wrap-up`'s Phase 4 execution step, `/claude-tweaks:wrap-up`'s
-  auto-merge short-circuit, and `/claude-tweaks:dispatch`'s group auto-merge gate, the last running
-  this procedure once per group member). Each arrives holding a **sub-issue** number, plus
+- **Sub-issue-side entry** — the four sub-issue callers in the Routing table at the top of
+  `verification-brief.md`: the three mid-close ones (`/claude-tweaks:wrap-up`'s Phase 4 execution
+  step, `/claude-tweaks:wrap-up`'s auto-merge short-circuit, and `/claude-tweaks:dispatch`'s group
+  auto-merge gate, the last running this procedure once per group member) and
+  `/claude-tweaks:dispatch`'s close-out step 3, at a later human-confirmed merge whose run never
+  landed labeling. Each arrives holding a **sub-issue** number, plus
   `$CLOSING_SUB_ISSUES` — the set of sub-issue numbers its own run is closing, which the
   **Self-inclusion rule** below reads (one element for both wrap-up entries; the whole group for
-  the dispatch gate). Run every section below in order, starting with **Resolve the parent**.
+  the dispatch gate; the PR's `Fixes` records for close-out). Run every section below in order, starting with **Resolve the parent**.
 - **Parent-side entry** — **`/claude-tweaks:tidy`'s `Open parent gate` action**, on either
   driver: `tidy/actions-github-issues.md` executing on a `[parent-gate]` finding from
   `_shared/github-pr-scan-acceptance.md`'s `parent-gate` scope, or `tidy/actions-local-files.md` executing
@@ -195,6 +197,7 @@ single-sub-issue case is the one-element set.
 | `/claude-tweaks:wrap-up` Phase 4 execution (`wrap-up/execution-and-verification.md`) | the one sub-issue this run is closing |
 | `/claude-tweaks:wrap-up`'s auto-merge short-circuit (`wrap-up/review-console.md`) | the one sub-issue this run is closing |
 | `/claude-tweaks:dispatch`'s group auto-merge gate (`dispatch/settle-and-merge.md`) | **every** member of the group, on every one of its per-member invocations — that gate's single merge carries one `Fixes #{issue}` line per record, so the whole group closes together |
+| `/claude-tweaks:dispatch`'s close-out step 3 (`dispatch/close-out.md`) | the PR's `Fixes` record numbers — the one merge it confirms closes them all |
 
 The two wrap-up entries close exactly one record per run, so their set has exactly one member —
 the sub-issue in hand — and this rule reduces to "the sub-issue being closed counts as `CLOSED`".
@@ -204,12 +207,12 @@ evaluates `incomplete` on every one of them, labeling nothing — not the sub-is
 
 **Ruling (`#205`): stays a prose contract, not a shared helper.** A fifth caller inherits the
 "default to `{the sub-issue in hand}`, never `{}`" rule above with nothing to catch a wrong value
-if it passes one — the risk this table exists to flag. Given only three callers exist today, each
+if it passes one — the risk this table exists to flag. When three callers existed, each
 already reading this table before writing its own `$CLOSING_SUB_ISSUES` line, and a shared helper
 would mean threading a new call through every one of them for a hazard the default clause already
-closes (an omitted set can no longer silently label nothing — see above), the cost doesn't clear
-the bar yet. Revisit as a real code change once a fourth sub-issue-side caller is added, when the
-table stops being small enough to audit by eye on every new caller.
+closes (an omitted set can no longer silently label nothing — see above), the cost didn't clear
+the bar. The revisit condition — a fourth sub-issue-side caller — was met by close-out step 3
+(#3783); the shared-helper decision is a backlog record of its own, not settled here.
 
 **The gate still fires once per parent.** The group gate's later invocations for the same
 parent re-fetch the parent's labels (**Enumerate the parent's sub-issues** above does this

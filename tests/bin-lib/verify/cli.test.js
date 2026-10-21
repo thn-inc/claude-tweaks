@@ -443,6 +443,74 @@ test('#3757: a clean start with an unreadable end-of-run status stamps dirty:nul
   assert.strictEqual(stamp.dirty, null, 'an end-of-run status that could not be read is unknown, not clean');
 });
 
+// #3799: --cwd moves only the check spawns; the stamp and report belong to
+// the invoking checkout, so a --cwd in another checkout is refused up front.
+test('#3799: a --cwd in another checkout exits 2 before any check runs and writes nothing under the invoking checkout', async () => {
+  const a = tmpGitRepo();
+  const b = tmpGitRepo();
+  const mark = `node -e "require('fs').writeFileSync('ran.marker', 'x')"`;
+  const { code, stderr } = await runCli(['--cmd', `tests=${mark}`, '--cwd', b.repo], { cwd: a.repo });
+  assert.strictEqual(code, 2);
+  assert.ok(stderr.includes(fs.realpathSync(b.gitDir)), 'names the --cwd checkout git dir');
+  assert.ok(stderr.includes(fs.realpathSync(a.gitDir)), 'names the invoking checkout git dir');
+  assert.ok(!fs.existsSync(path.join(b.repo, 'ran.marker')), 'no check spawned');
+  assert.ok(!fs.existsSync(path.join(a.gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp for the invoking checkout');
+  assert.ok(!fs.existsSync(path.join(a.gitDir, 'claude-tweaks-verify', 'report.json')), 'no report for the invoking checkout');
+  assert.ok(!fs.existsSync(path.join(a.gitDir, 'claude-tweaks-test-count.json')), 'no count stamp for the invoking checkout');
+});
+
+test('#3799: a --cwd in a sibling worktree of the same repository exits 2 — each worktree owns its own stamp', async () => {
+  const a = tmpGitRepo();
+  const sibling = path.join(tmpDir(), 'sibling');
+  a.git('worktree', 'add', '-q', '-b', 'sibling', sibling);
+  const { code, stderr } = await runCli(['--cmd', 'tests=node -e 0', '--cwd', sibling], { cwd: a.repo });
+  assert.strictEqual(code, 2);
+  assert.ok(stderr.includes(fs.realpathSync(path.join(a.gitDir, 'worktrees', 'sibling'))), 'names the sibling worktree git dir');
+  assert.ok(!fs.existsSync(path.join(a.gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp for the invoking checkout');
+});
+
+test('#3799: a case-variant --cwd naming the invoking checkout still runs and stamps on a case-insensitive filesystem', async (t) => {
+  const a = tmpGitRepo();
+  const variant = path.join(path.dirname(a.repo), path.basename(a.repo).toUpperCase());
+  if (variant === a.repo || !fs.existsSync(variant)) {
+    t.skip('case-sensitive filesystem — a case variant is a different directory');
+    return;
+  }
+  const { code, stderr } = await runCli(['--cmd', 'tests=node -e 0', '--cwd', variant], { cwd: a.repo });
+  assert.strictEqual(code, 0, stderr);
+  assert.ok(fs.existsSync(path.join(a.gitDir, 'claude-tweaks-verify-pass.json')));
+});
+
+test('#3799: a symlinked --cwd resolving to the invoking checkout still runs and stamps', async () => {
+  const a = tmpGitRepo();
+  const link = path.join(tmpDir(), 'link');
+  fs.symlinkSync(a.repo, link, process.platform === 'win32' ? 'junction' : 'dir');
+  const { code, stderr } = await runCli(['--cmd', 'tests=node -e 0', '--cwd', link], { cwd: a.repo });
+  assert.strictEqual(code, 0, stderr);
+  assert.ok(fs.existsSync(path.join(a.gitDir, 'claude-tweaks-verify-pass.json')));
+});
+
+test('#3799: a --cwd outside any git checkout exits 2 and says so', async () => {
+  const a = tmpGitRepo();
+  const { code, stderr } = await runCli(['--cmd', 'tests=node -e 0', '--cwd', tmpDir()], { cwd: a.repo });
+  assert.strictEqual(code, 2);
+  assert.match(stderr, /not inside a git checkout/);
+});
+
+test('#3799: a --cwd subdirectory of the invoking checkout still runs and stamps', async () => {
+  const a = tmpGitRepo();
+  fs.mkdirSync(path.join(a.repo, 'packages', 'app'), { recursive: true });
+  const { code } = await runCli(['--cmd', 'tests=node -e 0', '--cwd', 'packages/app'], { cwd: a.repo });
+  assert.strictEqual(code, 0);
+  assert.ok(fs.existsSync(path.join(a.gitDir, 'claude-tweaks-verify-pass.json')));
+});
+
+test('#3799: the usage text says --cwd must stay inside the checkout verify.js runs from', async () => {
+  const { code, stderr } = await runCli(['--help']);
+  assert.strictEqual(code, 2);
+  assert.match(stderr, /--cwd must stay inside the checkout verify\.js runs from/);
+});
+
 test('--stamp-status recomputes dirty from the live tree — a dirty edit with no new commit is match:false (#1921 Gotchas)', async () => {
   const { repo } = tmpGitRepo();
   await runCli(['--cmd', 'tests=node -e 0'], { cwd: repo });
@@ -1938,7 +2006,7 @@ test('preExisting: a jest log whose only failing file is covered but whose globa
 });
 
 test('preExisting: a fully attributed jest log covered by the allowlist is adjudicated (#3480)', async () => {
-  const log = ['FAIL tests/known-shallow.test.js', '  ● known › fails', 'Test Suites: 1 failed, 2 passed, 3 total', 'Tests:       1 failed, 3 passed, 4 total'].join('\n');
+  const log = ['FAIL tests/known-shallow.test.js', '  ● known › fails', 'Test Suites: 1 failed, 2 passed, 3 total', 'Tests:       1 failed, 3 passed, 4 total', 'Ran all test suites.'].join('\n');
   const r = preExistingRepo({ log });
   const { code, stderr } = await runCli(r.args, { cwd: r.repo });
   assert.strictEqual(code, 0, stderr);

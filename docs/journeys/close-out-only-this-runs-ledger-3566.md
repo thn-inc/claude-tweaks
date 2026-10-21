@@ -7,6 +7,8 @@ files:
   - plugin/bin/wrap-up-engine.js
   - plugin/skills/wrap-up/SKILL.md
   - plugin/skills/wrap-up/residue-sweep.md
+  - plugin/skills/wrap-up/cleanup-procedures.md
+  - plugin/skills/wrap-up/review-console.md
 ---
 
 # Close Out Only This Run's Ledger
@@ -46,6 +48,14 @@ files:
 - **Should understand:** It prints `cannot attribute docs/plans ledgers to {run} (…) — pass --ledger <path> explicitly; ledger not deleted` when ownership can't be computed. An explicit `--ledger` is never ownership-filtered, only confined to the run dir or worktree.
 - **Red flags:** `git status` after cleanup showing a deleted `docs/plans/*-ledger.md` that this branch never added. "not found" on a run whose own ledger is still on disk and was added on this branch.
 
+### 5. The deletion reaches the PR head before the merge
+- **URL:** `plugin/skills/wrap-up/review-console.md` "On approval" step 13 (`pr-first`); `plugin/skills/wrap-up/cleanup-procedures.md`'s "Item 2 lands before item 4's merge" paragraph
+- **Action:** Under `pr-first`, step 13 runs after the console's last ledger writers (steps 7 and 11) and after step 12's wrap-up commit. It runs the delete, commits only the tracked `docs/plans/*-ledger.md` path, and pushes the branch as its own Bash call. Only then does it run `_shared/pr-first-merge.md`.
+- **Should feel:** After the PR merges, `git ls-tree --name-only origin/main docs/plans/` lists no ledger from this run. Nobody has to clean up residue by hand.
+- **Should understand:** Any delete report other than `deleted` commits nothing for item 2, and step 13's push still carries step 12's commit. A run-dir ledger is gitignored, so there is nothing to commit. Under `local-merge`, item 2 commits in the execution step before item 4 and does not push.
+- **Red flags:** The squash commit for a merged run still adds its own `*-ledger.md`. `finish-console` exits 1 with `no ledger found`, which means the delete ran before step 11.
+
 ## Origin
 - Created during the build of #3566 (`resolveLedgerPath` scoped to branch-owned `docs/plans` ledgers through the ownership helper shared with the wrap-up ledger probe; wrap-up's post-sweep re-count re-runs the probe instead of globbing), run `2026-10-20T001914-record-3566`.
+- Step 5 added by #3595: the `pr-first` merge moved to the Review Console's "On approval" step 13, so the ledger delete is committed and pushed after the console's last ledger writers and before the merge. Run `2026-10-20T124821-spec-3599-3602-3695-3696-3698-3699-3595`.
 - Updated during the build of #3684 (`finish-console` resolves the ledger and flips its rows in a pre-flight before any write, so an `ambiguous` or `unattributable` ledger refuses with nothing written), run `2026-10-20T185239-record-3684`.

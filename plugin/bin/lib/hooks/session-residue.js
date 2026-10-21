@@ -26,6 +26,7 @@ const ctxLib = require('./context');
 const runIntegrity = require('./run-integrity');
 const passReentry = require('../flow/consolidated-pass');
 const wtDetect = require('./worktree-detect');
+const { readWorkBackend } = require('../work-backend');
 const { readRunResidue, formatResidueLines } = require('../console/residue');
 
 const { safeReal } = wtDetect;
@@ -61,6 +62,8 @@ function collectStaleRuns(cwd, { cache, exclude, pluginRoot } = {}) {
     stale.push(entry);
     if (stale.length >= MAX_REPORTED) break;
   }
+  if (!stale.length) return [];
+  const sigil = readWorkBackend(wtDetect.mainCheckoutRoot(cwd) || cwd) === 'local-files' ? '' : '#';
   return stale.map(({ dir, state }) => {
     const prSuffix = state && state.pr && state.pr.url ? ` — PR ${state.pr.url}` : '';
     const base = `- ${path.basename(dir)} (status: ${(state && state.status) || 'unknown'})${prSuffix}`;
@@ -84,13 +87,15 @@ function collectStaleRuns(cwd, { cache, exclude, pluginRoot } = {}) {
     // read as unmerged here, and the review-console skill's online check is what
     // refuses it at invocation. No `sessionId` either — SessionStart has no run
     // of its own to exempt, so a live parent lock always suppresses the suffix.
+    // The record-reference grammar drops the sigil under `local-files`
+    // (_shared/record-batch-input.md), and an unreadable or unknown backend keeps `#`.
     try {
       const pass = passReentry.checkPassReentry(dir, { cache });
       // Manifest ids are other sessions' file content headed for a command line:
       // a non-integer id suppresses the suffix. The full dir is named so the
       // pasted command never falls back to the most-recent-slug heuristic.
       if (pass.eligible && pass.specIds.every((id) => Number.isInteger(id))) {
-        const ids = pass.specIds.map((id) => '#' + id).join(',');
+        const ids = pass.specIds.map((id) => sigil + id).join(',');
         return {
           dir,
           state,
@@ -141,8 +146,11 @@ function runIdNames(dir) {
 // by basename, capped at `limit` (default MAX_REPORTED). Candidates are the
 // newest `window` run-id names of the top level and archive/ merged, listed
 // without reading any state; a basename in both is kept once, top-level
-// preferred. A top-level candidate counts only when its run-state.json is
-// `clean` and its archive twin is neither clean nor freshly `archiving`
+// preferred. An unresolved item whose staged file is gone is `missing`, not
+// residue (#3772): `readRunResidue` drops it from the count, so a run whose
+// every unresolved item is missing is not reported. A top-level candidate
+// counts only when its run-state.json is `clean` and its archive twin is
+// neither clean nor freshly `archiving`
 // (iterRunDirsWithState's twin skip); otherwise its archive/ copy, when there
 // is one, stands in. Only consoles not yet acknowledged count — a run is kept
 // when at least one remains, and only those are listed. Reading stops as soon
@@ -178,7 +186,8 @@ function scanUnresolvedConsoles(cwd, { exclude, pluginRoot, limit = MAX_REPORTED
     const found = readRunResidue(dir, readFile ? { readFile } : undefined);
     const consoles = found.consoles.filter((c) => !c.acknowledged);
     if (!consoles.length) continue;
-    runs.push({ dir, consoles, lines: formatResidueLines({ dir, consoles }, { pluginRoot: root }) });
+    const missingOnly = found.missingOnly.filter((c) => !c.acknowledged);
+    runs.push({ dir, consoles, lines: formatResidueLines({ dir, consoles, missingOnly }, { pluginRoot: root }) });
   }
   return { runs, more };
 }

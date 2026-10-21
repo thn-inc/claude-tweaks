@@ -2688,3 +2688,21 @@ test('#3388: probe checks registered by earlier tests do not leak -- a clean fix
     fs.rmSync(repoRoot, { recursive: true, force: true });
   }
 });
+
+// ---- carrier-commit shares the closing-keyword alternation (#3595 D3) ----
+
+test('#3595 AC3.1: carrier-commit matches Fixes/Closes and rejects Refs through the shared CLOSING_KEYWORD_ALTERNATION', () => {
+  const runDir = makeTmpDir('verify-carrier-shared-alt-');
+  writeSpecFile(runDir, '900', 900);
+  const verifyWithLog = (log) => {
+    const fakeGit = (args) => (args[0] === 'log' ? log : '');
+    const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+    return result.rows.find((r) => r.check === 'carrier-commit');
+  };
+  assert.strictEqual(verifyWithLog('x\n\nFixes #900\n').result, 'pass');
+  assert.strictEqual(verifyWithLog('x\n\nCloses #900\n').result, 'pass');
+  assert.strictEqual(verifyWithLog('x\n\nRefs #900\n').result, 'fail');
+  const source = fs.readFileSync(path.join(__dirname, '../../../plugin/bin/lib/wrap-up/engine-verify.js'), 'utf8');
+  assert.match(source, /\{[^}]*\bCLOSING_KEYWORD_ALTERNATION\b[^}]*\}\s*=\s*require\('\.\.\/issue-branch-tracking'\)/);
+  assert.doesNotMatch(source, /CLOSING_KEYWORDS_PATTERN/);
+});

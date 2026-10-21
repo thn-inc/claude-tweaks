@@ -4,7 +4,7 @@ Loaded at summary-render time by `/flow`'s consolidated close-out.
 
 After all specs complete (or one fails), present a consolidated summary:
 
-**Needs-a-human residue (#3370).** Run `node "{pluginRoot}/bin/console-residue.js" --run "$MULTISPEC_PARENT_DIR"` once against the parent run dir (the archive path when already archived, per `_shared/timing-render.md`'s archive-path rule) — it covers every `spec-*/console.json` — and render its stdout verbatim under a `### Needs a human` heading. Omit the section only when the command exits 0 with empty stdout; on any non-zero exit, render the CLI's stderr verbatim under the heading, so a failed scan never reads as "no residue".
+**Needs-a-human residue (#3370).** Run `node "{pluginRoot}/bin/console-residue.js" --run "$MULTISPEC_PARENT_DIR" --require-verify {base}` once against the parent run dir (the archive path when already archived, per `_shared/timing-render.md`'s archive-path rule), `{base}` being the base ref `wrap-up/summary-template.md`'s `{base}` rule resolves — it covers every `spec-*/console.json`, and `--require-verify` adds a line, with its paste-ready command, for each `spec-*/` that never wrote `verify.json` (wrap-up's Verify execution never ran, or its write failed) — and render its stdout verbatim under a `### Needs a human` heading. Omit the section only when the command exits 0 with empty stdout; on any non-zero exit, render the CLI's stderr verbatim under the heading, so a failed scan never reads as "no residue".
 
 ```markdown
 ## Flow: Multi-Spec Pipeline Complete  {— keep-going if applicable}
@@ -22,7 +22,7 @@ After all specs complete (or one fails), present a consolidated summary:
 
 ### Needs a human
 
-{stdout of `node "{pluginRoot}/bin/console-residue.js" --run "$MULTISPEC_PARENT_DIR"`, verbatim, per the Needs-a-human residue rule above — omit this whole section only on exit 0 with empty stdout; on any non-zero exit, the CLI's stderr verbatim instead}
+{stdout of `node "{pluginRoot}/bin/console-residue.js" --run "$MULTISPEC_PARENT_DIR" --require-verify {base}`, verbatim, per the Needs-a-human residue rule above — omit this whole section only on exit 0 with empty stdout; on any non-zero exit, the CLI's stderr verbatim instead}
 
 ### Try it
 

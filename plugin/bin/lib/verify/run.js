@@ -23,7 +23,7 @@ const STAGE1 = ['types', 'lint'];
 function killTree(child, { platform = process.platform, kill = process.kill, execImpl = execFileSync } = {}) {
   if (child && typeof child.pid === 'number') {
     try {
-      if (platform === 'win32') execImpl('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+      if (platform === 'win32') execImpl('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
       else kill(-child.pid, 'SIGKILL');
       return;
     } catch { /* fall through to the plain kill below */ }
@@ -80,7 +80,7 @@ function runOne({
       for (const k of Object.keys(inherited)) if (mine.has(k.toUpperCase())) delete inherited[k];
     }
     const env = { ...inherited, ...checkEnv };
-    const opts = { shell: true, env };
+    const opts = { shell: true, env, windowsHide: true };
     if (cwd) opts.cwd = cwd;
     // detached:true makes the spawned shell the leader of its own POSIX
     // process group, so killTree's negative-pid kill below reaches every

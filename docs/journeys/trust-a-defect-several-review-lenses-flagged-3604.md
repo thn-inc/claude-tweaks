@@ -5,6 +5,7 @@ files:
   - plugin/skills/review/code-mode-steps.md
   - plugin/bin/lib/coordination.js
   - plugin/bin/review-coordination.js
+  - plugin/bin/lib/console/resolve.js
 ---
 
 # Trust a Defect Several Review Lenses Flagged
@@ -34,9 +35,10 @@ files:
 - **URL:** the Review Console's Low-confidence findings section
 - **Action:** look for the corroborated finding.
 - **Should feel:** consistent. A finding confirmed in routing is not also offered as low-confidence.
-- **Should understand:** the console builds Low-confidence rows from `STAGED … not reproduced` lines (`plugin/bin/lib/console/resolve.js`'s `coordinationItems`). The pass writes those lines only for findings still `unconfirmed` after corroboration. If the call fails, nothing is promoted. The STAGED lines are written as before, plus one `SKIP … Cross-lens corroboration (skipped)` line.
+- **Should understand:** the console builds Low-confidence rows from `STAGED … not reproduced` lines (`plugin/bin/lib/console/resolve.js`'s `coordinationItems`), and drops a STAGED line that a later `AUTO … Confirmed.` line confirmed for the same lens and `path:line`. The pass writes those lines only for findings still `unconfirmed` after corroboration. If the call fails, nothing is promoted. The STAGED lines are written as before, plus one `SKIP … Cross-lens corroboration (skipped)` line.
 - **Red flags:** the same `{path}:{line}` appears both as a confirmed routing row and as a Low-confidence console row. A failed corroboration call leaves no STAGED and no SKIP line.
 
 ## Origin
 - Created during build of #3604. On #3258's medium-tier review, a superseded failed workflow run at the base sha marked a real PR failure as inherited. Lens agents 3a-B (high), 3b-B (low) and 3c-A (low) each reported it independently, but it stayed `unconfirmed` in every lens because each partner agent missed it. It was fixed only through the reviewing agent's manual Direct-verification override.
+- Updated by #3772: the console now drops a STAGED low-confidence line once a later `AUTO … Confirmed.` line in the same run confirms that lens and `path:line`, closing the step 3 red flag for reproduction-pair elevations too.
 - Related journeys: `keep-review-lenses-from-running-suites-3001.md` (the same medium-tier fan-out), `ratify-or-reverse-an-sdd-ruling-at-the-review-console-3401.md` (how this build's severity and chain-carving rulings reach the console).

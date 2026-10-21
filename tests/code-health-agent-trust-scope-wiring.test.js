@@ -57,8 +57,8 @@ test('criteria-agent-trust-scope.md names all three candidate kinds', () => {
 test('review wires in Step 6.65 and consolidates Step 6.7 routing', () => {
   // #2628 split the Step 6.6/6.65/6.66 component-pass bodies out of
   // code-mode-steps.md into focus-criterion-passes.md to stay under the
-  // per-file byte ceiling (tests/ceremony-profile-roster.test.js's #1926 AC7
-  // check) — step numbering and the Step 6.7 consolidated-routing table
+  // per-file byte ceiling (tests/review-qa-rerun-after-fix-wave-conformance.test.js's
+  // AC5.1 Read-limit byte rail) — step numbering and the Step 6.7 consolidated-routing table
   // (still in code-mode-steps.md) are unaffected by the split.
   const passes = readText(path.join(ROOT, 'plugin/skills/review/focus-criterion-passes.md'));
   assert.match(passes, /## Step 6\.65: Agent Trust Scope Pass/);
@@ -81,4 +81,91 @@ test('docs/getting-started.md counts the shipped verticals including agent-trust
   assert.match(docs, new RegExp(`${expectedWord} verticals shipped`));
   assert.match(docs, /`agent-trust-scope`/);
   assert.match(docs, /`app-store-readiness`/);
+});
+
+const CRITERIA_PATH = path.join(ROOT, 'plugin/skills/_shared/criteria-agent-trust-scope.md');
+const FOCUS_PASSES_PATH = path.join(ROOT, 'plugin/skills/review/focus-criterion-passes.md');
+const SUMMARY_TEMPLATE_PATH = path.join(ROOT, 'plugin/skills/review/review-summary-template.md');
+const CODE_HEALTH_SKILL_PATH = path.join(ROOT, 'plugin/skills/code-health/SKILL.md');
+const ACCEPTED_RISK_LINE = 'accepted risk — ADR NNNN ({kind})';
+
+function assertAcceptedRiskGuard(fragment) {
+  const start = fragment.indexOf('## What NOT to flag');
+  const end = fragment.indexOf('## Severity calibration', start + 1);
+  assert.ok(start >= 0 && end > start, 'fragment must have "## What NOT to flag" before "## Severity calibration"');
+  const notFlag = fragment.slice(start, end);
+  for (const needle of ['docs/decisions/', '**Status:**', '`accepted`', '## Decision', 'superseded', 'proposed',
+    ACCEPTED_RISK_LINE, 'never as a finding', 'never as a filed issue']) {
+    assert.ok(notFlag.includes(needle), `What NOT to flag is missing the accepted-risk guard element: ${needle}`);
+  }
+  const prompt = fragment.slice(fragment.indexOf('## Copy-paste prompt'));
+  assert.ok(prompt.includes('accepted risk — ADR NNNN'), 'copy-paste prompt must mirror the accepted-risk exception');
+}
+
+test('AC1.1/AC2.1/AC3.1: criteria fragment carries the accepted-risk ADR guard', () => {
+  assertAcceptedRiskGuard(readText(CRITERIA_PATH));
+});
+
+test('go-red: the accepted-risk guard check fails when the bullet is removed', () => {
+  const fragment = readText(CRITERIA_PATH);
+  const mutated = fragment.replace(/^- A dimension the project has formally accepted in an ADR[\s\S]*?(?=\n\n## Severity calibration)/m, '');
+  assert.notEqual(mutated, fragment, 'mutation did not apply — the bullet must start with "- A dimension the project has formally accepted in an ADR"');
+  assert.throws(() => assertAcceptedRiskGuard(mutated));
+});
+
+function assertStep665AcceptedRiskRow(passes) {
+  const start = passes.indexOf('## Step 6.65');
+  const end = passes.indexOf('## Step 6.66', start + 1);
+  const step = passes.slice(start, end);
+  const row = step.split('\n').find((l) => l.startsWith('|') && l.includes(ACCEPTED_RISK_LINE));
+  assert.ok(row, 'Step 6.65 result-handling table has no accepted-risk row');
+  assert.match(row, /footer/);
+  assert.match(row, /Not an Agent Trust Scope finding/);
+}
+
+function assertTemplateAcceptedRiskNote(tmpl) {
+  const start = tmpl.indexOf('### Agent Trust Scope');
+  const end = tmpl.indexOf('\n### ', start + 1);
+  assert.ok(start >= 0 && end > start, 'summary template must have an "### Agent Trust Scope" section');
+  assert.ok(tmpl.slice(start, end).includes(ACCEPTED_RISK_LINE),
+    'the Agent Trust Scope section of the summary template must name the accepted-risk footer note');
+}
+
+test('AC1.1: review Step 6.65 renders an accepted-risk candidate as a footer note naming the ADR', () => {
+  assertStep665AcceptedRiskRow(readText(FOCUS_PASSES_PATH));
+  assertTemplateAcceptedRiskNote(readText(SUMMARY_TEMPLATE_PATH));
+});
+
+test('go-red: the template check fails when only another section names the accepted-risk line', () => {
+  const tmpl = readText(SUMMARY_TEMPLATE_PATH);
+  const mutated = tmpl.split(ACCEPTED_RISK_LINE).join('REMOVED') + `\n### Elsewhere\n${ACCEPTED_RISK_LINE}\n`;
+  assert.notEqual(mutated, tmpl, 'mutation did not apply');
+  assert.throws(() => assertTemplateAcceptedRiskNote(mutated));
+});
+
+test('go-red: the Step 6.65 row check fails when the row is removed', () => {
+  const passes = readText(FOCUS_PASSES_PATH);
+  const mutated = passes.split('\n').filter((l) => !(l.startsWith('|') && l.includes('accepted risk — ADR NNNN'))).join('\n');
+  assert.notEqual(mutated, passes, 'mutation did not apply');
+  assert.throws(() => assertStep665AcceptedRiskRow(mutated));
+});
+
+function assertStep10AcceptedRiskLine(skillMd) {
+  const start = skillMd.indexOf('**Step 10 — SUMMARIZE.**');
+  assert.ok(start >= 0, 'SKILL.md must have a "**Step 10 — SUMMARIZE.**" paragraph');
+  const next = skillMd.indexOf('\n## ', start + 1);
+  assert.ok(next > start, 'SKILL.md Step 10 must be followed by a "## " heading');
+  const step = skillMd.slice(start, next);
+  assert.ok(step.includes(ACCEPTED_RISK_LINE), 'Step 10 must carry the accepted-risk summary line');
+}
+
+test('AC1.1: code-health Step 10 summary lists an accepted-risk candidate as its only record', () => {
+  assertStep10AcceptedRiskLine(readText(CODE_HEALTH_SKILL_PATH));
+});
+
+test('go-red: the Step 10 accepted-risk check fails when the sentence is removed', () => {
+  const skillMd = readText(CODE_HEALTH_SKILL_PATH);
+  const mutated = skillMd.split(ACCEPTED_RISK_LINE).join('');
+  assert.notEqual(mutated, skillMd, 'mutation did not apply — SKILL.md must contain "accepted risk — ADR NNNN ({kind})"');
+  assert.throws(() => assertStep10AcceptedRiskLine(mutated));
 });

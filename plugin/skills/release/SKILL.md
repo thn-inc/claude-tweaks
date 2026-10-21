@@ -1,6 +1,6 @@
 ---
 name: release
-description: Use to cut a release — reads the preflight pack, runs the whole-branch review before the bump, renders one console, drives the engine, verifies tag and hook, closes shipped records. Keywords - release, tag, changelog, release-please, release train, Release-As.
+description: Use to cut a release. Keywords - release, tag, changelog, release-please, release train, Release-As.
 argument-hint: "[--dry-run] [--train] [--as <version>] [--allow-blocking]"
 ---
 

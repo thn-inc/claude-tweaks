@@ -120,9 +120,12 @@ test('collectApprovableStandalone: exclude drops the named run dir from the resu
 
 // #3370: closed and archived runs whose unattended Review Console left
 // pending / keep-staged items no human has reviewed.
-function mkConsole(runDir, items, extra) {
+// #3772: an item whose staged file is gone is `missing`, not residue — so each
+// fixture item gets the staged file it names, unless `{ stage: false }`.
+function mkConsole(runDir, items, extra, { stage = true } = {}) {
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true, items, ...extra }));
+  if (stage) for (const { id } of items) mkStagedFile(runDir, id, 'x');
 }
 function mkArchived(project, name) {
   return path.join(project, '.claude-tweaks', 'pipelines', 'archive', name);
@@ -144,6 +147,24 @@ test('collectUnresolvedConsoles surfaces an archived run\'s unmapped-prefix and 
   assert.match(text, /review-debate-deviation\.md/);
   assert.ok(entries[0].lines.includes(`    cat "${path.join(run, 'staged', 'review-13-record.md')}"`));
   assert.ok(entries[0].lines.includes(`  mark reviewed: node "/plugins/claude-tweaks/bin/console-residue.js" --ack --run "${run}"`));
+});
+
+test('AC3.4: the SessionStart console scan skips a run whose pending items\' staged files are all gone (#3772)', () => {
+  const project = tmpProject();
+  mkConsole(mkArchived(project, '2026-10-19T131646-spec-3258'), [PENDING('wrap-up-docs-1.md')], undefined, { stage: false });
+  assert.deepStrictEqual(residue.collectUnresolvedConsoles(project, { pluginRoot: '/p' }), []);
+});
+
+test('the SessionStart console scan names the missing items of a spec console that has no present items (#3772)', () => {
+  const project = tmpProject();
+  const run = mkArchived(project, '2026-10-19T131646-spec-3258');
+  mkConsole(run, [PENDING('wrap-up-docs-1.md')]);
+  mkConsole(path.join(run, 'spec-2'), [PENDING('wrap-up-docs-2.md')], undefined, { stage: false });
+  const entries = residue.collectUnresolvedConsoles(project, { pluginRoot: '/p' });
+  assert.strictEqual(entries.length, 1);
+  const notCounted = entries[0].lines.filter((l) => l.startsWith('  not counted — '));
+  assert.strictEqual(notCounted.length, 1, entries[0].lines.join('\n'));
+  assert.ok(notCounted[0].includes(path.join('spec-2', 'staged', 'wrap-up-docs-2.md')), notCounted[0]);
 });
 
 test('collectUnresolvedConsoles: acknowledged consoles are skipped', () => {
@@ -340,6 +361,38 @@ test('AC5.1 eligible multi-spec parent line ends with the review-console command
   const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
   assert.strictEqual(entries.length, 1);
   assert.ok(entries[0].line.startsWith('- 2026-08-01T090000-spec-11-12 (status: active)'), entries[0].line);
+  assert.ok(entries[0].line.endsWith(reentrySuffix(runDir)), entries[0].line);
+});
+
+test('AC1.1 local-files CLAUDE.md -> suffix lists bare ids', () => {
+  const { root, runDir } = reentryFixture();
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# P\n\nwork-backend: local-files\n');
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.ok(entries[0].line.endsWith(` — consolidated pass never ran: PIPELINE_RUN_DIR="${runDir}" /claude-tweaks:flow 11,12 review-console`), entries[0].line);
+});
+
+test('AC1.2 github-issues CLAUDE.md keeps the # ids', () => {
+  const { root, runDir } = reentryFixture();
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# P\n\nwork-backend: github-issues\n');
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.ok(entries[0].line.endsWith(reentrySuffix(runDir)), entries[0].line);
+});
+
+test('#3554 unknown work-backend keeps the # ids', () => {
+  const { root, runDir } = reentryFixture();
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# P\n\nwork-backend: jira\n');
+  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
+  assert.ok(entries[0].line.endsWith(reentrySuffix(runDir)), entries[0].line);
+});
+
+test('#3554 the suffix reads the main checkout CLAUDE.md, not the worktree one', () => {
+  const { wt, runDir } = reentryFixture();
+  fs.writeFileSync(path.join(wt, 'CLAUDE.md'), '# P\n\nwork-backend: local-files\n');
+  const entries = residue.collectStaleRuns(wt, { pluginRoot: '/plugins/claude-tweaks' });
+  assert.strictEqual(entries.length, 1);
   assert.ok(entries[0].line.endsWith(reentrySuffix(runDir)), entries[0].line);
 });
 

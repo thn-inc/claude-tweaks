@@ -3,7 +3,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 const { ensureLabelPayload } = require('../../../plugin/bin/lib/issues/labels');
 const { LABELS } = require('../../../plugin/bin/lib/issues/record');
 
@@ -121,12 +123,16 @@ test('the graded risk/priority/size families follow the stated convention order 
 // test can never silently drift from the descriptions/colors every real `gh label create`
 // bootstrap flow actually uses (see the [reuse] finding this replaces — 7 of these rows used to
 // be hand-copied verbatim from that file instead of read from it).
-function canonicalLabelsFromBootstrapDoc() {
-  const docPath = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'label-bootstrap.md');
-  const md = fs.readFileSync(docPath, 'utf8');
+const BOOTSTRAP_DOC = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'label-bootstrap.md');
+
+function extractCanonicalLabels(md) {
   const match = md.match(/## Canonical LABELS_JSON[\s\S]*?```js\n([\s\S]*?)\n```/);
-  assert.ok(match, `labels.test.js: could not locate the Canonical LABELS_JSON fence in ${docPath}`);
+  assert.ok(match, `labels.test.js: could not locate the Canonical LABELS_JSON fence in ${BOOTSTRAP_DOC}`);
   return JSON.parse(match[1]);
+}
+
+function canonicalLabelsFromBootstrapDoc() {
+  return extractCanonicalLabels(readText(BOOTSTRAP_DOC));
 }
 
 // Every real label description this plan introduces or keeps must pass — a single place
@@ -154,4 +160,16 @@ test('every real label description used across the skill tree stays under the ca
   for (const [name, description, color] of REAL_LABEL_DESCRIPTIONS) {
     assert.doesNotThrow(() => ensureLabelPayload(name, description, color), `${name}: "${description}" (${description.length} chars)`);
   }
+});
+
+test('CRLF control (#3670): labels.test.js extracts the same result after a CRLF round-trip through readText()', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'labels-crlf-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const lf = readText(BOOTSTRAP_DOC);
+  const crlf = lf.replace(/\n/g, '\r\n');
+  assert.ok(crlf.includes('\r\n'), 'CRLF build must contain \\r\\n');
+  assert.ok(!crlf.includes('\r\r\n'), 'CRLF build must not contain \\r\\r\\n');
+  const file = path.join(tmp, path.basename(BOOTSTRAP_DOC));
+  fs.writeFileSync(file, crlf);
+  assert.deepStrictEqual(extractCanonicalLabels(readText(file)), extractCanonicalLabels(lf));
 });

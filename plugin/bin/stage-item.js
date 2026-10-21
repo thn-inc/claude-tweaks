@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // bin/stage-item.js — write one staged proposal file into a run's staged/
 // directory.
-//   node bin/stage-item.js --run <run-dir> --id <kind>-<n> --file <path> [--json <path>] [--allocate] [--help]
+//   node bin/stage-item.js --run <run-dir> --id <kind>-<n> --file <path> [--json <path>] [--allocate]
+//     [--ledger <path> --item <text> --label <noun> [--phase <phase>] [--section <heading>]] [--help]
+//     (--ledger requires --allocate)
 // Exit 0 on success (writes staged/<id><ext> — and, when --json was given,
 // staged/<id>.json alongside it — echoes the written path(s) to stdout, one
 // per line); 2 on a malformed invocation (missing/unsafe args, unreadable
-// --file/--json, --json content that isn't a JSON array, or --allocate with
-// an --id that isn't a "{kind}-{n}" shape); 3 when the run dir is missing or
+// --file/--json, --json content that isn't a JSON array, a rejected --ledger,
+// or --allocate with an --id that isn't a "{kind}-{n}" shape); 3 when the run dir is missing or
 // not anchored under the main checkout (a worktree-local shadow —
 // _shared/pipeline-run-dir.md's Anchoring section, [IL-127]), or a staged
 // file is unwritable. The printed path is the run dir's realpath, which can
@@ -36,6 +38,31 @@
 // nothing.
 // The staged/ half of #637 ("no CLI writes decisions.md or staged/ items");
 // bin/log-decision.js is the decisions.md half, shipped under #686.
+// `--ledger <path>` (#3510) turns one call into the whole carry-forward: read the
+// open-items ledger and number the next row, stage --file with its `Ledger:`
+// header line set to `{path}#{n}`, append row {n} (Phase `--phase`, default
+// `build`; Item `--item`, suffixed `(staged/{file})` with the path actually
+// written; Status `open`), and log a STAGED line under `--section` (default
+// `/build`) in decisions.md. --item and --label (the noun in the log lines) are
+// required, and --json is refused alongside it (exit 2). --allocate is required
+// too (exit 2 without it): its exclusive create is what guarantees the cleanup
+// on a failed ledger write removes only the file this call created, never an
+// earlier staged file overwritten under the same id. The ledger must be a
+// `ledger.md` / `*-ledger.md` under the run dir or the checkout, else exit 2.
+// Every degraded path logs a SKIP line, prints `stage-item.js: ledger
+// carry-forward degraded — …` on stderr, and exits 3 (the one exit-3 case a
+// caller must NOT retry — a refused run dir exits 3 too, with no such prefix and
+// nothing logged): an unreadable ledger, a ledger with no table, or a ledger
+// that cannot take a new row safely (duplicate row numbers, or numbered rows
+// outside the table) stage and append nothing; a staged write that fails leaves
+// the row appended `open` with no `(staged/…)` suffix; both failing leaves
+// nothing; a ledger write that fails removes the staged file (the SKIP says
+// whether the removal succeeded). A row number another writer took since the
+// first read is not a degraded path: the staged file's header is renumbered to
+// the next free row and the call exits 0 — only if that rewrite fails is the
+// staged file removed and the call degraded. A failing decisions.md write is
+// only a stderr warning.
+// The sequence runs under `{run-dir}/.ledger.lock` (bin/lib/stage-item/ledger.js).
 // `--json` (#2612) is the machine-readable sidecar render-tidy-report.js
 // reads back — an array of `{tag, record, title, action, command}` objects,
 // one per Approve-section row this staged item represents. Written in the
@@ -46,15 +73,18 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  resolveTarget, sanitizeId, writeStagedItem, writeStagedSidecar, parseNumberedKind,
+  resolveTarget, sanitizeId, writeStagedItem, writeStagedSidecar, parseNumberedKind, findGitRoot,
 } = require('./lib/stage-item/write');
+const { carryForward } = require('./lib/stage-item/ledger');
+const { resolveLedgerPath } = require('./lib/wrap-up/ledger-write');
 const { classifyStagedItem, nearestCanonicalPrefixes } = require('./lib/console/resolve');
 
-const USAGE = 'usage: stage-item.js --run <run-dir> --id <kind>-<n> --file <path> [--json <path>] [--allocate] [--help]\n';
+const USAGE = 'usage: stage-item.js --run <run-dir> --id <kind>-<n> --file <path> [--json <path>] [--allocate] [--ledger <path> --item <text> --label <noun> [--phase <phase>] [--section <heading>] (requires --allocate)] [--help]\n';
 
 function parseArgs(argv) {
   const o = {
     run: null, id: null, file: null, json: null, allocate: false, help: false,
+    ledger: undefined, item: undefined, label: undefined, phase: undefined, section: undefined,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -65,6 +95,11 @@ function parseArgs(argv) {
     else if (a === '--file') o.file = next();
     else if (a === '--json') o.json = next();
     else if (a === '--allocate') o.allocate = true;
+    else if (a === '--ledger') o.ledger = next();
+    else if (a === '--item') o.item = next();
+    else if (a === '--label') o.label = next();
+    else if (a === '--phase') o.phase = next();
+    else if (a === '--section') o.section = next();
     else return { error: `unknown argument: ${a}` };
   }
   return o;
@@ -78,6 +113,53 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
 };
 
+// #3370: warn (never fail) when the id that landed matches no SECTION_MAP
+// prefix — a wrap-up Review Console resolving this run would park it in
+// Pending review. Not every staging producer's run reaches that console.
+function warnUnmappedPrefix(landedId, sourceFile, deps) {
+  if (classifyStagedItem(landedId + path.extname(sourceFile)).reason === 'unmapped-prefix') {
+    deps.stderr(`stage-item.js: warning: --id ${landedId} matches no Review Console SECTION_MAP prefix — if a wrap-up Review Console resolves this run, it routes this item to Pending review (unmapped-prefix), never auto-resolved. Nearest canonical prefixes: ${nearestCanonicalPrefixes(landedId).join(', ')}\n`);
+  }
+}
+
+// #3510: the --ledger branch of run(), entered once the run dir has resolved.
+function runLedger(o, { id, content, target }, deps) {
+  const found = findGitRoot(deps.cwd());
+  const resolved = resolveLedgerPath({
+    runDir: target.dir, worktree: found ? found.dir : null, explicit: path.resolve(deps.cwd(), o.ledger),
+  });
+  if (!resolved.ok) {
+    deps.stderr(`stage-item.js: --ledger ${o.ledger} rejected (${resolved.reason}${resolved.detail ? `: ${resolved.detail}` : ''})\n`);
+    return 2;
+  }
+  const result = carryForward({
+    runDir: target.dir,
+    ledgerPath: resolved.path,
+    ledgerRef: o.ledger,
+    id,
+    sourcePath: o.file,
+    content: content.toString('utf8'),
+    allocate: o.allocate,
+    phase: o.phase ?? 'build',
+    item: o.item,
+    label: o.label,
+    section: o.section ?? '/build',
+    now: typeof deps.now === 'function' ? deps.now() : Date.now(),
+  });
+  // The degraded line goes first: callers branch on stderr *starting* with
+  // this prefix (build/dispatch.md), so a log-write warning must follow it.
+  if (result.code !== 0) deps.stderr(`stage-item.js: ledger carry-forward degraded — ${result.reason}\n`);
+  for (const w of result.warnings) deps.stderr(`stage-item.js: warning: ${w}\n`);
+  if (result.code !== 0) return result.code;
+  deps.stdout(result.file + '\n');
+  if (result.renamed) {
+    deps.stdout(`stage-item.js: --id ${result.requestedId} already exists in staged/ — wrote ${result.id} instead\n`);
+  }
+  deps.stdout(`stage-item.js: appended ledger row #${result.number} to ${o.ledger}\n`);
+  warnUnmappedPrefix(result.id, o.file, deps);
+  return 0;
+}
+
 function run(argv, deps = realDeps) {
   const o = parseArgs(argv);
   const usageError = (message) => { deps.stderr(`stage-item.js: ${message}\n` + USAGE); return 2; };
@@ -88,6 +170,20 @@ function run(argv, deps = realDeps) {
   const id = sanitizeId(o.id);
   if (!id) return usageError(`--id must be a plain filename stem (letters, digits, ., _, - — no path separators): ${JSON.stringify(o.id)}`);
   if (o.allocate && !parseNumberedKind(id)) return usageError(`--allocate requires a "{kind}-{n}" --id, got ${JSON.stringify(id)}`);
+
+  const ledgerMode = o.ledger !== undefined;
+  if (ledgerMode) {
+    if (!o.ledger) return usageError('--ledger requires a ledger path');
+    if (!o.item) return usageError('--ledger requires --item <text>');
+    if (!o.label) return usageError('--ledger requires --label <noun>');
+    if (o.phase === null || o.phase === '') return usageError('--phase requires a value');
+    if (o.section === null || o.section === '') return usageError('--section requires a value');
+    if (o.json !== null) return usageError('--ledger cannot be combined with --json');
+    if (!o.allocate) return usageError('--ledger requires --allocate (its exclusive create is what makes removing the staged file on a failed ledger write safe)');
+  } else {
+    const stray = [['--item', o.item], ['--label', o.label], ['--phase', o.phase], ['--section', o.section]].find(([, v]) => v !== undefined);
+    if (stray) return usageError(`${stray[0]} requires --ledger`);
+  }
 
   let content;
   try { content = deps.readFile(o.file); } catch (err) {
@@ -125,6 +221,8 @@ function run(argv, deps = realDeps) {
     return 3;
   }
 
+  if (ledgerMode) return runLedger(o, { id, content, target }, deps);
+
   let result;
   try {
     result = writeStagedItem({
@@ -148,12 +246,7 @@ function run(argv, deps = realDeps) {
     deps.stdout(sidecar.file + '\n');
   }
 
-  // #3370: warn (never fail) when the id that landed matches no SECTION_MAP
-  // prefix — a wrap-up Review Console resolving this run would park it in
-  // Pending review. Not every staging producer's run reaches that console.
-  if (classifyStagedItem(result.id + path.extname(o.file)).reason === 'unmapped-prefix') {
-    deps.stderr(`stage-item.js: warning: --id ${result.id} matches no Review Console SECTION_MAP prefix — if a wrap-up Review Console resolves this run, it routes this item to Pending review (unmapped-prefix), never auto-resolved. Nearest canonical prefixes: ${nearestCanonicalPrefixes(result.id).join(', ')}\n`);
-  }
+  warnUnmappedPrefix(result.id, o.file, deps);
 
   return 0;
 }

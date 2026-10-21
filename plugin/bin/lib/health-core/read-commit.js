@@ -22,7 +22,7 @@ const { execFileSync } = require('child_process');
 // treats an empty/undefined verifiedAsOf as "not supplied").
 function resolveReadCommit(root, execImpl = execFileSync) {
   try {
-    return String(execImpl('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' })).trim() || null;
+    return String(execImpl('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true })).trim() || null;
   } catch {
     return null;
   }

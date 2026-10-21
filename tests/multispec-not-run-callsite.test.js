@@ -16,12 +16,13 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readManifest } = require('../plugin/bin/lib/flow/manifest');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const HOOKS = path.join(ROOT, 'plugin', 'bin', 'hooks.js');
-const FAILURE_HANDLING = fs.readFileSync(
+const FAILURE_HANDLING = readText(
   path.join(ROOT, 'plugin', 'skills', 'flow', 'multispec-failure-handling.md'),
-  'utf8',
 );
 
 // Frozen bytes of the file's "Default — stop on first HARD-GATE" section before
@@ -41,8 +42,8 @@ spec 160 — not run (previous spec failed)
 The consolidated Review Console still runs with whatever was accumulated up to the failure; specs 158-160 appear in the **Not run** footer with status \`not-run\`, reason \`previous spec failed (159)\`.
 `;
 
-function extractNotRunSnippet() {
-  const section = FAILURE_HANDLING.match(
+function extractNotRunSnippet(doc = FAILURE_HANDLING) {
+  const section = doc.match(
     /\*\*Call site\.\*\*[\s\S]*?```bash\n([\s\S]*?)\n```/,
   );
   assert.ok(
@@ -92,7 +93,7 @@ test('the documented not-run call site, executed verbatim, transitions a skipped
   ]);
 
   const snippet = extractNotRunSnippet().replace('{n}', '160');
-  const script = `CLAUDE_PLUGIN_ROOT=${JSON.stringify(path.join(ROOT, 'plugin'))} MULTISPEC_PARENT_DIR=${JSON.stringify(run)}\n${snippet}`;
+  const script = `CLAUDE_PLUGIN_ROOT=${JSON.stringify(toPosix(path.join(ROOT, 'plugin')))} MULTISPEC_PARENT_DIR=${JSON.stringify(run)}\n${snippet}`;
   const stdout = execFileSync('bash', ['-c', script], { cwd: run, encoding: 'utf8' });
 
   // not-run emits no summaryLine (transitionSpec only emits one for
@@ -107,9 +108,21 @@ test('the documented not-run call site, executed verbatim, transitions a skipped
 });
 
 test('multispec-review-console.md\'s claim-release step already documents the not-run branch this call site feeds', () => {
-  const consoleDoc = fs.readFileSync(
+  const consoleDoc = readText(
     path.join(ROOT, 'plugin', 'skills', 'flow', 'multispec-review-console.md'),
-    'utf8',
   );
   assert.match(consoleDoc, /status: not-run/, 'multispec-review-console.md must still document reading status: not-run off manifest.yml — the consumer side of this call site');
+});
+
+test('CRLF control (#3670): multispec-not-run-callsite extracts the same result after a CRLF round-trip through readText()', (t) => {
+  const DOC_PATH = path.join(ROOT, 'plugin/skills/flow/multispec-failure-handling.md');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multispec-not-run-crlf-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const lf = readText(DOC_PATH);
+  const crlf = lf.replace(/\n/g, '\r\n');
+  assert.ok(crlf.includes('\r\n'), 'CRLF build must contain \\r\\n');
+  assert.ok(!crlf.includes('\r\r\n'), 'CRLF build must not contain \\r\\r\\n');
+  const file = path.join(tmp, path.basename(DOC_PATH));
+  fs.writeFileSync(file, crlf);
+  assert.deepStrictEqual(extractNotRunSnippet(readText(file)), extractNotRunSnippet(lf));
 });
