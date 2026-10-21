@@ -38,7 +38,8 @@ fs.mkdirSync(SUBJECT_DIR, { recursive: true });
 // `readsWorktree`: the procedure reads the worktree from run-state.json itself (settle-and-merge takes
 // `{group-worktree}` from dispatch context and has no read). `logNeedle`: the literal clause, after the
 // re-protect fence, that tells the agent to log a re-stamp that did not print "worktree recorded".
-// `worktreeVar`: the placeholder that names the worktree the re-protect fence re-stamps.
+// `worktreeVar`: the placeholder that names the worktree the re-protect fence re-stamps. `preservesOwner`:
+// the re-protect runs in another session than the run's owner, so its fence must not re-stamp the run's `sessionId`.
 const SITES = [
   {
     label: 'auto-merge-short-circuit.md',
@@ -88,6 +89,7 @@ const SITES = [
     label: 'worktree-merge.md',
     file: 'plugin/skills/flow/worktree-merge.md',
     readsWorktree: true,
+    preservesOwner: true,
     logNeedle: 'log any other line',
     worktreeVar: 'worktree-path',
     vars: {
@@ -262,6 +264,28 @@ function tmpProject() {
   return { dir, run };
 }
 
+// A run owned by 'owner-session' is closed, then `fence` runs as 'reconciler-session' (the re-protect of a
+// run another terminal owns). Returns the run's owner afterwards; the fence must leave it untouched.
+function ownerAfterReprotect(fence, { vars, worktreeVar }) {
+  const { dir, run } = tmpProject();
+  const hook = (env, ...args) => execFileSync(process.execPath, [HOOKS, ...args], {
+    cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', ...env },
+  });
+  hook({ CLAUDE_CODE_SESSION_ID: 'owner-session' }, 'record-worktree', '--run', run, vars[worktreeVar]);
+  hook({ CLAUDE_CODE_SESSION_ID: 'owner-session' }, 'close-run', '--run', run);
+  const r = runFence(fence, {
+    cwd: dir,
+    env: { CLAUDE_PLUGIN_ROOT: posix(PLUGIN_DIR), RUN_DIR: posix(run), CLAUDE_CODE_SESSION_ID: 'reconciler-session' },
+    vars: { ...vars, 'run-dir': posix(run) },
+  });
+  assert.strictEqual(r.code, 0, r.stderr);
+  return readRunState(run).sessionId;
+}
+const REPROTECT_OWNER_CLAUSE = 'env -u CLAUDE_CODE_SESSION_ID ';
+function assertKeepsOwner(fence, site) {
+  assert.strictEqual(ownerAfterReprotect(fence, site), 'owner-session', "the re-protect re-stamped the reconciler's session as the run's owner");
+}
+
 for (const site of SITES) {
   const raw = readText(path.join(ROOT, site.file));
   const { label, vars, readsWorktree, logNeedle, worktreeVar } = site;
@@ -359,6 +383,14 @@ for (const site of SITES) {
     state = readRunState(run);
     assert.strictEqual(state.worktree, path.resolve(wt));
     assert.strictEqual(state.status, 'active');
+
+    if (site.preservesOwner) {
+      assertKeepsOwner(fence, site);
+      assert.ok(fence.includes(REPROTECT_OWNER_CLAUSE), 'the fence unsets CLAUDE_CODE_SESSION_ID');
+      const mutated = fence.replace(REPROTECT_OWNER_CLAUSE, '');
+      assert.notStrictEqual(mutated, fence);
+      assert.throws(() => assertKeepsOwner(mutated, site), /re-stamped the reconciler/, 'go-red: a fence that inherits CLAUDE_CODE_SESSION_ID must fail');
+    }
   });
 
   test(`${label}: the fallback logs a re-stamp that does not print "worktree recorded"`, () => {
