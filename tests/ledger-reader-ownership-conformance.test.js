@@ -33,7 +33,8 @@ function assertRuleIsProbeFirst(text) {
   assert.match(text, /a `ledger\.md` entry is the run-dir file above \(relative to the run dir/);
   assert.match(text, /An empty `value\.files` means this run has no ledger yet — not a cue to look further/);
   assert.match(text, /`value\.unattributedFiles` lists the `docs\/plans\/` ledgers inherited from the integration branch: another run's/);
-  assert.match(text, /\*\*Fallback, for a reader only:\*\*/);
+  assert.match(text, /\*\*Fallback, for a reader only:\*\* when the probe returns `ok: false` or cannot run/);
+  assert.match(text, /if it exists, that is the ledger and the glob is not consulted/);
   assert.match(text, /When a run dir resolves, a caller that flips or deletes ledger rows or files never takes this fallback on a probe failure: it fails closed instead/);
   assert.match(text, /An append \(a new row, or Create's already-exists check\) and any caller with no run dir at all take the fallback as written/);
 }
@@ -81,6 +82,13 @@ test('auto-merge short-circuit deletes through delete-ledger (the rule\'s writer
   assert.ok(text.includes('hooks.js" delete-ledger --run "$RUN_DIR"'));
   assert.match(text, /Handle its printed report exactly as `cleanup-procedures\.md`'s Item 2 paragraph does/);
   assert.match(text, /ownership-aware, never a glob, failing closed on a ledger it cannot attribute to this run/);
+});
+
+test('auto-merge short-circuit commits only a tracked deletion and leaves the ledger alone on any other report', () => {
+  const text = read('wrap-up/auto-merge-short-circuit.md');
+  assert.match(text, /ls-files --error-unmatch -- "\$LEDGER_FILE"/);
+  assert.match(text, /Only a tracked `docs\/plans\/` path gets the deletion staged and committed/);
+  assert.match(text, /Every other report except `not found` leaves the ledger on disk: commit nothing and log one `SKIP` line/);
 });
 
 test('AC2.1 go-red: the pre-#3687 reader sentences fail the no-bare-glob assertion', () => {

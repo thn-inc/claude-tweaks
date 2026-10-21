@@ -31,8 +31,8 @@ Manage the open items ledger that tracks findings, operational tasks, and observ
 | Argument | Behavior |
 |----------|----------|
 | *(none)* | Show current ledger status — counts by phase and status |
-| `resolve` | Run the nothing-left-behind gate on the most recent ledger |
-| `resolve {feature-name}` | Run the nothing-left-behind gate on the ledger matching `{feature-name}`, instead of defaulting to the most recent one |
+| `resolve` | Run the nothing-left-behind gate on this run's ledger (the most recent `docs/plans` ledger only when no run dir resolves) |
+| `resolve {feature-name}` | Run the nothing-left-behind gate on the ledger matching `{feature-name}`, instead of defaulting to this run's |
 | `{feature-name}` | Show ledger for a specific feature |
 
 ## Ledger File Format
