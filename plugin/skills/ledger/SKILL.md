@@ -126,11 +126,11 @@ Only delete when the resolve gate has passed — all items must have terminal st
 1. Match `{feature-name}` against each ledger file's `{feature}` slug (case-insensitive substring match — e.g. `auth` matches `2026-01-15-auth-refactor-ledger.md`): this run's ledger per `_shared/ledger-format.md`'s resolution rule (a run-dir `ledger.md` carries no slug and is always in the match set), plus every other `docs/plans/*-ledger.md` file — a by-name lookup the user directs, so inherited ledgers are candidates here, labeled as other runs'. With no run dir at all, the glob alone is the complete match set (the rule's no-run-dir fallback).
 2. If exactly one file matches, show its full item table
 3. If multiple files match, list all matches (with their dates) and ask the user which one they mean
-4. If no file matches, report `No ledger found for "{feature-name}"` and list the currently active ledgers (same glob as the no-arguments form) so the user can retry with a correct name
+4. If no file matches, report `No ledger found for "{feature-name}"` and list the currently active ledgers (same listing as the no-arguments form) so the user can retry with a correct name
 
 ### `/claude-tweaks:ledger resolve`
 
-1. Find the ledger: a `{feature-name}` (`resolve {feature-name}`) is an explicit choice — match it the same way the `{feature-name}` form does above (no match → report `No ledger found for "{feature-name}"` and list the currently active ledgers instead of guessing). Without one, when a run dir resolves for this invocation, the active ledger is this run's per `_shared/ledger-format.md`'s resolution rule — when the rule finds none, report `No ledger found for this run` rather than resolving another run's. With no run dir at all, default to the most recent `docs/plans/*-ledger.md` (the rule's no-run-dir fallback).
+1. Find the ledger: a `{feature-name}` (`resolve {feature-name}`) is an explicit choice — match it the same way the `{feature-name}` form does above (no match → report `No ledger found for "{feature-name}"` and list the currently active ledgers instead of guessing). Without one, when a run dir resolves for this invocation, the active ledger is this run's per `_shared/ledger-format.md`'s resolution rule — when the rule finds none, report `No ledger found for this run` rather than resolving another run's, and when its probe fails, report the probe error and stop: the gate flips rows, so it never takes the rule's fallback. With no run dir at all, default to the most recent `docs/plans/*-ledger.md` (the rule's no-run-dir fallback).
 2. Run the resolve gate procedure
 3. Present results
 

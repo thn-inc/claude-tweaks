@@ -142,17 +142,17 @@ as before the `local-merge` branch's own later resolution:
 
 ```bash
 WORKTREE_PATH=$(node -e "console.log(require('$RUN_DIR/run-state.json').worktree)")
-node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-pack.js" --run "$RUN_DIR" --print ledger --json "$RUN_DIR/wrap-up-pack-ledger.json"
+node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" delete-ledger --run "$RUN_DIR"
 ```
 
-For each `docs/plans/` path in the printed `value.files`, as `LEDGER_FILE`, `git rm` it, then commit once (a `ledger.md` entry is the gitignored run-dir file — nothing to commit; archival takes it):
+This is a delete, so it takes the rule's writer branch: `delete-ledger` resolves through `bin/lib/wrap-up/ledger-write.js`'s `resolveLedgerPath` — ownership-aware, never a glob, failing closed on a ledger it cannot attribute to this run. Handle its printed report exactly as `cleanup-procedures.md`'s Item 2 paragraph does (the verb always exits 0 — read the report, not the exit code). On `deleted ledger {path}` for a `docs/plans/` path, as `LEDGER_FILE`, stage that deletion and commit (a run-dir `ledger.md` is gitignored — nothing to commit):
 
 ```bash
 git -C "$WORKTREE_PATH" rm "$LEDGER_FILE"
 git -C "$WORKTREE_PATH" commit -m "Wrap-up: delete resolved open items ledger for #{n} — auto-merge short-circuit"
 ```
 
-This is a delete, so it never takes the resolution rule's reader fallback: a glob here can remove a ledger inherited from the integration branch — another run's. On `ok: false`, delete nothing and log one `SKIP` line via `log-decision.js` naming the probe error; the ledger stays for `/claude-tweaks:tidy`'s ledger sweep (`tidy/scan-procedures.md`).
+Every other report except `not found` leaves the ledger on disk: commit nothing and log one `SKIP` line via `log-decision.js` naming the report.
 
 **`integration-model: pr-first` only — push this commit now**, its own Bash call: `gh pr merge`
 below merges the PR's remote head, not this worktree's local state, so a commit left unpushed

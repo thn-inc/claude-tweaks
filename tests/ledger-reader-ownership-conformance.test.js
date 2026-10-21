@@ -16,7 +16,7 @@ const flat = (s) => s.replace(/\s+/g, ' ');
 const read = (rel) => flat(readText(path.join(SKILLS, rel)));
 
 const GLOB_RE = /docs\/plans\/\*[^\s`"]*-ledger\.md/;
-const ALLOWED_RE = /fall ?back|inherited|unattributed|other run(?:'s|s')/i;
+const ALLOWED_RE = /fallback|inherited|unattributed|other run(?:'s|s')/i;
 
 function sentences(text) {
   return text.split(/(?<=[.!?])\s+(?=[A-Z*`(#\d-])/);
@@ -28,13 +28,14 @@ function assertNoBareGlob(text, label) {
 }
 
 function assertRuleIsProbeFirst(text) {
-  assert.ok(text.includes('wrap-up-pack.js" --run "$PIPELINE_RUN_DIR" --print ledger --json "$PIPELINE_RUN_DIR/wrap-up-pack-ledger.json"'), 'rule runs the ledger probe');
+  assert.ok(text.includes('wrap-up-pack.js" --run "{run-dir}" --print ledger --json "{run-dir}/wrap-up-pack-ledger.json"'), 'rule runs the ledger probe');
   assert.match(text, /read its `value\.files`/);
   assert.match(text, /a `ledger\.md` entry is the run-dir file above \(relative to the run dir/);
   assert.match(text, /An empty `value\.files` means this run has no ledger yet — not a cue to look further/);
   assert.match(text, /`value\.unattributedFiles` lists the `docs\/plans\/` ledgers inherited from the integration branch: another run's/);
   assert.match(text, /\*\*Fallback, for a reader only:\*\*/);
-  assert.match(text, /A caller that writes or deletes the ledger never takes this fallback: it fails closed/);
+  assert.match(text, /When a run dir resolves, a caller that flips or deletes ledger rows or files never takes this fallback on a probe failure: it fails closed instead/);
+  assert.match(text, /An append \(a new row, or Create's already-exists check\) and any caller with no run dir at all take the fallback as written/);
 }
 
 test('AC1.1: ledger-format.md resolves this run\'s ledger through the ledger probe', () => {
@@ -51,6 +52,7 @@ test('AC2.1 go-red: the pre-#3687 resolution rule fails the probe-first assertio
 test('AC2.1 go-red: a bare glob lookup sentence fails, a fallback/inherited sentence passes', () => {
   assert.throws(() => assertNoBareGlob(flat('1. Find active ledger files: glob `docs/plans/*-ledger.md`. Then show counts.'), 'fixture'));
   assert.throws(() => assertNoBareGlob(flat('LEDGER_FILE=$(git -C "$WORKTREE_PATH" ls-files "docs/plans/*-record-{n}-ledger.md")'), 'fixture'));
+  assert.throws(() => assertNoBareGlob(flat("if it exists, that's the active ledger; if not, fall back to the `docs/plans/*-ledger.md` glob."), 'fixture'));
   assert.doesNotThrow(() => assertNoBareGlob(flat('Fallback: the `docs/plans/*-ledger.md` glob. It also matches inherited ledgers in `docs/plans/*-ledger.md`.'), 'fixture'));
 });
 
@@ -70,11 +72,15 @@ test('ledger resolve never defaults to another run\'s ledger when a run dir reso
   assert.match(text, /when the rule finds none, report `No ledger found for this run` rather than resolving another run's/);
 });
 
-test('auto-merge short-circuit deletes only value.files entries and fails closed on ok: false', () => {
+test('ledger resolve with a run dir stops on a probe failure — the gate flips rows', () => {
+  assert.match(read('ledger/SKILL.md'), /when its probe fails, report the probe error and stop: the gate flips rows, so it never takes the rule's fallback/);
+});
+
+test('auto-merge short-circuit deletes through delete-ledger (the rule\'s writer branch), never a glob', () => {
   const text = read('wrap-up/auto-merge-short-circuit.md');
-  assert.ok(text.includes('wrap-up-pack.js" --run "$RUN_DIR" --print ledger --json "$RUN_DIR/wrap-up-pack-ledger.json"'));
-  assert.match(text, /For each `docs\/plans\/` path in the printed `value\.files`/);
-  assert.match(text, /On `ok: false`, delete nothing and log one `SKIP` line/);
+  assert.ok(text.includes('hooks.js" delete-ledger --run "$RUN_DIR"'));
+  assert.match(text, /Handle its printed report exactly as `cleanup-procedures\.md`'s Item 2 paragraph does/);
+  assert.match(text, /ownership-aware, never a glob, failing closed on a ledger it cannot attribute to this run/);
 });
 
 test('AC2.1 go-red: the pre-#3687 reader sentences fail the no-bare-glob assertion', () => {
