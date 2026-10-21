@@ -312,7 +312,8 @@ test('M3: a re-derived diff that does not apply on the stacked state is refused,
 
 test('M4: stagedApplyOrder agrees with the order readSnapshot hands the stacked check', (t) => {
   const names = ['review-2.patch', '.hidden.patch', 'x.md', 'review-10.patch', '.review-0.patch', 'review-2.patch.shadow-dup'];
-  const runDir = stagedDir(t);
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stack-check-run-'));
+  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(runDir, 'staged'));
   fs.mkdirSync(path.join(runDir, 'work')); // empty: no members, so readGrants is never consulted
   for (const n of names) fs.writeFileSync(path.join(runDir, 'staged', n), 'x\n');
