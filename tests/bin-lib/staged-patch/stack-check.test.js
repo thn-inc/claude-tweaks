@@ -241,11 +241,13 @@ test('a content-and-mode change is not re-derived', (t) => {
   const fx = gitFixture(t);
   const dir = stagedDir(t);
   const modder = gitFixture(t);
-  modder.runOk('config', 'core.fileMode', 'true');
   fs.writeFileSync(path.join(modder.dir, 'f.txt'), BASE.replace('l1\n', 'l1-edit\n'));
-  fs.chmodSync(path.join(modder.dir, 'f.txt'), 0o755); // root-safe: makes a mode-change diff for git to capture, not a permission simulation
-  const d = modder.git('diff');
+  // The mode goes through the index, not the filesystem: a checkout with core.fileMode=false (Windows) never sees a chmod, so a worktree `git diff` would carry no mode line there.
+  modder.runOk('add', 'f.txt');
+  modder.runOk('update-index', '--chmod=+x', 'f.txt');
+  const d = modder.git('diff', '--cached');
   assert.equal(d.status, 0, d.stderr);
+  assert.match(d.stdout, /^new mode 100755$/m, 'the fixture diff carries the mode change');
   const p = stage(dir, 'mode.patch', d.stdout);
   const r = rederive({ worktree: fx.dir, patches: [p], target: p });
   assert.deepEqual(r, { ok: false, reason: 'non-modification hunk' });
@@ -457,6 +459,15 @@ test('AC1.1: rederive names the earlier staged patch that creates a missing targ
   const modify = stage(dir, 'modify-2.patch', captureFrom(t, { 'g.txt': 'one\n' }, (c) => write(c, 'g.txt', 'one more\n')));
   assert.deepEqual(rederive({ worktree: fx.dir, patches: [create, modify], target: modify }),
     { ok: false, reason: 'g.txt is not in the worktree; an earlier staged patch, create-1.patch, creates it' });
+});
+
+test('AC1.1: rederive does not name an earlier staged patch that only edits the missing target file', (t) => {
+  const fx = gitFixture(t);
+  const dir = stagedDir(t);
+  const edit = stage(dir, 'edit-1.patch', captureFrom(t, { 'g.txt': 'one\n' }, (c) => write(c, 'g.txt', 'one edit\n')));
+  const modify = stage(dir, 'modify-2.patch', captureFrom(t, { 'g.txt': 'one\n' }, (c) => write(c, 'g.txt', 'one more\n')));
+  assert.deepEqual(rederive({ worktree: fx.dir, patches: [edit, modify], target: modify }),
+    { ok: false, reason: 'g.txt is not a file in the worktree' });
 });
 
 const renameDiff = (t) => captureFrom(t, { 'f.txt': NINE }, (fx) => {

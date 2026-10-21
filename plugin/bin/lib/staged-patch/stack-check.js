@@ -67,10 +67,14 @@ function isFile(p) {
   try { return fs.statSync(p).isFile(); } catch { return false; }
 }
 
+// First line of a git message.
+function firstOf(stderr) {
+  return String(stderr || '').split('\n')[0].trim();
+}
+
 // First line of a git message, with the patch's absolute path replaced by its basename.
 function firstLine(stderr, abs) {
-  const line = String(stderr || '').split('\n')[0].trim();
-  return line.split(abs).join(path.basename(abs));
+  return firstOf(stderr).split(abs).join(path.basename(abs));
 }
 
 // The git runner and scratch builders for one worktree. Every scratch is a fresh repo seeded
@@ -211,10 +215,11 @@ function rederive({ worktree, patches, target, git = defaultGit }) {
   if (idx < 0) throw new Error(`rederive target ${path.basename(target)} is not in patches`);
   const missing = rels.find((rel) => !isFile(path.join(worktree, rel)));
   if (missing !== undefined) {
-    // A file the worktree lacks may be one an earlier staged patch creates: name that patch.
+    // A file the worktree lacks may be one an earlier staged patch creates: name that patch. Only a
+    // `create mode` line in its summary counts, so a patch that merely edits the path is never named.
     const creator = patches.slice(0, idx).find((p) => {
-      const earlier = run(['apply', '--numstat', '-z', p], worktree);
-      return earlier.status === 0 && copiedPaths(earlier.stdout).includes(missing);
+      const earlier = run(['apply', '--summary', p], worktree);
+      return earlier.status === 0 && earlier.stdout.split('\n').some((l) => /^ create mode \d+ /.test(l) && l.replace(/^ create mode \d+ /, '') === missing);
     });
     if (creator === undefined) return { ok: false, reason: `${missing} is not a file in the worktree` };
     return { ok: false, reason: `${missing} is not in the worktree; an earlier staged patch, ${path.basename(creator)}, creates it` };
@@ -253,7 +258,7 @@ function rederive({ worktree, patches, target, git = defaultGit }) {
         // merge-file exits with the number of conflicts, and 255 on error: above 127 is git failing.
         if (mf.status > 127) {
           // Strip the scratch dir so neither `base` nor `theirs` leaks a temp path into the reason.
-          const detail = String(mf.stderr || '').split('\n')[0].trim().split(work + path.sep).join('');
+          const detail = firstOf(mf.stderr).split(work + path.sep).join('');
           return { reason: `git merge-file failed on ${rel}: ${detail || `exit ${mf.status}`}` };
         }
         if (mf.status > 0) return { reason: `conflict in ${rel}` };
