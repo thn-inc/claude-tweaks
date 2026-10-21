@@ -112,10 +112,13 @@ fires `PreToolUse` before and `PostToolUseFailure` after, with `error` holding t
 text; the module's header comment records the result and its measurement date. When the captured
 value is prose rather than a structured field, two limits follow. The match pattern
 (`HARNESS_ISOLATION_REFUSAL_RE`) fits only that one wording, so a harness rewording stops the
-logging with no error. And the wording differs by tool: the Write/Edit refusal reads "Edit the
-worktree copy…", not "Refusing to run it", and whether it fires `PostToolUseFailure` at all is
-still unmeasured. Capture one scenario per tool the pattern is meant to match, and keep the
-measurement date beside the pattern.
+logging with no error. The wording also differs by tool: the Write/Edit refusal reads "Edit the
+worktree copy…", not "Refusing to run it" — and it does **not** fire `PostToolUseFailure` at all.
+A throwaway-hook probe during #3301 (2026-10-21) showed a `Write` refused with that wording
+produced zero captured events, reproduced twice, while the identical setup correctly captured a
+`Bash` refusal's event in the same run — see `plugin/skills/reflect/full-mode.md`'s Friction Lens
+section for the full measurement. Capture one scenario per tool the pattern is meant to match, and
+keep the measurement date beside the pattern.
 
 ## A fixture is a claim, not ground truth
 
