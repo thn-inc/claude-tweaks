@@ -388,6 +388,9 @@ test('renderText groups by mark, deltas and new-unresolved; a pair groups; equal
       { entry: 'p:c', floor: 10, dFloor: 0, closure: 70, dClosure: 5, newUnresolved: [{ citingFile: 'plugin/skills/c/SKILL.md', token: 'gone.md' }] },
       { entry: 'p:d', floor: 5, dFloor: 5, closure: 5, dClosure: 5, newUnresolved: [], added: true },
       { entry: 'p:e', floor: 5, dFloor: 5, closure: 5, dClosure: 5, newUnresolved: [] },
+      { entry: 'p:f', floor: 20, dFloor: 0, closure: 30, dClosure: 9, newUnresolved: [] },
+      { entry: 'p:g', floor: 20, dFloor: 0, closure: 31, dClosure: 9, newUnresolved: [] },
+      { entry: 'p:h', floor: 21, dFloor: 0, closure: 32, dClosure: 9, newUnresolved: [] },
     ] }],
   };
   const lines = renderText(result, []).split('\n');
@@ -397,6 +400,7 @@ test('renderText groups by mark, deltas and new-unresolved; a pair groups; equal
     '| p:c | 10 | 0 | 70 | +5 | 1: `gone.md` |',
     '| p:d (added) | 5 | +5 | 5 | +5 | — |',
     '| p:e | 5 | +5 | 5 | +5 | — |',
+    '| 3 entries: p:f, p:g, p:h | 20–21 | 0 | 30–32 | +9 | — |',
     '',
   ]);
 });
