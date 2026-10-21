@@ -1,5 +1,6 @@
 ---
 files:
+  - plugin/bin/hooks.js
   - plugin/bin/lib/flow/consolidated-pass.js
   - plugin/bin/lib/hooks/run-integrity.js
   - plugin/bin/lib/hooks/session-residue.js
@@ -58,4 +59,5 @@ files:
 - Created during build of #3497 ("Consolidated-pass re-entry via review-console", run 2026-10-19T034326-spec-3497): the ended-parent re-entry in `multispec-review-console.md`, `checkPassReentry` in `plugin/bin/lib/flow/consolidated-pass.js`, `checkBranchLanded` in `run-integrity.js`, and the SessionStart banner suffix.
 - Steps 1-5 built in this session.
 - Updated during build of #3554 (run 2026-10-21T055740-record-3554): step 1's banner ids follow `work-backend` — bare under `local-files`, `#` otherwise — read via the shared `plugin/bin/lib/work-backend.js` reader.
+- Updated during build of #3553 (run 2026-10-21T212024-record-3553): step 3's eligibility check is now `hooks.js check-pass-reentry --run "{parent-run-dir}" --online`. The verb prints the verdict JSON on stdout and refuses an unanchored or missing `--run` with exit 1; it replaces the inline `node -e` snippet.
 - Related: `rejoin-a-multispec-run-with-a-spec-built-outside-flow-3033.md` (its step 5 covers the same re-entry for a spec built outside `/flow`), `multi-spec-review-console.md` (the console itself), #3033 (the forfeited-pass incident).
