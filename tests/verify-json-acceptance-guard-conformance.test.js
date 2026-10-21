@@ -34,14 +34,27 @@ const CLOSE_OUT_PINS = [
   /pr-first-merge\.md.{0,40}Step 1/,
   // Anchored on "Step 1": the Mark-ready sentence already says "before the confirmation gate".
   /Step 1 before the confirmation gate/,
-  /no valid .{0,40}marker.{0,80}(missing|not landed)/i,
+  // No run dir resolves -> stop the candidate, never guess (and never run Step 1 blind).
+  /no valid .{0,40}marker.{0,80}stop this candidate/i,
+  /stopped: acceptance labeling unverifiable — no run dir/,
+  // Multi-spec: the marker names the parent; every member's spec-*/verify.json is read.
+  /read every `spec-\*\/verify\.json`/,
+  /pass.{0,12}skip/,
+  // Live forge state is checked before re-running the non-idempotent brief.
+  /demo:pending/,
+  /<!-- run-comment: brief -->/,
+  /<!-- run-comment: try-it -->/,
+  /Trusted authors/,
+  // The re-run gets verification-brief.md's inputs.
+  /`PIPELINE_RUN_DIR` = the resolved run/,
+  /`CLOSING_SUB_ISSUES` = the PR's `Fixes` record numbers/,
 ];
-const MERGE_PINS = [/verify\.json/, /acceptance-labeling/, /not landed/];
+const MERGE_PINS = [/verify\.json/, /acceptance-labeling/, /not landed/, /pass.{0,12}skip/];
 const RESIDUE_PIN = /console-residue\.js" --run "\$(PIPELINE_RUN_DIR|MULTISPEC_PARENT_DIR)" --require-verify/;
 
 // The inserted sentences, located by their opening and closing words so the
 // negative control removes exactly what this task added.
-const CLOSE_OUT_ADDED = /Step 1 \(Acceptance labeling\) is guarded.*?before the confirmation gate\./;
+const CLOSE_OUT_ADDED = /\*\*Acceptance labeling first\*\*.*?`MULTISPEC_PARENT_DIR` = the parent\./;
 const MERGE_ADDED = /Labeling has not landed when.*?reached this merge\./;
 
 test('AC2.1: close-out step 3 reads verify.json and runs Step 1 before the gate when labeling has not landed', () => {
@@ -53,6 +66,49 @@ test('AC2.1: negative control — close-out step 3 without the added rule fails 
   assert.match(closeOutStep3, CLOSE_OUT_ADDED, 'the added rule must be locatable');
   const stripped = closeOutStep3.replace(CLOSE_OUT_ADDED, '');
   for (const re of CLOSE_OUT_PINS) assert.doesNotMatch(stripped, re);
+});
+
+// Labeling (and any Step 1 run) precedes step 3's Mark-ready call — pr-first-merge's own
+// Step 1 -> Step 2 order.
+function assertLabelingBeforeMarkReady(step3) {
+  const labeling = step3.indexOf('**Acceptance labeling first**');
+  const markReady = step3.indexOf('Step 2 (Mark ready)');
+  assert.ok(labeling >= 0 && markReady >= 0, 'both the labeling check and the Mark-ready call must exist');
+  assert.ok(labeling < markReady, 'the labeling check must come before Mark ready');
+}
+
+test('final review: close-out step 3 checks labeling before the Mark-ready call', () => {
+  assertLabelingBeforeMarkReady(closeOutStep3);
+});
+
+test('final review: negative control — Mark ready ahead of the labeling check fails the order pin', () => {
+  const markReady = closeOutStep3.match(/Then, when `isDraft`.*?reads it otherwise\./)[0];
+  const swapped = closeOutStep3.replace(markReady, '').replace('**Acceptance labeling first**', `${markReady} **Acceptance labeling first**`);
+  assert.throws(() => assertLabelingBeforeMarkReady(swapped), assert.AssertionError);
+});
+
+const reportingSection = slice(CLOSE_OUT, '## Reporting', '## Anti-Patterns');
+const NO_RUN_DIR_OUTCOME = /`stopped: acceptance labeling unverifiable — no run dir`/;
+
+test('final review: close-out Reporting lists the no-run-dir stop outcome', () => {
+  assert.match(reportingSection, NO_RUN_DIR_OUTCOME);
+});
+
+test('final review: negative control — Reporting without that outcome fails the pin', () => {
+  assert.doesNotMatch(reportingSection.replace(NO_RUN_DIR_OUTCOME, ''), NO_RUN_DIR_OUTCOME);
+});
+
+const BRIEF = read('plugin', 'skills', 'wrap-up', 'verification-brief.md');
+const briefRouting = slice(BRIEF, '## Routing', '## Try it block');
+const CLOSE_OUT_ROW = /\| `\/claude-tweaks:dispatch`'s close-out step 3 \(`dispatch\/close-out\.md`\) \| one or more \*\*sub-issues\*\* \(the PR's `Fixes` records\)/;
+
+test('final review: verification-brief.md routing table lists close-out step 3 as a caller', () => {
+  assert.match(briefRouting, /Five call sites exist today/);
+  assert.match(briefRouting, CLOSE_OUT_ROW);
+});
+
+test('final review: negative control — the routing table without the close-out row fails the pin', () => {
+  assert.doesNotMatch(briefRouting.replace(CLOSE_OUT_ROW, ''), CLOSE_OUT_ROW);
 });
 
 test('AC3.1: pr-first-merge Step 1 names verify.json and the not-landed condition', () => {

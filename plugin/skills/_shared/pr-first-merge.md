@@ -37,7 +37,8 @@ its `Fixes` lines, so labeling must land while every record is still open. A cal
 before labeling silently drops acceptance sign-off the same way the pre-#410 fast-lane path once
 did for a different reason (`wrap-up/review-console.md`'s own "console content is not all of
 Phase 4" note) — this procedure states the ordering explicitly so it is never re-dropped.
-Labeling has not landed when `{run-dir}/verify.json` is missing or its `acceptance-labeling` row's `result` is anything but `pass`/`skip` — whichever caller reached this merge.
+Labeling has not landed when `{run-dir}/verify.json` is missing or its `acceptance-labeling` row's
+`result` is anything but `pass`/`skip` — whichever caller reached this merge.
 
 ## Step 1.5: Curation-apply completeness guard (#1465)
 

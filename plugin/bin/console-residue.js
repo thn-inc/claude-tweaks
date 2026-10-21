@@ -10,8 +10,10 @@
 //                                              for each checked dir with no valid verify.json (#3783)
 //   console-residue.js --ack --run <dir>       mark that run's consoles reviewed
 //   console-residue.js --ack-all               mark every run with unacknowledged residue
-// Exit 0 done; 2 malformed (unknown flag, --run without a value, --ack without
-// --run, --ack-all with --run or --ack, neither --run nor --ack-all); 3 --run
+// Exit 0 done; 2 malformed (unknown flag, --run without a value, --require-verify
+// without a value or with an empty one, --require-verify with --ack or --ack-all,
+// --ack without --run, --ack-all with --run or --ack, neither --run nor
+// --ack-all); 3 --run
 // missing or not anchored under the main checkout ([IL-127]), or a console.json
 // that could not be written (the remaining consoles are still tried, and the
 // summary line says how many failed). A missing --run whose basename exists
@@ -45,7 +47,7 @@ function parseArgs(argv) {
       i += 1;
     } else if (flag === '--require-verify') {
       const value = argv[i + 1];
-      if (value === undefined || value.startsWith('--')) throw new UsageError('--require-verify requires a value');
+      if (value === undefined || value === '' || value.startsWith('--')) throw new UsageError('--require-verify requires a value');
       out.requireVerify = value;
       i += 1;
     } else if (flag === '--ack') out.ack = true;
@@ -110,7 +112,7 @@ function missingVerifyLines(runDir, base, pluginRoot) {
   const lines = [];
   for (const c of checked) {
     if (readVerifyResults(c.dir)) continue;
-    lines.push(`- ${c.label}: verify.json missing — wrap-up's Verify execution never ran`);
+    lines.push(`- ${c.label}: verify.json missing — wrap-up's Verify execution never ran, or its write failed`);
     lines.push(`  run: node "${pluginRoot}/bin/wrap-up-engine.js" verify --run-dir "${c.dir}" --base ${base}`);
   }
   return lines;

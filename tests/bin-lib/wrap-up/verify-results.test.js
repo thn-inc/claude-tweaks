@@ -60,3 +60,11 @@ test('writeVerifyResults throws on an unwritable run dir', () => {
   const runDir = path.join(blocker, 'run');
   assert.throws(() => writeVerifyResults({ runDir, rows: ROWS, base: 'a' }));
 });
+
+test('writeVerifyResults throws on a missing run dir and never recreates it', () => {
+  // A reconcile that archived the run dir mid-verify must not see it reborn
+  // by the lock's parent-bootstrap mkdir.
+  const runDir = path.join(tmpRunDir(), 'archived-away');
+  assert.throws(() => writeVerifyResults({ runDir, rows: ROWS, base: 'a' }), /ENOENT/);
+  assert.equal(fs.existsSync(runDir), false);
+});

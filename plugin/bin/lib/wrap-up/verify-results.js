@@ -27,9 +27,12 @@ const FILE_NAME = 'verify.json';
 const VERSION = 1;
 
 // { runDir, rows: {check, result, detail}[], base, now? } -> { file, data }.
-// Throws when the file is unwritable.
+// Throws when the file is unwritable, or when runDir is not an existing
+// directory — checked before the lock, whose parent-bootstrap mkdir would
+// otherwise recreate a run dir a reconcile archived mid-verify.
 function writeVerifyResults({ runDir, rows, base, now = Date.now }) {
   const file = path.join(runDir, FILE_NAME);
+  if (!fs.statSync(runDir).isDirectory()) throw new Error(`verify.json: run dir is not a directory: ${runDir}`);
   return withLock(path.join(runDir, '.verify-results.lock'), () => {
     const data = { version: VERSION, base, writtenAt: new Date(now()).toISOString(), checks: rows };
     writeFileAtomic(file, `${JSON.stringify(data, null, 2)}\n`);
