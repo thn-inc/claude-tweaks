@@ -10,7 +10,7 @@
 
 **Spec:** `.claude-tweaks/pipelines/2026-10-21T060308-spec-3809/work/3809-spec.md`
 
-Scope keywords: close-run, worktree-merge, record-worktree, Skip this branch, Abort remaining merges
+Scope keywords: Skip this branch, Abort remaining merges, closes only the newest run
 
 ## Global Constraints
 
@@ -35,11 +35,10 @@ Prose-only paths no test executes — the reviewer checks each against the new t
 | AC clause | Covered by |
 |---|---|
 | AC1.1 — no `close-run` instruction precedes a pre-merge check for the same branch (pinned by a test) | `worktree-merge.md: pre-merge checks, close-run, merge, re-protect appear in that order` + its go-red permutation (SITES loop) |
-| AC2.1 — a skipped or aborted branch's run keeps its worktree assignment and `active` status (the procedure states it | step 5's Skip / Abort bullets (Step 3 text) |
-| AC2.2 — a fence or text test pins it) | `AC2.2: worktree-merge.md's Skip and Abort bullets keep the run` + its go-red control |
+| AC2.1 — a skipped or aborted branch's run keeps its worktree assignment and `active` status (the procedure states it; a fence or text test pins it) | step 5's Skip / Abort bullets (Step 3 text), pinned by `AC2.1: worktree-merge.md's Skip and Abort bullets keep the run` + its go-red control |
 | AC3.1 — any failure after a run was closed re-stamps it with `record-worktree --run` and logs a re-stamp that did not print `worktree recorded` | `worktree-merge.md: the re-protect fence restores the worktree assignment after close-run` + `…the fallback logs a re-stamp that does not print "worktree recorded"` (SITES loop) |
 
-**Authoring self-check (inline self-consistency, go-red control).** Step 1's test and Step 3's text, placeholders resolved from the current file, were run together in a scratch copy of `plugin/` + `tests/` before dispatch: the four Step 4 suites, 92 tests, 0 fail. The same `local-merge-close-run-ordering` suite against the unchanged `worktree-merge.md`: 9 fail (the 8 `worktree-merge.md:` cases + `AC2.2`). Moved-prose pins: `git grep -F` over `tests/` for thirteen distinctive phrases from the rewritten blocks found none beyond the three suites Step 4 runs. The step-1 read fence was run once read-only against this run's own run dir and printed its worktree and branch.
+**Authoring self-check (inline self-consistency, go-red control).** Step 1's test and Step 3's text, placeholders resolved from the current file, were run together in a scratch copy of `plugin/` + `tests/` before dispatch: the four Step 4 suites, 92 tests, 0 fail. The same `local-merge-close-run-ordering` suite against the unchanged `worktree-merge.md`: 9 fail (the 8 `worktree-merge.md:` cases + `AC2.1`). Moved-prose pins: `git grep -F` over `tests/` for thirteen distinctive phrases from the rewritten blocks found none beyond the three suites Step 4 runs. The step-1 read fence was run once read-only against this run's own run dir and printed its worktree and branch.
 
 ---
 
@@ -78,7 +77,7 @@ In `tests/local-merge-close-run-ordering.test.js`:
   },
 ```
 
-3. After the `for (const site of SITES)` loop, add the AC2.2 test. Positive and control share one function (go-red control check):
+3. After the `for (const site of SITES)` loop, add the AC2.1 test. Positive and control share one function (go-red control check):
 
 ```js
 const KEEPS_RUN = 'keeps its worktree assignment and `active` status';
@@ -93,7 +92,7 @@ function skipAbortKeepsRun(text) {
   return errors;
 }
 
-test("AC2.2: worktree-merge.md's Skip and Abort bullets keep the run", () => {
+test("AC2.1: worktree-merge.md's Skip and Abort bullets keep the run", () => {
   const live = readText(path.join(ROOT, 'plugin/skills/flow/worktree-merge.md'));
   assert.deepStrictEqual(skipAbortKeepsRun(live), []);
   const flat = collapse(live);
@@ -106,7 +105,7 @@ test("AC2.2: worktree-merge.md's Skip and Abort bullets keep the run", () => {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test tests/local-merge-close-run-ordering.test.js`
-Expected: FAIL — the `worktree-merge.md:` cases (no `git merge-tree --write-tree` fence, no re-protect fence, close-run is inline prose not a fence) and `AC2.2` (no `**Skip this branch** →` bullet); the three existing sites still pass.
+Expected: FAIL — the `worktree-merge.md:` cases (no `git merge-tree --write-tree` fence, no re-protect fence, close-run is inline prose not a fence) and `AC2.1` (no `**Skip this branch** →` bullet); the three existing sites still pass.
 
 - [ ] **Step 3: Rewrite the `local-merge` half of `plugin/skills/flow/worktree-merge.md`**
 
@@ -223,11 +222,11 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --status AUTO
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test tests/local-merge-close-run-ordering.test.js tests/merge-subject-composer-conformance.test.js tests/pr-first-merge.test.js tests/merge-verification-gate-conformance.test.js`
-Expected: PASS, every case. In particular every `worktree-merge.md:` case and `AC2.2` pass, and the composer suite's `worktree-merge.md: the --no-ff merge sources -m from the composer` stays green.
+Expected: PASS, every case. In particular every `worktree-merge.md:` case and `AC2.1` pass, and the composer suite's `worktree-merge.md: the --no-ff merge sources -m from the composer` stays green.
 
 - [ ] **Step 5: Record the go-red proof**
 
-Step 2's run is the pre-change proof: it ran the new `SITES` entry and the AC2.2 test against the unchanged `worktree-merge.md`. Quote its `not ok` lines for the `worktree-merge.md:` cases and `AC2.2` in the task report (raw output, not a summary) — 9 expected: the 8 per-site cases plus AC2.2.
+Step 2's run is the pre-change proof: it ran the new `SITES` entry and the AC2.1 test against the unchanged `worktree-merge.md`. Quote its `not ok` lines for the `worktree-merge.md:` cases and `AC2.1` in the task report (raw output, not a summary) — 9 expected: the 8 per-site cases plus AC2.1.
 
 - [ ] **Step 6: Renumbering sweep**
 
@@ -241,5 +240,5 @@ Expected: no reference to a renumbered step outside `worktree-merge.md` itself (
 
 ```bash
 git add plugin/skills/flow/worktree-merge.md tests/local-merge-close-run-ordering.test.js
-git commit -m "Close each worktree-merge run only before its own merge — skip, abort and late failures keep the run protected" -m "flow/worktree-merge.md's local-merge reconciliation closed every non-clean run before the first merge, so a skipped, aborted or failed branch lost its worktree assignment while unmerged. Each branch now reads its worktree, runs the pre-merge fence (guard, composer, git merge-tree), and only then closes its own run; a merge, abandoned resolution or push failure after close-run re-stamps it with record-worktree --run and logs a re-stamp that did not print worktree recorded. Pinned as a fourth SITES entry plus an AC2.2 skip/abort text test. refs #3809" -m "Claude-Session: https://claude.ai/code/session_01VNe8TogqK1hEawnDY63oP1"
+git commit -m "Close each worktree-merge run only before its own merge — skip, abort and late failures keep the run protected" -m "flow/worktree-merge.md's local-merge reconciliation closed every non-clean run before the first merge, so a skipped, aborted or failed branch lost its worktree assignment while unmerged. Each branch now reads its worktree, runs the pre-merge fence (guard, composer, git merge-tree), and only then closes its own run; a merge, abandoned resolution or push failure after close-run re-stamps it with record-worktree --run and logs a re-stamp that did not print worktree recorded. Pinned as a fourth SITES entry plus an AC2.1 skip/abort text test. refs #3809" -m "Claude-Session: https://claude.ai/code/session_01VNe8TogqK1hEawnDY63oP1"
 ```
