@@ -53,6 +53,14 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.150.1](https://github.com/thn-inc/claude-tweaks/compare/v6.150.0...v6.150.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* Catch a skipped acceptance-labeling step before a… ([#3783](https://github.com/thn-inc/claude-tweaks/issues/3783)) ([45cdc65](https://github.com/thn-inc/claude-tweaks/commit/45cdc6508e797c94e3f89b8e2fa268025cbd7e24))
+* Make flow's resume-to-merge row workable for an… ([#3784](https://github.com/thn-inc/claude-tweaks/issues/3784)) ([4b3e6fa](https://github.com/thn-inc/claude-tweaks/commit/4b3e6fa7f5098b0ec912ad0b112521d67933231e))
+
 ## [6.150.0](https://github.com/thn-inc/claude-tweaks/compare/v6.149.0...v6.150.0) (2026-10-21)
 
 
