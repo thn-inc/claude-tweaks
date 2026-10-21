@@ -1,0 +1,10 @@
+Ignoring 1 permissions.allow entry from .claude/settings.json: this workspace has not been trusted. Run Claude Code interactively here once and accept the trust dialog, or set projects["/home/user/claude-tweaks"].hasTrustDialogAccepted: true in /root/.claude.json.
+`/prompt-audit` isn't installed in this session, so `--help` didn't run and I have no help text for it. If you need it, it would have to be added as an organization plugin or a project skill. The commands that are available include the project skills (e.g. `/upstream-drift`, `/upstream-repin`) and the `/claude-tweaks:*` set. `/claude-tweaks:help` gives a quick reference for those.
+
+The session start also found three unfinished pipeline runs under `.claude-tweaks/pipelines/`. I haven't run any of the commands below. Only the session that owns a run should close it. A listed run may be live in a sibling session right now, and closing it ends that run's enforcement and event logging mid-flight.
+
+- `2026-10-21T001740-record-3056` (active, PR https://github.com/thn-inc/claude-tweaks/pull/3842). To close: `node "/root/.claude/plugins/cache/claude-tweaks-marketplace/claude-tweaks/6.148.0/bin/hooks.js" close-run --run .claude-tweaks/pipelines/2026-10-21T001740-record-3056`
+- `2026-10-21T001455-dispatch-standalone` (unknown). To close: `node "/root/.claude/plugins/cache/claude-tweaks-marketplace/claude-tweaks/6.148.0/bin/hooks.js" close-run --run .claude-tweaks/pipelines/2026-10-21T001455-dispatch-standalone`
+- `2026-10-20T224802-record-3768` (unknown). To close: `node "/root/.claude/plugins/cache/claude-tweaks-marketplace/claude-tweaks/6.148.0/bin/hooks.js" close-run --run .claude-tweaks/pipelines/2026-10-20T224802-record-3768`
+
+To resume a run instead, review its `decisions.md` and `staged/` directory.

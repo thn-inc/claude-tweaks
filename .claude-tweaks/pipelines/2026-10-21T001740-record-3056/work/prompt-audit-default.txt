@@ -1,0 +1,179 @@
+Ignoring 1 permissions.allow entry from .claude/settings.json: this workspace has not been trusted. Run Claude Code interactively here once and accept the trust dialog, or set projects["/home/user/claude-tweaks"].hasTrustDialogAccepted: true in /root/.claude.json.
+# Prompt audit: Claude Code configuration for this project
+
+I found 4 high-confidence stale facts, 5 medium-confidence findings and 4 low-confidence flags. I applied no edits; the proposed diff is below.
+
+## Assumptions
+
+- **Target model:** Sonnet 5.5 (`claude-sonnet-5-5`), the model running this session.
+- **Inventory:**
+  - **Project root:** `CLAUDE.md` (150 lines, no imports).
+  - **Project skills:** 24 skills in `.claude/skills/` plus 5 sub-files.
+  - **User level:** `~/.claude/skills/session-start-hook`, plus 14 skills synced into `~/.claude/skills/synced/`.
+  - **Plugin:** the installed `claude-tweaks` agent `qa-agent`, plus its skills.
+  - **Not present:** `CLAUDE.local.md`, `AGENTS.md`, `.claude/CLAUDE.md`, `~/.claude/CLAUDE.md`, rules, commands, output styles and a managed policy. The only subagent definitions are the installed plugin's `qa-agent`; the project and user level have none.
+- **Read in full:** `CLAUDE.md`, all 24 project `SKILL.md` files, `async-fan-out.md`, `session-start-hook/SKILL.md` and `qa-agent.md`.
+- **Skimmed only:**
+  - The other project sub-files (`cli-wrapper-contract.md`, `advanced-proof-patterns.md`, `executable-snippet-pins.md`, `judge-procedure.md`) were not read.
+  - The 14 synced skills and the plugin skills got only a signal grep for dated patterns (see Report-only items).
+- **Not read:**
+  - `/home/user/claude-tweaks/CLAUDE.md` (the main checkout's copy, an ancestor of this worktree) and the 5 `evals/fixtures/*/CLAUDE.md` files. The fixtures are nested and load only if a session works in those directories.
+  - I did not read settings, `.mcp.json` or `~/.claude.json`.
+- **Edits outside the project:** the proposed edit to `~/.claude/skills/session-start-hook/SKILL.md` affects **every project**.
+- **Tools:** Bash was disabled, so I checked paths and facts with Glob, Grep and Read only. I ran no commands.
+
+## Summary
+
+The project skills are accurate and dense, and they hold up as context. The clearest defects are Group 2 stale facts: claims about this repo that the repo now contradicts. The Group 1 hits are few and small.
+
+- **Stale `.gitattributes` claim:** two skills say it pins only the upstream-drift fixtures. It now also pins `tests/fixtures/verify-dialects/**`.
+- **Wrong rationale in `upstream-drift`:** the skill says its bare `name` departs from `CLAUDE.md`'s convention. `docs/skill-authoring.md:125` makes the bare name the rule for every skill, and `CLAUDE.md` states neither point.
+- **Stale line numbers:** `prose-code-twin-pin` cites line numbers that have shifted.
+
+**Counts per group**
+
+| Group | Findings |
+|---|---|
+| 1a pressure language | 1 |
+| 1b scaffolds | 1 |
+| 1c over-specification | 0 |
+| 1d fossils | 2 |
+| 2 skill and config files | 8 (4 high, 2 medium, 2 flag) |
+| 3 tool descriptions | 0 |
+| 4 request config | not applicable (no request-building code in scope) |
+
+The roster check in Group 4 found nothing: `qa-agent` is the only subagent definition.
+
+## Findings (highest confidence first)
+
+| # | Location | Evidence | Pattern | Why obsolete | Confidence | Action |
+|---|---|---|---|---|---|---|
+| 1 | `.claude/skills/windows-checkout-test-parity/SKILL.md:10` | "this repo's `.gitattributes` pins only `tools/upstream-drift/fixtures/**`" | Group 2, volatile specifics | `.gitattributes:5,7` pins two globs, including `tests/fixtures/verify-dialects/**` | High | rewrite |
+| 2 | `.claude/skills/skill-prose-conformance-tests/SKILL.md:239` | "This repo's `.gitattributes` pins only the upstream-drift fixtures" | same | same file, same lines | High | rewrite |
+| 3 | `.claude/skills/upstream-drift/SKILL.md:24, 26` | "declared to restrict, per CLAUDE.md"; "bare `upstream-drift` rather than CLAUDE.md's `claude-tweaks:{skill}` form… The deviation is intentional" | Group 2, volatile specifics | `CLAUDE.md` states neither. `docs/skill-authoring.md:125` makes the bare name the rule for all skills, and `:127` holds the `allowed-tools` convention. Line 26's "not drift" rationale invents a departure that doesn't exist. | High | rewrite |
+| 4 | `.claude/skills/prose-code-twin-pin/SKILL.md:45, 148-149` | "`TYPES` … line 11"; "`compose-subject.js:69`'s `TYPE_PRECEDENCE`"; "(line 199)" | Group 2, volatile specifics | Actual positions are `record.js:12` and `compose-subject.js:87, 221`. The underlying gap is still real: `TYPE_PRECEDENCE` appears in no test. | High | rewrite (drop line numbers) |
+| 5 | `driver-skill-outcome-taxonomy/SKILL.md:101-105`; `compose-context-fencing/SKILL.md:56`; `run-directory-fact-packs/SKILL.md:222-226` | Origin and Evidence blocks cite `docs/plans/2026-09-11-release-skill-ledger.md`, `…2026-09-06-skill-context-composer-ledger.md` and `…2026-09-05-spec-1921-…-1929-ledger.md` | Group 2, history narratives | Under `docs/plans/` only `2026-10-*` ledgers exist. The first two files are declared "resolved and removed", and the third has an elided path. "Row 95/104/106-108/115" references in the driver skill (lines 30, 35, 40, 47, 73) point into the same missing files. | Medium | rewrite |
+| 6 | `.claude/skills/pre-tool-use-gate-exemptions/SKILL.md:3` | "reproduced independently in two review findings on record #1678 alone" | Group 2, history narratives (trigger text) | The description loads into every session, and this clause is history, not routing. | Medium | rewrite (keep every Keywords token, per `docs/skill-authoring.md:126`) |
+| 7 | `CLAUDE.md:29, 31, 150` | "Skill authoring — moved… now live in"; "now lives in `docs/donts.md` (moved out of this always-loaded file to fit the 150-line budget)" | Group 1d, migration-relative phrasing | Written as a diff against an earlier layout the model never saw. Line 112 ("only config home since 6.48.0") is a lighter case of the same thing. | Medium | rewrite |
+| 8 | `~/.claude/skills/session-start-hook/SKILL.md:126, 130, 134` (**all projects**) | three bare "IMPORTANT:" openers | Group 1a, pressure language | They mark ordinary validation steps with no stated reason, so the marker carries no information. | Medium | rewrite |
+| 9 | `~/.claude/skills/session-start-hook/SKILL.md:57` (**all projects**) | "Make a todo list for all the tasks in this workflow and work on them one after another" | Group 1b, plan-before-acting scaffold | Current models sequence an 8-step workflow unprompted. You may want the visible checklist, so this is the easiest hunk to decline. | Medium | remove |
+| 10 | `.claude/skills/**` (246 hits for `#NNNN`, `[IL-nn]`, `PR #N` across 28 files) | e.g. `gh-api-module-pattern/SKILL.md:21` narrates "#2882 … first shipped unbounded and review caught it" | Group 2, history narratives | A rule's authority is the behavior it prescribes. `CLAUDE.md` deliberately uses `[IL-nn]` tags as pointers into `docs/incident-log.md`, so a bulk strip would contradict an intentional convention. | Low | flag |
+| 11 | `CLAUDE.md:60-61, 74, 78` | "Assume zero cost", "Assume zero time" next to "Do it properly"; "Think before coding"; "Goal-driven…" | Group 1c, padding and generic virtues | The two zero-cost lines overlap "Do it properly", and the other two restate trained defaults. Line 76 reconciles "Do it properly" with "Simplicity first", so I found no conflict. Treat as your voice, not cruft. | Low | flag |
+| 12 | `CLAUDE.md:98, 102, 112` | "(v4.2+)", "(v4.6+)"; "preflight.json, timing.json, console.json all landed in one run" | Group 1d | Version pins in headings and a history aside in the run-directory note. | Low | flag |
+| 13 | `plugin/agents/qa-agent.md:142` (installed `qa-agent`) | "no longer visually marks which element a step acted on" | Group 1d, migration-relative phrasing | The text is a diff against a screenshot overlay the model never had. | Low | flag (plugin, report only) |
+
+## Report-only items (plugins and synced skills; no edits proposed)
+
+- **claude-tweaks 6.148.0:** `skills/capture/SKILL.md:383` says "don't overthink". That is prose steering thinking depth (1b); `effort` is the lever on this model.
+- **superpowers 7.0.0:**
+  - `using-superpowers/SKILL.md:13` has the capitalised "YOU MUST USE IT". It is routing text, so the trigger carve-out applies.
+  - `writing-skills/SKILL.md:150` opens a line with "CRITICAL:".
+- **Synced skills:** a grep for dated patterns found no retired model names, no `budget_tokens` and no step-by-step incantations.
+  - Capitalised emphasis appears in `pdf/FORMS.md` (2), `pptx/SKILL.md` (1) and `skill-creator/SKILL.md` (1).
+  - I did not review those hits, and the skills' bodies are otherwise unread.
+
+## Left alone (keep list)
+
+- The detailed incident-driven rules in the project skills encode demonstrated failures (keep-list 5) and fragile-operation specifics (keep-list 3).
+- `CLAUDE.md`'s auto-mode paragraphs at lines 104 and 142 agree with each other, so by keep-list 8 that redundancy is working and stays.
+- Skill descriptions carry long Keywords lists, but the repo's own convention (`docs/skill-authoring.md:126`) says to preserve them.
+- I found no conflicts between instruction files.
+
+## Proposed diff (not applied)
+
+**Hunk 1** (finding 1), `.claude/skills/windows-checkout-test-parity/SKILL.md:10`
+```diff
+-and this repo's `.gitattributes` pins only `tools/upstream-drift/fixtures/**` (`-text`, so those hashed fixture bytes stay exact).
++and this repo's `.gitattributes` pins `-text` only on byte-exact fixtures (`tools/upstream-drift/fixtures/**`, `tests/fixtures/verify-dialects/**`), so every other tracked text file is converted.
+```
+
+**Hunk 2** (finding 2), `.claude/skills/skill-prose-conformance-tests/SKILL.md:239`
+```diff
+-This repo's `.gitattributes` pins only the upstream-drift fixtures, so a `core.autocrlf` Windows checkout reads every skill file with `\r\n`
++This repo's `.gitattributes` pins `-text` only on the byte-exact fixtures (`tools/upstream-drift/fixtures/**`, `tests/fixtures/verify-dialects/**`), so a `core.autocrlf` Windows checkout reads every skill file with `\r\n`
+```
+
+**Hunk 3** (finding 3), `.claude/skills/upstream-drift/SKILL.md:24`
+```diff
+-`allowed-tools` is declared to **restrict**, per CLAUDE.md:
++`allowed-tools` is declared to **restrict**, per `docs/skill-authoring.md`'s frontmatter conventions:
+```
+
+**Hunk 4** (finding 3), `.claude/skills/upstream-drift/SKILL.md:26`
+```diff
+-For the same reason its frontmatter `name` is the bare `upstream-drift` rather than CLAUDE.md's `claude-tweaks:{skill}` form: that namespace belongs to the shipped plugin, and claiming it here would imply this skill ships. The deviation is intentional, not drift.
++Its frontmatter `name` is the bare `upstream-drift`, as for every skill (`docs/skill-authoring.md`, Frontmatter conventions).
+```
+
+**Hunk 5** (finding 4), `.claude/skills/prose-code-twin-pin/SKILL.md:45`
+```diff
+-(`['bug', 'feature', 'task']`, line 11) must stay in sync
++(`['bug', 'feature', 'task']`) must stay in sync
+```
+
+**Hunk 6** (finding 4), `.claude/skills/prose-code-twin-pin/SKILL.md:148-149`
+```diff
+-`plugin/bin/lib/compose-subject.js:69`'s `TYPE_PRECEDENCE = ['feature', 'bug', 'task']` is a
+-*third* copy … — used to rank a bundle's aggregated Type (line 199) — with no conformance test
++`plugin/bin/lib/compose-subject.js`'s `TYPE_PRECEDENCE = ['feature', 'bug', 'task']` is a
++*third* copy … — used to rank a bundle's aggregated Type — with no conformance test
+```
+
+**Hunk 7** (finding 5), `.claude/skills/driver-skill-outcome-taxonomy/SKILL.md:101-105`
+```diff
+-Derived at wrap-up from the seven-spec run that shipped `/claude-tweaks:release` (#2251-#2258) —
+-ledger row 115 of `docs/plans/2026-09-11-release-skill-ledger.md` (resolved and removed), rulings 13, 14, 19, 20 and
+-review rows 104-108.
++Derived from the seven-spec run that shipped `/claude-tweaks:release` (#2251-#2258).
+```
+Also drop the "(ledger rows …)" and "(row N)" parentheticals at lines 30, 35, 40, 47 and 73.
+
+**Hunk 8** (finding 5), `.claude/skills/compose-context-fencing/SKILL.md:56`
+```diff
+-- Ledger: `docs/plans/2026-09-06-skill-context-composer-ledger.md` (resolved and removed) rows 10, 13, 14, 15, 17, 19, 20, 22 — the survey misses, the byte-derivation rule, the two headroom pins, the unreachable `mode=confirm`, and the pointer-sweep guidance, each with its own measurement.
++- Survey misses, the byte-derivation rule, the two headroom pins, the unreachable `mode=confirm`, and the pointer-sweep guidance each came from a measured miss in #1987's decomposition (#1989-#1994).
+```
+
+**Hunk 9** (finding 5), `.claude/skills/run-directory-fact-packs/SKILL.md:222-226`
+```diff
+-Derived at wrap-up from the multi-spec run that shipped #1930 (`wrap-up-pack.js`) and #1931
+-(`flow-preflight.js`) — ledger rows 52 and 56 of
+-`docs/plans/2026-09-05-spec-1921-…-1929-ledger.md`.
++Derived from the multi-spec run that shipped #1930 (`wrap-up-pack.js`) and #1931 (`flow-preflight.js`).
+```
+
+**Hunk 10** (finding 6), `.claude/skills/pre-tool-use-gate-exemptions/SKILL.md:3`
+```diff
+-… the unwritten discipline every existing exemption in that file already obeys, reproduced independently in two review findings on record #1678 alone, plus which run …
++… the discipline every existing exemption in that file already obeys, plus which run …
+```
+
+**Hunk 11** (finding 7), `CLAUDE.md:29-31`
+```diff
+-### Skill authoring — moved
++### Skill authoring
+ 
+-SKILL.md structure, Interaction patterns (incl. the canonical CSC template), Frontmatter conventions, the Interaction style directive, and Parallel execution directives now live in `docs/skill-authoring.md`.
++SKILL.md structure, Interaction patterns (incl. the canonical CSC template), Frontmatter conventions, the Interaction style directive, and Parallel execution directives live in `docs/skill-authoring.md`.
+```
+
+**Hunk 12** (finding 7), `CLAUDE.md:150`
+```diff
+-The full rule list now lives in `docs/donts.md` (moved out of this always-loaded file to fit the 150-line budget); read it before touching code covered by any tagged rule.
++The full rule list is in `docs/donts.md` (this file stays within its 150-line budget); read it before touching code covered by any tagged rule.
+```
+
+**Hunk 13** (finding 8, **affects all projects**), `~/.claude/skills/session-start-hook/SKILL.md`
+```diff
+-IMPORTANT: Verify dependencies are installed and script completes successfully.
++Verify dependencies are installed and the script completes successfully.
+-IMPORTANT: Figure out what the right command is to run the linters and run it for an example file. …
++Work out the command that runs the linters and run it on an example file. …
+-IMPORTANT: Figure out what the right command is to run the tests and run it for one test. …
++Work out the command that runs the tests and run it on one test. …
+```
+
+**Hunk 14** (finding 9, **affects all projects**; decline this one if you want the visible checklist), `~/.claude/skills/session-start-hook/SKILL.md:57`
+```diff
+-Make a todo list for all the tasks in this workflow and work on them one after another
+```
