@@ -7,7 +7,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const { readText } = require('./helpers/read-skill');
-const { toPosix } = require('../plugin/bin/lib/shared-primitives');
+const { escapeRegExp, toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => readText(path.join(ROOT, rel));
@@ -85,7 +85,7 @@ function item9Scripts() {
 // Safe to open afterwards: Node accepts "/" on win32 and production's formatPrintedPath prints it so.
 function substitutePath(script, placeholder, file, sep = path.sep) {
   // A function replacement keeps "$&" / "$'" / "$`" in a path from being expanded.
-  return script.replace(new RegExp(`\\$${placeholder}`, 'g'), () => toPosix(file, sep));
+  return script.replace(new RegExp(escapeRegExp(`$${placeholder}`), 'g'), () => toPosix(file, sep));
 }
 
 // Every require(/readFileSync(/writeFileSync( single-quoted argument in a script (#3699).

@@ -410,6 +410,8 @@ test('measureComposed: LF and CRLF copies of the same sources measure the same c
     const files = Object.entries(sources).map(([rel, text]) => {
       const abs = path.join(root, rel);
       fs.writeFileSync(abs, text.replace(/\n/g, eol));
+      // The fixture really is in the line-ending form its slug names, or the comparison is vacuous.
+      assert.strictEqual(fs.readFileSync(abs, 'utf8').includes('\r\n'), eol === '\r\n');
       return abs;
     });
     return measureComposed(root, { step: 'x', file: 'f', line: 1, sources: files });

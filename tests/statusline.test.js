@@ -269,8 +269,9 @@ test('renderProject: the file:// link ends with a trailing slash (opens the fold
   const dir = '/Users/x/Code/claude-tweaks';
   const out = sl.renderProject({ workspace: { project_dir: dir } });
   assert.strictEqual(out, linkedName(dir), `expected derived file URL: ${out}`);
-  // Literal check, independent of the derivation: "/" immediately before the BEL terminator.
-  assert.match(out, /\/\x07/, `expected trailing slash before terminator: ${out}`);
+  // Literal check, independent of the derivation: the link target (from the OSC 8 opener to
+  // its first BEL) ends in "/", so the folder opens rather than revealing in its parent.
+  assert.match(out, /^\x1b\]8;;[^\x07]*\/\x07/, `expected trailing slash before terminator: ${out}`);
 });
 
 test('color.link emits the documented OSC 8 byte shape (BEL-terminated)', () => {
