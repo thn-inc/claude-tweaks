@@ -3,13 +3,13 @@
 # /claude-tweaks:backlog refine). Re-create it via
 # `/claude-tweaks:routine create dispatch` (this template) — the old routine keeps
 # firing a dead prompt until you replace or delete it at claude.ai/code/routines.
-template_version: 10
+template_version: 11
 routine_name: dispatch-weekdays
 kickoff: dispatch --budget 1
 # Optional: `branch: <name>` pins the assembled kernel's target-branch placeholder.
 # Normally unset here — a branch is project-specific, so /claude-tweaks:routine resolves
 # it at instantiation.
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 allowed_tools: [Bash, Read, Edit, Write, Grep, Glob, Task]
 mcp_connections: []
 default_schedule:

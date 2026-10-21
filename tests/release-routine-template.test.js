@@ -18,7 +18,7 @@ const TEMPLATE = parseRoutineTemplate(read('plugin/skills/release/routine-templa
 test('the template kicks off release --train — the skill directory first, the flag verbatim', () => {
   assert.equal(TEMPLATE.kickoff, 'release --train');
   assert.equal(TEMPLATE.routine_name, 'release-train-daily');
-  assert.equal(TEMPLATE.template_version, 1);
+  assert.equal(TEMPLATE.template_version, 2);
 });
 
 test('the template carries Bash (every write is a CLI or git/gh call) and Task (Step 3 dispatches lenses), never Edit/Write', () => {
