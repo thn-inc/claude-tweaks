@@ -91,6 +91,10 @@ the fifth copy, `tidy/digest-sweep.md`'s Cluster promotion filters (#3766), is p
 `tests/materiality-floor-conformance.test.js` with the same `includes(trustedJqSelect())` and
 `includes(untrustedJqNote())` needles. So answer step 2 for each copy by grepping `tests/` for the
 generator's name (`grep -rln 'trustedJqSelect' tests/`), not by reading the one suite named above.
+Per-site `includes(generated)` pins also cannot catch a hand-edited copy in a file nobody listed, so
+the AC2.1 sweep (#3823) closes that: it deletes every generator-output copy from each
+`plugin/skills/` file and fails when a stale or edited predicate survives in the remainder, with exact
+copy counts and go-red controls for a stale copy and a broken new-form copy.
 
 **Regex-alternation-to-prose-list instance on a router (#3401):** `plugin/bin/lib/console/resolve.js`'s
 `SECTION_MAP` routes staged `.md` proposals to Pending review through one prefix alternation
