@@ -224,3 +224,85 @@ test('ephemeral-server: the paragraph searches still find their breaks under CRL
     }
   }
 });
+
+// #3657 — the server record is parsed by its trailing `detached:` token, never by whitespace
+// position: a worktree root may contain spaces, so a positional fourth field would be a path
+// fragment. Pins Section D step 2, the two dispatch templates, and every reader in plugin/skills.
+const fs = require('node:fs');
+
+const flat = (s) => s.replace(/\s+/g, ' ');
+
+function assertTrailingTokenSectionD(body) {
+  const f = flat(body);
+  assert.match(f, /Parse it by token, not by whitespace position — the pid and port are its first two fields, the detach flag is the trailing `detached:` token/);
+  assert.match(f, /the worktree root is everything between the port and that trailing token, since a worktree root may contain spaces/);
+  assert.match(f, /When the trailing `detached:` token reads `detached:yes`, also kill the process group/);
+  assert.doesNotMatch(body, /fourth field|third field/);
+}
+
+function assertTrailingTokenTaskPrompt(text) {
+  const [first, second] = fencedBlocks(text);
+  assert.doesNotMatch(first, /fourth field|third field/);
+  assert.doesNotMatch(second, /fourth field|third field/);
+  assert.match(flat(first), /end the recorded line with a trailing `detached:yes`\/`detached:no` token/);
+  const at = second.indexOf('Ephemeral dev server liveness');
+  assert.notEqual(at, -1, 'the liveness paragraph must be present in the second template');
+  const end = second.indexOf('\n\n', at);
+  const liveness = second.slice(at, end === -1 ? undefined : end);
+  assert.match(flat(liveness), /the worktree root is everything between the port and the trailing `detached:` token/);
+}
+
+function walkMarkdown(dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((ent) => {
+    const p = path.join(dir, ent.name);
+    if (ent.isDirectory()) return walkMarkdown(p);
+    return ent.name.endsWith('.md') ? [p] : [];
+  });
+}
+
+function assertNoPositionalReader(entries) {
+  const offenders = entries
+    .filter(({ text }) => /\bfourth field\b/i.test(text) || /\bthird field\b/i.test(text))
+    .map(({ file }) => file);
+  assert.deepEqual(offenders, [], `server-record readers that take the flag or root by position: ${offenders.join(', ')}`);
+}
+
+test('#3657 Section D parses the server record by trailing token and gates the POSIX group kill on that token', () => {
+  assertTrailingTokenSectionD(sectionD(readText(CLEANUP_EXEC)));
+});
+
+test('#3657 go-red: re-inserting the positional `fourth field` wording into Section D fails the trailing-token predicate', () => {
+  const body = sectionD(readText(CLEANUP_EXEC));
+  assert.throws(
+    () => assertTrailingTokenSectionD(body + '\nWhen the fourth field reads `detached:yes`, also kill the process group.'),
+    assert.AssertionError,
+  );
+});
+
+test('#3657 dispatch templates end the recorded line with a trailing detached: token and bound the worktree root by the port and that token', () => {
+  assertTrailingTokenTaskPrompt(readText(TASK_PROMPT));
+});
+
+test('#3657 go-red: a first template that says "append a fourth field" fails the task-prompt predicate', () => {
+  const text = readText(TASK_PROMPT);
+  const [first] = fencedBlocks(text);
+  const mutated = text.replace(first, () => `${first}\nappend a fourth field to the recorded line`);
+  assert.notEqual(mutated, text);
+  assert.throws(() => assertTrailingTokenTaskPrompt(mutated), assert.AssertionError);
+});
+
+test('#3657 live corpus: no plugin/skills markdown naming ephemeral-server.txt reads the record by a positional field', () => {
+  const entries = walkMarkdown(path.join(PLUGIN, 'skills'))
+    .map((abs) => ({ file: path.relative(PLUGIN, abs), text: readText(abs) }))
+    .filter(({ text }) => text.includes('ephemeral-server.txt'));
+  assert.ok(entries.length >= 5, `the sweep must reach the server-record readers, found ${entries.length}`);
+  assertNoPositionalReader(entries);
+});
+
+test('#3657 go-red: a synthetic corpus entry with a positional fourth-field read fails the sweep predicate, a token-only entry passes', () => {
+  assert.throws(
+    () => assertNoPositionalReader([{ file: 'synthetic/fixture.md', text: 'read ephemeral-server.txt; the fourth field is the flag' }]),
+    assert.AssertionError,
+  );
+  assert.doesNotThrow(() => assertNoPositionalReader([{ file: 'synthetic/ok.md', text: 'read ephemeral-server.txt by its trailing detached: token' }]));
+});
