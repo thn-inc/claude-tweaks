@@ -12,7 +12,7 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { reentryFixture } = require('./helpers/reentry-fixture');
+const { reentryFixture, reentryGit } = require('./helpers/reentry-fixture');
 const { checkPassReentry } = require('../plugin/bin/lib/flow/consolidated-pass');
 const { USAGE } = require('../plugin/bin/hooks.js');
 
@@ -75,7 +75,7 @@ const gitPath = (() => {
   return w.status === 0 ? w.stdout.trim() : null;
 })();
 
-test('#3553: --online is threaded through (gh absent -> degrade named in detail; absent without --online)', { skip: !gitPath && 'git not resolvable on PATH' }, () => {
+test('#3553: --online is threaded through (gh absent -> degrade named in detail; absent without --online)', { skip: (!gitPath && 'git not resolvable on PATH') || (process.platform === 'win32' && 'symlink-only PATH fixture is POSIX-only') }, () => {
   const { root, runDir } = reentryFixture();
   const statePath = path.join(runDir, 'run-state.json');
   const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
@@ -90,6 +90,20 @@ test('#3553: --online is threaded through (gh absent -> degrade named in detail;
   assert.equal(offline.code, 0, offline.stderr);
   assert.match(JSON.parse(online.stdout.trim()).detail, /online PR check unavailable \(gh-absent\)/);
   assert.doesNotMatch(JSON.parse(offline.stdout.trim()).detail, /online PR check unavailable/);
+});
+
+test('#3553: the caller\'s CLAUDE_CODE_SESSION_ID is passed as sessionId (own run skips the parent-live lock check)', () => {
+  const { root, wt, runDir } = reentryFixture();
+  // A lock with no pid yields lockVerdict 'unknown', which checkPassReentry reads as
+  // parent-live unless the run's recorded sessionId is the caller's own.
+  reentryGit(root, 'worktree', 'lock', '--reason', 'held', wt);
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wt, sessionId: 'cpr-test' }));
+  const own = runCli(['check-pass-reentry', '--run', runDir], { cwd: root, env: { CLAUDE_CODE_SESSION_ID: 'cpr-test' } });
+  const other = runCli(['check-pass-reentry', '--run', runDir], { cwd: root, env: { CLAUDE_CODE_SESSION_ID: 'someone-else' } });
+  assert.equal(own.code, 0, own.stderr);
+  assert.equal(other.code, 0, other.stderr);
+  assert.equal(JSON.parse(own.stdout.trim()).reason, 'eligible');
+  assert.equal(JSON.parse(other.stdout.trim()).reason, 'parent-live');
 });
 
 test('#3553: an unknown flag prints the usage line, never verdict JSON', () => {

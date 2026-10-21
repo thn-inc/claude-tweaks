@@ -127,10 +127,11 @@ const USAGE = {
 
 const HELP_FLAGS = new Set(['--help', '-h']);
 
-// #1012: declared-flag sets for the five mutating run-state verbs
-// (close-run, record-worktree, record-pr, spec-status, teardown-run) —
+// #1012: declared-flag sets for the flag-strict verbs — the mutating run-state
+// verbs plus the read-only check-pass-reentry (#3553), exactly the keys of the
+// table below —
 // consulted by the unknown-flag guard below (which supersedes HELP_FLAGS for
-// exactly these five: `--help`/`-h` are simply never declared, so they fall
+// exactly these verbs: `--help`/`-h` are simply never declared, so they fall
 // out as "unknown" the same as a genuine typo) and by resolveRunArg's
 // unambiguousOnly resolution path further down. Every other resolveRunArg
 // caller (archive-run, check-resume-freshness, check-staged-inventory) has
@@ -633,7 +634,7 @@ async function main(argv) {
   // corruption hazard observed 2026-08-20 (see the now-removed docs/donts.md
   // bridging rule). Checked against the USAGE table, not a hardcoded verb
   // list, so a verb with no usage entry gets no guard by design.
-  // #1012: for the five mutating verbs, ANY undeclared --* argument (--help
+  // #1012: for the flag-strict verbs (the KNOWN_FLAGS table), ANY undeclared --* argument (--help
   // included — it is never declared) intercepts here, before resolveRunArg
   // or any lib call ever runs. Every other USAGE-table verb keeps the
   // narrower HELP_FLAGS-only guard unchanged.
