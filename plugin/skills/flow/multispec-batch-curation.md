@@ -19,6 +19,8 @@ If the run aborted early (one spec hit a HARD-GATE, no `keep-going`), still run 
 
 The shared open-items ledger is still on disk when this pass runs: `wrap-up/cleanup-procedures.md` item 2 defers its multi-spec deletion to `multispec-review-console.md`'s Shared teardown step 0, after this pass and the consolidated console (#3420).
 
+**Batch ceremony (#3595).** A spec's Ceremony escape hatch (`wrap-up/SKILL.md`) downgrades its own spec-level `config.yml` only, so the run-level value stops being uniform once one spec downgraded. The batch pass covers every spec's diff, the downgraded one included: it runs at `standard` when any `spec-{N}/config.yml` reads `ceremony-profile: standard`, and at the parent `config.yml`'s value only when no spec downgraded.
+
 ## Batch-scope reflect pass
 
 Run once, against the union of every completed spec's changed files:
@@ -27,7 +29,7 @@ Run once, against the union of every completed spec's changed files:
 2. **Ledger phase** — `wrap-up` (same phase tag the per-spec call would have used).
 3. **Seed context** — the aggregated Key Learnings sections from every completed spec's `/claude-tweaks:review` summary, concatenated in spec execution order.
 4. **`--source wrap-up`** — same as the per-spec call.
-5. **Mode** — read `config.yml`'s `ceremony-profile` (the run-level value, already uniform across every spec in the batch — see `manifesto.md`'s ceremony-profile computation) exactly as the per-spec call would: `light` under `fast-lane`, `full` otherwise.
+5. **Mode** — the batch ceremony above: `light` under `fast-lane`, `full` otherwise.
 
 If any insight is "Implement now", the reflect skill handles it before returning control here, same as the per-spec path. The surviving insight set feeds the batch registry pass's `--signals` below — the same six-signal classification `wrap-up/SKILL.md`'s Phase 2 documents, applied once over this batch-scope insight set instead of once per spec.
 
@@ -41,7 +43,7 @@ INTEGRATION_BRANCH=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values
 [ -n "$INTEGRATION_BRANCH" ] || INTEGRATION_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')
 node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-engine.js" plan --run-dir "$MULTISPEC_PARENT_DIR" \
   --base "$(git merge-base --end-of-options HEAD "origin/${INTEGRATION_BRANCH}")" \
-  --ceremony "{ceremony-profile from config.yml}" --signals '{...}'
+  --ceremony "{batch ceremony}" --signals '{...}'
 ```
 
 Then the same `record` (once per open row) / `render --section trace` sequence `curation-engine.md` documents for the single-spec path — this file doesn't restate that mechanics, only the scope difference (parent dir, batch `--base`, batch `--signals`). Ordering is load-bearing exactly as it is per-spec: Memory and Upstream feedback rows are judged last, since their input is "learnings no earlier row claimed" — this holds across the aggregated batch signal set, not per-spec.

@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { findConflictingSession, findLiveClaim, matchesRecordRef, tokenize } = require('../plugin/bin/lib/hooks/sibling-sessions');
+const { findConflictingSession, findLiveClaim, matchesRecordRef, normalizeRecordRef, tokenize } = require('../plugin/bin/lib/hooks/sibling-sessions');
 
 // Frozen `git worktree list --porcelain` fixtures — never live command output,
 // per [IL-80]: the lock-reason format is git's own unversioned implementation
@@ -260,4 +260,29 @@ test('AC2.1: findLiveClaim fails open to null — own session, tombstone, stale,
   let called = false;
   assert.strictEqual(findLiveClaim('flow-spec-12', claimOpts(() => { called = true; return claimBlob(); })), null);
   assert.strictEqual(called, false, 'a slug ref never triggers a claim read');
+});
+
+test('AC1.1: findConflictingSession reports the same worktree conflict for "#77" and "77"', () => {
+  const porcelain = porcelainWith({
+    path: '/repo/.claude/worktrees/dispatch-record-77',
+    branch: 'worktree-dispatch-record-77',
+    lockReason: `claude session x (pid ${process.pid} start Fri Aug  7 14:40:15 2026)`,
+  });
+  const expected = { path: '/repo/.claude/worktrees/dispatch-record-77', branch: 'worktree-dispatch-record-77', pid: process.pid };
+  assert.deepStrictEqual(findConflictingSession('77', { run: stubRun(porcelain), sessionId: null }), expected);
+  assert.deepStrictEqual(findConflictingSession('#77', { run: stubRun(porcelain), sessionId: null }), expected);
+});
+
+test('AC2.1: a slug ref matches exactly as before; a #-prefixed slug is not rewritten', () => {
+  assert.strictEqual(matchesRecordRef({ branch: 'flow-spec-3412', path: '/x' }, 'spec-3412'), true);
+  assert.strictEqual(normalizeRecordRef('spec-3412'), 'spec-3412');
+  assert.strictEqual(normalizeRecordRef('#spec-3412'), '#spec-3412');
+  assert.strictEqual(matchesRecordRef({ branch: 'flow-spec-3412', path: '/x' }, '#spec-3412'), false);
+});
+
+test('normalizeRecordRef strips one leading # from a numeric ref only, and the token boundary still holds', () => {
+  assert.strictEqual(normalizeRecordRef('#77'), '77');
+  assert.strictEqual(normalizeRecordRef('77'), '77');
+  assert.strictEqual(normalizeRecordRef(77), '77');
+  assert.strictEqual(matchesRecordRef({ branch: 'flow-spec-192-193', path: '/x' }, '#19'), false);
 });
