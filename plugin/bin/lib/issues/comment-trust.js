@@ -19,8 +19,8 @@
 // `untrustedJqNote()` verbatim; both are built from the set below so the jq
 // text and the code cannot drift. The pasted filters read either spelling
 // (`authorAssociation` or `author_association`), so a gh-shaped and a
-// REST/MCP-shaped comment are judged alike. The contract is `_shared/pr-run-comments.md`'s
-// Trusted authors section.
+// REST/MCP-shaped comment are judged alike. The contract is
+// `_shared/pr-run-comments.md`'s Trusted authors section.
 
 // Order is part of the contract — the jq builders below emit it as listed.
 const TRUSTED_AUTHOR_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);

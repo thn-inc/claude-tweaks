@@ -632,9 +632,9 @@ function sweepJqTrustCopies(text, label) {
   const note = untrustedJqNote();
   const select = trustedJqSelect();
   const notes = text.split(note).length - 1;
-  const afterNotes = text.split(note).join('');
+  const afterNotes = text.replaceAll(note, '');
   const selects = afterNotes.split(select).length - 1;
-  const rest = afterNotes.split(select).join('');
+  const rest = afterNotes.replaceAll(select, '');
   for (const stale of ['authorAssociation ==', 'author_association ==', '== "OWNER"', '== "MEMBER"', '== "COLLABORATOR"', '"no association"']) {
     assert.ok(!rest.includes(stale), `${label}: a stale or hand-edited jq trust copy remains (${stale})`);
   }
@@ -662,7 +662,7 @@ test('the AC2.1 sweep goes red on a stale copy', () => {
 test('the AC2.1 sweep goes red on a broken new-form copy', () => {
   const wrap = (select) => `gh pr view 1 --json comments --jq '.comments[] | ${select}'`;
   const dropped = trustedJqSelect().replace(/ or \(\.authorAssociation \/\/ \.author_association\) == "COLLABORATOR"/, '');
-  const swapped = trustedJqSelect().split('(.authorAssociation // .author_association)').join('(.author_association // .authorAssociation)');
+  const swapped = trustedJqSelect().replaceAll('(.authorAssociation // .author_association)', '(.author_association // .authorAssociation)');
   assert.notStrictEqual(dropped, trustedJqSelect(), 'control must actually drop COLLABORATOR');
   assert.notStrictEqual(swapped, trustedJqSelect(), 'control must actually swap the spellings');
   assert.doesNotThrow(() => sweepJqTrustCopies(wrap(trustedJqSelect()), 'intact'), 'the intact copy must pass (proves the controls differ only by the break)');
