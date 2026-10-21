@@ -7,7 +7,7 @@ keeps the step-cost framing sentence and a stub pointing here; the per-step data
 
 **No worktree for the scan batch.** The agent-backed scans only read — they write nothing — so
 `_shared/worktree-setup.md`'s "Forge-API-only invocations need no worktree" carve-out covers them
-outright; the only worktree `/claude-tweaks:tidy` provisions is Step 7.5's, for Step 7's mutations.
+outright; the only worktree `/claude-tweaks:tidy` provisions is Step 7.5's, and only when Step 7's approved set holds a working-tree write.
 
 ---
 

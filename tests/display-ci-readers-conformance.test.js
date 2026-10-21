@@ -7,6 +7,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const { readText } = require('./helpers/read-skill');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => readText(path.join(ROOT, rel));
@@ -76,6 +77,19 @@ function item9Scripts() {
   return scripts;
 }
 
+// The candidates path is spliced into JS single-quoted literals, so a native win32 path
+// must be forward-slashed first (#3699). The sep parameter lets a test pass path.win32.sep.
+// Safe to open afterwards: Node accepts "/" on win32 and production's formatPrintedPath prints it so.
+function substituteCandidates(script, candidatesFile, sep = path.sep) {
+  // A function replacement keeps "$&" / "$'" / "$`" in a path from being expanded.
+  return script.replace(/\$PR_SCAN_UNARMED_CANDIDATES/g, () => toPosix(candidatesFile, sep));
+}
+
+// Every require(/readFileSync(/writeFileSync( single-quoted argument in a script (#3699).
+function spliceLiterals(script) {
+  return [...script.matchAll(/(?:require|readFileSync|writeFileSync)\(\s*'([^']*)'/g)].map((m) => m[1]);
+}
+
 test('AC1.1: pr-scan item 9 gates candidates on a pr-checks.js --pr verdict', () => {
   const slice = item9Slice();
   assert.ok(slice.includes('pr-checks.js'), 'item 9 names pr-checks.js');
@@ -101,7 +115,7 @@ test('AC1.1: item 9 CI filter keeps green/no-ci, drops pending, red and a failed
     const candidatesFile = path.join(tmp, 'candidates.json');
     fs.writeFileSync(candidatesFile, JSON.stringify([1, 2, 3, 4, 5].map((number) => ({ number }))));
     // The plugin root reaches the script through the environment, as the shell prefix does.
-    const script = scripts[1].replace(/\$PR_SCAN_UNARMED_CANDIDATES/g, candidatesFile);
+    const script = substituteCandidates(scripts[1], candidatesFile);
     assert.ok(!script.includes('CLAUDE_PLUGIN_ROOT'), 'the CI filter body no longer interpolates CLAUDE_PLUGIN_ROOT into JS');
     const scriptFile = path.join(tmp, 'ci-filter.js');
     fs.writeFileSync(scriptFile, script);
@@ -116,4 +130,12 @@ test('AC1.1: item 9 CI filter keeps green/no-ci, drops pending, red and a failed
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test('#3699 AC1.1: the CI filter splices a win32 temp path with forward slashes', () => {
+  const win = path.win32.join('D:\\a\\_temp', 'ct-display-ci-x', 'candidates.json');
+  const s = substituteCandidates(item9Scripts()[1], win, path.win32.sep);
+  const lits = spliceLiterals(s);
+  assert.ok(lits.filter((l) => l === 'D:/a/_temp/ct-display-ci-x/candidates.json').length >= 2, 'the require and the writeFileSync both carry the forward-slashed path');
+  assert.ok(lits.every((l) => !l.includes('\\')), 'no spliced literal keeps a backslash');
 });

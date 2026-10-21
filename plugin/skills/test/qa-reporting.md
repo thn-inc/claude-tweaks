@@ -16,18 +16,18 @@ QA collection, recoveries, reporting, and ledger writes — Phases 4, 4.5, 5, 5.
 
 ### Finding Classification
 
-After collecting all agent reports, classify each failure into one of 5 categories using heuristic rules. Classification is automated — override categories in the findings table if needed.
+After collecting all agent reports, classify each failure into one of 5 categories using heuristic rules. Classification is automated — override categories in the findings table if needed. The report writer (`bin/qa-report.js`, Phase 5) applies rules 1-3 and 5 itself; rule 4 (`story-bug`), and any manual override, is recorded as that story's `category` in `story-results.json`.
 
 | Category | Signal | Default Severity | Suggested Fix Pattern |
 |----------|--------|-----------------|----------------------|
-| `stale-selector` | Error contains "locator not found" or "element not found" | Low | "Update locator in story YAML" |
+| `stale-selector` | Error has `locator` or `element` … `not found` on one line (up to 120 characters of locator text between, e.g. `role:button "Submit"`) | Low | "Update locator in story YAML" |
 | `code-bug` | Error contains "assertion" or "expected" or "verify failed" | High | "Investigate component behavior" |
 | `ux-issue` | From caveats (PASS_WITH_CAVEATS stories) | Medium | Specific to the observation |
 | `flaky-env` | Error contains "timeout" or "navigation failed" or "net::" | Low | "Re-run: `/test qa retry={RUN_DIR}`" |
 | `story-bug` | Element exists but in wrong position, or step instructions don't match current UI flow | Medium | "Regenerate story: `/stories focus={area}`" |
 
 **Classification rules (apply in order — first match wins):**
-1. Error contains "locator not found" or "element not found" -> `stale-selector`
+1. Error has `locator` or `element` … `not found` on one line (case-insensitive, up to 120 characters of locator text between, e.g. `Locator role:button "Submit" not found`) -> `stale-selector`
 2. Error contains "timeout" or "navigation failed" or "net::" -> `flaky-env`
 3. Error contains "assertion" or "expected" or "verify failed" -> `code-bug`
 4. Error suggests the page structure changed (element exists but in wrong position) -> `story-bug`
@@ -35,7 +35,7 @@ After collecting all agent reports, classify each failure into one of 5 categori
 
 **Caveat-to-finding conversion:** Each caveat from a PASS_WITH_CAVEATS story generates a `ux-issue` finding with severity Medium. These are informational and do not block the gate.
 
-**Auto-recovered selector classification:** When a locator was auto-recovered by the qa-agent (present in the `recovered_locators` array), classify it as `stale-selector` with status `auto-fixed` rather than `open`. These do not block the gate — the locator has already been corrected in the story YAML (see Phase 4.5).
+**Auto-recovered selector classification:** When a locator was auto-recovered by the qa-agent (present in the `recovered_locators` array), it appears only in `report.json`'s `recovered_locators[]` — never as a finding, so it never reaches the Phase 5.5 ledger as an open item. These do not block the gate — the locator has already been corrected in the story YAML (see Phase 4.5).
 
 ## Phase 4.5: Apply Selector Recoveries
 
@@ -69,9 +69,41 @@ After ALL agents in a tier complete (not during execution — to avoid file writ
 
 24. Record the total wall-clock time for the entire run (from the start of Phase 3 to the end of Phase 4).
 
-25. Write report artifacts to disk:
+25. Write report artifacts to disk.
 
-**`{RUN_DIR}/report.json`** — machine-readable:
+**`{RUN_DIR}/report.json`** — machine-readable, written by `bin/qa-report.js` (#3328), never by hand. Write the Phase 4 per-story results for every selected story — SKIPPED ones included (dependency, vault, target-environment, and origin skips from pre-flight and Phase 3), so `summary.skipped` counts them — plus run metadata (`run_dir`, `stories_dir`, `filters`, and `wall_clock_seconds` from step 24) to `{RUN_DIR}/story-results.json` with the Write tool, then run `node "${CLAUDE_PLUGIN_ROOT}/bin/qa-report.js" --results "{RUN_DIR}/story-results.json" --out "{RUN_DIR}/report.json"`. The writer derives `summary`, `findings`, `caveats`, `recovered_locators`, `page_inventories`, and `timing` from the stories array, so none of them is a payload field. The payload:
+
+```json
+{
+  "run_dir": "{RUN_DIR}",
+  "stories_dir": "{STORIES_DIR}",
+  "timestamp": "ISO-8601 (optional — defaults to now)",
+  "filters": { "tag": null, "priority": null, "retry": null, "journey": null },
+  "wall_clock_seconds": N,
+  "stories": [
+    {
+      "id": "story-id",
+      "name": "Story name",
+      "source_file": "filename.yaml",
+      "status": "PASS|PASS_WITH_CAVEATS|FAIL|SKIPPED",
+      "steps_passed": N,
+      "steps_total": N,
+      "elapsed_seconds": N,
+      "error": null,
+      "caveats": [],
+      "trace": "{trace path or null}",
+      "screenshot_dir": "{SCREENSHOT_PATH}",
+      "category": "optional — set for story-bug or a manual override of a FAIL story",
+      "recovered_locators": [],
+      "page_inventories": []
+    }
+  ]
+}
+```
+
+Exit codes: `0` written; `1` the results payload is unreadable or invalid — fix the payload the stderr reason names and re-run; `2` malformed invocation, `3` `--out` unwritable — surface stderr verbatim. Do not retry around the writer: never compose or hand-edit `report.json` — the QA pass stamp below reads only what this writer wrote.
+
+The schema below is the shape the writer produces.
 
 **Canonical schema.** The `page_inventories` array below (`interactive_elements`/`forms`/`navigation`/`accessibility`/`layout`) re-specifies the same nested shape declared canonical by `agents/qa-agent.md`'s `## Report` section — this file's `page_inventories` block must be kept byte-for-byte in sync with it.
 

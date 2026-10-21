@@ -265,10 +265,16 @@ function checkVersion(entry, options = {}) {
 
 // ─── checkAssertions ────────────────────────────────────────────────────────
 
-// One result per manifest assertion, matched by LITERAL substring
-// (String.prototype.includes) — never a regex. A cited literal such as
-// Impeccable's own `polish [target]` help text contains regex metacharacters;
-// treating it as a pattern would either match the wrong thing or throw.
+// One result per manifest assertion, matched by LITERAL substring — never a
+// regex. A cited literal such as Impeccable's own `polish [target]` help text
+// contains regex metacharacters; treating it as a pattern would either match
+// the wrong thing or throw.
+//
+// The match is byte-level: the file is read as a Buffer and tested with
+// Buffer.prototype.includes, which encodes the literal as UTF-8. The file is
+// never decoded into a JS string, so a compiled single-file artifact (the
+// `claude-code` entry) is matchable at any size — V8 caps a string at about
+// 2^29 characters and the Claude Code binary is already 268 MB and growing.
 //
 // Evaluated against EVERY root resolveRoots() returns, not just the first:
 // a plugin-cache-glob probe can legitimately resolve more than one
@@ -306,7 +312,7 @@ function checkAssertions(entry, options = {}) {
       const fullPath = path.join(root, upstreamPath);
       let content;
       try {
-        content = fs.readFileSync(fullPath, 'utf8');
+        content = fs.readFileSync(fullPath);
       } catch (err) {
         const reason = err.code === 'ENOENT' ? 'does not exist' : `could not be read: ${err.message}`;
         return { root, fullPath, status: 'missing-file', detail: `${fullPath} ${reason}` };
