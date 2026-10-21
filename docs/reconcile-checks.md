@@ -43,7 +43,7 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   equivalence it falls back to PR-state squash-merge evidence (#2252), so a stale local ref only
   delays it and never wrongly skips it. An added prerequisite follows the pass's own gates
   rather than overriding them: under `--dry-run` it does not fast-forward (`mirror` reports
-  `skipped` / `dry-run`), and when the gh preflight fails it is dropped along with the check it
+  `skipped` / `dry-run` — a `mirror` the caller named behaves the same), and when the gh preflight fails it is dropped along with the check it
   served, since only a `mirror` the caller named survives the preflight narrowing.
 - **The fast/background split (#820 D8).** `bin/lib/hooks/session-start.js`'s `FAST_CHECKS`
   (`mirror`, `red-tip`, `console` — cheap read/detect, run inline on every SessionStart) and
