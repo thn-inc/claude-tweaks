@@ -18,6 +18,11 @@ const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('.
 // A call satisfies the rule when its argument text names `windowsHide`, or its
 // last argument is a bare identifier whose own `const|let|var X = { ... }`
 // object literal in the same file does (policy-schema.js's shared execOpts).
+//
+// A call counts as a child_process call when it goes through an identifier bound
+// to a child_process function too — a parameter default or alias assignment such
+// as `execImpl = execFileSync` or `run = cp.execFileSync` (the injected-runner
+// seam, e.g. report.js's `gitInfo(execImpl = execFileSync)`).
 const BIN_ROOT = path.join(__dirname, '..', 'plugin', 'bin');
 const FNS = ['execFileSync', 'execSync', 'spawnSync', 'spawn', 'execFile', 'exec', 'fork'];
 
