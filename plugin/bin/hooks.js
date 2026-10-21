@@ -57,7 +57,7 @@ const EVENTS = ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', '
 // export) so a test can assert the two lists partition ALL_CHECKS exactly —
 // no overlap, nothing silently dropped when a check is added to one list and
 // not the other.
-const BACKGROUND_CHECKS = ['release', 'archive', 'archive-branches', 'remote-prune', 'reap'];
+const BACKGROUND_CHECKS = ['release', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'reap'];
 
 // String-literal per-event requires — not a computed `require('./lib/hooks/' +
 // event)` — so every `bin/lib/hooks/*.js` module resolves statically inside
@@ -1528,7 +1528,7 @@ async function main(argv) {
     try {
       out = await require('./lib/reconcile').reconcile(opts);
     } catch {
-      out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }] };
+      out = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, console: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }] };
     }
     if (jsonOut) {
       // Unchanged from before #638 — byte-for-byte, so bin/lib/reconcile's

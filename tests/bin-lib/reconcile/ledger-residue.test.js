@@ -192,3 +192,51 @@ test('fetch failure fails the whole check closed', () => {
   assert.strictEqual(r.failure, 'fetch-failed');
   assert.deepStrictEqual(r.entries, []);
 });
+
+const { reconcile, ALL_CHECKS } = require('../../../plugin/bin/lib/reconcile');
+const { formatSummary } = require('../../../plugin/bin/lib/reconcile/format-summary');
+
+test("index: ALL_CHECKS and BACKGROUND_CHECKS include 'ledger-residue'; dispatch sits between remote-prune and reap", () => {
+  assert.ok(ALL_CHECKS.includes('ledger-residue'));
+  assert.ok(require('../../../plugin/bin/hooks.js').BACKGROUND_CHECKS.includes('ledger-residue'));
+  const src = fs.readFileSync(path.join(__dirname, '../../../plugin/bin/lib/reconcile/index.js'), 'utf8');
+  const iBranches = src.indexOf("checks.includes('archive-branches')");
+  const iRemote = src.indexOf("checks.includes('remote-prune')", iBranches);
+  const iLedger = src.indexOf("checks.includes('ledger-residue')", iBranches);
+  const iReap = src.indexOf("checks.includes('reap')", iBranches);
+  assert.ok(iRemote > iBranches && iLedger > iRemote && iReap > iLedger, 'dispatch order: remote-prune < ledger-residue < reap');
+});
+
+test('index: requesting ledger-residue under pr-first sets result.ledgerResidue to an array; not requesting it leaves null', async () => {
+  // Same shape as prune-remote.test.js's "actually reaches the remote-prune
+  // dispatch": a real working origin, pr-first forced by policy, the
+  // `gh api rate_limit` preflight stubbed. No ledger on main, so the check
+  // reaches its dispatch and returns an empty array without any `gh` call.
+  const { dir } = makeRepo({ withLedger: false });
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\nintegration-branch: main\n');
+  const preflight = require('../../../plugin/bin/lib/reconcile/preflight');
+  const originalHealth = preflight.ghHealthCheck;
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  try {
+    const withDispatch = await reconcile({ cwd: dir, checks: ['ledger-residue'] });
+    assert.ok(Array.isArray(withDispatch.ledgerResidue), 'ledger-residue requested under pr-first must set ledgerResidue to an array, not stay null');
+    const withoutDispatch = await reconcile({ cwd: dir, checks: ['mirror'] });
+    assert.strictEqual(withoutDispatch.ledgerResidue, null, 'ledger-residue not requested must leave ledgerResidue null');
+  } finally {
+    preflight.ghHealthCheck = originalHealth;
+  }
+});
+
+test('formatSummary renders ledger-residue taken and skipped lines', () => {
+  const out = formatSummary({
+    mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: null,
+    ledgerResidue: [
+      { kind: 'ledger', action: 'pr-opened', reason: 'removal-pr-opened' },
+      { kind: 'ledger', action: 'pr-opened', reason: 'removal-pr-opened' },
+      { kind: 'ledger', action: 'skip', reason: 'removal-pr-open' },
+    ],
+  });
+  assert.ok(out.includes('removal PR opened: 2 residue ledgers'), out);
+  assert.ok(out.includes('skipped: 1 residue ledger (removal-pr-open 1)'), out);
+});
