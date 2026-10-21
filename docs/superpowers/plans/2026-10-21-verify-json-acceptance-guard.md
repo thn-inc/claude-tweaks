@@ -18,7 +18,9 @@
 - `verify.json` is written to the directory `runVerify` ran against (`resolvedDir`), never to the original `--run-dir` path when that path is gone — Verify execution runs after Section B archives the run, and a write to the original path recreates the archived directory.
 - No `verify.json` is written when `resolvedDir` is `null` (run dir not found at its original or archive path).
 - `--require-verify` is opt-in; `console-residue.js`'s default `--run` output, `--ack`, `--ack-all`, and `hooks/session-residue.js` (SessionStart) are unchanged. Every archived run predates `verify.json`, so a default-on check would flood every SessionStart.
-- `plugin/skills/_shared/pr-first-merge.md` composes with `_shared/pr-checklist-refresh.md` into the `merge` bundle, measured at 51,156 B against `RAIL_BYTES` 52,500 — the Step 1 addition stays at or under ~300 B.
+- `plugin/skills/_shared/pr-first-merge.md` composes with `_shared/pr-checklist-refresh.md` into the `merge` bundle, measured by plan-audit at 51,836 B (max over its three consumers) against `RAIL_BYTES` 52,500 — 664 B of headroom; the Step 1 addition stays at or under ~300 B.
+
+Waived plugin/bin/lib/wrap-up/engine-verify.js: the spec's Key Files names it as the writer; the plan keeps `runVerify` pure and puts the write in the new `verify-results.js`, called from the CLI verb (`wrap-up-engine.js`), so the file needs no change.
 - Landed means `result` is `pass` or `skip`; `fail`, `unknown`, or a missing `acceptance-labeling` row means labeling has not landed. **Plan judgment (logged at build):** this fails closed, a superset of the spec's "missing or `fail`" — labeling is an idempotent find-or-create, so an `unknown` re-run costs nothing.
 - Commit style `{Verb} {what} — {detail}`, `Refs #3783`, trailer `Claude-Session: https://claude.ai/code/session_01Hc6XBLDvX8cJJ5KdVT1goS`.
 
@@ -62,7 +64,7 @@
 - Consumes: `writeVerifyResults` (Task 1).
 
 - [ ] **Step 1: Write the failing tests** — spawn `node plugin/bin/wrap-up-engine.js verify --run-dir <dir> --base HEAD` against a temp git repo (`git init`, one commit, run dir under `.claude-tweaks/pipelines/<run-id>/`), with a `gh`-absent PATH (a temp dir holding only symlinks to `node` and `git`, the existing gh-absent test convention). Assert:
-  - `AC1: verify-json writes one entry per check`: `<dir>/verify.json` exists; `checks.map(c => c.check)` equals the table's check column in order and includes `acceptance-labeling`; each entry's `result` equals that row's result cell's first word; process exit code unchanged from a pre-change run of the same fixture (assert the observed code, 3 or 0, matches `runVerify`'s computed `exitCode` called in-process on the same fixture).
+  - `AC1.1: verify-json writes one entry per check`: `<dir>/verify.json` exists; `checks.map(c => c.check)` equals the table's check column in order and includes `acceptance-labeling`; each entry's `result` equals that row's result cell's first word; process exit code unchanged from a pre-change run of the same fixture (assert the observed code, 3 or 0, matches `runVerify`'s computed `exitCode` called in-process on the same fixture).
   - `verify-json lands in the archived copy`: original path absent, `.claude-tweaks/pipelines/archive/<run-id>/` present → the file is written under `archive/<run-id>/` and the original path still does not exist afterwards.
   - `verify-json not written when run dir not found`: neither path exists → no `verify.json` anywhere under `.claude-tweaks/pipelines/`, exit 3.
   - `verify-json write failure leaves the verdict alone`: run dir made read-only (`fs.chmodSync(dir, 0o555)`; skip on win32 / root) → stdout still carries the table, exit code unchanged, stderr contains `verify.json`.
@@ -106,7 +108,7 @@
 - Modify: `docs/skill-graph.md` (the `_shared/pr-first-merge.md` row: one sentence that `close-out.md` step 3 now reaches Step 1 when `verify.json` is missing or its `acceptance-labeling` row has not landed)
 - Test: `tests/verify-json-acceptance-guard-conformance.test.js`
 
-- [ ] **Step 1: Write the failing conformance test** (test names carry `AC2:` for the close-out step-3 rule — verify.json absent ⇒ labeling runs before the merge — and `AC3:` for the pair of pins) — read each file live, slice the section (close-out: from `3. **Convert draft to ready` to `4. **Confirmation gate`; pr-first-merge: from `## Step 1:` to `## Step 1.5`), flatten whitespace, and assert:
+- [ ] **Step 1: Write the failing conformance test** (test names carry `AC2.1:` for the close-out step-3 rule — verify.json absent ⇒ labeling runs before the merge — and `AC3.1:` for the pair of pins) — read each file live, slice the section (close-out: from `3. **Convert draft to ready` to `4. **Confirmation gate`; pr-first-merge: from `## Step 1:` to `## Step 1.5`), flatten whitespace, and assert:
   - close-out step 3 matches `/verify\.json/`, `/acceptance-labeling/`, `/claude-tweaks-run:/`, `/pr-first-merge\.md.{0,40}Step 1/`, `/before the confirmation gate/`, and `/no valid .{0,40}marker.{0,80}(missing|not landed)/i`; and no longer matches `/needs no separate run here/`.
   - pr-first-merge Step 1 matches `/verify\.json/` and `/acceptance-labeling/` and `/not landed/`.
   - Negative control: the same assertions applied to each section with the new sentence removed (string replace of the inserted text) fail — proves each assertion can go red.
@@ -119,4 +121,4 @@
 
 ### Task 5: Full suite
 
-- [ ] Run `node plugin/bin/verify.js --cmd tests="npm test"` from the worktree root; Expected: `fail 0`. Fix and recommit anything red.
+- [ ] **Step 1: Run the full-suite verification (AC5.1)** — `node plugin/bin/verify.js --cmd tests="npm test"` from the worktree root; Expected: `fail 0`. Fix and recommit anything red.
