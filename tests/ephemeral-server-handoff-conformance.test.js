@@ -7,6 +7,7 @@
 // already-stopped-is-not-an-error clauses.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
@@ -228,9 +229,9 @@ test('ephemeral-server: the paragraph searches still find their breaks under CRL
 // #3657 — the server record is parsed by its trailing `detached:` token, never by whitespace
 // position: a worktree root may contain spaces, so a positional fourth field would be a path
 // fragment. Pins Section D step 2, the two dispatch templates, and every reader in plugin/skills.
-const fs = require('node:fs');
-
-const flat = (s) => s.replace(/\s+/g, ' ');
+function flat(text) {
+  return text.replace(/\s+/g, ' ');
+}
 
 function assertTrailingTokenSectionD(body) {
   const f = flat(body);
@@ -262,7 +263,7 @@ function walkMarkdown(dir) {
 
 function assertNoPositionalReader(entries) {
   const offenders = entries
-    .filter(({ text }) => /\bfourth field\b/i.test(text) || /\bthird field\b/i.test(text))
+    .filter(({ text }) => /\b(?:fourth|third) field\b/i.test(text))
     .map(({ file }) => file);
   assert.deepEqual(offenders, [], `server-record readers that take the flag or root by position: ${offenders.join(', ')}`);
 }
