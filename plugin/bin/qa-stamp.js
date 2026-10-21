@@ -39,6 +39,7 @@ const {
   composeQaStamp, decideQaSkip, readQaStamp, writeQaStamp, QA_STAMP_NAME,
 } = require('./lib/verify/qa-stamp');
 const { gitInfo, gitDir } = require('./lib/verify/report');
+const { toPosix } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: qa-stamp.js --write --report <RUN_DIR/report.json> [--stories-dir <dir>]\n'
   + '       qa-stamp.js --check --stories <id=file,...> [--stories-dir <dir>]\n'
@@ -103,7 +104,7 @@ function hashFile(p) {
 // anywhere (composing the stamp, comparing it, or resolving story paths).
 function normalizeStoriesDir(dir, cwd) {
   const rel = path.relative(cwd, path.resolve(cwd, dir));
-  return (rel === '' ? '.' : rel).split(path.sep).join('/');
+  return toPosix(rel === '' ? '.' : rel);
 }
 
 function emit(deps, body) {

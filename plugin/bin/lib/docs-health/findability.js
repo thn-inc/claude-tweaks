@@ -2,6 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const { listDocs } = require('./scope');
+const { toPosix } = require('../shared-primitives');
 
 function escapeForRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -72,7 +73,7 @@ function computeInboundReferences(docId, root) {
     // candidate file's own directory would use (e.g. a sibling in the same
     // directory linking with a bare "config.md", or a nested doc linking
     // with "../config.md").
-    const relFromCandidate = path.relative(path.dirname(file), docPath).split(path.sep).join('/');
+    const relFromCandidate = toPosix(path.relative(path.dirname(file), docPath));
     if (
       hasBoundedMatch(content, qualifiedPath) ||
       hasBoundedMatch(content, rootRelativePath) ||

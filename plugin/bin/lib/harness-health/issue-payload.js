@@ -14,7 +14,7 @@ const {
   recordPayload, specShapedBody, CLASSIFICATION_SCORING, fencedBlock, isRepoRelativeKeyFilePath,
 } = require('../issues/record');
 const { buildRelatedBlocks } = require('../issues/related-blocks');
-const { isPathContained } = require('../shared-primitives');
+const { isPathContained, toPosix } = require('../shared-primitives');
 const path = require('path');
 
 const ASSET_TYPE_LABELS = { skill: 'Skill', rule: 'Rule', 'claude-md': 'CLAUDE.md', 'design-artifact': 'Design Context', memory: 'Memory' };
@@ -42,7 +42,7 @@ const MAX_PREMISE_ANCHOR_LENGTH = 400;
 function repoRelativePath(targetPath, root) {
   if (!root) return targetPath;
   const abs = path.resolve(root, targetPath);
-  return isPathContained(abs, path.resolve(root)) ? path.relative(root, abs).split(path.sep).join('/') : targetPath;
+  return isPathContained(abs, path.resolve(root)) ? toPosix(path.relative(root, abs)) : targetPath;
 }
 
 // Builds a Premise-check: command (#1829/#2621) for a mechanically
@@ -175,7 +175,7 @@ function toIssuePayload(finding, verifiedAsOf, pluginVersion, options = {}) {
   let keyFiles;
   if (!isNewSkill && finding.path && options.repoRoot) {
     const absolutePath = path.resolve(options.repoRoot, finding.path);
-    const rel = path.relative(options.repoRoot, absolutePath).split(path.sep).join('/');
+    const rel = toPosix(path.relative(options.repoRoot, absolutePath));
     if (isRepoRelativeKeyFilePath(rel)) {
       keyFiles = [{ path: rel, change: isRemoval ? 'remove the named content' : 'apply the proposed change' }];
     }

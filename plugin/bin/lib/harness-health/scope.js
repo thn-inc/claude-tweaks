@@ -5,6 +5,7 @@ const { STALE_DAYS } = require('./score');
 const { selectByStaleThenChurn } = require('../health-core/rotation');
 const { parseFrontmatterListField } = require('../health-core/frontmatter-list');
 const { domainChurn } = require('../health-core/churn');
+const { toPosix } = require('../shared-primitives');
 
 // ─── listSkills ──────────────────────────────────────────────────────────────
 // Returns [{ kind: 'skill', id, path }], sorted by id, for both skill shapes
@@ -292,7 +293,7 @@ function selectTarget(root, cursors, opts = {}) {
         // ...domainPaths] union (a doc/skill/rule that changed a lot
         // recently is itself a drift risk, independent of what it
         // references).
-        const relCandidatePath = path.relative(root, candidate.path).split(path.sep).join('/');
+        const relCandidatePath = toPosix(path.relative(root, candidate.path));
         churn = domainChurn(root, [relCandidatePath, ...domainPaths], sinceMs);
       }
       return churn > 0 ? churn : null;

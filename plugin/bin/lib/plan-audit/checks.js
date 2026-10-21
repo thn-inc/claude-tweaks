@@ -10,6 +10,7 @@ const { execFileSync } = require('node:child_process');
 const { lstatType, resolveLeaf } = require('../path-guard');
 const { composedBytesReport, measuredBytes } = require('../skill-audit/context-cost');
 const { RAIL_BYTES } = require('../skill-audit/budgets');
+const { toPosix } = require('../shared-primitives');
 const {
   extractAcceptanceClauses, extractCoverageSources, extractSpecPaths, extractPathWaivers,
   extractFileEntries, normalizeRepoPath,
@@ -425,7 +426,7 @@ function checkC(verificationChecks, repoRoot, deps = {}, unparseableStep2s = [])
 // has no current bytes to measure. v1 reports current bytes + headroom only;
 // it never estimates a planned insertion's size (Non-Goals).
 function isGovernedMdPath(relPath) {
-  const norm = relPath.split(path.sep).join('/');
+  const norm = toPosix(relPath);
   return /^plugin\/skills\/.+\.md$/.test(norm);
 }
 
@@ -474,7 +475,7 @@ function composedHeadroom(governedPaths, repoRoot, { report = composedBytesRepor
   }
   for (const row of rows) {
     if (!row.sources) continue; // unparsed call site — nothing to intersect
-    const relSources = row.sources.map((s) => path.relative(repoRoot, s).split(path.sep).join('/'));
+    const relSources = row.sources.map((s) => toPosix(path.relative(repoRoot, s)));
     if (!relSources.some((s) => governedPaths.has(s))) continue;
     if (row.error) {
       composedErrors.push({
@@ -508,7 +509,7 @@ function headroomCheck(entries, repoRoot, deps = {}) {
     if (!isGovernedMdPath(relPath)) continue;
     if (seen.has(relPath)) continue;
     seen.add(relPath);
-    governedPaths.add(relPath.split(path.sep).join('/'));
+    governedPaths.add(toPosix(relPath));
     const abs = path.resolve(repoRoot, relPath);
     let bytes;
     try {

@@ -21,6 +21,7 @@ const { computeDerivedDefaults } = require('../policy-derived-defaults');
 const { resolveTarget } = require('../stage-item/write');
 const { classifyDecisions } = require('../log-decision/claim-log');
 const { splitNul } = require('../git-z');
+const { toPosix } = require('../shared-primitives');
 
 const BIN = path.join(__dirname, '..', '..');
 const VERIFY_JS = path.join(BIN, 'verify.js');
@@ -122,7 +123,7 @@ function specOnBranch(deps, { mainRoot, runDirReal, state }) {
     try { branch = deps.git(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: state.worktree }).trim() || null; } catch { branch = null; }
   }
   if (!branch) return null;
-  const rel = path.relative(mainRoot, runDirReal).split(path.sep).join('/');
+  const rel = toPosix(path.relative(mainRoot, runDirReal));
   const ls = (pathspec, recursive) => {
     const args = ['ls-tree', ...(recursive ? ['-r'] : []), '--name-only', '-z', '--end-of-options', branch, '--', pathspec];
     try { return deps.git(args, { cwd: mainRoot }); } catch { return null; }

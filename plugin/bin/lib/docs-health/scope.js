@@ -5,6 +5,7 @@ const { STALE_DAYS } = require('./score');
 const { parseFilesField } = require('./freshness');
 const { selectByStaleThenChurn } = require('../health-core/rotation');
 const { domainChurn } = require('../health-core/churn');
+const { toPosix } = require('../shared-primitives');
 
 // Directory names excluded when they sit directly under docs/. `superpowers`
 // is ephemeral /specify + /superpowers:writing-plans build artifacts (specs,
@@ -54,7 +55,7 @@ function walk(dir, docsRoot, out, opts) {
       if (opts.excludeTopLevelDirs && dir === docsRoot && EXCLUDE_TOP_LEVEL_DIRS.has(entry.name)) continue;
       walk(full, docsRoot, out, opts);
     } else if (entry.isFile() && entry.name.endsWith('.md')) {
-      const rel = path.relative(docsRoot, full).split(path.sep).join('/').replace(/\.md$/, '');
+      const rel = toPosix(path.relative(docsRoot, full)).replace(/\.md$/, '');
       out.push({ kind: 'doc', id: rel, path: full });
     }
   }
@@ -126,7 +127,7 @@ function selectTarget(root, cursors, opts = {}) {
       } else {
         let content;
         try { content = fs.readFileSync(candidate.path, 'utf8'); } catch { content = ''; }
-        const relDocPath = path.relative(root, candidate.path).split(path.sep).join('/');
+        const relDocPath = toPosix(path.relative(root, candidate.path));
         const declaredPaths = parseFilesField(content);
         const domainPaths = declaredPaths.length > 0 ? declaredPaths : extractDomainPaths(content);
         churn = domainChurn(root, [relDocPath, ...domainPaths], sinceMs);

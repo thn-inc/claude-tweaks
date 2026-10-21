@@ -61,7 +61,7 @@ const fs = require('fs');
 const path = require('path');
 const { registerGenerator } = require('./focus-generators');
 const { listTrackedSourceFiles, isGlobDiscoveredTestFile, extractModuleExports } = require('./source-scan');
-const { escapeRegExp } = require('../shared-primitives');
+const { escapeRegExp, toPosix } = require('../shared-primitives');
 const { SKIP_DIRS } = require('./scope');
 
 // ─── Assertion vocabulary (module constant — the contract; extend here only) ─
@@ -162,8 +162,8 @@ function pairedByFilename(sourceRel, testFiles) {
 // it exists.
 function pairedByDirectory(sourceRel, testFiles) {
   const sourceDir = path.dirname(sourceRel);
-  const siblingTestsDir = path.join(sourceDir, 'tests').split(path.sep).join('/');
-  const siblingTestDir = path.join(sourceDir, 'test').split(path.sep).join('/');
+  const siblingTestsDir = toPosix(path.join(sourceDir, 'tests'));
+  const siblingTestDir = toPosix(path.join(sourceDir, 'test'));
   for (const tf of testFiles) {
     const tfDir = path.dirname(tf);
     if (tfDir === siblingTestsDir || tfDir === siblingTestDir) return tf;

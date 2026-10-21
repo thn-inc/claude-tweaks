@@ -17,6 +17,7 @@ const { toIssuePayload } = require('./lib/docs-health/issue-payload');
 const { resolveReadCommit } = require('./lib/health-core/read-commit');
 const { selectTarget, listDocs } = require('./lib/docs-health/scope');
 const path = require('path');
+const { toPosix } = require('./lib/shared-primitives');
 const { computeInboundReferences } = require('./lib/docs-health/findability');
 const { checkTrackedFreshness } = require('./lib/docs-health/freshness');
 const { verifyCommits } = require('./lib/docs-health/commit-ref');
@@ -280,7 +281,7 @@ function deriveDocId(targetPath, root) {
   // targetPath is already absolute — path.resolve discards the leading
   // `root` segment in that case, per Node's own right-to-left resolution.
   const rel = path.relative(docsRoot, path.resolve(root, targetPath));
-  return rel.split(path.sep).join('/').replace(/\.md$/, '');
+  return toPosix(rel).replace(/\.md$/, '');
 }
 
 function cmdFindRefs(args) {

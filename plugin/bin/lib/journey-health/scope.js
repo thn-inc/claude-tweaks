@@ -5,6 +5,7 @@ const { STALE_DAYS_LIGHT, STALE_DAYS_DEEP } = require('./score');
 const { selectByStaleThenChurn } = require('../health-core/rotation');
 const { parseFrontmatterListField } = require('../health-core/frontmatter-list');
 const { domainChurn } = require('../health-core/churn');
+const { toPosix } = require('../shared-primitives');
 
 // ─── parseJourneyFiles ───────────────────────────────────────────────────────
 // Extracts a journey file's `files:` frontmatter list, e.g.:
@@ -212,7 +213,7 @@ function selectTarget(root, cursors, opts = {}) {
         const churn = signals[candidate.id] || 0;
         return churn > 0 ? churn : null;
       }
-      const relJourneyPath = path.relative(root, candidate.path).split(path.sep).join('/');
+      const relJourneyPath = toPosix(path.relative(root, candidate.path));
       const churn = domainChurn(root, [relJourneyPath, ...candidate.filesFrontmatter], sinceMs);
       return churn > 0 ? churn : null;
     },
