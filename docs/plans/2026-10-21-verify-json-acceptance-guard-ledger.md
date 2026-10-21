@@ -20,3 +20,4 @@
 | 16 | review | readVerifyResults header claimed wrong-shape files read as null but rows were never validated | fixed | 806d153d8 — rows must carry string check/result; test proven red without the line |
 | 17 | review | RESIDUE_PIN stopped at --require-verify, so dropping {base} from the flow templates stayed green while the CLI exits 2 | fixed | 806d153d8 — pin includes {base}; negative control strips the value |
 | 18 | review | verify-results.test.js "unwritable run dir" test exercised the statSync ENOTDIR path, not a write failure | fixed | 806d153d8 — renamed and comment corrected |
+| 19 | review/hindsight | [skill: skill-prose-conformance-tests] a pin on a templated CLI invocation must include the flag's value placeholder, and its negative control must strip the value alone — RESIDUE_PIN stopped at --require-verify, green with {base} dropped (staged/reflect-1.md) | open | — |
