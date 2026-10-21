@@ -8,6 +8,7 @@ const {
   parseMaterialityFingerprints,
   materialityEntryLine,
   isMaterialityDuplicate,
+  trustedMaterialityTexts,
 } = require('../../../plugin/bin/lib/health-core/materiality-digest');
 
 const ENTRY = {
@@ -17,6 +18,9 @@ const ENTRY = {
   deferReason: 'direct-filing-sweep',
   provenance: '2026-09-01T120000-tidy-standalone',
 };
+
+// A `gh --json comments` element shape: body plus camelCase authorAssociation.
+const comment = (body, association) => ({ body, authorAssociation: association });
 
 // --- materialityFingerprint: stability and normalization ---
 
@@ -94,20 +98,20 @@ test('isMaterialityDuplicate is false when the digest container has no entries y
 });
 
 test('isMaterialityDuplicate is true when an identical entry was already routed in a prior comment', () => {
-  const priorComment = materialityEntryLine(ENTRY);
+  const priorComment = comment(materialityEntryLine(ENTRY), 'OWNER');
   assert.strictEqual(isMaterialityDuplicate([priorComment], ENTRY), true);
 });
 
-test('isMaterialityDuplicate is true across multiple comments (github-issues shape: array of comment bodies)', () => {
+test('isMaterialityDuplicate is true across multiple comments (github-issues shape: array of comment objects)', () => {
   const comments = [
-    materialityEntryLine({ ...ENTRY, area: 'review', finding: 'unrelated finding' }),
-    materialityEntryLine(ENTRY),
+    comment(materialityEntryLine({ ...ENTRY, area: 'review', finding: 'unrelated finding' }), 'OWNER'),
+    comment(materialityEntryLine(ENTRY), 'OWNER'),
   ];
   assert.strictEqual(isMaterialityDuplicate(comments, ENTRY), true);
 });
 
 test('isMaterialityDuplicate is false for a genuinely new finding even when other entries exist', () => {
-  const comments = [materialityEntryLine(ENTRY)];
+  const comments = [comment(materialityEntryLine(ENTRY), 'OWNER')];
   const fresh = { ...ENTRY, finding: 'a brand new, unrelated finding' };
   assert.strictEqual(isMaterialityDuplicate(comments, fresh), false);
 });
@@ -115,6 +119,48 @@ test('isMaterialityDuplicate is false for a genuinely new finding even when othe
 test('isMaterialityDuplicate accepts a single string (local-files shape: one file body)', () => {
   const body = materialityEntryLine(ENTRY);
   assert.strictEqual(isMaterialityDuplicate(body, ENTRY), true);
+});
+
+test('AC1.1: an untrusted-association comment carrying a matching fingerprint does not make the candidate a duplicate', () => {
+  for (const association of ['NONE', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR']) {
+    assert.strictEqual(isMaterialityDuplicate([comment(materialityEntryLine(ENTRY), association)], ENTRY), false, association);
+  }
+  assert.strictEqual(isMaterialityDuplicate([{ body: materialityEntryLine(ENTRY) }], ENTRY), false); // no association
+  assert.strictEqual(isMaterialityDuplicate([materialityEntryLine(ENTRY)], ENTRY), false); // bare string element
+});
+
+test('AC2.1: a matching fingerprint in an OWNER/MEMBER/COLLABORATOR comment still dedups', () => {
+  for (const association of ['OWNER', 'MEMBER', 'COLLABORATOR']) {
+    assert.strictEqual(isMaterialityDuplicate([comment(materialityEntryLine(ENTRY), association)], ENTRY), true, association);
+    assert.strictEqual(isMaterialityDuplicate([{ body: materialityEntryLine(ENTRY), author_association: association }], ENTRY), true, `${association} (REST)`);
+  }
+});
+
+test('a trusted copy of the fingerprint still dedups when an untrusted copy sits beside it', () => {
+  const line = materialityEntryLine(ENTRY);
+  assert.strictEqual(isMaterialityDuplicate([comment(line, 'NONE'), comment(line, 'MEMBER')], ENTRY), true);
+});
+
+test('trustedMaterialityTexts names each skipped marker comment and ignores untrusted comments with no marker', () => {
+  const planted = { body: materialityEntryLine(ENTRY), authorAssociation: 'NONE', url: 'https://example.test/c/1', author: { login: 'mallory' } };
+  const chatter = { body: 'just a comment', authorAssociation: 'NONE', url: 'https://example.test/c/2', author: { login: 'bob' } };
+  const owner = comment('owner text', 'OWNER');
+  const { texts, skipped } = trustedMaterialityTexts([planted, chatter, owner]);
+  assert.deepStrictEqual(texts, ['owner text']);
+  assert.deepStrictEqual(skipped, ['skipped marker comment https://example.test/c/1 by mallory (NONE) — not an owner, member, or collaborator']);
+});
+
+test('a bare-string array element stays untrusted and its note names the contract violation (#3766)', () => {
+  const line = materialityEntryLine(ENTRY);
+  const { texts, skipped } = trustedMaterialityTexts([line, 'no marker here', comment('owner text', 'OWNER')]);
+  assert.deepStrictEqual(texts, ['owner text']);
+  assert.deepStrictEqual(skipped, ['skipped bare-string digest element — caller passed comment bodies, not comment objects (no author association to check)']);
+  assert.strictEqual(isMaterialityDuplicate([line], ENTRY), false);
+});
+
+test('trustedMaterialityTexts treats a single string (local-files body) as trusted', () => {
+  assert.deepStrictEqual(trustedMaterialityTexts('body'), { texts: ['body'], skipped: [] });
+  assert.deepStrictEqual(trustedMaterialityTexts(undefined), { texts: [], skipped: [] });
 });
 
 test('a re-encountered finding folds into its existing entry instead of appending a second one (AC2)', () => {

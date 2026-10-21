@@ -84,8 +84,12 @@ different interpreter from the code, so `tests/bin-lib/issues/comment-trust.test
 `untrustedJqNote()` through real `jq` over the same comments and asserts the output equals
 `untrustedSkipNote()`'s, including a deleted author and a missing association (it skips where `jq`
 is absent). And the copy list is hand-written, so derive it by grepping the generated string across
-`plugin/skills/` (`grep -rlF 'select(.authorAssociation == "OWNER"' plugin/skills/` returns the same
-four files today), not from the files the change touched.
+`plugin/skills/` (`grep -rlF 'select(.authorAssociation == "OWNER"' plugin/skills/` returns five
+files today), not from the files the change touched. The pins do not all live in one suite either:
+the fifth copy, `tidy/digest-sweep.md`'s Cluster promotion filters (#3766), is pinned by
+`tests/materiality-floor-conformance.test.js` with the same `includes(trustedJqSelect())` and
+`includes(untrustedJqNote())` needles. So answer step 2 for each copy by grepping `tests/` for the
+generator's name (`grep -rln 'trustedJqSelect' tests/`), not by reading the one suite named above.
 
 **Regex-alternation-to-prose-list instance on a router (#3401):** `plugin/bin/lib/console/resolve.js`'s
 `SECTION_MAP` routes staged `.md` proposals to Pending review through one prefix alternation

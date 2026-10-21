@@ -55,13 +55,19 @@ append a fresh one on each run — the un-deduped entry count would otherwise cr
 `tidy/digest-sweep.md`'s cluster-promotion threshold (≥3 entries sharing one `{area}`) purely
 from repetition, promoting a genuinely low-value, repeatedly-recurring finding into a first-class
 issue and inverting this floor's entire purpose. Before routing a candidate entry, the routing
-skill calls `isMaterialityDuplicate(existingCommentBodies, candidate)`
-(`bin/lib/health-core/materiality-digest.js`) against every comment on the open digest issue
-(`github-issues`) or the current file body (`local-files`): a match means the finding is already
-present and un-promoted — skip the append entirely, write no new entry, and do not count it a
-second time toward the cluster-promotion threshold. No match means route it via
-`materialityEntryLine(candidate)`, which composes the Entry-format line above with its fingerprint
-marker embedded. This is the materiality-digest analog of the pre-existing drain-rate cap
+skill calls `isMaterialityDuplicate(existingComments, candidate)`
+(`bin/lib/health-core/materiality-digest.js`). On `github-issues` the caller passes the open digest
+issue's comment *objects*, each with its `body` and author association (`authorAssociation` from
+`gh issue view {n} --json comments`, `author_association` from REST and MCP), never bare bodies.
+Only a comment whose author is `OWNER`, `MEMBER`, or `COLLABORATOR` counts
+(`_shared/pr-run-comments.md`'s Trusted authors, implemented by `bin/lib/issues/comment-trust.js`),
+so a marker planted by any other commenter cannot suppress a finding: it is routed as new. The
+run's output names each skipped marker comment (`trustedMaterialityTexts(existingComments).skipped`).
+On `local-files` the caller passes the current file body, a single-writer string that is trusted.
+A match means the finding is already present and un-promoted — skip the append entirely, write no
+new entry, and do not count it a second time toward the cluster-promotion threshold. No match means
+route it via `materialityEntryLine(candidate)`, which composes the Entry-format line above with its
+fingerprint marker embedded. This is the materiality-digest analog of the pre-existing drain-rate cap
 digest's own dedup mechanism (`_shared/health-filing-digest.md`'s `expandDigestFingerprints`) —
 a parallel mechanism, not a shared one, since the two digests dedup against different containers
 (cap digest: embedded checklist items folded into the issue-index; materiality digest: entries
@@ -108,7 +114,7 @@ comment per run, aggregating that run's below-floor items — one comment URL pe
 comment per item. All writes go through `_shared/github-write-transport.md`. Routing appends are
 append-only; the one sanctioned exception is the `/tidy` digest sweep's promotion/expiry marker
 edits (`tidy/digest-sweep.md`). A creation race that leaves two open `digest` issues is repaired
-by that same sweep: merge the newer issue's comments into the older, then close the newer.
+by that same sweep: merge the newer issue's trusted comments into the older, then close the newer.
 
 **The digest issue is a container, not a work record.** It carries no stage label by design, so
 every record-scoped sweep that reads the open-issue queue classifies it as an ordinary backlog

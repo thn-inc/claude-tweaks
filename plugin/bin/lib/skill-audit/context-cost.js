@@ -21,7 +21,7 @@ const { listSkillDirs } = require('./skill-catalog');
 const {
   stripMarkers, MarkerError, parseMarkers, compose, KEYS, VOCAB, UNRESOLVED,
 } = require('../compose-context/compose');
-const { toPosix } = require('../shared-primitives');
+const { toPosix, isPathContained } = require('../shared-primitives');
 
 function skillsDir(repoRoot) {
   return path.join(repoRoot, 'skills');
@@ -262,15 +262,10 @@ function parseComposeCallLine(line, repoRoot) {
   // a read outside the corpus (docs/donts.md's path-decision rule, #1678).
   const root = path.resolve(repoRoot);
   const sources = rawSources.map((src) => path.resolve(root, src.slice(PLUGIN_ROOT_PREFIX.length)));
-  // Contained means strictly beneath `root`, and `path.relative` names the
-  // three ways out: `''` (the token resolved to `root` itself — a bare
-  // `${CLAUDE_PLUGIN_ROOT}/`), a `..` walk up out of it, and (win32,
-  // cross-drive) an absolute rel, i.e. no relative path back at all.
-  const escapesRoot = (source) => {
-    const rel = path.relative(root, source);
-    return rel === '' || rel.startsWith('..') || path.isAbsolute(rel);
-  };
-  const escaped = sources.find(escapesRoot);
+  // Contained means strictly beneath `root` — the shared isPathContained
+  // helper's answer: `root` itself (a bare `${CLAUDE_PLUGIN_ROOT}/`), a `..`
+  // walk up out of it, and (win32) a cross-drive path all escape.
+  const escaped = sources.find((source) => !isPathContained(source, root));
   if (escaped) return { unparsed: true, reason: `source path escapes the plugin root: ${escaped}` };
   return { step, sources };
 }

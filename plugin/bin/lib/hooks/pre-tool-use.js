@@ -686,8 +686,8 @@ function shadowPipelineRunDir(targetPath, { fsImpl } = {}) {
   // exists yet (a brand-new mkdir target has no leaf, sometimes not even a
   // parent, to realpath).
   const real = realTarget(resolved, { fsImpl }) || resolved;
+  if (!isPathContained(real, pipelinesDir)) return null;
   const relFromPipelines = path.relative(pipelinesDir, real);
-  if (!relFromPipelines || relFromPipelines.startsWith('..') || path.isAbsolute(relFromPipelines)) return null;
   const relParts = relFromPipelines.split(path.sep);
   const runDirName = relParts[0];
   const tail = relParts.slice(1).join(path.sep);

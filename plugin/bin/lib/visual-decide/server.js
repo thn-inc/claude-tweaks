@@ -32,9 +32,13 @@ function contentTypeFor(file) {
 }
 
 // Resolves a request path against rootDir, rejecting any escape (encoded or
-// not) via path.relative rather than string-matching '..' — normalize()
-// already collapses internal '..' segments, so the relative-check below is
-// the single source of truth for "did this stay inside rootDir".
+// not) via path.relative — normalize() already collapses internal '..'
+// segments, so the relative-check below is the single source of truth for
+// "did this stay inside rootDir". Containment is decided by the first path
+// segment being exactly '..' (or a cross-drive absolute rel), mirroring
+// path-guard's isAncestorOrSelf, which this module cannot import because it is
+// Node builtins only (#1202 AC 8). So a child named like '..foo' is served
+// (#3642).
 function resolveSafe(rootDir, urlPath) {
   let decoded;
   try {
@@ -45,7 +49,7 @@ function resolveSafe(rootDir, urlPath) {
   const full = path.normalize(path.join(rootDir, decoded));
   const rel = path.relative(rootDir, full);
   if (rel === '') return full;
-  if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  if (rel.split(path.sep)[0] === '..' || path.isAbsolute(rel)) return null;
   return full;
 }
 

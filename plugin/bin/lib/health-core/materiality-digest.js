@@ -9,12 +9,20 @@
 //
 // Pure — no I/O, no gh calls, no network. The routing skill (review/step3-routing.md,
 // wrap-up/residue-sweep.md, the four health sweeps, ...) calls isMaterialityDuplicate before
-// appending a new entry, and materialityEntryLine to compose the line it appends.
+// appending a new entry, and materialityEntryLine to compose the line it appends. Dedup reads
+// only trusted fingerprint sources (#3766): a github-issues caller passes comment objects, and
+// only OWNER/MEMBER/COLLABORATOR comments (issues/comment-trust.js) can suppress a finding.
 'use strict';
 
 const { fingerprintFromBasis, normalizeText } = require('./fingerprint');
+const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 
 const MATERIALITY_MARKER_PREFIX = 'materiality-fingerprint';
+
+// A bare-string array element is the pre-#3766 contract shape (`.comments[].body`): it has no
+// author association to check, so it stays untrusted, but its note names the caller's contract
+// violation rather than reading like an ordinary untrusted comment.
+const BARE_STRING_SKIP_NOTE = 'skipped bare-string digest element — caller passed comment bodies, not comment objects (no author association to check)';
 
 // { area, finding, fileRefs } -> stable fingerprint string, matching materiality-floor.md's
 // Entry format fields. fileRefs is normalized (comma-split, trimmed, sorted, deduped) so the
@@ -61,15 +69,42 @@ function materialityEntryLine(entry) {
   return `- [${area}] ${finding} — ${fileRefs} — Defer-reason: ${deferReason} — ${provenance} <!-- ${MATERIALITY_MARKER_PREFIX}: ${fp} -->`;
 }
 
-// existingTexts: the digest container's already-posted comment bodies (github-issues) or its
-// current file body (local-files) — a string or an array of strings. entry: the candidate
-// about to be routed. Returns true when an entry with the same fingerprint is already present
-// anywhere in existingTexts, meaning the caller must NOT append a duplicate and must NOT count
-// it a second time toward cluster-promotion's >=3 threshold.
+// existingTexts: the digest container's already-posted comments (github-issues: an array of
+// comment objects — `gh --json comments` elements or REST/MCP comments, each with its body and
+// author association) or its current file body (local-files: a string, single-writer and so
+// trusted). Returns { texts, skipped }. texts are the bodies a dedup may read: a string passes
+// through; for an array, each comment passing isTrustedComment contributes its body. A bare
+// string array element has no association, so it is dropped (fail closed). skipped holds one
+// note line per dropped element whose body carries a materiality-fingerprint marker (an
+// untrustedSkipNote for a comment object, BARE_STRING_SKIP_NOTE for a bare string), so the
+// caller can name what it ignored (#3766).
+function trustedMaterialityTexts(existingTexts) {
+  if (existingTexts === null || existingTexts === undefined) return { texts: [], skipped: [] };
+  if (typeof existingTexts === 'string') return { texts: [existingTexts], skipped: [] };
+  const texts = [];
+  const skipped = [];
+  for (const el of [].concat(existingTexts)) {
+    if (isTrustedComment(el)) {
+      texts.push(el.body);
+      continue;
+    }
+    if (typeof el === 'string') {
+      if (parseMaterialityFingerprints(el).length > 0) skipped.push(BARE_STRING_SKIP_NOTE);
+      continue;
+    }
+    if (parseMaterialityFingerprints(el && el.body).length > 0) skipped.push(untrustedSkipNote(el));
+  }
+  return { texts, skipped };
+}
+
+// existingTexts: see trustedMaterialityTexts. entry: the candidate about to be routed. Returns
+// true when an entry with the same fingerprint is already present in a trusted text, meaning the
+// caller must NOT append a duplicate and must NOT count it a second time toward
+// cluster-promotion's >=3 threshold. A marker in an untrusted comment never counts (#3766).
 function isMaterialityDuplicate(existingTexts, entry) {
   const fp = materialityFingerprint(entry);
   const seen = new Set();
-  for (const text of [].concat(existingTexts || [])) {
+  for (const text of trustedMaterialityTexts(existingTexts).texts) {
     for (const found of parseMaterialityFingerprints(text)) seen.add(found);
   }
   return seen.has(fp);
@@ -80,5 +115,6 @@ module.exports = {
   materialityFingerprint,
   parseMaterialityFingerprints,
   materialityEntryLine,
+  trustedMaterialityTexts,
   isMaterialityDuplicate,
 };

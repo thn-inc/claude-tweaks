@@ -23,6 +23,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { isPathContained } = require('../shared-primitives');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
@@ -335,8 +336,7 @@ function pipelinesArchiveRoot(repoRoot) {
 // (i.e. `--run-dir` was invoked already pointed at the post-archival path)
 // rather than at the pre-archival path archive-merged.js moved it from.
 function isUnderArchiveRoot(repoRoot, candidate) {
-  const rel = path.relative(pipelinesArchiveRoot(repoRoot), candidate);
-  return rel !== '' && rel !== '.' && !rel.startsWith('..') && !path.isAbsolute(rel);
+  return isPathContained(candidate, pipelinesArchiveRoot(repoRoot));
 }
 
 registerCheck('run-dir-archived', ({ runDir, originalRunDir, repoRoot, expectations, deps }) => {

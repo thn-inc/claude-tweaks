@@ -23,7 +23,7 @@ matching tier rows — none of these bypasses Step 6/7.
 ### Bootstrap-race repair
 
 When more than one open `digest`-labeled issue exists (a creation race in
-`_shared/materiality-floor.md`'s lazy bootstrap), merge the newer issue's comments into the older
+`_shared/materiality-floor.md`'s lazy bootstrap), merge the newer issue's trusted comments into the older
 (in creation order) and close the newer with a comment pointing at the surviving issue — the
 `Merge-close duplicate digest` action, Stage at every tier (`step-6-auto.md`). Runs before
 promotion/expiry below, since both need a single container to operate against. No analogous race
@@ -32,8 +32,30 @@ exists on `work-backend: local-files` (single-writer backend) — skip this proc
 ### Cluster promotion
 
 Read every active entry line (no trailing marker — neither a promotion `→ {id}` nor an expiry
-`→ expired`) across the container's comments (`github-issues`) or body (`local-files`), per
-`_shared/materiality-floor.md`'s entry format. Group by `{area}` (the entry format's first field).
+`→ expired`) from trusted content only. On `github-issues` that is the digest issue's comment
+*objects* (`gh issue view {n} --json comments`) filtered to author association `OWNER`, `MEMBER`, or
+`COLLABORATOR` (`_shared/pr-run-comments.md`'s Trusted authors) — filter the objects, never reduce
+them to bare bodies first, since promotion and expiry edit entry lines by comment `url`/`id` and
+read `createdAt` for the expiry timestamp fallback. Add this select to the comment iteration
+(`.comments[] | …`):
+
+```
+select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")
+```
+
+and run this note filter alongside it — already prefixed with the marker select, so only a skipped
+comment carrying a marker is named — to name each one in one line in the sweep report:
+
+```
+select(.body | contains("<!-- materiality-fingerprint:")) | select((.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR") | not) | "skipped marker comment \(.url) by \(.author.login // "unknown") (\(.authorAssociation // "no association")) — not an owner, member, or collaborator"
+```
+
+(Code callers get the same two filters from `trustedMaterialityTexts(comments)` in
+`bin/lib/health-core/materiality-digest.js`; its `.texts` are bare bodies without the per-comment
+`url`/`id`/`createdAt` this sweep needs, so use it for dedup, not for this read.) On `local-files`
+it is the body. An entry line in any other comment is never counted, promoted, or expired, so a
+planted entry line can neither inflate a cluster to the ≥3 threshold nor be expired. Entry lines
+follow `_shared/materiality-floor.md`'s entry format. Group by `{area}` (the entry format's first field).
 A re-encountered finding never produces a second active line to read here in the first place —
 `_shared/materiality-floor.md`'s Dedup section has every routing skill check
 `isMaterialityDuplicate` before appending, so this sweep's own count is never inflated by
@@ -55,6 +77,9 @@ re-filable at any time; the ≥3 threshold gates only this sweep's own automatic
 human's ability to act on a single entry directly.
 
 ### Expiry
+
+Expiry operates on the same trusted active set as Cluster promotion above: an entry line in an
+untrusted comment is never expired and never marked `→ expired`.
 
 Un-promoted entry lines older than 90 days (parsed from each entry's `{provenance}` — a run-id's
 ISO timestamp, or the comment/edit timestamp when provenance names a skill instead of a run) roll

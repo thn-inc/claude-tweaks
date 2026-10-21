@@ -44,6 +44,7 @@ const resumeFreshness = require('./lib/hooks/resume-freshness');
 const stagedInventory = require('./lib/hooks/staged-inventory');
 const sessionResidue = require('./lib/hooks/session-residue');
 const wtDetect = require('./lib/hooks/worktree-detect');
+const { isPathContained } = require('./lib/shared-primitives');
 const { closeRunState } = require('./lib/hooks/close-run-state');
 const { teardownRun } = require('./lib/hooks/teardown-run');
 const { deriveBranch, repoRootOf } = require('./lib/hooks/run-integrity');
@@ -260,8 +261,9 @@ function isInitializedRunDir(dir) {
 // `root` must already be realpath'd if `resolved` is (callers pass matching
 // pairs).
 function pipelinesRunIdShape(root, resolved) {
-  const relFromPipelines = path.relative(path.join(root, '.claude-tweaks', 'pipelines'), resolved);
-  const inPipelines = !relFromPipelines.startsWith('..') && !path.isAbsolute(relFromPipelines);
+  const pipelinesDir = path.join(root, '.claude-tweaks', 'pipelines');
+  const relFromPipelines = path.relative(pipelinesDir, resolved);
+  const inPipelines = isPathContained(resolved, pipelinesDir, { orEqual: true });
   const relParts = inPipelines ? relFromPipelines.split(path.sep) : [];
   const isArchiveShape = relParts[0] === 'archive';
   const runIdSegment = isArchiveShape ? relParts[1] : relParts[0];

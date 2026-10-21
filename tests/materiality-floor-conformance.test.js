@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
+const { trustedJqSelect, untrustedJqNote } = require('../plugin/bin/lib/issues/comment-trust');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
@@ -266,6 +267,53 @@ test('digest-sweep.md\'s cluster promotion notes the dedup-at-routing-time guara
 
 test('review/step3-routing.md checks isMaterialityDuplicate before appending a digest entry', () => {
   assert.ok(REVIEW_ROUTING.includes('isMaterialityDuplicate'));
+});
+
+test('materiality-floor.md Dedup passes comment objects and counts only trusted-author markers (#3766)', () => {
+  const dedup = FLOOR.slice(FLOOR.indexOf('### Dedup'), FLOOR.indexOf('### Direct-filing producers'));
+  assert.ok(dedup.includes('isMaterialityDuplicate(existingComments, candidate)'));
+  assert.ok(dedup.includes('authorAssociation'));
+  assert.ok(dedup.includes('bin/lib/issues/comment-trust.js'));
+  assert.ok(dedup.includes('Trusted authors'));
+  assert.ok(!dedup.includes('existingCommentBodies'));
+});
+
+test('materiality-floor.md race repair and digest-sweep.md read only trusted digest comments (#3766)', () => {
+  assert.ok(FLOOR.includes("merge the newer issue's trusted comments into the older"));
+  assert.ok(SWEEP.includes("merge the newer issue's trusted comments into the older"));
+  assert.ok(SWEEP.includes('trustedMaterialityTexts'));
+  assert.ok(SWEEP.includes('Trusted authors'));
+});
+
+test('digest-sweep.md reads trusted comment objects with the Trusted-authors jq pasted verbatim (#3766)', () => {
+  const promotion = SWEEP.slice(SWEEP.indexOf('### Cluster promotion'), SWEEP.indexOf('### Expiry'));
+  assert.ok(promotion.includes(trustedJqSelect()), 'inlined jq select must match comment-trust.js');
+  assert.ok(promotion.includes(untrustedJqNote()), 'inlined skip-note jq must match comment-trust.js');
+  assert.ok(promotion.includes('never reduce\nthem to bare bodies first'));
+  assert.ok(promotion.includes('`url`/`id`'));
+  assert.ok(promotion.includes('`createdAt`'));
+});
+
+test('digest-sweep.md Expiry operates on the trusted active set (#3766)', () => {
+  const expiry = SWEEP.slice(SWEEP.indexOf('### Expiry'), SWEEP.indexOf('### Container rollover'));
+  assert.ok(expiry.includes('operates on the same trusted active set as Cluster promotion'));
+  assert.ok(expiry.includes('never expired and never marked `→ expired`'));
+});
+
+test('materiality-floor.md Dedup says the local-files body string is trusted (#3766)', () => {
+  const dedup = FLOOR.slice(FLOOR.indexOf('### Dedup'), FLOOR.indexOf('### Direct-filing producers'));
+  assert.ok(dedup.includes('the current file body, a single-writer string that is trusted'));
+});
+
+test('tidy/SKILL.md Merge-close row and step-6-auto.md merge only trusted comments, not untrusted ones (#3766)', () => {
+  const row = TIDY_SKILL.split('\n').find((l) => l.startsWith('| **Merge-close duplicate digest**'));
+  assert.ok(row, 'Action Vocabulary row must exist');
+  assert.ok(row.includes("merge only the newer's trusted comments"));
+  assert.ok(row.includes('`OWNER`/`MEMBER`/`COLLABORATOR`'));
+  assert.ok(!row.includes("merge the newer's comments"));
+  const tier = TIDY_STEP6_AUTO.split('\n').find((l) => l.startsWith('| **Merge-close duplicate digest**'));
+  assert.ok(tier, 'step-6-auto.md tier row must exist');
+  assert.ok(tier.includes("merges the newer issue's trusted comments into the surviving issue"));
 });
 
 // --- #1279: digest URL and count surfacing ---

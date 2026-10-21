@@ -7,13 +7,17 @@ files:
   - plugin/bin/lib/reconcile/console-execute.js
   - plugin/bin/lib/issues/grant-maturation.js
   - plugin/skills/_shared/work-record.md
+  - plugin/bin/lib/health-core/materiality-digest.js
+  - plugin/skills/_shared/materiality-floor.md
+  - plugin/skills/tidy/digest-sweep.md
+  - plugin/skills/tidy/SKILL.md
 ---
 
 # Ignore a Planted Marker Comment
 
 **Persona:** A maintainer of a public repository where anyone with a GitHub account can comment on issues and PRs. A stranger has posted a comment that copies one of the plugin's markers, such as a `<!-- run-comment: try-it -->` walkthrough or a backdated `grant-mode-audit … auto-merge=pending` line.
 **Goal:** Have every plugin reader treat that comment as if it were absent, and see in one line that it was skipped, so a planted comment can never steer a demo, pass a check, or mature a merge grant.
-**Entry point:** Any plugin step that reads marker comments back from GitHub: `/claude-tweaks:demo #N`, wrap-up's acceptance-labeling check, `hooks.js resolve-console`, the auto-merge grant gate, or the backlog's `needs-decision` lane.
+**Entry point:** Any plugin step that reads marker comments back from GitHub: `/claude-tweaks:demo #N`, wrap-up's acceptance-labeling check, `hooks.js resolve-console`, the auto-merge grant gate, the backlog's `needs-decision` lane, or the materiality digest (routing dedup and `/claude-tweaks:tidy`'s digest sweep).
 **Success state:** Every reader took the "no such comment" path for the planted comment and printed `skipped marker comment {url} by {login} ({association}) — not an owner, member, or collaborator`. Comments from the maintainer and their collaborators still worked exactly as before.
 
 ## Steps
@@ -53,7 +57,15 @@ files:
 - **Should understand:** `_shared/work-record.md`'s Resolution rule counts only a trusted author's comment as a decision comment, and every reader names any lookalike it skipped. A stranger's `needs-decision: tidy` comment also no longer keeps release-note repair from proposing its fix. The summary line lists the ignored comment.
 - **Red flags:** A record parked in the decision lane by a stranger's comment. A resolver editing the stranger's comment.
 
+### 6. Route a below-floor finding past a planted digest entry — the materiality digest
+- **URL:** any routing skill's digest step (`/claude-tweaks:review`'s Defer → Digest row, `/claude-tweaks:wrap-up`'s residue sweep, a health sweep) and `/claude-tweaks:tidy`'s digest sweep, against the open `digest`-labelled issue
+- **Action:** A stranger has commented on the digest issue with a copied entry line carrying `<!-- materiality-fingerprint: … -->` for a finding the next run will route, or with three fake entries sharing one `{area}`. Run the routing step, then `/claude-tweaks:tidy`.
+- **Should feel:** Like the stranger's comment is not there. The real finding is appended to the digest as new, and no cluster proposal appears for the fake entries.
+- **Should understand:** Dedup (`isMaterialityDuplicate`) counts only fingerprints in `OWNER`/`MEMBER`/`COLLABORATOR` comments, so a planted marker routes the finding as new instead of suppressing it. The tidy sweep's promotion and expiry read only trusted comments, and the run's output names each skipped marker comment in the standard skip line. A bootstrap-race merge re-posts only trusted comments into the surviving digest, so a stranger's entry is never laundered under the maintainer's identity. A caller that passes raw comment bodies instead of comment objects gets its own `skipped bare-string digest element …` line rather than silent non-dedup.
+- **Red flags:** A finding missing from the digest because a stranger's marker matched it. A digest cluster proposal built from a stranger's entry lines. A stranger's entry re-posted under the maintainer's account by the merge-close action.
+
 ## Origin
 - Created during build of #3358 (filter run-comment marker reads by the posting identity, not the marker alone)
 - Steps 1-5 built in this session
-- Related specs: #3358, #2821 (the try-it walkthrough demo reads back), #309 (pending-grant maturation)
+- Step 6 added during build of #3766 (digest dedup and the tidy digest sweep trust only owner/member/collaborator comments)
+- Related specs: #3358, #3766, #2821 (the try-it walkthrough demo reads back), #309 (pending-grant maturation)

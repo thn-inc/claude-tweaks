@@ -6,6 +6,9 @@
 // pre-migration code AND the migrated code; the one intended difference is
 // the only #3417 test that is red before migration. The `isPolicyFile (#3495)`
 // tests are the exception: they pin the case-canonical behavior #3495 added.
+// The #3642 cases are the same kind of exception: each `..foo` case pins an
+// intended behavior change and is red before migration; the "strictness kept"
+// cases pin behavior the migration preserves and pass before and after.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -263,4 +266,63 @@ test('installed-plugins: without deps.readFile only exact paths match, in file o
   assert.equal(selectEntry([outer, inner], '/work/app', deps), inner);
   assert.equal(selectEntry([outer], '/work/app', deps), null, 'an ancestor projectPath no longer applies');
   assert.equal(canonicalGitRoot('/work', deps), null, 'no readFile -> no git root');
+});
+
+// ---- #3642: path.relative re-derivations migrated to isPathContained -------
+const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
+const { canonicalRealpath, isAncestorOrSelf } = require('../../../plugin/bin/lib/path-guard');
+const { shadowPipelineRunDir } = require('../../../plugin/bin/lib/hooks/pre-tool-use');
+
+test('#3642 AC2.1 pre-tool-use: a new run dir named ..foo inside a linked worktree is a shadow (was treated as outside pipelines/)', () => {
+  const wt = linkedWorktreeOf(gitRepo());
+  const out = shadowPipelineRunDir(path.join(wt, '.claude-tweaks', 'pipelines', '..foo', 'decisions.md'));
+  assert.ok(out, 'expected a shadow verdict');
+  assert.equal(out.runDirCandidate, path.join(canonicalRealpath(wt), '.claude-tweaks', 'pipelines', '..foo'));
+});
+
+test('#3642 pre-tool-use: the pipelines dir itself is still not a shadow (strictness kept)', () => {
+  const wt = linkedWorktreeOf(gitRepo());
+  assert.equal(shadowPipelineRunDir(path.join(wt, '.claude-tweaks', 'pipelines')), null);
+});
+
+const { resolveSafe } = require('../../../plugin/bin/lib/visual-decide/server');
+const { runVerify } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
+const { parseComposeCallLine } = require('../../../plugin/bin/lib/skill-audit/context-cost');
+
+test('#3642 AC2.1 visual-decide: resolveSafe serves a child directory named ..foo (was rejected as an escape)', () => {
+  const root = fresh();
+  assert.equal(resolveSafe(root, '/..foo/a.txt'), path.join(root, '..foo', 'a.txt'));
+});
+
+test('#3642 AC2.1 engine-verify: a run dir under archive/..foo is the archived copy (was read as the still-present original)', () => {
+  const repoRoot = fresh();
+  const archived = path.join(repoRoot, '.claude-tweaks', 'pipelines', 'archive', '..foo-run');
+  fs.mkdirSync(archived, { recursive: true });
+  const result = runVerify({ runDir: archived, originalRunDir: archived, base: 'main', repoRoot, cwd: fresh(), deps: { git: () => '', gh: () => '' } });
+  assert.equal(result.rows.find((r) => r.check === 'run-dir-archived').result, 'pass');
+});
+
+const composeLine = (src) => `node "\${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "\${CLAUDE_PLUGIN_ROOT}/${src}"`;
+
+test('#3642 AC2.1 context-cost: a source under a ..foo directory is contained (was an escapes-the-plugin-root row)', () => {
+  assert.deepEqual(parseComposeCallLine(composeLine('..foo/a.md'), '/r/plugin').sources, [path.resolve('/r/plugin', '..foo/a.md')]);
+});
+
+test('#3642 context-cost: a source resolving to the plugin root itself still escapes (strictness kept)', () => {
+  assert.equal(parseComposeCallLine(composeLine(''), '/r/plugin').unparsed, true);
+});
+
+// visual-decide/server.js keeps a builtins-only copy of the containment check
+// (#1202 AC 8 bars non-builtin imports there); this pins it to the shared
+// primitive's accept/reject verdict on this host.
+
+test("#3642 visual-decide: resolveSafe's builtins-only segment check agrees with isAncestorOrSelf", () => {
+  const root = fresh();
+  for (const rel of ['', 'a.txt', 'sub/a.txt', '..foo', '..foo/a.txt', '..', '../x', 'sub/../a.txt', 'sub/../../x']) {
+    assert.equal(
+      resolveSafe(root, '/' + rel) !== null,
+      isAncestorOrSelf(root, path.join(root, rel)),
+      `resolveSafe and isAncestorOrSelf disagree on ${JSON.stringify(rel)}`,
+    );
+  }
 });
