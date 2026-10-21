@@ -187,6 +187,24 @@ function newUnresolvedCell(list) {
   return `${list.length}: ${shown}${ellipsis}`;
 }
 
+// Rows that move identically (same entry mark, ΔFloor, ΔClosure, and New
+// unresolved set) share one group, so a _shared/*.md edit that shifts N entry
+// points by the same amount prints one row. Groups keep first-appearance order.
+function groupRows(rows) {
+  const groups = new Map();
+  for (const r of rows) {
+    const key = [
+      entryMark(r),
+      r.dFloor,
+      r.dClosure,
+      ...r.newUnresolved.map((u) => `${u.citingFile}\u0000${u.token}`).sort(),
+    ].join('\u0001');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  return [...groups.values()];
+}
+
 function renderText(result, changedFiles, { pluginRootsGiven = false } = {}) {
   if (result.roots.length === 0 && !pluginRootsGiven) {
     let line = 'Skill load delta: no plugin roots discovered — skipped (pass --plugin-root <dir>)';
@@ -226,10 +244,21 @@ function renderText(result, changedFiles, { pluginRootsGiven = false } = {}) {
     '| Entry | Floor | ΔFloor | Closure | ΔClosure | New unresolved |',
     '|---|---|---|---|---|---|',
   ];
-  for (const r of rows) {
-    const mark = entryMark(r);
-    const miss = newUnresolvedCell(r.newUnresolved);
-    lines.push(`| ${r.entry}${mark} | ${fmt(r.floor)} | ${signed(r.dFloor)} | ${fmt(r.closure)} | ${signed(r.dClosure)} | ${miss} |`);
+  const range = (xs) => {
+    const lo = Math.min(...xs);
+    const hi = Math.max(...xs);
+    return lo === hi ? fmt(lo) : `${fmt(lo)}–${fmt(hi)}`;
+  };
+  for (const members of groupRows(rows)) {
+    const first = members[0];
+    const miss = newUnresolvedCell(first.newUnresolved);
+    if (members.length === 1) {
+      lines.push(`| ${first.entry}${entryMark(first)} | ${fmt(first.floor)} | ${signed(first.dFloor)} | ${fmt(first.closure)} | ${signed(first.dClosure)} | ${miss} |`);
+      continue;
+    }
+    const names = members.slice(0, 3).map((m) => `${m.entry}${entryMark(m)}`).join(', ');
+    const more = members.length > 3 ? `, … +${members.length - 3} more` : '';
+    lines.push(`| ${members.length} entries: ${names}${more} | ${range(members.map((m) => m.floor))} | ${signed(first.dFloor)} | ${range(members.map((m) => m.closure))} | ${signed(first.dClosure)} | ${miss} |`);
   }
   return `${lines.join('\n')}\n`;
 }
