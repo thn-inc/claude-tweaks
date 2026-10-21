@@ -148,7 +148,7 @@ trips. It returns `true` when merge is proven, `false` when an unmatched commit 
 `pr-first` read it as "unmatched commit found", not "unmerged". `checkPassReentry` in
 `plugin/bin/lib/flow/consolidated-pass.js` (#3497) is the shipped instance of the split.
 SessionStart calls it without `online`, and `flow/multispec-review-console.md`'s re-entry step
-calls it with `online: true`.
+calls it with `online: true` through `hooks.js check-pass-reentry --online` (#3553).
 
 **Recurrence.** #3497's review: the re-entry step first proceeded on an `eligible` verdict whose
 online PR check had degraded, with the degrade visible only in `detail`. The fix made an
