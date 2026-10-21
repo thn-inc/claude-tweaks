@@ -4,6 +4,7 @@ files:
   - plugin/bin/lib/hooks/run-integrity.js
   - plugin/bin/lib/hooks/session-residue.js
   - plugin/bin/lib/hooks/session-start.js
+  - plugin/bin/lib/work-backend.js
   - plugin/skills/flow/multispec-review-console.md
   - plugin/skills/flow/steps-and-gates.md
   - plugin/skills/flow/multi-spec.md
@@ -22,8 +23,8 @@ files:
 - **URL:** SessionStart banner, "unfinished pipeline run(s) detected"; produced by `plugin/bin/lib/hooks/session-residue.js` `collectStaleRuns`, relayed per `plugin/bin/lib/hooks/session-start.js`'s relay directive
 - **Action:** Read the parent run's line. Along with the run name, the line carries a suffix holding the complete re-entry command, run directory included. The session's first reply relays that command, not a `close-run` command, and never runs it itself.
 - **Should feel:** Like being handed the exact next step. The maintainer does not have to work out which of the two specs, or which run, is waiting.
-- **Should understand:** The suffix is offline evidence only. It appears when the run is unarchived, not closed, ran in `auto` or `hybrid` mode, has no `console.json`, has no `pending` or `running` spec, is not owned by a live session, and has no merge evidence. A squash-merged branch can still show the suffix, because offline git evidence can prove that a branch landed but never that it did not. The re-entry's own check settles that.
-- **Red flags:** The relayed line offers only `close-run` for a run whose banner line carries the suffix (the relay directive in `session-start.js` was ignored). The suffix on a run whose parent session is visibly still running elsewhere (the worktree-lock liveness check failed to fire).
+- **Should understand:** The ids in the command follow the project's record grammar. The banner reads the main checkout's CLAUDE.md through the shared reader in `plugin/bin/lib/work-backend.js`. Under `work-backend: local-files` the ids print bare (`A,B`), the form that backend resolves. Under `github-issues`, an unknown value, or an unreadable CLAUDE.md, they keep the `#` sigil (`#A,#B`). The suffix is offline evidence only. It appears when the run is unarchived, not closed, ran in `auto` or `hybrid` mode, has no `console.json`, has no `pending` or `running` spec, is not owned by a live session, and has no merge evidence. A squash-merged branch can still show the suffix, because offline git evidence can prove that a branch landed but never that it did not. The re-entry's own check settles that.
+- **Red flags:** The relayed line offers only `close-run` for a run whose banner line carries the suffix (the relay directive in `session-start.js` was ignored). A `local-files` project whose suffix still shows `#`-prefixed ids, which its backend will not resolve as written. The suffix on a run whose parent session is visibly still running elsewhere (the worktree-lock liveness check failed to fire).
 
 ### 2. Re-enter with the parent run directory named — terminal
 - **URL:** `plugin/skills/flow/multispec-review-console.md`, "Re-entry after the parent session ended"; `plugin/skills/flow/steps-and-gates.md`'s `review-console` row
@@ -56,4 +57,5 @@ files:
 ## Origin
 - Created during build of #3497 ("Consolidated-pass re-entry via review-console", run 2026-10-19T034326-spec-3497): the ended-parent re-entry in `multispec-review-console.md`, `checkPassReentry` in `plugin/bin/lib/flow/consolidated-pass.js`, `checkBranchLanded` in `run-integrity.js`, and the SessionStart banner suffix.
 - Steps 1-5 built in this session.
+- Updated during build of #3554 (run 2026-10-21T055740-record-3554): step 1's banner ids follow `work-backend` — bare under `local-files`, `#` otherwise — read via the shared `plugin/bin/lib/work-backend.js` reader.
 - Related: `rejoin-a-multispec-run-with-a-spec-built-outside-flow-3033.md` (its step 5 covers the same re-entry for a spec built outside `/flow`), `multi-spec-review-console.md` (the console itself), #3033 (the forfeited-pass incident).

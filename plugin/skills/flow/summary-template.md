@@ -4,7 +4,7 @@ Loaded by `/claude-tweaks:flow` Step 5 **only on successful completion of all st
 
 **Reconcile residue line (#644).** Immediately before rendering the template below, run `node "{pluginRoot}/bin/hooks.js" reconcile-summary` and capture its one stdout line verbatim for the **Reconcile:** field — never hand-compose this line or re-derive its counts, and never skip the call: this is the only place in the pipeline that surfaces reconcile's stuck/declined residue (`bin/lib/reconcile`'s own convergence checks run silently off the SessionStart hot path and a detached background process; nothing else in `/flow` reads their output). The command always succeeds and always prints exactly one line — a background pass that hasn't completed yet reads as `0 archived`, an unreachable mirror reads as `mirror ff n/a` — so there is no failure mode here to branch on.
 
-**Needs-a-human residue (#3370).** Immediately before rendering the template below, run `node "{pluginRoot}/bin/console-residue.js" --run "$PIPELINE_RUN_DIR"` — with `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` as `--run` when wrap-up's cleanup has already archived the run directory (`_shared/timing-render.md`'s archive-path rule) — and render its stdout verbatim under `### Needs a human`, never hand-composing it. Omit the section only when the command exits 0 with empty stdout; on any non-zero exit, render the CLI's stderr verbatim under the heading, so a failed scan never reads as "no residue". An unattended console's pending/contested items are never auto-applied, so this is the run's own final human stop for them.
+**Needs-a-human residue (#3370).** Immediately before rendering the template below, run `node "{pluginRoot}/bin/console-residue.js" --run "$PIPELINE_RUN_DIR" --require-verify {base}` — with `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` as `--run` when wrap-up's cleanup has already archived the run directory (`_shared/timing-render.md`'s archive-path rule), and `{base}` the base ref `wrap-up/summary-template.md`'s `{base}` rule resolves — and render its stdout verbatim under `### Needs a human`, never hand-composing it. `--require-verify` adds a line, with its paste-ready command, when the run never wrote `verify.json` (wrap-up's Verify execution never ran, or its write failed). Omit the section only when the command exits 0 with empty stdout; on any non-zero exit, render the CLI's stderr verbatim under the heading, so a failed scan never reads as "no residue". An unattended console's pending/contested items are never auto-applied, so this is the run's own final human stop for them.
 
 **Try it is mandatory (#2821).** Render the `### Try it` section on every successful run, including a record below the oversight floor — the floor gates `demo:pending` and the sign-off ceremony, and never gates this section. Its body is the block `wrap-up/verification-brief.md` composed for this record, per `_shared/try-it.md`, read verbatim from the session-scoped file: `eval "$(node "{pluginRoot}/bin/session-tmp-resolve.js" TRY_IT=try-it-{number}.md)"`, which sets `$TRY_IT` to the file's path, not its content — then read the file at that path (Read tool, or `cat "$TRY_IT"`) and render its body verbatim, minus its own heading line. When the file cannot be used, compose it per `_shared/try-it.md`'s Rules — never omit the section.
 
@@ -30,7 +30,7 @@ On successful completion of all steps (`wrap-up` in the step list):
 
 ### Needs a human
 
-{stdout of `node "{pluginRoot}/bin/console-residue.js" --run "$PIPELINE_RUN_DIR"`, verbatim — omit this whole section only on exit 0 with empty stdout; on any non-zero exit, the CLI's stderr verbatim instead}
+{stdout of `node "{pluginRoot}/bin/console-residue.js" --run "$PIPELINE_RUN_DIR" --require-verify {base}`, verbatim — omit this whole section only on exit 0 with empty stdout; on any non-zero exit, the CLI's stderr verbatim instead}
 
 ### Try it
 
@@ -98,6 +98,7 @@ Close the template's fence above, then assemble the applicable lines (the base 2
 `/claude-tweaks:deepen {changed-paths}` — act on the {N} depth opportunit{y/ies} surfaced above — when the depth survey surfaced candidates
 `/claude-tweaks:release` — cut the release — per `_shared/release-recommendation-gate.md`
 `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}" wrap-up` — resume to re-offer the merge decision, PR #{n} {is ready | is blocked} — mergeability: {outcome} — when this run's own outcome is armed/pending-review under pr-first
+`/claude-tweaks:wrap-up {target} merge` — merge the parked PR in this session, PR #{n} {is ready | is blocked} — mergeability: {outcome} — in place of the row above when this run's ceiling grants `consoleAutoResolve`
 
 **Release row.** Run `_shared/release-recommendation-gate.md`'s pack call and gate against its table — since `wrap-up` ran as an inherited step in this pipeline (it never renders its own Next Actions block in that case, `wrap-up/SKILL.md`'s Component-Skill Contract), this is this run's own call, not a re-read of one `wrap-up` already made.
 
@@ -107,4 +108,10 @@ Close the template's fence above, then assemble the applicable lines (the base 2
 
 `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}" wrap-up` — resume to re-offer the merge decision, PR #{n} {is ready | is blocked} — mergeability: {outcome}
 
-This is the recommended slot only when no next spec exists in this run (same precedence rule the release row's own "Recommended slot" note above already states — resume-to-merge and the release row never both claim `(recommended)`; resume-to-merge wins when both would otherwise apply, since a run that hasn't merged yet has nothing to release into a version bump).
+When this run's resolved `autonomy` ceiling (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "$PIPELINE_RUN_DIR" --values autonomy`) grants `consoleAutoResolve` (`bookkeepingPermissions(ceiling).consoleAutoResolve`, `bin/lib/issues/autonomy.js`, true at `unattended` only), render this merge row instead, because a resume there re-resolves the Review Console with no question and re-parks the PR. `{target}` renders bare there, as the record's `#{record}` reference, because wrap-up's router reads a `#`-prefixed record reference and a quoted `"#42"` is not one. Its `{is ready | is blocked}` and suffix rules are the same as the row above's:
+
+`/claude-tweaks:wrap-up {target} merge` — merge the parked PR in this session, PR #{n} {is ready | is blocked} — mergeability: {outcome}
+
+Every other ceiling keeps the row above.
+
+This is the recommended slot, for whichever of the two rows renders, only when no next spec exists in this run (same precedence rule the release row's own "Recommended slot" note above already states — resume-to-merge and the release row never both claim `(recommended)`; resume-to-merge wins when both would otherwise apply, since a run that hasn't merged yet has nothing to release into a version bump).

@@ -218,7 +218,7 @@ test('registry: prelaunch is registered in FOCUS_GENERATORS and is scanPrelaunch
 // ── listTrackedFiles / listTrackedSourceFiles refactor ──────────────────────
 
 test('listTrackedFiles returns non-source files too; listTrackedSourceFiles still excludes them', () => {
-  const { listTrackedFiles, listTrackedSourceFiles } = require('../../../plugin/bin/lib/code-health/candidates-dead-code');
+  const { listTrackedFiles, listTrackedSourceFiles } = require('../../../plugin/bin/lib/code-health/source-scan');
   const root = tmpGitRepo();
   write(root, 'robots.txt', 'User-agent: *\n');
   write(root, 'lib/a.js', 'module.exports = {};\n');

@@ -267,3 +267,37 @@ test('#1778 negative control: a standalone-named directory nested under spec-*/ 
   const out = pre.run({ input: writeInput(target), runDir: null, runState: null, cwd: wt });
   assertDenied(out);
 });
+
+// --- #3769: the injected fsImpl reaches every probe in shadowPipelineRunDir ---
+// The fake models a case-insensitive volume whose canonical spelling of the
+// worktree (`WT`) differs from the real one (`wt`). The pipelines root, the
+// target and the existence probe must all resolve through it: leave any one on
+// the real fs and the relative-path comparison (or the probe) disagrees.
+const { caseInsensitiveFs } = require('./helpers/case-insensitive-fs');
+const POSIX_ONLY = process.platform === 'win32' && 'posix-only case-insensitive fake: path.resolve/join rewrite its literal paths on win32';
+
+function shadowFixture3769(extraEntries = {}) {
+  const wt = linkedWorktreeOf(gitRepo());
+  const canon = path.join(path.dirname(wt), path.basename(wt).toUpperCase());
+  const pipelines = path.join(canon, '.claude-tweaks', 'pipelines');
+  const fsImpl = caseInsensitiveFs({
+    [canon]: 'dir',
+    [path.join(canon, '.claude-tweaks')]: 'dir',
+    [pipelines]: 'dir',
+    ...Object.fromEntries(Object.entries(extraEntries).map(([rel, kind]) => [path.join(pipelines, rel), kind])),
+  });
+  const target = path.join(wt, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-5');
+  return { wt, fsImpl, target };
+}
+
+test('#3769: a NEW run directory is still denied when every probe resolves through an injected case-insensitive fsImpl', { skip: POSIX_ONLY }, () => {
+  const { wt, fsImpl, target } = shadowFixture3769();
+  const out = pre.run({ input: bashInput(`mkdir -p "${target}"`, wt), runDir: null, runState: null, cwd: wt }, { fsImpl });
+  assertDenied(out);
+});
+
+test('#3769: a run directory that exists only on the injected fsImpl counts as existing (allowed)', { skip: POSIX_ONLY }, () => {
+  const { wt, fsImpl, target } = shadowFixture3769({ '2026-01-01T000000-spec-5': 'dir' });
+  const out = pre.run({ input: bashInput(`mkdir -p "${target}"`, wt), runDir: null, runState: null, cwd: wt }, { fsImpl });
+  assertAllowed(out);
+});

@@ -33,6 +33,7 @@ const { discoverPluginRoots, entryPointLoads, loadDelta } = require('./lib/skill
 const { corpusDir } = require('./lib/skill-audit/context-cost');
 const { resolveIntegrationBranch, bareIntegrationName } = require('./lib/hooks/worktree-reap');
 const { toPosix, escapeRegExp, isPathContained } = require('./lib/shared-primitives');
+const { pluginRootReader, skillsPrefix } = require('./lib/skill-audit/plugin-root-reader');
 
 const USAGE = 'usage: load-delta.js [--plugin-root <dir>]... [--base <ref>] [--integration-branch <name>] [--json] [--help]\n';
 
@@ -129,7 +130,6 @@ const realDeps = {
 // splitting is not (#3307 F3/F4).
 const splitZ = (s) => s.split('\0').filter(Boolean);
 
-const skillsPrefix = (root) => (root === '.' ? 'skills/' : `${root}/skills/`);
 const SKILL_MD_UNDER = (root) => new RegExp(`^${escapeRegExp(skillsPrefix(root))}[^/]+/SKILL\\.md$`);
 
 // The path segment(s) before "/skills/{name}/" in a changed-file path, for
@@ -151,46 +151,6 @@ function firstNameableParent(files) {
   return null;
 }
 
-function headSide(repoRoot, root) {
-  // A citation that passed withinRoot's textual check can still be a committed
-  // symlink to a file outside the repository, or to a device (/dev/zero) that
-  // never reaches EOF — so resolve the real path and read only a regular file
-  // inside the repository; anything else is absent.
-  const realRoot = fs.realpathSync(repoRoot);
-  const readFile = (p) => {
-    try {
-      const real = fs.realpathSync(path.join(repoRoot, p));
-      if (!isPathContained(real, realRoot) || !fs.statSync(real).isFile()) return null;
-      return fs.readFileSync(real, 'utf8');
-    } catch (err) {
-      if (['ENOENT', 'EISDIR', 'ENOTDIR', 'ELOOP'].includes(err.code)) return null;
-      throw err;
-    }
-  };
-  const listSkillMds = () => {
-    const dir = path.join(repoRoot, root, 'skills');
-    // A root discovered only via the base-tree union (ledger row 17) — all
-    // its SKILL.md files deleted, committed, at head — has no skills/
-    // directory left on disk at all; a root whose index entries are deleted
-    // in the working tree only (never committed) can hit the same ENOENT.
-    // Either way that is "no entries at head", not a crash: readdirSync's
-    // ENOENT/ENOTDIR become [], and anything else (a real permissions or I/O
-    // error) still rethrows.
-    let entries;
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch (err) {
-      if (['ENOENT', 'ENOTDIR'].includes(err.code)) return [];
-      throw err;
-    }
-    return entries
-      .filter((d) => d.isDirectory())
-      .map((d) => `${skillsPrefix(root)}${d.name}/SKILL.md`)
-      .filter((p) => readFile(p) !== null);
-  };
-  return { readFile, listSkillMds };
-}
-
 function baseSide(git, sha, baseFiles, root, batch = null) {
   const re = SKILL_MD_UNDER(root);
   return {
@@ -207,6 +167,7 @@ function baseSide(git, sha, baseFiles, root, batch = null) {
       return git(['show', '--end-of-options', `${sha}:${p}`]);
     },
     listSkillMds: () => [...baseFiles].filter((p) => re.test(p)),
+    listFiles: () => [...baseFiles],
   };
 }
 
@@ -357,7 +318,7 @@ function run(argv, deps = realDeps) {
       roots = discoverPluginRoots(() => listed);
     }
 
-    const heads = roots.map((root) => ({ root, rows: entryPointLoads(root, headSide(repoRoot, root)) }));
+    const heads = roots.map((root) => ({ root, rows: entryPointLoads(root, pluginRootReader(repoRoot, root)) }));
     let result;
     let changedFiles = [];
     if (!base) {

@@ -11,9 +11,9 @@
 // filter of record.
 //
 // Coverage (stated explicitly, never implied total — IL-110):
-//   - JS/TS files only (SOURCE_EXTS, shared with candidates-dead-code.js).
+//   - JS/TS files only (SOURCE_EXTS, shared via source-scan.js).
 //   - Exported symbols only — `module.exports = { a, b, c }` shorthand-brace
-//     shape, reusing candidates-dead-code.js's extractModuleExports. Every
+//     shape, reusing source-scan.js's extractModuleExports. Every
 //     coverage caveat that function's own header documents (single ESM
 //     `export`, `module.exports.NAME = ...`, aliased/computed keys all
 //     unrecognized) applies here too.
@@ -49,30 +49,14 @@
 //     copied list), any path under a `fixtures`/`__fixtures__`/`vendor`/
 //     `third_party` directory segment, and any file matching this repo's
 //     own test-discovery naming convention (`isGlobDiscoveredTestFile`,
-//     reused from candidates-dead-code.js) — test doubles and fixture trees
+//     reused from source-scan.js) — test doubles and fixture trees
 //     legitimately share shapes without being a real duplicated abstraction.
 
 const fs = require('fs');
 const path = require('path');
-// `./focus-generators` is required FIRST, deliberately, before
-// `./candidates-dead-code` — this repo's registry file autoloads every
-// vertical (see focus-generators.js's own header) in a fixed order with
-// candidates-dead-code.js first, so requiring the registry before anything
-// else forces that full cascade to run to completion before this module's
-// own `require('./candidates-dead-code')` below executes. This order is
-// defense in depth: the real guard is that `candidates-dead-code.js`
-// publishes `module.exports` before it requires the registry, so a direct
-// require of this file gets complete exports either way (the all-modules
-// fresh-process test in `candidates-require-order.test.js` pins that for
-// every module). Requiring the registry first is what candidates-test-
-// hygiene.js does too.
 const { registerGenerator } = require('./focus-generators');
-const {
-  listTrackedSourceFiles,
-  isGlobDiscoveredTestFile,
-  extractModuleExports,
-  escapeRegExp,
-} = require('./candidates-dead-code');
+const { listTrackedSourceFiles, isGlobDiscoveredTestFile, extractModuleExports } = require('./source-scan');
+const { escapeRegExp } = require('../shared-primitives');
 const { SKIP_DIRS } = require('./scope');
 
 // Module constants — header rationale per each, calibrated at build against

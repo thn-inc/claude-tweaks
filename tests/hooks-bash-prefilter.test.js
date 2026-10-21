@@ -185,6 +185,33 @@ test('earlyGate reads stdin only for the governed tool-use events', () => {
   assert.deepStrictEqual(earlyGate('post-tool-use', () => { throw new Error('EAGAIN'); }), { raw: '', skip: false });
 });
 
+// UserPromptSubmit fires on EVERY human prompt and Claude Code waits for it, so
+// the gate is one raw substring test — JSON never escapes `/` or `:`, which makes
+// `claude-tweaks:` a superset of every line the handler could record. Garbage and
+// unreadable stdin skip because the handler would do nothing with them either.
+test('earlyGate governs user-prompt-submit by a raw substring test', () => {
+  let reads = 0;
+  const reader = (raw) => () => { reads += 1; return raw; };
+  const plain = '{"prompt":"hello there"}';
+  assert.deepStrictEqual(earlyGate('user-prompt-submit', reader(plain)), { raw: plain, skip: true });
+  assert.strictEqual(reads, 1);
+  const typed = '{"prompt":"/claude-tweaks:help"}';
+  assert.deepStrictEqual(earlyGate('user-prompt-submit', reader(typed)), { raw: typed, skip: false });
+  // Superset: a mid-prompt mention runs the handler, which makes the real decision.
+  const mention = '{"prompt":"see /claude-tweaks:build"}';
+  assert.deepStrictEqual(earlyGate('user-prompt-submit', reader(mention)), { raw: mention, skip: false });
+  assert.deepStrictEqual(earlyGate('user-prompt-submit', reader('not json')), { raw: 'not json', skip: true });
+  assert.deepStrictEqual(earlyGate('user-prompt-submit', () => { throw new Error('EAGAIN'); }), { raw: '', skip: true });
+  assert.strictEqual(reads, 4, 'one read per call, never a second');
+  // A large prompt with no marker still takes the cheap path, read exactly once.
+  reads = 0;
+  const big = '{"prompt":"' + 'x'.repeat(1024 * 1024) + '"}';
+  const gated = earlyGate('user-prompt-submit', reader(big));
+  assert.strictEqual(gated.skip, true);
+  assert.strictEqual(gated.raw, big);
+  assert.strictEqual(reads, 1);
+});
+
 // #2783 M3: every failing Bash call fires PostToolUseFailure, but the handler
 // only ever acts on the harness worktree-isolation refusal text.
 const REFUSAL = 'This session is isolated in the worktree /w, but this command cannot be shown not to be git. Refusing to run it — a worktree-isolated session\'s git operations must target its own worktree.';

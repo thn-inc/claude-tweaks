@@ -3,11 +3,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { readText } = require('./helpers/read-skill');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 const flat = (s) => s.replace(/\s+/g, ' ');
 const SKILL = read('plugin/skills/tidy/SKILL.md');
 const SUB = read('plugin/skills/tidy/release-note-repair.md');
@@ -75,16 +78,20 @@ test('SKILL.md registers the tag, the action, the backend probe count, and the S
   assert.ok(f.includes('- [x] Skipped Release Note: {ref} — stale premise'));
 });
 
-test('SKILL.md dispatcher block resolves a fresh session-scoped candidates path per run', () => {
-  const start = SKILL.indexOf('**Before dispatching the Work Records agent,**');
+function dispatcherScript(skill) {
+  const start = skill.indexOf('**Before dispatching the Work Records agent,**');
   assert.notEqual(start, -1, 'dispatcher note missing');
-  const m = /```bash\n([\s\S]*?)\n```/.exec(SKILL.slice(start));
+  const m = /```bash\n([\s\S]*?)\n```/.exec(skill.slice(start));
   assert.ok(m, 'extraction pattern is out of sync with the doc');
-  const script = m[1].split('${CLAUDE_PLUGIN_ROOT}').join(path.join(ROOT, 'plugin'));
+  return m[1];
+}
+
+test('SKILL.md dispatcher block resolves a fresh session-scoped candidates path per run', () => {
+  const script = dispatcherScript(SKILL).split('${CLAUDE_PLUGIN_ROOT}').join(toPosix(path.join(ROOT, 'plugin')));
   const env = { ...process.env, CLAUDE_CODE_SESSION_ID: `rn-dispatch-${process.pid}` };
   const a = execFileSync('bash', ['-c', script], { env, encoding: 'utf8' }).trim();
   const b = execFileSync('bash', ['-c', script], { env, encoding: 'utf8' }).trim();
-  assert.match(a, /ct-session-rn-dispatch-\d+\/tidy-release-note-\d+\.json$/);
+  assert.match(a, /ct-session-rn-dispatch-\d+[\\/]tidy-release-note-\d+\.json$/);
   assert.notEqual(a, b, 'each run must get a fresh name');
   fs.rmSync(path.dirname(a), { recursive: true, force: true });
 });
@@ -135,4 +142,17 @@ test('sweep, the tidy journey, and the skill graph restate the new tier truthful
   assert.ok(journey.includes('Updated during build of #2828'));
   const graphRow = read('docs/skill-graph.md').split('\n').find((l) => l.startsWith('| `/tidy` | Folds `unsynced: true`'));
   assert.ok(graphRow.includes('Shape 4.5'));
+});
+
+test('CRLF control (#3670): tidy-release-note-repair-conformance extracts the same result after a CRLF round-trip through readText()', (t) => {
+  const DOC_PATH = path.join(ROOT, 'plugin/skills/tidy/SKILL.md');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tidy-release-note-crlf-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const lf = readText(DOC_PATH);
+  const crlf = lf.replace(/\n/g, '\r\n');
+  assert.ok(crlf.includes('\r\n'), 'CRLF build must contain \\r\\n');
+  assert.ok(!crlf.includes('\r\r\n'), 'CRLF build must not contain \\r\\r\\n');
+  const file = path.join(tmp, path.basename(DOC_PATH));
+  fs.writeFileSync(file, crlf);
+  assert.deepStrictEqual(dispatcherScript(readText(file)), dispatcherScript(lf));
 });

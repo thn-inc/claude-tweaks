@@ -11,10 +11,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 const PLAN_AUDIT = read('plugin/skills/build/plan-audit.md');
 const SKILL = read('plugin/skills/build/SKILL.md');
 const { USAGE } = require('../plugin/bin/lib/plan-audit/args');
@@ -66,16 +68,33 @@ test('AC6.2 (#3099): build/SKILL.md Common Step 1.5 passes --spec when a materia
   assert.match(section, /Check E/);
 });
 
+function invocationFence(md) {
+  const fence = md.match(/## Invocation\s+```bash\n([^\n]+)\n```/);
+  assert.ok(fence, 'plan-audit.md Invocation fence not found');
+  return fence[1];
+}
+
 test('#3099: every restated plan-audit.js invocation names exactly the flags USAGE names', () => {
   const usageFlags = flags(USAGE);
   assert.ok(usageFlags.includes('--spec'), 'USAGE lost --spec');
-  const fence = PLAN_AUDIT.match(/## Invocation\s+```bash\n([^\n]+)\n```/);
-  assert.ok(fence, 'plan-audit.md Invocation fence not found');
-  assert.deepStrictEqual(flags(fence[1]), usageFlags);
+  assert.deepStrictEqual(flags(invocationFence(PLAN_AUDIT)), usageFlags);
   const skillLine = step15().split('\n').find((l) => l.startsWith('Audit the plan against the actual repo'));
   assert.ok(skillLine, 'Common Step 1.5 invocation line not found');
   assert.deepStrictEqual(flags(skillLine.match(/`node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/plan-audit\.js"[^`]*`/)[0]), usageFlags);
   const structure = read('docs/plugin-structure.md').split('\n').find((l) => l.startsWith('node plugin/bin/plan-audit.js'));
   assert.ok(structure, 'docs/plugin-structure.md plan-audit.js line not found');
   assert.deepStrictEqual(flags(structure.split('#')[0]), usageFlags);
+});
+
+test('CRLF control (#3670): plan-audit-check-e-prose extracts the same result after a CRLF round-trip through readText()', (t) => {
+  const docPath = path.join(ROOT, 'plugin/skills/build/plan-audit.md');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-audit-e-crlf-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const lf = readText(docPath);
+  const crlf = lf.replace(/\n/g, '\r\n');
+  assert.ok(crlf.includes('\r\n'), 'CRLF build must contain \\r\\n');
+  assert.ok(!crlf.includes('\r\r\n'), 'CRLF build must not contain \\r\\r\\n');
+  const file = path.join(tmp, path.basename(docPath));
+  fs.writeFileSync(file, crlf);
+  assert.deepStrictEqual(invocationFence(readText(file)), invocationFence(lf));
 });

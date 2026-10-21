@@ -82,10 +82,11 @@ every mode; only git's own auto-merge runs, so there is no judgment to surface:
   nothing else changes. The `SKIP` that check already wrote for a failed read stays as written.
 
 Log with `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --status AUTO
---section "/wrap-up" --step "Leave-open mergeability re-check" --reversibility high --text
-"mergeability: {outcome}"`. Escape any `"`, `$`, backtick or `\` in `{files}` and `{reason}`
-first — git accepts them in file names and its own error text. The phase-trace report's Verdict
-line (`summary-template.md`) and `/claude-tweaks:flow`'s resume-to-merge row
+--section "/wrap-up" --step "Leave-open mergeability re-check" --reversibility high --text-file
+"{text-file}"`, the file holding `mergeability: {outcome}` per `_shared/auto-decision-log.md`'s Text
+from git or a user paragraph — `{files}` and `{reason}` are git-supplied file names and error
+text, so they never go in a double-quoted `--text`. The phase-trace report's Verdict line
+(`summary-template.md`) and `/claude-tweaks:flow`'s resume-to-merge row
 (`flow/summary-template.md`) name a `DIRTY` outcome, so a parked PR whose CI GitHub suppressed is
 visible from the summary; any other outcome stays in `decisions.md` only. A merge outcome of
 `merged`, `armed`, or the merge path's own `pending-review` skips this paragraph —
@@ -95,4 +96,4 @@ visible from the summary; any other outcome stays in `decisions.md` only. A merg
 
 The verb reads `verify-expectations.json` from `$PIPELINE_RUN_DIR` — written by the Review Console at resolution time, always (see the Memory updates and Upstream feedback bullets above) — alongside repo and forge state. Run `wrap-up-engine.js verify --run-dir "$PIPELINE_RUN_DIR" --base {base}` and insert its output table **verbatim** — never summarized or paraphrased — as this section's evidence. `{base}` is the same base ref `summary-template.md`'s ladder already resolved for this run. `--run-dir` takes the run's original (pre-archive) `$PIPELINE_RUN_DIR` path even after Section B archived the run — the verb resolves the archived copy itself. An archive path under this checkout's own `.claude-tweaks/pipelines/archive/` is recognised and passes, but any archive path outside it makes `run-dir-archived` report `original path still present`.
 
-On exit code 3, do NOT emit the closure line: surface `BLOCKED — {failing check row(s), verbatim}` and stop. Only `fail` rows force this — `unknown` and `skip` rows are quoted in the closure line alongside a passing verdict instead; they do not block, but they are not silently dropped either. This is a structural property of the check registry, not a judgment call made here: a check that found genuinely unowned, pre-existing residue (e.g. `plans-ledger`'s "found, not owned" case, #2552) reports `skip` with the residue named in its detail, precisely so a run whose only non-passing rows are informational ones like this one closes normally instead of forcing `BLOCKED` for something outside the run's own scope.
+On exit code 3, do NOT emit the closure line: surface `BLOCKED — {failing check row(s), verbatim}` in the phase-trace report's Verdict (which renders next, per `SKILL.md`'s Phase 4 order — `summary-template.md`'s #2550 carve-out still applies) and stop after the report. Only `fail` rows force this — `unknown` and `skip` rows are quoted in the closure line alongside a passing verdict instead; they do not block, but they are not silently dropped either. This is a structural property of the check registry, not a judgment call made here: a check that found genuinely unowned, pre-existing residue (e.g. `plans-ledger`'s "found, not owned" case, #2552) reports `skip` with the residue named in its detail, precisely so a run whose only non-passing rows are informational ones like this one closes normally instead of forcing `BLOCKED` for something outside the run's own scope.

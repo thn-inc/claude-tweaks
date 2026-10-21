@@ -1,6 +1,6 @@
 # Step 20 — Integration Model (detailed procedure)
 
-*Optional Enhancement step — see `SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
+*Optional Enhancement step — see `../SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
 
 `integration-model` (`_shared/integration-model.md`) resolves to `pr-first` or `local-merge` — which backend a project integrates through. Left unset, `bin/resolve-policy.js` computes it via forge detection (`_shared/forge-detection.md`'s ladder run in code) every time it's read. That detection is **gh-only**: a Node subprocess cannot see an agent session's MCP tools, so an MCP-only sandbox for a GitHub-backed repo detects `local-merge` even though the repo genuinely has a forge — a different answer than a local session with `gh` authenticated would get for the exact same repo. Setting the value explicitly removes that divergence.
 

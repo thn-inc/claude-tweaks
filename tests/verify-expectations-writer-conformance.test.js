@@ -10,10 +10,12 @@ const { execFileSync } = require('node:child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const ROOT = path.join(__dirname, '..');
 const PLUGIN = path.join(ROOT, 'plugin');
-const read = (...segments) => fs.readFileSync(path.join(ROOT, ...segments), 'utf8');
+const read = (...segments) => readText(path.join(ROOT, ...segments));
 const CLI_CALL = 'node "${CLAUDE_PLUGIN_ROOT}/bin/set-verify-expectations.js" --run "$PIPELINE_RUN_DIR"';
 
 test('the multi-spec defer protocol writes the deferred shape through the sanctioned writer', () => {
@@ -43,17 +45,21 @@ test('no wrap-up skill file still hand-writes verify-expectations.json with fs.w
   const offenders = fs.readdirSync(dir)
     .filter((name) => name.endsWith('.md'))
     .filter((name) => {
-      const body = fs.readFileSync(path.join(dir, name), 'utf8');
+      const body = readText(path.join(dir, name));
       return body.includes('fs.writeFileSync(') && body.includes('verify-expectations.json');
     });
   assert.deepEqual(offenders, []);
 });
 
-test('the Oversight-floor gate snippet in verification-brief.md runs and records the exemption', () => {
-  const doc = read('plugin', 'skills', 'wrap-up', 'verification-brief.md');
+function oversightSnippet(doc) {
   const m = /Record the exemption \(#2383\)[\s\S]*?```bash\n([\s\S]*?)```/.exec(doc);
   assert.ok(m, 'extraction pattern is out of sync with the doc');
-  const snippet = m[1].trim();
+  return m[1].trim();
+}
+
+test('the Oversight-floor gate snippet in verification-brief.md runs and records the exemption', () => {
+  const doc = read('plugin', 'skills', 'wrap-up', 'verification-brief.md');
+  const snippet = oversightSnippet(doc);
   assert.ok(snippet.includes(`${CLI_CALL} --oversight-exempt {N}`), `unexpected snippet: ${snippet}`);
 
   const main = fs.mkdtempSync(path.join(os.tmpdir(), 'vexp-conf-'));
@@ -62,10 +68,23 @@ test('the Oversight-floor gate snippet in verification-brief.md runs and records
   fs.mkdirSync(path.join(main, '.git'));
   fs.writeFileSync(path.join(runDir, 'verify-expectations.json'), JSON.stringify({ version: 1, memory: [], upstream: [], oversightExempt: [7] }));
 
-  const command = snippet.split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN).split('{N}').join('42');
-  execFileSync('/bin/sh', ['-c', command], { cwd: main, env: { ...process.env, PIPELINE_RUN_DIR: runDir }, encoding: 'utf8' });
+  const command = snippet.split('${CLAUDE_PLUGIN_ROOT}').join(toPosix(PLUGIN)).split('{N}').join('42');
+  execFileSync('bash', ['-c', command], { cwd: main, env: { ...process.env, PIPELINE_RUN_DIR: runDir }, encoding: 'utf8' });
 
   const data = JSON.parse(fs.readFileSync(path.join(runDir, 'verify-expectations.json'), 'utf8'));
   assert.deepEqual(data.oversightExempt, [7, 42]);
   assert.deepEqual(data.memory, []);
+});
+
+test('CRLF control (#3670): verify-expectations-writer-conformance extracts the same result after a CRLF round-trip through readText()', (t) => {
+  const DOC_PATH = path.join(ROOT, 'plugin/skills/wrap-up/verification-brief.md');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-expectations-crlf-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const lf = readText(DOC_PATH);
+  const crlf = lf.replace(/\n/g, '\r\n');
+  assert.ok(crlf.includes('\r\n'), 'CRLF build must contain \\r\\n');
+  assert.ok(!crlf.includes('\r\r\n'), 'CRLF build must not contain \\r\\r\\n');
+  const file = path.join(tmp, path.basename(DOC_PATH));
+  fs.writeFileSync(file, crlf);
+  assert.deepStrictEqual(oversightSnippet(readText(file)), oversightSnippet(lf));
 });

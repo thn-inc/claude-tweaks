@@ -39,7 +39,7 @@ test('the release Enhancement filter token is registered in SKILL.md and input-g
 
 test('step-21-release.md carries the gate, the three verdicts, the CLI, the deferred policy write, and the citations', () => {
   assert.ok(STEP.startsWith('# Step 21 — '));
-  assert.ok(STEP.includes('*Optional Enhancement step — see `SKILL.md`'), 'standard step preamble');
+  assert.ok(STEP.includes('*Optional Enhancement step — see `../SKILL.md`'), 'standard step preamble');
   for (const word of ['`fresh`', '`already-bootstrapped`', '`conflict`']) assert.ok(STEP.includes(word), `verdict ${word}`);
   assert.ok(STEP.includes('release: skipped — integration-model unresolved'));
   assert.ok(STEP.includes('release: conflict — {tool}'));

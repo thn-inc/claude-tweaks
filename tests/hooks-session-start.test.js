@@ -85,6 +85,7 @@ test('#803: the banner names a designated consumer — relay the list once in th
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /Relay this list once, in your first reply to the user/);
+  assert.ok(ctx.includes('do not proceed silently without mentioning it, and never run either command yourself'), 'AC1.1: unfinished-runs banner says never run the command yourself');
 });
 
 test('#1493 AC5: a fixture with one interrupted run + one cleanly-clean standalone run with non-empty staged/ renders both — close-run for the interrupted run, tidy --approve for the standalone one', async () => {
@@ -100,13 +101,14 @@ test('#1493 AC5: a fixture with one interrupted run + one cleanly-clean standalo
   assert.match(ctx, /\/claude-tweaks:tidy --approve/, 'the standalone run points at tidy --approve, not close-run');
 });
 
-test('#1493 I4: the tidy --approve banner names a designated consumer — relay the list once in the first reply', async () => {
+test('#1493 I4: the tidy --approve banner names a designated consumer — relay the list once in the first reply — AC1.1: and never to run it', async () => {
   const project = tmpProject();
   const standalone = mkRun(project, '2026-07-02T090000-tidy-standalone', { status: 'clean' });
   mkStagedFile(standalone, 'stale-close-1.json', '{}');
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /Relay this list once, in your first reply to the user/);
+  assert.ok(ctx.includes('naming its tidy --approve command — do not proceed silently without mentioning it, and never run it yourself.'), 'AC1.1: staged-proposals banner says never run the command yourself');
 });
 
 test('#3370: an archived run with unreviewed console items gets its own banner naming both items', async () => {
@@ -120,6 +122,9 @@ test('#3370: an archived run with unreviewed console items gets its own banner n
       { id: 'review-debate-deviation.md', section: 'Contested findings', resolution: 'keep-staged', reason: 'debate inconclusive' },
     ],
   }));
+  // #3772: an item whose staged file is gone is `missing`, not residue.
+  mkStagedFile(archived, 'review-13-record.md');
+  mkStagedFile(archived, 'review-debate-deviation.md');
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /claude-tweaks: closed or archived run\(s\) whose unattended Review Console left item\(s\) no human has reviewed:/);
@@ -151,6 +156,7 @@ function mkArchivedResidue(project, n) {
       resolved: true,
       items: [{ id: `review-${i}-x.md`, section: 'Pending review', resolution: 'pending', reason: 'unmapped-prefix' }],
     }));
+    mkStagedFile(dir, `review-${i}-x.md`); // #3772: a vanished staged file is `missing`, not residue
   }
 }
 const OVERFLOW = /^- … more run\(s\) may have unreviewed console items \(newest 3 shown\)\.$/m;

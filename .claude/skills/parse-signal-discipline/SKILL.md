@@ -151,6 +151,16 @@ When mechanizing a prose heuristic into a deterministic check:
    added `quoteMatchesWholeWord`: a clause under three words is never matched by its text, and a
    longer one must match on a word boundary at both ends. Give a text-match recogniser a minimum
    length and a boundary at each end, and pin a short input hidden inside a longer word.
+   Lifting a lenient reader's predicate to widen a recogniser imports that reader's looseness.
+   #3665 let `classifyDecisions` count a model-worded claim line by calling
+   `paraphrasedClaimNumbers`, which accepts a bare "claimed #N" anywhere in an `AUTO` line. A
+   later-step line such as `Step 3: config.yml written; claims-registry shows #7 claimed.` then read
+   as a claim, so a run directory that had moved past the claim step still classified as a fresh
+   mint. Whole-branch review caught it, and `59e200225` anchored the paraphrase on the parsed
+   entry's location (the head text only for a `log-decision`-located or unparseable line). When a
+   fail-closed classifier needs a lenient reader's recognition, anchor on a field the writer
+   controls, such as the entry's location, never on words a later line can repeat, and pin a
+   later-step line that merely mentions the thing.
 7. **A parsed list that feeds a pass verdict owes an independent count to reconcile against.** An
    extractor that returns N items cannot say it missed one more, so an undercount reads exactly
    like a complete list. That is the same silent false negative as a merged `null`, one level up.
@@ -319,6 +329,53 @@ When mechanizing a prose heuristic into a deterministic check:
     it. A read that failed (`gitInfo` returns `dirty: null` when `git status` fails) counts as
     that direction too, per item 5, never as the other read's answer. Pin a commit landing during
     the last tree-executing phase, and a mid-run revert, each with its own test.
+18. **A composer's validator owes its readers' skip set, and a batch producer owes the predicate,
+    not the throw.** When one module writes text another module parses back, every value the
+    reader silently skips must be one the writer rejects. Otherwise a value accepted when the
+    record is composed vanishes when it is read, and nothing reports it.
+    `plugin/bin/lib/issues/record.js`'s `specShapedBody` renders `keyFiles` (#2975) as a
+    `### Key Files` list that `/build`'s micro-plan gate and `grouping.js`'s file-overlap checks
+    read. Only `grouping.js` skips a trailing-slash entry (a bare directory, #1420) with no
+    warning: `file.endsWith('/')` in `groupByFileOverlap`, `directOverlaps` and
+    `detectCrossPRFileOverlap`'s `isSignal`. The micro-plan gate counts every listed path except
+    tests and docs, so a directory entry there counts as an implementation file. The first
+    `keyFilePathProblem` accepted `'tests/'`. Review caught it, and `090359172` (#2975) rejects a trailing
+    slash or backslash as `'shape'`. Build the reject list from the readers' `continue` and
+    `return false` branches, not from what looks malformed, and pin each one with its own
+    assertion. The throw suits a hand-written caller. But the four health-sweep
+    composers fill `keyFiles` from LLM judge output, one finding after another in one run, and a
+    throw on one finding aborts the rest. So `record.js` exports the throw's own predicate,
+    `isRepoRelativeKeyFilePath`, and each producer calls it and omits `keyFiles` on failure. The
+    record still files, without the optional section. The omission leans safe in item 10's sense:
+    a record with no Key Files falls through to `/build`'s full planning. Export the predicate the
+    throw already uses rather than re-implementing it in the producer, where the two would drift.
+    Normalize before calling it, and read what each producer does from its own code, because the
+    four differ. `code-health/issue-payload.js` strips an anchor's `#symbol` suffix and trims
+    (`String(anchor).split('#')[0].trim()`). `harness-health/issue-payload.js` resolves
+    `finding.path` against `options.repoRoot` and rewrites it as a `/`-joined repo-relative path
+    with `path.relative`, so an out-of-repo target such as a memory file fails the predicate on its
+    `..` segment. `docs-health/issue-payload.js` and `journey-health/issue-payload.js` do no
+    normalizing of their own: each passes a path it assembled itself
+    (`` `docs/${finding.target}.md` ``, `` `docs/journeys/${finding.journey}.md` ``), so the
+    LLM-supplied `target` or `journey` is checked inside a fixed prefix and suffix, and only an
+    embedded `..` segment, backtick or line break can fail it. A new producer states its own
+    normalization from where its path comes from.
+19. **An enumerated list of failure channels reads every unlisted channel as "none"; a positive
+    recogniser at the tail closes that class, but only once the legitimate endings are captured.**
+    `plugin/bin/lib/verify/extract.js`'s `summaryUnattributedCount` (#3480) accounts a jest or
+    vitest log by listing the channels that count as unattributed. The list was incomplete three
+    times in one build, each channel found only by reading runner source or capturing a real log,
+    and every miss read as a false 0, the unsafe direction for a flaky retry or a `preExisting`
+    waiver. #3674 added the positive twin for jest: `endsLikeNormalJestRun` counts the log as
+    unattributed unless its last line is `Ran all test suites…` or a `--silent` run's `Time:`
+    line, optionally followed by a captured yarn or pnpm failure trailer. It fires only when no
+    enumerated channel already counted, so one failure is never counted twice. The first version
+    accepted only the trailer and over-refused every `--silent` and yarn/pnpm project. The
+    whole-branch review caught it from `SummaryReporter.js`, and each accepted ending now has a
+    captured fixture. Capture every real ending from the runner before shipping the guard, and keep
+    the enumerated list where no stable ending exists: vitest writes its summary to stdout and its
+    failure blocks to stderr, so either can end a piped log. The recogniser is a backstop behind
+    the list, not a replacement for it.
 
 ## When to use
 
@@ -332,6 +389,8 @@ When mechanizing a prose heuristic into a deterministic check:
 - Writing a check that reads the filesystem directly (`fs.readdirSync`/`readFileSync`/`existsSync`
   and the like) where catching every error the same way conflates "genuinely absent" (`ENOENT`)
   with "couldn't tell" (`EACCES`, `ENOTDIR`, and other non-ENOENT codes) (fix-shape item 11).
+- Adding a validated field to a shared body composer such as `specShapedBody` that another module
+  parses back, or that a batch producer fills from LLM output (fix-shape item 18).
 
 ## When not to use
 

@@ -523,7 +523,7 @@ function selectSlice(root, cursors, opts = {}) {
 // exclusion source next-slice uses instead of hand-copying the list — a
 // copied list drifts from this one (IL-40's cardinality-restatement lesson
 // applies equally to a restated set). SOURCE_EXTS is exported for the same
-// reason — the JS/TS extension set candidates-dead-code.js already
+// reason — the JS/TS extension set source-scan.js already
 // hand-declares its own copy of, but new verticals should not add a third.
 module.exports = {
   listSlices,

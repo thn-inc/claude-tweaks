@@ -10,6 +10,7 @@ When **all** of the following hold, render the compact block below instead of th
 - Zero findings in every category (code review, hindsight, visual, design quality, coverage, docs) and zero unresolved QA ledger entries. A non-empty skill load delta (3j) is informational and does not disqualify the compact form.
 - Zero tradeoffs accepted, zero autonomous actions performed (no fixes, no simplifier changes, no ledger resolutions)
 - No manual steps required
+- No `/build` plan step left not run (the full template's "Not run by /build" section would be omitted)
 - Zero untracked files and zero new listeners reported by the post-fan-out sweep (`step3-lens-dispatch.md`)
 
 ```markdown
@@ -50,6 +51,16 @@ The compact form never suppresses information, only empty scaffolding: if any se
 - Type check: {pass/fail}
 - Lint: {pass/fail}
 - Tests: {pass/fail}
+
+### Not run by /build
+
+{Include when `$PIPELINE_RUN_DIR/decisions.md` holds at least one line under its `## /build` heading that begins `- SKIP` and carries `not run by /build; surfaced for /review` — the line `build/dispatch.md`'s Folded verification task rule writes for a plan step `/build` could not run (`(skipped)`) or ran only in part (`(degraded)`). Omit otherwise: no run dir, or no such line. Other `/build` `SKIP` lines trace skipped pipeline steps, not plan verification — never list them here.}
+
+| Plan step | Outcome | Condition |
+|-----------|---------|-----------|
+| {plan task} step "{step}" | {skipped/degraded} | {condition — for degraded, what did not run} |
+
+> Each row is a verification the plan required that no phase ran. It is reported for a human to run or accept — not by itself a BLOCKED finding.
 
 ### QA Validation (from /test)
 - **Status:** {ALL PASSED | PASSED WITH OBSERVATIONS (N stories, M caveats) | PARTIAL FAILURE (N passed, M failed) | ALL FAILED (M failed) | Skipped — no stories | Skipped — no dev server | Not run}{stale-QA qualifier or never-run suffix, when one applies}

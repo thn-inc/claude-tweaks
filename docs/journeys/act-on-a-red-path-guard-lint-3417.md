@@ -41,7 +41,7 @@ files:
   - `canonicalRealpath` and `resolveLeaf` default to `fs.realpathSync.native`. Passing the JS `fs.realpathSync` is right only when the other side of a comparison is JS-resolved too, as `plugin/bin/lib/timing/transcript.js` does for its projects root and transcript leaves (`realTarget()` did for `isPolicyFile` until #3495).
 - **Red flags:**
   - Comparing a JS `fs.realpathSync` result with a `.native`, git-reported or un-resolved path. That mismatch is what #3380 hit on a case-insensitive volume.
-  - Treating `existsSync(p)` as proof that `p` is a directory before writing under it. That is the gap #3493 tracks in `plan-audit`.
+  - Treating `existsSync(p)` as proof that `p` is a directory before writing under it. `plan-audit`'s Check A did exactly this until #3493 moved it to `lstatType(p).type === 'directory'` (following a symlink only through `resolveLeaf`). Once the lint passes, a fallback that would otherwise accept the path must still check the type: a regular file at the repo root has the root directory as its own parent.
 
 ### 3. Route it, or record why it is safe
 - **URL:** the edited `plugin/bin/` file, and the `ALLOWLIST` in `tests/path-guard-conformance.test.js`.
@@ -58,4 +58,5 @@ files:
 - Updated during build of #3536. The lint's comment stripper moved into the shared `tests/helpers/strip-comments.js`, so escaped-slash regexes no longer blank code. The Step 1 red flag now names the regex shapes that still can.
 - Updated during build of #3573. A file whose stripped text stops compiling now fails the lint with its own offender line (via `stripperVerdict`), instead of silently counting as zero tokens. Step 1 lists the two new offender forms and says what to do about a mis-parse.
 - Updated during build of #3585. The shared stripper now models regex literals, so a quote or backtick inside a regex no longer hides the comments after it: in 23 `plugin/bin` files the lint stopped counting tokens named only in comment text. The Step 1 mis-parse red flag now names the one shape left (a regex right after `)` or `}`) and its rewrite.
+- Updated during build of #3493. `lib/plan-audit/checks.js` was the last `UNSAFE —` allowlist entry. It now routes Check A's parent-directory checks through path-guard, and its entry records the four remaining `existsSync` calls as plain presence checks. The Step 2 red flag now describes the fix and warns that a fallback rule can let a regular file back in.
 - Related: `act-on-a-red-skill-size-guard-3311.md` (the same shape for the skill-size guard), and `notice-a-stale-superpowers-install-3380.md` (the case-canonical realpath incident).

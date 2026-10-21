@@ -117,6 +117,18 @@ test('planRetry: a fully attributed jest log whose failing file is allowlisted r
   assert.deepStrictEqual(plan.files, ['tests/flaky.test.js']);
 });
 
+test('AC1.1: planRetry: a jest log that crashed after its trailer refuses retry even when its failing file is allowlisted — unattributed-failures: 1 (#3674)', () => {
+  const log = readDialect('jest-results-processor-crash.txt');
+  const family = sniffFamily(log);
+  const failingFiles = extractFailingFiles(log, family);
+  assert.deepStrictEqual(failingFiles, ['tests/flaky.test.js']);
+  const plan = planRetry({
+    failingFiles, flaky: { files: ['tests/flaky.test.js'], maxRetries: 1 }, retry: RETRY, suite: 'tests',
+    unattributedCount: unattributedFailureCount(log, family), family,
+  });
+  assert.deepStrictEqual(plan, { retry: false, reason: 'unattributed-failures: 1' });
+});
+
 test('planRetry: a vitest log with an unhandled error refuses retry even when its failing file is allowlisted — unattributed-failures: 1 (#3480 AC)', () => {
   const log = readDialect('vitest-unhandled-error.txt');
   const family = sniffFamily(log);

@@ -35,7 +35,7 @@ function matchPreExisting({ failingFiles, preExisting }) {
 // files deleted from the working tree, which a suite could not have run.
 // `execImpl` is injectable like report.js's gitInfo.
 function trackedFiles(cwd, execImpl = execFileSync) {
-  const list = (...flags) => String(execImpl('git', ['ls-files', '-z', ...flags], { encoding: 'utf8', cwd, maxBuffer: 64 * 1024 * 1024 })).split('\0').filter((f) => f !== '');
+  const list = (...flags) => String(execImpl('git', ['ls-files', '-z', ...flags], { encoding: 'utf8', cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true })).split('\0').filter((f) => f !== '');
   try {
     const deleted = new Set(list('--deleted'));
     return [...new Set(list())].filter((f) => !deleted.has(f));

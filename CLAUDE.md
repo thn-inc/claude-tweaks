@@ -42,7 +42,7 @@ Invocation: `/claude-tweaks:release` (no arguments) — this repo dogfoods the s
 
 ### Cross-references
 
-- Every relationship between skills is stated **once**, in `docs/skill-graph.md`. Adding or changing a skill means adding or updating its edges there. Do not restate an edge inside a `SKILL.md`: the bidirectional convention this replaces required each edge in two places, and the two copies drifted
+- Every relationship between skills is stated **once**, in `docs/skill-graph.md`. Adding or changing a skill means adding or updating its edges there. Do not restate an edge inside a `SKILL.md` (unless it is the skill's trigger condition or its only disambiguation from a same-named skill — `docs/skill-authoring.md`'s Frontmatter conventions): the bidirectional convention this replaces required each edge in two places, and the two copies drifted
 - `/help`'s workflow diagrams must list all skills, and its artifact lifecycle diagram must stay in sync with `README.md`'s
 - A skill reference inside actionable instruction text (a `## Step N` body, a `## Next Actions` block) MUST use the fully-qualified `/claude-tweaks:{skill}` form — the `Skill` tool requires it, and a bare `/{skill}` there fails with "Unknown skill" at invocation time. Bare short-form references (`/{skill}`) are reserved for descriptive prose and Relationship-to-Other-Skills tables, where they're never passed to a tool call.
 

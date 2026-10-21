@@ -182,7 +182,7 @@ test('AC2.1: Section D still stops whatever ephemeral-server.txt currently names
 });
 
 test('AC4.1: the coordination is a no-op without a run dir', () => {
-  assert.ok(section(routing(), HEADING).includes('no run directory or no such file'));
+  assert.ok(section(routing(), HEADING).includes('no run directory or no server record'));
 });
 
 // Waived AC5.1: npm test passing is verified by Common Step 5's full run, not a unit test.

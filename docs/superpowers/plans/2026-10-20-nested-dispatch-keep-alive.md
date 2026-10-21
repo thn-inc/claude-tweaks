@@ -8,7 +8,7 @@
 
 **Tech Stack:** Markdown skill files; `node --test` conformance tests.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-20T075234-spec-3078/work/3078-spec.md` (record #3078; absorbs #3266)
+**Spec:** `.claude-tweaks/pipelines/archive/2026-10-20T075234-spec-3078/work/3078-spec.md` (record #3078; absorbs #3266)
 
 ## Global Constraints
 

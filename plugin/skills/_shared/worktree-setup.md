@@ -138,9 +138,9 @@ use plain filesystem reads (`ls`, `cat`) against the main checkout's path instea
 
 **Resolve plugin-supplied values to literals once.** `CLAUDE_PLUGIN_ROOT` is not
 set in the Bash tool environment, and inside a worktree session the same guard
-refuses a command that passes `"${CLAUDE_PLUGIN_ROOT}"` or `"$CLAUDE_CODE_SESSION_ID"`
-as a runtime value (`_shared/scratch-worktree.md` §7's runtime-computed-variable
-entries). The first time a later command needs either value, resolve it once: the
+refuses a command that uses `"${CLAUDE_PLUGIN_ROOT}"` as `node`'s script operand
+(`_shared/scratch-worktree.md` §7's `node` script-operand row); `"$CLAUDE_CODE_SESSION_ID"`
+as a plain argument ran unrefused when last probed, but a literal is still the safe form. The first time a later command needs either value, resolve it once: the
 plugin root is the invoking claude-tweaks skill's `Base directory for this skill:`
 line minus its trailing `skills/{name}` (no Skill invocation — the read file's own
 path, cut before its `skills/` segment); the session id is one plain `printenv
