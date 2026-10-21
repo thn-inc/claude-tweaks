@@ -4,6 +4,7 @@ files:
   - plugin/skills/_shared/git-discipline.md
   - plugin/bin/pr-merge-state.js
   - plugin/skills/wrap-up/summary-template.md
+  - plugin/skills/wrap-up/SKILL.md
   - plugin/skills/flow/summary-template.md
 ---
 
@@ -48,11 +49,15 @@ files:
 - **URL:** `plugin/skills/wrap-up/summary-template.md` "Leave-open mergeability (#3483)"; `plugin/skills/flow/summary-template.md` "Resume-to-merge row."
 - **Action:** the wrap-up Verdict names a `DIRTY` outcome — `blocked — conflict with main in {files}` for a conflict, caught up for a clean merge. `/claude-tweaks:flow`'s resume-to-merge row reads `PR #{n} {is ready | is blocked} — mergeability: {outcome}` for a `DIRTY` outcome, read from the run's (possibly archived) `decisions.md`.
 - **Should feel:** Honest — a PR GitHub runs no CI on is never reported as shipped.
-- **Should understand:** A `CLEAN`, `BLOCKED`, `UNKNOWN` or failed read stays in `decisions.md` only; the Verdict and the row add nothing for it.
+- **Should understand:**
+  - A `CLEAN`, `BLOCKED`, `UNKNOWN` or failed read stays in `decisions.md` only; the Verdict and the row add nothing for it.
+  - The phase-trace report renders last in wrap-up's Phase 4, after Execute approved actions and its Verify execution (`plugin/skills/wrap-up/SKILL.md`'s **Order (#3672)** paragraph). The `mergeability:` line therefore already exists when the Verdict reads it. "mergeability not re-checked" means the re-check did not run.
 - **Red flags:**
   - "Everything shipped" beside a `DIRTY — conflict in …` log line.
   - The resume row printing `mergeability: CLEAN` (or any non-DIRTY outcome).
+  - A Verdict reading "mergeability not re-checked" while `decisions.md` carries a `mergeability:` line. That means the report rendered before the execution step.
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #3483 (2026-10-19). On #3298's run a sibling merge left the parked PR `DIRTY`, GitHub suppressed its `test` workflow, and nothing re-read the PR after wrap-up's push. Wrap-up now re-checks a leave-open PR's mergeability once after that push and merges `main` in when git can.
+- Updated for #3672 (2026-10-21). Wrap-up's SKILL.md listed the phase-trace report before Execute approved actions. Read literally, that put the Verdict before the `mergeability:` line it names. Phase 4 now states one order, with the report rendering last, and the console hand-offs point at the execution step. Step 3 gained a line and a red flag for this.
 - Related: `notice-a-run-pr-gone-conflicting-at-phase-exit-2986.md` (the mid-run phase-exit check this one extends to wrap-up's exit).

@@ -18,7 +18,7 @@ When **all** of the following hold, render the compact block below instead of th
 
 **Review effort:** {tier} ({derivation source, same format as the full template's Review effort line})
 **Status:** Spec compliance {met | skipped — fast-lane | n/a — no spec} · Tests pass · QA {status} · Findings 0 · Hindsight clean · Simplification none needed · Visual {status, one word} · Design Quality {skipped ({reason}) | 0 findings} · Fan-out leftovers 0
-{only when 3j printed a table:} **Skill load delta:** {N} entry point(s) moved — largest ΔClosure {signed bytes} on {entry}
+{only when 3j printed a table:} **Skill load delta:** {N} entry point(s) moved (a grouped `{count} entries:` row counts as {count}) — largest ΔClosure {signed bytes} on {entry, or a grouped row's first name and "+{count−1} more"}
 
 ### Key Learnings
 {1-3 insights, or "No key learnings — straightforward review."}

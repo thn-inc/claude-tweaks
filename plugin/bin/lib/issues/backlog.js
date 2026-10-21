@@ -133,6 +133,7 @@ function deriveCreatedAtFromGit(records, { execFn = execSync } = {}) {
     const out = execFn(`git log -z --name-only --format=${COMMIT_DATE_MARKER}%cI`, {
       encoding: 'utf8',
       maxBuffer: LARGE_MAX_BUFFER_BYTES,
+      windowsHide: true,
     });
     for (const { header, tokens } of splitLogZ(out, (t) => t.startsWith(COMMIT_DATE_MARKER))) {
       const commitDate = header.slice(COMMIT_DATE_MARKER.length);

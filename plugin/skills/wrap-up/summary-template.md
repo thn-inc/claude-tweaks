@@ -1,6 +1,6 @@
 # Phase 4 — The Phase-Trace Report Template
 
-Loaded by `/claude-tweaks:wrap-up` Phase 4's "The phase-trace report", which always runs. Holds the render template for the wrap-up report — one section per phase — its conversation-mode variant, and the closure lines for record mode and conversation mode.
+Loaded by `/claude-tweaks:wrap-up` Phase 4's "The phase-trace report", which always runs, and runs last: after Execute approved actions and its Verify execution (`SKILL.md`'s Phase 4 order, #3672). Holds the render template for the wrap-up report — one section per phase — its conversation-mode variant, and the closure lines for record mode and conversation mode.
 
 References inside the blocks below to "this file" and to a `## Next Actions` section "below" resolve to `SKILL.md`, not to this file.
 
@@ -28,7 +28,9 @@ worktree-mode run at the moment this report renders — the session composing
 this report is still physically inside the worktree it would need to remove to
 pass `worktree-removed`, and `run-dir-archived` only happens after that removal.
 That is a real, expected state for a run that has not yet finished exiting, not
-evidence the run is blocked. This reach-limited reading applies to
+evidence the run is blocked. These rows come from the Verify execution table
+that Phase 4's execution step inserted just before this report renders
+(`SKILL.md`'s Phase 4 order). This reach-limited reading applies to
 `worktree-removed` only when its detail reads `worktree still listed` — the
 session hasn't exited yet, so the registration is still there by
 construction. When the ONLY failing rows are `worktree-removed` (under that
@@ -50,7 +52,8 @@ never a general license to downgrade an unrelated failure.
 
 **Leave-open mergeability (#3483).** When the run left its PR open,
 `execution-and-verification.md`'s Leave-open mergeability re-check logged
-one `mergeability:` outcome — read it from that `decisions.md` line (at
+one `mergeability:` outcome in Phase 4's execution step, which completes
+before this report renders (`SKILL.md`'s Phase 4 order) — read it from that `decisions.md` line (at
 `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/decisions.md` once
 cleanup item 8 archived the run), never from memory, and name it in the
 Verdict. `DIRTY → merged main as {sha}`
@@ -62,7 +65,7 @@ a PR GitHub runs no CI on has not shipped. `DIRTY — not caught up
 ({reason})` reads `blocked — PR conflicts with main, not caught up
 ({reason})`. Any other outcome (`CLEAN`, `BLOCKED`, `UNKNOWN`, a failed
 read) adds nothing to the Verdict. A leave-open run whose `decisions.md`
-holds no `mergeability:` line reads "mergeability not re-checked" in the
+holds no `mergeability:` line — the re-check did not run — reads "mergeability not re-checked" in the
 Verdict — never as clean.
 
 ### State

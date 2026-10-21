@@ -226,13 +226,15 @@ Informational only — feeds Phase 4's Next Actions, never gates or delays the w
 
 ## Phase 4: CLOSE — decide, execute, hand off
 
+**Order (#3672).** Phase 4's steps run in the order below: plan cleanup, the Wrap-Up Review Console, Execute approved actions (its Verify execution included), then the phase-trace report. The report renders last because its Verdict names facts only execution produces — the Leave-open mergeability re-check's `mergeability:` line in `decisions.md`, and the `wrap-up-engine.js verify` rows the #2550 carve-out reads — so a report rendered earlier would call a re-checked PR "mergeability not re-checked". A verify exit 3 still renders the report, its Verdict reading `BLOCKED`; only the closure line is withheld.
+
 ### Plan cleanup actions (formerly Step 5)
 
 This step **plans** the cleanup — it does not execute. Actual deletions and archival run at execution time *after* the nothing-left-behind gate and the Review Console approve them.
 
 Cleanup enumerates the items below, in canonical order: execution plans, ledger, design caches, worktree, record/spec lifecycle, ephemeral dev server, issue claim release, pipeline run dir (always last — see the canonical list's ordering rule).
 
-First check whether **any** of the following conditions holds for this run — record-based work (items 1, 5, 7), a ledger exists (2), the design wrapper was active (3), a worktree strategy was used (4), `${RUN_DIR}/ephemeral-server.txt` exists (6), or a pipeline run directory exists (8):
+First check whether **any** of the following conditions holds for this run — record-based work (items 1, 5, 7), a ledger exists (2), the design wrapper was active (3), a worktree strategy was used (4), the server record (`$MULTISPEC_PARENT_DIR/ephemeral-server.txt` in a multi-spec run, else `${RUN_DIR}/ephemeral-server.txt`) exists (6), or a pipeline run directory exists (8):
 
 - **At least one holds** → read `cleanup-procedures.md` in this skill's directory for the canonical cleanup list, filter it to rows whose Condition holds for this run (e.g., skip the worktree row when no worktree strategy was used), and carry the filtered list forward into the report and the execution step. That file's own text names a fast-path fragment for the common no-record/no-worktree/non-multi-spec case (#797) — read it there, not restated here.
 - **None holds** → report "No cleanup actions apply" and skip this step entirely; do not read the file.
@@ -243,9 +245,9 @@ Item 8 now holds on **every** run — Phase 1 creates a run directory unconditio
 
 The Review Console is the **second bookend** of the pipeline (see `_shared/auto-mode-contract.md`). **It runs in every mode**, reading the run directory Phase 1 guaranteed. It reads `decisions.md`, `staged/`, and `config.yml` from that directory, then presents one consolidated batch table with the named sections `review-console.md` heads (Auto-applied / Pending review / Low-confidence findings / Contested findings / Skill updates / Documentation updates / Journey updates / Configuration updates / Reference repairs / Cleanup actions) and three actions (Approve all / Override / Stop). The two coordination-derived sections (Low-confidence findings, Contested findings) render only when non-empty, as does Reference repairs. In interactive and standalone runs the console is what presents the cleanup, configuration, queue-write, memory and upstream proposals for approval — there is no separate batch decision. Approve all resolves the queue-write/memory/upstream proposals to their own stated defaults directly; Override is the one path that still drills them per item (`review-console-interactive.md`'s Hard requirements).
 
-**Multi-spec defer:** when `MULTISPEC_REVIEW_DEFER=1` is set by `/flow` multi-spec orchestration, skip the per-spec console — the consolidated end-of-run console at `/flow` handles all approvals across every spec in the run. Leave `staged/` and `decisions.md` untouched, append a "deferred" log entry, and proceed to the report.
+**Multi-spec defer:** when `MULTISPEC_REVIEW_DEFER=1` is set by `/flow` multi-spec orchestration, skip the per-spec console — the consolidated end-of-run console at `/flow` handles all approvals across every spec in the run. Leave `staged/` and `decisions.md` untouched, append a "deferred" log entry, and proceed to Phase 4's execution step.
 
-Empty-console fast path: skip the console entirely and proceed to the report when all of `review-console.md`'s Empty-console fast path conditions hold (`decisions.md` holds no decision-bearing entries — `SCANNED` and `SKIP` audit lines are excluded — `staged/` is empty, no skill/config updates exist, no cleanup actions apply, no queue writes, memory updates, or upstream feedback proposals are pending). Unconditional bookkeeping rows — run-dir archival — do not count as cleanup actions for that test; archival executes regardless.
+Empty-console fast path: skip the console entirely and proceed to Phase 4's execution step when all of `review-console.md`'s Empty-console fast path conditions hold (`decisions.md` holds no decision-bearing entries — `SCANNED` and `SKIP` audit lines are excluded — `staged/` is empty, no skill/config updates exist, no cleanup actions apply, no queue writes, memory updates, or upstream feedback proposals are pending). Unconditional bookkeeping rows — run-dir archival — do not count as cleanup actions for that test; archival executes regardless.
 
 **Gate the read.** Read `review-console.md` (`wrap-up-engine.js render --section procedure:review-console`) — for the run-directory resolution sequence, the multi-spec defer protocol, and the Auto-merge short-circuit's applicability check — when **either** holds. Once a real stop will actually render (i.e. neither the Auto-resolution short-circuit nor the Empty-console fast path resolved and returned), also read `review-console-interactive.md` for the full console template with every section table (including the conditionally-rendered Low-confidence, Contested findings, and Reference repairs sections), override/stop semantics, and the sort-order requirement:
 
@@ -253,6 +255,12 @@ Empty-console fast path: skip the console entirely and proceed to the report whe
 - This run resolves a materialized header (`inputs.records`) whose issue carries a live `auto:merge` or `auto:merge-pending` label (re-fetch via `gh issue view --json labels`) — the pending case exists so a still-maturing grant reaches the short-circuit's own maturation check instead of being silently skipped (#309).
 
 The second condition exists because the **Auto-merge short-circuit**'s applicability check lives in `review-console.md`, not in this file — it is not part of the console rendering it precedes. Without it, a run that qualified for the empty-console fast path would silently skip its authorized auto-merge. In practice the fast path cannot fire on such a run — it requires "no cleanup actions apply," and a run with a materialized header is a pipeline run whose worktree row always applies — so this is a belt-and-braces guard against a latent ordering hazard, not a live bug. The full procedure itself is a further lazy-load, one level deeper: `review-console.md`'s Auto-merge short-circuit heading only points at `auto-merge-short-circuit.md` — that file loads only for the run that actually clears the condition above, not for every run that clears the fast path.
+
+### Execute approved actions (formerly Step 10)
+
+Execute the cleanup planned above (canonical list in `cleanup-procedures.md`, filtered by Condition) plus the configuration, documentation, skill, and acceptance-labeling actions approved at the Review Console — then verify each one landed before the closure line is emitted.
+
+**Gate the read.** Read `execution-and-verification.md` in this skill's directory — the `--dry-run` preview branch, the `MULTISPEC_REVIEW_DEFER` skip list, the full apply list (documentation, CLAUDE.md/rules, new docs, docs-health restructural filings, ADRs, skill updates, and acceptance labeling with its own gated read of `verification-brief.md`), the closing-keyword carrier commit, and the Verify-execution checklist — when at least one approved action exists: a cleanup row surviving the Condition filter, an approved configuration / documentation / skill update, an approved memory write or upstream filing, or record-mode acceptance labeling. When cleanup planning reported "No cleanup actions apply" and nothing else was approved, report "No actions to execute" and skip the read — there is nothing to commit or verify.
 
 ### The phase-trace report (formerly Step 9)
 
@@ -262,19 +270,13 @@ Render the report as the engine's own trace of this run, never as prose composed
 node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-engine.js" render --run-dir "$PIPELINE_RUN_DIR" --section trace --strict
 ```
 
-(Substitute the re-resolved run-dir path — env assignments do not survive between calls.)
+(Substitute the re-resolved run-dir path — env assignments do not survive between calls. The report renders after the execution step, so once cleanup item 8 archived the run, pass `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` as `--run-dir`: `render` reads `engine-state.json` from exactly the path it is given and, unlike `verify`, does not look in the archive itself.)
 
 Insert that output verbatim as the Phase 2 table. `--strict` prints the table first and then exits 2 if any worklist row has no recorded result, so a hole is visible *and* fatal. **Re-read cut:** when every row scanned clean or gate-closed (nothing to update anywhere), the render collapses to one line — `{N} rows scanned, 0 findings — nothing to update.` — instead of an N-row table that would otherwise be all `n/a`/`Clean` (`engine-render.js`'s `renderTrace`). A single row carrying findings, or a row with no recorded result at all, always forces the full table — the collapse never hides a real outcome. Under the prose fallback, compose the table by hand per `curation-engine.md` section 6 and caption it `(engine unavailable — prose fallback ran)`.
 
 **Read the template.** Read `summary-template.md` in this skill's directory for the report's full shape and its conversation-mode variant. This read is unconditional — the report renders on every run.
 
 Next Actions are rendered as a top-level `## Next Actions` section after execution — see the section near the end of this file.
-
-### Execute approved actions (formerly Step 10)
-
-Execute the cleanup planned above (canonical list in `cleanup-procedures.md`, filtered by Condition) plus the configuration, documentation, skill, and acceptance-labeling actions approved at the Review Console — then verify each one landed before the closure line is emitted.
-
-**Gate the read.** Read `execution-and-verification.md` in this skill's directory — the `--dry-run` preview branch, the `MULTISPEC_REVIEW_DEFER` skip list, the full apply list (documentation, CLAUDE.md/rules, new docs, docs-health restructural filings, ADRs, skill updates, and acceptance labeling with its own gated read of `verification-brief.md`), the closing-keyword carrier commit, and the Verify-execution checklist — when at least one approved action exists: a cleanup row surviving the Condition filter, an approved configuration / documentation / skill update, an approved memory write or upstream filing, or record-mode acceptance labeling. When cleanup planning reported "No cleanup actions apply" and nothing else was approved, report "No actions to execute" and skip the read — there is nothing to commit or verify.
 
 ## Important Notes
 

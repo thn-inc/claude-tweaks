@@ -11,7 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const { run } = require('../plugin/bin/load-delta');
+const { run, renderText } = require('../plugin/bin/load-delta');
 const { readText } = require('./helpers/read-skill');
 
 const REPO = path.join(__dirname, '..');
@@ -349,6 +349,62 @@ test('text outcome 3: a table with added/removed markers and signed deltas', () 
   assert.match(out, /\| plugin:s \| 15 \| \+13 \| 15 \| \+13 \| 1: `missing\.md` \|/);
 });
 
+test('AC1.1/AC1.2/AC2.1: a _shared edit moving 4 entries by one ΔClosure renders one grouped row; a different delta stays its own row; --json is per-entry and unchanged', () => {
+  const CITE = 'Read `_shared/x.md`.\n';
+  const dir = makeRepo({
+    'plugin/skills/_shared/x.md': 'shared\n',
+    'plugin/skills/a/SKILL.md': CITE,
+    'plugin/skills/b/SKILL.md': `${CITE}b\n`,
+    'plugin/skills/c/SKILL.md': `${CITE}cc\n`,
+    'plugin/skills/e/SKILL.md': `${CITE}eee\n`,
+    'plugin/skills/d/SKILL.md': `${CITE}Read \`part.md\` in this skill's directory.\n`,
+    'plugin/skills/d/part.md': 'p\n',
+  });
+  fs.appendFileSync(path.join(dir, 'plugin/skills/_shared/x.md'), 'one added row\n');
+  fs.appendFileSync(path.join(dir, 'plugin/skills/d/part.md'), 'more\n');
+  const lines = call([], dir).stdout.split('\n');
+  const sep = lines.indexOf('|---|---|---|---|---|---|');
+  assert.deepStrictEqual(lines.slice(sep + 1), [
+    '| 4 entries: plugin:a, plugin:b, plugin:c, … +1 more | 21–25 | 0 | 42–46 | +14 | — |',
+    '| plugin:d | 63 | 0 | 91 | +19 | — |',
+    '',
+  ]);
+  const j = JSON.parse(call(['--json'], dir).stdout);
+  assert.deepStrictEqual(j.roots[0].entries, [
+    { entry: 'plugin:a', floor: 21, dFloor: 0, closure: 42, dClosure: 14, newUnresolved: [] },
+    { entry: 'plugin:b', floor: 23, dFloor: 0, closure: 44, dClosure: 14, newUnresolved: [] },
+    { entry: 'plugin:c', floor: 24, dFloor: 0, closure: 45, dClosure: 14, newUnresolved: [] },
+    { entry: 'plugin:d', floor: 63, dFloor: 0, closure: 91, dClosure: 19, newUnresolved: [] },
+    { entry: 'plugin:e', floor: 25, dFloor: 0, closure: 46, dClosure: 14, newUnresolved: [] },
+  ]);
+});
+
+test('renderText groups by mark, deltas and new-unresolved; a pair groups; equal floors render one value', () => {
+  const result = {
+    status: 'ok', base: 'a'.repeat(40), baseKind: 'base', baseLabel: 'r',
+    roots: [{ pluginRoot: 'plugin', entries: [
+      { entry: 'p:a', floor: 10, dFloor: 0, closure: 50, dClosure: 5, newUnresolved: [] },
+      { entry: 'p:b', floor: 10, dFloor: 0, closure: 60, dClosure: 5, newUnresolved: [] },
+      { entry: 'p:c', floor: 10, dFloor: 0, closure: 70, dClosure: 5, newUnresolved: [{ citingFile: 'plugin/skills/c/SKILL.md', token: 'gone.md' }] },
+      { entry: 'p:d', floor: 5, dFloor: 5, closure: 5, dClosure: 5, newUnresolved: [], added: true },
+      { entry: 'p:e', floor: 5, dFloor: 5, closure: 5, dClosure: 5, newUnresolved: [] },
+      { entry: 'p:f', floor: 20, dFloor: 0, closure: 30, dClosure: 9, newUnresolved: [] },
+      { entry: 'p:g', floor: 20, dFloor: 0, closure: 31, dClosure: 9, newUnresolved: [] },
+      { entry: 'p:h', floor: 21, dFloor: 0, closure: 32, dClosure: 9, newUnresolved: [] },
+    ] }],
+  };
+  const lines = renderText(result, []).split('\n');
+  const sep = lines.indexOf('|---|---|---|---|---|---|');
+  assert.deepStrictEqual(lines.slice(sep + 1), [
+    '| 2 entries: p:a, p:b | 10 | 0 | 50–60 | +5 | — |',
+    '| p:c | 10 | 0 | 70 | +5 | 1: `gone.md` |',
+    '| p:d (added) | 5 | +5 | 5 | +5 | — |',
+    '| p:e | 5 | +5 | 5 | +5 | — |',
+    '| 3 entries: p:f, p:g, p:h | 20–21 | 0 | 30–32 | +9 | — |',
+    '',
+  ]);
+});
+
 test('AC12: this repo — exits 0 and lists both the plugin and .claude roots', () => {
   const r = call(['--json'], REPO);
   assert.strictEqual(r.code, 0, r.stderr);
@@ -378,6 +434,7 @@ test('step3-skill-load-delta.md quotes every outcome line the CLI prints, verbat
     'Skill load delta: skill files changed, no entry point\'s load moved',
     '(also changed outside discovered roots: {parent}; pass --plugin-root to measure)',
     '| Entry | Floor | ΔFloor | Closure | ΔClosure | New unresolved |',
+    '{count} entries: {e1}, {e2}, {e3}, … +{k} more',
     'Skill load delta (base {sha} = merge-base with origin/{name}):',
     'Skill load delta (base {sha} = --base {ref}):',
     'Skill load delta: no baseline (integration branch unresolved — pass --integration-branch) — skipped',

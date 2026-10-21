@@ -96,7 +96,7 @@ invoke the same procedure.
 3. Auto-applied items the user wants reverted: `git revert {commit}` (one revert commit per item, to keep history clean)
 4. Cleanup items the user skipped: leave the target intact (spec/plan/worktree stays)
 5. Queue writes (`Q#`), Memory updates (`M#`), and Upstream feedback (`U#`) resolve via their own multiSelect chunking (`_shared/batched-item-drill.md` for `Q#`/`M#`; `_shared/upstream-feedback-batch.md` for `U#`) — override is the one path where they resolve individually instead of by their Approve-all default; no per-item gate can be bulk-resolved by a shared toggle even here (Hard requirements below)
-6. Commit, then proceed to the phase-trace report
+6. Commit, then proceed to Phase 4's execution step
 
 ## On stop (option 3)
 

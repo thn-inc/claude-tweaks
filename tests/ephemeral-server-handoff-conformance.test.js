@@ -142,7 +142,7 @@ test('go-red: removing the record-gate sentence fails the gate predicate', () =>
 test('go-red: moving the record-gate sentence after the kill bullets fails the ordering assertion', () => {
   const body = sectionD(readText(CLEANUP_EXEC));
   const bullets = body.match(/^ {3}- \*\*win32:\*\*[^\n]*\n {3}- \*\*POSIX:\*\*[^\n]*\n/m)[0];
-  const mutated = body.replace(bullets, '').replace('2. Read `{run-dir}', bullets + '2. Read `{run-dir}');
+  const mutated = body.replace(bullets, '').replace('2. Read the server record', bullets + '2. Read the server record');
   assert.notEqual(mutated, body);
   assert.throws(() => assertRecordGate(mutated), /the record gate must sit before the first kill/);
 });

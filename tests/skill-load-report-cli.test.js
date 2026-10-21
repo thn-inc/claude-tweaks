@@ -35,6 +35,11 @@ const invocation = (skill, id, bytes) => [skillUse(skill, id), injectedBody(byte
 
 const SKILL_PATH = '/home/u/.claude/plugins/cache/m/demo/1.0.0/skills/alpha/more.md';
 
+// A Read fixture built from a real temp path: forward slashes on win32 too, the
+// only form transcript-load's isProcedurePath records (a backslash path is never
+// seen as a skill-file Read, so a path.join() fixture there would never register).
+const posix = (p) => p.split(path.sep).join('/');
+
 function tmp(prefix) { return fs.mkdtempSync(path.join(os.tmpdir(), prefix)); }
 
 function writeJsonl(file, lines, mtimeSec) {
@@ -77,7 +82,7 @@ test('--help prints usage and exits 0', async () => {
 });
 
 test('malformed invocations exit 2 with no stdout', async () => {
-  for (const argv of [['--bogus'], ['--sessions', '0'], ['--sessions', 'abc'], ['--cwd'], ['--plugin-root', '--cwd']]) {
+  for (const argv of [['--bogus'], ['--sessions', '0'], ['--sessions', 'abc'], ['--cwd'], ['--plugin-root', '--cwd'], ['--optional-plugin-root']]) {
     const { out, deps } = setup();
     assert.strictEqual(await run(argv, deps), 2, argv.join(' '));
     assert.strictEqual(out.stdout, '');
@@ -136,7 +141,7 @@ test('an unreadable subagents/ directory is counted and the run continues', CHMO
   }
 });
 
-test('closure joins on namespace + skill: over its closure is flagged, another plugin\'s same-named skill gets closure null', async () => {
+test('closure joins on namespace + skill: demo:alpha gets its closure, another plugin\'s same-named skill gets closure null', async () => {
   const { transcriptDir, deps, json } = setup();
   const { root, closure } = pluginRoot();
   writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
@@ -148,8 +153,8 @@ test('closure joins on namespace + skill: over its closure is flagged, another p
   assert.strictEqual(r.status, 'ok');
   assert.strictEqual(r.sessions, 1);
   assert.deepStrictEqual(r.rows, [
-    { skill: 'demo:alpha', invocations: 1, median: closure + 500, max: closure + 500, closure, overClosure: true },
-    { skill: 'other:alpha', invocations: 1, median: 300, max: 300, closure: null, overClosure: false },
+    { skill: 'demo:alpha', invocations: 1, median: closure + 500, max: closure + 500, closure, outsideClosure: [] },
+    { skill: 'other:alpha', invocations: 1, median: 300, max: 300, closure: null, outsideClosure: null },
   ]);
 });
 
@@ -164,17 +169,180 @@ test('a project-local root (no plugin.json) folds path-namespaced names into the
   ]);
   await run(['--plugin-root', root], deps);
   assert.deepStrictEqual(json().rows, [
-    { skill: 'alpha', invocations: 2, median: 150, max: 200, closure, overClosure: false },
-    { skill: 'demo:alpha', invocations: 1, median: 50, max: 50, closure: null, overClosure: false },
+    { skill: 'alpha', invocations: 2, median: 150, max: 200, closure, outsideClosure: [] },
+    { skill: 'demo:alpha', invocations: 1, median: 50, max: 50, closure: null, outsideClosure: null },
   ]);
 });
 
-test('overClosure is false when max equals the closure exactly', async () => {
+const CACHE = '/home/u/.claude/plugins/cache/m/demo/1.0.0';
+const withFile = (root, rel, text) => {
+  fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+  fs.writeFileSync(path.join(root, rel), text);
+};
+const outsideOf = (r, skill) => r.rows.find((x) => x.skill === skill).outsideClosure;
+
+test('AC1.1: a read of a root file outside the closure is listed in outsideClosure', async () => {
   const { transcriptDir, deps, json } = setup();
-  const { root, closure } = pluginRoot();
-  writeJsonl(path.join(transcriptDir, 's1.jsonl'), invocation('demo:alpha', 't1', closure));
-  await run(['--plugin-root', root], deps);
-  assert.deepStrictEqual(json().rows.map((r) => [r.max, r.closure, r.overClosure]), [[closure, closure, false]]);
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse(`${CACHE}/skills/alpha/extra.md`, 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), ['skills/alpha/extra.md']);
+});
+
+test('AC1.2: reading only closure files leaves outsideClosure empty', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse(`${CACHE}/skills/alpha/SKILL.md`, 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), []);
+});
+
+test('cross-root reads are not comparable', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse('/repo/.claude/skills/other/SKILL.md', 'r1'),
+    readResult('r1', 40),
+    readUse('/home/u/.claude/plugins/cache/m2/other/2.0.0/skills/beta/SKILL.md', 'r2'),
+    readResult('r2', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), []);
+});
+
+// Origin anchoring: a read counts only when the text before its final
+// "skills/" segment is the matched root itself or, for a named plugin, an
+// installed copy of it under plugins/cache/{marketplace}/{name}/{version}/.
+test('origin: a same-relative-path read under no root is not counted', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse('/proj/.claude/skills/alpha/extra.md', 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), []);
+});
+
+test('origin: an installed copy of the same plugin at another version is counted', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse('/home/u/.claude/plugins/cache/m/demo/9.9.9/skills/alpha/extra.md', 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), ['skills/alpha/extra.md']);
+});
+
+test('origin: a cache path of a different plugin name is not counted', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse('/home/u/.claude/plugins/cache/m/other/1.0.0/skills/alpha/extra.md', 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), []);
+});
+
+test('origin: a read under the root\'s own absolute path is counted', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse(posix(path.join(root, 'skills/alpha/extra.md')), 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), ['skills/alpha/extra.md']);
+});
+
+test('origin: a root with no plugin.json accepts no installed-copy path', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  fs.rmSync(path.join(root, '.claude-plugin'), { recursive: true });
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('alpha', 't1', 100),
+    readUse(`${CACHE}/skills/alpha/extra.md`, 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'alpha'), []);
+});
+
+test('outsideClosure is distinct and sorted', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/z.md', 'z\n');
+  withFile(root, 'skills/alpha/b.md', 'b\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('demo:alpha', 't1', 100),
+    readUse(`${CACHE}/skills/alpha/z.md`, 'r1'),
+    readResult('r1', 10),
+    readUse(`${CACHE}/skills/alpha/b.md`, 'r2'),
+    readResult('r2', 10),
+    ...invocation('demo:alpha', 't2', 100),
+    readUse(`${CACHE}/skills/alpha/z.md`, 'r3'),
+    readResult('r3', 10),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  assert.deepStrictEqual(outsideOf(json(), 'demo:alpha'), ['skills/alpha/b.md', 'skills/alpha/z.md']);
+});
+
+test('null closure gives null outsideClosure', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(root, 'skills/alpha/extra.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    readUse(`${CACHE}/skills/alpha/extra.md`, 'r0'),
+    readResult('r0', 10),
+    ...invocation('other:alpha', 't1', 100),
+    readUse(`${CACHE}/skills/alpha/extra.md`, 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(['--plugin-root', root], deps), 0);
+  const rows = json().rows;
+  assert.deepStrictEqual(rows.map((r) => r.skill).sort(), ['(main, unattributed)', 'other:alpha']);
+  for (const r of rows) assert.deepStrictEqual([r.closure, r.outsideClosure], [null, null], r.skill);
+});
+
+test('--optional-plugin-root without skills/ is skipped, not exit 2', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), invocation('demo:alpha', 't1', 100));
+  assert.strictEqual(await run(['--plugin-root', root, '--optional-plugin-root', tmp('slr-noskills-')], deps), 0);
+  assert.strictEqual(json().status, 'ok');
+});
+
+test('--optional-plugin-root with skills/ joins its closure', async () => {
+  const { cwd, transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  fs.cpSync(root, path.join(cwd, '.claude'), { recursive: true, filter: (src) => path.basename(src) !== '.claude-plugin' });
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), invocation('alpha', 't1', 100));
+  assert.strictEqual(await run(['--optional-plugin-root', '.claude'], deps), 0);
+  const row = json().rows.find((r) => r.skill === 'alpha');
+  assert.strictEqual(typeof row.closure, 'number');
+  assert.deepStrictEqual(row.outsideClosure, []);
 });
 
 test('closure counts a bare-name citation of another skill\'s file', async () => {
@@ -250,23 +418,74 @@ test('AC3.2: a plugin root deleted entirely at the same point degrades the same 
   assert.deepStrictEqual(r.rows.map((x) => [x.skill, x.closure]), [['demo:alpha', null]]);
 });
 
-test('harness-health names the Skill-load check: command, top 10, filing title, dedup, auto-close, --dry-run', () => {
-  const text = readText(path.join(__dirname, '..', 'plugin', 'skills', 'harness-health', 'SKILL.md'));
+const HARNESS_HEALTH = path.join(__dirname, '..', 'plugin', 'skills', 'harness-health', 'SKILL.md');
+
+// The Skill-load check paragraph is its lead-in, one ```bash block, and the
+// text after the fence up to the next blank line.
+function skillLoadParagraph(text) {
   const start = text.indexOf('**Skill-load check (#3309');
   assert.ok(start >= 0, 'harness-health/SKILL.md has no Skill-load check paragraph');
-  // The paragraph is its lead-in, one ```bash block, and the text after the
-  // fence up to the next blank line.
   const fenceEnd = text.indexOf('\n```\n', text.indexOf('```bash', start)) + 5;
-  const para = text.slice(start, text.indexOf('\n\n', fenceEnd));
+  return text.slice(start, text.indexOf('\n\n', fenceEnd));
+}
+
+// The paragraph's documented command with ${CLAUDE_PLUGIN_ROOT} replaced by
+// `pluginRootDir`, as the argv run() takes: split on spaces outside double
+// quotes, quotes stripped, the leading `node <script>` tokens dropped.
+function documentedArgv(pluginRootDir) {
+  const para = skillLoadParagraph(readText(HARNESS_HEALTH));
+  const line = para.split('\n').find((l) => l.startsWith('node ') && l.includes('skill-load-report.js'));
+  assert.ok(line, 'the Skill-load check paragraph has no skill-load-report.js command line');
+  const tokens = [];
+  let cur = '';
+  let quoted = false;
+  for (const ch of line.split('${CLAUDE_PLUGIN_ROOT}').join(pluginRootDir)) {
+    if (ch === '"') quoted = !quoted;
+    else if (ch === ' ' && !quoted) { if (cur) tokens.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  if (cur) tokens.push(cur);
+  return tokens.slice(2);
+}
+
+test('AC3.1: a project-local skill invoked from a worktree joins its .claude/skills closure under the harness-health command as written', async () => {
+  const { cwd, transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  withFile(cwd, '.claude/skills/alpha/SKILL.md', `# Alpha\n\n${'a'.repeat(1000)}\n`);
+  withFile(cwd, '.claude/skills/alpha/notes.md', 'uncited\n');
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
+    ...invocation('.claude/worktrees/wt:alpha', 't1', 100),
+    readUse(posix(path.join(cwd, '.claude/skills/alpha/notes.md')), 'r1'),
+    readResult('r1', 40),
+  ]);
+  assert.strictEqual(await run(documentedArgv(root), deps), 0);
+  const row = json().rows.find((r) => r.skill === 'alpha');
+  assert.ok(row, 'no alpha row');
+  assert.strictEqual(typeof row.closure, 'number');
+  assert.deepStrictEqual(row.outsideClosure, ['skills/alpha/notes.md']);
+});
+
+test('the harness-health command runs in a project with no .claude/skills', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), invocation('demo:alpha', 't1', 100));
+  assert.strictEqual(await run(documentedArgv(root), deps), 0);
+  assert.strictEqual(json().status, 'ok');
+});
+
+test('harness-health names the Skill-load check: command, top 10, filing title, dedup, auto-close, --dry-run', () => {
+  const para = skillLoadParagraph(readText(HARNESS_HEALTH));
   for (const needle of [
-    'node "${CLAUDE_PLUGIN_ROOT}/bin/skill-load-report.js" --plugin-root "${CLAUDE_PLUGIN_ROOT}"',
+    'node "${CLAUDE_PLUGIN_ROOT}/bin/skill-load-report.js" --plugin-root "${CLAUDE_PLUGIN_ROOT}" --optional-plugin-root .claude',
     'top 10',
-    '"Skill load exceeds its static closure: {skill}"',
+    'non-empty `outsideClosure`',
+    '"Skill reads files outside its static closure: {skill}"',
     'open `by:harness-health` issue already carries that exact title',
     '`status: "ok"`',
-    '`max ≤ closure`',
-    'Back within its static closure: max {max} B ≤ closure {closure} B over {sessions} sessions',
+    'empty `outsideClosure`',
+    'No outside reads observed over the last {sessions} sessions',
     'never closes anything',
+    'reopen',
     '`--dry-run`',
   ]) assert.ok(para.includes(needle), `Skill-load check paragraph is missing: ${needle}`);
 });
@@ -278,8 +497,5 @@ test('skill-load-report: the paragraph search still finds its break under CRLF l
   assert.ok(!raw.includes('\r\r\n'), 'the CRLF input must not contain \\r\\r\\n');
   assert.strictEqual(raw.indexOf('\n\n'), -1, 'a raw CRLF read has no LF paragraph break');
   assert.strictEqual(text, readText(FILE));
-  const start = text.indexOf('**Skill-load check (#3309');
-  const fenceEnd = text.indexOf('\n```\n', text.indexOf('```bash', start)) + 5;
-  const para = text.slice(start, text.indexOf('\n\n', fenceEnd));
-  assert.ok(para.includes('top 10'));
+  assert.ok(skillLoadParagraph(text).includes('top 10'));
 });

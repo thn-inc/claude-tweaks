@@ -138,7 +138,7 @@ The hook surface (`bin/hooks.js`, see CLAUDE.md Conventions → Hooks) mechanize
 - Auto-decision log entries (delete to undo)
 - Cache writes under `.claude-tweaks/pipelines/{run-id}/cache/*.json` (regeneration is cheap)
 - Ledger appends with status `observation` or `open`
-- **Ephemeral dev server** started on a free port, anchored to the worktree root, with PID/port tracked in `{run-id}/ephemeral-server.txt` and torn down at wrap-up (kill the process to undo). This is the worktree-correct way to make a running app reachable for `/visual-review` and `/stories` in auto mode — see `_shared/dev-url-detection.md`, "Ephemeral server start". (A *global install* like `agent-browser` is NOT in this class — see `browser-detection.md`.)
+- **Ephemeral dev server** started on a free port, anchored to the worktree root, with PID/port tracked in the server record (`_shared/dev-url-detection.md`'s Ephemeral server start item 4) and torn down at wrap-up (kill the process to undo). This is the worktree-correct way to make a running app reachable for `/visual-review` and `/stories` in auto mode — see `_shared/dev-url-detection.md`, "Ephemeral server start". (A *global install* like `agent-browser` is NOT in this class — see `browser-detection.md`.)
 
 ### Never-reversible (auto-FORBIDDEN, regardless of mode)
 

@@ -62,5 +62,5 @@ never restate their internals a third way):
    run directory outright — the auto-decision log is project history, not disposable pipeline
    state.
 
-Proceed to `SKILL.md`'s phase-trace report and "Execute approved actions" step as normal —
+Proceed to `SKILL.md`'s "Execute approved actions" step and phase-trace report as normal —
 nothing about the report, commit, or verification changes for this run shape.
