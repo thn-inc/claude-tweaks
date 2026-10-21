@@ -59,7 +59,8 @@ function hasRunStateFile(dir) {
 // close-run — record-worktree no longer does, #1124: it now hard-requires an
 // explicit --run, never guessing) only ever resolve an adopted run — safe
 // because every sanctioned caller runs after flow Step 3 has already
-// initialized the run dir (decisions.md with more than the claim line, or
+// initialized the run dir (decisions.md with more than Step 2.8's claim-log
+// lines (claim plus bookkeeping, #3665), or
 // run-state.json, already exists by then). Exception: in `interactive` mode
 // Step 3 skips the Manifesto, so a current-branch run stays claim-log-only
 // with no run-state.json until wrap-up and its own session's events get no

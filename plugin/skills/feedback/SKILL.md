@@ -82,7 +82,7 @@ choice — this and the verdict feed Step 5's draft.
 - Pick a fragment without the substring `git`, since the guard refuses that grep itself inside a worktree session.
 - A match on a `claude-tweaks:`-prefixed deny (`claude-tweaks: this project requires an isolated worktree…`, `claude-tweaks working-directory discipline: …`) keeps the plugin-hook attribution; telling the two apart is `docs/skill-authoring.md`'s "Harness-level worktree Bash guard vs. the plugin's PreToolUse gate" section.
 - A match on any other string: read the hit. A line that only quotes or recognizes the refusal (a regex, a signature constant) is not the plugin emitting it, so count it as no match; a line that emits the text as a deny reason keeps the plugin-hook attribution.
-- No match → the affected component is the Claude Code harness worktree guard: route it as a `_shared/scratch-worktree.md` §7 ("## 7. Shell constraint") addendum candidate (a documentation finding), never a hook defect.
+- No match → the affected component is the Claude Code harness worktree guard: route it as a `_shared/scratch-worktree.md` §7 ("## 7. Shell constraint") table-row candidate (a documentation finding), never a hook defect.
 - Exception: `Permission to use Bash … has been denied` is a permission rule, per that same section.
 
 When the free-text names a preserved unfiled draft by absolute path (the

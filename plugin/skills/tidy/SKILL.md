@@ -202,7 +202,7 @@ After all actions are applied, verify every decision was fully executed. Present
 
 If any verification fails, fix it before committing. Do not commit partial state.
 
-**Extracted — read `step-7-5-worktree-always.md` in this skill's directory.** Covers the scratch-worktree procedure for Step 7's mutations and the tidy-up commit under `worktree-always: true`: provisioning, the `local-merge` vs `pr-first` branches, arming a `pr-first` PR before `ExitWorktree`, the commit itself (including the `pr-first` run-dir-copy step), and the `housekeeping-auto-merge` grant / `<!-- tidy-housekeeping-pr -->` marker. Read it whole when `worktree-always` resolves `true`; skip it entirely otherwise (Step 7 never mutates or commits without it, and no worktree is ever provisioned).
+**Extracted — read `step-7-5-worktree-always.md` in this skill's directory.** Covers the scratch-worktree procedure for Step 7's mutations and the tidy-up commit under `worktree-always: true`: provisioning (only when the approved set holds a working-tree write), the `local-merge` vs `pr-first` branches, arming a `pr-first` PR before `ExitWorktree`, the commit itself (including the `pr-first` run-dir-copy step), and the `housekeeping-auto-merge` grant / `<!-- tidy-housekeeping-pr -->` marker. Read it whole when `worktree-always` resolves `true`; skip it entirely otherwise (no worktree is ever provisioned, and Step 7 runs from the checkout it is in).
 
 ## Routine Configuration
 
@@ -239,7 +239,7 @@ Empty fallback — Approve and Yours both empty (the fixed block, unchanged from
 
 `/claude-tweaks:tidy` has one sanctioned parent: `/claude-tweaks:sweep`, whose Step 1 passes `--source sweep` — the explicit parent signal; there is still no `PIPELINE_RUN_DIR` signal expected (tidy adopts an inherited one first, ladder step 1 — a set `$PIPELINE_RUN_DIR` alone still never means parent invocation — the run dir is resolved internally for Step 6's routing). Under `--source sweep`: auto-mode runs regardless of `auto-mode` policy, entries log to the shared `decisions.md`, findings stage to the shared `staged/`, and both `## Next Actions` and `AskUserQuestion` approval are suppressed — counts report to the parent; staged items wait for `/claude-tweaks:tidy --approve`. The report itself is not suppressed, only its chat send: it writes it to the run dir (`{run-dir}/report-condensed.md`, alongside `report.md`) for the parent to inline — `step-6-auto.md`'s `--source sweep` persistence bullet. Every other invocation is standalone: `## Next Actions` always renders.
 
-One exception to "never creates or enters a worktree": under `worktree-always: true`, Step 7.5 sets up a scratch worktree to satisfy the PreToolUse gate for Step 7's mutations and the tidy-up commit, then merges back and tears down before Next Actions render (see Step 7.5's handling above). Internal bookkeeping, not a parent-skill relationship.
+One exception to "never creates or enters a worktree": under `worktree-always: true`, when Step 7's approved set holds a working-tree write, Step 7.5 sets up a scratch worktree to satisfy the PreToolUse gate for Step 7's mutations and the tidy-up commit, then merges back and tears down before Next Actions render (see Step 7.5's handling above). Internal bookkeeping, not a parent-skill relationship.
 
 ## Anti-Patterns
 

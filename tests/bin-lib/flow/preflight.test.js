@@ -440,6 +440,34 @@ test('AC2.1: claim-log-only decisions.md beside fallback-only events.jsonl → c
   assert.strictEqual(a.hasOtherContent, false);
 });
 
+// #3665: degraded Step 2.8 bookkeeping is still a fresh mint — computeAdoption
+// inherits the widened claim-log-only class from classifyDecisions.
+const OVERLAP_SKIP_LINE = '- SKIP 18:42:05 — Step 2.8 file-overlap warning (skipped): condition: preflight-records.js exited non-zero or gh unavailable → fallback: overlap warning not computed; claim proceeds on the named targets only. Reversibility: n/a.\n';
+const DEGRADED_SKIP_LINE = "- SKIP 18:42:07 — Step 2.8 bot:in-progress projection (degraded): condition: label still absent on #7 after one mergeLabelNames retry → fallback: claim kept; dispatch's label pre-filter will not see this hold. Reversibility: n/a.\n";
+const PARAPHRASED_ONLY = '## /flow\n- AUTO 07:42:07 — spec #7 — flow/claim-targets: Claimed issue #7 for this run (claims-registry blob write, state: absent -> live). Reversibility: high.\n';
+const DEGRADED_MINTS = [
+  ['overlap-skip', `${CLAIM_ONLY}${OVERLAP_SKIP_LINE}`],
+  ['degraded-projection-skip', `${CLAIM_ONLY}${DEGRADED_SKIP_LINE}`],
+  ['paraphrased-claim', PARAPHRASED_ONLY],
+];
+
+for (const [kind, text] of DEGRADED_MINTS) {
+  test(`AC: degraded Step 2.8 mint (${kind}) beside fallback-only events.jsonl → case 2, not case 3 (#3665)`, () => {
+    const fallbackOnly = '{"type":"skill_invoked","skill":"claude-tweaks:build","ts":"2026-09-06T12:01:00.000Z","attribution":"fallback"}\n'
+      + '{"type":"skill_invoked","skill":"claude-tweaks:test","ts":"2026-09-06T12:02:00.000Z","attribution":"fallback"}\n';
+    const { a } = adoptionFor(text, { 'events.jsonl': fallbackOnly });
+    assert.strictEqual(a.case, 2, `expected case 2, got case ${a.case}`);
+    assert.strictEqual(a.hasOtherContent, false);
+    assert.deepStrictEqual(a.backfills, []);
+  });
+}
+
+test('a degraded Step 2.8 mint plus a Manifesto line is still case 3 (#3665)', () => {
+  const mixed = `${CLAIM_ONLY}${OVERLAP_SKIP_LINE}- AUTO 18:42:16 — Manifesto: design-critique resolved to auto (source: default). Reversibility: n/a.\n`;
+  const { a } = adoptionFor(mixed);
+  assert.strictEqual(a.case, 3, `expected case 3, got case ${a.case}`);
+});
+
 test('AC3.1: an env- or session-attributed (untagged) events.jsonl line is still other-run content (#3363)', () => {
   const fallbackLine = '{"type":"skill_invoked","skill":"claude-tweaks:build","ts":"2026-09-06T12:01:00.000Z","attribution":"fallback"}\n';
   for (const other of [

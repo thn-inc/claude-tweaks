@@ -207,7 +207,7 @@ If you need to resume a session after it entered a worktree, `cd` into the workt
 ## Local development
 
 ```bash
-claude --plugin-dir ./
+claude --plugin-dir ./plugin
 ```
 
 ## License

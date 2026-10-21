@@ -130,8 +130,12 @@ function statusContextBlock(text) {
 function assertStatusContextNormalization(text) {
   const block = statusContextBlock(text);
   assert.ok(block, 'pr-first-merge.md Step 2.5 names StatusContext normalization');
-  assert.ok(text.indexOf(block) > text.indexOf('**Read state first'), 'StatusContext paragraph sits inside Step 2.5');
-  assert.ok(text.indexOf(block) < text.indexOf('entry with `conclusion` in'), 'StatusContext paragraph precedes the red/pending rules');
+  const readAt = text.indexOf('**Read state first');
+  assert.notEqual(readAt, -1, 'pr-first-merge.md Step 2.5 anchor `**Read state first` not found — the ordering check would pass vacuously');
+  const redAt = text.indexOf('entry with `conclusion` in');
+  assert.notEqual(redAt, -1, 'pr-first-merge.md anchor `entry with `conclusion` in` not found — the ordering check would pass vacuously');
+  assert.ok(text.indexOf(block) > readAt, 'StatusContext paragraph sits inside Step 2.5');
+  assert.ok(text.indexOf(block) < redAt, 'StatusContext paragraph precedes the red/pending rules');
   assert.ok(block.includes('bin/lib/pr-checks/classify.js'), 'StatusContext paragraph names the code twin');
   const verdicts = {};
   for (const m of block.matchAll(/((?:`[A-Z]+`(?: or |, ))*`[A-Z]+`) → (red|pending|green)/g)) {
@@ -158,4 +162,16 @@ test('AC2.1 go-red control: removing the StatusContext paragraph fails the pin',
   const mutated = block ? MERGE.replace(block, '') : MERGE;
   assert.notEqual(mutated, MERGE, 'the StatusContext paragraph is present to remove');
   assert.throws(() => assertStatusContextNormalization(mutated), /names StatusContext normalization/);
+});
+
+test('#3770 go-red control: removing the **Read state first anchor fails the pin, naming it', () => {
+  const mutated = MERGE.replace('**Read state first', '');
+  assert.notEqual(mutated, MERGE, 'the **Read state first anchor is present to remove');
+  assert.throws(() => assertStatusContextNormalization(mutated), /\*\*Read state first/);
+});
+
+test('#3770 go-red control: removing the entry with `conclusion` in anchor fails the pin, naming it', () => {
+  const mutated = MERGE.replace('entry with `conclusion` in', '');
+  assert.notEqual(mutated, MERGE, 'the entry with `conclusion` in anchor is present to remove');
+  assert.throws(() => assertStatusContextNormalization(mutated), /entry with `conclusion` in/);
 });
