@@ -53,6 +53,30 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.150.0](https://github.com/thn-inc/claude-tweaks/compare/v6.149.0...v6.150.0) (2026-10-21)
+
+
+### Features
+
+* test: QA report.json is written only by agent prose, so… ([#3328](https://github.com/thn-inc/claude-tweaks/issues/3328)) ([e137804](https://github.com/thn-inc/claude-tweaks/commit/e137804fc60fd07360144a28c13840b857316294))
+* tidy Step 7.5: skip the scratch worktree when every… ([#3339](https://github.com/thn-inc/claude-tweaks/issues/3339)) ([22314f5](https://github.com/thn-inc/claude-tweaks/commit/22314f5e720e0ce1c1a58b23ce5d876d9d9cdbe1))
+* wrap-up: dispose three deferred digest findings (ledger… ([#3595](https://github.com/thn-inc/claude-tweaks/issues/3595)) ([4dea52a](https://github.com/thn-inc/claude-tweaks/commit/4dea52a99956a818ca3d22e7b670368f891a9e27)), closes [#3599](https://github.com/thn-inc/claude-tweaks/issues/3599) [#3602](https://github.com/thn-inc/claude-tweaks/issues/3602) [#3695](https://github.com/thn-inc/claude-tweaks/issues/3695) [#3696](https://github.com/thn-inc/claude-tweaks/issues/3696) [#3698](https://github.com/thn-inc/claude-tweaks/issues/3698) [#3699](https://github.com/thn-inc/claude-tweaks/issues/3699)
+
+
+### Bug Fixes
+
+* /build's folded-verification SKIP line says "surfaced for… ([#3767](https://github.com/thn-inc/claude-tweaks/issues/3767)) ([82492a7](https://github.com/thn-inc/claude-tweaks/commit/82492a7617da07f68ff7ebaa1f9d732f7810e929))
+* /review Step 6.7's QA re-run omits --source review, so a… ([#3771](https://github.com/thn-inc/claude-tweaks/issues/3771)) ([c68d7de](https://github.com/thn-inc/claude-tweaks/commit/c68d7dedede74ea9a6851ef6562dbc1c765fb3c8))
+* check-sibling-sessions --record "#N" silently skips the… ([#3768](https://github.com/thn-inc/claude-tweaks/issues/3768)) ([36fff7a](https://github.com/thn-inc/claude-tweaks/commit/36fff7a2f9e668d37e16bf30f0305af08772292f))
+* Give tidy's release Backfill findings a routing row in… ([#3291](https://github.com/thn-inc/claude-tweaks/issues/3291)) ([b4f4cf8](https://github.com/thn-inc/claude-tweaks/commit/b4f4cf875f04c14f972fc63c013fef659aedddc3))
+* local-merge auto-merge closes the run before the merge… ([#3762](https://github.com/thn-inc/claude-tweaks/issues/3762)) ([f5b03f5](https://github.com/thn-inc/claude-tweaks/commit/f5b03f592afa5bf906111db40961dee44f2a87de))
+* Review Console keeps an unconfirmed finding pending after… ([#3772](https://github.com/thn-inc/claude-tweaks/issues/3772)) ([560ecb2](https://github.com/thn-inc/claude-tweaks/commit/560ecb2690bc8da8f76be7b8d25b66a5cdc0e0d6))
+* Route github-pr-scan current-pr item 3 and repo-wide item… ([#3658](https://github.com/thn-inc/claude-tweaks/issues/3658)) ([8da6efd](https://github.com/thn-inc/claude-tweaks/commit/8da6efddc7ebe131a18598c68dc0e495f641a6e1))
+* Teardown gate's assigned-run deny can miss a mis-cased… ([#3769](https://github.com/thn-inc/claude-tweaks/issues/3769)) ([b9a42b2](https://github.com/thn-inc/claude-tweaks/commit/b9a42b240e9e54dbf3053e874bc24b665d19ba5a))
+* verify.js --cwd into another checkout writes the invoking… ([#3799](https://github.com/thn-inc/claude-tweaks/issues/3799)) ([ada71fd](https://github.com/thn-inc/claude-tweaks/commit/ada71fdb08de464cd84447ce07040fea5795bba2))
+* Widen the claim-log-only class so degraded Step 2.8 mints… ([#3665](https://github.com/thn-inc/claude-tweaks/issues/3665)) ([f872d39](https://github.com/thn-inc/claude-tweaks/commit/f872d392e1b101a928085181124ea358aa5f6015))
+* Windows CRLF: ten skill-prose tests read governed… ([#3670](https://github.com/thn-inc/claude-tweaks/issues/3670)) ([b07e3f7](https://github.com/thn-inc/claude-tweaks/commit/b07e3f7ee23f6d2b1ea4e4db0dfef80b528c577b))
+
 ## [6.149.0](https://github.com/thn-inc/claude-tweaks/compare/v6.148.0...v6.149.0) (2026-10-20)
 
 
