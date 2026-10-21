@@ -5,10 +5,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
-const read = (...p) => fs.readFileSync(path.join(SKILLS, ...p), 'utf8');
+// Pinned seam: the #3698 CRLF test reads through readAt, so keep every skill read routed here.
+const readAt = (abs) => readText(abs);
+const read = (...p) => readAt(path.join(SKILLS, ...p));
 
 // Slice between two anchors, asserting both resolve — a missing end anchor would otherwise
 // make slice(start, -1) silently widen the region to the rest of the file.
@@ -30,6 +34,14 @@ function bullet(dispatch) {
   const line = dispatch.split('\n').find((l) => l.startsWith(ONLY_ONE_BULLET));
   assert.ok(line, 'only-one-agent bullet not found');
   return line;
+}
+
+// Go-red mutation: strip the At `medium` sentence from the bullet line that starts with `prefix`.
+function stripAtMedium(dispatch, prefix) {
+  return dispatch
+    .split('\n')
+    .map((l) => (l.startsWith(prefix) ? l.replace(/ At `medium`.*$/, '') : l))
+    .join('\n');
 }
 
 const CONTESTED_LOG_LINE =
@@ -100,10 +112,7 @@ test('AC1.2: a finding left unconfirmed keeps its deferred STAGED line', () => {
 
 test('AC1.2 go-red: stripping the At `medium` sentence from the bullet fails the same assertions', () => {
   const dispatch = read('review', 'step3-lens-dispatch.md');
-  const mutated = dispatch
-    .split('\n')
-    .map((l) => (l.startsWith(ONLY_ONE_BULLET) ? l.replace(/ At `medium`.*$/, '') : l))
-    .join('\n');
+  const mutated = stripAtMedium(dispatch, ONLY_ONE_BULLET);
   assert.notEqual(mutated, dispatch, 'mutation did not change the text');
   assert.throws(() => assertKeepsStaged(read('review', 'step3-cross-lens-corroboration.md'), mutated));
 });
@@ -114,10 +123,7 @@ test('AC1.2: the share-a-location bullet defers its STAGED write at medium; neit
 
 test('AC1.2 go-red: stripping the At `medium` sentence from the share-a-location bullet fails the same assertions', () => {
   const dispatch = read('review', 'step3-lens-dispatch.md');
-  const mutated = dispatch
-    .split('\n')
-    .map((l) => (l.startsWith(SHARE_LOC_BULLET) ? l.replace(/ At `medium`.*$/, '') : l))
-    .join('\n');
+  const mutated = stripAtMedium(dispatch, SHARE_LOC_BULLET);
   assert.notEqual(mutated, dispatch, 'mutation did not change the text');
   assert.throws(() => assertShareLocationDeferred(read('review', 'step3-cross-lens-corroboration.md'), mutated));
 });
@@ -167,4 +173,20 @@ test('go-red: dropping the overrides-before-the-pass clause fails the same asser
   const mutated = file.replace(OVERRIDES_FIRST, 'Overrides may run');
   assert.notEqual(mutated, file, 'mutation did not change the text');
   assert.throws(() => assertInputScope(mutated));
+});
+
+test('#3698 AC1.1: on a CRLF checkout both go-red mutations still change the text', (t) => {
+  const { raw } = crlfCheckoutRead(path.join(SKILLS, 'review', 'step3-lens-dispatch.md'));
+  assert.ok(raw.includes('\r\n'), 'CRLF fixture has no CRLF line endings');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3698-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const tmp = path.join(dir, 'step3-lens-dispatch.md');
+  fs.writeFileSync(tmp, raw);
+  const text = readAt(tmp);
+  for (const [name, prefix] of [
+    ['only-one-agent bullet', ONLY_ONE_BULLET],
+    ['share-a-location bullet', SHARE_LOC_BULLET],
+  ]) {
+    assert.notEqual(stripAtMedium(text, prefix), text, `mutation did not change the text (${name})`);
+  }
 });

@@ -46,7 +46,7 @@ function logReapEvent(runDir, type, data) {
 // realpath-resolves both sides of the join itself, which only succeeds while
 // the worktree directory still exists on disk; calling it after `git
 // worktree remove` has already deleted the directory makes its own
-// fs.realpathSync throw and silently fall back to a raw, un-resolved form
+// canonicalRealpath return null and silently fall back to a raw, un-resolved form
 // that no longer string-matches the pre-resolved `real` path this loop
 // already has (caught in review: the removal itself worked, but the join
 // silently found nothing every time).

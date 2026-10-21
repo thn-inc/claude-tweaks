@@ -53,15 +53,21 @@ Print a one-line FYI before starting — `Integration model: local-merge — mer
 one, and `_shared/integration-model.md` has already resolved which model applies.
 
 Reuses the git mechanics `wrap-up/auto-merge-short-circuit.md`'s own `integration-model: local-merge`
-branch (lines 123-207 as of this writing) already proved for its grant-gated fast-lane path — this
+branch already proved for its grant-gated fast-lane path — this
 file reaches the same mechanics through a different, ungated gate (the Precondition above, not a
 `merge-check` verdict or an `auto:merge` label). Cite that section's rationale rather than duplicating
 it; the steps below restate the commands so this auto branch never needs to invoke
 `finishing-a-development-branch`'s own interactive Step 4 menu.
 
+The order is load-bearing: `close-run` (step 4) clears the run's protection and its worktree
+assignment, so every check that can run beforehand runs before it — the pre-merge checks (step 3)
+run first, while a failure still leaves the run open and protected; the merge, the step 6 verify, and
+the push necessarily follow it, and a failure after `close-run` re-protects the run in the **Park**
+branch below.
+
 **Shell state does not survive between separate Bash calls** — read every value first and substitute
 it literally into the next call; never carry it in a shell variable across calls (same warning
-`auto-merge-short-circuit.md` states for its own two-call shape).
+`auto-merge-short-circuit.md` states for its own separate calls).
 
 1. **Resolve the base/integration branch** — `_shared/integration-branch.md`'s canonical resolution
    (never asked; this is exactly the "confirm before merging" step `finishing-a-development-branch`
@@ -72,18 +78,8 @@ it literally into the next call; never carry it in a shell variable across calls
    node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-branch
    ```
 
-2. **Clear this run's worktree assignment before merging** — `close-run` first, so the merge landing
-   in the main checkout isn't denied as a wrong-checkout commit (same as
-   `auto-merge-short-circuit.md`'s local-merge branch):
-
-   ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"
-   ```
-
-   This call is fail-open by design (same as `auto-merge-short-circuit.md`'s identical call) — it
-   never blocks the procedure below regardless of its own outcome.
-
-3. **Read the worktree path and feature branch** — from `run-state.json`'s own `worktree` field
+2. **Read the worktree path and feature branch** — before `close-run` (step 4), which nulls
+   `run-state.json`'s `worktree` field, so a later read returns nothing. Read it from that field
    (`record-worktree` stamped it there), never `$RUN_DIR` itself (`$RUN_DIR` sits inside the main
    checkout per `_shared/pipeline-run-dir.md`'s anchoring rule):
 
@@ -96,8 +92,9 @@ it literally into the next call; never carry it in a shell variable across calls
    state — abort here (do not fall through to a `git -C "undefined"` command) and treat it the same
    as the Park branch below: nothing has been merged yet, so `pending-review` is the correct outcome.
 
-4. **Merge, from the main checkout.** Verify the main checkout is actually on the resolved base
-   branch first — a concurrent session may have switched it underfoot (`[IL-05]`):
+3. **Pre-merge checks, from the main checkout — nothing mutated.** Verify the main checkout is
+   actually on the resolved base branch first — a concurrent session may have switched it underfoot
+   (`[IL-05]`) — then compose the subject and predict the merge:
 
    ```bash
    CURRENT=$(git branch --show-current)
@@ -105,57 +102,96 @@ it literally into the next call; never carry it in a shell variable across calls
      echo "Main checkout is on '$CURRENT', not '{base-branch}' — a concurrent session switched it. Abort, do not merge." >&2
      exit 1
    fi
+   node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --range {base-branch}...{feature-branch} --out-dir "{subject-dir}" || exit 1
+   git merge-tree --write-tree --name-only {base-branch} {feature-branch} || exit 1
    ```
 
-   **On abort** (the branch check above failed): nothing has been merged — this is not a distinct
-   third outcome, it is the same unmergeable state the Park branch below handles. Log it via the
-   Park branch's `log-decision.js` call, with `{conflict|failed verification}` replaced by
-   `"main checkout switched to '$CURRENT' underfoot"`, and report `pending-review` to the caller —
+   `{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3. `git merge-tree` writes only
+   unreferenced objects, never the working tree, the index, or a ref; it exits non-zero on a
+   predicted conflict and on a ref it cannot merge.
+
+   **On abort** (the branch check above failed): nothing has been merged and `close-run` has not
+   run — this is not a distinct third outcome, it is the same unmergeable state the Park branch
+   below handles. Log it via the Park branch's `log-decision.js` call, with
+   `{conflict|failed verification}` replaced by
+   `main checkout switched to '{current-branch}' underfoot` (`{current-branch}` is the branch name the
+   guard's stderr printed, substituted literally — the shell's `$CURRENT` does not survive), and report `pending-review` to the caller —
    never a bare non-zero exit with no logged outcome, per this file's own invariant that every run
    ends in an explicit, logged outcome.
 
+   **On a composer failure** (the first `|| exit 1` above fired — `compose-subject.js` printed its
+   reason to stderr, nothing has been merged, and `close-run` has not run): this is not a bare,
+   unlogged exit — log it via the Park branch's `log-decision.js` call below, with
+   `{conflict|failed verification}` replaced by `"composer failed: {first stderr line}"` — a record
+   with no resolvable Type, or a `breaking` label with no `## Breaking Change` section, is a shaping
+   defect to fix on the record, not a merge problem; a malformed `commit-scope-paths` entry, a
+   `commit-scope` token the composer rejects, a failed `--range` diff, or this call passing no
+   `--range` while `commit-scope-paths` is set is a policy or invocation fault to fix in
+   `policy.yml` or in this fence; report `pending-review` to the caller, per this file's own
+   invariant that every run ends in an explicit, logged outcome.
+
+   **On a predicted conflict** (the `git merge-tree` line's `|| exit 1` fired — a `CONFLICT` report
+   on stdout, or a ref it cannot merge): nothing has been merged and `close-run` has not run. Log it
+   via the Park branch's `log-decision.js` call, with `{conflict|failed verification}` replaced by
+   `"predicted conflict: {first CONFLICT line}"`, and report `pending-review` — never attempt
+   resolution. The `|| exit 1` collapses every `git merge-tree` failure to exit 1, so tell them apart
+   by its output, not the fence's exit code: a `CONFLICT` line on stdout is a predicted conflict; an
+   error on stderr with no `CONFLICT` line means git could not run the pre-check (e.g. git older
+   than 2.38 lacks `--write-tree`, or an unknown ref) — log `"pre-check failed: {first stderr line}"`
+   as the reason instead, not "predicted conflict".
+
+4. **Clear this run's worktree assignment before merging** — only now, once the pre-merge checks
+   passed. `close-run` first, so the merge landing in the main checkout isn't denied as a
+   wrong-checkout commit (same as `auto-merge-short-circuit.md`'s local-merge branch), as its own
+   Bash call:
+
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag auto-finish --range {base-branch}...{feature-branch} --out-dir "{subject-dir}" || exit 1
-   git merge --no-ff {feature-branch} -F "{subject-dir}/message.txt"
+   node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"
    ```
 
-   `{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3.
+   This call is fail-open by design (same as `auto-merge-short-circuit.md`'s identical call) — it
+   never blocks the procedure below regardless of its own outcome.
 
-   **On a composer failure** (the `|| exit 1` above fired — `compose-subject.js` printed its
-   reason to stderr and nothing has been merged): this is not a bare, unlogged exit — log it via
-   the Park branch's `log-decision.js` call below, with `{conflict|failed verification}` replaced
-   by `"composer failed: {first stderr line}"` — a record with no resolvable Type, or a `breaking`
-   label with no `## Breaking Change` section, is a shaping defect to fix on the record, not a
-   merge problem; a malformed `commit-scope-paths` entry, a `commit-scope` token the composer
-   rejects, a failed `--range` diff, or this call passing no `--range` while `commit-scope-paths`
-   is set is a policy or invocation fault to fix in `policy.yml` or in this fence; report
-   `pending-review` to the caller, per this file's own invariant that every run ends in an
-   explicit, logged outcome.
+5. **Merge, from the main checkout.** The guard repeats the pre-merge check as the race backstop — a
+   concurrent session may have switched the checkout since step 3:
+
+   ```bash
+   CURRENT=$(git branch --show-current)
+   if [ "$CURRENT" != "{base-branch}" ]; then
+     echo "Main checkout is on '$CURRENT', not '{base-branch}' — a concurrent session switched it. Abort, do not merge." >&2
+     exit 1
+   fi
+   git merge --no-ff {feature-branch} -F "{subject-dir}/message.txt"
+   ```
 
    `--no-ff` guarantees a real merge commit exists to carry the composer's `Fixes #{issue}` closing keyword (`bin/compose-subject.js` — Conventional-Commits subject, `[auto-finish]` body tag) —
    the same reason `cleanup-procedures-execution.md` Section C step 2's own carrier commit exists.
    That carrier commit already guarantees closure regardless, so this is redundant-but-safe, never
    harmful.
 
-   **On any failure** (`git merge` exits non-zero, for any reason — conflict markers, a `CONFLICT`
-   report, a dirty working tree ("local changes would be overwritten"), unrelated histories, or any
-   other failure this procedure doesn't specifically recognize): if a `MERGE_HEAD` exists (a real
-   conflict was entered), run `git merge --abort` to return to the pre-merge state; otherwise the
-   merge never started and the checkout is already unchanged. Either way, this is the one point in
-   this procedure that must never attempt resolution — `_shared/auto-mode-contract.md`'s "does NOT
-   silence" table states plainly: "Resolution of merge conflicts in worktree finishing | Conflict
-   resolution requires intent the model cannot infer." Go to the **Park** branch below.
+   **On any failure** (this call's guard aborts, or `git merge` exits non-zero, for any reason — a
+   conflict that appeared only after step 3's prediction (the race it cannot rule out), conflict
+   markers, a `CONFLICT` report, a dirty working tree ("local changes would be overwritten"),
+   unrelated histories, or any other failure this procedure doesn't specifically recognize): if a
+   `MERGE_HEAD` exists (a real conflict was entered), run `git merge --abort` to return to the
+   pre-merge state; otherwise the merge never started and the checkout is already unchanged. Either
+   way, this is the one point in this procedure that must never attempt resolution —
+   `_shared/auto-mode-contract.md`'s "does NOT silence" table states plainly: "Resolution of merge
+   conflicts in worktree finishing | Conflict resolution requires intent the model cannot infer."
+   Go to the **Park** branch below, with `{conflict|failed verification}` replaced by `conflict`
+   for a merge conflict, or by `merge aborted: {first stderr line}` for the guard abort or any
+   other failure.
 
-5. **Verify on the merged result** — run the project's verification command
+6. **Verify on the merged result** — run the project's verification command
    (`skills/test/verification.md`'s shared procedure) against the now-merged base branch.
 
-   - **Green** → proceed to step 6.
+   - **Green** → proceed to step 7.
    - **Red** → `git reset --hard ORIG_HEAD` (undo the local merge — nothing has been pushed, so this
      is fully recoverable) and go to the **Park** branch below. A merged-result test failure gets the
      identical treatment as a merge conflict: leave the worktree and feature branch exactly as they
      were, never force anything.
 
-6. **Push** (from inside the worktree — naming the branch explicitly, since a bare `git push` from
+7. **Push** (from inside the worktree — naming the branch explicitly, since a bare `git push` from
    the worktree would push the *feature* branch, not the just-updated base branch; same reason
    `auto-merge-short-circuit.md`'s own local-merge push step states):
 
@@ -172,7 +208,7 @@ it literally into the next call; never carry it in a shell variable across calls
    the caller. Do not retry the push automatically and do not undo the local merge — a human
    resuming this run needs the merge commit to still be there to push it themselves.
 
-7. **Log the merged outcome** (push succeeded):
+8. **Log the merged outcome** (push succeeded):
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$RUN_DIR" --status AUTO \
@@ -185,27 +221,44 @@ it literally into the next call; never carry it in a shell variable across calls
    its step 4 (worktree removal) exactly as though `finishing-a-development-branch` itself had
    reported "Merged, PR created, or discarded."
 
-**Park branch (conflict or failed merged-result verification):**
+**Park branch (an unmergeable state — abort, composer failure, conflict, failed merged-result verification, or push failure):**
+
+**If the park was reached after step 4** (a merge failure from step 5, a red verification from step 6,
+or a push failure from step 7), re-protect the run first. `close-run` already ran, so the parked run
+would otherwise be unprotected with its worktree assignment cleared; re-stamp it with the
+`{worktree-path}` step 2 read (`run-state.json` no longer holds it), its own Bash call:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "$RUN_DIR" "{worktree-path}"
+```
+
+`record-worktree` restores the worktree assignment and `active` status. It prints `claude-tweaks: worktree recorded for …` when
+it worked; any other line (the run dir may have been archived underneath) is not ignored — carry it
+into the `--text` of the log call below. A park reached from step 2 or step 3 runs no re-stamp:
+`close-run` has not fired, so nothing was closed.
+
+Then log the outcome:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$RUN_DIR" --status AUTO \
   --section "/wrap-up" --step "Section C (local-merge-auto-finish)" \
-  --text "Local merge into {base-branch} failed ({conflict|failed verification}) — reverted, worktree and branch preserved. [outcome: pending-review]" \
+  --text 'Local merge into {base-branch} failed ({conflict|failed verification}) — reverted, worktree and branch preserved. [outcome: pending-review]' \
   --reversibility high
 ```
 
+The substituted reason can carry a filename or stderr text, so `--text` is single-quoted — never
+double-quoted, where `$(…)`, backticks and `$VAR` would execute — and any `'` in the substituted
+reason is written `'\''`.
+
 Report outcome `pending-review` to the caller. The worktree's *files* — the feature branch and its
 commits — are untouched: a human can check out the branch, resolve or investigate, and re-run
-finish exactly as if nothing had happened to the code. But the run's own bookkeeping is **not**
-unchanged: step 2's `close-run` already fired, unconditionally, before the merge attempt — it lifts
-the pipeline-run assignment that protects this worktree from teardown (`bin/lib/hooks/pre-tool-use.js`'s
-teardown gate), so the worktree is reap-eligible from this point on, regardless of whether the merge
-that followed succeeded or parked. A human resuming a parked run should treat the worktree as
-time-sensitive: resolve it promptly, or re-run `record-worktree`/`close-run`'s counterpart to
-re-establish the assignment before leaving it for later. Never `git merge --abort` twice, never
-retry automatically, never widen scope to attempt a fix — this is the one decision
-`_shared/auto-mode-contract.md`'s "does NOT silence" table reserves for a human: never attempt
-conflict resolution under auto.
+finish exactly as if nothing had happened to the code. The run's own bookkeeping is protected the
+same way: a park before step 4 never lifted the pipeline-run assignment that guards this worktree
+from teardown (`bin/lib/hooks/pre-tool-use.js`'s teardown gate), and a park after it restored that
+assignment with the re-stamp above — so the worktree is not reap-eligible while it waits. Never
+`git merge --abort` twice, never retry automatically, never widen scope to attempt a fix — this is
+the one decision `_shared/auto-mode-contract.md`'s "does NOT silence" table reserves for a human:
+never attempt conflict resolution under auto.
 
 ## Interactive mode is unaffected
 

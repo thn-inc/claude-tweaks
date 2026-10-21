@@ -2,6 +2,7 @@
 files:
   - plugin/bin/load-delta.js
   - plugin/bin/lib/skill-audit/load.js
+  - plugin/bin/lib/skill-audit/plugin-root-reader.js
   - plugin/skills/review/step3-skill-load-delta.md
   - plugin/skills/review/review-summary-template.md
 ---

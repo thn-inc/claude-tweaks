@@ -10,10 +10,11 @@ const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
 
 const REVIEW = path.join(__dirname, '..', 'plugin', 'skills', 'review');
 const steps = readText(path.join(REVIEW, 'code-mode-steps.md'));
-for (const heading of ['### Step 3 Routing — Code Review Findings', '## Step 4:', '## Step 6.7:', '## Step 7:', '## Important Notes']) {
+for (const heading of ['### Step 3 Routing — Code Review Findings', '## Step 4:', '## Step 5:', '## Step 6.7:', '## Step 7:', '## Important Notes']) {
   assert.ok(steps.includes(heading), `anchor heading missing: ${heading}`);
 }
 const step3 = steps.slice(steps.indexOf('### Step 3 Routing — Code Review Findings'), steps.indexOf('## Step 4:'));
+const step4 = steps.slice(steps.indexOf('## Step 4:'), steps.indexOf('## Step 5:'));
 const step67 = steps.slice(steps.indexOf('## Step 6.7:'), steps.indexOf('## Step 7:'));
 const step7 = steps.slice(steps.indexOf('## Step 7:'), steps.indexOf('## Important Notes'));
 
@@ -24,12 +25,16 @@ for (const heading of ['### QA Validation (from /test)', '### Code Review Findin
 const qa = template.slice(template.indexOf('### QA Validation (from /test)'), template.indexOf('### Code Review Findings'));
 
 test('AC1.1: Step 6.7 re-runs affected stories via test qa affected, gated on a fix touching story source_files', () => {
-  assert.ok(step67.includes('`/claude-tweaks:test qa affected`'));
+  assert.ok(step67.includes('`/claude-tweaks:test qa affected --source review`'));
   assert.ok(step67.includes('`git stash create`'));
   assert.ok(step67.includes('`git rev-parse HEAD`'));
   assert.ok(step67.includes("`git diff --name-only {WAVE_BASE}`"));
   assert.ok(step67.includes("every QA story's `source_files`"));
   assert.ok(step67.indexOf('`git stash create`') < step67.indexOf('\n1. '), 'WAVE_BASE is captured before item 1');
+});
+
+test('#3771: Step 4 re-runs /test with the --source review parent signal', () => {
+  assert.ok(step4.includes('re-run `/claude-tweaks:test --source review` before proceeding'));
 });
 
 test('AC1.1 (#3598): a Step 3 Routing fix wave gets the same affected-story re-run, one base per review', () => {
@@ -167,4 +172,12 @@ test('wrap-up (#3598): the uncommitted-edits check also counts an untracked-only
 test('fix round 1 (#3598): the test skill contract notes the Step 3 Routing wave', () => {
   const testSkill = readText(path.join(__dirname, '..', 'plugin', 'skills', 'test', 'SKILL.md'));
   assert.ok(testSkill.includes('which also covers a Step 3 Routing fix wave (#3598)'));
+});
+
+test('#3771: the test skill contract and Step 3 Routing name every standalone --source review call', () => {
+  const testSkill = readText(path.join(__dirname, '..', 'plugin', 'skills', 'test', 'SKILL.md'));
+  assert.ok(testSkill.includes('standalone calls (Step 1.5\'s "No recent pass" auto-trigger, Step 3 Routing\'s re-verify, Step 4\'s re-run, and Step 6.7\'s `qa affected` re-run'));
+  const routing = readText(path.join(REVIEW, 'step3-routing.md'));
+  assert.ok(routing.includes('Re-verification rule (`/claude-tweaks:test --source review`)'));
+  assert.ok(routing.includes('then re-run `/claude-tweaks:test --source review`'));
 });

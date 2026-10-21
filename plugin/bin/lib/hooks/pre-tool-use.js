@@ -598,7 +598,7 @@ function checkTeardownGate(ctx, teardownWarnings = [], deps = {}) {
     }
 
     let exists = false;
-    try { fs.statSync(target); exists = true; } catch { /* gone */ }
+    try { (fsImpl || fs).statSync(target); exists = true; } catch { /* gone */ }
     // Recorded-or-target path already gone from disk -> allow (fail-open).
     // Target and recorded assignment are the same path once matched, so
     // statting the target side covers both.
@@ -606,7 +606,7 @@ function checkTeardownGate(ctx, teardownWarnings = [], deps = {}) {
     // #2783: an `-adhoc-standalone` dir never makes a worktree "assigned" — it
     // holds only friction events, nothing this gate protects, and must stay
     // non-terminal so friction-events.js can still read it after the removal.
-    const hit = ctxLib.findRunByWorktreePath(ctx.cwd, target, { skipAdHoc: true });
+    const hit = ctxLib.findRunByWorktreePath(ctx.cwd, target, { skipAdHoc: true, fsImpl });
     if (!hit || !hit.state) continue;
     const status = hit.state.status;
     if (status !== 'active' && status !== 'interrupted') continue;
@@ -679,7 +679,7 @@ function checkTeardownGate(ctx, teardownWarnings = [], deps = {}) {
 // pre-exist made the sanctioned exception unreachable by any tool-mediated
 // write. See WORK_SPEC_TAIL_RE above for exactly what this does and does
 // not cover.
-function shadowPipelineRunDir(targetPath) {
+function shadowPipelineRunDir(targetPath, { fsImpl } = {}) {
   if (typeof targetPath !== 'string' || !targetPath || !path.isAbsolute(targetPath)) return null;
   const resolved = path.resolve(targetPath);
   const { repoRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(resolved);
@@ -687,12 +687,13 @@ function shadowPipelineRunDir(targetPath) {
   // realTarget (below) now returns path-guard's case-canonical (.native) form,
   // so the root it is compared against is canonicalised the same way (#3495);
   // repoRoot is the JS form, which echoes casing on a case-insensitive volume.
-  const pipelinesDir = path.join(canonicalRealpath(repoRoot) || repoRoot, PIPELINE_STATE_DIR);
+  // Both operands resolve through the same fsImpl so they land on one filesystem.
+  const pipelinesDir = path.join(canonicalRealpath(repoRoot, { fsImpl }) || repoRoot, PIPELINE_STATE_DIR);
   // realTarget follows an existing symlink chain the same way the policy.yml
   // exemption does; falls back to the literal resolved path when nothing
   // exists yet (a brand-new mkdir target has no leaf, sometimes not even a
   // parent, to realpath).
-  const real = realTarget(resolved) || resolved;
+  const real = realTarget(resolved, { fsImpl }) || resolved;
   const relFromPipelines = path.relative(pipelinesDir, real);
   if (!relFromPipelines || relFromPipelines.startsWith('..') || path.isAbsolute(relFromPipelines)) return null;
   const relParts = relFromPipelines.split(path.sep);
@@ -702,12 +703,12 @@ function shadowPipelineRunDir(targetPath) {
   if (STANDALONE_AUDIT_RUN_RE.test(runDirName) && STANDALONE_AUDIT_TAIL_RE.test(tail)) return null;
   const runDirCandidate = path.join(pipelinesDir, runDirName);
   let exists = false;
-  try { exists = fs.statSync(runDirCandidate).isDirectory(); } catch { /* not there yet — a genuinely new shadow */ }
+  try { exists = (fsImpl || fs).statSync(runDirCandidate).isDirectory(); } catch { /* not there yet — a genuinely new shadow */ }
   if (exists) return null;
   return { worktreeRoot: repoRoot, runDirCandidate };
 }
 
-function checkPipelineShadowGuard(ctx) {
+function checkPipelineShadowGuard(ctx, deps = {}) {
   const toolName = ctx.input && ctx.input.tool_name;
   const toolInput = ctx.input && ctx.input.tool_input;
   const candidates = [];
@@ -720,7 +721,7 @@ function checkPipelineShadowGuard(ctx) {
     for (const t of mkdirTargets(command, ctx.cwd)) candidates.push(t.file);
   }
   for (const candidate of candidates) {
-    const shadow = shadowPipelineRunDir(candidate);
+    const shadow = shadowPipelineRunDir(candidate, { fsImpl: deps.fsImpl });
     if (!shadow) continue;
     // #2282: previously left no friction-event trace — mirrors
     // checkWorktreeRequired's own gate-denial breadcrumb below (same
@@ -2118,7 +2119,8 @@ function checkDispatchConfigGate(ctx, commandGitTargets, deps = {}) {
 // foreign-owned run); run() attaches them all to whatever outcome is reached.
 // `deps` is run()'s own pass-through of its test-only override bag — see
 // run()'s header comment below — forwarded verbatim to checkTeardownGate,
-// checkDispatchConfigGate and checkBookkeepingStampsGate as their own `deps`
+// checkPipelineShadowGuard, checkDispatchConfigGate and
+// checkBookkeepingStampsGate as their own `deps`
 // parameter, and read directly by E1 at the tail of this function.
 function runInner(ctx, indeterminateTargets, warnings, deps) {
   // #3712: no other gate applies to AskUserQuestion.
@@ -2127,7 +2129,7 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
   const teardown = checkTeardownGate(ctx, warnings, deps);
   if (teardown.json) return teardown;
 
-  const shadow = checkPipelineShadowGuard(ctx);
+  const shadow = checkPipelineShadowGuard(ctx, deps);
   if (shadow.json) return shadow;
 
   const command = ctx.input && ctx.input.tool_name === 'Bash' && ctx.input.tool_input
@@ -2280,8 +2282,9 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
 // checkBookkeepingStampsGate's `resolveIntegrationModel` override (see that
 // function's header comment), `fsImpl` (an fs-like object every
 // canonicalRealpath call resolves through, so a case-insensitive fake can stand
-// in for the volume, #3682), and `toplevel` (replaces the `git rev-parse
-// --show-toplevel` probe in E1 and checkDispatchConfigGate). The production
+// in for the volume, #3682; it also backs checkTeardownGate's existence probe
+// and its `findRunByWorktreePath` lookup, #3769), and `toplevel` (replaces the
+// `git rev-parse --show-toplevel` probe in E1 and checkDispatchConfigGate). The production
 // call site (bin/hooks.js's `main()`) calls `mod.run({...})` with a single argument, so
 // `deps` is always `{}` there; only a test passes a second argument. Adding
 // this parameter is what lets a test exercise checkBookkeepingStampsGate's

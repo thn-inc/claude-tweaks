@@ -1,6 +1,6 @@
 ---
 name: code-health-focus-vertical
-description: Use when adding a `/code-health focus=<vertical>` candidate generator — every registration site, the require-order and anchor rules, and the real-input fixtures it needs. Keywords - focus vertical, registerGenerator, FOCUS_GENERATORS, criteria fragment.
+description: Use when adding a `/code-health focus=<vertical>` candidate generator — every registration site, the import-source (`./source-scan`) and anchor rules, and the real-input fixtures it needs. Keywords - require order, focus vertical, registerGenerator, FOCUS_GENERATORS, criteria fragment.
 ---
 
 # Code-health focus vertical
@@ -50,7 +50,7 @@ The last row is pitfall 5 one level up. Step 6.6 skips unless the diff touches a
 
 ## Six pitfalls
 
-1. **Require `./focus-generators` before `./candidates-dead-code`.** The registry autoloads every vertical. Keep it as defense in depth; `candidates-abstraction-police.js`'s require block documents the order. The real guard is that `candidates-dead-code.js` (the registry's first autoload) publishes its `module.exports` before it requires the registry, so a vertical loaded directly gets complete exports in either order. Moving that registry require back above `module.exports` makes the shared helpers bind to `undefined` through Node's circular require; the all-modules test in `candidates-require-order.test.js` pins the export-first order for every module. #2693 shipped it reversed. Pin the order with a fresh-process test, because an in-process `require` hits the module cache and never shows the warning: `spawnSync(process.execPath, ['-e', 'require(<module path>)'])`, then assert stderr has no `inside circular dependency` (`tests/bin-lib/code-health/candidates-require-order.test.js`; #3330 added the same test to `candidates-experiment-cleanup.test.js`).
+1. **Import shared helpers from `./source-scan`, never from a sibling vertical.** The registry autoloads every vertical, so a vertical that destructures from a sibling re-enters that sibling mid-load, and Node binds the names to `undefined` with an `inside circular dependency` warning. #2693, #2908, and #3330 each hit this through `./candidates-dead-code`, and #3478 moved the helpers into the leaf `source-scan.js`. A helper a new vertical needs from a sibling moves into `source-scan.js` first. Test it in a fresh process, because an in-process `require` hits the module cache and never shows the warning: `spawnSync(process.execPath, ['-e', 'require(<module path>)'])`, then assert stderr has no `inside circular dependency`. The edge test in `tests/bin-lib/code-health/candidates-require-order.test.js` does this for every vertical.
 2. **A candidate's `file` must be a real file.** Code-health anchors are `relfile#Symbol`, and `areaId` is derived from the anchor's file. A site-level item with no file of its own (a missing `robots.txt`) anchors to a real file, such as the site's entry page as `{file}#{item id}`, never to a directory.
 3. **Test against real framework inputs, not the plan's rules.** Tests written from the plan pin the plan. #2693's first tests passed while Nuxt, Astro and SvelteKit layouts were invisible to the generator and its alt-text scan skipped components. Only fixtures in each framework's real file layout exposed that.
 4. **A generator that emits a status per item needs a reconciliation rule.** When the summary renders one checklist row per item, the fragment must tell the judge how a row's status follows from its verdicts (`criteria-prelaunch.md`: a `fail` whose candidates were all rejected becomes `pass (N rejected: {reason})`). Without it, the table and the filed findings contradict each other.
@@ -70,7 +70,7 @@ Settle these before the plan is written:
 | Pattern | Why it fails here |
 |---|---|
 | Adding the `FOCUS_GENERATORS` key without both `focus-mode.md` rows | The firing stops fail-loud at runtime, or reports a reach its Coverage block never stated |
-| Fixing the require order only in the file that failed | Every vertical loaded directly by its own test has the same exposure |
+| Importing a helper from a sibling `candidates-*.js` | Re-creates the hub cycle; the fresh-process edge test in `candidates-require-order.test.js` fails it |
 | Anchoring a site-level finding to a directory | `areaId` derivation and dedup expect a file |
 | A heuristic generator with only synthetic fixtures | Real layouts (`app/`, `src/routes/`, `layouts/`) are where #2693's misses were |
 | Writing the plan from the record without this skill open | #2628's plan never cited this skill, so it shipped pitfall 1's require order reversed and left out the `/review` summary-template section and the wiring test, all rows already listed here; review caught them. Take the registration set and the pitfalls into the plan as its checklist |

@@ -25,7 +25,7 @@
 //     = the flag identifier) and `experiment-flag-exclude` (kill-switch name
 //     substrings, extending the shipped defaults
 //     ["emergency","circuit","kill"] rather than replacing them).
-//   - JS/TS files only — reuses candidates-dead-code.js's
+//   - JS/TS files only — reuses source-scan.js's
 //     listTrackedSourceFiles (same git-ls-files-based discovery, same
 //     extension set, same .gitignore handling, same discoveryFailed/
 //     discoveryReason IL-115 distinction).
@@ -58,7 +58,7 @@
 const fs = require('fs');
 const path = require('path');
 const { registerGenerator } = require('./focus-generators');
-const { listTrackedSourceFiles } = require('./candidates-dead-code');
+const { listTrackedSourceFiles } = require('./source-scan');
 const { readListKey } = require('../policy');
 
 const DEFAULT_EXCLUDES = ['emergency', 'circuit', 'kill'];
@@ -102,7 +102,7 @@ function normalizeBranch(text) {
 
 // Depth-tracking brace match — returns the index of the `}` that closes the
 // `{` at `openIdx`, or -1 if unterminated. Same technique as
-// candidates-dead-code.js's extractModuleExports.
+// source-scan.js's extractModuleExports.
 function matchBrace(text, openIdx) {
   let depth = 0;
   for (let i = openIdx; i < text.length; i++) {

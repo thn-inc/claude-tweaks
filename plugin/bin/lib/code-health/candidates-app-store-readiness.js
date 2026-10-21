@@ -22,7 +22,7 @@
 // `criteria-app-store-readiness.md` for the judging side of this boundary.
 //
 // Coverage (stated explicitly, never implied total — IL-110):
-//   - Discovery is extension-agnostic (reuses candidates-dead-code.js's
+//   - Discovery is extension-agnostic (reuses source-scan.js's
 //     listTrackedFiles — same git-ls-files discovery, same .gitignore
 //     handling, same discoveryFailed/discoveryReason IL-115 distinction) —
 //     unlike security-hardening's JS/TS-only listTrackedSourceFiles, this
@@ -51,7 +51,7 @@
 const fs = require('fs');
 const path = require('path');
 const { registerGenerator } = require('./focus-generators');
-const { listTrackedFiles } = require('./candidates-dead-code');
+const { listTrackedFiles } = require('./source-scan');
 
 const WINDOW = 400; // chars, each direction, for co-occurrence checks
 
