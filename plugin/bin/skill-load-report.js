@@ -183,6 +183,17 @@ function originMatches(entry, origin) {
   return new RegExp(`/plugins/cache/[^/]+/${name}/[^/]+/$`).test(origin);
 }
 
+// The sorted, distinct root-relative paths among `readPaths` that the matched
+// root holds but the skill's static closure does not list.
+function outsideReads(entry, readPaths) {
+  const outside = new Set();
+  for (const p of readPaths) {
+    const read = splitAtSkills(p);
+    if (read && originMatches(entry, read.origin) && entry.rootFiles.has(read.rel) && !entry.files.has(read.rel)) outside.add(read.rel);
+  }
+  return [...outside].sort();
+}
+
 // Plain `{ns}:{name}` / bare-name split — every row's skill is already
 // folded (foldPathNamespace, above) before this runs, so no path form
 // reaches here.
@@ -250,14 +261,8 @@ async function run(argv, deps = realDeps) {
   const out = summarizeLoads(rows)
     .map((r) => {
       const entry = closureOf(index, r.skill);
-      const outside = new Set();
-      if (entry) {
-        for (const p of readsBySkill.get(r.skill)) {
-          const read = splitAtSkills(p);
-          if (read && originMatches(entry, read.origin) && entry.rootFiles.has(read.rel) && !entry.files.has(read.rel)) outside.add(read.rel);
-        }
-      }
-      return { ...r, closure: entry ? entry.closure : null, outsideClosure: entry ? [...outside].sort() : null };
+      if (!entry) return { ...r, closure: null, outsideClosure: null };
+      return { ...r, closure: entry.closure, outsideClosure: outsideReads(entry, readsBySkill.get(r.skill)) };
     })
     .sort((a, b) => b.max - a.max || (a.skill < b.skill ? -1 : a.skill > b.skill ? 1 : 0));
   deps.stdout(`${JSON.stringify({ status: 'ok', transcriptDir, sessions, unreadable, rows: out })}\n`);
