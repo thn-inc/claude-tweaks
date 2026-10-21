@@ -254,7 +254,6 @@ async function main() {
   // #3043: an unresolvable --baseline is a usage error before any check runs.
   let bgit = null;
   let baseSha = null;
-  let mergeBaseSha = null;
   if (parsed.baseline) {
     bgit = realGit(parsed.cwd || process.cwd());
     baseSha = bgit.resolveCommit(parsed.baseline);
@@ -263,9 +262,6 @@ async function main() {
       process.exitCode = 2;
       return;
     }
-    // #3810: the base adjudicated against is where HEAD forked from the ref,
-    // not the ref's own (possibly moved) tip. null: no common ancestor.
-    mergeBaseSha = bgit.mergeBase('HEAD', baseSha);
     // Named, never swept — see findStaleBaselineWorktrees (#3064).
     for (const dir of findStaleBaselineWorktrees(bgit.listWorktrees)) {
       process.stderr.write(`verify.js: a stale baseline scratch worktree is registered at ${dir} from an earlier interrupted run — remove it manually: git worktree remove --force ${dir}\n`);
@@ -578,33 +574,39 @@ async function main() {
           base: parsed.baseline, baseSha, baseRef: parsed.baseline, eligible: false,
           reason: `base ${parsed.baseline} (${baseSha.slice(0, 9)}) already contains HEAD — nothing to compare against`,
         };
-      } else if (mergeBaseSha === null) {
-        // #3810: unrelated histories have no fork point to adjudicate against.
-        baselineAdjudicated = {
-          base: parsed.baseline, baseSha, baseRef: parsed.baseline, eligible: false,
-          reason: `no merge-base between HEAD and ${parsed.baseline} — nothing to compare against`,
-        };
       } else {
-        // #3810: adjudicate against the merge-base with HEAD (the fork point),
-        // not the ref's tip — a moved integration branch that fixed a failure
-        // must not make the inherited failure look attributable.
-        baselineAdjudicated = {
-          ...await adjudicate({
-            checks: results,
-            baselineCmds: baselineCmdMap,
-            base: mergeBaseSha,
-            baseSha: mergeBaseSha,
-            cwd: parsed.cwd,
-            logDir,
-            runOne,
-            spawnImpl: spawn,
-            envOf,
-            timeoutOf,
-            git: bgit,
-            computeFixed: !parsed.noBaselineFixed,
-          }),
-          baseRef: parsed.baseline,
-        };
+        const mergeBaseSha = bgit.mergeBase('HEAD', baseSha);
+        if (mergeBaseSha === null) {
+          // #3810: no fork point to adjudicate against — unrelated histories, or
+          // a shallow clone that never fetched it (worded for the cause).
+          baselineAdjudicated = {
+            base: parsed.baseline, baseSha, baseRef: parsed.baseline, eligible: false,
+            reason: bgit.isShallow()
+              ? `no merge-base between HEAD and ${parsed.baseline} — shallow clone, fork point not fetched (deepen or unshallow the fetch)`
+              : `no merge-base between HEAD and ${parsed.baseline} — nothing to compare against`,
+          };
+        } else {
+          // #3810: adjudicate against the merge-base with HEAD (the fork point),
+          // not the ref's tip — a moved integration branch that fixed a failure
+          // must not make the inherited failure look attributable.
+          baselineAdjudicated = {
+            ...await adjudicate({
+              checks: results,
+              baselineCmds: baselineCmdMap,
+              base: mergeBaseSha,
+              baseSha: mergeBaseSha,
+              cwd: parsed.cwd,
+              logDir,
+              runOne,
+              spawnImpl: spawn,
+              envOf,
+              timeoutOf,
+              git: bgit,
+              computeFixed: !parsed.noBaselineFixed,
+            }),
+            baseRef: parsed.baseline,
+          };
+        }
       }
     } catch (err) {
       // Fail closed: an adjudicator crash (e.g. the scratch worktree could not

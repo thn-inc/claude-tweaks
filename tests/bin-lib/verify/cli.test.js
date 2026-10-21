@@ -2461,6 +2461,24 @@ test('--baseline: a ref sharing no merge-base with HEAD is not adjudicated and e
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp');
 });
 
+test('--baseline: a shallow clone whose fork point is not fetched names the shallow cause, fails closed with exit 1 (#3810)', async () => {
+  const src = forkedBaselineRepo();
+  const clone = path.join(tmpDir(), 'clone');
+  // file:// is required: a plain local path ignores --depth and clones in full.
+  execFileSync('git', ['clone', '-q', '--depth', '1', '--no-single-branch', `file://${src.repo}`, clone], { stdio: 'ignore' });
+  const cloneGit = (...a) => execFileSync('git', a, { cwd: clone, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  assert.strictEqual(cloneGit('rev-parse', '--is-shallow-repository'), 'true');
+  assert.throws(() => cloneGit('cat-file', '-e', `${src.baseSha}^{commit}`), 'the fork point must be genuinely absent from the clone');
+  const { code, stdout } = await runCli(['--cmd', SUITE, '--baseline', `origin/${src.integ}`, '--baseline-cmd', PER_FILE], { cwd: clone, env: nestedRunEnv() });
+  assert.strictEqual(code, 1, stdout);
+  assert.ok(stdout.includes(`Baseline: not adjudicated — no merge-base between HEAD and origin/${src.integ} — shallow clone, fork point not fetched (deepen or unshallow the fetch)`), stdout);
+  const gitDir = path.join(clone, '.git');
+  const report = JSON.parse(fs.readFileSync(path.join(gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
+  assert.strictEqual(report.baselineAdjudicated.eligible, false);
+  assert.strictEqual(report.baselineAdjudicated.baseRef, `origin/${src.integ}`);
+  assert.ok(!fs.existsSync(path.join(gitDir, 'claude-tweaks-verify-pass.json')), 'no stamp');
+});
+
 test('--baseline: a file failing only in the full run is flaky — exit 0 with a CAVEAT line naming its isolated log (#3043 I3)', async () => {
   const r = baselineRepo();
   // Fails once (the full run consumes the marker), then passes at base and in isolation.

@@ -132,6 +132,10 @@ test('verification.md states --baseline adjudicates against the merge-base with 
   const section = DOC.slice(DOC.indexOf('### Baseline adjudication'), DOC.indexOf('### Declared pre-existing failures'));
   assert.ok(section.includes('`git merge-base HEAD {ref}`'), 'names the merge-base resolution');
   assert.ok(section.includes('baseRef'), 'names the baseRef report field');
+  assert.ok(section.includes('vs {baseRef}'), 'names the table Status cell form that carries the ref');
+  assert.ok(section.includes('a ref sharing no merge-base with HEAD'), 'names the no-merge-base ineligible case');
+  assert.ok(section.includes('a shallow clone whose fork point is not fetched'), 'names the shallow-clone no-merge-base refusal');
+  assert.ok(DOC.includes('`shallow clone, fork point not fetched`'), 'the preExisting paragraph names the refusal reason users see');
 });
 
 test('agents never write the stamp: no redirect into claude-tweaks-verify-pass remains, and the foreground rule is stated (#1921 AC6)', () => {
