@@ -177,6 +177,20 @@ test('overClosure is false when max equals the closure exactly', async () => {
   assert.deepStrictEqual(json().rows.map((r) => [r.max, r.closure, r.overClosure]), [[closure, closure, false]]);
 });
 
+test('closure counts a bare-name citation of another skill\'s file', async () => {
+  const { transcriptDir, deps, json } = setup();
+  const { root } = pluginRoot();
+  const alphaBody = `# Alpha\n\nsee \`beta-notes.md\`\n${'a'.repeat(1000)}\n`;
+  fs.writeFileSync(path.join(root, 'skills', 'alpha', 'SKILL.md'), alphaBody);
+  fs.mkdirSync(path.join(root, 'skills', 'beta'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'skills', 'beta', 'SKILL.md'), '# Beta\n');
+  fs.writeFileSync(path.join(root, 'skills', 'beta', 'beta-notes.md'), `${'b'.repeat(500)}\n`);
+  writeJsonl(path.join(transcriptDir, 's1.jsonl'), invocation('demo:alpha', 't1', 100));
+  await run(['--plugin-root', root], deps);
+  const row = json().rows.find((r) => r.skill === 'demo:alpha');
+  assert.strictEqual(row.closure, measuredTextBytes(alphaBody, 'skills/alpha/SKILL.md').bytes + 501);
+});
+
 test('rows that tie on max sort by skill ascending', async () => {
   const { transcriptDir, deps, json } = setup();
   writeJsonl(path.join(transcriptDir, 's1.jsonl'), [

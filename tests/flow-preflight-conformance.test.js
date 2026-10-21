@@ -69,9 +69,12 @@ test('flow/SKILL.md names the pack in Step 3 (#1931 AC6)', () => {
   assert.match(t, /flow-preflight\.js/);
 });
 
-test('the adoption section surfaces a CONFLICTING run PR and routes it to the git-discipline catch-up (#3014)', () => {
+function readConflictSection() {
   const t = read('plugin/skills/flow/steps-and-gates.md');
-  const section = t.slice(t.indexOf('### Adopting an inherited run directory'), t.indexOf('### Partial step lists'));
+  return t.slice(t.indexOf('### Adopting an inherited run directory'), t.indexOf('### Partial step lists'));
+}
+
+function assertConflictSection(section) {
   assert.ok(section.includes('`' + PR_CONFLICT_NOTE + '`'), 'the conflict line literal is rendered verbatim');
   assert.match(section, /pr\.value\.mergeable === 'CONFLICTING'/);
   assert.match(section, /pr\.value\.conflictNote/);
@@ -94,8 +97,22 @@ test('the adoption section surfaces a CONFLICTING run PR and routes it to the gi
   // final-review fixes: open-only guard, spelled-out abort text, recovery form, no second `test` run
   assert.match(section, /pr\.value\.state === 'OPEN'/, 'only an open PR triggers the stop (pr-merge-state.js excludes non-OPEN)');
   assert.match(section, /merge aborted — HARD-GATE stop before \{next phase\}/, 'the abort entry spells out its --text');
+  assert.match(section, /--text-file/, 'the abort entry names the --text-file form');
+  assert.match(section, /Text from git or a user/, 'the abort entry cites the canonical --text-file procedure');
+  assert.doesNotMatch(section, /escape any/i, 'the abort entry carries no hand-escape instruction');
   assert.match(section, /PIPELINE_RUN_DIR="\{run-dir\}" \/claude-tweaks:flow "\{target\}" \{step\}/, 'the stop names its resume form');
   assert.match(section, /\*\*Auto-insert `test`:\*\* rule/, 'the stamp re-verification cites the auto-insert rule instead of restating a test run');
+}
+
+test('the adoption section surfaces a CONFLICTING run PR and routes it to the git-discipline catch-up (#3014)', () => {
+  assertConflictSection(readConflictSection());
+});
+
+test('go-red control: swapping the abort entry back to a double-quoted --text makes the section assertion throw (#3014)', () => {
+  const section = readConflictSection();
+  const mutated = section.split('--text-file').join('--text');
+  assert.notStrictEqual(mutated, section, 'the control must actually mutate the text');
+  assert.throws(() => assertConflictSection(mutated), /--text-file/);
 });
 
 test('auto-mode-contract registers the adopted-run PR-conflict stop in its HARD-GATE row (#3014)', () => {

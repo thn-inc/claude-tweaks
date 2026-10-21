@@ -167,6 +167,7 @@ function baseSide(git, sha, baseFiles, root, batch = null) {
       return git(['show', '--end-of-options', `${sha}:${p}`]);
     },
     listSkillMds: () => [...baseFiles].filter((p) => re.test(p)),
+    listFiles: () => [...baseFiles],
   };
 }
 

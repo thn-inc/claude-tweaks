@@ -1,6 +1,6 @@
 # Step 17 — Work-Record Backend (detailed procedure)
 
-*Optional Enhancement step — see `SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
+*Optional Enhancement step — see `../SKILL.md`'s `## Input` for when this group is offered or filtered, and `../bootstrap-steps.md` for its ordering and renumbering conventions.*
 
 `/claude-tweaks:capture`, `/claude-tweaks:specify`, `/claude-tweaks:backlog`,
 `/claude-tweaks:dispatch`, `/claude-tweaks:tidy`, and every health skill

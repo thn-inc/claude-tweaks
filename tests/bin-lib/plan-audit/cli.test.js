@@ -565,7 +565,7 @@ test('AC3.1 (#3099): a spec with no ## Acceptance Criteria section yields a non-
   }
 });
 
-test('AC4.1 (#3099): without --spec the envelope carries checkE {ok: true, skipped: no-spec}; every other key, the summary, and the exit code match a --spec run', () => {
+test('AC4.1 (#3099) + AC3.1 (#3602): without --spec the envelope carries checkE and checkF {ok: true, skipped: no-spec}; every other key, the summary, and the exit code match a --spec run', () => {
   const repo = makeERepo();
   try {
     const plan = writePlan(repo, cliEPlan());
@@ -576,9 +576,10 @@ test('AC4.1 (#3099): without --spec the envelope carries checkE {ok: true, skipp
     const a = JSON.parse(without.stdout.split('\n')[0]);
     const b = JSON.parse(withSpec.stdout.split('\n')[0]);
     assert.deepStrictEqual(a.checkE, { ok: true, skipped: 'no-spec' });
+    assert.deepStrictEqual(a.checkF, { ok: true, skipped: 'no-spec' });
     assert.deepStrictEqual(b.checkE.uncovered, []);
-    const { checkE: dropA, ...restA } = a;
-    const { checkE: dropB, ...restB } = b;
+    const { checkE: dropA, checkF: dropFA, ...restA } = a;
+    const { checkE: dropB, checkF: dropFB, ...restB } = b;
     assert.deepStrictEqual(restA, restB);
     assert.deepStrictEqual(Object.keys(restA), ['checkA', 'checkB', 'checkC', 'checkD', 'headroom', 'premiseRefs']);
     assert.strictEqual(without.exitCode, 0);
@@ -630,6 +631,60 @@ test('#3099: --spec with no value, or beside --bytes or --count-tasks, is a usag
       assert.strictEqual(r.exitCode, 2, `expected exit 2 for ${args.slice(1).join(' ')}`);
       assert.match(r.stderr, /usage: plan-audit\.js .*--spec <spec-file>/);
     }
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+const CLI_F_SPEC = ['## Acceptance Criteria', '', '1. The report renders.', '', '## Technical Approach', '',
+  'Read `src/a.js` and `src/b.js` back; change them only if they break.', ''].join('\n');
+
+test('AC1.1 (#3602): --spec reports both unlisted Technical Approach paths in checkF and the summary line; exit stays 0', () => {
+  const repo = makeERepo();
+  try {
+    const plan = writePlan(repo, cliEPlan());
+    const spec = path.join(repo, 'spec.md');
+    fs.writeFileSync(spec, CLI_F_SPEC);
+    const { exitCode, stdout } = runCliArgs([plan, '--repo-root', repo, '--spec', spec]);
+    assert.strictEqual(exitCode, 0);
+    const report = JSON.parse(stdout.split('\n')[0]);
+    assert.strictEqual(report.checkF.ok, true);
+    assert.deepStrictEqual(report.checkF.unlisted, [
+      { path: 'src/a.js', section: 'Technical Approach' },
+      { path: 'src/b.js', section: 'Technical Approach' },
+    ]);
+    assert.strictEqual(stdout.split('\n')[1], 'plan-audit: Check F: 2 unlisted spec path(s).');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC3.1 (#3602): unlisted spec paths never decide the exit code — a failing Check A alone does', () => {
+  const repo = makeERepo();
+  try {
+    const plan = writePlan(repo, cliEPlan().replace('plugin/bin/existing.js', 'does/not/exist.js'));
+    const spec = path.join(repo, 'spec.md');
+    fs.writeFileSync(spec, CLI_F_SPEC);
+    const { exitCode, stdout } = runCliArgs([plan, '--repo-root', repo, '--spec', spec]);
+    const report = JSON.parse(stdout.split('\n')[0]);
+    assert.strictEqual(report.checkF.ok, true);
+    assert.strictEqual(report.checkF.unlisted.length, 2);
+    assert.strictEqual(report.checkA.ok, false);
+    assert.strictEqual(exitCode, 1);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#3602: an unparsed Technical Approach line and an orphan path waiver each get their own summary part', () => {
+  const repo = makeERepo();
+  try {
+    const plan = writePlan(repo, cliEPlan(['Waived src/typo.js: stale', '']));
+    const spec = path.join(repo, 'spec.md');
+    fs.writeFileSync(spec, '## Acceptance Criteria\n\n1. The report renders.\n\n## Technical Approach\n\nRead `src/a.js and stop.\n');
+    const { exitCode, stdout } = runCliArgs([plan, '--repo-root', repo, '--spec', spec]);
+    assert.strictEqual(exitCode, 0);
+    assert.strictEqual(stdout.split('\n')[1], 'plan-audit: Check F: 1 unparsed spec block(s); Check F: 1 orphan path waiver(s).');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

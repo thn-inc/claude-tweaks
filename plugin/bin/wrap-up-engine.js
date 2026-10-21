@@ -577,18 +577,19 @@ function optionalIssuesField(payload) {
 //     "issues": [3394, ...],
 //     "ledger": [{ "item": 3, "status": "deferred", "resolution": "..." }, ...] }
 //
-// Atomicity (Gotchas, record #2544): the three writes are NOT transactional
-// across each other — verify-expectations.json first, then the decision
-// log, then ledger flips, in that fixed order. A failure stops immediately;
-// writes already completed stay completed (verify-expectations.json is
-// idempotent to re-run, and the decision log is append-only, so re-running
-// after fixing the cause re-derives the same state rather than duplicating
-// it — only a partially-flipped ledger needs the operator to check which
-// rows the stderr message named before resolved). This is a documented
-// best-effort posture, not a bug: building real cross-file-format
-// transactionality for three unrelated artifacts is out of scope for a
-// bookkeeping-consolidation CLI — the exit code and stderr message are the
-// recovery contract.
+// Atomicity (Gotchas, record #2544; pre-flight, record #3684): payload
+// validation, ledger resolution and every row flip are checked before any
+// write — a refusal there names the failing ledger row (or the reason the
+// ledger could not be resolved or read) and writes none of the three
+// artifacts. Only a write failure (an I/O fault mid-call) can leave earlier
+// steps landed: verify-expectations.json first, then the decision log, then
+// the ledger, in that fixed order. The three writes are NOT transactional
+// across each other, and a re-run after a step-2 or step-3 write failure is
+// not idempotent: the decision log is append-only, so it appends the
+// Approve-all header and outcome lines again. This is a documented best-effort
+// posture, not a bug: building real cross-file-format transactionality for
+// three unrelated artifacts is out of scope for a bookkeeping-consolidation
+// CLI — the exit code and stderr message are the recovery contract.
 function validateFinishConsolePayload(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return 'stdin JSON must be an object with optional "memory"/"upstream"/"issues"/"ledger" array fields';
@@ -625,6 +626,51 @@ function runFinishConsole(args) {
   const ledgerUpdates = payload.ledger ?? [];
   const issuesField = optionalIssuesField(payload);
   const issuesNote = issuesField.issues ? `, issues: [${issuesField.issues.join(', ')}]` : '';
+
+  // Pre-flight (#3684): resolve the ledger and apply every row flip in memory
+  // before step 1 writes anything, so a row the flip refuses stops the call
+  // with nothing written. Step 3 writes the text computed here.
+  let ledgerFlip = null;
+  if (ledgerUpdates.length > 0) {
+    // #3017: process.cwd() here is an intentional fallback, not a repo-facts
+    // read — readRunState's own worktree field is already the right root
+    // when present (the run's worktree, which may differ from the main
+    // checkout), and the raw cwd is the correct substitute only for the rare
+    // case that field is absent. Overriding it with resolveRepoRoot's main
+    // checkout would resolve the ledger against the wrong worktree.
+    const worktree = readRunState(args.runDir)?.worktree || process.cwd();
+    const resolved = resolveLedgerPath({ runDir: args.runDir, worktree, explicit: args.ledger || null });
+    if (!resolved.ok) {
+      const detail = resolved.reason === 'ambiguous'
+        ? `${resolved.candidates.length} candidate ledgers found, cannot pick one — pass --ledger <path> explicitly:\n${resolved.candidates.map((c) => `  ${c}`).join('\n')}`
+        : resolved.reason === 'rejected'
+          ? `--ledger ${resolved.candidates[0]} rejected (${resolved.detail})`
+          : resolved.reason === 'unattributable'
+            ? `cannot attribute docs/plans ledgers to this run (${resolved.detail}) — pass --ledger <path> explicitly`
+            : 'no ledger found';
+      process.stderr.write(`wrap-up-engine.js finish-console: ledger pre-flight failed: ${detail} — nothing written\n`);
+      process.exitCode = 1;
+      return;
+    }
+    let text;
+    try {
+      text = fs.readFileSync(resolved.path, 'utf8');
+    } catch (e) {
+      process.stderr.write(`wrap-up-engine.js finish-console: ledger pre-flight failed: could not read ${resolved.path}: ${e.message} — nothing written\n`);
+      process.exitCode = 1;
+      return;
+    }
+    for (const [i, l] of ledgerUpdates.entries()) {
+      try {
+        text = flipLedgerRow(text, l);
+      } catch (e) {
+        process.stderr.write(`wrap-up-engine.js finish-console: ledger pre-flight failed at ledger[${i}]: ${e.message} — nothing written\n`);
+        process.exitCode = 1;
+        return;
+      }
+    }
+    ledgerFlip = { path: resolved.path, text };
+  }
 
   // Step 1: verify-expectations.json (read-modify-write — preserve every
   // field this verb doesn't itself own, same discipline
@@ -663,50 +709,14 @@ function runFinishConsole(args) {
     return;
   }
 
-  // Step 3: ledger flips — skipped entirely (not an error) when the payload
+  // Step 3: ledger write — the pre-flight above already flipped every row, so
+  // this is the one I/O call. Skipped entirely (not an error) when the payload
   // named no ledger updates.
-  if (ledgerUpdates.length > 0) {
-    // #3017: process.cwd() here is an intentional fallback, not a repo-facts
-    // read — readRunState's own worktree field is already the right root
-    // when present (the run's worktree, which may differ from the main
-    // checkout), and the raw cwd is the correct substitute only for the rare
-    // case that field is absent. Overriding it with resolveRepoRoot's main
-    // checkout would resolve the ledger against the wrong worktree.
-    const worktree = readRunState(args.runDir)?.worktree || process.cwd();
-    const resolved = resolveLedgerPath({ runDir: args.runDir, worktree, explicit: args.ledger || null });
-    if (!resolved.ok) {
-      const detail = resolved.reason === 'ambiguous'
-        ? `${resolved.candidates.length} candidate ledgers found, cannot pick one — pass --ledger <path> explicitly:\n${resolved.candidates.map((c) => `  ${c}`).join('\n')}`
-        : resolved.reason === 'rejected'
-          ? `--ledger ${resolved.candidates[0]} rejected (${resolved.detail})`
-          : resolved.reason === 'unattributable'
-            ? `cannot attribute docs/plans ledgers to this run (${resolved.detail}) — pass --ledger <path> explicitly`
-            : 'no ledger found';
-      process.stderr.write(`wrap-up-engine.js finish-console: step 3 (ledger flips) failed: ${detail} — steps 1-2 already completed\n`);
-      process.exitCode = 1;
-      return;
-    }
-    let text;
+  if (ledgerFlip) {
     try {
-      text = fs.readFileSync(resolved.path, 'utf8');
+      writeFileAtomic(ledgerFlip.path, ledgerFlip.text);
     } catch (e) {
-      process.stderr.write(`wrap-up-engine.js finish-console: step 3 (ledger flips) failed: could not read ${resolved.path}: ${e.message} — steps 1-2 already completed\n`);
-      process.exitCode = 1;
-      return;
-    }
-    for (const [i, l] of ledgerUpdates.entries()) {
-      try {
-        text = flipLedgerRow(text, l);
-      } catch (e) {
-        process.stderr.write(`wrap-up-engine.js finish-console: step 3 (ledger flips) failed at ledger[${i}]: ${e.message} — steps 1-2 already completed; ${i} of ${ledgerUpdates.length} ledger row(s) flipped so far were written together at the end, so NONE have been written yet\n`);
-        process.exitCode = 1;
-        return;
-      }
-    }
-    try {
-      writeFileAtomic(resolved.path, text);
-    } catch (e) {
-      process.stderr.write(`wrap-up-engine.js finish-console: step 3 (ledger flips) failed to write ${resolved.path}: ${e.message} — steps 1-2 already completed\n`);
+      process.stderr.write(`wrap-up-engine.js finish-console: step 3 (ledger flips) failed to write ${ledgerFlip.path}: ${e.message} — steps 1-2 already completed\n`);
       process.exitCode = 1;
       return;
     }

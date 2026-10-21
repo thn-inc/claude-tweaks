@@ -12,6 +12,8 @@
 const fs = require('fs');
 const path = require('path');
 const { isPathContained } = require('../shared-primitives');
+const { walkCitable } = require('./load');
+const { readdirUnder } = require('./citable-readdir');
 
 const skillsPrefix = (root) => (root === '.' ? 'skills/' : `${root}/skills/`);
 
@@ -54,7 +56,10 @@ function pluginRootReader(baseAbs, root = '.') {
       .map((d) => `${skillsPrefix(root)}${d.name}/SKILL.md`)
       .filter((p) => readFile(p) !== null);
   };
-  return { readFile, listSkillMds };
+  // Rule (f)'s citable listing for bare-name resolution — walked from
+  // {root}/skills and {root}/agents only, never `.claude/worktrees/`.
+  const listFiles = () => walkCitable(root, readdirUnder(baseAbs));
+  return { readFile, listSkillMds, listFiles };
 }
 
 module.exports = { pluginRootReader, skillsPrefix };

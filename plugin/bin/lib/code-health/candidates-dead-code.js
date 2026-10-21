@@ -104,29 +104,11 @@
 // drops any extra properties hung off it, so the counts cannot ride along on
 // the array that focus-mode.md's `node -e` wiring serializes.
 
-const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { escapeRegExp } = require('../shared-primitives');
-
-const SOURCE_EXTS = new Set(['.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs']);
-
-// True if `relFile`'s basename matches this repo's own test-discovery
-// naming convention — `*.test.js`/`*.test.ts`/etc., the pattern
-// `package.json`'s `test` script discovers via its single recursive
-// `find tests tools/upstream-drift/tests -name '*.test.js'` (not an
-// enumerated glob list) and the one `node --test <dir>` itself
-// recognizes when given a directory to walk. A file matching this is
-// discovered by the test runner's own glob, never by a `require`/`import`
-// specifier naming it — so it is never a genuine file-orphan candidate (see
-// the module header's Coverage block). Name-based rather than a literal
-// read of `package.json`'s globs: a generic heuristic that holds for any
-// consumer repo following the widespread `*.test.js`/`*.spec.js` convention,
-// not just this one.
-const TEST_GLOB_BASENAME_RE = /\.(test|spec)\.(js|ts|tsx|jsx|mjs|cjs)$/;
-function isGlobDiscoveredTestFile(relFile) {
-  return TEST_GLOB_BASENAME_RE.test(relFile);
-}
+const { registerGenerator } = require('./focus-generators');
+const { isGlobDiscoveredTestFile, extractModuleExports, listTrackedSourceFiles } = require('./source-scan');
 
 // Pulls substrings that look like a relative source-file path (ending in a
 // known extension) out of raw JSON/text — e.g.
@@ -253,56 +235,8 @@ function detectEntrypoints(rootDir, files) {
   return entrypoints;
 }
 
-const IDENTIFIER_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-
-// Extracts every bare identifier out of every `module.exports = { ... }`
-// brace block in `text` — this repo's dominant export shape, single- or
-// multi-line alike (a single-line block is just the one-line case of the
-// same brace scan). Character-by-character brace-depth tracking, not a
-// line-by-line split, so a nested object value can't prematurely end the
-// block. Tokens that aren't bare identifiers (spread `...x`, aliased
-// `a: b`, computed `[x]: y`) are silently skipped — conservative by
-// design (AC2): prefer missing a dead export over flagging a live one.
-function extractModuleExports(text) {
-  const results = [];
-  const startRe = /module\.exports\s*=\s*\{/g;
-  let m;
-  while ((m = startRe.exec(text))) {
-    const openIdx = m.index + m[0].length - 1; // index of the '{'
-    let depth = 0;
-    let closeIdx = -1;
-    for (let i = openIdx; i < text.length; i++) {
-      if (text[i] === '{') depth++;
-      else if (text[i] === '}') {
-        depth--;
-        if (depth === 0) {
-          closeIdx = i;
-          break;
-        }
-      }
-    }
-    if (closeIdx === -1) {
-      // Unterminated block (malformed or truncated file) — skip gracefully,
-      // never throw. startRe.lastIndex is already past openIdx, so the
-      // outer while loop simply finds no further "module.exports = {" and
-      // exits.
-      continue;
-    }
-    const inner = text.slice(openIdx + 1, closeIdx);
-    const startLine = text.slice(0, openIdx).split('\n').length;
-    const endLine = text.slice(0, closeIdx).split('\n').length;
-    for (const rawToken of inner.split(',')) {
-      const token = rawToken.trim();
-      if (token === '' || !IDENTIFIER_RE.test(token)) continue;
-      results.push({ symbol: token, startLine, endLine });
-    }
-    startRe.lastIndex = closeIdx;
-  }
-  return results;
-}
-
 // Wraps an already-escaped symbol in identifier boundaries. Deliberately not
-// `\b`: `$` is a legal JS identifier character (IDENTIFIER_RE accepts it) but
+// `\b`: `$` is a legal JS identifier character (`source-scan.js`'s IDENTIFIER_RE accepts it) but
 // a NON-word character to the regex engine, so `\b` is wrong in both
 // directions around it — `\b\$fn\b` matches nothing at all (a live symbol
 // would report dead), while `\bdead\b` matches inside `$dead` (a distinct
@@ -353,8 +287,8 @@ function isReferenced(symbol, declFile, declRange, allFiles, linesByFile) {
 // side-effect-only `import './x.js'` form has neither `from` nor a
 // parenthesis, so it needs its own alternative — without it an
 // imported-for-effect file reads as orphan, the direction the spec forbids.
-// The regex is built per call (as in extractPathLikeStrings and
-// extractModuleExports above) rather than hoisted: a `/g` regex carries
+// The regex is built per call (as in extractPathLikeStrings above and
+// extractModuleExports in source-scan.js) rather than hoisted: a `/g` regex carries
 // mutable `lastIndex`, and module-level shared state there truncates a later
 // scan if any caller ever leaves the loop early.
 function referencedFileSpecifiers(text) {
@@ -392,56 +326,6 @@ function isFileOrphan(relFile, allFiles, contentsByFile) {
     }
   }
   return true;
-}
-
-// Files git would track or allow to be tracked, respecting .gitignore —
-// `--cached` (tracked/staged) + `--others --exclude-standard` (untracked
-// but not ignored) together, so a fixture tree needs only `git init` and a
-// `.gitignore` on disk; nothing needs to be `git add`ed or committed for
-// exclusion to take effect. No extension filter — every tracked/untracked-
-// unignored path, sorted for deterministic ordering. `listTrackedSourceFiles`
-// below layers the JS/TS extension filter on top for this vertical's own
-// use; `candidates-prelaunch.js` (#2693) calls this extension-agnostic form
-// directly, since a pre-launch checklist needs non-source files too
-// (`robots.txt`, `sitemap.xml`, image assets).
-//
-// Returns `{ files, discoveryFailed, reason? }`, never a bare array —
-// `discoveryFailed` distinguishes "git itself failed" (timeout, permission
-// denied, repo corruption, non-git root, output past maxBuffer) from a
-// legitimately empty tracked tree, both of which would otherwise collapse
-// into the identical `files: []` sentinel a caller can't tell apart
-// (IL-115: a focus-mode firing must be able to report which one happened,
-// not silently degrade a real failure into "zero candidates, clean repo").
-// `reason` is the captured stderr (or, failing that, the error message) and
-// is present only when `discoveryFailed` is true. `maxBuffer` is set
-// explicitly (Node's execFileSync default is ~1MB) since a large consumer
-// repo's `git ls-files` output can exceed that on the default.
-function listTrackedFiles(rootDir) {
-  let raw;
-  try {
-    raw = execFileSync(
-      'git',
-      ['-C', rootDir, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000, maxBuffer: 10 * 1024 * 1024, windowsHide: true },
-    );
-  } catch (err) {
-    const stderr = err && err.stderr ? String(err.stderr).trim() : '';
-    const reason = stderr || (err && err.message) || 'unknown error';
-    return { files: [], discoveryFailed: true, reason };
-  }
-  const files = raw
-    .split('\0')
-    .filter(Boolean)
-    .sort();
-  return { files, discoveryFailed: false };
-}
-
-// JS/TS-only view of listTrackedFiles, for this vertical's own dead-export/
-// orphan-file scan.
-function listTrackedSourceFiles(rootDir) {
-  const discovery = listTrackedFiles(rootDir);
-  if (discovery.discoveryFailed) return discovery;
-  return { files: discovery.files.filter((f) => SOURCE_EXTS.has(path.extname(f))), discoveryFailed: false };
 }
 
 function hasNulByte(buffer) {
@@ -555,23 +439,14 @@ module.exports = {
   detectEntrypoints,
   extractPathLikeStrings,
   collectStrings,
-  extractModuleExports,
   isReferenced,
-  escapeRegExp,
   isFileOrphan,
-  isGlobDiscoveredTestFile,
   referencedFileSpecifiers,
-  listTrackedFiles,
-  listTrackedSourceFiles,
   scanDeadCode,
   candidatesDeadCode,
 };
 
 // Registers this vertical's generator into the shared framework registry —
 // see `./focus-generators.js` for why that registry lives in its own
-// neutral module rather than here (review finding, ledger item #6). This
-// module is the registry's first autoload, and requiring the registry
-// triggers its cascade of sibling verticals, which destructure this module's
-// helpers at require time. So the require sits below `module.exports`: the
-// siblings then see the real exports instead of an empty object (#2869).
-require('./focus-generators').registerGenerator('dead-code', scanDeadCode);
+// neutral module rather than here (review finding, ledger item #6).
+registerGenerator('dead-code', scanDeadCode);
