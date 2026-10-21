@@ -1938,7 +1938,7 @@ test('preExisting: a jest log whose only failing file is covered but whose globa
 });
 
 test('preExisting: a fully attributed jest log covered by the allowlist is adjudicated (#3480)', async () => {
-  const log = ['FAIL tests/known-shallow.test.js', '  ● known › fails', 'Test Suites: 1 failed, 2 passed, 3 total', 'Tests:       1 failed, 3 passed, 4 total'].join('\n');
+  const log = ['FAIL tests/known-shallow.test.js', '  ● known › fails', 'Test Suites: 1 failed, 2 passed, 3 total', 'Tests:       1 failed, 3 passed, 4 total', 'Ran all test suites.'].join('\n');
   const r = preExistingRepo({ log });
   const { code, stderr } = await runCli(r.args, { cwd: r.repo });
   assert.strictEqual(code, 0, stderr);

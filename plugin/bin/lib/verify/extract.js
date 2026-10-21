@@ -629,6 +629,13 @@ function interruptedRun(summary, dialect) {
   return reported < Number(of[2]);
 }
 
+// jest's closing line on a normal run: SummaryReporter's `_getTestSummary`
+// prints `Ran all test suites` with the pattern or project filter, then a
+// period. A jest log whose last line is anything else crashed after its summary
+// (#3674). vitest has no counterpart: its summary and stream interleave, so no
+// closing line is stable across runs (`vitest-summary-last.txt`).
+const JEST_TRAILER_RE = /^Ran all test suites\b.*\.$/;
+
 // The summary family's per-dialect accounting (#3480) — see the comment on
 // `unattributedFailureCount`. null for pytest and an ambiguous log.
 function summaryUnattributedCount(text, { cwd }) {
@@ -660,6 +667,14 @@ function summaryUnattributedCount(text, { cwd }) {
   const totalLines = clean.match(dialect === 'jest' ? /^Test Suites:.*$/gm : /^\s*Test Files\s.*$/gm) || [];
   if (totalLines.length > 1) nonFile += 1;
   if (totalLines.length === 1 && interruptedRun(totalLines[0], dialect)) nonFile += 1;
+  // A jest run that crashed after its summary (a results processor that threw)
+  // prints no line an enumerated channel matches, so the trailer guard counts
+  // it. Only when no channel counted anything (`unmatched` FAIL lines included):
+  // a channel that already counted the same crash would otherwise count it twice.
+  if (dialect === 'jest' && unmatched + nonFile === 0) {
+    const lastLine = clean.split('\n').map((l) => l.trim()).filter(Boolean).pop();
+    if (!JEST_TRAILER_RE.test(lastLine)) nonFile += 1;
+  }
   if (unmatched + nonFile > 0) return unmatched + nonFile;
   if (totalLines.length === 0) return 1;
   const failed = totalLines[0].match(/(\d+) failed/);
@@ -682,7 +697,8 @@ function summaryUnattributedCount(text, { cwd }) {
 // `FAIL` lines against `Test Suites: N failed`, vitest against `Test Files N
 // failed` plus its `Errors` block, and both add every `FAIL` line naming no
 // test file, every `UNATTRIBUTED_LINE_RES` line (coverage, a global hook, a
-// jest obsolete snapshot, a crashed runner), an interrupted run, and a log
+// jest obsolete snapshot, a crashed runner), an interrupted run, a jest log
+// whose last line is not its `Ran all test suites` trailer (#3674), and a log
 // carrying more than one summary line — failures no file accounts for.
 // pytest (collection `ERROR`s sit outside every `FAILED` line) and an
 // ambiguous summary log (more than one runner's markers, or none) return null, as
