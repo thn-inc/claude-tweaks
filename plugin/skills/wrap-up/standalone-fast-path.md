@@ -38,7 +38,7 @@ file's only scope is Phase 4's **cleanup execution** step, for the narrow item s
 
 **Item 2 (ledger)** — delete via `/ledger`'s delete operation, only after Phase 3's ledger gate
 confirmed zero open items. Already "simple enough to execute inline" per
-`cleanup-procedures.md` — no further procedure needed.
+`cleanup-procedures.md` — no further procedure needed (a run-dir ledger is gitignored, so there is nothing to commit; `cleanup-procedures.md`'s Item 2 commit applies only to a tracked `docs/plans/` ledger).
 
 **Item 6 (ephemeral dev server)** — only reachable if this conversation-based, no-worktree run
 still triggered a frontend visual review that auto-started a dev server
@@ -62,5 +62,5 @@ never restate their internals a third way):
    run directory outright — the auto-decision log is project history, not disposable pipeline
    state.
 
-Proceed to `SKILL.md`'s phase-trace report and "Execute approved actions" step as normal —
+Proceed to `SKILL.md`'s "Execute approved actions" step and phase-trace report as normal —
 nothing about the report, commit, or verification changes for this run shape.

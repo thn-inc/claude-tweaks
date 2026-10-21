@@ -35,7 +35,7 @@ function parseRepo(url) {
 function ghAvailable(deps = {}) {
   const exec = deps.execFileSync || execFileSync;
   try {
-    exec('gh', ['--version'], { stdio: 'ignore', timeout: GH_TIMEOUT_MS });
+    exec('gh', ['--version'], { stdio: 'ignore', timeout: GH_TIMEOUT_MS, windowsHide: true });
     return true;
   } catch {
     return false;

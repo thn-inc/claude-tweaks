@@ -242,6 +242,8 @@ test('#1861: policy-configured integration-branch resolving to origin/{name} -- 
 const EV_BUILD = '{"skill":"claude-tweaks:build","ts":"2026-08-01T09:05:00.000Z","type":"skill_invoked"}';
 const EV_BUILD_FALLBACK = '{"skill":"claude-tweaks:build","attribution":"fallback","ts":"2026-08-01T09:05:00.000Z","type":"skill_invoked"}';
 const EV_WRAPUP = '{"skill":"claude-tweaks:wrap-up","ts":"2026-08-01T09:50:00.000Z","type":"skill_invoked"}';
+const EV_WRAPUP_USER = '{"skill":"claude-tweaks:wrap-up","source":"user","ts":"2026-08-01T09:50:00.000Z","type":"skill_invoked"}';
+const EV_BUILD_USER = '{"skill":"claude-tweaks:build","source":"user","ts":"2026-08-01T09:30:00.000Z","type":"skill_invoked"}';
 const EV_OTHER = '{"path":"/x","ts":"2026-08-01T09:00:00.000Z","type":"commit"}';
 
 function writeEvents(runDir, lines) {
@@ -377,6 +379,26 @@ test('AC4a: merged but wrap-up event present -> in-progress', () => {
   const r = checkRunIntegrity(runDir);
   assert.strictEqual(r.state, 'in-progress');
   assert.strictEqual(r.evidence.wrapupInvoked, true);
+});
+
+test('AC4a (typed): merged but a source:"user" wrap-up event present -> in-progress (a typed wrap-up is proof the procedure ran)', () => {
+  const { root, runDir } = fixtureRepo();
+  sh(root, 'merge', '-q', '--no-edit', 'feat-branch');
+  writeEvents(runDir, [EV_BUILD_USER, EV_WRAPUP_USER]);
+  const r = checkRunIntegrity(runDir);
+  assert.strictEqual(r.state, 'in-progress');
+  assert.strictEqual(r.evidence.wrapupInvoked, true);
+  assert.strictEqual(r.evidence.ledgerActive, true);
+});
+
+test('AC1 (typed): merged + only a source:"user" non-wrap-up event -> shipped-unclosed (a typed command activates the ledger)', () => {
+  const { root, runDir } = fixtureRepo();
+  sh(root, 'merge', '-q', '--no-edit', 'feat-branch');
+  writeEvents(runDir, [EV_BUILD_USER]);
+  const r = checkRunIntegrity(runDir);
+  assert.strictEqual(r.state, 'shipped-unclosed');
+  assert.strictEqual(r.evidence.ledgerActive, true);
+  assert.strictEqual(r.evidence.wrapupInvoked, false);
 });
 
 test('AC4b: merged but zero skill_invoked events of any kind -> in-progress (pre-ledger run)', () => {

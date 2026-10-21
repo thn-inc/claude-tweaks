@@ -26,7 +26,7 @@ class ChangedFilesError extends Error {
 }
 
 function git(execImpl, args) {
-  return String(execImpl('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+  return String(execImpl('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
 }
 
 function tryGit(execImpl, args) {

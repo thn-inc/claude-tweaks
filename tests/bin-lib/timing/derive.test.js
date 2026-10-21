@@ -82,6 +82,35 @@ test('#1928: an un-mapped claude-tweaks skill opens its own top-level span (neve
   assert.equal(NESTED_PARENT.journeys, 'enclosing');
 });
 
+test('typed (source user) lifecycle skills open phases exactly like model ones; a typed non-phase skill nests', () => {
+  const events = [
+    { skill: 'claude-tweaks:flow', source: 'user', ts: '2026-09-05T13:00:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:build', source: 'user', ts: '2026-09-05T13:01:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:help', source: 'user', ts: '2026-09-05T13:05:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:test', ts: '2026-09-05T13:10:00.000Z', type: 'skill_invoked' },
+    { ts: '2026-09-05T13:15:00.000Z', type: 'session-end' },
+  ];
+  const out = derivePhases({ events });
+  const p = byName(out);
+  assert.equal(p['call-1'].minutes, 15);
+  assert.equal(p.build.minutes, 9, 'a typed help nests in build instead of cutting it short');
+  assert.equal(p.test.minutes, 5);
+  assert.equal(out.phases.some((x) => x.phase === 'help'), false);
+});
+
+test('a model-initiated un-mapped skill still opens its own span (the drift detector is unchanged)', () => {
+  const events = [
+    { skill: 'claude-tweaks:flow', source: 'user', ts: '2026-09-05T13:00:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:build', source: 'user', ts: '2026-09-05T13:01:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:help', ts: '2026-09-05T13:05:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:test', ts: '2026-09-05T13:10:00.000Z', type: 'skill_invoked' },
+    { ts: '2026-09-05T13:15:00.000Z', type: 'session-end' },
+  ];
+  const p = byName(derivePhases({ events }));
+  assert.equal(p.build.minutes, 4, 'the un-sourced help ends build at 13:05');
+  assert.equal(p.help.minutes, 5);
+});
+
 test('#2249: stories/deepen/feedback are NESTED_PARENT members and nest into the enclosing phase rather than opening a new top-level span', () => {
   assert.equal(NESTED_PARENT.stories, 'enclosing');
   assert.equal(NESTED_PARENT.deepen, 'enclosing');

@@ -24,11 +24,15 @@
 // Known limit: a program name produced by command substitution (`$(echo git)
 // push`) is not reached, and the handler cannot resolve it either.
 //
-// Dependency-light by contract: fs plus git-command.js (which requires only
-// path). Adding a heavier require here moves cost onto EVERY Bash call.
+// Dependency-light by contract: fs, git-command.js (which requires only path)
+// and harness-refusal.js (which requires nothing). Adding a heavier require here
+// moves cost onto EVERY Bash call. The same holds for user-prompt-submit: it fires
+// on every human prompt and Claude Code waits for it, so it is governed here too,
+// by a raw substring test on `claude-tweaks:` with no JSON parse.
 'use strict';
 const fs = require('fs');
 const { GUARDED_PROGRAM_WORDS, forEachCommandSegment, redirectWriteTargets } = require('./git-command');
+const { REFUSAL_SIGNATURE } = require('./harness-refusal');
 
 // Both word sets come from git-command.js, where the parsers that key on these
 // words live (#3092): pre-tool-use runs every guard family, post-tool-use only the
@@ -109,10 +113,10 @@ function shouldRunFull(event, input) {
 
 // #2783: post-tool-use-failure fires on EVERY failed Bash call, yet its handler
 // only acts on the harness worktree-isolation refusal, whose text always carries
-// this phrase (post-tool-use-failure.js's HARNESS_ISOLATION_REFUSAL_RE). Matched
+// this phrase (harness-refusal.js's REFUSAL_SIGNATURE, the tail of
+// post-tool-use-failure.js's HARNESS_ISOLATION_REFUSAL_RE). Matched
 // on the raw payload OR the parsed `error`, so a JSON-escaped spelling still runs.
 // Unparseable input skips: the handler does nothing with it either.
-const REFUSAL_SIGNATURE = 'Refusing to run it';
 function failureCarriesRefusal(raw, input) {
   if (raw.includes(REFUSAL_SIGNATURE)) return true;
   return Boolean(input && typeof input.error === 'string' && input.error.includes(REFUSAL_SIGNATURE));
@@ -123,9 +127,14 @@ function failureCarriesRefusal(raw, input) {
 // every event this filter does not govern.
 function earlyGate(event, readRaw = () => fs.readFileSync(0, 'utf8')) {
   const isFailure = event === 'post-tool-use-failure';
-  if (!wordsFor(event) && !isFailure) return null;
+  const isPrompt = event === 'user-prompt-submit';
+  if (!wordsFor(event) && !isFailure && !isPrompt) return null;
   let raw = '';
   try { raw = readRaw(); } catch { raw = ''; }
+  // JSON never escapes `/` or `:`, so `claude-tweaks:` is a superset of every
+  // payload user-prompt-submit.js can record; the handler makes the real call.
+  // Unreadable or unparseable stdin skips: the handler would do nothing with it.
+  if (isPrompt) return { raw, skip: !raw.includes('claude-tweaks:') };
   let input = null;
   try { input = JSON.parse(raw); } catch { input = null; }
   if (isFailure) {

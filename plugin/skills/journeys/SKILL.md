@@ -1,6 +1,6 @@
 ---
 name: journeys
-description: Use when you want to create or update user journey documentation for recently built features. Works standalone or as a step within /claude-tweaks:build.
+description: Use when you want to create or update user journey documentation for recently built features.
 argument-hint: "[<spec-number>|<file-path>...|--journey <name>]"
 ---
 

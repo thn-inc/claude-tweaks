@@ -29,11 +29,11 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { discoverPluginRoots, entryPointLoads, loadDelta, walkCitable } = require('./lib/skill-audit/load');
-const { readdirUnder } = require('./lib/skill-audit/citable-readdir');
+const { discoverPluginRoots, entryPointLoads, loadDelta } = require('./lib/skill-audit/load');
 const { corpusDir } = require('./lib/skill-audit/context-cost');
 const { resolveIntegrationBranch, bareIntegrationName } = require('./lib/hooks/worktree-reap');
 const { toPosix, escapeRegExp, isPathContained } = require('./lib/shared-primitives');
+const { pluginRootReader, skillsPrefix } = require('./lib/skill-audit/plugin-root-reader');
 
 const USAGE = 'usage: load-delta.js [--plugin-root <dir>]... [--base <ref>] [--integration-branch <name>] [--json] [--help]\n';
 
@@ -130,7 +130,6 @@ const realDeps = {
 // splitting is not (#3307 F3/F4).
 const splitZ = (s) => s.split('\0').filter(Boolean);
 
-const skillsPrefix = (root) => (root === '.' ? 'skills/' : `${root}/skills/`);
 const SKILL_MD_UNDER = (root) => new RegExp(`^${escapeRegExp(skillsPrefix(root))}[^/]+/SKILL\\.md$`);
 
 // The path segment(s) before "/skills/{name}/" in a changed-file path, for
@@ -150,49 +149,6 @@ function firstNameableParent(files) {
     if (p) return p;
   }
   return null;
-}
-
-function headSide(repoRoot, root) {
-  // A citation that passed withinRoot's textual check can still be a committed
-  // symlink to a file outside the repository, or to a device (/dev/zero) that
-  // never reaches EOF — so resolve the real path and read only a regular file
-  // inside the repository; anything else is absent.
-  const realRoot = fs.realpathSync(repoRoot);
-  const readFile = (p) => {
-    try {
-      const real = fs.realpathSync(path.join(repoRoot, p));
-      if (!isPathContained(real, realRoot) || !fs.statSync(real).isFile()) return null;
-      return fs.readFileSync(real, 'utf8');
-    } catch (err) {
-      if (['ENOENT', 'EISDIR', 'ENOTDIR', 'ELOOP'].includes(err.code)) return null;
-      throw err;
-    }
-  };
-  const listSkillMds = () => {
-    const dir = path.join(repoRoot, root, 'skills');
-    // A root discovered only via the base-tree union (ledger row 17) — all
-    // its SKILL.md files deleted, committed, at head — has no skills/
-    // directory left on disk at all; a root whose index entries are deleted
-    // in the working tree only (never committed) can hit the same ENOENT.
-    // Either way that is "no entries at head", not a crash: readdirSync's
-    // ENOENT/ENOTDIR become [], and anything else (a real permissions or I/O
-    // error) still rethrows.
-    let entries;
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch (err) {
-      if (['ENOENT', 'ENOTDIR'].includes(err.code)) return [];
-      throw err;
-    }
-    return entries
-      .filter((d) => d.isDirectory())
-      .map((d) => `${skillsPrefix(root)}${d.name}/SKILL.md`)
-      .filter((p) => readFile(p) !== null);
-  };
-  // The citable `.md` listing rule (f)'s bare-name resolution reads — walked
-  // from {root}/skills and {root}/agents only (never `.claude/worktrees/`).
-  const listFiles = () => walkCitable(root, readdirUnder(repoRoot));
-  return { readFile, listSkillMds, listFiles };
 }
 
 function baseSide(git, sha, baseFiles, root, batch = null) {
@@ -229,6 +185,38 @@ function newUnresolvedCell(list) {
   const shown = list.slice(0, 3).map((u) => `\`${u.token}\``).join(', ');
   const ellipsis = list.length > 3 ? ', …' : '';
   return `${list.length}: ${shown}${ellipsis}`;
+}
+
+// Rows that move identically (same entry mark, ΔFloor, ΔClosure, and New
+// unresolved set) share one group, so a _shared/*.md edit that shifts N entry
+// points by the same amount prints one row. Groups keep first-appearance order.
+function groupRows(rows) {
+  const groups = new Map();
+  for (const r of rows) {
+    const key = [
+      entryMark(r),
+      r.dFloor,
+      r.dClosure,
+      ...r.newUnresolved.map((u) => `${u.citingFile}\u0000${u.token}`).sort(),
+    ].join('\u0001');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  return [...groups.values()];
+}
+
+function range(values) {
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  return lo === hi ? fmt(lo) : `${fmt(lo)}–${fmt(hi)}`;
+}
+
+function groupEntryCell(members) {
+  const named = (m) => `${m.entry}${entryMark(m)}`;
+  if (members.length === 1) return named(members[0]);
+  const names = members.slice(0, 3).map(named).join(', ');
+  const more = members.length > 3 ? `, … +${members.length - 3} more` : '';
+  return `${members.length} entries: ${names}${more}`;
 }
 
 function renderText(result, changedFiles, { pluginRootsGiven = false } = {}) {
@@ -270,10 +258,12 @@ function renderText(result, changedFiles, { pluginRootsGiven = false } = {}) {
     '| Entry | Floor | ΔFloor | Closure | ΔClosure | New unresolved |',
     '|---|---|---|---|---|---|',
   ];
-  for (const r of rows) {
-    const mark = entryMark(r);
-    const miss = newUnresolvedCell(r.newUnresolved);
-    lines.push(`| ${r.entry}${mark} | ${fmt(r.floor)} | ${signed(r.dFloor)} | ${fmt(r.closure)} | ${signed(r.dClosure)} | ${miss} |`);
+  for (const members of groupRows(rows)) {
+    const first = members[0];
+    const floors = range(members.map((m) => m.floor));
+    const closures = range(members.map((m) => m.closure));
+    const miss = newUnresolvedCell(first.newUnresolved);
+    lines.push(`| ${groupEntryCell(members)} | ${floors} | ${signed(first.dFloor)} | ${closures} | ${signed(first.dClosure)} | ${miss} |`);
   }
   return `${lines.join('\n')}\n`;
 }
@@ -362,7 +352,7 @@ function run(argv, deps = realDeps) {
       roots = discoverPluginRoots(() => listed);
     }
 
-    const heads = roots.map((root) => ({ root, rows: entryPointLoads(root, headSide(repoRoot, root)) }));
+    const heads = roots.map((root) => ({ root, rows: entryPointLoads(root, pluginRootReader(repoRoot, root)) }));
     let result;
     let changedFiles = [];
     if (!base) {

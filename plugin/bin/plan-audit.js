@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // plugin/bin/plan-audit.js — mechanized plan audit (#903): Checks A/B/C/D
 // plus a size-headroom check, replacing the hand-run prose procedure that used to
-// live entirely in plugin/skills/build/plan-audit.md, and the warn-only Check E
-// (#3099, AC clause coverage — runs only with `--spec`). Exit 0 iff every
-// gating check is ok (a `nearCeiling` headroom flag, or any Check E entry,
-// alone does not fail). `--count-tasks`
-// (#1926) is a read-only verb printing `{tasks, batched}` for /build's
+// live entirely in plugin/skills/build/plan-audit.md, and the warn-only Checks
+// E (#3099, AC clause coverage) and F (#3602, spec-named path coverage) — both
+// run only with `--spec`. Exit 0 iff every gating check is ok (a `nearCeiling`
+// headroom flag, or any Check E or Check F entry, alone does not fail).
+// `--count-tasks` (#1926) is a read-only verb printing `{tasks, batched}` for /build's
 // single-task fast-lane condition — it never runs the checks.
 'use strict';
 
@@ -18,7 +18,7 @@ const {
   extractFileEntries, extractScopeKeywords, extractPremiseRefs, extractVerificationChecks, extractUnparseableStep2s, countTasks,
 } = require('./lib/plan-audit/parser');
 const {
-  checkA, checkB, checkC, checkD, checkE, headroomCheck, checkPremiseRefs,
+  checkA, checkB, checkC, checkD, checkE, checkF, headroomCheck, checkPremiseRefs,
 } = require('./lib/plan-audit/checks');
 
 function resolveRepoRoot(explicit, cwd) {
@@ -56,6 +56,12 @@ function summaryLine(report) {
   if (!report.checkE.skipped) {
     if (report.checkE.uncovered.length) parts.push(`Check E: ${report.checkE.uncovered.length} uncovered AC clause(s)`);
     if (report.checkE.unparsed.length) parts.push(`Check E: ${report.checkE.unparsed.length} unparsed AC item(s)`);
+  }
+  // #3602: warn-only, like Check E.
+  if (!report.checkF.skipped) {
+    if (report.checkF.unlisted.length) parts.push(`Check F: ${report.checkF.unlisted.length} unlisted spec path(s)`);
+    if (report.checkF.unparsed.length) parts.push(`Check F: ${report.checkF.unparsed.length} unparsed spec block(s)`);
+    if (report.checkF.orphanWaivers.length) parts.push(`Check F: ${report.checkF.orphanWaivers.length} orphan path waiver(s)`);
   }
   if (parts.length === 0) return 'plan-audit: clean — no findings.';
   return `plan-audit: ${parts.join('; ')}.`;
@@ -138,6 +144,7 @@ function main() {
     headroom: headroomCheck(entries, repoRoot),
     premiseRefs: checkPremiseRefs(premiseRefs, repoRoot),
     checkE: specText === null ? { ok: true, skipped: 'no-spec' } : checkE(specText, text),
+    checkF: specText === null ? { ok: true, skipped: 'no-spec' } : checkF(specText, text),
   };
 
   // Compact JSON on its own first line (never pretty-printed — a caller

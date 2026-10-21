@@ -114,7 +114,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    itself is in question, never needed to execute this step correctly.
 3. **`integration-model: pr-first` (`_shared/integration-model.md`): skip this step entirely.** The
    Review Console's own terminal decision already routed the merge — `review-console.md`'s "On
-   approval" step 6 ran `_shared/pr-first-merge.md` directly (or deliberately skipped it, "leave PR
+   approval" step 13 ran `_shared/pr-first-merge.md` directly (or deliberately skipped it, "leave PR
    open") before this cleanup step is reached. Calling `/superpowers:finishing-a-development-branch`
    here too would re-ask a decision already made — the same improvised-third-stop pattern
    `_shared/auto-mode-contract.md` forbids, mirroring the split `flow/worktree-merge.md` and
@@ -133,13 +133,15 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
      presents that skill's interactive menu, and every outcome it produces is already logged per
      `_shared/auto-decision-log.md`'s canonical schema. Map its outcome onto this branch structure:
      - **`merged`** → proceed to step 4, same as "Merged, PR created, or discarded" below.
-     - **`pending-review`** → a merge conflict or a failed merged-result verification — do NOT
-       proceed to step 4. Skip steps 3.5, 3.6, 4, and 5 below entirely for this spec (do NOT close
-       the run, do NOT remove the worktree, do NOT delete the branch) and skip Section E (issue
-       claim release) — same posture as "Kept as-is" below, since the worktree and branch are
-       exactly as `local-merge-auto-finish.md` left them: unmerged, unmodified, awaiting a human.
-       Note in the wrap-up summary that this spec parked pending resolution of a merge conflict or
-       failed post-merge verification, distinct from a deliberate keep-as-is.
+     - **`pending-review`** → any of that file's Park reasons (an abort, a composer failure, a
+       predicted or actual merge conflict, a failed merged-result verification, or a push failure)
+       — do NOT proceed to step 4. Skip steps 3.5, 3.6, 4, and 5 below entirely for this spec (do
+       NOT close the run, do NOT remove the worktree, do NOT delete the branch) and skip Section E
+       (issue claim release) — same posture as "Kept as-is" below, since the worktree and branch
+       are exactly as `local-merge-auto-finish.md` left them, awaiting a human: unmerged — except
+       after a push failure, where the local merge commit stays in the main checkout, unpushed.
+       Note in the wrap-up summary that this spec parked pending resolution of the reason that
+       file logged, distinct from a deliberate keep-as-is.
 
      When the Precondition does not hold (an `interactive` or standalone run — no `config.yml` in
      this run's directory), run `/superpowers:finishing-a-development-branch` now (do not stop and
@@ -311,10 +313,10 @@ If no worktree exists for this spec, skip this section silently.
 
 ## D. Ephemeral dev server (v4.11.0)
 
-If `/visual-review` or `/stories` auto-started a dev server during this run (`dev-url-detection.md` "Ephemeral server start"), it recorded the PID, port, worktree root, and detach state in `{run-dir}/ephemeral-server.txt` — read whatever it currently names, per that file's liveness-handle rule, since a dispatched second call may have restarted the server and rewritten this record since it was first written.
+If `/visual-review` or `/stories` auto-started a dev server during this run (`dev-url-detection.md` "Ephemeral server start"), it recorded the PID, port, worktree root, and detach state in the server record (`_shared/dev-url-detection.md`'s Ephemeral server start item 4: `$MULTISPEC_PARENT_DIR/ephemeral-server.txt` in a multi-spec run, else `{run-dir}/ephemeral-server.txt`) — read whatever it currently names, per that file's liveness-handle rule, since a dispatched second call may have restarted the server and rewritten this record since it was first written.
 
 1. **Multi-spec defer check:** if `MULTISPEC_REVIEW_DEFER=1` is set, **skip this section** — the server is shared across all specs in the run. The parent `/flow` kills it once after the consolidated Review Console (otherwise each later spec's visual review would have to restart it).
-2. Read `{run-dir}/ephemeral-server.txt` (`{pid} {port} {worktree-root} detached:{yes|no}`). A record that cannot be parsed — fewer than four fields, a pid or port that is not a positive integer, or no trailing `detached:` token — is unprovable: log `SKIP` via `log-decision.js` naming that condition, leave the file and every process alone, signal nothing, and skip the rest of this step and steps 3-4. Otherwise, **detect the platform first** (e.g. `node -p process.platform`, reading `win32`) and stop the process accordingly:
+2. Read the server record (`{pid} {port} {worktree-root} detached:{yes|no}`). A record that cannot be parsed — fewer than four fields, a pid or port that is not a positive integer, or no trailing `detached:` token — is unprovable: log `SKIP` via `log-decision.js` naming that condition, leave the file and every process alone, signal nothing, and skip the rest of this step and steps 3-4. Otherwise, **detect the platform first** (e.g. `node -p process.platform`, reading `win32`) and stop the process accordingly:
    - **win32:** stop the recorded PID with a tree kill — `taskkill /PID {pid} /T /F` — regardless of what the `detached:` field reads. On this platform the field is always `detached:no` (`dev-url-detection.md`'s Ownership rule: no detach primitive is available there), so a leader-only stop would leave a shell-spawned dev command's children running and still holding their ports; `/T` scopes the kill to the recorded PID's own descendants, never the caller's own shell, giving the same coverage the POSIX `detached:yes` group kill gives below.
    - **POSIX:** `kill {pid}` — with a port-isolation lease (#1795), the recorded port is known and the PID kill alone is sufficient; the `lsof -ti tcp:{port} | xargs kill` fallback for a stale PID is a no-lease/POSIX-only path (see `dev-url-detection.md`'s Step 0.5). When the fourth field reads `detached:yes`, also kill the process group (`kill -- -{pid}`, the negative-pid form) so a detached dev command's own children don't outlive their leader — never do this when the field reads `detached:no`, since a non-detached server shares its process group with whatever spawned it and a group kill there could take down the caller's own shell.
 3. **An already-gone pid is not an error.** POSIX: `kill {pid}` failing with "no such process" means the server already stopped (a prior cleanup attempt, or the process died on its own) — log "already stopped: pid {pid}" and continue; never surface this as a cleanup failure. win32: `taskkill` reporting the PID was not found means the same thing — log "already stopped: pid {pid}" and continue. `taskkill /F` also exits non-zero on access-denied; only the not-found case is "already stopped" — any other non-zero exit (access-denied or otherwise) is a real cleanup failure and must be reported as one, never silently treated as already-stopped.

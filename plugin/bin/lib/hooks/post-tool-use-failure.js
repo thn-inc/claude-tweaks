@@ -1,15 +1,16 @@
 // bin/lib/hooks/post-tool-use-failure.js — log tier only (#2783 Deliverable 2).
 // Claude Code's own worktree-isolation Bash guard refuses a command in an
 // EnterWorktree session ("This session is isolated in the worktree … Refusing
-// to run it — …"). No PreToolUse/PostToolUse consumer sees that refusal; the
-// harness reports it as a PostToolUseFailure whose `error` is the full refusal
-// text (measured 2026-10-16 with a headless probe — the hooks docs do not
-// state it). Every ordinary non-zero exit fires the same event, so only the
-// refusal-text signature counts. Never surfaces a message; never breaks a session.
+// to run it — …"; the text lives in harness-refusal.js). No PreToolUse/PostToolUse
+// consumer sees that refusal; the harness reports it as a PostToolUseFailure whose
+// `error` is the full refusal text (measured 2026-10-16 with a headless probe — the
+// hooks docs do not state it). Every ordinary non-zero exit fires the same event,
+// so only the refusal-text signature counts. Never surfaces a message; never breaks
+// a session.
 'use strict';
 const ctxLib = require('./context');
 
-const HARNESS_ISOLATION_REFUSAL_RE = /This session is isolated in the worktree [\s\S]*?Refusing to run it/;
+const { HARNESS_ISOLATION_REFUSAL_RE } = require('./harness-refusal');
 const COMMAND_EXCERPT_CHARS = 200;
 
 function run(ctx) {

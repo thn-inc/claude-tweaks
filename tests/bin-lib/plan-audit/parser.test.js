@@ -553,3 +553,107 @@ test('#3099: a CRLF plan yields exactly the LF result', () => {
     extractCoverageSources(COVERAGE_PLAN),
   );
 });
+
+// ── Check F inputs (#3602) ──────────────────────────────────────────────
+
+const {
+  looksLikeRepoPath, normalizeRepoPath, extractSpecPaths, extractPathWaivers,
+} = require('../../../plugin/bin/lib/plan-audit/parser');
+
+const F_SPEC = [
+  '# 1: X', '',
+  '## Deliverables', '', '1. Change `src/deliv.js`.', '',
+  '## Acceptance Criteria', '', '1. `src/ac.js` works.', '',
+  '## Technical Approach', '', 'Read `src/a.js` back; change `./src/b.js:88` only if it breaks.', '',
+  '### Key Files', '', '- `src/a.js` — reader', '- `plugin/skills/_shared/x.md` — read only', '',
+  '## Gotchas', '', '- Verify `lib/c.js` against `src/a.js`.', '',
+  '## Release Note', '', 'Mentions `src/note.js`.', '',
+].join('\n');
+
+test('AC2.1 (#3602): extractSpecPaths reads only Technical Approach (with Key Files) and Gotchas — deduped, first section wins, normalized', () => {
+  assert.deepStrictEqual(extractSpecPaths(F_SPEC), {
+    paths: [
+      { path: 'src/a.js', section: 'Technical Approach' },
+      { path: 'src/b.js', section: 'Technical Approach' },
+      { path: 'plugin/skills/_shared/x.md', section: 'Technical Approach' },
+      { path: 'lib/c.js', section: 'Gotchas' },
+    ],
+    unparsed: [],
+  });
+});
+
+test('#3602: looksLikeRepoPath accepts repo-relative file paths and rejects every non-path span', () => {
+  for (const p of ['src/a.js', './src/a.js', 'src/b.js:88', 'src/b.js:12-20', '.claude/skills/x/SKILL.md', 'docs/plans/2026-10-20-x-ledger.md']) {
+    assert.ok(looksLikeRepoPath(p), p);
+  }
+  for (const p of ['AC_HEADING_RE', 'parser.js', '--spec', 'src/*.js', 'work/{n}-spec.md', 'https://x.io/a.js',
+    '.claude/skills/x/', 'origin/main', 'plan-audit.js {plan} --spec {spec}', '/abs/path.js', 'node:fs', '~/.claude/x.md']) {
+    assert.ok(!looksLikeRepoPath(p), p);
+  }
+});
+
+test('#3602: normalizeRepoPath drops a leading ./ and a :NN or :NN-MM line suffix', () => {
+  assert.strictEqual(normalizeRepoPath('./src/b.js:88'), 'src/b.js');
+  assert.strictEqual(normalizeRepoPath('src/b.js:12-20'), 'src/b.js');
+  assert.strictEqual(normalizeRepoPath('src/a.js'), 'src/a.js');
+});
+
+test('AC4.1 (#3602): a line with an unbalanced code span is unparsed with its section; its neighbours still extract', () => {
+  const spec = '## Technical Approach\n\nRead `src/a.js and stop.\nThen `src/b.js`.\n';
+  assert.deepStrictEqual(extractSpecPaths(spec), {
+    paths: [{ path: 'src/b.js', section: 'Technical Approach' }],
+    unparsed: [{ section: 'Technical Approach', raw: 'Read `src/a.js and stop.' }],
+  });
+});
+
+test('AC4.1 (#3602): a line with a double-backtick run is unparsed, never a silent drop; its neighbours still extract', () => {
+  const spec = '## Technical Approach\n\nUse `` `x` `` and read `src/k.js`.\nThen `src/b.js`.\n';
+  assert.deepStrictEqual(extractSpecPaths(spec), {
+    paths: [{ path: 'src/b.js', section: 'Technical Approach' }],
+    unparsed: [{ section: 'Technical Approach', raw: 'Use `` `x` `` and read `src/k.js`.' }],
+  });
+});
+
+test('AC4.1 (#3602): an unclosed fence makes the section one unparsed entry, never an empty, clean result', () => {
+  const spec = '## Technical Approach\n\n```js\nrequire(`src/a.js`)\n\n## Gotchas\n\n- `src/g.js`\n';
+  assert.deepStrictEqual(extractSpecPaths(spec), {
+    paths: [],
+    unparsed: [
+      { section: 'Technical Approach', raw: 'unclosed code fence in "## Technical Approach"' },
+      { section: 'Gotchas', raw: 'unclosed code fence before "## Gotchas"' },
+    ],
+  });
+});
+
+test('AC4.1 (#3602): an unclosed fence in an earlier section swallows both headings — each is unparsed, never a clean empty result', () => {
+  const spec = '## Deliverables\n\n```js\nconst x = 1;\n\n## Technical Approach\n\nRead `src/a.js`.\n\n## Gotchas\n\n- `lib/c.js`\n';
+  assert.deepStrictEqual(extractSpecPaths(spec), {
+    paths: [],
+    unparsed: [
+      { section: 'Technical Approach', raw: 'unclosed code fence before "## Technical Approach"' },
+      { section: 'Gotchas', raw: 'unclosed code fence before "## Gotchas"' },
+    ],
+  });
+});
+
+test('#3602: a path inside a balanced fenced block is not extracted; one after the fence is', () => {
+  const spec = '## Gotchas\n\n```\nsee `src/in-fence.js`\n```\n\n- `src/after.js`\n';
+  assert.deepStrictEqual(extractSpecPaths(spec).paths, [{ path: 'src/after.js', section: 'Gotchas' }]);
+});
+
+test('#3602: a spec with neither section yields no paths and no unparsed entry (an optional section left out is nothing here)', () => {
+  assert.deepStrictEqual(extractSpecPaths('## Acceptance Criteria\n\n1. `src/a.js` works.\n'), { paths: [], unparsed: [] });
+});
+
+test('#3602: a CRLF spec yields exactly the LF result', () => {
+  assert.deepStrictEqual(extractSpecPaths(F_SPEC.replace(/\n/g, '\r\n')), extractSpecPaths(F_SPEC));
+});
+
+test('AC1.2 (#3602): extractPathWaivers reads Waived {path}: {reason} lines, normalized, skipping AC waivers and fenced lines', () => {
+  const plan = ['Waived src/b.js: read-only', '- Waived `lib/c.js:12`: covered upstream', 'Waived AC2.3: not a path',
+    '```', 'Waived src/fenced.js: inside a fence', '```'].join('\n');
+  assert.deepStrictEqual(extractPathWaivers(plan), [
+    { path: 'src/b.js', reason: 'read-only' },
+    { path: 'lib/c.js', reason: 'covered upstream' },
+  ]);
+});

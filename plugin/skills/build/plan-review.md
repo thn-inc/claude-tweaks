@@ -4,6 +4,8 @@ One dispatched Capable reviewer reads the materialized spec and the plan once, b
 
 **Skip condition lives in `build/SKILL.md`'s Common Step 1.6 stub, not here** (the re-read cut: deciding skip-vs-run never loads this file). This file loads only once the step is confirmed to run.
 
+**A resumed build** (a still-valid plan, `build/SKILL.md` Spec Step 2) re-runs this review unless this run already recorded a completed one and neither the spec nor the plan changed after it — the decision lives in that resume branch, for the same re-read-cut reason. A review is once per plan, not once per session: a resume that already passed it does not ask the same questions twice.
+
 **Not SDD's pre-flight scan.** `/superpowers:subagent-driven-development` scans the plan for conflicts before its own Task 1 and writes the result to its ledger; that scan runs later, unchanged. This step never tells SDD to skip or alter its scan, and the reviewer's brief tells it not to repeat that scan's conflict table.
 
 ## Inputs
@@ -134,12 +136,12 @@ With no `$PIPELINE_RUN_DIR` (no run directory resolves, so no `config.yml`), the
 
 ## Skip logging
 
-When the `SKILL.md` stub's gate fires (`ceremony-profile=fast-lane` — roster tag `plan-review` — or a trivial plan), write one `SKIP` entry:
+When the `SKILL.md` stub's gate fires (`ceremony-profile=fast-lane` — roster tag `plan-review` — or a trivial plan), or Spec Step 2's resume branch skips a plan already reviewed, write one `SKIP` entry:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP \
   --section "/build" --step "Common Step 1.6 (plan review)" \
-  --text "condition: {ceremony-profile=fast-lane (roster tag plan-review) | trivial plan: fewer than 3 file references and no Scope keywords:} → fallback: no plan review" --reversibility n/a
+  --text "condition: {ceremony-profile=fast-lane (roster tag plan-review) | trivial plan: fewer than 3 file references and no Scope keywords: | resumed build: plan already reviewed this run, spec and plan unchanged since} → fallback: no plan review" --reversibility n/a
 ```
 
 Standalone `/build` (no run dir): list the skip in the Step 7 handoff instead (`handoff-template.md`'s inline-skip listing).
