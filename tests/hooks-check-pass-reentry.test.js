@@ -26,6 +26,8 @@ function runCli(args, { cwd, env = {} } = {}) {
   return { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
+const verdictOf = (r) => JSON.parse(r.stdout.trim());
+
 test('AC1.1: eligible fixture -> stdout is checkPassReentry\'s verdict JSON, exit 0', () => {
   const { root, runDir } = reentryFixture();
   const expected = checkPassReentry(runDir, { sessionId: 'cpr-test' });
@@ -33,7 +35,7 @@ test('AC1.1: eligible fixture -> stdout is checkPassReentry\'s verdict JSON, exi
   const r = runCli(['check-pass-reentry', '--run', runDir], { cwd: root });
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.stderr, '');
-  assert.deepStrictEqual(JSON.parse(r.stdout.trim()), expected);
+  assert.deepStrictEqual(verdictOf(r), expected);
   assert.equal(r.stdout, `${JSON.stringify(expected)}\n`);
 });
 
@@ -44,7 +46,7 @@ test('AC1.1: ineligible fixture (console.json present) -> same verdict JSON as c
   assert.equal(expected.reason, 'console-exists');
   const r = runCli(['check-pass-reentry', '--run', runDir], { cwd: root });
   assert.equal(r.code, 0, r.stderr);
-  assert.deepStrictEqual(JSON.parse(r.stdout.trim()), expected);
+  assert.deepStrictEqual(verdictOf(r), expected);
 });
 
 test('AC1.2: an unanchored --run exits non-zero with no JSON on stdout', () => {
@@ -88,8 +90,8 @@ test('#3553: --online is threaded through (gh absent -> degrade named in detail;
   const offline = runCli(['check-pass-reentry', '--run', runDir], { cwd: root, env });
   assert.equal(online.code, 0, online.stderr);
   assert.equal(offline.code, 0, offline.stderr);
-  assert.match(JSON.parse(online.stdout.trim()).detail, /online PR check unavailable \(gh-absent\)/);
-  assert.doesNotMatch(JSON.parse(offline.stdout.trim()).detail, /online PR check unavailable/);
+  assert.match(verdictOf(online).detail, /online PR check unavailable \(gh-absent\)/);
+  assert.doesNotMatch(verdictOf(offline).detail, /online PR check unavailable/);
 });
 
 test('#3553: the caller\'s CLAUDE_CODE_SESSION_ID is passed as sessionId (own run skips the parent-live lock check)', () => {
@@ -102,8 +104,8 @@ test('#3553: the caller\'s CLAUDE_CODE_SESSION_ID is passed as sessionId (own ru
   const other = runCli(['check-pass-reentry', '--run', runDir], { cwd: root, env: { CLAUDE_CODE_SESSION_ID: 'someone-else' } });
   assert.equal(own.code, 0, own.stderr);
   assert.equal(other.code, 0, other.stderr);
-  assert.equal(JSON.parse(own.stdout.trim()).reason, 'eligible');
-  assert.equal(JSON.parse(other.stdout.trim()).reason, 'parent-live');
+  assert.equal(verdictOf(own).reason, 'eligible');
+  assert.equal(verdictOf(other).reason, 'parent-live');
 });
 
 test('#3553: an unknown flag prints the usage line, never verdict JSON', () => {

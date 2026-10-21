@@ -108,6 +108,7 @@ test('AC1.2 multispec-review-console.md has the re-entry section, placed after L
 test('AC2.1: re-entry step 2 calls the check-pass-reentry verb and carries no node -e', () => {
   assertReentryVerb(reentrySection(CONSOLE));
 });
+
 test('AC2.2 #3553 negative control: a node -e snippet in the re-entry section fails the verb pin', () => {
   const doctored = reentrySection(CONSOLE) + '\n`node -e "require(1)"`\n';
   assert.throws(() => assertReentryVerb(doctored));

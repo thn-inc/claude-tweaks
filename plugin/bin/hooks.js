@@ -1417,9 +1417,7 @@ async function main(argv) {
     // check-* verbs this exits 1 on refusal (nothing on stdout): that caller
     // treats a non-zero exit or non-JSON stdout as a stop, so a refused --run
     // must never read as a verdict.
-    const {
-      runDir, invalidRunArg, worktreeLocalFallback, explicit,
-    } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
+    const { runDir, invalidRunArg, worktreeLocalFallback, explicit } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
     if (!explicit) {
       process.stderr.write('claude-tweaks: check-pass-reentry requires --run — pass re-entry not checked\n');
       return 1;
