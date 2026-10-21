@@ -2,8 +2,8 @@
 
 Canonical for every merge site under `integration-model: pr-first` (`_shared/integration-model.md`):
 `dispatch/settle-and-merge.md`'s Auto-merge gate, `wrap-up/review-console.md`'s Auto-merge
-short-circuit, `flow/worktree-merge.md`'s reconciliation, and `release/execute.md`
-Step 5. Supersedes and closes
+short-circuit, `wrap-up/merge-mode.md`, `flow/worktree-merge.md`'s reconciliation, and
+`release/execute.md` Step 5. Supersedes and closes
 #335 (the two independently-authored auto-merge implementations these three files carried) and
 #299 (the fast-lane `git -C "$RUN_DIR"` worktree/branch anchoring defect — obsolete once merge
 needs no checkout at all).

@@ -43,6 +43,17 @@ const MERGE_MODE_FACTS = {
   'reread-merge-state': /re-read `mergeStateStatus`/,
   'rejects-cleanup-only': /`merge` with `cleanup-only` is rejected/,
   'needs-record': /`merge` with no record reference stops/,
+  'rejects-dry-run': /`merge` with `--dry-run` is rejected: report both tokens and run neither/,
+  'rejects-resume': /`merge` with `resume` is rejected: report both tokens and run neither/,
+  'resolve-command': /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" resolve-run-dir --spec-slug "spec-\{n\}"/,
+  'no-create': /with no `--create`/,
+  'unresolved-stops': /When nothing resolves, merge mode stops and names the record/,
+  'never-mint': /never mints a run dir, because a stray `-standalone` dir could shadow the real run on retry/,
+  'steps-split': /, split as below\. Steps 1-3 are/,
+  'unrecognized-example': /an error branches 1-4 do not recognize \(for example a transient `HTTP 502` from the forge\)/,
+  'clean-reenter': /`CLEAN` with a green rollup: re-enter Step 2\.5 from the top, so its head-run read \(`gh run list --commit`\) still runs/,
+  'dirty-conflict': /`DIRTY`: take the Conflict path/,
+  'anything-else': /Anything else: accept `pending-review`/,
   outcomes: /`merged`, `armed`, or `pending-review`/,
   bundle: /--step merge/,
 };
@@ -50,8 +61,8 @@ const MERGE_MODE_FACTS = {
 // SKILL.md's router bullet: `merge` routes on the token alone, so a bare `merge` reaches
 // merge-mode.md's no-record stop instead of being stripped as a flag.
 const ROUTER_FACTS = {
-  'routes-on-token': /If `\$ARGUMENTS` consists of nothing but the literal `merge` token, at most one record reference \(`#42 merge` or `merge #42`\), and this skill's own flags \(`--dry-run`, `--skill-budget <n>`, `--doc-budget <n>`, `cleanup-only`\), read `merge-mode\.md`/,
-  'bare-and-cleanup-route': /A bare `merge` and `merge` with `cleanup-only` route there too/,
+  'routes-on-token': /If `\$ARGUMENTS` consists of nothing but the literal `merge` token, at most one record reference \(`#42 merge` or `merge #42`\), this skill's own flags \(`--dry-run`, `--skill-budget <n>`, `--doc-budget <n>`, `cleanup-only`\), and `resume`, read `merge-mode\.md`/,
+  'bare-and-cleanup-route': /A bare `merge`, `merge` with `cleanup-only`, `merge` with `--dry-run`, and `merge` with `resume` route there too/,
   'routing-not-flag': /`merge` is a routing token handled before the flag strip, never a flag/,
   'free-text-falls-through': /Free text that merely contains the word merge \(`fix the merge bug`\) does not route there and falls through to the branches below/,
 };
@@ -111,6 +122,7 @@ const ATTENDED_FACTS = {
   renumber: /renumbers the branch's own entry and every citation the branch added, never the integration branch's/,
   suite: /`verify\.js`/,
   reenter: /re-enter Step 2\.5 from the top/,
+  'one-attempt': /This re-entry is the Conflict path's one attempt: a second `DIRTY` after the attended push reports `pending-review`, reason `moving-target`, with the PR ready/,
   abort: /`git merge --abort`/,
 };
 const POINTER_FACTS = {
@@ -223,4 +235,31 @@ test('summary-template.md keeps the existing resume row in both places', () => {
   const first = text.indexOf(OLD_RESUME_ROW);
   assert.notEqual(first, -1, 'old resume row missing from Next Actions');
   assert.notEqual(text.indexOf(OLD_RESUME_ROW, first + 1), -1, 'old resume row missing from the paragraph');
+});
+
+// Final-review fixes: the caller list, the graph rows, the structure row, and the Next Actions line.
+test('pr-first-merge.md header lists merge mode among its callers', () => {
+  const raw = read('plugin', 'skills', '_shared', 'pr-first-merge.md');
+  const header = flat(raw.slice(0, raw.indexOf('**The shape:**')));
+  assert.match(header, /Canonical for every merge site[^]*`wrap-up\/merge-mode\.md`/);
+});
+
+test('docs/skill-graph.md counts three /wrap-up merge sites and names merge-mode.md in both rows', () => {
+  const graph = flat(read('docs', 'skill-graph.md'));
+  assert.ok(!/(`\/wrap-up`'s two merge sites|two `\/wrap-up` merge sites)/i.test(graph), 'stale "two merge sites" wording');
+  const matches = graph.match(/(`\/wrap-up`'s three merge sites|three `\/wrap-up` merge sites) \(([^)]*)\)/gi) || [];
+  assert.strictEqual(matches.length, 2, 'both the pr-first-merge.md and pr-checklist-refresh.md rows');
+  for (const m of matches) assert.match(m, /merge-mode\.md/);
+});
+
+test('docs/plugin-structure.md states the narrowed merge-mode.md read condition', () => {
+  const structure = flat(read('docs', 'plugin-structure.md'));
+  assert.ok(!/read only when `\$ARGUMENTS` carries `merge`/.test(structure), 'stale read condition');
+  assert.match(structure, /merge-mode\.md \(the `#N merge` same-session merge entry, read only when `\$ARGUMENTS` is only the `merge` token, at most one record reference, and the skill's own flags\)/);
+});
+
+test('summary-template.md Next Actions list line backticks consoleAutoResolve', () => {
+  const region = summaryNextActionsRegion();
+  assert.ok(!/grants consoleAutoResolve/.test(region), 'unbackticked consoleAutoResolve');
+  assert.match(region, /grants `consoleAutoResolve`/);
 });
