@@ -85,7 +85,7 @@ function mergeModeRegion() {
   return flat(raw.slice(0, idx));
 }
 
-test('merge-mode.md carries every Task 1 fact before its Conflict heading', () => {
+test('merge-mode.md carries every merge-mode fact before its Conflict heading', () => {
   assert.deepStrictEqual(missingFactsOf(mergeModeRegion(), MERGE_MODE_FACTS), []);
 });
 
@@ -123,7 +123,7 @@ test('wrap-up grammar surfaces carry the merge token', () => {
   assert.strictEqual(takes, HINT);
 });
 
-// Task 2: the attended Conflict-path branch. The procedure lives in merge-mode.md's
+// The attended Conflict-path branch. The procedure lives in merge-mode.md's
 // `## Conflict` (merge mode's only reader); `_shared/pr-first-merge.md` carries a pointer
 // bullet only, because the composed `merge` bundle has too little rail headroom for it.
 const ATTENDED_FACTS = {
@@ -199,7 +199,7 @@ test('the composed merge bundle stays within the read-limit rail', () => {
   }
 });
 
-// Task 3: flow's Resume-to-merge row under `consoleAutoResolve`. Under that ceiling the
+// Flow's Resume-to-merge row under `consoleAutoResolve`. Under that ceiling the
 // existing `flow ... wrap-up` resume re-resolves the Review Console with no question and
 // re-parks the PR, so the row points at merge mode instead. The old row stays (both places).
 const SUMMARY_FACTS = {
@@ -217,6 +217,7 @@ test('the summary row predicate resolves to unattended only', () => {
   assert.strictEqual(bookkeepingPermissions('trusted').consoleAutoResolve, false);
   assert.strictEqual(bookkeepingPermissions('supervised').consoleAutoResolve, false);
 });
+
 const OLD_RESUME_ROW = '`PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}" wrap-up` — resume to re-offer the merge decision, PR #{n} {is ready | is blocked} — mergeability: {outcome}';
 
 function summaryText() {
@@ -262,7 +263,7 @@ test('summary-template.md keeps the existing resume row in both places', () => {
   assert.notEqual(text.indexOf(OLD_RESUME_ROW, first + 1), -1, 'old resume row missing from the paragraph');
 });
 
-// Final-review fixes: the caller list, the graph rows, the structure row, and the Next Actions line.
+// Cross-file surfaces: the caller list, the graph rows, the structure row, and the Next Actions line.
 test('pr-first-merge.md header lists merge mode among its callers', () => {
   const raw = read('plugin', 'skills', '_shared', 'pr-first-merge.md');
   const end = raw.indexOf('**The shape:**');
