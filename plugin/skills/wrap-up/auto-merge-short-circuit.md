@@ -145,7 +145,7 @@ WORKTREE_PATH=$(node -e "console.log(require('$RUN_DIR/run-state.json').worktree
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" delete-ledger --run "$RUN_DIR"
 ```
 
-This is a delete, so it takes the rule's writer branch: `delete-ledger` resolves through `bin/lib/wrap-up/ledger-write.js`'s `resolveLedgerPath` — ownership-aware, never a glob, failing closed on a ledger it cannot attribute to this run. Handle its printed report exactly as `cleanup-procedures.md`'s Item 2 paragraph does (the verb always exits 0 — read the report, not the exit code). On `deleted ledger {path}` for a `docs/plans/` path, as `LEDGER_FILE`, stage that deletion and commit (a run-dir `ledger.md` is gitignored — nothing to commit):
+This is a delete, so it takes the rule's writer branch: `delete-ledger` resolves through `bin/lib/wrap-up/ledger-write.js`'s `resolveLedgerPath` — ownership-aware, never a glob, failing closed on a ledger it cannot attribute to this run. Handle its printed report exactly as `cleanup-procedures.md`'s Item 2 paragraph does (the verb always exits 0 — read the report, not the exit code). On `deleted ledger {path}` for a tracked `docs/plans/` path, as `LEDGER_FILE`, stage that deletion and commit (a run-dir `ledger.md` is gitignored and an untracked `docs/plans/` file has nothing in the index — `git rm` would fail, so commit nothing for either):
 
 ```bash
 git -C "$WORKTREE_PATH" rm "$LEDGER_FILE"
