@@ -29,6 +29,13 @@ Waived AC2.1: a real-data observation over machine-local transcripts, which cann
 
 A scratch probe over this repo's 20 newest main transcripts + subagents (`$CLAUDE_CONFIG_DIR` = `~/.claude-accounts/lipht-thn`, closure from the installed 6.145.0 root) normalized every read by its last `/skills/` segment. It showed cross-root reads mis-labelled as the plugin's own files: `claude-tweaks:capture` reading superpowers' `skills/subagent-driven-development/re-review-prompt.md`, `claude-tweaks:reflect` reading project-local `.claude/skills/prose-code-twin-pin/SKILL.md`. A citation can never reach another root, so such a read is not a missing citation. **Rule:** a read counts toward `outsideClosure` only when its normalized path is a citable file of the matched root (`pluginRootReader(rootAbs).listFiles()` — `skills/**` and `agents/**` `.md`) and is not in the entry's closure `files`. Reads that normalize to nothing the root holds are not comparable and are dropped. Known limitation, kept from `transcript-load.js`'s header: the attribution cursor never expires, so in a session editing this repo an edit-Read of a `plugin/skills/**` file is attributed to the last-invoked skill.
 
+### As built (architecture alignment, Common Step 4.5)
+
+All three deviations from the spec's literal wording are classified Beneficial:
+- **Origin anchoring.** This tightens the root-file rule above. It comes from the final whole-branch review, ruling 2, and landed in 7c3460e50. A read counts only when the text before its final `skills/` segment is the matched root's absolute path, or, for a named plugin root, `/plugins/cache/{marketplace}/{name}/{version}/`. Reads that share a relative path with a file in another root no longer count, and neither do edit-Reads of this repo's `plugin/skills/**` while the installed cache is the matched root.
+- **Honest auto-close.** The spec is silent on auto-close. The close comment now states only what was observed (`No outside reads observed over the last {sessions} sessions`). Re-filing reopens a closed issue with the same title rather than creating a duplicate, and an open record's body is not refreshed. This is final-review ruling 1.
+- **Count.** The spec's "count and list" is the length of `outsideClosure`. harness-health's SUMMARIZE reports it next to the paths, so there is no separate JSON field.
+
 ## Review Focus
 
 1. A read of another plugin's or the project-local root's skill file during a plugin skill must not appear in that plugin skill's `outsideClosure` (Task 1, test `cross-root reads are not comparable`).
