@@ -1280,6 +1280,19 @@ test('expandChecks (#3630): adds mirror ahead of archive/red-tip and widens noth
   assert.deepEqual(input, ['archive'], 'input must not be mutated');
 });
 
+// The doc table is a hand-kept restatement of PREREQUISITES that every editor of
+// the table is told to follow, so it is pinned row for row to the exported object.
+test('docs/reconcile-checks.md prerequisite table matches PREREQUISITES row for row (#3630)', () => {
+  const doc = fs.readFileSync(path.join(__dirname, '..', 'docs', 'reconcile-checks.md'), 'utf8');
+  const rows = doc.split('\n').map((line) => /^\s*\| `([^`]+)` \| `([^`]+)` \| ((?:`[^`]+`(?:, )?)+) \|/.exec(line)).filter(Boolean);
+  const fromDoc = {};
+  for (const [, check, prerequisite, satisfiedBy] of rows) {
+    fromDoc[check] = { check: prerequisite, satisfiedBy: satisfiedBy.split(', ').map((s) => s.replace(/`/g, '')) };
+  }
+  assert.ok(rows.length >= 2, 'the table rows were not found in docs/reconcile-checks.md');
+  assert.deepEqual(fromDoc, PREREQUISITES);
+});
+
 // #3630 behavioral scaffolding: origin's main is one commit (NEW) ahead of the
 // clone's local main, as when GitHub merges a PR asynchronously. archive/
 // release/reap are stubbed; the archive stub records what local main and
