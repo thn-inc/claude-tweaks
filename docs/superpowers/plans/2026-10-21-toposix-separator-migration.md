@@ -95,6 +95,8 @@ Kept (input is not guaranteed to be a native host path, so `toPosix` would chang
 | `plugin/bin/lib/verify/baseline.js:227` (`normalizeLog`) | Builds both spellings of a root to scrub from log text; must normalize either input spelling |
 | `plugin/bin/lib/design-detect/index.js:165` (`fileMatchesFrontendPredicate`) | Classifies file paths from diff/record text of unknown origin, either separator |
 | `plugin/bin/lib/design-detect/surface-lines.js:65` (`classifyFileKind`) | Same — path text, not a host path |
+| `plugin/bin/lib/init/verify-scope-starter.js:96` (`walkForPackageDirs`) | Added at execution (ruling, decisions.md "Task 2 ruling"): `relDir` is built from user-written workspace-glob text, not a host path API |
+| `plugin/bin/lib/init/verify-scope-starter.js:219` | Same — `rel` comes from `expandGlob` |
 
 **Files:**
 - Modify: the five sites above — add a one-line `//` comment directly above each (or extend the existing one) stating it is an any-host separator normalization, not a native-path conversion, so `toPosix` does not apply (#3317).

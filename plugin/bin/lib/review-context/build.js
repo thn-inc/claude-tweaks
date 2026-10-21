@@ -78,13 +78,15 @@ const ALWAYS_STUB_BASENAMES = new Set([
   'composer.lock',
 ]);
 
-// True for lockfiles and `*.jsonl` fixtures. Accepts `/`- or `\`-separated paths.
+// True for lockfiles and `*.jsonl` fixtures. Accepts `/`- or `\`-separated paths
+// on any host — an any-separator normalization, so not toPosix (#3317).
 function isAlwaysStub(file) {
   const base = String(file).replace(/\\/g, '/').split('/').pop();
   return ALWAYS_STUB_BASENAMES.has(base) || base.endsWith('.jsonl');
 }
 
-// True for markdown files (`.md` / `.markdown`, case-insensitive). Accepts `/`- or `\`-separated paths.
+// True for markdown files (`.md` / `.markdown`, case-insensitive). Accepts `/`- or
+// `\`-separated paths on any host — an any-separator normalization, so not toPosix (#3317).
 function isMarkdown(file) {
   const base = String(file).replace(/\\/g, '/').split('/').pop();
   return /\.(md|markdown)$/i.test(base);

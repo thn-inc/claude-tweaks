@@ -225,6 +225,7 @@ function accountedFamily(text, scope) {
 function normalizeLog(text, roots) {
   let out = text.replace(/\r$/gm, '');
   for (const root of roots) {
+    // Either input spelling, on any host — not toPosix, which is a no-op on POSIX (#3317).
     const fwd = root.replace(/\\/g, '/').replace(/\/+$/, '');
     const back = fwd.replace(/\//g, '\\');
     for (const spelling of [back.replace(/\\/g, '\\\\'), back, fwd]) out = out.split(spelling).join('<ROOT>');

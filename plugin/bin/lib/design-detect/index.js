@@ -162,6 +162,7 @@ function resolveTrack({ platform = null, surface = null } = {}) {
 // construction: no native extension appears in either table.
 function fileMatchesFrontendPredicate(filePath) {
   if (typeof filePath !== 'string' || !filePath) return false;
+  // Path text from diffs/records, either separator on any host — not toPosix (#3317).
   const normalized = filePath.replace(/\\/g, '/');
   const ext = path.extname(normalized).toLowerCase();
   if (TRIGGER_EXTENSIONS.has(ext)) return true;

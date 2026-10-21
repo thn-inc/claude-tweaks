@@ -62,6 +62,7 @@ function matchesExcludingGenericCall(re, line) {
 }
 
 function classifyFileKind(filePath) {
+  // Path text from diffs/records, either separator on any host — not toPosix (#3317).
   const normalized = String(filePath || '').replace(/\\/g, '/');
   const base = path.basename(normalized).toLowerCase();
   if (/\.module\.\w+$/i.test(base)) return 'style'; // CSS-module-shaped filename, any extension

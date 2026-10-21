@@ -93,6 +93,7 @@ const MAX_WALK_DEPTH = 6;
 // depth bound, so the caller can report that packages beyond it may exist
 // unscanned rather than reading a shallow result as exhaustive.
 function walkForPackageDirs(fsImpl, root, relDir, depth, found, limitHit, symlinks) {
+  // relDir starts from user-written workspace-glob text, either separator on any host — not toPosix (#3317).
   if (exists(fsImpl, path.join(root, relDir, 'package.json'))) found.push(relDir.replace(/\\/g, '/'));
   if (depth >= MAX_WALK_DEPTH) { limitHit.hit = true; return; }
   let entries;
@@ -216,6 +217,7 @@ function detectWorkspace({ root, fsImpl = fs }) {
     }
     for (const rel of expanded.dirs) {
       const { pkg, reason } = readPackageAt(fsImpl, root, rel);
+      // rel is workspace-glob text (expandGlob), either separator on any host — not toPosix (#3317).
       const relPath = rel.replace(/\\/g, '/');
       if (reason) { skipped.push({ path: relPath, reason }); continue; }
       if (!SAFE_PACKAGE_NAME.test(pkg.name) || !SAFE_PACKAGE_PATH.test(relPath)) {
