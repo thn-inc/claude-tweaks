@@ -15,12 +15,12 @@ function gitInfo(execImpl = execFileSync) {
   let sha = null;
   let dirty = null;
   try {
-    sha = String(execImpl('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' })).trim();
+    sha = String(execImpl('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true })).trim();
   } catch {
     return { sha: null, dirty: null };
   }
   try {
-    dirty = String(execImpl('git', ['--no-optional-locks', 'status', '--porcelain'], { encoding: 'utf8' })).trim() !== ''; // git-path-read: not a path list (emptiness only)
+    dirty = String(execImpl('git', ['--no-optional-locks', 'status', '--porcelain'], { encoding: 'utf8', windowsHide: true })).trim() !== ''; // git-path-read: not a path list (emptiness only)
   } catch {
     dirty = null;
   }
@@ -34,7 +34,7 @@ function gitInfo(execImpl = execFileSync) {
 // falls back to its tmpdir behavior.
 function gitDir(execImpl = execFileSync, cwd = process.cwd()) {
   try {
-    const out = String(execImpl('git', ['rev-parse', '--git-dir'], { encoding: 'utf8', cwd })).trim();
+    const out = String(execImpl('git', ['rev-parse', '--git-dir'], { encoding: 'utf8', cwd, windowsHide: true })).trim();
     if (out === '') return null;
     return path.resolve(cwd, out);
   } catch {

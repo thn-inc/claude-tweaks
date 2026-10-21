@@ -97,7 +97,7 @@ Render 2 run-level rows (no `Spec` value, rendered as `—`) plus 3 rows per spe
 
 | # | Spec | Action | Details |
 |---|---|---|---|
-| 15 | — | Tear down shared ephemeral dev server | `{parent-run-dir}/ephemeral-server.txt`, if one was started |
+| 15 | — | Tear down shared ephemeral dev server | `$MULTISPEC_PARENT_DIR/ephemeral-server.txt`, if one was started |
 | 16 | — | Finish the shared branch | `pr-first`: `_shared/pr-first-merge.md` (bundle — no prompt). `local-merge`: `/superpowers:finishing-a-development-branch` — merge / PR / discard; every row below depends on this outcome |
 | 17 | 157 | Release issue claim | `claims/issue-157.json` on `claims-registry` |
 | 18 | 157 | Remove grants | `auto:build`/`auto:merge`, if present |
