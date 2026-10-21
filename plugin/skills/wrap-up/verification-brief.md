@@ -9,13 +9,14 @@ work has no work record to label, so this procedure does not run for it.
 
 **The routing below is this file's decision, not its caller's.** Every call site lands here
 first and inherits it, so a new one never has to re-derive the condition (and cannot get it
-wrong by omission). Four call sites exist today:
+wrong by omission). Five call sites exist today:
 
 | Caller | Arrives holding |
 |---|---|
 | `/claude-tweaks:wrap-up` Phase 4 execution's Acceptance-labeling bullet (`wrap-up/execution-and-verification.md`) | one **sub-issue**, mid-close |
 | `/claude-tweaks:wrap-up`'s auto-merge short-circuit (`wrap-up/review-console.md`) | one **sub-issue**, mid-close |
 | `/claude-tweaks:dispatch`'s group auto-merge gate (`dispatch/settle-and-merge.md`) | one **sub-issue** per group member, mid-close — plus the group's whole closing sub-issue set (see the Self-inclusion rule) |
+| `/claude-tweaks:dispatch`'s close-out step 3 (`dispatch/close-out.md`) | one or more **sub-issues** (the PR's `Fixes` records), at a later human-confirmed merge |
 | `/claude-tweaks:tidy`'s `Open parent gate` action (`tidy/actions-github-issues.md`, or `tidy/actions-local-files.md` on that driver) | a **parent** number (`$PARENT_NUM`) directly |
 
 **Whatever invoked this file: if the record in hand has a resolvable parent, run the
@@ -321,7 +322,7 @@ _Posted by {poster}. Resolve with `/claude-tweaks:demo`._
 `{poster}` is the **skill** that invoked this file, on this default (Step 1-4) path exactly as on
 the Parent-Gate Procedure's — never hardcode `` `/claude-tweaks:wrap-up` ``. Per the Routing
 table at the top of this file: `` `/claude-tweaks:wrap-up` `` for either wrap-up entry (Phase 4's
-execution step or the auto-merge short-circuit), `` `/claude-tweaks:dispatch` `` for the group auto-merge gate, and
+execution step or the auto-merge short-circuit), `` `/claude-tweaks:dispatch` `` for the group auto-merge gate or close-out step 3, and
 — on the Parent-Gate Procedure's parent-side entry only — `` `/claude-tweaks:tidy` ``. The string
 is outward-facing (posted as a GitHub comment, or embedded in a local record body), so a
 `/tidy`-posted parent brief claiming `/wrap-up` posted it would be wrong on exactly the population

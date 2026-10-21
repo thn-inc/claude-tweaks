@@ -4,6 +4,8 @@
 // parked a run that was already closed -- unprotected, worktree assignment cleared (since #3023
 // close-run also nulls run-state.json's `worktree`). The order is now: pre-merge checks (nothing
 // mutated) -> close-run -> merge -> push, with a re-protect (`record-worktree`) on the late-failure path.
+// #3809 extends this to the human-present multi-run reconciliation (flow/worktree-merge.md): each branch's
+// run closes only after that branch's own pre-merge checks.
 //
 // One SITES entry per procedure; a new site is data only. Live-corpus read (skill-prose-conformance-tests:
 // a documented convention this project wants enforced) plus extract-and-run of the two fences whose
@@ -36,7 +38,8 @@ fs.mkdirSync(SUBJECT_DIR, { recursive: true });
 // `readsWorktree`: the procedure reads the worktree from run-state.json itself (settle-and-merge takes
 // `{group-worktree}` from dispatch context and has no read). `logNeedle`: the literal clause, after the
 // re-protect fence, that tells the agent to log a re-stamp that did not print "worktree recorded".
-// `worktreeVar`: the placeholder that names the worktree the re-protect fence re-stamps.
+// `worktreeVar`: the placeholder that names the worktree the re-protect fence re-stamps. `preservesOwner`:
+// the re-protect runs in another session than the run's owner, so its fence must not re-stamp the run's `sessionId`.
 const SITES = [
   {
     label: 'auto-merge-short-circuit.md',
@@ -78,6 +81,22 @@ const SITES = [
       'base-branch': 'main',
       'feature-branch': 'feat',
       issue: '1',
+      'subject-dir': posix(SUBJECT_DIR),
+      'worktree-path': posix(WORKTREE),
+    },
+  },
+  {
+    label: 'worktree-merge.md',
+    file: 'plugin/skills/flow/worktree-merge.md',
+    readsWorktree: true,
+    preservesOwner: true,
+    logNeedle: 'log any other line',
+    worktreeVar: 'worktree-path',
+    vars: {
+      'base-branch': 'main',
+      branch: 'feat',
+      issue: '1',
+      'second-issue': '2',
       'subject-dir': posix(SUBJECT_DIR),
       'worktree-path': posix(WORKTREE),
     },
@@ -245,6 +264,28 @@ function tmpProject() {
   return { dir, run };
 }
 
+// A run owned by 'owner-session' is closed, then `fence` runs as 'reconciler-session' (the re-protect of a
+// run another terminal owns). Returns the run's owner afterwards; the fence must leave it untouched.
+function ownerAfterReprotect(fence, { vars, worktreeVar }) {
+  const { dir, run } = tmpProject();
+  const hook = (env, ...args) => execFileSync(process.execPath, [HOOKS, ...args], {
+    cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', ...env },
+  });
+  hook({ CLAUDE_CODE_SESSION_ID: 'owner-session' }, 'record-worktree', '--run', run, vars[worktreeVar]);
+  hook({ CLAUDE_CODE_SESSION_ID: 'owner-session' }, 'close-run', '--run', run);
+  const r = runFence(fence, {
+    cwd: dir,
+    env: { CLAUDE_PLUGIN_ROOT: posix(PLUGIN_DIR), RUN_DIR: posix(run), CLAUDE_CODE_SESSION_ID: 'reconciler-session' },
+    vars: { ...vars, 'run-dir': posix(run) },
+  });
+  assert.strictEqual(r.code, 0, r.stderr);
+  return readRunState(run).sessionId;
+}
+const REPROTECT_OWNER_CLAUSE = 'env -u CLAUDE_CODE_SESSION_ID ';
+function assertKeepsOwner(fence, site) {
+  assert.strictEqual(ownerAfterReprotect(fence, site), 'owner-session', "the re-protect re-stamped the reconciler's session as the run's owner");
+}
+
 for (const site of SITES) {
   const raw = readText(path.join(ROOT, site.file));
   const { label, vars, readsWorktree, logNeedle, worktreeVar } = site;
@@ -342,6 +383,14 @@ for (const site of SITES) {
     state = readRunState(run);
     assert.strictEqual(state.worktree, path.resolve(wt));
     assert.strictEqual(state.status, 'active');
+
+    if (site.preservesOwner) {
+      assertKeepsOwner(fence, site);
+      assert.ok(fence.includes(REPROTECT_OWNER_CLAUSE), 'the fence unsets CLAUDE_CODE_SESSION_ID');
+      const mutated = fence.replace(REPROTECT_OWNER_CLAUSE, '');
+      assert.notStrictEqual(mutated, fence);
+      assert.throws(() => assertKeepsOwner(mutated, site), /re-stamped the reconciler/, 'go-red: a fence that inherits CLAUDE_CODE_SESSION_ID must fail');
+    }
   });
 
   test(`${label}: the fallback logs a re-stamp that does not print "worktree recorded"`, () => {
@@ -352,6 +401,115 @@ for (const site of SITES) {
     assert.ok(after.includes(collapse(logNeedle)), `a re-stamp that fails must be logged, not ignored: expected ${JSON.stringify(logNeedle)} within the window`);
   });
 }
+
+const KEEPS_RUN = 'keeps its worktree assignment and `active` status';
+function skipAbortKeepsRun(text) {
+  const flat = collapse(text);
+  const errors = [];
+  for (const label of ['**Skip this branch** →', '**Abort remaining merges** →']) {
+    const at = flat.indexOf(label);
+    if (at < 0) { errors.push(`no ${label} bullet`); continue; }
+    if (!flat.slice(at, at + 300).includes(KEEPS_RUN)) errors.push(`${label} does not keep its run`);
+  }
+  return errors;
+}
+
+test("AC2.1: worktree-merge.md's Skip and Abort bullets keep the run", () => {
+  const live = readText(path.join(ROOT, 'plugin/skills/flow/worktree-merge.md'));
+  assert.deepStrictEqual(skipAbortKeepsRun(live), []);
+  const flat = collapse(live);
+  const skipAt = flat.indexOf('**Skip this branch** →');
+  const mutated = flat.slice(0, skipAt) + flat.slice(skipAt).replace(KEEPS_RUN, 'is closed');
+  assert.ok(skipAbortKeepsRun(mutated).some((e) => /Skip this branch/.test(e)), 'go-red: a Skip bullet that closes the run must fail');
+});
+
+// AC3: every failure that can follow close-run re-protects. The Re-protect section names each trigger, and
+// each failure site carries its own re-protect instruction (prose a fence test cannot reach).
+const REPROTECT_TRIGGERS = ['branch-guard abort', 'merge failure', 'abandoned or stopped before it lands', 'push failure'];
+const REPROTECT_SITES = [
+  ['**The branch guard aborted** (stderr ends', "re-protect this branch's run", 200],
+  ['**Failed** — if a `MERGE_HEAD` exists', "re-protect this branch's run", 120],
+  ['abandoned or stopped before it lands', 're-protect every run closed for it', 200],
+  ['**On push failure**', 're-protect every run step 3 closed', 300],
+];
+function reprotectCoverage(text) {
+  const flat = collapse(text);
+  const errors = [];
+  const start = flat.indexOf('### Re-protect');
+  const section = start < 0 ? '' : flat.slice(start, flat.indexOf('### ', start + 4));
+  if (start < 0) errors.push('no ### Re-protect section');
+  for (const trigger of REPROTECT_TRIGGERS) if (!section.includes(trigger)) errors.push(`Re-protect section does not name: ${trigger}`);
+  for (const [label, action, span] of REPROTECT_SITES) {
+    const at = flat.indexOf(collapse(label));
+    if (at < 0) errors.push(`no failure site ${JSON.stringify(label)}`);
+    else if (!flat.slice(at, at + span).includes(action)) errors.push(`${label} does not ${action}`);
+  }
+  return errors;
+}
+
+test("AC3: worktree-merge.md re-protects after every failure that can follow close-run", () => {
+  const live = readText(path.join(ROOT, 'plugin/skills/flow/worktree-merge.md'));
+  assert.deepStrictEqual(reprotectCoverage(live), []);
+  const dropTrigger = live.replace('or a step 6 push failure', 'or a step 6 hiccup');
+  assert.ok(reprotectCoverage(dropTrigger).some((e) => /push failure/.test(e)), 'go-red: a trigger dropped from the Re-protect list must fail');
+  const dropSite = live.replace("re-protect this branch's run (**Re-protect** below), then stop", 'stop');
+  assert.notStrictEqual(dropSite, live);
+  assert.ok(reprotectCoverage(dropSite).some((e) => /branch guard aborted/.test(e)), 'go-red: a guard abort with no re-protect must fail');
+  const dropFailed = live.replace("Then re-protect this branch's run (**Re-protect** below). A conflict", 'A conflict');
+  assert.notStrictEqual(dropFailed, live);
+  assert.ok(reprotectCoverage(dropFailed).some((e) => /Failed/.test(e)), 'go-red: a merge failure with no re-protect must fail');
+});
+
+// The Skip bullet says a predicted conflict never closed the run (step 3 runs only after step 2's checks pass).
+const SKIP_NEVER_CLOSED = 'never closed when step 2 predicted the conflict';
+function skipNeverClosed(text) {
+  const flat = collapse(text);
+  const at = flat.indexOf('**Skip this branch** →');
+  return at > -1 && flat.slice(at, at + 250).includes(SKIP_NEVER_CLOSED);
+}
+
+test("AC2.1: worktree-merge.md's Skip bullet says a predicted conflict never closed the run", () => {
+  const live = readText(path.join(ROOT, 'plugin/skills/flow/worktree-merge.md'));
+  assert.ok(skipNeverClosed(live), 'Skip bullet does not say a predicted conflict never closed the run');
+  const mutated = live.replace(SKIP_NEVER_CLOSED, 'closed when step 2 predicted the conflict');
+  assert.notStrictEqual(mutated, live);
+  assert.ok(!skipNeverClosed(mutated), 'go-red: a Skip bullet that drops the clause must fail');
+});
+
+// AC3's log call takes its text from a file: the branch name and the hook's output never pass through shell quoting.
+function logFenceErrors(text) {
+  const flat = collapse(text);
+  const at = fenceIndex(text, REPROTECT_NEEDLE, fenceIndex(text, MERGE_NEEDLE));
+  const fence = fencesOf(text).find((body) => body.includes('bin/log-decision.js') && flat.indexOf(collapse(body)) > at);
+  if (!fence) return ['no log-decision.js fence after the re-protect fence'];
+  const errors = [];
+  if (!fence.includes('--text-file "{text-file}"')) errors.push('the log fence does not read its text from {text-file}');
+  if (/--text '/.test(fence)) errors.push('the log fence single-quotes substituted text');
+  return errors;
+}
+
+test("AC3: worktree-merge.md logs a failed re-stamp through --text-file", () => {
+  const live = readText(path.join(ROOT, 'plugin/skills/flow/worktree-merge.md'));
+  assert.deepStrictEqual(logFenceErrors(live), []);
+  const quoted = live.replace('--text-file "{text-file}"', "--text 'Re-stamp of {branch}: {output line}'");
+  assert.notStrictEqual(quoted, live);
+  assert.ok(logFenceErrors(quoted).length > 0, 'go-red: a single-quoted --text fence must fail');
+});
+
+test("worktree-merge.md's run-state read takes {run-dir} as an argument, so a quote in the path cannot break it", () => {
+  const live = readText(path.join(ROOT, 'plugin/skills/flow/worktree-merge.md'));
+  const readLine = extractFence(live, WORKTREE_READ_NEEDLE).split('\n')[0].replace(/\s+# ->.*$/, '');
+  const runDir = path.join(SCRATCH, "o'brien run");
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: '/wt/feat', status: 'active' }));
+  const run = (line) => runFence(line, { cwd: SCRATCH, vars: { 'run-dir': posix(runDir) } });
+  const r = run(readLine);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(r.stdout.trim(), '/wt/feat');
+  const inlined = readLine.replace("require(process.argv[1]+'/run-state.json')", "require('{run-dir}/run-state.json')").replace(/ "\{run-dir\}"$/, '');
+  assert.notStrictEqual(inlined, readLine);
+  assert.notStrictEqual(run(inlined).code, 0, 'go-red: a {run-dir} pasted into the script text breaks on a quote in the path');
+});
 
 test('no plugin/ file still carries "Not fixed here; there is no"', () => {
   const hits = fs.readdirSync(PLUGIN_DIR, { recursive: true })
