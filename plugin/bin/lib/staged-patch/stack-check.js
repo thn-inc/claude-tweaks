@@ -22,6 +22,8 @@ function stagedApplyOrder(names) {
 }
 
 // Git for Windows rejects the OS null device (`\\.\nul` on win32) as a config path, so win32 uses `/dev/null`.
+// GIT_CONFIG_GLOBAL needs git >= 2.32. On older git the user's global config is still read, and
+// only the explicit `--src-prefix=a/ --dst-prefix=b/`, `--no-color` and `--no-ext-diff` pins hold.
 function gitEnv({ platform = process.platform, devNull = os.devNull, env = process.env } = {}) {
   const out = { ...env, GIT_CONFIG_GLOBAL: platform === 'win32' ? '/dev/null' : devNull, GIT_CONFIG_NOSYSTEM: '1' };
   delete out.GIT_DIR;
@@ -48,13 +50,17 @@ function copiedPaths(stdout) {
 
 // numstat reports only the destination of a rename that also changes content, so the source
 // comes from the header. A C-quoted name (rare) is taken verbatim: it then fails to copy and the
-// patch is skipped, which is the safe outcome.
+// patch is skipped, which is the safe outcome. The scan starts at the first `diff --git` line: a
+// staged patch opens with a free-text preamble, and a preamble line is not a diff header.
 function headerSources(text) {
-  return [...text.matchAll(/^(?:rename|copy) from (.+)$/gm)].map((m) => m[1]);
+  const start = text.search(/^diff --git /m);
+  if (start < 0) return [];
+  return [...text.slice(start).matchAll(/^(?:rename|copy) from ([^\n]+)$/gm)].map((m) => m[1].replace(/\r$/, ''));
 }
 
+// A `\` separates path segments on Windows, so `..\x` is a traversal there.
 function isUnsafe(rel) {
-  return path.isAbsolute(rel) || rel.split('/').includes('..');
+  return path.isAbsolute(rel) || rel.split(/[\\/]/).includes('..');
 }
 
 function isFile(p) {
@@ -201,11 +207,20 @@ function rederive({ worktree, patches, target, git = defaultGit }) {
   const raw = fs.readFileSync(target);
   const head = raw.toString('latin1').search(/^diff --git /m);
   if (head < 0 || rels.length === 0) return { ok: false, reason: 'target has no diff' };
-  const missing = rels.find((rel) => !isFile(path.join(worktree, rel)));
-  if (missing !== undefined) return { ok: false, reason: `${missing} is not a file in the worktree` };
-
   const idx = patches.indexOf(target);
   if (idx < 0) throw new Error(`rederive target ${path.basename(target)} is not in patches`);
+  const missing = rels.find((rel) => !isFile(path.join(worktree, rel)));
+  if (missing !== undefined) {
+    // A file the worktree lacks may be one an earlier staged patch creates: name that patch.
+    const creator = patches.slice(0, idx).find((p) => {
+      const earlier = run(['apply', '--numstat', '-z', p], worktree);
+      return earlier.status === 0 && copiedPaths(earlier.stdout).includes(missing);
+    });
+    return { ok: false, reason: creator === undefined
+      ? `${missing} is not a file in the worktree`
+      : `${missing} is not in the worktree; an earlier staged patch, ${path.basename(creator)}, creates it` };
+  }
+
   const prior = walkStack({ worktree, patches: patches.slice(0, idx), git });
   const present = [...new Set([...prior.present, ...rels])];
 
@@ -236,6 +251,8 @@ function rederive({ worktree, patches, target, git = defaultGit }) {
         fs.writeFileSync(their, theirs.files[rel]);
         // Without -p the merge is written into `ours` in place, byte for byte.
         const mf = run(['merge-file', ours, base, their], work);
+        // merge-file exits with the number of conflicts, and 255 on error: above 127 is git failing.
+        if (mf.status > 127) return { reason: `git merge-file failed on ${rel}: ${firstLine(mf.stderr, ours)}` };
         if (mf.status > 0) return { reason: `conflict in ${rel}` };
         fs.copyFileSync(ours, path.join(dir, rel));
       }
@@ -272,4 +289,4 @@ function stackVerdicts({ worktree, patches, git = defaultGit }) {
   }));
 }
 
-module.exports = { stagedApplyOrder, checkStack, rederive, stackVerdicts, gitEnv };
+module.exports = { stagedApplyOrder, checkStack, rederive, stackVerdicts, gitEnv, headerSources };

@@ -10,7 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { FIXTURE_TIMEOUT_MS } = require('../../helpers/git-fixtures');
-const { checkStack, gitEnv, rederive, stagedApplyOrder, stackVerdicts } = require('../../../plugin/bin/lib/staged-patch/stack-check');
+const { checkStack, gitEnv, headerSources, rederive, stagedApplyOrder, stackVerdicts } = require('../../../plugin/bin/lib/staged-patch/stack-check');
 
 const FIXTURE_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 const BASE = ['l1', 'l2', 'l3', 'l4', 'anchor', 'a1', 'a2', 'a3'].join('\n') + '\n';
@@ -357,4 +357,68 @@ test('#3696: gitEnv keeps NOSYSTEM, drops repo pointers, and never mutates the i
   assert.strictEqual(env.PATH, '/bin');
   for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) assert.ok(!(k in env), k);
   assert.deepStrictEqual(input, { PATH: '/bin', GIT_DIR: '/x/.git', GIT_WORK_TREE: '/x', GIT_INDEX_FILE: '/x/i' });
+});
+
+// A fixture repo with every `{name: content}` file committed.
+function repoWith(t, files) {
+  const fx = gitFixture(t);
+  for (const [name, content] of Object.entries(files)) {
+    fs.writeFileSync(path.join(fx.dir, name), content);
+    fx.runOk('add', name);
+  }
+  fx.runOk('commit', '-q', '--allow-empty', '-m', 'files');
+  return fx;
+}
+
+test('AC1.1: a preamble line reading "rename from ../x" does not skip a valid patch', (t) => {
+  const fx = gitFixture(t);
+  const dir = stagedDir(t);
+  const p = path.join(dir, 'review-1.patch');
+  fs.writeFileSync(p, 'Target: f.txt\nrename from ../escape.txt\nInvariant: x\n\n' + captureDiff(t, BASE, editLine('l1', 'l1-edit')));
+  const r = checkStack({ worktree: fx.dir, patches: [p], target: p });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.skipped, []);
+});
+
+test('AC1.1: headerSources reads sources from the diff only and strips CRLF', () => {
+  const crlf = 'Target: x\r\nrename from ../evil\r\n\r\ndiff --git a/a b/b\r\nsimilarity index 90%\r\nrename from a.txt\r\nrename to b.txt\r\n';
+  assert.deepEqual(headerSources(crlf), ['a.txt']);
+  assert.deepEqual(headerSources('no diff here\nrename from a.txt\n'), []);
+});
+
+test('AC1.1: a copied path with a backslash .. segment is skipped as unsafe and never read', (t) => {
+  const fx = gitFixture(t);
+  const dir = stagedDir(t);
+  const p = stage(dir, 'unsafe.patch', captureDiff(t, BASE, editLine('l1', 'l1-edit')));
+  const calls = [];
+  const r = checkStack({ worktree: fx.dir, patches: [p], target: p, git: numstatReporting('..\\escape.txt', calls) });
+  assert.deepEqual(r.skipped, [{ patch: 'unsafe.patch', error: 'unsafe path ..\\escape.txt' }]);
+  assert.deepEqual(calls.filter((a) => a[0] === 'apply' && a[1] !== '--numstat'), []);
+});
+
+test('AC1.1: a git merge-file error (exit 255) is reported as a git error, not a conflict', (t) => {
+  const fx = gitFixture(t, NINE);
+  const dir = stagedDir(t);
+  const r1 = stage(dir, 'review-1.patch', captureDiff(t, NINE, editLine('l2', 'L2')));
+  const r2 = stage(dir, 'review-2.patch', captureDiff(t, NINE, editLine('l5', 'L5')));
+  const git = gitIntercepting((args) => (args[0] === 'merge-file' ? { status: 255, stdout: '', stderr: 'error: Could not stat ours\n' } : null));
+  assert.deepEqual(rederive({ worktree: fx.dir, patches: [r1, r2], target: r2, git }), { ok: false, reason: 'git merge-file failed on f.txt: error: Could not stat ours' });
+});
+
+test('AC1.1: rederive names the earlier staged patch that creates a missing target file', (t) => {
+  const fx = gitFixture(t);
+  const dir = stagedDir(t);
+  const creator = gitFixture(t);
+  fs.writeFileSync(path.join(creator.dir, 'g.txt'), 'one\n');
+  creator.runOk('add', '-N', 'g.txt');
+  const created = creator.git('diff');
+  assert.equal(created.status, 0, created.stderr);
+  const modder = repoWith(t, { 'g.txt': 'one\n' });
+  fs.writeFileSync(path.join(modder.dir, 'g.txt'), 'one more\n');
+  const modified = modder.git('diff');
+  assert.equal(modified.status, 0, modified.stderr);
+  const create = stage(dir, 'create-1.patch', created.stdout);
+  const modify = stage(dir, 'modify-2.patch', modified.stdout);
+  assert.deepEqual(rederive({ worktree: fx.dir, patches: [create, modify], target: modify }),
+    { ok: false, reason: 'g.txt is not in the worktree; an earlier staged patch, create-1.patch, creates it' });
 });
