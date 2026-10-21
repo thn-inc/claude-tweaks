@@ -632,9 +632,36 @@ function interruptedRun(summary, dialect) {
 // jest's closing line on a normal run: SummaryReporter's `_getTestSummary`
 // prints `Ran all test suites` with the pattern or project filter, then a
 // period. A jest log whose last line is anything else crashed after its summary
-// (#3674). vitest has no counterpart: its summary and stream interleave, so no
-// closing line is stable across runs (`vitest-summary-last.txt`).
+// (#3674). vitest has no counterpart: it writes its summary to stdout and its
+// failure blocks to stderr, so either can end the piped log
+// (`vitest-summary-last.txt`).
 const JEST_TRAILER_RE = /^Ran all test suites\b.*\.$/;
+
+// `jest --silent` never prints that trailer: SummaryReporter (@jest/reporters
+// 29.7.0, SummaryReporter.js:124) appends it only when `!globalConfig.silent`,
+// while getSummary.js always ends the summary block with the `Time:` line.
+// Summary and trailer leave in one `this.log(message)` write, so a crash cannot
+// end a log exactly on `Time:` — a crash under `--silent` prints after it.
+const JEST_SILENT_TIME_RE = /^Time:\s+\d/;
+
+// The check command's own stdout+stderr is one log (run.js), so a package
+// manager appends its failure lines after jest's trailer. Captured forms only,
+// each anchored on the trimmed line: yarn classic 1.22.22 prints the first two,
+// pnpm 9.15.9 the third; npm 10.9.8 appends nothing. Any other trailing text
+// still refuses (fail closed). Stripped from the end of the log only.
+const WRAPPER_TRAILER_RES = [
+  /^error Command failed with exit code \d+\.$/, // yarn 1.22.22
+  /^info Visit https:\/\/yarnpkg\.com\/en\/docs\/cli\/run for documentation about this command\.$/, // yarn 1.22.22
+  /^ELIFECYCLE\s+Test failed\. See above for more details\.$/, // pnpm 9.15.9: U+2009 padding around ELIFECYCLE, so \s
+];
+
+// True when a jest log ends the way a normal run does (see the two constants above).
+function endsLikeNormalJestRun(clean) {
+  const lines = clean.split('\n').map((l) => l.trim()).filter(Boolean);
+  while (lines.length && WRAPPER_TRAILER_RES.some((re) => re.test(lines[lines.length - 1]))) lines.pop();
+  const lastLine = lines.pop();
+  return lastLine !== undefined && (JEST_TRAILER_RE.test(lastLine) || JEST_SILENT_TIME_RE.test(lastLine));
+}
 
 // The summary family's per-dialect accounting (#3480) — see the comment on
 // `unattributedFailureCount`. null for pytest and an ambiguous log.
@@ -671,10 +698,7 @@ function summaryUnattributedCount(text, { cwd }) {
   // prints no line an enumerated channel matches, so the trailer guard counts
   // it. Only when no channel counted anything (`unmatched` FAIL lines included):
   // a channel that already counted the same crash would otherwise count it twice.
-  if (dialect === 'jest' && unmatched + nonFile === 0) {
-    const lastLine = clean.split('\n').map((l) => l.trim()).filter(Boolean).pop();
-    if (!JEST_TRAILER_RE.test(lastLine)) nonFile += 1;
-  }
+  if (dialect === 'jest' && unmatched + nonFile === 0 && !endsLikeNormalJestRun(clean)) nonFile += 1;
   if (unmatched + nonFile > 0) return unmatched + nonFile;
   if (totalLines.length === 0) return 1;
   const failed = totalLines[0].match(/(\d+) failed/);
