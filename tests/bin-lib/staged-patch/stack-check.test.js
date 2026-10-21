@@ -418,6 +418,27 @@ test('AC1.1: a git merge-file error (exit 255) is reported as a git error, not a
   assert.deepEqual(rederive({ worktree: fx.dir, patches: [r1, r2], target: r2, git }), { ok: false, reason: 'git merge-file failed on f.txt: error: Could not stat ours' });
 });
 
+test('AC1.1: a git merge-file error reason carries no scratch path, and an empty stderr falls back to the exit status', (t) => {
+  const fx = gitFixture(t, NINE);
+  const dir = stagedDir(t);
+  const r1 = stage(dir, 'review-1.patch', captureDiff(t, NINE, editLine('l2', 'L2')));
+  const r2 = stage(dir, 'review-2.patch', captureDiff(t, NINE, editLine('l5', 'L5')));
+  // args are [merge-file, ours, base, theirs]: the stderr names the base file by its absolute scratch path.
+  const leaking = gitIntercepting((args) => (args[0] === 'merge-file' ? { status: 255, stdout: '', stderr: `error: Could not stat ${args[2]}\n` } : null));
+  assert.deepEqual(rederive({ worktree: fx.dir, patches: [r1, r2], target: r2, git: leaking }), { ok: false, reason: 'git merge-file failed on f.txt: error: Could not stat base' });
+  const silent = gitIntercepting((args) => (args[0] === 'merge-file' ? { status: 255, stdout: '', stderr: '' } : null));
+  assert.deepEqual(rederive({ worktree: fx.dir, patches: [r1, r2], target: r2, git: silent }), { ok: false, reason: 'git merge-file failed on f.txt: exit 255' });
+});
+
+test('AC1.1: a two-hunk conflict (merge-file exit 2) is a conflict, not a git error', (t) => {
+  const fx = gitFixture(t, NINE);
+  const dir = stagedDir(t);
+  const both = (a, b) => (text) => editLine('l8', b)(editLine('l2', a)(text));
+  const r1 = stage(dir, 'review-1.patch', captureDiff(t, NINE, both('A2', 'A8')));
+  const r2 = stage(dir, 'review-2.patch', captureDiff(t, NINE, both('B2', 'B8')));
+  assert.deepEqual(rederive({ worktree: fx.dir, patches: [r1, r2], target: r2 }), { ok: false, reason: 'conflict in f.txt' });
+});
+
 test('AC1.1: rederive names the earlier staged patch that creates a missing target file', (t) => {
   const fx = gitFixture(t);
   const dir = stagedDir(t);

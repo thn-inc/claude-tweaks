@@ -6,14 +6,14 @@
 //   node bin/check-staged-stack.js --worktree <dir> --patch <run-dir>/staged/<name>.patch [--rederive-out <file>] [--help]
 // Exit 0 no conflict involves --patch — one JSON line on stdout, nothing on stderr; 1 a conflict
 // involves --patch — the JSON on stdout, one stderr line naming every conflict that involves
-// --patch (joined by `; `, in walk order); 2 a malformed
-// invocation (missing/valueless flags, --patch not a .patch directly under a staged/ dir, a
-// missing --patch file, --worktree not a directory, --rederive-out resolving inside staged/, --patch
-// not among staged/'s walked .patch entries — a dotfile, say), or --patch does not apply at its
-// position nor alone — the JSON still prints on that last path; 3 the run dir (the parent of staged/) is missing or
-// not anchored under the main checkout (a worktree-local shadow — _shared/pipeline-run-dir.md's
-// Anchoring section, [IL-127]); 4 the check could not run — any throw from checkStack (scratch or
-// git failure, or an invariant guard), error on stderr.
+// --patch (joined by `; `, in walk order); 2 a malformed invocation (missing/valueless flags,
+// --patch not a .patch directly under a staged/ dir, a missing --patch file, --worktree not a
+// directory, --rederive-out resolving inside staged/, --patch not among staged/'s walked .patch
+// entries — a dotfile, say), or --patch does not apply at its position nor alone — the JSON still
+// prints on that last path; 3 the run dir (the parent of staged/) is missing or not anchored under
+// the main checkout (a worktree-local shadow — _shared/pipeline-run-dir.md's Anchoring section,
+// [IL-127]); 4 the check could not run — any throw from checkStack (scratch or git failure, or an
+// invariant guard), error on stderr.
 // --rederive-out (#3290): when --patch conflicts with an earlier patch, its per-file 3-way re-derive
 // onto the stacked state is written there and named in the JSON's `rederived`; a refusal or failure
 // lands in `rederiveReason` instead and never changes the exit code (a re-derive that cannot run

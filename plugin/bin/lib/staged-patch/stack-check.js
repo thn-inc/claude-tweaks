@@ -252,7 +252,11 @@ function rederive({ worktree, patches, target, git = defaultGit }) {
         // Without -p the merge is written into `ours` in place, byte for byte.
         const mf = run(['merge-file', ours, base, their], work);
         // merge-file exits with the number of conflicts, and 255 on error: above 127 is git failing.
-        if (mf.status > 127) return { reason: `git merge-file failed on ${rel}: ${firstLine(mf.stderr, ours)}` };
+        if (mf.status > 127) {
+          // Strip the scratch dir so neither `base` nor `theirs` leaks a temp path into the reason.
+          const detail = String(mf.stderr || '').split('\n')[0].trim().split(work + path.sep).join('');
+          return { reason: `git merge-file failed on ${rel}: ${detail || `exit ${mf.status}`}` };
+        }
         if (mf.status > 0) return { reason: `conflict in ${rel}` };
         fs.copyFileSync(ours, path.join(dir, rel));
       }
