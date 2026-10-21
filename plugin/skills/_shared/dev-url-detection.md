@@ -127,8 +127,8 @@ In the `PRIMARY` (non-worktree) case, skip this check — a responding port is a
 
 **Ownership.** A server started as a Bash background task belongs to the agent turn that spawned it — it lives only as long as that turn's process tree, whether or not the turn is waiting on it. (This is not in tension with the foreground-execution rule elsewhere in this plugin (#1965): that rule covers commands the agent *blocks on*; this server is started, polled once, and then left running, never awaited.) When the caller is a dispatched Task call and the server must stay reachable past that call's own end — e.g. dispatch's `build,test` call starting the server for a second call's `review`/`stories`/QA work — it must be **detached** at start, or it dies with the call:
 
-- **POSIX:** launch under `setsid` (e.g. `setsid {dev command} > {log} 2>&1 &`) so the child is reparented off the caller's process group and survives the caller's own exit. Record `detached: yes`.
-- **Windows:** no equivalent detach primitive is available to this procedure. Record `detached: no` and accept that the server does not outlive the spawning turn there. A recorded `detached: no` server on this platform is still stopped as a tree, not a leader-only kill — see `wrap-up/cleanup-procedures-execution.md` Section D, whose win32 branch runs `taskkill /PID {pid} /T /F` regardless of the `detached:` field.
+- **POSIX:** launch under `setsid` (e.g. `setsid {dev command} > {log} 2>&1 &`) so the child is reparented off the caller's process group and survives the caller's own exit. Record `detached:yes`.
+- **Windows:** no equivalent detach primitive is available to this procedure. Record `detached:no` and accept that the server does not outlive the spawning turn there. A recorded `detached:no` server on this platform is still stopped as a tree, not a leader-only kill — see `wrap-up/cleanup-procedures-execution.md` Section D, whose win32 branch runs `taskkill /PID {pid} /T /F` regardless of the `detached:` field.
 
 When starting a server (auto mode, or interactive with consent):
 
