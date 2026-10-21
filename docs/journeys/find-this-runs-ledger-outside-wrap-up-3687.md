@@ -21,9 +21,9 @@ files:
 ### 1. Resolve this run's ledger through the probe
 - **URL:** `plugin/skills/_shared/ledger-format.md`, Location section, "Resolution rule for a caller reading 'the active ledger for this run' (#3687)"
 - **Action:** Run the probe against the resolved run dir and read `value.files`. A `ledger.md` entry is relative to the run dir. A `docs/plans/{file}` entry is relative to the run's worktree.
-- **Should feel:** Like one question with one answer. The inherited ledgers show up by name under `value.unattributedFiles` and are never read as this run's.
-- **Should understand:** `{run-dir}` is the run dir just resolved, not a bare `$PIPELINE_RUN_DIR` that an inferred run leaves unset. An empty `value.files` means "no ledger yet", not "look further". The `docs/plans/*-ledger.md` glob is a reader-only fallback, used when the probe is `ok: false` or no run dir resolves.
-- **Red flags:** A probe called with `--run ""` (exit 2) silently dropping into the glob. A reader picking the newest `docs/plans` ledger while `value.files` names a different one.
+- **Should feel:** Like one question with one answer. The inherited ledgers show up by name under `value.unattributedFiles` and are never read as this run's. When the probe returns the run-dir `ledger.md`, that key is absent, and an absent key reads as an empty list.
+- **Should understand:** `{run-dir}` is the run dir just resolved, not a bare `$PIPELINE_RUN_DIR` that an inferred run leaves unset. An empty `value.files` means "no ledger yet", not "look further". The `docs/plans/*-ledger.md` glob is a reader-only fallback, used when the probe is `ok: false` or no run dir resolves. On that fallback an existing `{run-dir}/ledger.md` wins, and the glob is not consulted.
+- **Red flags:** A probe called with `--run ""` (exit 2) silently dropping into the glob. A reader picking the newest `docs/plans` ledger while `value.files` names a different one, or while `{run-dir}/ledger.md` exists.
 
 ### 2. Review merges this run's QA findings, not a stranger's
 - **URL:** `plugin/skills/review/code-mode-steps.md`, "QA Ledger Check"
@@ -48,10 +48,10 @@ files:
 
 ### 5. The fast-lane short-circuit deletes this run's ledger through `delete-ledger`
 - **URL:** `plugin/skills/wrap-up/auto-merge-short-circuit.md`, "Ledger deletion (`cleanup-procedures.md` item 2) — before the merge (#939)"; `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" delete-ledger --run "$RUN_DIR"`
-- **Action:** Before the merge, run the verb and handle its report the way `cleanup-procedures.md`'s Item 2 does. On `deleted ledger {path}` for a `docs/plans/` path, `git rm` that path and commit. Under `pr-first`, push before `gh pr merge`.
-- **Should feel:** The same as the attended Review Console path: one deletion mechanism, ownership-aware.
-- **Should understand:** Every report except `not found` leaves the ledger on disk, commits nothing and logs a `SKIP`. That includes `ambiguous`, `unattributable` and `failed to delete`. The old `ls-files "docs/plans/*-record-{n}-ledger.md"` locate step never matched a topic-slug ledger, so before this change the short-circuit silently left the run's ledger behind.
-- **Red flags:** A merged short-circuit run whose squash commit still adds its own `*-ledger.md`. A deleted inherited ledger in the PR diff.
+- **Action:** Before the merge, run the verb and handle its report the way `cleanup-procedures.md`'s Item 2 does. On `deleted ledger {path}`, test the path with `git -C "$WORKTREE_PATH" ls-files --error-unmatch`. Only a tracked `docs/plans/` path is `git rm`'d and committed. A gitignored run-dir `ledger.md` or an untracked `docs/plans/` file commits nothing. Under `pr-first`, push before `gh pr merge`.
+- **Should feel:** The same as the attended Review Console path: one deletion mechanism, ownership-aware through `ledger-write.js`'s `resolveLedgerPath`.
+- **Should understand:** Every report except `not found` leaves the ledger on disk, commits nothing and logs a `SKIP`. That includes `ambiguous`, `unattributable` and `failed to delete`. The `AUTO` deletion line goes to `decisions.md` only on a `deleted ledger` report; `not found` logs nothing. The old `ls-files "docs/plans/*-record-{n}-ledger.md"` locate step never matched a topic-slug ledger, so before this change the short-circuit silently left the run's ledger behind.
+- **Red flags:** A merged short-circuit run whose squash commit still adds its own `*-ledger.md`. A deleted inherited ledger in the PR diff. A failing `git rm` on a run-dir or untracked ledger path.
 
 ## Origin
 - Created during the build of #3687 (ledger readers outside wrap-up resolve this run's ledger through the ownership-aware ledger probe; writers fail closed; the auto-merge short-circuit deletes through `delete-ledger`), run `2026-10-21T181728-record-3687`. Companion to `close-out-only-this-runs-ledger-3566.md`, which covers wrap-up's own close-out path.
