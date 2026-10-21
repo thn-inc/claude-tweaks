@@ -5,7 +5,7 @@
 // gone), never recreating the stale original. Spawns the CLI as a real child
 // process against a temp git repo, with a gh-absent PATH (a scratch dir of
 // symlinks to node and git only) so the result is machine-independent.
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -18,17 +18,26 @@ const { runVerify, resolveArchivedRunDir } = require('../../../plugin/bin/lib/wr
 
 const RUN_ID = '2026-10-21T120000-verify-json-fixture';
 
+// Every temp dir this file mints, removed once the file's tests finish.
+const tmpDirs = [];
+after(() => { for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true }); });
+function tmpDir(prefix) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tmpDirs.push(d);
+  return d;
+}
+
 // Same shape as tests/integration-model.test.js's ghAbsentPath(), plus node:
 // `gh` is absent even where it sits beside git (Homebrew).
 function ghAbsentPath() {
-  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-nogh-bin-'));
+  const binDir = tmpDir('ct-nogh-bin-');
   fs.symlinkSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim(), path.join(binDir, 'git'));
   fs.symlinkSync(process.execPath, path.join(binDir, 'node'));
   return binDir;
 }
 
 function makeRepo() {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'verify-json-cli-')));
+  const repo = fs.realpathSync(tmpDir('verify-json-cli-'));
   const g = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8' }).trim();
   g('init', '-q');
   g('config', 'user.email', 'test@example.com');
@@ -102,6 +111,9 @@ test('verify-json lands in the archived copy', () => {
 
   const r = runCli(repo, runDir, ghAbsentPath());
   assert.ok(fs.existsSync(path.join(archived, 'verify.json')), `${r.stderr}${r.stdout}`);
+  const written = JSON.parse(fs.readFileSync(path.join(archived, 'verify.json'), 'utf8'));
+  assert.deepStrictEqual(written.checks.map((c) => c.check), tableRows(r.stdout).map((x) => x.check));
+  assert.ok(written.checks.some((c) => c.check === 'acceptance-labeling'), 'acceptance-labeling is persisted');
   assert.ok(!fs.existsSync(runDir), 'the stale original run dir was not recreated');
 });
 

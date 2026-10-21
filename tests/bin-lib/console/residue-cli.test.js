@@ -341,13 +341,15 @@ test('--run without --require-verify never mentions verify.json', () => {
 
 test('--require-verify usage errors', () => {
   const f = fixture();
-  for (const argv of [
-    ['--run', f.runDir, '--require-verify'],
-    ['--run', f.runDir, '--require-verify', ''],
-    ['--ack', '--run', f.runDir, '--require-verify', 'b'],
-    ['--ack-all', '--require-verify', 'b'],
+  for (const [argv, message] of [
+    [['--run', f.runDir, '--require-verify'], /--require-verify requires a value/],
+    [['--run', f.runDir, '--require-verify', ''], /--require-verify requires a value/],
+    [['--run', f.runDir, '--require-verify', '--ack'], /--require-verify requires a value/],
+    [['--ack', '--run', f.runDir, '--require-verify', 'b'], /--require-verify takes neither --ack nor --ack-all/],
+    [['--ack-all', '--require-verify', 'b'], /--ack-all takes neither --run nor --ack|--require-verify takes neither/],
   ]) {
     const h = harness(f.main);
     assert.strictEqual(run(argv, h.deps), 2, argv.join(' '));
+    assert.match(h.err(), message, argv.join(' '));
   }
 });

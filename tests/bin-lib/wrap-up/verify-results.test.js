@@ -45,7 +45,7 @@ test('readVerifyResults returns null for a missing, malformed, or wrong-shape fi
   const missing = tmpRunDir();
   assert.equal(readVerifyResults(missing), null);
   for (const body of [
-    '{', '[]', JSON.stringify({ version: 2, checks: [] }), JSON.stringify({ version: 1 }),
+    '{', '[]', 'null', JSON.stringify({ version: 2, checks: [] }), JSON.stringify({ version: 1 }),
     JSON.stringify({ version: 1, checks: [null] }), JSON.stringify({ version: 1, checks: [{ check: 'issues' }] }),
   ]) {
     const runDir = tmpRunDir();
