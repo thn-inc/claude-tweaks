@@ -136,7 +136,7 @@ test('AC1.1: the snippet adopts this record\'s own prior attempt instead of card
     isDraft: false,
     isCrossRepository: false,
     headRefOid: closedHead,
-    closingIssuesReferences: [{ number: 1 }],
+    closingIssuesReferences: [{ number: 1, repository: { name: 'r', owner: { login: 'o' } } }],
     body: '<!-- claude-tweaks-run: 2026-10-21T000000-record-1 -->\nclaude-tweaks-run: 2026-10-21T000000-record-1\n\nFixes #1\n',
   };
   const snippet = extractSnippet();

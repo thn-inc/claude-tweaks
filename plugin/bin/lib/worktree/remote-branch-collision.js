@@ -29,6 +29,7 @@
 const { execFileSync } = require('child_process');
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
 const { firstLineRunId } = require('../flow/pr-checklist');
+const { prClosesIssue } = require('../reconcile/release-merged');
 
 // Throws on a non-zero exit; the thrown error carries `.status`.
 function defaultGit(args) {
@@ -139,30 +140,21 @@ function findPrsForBranch({ branch, repo, gh = defaultGh }) {
   }
 }
 
-// Record numbers a PR links: GitHub's closing references plus every
-// `Fixes #N` line of its body.
-function linkedRecords(pr) {
-  const linked = new Set();
-  for (const ref of Array.isArray(pr.closingIssuesReferences) ? pr.closingIssuesReferences : []) {
-    if (ref && Number.isInteger(ref.number)) linked.add(ref.number);
-  }
-  for (const m of String(pr.body || '').matchAll(/^Fixes #(\d+)\s*$/gm)) linked.add(Number(m[1]));
-  return linked;
-}
-
 // The first CLOSED claude-tweaks PR (run marker on its body's first line) that
-// links one of `records` and whose head is an ancestor of `remoteSha` — the
-// record's own earlier attempt — as `{ number, url }`, else null. Any doubt
-// (failed lookup, bad sha, ancestry error) is null: the branch stays foreign.
-function findPriorAttemptPr({ remoteSha, prLookup, records, git = defaultGit }) {
+// closes one of `records` in `repo` (`owner/name`) and whose head is an ancestor
+// of `remoteSha` — the record's own earlier attempt — as `{ number, url }`, else
+// null. "Closes" is `prClosesIssue`'s three-valued verdict (closing references
+// matched on number and repository, else a closing-keyword line of the PR body);
+// only `true` links, so a PR read without `closingIssuesReferences` stays foreign.
+// Any doubt (failed lookup, bad sha, ancestry error) is null: the branch stays foreign.
+function findPriorAttemptPr({ remoteSha, prLookup, records, repo, git = defaultGit }) {
   const wanted = (Array.isArray(records) ? records : []).filter(Number.isInteger);
-  if (!SHA_RE.test(remoteSha || '') || wanted.length === 0) return null;
+  if (!SHA_RE.test(remoteSha || '') || wanted.length === 0 || !repo) return null;
   if (!prLookup || !prLookup.ok || !Array.isArray(prLookup.prs)) return null;
   for (const pr of prLookup.prs) {
     // `gh pr list --head` also matches fork PRs; only a same-repo PR is this record's own.
     if (!pr || pr.state !== 'CLOSED' || pr.isCrossRepository !== false || !firstLineRunId(pr.body)) continue;
-    const linked = linkedRecords(pr);
-    if (!wanted.some((n) => linked.has(n))) continue;
+    if (!wanted.some((n) => prClosesIssue(pr, n, repo, pr.body) === true)) continue;
     if (!SHA_RE.test(pr.headRefOid || '')) continue;
     try {
       git(['merge-base', '--is-ancestor', pr.headRefOid, remoteSha]);

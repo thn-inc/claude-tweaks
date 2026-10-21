@@ -25,7 +25,7 @@ files:
 
 ### 2. The retry's collision check recognizes its own prior attempt — `build/adopted-branch-collision-check.md` item 5
 - **URL:** —
-- **Action:** The fresh `worktree-dispatch-record-{n}` branch's tip is not an ancestor of origin's, so `classifyRemoteBranch` says `foreign`; `findPriorAttemptPr` then finds a CLOSED, same-repo PR on that branch whose body opens with the `claude-tweaks-run:` marker, links #{n}, and whose head is an ancestor of origin's tip → state `prior-attempt`. The build runs `git merge --no-edit {remoteSha}` and logs the adoption.
+- **Action:** The fresh `worktree-dispatch-record-{n}` branch's tip is not an ancestor of origin's, so `classifyRemoteBranch` says `foreign`; `findPriorAttemptPr` then finds a CLOSED, same-repo PR on that branch whose body opens with the `claude-tweaks-run:` marker, closes #{n} in this repo, and whose head is an ancestor of origin's tip → state `prior-attempt`. The build runs `git merge --no-edit {remoteSha}` and logs the adoption; a merge conflict it cannot resolve confidently is aborted and the branch stops as `foreign` instead.
 - **Should feel:** Hands-off — no stop card, no question.
 - **Should understand:** Only this record's own closed claude-tweaks PR qualifies. Another record's PR, a human's branch, an open or merged PR, a fork PR, or a failed lookup still stops as `foreign`; with `gh` absent there is no lookup, so it stops too (#3915 tracks the MCP path).
 - **Red flags:** A `## Build: Adopted branch collides with an unrelated branch on origin` card naming the record's own closed PR; or, conversely, a different record's branch being adopted.
@@ -35,7 +35,7 @@ files:
 - **Action:** Step 1 finds the CLOSED PR for the branch and reopens it (`reopened PR #{pr} for {branch} (retry)`); because this run adopted a prior attempt, it recomposes the body for the new run and writes it with `gh pr edit {pr} --body-file` (`rebound reopened PR #{pr} to run {run-id}`), then pushes.
 - **Should feel:** Continuous — attempt 2's progress and comments land in the same thread as attempt 1's failure.
 - **Should understand:** The rebind is what lets `bin/pr-checklist.js` flip this run's phase rows; a body still naming the old run is refused (exit 4).
-- **Red flags:** Phase-exit checklist updates failing with "run marker mismatch"; a second PR opened for the same branch.
+- **Red flags:** Phase-exit checklist updates failing with "run marker mismatch" (a failed rebind is logged as a `SKIP` degrade, not a stop); a second PR opened for the same branch.
 
 ### 4. The build resumes instead of re-closing — `build/SKILL.md` Spec Step 2
 - **URL:** —

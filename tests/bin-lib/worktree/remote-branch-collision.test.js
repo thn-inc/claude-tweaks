@@ -195,13 +195,14 @@ test('real git: an unreachable origin is unreachable, never absent', (t) => {
 // --- #3887: a dispatched retry's own prior attempt vs a foreign branch ---
 
 const SHA_B = 'b'.repeat(40);
+const ref = (number, slug = 'o/r') => ({ number, repository: { name: slug.split('/')[1], owner: { login: slug.split('/')[0] } } });
 const closedPr = (over) => ({
   number: 9,
   url: 'https://example.test/pr/9',
   state: 'CLOSED',
   isCrossRepository: false,
   headRefOid: SHA_B,
-  closingIssuesReferences: [{ number: 42 }],
+  closingIssuesReferences: [ref(42)],
   body: '<!-- claude-tweaks-run: 2026-10-21T000000-record-42 -->\nclaude-tweaks-run: 2026-10-21T000000-record-42\n\nFixes #42\n',
   ...over,
 });
@@ -214,6 +215,7 @@ const priorAttempt = (over) => findPriorAttemptPr({
   remoteSha: SHA_A,
   prLookup: { ok: true, prs: [closedPr()] },
   records: [42],
+  repo: 'o/r',
   git: ancestorGit(),
   ...over,
 });
@@ -267,9 +269,20 @@ test('findPriorAttemptPr: a failed or absent lookup, or no records, is null', ()
   assert.equal(calls.length, 0);
 });
 
-test('findPriorAttemptPr: links by a Fixes line when closingIssuesReferences is absent', () => {
-  const prLookup = { ok: true, prs: [closedPr({ closingIssuesReferences: undefined })] };
+test('findPriorAttemptPr: links by a closing-keyword line when GitHub linked no issue (empty references)', () => {
+  const prLookup = { ok: true, prs: [closedPr({ closingIssuesReferences: [] })] };
   assert.deepEqual(priorAttempt({ prLookup }), { number: 9, url: 'https://example.test/pr/9' });
+});
+
+test('findPriorAttemptPr: a PR read without closingIssuesReferences is unknown, so it stays foreign', () => {
+  const prLookup = { ok: true, prs: [closedPr({ closingIssuesReferences: undefined })] };
+  assert.equal(priorAttempt({ prLookup }), null);
+});
+
+test('findPriorAttemptPr: a closing reference into another repository never counts, and no repo is no match', () => {
+  const prLookup = { ok: true, prs: [closedPr({ closingIssuesReferences: [ref(42, 'other/x')], body: closedPr().body.replace('Fixes #42', 'Refs #42') })] };
+  assert.equal(priorAttempt({ prLookup }), null);
+  assert.equal(priorAttempt({ repo: undefined }), null);
 });
 
 test('findPriorAttemptPr: links by closingIssuesReferences alone when the body has no Fixes line', () => {
@@ -282,7 +295,7 @@ test('findPriorAttemptPr: skips non-matching closed PRs ahead of the record\'s o
   const prLookup = {
     ok: true,
     prs: [
-      closedPr({ number: 1, closingIssuesReferences: [{ number: 43 }], body: closedPr().body.replace('#42', '#43') }),
+      closedPr({ number: 1, closingIssuesReferences: [ref(43)], body: closedPr().body.replace('#42', '#43') }),
       closedPr({ number: 2, isCrossRepository: true }),
       closedPr({ number: 3, headRefOid: OTHER_HEAD }),
       closedPr({ number: 9, url: 'https://example.test/pr/9' }),
@@ -324,6 +337,7 @@ test('AC1.1: a retry\'s fresh branch is foreign by ancestry but prior-attempt by
     remoteSha: verdict.remoteSha,
     prLookup: { ok: true, prs: [closedPr({ headRefOid: closedHead })] },
     records: [42],
+    repo: 'o/r',
     git,
   });
   assert.deepEqual(prior, { number: 9, url: 'https://example.test/pr/9' });

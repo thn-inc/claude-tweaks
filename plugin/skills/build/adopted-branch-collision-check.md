@@ -42,7 +42,7 @@ if (r.state === 'foreign' || (r.state === 'unreachable' && r.remoteSha)) {
   const reason = r.state === 'foreign' ? null : r.reason;
   const prLookup = repo ? m.findPrsForBranch({ branch, repo }) : null;
   const records = String(recordList || '').split(',').map(Number).filter(Number.isInteger);
-  const prior = r.state === 'foreign' ? m.findPriorAttemptPr({ remoteSha: r.remoteSha, prLookup, records }) : null;
+  const prior = r.state === 'foreign' ? m.findPriorAttemptPr({ remoteSha: r.remoteSha, prLookup, records, repo }) : null;
   if (prior) { out.state = 'prior-attempt'; out.pr = prior; }
   else out.card = m.formatStopCard({ branch, remoteSha: r.remoteSha, prLookup, reason });
 }
@@ -98,8 +98,9 @@ then treat it as `unreachable` with reason `no-output` (item 3). Branch on `stat
    local-only run.
 5. `prior-attempt` — `origin`'s tip is not in `HEAD`'s history, but `findPriorAttemptPr` matched it to
    this record's own failed earlier attempt (CLOSED, not merged, a PR on this branch whose body opens
-   with the `claude-tweaks-run:` marker, links a record of this run by `closingIssuesReferences` or a
-   `Fixes #{n}` line, and whose head is an ancestor of origin's tip — the shape
+   with the `claude-tweaks-run:` marker, closes a record of this run in this repo (`prClosesIssue`:
+   `closingIssuesReferences` on number and repository, else a closing-keyword line of the body), and
+   whose head is an ancestor of origin's tip — the shape
    `dispatch/settle-and-merge.md` Step 6 step 5 leaves: branch kept, PR closed as a tombstone). Adopt
    it, never stop on it: `git merge --no-edit {remoteSha}` as its own Bash call (a conflict goes to
    `_shared/git-discipline.md`'s Merge conflict resolution; its "ask the user" fallback does not
