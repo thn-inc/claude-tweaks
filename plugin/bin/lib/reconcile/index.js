@@ -60,7 +60,10 @@ function expandChecks(checks) {
   const requested = new Set(checks);
   const out = [];
   for (const c of requested) {
-    const pre = PREREQUISITES[c];
+    // Own-property lookup: `--checks` names are caller-typed strings, and an
+    // inherited key (`constructor`, `toString`) must pass through as an
+    // unknown check, as it did before expansion existed, not throw.
+    const pre = Object.hasOwn(PREREQUISITES, c) ? PREREQUISITES[c] : null;
     if (pre) {
       const covered = [pre.check, ...pre.satisfiedBy].some((s) => requested.has(s));
       if (!covered && !out.includes(pre.check)) out.push(pre.check);
@@ -83,7 +86,8 @@ function expandChecks(checks) {
 // `_shared/integration-model.md`).
 async function reconcile(opts = {}) {
   const dryRun = !!opts.dryRun;
-  let checks = expandChecks(Array.isArray(opts.checks) && opts.checks.length ? opts.checks : ALL_CHECKS);
+  const requestedChecks = Array.isArray(opts.checks) && opts.checks.length ? opts.checks : ALL_CHECKS;
+  let checks = expandChecks(requestedChecks);
   const cwd = opts.cwd || process.cwd();
   const result = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: [] };
 
@@ -280,7 +284,10 @@ async function reconcile(opts = {}) {
   const healthJustSucceeded = !!(health && health.ok && !healthFresh);
   if (health && !health.ok) {
     result.skipped.push({ check: ghDependentChecks.join(','), reason: `preflight-${health.reason}` });
-    checks = checks.filter((c) => c === 'mirror');
+    // Only a mirror the caller named survives the narrowing: a mirror that
+    // expandChecks added (#3630) exists to serve a gh-dependent check that was
+    // just skipped, so it does not run uninvited on a preflight failure.
+    checks = checks.filter((c) => c === 'mirror' && requestedChecks.includes('mirror'));
     if (!checks.length) return result;
   }
 
@@ -352,7 +359,7 @@ async function reconcile(opts = {}) {
     result.skipped.push({ check: 'red-tip', reason: 'no-fetch-this-pass' });
   }
   if (checks.includes('mirror') && sharedFetchOk) {
-    result.mirror = mirrorFastForward(root, integration, { skipFetch: true });
+    result.mirror = mirrorFastForward(root, integration, { skipFetch: true, dryRun });
   }
 
   // Detection only — never mutates repo/run state. Reads origin/{integration}

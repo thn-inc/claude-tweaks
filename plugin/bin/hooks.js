@@ -1513,9 +1513,10 @@ async function main(argv) {
       cwd: process.cwd(),
       mcpReachable: args.includes('--mcp-reachable'),
       checks: checksList.length ? checksList : undefined,
-      // An explicit --checks subset is the caller naming exactly which checks
-      // must run — don't let the SessionStart hot-path time ceiling (#820 D4)
-      // skip them; an unscoped pass keeps the default ceiling (#3026).
+      // An explicit --checks subset is the caller naming which checks must
+      // run (plus any prerequisite reconcile() adds, #3630) — don't let the
+      // SessionStart hot-path time ceiling (#820 D4) skip them; an unscoped
+      // pass keeps the default ceiling (#3026).
       budgetMs: checksList.length ? Infinity : undefined,
       // An explicit subset cannot claim the whole fast pass ran, so it must
       // not stamp the shared freshness key — otherwise the next SessionStart

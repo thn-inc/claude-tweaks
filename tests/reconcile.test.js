@@ -14,7 +14,7 @@ const { decideRelease } = require('../plugin/bin/lib/reconcile/release-merged');
 const { decideArchive, readConsoleState, localHasMerge } = require('../plugin/bin/lib/reconcile/archive-merged');
 const { formatSummary } = require('../plugin/bin/lib/reconcile/format-summary');
 const { isWorktreeLocked } = require('../plugin/bin/lib/hooks/worktree-reap');
-const { reconcile } = require('../plugin/bin/lib/reconcile');
+const { reconcile, PREREQUISITES } = require('../plugin/bin/lib/reconcile');
 const { gitRepo } = require('./helpers/git-fixtures');
 const { skipUnderRoot } = require('./helpers/root');
 
@@ -151,6 +151,19 @@ test('mirrorFastForward: fast-forwards when strictly behind and clean (AC1)', ()
   const after = git(['rev-parse', 'main'], mainDir).trim();
   assert.notStrictEqual(before, after);
   assert.strictEqual(after, git(['rev-parse', 'origin/main'], mainDir).trim());
+});
+
+test('mirrorFastForward: dryRun reports a behind mirror as skipped and moves nothing (#3630)', () => {
+  const { seedDir, mainDir } = pairedFixture();
+  fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
+  git(['add', 'b.txt'], seedDir);
+  git(['commit', '-q', '-m', 'second'], seedDir);
+  git(['push', '-q', 'origin', 'main'], seedDir);
+
+  const before = git(['rev-parse', 'main'], mainDir).trim();
+  const r = mirrorFastForward(mainDir, 'main', { dryRun: true });
+  assert.deepStrictEqual(r, { state: 'behind', action: 'skipped', reason: 'dry-run' });
+  assert.strictEqual(git(['rev-parse', 'main'], mainDir).trim(), before);
 });
 
 test('mirrorFastForward: dirty tree reports dirty and moves nothing (AC1)', () => {
@@ -1199,9 +1212,8 @@ test('reconcile: red-tip dispatches immediately after mirror in source order (lo
 // the `no-fetch-this-pass` gate is unreachable through reconcile() — a
 // red-tip-alone request gets its fetch instead of a skip.
 test('reconcile(): red-tip requested alone pulls in mirror\'s fetch rather than reading a stale ref (#3630)', async () => {
-  const { mainDir } = pairedFixture();
-  fs.mkdirSync(path.join(mainDir, '.claude-tweaks'), { recursive: true });
-  fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
+  const { seedDir, mainDir } = pairedFixture();
+  writePolicyViaSeedAndPull(seedDir, mainDir, 'integration-model: pr-first\n');
 
   const preflight = require('../plugin/bin/lib/reconcile/preflight');
   const originalHealth = preflight.ghHealthCheck;
@@ -1213,7 +1225,7 @@ test('reconcile(): red-tip requested alone pulls in mirror\'s fetch rather than 
     const calls = await withFetchArgvLog(async () => { r = await reconcile({ cwd: mainDir, checks: ['red-tip'] }); });
     const fetches = calls.filter((c) => /fetch .*origin main$/.test(c));
     assert.equal(fetches.length, 1, `expected exactly one shared fetch, saw ${JSON.stringify(calls)}`);
-    assert.notEqual(r.mirror, null, 'the added mirror prerequisite must have run');
+    assert.equal(r.mirror && r.mirror.state, 'current', 'the added mirror prerequisite must have run on a clean tree');
     assert.ok(!r.skipped.some((s) => s.reason === 'no-fetch-this-pass'), JSON.stringify(r.skipped));
   } finally {
     preflight.ghHealthCheck = originalHealth;
@@ -1221,14 +1233,43 @@ test('reconcile(): red-tip requested alone pulls in mirror\'s fetch rather than 
   }
 });
 
+// The `no-fetch-this-pass` gate is the backstop for a PREREQUISITES edit that
+// drops red-tip's entry — expandChecks no longer reaches it, so reach it by
+// making exactly that edit.
+test('reconcile(): without a red-tip PREREQUISITES entry the no-fetch-this-pass backstop still skips red-tip (#3630)', async () => {
+  const { seedDir, mainDir } = pairedFixture();
+  writePolicyViaSeedAndPull(seedDir, mainDir, 'integration-model: pr-first\n');
+
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+  const originalHealth = preflight.ghHealthCheck;
+  const originalEntry = PREREQUISITES['red-tip'];
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  delete PREREQUISITES['red-tip'];
+  try {
+    const r = await reconcile({ cwd: mainDir, checks: ['red-tip'] });
+    assert.equal(r.redTip, null, 'red-tip must never dispatch without a fetch this pass');
+    assert.deepEqual(r.skipped, [{ check: 'red-tip', reason: 'no-fetch-this-pass' }]);
+  } finally {
+    PREREQUISITES['red-tip'] = originalEntry;
+    preflight.ghHealthCheck = originalHealth;
+  }
+});
+
 test('expandChecks (#3630): adds mirror ahead of archive/red-tip and widens nothing else', () => {
-  const { expandChecks, PREREQUISITES, ALL_CHECKS } = require('../plugin/bin/lib/reconcile');
+  const { expandChecks, ALL_CHECKS } = require('../plugin/bin/lib/reconcile');
   assert.deepEqual(expandChecks(['archive']), ['mirror', 'archive']);
   assert.deepEqual(expandChecks(['red-tip']), ['mirror', 'red-tip']);
   assert.deepEqual(expandChecks(['reap']), ['reap']);
   assert.deepEqual(expandChecks(['release', 'archive', 'reap']), ['release', 'mirror', 'archive', 'reap']);
   assert.deepEqual(expandChecks(['archive', 'remote-prune']), ['archive', 'remote-prune']);
   assert.deepEqual(expandChecks(['archive', 'archive']), ['mirror', 'archive']);
+  // Two checks sharing one prerequisite add it once; remote-prune satisfies it for both.
+  assert.deepEqual(expandChecks(['archive', 'red-tip']), ['mirror', 'archive', 'red-tip']);
+  assert.deepEqual(expandChecks(['red-tip', 'remote-prune']), ['red-tip', 'remote-prune']);
+  // Caller-typed names that collide with Object.prototype keys are unknown checks, not entries.
+  for (const name of ['constructor', 'toString', '__proto__']) {
+    assert.deepEqual(expandChecks([name]), [name]);
+  }
   assert.deepEqual(expandChecks(ALL_CHECKS), ALL_CHECKS);
   const { FAST_CHECKS } = require('../plugin/bin/lib/hooks/session-start');
   const { BACKGROUND_CHECKS } = require('../plugin/bin/hooks');
@@ -1237,14 +1278,14 @@ test('expandChecks (#3630): adds mirror ahead of archive/red-tip and widens noth
   const input = ['archive'];
   expandChecks(input);
   assert.deepEqual(input, ['archive'], 'input must not be mutated');
-  assert.deepEqual(Object.keys(PREREQUISITES).sort(), ['archive', 'red-tip']);
 });
 
 // #3630 behavioral scaffolding: origin's main is one commit (NEW) ahead of the
 // clone's local main, as when GitHub merges a PR asynchronously. archive/
 // release/reap are stubbed; the archive stub records what local main and
 // localHasMerge looked like at the moment it was called.
-async function reconcileWithAsyncMerge(checks) {
+// extra: { dryRun?, health? } — health is the gh preflight verdict (default ok).
+async function reconcileWithAsyncMerge(checks, extra = {}) {
   const { seedDir, mainDir } = pairedFixture();
   writePolicyViaSeedAndPull(seedDir, mainDir, 'integration-model: pr-first\n');
   fs.writeFileSync(path.join(seedDir, 'merged.txt'), 'merged\n');
@@ -1264,9 +1305,10 @@ async function reconcileWithAsyncMerge(checks) {
     release: releaseMod.releaseMerged,
     reap: reapMod.reapMerged,
   };
-  const out = { NEW, seenAtArchive: null, archiveCalled: false, reapCalled: false, r: null, fetchCalls: null };
-  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
-  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
+  const out = { NEW, mainDir, seenAtArchive: null, archiveCalled: false, reapCalled: false, r: null, fetchCalls: null };
+  const health = extra.health || { ok: true, reason: null };
+  preflight.ghHealthCheck = () => health;
+  preflight.ghHealthCheckAsync = async () => health;
   archiveMod.archiveMerged = () => {
     out.archiveCalled = true;
     out.seenAtArchive = {
@@ -1284,7 +1326,7 @@ async function reconcileWithAsyncMerge(checks) {
   try {
     delete require.cache[indexPath];
     const { reconcile: reconcileFresh } = require(indexPath);
-    out.fetchCalls = await withFetchArgvLog(async () => { out.r = await reconcileFresh({ cwd: mainDir, checks }); });
+    out.fetchCalls = await withFetchArgvLog(async () => { out.r = await reconcileFresh({ cwd: mainDir, checks, dryRun: extra.dryRun }); });
   } finally {
     preflight.ghHealthCheck = original.health;
     preflight.ghHealthCheckAsync = original.healthAsync;
@@ -1314,6 +1356,29 @@ test('AC2 (#3630): dispatch-style checks release,archive,reap sees the asynchron
   const { r, seenAtArchive } = await reconcileWithAsyncMerge(['release', 'archive', 'reap']);
   assert.equal(seenAtArchive.hasMerge, true, 'localHasMerge must see the merge — no local-behind-merge from a missing fetch');
   assert.ok(r.mirror && r.mirror.action === 'fast-forwarded', JSON.stringify(r.mirror));
+});
+
+test('(#3630): dryRun with an added mirror prerequisite moves nothing but archive still sees origin\'s merge', async () => {
+  const { r, seenAtArchive, NEW, mainDir } = await reconcileWithAsyncMerge(['archive'], { dryRun: true });
+  assert.deepEqual(r.mirror, { state: 'behind', action: 'skipped', reason: 'dry-run' });
+  assert.notEqual(git(['rev-parse', 'main'], mainDir).trim(), NEW, 'a dry-run must not fast-forward local main');
+  assert.equal(seenAtArchive.hasMerge, true, 'the shared fetch still refreshes origin/main for the preview');
+});
+
+test('(#3630): a gh preflight failure does not run a mirror the caller never named', async () => {
+  const health = { ok: false, reason: 'rate-limited' };
+  const { r, archiveCalled, NEW, mainDir } = await reconcileWithAsyncMerge(['archive'], { health });
+  assert.equal(r.mirror, null, 'the added mirror must not run once its dependent check was skipped');
+  assert.equal(archiveCalled, false);
+  assert.notEqual(git(['rev-parse', 'main'], mainDir).trim(), NEW, 'local main must not move');
+  assert.ok(r.skipped.some((s) => s.check === 'archive' && s.reason === 'preflight-rate-limited'), JSON.stringify(r.skipped));
+});
+
+test('(#3630): a gh preflight failure still runs a mirror the caller did name', async () => {
+  const health = { ok: false, reason: 'rate-limited' };
+  const { r, archiveCalled } = await reconcileWithAsyncMerge(['mirror', 'archive'], { health });
+  assert.ok(r.mirror && r.mirror.action === 'fast-forwarded', JSON.stringify(r.mirror));
+  assert.equal(archiveCalled, false);
 });
 
 // --- hooks.js verb: garbage-stdin invariant + JSON shape (AC5) ---

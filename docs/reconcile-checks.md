@@ -41,7 +41,10 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   prerequisite runs in the same pass, so under the CLI's `--checks` path it shares the unbounded
   budget from the bullet above. `archive-branches` has no entry: when `git cherry` cannot prove
   equivalence it falls back to PR-state squash-merge evidence (#2252), so a stale local ref only
-  delays it and never wrongly skips it.
+  delays it and never wrongly skips it. An added prerequisite follows the pass's own gates
+  rather than overriding them: under `--dry-run` it does not fast-forward (`mirror` reports
+  `skipped` / `dry-run`), and when the gh preflight fails it is dropped along with the check it
+  served, since only a `mirror` the caller named survives the preflight narrowing.
 - **The fast/background split (#820 D8).** `bin/lib/hooks/session-start.js`'s `FAST_CHECKS`
   (`mirror`, `red-tip`, `console` — cheap read/detect, run inline on every SessionStart) and
   `bin/hooks.js`'s `BACKGROUND_CHECKS` (`release`, `archive`, `archive-branches`, `remote-prune`,
