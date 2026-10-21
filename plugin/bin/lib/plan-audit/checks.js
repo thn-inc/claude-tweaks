@@ -55,11 +55,9 @@ function isDirectory(p) {
   return resolved.state === 'resolved' && lstatType(resolved.path).type === 'directory';
 }
 
-// Nearest ancestor-or-self present on disk in any form (lstatType reports
-// ENOENT and ENOTDIR alike as `missing`).
-function nearestPresentAncestor(dir) {
+function nearestAncestorWhere(dir, accepts) {
   let cur = dir;
-  while (lstatType(cur).type === 'missing') {
+  while (!accepts(cur)) {
     const parent = path.dirname(cur);
     if (parent === cur) break;
     cur = parent;
@@ -67,14 +65,14 @@ function nearestPresentAncestor(dir) {
   return cur;
 }
 
+// Nearest ancestor-or-self present on disk in any form (lstatType reports
+// ENOENT and ENOTDIR alike as `missing`).
+function nearestPresentAncestor(dir) {
+  return nearestAncestorWhere(dir, (p) => lstatType(p).type !== 'missing');
+}
+
 function nearestExistingAncestor(dir) {
-  let cur = dir;
-  while (!isDirectory(cur)) {
-    const parent = path.dirname(cur);
-    if (parent === cur) break;
-    cur = parent;
-  }
-  return cur;
+  return nearestAncestorWhere(dir, isDirectory);
 }
 
 function checkA(entries, repoRoot) {
@@ -86,20 +84,20 @@ function checkA(entries, repoRoot) {
     if (type === 'Create' || type === 'Test') {
       const parentAbs = path.dirname(abs);
       if (isDirectory(parentAbs)) continue;
-      // #2745: a Create/Test bullet whose immediate parent directory is
-      // missing, but whose grandparent DOES exist, passes on its own —
-      // exactly one new directory level. Writing the file creates that
-      // single new directory as a side effect of the same task; nothing
-      // else in the plan needs to pre-create it or separately reference it
-      // (the standing workaround this closes: "mkdir the new module dir
-      // before auditing"). A path missing more than one directory level
-      // still falls through to the cross-reference check below, since a
-      // multi-level gap reads more like a typo than an intentional new
-      // module directory — see the #1999 tests this file still pins.
       // #3493: a parent whose nearest present ancestor is a regular file, an
       // unreadable entry, or any other non-directory can never hold the new
-      // file, so neither fallback may rescue it.
+      // file, so neither fallback below may rescue it.
       if (isDirectory(nearestPresentAncestor(parentAbs))) {
+        // #2745: a Create/Test bullet whose immediate parent directory is
+        // missing, but whose grandparent DOES exist, passes on its own —
+        // exactly one new directory level. Writing the file creates that
+        // single new directory as a side effect of the same task; nothing
+        // else in the plan needs to pre-create it or separately reference it
+        // (the standing workaround this closes: "mkdir the new module dir
+        // before auditing"). A path missing more than one directory level
+        // still falls through to the cross-reference check below, since a
+        // multi-level gap reads more like a typo than an intentional new
+        // module directory — see the #1999 tests this file still pins.
         const grandparentAbs = path.dirname(parentAbs);
         if (grandparentAbs !== parentAbs && isDirectory(grandparentAbs)) continue;
         const createdDirs = new Set();
