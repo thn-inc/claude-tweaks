@@ -255,13 +255,9 @@ test('AC1.1: the exit-1 stderr line names every conflict that involves --patch',
   stage(fx.staged, 'review-3.patch', captureDiff(t, BASE, insertAboveAnchor('new3')));
   const { deps, out, err } = fakeDeps(fx.main);
   assert.equal(run(['--worktree', fx.worktree, '--patch', r1], deps), 1);
-  const stderr = err.join('');
-  assert.equal(stderr.split('\n').filter((l) => l !== '').length, 1);
-  assert.match(stderr, /staged\/review-2\.patch does not apply on top of staged\/review-1\.patch/);
-  assert.match(stderr, /staged\/review-3\.patch does not apply on top of staged\/review-1\.patch/);
-  // The exact line: the `; ` join and the walk order, built from the JSON's own conflict errors.
+  // One exact line: the `; ` join and the walk order, built from the JSON's own conflict errors.
   const [e2, e3] = JSON.parse(out.join('')).conflicts.map((c) => c.error);
-  assert.equal(stderr, `check-staged-stack.js: staged/review-2.patch does not apply on top of staged/review-1.patch in apply order (${e2}); staged/review-3.patch does not apply on top of staged/review-1.patch in apply order (${e3})\n`);
+  assert.equal(err.join(''), `check-staged-stack.js: staged/review-2.patch does not apply on top of staged/review-1.patch in apply order (${e2}); staged/review-3.patch does not apply on top of staged/review-1.patch in apply order (${e3})\n`);
 });
 
 test('AC1.1: the exit-1 stderr line is filtered to the conflicts that involve --patch', (t) => {

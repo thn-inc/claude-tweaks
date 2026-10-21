@@ -383,6 +383,17 @@ function repoWith(t, files) {
   return fx;
 }
 
+// A real git capture: a fixture committed with `files`, `mutate(fx)` run on it, then `git <gitArgs>`.
+function captureFrom(t, files, mutate, gitArgs = ['diff']) {
+  const fx = repoWith(t, files);
+  mutate(fx);
+  const d = fx.git(...gitArgs);
+  assert.equal(d.status, 0, d.stderr);
+  return d.stdout;
+}
+
+const write = (fx, name, content) => fs.writeFileSync(path.join(fx.dir, name), content);
+
 test('AC1.1: a preamble line reading "rename from ../x" does not skip a valid patch', (t) => {
   const fx = gitFixture(t);
   const dir = stagedDir(t);
@@ -442,31 +453,12 @@ test('AC1.1: a two-hunk conflict (merge-file exit 2) is a conflict, not a git er
 test('AC1.1: rederive names the earlier staged patch that creates a missing target file', (t) => {
   const fx = gitFixture(t);
   const dir = stagedDir(t);
-  const creator = gitFixture(t);
-  fs.writeFileSync(path.join(creator.dir, 'g.txt'), 'one\n');
-  creator.runOk('add', '-N', 'g.txt');
-  const created = creator.git('diff');
-  assert.equal(created.status, 0, created.stderr);
-  const modder = repoWith(t, { 'g.txt': 'one\n' });
-  fs.writeFileSync(path.join(modder.dir, 'g.txt'), 'one more\n');
-  const modified = modder.git('diff');
-  assert.equal(modified.status, 0, modified.stderr);
-  const create = stage(dir, 'create-1.patch', created.stdout);
-  const modify = stage(dir, 'modify-2.patch', modified.stdout);
+  const create = stage(dir, 'create-1.patch', captureFrom(t, {}, (c) => { write(c, 'g.txt', 'one\n'); c.runOk('add', '-N', 'g.txt'); }));
+  const modify = stage(dir, 'modify-2.patch', captureFrom(t, { 'g.txt': 'one\n' }, (c) => write(c, 'g.txt', 'one more\n')));
   assert.deepEqual(rederive({ worktree: fx.dir, patches: [create, modify], target: modify }),
     { ok: false, reason: 'g.txt is not in the worktree; an earlier staged patch, create-1.patch, creates it' });
 });
 
-// A real git capture: a fixture committed with `files`, `mutate(fx)` run on it, then `git <gitArgs>`.
-function captureFrom(t, files, mutate, gitArgs = ['diff']) {
-  const fx = repoWith(t, files);
-  mutate(fx);
-  const d = fx.git(...gitArgs);
-  assert.equal(d.status, 0, d.stderr);
-  return d.stdout;
-}
-
-const write = (fx, name, content) => fs.writeFileSync(path.join(fx.dir, name), content);
 const renameDiff = (t) => captureFrom(t, { 'f.txt': NINE }, (fx) => {
   fx.runOk('mv', 'f.txt', 'h.txt');
   write(fx, 'h.txt', NINE.replace('l5\n', 'L5\n'));

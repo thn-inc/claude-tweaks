@@ -216,9 +216,8 @@ function rederive({ worktree, patches, target, git = defaultGit }) {
       const earlier = run(['apply', '--numstat', '-z', p], worktree);
       return earlier.status === 0 && copiedPaths(earlier.stdout).includes(missing);
     });
-    return { ok: false, reason: creator === undefined
-      ? `${missing} is not a file in the worktree`
-      : `${missing} is not in the worktree; an earlier staged patch, ${path.basename(creator)}, creates it` };
+    if (creator === undefined) return { ok: false, reason: `${missing} is not a file in the worktree` };
+    return { ok: false, reason: `${missing} is not in the worktree; an earlier staged patch, ${path.basename(creator)}, creates it` };
   }
 
   const prior = walkStack({ worktree, patches: patches.slice(0, idx), git });
