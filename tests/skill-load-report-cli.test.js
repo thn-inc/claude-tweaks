@@ -35,6 +35,11 @@ const invocation = (skill, id, bytes) => [skillUse(skill, id), injectedBody(byte
 
 const SKILL_PATH = '/home/u/.claude/plugins/cache/m/demo/1.0.0/skills/alpha/more.md';
 
+// A Read fixture built from a real temp path: forward slashes on win32 too, the
+// only form transcript-load's isProcedurePath records (a backslash path is never
+// seen as a skill-file Read, so a path.join() fixture there would never register).
+const posix = (p) => p.split(path.sep).join('/');
+
 function tmp(prefix) { return fs.mkdtempSync(path.join(os.tmpdir(), prefix)); }
 
 function writeJsonl(file, lines, mtimeSec) {
@@ -264,7 +269,7 @@ test('origin: a read under the root\'s own absolute path is counted', async () =
   withFile(root, 'skills/alpha/extra.md', 'uncited\n');
   writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
     ...invocation('demo:alpha', 't1', 100),
-    readUse(path.join(root, 'skills/alpha/extra.md'), 'r1'),
+    readUse(posix(path.join(root, 'skills/alpha/extra.md')), 'r1'),
     readResult('r1', 40),
   ]);
   assert.strictEqual(await run(['--plugin-root', root], deps), 0);
@@ -450,7 +455,7 @@ test('AC3.1: a project-local skill invoked from a worktree joins its .claude/ski
   withFile(cwd, '.claude/skills/alpha/notes.md', 'uncited\n');
   writeJsonl(path.join(transcriptDir, 's1.jsonl'), [
     ...invocation('.claude/worktrees/wt:alpha', 't1', 100),
-    readUse(path.join(cwd, '.claude/skills/alpha/notes.md'), 'r1'),
+    readUse(posix(path.join(cwd, '.claude/skills/alpha/notes.md')), 'r1'),
     readResult('r1', 40),
   ]);
   assert.strictEqual(await run(documentedArgv(root), deps), 0);
