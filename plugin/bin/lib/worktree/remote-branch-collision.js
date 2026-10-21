@@ -161,7 +161,8 @@ function findPriorAttemptPr({ remoteSha, prLookup, records, git = defaultGit }) 
   for (const pr of prLookup.prs) {
     // `gh pr list --head` also matches fork PRs; only a same-repo PR is this record's own.
     if (!pr || pr.state !== 'CLOSED' || pr.isCrossRepository !== false || !firstLineRunId(pr.body)) continue;
-    if (!wanted.some((n) => linkedRecords(pr).has(n))) continue;
+    const linked = linkedRecords(pr);
+    if (!wanted.some((n) => linked.has(n))) continue;
     if (!SHA_RE.test(pr.headRefOid || '')) continue;
     try {
       git(['merge-base', '--is-ancestor', pr.headRefOid, remoteSha]);
