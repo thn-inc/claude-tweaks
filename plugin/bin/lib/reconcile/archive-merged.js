@@ -13,6 +13,7 @@ const { splitNul } = require('../git-z');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { isPathContained } = require('../shared-primitives');
+const { readWorkBackend } = require('../work-backend');
 const {
   iterRunDirsWithState, writeRunState, readRunState, readEventLines, isAdHocRunDir,
 } = require('../hooks/context');
@@ -1793,22 +1794,6 @@ function settleMergedPartial(root, dir, prState, decision) {
   return unclosed.length > 0 ? { ...decision, unclosed } : { action: 'archive' };
 }
 
-// #3503: `work-backend: local-files` records are not GitHub issues, so a PR's
-// closingIssuesReferences can never attest them: the record check stays off. The
-// main checkout's CLAUDE.md is read once per pass; an absent or unreadable file,
-// or an absent line, returns null and keeps the check (pr-first is GitHub-backed
-// by construction). Same regex shape as wrap-up/pack.js's WORK_BACKEND_RE.
-const WORK_BACKEND_RE = /^work-backend:\s*(\S+)\s*$/m;
-
-function readWorkBackend(root) {
-  try {
-    const m = WORK_BACKEND_RE.exec(fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf8'));
-    return m ? m[1] : null;
-  } catch {
-    return null;
-  }
-}
-
 // #3503: `unclosed` rides along on a merged-partial skip only; every other
 // reason keeps the bare {runDir, reason} shape.
 function skippedEntry(dir, { reason, unclosed }) {
@@ -1895,7 +1880,10 @@ function archiveMerged({
   const root = mainCheckoutRoot(start);
   if (!root) return { archived, skipped };
   const repoSlug = repoSlugOf(root);
-  // #3503: read once per pass — see readWorkBackend.
+  // #3503: `work-backend: local-files` records are not GitHub issues, so a PR's
+  // closingIssuesReferences can never attest them: the record check stays off.
+  // Read once per pass; an absent file or line (unconfigured) keeps the check
+  // (pr-first is GitHub-backed by construction).
   const recordCheckApplies = readWorkBackend(root) !== 'local-files';
 
   const wtList = runGit(['worktree', 'list', '--porcelain'], root);

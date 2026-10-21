@@ -37,6 +37,7 @@ const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schem
 const { resolveCeiling, bookkeepingPermissions } = require('../issues/autonomy');
 const { isPathContained, escapeRegExp } = require('../shared-primitives');
 const { hasClaimLogFor } = require('../log-decision/claim-log');
+const { readWorkBackend } = require('../work-backend');
 // Every realpath resolution in this file goes through canonicalRealpath (#3682); lexical containment checks (isPipelineBookkeeping) resolve nothing.
 const { resolveLeaf, canonicalRealpath, lstatType } = require('../path-guard');
 
@@ -73,11 +74,6 @@ function pluginRoot() {
 // can be removed.
 const PIPELINE_STATE_DIR = path.join('.claude-tweaks', 'pipelines');
 
-// #2526: the claim-stamp branch's own work-backend read — mirrors
-// bin/lib/wrap-up/pack.js's WORK_BACKEND_RE/readWorkBackend exactly (a
-// worktree's CLAUDE.md `work-backend:` line). `local-files` has no claim
-// infrastructure at all, so only `github-issues` arms the check below.
-const WORK_BACKEND_RE = /^work-backend:\s*(\S+)\s*$/m;
 const POLICY_FILE = path.join('.claude-tweaks', 'policy.yml');
 
 // #959: the one documented worktree-local exception (_shared/pipeline-run-dir.md's
@@ -1447,20 +1443,6 @@ function hasLoggedClaim(runDir, n) {
   }
 }
 
-// #2526: mirrors bin/lib/wrap-up/pack.js's own readWorkBackend, reduced to
-// the bare value this gate needs — an absent file/line (unconfigured) reads
-// as null, same as any other backend the claim-stamp branch below does not
-// recognize as `github-issues`: nothing to enforce a claim against.
-function readWorkBackendValue(worktreeRoot) {
-  try {
-    const text = fs.readFileSync(path.join(worktreeRoot, 'CLAUDE.md'), 'utf8');
-    const m = WORK_BACKEND_RE.exec(text);
-    return m ? m[1] : null;
-  } catch {
-    return null;
-  }
-}
-
 // The branch a push target's `dir` is currently on — used only to scope
 // hasLoggedPrEarlyStep1's decisions.md read to THIS attempt's branch name.
 // Ambiguity (detached HEAD, spawn failure) resolves to null, never throws;
@@ -1909,7 +1891,7 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   // infrastructure at all and is exempted unconditionally, same posture as
   // this file's other backend-scoped checks.
   if (!runState.claimExempt) {
-    const workBackend = readWorkBackendValue(wtRoot);
+    const workBackend = readWorkBackend(wtRoot);
     if (workBackend === 'github-issues') {
       const recordNumbers = getMaterializedRecordNumbers(wtRoot, ctx.runDir);
       const missing = recordNumbers.filter((n) => !hasLoggedClaim(ctx.runDir, n));
