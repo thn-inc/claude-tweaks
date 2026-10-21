@@ -52,6 +52,12 @@ function realGit(cwd, { warn = (line) => process.stderr.write(line), rmSync = fs
         throw err;
       }
     },
+    // `git merge-base`: the full SHA of the best common ancestor of `a` and
+    // `b`, or null on any non-zero exit (no common ancestor, or a failure) —
+    // the caller fails closed on null rather than guessing a base (#3810).
+    mergeBase: (a, b) => {
+      try { return git(['merge-base', '--end-of-options', a, b]) || null; } catch { return null; }
+    },
     // Existence-at-base and sameness-at-base for every `files` entry (each a
     // repo-root-relative path) in two spawns total, however many files there
     // are: one `cat-file --batch-check` for the base blob sha (a missing
