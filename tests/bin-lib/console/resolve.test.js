@@ -533,6 +533,59 @@ test('decisions.md STAGED coordination entries render as Low-confidence / Contes
   assert.strictEqual(r.items.filter((i) => i.section === 'Contested findings').length, 1, 'the staged file and its decisions line are one item');
 });
 
+// Excerpt shaped like run 2026-10-17T192303-spec-3412's decisions.md (#3772).
+const SUPERSEDED = [
+  '## /review',
+  '- STAGED 23:44:20 — spec #3412 — Step 3 reproduction: Reproduction: lens "3a" finding plugin/bin/lib/reconcile/pr-state.js:158 not reproduced. Staged to Review Console as low-confidence. Reversibility: high.',
+  '- AUTO 23:44:20 — spec #3412 — Step 3 reproduction: Reproduction: lens "3a" finding plugin/bin/lib/reconcile/pr-state.js:158 elevated via direct-verification override (comment sentence read independently). Confirmed, low. Reversibility: high.',
+  '- STAGED 23:44:20 — spec #3412 — Step 3 reproduction: Reproduction: lens "3a" finding plugin/bin/lib/reconcile/release-merged.js:523 (agent A) and :61 (agent B, same substance) not reproduced at the same line. Staged to Review Console as low-confidence. Reversibility: high.',
+  '- AUTO 23:44:20 — spec #3412 — Step 3 reproduction: Reproduction: lens "3a" finding plugin/bin/lib/reconcile/release-merged.js:523 elevated via direct-verification override (source read independently). Confirmed, low. Reversibility: high.',
+  '- STAGED 23:44:20 — spec #3412 — Step 3 reproduction: Reproduction: lens "3a" finding plugin/bin/lib/reconcile/pr-state.js:39 not reproduced. Staged to Review Console as low-confidence — not elevated. Reversibility: high.',
+  '',
+].join('\n');
+const lowItems = (decisions) => resolveAll({ runDir: fixture({ decisions, headers: [7] }), policy: 'console-auto', deps: deps() }).items.filter((i) => i.section === 'Low-confidence findings');
+
+test('AC1.1: a STAGED low-confidence line followed by a same-lens, same path:line AUTO elevation produces no Low-confidence item (#3772)', () => {
+  const low = lowItems(SUPERSEDED);
+  assert.strictEqual(low.length, 1, 'the two confirmed lines are superseded; pr-state.js:39 stays');
+  assert.strictEqual(low[0].id, `decision:${SUPERSEDED.split('\n')[5].slice(2, 60)}`, 'the survivor is the pr-state.js:39 line');
+});
+
+test('AC2.1: a STAGED low-confidence line with no later elevation still produces its keep-staged item (#3772)', () => {
+  const only = SUPERSEDED.split('\n').filter((l) => l.includes('pr-state.js:39')).join('\n') + '\n';
+  const low = lowItems(only);
+  assert.strictEqual(low.length, 1);
+  assert.strictEqual(low[0].resolution, 'keep-staged');
+  assert.strictEqual(low[0].reason, SECTION_STANCES['Low-confidence findings'].reason);
+});
+
+test('a same-location AUTO elevation under a different lens does not supersede (#3772)', () => {
+  const decisions = [
+    '- STAGED 10:00:00 — Single-read: lens "3a" finding src/a.js:4 not directly verified. Staged to Review Console as low-confidence.',
+    '- AUTO 10:00:01 — Reproduction: lens "3f" finding src/a.js:4 elevated. Confirmed.',
+    '',
+  ].join('\n');
+  assert.strictEqual(lowItems(decisions).length, 1);
+});
+
+test('an AUTO elevation logged before the STAGED line does not supersede it (#3772)', () => {
+  const decisions = [
+    '- AUTO 10:00:00 — Reproduction: lens "3a" finding src/a.js:4 elevated. Confirmed.',
+    '- STAGED 10:00:01 — Single-read: lens "3a" finding src/a.js:4 not directly verified. Staged to Review Console as low-confidence.',
+    '',
+  ].join('\n');
+  assert.strictEqual(lowItems(decisions).length, 1);
+});
+
+test('a later same-key AUTO line without the Confirmed sentence does not supersede (#3772)', () => {
+  const decisions = [
+    '- STAGED 10:00:00 — Single-read: lens "3a" finding src/a.js:4 not directly verified. Staged to Review Console as low-confidence.',
+    '- AUTO 10:00:01 — Reproduction: lens "3a" finding src/a.js:4 not confirmed.',
+    '',
+  ].join('\n');
+  assert.strictEqual(lowItems(decisions).length, 1);
+});
+
 test('the snapshot is read once before any resolution: a second read would throw (#1932 Gotcha)', () => {
   let reads = 0;
   const runDir = fixture({ staged: EVERY_SECTION, headers: [7] });
