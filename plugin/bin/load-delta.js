@@ -260,7 +260,10 @@ function renderText(result, changedFiles, { pluginRootsGiven = false } = {}) {
   ];
   for (const members of groupRows(rows)) {
     const first = members[0];
-    lines.push(`| ${groupEntryCell(members)} | ${range(members.map((m) => m.floor))} | ${signed(first.dFloor)} | ${range(members.map((m) => m.closure))} | ${signed(first.dClosure)} | ${newUnresolvedCell(first.newUnresolved)} |`);
+    const floors = range(members.map((m) => m.floor));
+    const closures = range(members.map((m) => m.closure));
+    const miss = newUnresolvedCell(first.newUnresolved);
+    lines.push(`| ${groupEntryCell(members)} | ${floors} | ${signed(first.dFloor)} | ${closures} | ${signed(first.dClosure)} | ${miss} |`);
   }
   return `${lines.join('\n')}\n`;
 }
