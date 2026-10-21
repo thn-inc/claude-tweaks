@@ -26,7 +26,7 @@ files:
 - **Action:** read the block after an unattended run parks.
 - **Should feel:** told, not left to find out at merge time.
 - **Should understand:** when the run never wrote `verify.json`, the block carries `- {run-id}: verify.json missing — wrap-up's Verify execution never ran, or its write failed` and a paste-ready `run: node "…/bin/wrap-up-engine.js" verify --run-dir "…" --base {base}` line. A multi-spec parent is checked per `spec-*/`, never as a whole. A run that wrote a valid `verify.json` adds nothing.
-- **Red flags:** the line on a run whose `verify.json` exists; the line in a SessionStart residue scan (the flag is opt-in, archived runs predate the file); an empty `--require-verify` value accepted silently.
+- **Red flags:** the line on a run whose `verify.json` is valid (an unparseable file, a wrong version, or a row without a string `check`/`result` counts as missing and correctly gets the line); the line in a SessionStart residue scan (the flag is opt-in, archived runs predate the file); an empty `--require-verify` value accepted silently.
 
 ### 2. Start close-out on the PR
 - **URL:** `/claude-tweaks:dispatch close-out #{n}` → `dispatch/close-out.md`'s per-candidate procedure, steps 1-2
