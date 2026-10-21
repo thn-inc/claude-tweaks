@@ -58,14 +58,14 @@ Two consequences for the sequence below. **`git merge` is not gated**, so the me
 
 For each completed branch (in order):
 
-1. **Find the branch's run and read its worktree — before anything closes it.** `close-run` nulls `run-state.json`'s `worktree` field, so read it now. `{run-dir}` is the run directory whose recorded worktree has `{branch}` checked out, as the absolute `$RUN_ROOT/.claude-tweaks/pipelines/<id>` path per `_shared/pipeline-run-dir.md` (a relative path makes the `require` fail with `MODULE_NOT_FOUND`, which the no-match fallback below would hide). Candidates are the run dirs whose `run-state.json` status is not `clean`. Run this pair per candidate and keep the one whose second line prints `{branch}`:
+1. **Find the branch's run and read its worktree — before anything closes it.** `close-run` nulls `run-state.json`'s `worktree` field, so read it now. `{run-dir}` is the run directory whose recorded worktree has `{branch}` checked out, as the absolute `$RUN_ROOT/.claude-tweaks/pipelines/<id>` path per `_shared/pipeline-run-dir.md`, passed as an argument so no path character reaches the script text. Candidates are the run dirs whose `run-state.json` status is not `clean`. Run this pair per candidate and keep the one whose second line prints `{branch}`:
 
    ```bash
-   node -e "const w=require('{run-dir}/run-state.json').worktree; if(!w){console.error('claude-tweaks: run-state.json has no worktree field — cannot resolve the worktree to merge'); process.exit(1);} console.log(w)"   # -> {worktree-path}
+   node -e "const w=require(process.argv[1]+'/run-state.json').worktree; if(!w){console.error('claude-tweaks: run-state.json has no worktree field — cannot resolve the worktree to merge'); process.exit(1);} console.log(w)" "{run-dir}"   # -> {worktree-path}
    git -C "{worktree-path}" branch --show-current                       # -> must print {branch}
    ```
 
-   No run dir matches → this branch has no run to protect: run steps 2 and 4 for it, with no `close-run` and no re-protect.
+   A `node` error (a missing or unparseable `run-state.json`) is not a non-match — stop and report it. No run dir matches → this branch has no run to protect: run steps 2 and 4 for it, with no `close-run` and no re-protect anywhere below, step 5 included.
 
 2. **Pre-merge checks, from the main checkout — nothing mutated.** Verify the main checkout is on `{base-branch}` — a concurrent session may have switched it underfoot (`[IL-05]`) — then compose the subject and predict the merge. For record-derived runs (any materialized file under `{run-dir}/work/` on the branch carries a `record:` field in its header — see `materialize.md`), the merge commit message carries the closing keywords — one line per issue (see "Close-via-merge" in `_shared/issue-claims.md`):
 
@@ -79,11 +79,11 @@ For each completed branch (in order):
    git merge-tree --write-tree --name-only {base-branch} {branch} || exit 1
    ```
 
-   `{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3. A branch with no record drops the composer line here and the `-F` in step 4. The issues close when the user pushes the base branch to the default remote branch. `git merge-tree` writes only unreferenced objects — never the working tree, the index, or a ref.
+   `{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3. A branch with no record drops the composer line here and the `-F` in step 4. The issues close when step 6 pushes the base branch to the default remote branch. `git merge-tree` writes only unreferenced objects — never the working tree, the index, or a ref.
 
    Nothing is closed yet, so every way this fence stops leaves the run exactly as it was:
    - **The branch guard aborted** — stop the reconciliation; the checkout moved underneath it. Then run step 6 for the branches already merged (push, or re-protect on push failure).
-   - **The composer failed** (nothing merged): record the composer's stderr and stop the reconciliation for this branch — a record with no resolvable Type or a `breaking` label with no `## Breaking Change` section is a shaping defect to fix on the record, not a merge problem; a malformed `commit-scope-paths` entry, a `commit-scope` token the composer rejects, a failed `--range` diff, or this fence passing no `--range` while `commit-scope-paths` is set is a policy or invocation fault to fix in `policy.yml` or in this fence.
+   - **The composer failed** (nothing merged): record the composer's stderr, skip this branch, and continue with the next one — a record with no resolvable Type or a `breaking` label with no `## Breaking Change` section is a shaping defect to fix on the record, not a merge problem; a malformed `commit-scope-paths` entry, a `commit-scope` token the composer rejects, a failed `--range` diff, or this fence passing no `--range` while `commit-scope-paths` is set is a policy or invocation fault to fix in `policy.yml` or in this fence.
    - **A predicted conflict** — a `CONFLICT` line on `git merge-tree`'s stdout: go to step 5. An error on stderr with no `CONFLICT` line means git could not run the pre-check (git older than 2.38, an unknown ref): record it and skip this branch.
 
 3. **Close this branch's run — only now, once its pre-merge checks passed**, as its own Bash call:
@@ -106,6 +106,7 @@ For each completed branch (in order):
    ```
 
    - **Merged** — record the merge commit (`git rev-parse {base-branch}`) and continue to the next branch.
+   - **The branch guard aborted** (stderr ends `Abort, do not merge.`; no merge started — the checkout moved after step 3 closed the run) — re-protect this branch's run (**Re-protect** below), then stop the reconciliation and run step 6 for the branches already merged.
    - **Failed** — if a `MERGE_HEAD` exists, run `git merge --abort`. Then re-protect this branch's run (**Re-protect** below). A conflict goes to step 5; any other failure is recorded as `merge aborted: {first stderr line}` and the branch is skipped.
 
 5. **On a conflict** (predicted at step 2, or hit at step 4) — present the conflicts:
@@ -123,9 +124,9 @@ For each completed branch (in order):
    - Option 2 — `label`: `"Skip this branch"`, `description`: `"merge remaining branches first, come back to this one"`
    - Option 3 — `label`: `"Abort remaining merges"`, `description`: `"I'll handle merges manually"`
 
-   - **Resolve now** → this branch's run is closed first, if it is not closed already: run step 3's fence for it (after a step 4 failure it was re-protected, so it must be closed again). The resolution ends in a commit E1 checks against the newest non-terminal run in the project. If E1 still denies that commit, its deny message names the worktree the run it checked is assigned to — find the run dir whose `run-state.json` records that worktree. When that run belongs to another branch in this reconciliation, read that run's worktree with step 1's pair first, then close it with step 3's fence, and re-protect it (**Re-protect** below) once the resolution lands. Closing it moves E1 to the next-newest live run, so repeat until the commit passes, applying the same rule to each run: close it if it is a branch of this reconciliation, otherwise it is not this reconciliation's to close — stop and report it. "The resolution lands" means the `git commit --no-edit` below (no `worktree-always`) or the fast-forward below (`worktree-always`).
+   - **Resolve now** → this branch's run is closed first, if it has one and it is not closed already: run step 3's fence for it (after a step 4 failure it was re-protected, so it must be closed again). The resolution ends in a commit E1 checks against the newest non-terminal run in the project. If E1 still denies that commit, its deny message names the worktree the run it checked is assigned to — find the run dir whose `run-state.json` records that worktree. When that run belongs to another branch in this reconciliation, read that run's worktree with step 1's pair first, then close it with step 3's fence, and re-protect it (**Re-protect** below) once the resolution lands. Closing it moves E1 to the next-newest live run, so repeat until the commit passes, applying the same rule to each run: close it if it is a branch of this reconciliation, otherwise it is not this reconciliation's to close — treat the resolution as abandoned (below) and report that run. "The resolution lands" means the `git commit --no-edit --cleanup=strip` below (no `worktree-always`) or the fast-forward below (`worktree-always`).
 
-     Without `worktree-always`, there is no merge in progress to resolve: step 4 aborts every failed merge, and a conflict predicted at step 2 never started one. Re-run step 4's fence and, on the conflict, leave the merge in place — do not take step 4's **Failed** bullet. Resolve the files, stage them, then commit with `git commit --no-edit` (`MERGE_MSG` carries `message.txt`'s closing keywords).
+     Without `worktree-always`, there is no merge in progress to resolve: step 4 aborts every failed merge, and a conflict predicted at step 2 never started one. Re-run step 4's fence and, on the conflict, leave the merge in place — do not take step 4's **Failed** bullet. Resolve the files, stage them, then commit with `git commit --no-edit --cleanup=strip` (`MERGE_MSG` carries `message.txt`'s closing keywords; `--cleanup=strip` drops git's `# Conflicts:` comment lines).
 
      If `worktree-always: true` is set, don't resolve "Resolve now" directly in the main checkout — `Edit`/`Write` there is denied regardless of `close-run` (see above). Instead, provision a scratch worktree off `{base-branch}` per `_shared/scratch-worktree.md` §2 (native `EnterWorktree` when available, `git worktree add` under `.worktrees/` as the documented fallback only — never under `.claude/worktrees/`, that section's own ADR-0004 domain rule), re-run step 4's merge (`git merge --no-ff {branch} -F "{subject-dir}/message.txt"`) there, resolve and commit inside that worktree (a linked worktree, so both gates pass), verify, then fast-forward the main checkout to the result the same way `_shared/scratch-worktree.md` §5 does — verifying the branch in the same compound command so a concurrent session that switched it underfoot can't merge onto the wrong branch (`[IL-05]`; same shape as the precedent in `dispatch/settle-and-merge.md`'s local-merge fallback):
 
@@ -135,15 +136,15 @@ For each completed branch (in order):
 
      `<sha>` is the scratch worktree's HEAD after resolving and committing — resolve it there with `git rev-parse HEAD` and paste the literal value in (`_shared/scratch-worktree.md` §7). `git merge` itself is ungated and this fast-forward creates no new commit. Tear the scratch worktree down via `ExitWorktree` per that file's §6 — never a raw `git worktree remove`, which fails on the worktree's own live lock (`[IL-58]`); the same Teardown ordering invariant `wrap-up/cleanup-procedures-execution.md` Section C states for a run's own worktree applies here — removal is the last action against the scratch worktree, only after the fast-forward above has landed. This scratch-worktree ceremony is `local-merge`-only — the `pr-first` path above never needs it, since its own conflict path surfaces inside the run's own real worktree, not the main checkout.
 
-     Once the resolution lands, record the merge commit and continue. If the resolution is abandoned before it lands (run `git merge --abort` first if a merge is in progress), re-protect this branch's run.
+     Once the resolution lands, record the merge commit and continue. If the resolution is abandoned or stopped before it lands (run `git merge --abort` first if a merge is in progress), re-protect every run closed for it — this branch's and every run closed to pass E1.
    - **Skip this branch** → this branch's run keeps its worktree assignment and `active` status: never closed when step 2 predicted the conflict, re-protected already when step 4 hit it. Merge the remaining branches, then return to this one from step 1.
    - **Abort remaining merges** → stop. This branch's run, and every remaining branch's, keeps its worktree assignment and `active` status — none is closed, and a run step 4 closed was re-protected already. Report the branches left, then run step 6 for the branches already merged (push, or re-protect on push failure).
 
-6. **Push the base branch once, after every branch is merged or skipped** — from inside a linked worktree (the `worktree-always` gate) and as its own Bash call: `git -C "{worktree-path}" push origin {base-branch}`, with any reconciled branch's worktree that still exists. **On push failure**, every merge in this reconciliation is local-only: re-protect every run step 3 closed, once per run, leave the local merge commits for a human to push, and report it. Once the base branch is pushed, run `_shared/pr-first-merge-post-merge.md` Step 4.1 against each recorded merge commit with `--ref {integration-branch}` — same outcomes and staged file, closing-report line only (no PR to comment on).
+6. **Push the base branch once, after every branch is merged or skipped** — from inside a linked worktree (the `worktree-always` gate) and as its own Bash call: `git -C "{worktree-path}" push origin {base-branch}`, with any reconciled branch's worktree that still exists. **On push failure** — or when no linked worktree is left to push from — every merge in this reconciliation is local-only: re-protect every run step 3 closed, once per run, leave the local merge commits for a human to push, and report it. Once the base branch is pushed, run `_shared/pr-first-merge-post-merge.md` Step 4.1 against each recorded merge commit with `--ref {integration-branch}` — same outcomes and staged file, closing-report line only (no PR to comment on).
 
 ### Re-protect
 
-After any failure that follows a branch's `close-run` — a step 4 merge failure, a step 5 resolution abandoned before it lands, or a step 6 push failure — re-stamp that branch's run with the `{worktree-path}` step 1 read (`run-state.json` no longer holds it), one Bash call per run:
+After any failure that follows a branch's `close-run` — a step 4 branch-guard abort, a step 4 merge failure, a step 5 resolution abandoned or stopped before it lands, or a step 6 push failure — re-stamp that branch's run with the `{worktree-path}` step 1 read (`run-state.json` no longer holds it), one Bash call per run:
 
 ```bash
 env -u CLAUDE_CODE_SESSION_ID node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "{run-dir}" "{worktree-path}"
@@ -152,8 +153,10 @@ env -u CLAUDE_CODE_SESSION_ID node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-w
 `env -u CLAUDE_CODE_SESSION_ID` keeps the run's original owner: `record-worktree` stamps the calling session's id into the run otherwise, handing another terminal's run to the reconciling session. `record-worktree` restores the worktree assignment and `active` status. It prints `claude-tweaks: worktree recorded for …` when it worked; any other line (the run dir may have been archived underneath) is not ignored — log any other line to that run's `decisions.md` and name it in the Post-Merge Summary:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --status AUTO --section "/flow" --step "worktree-merge reconciliation" --text 'Re-stamp of {branch} after {failure} did not print worktree recorded: {output line}' --reversibility high
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --status AUTO --section "/flow" --step "worktree-merge reconciliation" --text-file "{text-file}" --reversibility high
 ```
+
+`{text-file}` holds one line, `Re-stamp of {branch} after {failure} did not print worktree recorded: {output line}`, written per `_shared/auto-decision-log.md`'s "Text from git or a user" paragraph — the branch name and the hook's output are git- and tool-supplied, so they never pass through shell quoting. If this log call fails too (an archived run dir exits 3), name both outputs in the Post-Merge Summary's `Re-protect failed` row.
 
 ### Post-Merge Summary
 
@@ -169,6 +172,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --status AUTO
 | {branch} | {spec} | Merged locally, push failed — run re-protected |
 | {branch} | {spec} | Not merged (pre-merge check failed: {reason}) — run still active |
 | {branch} | {spec} | Not merged (aborted) — run still active |
+| {branch} | {spec} | Not merged (checkout moved before the merge) — run re-protected |
+| {branch} | {spec} | Re-protect failed: {output line} — run unprotected |
 | {branch} | {spec} | Skipped (pipeline failed) |
 ```
 

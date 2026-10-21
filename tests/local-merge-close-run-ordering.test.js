@@ -423,6 +423,74 @@ test("AC2.1: worktree-merge.md's Skip and Abort bullets keep the run", () => {
   assert.ok(skipAbortKeepsRun(mutated).some((e) => /Skip this branch/.test(e)), 'go-red: a Skip bullet that closes the run must fail');
 });
 
+// AC3: every failure that can follow close-run re-protects. The Re-protect section names each trigger, and
+// each failure site carries its own re-protect instruction (prose a fence test cannot reach).
+const REPROTECT_TRIGGERS = ['branch-guard abort', 'merge failure', 'abandoned or stopped before it lands', 'push failure'];
+const REPROTECT_SITES = [
+  ['**The branch guard aborted** (stderr ends', "re-protect this branch's run", 200],
+  ['abandoned or stopped before it lands', 're-protect every run closed for it', 200],
+  ['**On push failure**', 're-protect every run step 3 closed', 300],
+];
+function reprotectCoverage(text) {
+  const flat = collapse(text);
+  const errors = [];
+  const start = flat.indexOf('### Re-protect');
+  const section = start < 0 ? '' : flat.slice(start, flat.indexOf('### ', start + 4));
+  if (start < 0) errors.push('no ### Re-protect section');
+  for (const trigger of REPROTECT_TRIGGERS) if (!section.includes(trigger)) errors.push(`Re-protect section does not name: ${trigger}`);
+  for (const [label, action, span] of REPROTECT_SITES) {
+    const at = flat.indexOf(collapse(label));
+    if (at < 0) errors.push(`no failure site ${JSON.stringify(label)}`);
+    else if (!flat.slice(at, at + span).includes(action)) errors.push(`${label} does not ${action}`);
+  }
+  return errors;
+}
+
+test("AC3: worktree-merge.md re-protects after every failure that can follow close-run", () => {
+  const live = readText(path.join(ROOT, 'plugin/skills/flow/worktree-merge.md'));
+  assert.deepStrictEqual(reprotectCoverage(live), []);
+  const dropTrigger = live.replace('or a step 6 push failure', 'or a step 6 hiccup');
+  assert.ok(reprotectCoverage(dropTrigger).some((e) => /push failure/.test(e)), 'go-red: a trigger dropped from the Re-protect list must fail');
+  const dropSite = live.replace("re-protect this branch's run (**Re-protect** below), then stop", 'stop');
+  assert.notStrictEqual(dropSite, live);
+  assert.ok(reprotectCoverage(dropSite).some((e) => /branch guard aborted/.test(e)), 'go-red: a guard abort with no re-protect must fail');
+});
+
+// AC3's log call takes its text from a file: the branch name and the hook's output never pass through shell quoting.
+function logFenceErrors(text) {
+  const flat = collapse(text);
+  const at = fenceIndex(text, REPROTECT_NEEDLE, fenceIndex(text, MERGE_NEEDLE));
+  const fence = fencesOf(text).find((body) => body.includes('bin/log-decision.js') && flat.indexOf(collapse(body)) > at);
+  if (!fence) return ['no log-decision.js fence after the re-protect fence'];
+  const errors = [];
+  if (!fence.includes('--text-file "{text-file}"')) errors.push('the log fence does not read its text from {text-file}');
+  if (/--text '/.test(fence)) errors.push('the log fence single-quotes substituted text');
+  return errors;
+}
+
+test("AC3: worktree-merge.md logs a failed re-stamp through --text-file", () => {
+  const live = readText(path.join(ROOT, 'plugin/skills/flow/worktree-merge.md'));
+  assert.deepStrictEqual(logFenceErrors(live), []);
+  const quoted = live.replace('--text-file "{text-file}"', "--text 'Re-stamp of {branch}: {output line}'");
+  assert.notStrictEqual(quoted, live);
+  assert.ok(logFenceErrors(quoted).length > 0, 'go-red: a single-quoted --text fence must fail');
+});
+
+test("worktree-merge.md's run-state read takes {run-dir} as an argument, so a quote in the path cannot break it", () => {
+  const live = readText(path.join(ROOT, 'plugin/skills/flow/worktree-merge.md'));
+  const readLine = extractFence(live, WORKTREE_READ_NEEDLE).split('\n')[0].replace(/\s+# ->.*$/, '');
+  const runDir = path.join(SCRATCH, "o'brien run");
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: '/wt/feat', status: 'active' }));
+  const run = (line) => runFence(line, { cwd: SCRATCH, vars: { 'run-dir': posix(runDir) } });
+  const r = run(readLine);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(r.stdout.trim(), '/wt/feat');
+  const inlined = readLine.replace("require(process.argv[1]+'/run-state.json')", "require('{run-dir}/run-state.json')").replace(/ "\{run-dir\}"$/, '');
+  assert.notStrictEqual(inlined, readLine);
+  assert.notStrictEqual(run(inlined).code, 0, 'go-red: a {run-dir} pasted into the script text breaks on a quote in the path');
+});
+
 test('no plugin/ file still carries "Not fixed here; there is no"', () => {
   const hits = fs.readdirSync(PLUGIN_DIR, { recursive: true })
     .filter((rel) => String(rel).endsWith('.md'))
