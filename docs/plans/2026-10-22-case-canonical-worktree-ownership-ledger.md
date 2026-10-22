@@ -12,3 +12,6 @@
 | 8 | review | Lens 3a (single agent, low-confidence): the residue probe plugin/bin/lib/residue/probes/pipeline-runs.js compares worktrees with the JS-form realpath (pre-existing-outside-diff; staged/review-unconfirmed-2.md) | open | — |
 | 9 | review | Lens 3a (single agent, low-confidence): pre-tool-use.js classifyOwnership call sites at the working-directory and dispatch-config gates do not receive the injected fs (staged/review-unconfirmed-3.md) | open | — |
 | 10 | review | Lens 3a (single agent, low-confidence): run-dir comparisons in context.js remain JS-form by documented design (staged/review-unconfirmed-4.md) | open | — |
+| 11 | wrap-up/skill | Skills curation: the pre-tool-use-gate-exemptions skill's run-choice bullet still prescribes a two-argument classifyOwnership call; since #3836 it takes the injected fs as a third argument. Staged until row 9's code gap (the gates that call it without the fs) is settled (staged/wrap-up-skill-1.md) | open | — |
+| 12 | wrap-up | pr — PR #3938 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | — |
+| 13 | wrap-up | residue probe: project test suite not re-run by the fact pack (skipped via --no-suite); this run's suite state is the verify.js pass stamp at 278f03dc5 (baseline-adjudicated, 0 attributable) | observation | — |
