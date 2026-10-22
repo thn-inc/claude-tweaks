@@ -1,6 +1,6 @@
 # Review — Step 3.5/3.6: Cross-Lens Debate, Per-Candidate Refutation, and Gap-Sweep
 
-Loaded by `/claude-tweaks:review` after Step 3's per-lens reproduction completes. Contains the full procedure for the three effort-gated findings-quality mechanisms: Cross-Lens Debate and the Per-Candidate Refutation Pass (Step 3.5), and Gap-Sweep / Completeness Critic (Step 3.6). Lazy-loaded only when the resolved `review-effort` tier (Step 2.5) is `high` or above — at `low`/`medium`, code-mode-steps.md's own gate skips straight to Step 3 Routing without reading this file at all.
+Loaded by `/claude-tweaks:review` after Step 3's per-lens reproduction completes. Contains the full procedure for the three effort-gated findings-quality mechanisms: Cross-Lens Debate and the Per-Candidate Refutation Pass (Step 3.5), and Gap-Sweep / Completeness Critic (Step 3.6). Lazy-loaded only when the resolved `review-effort` tier (Step 2.5) is `high` or above — at `low`/`medium`, code-mode-steps.md's own gate goes to Step 3.7 (`step3-tiebreak.md`) without reading this file at all.
 
 ## Step 3.5: Cross-Lens Debate & Per-Candidate Refutation
 
@@ -42,7 +42,7 @@ After per-lens reproduction completes, scan for contradictions across lenses bef
    node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" resolve-debate {verdictA} {verdictB}
    ```
    - Both `agree` → finding upgraded to `confirmed`. Write `AUTO {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} converged positive after 1 round. Reversibility: high.`
-   - Both `disagree` → finding downgraded to `unconfirmed` (lands in Low-confidence subsection). Write `AUTO {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} converged negative after 1 round. Reversibility: high.`
+   - Both `disagree` → finding downgraded to `unconfirmed`, for Step 3.7 (`step3-tiebreak.md`). Write `STAGED {HH:MM:SS} — Debate: lens "{lensA}" finding {path}:{line} — cross-lens disagreement converged negative after 1 round; unconfirmed. Reversibility: high.`
    - Mixed / partial → finding becomes `contested`. Write `STAGED {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} inconclusive ({verdicts}). Both verdicts staged. Reversibility: high.` Stage the side-by-side verdicts to `staged/review-contested-{N}.md`.
 
 5. **Skip debate** when no overlap is detected, or when only one lens covered a region. Avoid running debate on every `Path:Line` where any two lenses touched — that explodes the token budget for no value.
@@ -77,12 +77,11 @@ This pass is the only place in the skill where an unbounded fan-out would meet t
 
    Typical runs cost well under that worst case, because the `medium` floor is applied *before* the cap is consulted: the cap only binds on a review that surfaces 10 or more `medium`-or-higher `confirmed` findings, which is the tail rather than the norm. The floor is doing most of the work here and the cap is the backstop — so tightening the cap further buys little, while lowering the floor would quietly undo both.
 
-4. **Dispatch one refutation agent per in-scope candidate, given fresh file access.** Each agent gets the finding's path/line/severity/evidence and fresh read access to the actual current file content (not the finding's cached evidence text) — instructed to actively try to falsify it: re-trace whether the claimed failure is actually reachable, verify the cited evidence still matches the current code, and challenge the reasoning rather than restate it. Inline this template literally in each `Task()` prompt:
+4. **Dispatch one refutation agent per in-scope candidate, given fresh file access.** Each agent gets only Step 3.7's allowlist — the claim, severity, `path:line`, and diff scope (`step3-tiebreak.md`'s Dispatch section), never the reporter's evidence or reasoning — and fresh read access to the actual current file content, instructed to actively try to falsify it: re-trace whether the claimed failure is actually reachable, check the claim against the current code, and challenge it rather than restate it. Inline this template literally in each `Task()` prompt:
 >
 >    ```
 >    You are trying to FALSIFY this finding, not confirm it. Re-read the actual current file
->    content at {path}:{line} (do not trust the cached evidence text below) and determine
->    whether the claimed issue is real and reachable.
+>    content at {path}:{line} and determine whether the claimed issue is real and reachable.
 >
 >    Reply with exactly these lines, then your status line:
 >    Verdict: confirmed | refuted | cant-tell
@@ -96,9 +95,9 @@ This pass is the only place in the skill where an unbounded fan-out would meet t
 >    Produce your response first; the last non-empty line of your reply must then read exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, labeled `STATUS: {WORD}`.
 >
 >    Candidate finding: {path}:{line}
->    Severity: {severity}  Category: {category}
+>    Severity: {severity}
 >    Finding: {finding text}
->    Cached evidence: {evidence text}
+>    Diff scope: {base}...{branch}, or the own-work file list path when the Merge-Provenance Check found merge commits
 >
 >    [... READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section ...]
 >
@@ -111,7 +110,7 @@ This pass is the only place in the skill where an unbounded fan-out would meet t
 5. **Resolve.** Feed each agent's reply to `resolve-tiebreak`, exactly as `step3-tiebreak.md`'s Resolve and act section does for a tiebreak reply — its session-tmp files, its `--root`, its `--text-file` log call, and its empty-reply rule for an empty, failed, timed-out, or non-`DONE` dispatch are cited here, not restated. The finding file holds the candidate as `{lens, path, line, claim, reporterSeverity, kind: "unconfirmed"}`: `resolve-tiebreak` validates the finding through `buildFindingsArtifact`, which accepts `kind` only as `unconfirmed` or `contested`, and the resolver reads `kind` only for a contested finding's positions. The resolver fails toward scrutiny — a reply that is not a literal `confirmed`/`refuted` verdict with status `DONE` and evidence verified against the live file is can't-tell — so a failed dispatch is never fabricated into a verdict. Act on the returned `outcome`. Only `confirmed` and `drop` write the resolver's line:
    - `confirmed` → the candidate stands and proceeds unchanged toward Step 3 Routing. Log the resolver's line.
    - `drop` → the candidate is dropped. Log the resolver's line. A `drop` counts as a tiebreak `refuted` verdict, so Step 3.7 does not tiebreak the finding again.
-   - `digest` / `console` (can't-tell, including a failed or evidence-free reply) → the candidate is downgraded to `unconfirmed` and joins the Step 3.7 entry set, which tiebreaks it and logs its one verdict line. Do not log the resolver's line (a second one would double that finding's verdict line). Write `AUTO {HH:MM:SS} — Refutation: {path}:{line} — no usable verdict ({cause}), not genuinely re-examined. Downgraded to unconfirmed out of caution. Reversibility: high.`, with `{cause}` one of `dispatch failed ({status})`, `unparseable verdict`, `can't-tell`, or `evidence unverified`. A failed dispatch must never be logged as if a real falsification attempt happened.
+   - `digest` / `console` (can't-tell, including a failed or evidence-free reply) → the candidate is downgraded to `unconfirmed` and joins the Step 3.7 entry set, which tiebreaks it and logs its one verdict line. Do not log the resolver's line (a second one would double that finding's verdict line). Write `STAGED {HH:MM:SS} — Refutation: lens "{lens}" finding {path}:{line} — no usable verdict ({cause}), not genuinely re-examined. Downgraded to unconfirmed out of caution. Reversibility: high.`, with `{cause}` one of `dispatch failed ({status})`, `unparseable verdict`, `can't-tell`, or `evidence unverified`. A failed dispatch must never be logged as if a real falsification attempt happened.
 
 After Step 3.5, every finding has a final bucket — `confirmed`, `unconfirmed`, or `contested`. A `confirmed` finding the Per-Candidate Refutation Pass above could not stand behind (the `digest` / `console` outcome) joins `unconfirmed` with the same visibility rules as any other unconfirmed finding. Only `confirmed` findings flow into Step 3 Routing. `unconfirmed` and `contested` findings go to Step 3.7 (`step3-tiebreak.md`), and only its `confirmed` results join routing.
 
@@ -140,7 +139,7 @@ SCRATCH: {ctx-dir}/agent-scratch/gap-sweep — any probe script or fixture you c
 reproduction pair. Degrades per the resolver's preconditions (contract § Model Selection).]
 ```
 
-Findings returned are tagged with an internal `source: gap-sweep` marker (parallel to how lenses tag findings with their own lens name for Step 3 Routing's Category column) and inserted directly into the `unconfirmed` bucket — the same confidence tier a single-source, non-reproduction-paired lens finding gets. They are **not** auto-promoted to `confirmed` — there's no second agent to reproduce them against, by design. Being single-source `unconfirmed` findings, they go to Step 3.7 (`step3-tiebreak.md`) like any other, and only its `confirmed` results join routing. This reuses `step3-routing.md`'s existing `xhigh`/`max` inline-visibility rules (unconfirmed findings surface inline at `xhigh`+) — no new routing table needed. Write `STAGED {HH:MM:SS} — Gap-sweep: {path}:{line} — {one-line finding}. Staged to Review Console as low-confidence (gap-sweep, single-source by design). Reversibility: high.`
+Findings returned are tagged with an internal `source: gap-sweep` marker (parallel to how lenses tag findings with their own lens name for Step 3 Routing's Category column) and inserted directly into the `unconfirmed` bucket — the same confidence tier a single-source, non-reproduction-paired lens finding gets. They are **not** auto-promoted to `confirmed` — there's no second agent to reproduce them against, by design. Being single-source `unconfirmed` findings, they go to Step 3.7 (`step3-tiebreak.md`) like any other, and only its `confirmed` results join routing. This reuses `step3-routing.md`'s existing `xhigh`/`max` inline-visibility rules (unconfirmed findings surface inline at `xhigh`+) — no new routing table needed. Write `STAGED {HH:MM:SS} — Gap-sweep: lens "gap-sweep" finding {path}:{line} — {one-line finding}. Staged to Review Console as low-confidence (gap-sweep, single-source by design). Reversibility: high.`
 
 Check the agent's status line first, per the Subagent Contract: a `BLOCKED`/`NEEDS_CONTEXT` status, or a response that parses as neither a findings table nor the literal `No findings.`, means the sweep did not actually complete — write `STAGED {HH:MM:SS} — Gap-sweep: dispatch failed ({status}), sweep not genuinely performed. Reversibility: high.` so a persistently broken dispatch stays visible rather than silently reading as "we checked and found nothing." Only a genuine `DONE`/`DONE_WITH_CONCERNS` response with literal `No findings.` text logs nothing further, per the existing per-lens convention — no decision-log entry is needed for an actually-completed zero-findings pass.
 

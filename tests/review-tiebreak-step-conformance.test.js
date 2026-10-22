@@ -224,9 +224,10 @@ test('fix 1: the --text-file assertions can go red', () => {
   assert.ok(passesTextOnCommandLine(resolveAndAct.replace('--text-file "{path-T}"', '--text "{logText}"')), 'reverting to --text must turn the check red');
 });
 
+// The fact, not the wording: each bullet's own parenthetical says pipeline-run only and points at ## Standalone review.
 const PIPELINE_ONLY = [
-  [/- `digest` \(a pipeline run only; `## Standalone review` covers the no-run-dir case\)/, 'the digest action is qualified as pipeline-run only'],
-  [/- `console` \(a pipeline run only; `## Standalone review` covers the no-run-dir case\)/, 'the console action is qualified as pipeline-run only'],
+  [/- `digest` \([^)\n]*pipeline run only[^)\n]*`## Standalone review`[^)\n]*\)/, 'the digest action is qualified as pipeline-run only'],
+  [/- `console` \([^)\n]*pipeline run only[^)\n]*`## Standalone review`[^)\n]*\)/, 'the console action is qualified as pipeline-run only'],
 ];
 const pipelineOnlyMissing = missingFactsOf(PIPELINE_ONLY);
 
@@ -578,21 +579,32 @@ test('AC5.2 the refutation-rule assertions can go red', () => {
 });
 
 // Step 5 logs the resolver's line for confirmed/drop and writes the downgrade line otherwise (never both).
-test("AC5.2 step 5 keeps one downgrade line for can't-tell and never logs the resolver's line for it", () => {
-  const step5 = refutationStep5(debateText());
+// The downgrade line is STAGED, keyed `lens "{lens}" finding {path}:{line}`, and says unconfirmed, so the Review
+// Console surfaces the can't-tell finding (F5b).
+const DOWNGRADE_LINE = /STAGED \{HH:MM:SS\} — Refutation: lens "\{lens\}" finding \{path\}:\{line\} — no usable verdict \(\{cause\}\)/;
+function downgradeProblems(step5) {
+  const problems = [];
   const downgrades = step5.split('\n').filter((line) => line.includes('Downgraded to unconfirmed'));
-  assert.equal(downgrades.length, 1, 'step 5 must carry exactly one downgrade log line');
-  assert.match(downgrades[0], /AUTO \{HH:MM:SS\} — Refutation: \{path\}:\{line\} — no usable verdict \(\{cause\}\)/);
-  assert.match(step5, /Do not log the resolver's line/);
+  if (downgrades.length !== 1) problems.push(`expected exactly one downgrade line, found ${downgrades.length}`);
+  else if (!DOWNGRADE_LINE.test(downgrades[0])) problems.push('the downgrade line is not the STAGED lens-keyed form');
+  if (!/Do not log the resolver's line/.test(step5)) problems.push("the do-not-log-the-resolver's-line rule is missing");
+  return problems;
+}
+
+test("AC5.2 step 5 keeps one downgrade line for can't-tell and never logs the resolver's line for it", () => {
+  assert.deepEqual(downgradeProblems(refutationStep5(debateText())), []);
 });
 
 test("AC5.2 the downgrade-line assertions can go red", () => {
   const step5 = refutationStep5(debateText());
   const without = step5.replace(/Do not log the resolver's line/g, '');
   assert.notEqual(without, step5, 'anchor text not found — proof cannot discriminate');
-  assert.doesNotMatch(without, /Do not log the resolver's line/);
-  const doubled = `${step5}\nAUTO {HH:MM:SS} — Refutation: x. Downgraded to unconfirmed.`;
-  assert.equal(doubled.split('\n').filter((line) => line.includes('Downgraded to unconfirmed')).length, 2, 'a second downgrade line must turn the count check red');
+  assert.deepEqual(downgradeProblems(without), ["the do-not-log-the-resolver's-line rule is missing"]);
+  const doubled = `${step5}\nSTAGED {HH:MM:SS} — Refutation: x. Downgraded to unconfirmed.`;
+  assert.deepEqual(downgradeProblems(doubled), ['expected exactly one downgrade line, found 2']);
+  const oldForm = step5.replace(DOWNGRADE_LINE, 'AUTO {HH:MM:SS} — Refutation: {path}:{line} — no usable verdict ({cause})');
+  assert.notEqual(oldForm, step5, 'anchor text for the downgrade line not found');
+  assert.deepEqual(downgradeProblems(oldForm), ['the downgrade line is not the STAGED lens-keyed form']);
 });
 
 // Gap-sweep hand-off.
@@ -660,7 +672,6 @@ const xhighParagraph = (text) => lineStartingWith(text, 'At **`xhigh` and above*
 const maxParagraph = (text) => lineStartingWith(text, 'At **`max`**');
 
 const ROUTING_FORBIDDEN = [
-  [/route straight to the Wrap-Up Review Console's Low-confidence/, 'unconfirmed/contested findings route straight to the console, bypassing the tiebreak'],
   [/the Direct-verification override is the only path to `confirmed`/, 'the override is the only path to confirmed for the low tier'],
   [/where it is the designed confirmation path/, 'the override is the designed confirmation path for the low tier'],
 ];
@@ -673,9 +684,35 @@ test('AC6.1 step3-routing.md no longer bypasses the tiebreak', () => {
 
 test('AC6.1 the routing leftover assertions can go red', () => {
   const text = routingText();
-  assert.deepEqual(routingLeftovers(`${text}\nroute straight to the Wrap-Up Review Console's Low-confidence and Contested subsections`), [ROUTING_FORBIDDEN[0][1]]);
-  assert.deepEqual(routingLeftovers(`${text}\nthe Direct-verification override is the only path to \`confirmed\` for this source`), [ROUTING_FORBIDDEN[1][1]]);
-  assert.deepEqual(routingLeftovers(`${text}\nwhere it is the designed confirmation path`), [ROUTING_FORBIDDEN[2][1]]);
+  assert.deepEqual(routingLeftovers(`${text}\nthe Direct-verification override is the only path to \`confirmed\` for this source`), [ROUTING_FORBIDDEN[0][1]]);
+  assert.deepEqual(routingLeftovers(`${text}\nwhere it is the designed confirmation path`), [ROUTING_FORBIDDEN[1][1]]);
+});
+
+// F2: no file of the review skill routes an unconfirmed/contested finding straight to the console.
+const REVIEW_DIR = path.join(SKILLS, 'review');
+const BYPASS_FORBIDDEN = [
+  [/route directly to the Wrap-Up Console's Low-confidence/, "route directly to the Wrap-Up Console's Low-confidence"],
+  [/route straight to the Wrap-Up Review Console's Low-confidence/, "route straight to the Wrap-Up Review Console's Low-confidence"],
+  [/lands in Low-confidence subsection/, 'lands in Low-confidence subsection'],
+  [/Low-confidence subsection as usual/, 'Low-confidence subsection as usual'],
+  [/skips straight to Step 3 Routing/, 'skips straight to Step 3 Routing'],
+  [/staged to the Wrap-Up Review Console instead/, 'staged to the Wrap-Up Review Console instead'],
+];
+const reviewFiles = () => fs.readdirSync(REVIEW_DIR).filter((name) => name.endsWith('.md'));
+const bypassLeftovers = (files, readFile) => files.flatMap((name) => BYPASS_FORBIDDEN
+  .filter(([pattern]) => pattern.test(readFile(name))).map(([, phrase]) => `${name}: ${phrase}`));
+const readReviewFile = (name) => readText(path.join(REVIEW_DIR, name));
+
+test('F2 no review file routes a finding straight to the console, bypassing Step 3.7', () => {
+  const files = reviewFiles();
+  assert.ok(files.includes('step3-lens-dispatch.md') && files.includes('review-summary-template.md'), 'the scan covers the review skill directory');
+  assert.deepEqual(bypassLeftovers(files, readReviewFile), []);
+});
+
+test('F2 the review-wide bypass scan can go red', () => {
+  for (const [, phrase] of BYPASS_FORBIDDEN) {
+    assert.deepEqual(bypassLeftovers(['planted.md'], () => `text ${phrase} text`), [`planted.md: ${phrase}`], `a planted "${phrase}" must turn the scan red`);
+  }
 });
 
 const ROUTING_INPUTS = [[/tiebreak-confirmed findings \(`step3-tiebreak\.md`\)/, 'the Inputs list takes tiebreak-confirmed findings']];
@@ -717,7 +754,7 @@ test('AC6.1 the source-bullet assertions can go red', () => {
 
 const SURFACING = [
   [(text) => surfacingParagraph(text), /Step 3\.7's `confirmed` outcome \(`step3-tiebreak\.md`\)/, "unconfirmed/contested findings reach the table only through Step 3.7's confirmed outcome"],
-  [(text) => surfacingParagraph(text), /`console` outcome is what reaches the Wrap-Up Review Console/, "the tiebreak's console outcome is what reaches the Review Console"],
+  [(text) => surfacingParagraph(text), /`console` outcome reaches the Wrap-Up Review Console through the finding's earlier STAGED line/, "a tiebreak console outcome reaches the Review Console through the earlier STAGED line"],
   [(text) => xhighParagraph(text), /can't-tell/, "the xhigh paragraph names the tiebreak's can't-tell outcomes"],
   [(text) => xhighParagraph(text), /surfacing inline doesn't remove the staging/, 'the xhigh paragraph keeps the staging wording'],
   [(text) => maxParagraph(text), /on top of the .{0,40}rows `xhigh` already added/, 'the max paragraph still stacks on the xhigh rows'],
@@ -828,10 +865,9 @@ test('R1 the materiality-floor assertions can go red', () => {
   assert.deepEqual(tiebreakValueMissing('## no such subsection'), TIEBREAK_VALUE.map(([, fact]) => fact), 'a floor without the subsection fails every fact');
 });
 
-test('R1 tiebreak-cant-tell is not in DEFER_REASONS, which keeps its six gate values', () => {
+test('R1 tiebreak-cant-tell is not in DEFER_REASONS', () => {
   assert.ok(!DEFER_REASONS.includes('tiebreak-cant-tell'), 'tiebreak-cant-tell is an entry-format value, not a fix-now-failure reason');
-  assert.equal(DEFER_REASONS.length, 6, 'the deferral gate vocabulary is unchanged');
-  assert.ok(DEFER_REASONS.includes('tangential'), 'the length check counts the real gate vocabulary, so the includes check above discriminates');
+  assert.ok(DEFER_REASONS.includes('tangential'), 'DEFER_REASONS is the real gate vocabulary, so the includes check above discriminates');
 });
 
 const RESOLVE_NAMES_VALUE = [[/tiebreak-cant-tell/, 'the Resolve and act section names the tiebreak-cant-tell digest value']];
@@ -914,4 +950,261 @@ test('AC11.1 the SKILL.md scan can go red', () => {
   const files = listSkillFiles(SKILLS);
   const planted = files[0];
   assert.deepEqual(skillsNamingStep(files, (file) => (file === planted ? 'see step3-tiebreak.md' : '')), [planted]);
+});
+
+// ===== Final-review fix wave (#3947, F1-F16) =====
+
+// A section-scoped fact list: [pick(texts), pattern, fact]. The go-red proof strips the pattern from the picked
+// region only, then runs the same predicate over the doctored texts.
+function sectionFactsMissing(facts) {
+  return (texts) => facts.filter(([pick, pattern]) => !pattern.test(pick(texts))).map(([, , fact]) => fact);
+}
+function assertEachSectionFactGoesRed(texts, facts, missingOf) {
+  for (const [pick, pattern, fact] of facts) {
+    const region = pick(texts);
+    const global = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
+    const doctoredRegion = region.replace(global, '');
+    assert.notEqual(doctoredRegion, region, `anchor text for "${fact}" not found — proof cannot discriminate`);
+    const doctored = Object.fromEntries(Object.entries(texts).map(([key, text]) => [key, text.replace(region, () => doctoredRegion)]));
+    assert.ok(missingOf(doctored).includes(fact), `removing "${fact}" must turn its assertion red`);
+  }
+}
+
+const SUMMARY_TEMPLATE = path.join(SKILLS, 'review', 'review-summary-template.md');
+const liveTexts = () => ({
+  tiebreak: tiebreakText(),
+  step3: readText(STEP3),
+  debate: debateText(),
+  template: readText(SUMMARY_TEMPLATE),
+});
+const tiebreakSection = (heading) => (texts) => sectionOf(texts.tiebreak, heading);
+const tiebreakTemplate = (texts) => fencedTemplate(sectionOf(texts.tiebreak, 'Dispatch'));
+const hungParagraph = (texts) => lineStartingWith(texts.step3, '**Hung or non-responsive single-read agent.**');
+const overrideOf = (texts) => overrideParagraph(texts.step3);
+const refutationTemplateOf = (texts) => refutationStep4(texts.debate);
+const compactForm = (texts) => between(texts.template, '## Compact form — clean PASS', '```markdown');
+function templateTiebreakSection(texts) {
+  const full = texts.template.slice(texts.template.indexOf('## Full template'));
+  const start = full.indexOf('\n### Tiebreak\n');
+  if (start === -1) return '';
+  const next = full.indexOf('\n### ', start + 1);
+  return full.slice(start, next === -1 ? full.length : next);
+}
+
+const FIX_WAVE = [
+  // F1: reading never confirms a vacuity claim.
+  [tiebreakTemplate, /A vacuity claim[^\n]*cannot be confirmed by reading code/, 'F1 the template tells the agent reading cannot confirm a vacuity claim'],
+  [tiebreakSection('Resolve and act'), /On a lens 3f vacuity finding, write a `confirmed` reply to `R` as an empty reply instead/, "F1 a confirmed reply on a vacuity finding is replaced with an empty reply"],
+  [tiebreakSection('Resolve and act'), /a vacuity claim needs an executed run \(`step3-lens-dispatch\.md`'s lens 3f vacuity bullet\)/, "F1 the cause cites step3-lens-dispatch.md's vacuity rule"],
+  [tiebreakSection('Resolve and act'), /a `refuted` reply resolves as written/, 'F1 a refuted reply on a vacuity finding resolves normally'],
+  // F3: the override logs only confirmed/drop; can't-tell is left to Step 3.7.
+  [overrideOf, /On `confirmed`, log the resolver's line: the finding is confirmed\./, 'F3 an override confirmed logs the resolver line'],
+  [overrideOf, /On `drop`, log it: the finding is dropped\./, 'F3 an override drop logs the resolver line'],
+  [overrideOf, /On `digest`\/`console` \(can't-tell\), log nothing: the finding stays `unconfirmed` and Step 3\.7 judges it/, "F3 an override can't-tell logs nothing and leaves the finding to Step 3.7"],
+  [tiebreakSection('Resolve and act'), /An override's can't-tell outcome is not logged/, "F3 step3-tiebreak.md agrees the override's can't-tell is not logged"],
+  // F4: the post-fan-out sweep re-runs after the tiebreak's last wave.
+  [tiebreakSection('Dispatch'), /After the last wave, re-run `step3-lens-dispatch\.md`'s Post-fan-out untracked-file sweep against the same pre-dispatch listing/, 'F4 the sweep re-runs after the last wave against the same listing'],
+  [tiebreakSection('Dispatch'), /report-only, as there/, 'F4 the re-run sweep is report-only'],
+  [tiebreakSection('Dispatch'), /Skip it when this step dispatched no agent/, 'F4 the re-run is skipped when nothing was dispatched'],
+  // F5: what #3772 supersedes, and how a console outcome surfaces.
+  [tiebreakSection('Resolve and act'), /supersedes it through `console\/resolve\.js`'s `#3772` matcher only when that line carries `lens "\{lens\}"` and `\{path\}:\{line\}`/, 'F5a the supersession claim names the lens + path:line key'],
+  [tiebreakSection('Resolve and act'), /`staged\/review-contested-\{N\}\.md` is never superseded/, 'F5a the contested-file gap is stated'],
+  [tiebreakSection('Resolve and act'), /- `console`[^\n]*surfaces at the Review Console through its earlier STAGED line/, 'F5b a console outcome surfaces through the earlier STAGED line'],
+  // F6: the refutation template carries only the allowlist.
+  [refutationTemplateOf, /Diff scope: /, 'F6 the refutation template input carries the diff scope'],
+  // F7: step3-tiebreak.md points at the template's Tiebreak section; the template has the slots.
+  [tiebreakSection('Resolve and act'), /`review-summary-template\.md`'s `### Tiebreak` section/, 'F7 the digest count points at the template section'],
+  [tiebreakSection('Standalone review'), /`review-summary-template\.md`'s `### Tiebreak` section/, 'F7 the standalone lists point at the template section'],
+  [tiebreakSection('Dispatched reviewer'), /`review-summary-template\.md`'s `### Tiebreak` section/, 'F7 the Tiebreak caveat points at the template section'],
+  [templateTiebreakSection, /\{n\} confirmed · \{n\} dropped · \{n\} digest · \{n\} console/, 'F7 the template counts each outcome'],
+  [templateTiebreakSection, /\{only when[^}\n]*\} \*\*Tiebreak caveat:\*\*/, 'F7 the template carries a conditional Tiebreak caveat slot'],
+  [templateTiebreakSection, /standalone review only[^\n]*medium or higher[^\n]*recommendation/, "F7 the template carries the standalone can't-tell >= medium list"],
+  [compactForm, /nothing to judge, or every verdict was `confirmed` or `drop`, and no Tiebreak caveat applies/, 'F7 the compact form requires a tiebreak with nothing left open'],
+  // F8: a dispatched reviewer's timeout takes the inline rung.
+  [tiebreakSection('Resolve and act'), /timed-out \(a dispatched reviewer takes the inline rung instead, see `## Dispatched reviewer`\)/, "F8 the timed-out empty-reply rule defers to the dispatched reviewer's inline rung"],
+  // F9: claims are collapsed before write-findings; a resolver failure never invents a verdict.
+  [tiebreakSection('Findings artifact'), /Collapse each claim's whitespace and line breaks to single spaces/, 'F9 claims are collapsed before write-findings'],
+  [tiebreakSection('Resolve and act'), /When `resolve-tiebreak` exits non-zero for an entry, never invent a verdict/, 'F9 a resolver failure never invents a verdict'],
+  [tiebreakSection('Resolve and act'), /no verdict line, so the archive gate refuses the run and surfaces it/, 'F9 the archive gate surfaces the unresolved finding'],
+  // F10: the lens written to review-findings.json.
+  [tiebreakSection('Findings artifact'), /`lens` is the lens the finding's earlier STAGED line names/, "F10 lens is the earlier STAGED line's lens"],
+  [tiebreakSection('Findings artifact'), /`gap-sweep` for a gap-sweep finding/, 'F10 a gap-sweep finding uses lens gap-sweep'],
+  [tiebreakSection('Findings artifact'), /a contested entry's first position's lens/, "F10 a contested entry uses its first position's lens"],
+  [tiebreakSection('Findings artifact'), /a multi-lens refutation candidate's first listed lens/, 'F10 a multi-lens refutation candidate uses its first listed lens'],
+  // F11: the digest write follows the Defer path, approval included.
+  [tiebreakSection('Resolve and act'), /including that bullet's interactive batch-table approval/, "F11 the digest write follows the Defer path's batch-table approval"],
+  // F12: the hung single-read agent's substitute findings go to Step 3.7, not the override.
+  [hungParagraph, /enter `unconfirmed` for Step 3\.7/, "F12 the reviewer's substitute findings enter unconfirmed for Step 3.7"],
+  [hungParagraph, /a reporter cannot judge its own finding/, 'F12 the reporter is not its own judge'],
+  // F13: a standalone inline verdict carries Mode: inline.
+  [tiebreakSection('Standalone review'), /an inline verdict's line also carries ` Mode: inline\.`/, 'F13 a standalone inline verdict line carries Mode: inline.'],
+];
+const fixWaveMissing = sectionFactsMissing(FIX_WAVE);
+
+test('F1-F13 the fix-wave facts are stated where they belong', () => {
+  assert.deepEqual(fixWaveMissing(liveTexts()), []);
+});
+
+test('F1-F13 every fix-wave fact can go red', () => {
+  assertEachSectionFactGoesRed(liveTexts(), FIX_WAVE, fixWaveMissing);
+});
+
+const FIX_WAVE_FORBIDDEN = [
+  [overrideOf, /can still be elevated to `confirmed`/, 'F3 the override no longer frames itself as elevation'],
+  [hungParagraph, /Direct-verification override for that lens|resolved via reviewing agent's own Direct-verification override/, 'F12 the hung-agent fallback no longer settles through the override'],
+  [refutationTemplateOf, /Cached evidence:/, 'F6 no Cached evidence line in the refutation template'],
+  [refutationTemplateOf, /Category: \{category\}/, 'F6 no Category line in the refutation template'],
+  [refutationTemplateOf, /cached evidence/i, "F6 no mention of the reporter's cached evidence"],
+];
+const fixWaveLeftovers = (texts) => FIX_WAVE_FORBIDDEN.filter(([pick, pattern]) => pattern.test(pick(texts))).map(([, , fact]) => fact);
+
+test('F3/F6/F12 the retired wording is gone', () => {
+  const texts = liveTexts();
+  for (const [pick, , fact] of FIX_WAVE_FORBIDDEN) assert.notEqual(pick(texts), '', `region not found for "${fact}"`);
+  assert.deepEqual(fixWaveLeftovers(texts), []);
+});
+
+test('F3/F6/F12 the retired-wording assertions can go red', () => {
+  const plants = [
+    'An `unconfirmed` finding can still be elevated to `confirmed` here.',
+    "resolved via reviewing agent's own Direct-verification override",
+    'Cached evidence: {evidence text}',
+    'Severity: {severity}  Category: {category}',
+    'do not trust the cached evidence text below',
+  ];
+  FIX_WAVE_FORBIDDEN.forEach(([pick, , fact], i) => {
+    const texts = liveTexts();
+    const region = pick(texts);
+    const key = Object.keys(texts).find((k) => texts[k].includes(region));
+    const planted = { ...texts, [key]: texts[key].replace(region, () => `${region} ${plants[i]}`) };
+    assert.ok(fixWaveLeftovers(planted).includes(fact), `a planted "${plants[i]}" must turn "${fact}" red`);
+  });
+});
+
+// F4: the cited sweep heading resolves.
+test('F4 the cited Post-fan-out untracked-file sweep heading exists', () => {
+  assert.ok(readText(STEP3).includes('\n## Post-fan-out untracked-file sweep\n'));
+});
+
+// F6: the refutation template's input carries no reporter content, like Step 3.7's.
+test('F6 the refutation template input is the allowlist only', () => {
+  const block = refutationTemplateOf(liveTexts());
+  const input = block.slice(block.indexOf('Candidate finding:'), block.indexOf('[... READ-ONLY REVIEW'));
+  assert.notEqual(input, '', 'the refutation input block was not found');
+  assert.ok(!leaksReporterContent(input.split('\n')), 'the refutation input must not carry evidence or reasoning');
+  assert.ok(leaksReporterContent([...input.split('\n'), 'Cached evidence: {evidence text}']), 'an evidence line must turn the leak check red');
+});
+
+// F15: the evidence window the prose states is the resolver's own constant.
+const { LINE_TOLERANCE_REPRODUCTION_WIDE } = require('../plugin/bin/lib/coordination');
+const windowFacts = (n) => [
+  [tiebreakTemplate, new RegExp(`a line within ${n} of Location`), "the tiebreak template states the resolver's evidence window"],
+  [refutationTemplateOf, new RegExp(`a line within ${n} of \\{line\\}`), "the refutation template states the resolver's evidence window"],
+];
+
+test("F15 the templates' evidence window equals LINE_TOLERANCE_REPRODUCTION_WIDE", () => {
+  assert.deepEqual(sectionFactsMissing(windowFacts(LINE_TOLERANCE_REPRODUCTION_WIDE))(liveTexts()), []);
+});
+
+test('F15 the evidence-window twin pin can go red', () => {
+  const n = LINE_TOLERANCE_REPRODUCTION_WIDE;
+  const texts = liveTexts();
+  const drifted = Object.fromEntries(Object.entries(texts).map(([k, t]) => [k, t.replaceAll(`a line within ${n} of`, `a line within ${n + 4} of`)]));
+  assert.notEqual(drifted.tiebreak, texts.tiebreak, 'anchor text not found in the tiebreak template');
+  assert.notEqual(drifted.debate, texts.debate, 'anchor text not found in the refutation template');
+  assert.deepEqual(sectionFactsMissing(windowFacts(n))(drifted), windowFacts(n).map(([, , fact]) => fact));
+});
+
+// F5: the documented STAGED lines surface at the Review Console and a tiebreak `confirmed` supersedes them,
+// run through the real console/resolve.js and the real resolver.
+const { resolveAll } = require('../plugin/bin/lib/console/resolve');
+
+function consoleLowItems(decisions) {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tiebreak-console-'));
+  try {
+    fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
+    fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'decisions.md'), decisions);
+    fs.writeFileSync(path.join(runDir, 'work', '7-spec.md'), '---\nrecord: 7\n---\n');
+    const deps = {
+      readFile: (p) => fs.readFileSync(p, 'utf8'),
+      readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
+      gitApplyCheck: () => ({ ok: true }),
+      readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:merge'], pendingSince: null }])),
+      now: () => Date.parse('2026-10-22T12:00:00Z'),
+    };
+    return resolveAll({ runDir, policy: 'console-auto', deps }).items.filter((i) => i.section === 'Low-confidence findings');
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+}
+
+// The one backticked log-line template in `text` that contains every needle.
+function documentedTemplate(text, needles) {
+  const spans = [...text.matchAll(/`((?:STAGED|AUTO) \{HH:MM:SS\}[^`]*)`/g)].map((m) => m[1]).filter((s) => needles.every((n) => s.includes(n)));
+  assert.equal(spans.length, 1, `expected one documented log line containing ${JSON.stringify(needles)}, found ${spans.length}`);
+  return spans[0];
+}
+const instantiate = (template) => `- ${template
+  .replace(/\{HH:MM:SS\}/g, '10:00:00')
+  .replace(/\{lens[A-Z]?\}/g, '3b')
+  .replace(/\{path\}/g, 'src/a.js')
+  .replace(/\{line\}/g, '4')
+  .replace(/\{[^{}]*\}/g, 'x')}`;
+
+const SOURCE_LINES = ['// one', '// two', '// three', '  const guard = check(value); // the guarded read', '// five'];
+function confirmedEntryFor(lens) {
+  const finding = { lens, path: 'src/a.js', line: 4, claim: 'the guard is skipped', reporterSeverity: 'medium', kind: 'unconfirmed' };
+  const reply = `Verdict: confirmed\nEvidence: src/a.js:4 \`${SOURCE_LINES[3].trim()}\`\nSeverity: medium\nRecommendation: file — real\nSTATUS: DONE`;
+  const resolved = resolveTiebreak(finding, reply, { readFile: () => SOURCE_LINES.join('\n'), now: NOW });
+  assert.equal(resolved.outcome, 'confirmed');
+  return formatEntry({ status: resolved.logStatus, now: NOW, step: resolved.logStep, text: resolved.logText, reversibility: 'high' });
+}
+
+function consoleProblems(template) {
+  const staged = instantiate(template);
+  const problems = [];
+  if (consoleLowItems(`${staged}\n`).length !== 1) problems.push('does not surface as a Low-confidence item');
+  const lens = (/lens "([^"]+)"/.exec(staged) || [])[1];
+  if (!lens) problems.push('carries no lens key');
+  else if (consoleLowItems(`${staged}\n${confirmedEntryFor(lens)}\n`).length !== 0) problems.push('not superseded by a confirmed tiebreak verdict');
+  return problems;
+}
+
+const CONSOLE_LINES = [
+  ['debate', ['Gap-sweep:', 'single-source by design'], 'F5a the gap-sweep finding line'],
+  ['debate', ['converged negative'], 'F5b the debate-converged-negative line'],
+  ['debate', ['no usable verdict'], "F5b the refutation can't-tell line"],
+];
+
+test('F5 the gap-sweep, debate-negative and refutation-downgrade lines surface and are superseded by a confirmed verdict', () => {
+  const texts = liveTexts();
+  for (const [key, needles, name] of CONSOLE_LINES) {
+    assert.deepEqual(consoleProblems(documentedTemplate(texts[key], needles)), [], name);
+  }
+});
+
+test('F5 the console-surfacing assertions can go red', () => {
+  assert.deepEqual(consoleProblems('STAGED {HH:MM:SS} — Gap-sweep: {path}:{line} — {one-line finding}. Staged to Review Console as low-confidence (gap-sweep, single-source by design). Reversibility: high.'), ['carries no lens key']);
+  assert.deepEqual(consoleProblems('AUTO {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} converged negative after 1 round. Reversibility: high.'), ['does not surface as a Low-confidence item', 'carries no lens key']);
+  assert.deepEqual(consoleProblems('STAGED {HH:MM:SS} — Refutation: lens "{lens}" near src/other.js:9 for {path}:{line} — unconfirmed. Reversibility: high.'), ['not superseded by a confirmed tiebreak verdict']);
+});
+
+// F9: the resolver-failure line surfaces and carries no verdict marker.
+const resolverFailureLine = (texts) => documentedTemplate(sectionOf(texts.tiebreak, 'Resolve and act'), ['resolve-tiebreak exited']);
+const failureLineProblems = (template) => {
+  const problems = [];
+  if (consoleLowItems(`${instantiate(template)}\n`).length !== 1) problems.push('does not surface as a Low-confidence item');
+  if (/tiebreak:/.test(template)) problems.push('carries the tiebreak: marker');
+  return problems;
+};
+
+test('F9 the resolve-tiebreak failure line surfaces and carries no tiebreak: marker', () => {
+  assert.deepEqual(failureLineProblems(resolverFailureLine(liveTexts())), []);
+});
+
+test('F9 the failure-line assertions can go red', () => {
+  const line = resolverFailureLine(liveTexts());
+  assert.deepEqual(failureLineProblems(line.replace('unconfirmed', 'pending')), ['does not surface as a Low-confidence item']);
+  assert.deepEqual(failureLineProblems(`${line} tiebreak:abc123def456`), ['carries the tiebreak: marker']);
 });

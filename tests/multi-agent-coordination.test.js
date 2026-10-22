@@ -1101,7 +1101,7 @@ test('debate: mixed/partial verdicts → contested with STAGED entry matching th
 test('refutation: refuted verdict downgrades to unconfirmed', () => {
   assert.strictEqual(c.resolveRefutation('refuted'), 'unconfirmed');
   const entry =
-    `- AUTO 14:52:10 — Refutation: src/auth.ts:42 — no usable verdict (can't-tell), not genuinely re-examined. Downgraded to unconfirmed out of caution. Reversibility: high.`;
+    `- STAGED 14:52:10 — Refutation: lens "security" finding src/auth.ts:42 — no usable verdict (can't-tell), not genuinely re-examined. Downgraded to unconfirmed out of caution. Reversibility: high.`;
   assert.match(entry, decisionLogPattern(REVIEW_SKILL, ['Refutation:', 'Downgraded to unconfirmed']));
 });
 
@@ -1266,7 +1266,7 @@ test('/review debate integration: cross-lens overlap with contradicting verdicts
 
   const confirmedEntry = `- AUTO 14:41:02 — Debate: cross-lens disagreement on src/auth.ts:42 converged positive after 1 round. Reversibility: high.`;
   assert.match(confirmedEntry, decisionLogPattern(REVIEW_SKILL, ['Both `agree`']));
-  const unconfirmedEntry = `- AUTO 14:41:05 — Debate: cross-lens disagreement on src/auth.ts:42 converged negative after 1 round. Reversibility: high.`;
+  const unconfirmedEntry = `- STAGED 14:41:05 — Debate: lens "security" finding src/auth.ts:42 — cross-lens disagreement converged negative after 1 round; unconfirmed. Reversibility: high.`;
   assert.match(unconfirmedEntry, decisionLogPattern(REVIEW_SKILL, ['Both `disagree`']));
   const contestedEntry = `- STAGED 14:41:08 — Debate: cross-lens disagreement on src/auth.ts:42 inconclusive (agree, partial). Both verdicts staged. Reversibility: high.`;
   assert.match(contestedEntry, decisionLogPattern(REVIEW_SKILL, ['Mixed / partial']));

@@ -16,7 +16,7 @@ This pass never runs at `low` or `high` (or above): at `low` the single-read rul
    `AUTO {HH:MM:SS} — Cross-lens corroboration (medium tier): finding {path}:{line} reported independently by lenses {lens list}. Confirmed. Reversibility: high.`
    When `severityContested` is set, write this line instead:
    `AUTO {HH:MM:SS} — Cross-lens corroboration (medium tier): finding {path}:{line} reported independently by lenses {lens list}, severity contested (took the highest). Confirmed. Reversibility: high.`
-4. **Stage the rest.** Each finding left in `unconfirmed` gets the STAGED line `step3-lens-dispatch.md`'s "only one agent's output" bullet deferred at `medium`: `not reproduced`, routing to the Wrap-Up Console's Low-confidence subsection as usual. A finding carrying `nearLocation` (the share-a-location coincidence) gets the share-a-location line only when neither side of the coincidence was promoted; when one side was promoted, the remaining side gets the plain `not reproduced` line instead.
+4. **Stage the rest.** Each finding left in `unconfirmed` gets the STAGED line `step3-lens-dispatch.md`'s "only one agent's output" bullet deferred at `medium`: `not reproduced`; the finding goes to Step 3.7 (`step3-tiebreak.md`). A finding carrying `nearLocation` (the share-a-location coincidence) gets the share-a-location line only when neither side of the coincidence was promoted; when one side was promoted, the remaining side gets the plain `not reproduced` line instead.
 5. **Order.** Corroboration, then the deferred STAGED lines, then the post-fan-out untracked-file sweep (`step3-lens-dispatch.md`), then Step 3 Routing.
 
 ## Failure
