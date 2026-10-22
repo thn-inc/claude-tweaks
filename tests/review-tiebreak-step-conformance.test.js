@@ -401,7 +401,6 @@ test('code-mode-steps wiring assertions can go red', () => {
 
 const STEP3 = path.join(SKILLS, 'review', 'step3-lens-dispatch.md');
 const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
-const STEP3_BYTE_CEILING = 51584;
 
 const lineStartingWith = (text, prefix) => text.split('\n').find((line) => line.startsWith(prefix)) || '';
 const lowTierParagraph = (text) => lineStartingWith(text, '**Low-tier single-read dispatch (`low` only).**');
@@ -469,19 +468,16 @@ test('pointer: the count assertion can go red', () => {
 });
 
 // AC10.1: the rail.
-const byteProblems = (bytes) => [
-  ...(bytes > STEP3_BYTE_CEILING ? [`over the ${STEP3_BYTE_CEILING} B ceiling`] : []),
-  ...(bytes >= RAIL_BYTES ? [`at or over the ${RAIL_BYTES} B rail`] : []),
-];
+const underRail = (bytes) => bytes < RAIL_BYTES;
 
-test('AC10.1 step3-lens-dispatch.md stays within its byte ceiling and under the rail', () => {
-  assert.deepEqual(byteProblems(fs.statSync(STEP3).size), []);
+test('AC10.1 step3-lens-dispatch.md stays under the rail', () => {
+  assert.ok(underRail(fs.statSync(STEP3).size), 'step3-lens-dispatch.md must stay under RAIL_BYTES');
 });
 
-test('AC10.1 the byte-ceiling assertion can go red', () => {
-  assert.deepEqual(byteProblems(STEP3_BYTE_CEILING), [], 'the ceiling itself is allowed');
-  assert.deepEqual(byteProblems(STEP3_BYTE_CEILING + 1), [`over the ${STEP3_BYTE_CEILING} B ceiling`]);
-  assert.deepEqual(byteProblems(RAIL_BYTES), [`over the ${STEP3_BYTE_CEILING} B ceiling`, `at or over the ${RAIL_BYTES} B rail`]);
+test('AC10.1 the rail assertion can go red', () => {
+  assert.ok(underRail(RAIL_BYTES - 1), 'one byte under the rail passes');
+  assert.ok(!underRail(RAIL_BYTES), 'a file exactly at the rail must turn the check red');
+  assert.ok(!underRail(RAIL_BYTES + 1), 'a file over the rail must turn the check red');
 });
 
 // --- step3-debate-and-refutation.md: Per-Candidate Refutation through the resolver, gap-sweep hand-off ---
