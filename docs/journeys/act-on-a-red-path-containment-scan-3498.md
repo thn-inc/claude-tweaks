@@ -30,6 +30,7 @@ files:
   - A `{file}: …` line instead of a hit means the comment stripper could not parse that file (`tests/helpers/strip-comments.js`). That is a parse problem, not a containment hit.
 - **Red flags:**
   - A green run after moving the sep expression somewhere the scans do not read: a right-hand side that starts on the next line, an object property (`{ rs: root + path.sep }`), or a helper's return value (`startsWith(pre(root))`), or swapping `startsWith('..')` for `slice(0, 2) === '..'`. Those are the scans' documented recall limits; using them hides the retyped check rather than removing it.
+  - A green run after breaking the `startsWith(` call so its `root + path.sep` argument sits on the next line, or after aliasing the separator to a local (`const s = path.sep` or `const { sep } = path`) and testing `startsWith(root + s)`. No scan sees either form, and the test header does not list them as limits; they are evasions, not fixes.
 
 ### 2. Choose strict or orEqual
 - **URL:** `.claude/skills/pre-tool-use-gate-exemptions/SKILL.md`'s "A containment check" bullet, and the `isPathContained` note in `plugin/bin/lib/shared-primitives.js`'s header.
