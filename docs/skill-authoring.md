@@ -261,12 +261,15 @@ new model release, run Claude Code's prompt audit over the shipped skill prose w
 (a read-only tool set), then once more with no path argument to cover CLAUDE.md and `.claude/skills/`.
 The audit is the `prompt-audit [<path>]` argument of `/doctor` in Claude Code 2.1.305, not a standalone
 `/prompt-audit` command; with no path it audits only session-loaded configuration. Route each finding
-through the same three-bucket comparison #3056 used. Do not run the nested `claude -p` inside an active
-pipeline session until #3845 is fixed: a nested `claude -p` there marks the parent's run interrupted at
-its SessionEnd. `/claude-tweaks:harness-health` does not reach `plugin/` by design: its discovery
-(`plugin/bin/lib/harness-health/scope.js`) reads only the project's `.claude/skills/`, `.claude/rules/`,
-CLAUDE.md, the auto-memory index, and `PRODUCT.md`/`DESIGN.md` when design integration is enabled, so
-this run is the only automated reader of the shipped library's prose.
+through the same three-bucket comparison #3056 used: already covered by `/claude-tweaks:harness-health`,
+already covered by this checklist, or genuinely new (a genuinely new finding gets a spec-shaped backlog
+record via `/claude-tweaks:capture`, or a stated reason for no action). Do not run the nested
+`claude -p` inside an active pipeline session until #3845 is fixed: a nested `claude -p` there marks
+the parent's run interrupted at its SessionEnd. `/claude-tweaks:harness-health` does not reach
+`plugin/` by design: its discovery (`plugin/bin/lib/harness-health/scope.js`) reads only the
+project's `.claude/skills/`, `.claude/rules/`, CLAUDE.md, the auto-memory index, and
+`PRODUCT.md`/`DESIGN.md` when design integration is enabled, so this run is the only automated reader
+of the shipped library's prose.
 
 **Claude Fable 5.1 vs. Fable 5** (source:
 https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-1):
