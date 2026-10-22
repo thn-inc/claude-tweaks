@@ -632,7 +632,7 @@ test('reproduction: one-side-only finding → unconfirmed with STAGED entry matc
 
   const entry =
     `- STAGED 14:32:08 — /review reproduction: finding ${unconfirmed[0].path}:${unconfirmed[0].line} ` +
-    `surfaced by one agent only. Stage path: staged/review-unconfirmed-1.patch.`;
+    `surfaced by one agent only. Stage path: staged/review-unconfirmed-1.md.`;
   assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['surfaced by one agent only']));
 });
 

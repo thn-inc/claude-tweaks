@@ -47,7 +47,6 @@ test('contract documents ledger write-back on apply, distinct from the decisions
 const STAGING_SITES = [
   ['review', 'step3-routing.md', /staged\/review-\{n\}\.patch/],
   ['test', 'SKILL.md', /staged\/test-fix-\{n\}\.patch/],
-  ['_shared', 'multi-agent-coordination.md', /staged\/review-unconfirmed-\{n\}\.patch/],
   ['deepen', 'SKILL.md', /staged\/deepen-collapse-\{n\}\.patch/],
 ];
 for (const [dir, file, anchor] of STAGING_SITES) {

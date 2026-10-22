@@ -741,3 +741,59 @@ test('AC6.1 the surfacing assertions can go red', () => {
     assert.ok(surfacingMissing(doctored).includes(fact), `removing "${fact}" must turn its assertion red`);
   }
 });
+
+// --- multi-agent-coordination.md: the reproduction bucket rule and the unconfirmed stage path (AC9.1 / AC9.2) ---
+
+const COORDINATION_DOC = path.join(SKILLS, '_shared', 'multi-agent-coordination.md');
+const coordinationText = () => readText(COORDINATION_DOC);
+const { categoriseReproduction, findingsMatch } = require('../plugin/bin/lib/coordination');
+
+// AC9.1: the doc states the straddling pair still reproduces, and stages a description file, not a patch.
+const COORDINATION_REQUIRED = [
+  [/staged\/review-unconfirmed-\{n\}\.md/, 'the unconfirmed stage path is a .md description file'],
+  [/straddl.*still reproduces.*lower severity.*severityContested/, 'a straddling pair still reproduces at the lower severity, flagged severityContested'],
+];
+const COORDINATION_FORBIDDEN = [
+  [/Cross-bucket mismatches do not reproduce/, 'the stale cross-bucket-does-not-reproduce sentence'],
+  [/review-unconfirmed-\{n\}\.patch/, 'the stale .patch stage path'],
+];
+const coordinationMissing = missingFactsOf(COORDINATION_REQUIRED);
+const coordinationLeftovers = (text) => COORDINATION_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+
+test('AC9.1 multi-agent-coordination.md states the straddle rule and the .md stage path', () => {
+  const text = coordinationText();
+  assert.deepEqual(coordinationMissing(text), [], 'the doc must state the corrected bucket rule and stage path');
+  assert.deepEqual(coordinationLeftovers(text), [], 'the doc must not keep the stale bucket sentence or the .patch stage path');
+});
+
+test('AC9.1 the coordination-doc assertions can go red', () => {
+  const text = coordinationText();
+  assertEachPatternGoesRed(text, COORDINATION_REQUIRED, coordinationMissing);
+  assert.deepEqual(coordinationLeftovers(`${text}\nCross-bucket mismatches do not reproduce.`), [COORDINATION_FORBIDDEN[0][1]]);
+  assert.deepEqual(coordinationLeftovers(`${text}\nStage path: staged/review-unconfirmed-{n}.patch.`), [COORDINATION_FORBIDDEN[1][1]]);
+});
+
+// AC9.2: the prose is held to the code. A high/medium pair at one location with near-identical text straddles
+// the bucket boundary: findingsMatch refuses it, categoriseReproduction (location + substance only) still
+// pairs it and reconcileSeverity keeps the lower severity, flagged severityContested.
+const STRADDLE_TEXT = 'the guard on this line swallows the error instead of rethrowing it';
+const straddleFinding = (severity) => ({ path: 'plugin/bin/foo.js', line: 20, severity, text: STRADDLE_TEXT });
+
+test('AC9.2 a pair straddling the severity boundary still reproduces at the lower severity, flagged contested', () => {
+  const a = straddleFinding('high');
+  const b = straddleFinding('medium');
+  assert.equal(findingsMatch(a, b), false, 'findingsMatch requires the same severity bucket');
+  const { confirmed, unconfirmed } = categoriseReproduction([a], [b]);
+  assert.equal(confirmed.length, 1, 'the straddling pair is one confirmed finding');
+  assert.equal(unconfirmed.length, 0, 'nothing is left unconfirmed');
+  assert.equal(confirmed[0].severity, 'medium', 'reconcileSeverity keeps the lower severity');
+  assert.equal(confirmed[0].severityContested, true);
+});
+
+test('AC9.2 the straddle assertion can go red', () => {
+  const a = straddleFinding('high');
+  const sameBucket = straddleFinding('critical');
+  assert.equal(findingsMatch(a, sameBucket), true, 'a same-bucket pair matches, so the false above discriminates');
+  const { confirmed } = categoriseReproduction([a], [sameBucket]);
+  assert.notEqual(confirmed[0].severityContested, true, 'a same-bucket pair is not contested, so the contested flag above discriminates');
+});
