@@ -499,7 +499,7 @@ function validateManifest(obj) {
     // `upgrade-available` class for a drift-only entry whose assertions carry
     // the signal; see the claude-code entry for why that exists.
     if (hasKey(dep, 'report-upgrades') && typeof dep['report-upgrades'] !== 'boolean') {
-      errors.push(`Dependency ${label}: 'report-upgrades' must be true or false (got '${dep['report-upgrades']}')`);
+      errors.push(`Dependency ${label}: 'report-upgrades' must be true or false (got ${typeof dep['report-upgrades']} ${JSON.stringify(dep['report-upgrades'])} — use an unquoted true or false)`);
     }
 
     if (!isPlainObject(dep.upstream)) {

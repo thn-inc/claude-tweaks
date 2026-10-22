@@ -572,7 +572,7 @@ function cmdFindings(args, io = {}) {
   if (findings.length === 0) {
     // AC2: an all-green run says so, on stderr, and files nothing. It must
     // never turn "nothing found" into an issue of its own.
-    process.stderr.write(`[${TOOL_NAME}] no version moved and every assertion and fixture holds — nothing to file\n`);
+    process.stderr.write(`[${TOOL_NAME}] no findings — every assertion and fixture holds and no reported upgrade is pending — nothing to file\n`);
   }
   return findings;
 }

@@ -565,14 +565,16 @@ test('hasUpgrade: due, findings, and the due-report all agree on the same predic
   const behind = greenEvaluation({ latest: '4.0.4' });
   const level = greenEvaluation({ latest: '4.0.2' });
   const absent = greenEvaluation({ latest: '4.0.4', resolvedInstalled: null, installed: [] });
+  const optedOut = greenEvaluation({ latest: '4.0.4', reportUpgrades: false });
 
   assert.strictEqual(hasUpgrade(behind), true);
   assert.strictEqual(hasUpgrade(level), false);
   assert.strictEqual(hasUpgrade(absent), false, 'no upgrade path from a missing artifact');
+  assert.strictEqual(hasUpgrade(optedOut), false, 'an entry that opted out of upgrade reporting has no upgrade');
 
   // The agreement itself is the point: a `due` report that disagrees with the
   // findings it precedes is worse than either being wrong alone.
-  for (const ev of [behind, level, absent]) {
+  for (const ev of [behind, level, absent, optedOut]) {
     const hasUpgradeFinding = buildFindings(ev).some((f) => f.kind === 'upgrade-available');
     assert.strictEqual(hasUpgradeFinding, hasUpgrade(ev), 'buildFindings must match hasUpgrade');
   }

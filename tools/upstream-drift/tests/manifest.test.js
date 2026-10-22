@@ -424,7 +424,7 @@ test('report-upgrades: false validates clean on a probe-class entry', () => {
 });
 
 test('a non-boolean report-upgrades is a validation error naming the value', () => {
-  for (const bad of ['false', 'no', 0]) {
+  for (const bad of ['false', 'no', 0, null]) {
     const dep = validDependency();
     dep['report-upgrades'] = bad;
     const errors = validateManifest({ dependencies: [dep] });
