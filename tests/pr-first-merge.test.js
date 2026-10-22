@@ -219,6 +219,26 @@ test('AC2.1: Step 4.2 still leaves a transient failure for the next trigger poin
   assert.match(MERGE_POST_MERGE.slice(step42, step5), /is logged and left for the next trigger point/);
 });
 
+// #3866: reconcile's archive check moves this run's dir to the archive path, so a
+// Step 4.2 decisions.md write to $PIPELINE_RUN_DIR afterwards fails (exit 3) or, by a
+// hand append, recreates an un-archived dir. The archive-path resolution must sit
+// before the "other run dir(s)" log instruction that now targets it.
+test('#3866: Step 4.2 routes post-reconcile decisions.md lines to the archived run path, resolved before the other-run log line', () => {
+  const step42 = MERGE_POST_MERGE.indexOf('### Step 4.2: Reconcile');
+  const step5 = MERGE_POST_MERGE.indexOf('## Step 5: Delete the remote branch');
+  assert.ok(step42 > 0 && step5 > step42, 'Step 4.2 must precede Step 5');
+  const section = MERGE_POST_MERGE.slice(step42, step5);
+  assert.match(section, /archive\/\{run-id\}\/`,\s+`_shared\/timing-render\.md`'s\s+archive-path\s+rule/, 'the archive path is cited with timing-render\'s archive-path rule');
+  assert.match(section, /passes that archive path\s+as `--run`/, 'post-reconcile lines pass the archive path as --run');
+  assert.match(section, /never `\$PIPELINE_RUN_DIR`/, 'the moved run dir is never written to');
+  assert.match(section, /exits 3 on the moved path/, 'names the exit-3 consequence');
+  assert.match(section, /recreate an un-archived run dir/, 'names the recreated-dir consequence');
+  const resolved = section.indexOf('archive/{run-id}/');
+  const other = section.search(/other run dir\(s\) need\s+human action/);
+  assert.ok(resolved > 0 && other > resolved, 'the archive-path resolution must precede the other-run log instruction');
+  assert.match(section, /log to the path resolved above \(else\s+`\$PIPELINE_RUN_DIR`\) and report\s+"\{N\} other run dir\(s\)/, 'the other-run log line targets the resolved path, falling back to $PIPELINE_RUN_DIR');
+});
+
 test('Deliverable 2: auto-merge-short-circuit records why it writes no console.json (#3297)', () => {
   const prFirst = AUTO_MERGE.indexOf('Fast-lane auto-merge: issue #{n}, assess-agent-autonomy verdict auto-merge (see RATIONALE), pr-first-merge outcome');
   const localMerge = AUTO_MERGE.indexOf('**`integration-model: local-merge`:**', prFirst);
