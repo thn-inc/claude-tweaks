@@ -43,8 +43,8 @@ function shellFences(text) {
   const all = text.split(/\r?\n/);
   const fences = [];
   for (let i = 0; i < all.length; i++) {
-    const quoted = QUOTE_PREFIX_RE.test(all[i]);
-    const strip = (l) => (quoted ? l.replace(QUOTE_PREFIX_RE, '') : l);
+    const inBlockquote = QUOTE_PREFIX_RE.test(all[i]);
+    const strip = (l) => (inBlockquote ? l.replace(QUOTE_PREFIX_RE, '') : l);
     const open = /^\s*(`{3,}|~{3,})\s*(.*?)\s*$/.exec(strip(all[i]));
     if (!open) continue;
     const marker = open[1];
