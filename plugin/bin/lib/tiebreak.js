@@ -197,8 +197,8 @@ const squash = (s) => s.replace(/\s+/g, ' ').trim();
 // word characters), so `}` or `c` can never verify against a window.
 function evidenceProblem(evidence, finding, line, readFile) {
   if (evidence.path !== finding.path) return 'evidence-path-mismatch';
-  if (squash(evidence.quote) === '') return 'evidence-unverified';
-  if (!/[A-Za-z0-9_]{3,}/.test(squash(evidence.quote))) return 'evidence-unverified';
+  const quote = squash(evidence.quote);
+  if (!/[A-Za-z0-9_]{3,}/.test(quote)) return 'evidence-unverified';
   if (Math.abs(evidence.line - line) > LINE_TOLERANCE_REPRODUCTION_WIDE) return 'evidence-unverified';
   if (typeof readFile !== 'function') return 'evidence-unverified';
   let text;
@@ -210,7 +210,7 @@ function evidenceProblem(evidence, finding, line, readFile) {
   const lo = Math.max(1, line - LINE_TOLERANCE_REPRODUCTION_WIDE);
   const hi = Math.min(lines.length, line + LINE_TOLERANCE_REPRODUCTION_WIDE);
   const window = squash(lines.slice(lo - 1, hi).join(' '));
-  return window.includes(squash(evidence.quote)) ? null : 'evidence-unverified';
+  return window.includes(quote) ? null : 'evidence-unverified';
 }
 
 function stamp(now) {
@@ -234,6 +234,7 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
   const shownLine = line !== null ? line : String(finding.line ?? 'unknown');
   const reporterSev = reporterSeverityOf(finding);
   const tiebreakSev = parsed.severity;
+  const higherSev = higher(reporterSev, tiebreakSev) || 'medium';
   const where = `lens "${finding.lens}" finding ${finding.path}:${shownLine}`;
   const result = (fields) => ({
     id, evidence: null, recommendation: parsed.recommendation, listInConsole: false, parse: parsed.parse, ...fields,
@@ -256,12 +257,11 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
   else reason = evidenceProblem(parsed.evidence, finding, line, readFile);
 
   if (reason) {
-    const sev = higher(reporterSev, tiebreakSev) || 'medium';
-    const outcome = severityRank(sev) >= severityRank('medium') ? 'console' : 'digest';
+    const outcome = severityRank(higherSev) >= severityRank('medium') ? 'console' : 'digest';
     const log = outcome === 'console'
-      ? entry('STAGED', tiebreakStep, neutralize(`${where} console: ${reason}. Severity: ${sev}. Recommendation: ${parsed.recommendation ?? 'none'}.`))
-      : entry('AUTO', tiebreakStep, neutralize(`${where} digested: ${reason}. Severity: ${sev}.`));
-    return result({ outcome, severity: sev, reason, ...log });
+      ? entry('STAGED', tiebreakStep, neutralize(`${where} console: ${reason}. Severity: ${higherSev}. Recommendation: ${parsed.recommendation ?? 'none'}.`))
+      : entry('AUTO', tiebreakStep, neutralize(`${where} digested: ${reason}. Severity: ${higherSev}.`));
+    return result({ outcome, severity: higherSev, reason, ...log });
   }
 
   const ev = parsed.evidence;
@@ -274,11 +274,10 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
       ...entry('AUTO', 'Reproduction', `${where} confirmed by tiebreak:${id}. Confirmed.`),
     });
   }
-  const sev = higher(reporterSev, tiebreakSev) || 'medium';
-  const text = `${where} dropped: refuted by tiebreak. Evidence: ${ev.path}:${ev.line} "${ev.quote}". Severity: ${sev}.`;
+  const text = `${where} dropped: refuted by tiebreak. Evidence: ${ev.path}:${ev.line} "${ev.quote}". Severity: ${higherSev}.`;
   return result({
-    outcome: 'drop', severity: sev, evidence: ev, reason: 'refuted by tiebreak',
-    listInConsole: sev === 'high' || sev === 'critical', ...entry('AUTO', tiebreakStep, neutralize(text)),
+    outcome: 'drop', severity: higherSev, evidence: ev, reason: 'refuted by tiebreak',
+    listInConsole: higherSev === 'high' || higherSev === 'critical', ...entry('AUTO', tiebreakStep, neutralize(text)),
   });
 }
 
@@ -322,13 +321,13 @@ function buildFindingsArtifact(findings) {
 
 function readFindingsArtifact(dir) {
   const file = path.join(dir, FINDINGS_ARTIFACT);
+  const invalid = { present: true, valid: false, findings: null };
   try {
     fs.lstatSync(file);
   } catch (err) {
     if (err && err.code === 'ENOENT') return { present: false, valid: true, findings: null };
-    return { present: true, valid: false, findings: null };
+    return invalid;
   }
-  const invalid = { present: true, valid: false, findings: null };
   let parsed;
   try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return invalid; }
   if (!Array.isArray(parsed)) return invalid;
