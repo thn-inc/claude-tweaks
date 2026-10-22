@@ -168,7 +168,7 @@ test("this repo's own CLAUDE.md claude-tweaks Pipeline section conforms to the l
   const r = checkConformance({ templateSource: readText(TEMPLATE), projectClaudeMd: claudeMd });
   assert.ok(
     r.conformant.includes('claude-tweaks Pipeline'),
-    'CLAUDE.md claude-tweaks Pipeline section drifted from the live template (Integration model paragraph or specify-auto-continue clause differs)',
+    `CLAUDE.md claude-tweaks Pipeline section is not conformant to the live template (missing: ${JSON.stringify(r.missing.map((m) => m.section))}, drifted: ${JSON.stringify(r.drifted.map((d) => d.section))}) — the Integration model paragraph or specify-auto-continue clause likely differs`,
   );
 });
 
