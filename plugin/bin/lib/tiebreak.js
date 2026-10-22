@@ -156,8 +156,10 @@ const LINE_BREAK_RE = /[\r\n\u2028\u2029]/;
 const MARKER_RE = /tiebreak:/i;
 // The finding fields every verdict line echoes back.
 const ECHOED_FIELDS = ['lens', 'path', 'line'];
-const badEchoedField = (finding, key) => typeof finding[key] === 'string'
-  && (LINE_BREAK_RE.test(finding[key]) || MARKER_RE.test(finding[key]));
+function badEchoedField(finding, key) {
+  const value = finding[key];
+  return typeof value === 'string' && (LINE_BREAK_RE.test(value) || MARKER_RE.test(value));
+}
 
 function knownSeverity(s) {
   if (typeof s !== 'string') return null;
@@ -300,9 +302,10 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
 // each listed id" — matched on the verdict line's own shape (verdictLineRe:
 // the `Tiebreak tiebreak:{id}:` step, or the confirmed line's `confirmed by
 // tiebreak:{id}. Confirmed.`), never on the marker anywhere in a line, so a
-// marker quoted inside another line's text never counts. The #3772 matcher in console/resolve.js (findingKey: lens + first
-// path:line) is unchanged and coarser than the id — two findings that differ
-// only in claim share a key but need two verdict lines here.
+// marker quoted inside another line's text never counts. The #3772 matcher in
+// console/resolve.js (findingKey: lens + first path:line) is unchanged and
+// coarser than the id — two findings that differ only in claim share a key but
+// need two verdict lines here.
 //
 // A present-but-bad artifact is never absent and never valid: readFindingsArtifact
 // reports { present: true, valid: false } so archival can refuse with its own

@@ -42,6 +42,7 @@ const {
 const {
   resolveTiebreak, buildFindingsArtifact, checkRunTiebreakCoverage, FINDINGS_ARTIFACT,
 } = require('./lib/tiebreak');
+const { resolveWithin } = require('./lib/path-guard');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { writeArtifact } = require('./lib/run-artifact/write');
 
@@ -69,6 +70,26 @@ function readJson(file, stderr) {
     stderr(`review-coordination.js: invalid JSON in ${file}: ${err.message}\n`);
     return { failed: true };
   }
+}
+
+// Anchors a run dir under the main checkout. Returns { dir } on success, else
+// { exitCode } after writing the reason to stderr (a missing dir exits
+// `missingExitCode`; an unanchored or unresolvable one exits 3).
+function anchorRunDir(runDir, deps, missingExitCode) {
+  let target;
+  try {
+    target = resolveTarget({ runDir, cwd: deps.cwd(), mainRoot: deps.mainRoot });
+  } catch (err) {
+    deps.stderr(`review-coordination.js: ${err && err.message}\n`);
+    return { exitCode: 3 };
+  }
+  if (target.ok) return { dir: target.dir };
+  if (target.reason === 'missing') {
+    deps.stderr(`review-coordination.js: run dir does not exist: ${runDir}\n`);
+    return { exitCode: missingExitCode };
+  }
+  deps.stderr(`review-coordination.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+  return { exitCode: 3 };
 }
 
 const realDeps = {
@@ -181,12 +202,8 @@ function run(argv, deps = realDeps) {
     }
     // Throws (→ evidence-unverified) for a path that resolves outside --root.
     const readFile = (p) => {
-      const realRoot = fs.realpathSync(root);
-      const real = fs.realpathSync(path.resolve(realRoot, p));
-      const rel = path.relative(realRoot, real);
-      if (rel === '' || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
-        throw new Error(`evidence path is outside --root: ${p}`);
-      }
+      const real = resolveWithin(path.resolve(root, p), root);
+      if (real === null) throw new Error(`evidence path is outside --root or does not resolve: ${p}`);
       return fs.readFileSync(real, 'utf8');
     };
     deps.stdout(JSON.stringify(resolveTiebreak(input.value, reply, { readFile })) + '\n');
@@ -206,18 +223,10 @@ function run(argv, deps = realDeps) {
       deps.stderr(`review-coordination.js: invalid findings in ${rest[1]}: ${err.message}\n`);
       return 2;
     }
-    let target;
-    try { target = resolveTarget({ runDir: rest[0], cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch (err) {
-      deps.stderr(`review-coordination.js: ${err && err.message}\n`);
-      return 3;
-    }
-    if (!target.ok) {
-      if (target.reason === 'missing') deps.stderr(`review-coordination.js: run dir does not exist: ${rest[0]}\n`);
-      else deps.stderr(`review-coordination.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${rest[0]} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
-      return 3;
-    }
+    const anchored = anchorRunDir(rest[0], deps, 3);
+    if (anchored.exitCode !== undefined) return anchored.exitCode;
     try {
-      const result = writeArtifact({ runDir: target.dir, name: FINDINGS_ARTIFACT, content: JSON.stringify(artifact, null, 2) + '\n' });
+      const result = writeArtifact({ runDir: anchored.dir, name: FINDINGS_ARTIFACT, content: JSON.stringify(artifact, null, 2) + '\n' });
       deps.stdout(JSON.stringify({ path: result.file, count: artifact.length }) + '\n');
     } catch (err) {
       deps.stderr(`review-coordination.js: could not write ${FINDINGS_ARTIFACT} (${err && err.message})\n`);
@@ -230,23 +239,12 @@ function run(argv, deps = realDeps) {
       deps.stderr('review-coordination.js: check-coverage takes exactly 1 run-dir\n' + USAGE);
       return 2;
     }
-    let target;
-    try { target = resolveTarget({ runDir: rest[0], cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch (err) {
-      deps.stderr(`review-coordination.js: ${err && err.message}\n`);
-      return 3;
-    }
-    if (!target.ok && target.reason === 'missing') {
-      deps.stderr(`review-coordination.js: run dir does not exist: ${rest[0]}\n`);
-      return 2;
-    }
-    if (!target.ok) {
-      deps.stderr(`review-coordination.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${rest[0]} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
-      return 3;
-    }
+    const anchored = anchorRunDir(rest[0], deps, 2);
+    if (anchored.exitCode !== undefined) return anchored.exitCode;
     // listSpecDirs comes from the archive module so tiebreak.js never requires
     // it; loaded here so the other verbs never pay for that module.
     const { listSpecDirs } = require('./lib/reconcile/archive-merged');
-    deps.stdout(JSON.stringify(checkRunTiebreakCoverage(target.dir, listSpecDirs(target.dir))) + '\n');
+    deps.stdout(JSON.stringify(checkRunTiebreakCoverage(anchored.dir, listSpecDirs(anchored.dir))) + '\n');
     return 0;
   }
   deps.stderr(`review-coordination.js: unknown command: ${command === undefined ? '(none)' : command}\n` + USAGE);
