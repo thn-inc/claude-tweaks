@@ -51,8 +51,11 @@ test('console prose: the appendix withholds a Defer-reason-bearing Defers: no, a
 test('console prose: the appendix sdd-ruling bullet states the console-auto rule with the code\'s reason literals', () => {
   assert.match(APPENDIX, ws('--policy console-auto'));
   assert.match(APPENDIX, ws('`Defers: no`'));
-  assert.match(APPENDIX, ws(`pending — ${SDD_RULING_REASONS.NO_DEFER_REASON}`));
-  assert.match(APPENDIX, ws(`pending — ${SDD_RULING_REASONS.UNCLASSIFIED}`));
+  // Every reason the code can emit, not two named fields: a reason added to
+  // SDD_RULING_REASONS later must also be stated in the appendix bullet.
+  const reasons = Object.values(SDD_RULING_REASONS);
+  assert.ok(reasons.length >= 2, 'SDD_RULING_REASONS exposes its reasons');
+  for (const reason of reasons) assert.match(APPENDIX, ws(`pending — ${reason}`));
 });
 
 test('reconciler prose: console-execution.md states the third exception and console-on-pr.md the stagedPath field', () => {
