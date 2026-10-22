@@ -11,6 +11,10 @@ const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 const { buildFindingsArtifact, resolveTiebreak, checkTiebreakCoverage, findingId } = require('../plugin/bin/lib/tiebreak');
 const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
+const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
+const { categoriseReproduction, findingsMatch, LINE_TOLERANCE_REPRODUCTION_WIDE } = require('../plugin/bin/lib/coordination');
+const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
+const { resolveAll } = require('../plugin/bin/lib/console/resolve');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const TIEBREAK = path.join(SKILLS, 'review', 'step3-tiebreak.md');
@@ -19,24 +23,61 @@ const CODE_MODE_STEPS = path.join(SKILLS, 'review', 'code-mode-steps.md');
 // A fact-list predicate: the facts whose pattern the text no longer matches.
 const missingFactsOf = (patterns) => (text) => patterns.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
 
-// Per-assertion go-red proof: strip every match of one pattern from the live text (global, so a phrase the
-// file states twice cannot survive the removal), and the shared predicate must report exactly that one fact.
+// The opposite predicate for retired wording: the facts whose pattern the text still matches.
+const leftoverFactsOf = (patterns) => (text) => patterns.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+
+// The pattern as a global regex, so a phrase a file states twice cannot survive a strip.
+const globalOf = (pattern) => new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
+
+// Per-assertion go-red proof: strip every match of one pattern from the live text, and the shared
+// predicate must report exactly that one fact.
 function assertEachPatternGoesRed(text, patterns, missingOf) {
   for (const [pattern, fact] of patterns) {
-    const global = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
-    const doctored = text.replace(global, '');
+    const doctored = text.replace(globalOf(pattern), '');
     assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
     assert.deepEqual(missingOf(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
   }
 }
 
+// A section-scoped fact list: [pick(texts), pattern, fact]. The go-red proof strips the pattern from the picked
+// region only, then runs the same predicate over the doctored texts.
+function sectionFactsMissing(facts) {
+  return (texts) => facts.filter(([pick, pattern]) => !pattern.test(pick(texts))).map(([, , fact]) => fact);
+}
+function assertEachSectionFactGoesRed(texts, facts, missingOf) {
+  for (const [pick, pattern, fact] of facts) {
+    const region = pick(texts);
+    const doctoredRegion = region.replace(globalOf(pattern), '');
+    assert.notEqual(doctoredRegion, region, `anchor text for "${fact}" not found — proof cannot discriminate`);
+    const doctored = Object.fromEntries(Object.entries(texts).map(([key, text]) => [key, text.replace(region, () => doctoredRegion)]));
+    assert.ok(missingOf(doctored).includes(fact), `removing "${fact}" must turn its assertion red`);
+  }
+}
+
+// The text from `startMarker` up to the next `nextMarker` (or the end of the text); '' when `startMarker` is absent.
+function sliceSection(text, startMarker, nextMarker) {
+  const start = text.indexOf(startMarker);
+  if (start === -1) return '';
+  const next = text.indexOf(nextMarker, start + 1);
+  return text.slice(start, next === -1 ? text.length : next);
+}
+
+// The text from a start anchor up to the next end anchor (the end anchor is excluded).
+function between(text, startAnchor, endAnchor) {
+  const start = text.indexOf(startAnchor);
+  assert.notEqual(start, -1, `step3-debate-and-refutation.md lost its "${startAnchor}" anchor`);
+  const end = text.indexOf(endAnchor, start + startAnchor.length);
+  assert.notEqual(end, -1, `step3-debate-and-refutation.md lost its "${endAnchor}" anchor after "${startAnchor}"`);
+  return text.slice(start, end);
+}
+
+const lineStartingWith = (text, prefix) => text.split('\n').find((line) => line.startsWith(prefix)) || '';
+
 // The body of a `## {heading}` section, up to the next `## ` heading (or the end of the file).
 function sectionOf(text, heading) {
-  const start = text.indexOf(`\n## ${heading}\n`);
-  assert.notEqual(start, -1, `step3-tiebreak.md lost its "## ${heading}" section`);
-  const bodyStart = start + 1;
-  const next = text.indexOf('\n## ', bodyStart + 1);
-  return text.slice(bodyStart, next === -1 ? text.length : next);
+  const section = sliceSection(text, `\n## ${heading}\n`, '\n## ');
+  assert.notEqual(section, '', `step3-tiebreak.md lost its "## ${heading}" section`);
+  return section.slice(1);
 }
 
 // The first fenced block of a section: the dispatch template.
@@ -121,16 +162,21 @@ test('AC1.3 the entry-status assertion can go red', () => {
 
 // --- AC2.1 / AC2.2 / AC12.1: the dispatch prompt ---
 
-const DISPATCH_TEMPLATE = [
-  [/\[Use: Capable/, 'the model profile line is [Use: Capable'],
+// The reply format the tiebreak template and the Per-Candidate Refutation template both ask for.
+const REPLY_FORMAT = [
   [/Verdict: confirmed \| refuted \| cant-tell/, 'the Verdict reply line'],
   [/Evidence: \{path\}:\{line\}/, 'the Evidence reply line'],
+  [/whole (cited )?source line/, 'the evidence quote is the whole cited source line'],
   [/Severity: critical \| high \| medium \| low \| info/, 'the Severity reply line'],
   [/Recommendation: file \| drop/, 'the Recommendation reply line'],
   [/the last non-empty line of your reply must then read exactly one of: DONE \/ DONE_WITH_CONCERNS \/ NEEDS_CONTEXT \/ BLOCKED, labeled `STATUS: \{WORD\}`/, 'the trailing STATUS instruction'],
+];
+
+const DISPATCH_TEMPLATE = [
+  [/\[Use: Capable/, 'the model profile line is [Use: Capable'],
+  ...REPLY_FORMAT,
   [/\[\.\.\. READ-ONLY REVIEW line, verbatim from the review-dispatch bundle's Read-only Reviewer Discipline section \.\.\.\]/, 'the READ-ONLY REVIEW placeholder line'],
   [/SCRATCH: \{ctx-dir\}\/agent-scratch\/\{agent-id\}/, 'the SCRATCH line'],
-  [/whole (cited )?source line/, 'the evidence quote is the whole cited source line'],
   [/- \{one-line claim\} \(\{severity\}\)/, 'the contested positions line shape'],
 ];
 const dispatchTemplateMissing = missingFactsOf(DISPATCH_TEMPLATE);
@@ -401,9 +447,7 @@ test('code-mode-steps wiring assertions can go red', () => {
 // --- step3-lens-dispatch.md: low tier and the Direct-verification override route through the tiebreak ---
 
 const STEP3 = path.join(SKILLS, 'review', 'step3-lens-dispatch.md');
-const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
 
-const lineStartingWith = (text, prefix) => text.split('\n').find((line) => line.startsWith(prefix)) || '';
 const lowTierParagraph = (text) => lineStartingWith(text, '**Low-tier single-read dispatch (`low` only).**');
 const overrideParagraph = (text) => lineStartingWith(text, '> **Direct-verification override.**');
 
@@ -417,7 +461,7 @@ const LOW_TIER_FORBIDDEN = [
   [/confirmed via direct verification/, 'the old direct-verification confirmation log line'],
 ];
 const lowTierMissing = missingFactsOf(LOW_TIER_REQUIRED);
-const lowTierLeftovers = (text) => LOW_TIER_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+const lowTierLeftovers = leftoverFactsOf(LOW_TIER_FORBIDDEN);
 
 test('AC4.1 low tier hands findings to the tiebreak', () => {
   const paragraph = lowTierParagraph(readText(STEP3));
@@ -441,7 +485,7 @@ const OVERRIDE_REQUIRED = [
 ];
 const OVERRIDE_FORBIDDEN = [[/the resolution path that actually confirms/, 'the resolution-path-that-actually-confirms sentence']];
 const overrideMissing = missingFactsOf(OVERRIDE_REQUIRED);
-const overrideLeftovers = (text) => OVERRIDE_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+const overrideLeftovers = leftoverFactsOf(OVERRIDE_FORBIDDEN);
 
 test('AC4.2 the override stays documented and emits a resolver verdict line', () => {
   const paragraph = overrideParagraph(readText(STEP3));
@@ -486,14 +530,6 @@ test('AC10.1 the rail assertion can go red', () => {
 const DEBATE = path.join(SKILLS, 'review', 'step3-debate-and-refutation.md');
 const debateText = () => readText(DEBATE);
 
-// The text from a start anchor up to the next end anchor (the end anchor is excluded).
-function between(text, startAnchor, endAnchor) {
-  const start = text.indexOf(startAnchor);
-  assert.notEqual(start, -1, `step3-debate-and-refutation.md lost its "${startAnchor}" anchor`);
-  const end = text.indexOf(endAnchor, start + startAnchor.length);
-  assert.notEqual(end, -1, `step3-debate-and-refutation.md lost its "${endAnchor}" anchor after "${startAnchor}"`);
-  return text.slice(start, end);
-}
 const refutationStep4 = (text) => between(text, '4. **Dispatch one refutation agent', '5. **Resolve.**');
 const refutationStep5 = (text) => between(text, '5. **Resolve.**', 'After Step 3.5, every finding has a final bucket');
 const gapSweepSection = (text) => between(text, '## Step 3.6: Gap-Sweep', '## Post-fan-out sweep');
@@ -503,16 +539,11 @@ const refutationNote = (text) => lineStartingWith(text, '> **Parallel execution:
 // AC5.1: the refutation template keeps "try to FALSIFY" and replies in the tiebreak fields.
 const REFUTATION_TEMPLATE_REQUIRED = [
   [/You are trying to FALSIFY this finding/, 'the template still asks the agent to try to FALSIFY the finding'],
-  [/Verdict: confirmed \| refuted \| cant-tell/, 'the Verdict reply line is the tiebreak vocabulary'],
-  [/Evidence: \{path\}:\{line\}/, 'the Evidence reply line'],
-  [/whole (cited )?source line/, 'the evidence quote is the whole cited source line'],
-  [/Severity: critical \| high \| medium \| low \| info/, 'the Severity reply line'],
-  [/Recommendation: file \| drop/, 'the Recommendation reply line'],
-  [/the last non-empty line of your reply must then read exactly one of: DONE \/ DONE_WITH_CONCERNS \/ NEEDS_CONTEXT \/ BLOCKED, labeled `STATUS: \{WORD\}`/, 'the trailing STATUS instruction'],
+  ...REPLY_FORMAT,
 ];
 const REFUTATION_TEMPLATE_FORBIDDEN = [[/refuted \/ not-refuted/, 'the retired "refuted / not-refuted" verdict line']];
 const refutationTemplateMissing = missingFactsOf(REFUTATION_TEMPLATE_REQUIRED);
-const refutationTemplateLeftovers = (text) => REFUTATION_TEMPLATE_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+const refutationTemplateLeftovers = leftoverFactsOf(REFUTATION_TEMPLATE_FORBIDDEN);
 
 test('AC5.1 refutation template replies in the tiebreak fields and drops not-refuted', () => {
   const step4 = refutationStep4(debateText());
@@ -530,7 +561,7 @@ test('AC5.1 the refutation-template assertions can go red', () => {
 const NOTE_REQUIRED = [[/returns a `confirmed`\/`refuted`\/`cant-tell` verdict/, 'the note names the tiebreak verdict vocabulary']];
 const NOTE_FORBIDDEN = [[/`refuted`\/`not-refuted` verdict/, 'the retired refuted/not-refuted verdict wording']];
 const noteMissing = missingFactsOf(NOTE_REQUIRED);
-const noteLeftovers = (text) => NOTE_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+const noteLeftovers = leftoverFactsOf(NOTE_FORBIDDEN);
 
 test('AC5.1 the parallel-execution note names the tiebreak verdicts', () => {
   const note = refutationNote(debateText());
@@ -562,7 +593,7 @@ const REFUTATION_RULE_FORBIDDEN = [
   [/`not-refuted`/, 'the retired not-refuted verdict'],
 ];
 const refutationRuleMissing = missingFactsOf(REFUTATION_RULE);
-const refutationRuleLeftovers = (text) => REFUTATION_RULE_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+const refutationRuleLeftovers = leftoverFactsOf(REFUTATION_RULE_FORBIDDEN);
 
 test("AC5.2 step 5 feeds the reply to resolve-tiebreak and hands can't-tell to Step 3.7", () => {
   const step5 = refutationStep5(debateText());
@@ -623,7 +654,7 @@ test('gap-sweep hand-off: the assertion can go red', () => {
 const FINAL_BUCKET_REQUIRED = [[/Step 3\.7[^\n]*`step3-tiebreak\.md`|`step3-tiebreak\.md`[^\n]*Step 3\.7/, 'the paragraph points unconfirmed and contested findings at Step 3.7 (step3-tiebreak.md)']];
 const FINAL_BUCKET_FORBIDDEN = [[/are already staged to the Wrap-Up Console/, 'the stale already-staged sentence']];
 const finalBucketMissing = missingFactsOf(FINAL_BUCKET_REQUIRED);
-const finalBucketLeftovers = (text) => FINAL_BUCKET_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+const finalBucketLeftovers = leftoverFactsOf(FINAL_BUCKET_FORBIDDEN);
 
 test('final bucket: unconfirmed and contested findings go to Step 3.7', () => {
   const paragraph = finalBucketParagraph(debateText());
@@ -663,10 +694,9 @@ test('code-mode-steps.md verb-citation assertions can go red', () => {
 const ROUTING = path.join(SKILLS, 'review', 'step3-routing.md');
 const routingText = () => readText(ROUTING);
 const inputsSection = (text) => between(text, '## Inputs\n', '**`unconfirmed` findings can originate');
-const sourceBullet = (text, prefix) => lineStartingWith(text, prefix);
-const lowTierBullet = (text) => sourceBullet(text, '- Low-tier single-read (Step 3');
-const noReproBullet = (text) => sourceBullet(text, '- No reproduction agreement (Step 3)');
-const refutationBullet = (text) => sourceBullet(text, '- A `confirmed` finding downgraded by the Per-Candidate Refutation Pass');
+const lowTierBullet = (text) => lineStartingWith(text, '- Low-tier single-read (Step 3');
+const noReproBullet = (text) => lineStartingWith(text, '- No reproduction agreement (Step 3)');
+const refutationBullet = (text) => lineStartingWith(text, '- A `confirmed` finding downgraded by the Per-Candidate Refutation Pass');
 const surfacingParagraph = (text) => lineStartingWith(text, '**Effort-tier surfacing.**');
 const xhighParagraph = (text) => lineStartingWith(text, 'At **`xhigh` and above**');
 const maxParagraph = (text) => lineStartingWith(text, 'At **`max`**');
@@ -675,7 +705,7 @@ const ROUTING_FORBIDDEN = [
   [/the Direct-verification override is the only path to `confirmed`/, 'the override is the only path to confirmed for the low tier'],
   [/where it is the designed confirmation path/, 'the override is the designed confirmation path for the low tier'],
 ];
-const routingLeftovers = (text) => ROUTING_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+const routingLeftovers = leftoverFactsOf(ROUTING_FORBIDDEN);
 
 test('AC6.1 step3-routing.md no longer bypasses the tiebreak', () => {
   const text = routingText();
@@ -726,64 +756,52 @@ test('AC6.1 the Inputs assertion can go red', () => {
   assertEachPatternGoesRed(inputsSection(routingText()), ROUTING_INPUTS, routingInputsMissing);
 });
 
+// Routing facts are section-scoped over { routing }, so the shared fact-list helpers apply.
+const routingTexts = () => ({ routing: routingText() });
+
 const SOURCE_BULLETS = [
-  [(text) => noReproBullet(text), /resolve-tiebreak/, 'the Direct-verification override resolves through resolve-tiebreak'],
-  [(text) => noReproBullet(text), /Mode: inline\./, 'the override marks its verdict Mode: inline.'],
-  [(text) => lowTierBullet(text), /goes to the tiebreak \(`step3-tiebreak\.md`\)/, 'the low-tier bullet hands findings to the tiebreak'],
-  [(text) => refutationBullet(text), /Step 3\.7/, 'the refutation bullet hands the downgraded finding to Step 3.7'],
-  [(text) => refutationBullet(text), /can't-tell/, "the refutation bullet names the can't-tell downgrade"],
+  [({ routing }) => noReproBullet(routing), /resolve-tiebreak/, 'the Direct-verification override resolves through resolve-tiebreak'],
+  [({ routing }) => noReproBullet(routing), /Mode: inline\./, 'the override marks its verdict Mode: inline.'],
+  [({ routing }) => lowTierBullet(routing), /goes to the tiebreak \(`step3-tiebreak\.md`\)/, 'the low-tier bullet hands findings to the tiebreak'],
+  [({ routing }) => refutationBullet(routing), /Step 3\.7/, 'the refutation bullet hands the downgraded finding to Step 3.7'],
+  [({ routing }) => refutationBullet(routing), /can't-tell/, "the refutation bullet names the can't-tell downgrade"],
 ];
-const sourceBulletsMissing = (text) => SOURCE_BULLETS.filter(([pick, pattern]) => !pattern.test(pick(text))).map(([, , fact]) => fact);
+const sourceBulletsMissing = sectionFactsMissing(SOURCE_BULLETS);
 
 test('AC6.1 the unconfirmed-source bullets say the tiebreak settles these findings', () => {
-  const text = routingText();
-  for (const [pick, , fact] of SOURCE_BULLETS) assert.notEqual(pick(text), '', `bullet not found for "${fact}"`);
-  assert.deepEqual(sourceBulletsMissing(text), [], 'the source bullets must route through the tiebreak');
+  const texts = routingTexts();
+  for (const [pick, , fact] of SOURCE_BULLETS) assert.notEqual(pick(texts), '', `bullet not found for "${fact}"`);
+  assert.deepEqual(sourceBulletsMissing(texts), [], 'the source bullets must route through the tiebreak');
 });
 
 test('AC6.1 the source-bullet assertions can go red', () => {
-  const text = routingText();
-  for (const [pick, pattern, fact] of SOURCE_BULLETS) {
-    const bullet = pick(text);
-    const global = new RegExp(pattern.source, `${pattern.flags}g`);
-    const doctored = text.replace(bullet, bullet.replace(global, ''));
-    assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
-    assert.ok(sourceBulletsMissing(doctored).includes(fact), `removing "${fact}" must turn its assertion red`);
-  }
+  assertEachSectionFactGoesRed(routingTexts(), SOURCE_BULLETS, sourceBulletsMissing);
 });
 
 const SURFACING = [
-  [(text) => surfacingParagraph(text), /Step 3\.7's `confirmed` outcome \(`step3-tiebreak\.md`\)/, "unconfirmed/contested findings reach the table only through Step 3.7's confirmed outcome"],
-  [(text) => surfacingParagraph(text), /`console` outcome reaches the Wrap-Up Review Console through the finding's earlier STAGED line/, "a tiebreak console outcome reaches the Review Console through the earlier STAGED line"],
-  [(text) => xhighParagraph(text), /can't-tell/, "the xhigh paragraph names the tiebreak's can't-tell outcomes"],
-  [(text) => xhighParagraph(text), /surfacing inline doesn't remove the staging/, 'the xhigh paragraph keeps the staging wording'],
-  [(text) => maxParagraph(text), /on top of the .{0,40}rows `xhigh` already added/, 'the max paragraph still stacks on the xhigh rows'],
-  [(text) => maxParagraph(text), /staged to `staged\/review-contested-\{N\}\.md` as before/, 'the max paragraph keeps the contested staging wording'],
+  [({ routing }) => surfacingParagraph(routing), /Step 3\.7's `confirmed` outcome \(`step3-tiebreak\.md`\)/, "unconfirmed/contested findings reach the table only through Step 3.7's confirmed outcome"],
+  [({ routing }) => surfacingParagraph(routing), /`console` outcome reaches the Wrap-Up Review Console through the finding's earlier STAGED line/, "a tiebreak console outcome reaches the Review Console through the earlier STAGED line"],
+  [({ routing }) => xhighParagraph(routing), /can't-tell/, "the xhigh paragraph names the tiebreak's can't-tell outcomes"],
+  [({ routing }) => xhighParagraph(routing), /surfacing inline doesn't remove the staging/, 'the xhigh paragraph keeps the staging wording'],
+  [({ routing }) => maxParagraph(routing), /on top of the .{0,40}rows `xhigh` already added/, 'the max paragraph still stacks on the xhigh rows'],
+  [({ routing }) => maxParagraph(routing), /staged to `staged\/review-contested-\{N\}\.md` as before/, 'the max paragraph keeps the contested staging wording'],
 ];
-const surfacingMissing = (text) => SURFACING.filter(([pick, pattern]) => !pattern.test(pick(text))).map(([, , fact]) => fact);
+const surfacingMissing = sectionFactsMissing(SURFACING);
 
 test('AC6.1 the effort-tier surfacing paragraphs route through the tiebreak and keep the staging wording', () => {
-  const text = routingText();
-  for (const [pick, , fact] of SURFACING) assert.notEqual(pick(text), '', `paragraph not found for "${fact}"`);
-  assert.deepEqual(surfacingMissing(text), []);
+  const texts = routingTexts();
+  for (const [pick, , fact] of SURFACING) assert.notEqual(pick(texts), '', `paragraph not found for "${fact}"`);
+  assert.deepEqual(surfacingMissing(texts), []);
 });
 
 test('AC6.1 the surfacing assertions can go red', () => {
-  const text = routingText();
-  for (const [pick, pattern, fact] of SURFACING) {
-    const paragraph = pick(text);
-    const global = new RegExp(pattern.source, `${pattern.flags}g`);
-    const doctored = text.replace(paragraph, paragraph.replace(global, ''));
-    assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
-    assert.ok(surfacingMissing(doctored).includes(fact), `removing "${fact}" must turn its assertion red`);
-  }
+  assertEachSectionFactGoesRed(routingTexts(), SURFACING, surfacingMissing);
 });
 
 // --- multi-agent-coordination.md: the reproduction bucket rule and the unconfirmed stage path (AC9.1 / AC9.2) ---
 
 const COORDINATION_DOC = path.join(SKILLS, '_shared', 'multi-agent-coordination.md');
 const coordinationText = () => readText(COORDINATION_DOC);
-const { categoriseReproduction, findingsMatch } = require('../plugin/bin/lib/coordination');
 
 // AC9.1: the doc states the straddling pair still reproduces, and stages a description file, not a patch.
 const COORDINATION_REQUIRED = [
@@ -795,7 +813,7 @@ const COORDINATION_FORBIDDEN = [
   [/review-unconfirmed-\{n\}\.patch/, 'the stale .patch stage path'],
 ];
 const coordinationMissing = missingFactsOf(COORDINATION_REQUIRED);
-const coordinationLeftovers = (text) => COORDINATION_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+const coordinationLeftovers = leftoverFactsOf(COORDINATION_FORBIDDEN);
 
 test('AC9.1 multi-agent-coordination.md states the straddle rule and the .md stage path', () => {
   const text = coordinationText();
@@ -839,29 +857,24 @@ test('AC9.2 the straddle assertion can go red', () => {
 
 const MATERIALITY_FLOOR = path.join(SKILLS, '_shared', 'materiality-floor.md');
 const materialityText = () => readText(MATERIALITY_FLOOR);
-const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
 
 // The text of the floor's `### Tiebreak can't-tell value` subsection, up to the next heading.
-function tiebreakValueSection(text) {
-  const start = text.indexOf("### Tiebreak can't-tell value");
-  if (start === -1) return '';
-  const next = text.indexOf('\n### ', start + 1);
-  return text.slice(start, next === -1 ? text.length : next);
-}
+const tiebreakValueSection = (text) => sliceSection(text, "### Tiebreak can't-tell value", '\n### ');
 
 const TIEBREAK_VALUE = [
   [/Defer-reason: tiebreak-cant-tell/, 'the floor documents the Defer-reason: tiebreak-cant-tell value'],
   [/step3-tiebreak\.md/, 'the floor names step3-tiebreak.md as the producer'],
   [/Deliberately \*\*not\*\* in `DEFER_REASONS`/, 'the floor says the value is deliberately not in DEFER_REASONS'],
 ];
-const tiebreakValueMissing = (text) => missingFactsOf(TIEBREAK_VALUE)(tiebreakValueSection(text));
+const tiebreakValueFactsMissing = missingFactsOf(TIEBREAK_VALUE);
+const tiebreakValueMissing = (text) => tiebreakValueFactsMissing(tiebreakValueSection(text));
 
 test('R1 materiality-floor.md documents Defer-reason: tiebreak-cant-tell, produced by step3-tiebreak.md, outside DEFER_REASONS', () => {
   assert.deepEqual(tiebreakValueMissing(materialityText()), [], "the floor's Tiebreak can't-tell value subsection must carry every fact");
 });
 
 test('R1 the materiality-floor assertions can go red', () => {
-  assertEachPatternGoesRed(tiebreakValueSection(materialityText()), TIEBREAK_VALUE, missingFactsOf(TIEBREAK_VALUE));
+  assertEachPatternGoesRed(tiebreakValueSection(materialityText()), TIEBREAK_VALUE, tiebreakValueFactsMissing);
   assert.deepEqual(tiebreakValueMissing('## no such subsection'), TIEBREAK_VALUE.map(([, fact]) => fact), 'a floor without the subsection fails every fact');
 });
 
@@ -890,45 +903,30 @@ const SKILL_GRAPH = path.join(__dirname, '..', 'docs', 'skill-graph.md');
 const skillGraphText = () => fs.readFileSync(SKILL_GRAPH, 'utf8');
 
 // The `## review` section, up to the next `## ` heading.
-function reviewGraphSection(text) {
-  const start = text.indexOf('\n## review\n');
-  if (start === -1) return '';
-  const next = text.indexOf('\n## ', start + 1);
-  return text.slice(start, next === -1 ? text.length : next);
-}
-const graphRow = (section, prefix) => section.split('\n').find((line) => line.startsWith(prefix)) || '';
+const reviewGraphSection = (text) => sliceSection(text, '\n## review\n', '\n## ');
+const graphRowOf = (prefix) => ({ graph }) => lineStartingWith(reviewGraphSection(graph), prefix);
 
-const COORDINATION_ROW = '| `bin/review-coordination.js` |';
+const coordinationRow = graphRowOf('| `bin/review-coordination.js` |');
+const subagentCoreRow = graphRowOf('| `_shared/subagent-dispatch-core.md` |');
 const GRAPH_ROWS = [
-  [COORDINATION_ROW, /step3-tiebreak\.md/, 'the review-coordination row names step3-tiebreak.md'],
-  [COORDINATION_ROW, /resolve-tiebreak/, 'the review-coordination row names resolve-tiebreak'],
-  [COORDINATION_ROW, /write-findings/, 'the review-coordination row names write-findings'],
-  ['| `_shared/materiality-floor.md` |', /tiebreak-cant-tell/, 'the materiality-floor row names tiebreak-cant-tell'],
-  ['| `_shared/subagent-dispatch-core.md` |', /tiebreak/, 'the subagent-dispatch-core row names the tiebreak'],
-  ['| `_shared/subagent-dispatch-core.md` |', /nested/i, 'the subagent-dispatch-core row names the nested-children rule'],
+  [coordinationRow, /step3-tiebreak\.md/, 'the review-coordination row names step3-tiebreak.md'],
+  [coordinationRow, /resolve-tiebreak/, 'the review-coordination row names resolve-tiebreak'],
+  [coordinationRow, /write-findings/, 'the review-coordination row names write-findings'],
+  [graphRowOf('| `_shared/materiality-floor.md` |'), /tiebreak-cant-tell/, 'the materiality-floor row names tiebreak-cant-tell'],
+  [subagentCoreRow, /tiebreak/, 'the subagent-dispatch-core row names the tiebreak'],
+  [subagentCoreRow, /nested/i, 'the subagent-dispatch-core row names the nested-children rule'],
 ];
-const graphRowsMissing = (text) => {
-  const section = reviewGraphSection(text);
-  return GRAPH_ROWS.filter(([prefix, pattern]) => !pattern.test(graphRow(section, prefix))).map(([, , fact]) => fact);
-};
+const graphRowsMissing = sectionFactsMissing(GRAPH_ROWS);
 
 test('AC11.1 the review section of skill-graph.md records the tiebreak edges', () => {
-  assert.deepEqual(graphRowsMissing(skillGraphText()), []);
+  assert.deepEqual(graphRowsMissing({ graph: skillGraphText() }), []);
 });
 
 test('AC11.1 the graph-row assertions can go red', () => {
-  const text = skillGraphText();
-  const section = reviewGraphSection(text);
-  assert.ok(section.length > 0, 'the ## review section exists');
-  for (const [prefix, pattern, fact] of GRAPH_ROWS) {
-    const row = graphRow(section, prefix);
-    assert.ok(row, `anchor row for "${fact}" not found`);
-    const global = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
-    const doctoredRow = row.replace(global, '');
-    assert.notEqual(doctoredRow, row, `anchor text for "${fact}" not found in its row`);
-    assert.ok(graphRowsMissing(text.replace(row, doctoredRow)).includes(fact), `removing "${fact}" must turn its assertion red`);
-  }
-  assert.equal(graphRowsMissing('## other\n').length, GRAPH_ROWS.length, 'a graph without the review section fails every fact');
+  const texts = { graph: skillGraphText() };
+  assert.ok(reviewGraphSection(texts.graph).length > 0, 'the ## review section exists');
+  assertEachSectionFactGoesRed(texts, GRAPH_ROWS, graphRowsMissing);
+  assert.equal(graphRowsMissing({ graph: '## other\n' }).length, GRAPH_ROWS.length, 'a graph without the review section fails every fact');
 });
 
 function listSkillFiles(dir) {
@@ -954,22 +952,6 @@ test('AC11.1 the SKILL.md scan can go red', () => {
 
 // ===== Final-review fix wave (#3947, F1-F16) =====
 
-// A section-scoped fact list: [pick(texts), pattern, fact]. The go-red proof strips the pattern from the picked
-// region only, then runs the same predicate over the doctored texts.
-function sectionFactsMissing(facts) {
-  return (texts) => facts.filter(([pick, pattern]) => !pattern.test(pick(texts))).map(([, , fact]) => fact);
-}
-function assertEachSectionFactGoesRed(texts, facts, missingOf) {
-  for (const [pick, pattern, fact] of facts) {
-    const region = pick(texts);
-    const global = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
-    const doctoredRegion = region.replace(global, '');
-    assert.notEqual(doctoredRegion, region, `anchor text for "${fact}" not found — proof cannot discriminate`);
-    const doctored = Object.fromEntries(Object.entries(texts).map(([key, text]) => [key, text.replace(region, () => doctoredRegion)]));
-    assert.ok(missingOf(doctored).includes(fact), `removing "${fact}" must turn its assertion red`);
-  }
-}
-
 const SUMMARY_TEMPLATE = path.join(SKILLS, 'review', 'review-summary-template.md');
 const liveTexts = () => ({
   tiebreak: tiebreakText(),
@@ -983,13 +965,7 @@ const hungParagraph = (texts) => lineStartingWith(texts.step3, '**Hung or non-re
 const overrideOf = (texts) => overrideParagraph(texts.step3);
 const refutationTemplateOf = (texts) => refutationStep4(texts.debate);
 const compactForm = (texts) => between(texts.template, '## Compact form — clean PASS', '```markdown');
-function templateTiebreakSection(texts) {
-  const full = texts.template.slice(texts.template.indexOf('## Full template'));
-  const start = full.indexOf('\n### Tiebreak\n');
-  if (start === -1) return '';
-  const next = full.indexOf('\n### ', start + 1);
-  return full.slice(start, next === -1 ? full.length : next);
-}
+const templateTiebreakSection = (texts) => sliceSection(texts.template.slice(texts.template.indexOf('## Full template')), '\n### Tiebreak\n', '\n### ');
 
 const FIX_WAVE = [
   // F1: reading never confirms a vacuity claim.
@@ -1096,7 +1072,6 @@ test('F6 the refutation template input is the allowlist only', () => {
 });
 
 // F15: the evidence window the prose states is the resolver's own constant.
-const { LINE_TOLERANCE_REPRODUCTION_WIDE } = require('../plugin/bin/lib/coordination');
 const windowFacts = (n) => [
   [tiebreakTemplate, new RegExp(`a line within ${n} of Location`), "the tiebreak template states the resolver's evidence window"],
   [refutationTemplateOf, new RegExp(`a line within ${n} of \\{line\\}`), "the refutation template states the resolver's evidence window"],
@@ -1117,7 +1092,6 @@ test('F15 the evidence-window twin pin can go red', () => {
 
 // F5: the documented STAGED lines surface at the Review Console and a tiebreak `confirmed` supersedes them,
 // run through the real console/resolve.js and the real resolver.
-const { resolveAll } = require('../plugin/bin/lib/console/resolve');
 
 function consoleLowItems(decisions) {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tiebreak-console-'));
@@ -1158,7 +1132,7 @@ function confirmedEntryFor(lens) {
   const reply = `Verdict: confirmed\nEvidence: src/a.js:4 \`${SOURCE_LINES[3].trim()}\`\nSeverity: medium\nRecommendation: file — real\nSTATUS: DONE`;
   const resolved = resolveTiebreak(finding, reply, { readFile: () => SOURCE_LINES.join('\n'), now: NOW });
   assert.equal(resolved.outcome, 'confirmed');
-  return formatEntry({ status: resolved.logStatus, now: NOW, step: resolved.logStep, text: resolved.logText, reversibility: 'high' });
+  return renderVerdictLine(resolved);
 }
 
 function consoleProblems(template) {
