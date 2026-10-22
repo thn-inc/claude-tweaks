@@ -1,7 +1,13 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { findingId, parseTiebreakReply, resolveTiebreak, VERDICTS, SEVERITIES } = require('../../plugin/bin/lib/tiebreak');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const {
+  findingId, parseTiebreakReply, resolveTiebreak, VERDICTS, SEVERITIES,
+  FINDINGS_ARTIFACT, buildFindingsArtifact, readFindingsArtifact, checkTiebreakCoverage, checkRunTiebreakCoverage,
+} = require('../../plugin/bin/lib/tiebreak');
 
 const WELL_FORMED = [
   'Verdict: confirmed',
@@ -391,4 +397,119 @@ test('every verdict line carries tiebreak:{id} (AC7.1)', () => {
     assert.ok(r.logLine.includes(`tiebreak:${r.id}`), r.logLine);
   }
   assert.equal(results[0].id, findingId(FINDING));
+});
+
+// ---- findings artifact and verdict coverage (#3945 Task 3) ----
+
+function tmpDir(t) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'tiebreak-cov-'));
+  t.after(() => fs.rmSync(d, { recursive: true, force: true }));
+  return d;
+}
+
+const RAW = [
+  { lens: 'correctness', path: 'plugin/bin/a.js', line: 10, claim: 'reads fd without a guard', reporterSeverity: 'high', kind: 'single-read' },
+  { lens: 'security', path: 'plugin/bin/b.js', line: 7, claim: 'shell string built from input', reporterSeverity: 'medium', kind: 'contested' },
+];
+
+function writeFindings(dir, findings) {
+  fs.writeFileSync(path.join(dir, FINDINGS_ARTIFACT), JSON.stringify(findings));
+}
+
+function verdictFor(f) {
+  return `- AUTO 10:00:00 — Tiebreak tiebreak:${findingId(f)}: lens "${f.lens}" finding ${f.path}:${f.line} digested: x.`;
+}
+
+test('artifact round-trips (AC7.1)', (t) => {
+  const dir = tmpDir(t);
+  const built = buildFindingsArtifact(RAW);
+  assert.equal(FINDINGS_ARTIFACT, 'review-findings.json');
+  assert.deepEqual(built.map((f) => f.id), RAW.map(findingId));
+  assert.deepEqual(Object.keys(built[0]).sort(), ['claim', 'id', 'kind', 'lens', 'line', 'path', 'reporterSeverity']);
+  writeFindings(dir, built);
+  assert.deepEqual(readFindingsArtifact(dir), { present: true, valid: true, findings: built });
+  assert.throws(() => buildFindingsArtifact([{ ...RAW[0], lens: undefined }]), TypeError);
+  assert.throws(() => buildFindingsArtifact([{ ...RAW[0], path: '' }]), TypeError);
+  assert.throws(() => buildFindingsArtifact([{ ...RAW[0], claim: undefined }]), TypeError);
+  assert.throws(() => buildFindingsArtifact([{ ...RAW[0], kind: 'other' }]), TypeError);
+});
+
+test('coverage returns exactly the uncovered ids (AC7.1)', (t) => {
+  const dir = tmpDir(t);
+  const built = buildFindingsArtifact(RAW);
+  writeFindings(dir, built);
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `${verdictFor(RAW[0])}\n`);
+  assert.deepEqual(checkTiebreakCoverage(dir), { artifactPresent: true, artifactValid: true, missing: [built[1].id] });
+  fs.rmSync(path.join(dir, 'decisions.md'));
+  assert.deepEqual(checkTiebreakCoverage(dir).missing, built.map((f) => f.id));
+});
+
+test('empty missing when every id has a line (AC7.1)', (t) => {
+  const dir = tmpDir(t);
+  writeFindings(dir, buildFindingsArtifact(RAW));
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `${RAW.map(verdictFor).join('\n')}\n`);
+  assert.deepEqual(checkTiebreakCoverage(dir), { artifactPresent: true, artifactValid: true, missing: [] });
+});
+
+test('same lens+path:line, different claims → two ids, two lines needed (AC7.1)', (t) => {
+  const dir = tmpDir(t);
+  const a = { ...RAW[0], claim: 'reads fd without a guard' };
+  const b = { ...RAW[0], claim: 'never closes the fd' };
+  assert.notEqual(findingId(a), findingId(b));
+  writeFindings(dir, buildFindingsArtifact([a, b]));
+  // The #3772 matcher (console/resolve.js findingKey) keys on lens + first
+  // path:line, so it gives both findings the same key — coarser than the id.
+  const keyOf = (l) => `${/\blens\s+"?([A-Za-z0-9_-]+)"?/i.exec(l)[1]}|${/([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+)/.exec(l).slice(1, 3).join(':')}`;
+  assert.equal(keyOf(verdictFor(a)), keyOf(verdictFor(b)));
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `${verdictFor(a)}\n`);
+  assert.deepEqual(checkTiebreakCoverage(dir).missing, [findingId(b)]);
+  fs.appendFileSync(path.join(dir, 'decisions.md'), `${verdictFor(b)}\n`);
+  assert.deepEqual(checkTiebreakCoverage(dir).missing, []);
+});
+
+test('malformed artifact → artifactValid false (AC8.1)', (t) => {
+  const good = buildFindingsArtifact(RAW);
+  const bad = {
+    'invalid JSON': '{not json',
+    'non-array': JSON.stringify({ findings: good }),
+    'entry missing id': JSON.stringify([good[0], { lens: 'x', path: 'p', line: 1 }]),
+    'entry missing lens': JSON.stringify([{ id: 'abc', path: 'p' }]),
+    'entry missing path': JSON.stringify([{ id: 'abc', lens: 'x' }]),
+    'non-object entry': JSON.stringify([null]),
+  };
+  for (const [label, body] of Object.entries(bad)) {
+    const dir = tmpDir(t);
+    fs.writeFileSync(path.join(dir, FINDINGS_ARTIFACT), body);
+    assert.deepEqual(readFindingsArtifact(dir), { present: true, valid: false, findings: null }, label);
+    assert.deepEqual(checkTiebreakCoverage(dir), { artifactPresent: true, artifactValid: false, missing: [] }, label);
+  }
+  // Present but unreadable (a directory in the file's place) is also invalid, never absent.
+  const dir = tmpDir(t);
+  fs.mkdirSync(path.join(dir, FINDINGS_ARTIFACT));
+  assert.deepEqual(readFindingsArtifact(dir), { present: true, valid: false, findings: null });
+});
+
+test('absent artifact → artifactPresent false, nothing missing', (t) => {
+  const dir = tmpDir(t);
+  assert.deepEqual(readFindingsArtifact(dir), { present: false, valid: true, findings: null });
+  assert.deepEqual(checkTiebreakCoverage(dir), { artifactPresent: false, artifactValid: true, missing: [] });
+});
+
+test('run-level aggregation includes spec-* subdirs', (t) => {
+  const run = tmpDir(t);
+  const built = buildFindingsArtifact(RAW);
+  writeFindings(run, [built[0]]);
+  fs.mkdirSync(path.join(run, 'spec-3945'));
+  writeFindings(path.join(run, 'spec-3945'), [built[1]]);
+  fs.mkdirSync(path.join(run, 'spec-4000'));
+  assert.deepEqual(checkRunTiebreakCoverage(run, ['spec-3945', 'spec-4000']), {
+    artifactPresent: true, artifactValid: true, missing: [built[0].id, `spec-3945/${built[1].id}`],
+  });
+  fs.writeFileSync(path.join(run, 'spec-3945', 'decisions.md'), `${verdictFor(RAW[1])}\n`);
+  assert.deepEqual(checkRunTiebreakCoverage(run, ['spec-3945']).missing, [built[0].id]);
+  fs.writeFileSync(path.join(run, 'spec-4000', FINDINGS_ARTIFACT), 'garbage');
+  const r = checkRunTiebreakCoverage(run, ['spec-3945', 'spec-4000']);
+  assert.equal(r.artifactValid, false);
+  assert.equal(r.artifactPresent, true);
+  assert.deepEqual(checkRunTiebreakCoverage(tmpDir(t), ['spec-1']), { artifactPresent: false, artifactValid: true, missing: [] });
 });

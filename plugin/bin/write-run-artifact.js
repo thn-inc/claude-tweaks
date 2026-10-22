@@ -7,7 +7,8 @@
 // (verify-expectations.json), this (the names in
 // bin/lib/run-artifact/write.js's ARTIFACT_NAMES — today
 // sdd-dispatch-sample.txt, /build's AC-forwarding sample, and
-// sdd-final-review.md, the SDD final review).
+// sdd-final-review.md, the SDD final review, and review-findings.json, the
+// review's tiebreak finding list).
 //   node bin/write-run-artifact.js --run <run-dir> --name <artifact> (--file <src> | --delete) [--help]
 // --file reads the source file as UTF-8 text (the allowlisted artifacts
 // are text: a reviewer prompt, a review) and writes it to

@@ -1,6 +1,7 @@
 // bin/lib/tiebreak.js — finding identity and the tiebreak-reply parser (#3945).
-// Pure: no fs, no process (file reads go through the injected readFile). The
-// resolver at the bottom maps a parsed reply to a ruling.
+// The parser and resolver are pure: no fs, no process (file reads go through the
+// injected readFile). Only the findings-artifact reader and coverage check at the
+// bottom touch the filesystem.
 //
 // findingId({ lens, path, line, claim }): the first 12 hex chars of
 // sha1([lens, path, String(line), normClaim].join('\n')), where normClaim is
@@ -32,6 +33,8 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const { severityRank, LINE_TOLERANCE_REPRODUCTION_WIDE } = require('./coordination');
 
 const VERDICTS = ['confirmed', 'refuted', 'cant-tell'];
@@ -244,4 +247,82 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
   });
 }
 
-module.exports = { findingId, parseTiebreakReply, resolveTiebreak, VERDICTS, SEVERITIES };
+// ---- findings artifact and verdict coverage (#3945 Task 3) ----
+//
+// review-findings.json (a run-dir artifact, in run-artifact/write.js's
+// ARTIFACT_NAMES) lists every finding the review handed to tiebreak, each with
+// its findingId. Every resolveTiebreak logLine carries the literal
+// `tiebreak:{id}`, so coverage is "does decisions.md hold that literal for each
+// listed id". The #3772 matcher in console/resolve.js (findingKey: lens + first
+// path:line) is unchanged and coarser than the id — two findings that differ
+// only in claim share a key but need two verdict lines here.
+//
+// A present-but-bad artifact is never absent and never valid: readFindingsArtifact
+// reports { present: true, valid: false } so archival can refuse with its own
+// reason. Only a missing file is { present: false, valid: true } (nothing enforced).
+
+const FINDINGS_ARTIFACT = 'review-findings.json';
+const FINDING_KINDS = ['single-read', 'contested'];
+
+function buildFindingsArtifact(findings) {
+  if (!Array.isArray(findings)) throw new TypeError('findings must be an array');
+  return findings.map((f, i) => {
+    if (!f || typeof f !== 'object') throw new TypeError(`finding ${i} is not an object`);
+    for (const key of ['lens', 'path', 'claim']) {
+      if (typeof f[key] !== 'string' || f[key].trim() === '') throw new TypeError(`finding ${i} is missing ${key}`);
+    }
+    if (!FINDING_KINDS.includes(f.kind)) throw new TypeError(`finding ${i} kind must be one of ${FINDING_KINDS.join(', ')}`);
+    return {
+      id: findingId(f), lens: f.lens, path: f.path, line: f.line, claim: f.claim,
+      reporterSeverity: f.reporterSeverity ?? null, kind: f.kind,
+    };
+  });
+}
+
+function readFindingsArtifact(dir) {
+  const file = path.join(dir, FINDINGS_ARTIFACT);
+  try {
+    fs.lstatSync(file);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return { present: false, valid: true, findings: null };
+    return { present: true, valid: false, findings: null };
+  }
+  const invalid = { present: true, valid: false, findings: null };
+  let parsed;
+  try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return invalid; }
+  if (!Array.isArray(parsed)) return invalid;
+  const wellFormed = parsed.every((e) => e && typeof e === 'object'
+    && ['id', 'lens', 'path'].every((k) => typeof e[k] === 'string' && e[k] !== ''));
+  return wellFormed ? { present: true, valid: true, findings: parsed } : invalid;
+}
+
+function checkTiebreakCoverage(dir) {
+  const art = readFindingsArtifact(dir);
+  if (!art.present || !art.valid) return { artifactPresent: art.present, artifactValid: art.valid, missing: [] };
+  let decisions = '';
+  try { decisions = fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'); } catch { /* absent or unreadable: no lines */ }
+  const lines = decisions.split(/\r?\n/);
+  const missing = art.findings
+    .filter((f) => !lines.some((l) => l.includes(`tiebreak:${f.id}`)))
+    .map((f) => f.id);
+  return { artifactPresent: true, artifactValid: true, missing };
+}
+
+// specDirs are basenames such as `spec-3945` (the caller derives them, so this
+// module never requires reconcile/archive-merged.js).
+function checkRunTiebreakCoverage(runDir, specDirs) {
+  const targets = [{ dir: runDir, prefix: '' }, ...(specDirs || []).map((s) => ({ dir: path.join(runDir, s), prefix: `${s}/` }))];
+  const out = { artifactPresent: false, artifactValid: true, missing: [] };
+  for (const { dir, prefix } of targets) {
+    const r = checkTiebreakCoverage(dir);
+    if (r.artifactPresent) out.artifactPresent = true;
+    if (!r.artifactValid) out.artifactValid = false;
+    out.missing.push(...r.missing.map((id) => `${prefix}${id}`));
+  }
+  return out;
+}
+
+module.exports = {
+  findingId, parseTiebreakReply, resolveTiebreak, VERDICTS, SEVERITIES,
+  FINDINGS_ARTIFACT, buildFindingsArtifact, readFindingsArtifact, checkTiebreakCoverage, checkRunTiebreakCoverage,
+};
