@@ -35,7 +35,8 @@
 // #3370: when the id that landed matches no Review Console SECTION_MAP prefix
 // (console/resolve.js), a warning naming the nearest canonical prefixes goes to
 // stderr after the write. It never changes the exit code; a canonical id prints
-// nothing.
+// nothing, and neither does an exempt one (#3488: resolve.js's STAGING_EXEMPTIONS —
+// producers whose runs never reach that console).
 // The staged/ half of #637 ("no CLI writes decisions.md or staged/ items");
 // bin/log-decision.js is the decisions.md half, shipped under #686.
 // `--ledger <path>` (#3510) turns one call into the whole carry-forward: read the
@@ -77,7 +78,7 @@ const {
 } = require('./lib/stage-item/write');
 const { carryForward } = require('./lib/stage-item/ledger');
 const { resolveLedgerPath } = require('./lib/wrap-up/ledger-write');
-const { classifyStagedItem, nearestCanonicalPrefixes } = require('./lib/console/resolve');
+const { classifyStagedItem, nearestCanonicalPrefixes, stagingExemption } = require('./lib/console/resolve');
 
 const USAGE = 'usage: stage-item.js --run <run-dir> --id <kind>-<n> --file <path> [--json <path>] [--allocate] [--ledger <path> --item <text> --label <noun> [--phase <phase>] [--section <heading>] (requires --allocate)] [--help]\n';
 
@@ -117,6 +118,7 @@ const realDeps = {
 // prefix — a wrap-up Review Console resolving this run would park it in
 // Pending review. Not every staging producer's run reaches that console.
 function warnUnmappedPrefix(landedId, sourceFile, deps) {
+  if (stagingExemption(landedId + path.extname(sourceFile)) !== null) return;
   if (classifyStagedItem(landedId + path.extname(sourceFile)).reason === 'unmapped-prefix') {
     deps.stderr(`stage-item.js: warning: --id ${landedId} matches no Review Console SECTION_MAP prefix — if a wrap-up Review Console resolves this run, it routes this item to Pending review (unmapped-prefix), never auto-resolved. Nearest canonical prefixes: ${nearestCanonicalPrefixes(landedId).join(', ')}\n`);
   }
