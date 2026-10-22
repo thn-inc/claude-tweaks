@@ -379,6 +379,18 @@ test('lens dispatch Scratch path forbids a ; sequence and a carried shell variab
   );
 });
 
+// #3876: the refutation and gap-sweep SCRATCH lines are the other two agent prompts that
+// state the recipe, so they carry the same ban rather than drifting from the lens paragraph.
+test('refutation and gap-sweep SCRATCH lines forbid a ; sequence and a carried shell variable (#3876)', () => {
+  const debate = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-debate-and-refutation.md'));
+  const clause = 'nor a `;` sequence, and no shell variable carried between calls: spell the scratch path out as a literal absolute path in every call';
+  assert.strictEqual(
+    debate.split(clause).length - 1,
+    2,
+    'step3-debate-and-refutation.md must carry the ; / carried-variable ban in both its SCRATCH lines (#3876)',
+  );
+});
+
 test('go-red control: the pre-#3675 Scratch path fails the citation assertion (#3675)', () => {
   // Frozen tail of the pre-#3675 paragraph: shell-safe recipe present, no contract citation.
   const OLD =
