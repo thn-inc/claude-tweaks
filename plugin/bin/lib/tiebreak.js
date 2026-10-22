@@ -262,7 +262,7 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
 // reason. Only a missing file is { present: false, valid: true } (nothing enforced).
 
 const FINDINGS_ARTIFACT = 'review-findings.json';
-const FINDING_KINDS = ['single-read', 'contested'];
+const FINDING_KINDS = ['unconfirmed', 'contested'];
 
 function buildFindingsArtifact(findings) {
   if (!Array.isArray(findings)) throw new TypeError('findings must be an array');

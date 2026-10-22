@@ -408,7 +408,7 @@ function tmpDir(t) {
 }
 
 const RAW = [
-  { lens: 'correctness', path: 'plugin/bin/a.js', line: 10, claim: 'reads fd without a guard', reporterSeverity: 'high', kind: 'single-read' },
+  { lens: 'correctness', path: 'plugin/bin/a.js', line: 10, claim: 'reads fd without a guard', reporterSeverity: 'high', kind: 'unconfirmed' },
   { lens: 'security', path: 'plugin/bin/b.js', line: 7, claim: 'shell string built from input', reporterSeverity: 'medium', kind: 'contested' },
 ];
 
@@ -432,6 +432,12 @@ test('artifact round-trips (AC7.1)', (t) => {
   assert.throws(() => buildFindingsArtifact([{ ...RAW[0], path: '' }]), TypeError);
   assert.throws(() => buildFindingsArtifact([{ ...RAW[0], claim: undefined }]), TypeError);
   assert.throws(() => buildFindingsArtifact([{ ...RAW[0], kind: 'other' }]), TypeError);
+});
+
+test('kind vocabulary is unconfirmed | contested; single-read is rejected (#3945)', () => {
+  assert.equal(buildFindingsArtifact([{ ...RAW[0], kind: 'unconfirmed' }])[0].kind, 'unconfirmed');
+  assert.equal(buildFindingsArtifact([{ ...RAW[0], kind: 'contested' }])[0].kind, 'contested');
+  assert.throws(() => buildFindingsArtifact([{ ...RAW[0], kind: 'single-read' }]), TypeError);
 });
 
 test('coverage returns exactly the uncovered ids (AC7.1)', (t) => {

@@ -79,7 +79,7 @@ test('#3945: review-findings.json is allowlisted; traversal forms of it are not'
   assert.equal(isArtifactName(name), true);
   assert.equal(isArtifactName('../review-findings.json'), false);
   assert.equal(isArtifactName('staged/review-findings.json'), false);
-  const content = '[{"id":"abc123def456","lens":"x","path":"p.js","line":1,"claim":"c","reporterSeverity":"high","kind":"single-read"}]\n';
+  const content = '[{"id":"abc123def456","lens":"x","path":"p.js","line":1,"claim":"c","reporterSeverity":"high","kind":"unconfirmed"}]\n';
   const r = writeArtifact({ runDir, name, content });
   assert.equal(r.file, path.join(runDir, name));
   assert.equal(fs.readFileSync(r.file, 'utf8'), content);
