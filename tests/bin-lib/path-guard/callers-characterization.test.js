@@ -312,6 +312,29 @@ test('#3642 context-cost: a source resolving to the plugin root itself still esc
   assert.equal(parseComposeCallLine(composeLine(''), '/r/plugin').unparsed, true);
 });
 
+// The #3892 sweep-shadow cases pin the run-dir containment check's strictness
+// (the root itself, and anything outside it, is not swept). They pass before and
+// after the isPathContained migration.
+
+const { sweepShadow } = require('../../../plugin/bin/lib/hooks/sweep-shadow');
+
+test('#3892 sweep-shadow: a run dir outside the anchored root takes the not-under diagnostic, not a sweep', () => {
+  const root = fresh();
+  const outside = fresh();
+  assert.deepEqual(sweepShadow({ runRoot: root, pipelineRunDir: outside, worktree: fresh() }), {
+    lines: [`sweep: ${fs.realpathSync(outside)} is not under ${fs.realpathSync(root)} — not swept`],
+    diagnostic: true,
+  });
+});
+
+test('#3892 sweep-shadow: the anchored root itself is not a run dir (strictness kept)', () => {
+  const root = fresh();
+  assert.deepEqual(sweepShadow({ runRoot: root, pipelineRunDir: root, worktree: fresh() }), {
+    lines: [`sweep: ${fs.realpathSync(root)} is not under ${fs.realpathSync(root)} — not swept`],
+    diagnostic: true,
+  });
+});
+
 // visual-decide/server.js keeps a builtins-only copy of the containment check
 // (#1202 AC 8 bars non-builtin imports there); this pins it to the shared
 // primitive's accept/reject verdict on this host.

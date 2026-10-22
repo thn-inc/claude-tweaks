@@ -22,6 +22,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { isPathContained } = require('../shared-primitives');
 
 // Mirrors the bash `cd "$X" 2>/dev/null && pwd -P` idiom: resolves symlinks
 // and returns the canonical absolute path only when `p` is a real,
@@ -110,13 +111,12 @@ function sweepShadow({ runRoot, pipelineRunDir, worktree }) {
 
   let root;
   try { root = fs.realpathSync(runRoot); } catch { root = runRoot; }
-  const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
 
-  if (!runDir.startsWith(rootWithSep)) {
+  if (!isPathContained(runDir, root)) {
     return { lines: [`sweep: ${runDir} is not under ${root} — not swept`], diagnostic: true };
   }
 
-  const rel = runDir.slice(rootWithSep.length);
+  const rel = path.relative(root, runDir);
   const shadow = path.join(wt, rel);
 
   // #1493/#1494: a `*-tidy-standalone*` (or, since sweep's shared run dir,
