@@ -325,7 +325,7 @@ function ledgerResidue({
     try {
       text = run(['cat-file', '-p', `${tip}:${p}`]);
     } catch {
-      text = null;
+      /* unreadable blob: stays null, classified as ledger-read-failed */
     }
     const reason = classifyLedgerCandidate({ path: p, text, runDirNames });
     if (reason) skip(p, reason);

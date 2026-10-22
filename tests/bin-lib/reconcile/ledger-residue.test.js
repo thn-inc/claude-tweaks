@@ -10,6 +10,8 @@ const {
   attributedRunDir, classifyLedgerCandidate, partitionByRemovalPrs, decideLedgerResidue, defaultListRunDirs,
   defaultListRemovalPrs, defaultCreatePr, ledgerResidue,
 } = require('../../../plugin/bin/lib/reconcile/ledger-residue');
+const { reconcile, ALL_CHECKS } = require('../../../plugin/bin/lib/reconcile');
+const { formatSummary } = require('../../../plugin/bin/lib/reconcile/format-summary');
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -443,9 +445,6 @@ test('fetch failure fails the whole check closed', () => {
   assert.strictEqual(r.failure, 'fetch-failed');
   assert.deepStrictEqual(r.entries, []);
 });
-
-const { reconcile, ALL_CHECKS } = require('../../../plugin/bin/lib/reconcile');
-const { formatSummary } = require('../../../plugin/bin/lib/reconcile/format-summary');
 
 test("index: ALL_CHECKS and BACKGROUND_CHECKS include 'ledger-residue'; dispatch sits between remote-prune and reap", () => {
   assert.ok(ALL_CHECKS.includes('ledger-residue'));
