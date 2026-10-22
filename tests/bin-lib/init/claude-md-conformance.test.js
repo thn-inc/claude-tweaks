@@ -162,6 +162,16 @@ test('claude-tweaks Pipeline section does not forbid /superpowers:writing-plans 
   );
 });
 
+test("this repo's own CLAUDE.md claude-tweaks Pipeline section conforms to the live template (#3859)", () => {
+  const claudeMd = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'CLAUDE.md'), 'utf8');
+  const r = checkConformance({ templateSource: fs.readFileSync(TEMPLATE, 'utf8'), projectClaudeMd: claudeMd });
+  assert.ok(
+    r.conformant.includes('claude-tweaks Pipeline'),
+    'CLAUDE.md claude-tweaks Pipeline section drifted from the live template (Integration model paragraph or specify-auto-continue clause differs)',
+  );
+  assert.ok(!r.drifted.some((d) => d.section === 'claude-tweaks Pipeline'));
+});
+
 const TPL = [
   '## Initial Mode Template',
   '',

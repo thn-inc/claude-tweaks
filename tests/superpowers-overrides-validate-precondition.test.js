@@ -47,7 +47,11 @@ for (const segments of TARGETS) {
   });
 }
 
-test('CLAUDE.md still carries its own specify-auto-continue clause alongside the new one (no accidental deletion)', () => {
-  const line = overridesLine('CLAUDE.md');
-  assert.match(line, /specify-auto-continue/, 'the pre-existing clause this repo carries beyond the shipped template must survive the edit');
-});
+for (const segments of TARGETS) {
+  const file = segments.join('/');
+
+  test(`${file}: Superpowers overrides line carries the specify-auto-continue clause (#3859)`, () => {
+    const line = overridesLine(...segments);
+    assert.match(line, /specify-auto-continue/, `${file}'s Superpowers overrides line must state the specify-auto-continue clause, so the shipped template and CLAUDE.md stay in sync`);
+  });
+}
