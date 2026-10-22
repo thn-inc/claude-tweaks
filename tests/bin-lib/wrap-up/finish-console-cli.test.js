@@ -195,6 +195,18 @@ test('finish-console refuses a ledger row with an unescaped raw pipe before writ
   assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'verify-expectations.json, decisions.md and the ledger must be byte-identical');
 });
 
+test('finish-console refuses a ledger with duplicate row numbers before writing any artifact (#3834)', () => {
+  const runDir = makeRunDir();
+  fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE.replace('| 2 | test | Flaky selector', '| 1 | test | Flaky selector'));
+  const before = snapshotArtifacts(runDir);
+  const payload = JSON.stringify({ memory: [{ file: 'memory/foo.md', indexFile: 'MEMORY.md' }], ledger: [{ item: 1, status: 'accepted', resolution: 'ratified' }] });
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { input: payload });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /ledger pre-flight failed at ledger\[0\]: .*duplicate row number\(s\) #1/);
+  assert.match(r.stderr, /nothing written/);
+  assert.deepStrictEqual(snapshotArtifacts(runDir), before, 'verify-expectations.json, decisions.md and the ledger must be byte-identical');
+});
+
 test('finish-console rejects an invalid ledger status (e.g. "open") at payload validation, before any write', () => {
   const runDir = makeRunDir();
   fs.writeFileSync(path.join(runDir, 'ledger.md'), LEDGER_SAMPLE);

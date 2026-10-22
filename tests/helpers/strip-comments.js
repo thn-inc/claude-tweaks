@@ -1,8 +1,8 @@
 'use strict';
 const vm = require('node:vm');
 // Shared literal-aware comment stripper for the source-scan conformance tests
-// (#3536, #3585): the windows-hide, git-status, path-guard and exit-code scans
-// call it per file. Comments are blanked, never deleted: every non-newline
+// (#3536, #3585): the windows-hide, git-status, path-guard, path-containment, exit-code
+// and wall-clock-budget (#3491, in `literals: 'blank'` mode) scans call it per file. Comments are blanked, never deleted: every non-newline
 // character of a comment becomes a space, so offsets and line numbers stay stable.
 //
 // One left-to-right scanner models string literals, template literals (their
@@ -10,7 +10,10 @@ const vm = require('node:vm');
 // verbatim — a quote, backtick, `//` or `/*` inside one stays code and never opens
 // a fake string or comment. A hashbang first line is kept as is. An unterminated
 // string, template, regex or block comment ends at the end of its line or of the
-// input and never throws.
+// input and never throws. `{ literals: 'blank' }` also blanks string, template-text
+// and regex literal bodies, for operator scans that must not read literal text as
+// code (a `\` directly before a newline, a string's line continuation, stays); the
+// default `'keep'` leaves them verbatim. Any other `literals` value throws a TypeError.
 //
 // Whether a `/` that is not a comment opener begins a regex or is division follows
 // the previous significant token: a regex after nothing, after a punctuator other
@@ -49,29 +52,35 @@ function slashStartsRegex(prev) {
 }
 
 // End index of the string literal opening at `i`: just past its closing quote, or
-// at a newline (not consumed) or the end of input when it is unterminated.
-function scanString(src, i) {
+// at a newline (not consumed) or the end of input when it is unterminated. The
+// body between the quotes is handed to `blankBody`.
+function scanString(src, i, blankBody) {
   const quote = src[i];
-  i++;
-  while (i < src.length) {
-    const ch = src[i];
-    if (ch === '\\') i += 2;
-    else if (ch === quote) return i + 1;
-    else if (ch === '\n') return i;
-    else i++;
+  const bodyStart = i + 1;
+  i = bodyStart;
+  while (i < src.length && src[i] !== quote && src[i] !== '\n') {
+    if (src[i] !== '\\') i++;
+    else i += src[i + 1] === '\r' && src[i + 2] === '\n' ? 3 : 2; // a CRLF continuation is one escape
   }
-  return src.length;
+  const bodyEnd = Math.min(i, src.length);
+  blankBody(bodyStart, bodyEnd);
+  return src[bodyEnd] === quote ? bodyEnd + 1 : bodyEnd;
 }
 
 // End index of the regex literal opening at `i`: just past its flags, or at a
 // newline (not consumed) or the end of input when it is unterminated. A `/` inside
-// a `[…]` class or after a backslash does not end it.
-function scanRegex(src, i) {
+// a `[…]` class or after a backslash does not end it. The body between the slashes
+// is handed to `blankBody`; the slashes and flags are not.
+function scanRegex(src, i, blankBody) {
   let inClass = false;
+  const bodyStart = i + 1;
   i++;
   while (i < src.length) {
     const ch = src[i];
-    if (ch === '\n') return i;
+    if (ch === '\n') {
+      blankBody(bodyStart, i);
+      return i;
+    }
     if (ch === '\\') {
       i += 2;
       continue;
@@ -79,21 +88,39 @@ function scanRegex(src, i) {
     if (ch === '[') inClass = true;
     else if (ch === ']') inClass = false;
     else if (ch === '/' && !inClass) {
+      blankBody(bodyStart, i);
       i++;
       while (i < src.length && isIdentChar(src[i])) i++;
       return i;
     }
     i++;
   }
+  blankBody(bodyStart, src.length);
   return src.length;
 }
 
-function stripComments(src) {
+function stripComments(src, { literals = 'keep' } = {}) {
+  if (literals !== 'keep' && literals !== 'blank') {
+    throw new TypeError(`stripComments: literals must be 'keep' or 'blank', got ${String(literals)}`);
+  }
   const out = src.split('');
   const n = src.length;
   const blank = (start, end) => {
     for (let k = start; k < end; k++) if (out[k] !== '\n') out[k] = ' ';
   };
+  // A literal body blanks like a comment, except a `\` directly before a newline (a
+  // string's line continuation, LF or CRLF) stays: blanking it would leave an
+  // unterminated string.
+  const keepsContinuation = (k) =>
+    (src[k] === '\\' && (src[k + 1] === '\n' || (src[k + 1] === '\r' && src[k + 2] === '\n'))) ||
+    (src[k] === '\r' && src[k - 1] === '\\' && src[k + 1] === '\n');
+  const blankLiteral = (start, end) => {
+    for (let k = start; k < end; k++) {
+      if (out[k] === '\n' || keepsContinuation(k)) continue;
+      out[k] = ' ';
+    }
+  };
+  const blankBody = literals === 'blank' ? blankLiteral : () => {};
 
   // Scans code from `i`. With `inBrace`, the `}` that closes the enclosing `${`
   // ends the scan. Returns the index to resume at.
@@ -113,14 +140,14 @@ function stripComments(src) {
         blank(i, end);
         i = end;
       } else if (ch === "'" || ch === '"') {
-        i = scanString(src, i);
+        i = scanString(src, i, blankBody);
         prev = LITERAL;
       } else if (ch === '`') {
         i = scanTemplate(i);
         prev = LITERAL;
       } else if (ch === '/') {
         if (slashStartsRegex(prev)) {
-          i = scanRegex(src, i);
+          i = scanRegex(src, i, blankBody);
           prev = LITERAL;
         } else {
           prev = { kind: 'punct', value: '/' };
@@ -152,10 +179,15 @@ function stripComments(src) {
     i++;
     while (i < n) {
       const ch = src[i];
-      if (ch === '\\') i += 2;
-      else if (ch === '`') return i + 1;
+      if (ch === '\\') {
+        blankBody(i, Math.min(i + 2, n));
+        i += 2;
+      } else if (ch === '`') return i + 1;
       else if (ch === '$' && src[i + 1] === '{') i = scanCode(i + 2, true);
-      else i++;
+      else {
+        blankBody(i, i + 1);
+        i++;
+      }
     }
     return n;
   }

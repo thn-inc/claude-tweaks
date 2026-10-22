@@ -144,6 +144,14 @@ When mechanizing a prose heuristic into a deterministic check:
    `merge-verdict.js`'s bare-tier pass pattern stay anchored to the bare tier. Both fail safe
    today because their writers still pass bare tiers. When you widen a writer, grep every
    recogniser of its lines and either widen it with the writer or record why it stays narrow.
+   #3870 then widened `merge-verdict.js`'s pass pattern and `claim-log.js`'s `COMPLETE_RE`, and
+   two things went wrong on the way. Widening the pass pattern to a free-text group (`\(.+\)`)
+   let a tail ride behind the note (`... (x). trailing narrative`), reopening the hole its end
+   anchor had closed. Exclude the group's own boundary sequence (`). `) from its content, and
+   pin a tail-after-group copy. Separately, the plan's recogniser inventory cleared `claim-log.js`
+   on `ACTION_RE`'s property (its writer passes a bare tier) while the same file's `COMPLETE_RE`
+   reads lines the model writes with any tier. Whole-branch review caught it. Inventory
+   recognisers per regex, not per file, and name each one's writer.
    A fuzzy text match is the same leak with no anchor at all. `plugin/bin/lib/plan-audit/checks.js`'s
    Check E (#3099) reads an acceptance-criterion clause as `covered` when the plan quotes its text.
    Its first version was a bare substring `includes()`, so the one-word clause "Last." read as

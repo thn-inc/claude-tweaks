@@ -86,20 +86,25 @@ function resolveLedgerPath({ runDir, worktree, explicit, deps = {} } = {}) {
   return { ok: true, path: candidates[0] };
 }
 
-// Splits a ledger file's text into { preamble, header, separator, rows } —
-// `rows` keyed by item number (string, as it appears in the `#` column).
-// Throws if the file doesn't look like a ledger table at all (no header row
-// found) — a caller mutating a row needs the table to actually be there.
+// Splits a ledger file's text into { preamble, header, separator, rows, trailer,
+// duplicates } — `rows` keyed by item number (string, as it appears in the `#`
+// column). `duplicates` lists each item number that more than one row carries
+// (once each, in first-repeat order; `[]` when none): `rows` keeps only the last
+// such row, so serializeLedgerTable refuses to write a table with duplicates
+// back (#3834). Throws if the file doesn't look like a ledger table at all (no
+// header row found) — a caller mutating a row needs the table to actually be there.
 function parseLedgerTable(text) {
   const lines = text.split('\n');
   const headerIdx = lines.findIndex((l) => /^\|\s*#\s*\|/.test(l));
   if (headerIdx === -1) throw new Error('no ledger table header row found (expected "| # | Phase | Item | Status | Resolution |")');
   const separatorIdx = headerIdx + 1;
   const rows = new Map();
+  const duplicates = [];
   let rowsEnd = separatorIdx + 1;
   for (let i = separatorIdx + 1; i < lines.length; i += 1) {
     const m = lines[i].match(/^\|\s*(\d+)\s*\|/);
     if (!m) { rowsEnd = i; break; }
+    if (rows.has(m[1]) && !duplicates.includes(m[1])) duplicates.push(m[1]);
     rows.set(m[1], lines[i]);
     rowsEnd = i + 1;
   }
@@ -109,10 +114,17 @@ function parseLedgerTable(text) {
     separator: lines[separatorIdx],
     rows,
     trailer: lines.slice(rowsEnd),
+    duplicates,
   };
 }
 
+// Throws when the table holds duplicate row numbers: the Map in `rows` already
+// collapsed them, so writing it back would silently drop a row (#3834).
 function serializeLedgerTable(table) {
+  const duplicates = table.duplicates || [];
+  if (duplicates.length > 0) {
+    throw new Error(`ledger table has duplicate row number(s) ${duplicates.map((n) => `#${n}`).join(', ')} — writing it back would drop a row; renumber by hand (_shared/ledger-format.md's Item Numbering)`);
+  }
   return [...table.preamble, table.header, table.separator, ...table.rows.values(), ...table.trailer].join('\n');
 }
 
