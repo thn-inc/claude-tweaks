@@ -531,7 +531,7 @@ function classifyOwnership(caller, runState, opts = {}) {
     // here too; a caller anywhere inside the recorded worktree resolves to that
     // worktree's root and matches, and a case-only mismatch on a case-insensitive
     // volume reads 'mine'.
-    const canonical = (p) => canonicalRealpath(p, { fsImpl: opts.fsImpl });
+    function canonical(p) { return canonicalRealpath(p, { fsImpl: opts.fsImpl }); }
     const top = info.repoRoot ? (canonical(info.repoRoot) || info.repoRoot) : null;
     if (info.repoRoot && worktreeMatches({ worktree: binding }, top, info.repoRoot, canonical)) return 'mine';
     if (!info.repoRoot || !info.isLinkedWorktree) return 'indeterminate'; // outside any repo, or main checkout — cannot prove foreign
