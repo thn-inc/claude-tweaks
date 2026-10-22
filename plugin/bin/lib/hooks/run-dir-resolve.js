@@ -23,6 +23,7 @@
 const fs = require('fs');
 const path = require('path');
 const wtDetect = require('./worktree-detect');
+const { escapeRegExp } = require('../shared-primitives');
 
 function safeReal(p) {
   try { return fs.realpathSync(p); } catch { return null; }
@@ -101,8 +102,7 @@ function isDeadRunDir(dir) {
 // `spec-378` matches `…-spec-378`, `…-spec-378-standalone`, `…-spec-378-379`,
 // never `…-spec-3784`.
 function hasSegment(name, slug) {
-  const escaped = slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|-)${escaped}(?=-|$)`).test(name);
+  return new RegExp(`(^|-)${escapeRegExp(slug)}(?=-|$)`).test(name);
 }
 
 // Step 2 (`_shared/run-dir-resolution.md`'s resolution order): the most recent
