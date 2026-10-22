@@ -483,9 +483,6 @@ function runRender(args) {
   // #3856: after cleanup archives the run, the given path is gone; resolve the
   // archived copy the same way verify does. Null (neither location) keeps the
   // given path, so the error below still names it.
-  // #3856: after cleanup archives the run, the given path is gone; resolve the
-  // archived copy the same way verify does. Null (neither location) keeps the
-  // given path, so the error below still names it.
   const resolvedDir = resolveArchivedRunDir(args.runDir, resolveRepoRoot(process.cwd())) || args.runDir;
 
   let state;

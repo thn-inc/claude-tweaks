@@ -2,3 +2,6 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | duplicated 3-line #3856 comment block in plugin/bin/wrap-up-engine.js runRender — remove one copy (SDD task review minor) | fixed | removed by /simplify in the Common Step 3 commit ("Remove duplicated #3856 comment in runRender"), plugin/bin/wrap-up-engine.js |
+| 2 | build | render archive test covers only plain run-id dir, not spec-N leaf; not-found path untested for render (SDD task review minor) | accepted | spec-N leaf resolution is resolveArchivedRunDir's own contract, already covered by tests/bin-lib/wrap-up/engine-verify.test.js's "multi-spec spec-{N}/ archived run" case; render only calls it. The neither-location case is not separately tested for render: its `|| args.runDir` branch substitutes the given path back, so the read and its "could not read engine-state.json from {path}" exit 2 behave exactly as before the change |
+| 3 | build | follow-up (implementer): render --section console's #2688 "no recorded results in {dir}" stderr names the given path, which no longer exists after archival | accepted | the message names the path the caller passed, matching the not-found error's convention; it is a diagnostic label for the caller's own argument, not a path anything re-reads, so it stays correct after archival |
