@@ -100,9 +100,11 @@ landed ({verify.json missing | acceptance-labeling: {result} | no run dir})` and
 `/claude-tweaks:dispatch close-out #{record}` ({record} = one of the PR's `Fixes` records), which runs
 `_shared/pr-first-merge.md` Step 1 before it merges. For `no run dir`, close-out stops on the same
 missing run dir, so the recommendation instead names running that command from the checkout that holds
-run `{run-id}`, or, when none does, a human acceptance pass via `/claude-tweaks:demo #{record}` before
-merging by hand. Log the hold to this tidy run's `decisions.md`:
-`node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{tidy-run-dir}" --section "/tidy" --status KEPT-PROMPT --step "Arm ready PR" --text "PR #{n} held, not armed — acceptance labeling not landed ({reason})" --reversibility n/a`.
+run `{run-id}` when a marker names one, or, when none does, a human acceptance pass via
+`/claude-tweaks:demo #{record}` before merging by hand. Log the hold to this tidy run's `decisions.md`
+(`_shared/auto-decision-log.md`'s degrade-trace `SKIP` — the arm was not performed, and the hold stays
+open for a human):
+`node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --section "/tidy" --status SKIP --step "Step 7 Arm ready PR (skipped)" --text "condition: PR #{n} acceptance labeling not landed ({reason}) → fallback: held, not armed; recommended {command}" --reversibility n/a`.
 So a record-linked PR whose run dir has no `verify.json`, and whose `Fixes` records carry no
 `demo:pending`, is held, not armed. The housekeeping-marker flavor (`<!-- tidy-housekeeping-pr -->` /
 `<!-- wrap-up-residue-pr -->`) skips this check: it links no record, so there is nothing to label.
