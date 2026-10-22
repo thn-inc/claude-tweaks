@@ -216,15 +216,22 @@ test('AC2.1: docs/skill-authoring.md argument-hint bullet names every exemption 
 // A flag matches the hint only as a whole token: `--batch-size` in the hint does
 // not cover `--batch` in a row.
 function undocumentedHintFlags(content) {
+  return entryFlagsByHintPresence(content, { marked: false, inHint: false });
+}
+
+// The flags of the `## Input` entries whose marked state is `marked` and whose
+// whole-token presence in the argument-hint is `inHint`, first-seen order,
+// deduplicated.
+function entryFlagsByHintPresence(content, { marked, inHint }) {
   const hint = extractArgumentHint(content);
   const body = inputSectionBody(content);
   if (!hint || body === null) return [];
   const found = [];
-  for (const { flagText, marked } of inputEntries(body)) {
-    if (marked) continue;
-    for (const flag of flagText.match(/--[a-z][a-z0-9-]*/g) || []) {
-      const inHint = new RegExp(flag + '(?![a-z0-9-])').test(hint);
-      if (!inHint && !found.includes(flag)) found.push(flag);
+  for (const entry of inputEntries(body)) {
+    if (entry.marked !== marked) continue;
+    for (const flag of entry.flagText.match(/--[a-z][a-z0-9-]*/g) || []) {
+      const present = new RegExp(flag + '(?![a-z0-9-])').test(hint);
+      if (present === inHint && !found.includes(flag)) found.push(flag);
     }
   }
   return found;
@@ -256,18 +263,7 @@ function inputEntries(body) {
 // marked flag is one only an agent or another skill passes, so a person typing at
 // the hint must not be offered it.
 function markedHintFlags(content) {
-  const hint = extractArgumentHint(content);
-  const body = inputSectionBody(content);
-  if (!hint || body === null) return [];
-  const found = [];
-  for (const { flagText, marked } of inputEntries(body)) {
-    if (!marked) continue;
-    for (const flag of flagText.match(/--[a-z][a-z0-9-]*/g) || []) {
-      const inHint = new RegExp(flag + '(?![a-z0-9-])').test(hint);
-      if (inHint && !found.includes(flag)) found.push(flag);
-    }
-  }
-  return found;
+  return entryFlagsByHintPresence(content, { marked: true, inHint: true });
 }
 
 function assertNoMarkedHintFlags(name, content) {
