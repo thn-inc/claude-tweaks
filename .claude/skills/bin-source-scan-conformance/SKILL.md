@@ -14,6 +14,7 @@ Several conventions for `plugin/bin` code are enforced by a test that walks the 
 - `tests/bin-lib/exit-code-conformance.test.js`: an entry point (a `require.main === module` guard, or a guard-less, export-less whole-script file) sets `process.exitCode` and never calls `process.exit(`; a guard-less file that exports is a library and is skipped.
 - `tests/path-guard-conformance.test.js`: no bare `realpathSync`/`existsSync` outside the per-file allowlist.
 - `tests/path-containment-conformance.test.js`: no hand-rolled `startsWith(… path.sep)` containment test, nor a `startsWith(<identifier bound to a path.sep expression>)` (#3892), and no bare `startsWith('..')` on a `path.relative` result (a child named `..foo` is contained, not outside); use `isPathContained`. `visual-decide/server.js` is the one exception: it keeps a builtins-only whole-segment copy (`rel.split(path.sep)[0] === '..'`) because #1202 AC 8 bars non-builtin imports there.
+- `tests/porcelain-cwd-compare-conformance.test.js`: no strict `.path` vs `cwd` compare (either operand order, `===`/`!==`/`==`/`!=`); a porcelain lookup goes through `findWorktreeEntry` (#3811).
 
 Each one is a hand-written parser over JavaScript. The comment stripper, the call-shape regex and the file walk can each fail in the direction that hides code. When that happens, the scan reports zero offenders over less code than it claims to cover.
 
@@ -105,11 +106,13 @@ Assert the exact flagged line numbers, not just a count, because the right count
 | Deleting comments instead of replacing them with spaces | Line numbers in offender messages no longer match the file |
 | A scan with no floor on matched sites | A pattern that stops matching reports zero offenders, and that looks like a clean tree |
 | Self-tests that cover only the happy path | The right count can come from the wrong lines, and a matcher can go dead without a negative case failing |
+| Walking `plugin/bin` with `fs.readdirSync(dir, { recursive: true })` | Node before 18.17 ignores the option, so the walk silently covers only the top level and the scan reports zero offenders over `lib/`. The project floor is Node 18; use the manual `withFileTypes` walk (`listJs` in `tests/path-containment-conformance.test.js`) and a floor on files walked. The #3811 AC3 pin shipped with the recursive form, and the exit-code scan's `walkFilesRelative` comment already named the hazard |
+| A new scan written inside a per-module suite as a raw-text regex | It skips the stripper, the verdict, the floor and the planted cases above, and matches one spelling. The #3811 AC3 pin did, passed the build's whole-branch review with a rename only, and was rebuilt in review as its own conformance file. Start from the sibling scan, not from the spec's grep line |
 | Reading a green token-count scan as proof that a new call follows the convention | A count-based scan sees tokens, not call sites, so a new call through a wrapper the file already has allowlisted adds no token and passes. #3799's first fix sent `verify.js`'s new git-dir comparison through the file's own `realpathOrNull`, a JS `fs.realpathSync` wrapper holding the one allowlisted token. `tests/path-guard-conformance.test.js` went green, and review then reproduced a case-variant `--cwd` into the same checkout being refused on a case-insensitive volume. The fix resolved both sides through path-guard's `canonicalRealpath` and removed the allowlist entry. When a count scan goes red, decide what the new call must answer before restoring the count |
 
 ## Reference
 
-- Instances: `tests/git-status-optional-locks.test.js`, `tests/windows-hide-spawn-conformance.test.js`, `tests/bin-lib/exit-code-conformance.test.js`, `tests/path-guard-conformance.test.js`, `tests/path-containment-conformance.test.js`
+- Instances: `tests/git-status-optional-locks.test.js`, `tests/windows-hide-spawn-conformance.test.js`, `tests/bin-lib/exit-code-conformance.test.js`, `tests/path-guard-conformance.test.js`, `tests/path-containment-conformance.test.js`, `tests/porcelain-cwd-compare-conformance.test.js`
 - Shared helper and its planted cases: `tests/helpers/strip-comments.js` and `tests/helpers-strip-comments.test.js`
 - Could-not-parse principle: `.claude/skills/parse-signal-discipline/SKILL.md`, item 15
 - Rule: the `--no-optional-locks` line in `docs/donts.md`

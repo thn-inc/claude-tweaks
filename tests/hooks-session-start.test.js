@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const sessionStart = require('../plugin/bin/lib/hooks/session-start');
+const ctxLib = require('../plugin/bin/lib/hooks/context');
 const deps = require('../plugin/bin/lib/deps');
 const { INTERACTION_STYLE_DIRECTIVE } = require('../plugin/bin/lib/hooks/interaction-style');
 
@@ -1324,4 +1325,36 @@ test('AC6.1 SessionStart banner carries the review-console suffix for an eligibl
   assert.ok(ctx.includes('one line per run naming its close-run command, or its re-entry command where the line carries one'), ctx);
   assert.ok(ctx.includes('never run either command yourself'), ctx);
   assert.ok(ctx.includes('PIPELINE_RUN_DIR="'), ctx);
+});
+
+// #3845: `claude --resume` brings the owning session id back under a new process, so a
+// resume SessionStart re-stamps the run's ownerPid; every other start leaves it alone.
+async function resumeStamp({ source = 'resume', env = '222', state = {}, attribution = 'session', sessionId = 'sess-r' }) {
+  const project = tmpProject();
+  const run = mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted', sessionId: 'sess-r', ownerPid: 111, ...state });
+  const prior = process.env.CLAUDE_PID;
+  if (env === null) delete process.env.CLAUDE_PID;
+  else process.env.CLAUDE_PID = env;
+  try {
+    await runSessionStart({ input: { source, session_id: sessionId }, runDir: run, runState: null, cwd: project, ownedRun: { dir: run, attribution } });
+  } finally {
+    if (prior === undefined) delete process.env.CLAUDE_PID;
+    else process.env.CLAUDE_PID = prior;
+  }
+  return ctxLib.readRunState(run);
+}
+
+test('#3845: a resume SessionStart re-stamps the owned run with the resumed process pid', async () => {
+  assert.strictEqual((await resumeStamp({})).ownerPid, 222);
+});
+
+test('#3845: only a resume re-stamps — a startup SessionStart (a nested claude -p looks like one) leaves ownerPid alone', async () => {
+  assert.strictEqual((await resumeStamp({ source: 'startup' })).ownerPid, 111);
+});
+
+test('#3845: the resume re-stamp fails open — unknown pid, fallback attribution, another session\'s run, an unstamped run', async () => {
+  assert.strictEqual((await resumeStamp({ env: null })).ownerPid, 111, 'unknown CLAUDE_PID');
+  assert.strictEqual((await resumeStamp({ attribution: 'fallback' })).ownerPid, 111, 'a guessed run is never re-stamped');
+  assert.strictEqual((await resumeStamp({ sessionId: 'other-session' })).ownerPid, 111, 'a run recorded for another session');
+  assert.ok(!('ownerPid' in (await resumeStamp({ state: { ownerPid: undefined } }))), 'an unstamped run stays unstamped');
 });

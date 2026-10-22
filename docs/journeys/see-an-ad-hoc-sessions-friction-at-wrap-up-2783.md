@@ -5,6 +5,7 @@ files:
   - plugin/bin/lib/hooks/harness-refusal.js
   - plugin/bin/lib/hooks/pre-tool-use.js
   - plugin/bin/lib/hooks/context.js
+  - plugin/bin/lib/hooks/worktree-reap.js
   - plugin/hooks/hooks.json
   - plugin/bin/friction-events.js
   - plugin/skills/reflect/full-mode.md
@@ -23,17 +24,18 @@ files:
 - **URL:** the `EnterWorktree` tool call
 - **Action:** Claude creates or enters a worktree at the developer's request. The `PostToolUse` hook (`stampAdHocRunDir`) mints a `{ts}-adhoc-standalone` run dir that records this session's id and the worktree path.
 - **Should feel:** invisible. Nothing is printed and no prompt appears; it's pure bookkeeping.
-- **Should understand:** an unrelated run that `resolveRun` merely *guesses* (`attribution: fallback`) never counts as "this session already owns a run" (#2783). The mint happens even in a checkout full of other sessions' runs.
-- **Red flags:** no `*-adhoc-standalone` dir appears under `.claude-tweaks/pipelines/` after the first `EnterWorktree`, even though the session owns no run. That was #2783's original failure.
+- **Should understand:** an unrelated run that `resolveRun` merely *guesses* (`attribution: fallback`) never counts as "this session already owns a run" (#2783). The mint happens even in a checkout full of other sessions' runs. When the tool result doesn't expose the path, the hook finds the worktree in `git worktree list --porcelain` through worktree-reap.js's `findWorktreeEntry`. That compare also works on Windows, where porcelain prints `D:/a/x/feat` and the session's cwd is `D:\a\x\feat` (#3811).
+- **Red flags:** no `*-adhoc-standalone` dir appears under `.claude-tweaks/pipelines/` after the first `EnterWorktree`, even though the session owns no run. That was #2783's original failure, and on Windows it was #3811's.
 
 ### 2. Hit a guard refusal: inside the worktree
 - **URL:** any Bash call the harness's worktree-isolation guard refuses, or any claude-tweaks deny gate (worktree-required, shadow-run-dir, teardown)
 - **Action:** Claude runs a command the guard can't prove isn't a git operation on another checkout, such as `d=.; sed -n 1,2p $d/README.md`. It sees "This session is isolated in the worktree … Refusing to run it", then retries with a plainer command.
 - **Should feel:** the same friction as before this change. The refusal text and the retry path are unchanged; the hook only observes it.
-- **Should understand:** the refusal is now recorded as a `wd-guard-refusal` event with `reason: harness-worktree-isolation` and a 200-character command excerpt. It is recorded by the `PostToolUseFailure` hook, the one event Claude Code fires for its own guard's refusals. An ordinary non-zero exit fires the same event and is ignored. A plugin gate denial logs `gate-denial` / `wd-guard-refusal` into the same session-owned dir via `resolveDenialRunDir`, never into a guessed run.
+- **Should understand:** the refusal is now recorded as a `wd-guard-refusal` event with `reason: harness-worktree-isolation` and a 200-character command excerpt. It is recorded by the `PostToolUseFailure` hook, the one event Claude Code fires for its own guard's refusals. An ordinary non-zero exit fires the same event and is ignored. A plugin gate denial logs `gate-denial` / `wd-guard-refusal` into the same session-owned dir via `resolveDenialRunDir`, never into a guessed run. On Windows too: that dir is keyed on the cwd's entry in `git worktree list`, matched with the same slash- and case-tolerant compare (#3811).
 - **Red flags:**
   - an ordinary failing command (e.g. `Exit code 128`) shows up as a guard refusal;
   - a denial lands in another session's run dir (that run's `events.jsonl` grows);
+  - on Windows, a denial with no owned run dir leaves no `-adhoc-standalone` dir behind (the pre-#3811 failure);
   - every failing Bash call becomes noticeably slower. The prefilter skips this hook unless the payload carries `Refusing to run it`.
 
 ### 3. Remove the worktree: same session
@@ -60,3 +62,4 @@ files:
 - Related specs: #500 / #1333 (ad-hoc stamping), #2351 / #2543 (main-checkout denial coverage), #2989 (pre-claim event exclusion on the same read side)
 - Updated during build of #3836: step 4's worktree-path lookup (`findRunsByWorktreePath`) compares case-canonical real paths
 - Updated during build of #3304: step 2's refusal text now lives in `plugin/bin/lib/hooks/harness-refusal.js`, and a Claude Code rewording surfaces as upstream drift (see `notice-a-reworded-isolation-refusal-3304.md`)
+- Updated during build of #3811: steps 1-2's porcelain worktree lookups now go through worktree-reap.js's shared `findWorktreeEntry`, so they match on Windows

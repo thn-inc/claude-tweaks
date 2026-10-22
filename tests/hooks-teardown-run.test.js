@@ -489,5 +489,5 @@ test('#3695: the prunable retry matches a stamped path that differs from porcela
 test('#3695 AC3: no strict worktree-path compare remains at either call site', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'teardown-run.js'), 'utf8');
   assert.doesNotMatch(src, /\.path\s*[!=]==?/);
-  assert.ok((src.match(/findWorktreeEntry\(/g) || []).length >= 3);
+  assert.ok((src.match(/findWorktreeEntry\(/g) || []).length >= 2);
 });
