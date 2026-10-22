@@ -318,7 +318,57 @@ test('#3493: a parent that is a dangling symlink is reported, not accepted', (t)
   }
 });
 
+// #3315: path.win32.relative on a POSIX host still returns a `\`-joined path for
+// these tmp paths, so injecting path.win32 reaches the win32 branch with real fs.
+test('AC1.1: checkA reports nearestExistingAncestor as a / display ID under path.win32 (#3315)', () => {
+  const repo = makeTmpRepo();
+  fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
+  try {
+    const r = checkA([{ type: 'Create', path: 'plugin/bin/new/deeper/x.js' }], repo, { pathImpl: path.win32 });
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.missingDetail[0].nearestExistingAncestor, 'plugin/bin');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1: checkA reports a Modify-missing-file nearestExistingAncestor as a / display ID under path.win32 (#3315)', () => {
+  const repo = makeTmpRepo();
+  fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
+  try {
+    const r = checkA([{ type: 'Modify', path: 'plugin/bin/new/deeper/x.js' }], repo, { pathImpl: path.win32 });
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.missingDetail[0].nearestExistingAncestor, 'plugin/bin');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('checkA keeps the "." ancestor for a repo-root miss under path.win32 (#3315)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const create = checkA([{ type: 'Create', path: 'nowhere/deeper/new.js' }], repo, { pathImpl: path.win32 });
+    assert.strictEqual(create.missingDetail[0].nearestExistingAncestor, '.');
+    const modify = checkA([{ type: 'Modify', path: 'nope.js' }], repo, { pathImpl: path.win32 });
+    assert.strictEqual(modify.missingDetail[0].nearestExistingAncestor, '.');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 // ── Check B ──────────────────────────────────────────────────────────────
+
+test('AC1.1: checkB lists unplanned files as / display IDs under path.win32 (#3315)', () => {
+  const repo = makeTmpRepo();
+  fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'plugin', 'bin', 'hit.js'), 'mentions zebrakeyword here');
+  try {
+    const r = checkB(['zebrakeyword'], [], repo, { pathImpl: path.win32 });
+    assert.deepStrictEqual(r.unplanned, ['plugin/bin/hit.js']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
 
 test('checkB is a no-op (ok, empty) when the plan declares no Scope keywords', () => {
   const repo = makeTmpRepo();
