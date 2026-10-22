@@ -762,16 +762,36 @@ function isTrustedOwnedRun(ownedRun) {
 // run's owner. Fail open: an unknown pid on either side is never "nested", so
 // a missing/garbled CLAUDE_PID or an unstamped (pre-#3845) run-state keeps the
 // existing session-end behavior.
+//
+// Liveness rule: a differing pair is "nested" only while the owner process is
+// still alive. A nested child's SessionEnd always fires while its parent is
+// alive (the parent's Bash tool is blocked on the child), so the incident case
+// keeps its protection. A dead owner is the crash + `claude --resume` shape: the
+// original process died without a SessionEnd, the resumed process (new pid, same
+// session id) never re-stamps ownerPid, and its ending is the run's real
+// interruption — suppressing it would regress to a never-flagged run. Probe
+// errors other than "alive" fail open (never nested, never throw from a hook).
 function claudePid(env) {
   const raw = env && env.CLAUDE_PID;
   return typeof raw === 'string' && /^[1-9]\d*$/.test(raw) ? Number(raw) : null;
 }
 
-function isNestedSession(runState, env) {
+// ESRCH = no such process; EPERM = exists but not ours (alive); anything else
+// is unknown and reported as not alive so the caller fails open.
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return !!err && err.code === 'EPERM';
+  }
+}
+
+function isNestedSession(runState, env, { isAlive = isPidAlive } = {}) {
   const owner = runState && runState.ownerPid;
   if (!Number.isInteger(owner) || owner <= 0) return false;
   const mine = claudePid(env);
-  return mine !== null && mine !== owner;
+  return mine !== null && mine !== owner && isAlive(owner) === true;
 }
 
 // `{ts}-adhoc-standalone` — the suffix run-dir-resolve.js mints for
@@ -907,5 +927,5 @@ module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
   readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
   rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, isTrustedOwnedRun, isAdHocRunDir, resolveDenialRunDir,
-  claudePid, isNestedSession,
+  claudePid, isPidAlive, isNestedSession,
 };

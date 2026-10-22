@@ -550,12 +550,12 @@ test('#3845: record-worktree without CLAUDE_PID writes no ownerPid', () => {
 test('AC3.1 #3845: hooks.js session-end from a nested claude process (same session id, other CLAUDE_PID) leaves the run active; the owner process stamps it', () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: '100' } });
-  assert.strictEqual(readRunState(run).ownerPid, 100);
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) } });
+  assert.strictEqual(readRunState(run).ownerPid, process.pid);
   const input = JSON.stringify({ session_id: 'owner', reason: 'other', cwd: project });
-  runHook(['session-end'], { cwd: project, input, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: '200' } });
+  runHook(['session-end'], { cwd: project, input, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid + 1) } });
   assert.strictEqual(readRunState(run).status, 'active', 'a nested process ending must not stamp the parent run');
-  runHook(['session-end'], { cwd: project, input, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: '100' } });
+  runHook(['session-end'], { cwd: project, input, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) } });
   assert.strictEqual(readRunState(run).status, 'interrupted', 'the owner process ending still stamps interrupted');
 });
 

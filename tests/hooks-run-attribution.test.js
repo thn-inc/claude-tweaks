@@ -149,9 +149,10 @@ test('session-end DOES stamp interrupted on a run this session owns', () => {
   assert.strictEqual(readEvents(mine)[0].attribution, undefined, 'a known-owner event carries no guess tag');
 });
 
-// #3845: a nested `claude -p` inherits the owner's CLAUDE_CODE_SESSION_ID, so
-// its SessionEnd resolves the parent's run as owned. The pid is the one
-// identity the two processes do not share. process.env.CLAUDE_PID is set
+// #3845: a nested `claude -p` can resolve the parent's run as its own — #3056's
+// run showed the parent's session id at the child's SessionEnd, and an inherited
+// PIPELINE_RUN_DIR gives `env` attribution. The pid is the one identity the two
+// processes do not share. process.env.CLAUDE_PID is set
 // explicitly in each test because the runner may itself run under Claude Code.
 function withClaudePid(pid, fn) {
   const prior = process.env.CLAUDE_PID;
@@ -166,10 +167,10 @@ function withClaudePid(pid, fn) {
 
 test('AC1.1 #3845: a nested session ending (same session id, different CLAUDE_PID) leaves the parent run untouched', () => {
   const cwd = project();
-  const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: 100 });
+  const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: process.pid });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  withClaudePid('200', () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(mine).status, 'active', 'a nested claude -p ending is not the owner session ending');
   assert.deepStrictEqual(readEvents(mine), [], 'and leaves no breadcrumb on the parent run');
@@ -177,10 +178,10 @@ test('AC1.1 #3845: a nested session ending (same session id, different CLAUDE_PI
 
 test('AC2.1 #3845: the owner process ending still stamps interrupted', () => {
   const cwd = project();
-  const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: 100 });
+  const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: process.pid });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  withClaudePid('100', () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+  withClaudePid(String(process.pid), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(mine).status, 'interrupted');
   const ev = readEvents(mine);
@@ -188,13 +189,28 @@ test('AC2.1 #3845: the owner process ending still stamps interrupted', () => {
   assert.strictEqual(ev[0].type, 'session-end');
 });
 
+// A pid that is certainly dead: a child that was spawned and has exited.
+function deadPid() {
+  return require('node:child_process').spawnSync(process.execPath, ['-e', '']).pid;
+}
+
+test('#3845: crash + resume — a dead ownerPid does not suppress the resumed owner process stamping interrupted', () => {
+  const cwd = project();
+  const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: deadPid() });
+
+  const owned = ctxLib.resolveRun(cwd, {}, 'me');
+  withClaudePid(String(process.pid), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+
+  assert.strictEqual(readState(mine).status, 'interrupted', 'the original owner died; the resumed process ending is the real interruption');
+});
+
 test('#3845: a nested session on an env-attributed run also writes nothing', () => {
   const cwd = project();
-  const pinned = mkRun(cwd, '2026-07-01T090000-pinned', { status: 'active', sessionId: 'me', ownerPid: 100 });
+  const pinned = mkRun(cwd, '2026-07-01T090000-pinned', { status: 'active', sessionId: 'me', ownerPid: process.pid });
 
   const owned = ctxLib.resolveRun(cwd, { PIPELINE_RUN_DIR: pinned }, 'me');
   assert.strictEqual(owned.attribution, 'env');
-  withClaudePid('200', () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(pinned).status, 'active');
   assert.deepStrictEqual(readEvents(pinned), []);
@@ -708,11 +724,18 @@ test('#3845 claudePid: a positive integer string parses, anything else is unknow
   assert.strictEqual(ctxLib.claudePid(undefined), null);
 });
 
-test('#3845 isNestedSession: only a known, differing pid pair is nested', () => {
-  assert.strictEqual(ctxLib.isNestedSession({ ownerPid: 100 }, { CLAUDE_PID: '200' }), true);
-  assert.strictEqual(ctxLib.isNestedSession({ ownerPid: 100 }, { CLAUDE_PID: '100' }), false);
-  assert.strictEqual(ctxLib.isNestedSession({}, { CLAUDE_PID: '200' }), false, 'no ownerPid -> fail open');
-  assert.strictEqual(ctxLib.isNestedSession({ ownerPid: 100 }, {}), false, 'no CLAUDE_PID -> fail open');
-  assert.strictEqual(ctxLib.isNestedSession({ ownerPid: '100' }, { CLAUDE_PID: '200' }), false, 'string ownerPid -> fail open');
-  assert.strictEqual(ctxLib.isNestedSession(null, { CLAUDE_PID: '200' }), false);
+test('#3845 isNestedSession: only a known, differing pid pair with a live owner is nested', () => {
+  const alive = { isAlive: () => true };
+  assert.strictEqual(ctxLib.isNestedSession({ ownerPid: 100 }, { CLAUDE_PID: '200' }, alive), true);
+  assert.strictEqual(ctxLib.isNestedSession({ ownerPid: 100 }, { CLAUDE_PID: '200' }, { isAlive: () => false }), false, 'dead owner (crash + resume) -> fail open');
+  assert.strictEqual(ctxLib.isNestedSession({ ownerPid: 100 }, { CLAUDE_PID: '100' }, alive), false);
+  assert.strictEqual(ctxLib.isNestedSession({}, { CLAUDE_PID: '200' }, alive), false, 'no ownerPid -> fail open');
+  assert.strictEqual(ctxLib.isNestedSession({ ownerPid: 100 }, {}, alive), false, 'no CLAUDE_PID -> fail open');
+  assert.strictEqual(ctxLib.isNestedSession({ ownerPid: '100' }, { CLAUDE_PID: '200' }, alive), false, 'string ownerPid -> fail open');
+  assert.strictEqual(ctxLib.isNestedSession(null, { CLAUDE_PID: '200' }, alive), false);
+});
+
+test('#3845 isPidAlive: the test process is alive, an exited child is not', () => {
+  assert.strictEqual(ctxLib.isPidAlive(process.pid), true);
+  assert.strictEqual(ctxLib.isPidAlive(deadPid()), false);
 });
