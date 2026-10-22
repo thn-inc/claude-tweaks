@@ -27,6 +27,7 @@ const SECTIONS = {
   QUEUE: 'Queue writes',
   MEMORY: 'Memory updates',
   UPSTREAM: 'Upstream feedback',
+  INSIGHTS: 'Reflection insights',
   REFUSED: 'Refused — no defer reason',
 };
 
@@ -64,6 +65,7 @@ const SECTION_MAP = [
   [/^(reflect|digest-promotion|leftover|ledger-record|upstream-unfiled|red-team|specify-overlap|specify-redteam|flaky-allowlist|tidy|plan-retention|feedback-drafts)(-|\b)/, SECTIONS.QUEUE],
   [/^wrap-up-memory-/, SECTIONS.MEMORY],
   [/^wrap-up-upstream-/, SECTIONS.UPSTREAM],
+  [/^wrap-up-reflect-/, SECTIONS.INSIGHTS],
 ];
 
 // One literal string per alternative of every non-`.patch` SECTION_MAP row,
@@ -85,6 +87,7 @@ const CANONICAL_PREFIXES = [
   'specify-overlap-', 'specify-redteam-', 'flaky-allowlist-', 'tidy-', 'plan-retention-', 'feedback-drafts-',
   'wrap-up-memory-',
   'wrap-up-upstream-',
+  'wrap-up-reflect-',
 ];
 
 function levenshtein(a, b) {
@@ -151,6 +154,7 @@ const SECTION_STANCES = {
   [SECTIONS.QUEUE]: { resolution: 'apply', reason: 'pre-checked Apply default (batched-item-drill.md)' },
   [SECTIONS.MEMORY]: { resolution: 'apply', reason: 'pre-checked Apply default (batched-item-drill.md)' },
   [SECTIONS.UPSTREAM]: { resolution: 'filed', reason: 'unattended files upstream feedback like M#/Q# (#347)' },
+  [SECTIONS.INSIGHTS]: { resolution: 'approve', reason: 'Approve-all default — review-console.md step 10 applies each row\'s recommended destination; D4/D5 rows stay informational' },
   [SECTIONS.REFUSED]: { resolution: 'refused', reason: 'no default; excluded from Approve all and from consoleAutoResolve (refused-proposals.md)' },
 };
 

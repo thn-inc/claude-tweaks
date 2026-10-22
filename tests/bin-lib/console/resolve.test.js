@@ -57,6 +57,7 @@ const EVERY_SECTION = {
   'reflect-1.md': 'reflect',
   'wrap-up-memory-1.md': 'memory',
   'wrap-up-upstream-1.md': 'upstream',
+  'wrap-up-reflect-insights.md': 'insights',
   'mystery-9.md': 'unmapped',
 };
 
@@ -74,6 +75,7 @@ test('classifyStagedItem maps every known prefix to its console section and unkn
     'upstream-unfiled-1.md': 'Queue writes', 'red-team-1.md': 'Queue writes', 'specify-overlap-1.md': 'Queue writes', 'flaky-allowlist-x.md': 'Queue writes',
     'tidy-parked-1.md': 'Queue writes', 'plan-retention-1.md': 'Queue writes', 'feedback-drafts.md': 'Queue writes',
     'wrap-up-memory-1.md': 'Memory updates', 'wrap-up-upstream-1.md': 'Upstream feedback',
+    'wrap-up-reflect-insights.md': 'Reflection insights',
   };
   for (const [name, section] of Object.entries(expect)) {
     assert.strictEqual(classifyStagedItem(name).section, section, name);
@@ -107,11 +109,20 @@ test('resolveAll resolves one item per section per the short-circuit stances and
   assert.strictEqual(by['reflect-1.md'].resolution, 'apply');
   assert.strictEqual(by['wrap-up-memory-1.md'].resolution, 'apply');
   assert.strictEqual(by['wrap-up-upstream-1.md'].resolution, 'filed');
+  assert.strictEqual(by['wrap-up-reflect-insights.md'].resolution, 'approve');
+  assert.strictEqual(by['wrap-up-reflect-insights.md'].reason, SECTION_STANCES['Reflection insights'].reason);
   assert.deepStrictEqual({ resolution: by['mystery-9.md'].resolution, reason: by['mystery-9.md'].reason }, { resolution: 'pending', reason: 'unmapped-prefix' });
   assert.strictEqual(r.sections.cleanup.resolution, 'approve');
   assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
   assert.strictEqual(r.items.length, Object.keys(EVERY_SECTION).length);
   assert.strictEqual(r.ceiling, 'unattended');
+});
+
+test('a run whose only staged file is wrap-up-reflect-insights.md resolves with nothing under Needs a human (#3926 AC2)', () => {
+  const r = resolveAll({ runDir: fixture({ staged: { 'wrap-up-reflect-insights.md': 'table' }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  assert.strictEqual(r.items.length, 1);
+  assert.strictEqual(r.items[0].section, 'Reflection insights');
+  assert.deepStrictEqual(r.items.filter((i) => i.resolution === 'pending' || i.resolution === 'keep-staged'), []);
 });
 
 test('a .shadow-dup file is classified duplicate when byte-identical to its anchor, divergent otherwise, and falls back to shadow-dup-collision with no anchor to compare (#2773)', () => {
@@ -599,7 +610,7 @@ test('policy other than console-auto throws RangeError (#1932)', () => {
 });
 
 test('SECTION_STANCES names a stance for every section the console renders (#1932)', () => {
-  for (const s of ['Auto-applied', 'Pending review', 'Low-confidence findings', 'Contested findings', 'Skill updates', 'Documentation updates', 'Journey updates', 'Configuration updates', 'Reference repairs', 'Cleanup actions', 'Queue writes', 'Memory updates', 'Upstream feedback', 'Refused — no defer reason']) {
+  for (const s of ['Auto-applied', 'Pending review', 'Low-confidence findings', 'Contested findings', 'Skill updates', 'Documentation updates', 'Journey updates', 'Configuration updates', 'Reference repairs', 'Cleanup actions', 'Queue writes', 'Memory updates', 'Upstream feedback', 'Reflection insights', 'Refused — no defer reason']) {
     assert.ok(SECTION_STANCES[s] && typeof SECTION_STANCES[s].resolution === 'string', s);
   }
 });
@@ -652,6 +663,13 @@ test('AC4.2 (control): removing sdd-ruling-* from the appendix prose alone makes
   const mutated = APPENDIX.replace(/,?\s*`sdd-ruling-\*`/, '');
   assert.notStrictEqual(mutated, APPENDIX, 'the mutation removed the prose entry');
   assert.throws(() => assertPendingPrefixTwin(pendingMdPrefixesFromCode(), pendingMdPrefixesFromProse(mutated)));
+});
+
+test('the appendix Resolution-to-step mapping routes an approve Reflection insights row to step 10 (#3926)', () => {
+  const approve = /- `approve` — [\s\S]*?(?=\n- `)/.exec(APPENDIX);
+  assert.ok(approve, 'the appendix approve bullet is present');
+  assert.match(approve[0], /Reflection insights/);
+  assert.match(approve[0], /step 10/);
 });
 
 test('every CANONICAL_PREFIXES entry classifies without unmapped-prefix (#3370)', () => {
