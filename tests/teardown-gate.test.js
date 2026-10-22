@@ -257,15 +257,15 @@ test('findRunsByWorktreePath (#3836): a mis-cased worktree path returns the ad-h
   assert.strictEqual(path.basename(exact[0]), '2026-08-01T100000-adhoc-standalone');
 });
 
-// The skip probe is the fixture's own mis-cased path (not os.tmpdir(): its last
-// segment is `T`, so an upper-casing probe of it always resolves to itself).
-test('resolveRun strictAttribution (#3836): a run bound to the caller\'s worktree in a different letter case is not dropped as other-worktree-bound', { skip: POSIX_ONLY }, (t) => {
-  if (!fs.existsSync(caseFixture3836().misCased)) return t.skip('case-sensitive volume: a mis-cased path does not exist on the real fs');
+// No case-sensitive-volume skip: the fake volume is injected through opts.fsImpl, so
+// the mis-cased binding resolves through it rather than the real fs, and the test
+// also runs (and discriminates) on Linux CI.
+test('resolveRun strictAttribution (#3836): a run bound to the caller\'s worktree in a different letter case is not dropped as other-worktree-bound', { skip: POSIX_ONLY }, () => {
   for (const recorded of ['misCased', 'wt']) {
     const fixture = caseFixture3836();
-    const { root, wt } = fixture;
+    const { root, wt, fsImpl } = fixture;
     const runDir = makeRun(root, JSON.stringify({ status: 'active', worktree: fixture[recorded] }));
-    assert.strictEqual(resolveRun(wt, {}, 's1', { strictAttribution: true }).dir, runDir, `recorded=${recorded}`);
+    assert.strictEqual(resolveRun(wt, {}, 's1', { strictAttribution: true, fsImpl }).dir, runDir, `recorded=${recorded}`);
   }
 });
 

@@ -105,14 +105,14 @@ function isClaimLogOnlyMint(dir, state) {
 // is resolveRun's lazy per-call memo of wtDetect.repoInfo(cwd) — the caller's
 // cwd is the same for every candidate, so it is computed at most once, and
 // only once a bound candidate is actually met.
-function isOtherWorktreeBound(callerRepoInfo, state) {
+function isOtherWorktreeBound(callerRepoInfo, state, fsImpl) {
   const binding = state && typeof state.worktree === 'string' && state.worktree ? state.worktree : null;
   if (!binding) return false;
   const info = callerRepoInfo();
   if (info.indeterminate || !info.repoRoot) return false;
   // Both sides canonicalized through path-guard's .native canonicalRealpath: the
   // JS-form realpath keeps the input's letter case on a case-insensitive volume (#3836).
-  return (canonicalRealpath(binding) || path.resolve(binding)) !== (canonicalRealpath(info.repoRoot) || info.repoRoot);
+  return (canonicalRealpath(binding, { fsImpl }) || path.resolve(binding)) !== (canonicalRealpath(info.repoRoot, { fsImpl }) || info.repoRoot);
 }
 
 // #1177: best-effort removal of a mint's own layout (staged/, decisions.md,
@@ -375,13 +375,13 @@ function isForeignWorktreeCandidate(cwd, sessionId, state) {
 // `dropped` list. `includeWorktreeForeign` disables the worktree-binding
 // guards, (b) included. `callerRepoInfo` is the lazy memo isOtherWorktreeBound
 // reads (see there).
-function isSkippableFallbackCandidate(cwd, sessionId, dir, state, includeWorktreeForeign, strict, callerRepoInfo) {
+function isSkippableFallbackCandidate(cwd, sessionId, dir, state, includeWorktreeForeign, strict, callerRepoInfo, fsImpl) {
   if (isClaimLogOnlyMint(dir, state)) return { reason: 'claim-log-only mint', dropped: true };
   if (isUnadoptedMint(dir, state)) return { reason: 'unadopted-mint', dropped: false };
   if (isAdHocRunDir(dir)) return { reason: 'ad-hoc', dropped: false };
   if (includeWorktreeForeign) return null;
   if (isForeignWorktreeCandidate(cwd, sessionId, state)) return { reason: 'worktree-foreign', dropped: false };
-  if (strict && isOtherWorktreeBound(callerRepoInfo, state)) return { reason: `bound to ${state.worktree}`, dropped: true };
+  if (strict && isOtherWorktreeBound(callerRepoInfo, state, fsImpl)) return { reason: `bound to ${state.worktree}`, dropped: true };
   return null;
 }
 function resolveRun(cwd, env, sessionId, opts = {}) {
@@ -419,7 +419,7 @@ function resolveRun(cwd, env, sessionId, opts = {}) {
     return callerInfo;
   };
   const skipReason = (dir, state) => {
-    const skip = isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign, strict, callerRepoInfo);
+    const skip = isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign, strict, callerRepoInfo, opts.fsImpl);
     if (skip && skip.dropped) dropped.push(`${path.basename(dir)} (${skip.reason})`);
     return skip;
   };
