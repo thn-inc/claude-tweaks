@@ -26,6 +26,7 @@ const os = require('os');
 const path = require('path');
 const readline = require('readline');
 const { lstatType, resolveLeaf, canonicalRealpath, isAncestorOrSelf } = require('../path-guard');
+const { toPosix } = require('../shared-primitives');
 
 const TRANSCRIPT_SLUG_RULE = 'replace every character not in [A-Za-z0-9-] with "-" (observed: "/", " ", and "." all become "-")';
 
@@ -89,11 +90,17 @@ function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), configDir =
 // A Read counts as procedure loading when it targets a skill file — the
 // repo's plugin/skills/** or the installed plugin cache's skills/ (a real
 // session reads skills from ~/.claude/plugins/cache/…/skills/, so a
-// repo-only rule would count zero bytes on every real run).
-function isProcedurePath(filePath, worktree) {
+// repo-only rule would count zero bytes on every real run). Both inputs are
+// `/`-normalized first (#3315): a win32 transcript records backslash paths, and
+// the prefix strip and regexes below speak `/`. `pathImpl` is the seam a test
+// injects `path.win32` through; callers pass two arguments and get the native path.
+function isProcedurePath(filePath, worktree, pathImpl = path) {
   if (typeof filePath !== 'string' || !filePath) return false;
-  let p = filePath;
-  if (worktree && p.startsWith(worktree)) p = p.slice(worktree.length).replace(/^\/+/, '');
+  let p = toPosix(filePath, pathImpl.sep);
+  if (worktree) {
+    const wt = toPosix(worktree, pathImpl.sep);
+    if (p.startsWith(wt)) p = p.slice(wt.length).replace(/^\/+/, '');
+  }
   if (/(^|\/)(plugin\/)?skills\/.+\.md$/.test(p)) return true;
   return p.includes('/.claude/plugins/') && p.includes('/skills/') && p.endsWith('.md');
 }
