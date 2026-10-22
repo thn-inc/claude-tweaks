@@ -86,6 +86,7 @@ test('#3829: ceremony-derivation.md pre-splits the merge-base out of the composi
   const line = lines.find((l) => l.includes('parseNumstatZ') && l.includes('node -e'));
   assert.ok(line, 'ceremony-derivation.md has no line with both parseNumstatZ and node -e');
   assert.ok(!line.includes('$('), `composition line still carries a $(...) substitution: ${line}`);
+  assert.ok(line.includes('{merge-base}'), `composition line must take the pasted-in {merge-base}: ${line}`);
   assert.ok(
     lines.some((l) => l.trim() === 'git merge-base HEAD origin/main'),
     'ceremony-derivation.md must show `git merge-base HEAD origin/main` as its own command',

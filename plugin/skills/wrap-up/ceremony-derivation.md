@@ -39,8 +39,8 @@ computation), so there is nothing here to clobber:
 
    then paste the printed sha in for `{merge-base}` and the literal plugin root (the skill's
    `Base directory` minus `skills/{name}`) in for `${CLAUDE_PLUGIN_ROOT}`: a worktree-isolated
-   session refuses a `$(git …)` substitution, and a runtime variable in a command that runs `git`
-   (`_shared/scratch-worktree.md` §7). It prints the diff-facts JSON:
+   session refuses a `$(git …)` substitution, and a runtime variable inside the `node -e` text of a
+   command that runs `git` (`_shared/scratch-worktree.md` §7). It prints the diff-facts JSON:
 
    ```bash
    git diff --numstat -z {merge-base} | node -e "const { parseNumstatZ } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/git-z.js'); const { computeDiffFacts } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/ceremony-derive.js'); console.log(JSON.stringify(computeDiffFacts(parseNumstatZ(require('fs').readFileSync(0, 'utf8')))))"
