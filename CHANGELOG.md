@@ -53,6 +53,27 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.151.1](https://github.com/thn-inc/claude-tweaks/compare/v6.151.0...v6.151.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* A nested `claude -p` inside a pipeline session marks the… ([#3845](https://github.com/thn-inc/claude-tweaks/issues/3845)) ([cdb9ebd](https://github.com/thn-inc/claude-tweaks/commit/cdb9ebd39eb27361c88cb94312efeb69e3f6f20e))
+* classifyOwnership and findRunsByWorktreePath still… ([#3836](https://github.com/thn-inc/claude-tweaks/issues/3836)) ([5c7722f](https://github.com/thn-inc/claude-tweaks/commit/5c7722f246d20628a8f8f7d8453e473e06748a8d))
+* Dispatch retry collides with the remote branch its own… ([#3887](https://github.com/thn-inc/claude-tweaks/issues/3887)) ([354119f](https://github.com/thn-inc/claude-tweaks/commit/354119ff36509ffa23a8b8ef670753ae507a5ca2))
+* Hooks: match git worktree porcelain paths against native… ([#3811](https://github.com/thn-inc/claude-tweaks/issues/3811)) ([02e419a](https://github.com/thn-inc/claude-tweaks/commit/02e419a6b83b9ab8891f82982cbb41f9768cca42))
+* log-decision.js rejects the "enum (note)" reversibility… ([#3870](https://github.com/thn-inc/claude-tweaks/issues/3870)) ([c5f3a4a](https://github.com/thn-inc/claude-tweaks/commit/c5f3a4a679e572172b46750d5889cffb83b64120))
+* pr-first-merge Step 4.2 logs to the run dir after… ([#3866](https://github.com/thn-inc/claude-tweaks/issues/3866)) ([25e4f55](https://github.com/thn-inc/claude-tweaks/commit/25e4f55244e9a3e4268749fa5e2d2a183b17031a))
+* reconcile does not expand an explicit checks subset with… ([#3630](https://github.com/thn-inc/claude-tweaks/issues/3630)) ([c31b0e0](https://github.com/thn-inc/claude-tweaks/commit/c31b0e07c5cfe9944b44b3197850e621d41ddc12))
+* resolve-run-dir --spec-slug matches by substring, so… ([#3865](https://github.com/thn-inc/claude-tweaks/issues/3865)) ([92ac6e1](https://github.com/thn-inc/claude-tweaks/commit/92ac6e1e8ce5ad8a68a4ff39c68f7db474eaabda))
+* Stop flipLedgerRow dropping a duplicate-numbered ledger… ([#3834](https://github.com/thn-inc/claude-tweaks/issues/3834)) ([d7f5e52](https://github.com/thn-inc/claude-tweaks/commit/d7f5e525ad5a7f57116283d67c77821cf228c9a3))
+* Test suite overloads the dev machine — unbounded… ([#3969](https://github.com/thn-inc/claude-tweaks/issues/3969)) ([4d25f56](https://github.com/thn-inc/claude-tweaks/commit/4d25f5610ee462f39eec3cf43cf636e5557944b9))
+* verify.js baseline adjudication blames a branch for… ([#3810](https://github.com/thn-inc/claude-tweaks/issues/3810)) ([63180ed](https://github.com/thn-inc/claude-tweaks/commit/63180ed6f835b66edb8f5d68c824287e9d6d39a3))
+* Windows regression: 1 test file(s) newly failing after… ([#3797](https://github.com/thn-inc/claude-tweaks/issues/3797)) ([1d3934f](https://github.com/thn-inc/claude-tweaks/commit/1d3934f5c29e265359881048310b5f8a0254d47e)), closes [#3802](https://github.com/thn-inc/claude-tweaks/issues/3802)
+* Windows regression: 1 test file(s) newly failing after… ([#3857](https://github.com/thn-inc/claude-tweaks/issues/3857)) ([100e11c](https://github.com/thn-inc/claude-tweaks/commit/100e11c1141b1d0a86c94eb0481db12405653354)), closes [#3871](https://github.com/thn-inc/claude-tweaks/issues/3871) [#3886](https://github.com/thn-inc/claude-tweaks/issues/3886)
+* Windows regression: 1 test file(s) newly failing after… ([#3890](https://github.com/thn-inc/claude-tweaks/issues/3890)) ([b49538b](https://github.com/thn-inc/claude-tweaks/commit/b49538bff138d701742645c6eede0b5c79557455)), closes [#3894](https://github.com/thn-inc/claude-tweaks/issues/3894)
+* wrap-up Section D reads the detached flag as the "fourth… ([#3657](https://github.com/thn-inc/claude-tweaks/issues/3657)) ([4338865](https://github.com/thn-inc/claude-tweaks/commit/4338865198e64832d1285484f1e9e112fc35c41c))
+
 ## [6.151.0](https://github.com/thn-inc/claude-tweaks/compare/v6.150.1...v6.151.0) (2026-10-21)
 
 
