@@ -241,6 +241,27 @@ test('reconcile-background summary: counts each check\'s taken entries (characte
   assert.deepEqual(summary.skipped, [{ check: 'release', reason: 'x' }]);
 });
 
+test('reconcile-background summary: ledger-residue PRs opened and notable per-path skips (#3812)', async () => {
+  const summary = await backgroundSummaryFor({
+    ledgerResidue: [
+      { path: 'docs/plans/a-ledger.md', action: 'pr-opened', reason: 'removal-pr-opened', prNumber: 90 },
+      { path: 'docs/plans/b-ledger.md', action: 'pr-opened', reason: 'removal-pr-opened', prNumber: 90 },
+      { path: 'docs/plans/c-ledger.md', action: 'skip', reason: 'ledger-has-open-rows' },
+      { path: 'docs/plans/d-ledger.md', action: 'skip', reason: 'removal-pr-open', prNumber: 88 },
+      { path: 'docs/plans/e-ledger.md', action: 'skip', reason: 'run-live' },
+      { path: 'docs/plans/f-ledger.md', action: 'skip', reason: 'removal-pr-declined', prNumber: 70 },
+    ],
+  });
+  assert.equal(summary.ledgerResiduePrOpened, 1, 'two paths in one PR count as one PR opened');
+  assert.deepEqual(summary.notableLedgerResidue, [
+    { path: 'docs/plans/c-ledger.md', reason: 'ledger-has-open-rows' },
+    { path: 'docs/plans/d-ledger.md', reason: 'removal-pr-open', prNumber: 88 },
+  ]);
+  const empty = await backgroundSummaryFor({});
+  assert.equal(empty.ledgerResiduePrOpened, 0);
+  assert.deepEqual(empty.notableLedgerResidue, []);
+});
+
 // Task 10 review Important #3: pin the FAST_CHECKS/BACKGROUND_CHECKS
 // partition invariant — a future check added to reconcile/index.js's
 // ALL_CHECKS that isn't also added to exactly one of these two lists must
