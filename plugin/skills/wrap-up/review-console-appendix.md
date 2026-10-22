@@ -94,6 +94,13 @@ procedure — no row is left unrouted:
   per `_shared/staged-patch.md`'s Write-back to the ledger — the same per-item write that
   step already performs for a `.patch`; a `reverse` on any path writes it at step 7, as
   above, never at step 1.
+  Under `console-resolve.js --policy console-auto` (unattended) an `sdd-ruling-*` item resolves
+  `apply` (ratify) only when its staged header shows it is safe (#3880): `Defers: no` — a settled
+  design decision, resolved exactly as before — or `Defers: yes` with exactly one `Defer-reason:`
+  header line whose value is in `_shared/deferral-gate.md`'s vocabulary. A deferral without a valid
+  reason resolves `pending — sdd-ruling-deferral-no-defer-reason`; a header with no `Defers:` line,
+  or an unreadable file, resolves `pending — sdd-ruling-unclassified`, since the console cannot tell
+  whether it defers. Neither is ever auto-ratified.
 - `apply` on a `Q#` item — step 7 (record creation), whose `refused-proposals.md` check still
   runs first; on an `M#` item — step 8 (the `_shared/learning-routing.md` memory write plus its
   `MEMORY.md` index line).
