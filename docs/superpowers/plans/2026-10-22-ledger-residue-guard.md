@@ -203,6 +203,13 @@ git add plugin/bin/lib/reconcile/index.js plugin/bin/hooks.js plugin/bin/lib/rec
 git commit -m "Register the ledger-residue check in reconcile — background pass, after remote-prune, before reap (refs #3812)" -m "Claude-Session: https://claude.ai/code/session_01XC28e2QW47wrx6b6uBbH2o"
 ```
 
+## As-built deviations (Common Step 4.5)
+
+Both deviations below are Beneficial. They came from the whole-branch review's fix wave, and ADR 0026 records the reasoning (commit fe113fe05).
+
+1. **A removable ledger is narrower than "any `*-ledger.md` on the integration branch."** A ledger is kept and reported as a per-path skip, never removed, when any of these holds: it lacks the ledger signature, it has an `open` row, it has an unrecognized status, or its run directory is still live. This matches tidy's shipped keep rule in `plugin/skills/tidy/scan-procedures.md` (commit 117badd40). AC1 still holds, since the ledger is reported. The skip reasons are `not-a-ledger`, `ledger-has-open-rows`, `ledger-status-unrecognized` and `run-live`.
+2. **The removal-PR state comes from one list of every `build/ledger-residue-*` head, not from one branch's PR.** An open removal PR governs. A path that a closed removal PR named stays declined, and a path that a merged one named is reported (commit 117badd40). The result is surfaced in the background SessionStart summary and in tidy Step 6 (commit 8e8f737e2).
+
 ## Acceptance-criteria coverage
 
 | Clause | Covered by |
