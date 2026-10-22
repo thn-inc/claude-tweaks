@@ -753,6 +753,27 @@ function isTrustedOwnedRun(ownedRun) {
   return !!(ownedRun && ownedRun.dir && ownedRun.attribution !== 'fallback');
 }
 
+// #3845: owner-process identity. Measured premise (probe, Claude Code 2.1.302):
+// Claude Code sets CLAUDE_PID to its own pid in every process it spawns — its
+// Bash tool and its hooks alike — so one session's Bash tool and its hooks see
+// the same value; a nested `claude -p` run from that Bash tool sets its own,
+// different value. record-worktree stamps run-state `ownerPid` from the former;
+// session-end compares the latter against it to tell a nested session from the
+// run's owner. Fail open: an unknown pid on either side is never "nested", so
+// a missing/garbled CLAUDE_PID or an unstamped (pre-#3845) run-state keeps the
+// existing session-end behavior.
+function claudePid(env) {
+  const raw = env && env.CLAUDE_PID;
+  return typeof raw === 'string' && /^[1-9]\d*$/.test(raw) ? Number(raw) : null;
+}
+
+function isNestedSession(runState, env) {
+  const owner = runState && runState.ownerPid;
+  if (!Number.isInteger(owner) || owner <= 0) return false;
+  const mine = claudePid(env);
+  return mine !== null && mine !== owner;
+}
+
 // `{ts}-adhoc-standalone` — the suffix run-dir-resolve.js mints for
 // `standalone: 'adhoc'` (post-tool-use.js's stampAdHocRunDir and
 // stampAdHocRunDirForDenial). Same test as reconcile/archive-merged.js's
@@ -886,4 +907,5 @@ module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
   readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
   rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, isTrustedOwnedRun, isAdHocRunDir, resolveDenialRunDir,
+  claudePid, isNestedSession,
 };

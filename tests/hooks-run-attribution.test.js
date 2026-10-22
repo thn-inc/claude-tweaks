@@ -646,3 +646,22 @@ test('#3515 incident e2e: a sibling worktree Write to a gitignored path writes n
   assert.ok(!fs.existsSync(path.join(mint, 'events.jsonl')), `no event was written into the mint: ${fs.existsSync(path.join(mint, 'events.jsonl')) ? fs.readFileSync(path.join(mint, 'events.jsonl'), 'utf8') : ''}`);
   assert.strictEqual(ctxLib.resolveRunDir(wt, {}), owned, 'E1 resolution skips the mint');
 });
+
+// ─── nested sessions (#3845) ───────────────────────────────────────────────
+
+test('#3845 claudePid: a positive integer string parses, anything else is unknown', () => {
+  assert.strictEqual(ctxLib.claudePid({ CLAUDE_PID: '8207' }), 8207);
+  for (const bad of [undefined, '', 'abc', '0', '-5', '12.5', ' 8207']) {
+    assert.strictEqual(ctxLib.claudePid({ CLAUDE_PID: bad }), null, `CLAUDE_PID=${JSON.stringify(bad)}`);
+  }
+  assert.strictEqual(ctxLib.claudePid(undefined), null);
+});
+
+test('#3845 isNestedSession: only a known, differing pid pair is nested', () => {
+  assert.strictEqual(ctxLib.isNestedSession({ ownerPid: 100 }, { CLAUDE_PID: '200' }), true);
+  assert.strictEqual(ctxLib.isNestedSession({ ownerPid: 100 }, { CLAUDE_PID: '100' }), false);
+  assert.strictEqual(ctxLib.isNestedSession({}, { CLAUDE_PID: '200' }), false, 'no ownerPid -> fail open');
+  assert.strictEqual(ctxLib.isNestedSession({ ownerPid: 100 }, {}), false, 'no CLAUDE_PID -> fail open');
+  assert.strictEqual(ctxLib.isNestedSession({ ownerPid: '100' }, { CLAUDE_PID: '200' }), false, 'string ownerPid -> fail open');
+  assert.strictEqual(ctxLib.isNestedSession(null, { CLAUDE_PID: '200' }), false);
+});
