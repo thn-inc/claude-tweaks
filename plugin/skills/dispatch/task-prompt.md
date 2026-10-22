@@ -52,15 +52,15 @@ that needs no resolution, only inclusion:
    (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
    expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
    child is abandoned and no longer counts as outstanding, so your final reply still ends with
-   `STATUS: {WORD}`. Ignore a late result; if a late notification re-wakes you after your final
+   `STATUS: {WORD}`. For a `/claude-tweaks:review` lens unit, log that downgrade as the single-read
+   coverage line, and carry its caveat, from `review/step3-lens-dispatch.md`'s partner-died
+   paragraph. Ignore a late result; if a late notification re-wakes you after your final
    reply, repeat your whole final reply unchanged — the dispatcher keeps only your latest reply, so
    a bare `STATUS:` line would replace the report. A child that reports a failure (a `failed`
    notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not
    outstanding: handle it per the dispatching skill's own status handling where one exists
    (`superpowers:subagent-driven-development`'s BLOCKED handling), otherwise judge that unit
-   yourself. For a `/claude-tweaks:review` lens unit, that downgrade is the single-read coverage
-   line and caveat in `review/step3-lens-dispatch.md`'s partner-died paragraph. Self-judging is for
-   a read-only unit (a lens, a single read, a judge); a
+   yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a
    write-capable child (one that edits files) still silent at the bound is never redone in-session,
    because an abandoned child keeps running and may still write — stop, and end with
    `STATUS: BLOCKED` naming that child and its unit. A wait call that is blocked or fails is not a

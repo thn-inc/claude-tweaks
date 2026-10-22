@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const PLUGIN = path.join(__dirname, '..', 'plugin');
 const SKILLS = path.join(PLUGIN, 'skills');
@@ -77,7 +78,7 @@ test('partner-died paragraph states the degrade line shape and caveat once (#381
   const files = markdownFilesUnder(SKILLS);
   assert.ok(files.length > 0, 'no skill markdown found — the walk is broken');
   const carriers = files.filter((file) => readText(file).includes(LINE_TAIL));
-  assert.deepEqual(carriers.map((file) => path.relative(SKILLS, file)), ['review/step3-lens-dispatch.md'], 'the degrade line shape is stated in exactly one skill file');
+  assert.deepEqual(carriers.map((file) => toPosix(path.relative(SKILLS, file))), ['review/step3-lens-dispatch.md'], 'the degrade line shape is stated in exactly one skill file');
   assert.equal(readText(carriers[0]).split(LINE_TAIL).length - 1, 1, 'the degrade line shape occurs exactly once in that file');
 });
 
@@ -121,7 +122,20 @@ test('the summary slot assertions can go red', () => {
   assertEachPatternGoesRed(full, SLOT, slotMissing);
 });
 
-const VERDICT_PREFIX = '**Verdict comment (';
+// The compact form's eligibility list must say the caveat is informational, like the skill load delta (3j).
+const COMPACT_ELIGIBLE = [[/A Coverage caveat \(`step3-lens-dispatch\.md`'s partner-died single-read degrade\) is informational and does not disqualify the compact form either\./, 'the compact eligibility list says a Coverage caveat does not disqualify the compact form']];
+const compactEligibleMissing = missingFactsOf(COMPACT_ELIGIBLE);
+
+test('a Coverage caveat does not disqualify the compact form (#3817)', () => {
+  const { compact } = summaryForms(readText(SUMMARY_TEMPLATE));
+  assert.deepEqual(compactEligibleMissing(compact), [], 'the compact eligibility list must say a Coverage caveat is informational (#3817)');
+});
+
+test('the compact-eligibility assertion can go red', () => {
+  assertEachPatternGoesRed(summaryForms(readText(SUMMARY_TEMPLATE)).compact, COMPACT_ELIGIBLE, compactEligibleMissing);
+});
+
+const VERDICT_PREFIX ='**Verdict comment (';
 const VERDICT_COPY = [[/Coverage caveat:\*\* line verbatim/, "the verdict comment copies the summary's Coverage caveat line verbatim"]];
 const verdictMissing = missingFactsOf(VERDICT_COPY);
 
