@@ -1203,6 +1203,19 @@ async function main(argv) {
         return 0;
       }
     }
+    // #3945: evaluated after the guards above. A findings artifact that is
+    // present but unreadable/malformed is refused under its own reason, before
+    // the per-id coverage gap is looked at.
+    const tiebreakCoverage = require('./lib/tiebreak').checkRunTiebreakCoverage(runDir, listSpecDirs(runDir));
+    const tiebreakHint = "re-run the review step's findings writer for this run, or delete review-findings.json if the run predates the tiebreak, then re-run archive-run";
+    if (tiebreakCoverage.artifactValid === false) {
+      process.stdout.write(`claude-tweaks: archival refused — tiebreak-artifact-invalid (review-findings.json is present but unreadable or malformed) — ${tiebreakHint}\n`);
+      return 0;
+    }
+    if (tiebreakCoverage.missing.length > 0) {
+      process.stdout.write(`claude-tweaks: archival refused — tiebreak-coverage-missing (${tiebreakCoverage.missing.length} listed finding(s) have no tiebreak verdict line: ${tiebreakCoverage.missing.join(', ')}) — ${tiebreakHint}\n`);
+      return 0;
+    }
     const mainRoot = wtDetect.mainCheckoutRoot(process.cwd());
     if (!mainRoot) {
       process.stdout.write('claude-tweaks: could not resolve the main checkout root — run not archived\n');
