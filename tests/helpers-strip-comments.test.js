@@ -162,6 +162,52 @@ test('the hashbang line is kept and unterminated constructs at EOF do not throw'
   }
 });
 
+const LITERAL_INPUT = [
+  "const a = 'x < 1';",
+  'const t = `took ${Date.now() - s} < 5`;',
+  'const r = /a<b/g;',
+  'live(x < 2);',
+  "const e = 'it\\'s < 3';",
+].join('\n');
+
+test("literals: 'blank' empties string, template-text and regex bodies but keeps their code and offsets", () => {
+  const out = stripComments(LITERAL_INPUT, { literals: 'blank' });
+  assert.equal(out.length, LITERAL_INPUT.length);
+  assert.deepEqual(newlineIndices(out), newlineIndices(LITERAL_INPUT));
+  assert.ok(out.includes('live(x < 2);'));
+  assert.ok(out.includes('Date.now() - s'));
+  assert.ok(out.includes('/g;'));
+  assert.ok(!out.includes('x < 1'));
+  assert.ok(!out.includes('took'));
+  assert.ok(!out.includes('a<b'));
+  assert.ok(!out.includes('s < 3'));
+  // Delimiters stay in place; the escaped \' inside the body is body text, so it blanks too.
+  assert.equal(
+    out,
+    [
+      `const a = '${' '.repeat(5)}';`,
+      `const t = \`${' '.repeat(5)}\${Date.now() - s}${' '.repeat(4)}\`;`,
+      `const r = /${' '.repeat(3)}/g;`,
+      'live(x < 2);',
+      `const e = '${' '.repeat(9)}';`,
+    ].join('\n'),
+  );
+});
+
+test("literals: 'blank' still blanks comments, and an unterminated string blanks to the end of its line", () => {
+  const out = stripComments("live(); // c < 1\nconst u = 'open < 2\nnext();", { literals: 'blank' });
+  assert.ok(out.includes('live();'));
+  assert.ok(out.includes('next();'));
+  assert.ok(!out.includes('c < 1'));
+  assert.ok(!out.includes('open < 2'));
+});
+
+test('the default and literals: keep leave literals verbatim (unchanged behaviour)', () => {
+  assert.equal(stripComments(LITERAL_INPUT), stripComments(LITERAL_INPUT, { literals: 'keep' }));
+  assert.ok(stripComments(LITERAL_INPUT).includes('x < 1'));
+  assert.ok(stripComments(LITERAL_INPUT).includes('a<b'));
+});
+
 const REPO_ROOT = path.join(__dirname, '..');
 const BIN_DIR = path.join(REPO_ROOT, 'plugin', 'bin');
 

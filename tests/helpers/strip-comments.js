@@ -10,7 +10,9 @@ const vm = require('node:vm');
 // verbatim — a quote, backtick, `//` or `/*` inside one stays code and never opens
 // a fake string or comment. A hashbang first line is kept as is. An unterminated
 // string, template, regex or block comment ends at the end of its line or of the
-// input and never throws.
+// input and never throws. `{ literals: 'blank' }` also blanks string, template-text
+// and regex literal bodies, for operator scans that must not read literal text as
+// code; the default `'keep'` leaves them verbatim.
 //
 // Whether a `/` that is not a comment opener begins a regex or is division follows
 // the previous significant token: a regex after nothing, after a punctuator other
@@ -49,29 +51,41 @@ function slashStartsRegex(prev) {
 }
 
 // End index of the string literal opening at `i`: just past its closing quote, or
-// at a newline (not consumed) or the end of input when it is unterminated.
-function scanString(src, i) {
+// at a newline (not consumed) or the end of input when it is unterminated. The
+// body between the quotes is handed to `blankBody`.
+function scanString(src, i, blankBody) {
   const quote = src[i];
+  const bodyStart = i + 1;
   i++;
   while (i < src.length) {
     const ch = src[i];
     if (ch === '\\') i += 2;
-    else if (ch === quote) return i + 1;
-    else if (ch === '\n') return i;
-    else i++;
+    else if (ch === quote) {
+      blankBody(bodyStart, i);
+      return i + 1;
+    } else if (ch === '\n') {
+      blankBody(bodyStart, i);
+      return i;
+    } else i++;
   }
+  blankBody(bodyStart, src.length);
   return src.length;
 }
 
 // End index of the regex literal opening at `i`: just past its flags, or at a
 // newline (not consumed) or the end of input when it is unterminated. A `/` inside
-// a `[…]` class or after a backslash does not end it.
-function scanRegex(src, i) {
+// a `[…]` class or after a backslash does not end it. The body between the slashes
+// is handed to `blankBody`; the slashes and flags are not.
+function scanRegex(src, i, blankBody) {
   let inClass = false;
+  const bodyStart = i + 1;
   i++;
   while (i < src.length) {
     const ch = src[i];
-    if (ch === '\n') return i;
+    if (ch === '\n') {
+      blankBody(bodyStart, i);
+      return i;
+    }
     if (ch === '\\') {
       i += 2;
       continue;
@@ -79,21 +93,24 @@ function scanRegex(src, i) {
     if (ch === '[') inClass = true;
     else if (ch === ']') inClass = false;
     else if (ch === '/' && !inClass) {
+      blankBody(bodyStart, i);
       i++;
       while (i < src.length && isIdentChar(src[i])) i++;
       return i;
     }
     i++;
   }
+  blankBody(bodyStart, src.length);
   return src.length;
 }
 
-function stripComments(src) {
+function stripComments(src, { literals = 'keep' } = {}) {
   const out = src.split('');
   const n = src.length;
   const blank = (start, end) => {
     for (let k = start; k < end; k++) if (out[k] !== '\n') out[k] = ' ';
   };
+  const blankBody = literals === 'blank' ? blank : () => {};
 
   // Scans code from `i`. With `inBrace`, the `}` that closes the enclosing `${`
   // ends the scan. Returns the index to resume at.
@@ -113,14 +130,14 @@ function stripComments(src) {
         blank(i, end);
         i = end;
       } else if (ch === "'" || ch === '"') {
-        i = scanString(src, i);
+        i = scanString(src, i, blankBody);
         prev = LITERAL;
       } else if (ch === '`') {
         i = scanTemplate(i);
         prev = LITERAL;
       } else if (ch === '/') {
         if (slashStartsRegex(prev)) {
-          i = scanRegex(src, i);
+          i = scanRegex(src, i, blankBody);
           prev = LITERAL;
         } else {
           prev = { kind: 'punct', value: '/' };
@@ -152,10 +169,15 @@ function stripComments(src) {
     i++;
     while (i < n) {
       const ch = src[i];
-      if (ch === '\\') i += 2;
-      else if (ch === '`') return i + 1;
+      if (ch === '\\') {
+        blankBody(i, Math.min(i + 2, n));
+        i += 2;
+      } else if (ch === '`') return i + 1;
       else if (ch === '$' && src[i + 1] === '{') i = scanCode(i + 2, true);
-      else i++;
+      else {
+        blankBody(i, i + 1);
+        i++;
+      }
     }
     return n;
   }
