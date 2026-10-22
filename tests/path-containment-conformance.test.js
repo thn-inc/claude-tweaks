@@ -12,7 +12,8 @@ const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('.
 // casing/drive semantics, so none may remain under plugin/bin/. The scan also
 // flags the variable-mediated form (#3892): `startsWith(<identifier bound to an
 // expression naming path.sep>)`, which a same-line match cannot see when the
-// binding and the test sit on different lines. It also flags any literal
+// binding and the test sit on different lines (its recall limits are listed at
+// `SEP_BINDING` below). It also flags any literal
 // `startsWith('..')` under plugin/bin outside lib/path-guard/ (#3642), since
 // such a test is the `path.relative`-derived containment idiom; other
 // re-derivations are out of scope.
@@ -34,6 +35,18 @@ function listJs(dir) {
   return out;
 }
 
+// The plugin/bin tree, walked and read once; the real-tree assertions share it.
+let binSourcesCache = null;
+function binSources() {
+  if (binSourcesCache === null) {
+    binSourcesCache = listJs(BIN_ROOT).map((file) => ({
+      rel: path.relative(ROOT, file).replace(/\\/g, '/'),
+      raw: fs.readFileSync(file, 'utf8'),
+    }));
+  }
+  return binSourcesCache;
+}
+
 // `${rel}:${lineNo}` for every non-comment line matching the spec's own grep
 // pattern. Comments are blanked (line numbers stay stable) so prose that names
 // the retired idiom is not a hit.
@@ -50,9 +63,22 @@ function scanHandRolled(src, rel) {
 // chain) followed by `=`, `+=`, `??=` or `||=`; `==`, `===`, `!=`, `<=`, `>=`
 // and `=>` are not bindings. Its right-hand side runs to the next binding on the
 // line or to a `;`; it counts when it names `sep` (`path.sep`, `pathImpl.sep`,
-// a destructured `sep`). Read per line over the comment-stripped text, so a
-// right-hand side that starts on the next line is not seen. An object-property
-// binding (`{ rootSep: root + path.sep }`) is not collected.
+// a destructured `sep`).
+//
+// Scope: the bound-name set is file-wide, not per function. A name bound to a
+// sep expression in one function and passed to `startsWith(name)` in another
+// function of the same file is flagged; that is a possible false positive the
+// scan accepts for a conservative match.
+//
+// Limits (recall gaps, by design; the matcher is not widened for them):
+//   (a) a right-hand side that starts on the next line (`const r =\n  root + path.sep;`)
+//       is not seen, because bindings are read one line at a time;
+//   (b) an object-property binding (`{ rs: root + path.sep }`, then `startsWith(o.rs)`)
+//       is not collected;
+//   (c) a helper-function return (`startsWith(pre(root))`) is not flagged: the scan
+//       matches only an identifier or dotted-identifier argument, so a call argument
+//       is never matched, even when the helper builds a sep-suffixed value.
+// Read per line over the comment-stripped text.
 const SEP_BINDING = /(?<![\w$.!<>=+\-*\/%&|^?])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*(?:\+|\?\?|\|\|)?=(?![=>])/g;
 const STARTS_WITH_ARG = /\.startsWith\(\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*[,)]/g;
 function sepBoundNames(line) {
@@ -109,9 +135,7 @@ test('scanHandRolled flags the idiom in code but not in a comment', () => {
 
 test('AC1.1: no plugin/bin JS file hand-rolls a startsWith(... path.sep) containment test', () => {
   const hits = [];
-  for (const file of listJs(BIN_ROOT)) {
-    const rel = path.relative(ROOT, file).replace(/\\/g, '/');
-    const raw = fs.readFileSync(file, 'utf8');
+  for (const { rel, raw } of binSources()) {
     const verdict = stripperVerdict(raw);
     assert.equal(verdict, 'ok', `${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
     hits.push(...scanHandRolled(raw, rel));
@@ -161,9 +185,7 @@ test('#3892 go-red: the scan flags the old sweep-shadow rootWithSep guard, verba
 
 test('#3892 AC1.2: no plugin/bin JS file tests containment with startsWith(<identifier bound to a path.sep expression>)', () => {
   const hits = [];
-  for (const file of listJs(BIN_ROOT)) {
-    const rel = path.relative(ROOT, file).replace(/\\/g, '/');
-    const raw = fs.readFileSync(file, 'utf8');
+  for (const { rel, raw } of binSources()) {
     const verdict = stripperVerdict(raw);
     assert.equal(verdict, 'ok', `${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
     hits.push(...scanVariableHandRolled(raw, rel));
@@ -184,9 +206,7 @@ test('#3642 scanRelDotDot flags a bare startsWith(\'..\') in any quote style, bu
 });
 
 test('#3642 AC1.1: no plugin/bin JS file outside lib/path-guard/ tests containment with startsWith(\'..\')', () => {
-  assertNoRelDotDot(listJs(BIN_ROOT)
-    .map((file) => ({ rel: path.relative(ROOT, file).replace(/\\/g, '/'), raw: fs.readFileSync(file, 'utf8') }))
-    .filter(({ rel }) => !rel.startsWith('plugin/bin/lib/path-guard/')));
+  assertNoRelDotDot(binSources().filter(({ rel }) => !rel.startsWith('plugin/bin/lib/path-guard/')));
 });
 
 test('#3642 AC3.1: the scan fails on a planted rel.startsWith(\'..\') containment check', () => {
