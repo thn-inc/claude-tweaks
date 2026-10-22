@@ -396,3 +396,90 @@ test('code-mode-steps wiring assertions can go red', () => {
   const routingFirst = text.replace(STEP37_HEADING, '').replace(ROUTING_HEADING, `${ROUTING_HEADING}\n\n${STEP37_HEADING}`);
   assert.ok(wiringProblems(routingFirst).includes('the Step 3.7 heading comes after Step 3 Routing'));
 });
+
+// --- step3-lens-dispatch.md: low tier and the Direct-verification override route through the tiebreak ---
+
+const STEP3 = path.join(SKILLS, 'review', 'step3-lens-dispatch.md');
+const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
+const STEP3_BYTE_CEILING = 51584;
+
+const lineStartingWith = (text, prefix) => text.split('\n').find((line) => line.startsWith(prefix)) || '';
+const lowTierParagraph = (text) => lineStartingWith(text, '**Low-tier single-read dispatch (`low` only).**');
+const overrideParagraph = (text) => lineStartingWith(text, '> **Direct-verification override.**');
+
+// AC4.1: the low tier hands every single-read finding to the tiebreak.
+const LOW_TIER_REQUIRED = [
+  [/goes to the tiebreak \(`step3-tiebreak\.md`\)/, 'the low tier hands findings to the tiebreak'],
+  [/STAGED \{HH:MM:SS\} — Single-read \(low tier\): lens "\{lens\}" finding \{path\}:\{line\} unconfirmed; handed to the tiebreak\./, 'the STAGED line keeps the word unconfirmed'],
+];
+const LOW_TIER_FORBIDDEN = [
+  [/only path to `confirmed` is the Direct-verification override/, 'the old only-path-to-confirmed sentence'],
+  [/confirmed via direct verification/, 'the old direct-verification confirmation log line'],
+];
+const lowTierMissing = missingFactsOf(LOW_TIER_REQUIRED);
+const lowTierLeftovers = (text) => LOW_TIER_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+
+test('AC4.1 low tier hands findings to the tiebreak', () => {
+  const paragraph = lowTierParagraph(readText(STEP3));
+  assert.notEqual(paragraph, '', 'the low-tier single-read paragraph was not found');
+  assert.deepEqual(lowTierMissing(paragraph), [], 'the low-tier paragraph must hand findings to the tiebreak');
+  assert.deepEqual(lowTierLeftovers(paragraph), [], 'the low-tier paragraph must not keep the old direct-verification path');
+});
+
+test('AC4.1 the low-tier assertions can go red', () => {
+  const paragraph = lowTierParagraph(readText(STEP3));
+  assertEachPatternGoesRed(paragraph, LOW_TIER_REQUIRED, lowTierMissing);
+  assert.deepEqual(lowTierLeftovers(`${paragraph} the only path to \`confirmed\` is the Direct-verification override`), ['the old only-path-to-confirmed sentence']);
+  assert.deepEqual(lowTierLeftovers(`${paragraph} confirmed via direct verification`), ['the old direct-verification confirmation log line']);
+});
+
+// AC4.2: the override stays documented and emits a resolver verdict line.
+const OVERRIDE_REQUIRED = [
+  [/resolve-tiebreak/, 'the override resolves through resolve-tiebreak'],
+  [/Mode: inline\./, 'the override marks its verdict Mode: inline.'],
+  [/step3-tiebreak\.md/, 'the override cites the tiebreak step'],
+];
+const OVERRIDE_FORBIDDEN = [[/the resolution path that actually confirms/, 'the resolution-path-that-actually-confirms sentence']];
+const overrideMissing = missingFactsOf(OVERRIDE_REQUIRED);
+const overrideLeftovers = (text) => OVERRIDE_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+
+test('AC4.2 the override stays documented and emits a resolver verdict line', () => {
+  const paragraph = overrideParagraph(readText(STEP3));
+  assert.notEqual(paragraph, '', 'the Direct-verification override paragraph was not found');
+  assert.deepEqual(overrideMissing(paragraph), [], 'the override must route through the resolver');
+  assert.deepEqual(overrideLeftovers(paragraph), [], 'the override must not claim to be the resolution path that confirms');
+});
+
+test('AC4.2 the override assertions can go red', () => {
+  const paragraph = overrideParagraph(readText(STEP3));
+  assertEachPatternGoesRed(paragraph, OVERRIDE_REQUIRED, overrideMissing);
+  assert.deepEqual(overrideLeftovers(`${paragraph} expect it to be the resolution path that actually confirms a real finding`), ['the resolution-path-that-actually-confirms sentence']);
+});
+
+// pointer: the file names the tiebreak step at least twice (low tier + override).
+const countOf = (text, needle) => text.split(needle).length - 1;
+
+test('pointer: step3-lens-dispatch.md names step3-tiebreak.md at least twice', () => {
+  assert.ok(countOf(readText(STEP3), 'step3-tiebreak.md') >= 2);
+});
+
+test('pointer: the count assertion can go red', () => {
+  const text = readText(STEP3);
+  assert.ok(countOf(text.replaceAll('step3-tiebreak.md', 'step3-other.md'), 'step3-tiebreak.md') < 2);
+});
+
+// AC10.1: the rail.
+const byteProblems = (bytes) => [
+  ...(bytes > STEP3_BYTE_CEILING ? [`over the ${STEP3_BYTE_CEILING} B ceiling`] : []),
+  ...(bytes >= RAIL_BYTES ? [`at or over the ${RAIL_BYTES} B rail`] : []),
+];
+
+test('AC10.1 step3-lens-dispatch.md stays within its byte ceiling and under the rail', () => {
+  assert.deepEqual(byteProblems(fs.statSync(STEP3).size), []);
+});
+
+test('AC10.1 the byte-ceiling assertion can go red', () => {
+  assert.deepEqual(byteProblems(STEP3_BYTE_CEILING), [], 'the ceiling itself is allowed');
+  assert.deepEqual(byteProblems(STEP3_BYTE_CEILING + 1), [`over the ${STEP3_BYTE_CEILING} B ceiling`]);
+  assert.deepEqual(byteProblems(RAIL_BYTES), [`over the ${STEP3_BYTE_CEILING} B ceiling`, `at or over the ${RAIL_BYTES} B rail`]);
+});

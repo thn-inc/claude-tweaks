@@ -28,7 +28,7 @@ const LOG_LINE =
   'AUTO {HH:MM:SS} — Cross-lens corroboration (medium tier): finding {path}:{line} reported independently by lenses {lens list}. Confirmed. Reversibility: high.';
 const ONLY_ONE_BULLET = "> - Findings present in only one agent's output";
 const SINGLE_READ_RULE =
-  'Every finding a single-read agent returns enters as `unconfirmed`, and the only path to `confirmed` is the Direct-verification override';
+  'Every finding a single-read agent returns enters as `unconfirmed` and goes to the tiebreak (`step3-tiebreak.md`)';
 
 function bullet(dispatch) {
   const line = dispatch.split('\n').find((l) => l.startsWith(ONLY_ONE_BULLET));
