@@ -21,9 +21,7 @@ const { ISSUE_REF_SOURCE } = require('../issue-branch-tracking');
 // Reused rather than reimplemented a third time (CLAUDE.md's don't-duplicate
 // rule) — `resolveIntegrationBranch`'s fallback profile (no explicit arg,
 // policy.yml then origin/HEAD) fits this file's EnterWorktree handler as-is.
-// `parseWorktreeList` is reused for the same reason, for the tool-result
-// fallback path below.
-const { resolveIntegrationBranch, parseWorktreeList, findWorktreeEntry, bareIntegrationName } = require('./worktree-reap');
+const { resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
 // Session-scoped marker path for the non-EnterWorktree ad-hoc-run-dir rate-limit (#1333) — see
 // stampAdHocRunDir below.
 const { sessionTmpPath } = require('../session-tmp');
@@ -233,17 +231,11 @@ function extractToolResponseText(toolResponse) {
 // Returns `{ path, isMain }` — `isMain` is true for the entry `git worktree list` always lists
 // first (the primary/main checkout, per git's own porcelain output convention) — or null when
 // `ctx.cwd` doesn't resolve to a listed worktree at all (not a git repo, or the `git worktree
-// list` call itself failed). The match goes through worktree-reap.js's `findWorktreeEntry`, so a
-// win32 forward-slash porcelain path matches a backslash cwd (#3811).
+// list` call itself failed). Delegates to context.js's `listedWorktreeForCwd`, which matches through
+// worktree-reap.js's `findWorktreeEntry`, so a win32 forward-slash porcelain path matches a
+// backslash cwd (#3811).
 function resolveWorktreePathViaPorcelain(ctx, deps = {}) {
-  const cwd = ctx.cwd;
-  if (typeof cwd !== 'string' || !cwd) return null;
-  const { stdout, failure } = (deps.runGit || runGit)(['worktree', 'list', '--porcelain'], cwd);
-  if (failure || stdout === null) return null;
-  const entries = parseWorktreeList(stdout);
-  const entry = findWorktreeEntry(entries, cwd, deps.pathImpl || path);
-  if (!entry) return null;
-  return { path: entry.path, isMain: entry === entries[0] };
+  return ctxLib.listedWorktreeForCwd(ctx.cwd, deps);
 }
 
 function resolveCreatedWorktreePath(ctx) {
