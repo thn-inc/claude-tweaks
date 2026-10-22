@@ -773,7 +773,9 @@ function isTrustedOwnedRun(ownedRun) {
 // errors other than "alive" fail open (never nested, never throw from a hook).
 function claudePid(env) {
   const raw = env && env.CLAUDE_PID;
-  return typeof raw === 'string' && /^[1-9]\d*$/.test(raw) ? Number(raw) : null;
+  if (typeof raw !== 'string' || !/^[1-9]\d*$/.test(raw)) return null;
+  const pid = Number(raw);
+  return Number.isSafeInteger(pid) ? pid : null;
 }
 
 function isNestedSession(runState, env, { isAlive = isPidAlive } = {}) {

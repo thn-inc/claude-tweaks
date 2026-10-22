@@ -156,7 +156,8 @@ test('session-end DOES stamp interrupted on a run this session owns', () => {
 // explicitly in each test because the runner may itself run under Claude Code.
 function withClaudePid(pid, fn) {
   const prior = process.env.CLAUDE_PID;
-  process.env.CLAUDE_PID = pid;
+  if (pid === null) delete process.env.CLAUDE_PID;
+  else process.env.CLAUDE_PID = pid;
   try {
     return fn();
   } finally {
@@ -214,6 +215,38 @@ test('#3845: a nested session on an env-attributed run also writes nothing', () 
 
   assert.strictEqual(readState(pinned).status, 'active');
   assert.deepStrictEqual(readEvents(pinned), []);
+});
+
+test('#3845: a nested session on a fallback-attributed run writes neither the stamp nor the breadcrumb', () => {
+  const cwd = project();
+  const guessed = mkRun(cwd, '2026-07-01T090000-guessed', { status: 'active', ownerPid: process.pid });
+
+  const owned = ctxLib.resolveRun(cwd, {}, 'someone');
+  assert.strictEqual(owned.attribution, 'fallback');
+  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'someone' }, ownedRun: owned, cwd }));
+
+  assert.strictEqual(readState(guessed).status, 'active');
+  assert.deepStrictEqual(readEvents(guessed), [], 'the guard sits before the attribution check, so the fallback breadcrumb is withheld too');
+});
+
+test('#3845: an unstamped run (no ownerPid) fails open — the session ending still stamps interrupted', () => {
+  const cwd = project();
+  const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me' });
+
+  const owned = ctxLib.resolveRun(cwd, {}, 'me');
+  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+
+  assert.strictEqual(readState(mine).status, 'interrupted');
+});
+
+test('#3845: an unknown CLAUDE_PID at session end fails open — the stamp is written even against a live ownerPid', () => {
+  const cwd = project();
+  const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: process.pid });
+
+  const owned = ctxLib.resolveRun(cwd, {}, 'me');
+  withClaudePid(null, () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+
+  assert.strictEqual(readState(mine).status, 'interrupted');
 });
 
 test('pre-compact does not overwrite lastEvent on a guessed run', () => {
@@ -718,7 +751,8 @@ test('#3515 incident e2e: a sibling worktree Write to a gitignored path writes n
 
 test('#3845 claudePid: a positive integer string parses, anything else is unknown', () => {
   assert.strictEqual(ctxLib.claudePid({ CLAUDE_PID: '8207' }), 8207);
-  for (const bad of [undefined, '', 'abc', '0', '-5', '12.5', ' 8207']) {
+  assert.strictEqual(ctxLib.claudePid({ CLAUDE_PID: 8207 }), null, 'a non-string env value is unknown');
+  for (const bad of [undefined, '', 'abc', '0', '-5', '12.5', ' 8207', '9007199254740993']) {
     assert.strictEqual(ctxLib.claudePid({ CLAUDE_PID: bad }), null, `CLAUDE_PID=${JSON.stringify(bad)}`);
   }
   assert.strictEqual(ctxLib.claudePid(undefined), null);
