@@ -797,3 +797,53 @@ test('AC9.2 the straddle assertion can go red', () => {
   const { confirmed } = categoriseReproduction([a], [sameBucket]);
   assert.notEqual(confirmed[0].severityContested, true, 'a same-bucket pair is not contested, so the contested flag above discriminates');
 });
+
+// --- _shared/materiality-floor.md: the tiebreak-cant-tell digest value (R1) ---
+
+const MATERIALITY_FLOOR = path.join(SKILLS, '_shared', 'materiality-floor.md');
+const materialityText = () => readText(MATERIALITY_FLOOR);
+const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
+
+// The text of the floor's `### Tiebreak can't-tell value` subsection, up to the next heading.
+function tiebreakValueSection(text) {
+  const start = text.indexOf("### Tiebreak can't-tell value");
+  if (start === -1) return '';
+  const next = text.indexOf('\n### ', start + 1);
+  return text.slice(start, next === -1 ? text.length : next);
+}
+
+const TIEBREAK_VALUE = [
+  [/Defer-reason: tiebreak-cant-tell/, 'the floor documents the Defer-reason: tiebreak-cant-tell value'],
+  [/step3-tiebreak\.md/, 'the floor names step3-tiebreak.md as the producer'],
+  [/Deliberately \*\*not\*\* in `DEFER_REASONS`/, 'the floor says the value is deliberately not in DEFER_REASONS'],
+];
+const tiebreakValueMissing = (text) => missingFactsOf(TIEBREAK_VALUE)(tiebreakValueSection(text));
+
+test('R1 materiality-floor.md documents Defer-reason: tiebreak-cant-tell, produced by step3-tiebreak.md, outside DEFER_REASONS', () => {
+  assert.deepEqual(tiebreakValueMissing(materialityText()), [], "the floor's Tiebreak can't-tell value subsection must carry every fact");
+});
+
+test('R1 the materiality-floor assertions can go red', () => {
+  assertEachPatternGoesRed(tiebreakValueSection(materialityText()), TIEBREAK_VALUE, missingFactsOf(TIEBREAK_VALUE));
+  assert.deepEqual(tiebreakValueMissing('## no such subsection'), TIEBREAK_VALUE.map(([, fact]) => fact), 'a floor without the subsection fails every fact');
+});
+
+test('R1 tiebreak-cant-tell is not in DEFER_REASONS, which keeps its six gate values', () => {
+  assert.ok(!DEFER_REASONS.includes('tiebreak-cant-tell'), 'tiebreak-cant-tell is an entry-format value, not a fix-now-failure reason');
+  assert.equal(DEFER_REASONS.length, 6, 'the deferral gate vocabulary is unchanged');
+  assert.ok(DEFER_REASONS.includes('tangential'), 'the length check counts the real gate vocabulary, so the includes check above discriminates');
+});
+
+const RESOLVE_NAMES_VALUE = [[/tiebreak-cant-tell/, 'the Resolve and act section names the tiebreak-cant-tell digest value']];
+const resolveNamesValueMissing = (text) => missingFactsOf(RESOLVE_NAMES_VALUE)(sectionOf(text, 'Resolve and act'));
+
+test("R1 step3-tiebreak.md's Resolve and act section names tiebreak-cant-tell", () => {
+  assert.deepEqual(resolveNamesValueMissing(tiebreakText()), []);
+});
+
+test('R1 the Resolve and act assertion can go red', () => {
+  const text = tiebreakText();
+  const doctored = text.replace(/tiebreak-cant-tell/g, '');
+  assert.notEqual(doctored, text, 'anchor text not found');
+  assert.deepEqual(resolveNamesValueMissing(doctored), [RESOLVE_NAMES_VALUE[0][1]]);
+});
