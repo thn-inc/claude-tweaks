@@ -24,7 +24,7 @@ files:
   - three refusal fragments, `noun:"This session"`, ` is isolated in the worktree ` and `Refusing to run it`;
   - two anchors unique to the templates the hook matches, the git-operations `Refusing to run it` + escaped-dash form and `Refusing to run it there`.
 - **Should feel:** routine and quick. A minute's wait while it reads a ~268 MB binary a few times, then a short report.
-- **Should understand:** an `upgrade-available` finding for claude-code is expected noise, because Claude Code ships near daily. It is not drift. Without `claude` installed (CI) the entry reports `absent` and skips its assertions, never a false drift.
+- **Should understand:** claude-code never reports `upgrade-available`: the entry sets `report-upgrades: false`, because Claude Code ships near daily and the assertions, not the version, carry the signal. Without `claude` installed (CI) the entry reports `absent` and skips its assertions, never a false drift.
 - **Red flags:**
   - every claude-code assertion turns `unmatched` at once. That more likely means the bundler changed its escape form, or `claude` now resolves to a wrapper script, than that the wording changed. Read the binary before editing anything;
   - the sweep runs out of memory reading the binary.

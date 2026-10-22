@@ -217,6 +217,7 @@ function evaluate(entry, options = {}) {
     version,
     assertions,
     fixtures,
+    reportUpgrades: entry['report-upgrades'] !== false,
   };
   evaluation.due = isDue(evaluation);
   return evaluation;
@@ -229,8 +230,14 @@ function evaluate(entry, options = {}) {
 // disagrees with the findings it precedes is worse than either being wrong on
 // its own. `resolvedInstalled` is required — "you could upgrade from nothing"
 // is noise, and checkVersion already reported the absence.
+//
+// An entry's `report-upgrades: false` opt-out lives here, not at a call site,
+// so isDue, buildFindings and cmdDue stay in agreement.
 function hasUpgrade(evaluation) {
   if (evaluation.contentPins) return false; // no version line exists to upgrade along
+  // Entry opted out via `report-upgrades: false`; drift findings are unaffected
+  // because they never call this predicate.
+  if (evaluation.reportUpgrades === false) return false;
   return Boolean(
     evaluation.latest
     && evaluation.resolvedInstalled
