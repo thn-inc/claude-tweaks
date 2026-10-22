@@ -18,13 +18,13 @@ const { readText } = require('./helpers/read-skill');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
 
-// Explicit non-{tmp-*} targets. Task 2 of #3544 extends this list only.
-const NAMED_TARGETS = ['{subject-dir}'];
+// Explicit non-{tmp-*} targets: path placeholders that resolve under the session tmp root.
+const NAMED_TARGETS = ['{subject-dir}', '{frame-path}', '{frame-dir}', '{gif-path}', '{steps-json-path}', '{ctx-dir}'];
 // A variable-name placeholder (`{tmp-var}=$(...)` in _shared/session-tmp-root.md), never a path.
 const EXEMPT = ['{tmp-var}'];
 
 // Measured scanCorpus().quoted after the #3544 edits; the sweep must keep seeing at least this many.
-const QUOTED_FLOOR = 50;
+const QUOTED_FLOOR = 56;
 
 function isTarget(name) {
   return (/^\{tmp-[a-z0-9-]+\}$/.test(name) && !EXEMPT.includes(name)) || NAMED_TARGETS.includes(name);
@@ -185,6 +185,12 @@ fi`;
 // Frozen: the pre-quoted substitution at decomposition-mode.md:50 at 1d3934f5c.
 const PRE_CHANGE_SPECIFY_SUBST = 'with {tmp-records-file} = "$SPECIFY_ALL_ISSUES"}';
 
+// Frozen: walkthrough/SKILL.md line 72 at 1d3934f5c (the Step 4 encode fence line).
+const PRE_CHANGE_WALKTHROUGH_ENCODE = `node "\${CLAUDE_PLUGIN_ROOT}/bin/walkthrough-encode.js" --frames {frame-dir} --out {gif-path} --delay-ms {delay-ms} --budget-mb {budget-mb} --steps-json {steps-json-path} --captions {name}.md --caption-title "{story description}"`;
+
+// Frozen: review/review-effort-derivation.md line 20 at 1d3934f5c, trimmed of its list indent.
+const PRE_CHANGE_CTX_REDIRECT = `gh issue view {n} --json labels > {ctx-dir}/record-{n}.json`;
+
 const FOUR_PRE_CHANGE_OFFENDERS = ['{tmp-records-file}', '{tmp-records-file}', '{tmp-open-only-file}', '{tmp-records-file}'];
 
 test('AC1.1: no target placeholder sits unquoted on a shell line in plugin/skills', () => {
@@ -202,6 +208,18 @@ test('AC1.1 go-red: the frozen pre-change record-queue-fetch.md fence reports it
   const r = scanFence(PRE_CHANGE_QUEUE_FETCH.split('\n'));
   assert.deepStrictEqual(r.offenders.map((o) => o.name), FOUR_PRE_CHANGE_OFFENDERS);
   assert.strictEqual(r.quoted, 4);
+  assert.strictEqual(r.balanced, true);
+});
+
+test('AC1.1 go-red: the frozen walkthrough encode line reports {frame-dir}, {gif-path}, {steps-json-path}', () => {
+  const r = scanFence([PRE_CHANGE_WALKTHROUGH_ENCODE]);
+  assert.deepStrictEqual(r.offenders.map((o) => o.name), ['{frame-dir}', '{gif-path}', '{steps-json-path}']);
+  assert.strictEqual(r.balanced, true);
+});
+
+test('AC1.1 go-red: the frozen review redirect reports {ctx-dir}', () => {
+  const r = scanFence([PRE_CHANGE_CTX_REDIRECT]);
+  assert.deepStrictEqual(r.offenders.map((o) => o.name), ['{ctx-dir}']);
   assert.strictEqual(r.balanced, true);
 });
 
