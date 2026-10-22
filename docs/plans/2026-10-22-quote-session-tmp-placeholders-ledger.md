@@ -2,3 +2,12 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | SDD Task 1 minor: CRLF go-red does not exercise the \r?\n split (fence regex + trim absorb \r) | accepted | Final whole-branch review ruled leave — a stray \r is harmless through scanFence and readText already normalizes; asserting no-\r pins a non-load-bearing detail |
+| 2 | build | SDD Task 1/2 minor: QUOTED_FLOOR equals the exact measured count (no slack) | accepted | House rule (bin-source-scan-conformance skill): floor = count at landing, never lowered to go green; now 63 |
+| 3 | build | SDD Task 1 minor: single-quoted placeholders counted as quoted | fixed | de8665651 — shell-level single quotes now reported as offenders (a bare $VAR never expands inside '…') |
+| 4 | build | SDD Task 2 minor: QUOTED_FLOOR=56 at exact measured count | accepted | Same as #2; superseded by floor 63 in de8665651 |
+| 5 | build | SDD ruling — leave the CRLF split assertion (deferred minor 1): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
+| 6 | build | SDD ruling — leave QUOTED_FLOOR at the exact count (deferred minor 2): ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
+| 7 | build | SDD ruling — report shell-level single-quoted targets as offenders (deferred minor 3 / final Minor 5): ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
+| 8 | build | SDD ruling — widen scope to {tmp}/{path-*} session-tmp placeholders across review/build/specify/challenge (final Important 1): ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
+| 9 | build | SDD ruling — route re-review's out-of-scope unquoted path placeholders (plan-review.md:103 session-tmp + 9 others) to /build Common Step 4.5: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
