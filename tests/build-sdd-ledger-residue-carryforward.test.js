@@ -72,7 +72,7 @@ test('I1: the exit-3 guidance branches on the degraded stderr prefix — traced 
 });
 
 test('M5: {ledger path} is this build\'s active open items ledger, run-dir or repo-relative', () => {
-  assert.match(DISPATCH, ws('`{ledger path}` is this build\'s active open items ledger per `_shared/ledger-format.md`\'s resolution rule: `"$PIPELINE_RUN_DIR/ledger.md"` when that file exists, else the repo-relative `docs/plans/…-ledger.md` path'));
+  assert.match(DISPATCH, ws('`{ledger path}` is this build\'s active open items ledger per `_shared/ledger-format.md`\'s resolution rule — the `this-run:` path `hooks.js resolve-ledger --run "$PIPELINE_RUN_DIR"` reports (this build created exactly one)'));
   assert.doesNotMatch(DISPATCH, /`\{ledger path\}` is this build's open items ledger, repo-relative/);
 });
 

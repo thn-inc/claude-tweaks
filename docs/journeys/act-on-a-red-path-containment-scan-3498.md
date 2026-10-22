@@ -11,8 +11,9 @@ files:
 
 **Persona:** A claude-tweaks plugin maintainer. They write a check under `plugin/bin/` that asks whether one resolved path lies inside another. They type either `candidate.startsWith(root + path.sep)` or `path.relative(root, candidate).startsWith('..')`, both of which the code used to use, and `npm test` goes red on `tests/path-containment-conformance.test.js`.
 **Goal:** Replace the retyped test with the shared helper, choosing strict or `orEqual` deliberately, without weakening a boundary the check guards.
-**Entry point:** `npm test` (or `node --test tests/path-containment-conformance.test.js`) reports one of two failures. Each comes with a `{file}:{line}` hit per retyped test.
+**Entry point:** `npm test` (or `node --test tests/path-containment-conformance.test.js`) reports one of three failures. Each comes with a `{file}:{line}` hit per retyped test.
 - `not ok … AC1.1: no plugin/bin JS file hand-rolls a startsWith(... path.sep) containment test`
+- `not ok … #3892 AC1.2: no plugin/bin JS file tests containment with startsWith(<identifier bound to a path.sep expression>)`
 - `not ok … #3642 AC1.1: no plugin/bin JS file outside lib/path-guard/ tests containment with startsWith('..')`
 **Success state:** Each hit calls `isPathContained(candidate, root)` (root excluded) or `isPathContained(candidate, root, { orEqual: true })` (root admitted) from `plugin/bin/lib/shared-primitives.js`. Both arguments are absolute, already-resolved paths. The scan passes.
 
@@ -24,10 +25,12 @@ files:
 - **Should feel:** Pinpointed. The line number is exact, and a mention of the idiom inside a comment never appears in the list.
 - **Should understand:**
   - The first scan matches `startsWith(` followed by `path.sep` on one line of code.
-  - The second (#3642) matches a literal `startsWith('..')` in any quote style. That idiom wrongly treats a child named like `..foo` as outside its root.
+  - The second (#3892) matches the variable-mediated form: a name bound on one line to an expression naming `sep` (`const rootWithSep = root + path.sep`), then tested as `x.startsWith(rootWithSep)` anywhere in the same file. The hit is the `startsWith` line, not the binding.
+  - The third (#3642) matches a literal `startsWith('..')` in any quote style. That idiom wrongly treats a child named like `..foo` as outside its root.
   - A `{file}: …` line instead of a hit means the comment stripper could not parse that file (`tests/helpers/strip-comments.js`). That is a parse problem, not a containment hit.
 - **Red flags:**
-  - A green run after splitting the expression across lines, aliasing `path.sep` to a local, or swapping `startsWith('..')` for `slice(0, 2) === '..'`. That hides the retyped check rather than removing it.
+  - A green run after moving the sep expression somewhere the scans do not read: a right-hand side that starts on the next line, an object property (`{ rs: root + path.sep }`), or a helper's return value (`startsWith(pre(root))`), or swapping `startsWith('..')` for `slice(0, 2) === '..'`. Those are the scans' documented recall limits; using them hides the retyped check rather than removing it.
+  - A green run after breaking the `startsWith(` call so its `root + path.sep` argument sits on the next line, or after aliasing the separator to a local (`const s = path.sep` or `const { sep } = path`) and testing `startsWith(root + s)`. No scan sees either form, and the test header does not list them as limits; they are evasions, not fixes.
 
 ### 2. Choose strict or orEqual
 - **URL:** `.claude/skills/pre-tool-use-gate-exemptions/SKILL.md`'s "A containment check" bullet, and the `isPathContained` note in `plugin/bin/lib/shared-primitives.js`'s header.
@@ -51,4 +54,5 @@ files:
 ## Origin
 - Created during build of #3498. That build made `isPathContained` a thin strict/`orEqual` wrapper over path-guard's `isAncestorOrSelf`, migrated the last four retyped containment tests, added the conformance scan, and pointed `[IL-161]` and the pre-tool-use-gate-exemptions skill at the same helper.
 - Updated during build of #3642. That build migrated the five remaining `path.relative`-derived `startsWith('..')` containment checks, widened the scan to flag that idiom outside `lib/path-guard/`, and recorded the `visual-decide` builtins-only exception.
+- Updated during build of #3892. That build migrated the two variable-mediated copies the same-line scan could not see (`hooks/sweep-shadow.js`'s `rootWithSep` guard and `timing/transcript.js`'s projects-root guard) and added the `#3892 AC1.2` scan for `startsWith(<name bound to a sep expression>)`, with its recall limits stated in the test header.
 - Related: `act-on-a-red-path-guard-lint-3417.md` (the sibling lint over `realpathSync`/`existsSync` tokens).

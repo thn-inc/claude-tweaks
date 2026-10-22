@@ -10,7 +10,7 @@ Referenced by `skills/wrap-up/SKILL.md`'s Phase 1 ("Identify the work context") 
 
 Adopt the run dir the way the explicit `/claude-tweaks:wrap-up #{n}` re-entry does (`resume-halted-run.md`'s second paragraph): `_shared/run-dir-resolution.md`'s resolution order, an inherited `PIPELINE_RUN_DIR` first, else `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug "spec-{n}"` with no `--create`. When nothing resolves, merge mode stops and names the record; it never mints a run dir, because a stray `-standalone` dir could shadow the real run on retry. This is not the `resume` form — a parked `pending-review` run stays `status: active`, so `resume`'s `status: interrupted` precondition never holds for it.
 
-Then bind the adopted run to the typed record: its `config.yml` `spec:` value must equal `{n}`. An inherited `PIPELINE_RUN_DIR` can name another run, and `--spec-slug` matches by substring (`spec-378` also matches a `spec-3784` dir), so a mismatch stops before any merge step and names both records. `{worktree-path}` below is that run's `run-state.json` `worktree`.
+Then bind the adopted run to the typed record: its `config.yml` `spec:` value must equal `{n}`. An inherited `PIPELINE_RUN_DIR` can name another run (`--spec-slug` itself matches a whole `-`-delimited name segment, so `spec-378` never reaches a `spec-3784` dir, #3865), so a mismatch stops before any merge step and names both records. `{worktree-path}` below is that run's `run-state.json` `worktree`.
 
 ## Token rules
 

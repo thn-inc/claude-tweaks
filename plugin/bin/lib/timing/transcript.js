@@ -26,6 +26,7 @@ const os = require('os');
 const path = require('path');
 const readline = require('readline');
 const { lstatType, resolveLeaf, canonicalRealpath, isAncestorOrSelf } = require('../path-guard');
+const { isPathContained } = require('../shared-primitives');
 
 const TRANSCRIPT_SLUG_RULE = 'replace every character not in [A-Za-z0-9-] with "-" (observed: "/", " ", and "." all become "-")';
 
@@ -49,7 +50,7 @@ function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), configDir =
   if (sessionIdGiven && !sid) return [];
   if (!cwd && !sid) return [];
   const projects = path.join(configDir, 'projects');
-  const projectsResolved = path.resolve(projects) + path.sep;
+  const projectsResolved = path.resolve(projects);
   // realpath: fsImpl.realpathSync pins the JS form this reader has always used
   // (path-guard defaults to .native, which would change Windows short-name
   // expansion), so routing through path-guard (#3417) changes no behavior.
@@ -63,7 +64,7 @@ function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), configDir =
   // finding, [IL-150]). The lexical check stays first: it's cheap and
   // rejects a literal ".." before any filesystem call.
   const push = (p) => {
-    if (!path.resolve(p).startsWith(projectsResolved)) return;
+    if (!isPathContained(path.resolve(p), projectsResolved)) return;
     const leaf = resolveLeaf(p, { fsImpl, realpath: fsImpl.realpathSync });
     if (leaf.state !== 'resolved') return; // missing, dangling or unreadable — unprovable, skip (fail closed)
     // Admits the root itself, which the isFile check below still rejects.

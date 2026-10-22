@@ -59,6 +59,31 @@ test('stampAdHocRunDirForDenial: a fallback-attributed ownedRun no longer short-
   assert.strictEqual(adhocDirs(main).length, 1);
 });
 
+test('#3811: stampAdHocRunDirForDenial matches its porcelain entry through the shared lookup (a cwd with a trailing separator still stamps)', () => {
+  const main = gitRepo();
+  const stamped = ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 'sess-drd-5' }, cwd: main + path.sep, ownedRun: {} });
+  assert.ok(stamped, 'a trailing separator must not defeat the porcelain match');
+  assert.strictEqual(adhocDirs(main).length, 1);
+});
+
+// #3845: an ad-hoc mint stamps the session's process as the run's owner, so the
+// nested-session guard in session-end.js covers it like a record-worktree run.
+test('#3845: stampAdHocRunDirForDenial stamps ownerPid from CLAUDE_PID and omits it when the pid is unknown', () => {
+  const prior = process.env.CLAUDE_PID;
+  try {
+    process.env.CLAUDE_PID = '4242';
+    const stamped = ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 'sess-3845-denial-a' }, cwd: gitRepo(), ownedRun: {} });
+    assert.strictEqual(ctxLib.readRunState(stamped).ownerPid, 4242);
+
+    delete process.env.CLAUDE_PID;
+    const unstamped = ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 'sess-3845-denial-b' }, cwd: gitRepo(), ownedRun: {} });
+    assert.ok(!('ownerPid' in ctxLib.readRunState(unstamped)));
+  } finally {
+    if (prior === undefined) delete process.env.CLAUDE_PID;
+    else process.env.CLAUDE_PID = prior;
+  }
+});
+
 function seed(main, name, state) {
   const dir = path.join(main, '.claude-tweaks', 'pipelines', name);
   fs.mkdirSync(dir, { recursive: true });
@@ -100,4 +125,19 @@ test('#2783 G2: a RELATIVE recorded worktree is never provable as "still exists"
   const dir = seed(main, '2026-10-04T000000-adhoc-standalone', { status: 'active', sessionId: 'S1', worktree: relativeWorktree });
   const hits = ctxLib.findAdHocRunsBySessionId(main, 'S1');
   assert.deepStrictEqual(hits.map((h) => fs.realpathSync(h.runDir)), [fs.realpathSync(dir)]);
+});
+
+test('#3811: listedWorktreeForCwd matches win32 forward-slash porcelain against a backslash cwd', () => {
+  const porcelain = 'worktree D:/a/x\nbranch refs/heads/trunk\n\nworktree D:/a/x/feat\nbranch refs/heads/feat\n\n';
+  const deps = { runGit: () => ({ stdout: porcelain, failure: null }), pathImpl: path.win32 };
+  assert.deepStrictEqual(ctxLib.listedWorktreeForCwd('D:\\a\\x\\feat', deps), { path: 'D:/a/x/feat', isMain: false });
+  assert.deepStrictEqual(ctxLib.listedWorktreeForCwd('d:\\a\\x\\feat\\', deps), { path: 'D:/a/x/feat', isMain: false });
+  assert.deepStrictEqual(ctxLib.listedWorktreeForCwd('D:\\a\\x', deps), { path: 'D:/a/x', isMain: true });
+  assert.strictEqual(ctxLib.listedWorktreeForCwd('D:\\elsewhere', deps), null);
+  assert.deepStrictEqual(ctxLib.listedWorktreeForCwd('D:\\A\\X\\FEAT', deps), { path: 'D:/a/x/feat', isMain: false });
+  let gitCalls = 0;
+  const countingGit = () => { gitCalls += 1; return { stdout: porcelain, failure: null }; };
+  assert.strictEqual(ctxLib.listedWorktreeForCwd('', { ...deps, runGit: countingGit }), null);
+  assert.strictEqual(gitCalls, 0, 'an empty cwd must return before git is asked anything');
+  assert.strictEqual(ctxLib.listedWorktreeForCwd('D:\\a\\x\\feat', { ...deps, runGit: () => ({ stdout: null, failure: 'git failed' }) }), null);
 });

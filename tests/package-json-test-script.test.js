@@ -145,41 +145,41 @@ const FILES = ['tests/a.test.js', 'tests/b.test.js'];
 const ROOTS = ['tests', 'tools\\upstream-drift\\tests'];
 
 test('buildTestArgs passes the explicit file list on linux, Node 20 and Node 22 alike (#3316 — Linux never globs)', () => {
-  const expected = ['--test', 'tests/a.test.js', 'tests/b.test.js'];
-  assert.deepStrictEqual(buildTestArgs(FILES, ROOTS, { platform: 'linux', nodeMajor: 20 }), expected);
-  assert.deepStrictEqual(buildTestArgs(FILES, ROOTS, { platform: 'linux', nodeMajor: 22 }), expected);
+  const expected = ['--test', '--test-concurrency=4', 'tests/a.test.js', 'tests/b.test.js'];
+  assert.deepStrictEqual(buildTestArgs(FILES, ROOTS, { platform: 'linux', nodeMajor: 20, concurrency: 4 }), expected);
+  assert.deepStrictEqual(buildTestArgs(FILES, ROOTS, { platform: 'linux', nodeMajor: 22, concurrency: 4 }), expected);
 });
 
 test('buildTestArgs passes the explicit file list on darwin, Node 22', () => {
   assert.deepStrictEqual(
-    buildTestArgs(FILES, ROOTS, { platform: 'darwin', nodeMajor: 22 }),
-    ['--test', 'tests/a.test.js', 'tests/b.test.js'],
+    buildTestArgs(FILES, ROOTS, { platform: 'darwin', nodeMajor: 22, concurrency: 4 }),
+    ['--test', '--test-concurrency=4', 'tests/a.test.js', 'tests/b.test.js'],
   );
 });
 
 test('buildTestArgs passes forward-slash root globs on win32, Node 22 (#3316 — the file list overflows the command line)', () => {
   assert.deepStrictEqual(
-    buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 22 }),
-    ['--test', 'tests/**/*.test.js', 'tools/upstream-drift/tests/**/*.test.js'],
+    buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 22, concurrency: 4 }),
+    ['--test', '--test-concurrency=4', 'tests/**/*.test.js', 'tools/upstream-drift/tests/**/*.test.js'],
   );
 });
 
 test('buildTestArgs globs on win32 for any Node >= 22, not only Node 22', () => {
   assert.deepStrictEqual(
-    buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 24 }),
-    ['--test', 'tests/**/*.test.js', 'tools/upstream-drift/tests/**/*.test.js'],
+    buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 24, concurrency: 4 }),
+    ['--test', '--test-concurrency=4', 'tests/**/*.test.js', 'tools/upstream-drift/tests/**/*.test.js'],
   );
 });
 
 test('buildTestArgs throws on win32 with Node < 22, naming the running major', () => {
-  assert.throws(() => buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 20 }), /Node >= 22/);
-  assert.throws(() => buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 20 }), /Node 20/);
+  assert.throws(() => buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 20, concurrency: 4 }), /Node >= 22/);
+  assert.throws(() => buildTestArgs(FILES, ROOTS, { platform: 'win32', nodeMajor: 20, concurrency: 4 }), /Node 20/);
 });
 
 test('run-tests.js\'s main block turns a buildTestArgs throw into exit 1 and one stderr line, starting no test run', () => {
   // The only process-level test of the main block: the preload fakes win32 + Node 20 and
-  // replaces spawnSync with a tripwire, so the error path runs for real and a regression
-  // past it prints a marker instead of launching the suite. Error path only, by design.
+  // replaces spawnSync and spawn with tripwires, so the error path runs for real and a
+  // regression past it prints a marker instead of launching the suite. Error path only, by design.
   const { spawnSync } = require('child_process');
   const preload = path.join(ROOT, 'tests', 'fixtures', 'run-tests', 'win32-node20-preload.js');
   const r = spawnSync(process.execPath, ['-r', preload, path.join('tools', 'run-tests.js')], { cwd: ROOT, encoding: 'utf8' });

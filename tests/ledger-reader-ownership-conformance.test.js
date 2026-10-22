@@ -1,13 +1,16 @@
 'use strict';
-// tests/ledger-reader-ownership-conformance.test.js — pins #3687: ledger readers outside
-// wrap-up resolve THIS run's ledger through the ownership-aware ledger probe
-// (`wrap-up-pack.js --print ledger`'s `value.files`), never a bare `docs/plans/*-ledger.md`
-// glob, which also matches ledgers inherited from the integration branch. The glob may
-// survive only as the documented reader fallback, or in prose naming inherited / other
-// runs' ledgers. Live-corpus read (skill-prose-conformance-tests: a convention this project
-// enforces); go-red controls run the same assertion function against frozen pre-change text.
+// tests/ledger-reader-ownership-conformance.test.js — pins #3687, re-pointed by #3897: ledger
+// readers outside wrap-up resolve THIS run's ledger through `hooks.js resolve-ledger` (the
+// read-side twin of `delete-ledger`, over `resolveLedgerPath`), never a bare
+// `docs/plans/*-ledger.md` glob — which also matches ledgers inherited from the integration
+// branch — and never by restating the old probe's `value.files` / `unattributedFiles`
+// handling. The glob may survive only in an allow-listed passage (#3896): the documented
+// reader fallback, or prose naming inherited / other runs' ledgers. Live-corpus read
+// (skill-prose-conformance-tests: a convention this project enforces); go-red controls run
+// the same assertion function against frozen pre-change text.
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 
@@ -20,10 +23,9 @@ const read = (rel) => flat(readText(path.join(SKILLS, rel)));
 const ALLOWED = {
   '_shared/ledger-format.md': [
     'Never committed, and never matched by the `docs/plans/*-ledger.md` fallback glob below.',
-    '**Fallback, for a reader only:** when the probe returns `ok: false` or cannot run (a caller already holding an `ok: false` result comes straight here, and never reads it as zero ledgers), check `{run-dir}/ledger.md` first — if it exists, that is the ledger and the glob is not consulted — then the `docs/plans/*-ledger.md` glob; a caller with no run dir at all (no `$PIPELINE_RUN_DIR` resolves, and no run dir can be inferred) uses that glob only, since there is no run-dir-scoped file and no run to attribute ownership to.',
+    "**Fallback, for a reader only:** on `unattributable`, or output with no report line (the verb refused its `--run`, printed usage, or is absent from this build), check `{run-dir}/ledger.md` first — if it exists, that is the ledger and the glob is not consulted — then read the `docs/plans/*-ledger.md` glob, knowing it also matches other runs' ledgers.",
   ],
   'ledger/SKILL.md': [
-    "then list every other ledger file — the probe's `value.unattributedFiles`, or on the rule's fallback the remaining `docs/plans/*-ledger.md` matches — as other runs' ledgers, never as this run's.",
     'With no run dir at all, the `docs/plans/*-ledger.md` glob is the complete listing (the rule\'s no-run-dir fallback).',
     "plus every other `docs/plans/*-ledger.md` file — a by-name lookup the user directs, so inherited ledgers are candidates here, labeled as other runs'.",
     'With no run dir at all, default to the most recent `docs/plans/*-ledger.md` (the rule\'s no-run-dir fallback).',
@@ -72,27 +74,46 @@ function assertNoBareGlob(text, label, allowed = []) {
   assert.strictEqual(bare.length, 0, `${label}: a this-run ledger lookup uses the bare docs/plans glob: ${JSON.stringify([...new Set(bare)])}`);
 }
 
-function assertRuleIsProbeFirst(text) {
-  assert.ok(text.includes('wrap-up-pack.js" --run "{run-dir}" --print ledger --json "{run-dir}/wrap-up-pack-ledger.json"'), 'rule runs the ledger probe');
-  assert.match(text, /read its `value\.files`/);
-  assert.match(text, /a `ledger\.md` entry is the run-dir file above \(relative to the run dir/);
-  assert.match(text, /An empty `value\.files` means this run has no ledger yet — not a cue to look further/);
-  assert.match(text, /`value\.unattributedFiles` lists the `docs\/plans\/` ledgers inherited from the integration branch: another run's/);
-  assert.match(text, /\*\*Fallback, for a reader only:\*\* when the probe returns `ok: false` or cannot run/);
-  assert.match(text, /if it exists, that is the ledger and the glob is not consulted/);
-  assert.match(text, /When a run dir resolves, a caller that flips or deletes ledger rows or files never takes this fallback on a probe failure: it fails closed instead/);
-  assert.match(text, /An append \(a new row, or Create's already-exists check\) and any caller with no run dir at all take the fallback as written/);
+const PROBE_RESTATEMENT_RE = /value\.files|unattributedFiles|--print ledger/;
+
+function assertRuleNamesVerb(text) {
+  assert.ok(text.includes('hooks.js" resolve-ledger --run "{run-dir}"'), 'rule runs hooks.js resolve-ledger');
+  for (const report of ['found', 'none', 'ambiguous', 'unattributable']) {
+    assert.ok(text.includes('`' + report + '`'), `rule names the \`${report}\` report`);
+  }
+  assert.match(text, /`other-run:` lines are other runs' ledgers — never read, flipped, or deleted as this run's/);
+  assert.match(text, /\*\*Fallback, for a reader only:\*\*/);
+  assert.match(text, /check `\{run-dir\}\/ledger\.md` first — if it exists, that is the ledger and the glob is not consulted/);
+  assert.match(text, /a caller that flips or deletes ledger rows or files never takes this fallback/);
+  assert.match(text, /\(the verb refused its `--run`, printed usage, or is absent from this build\)/);
+  assert.match(text, /Never substitute `delete-ledger` for it\./);
+  assert.doesNotMatch(text, PROBE_RESTATEMENT_RE, 'rule no longer restates the old probe');
 }
 
-test('AC1.1: ledger-format.md resolves this run\'s ledger through the ledger probe', () => {
+function assertNoProbeRestatement(files) {
+  const offenders = Object.keys(files).filter((rel) => PROBE_RESTATEMENT_RE.test(files[rel]));
+  assert.deepStrictEqual(offenders, [], `restates the probe's value.files / unattributedFiles handling: ${offenders.join(', ')}`);
+}
+
+function walkMarkdown(dir, rel = '') {
+  const out = [];
+  for (const entry of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
+    const child = rel ? `${rel}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) out.push(...walkMarkdown(dir, child));
+    else if (entry.name.endsWith('.md')) out.push(child);
+  }
+  return out;
+}
+
+test('AC2.1: ledger-format.md resolves this run\'s ledger through hooks.js resolve-ledger and carries no bare glob lookup', () => {
   const text = read('_shared/ledger-format.md');
-  assertRuleIsProbeFirst(text);
+  assertRuleNamesVerb(text);
   assertNoBareGlob(text, '_shared/ledger-format.md', ALLOWED['_shared/ledger-format.md']);
 });
 
-test('AC2.1 go-red: the pre-#3687 resolution rule fails the probe-first assertions', () => {
-  const PRE = flat('**Resolution rule for a caller reading "the active ledger for this run":** when a run dir resolves (`$PIPELINE_RUN_DIR` or the most-recent-matching run), check `{run-dir}/ledger.md` for existence first — if it exists, that\'s the active ledger; if not, fall back to the `docs/plans/*-ledger.md` glob.');
-  assert.throws(() => assertRuleIsProbeFirst(PRE), /rule runs the ledger probe/);
+test('go-red: the #3687 probe-based rule fails assertRuleNamesVerb', () => {
+  const PRE = flat('**Resolution rule for a caller reading "the active ledger for this run" (#3687):** when a run dir resolves (`$PIPELINE_RUN_DIR` or the most-recent-matching run), run the ownership-aware ledger probe — `node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-pack.js" --run "{run-dir}" --print ledger --json "{run-dir}/wrap-up-pack-ledger.json"` (its own `--json` file, so the `wrap-up-pack.json` another step reads keeps its other probes) — `{run-dir}` is the run dir just resolved, never a bare `$PIPELINE_RUN_DIR` that an inferred run leaves unset — and read its `value.files`.');
+  assert.throws(() => assertRuleNamesVerb(PRE), /rule runs hooks\.js resolve-ledger/);
 });
 
 test('AC2.1 go-red: a bare glob lookup sentence fails, a fallback/inherited sentence passes', () => {
@@ -134,10 +155,28 @@ test('AC1.4 go-red: an allow-list passage is exact — text beside it fails, and
   assert.throws(() => assertNoBareGlob(flat('No ledger lookup here.'), 'fixture', ['a passage the file no longer has']), /no longer in the file/);
 });
 
+test('AC3.1: no ledger reader in plugin/skills outside wrap-up/ restates the probe\'s value.files / unattributedFiles handling', () => {
+  const files = {};
+  for (const rel of walkMarkdown(SKILLS)) {
+    if (rel.startsWith('wrap-up/')) continue;
+    files[rel] = flat(readText(path.join(SKILLS, rel)));
+  }
+  assert.ok(Object.keys(files).length > 0, 'scan found skill files');
+  assert.ok('_shared/ledger-format.md' in files && 'ledger/SKILL.md' in files, 'scan reaches the rule and its reader');
+  assertNoProbeRestatement(files);
+});
+
+test('go-red: a reader restating the probe\'s unattributedFiles handling fails assertNoProbeRestatement', () => {
+  assert.throws(
+    () => assertNoProbeRestatement({ 'ledger/SKILL.md': flat("then list every other ledger file — the probe's `value.unattributedFiles`, or on the rule's fallback the remaining matches") }),
+    /ledger\/SKILL\.md/,
+  );
+});
+
 const RULE_CITE = "`_shared/ledger-format.md`'s resolution rule";
 const READERS = ['ledger/SKILL.md', 'review/code-mode-steps.md', 'wrap-up/auto-merge-short-circuit.md'];
 
-test('AC1.1/AC2.1: every repointed reader cites the resolution rule and carries no bare glob lookup', () => {
+test('AC3.2: every reader cites the resolution rule and carries no bare glob lookup', () => {
   for (const rel of READERS) {
     const text = read(rel);
     assert.ok(text.includes(RULE_CITE), `${rel} cites ${RULE_CITE}`);
@@ -145,13 +184,21 @@ test('AC1.1/AC2.1: every repointed reader cites the resolution rule and carries 
   }
 });
 
-test('ledger resolve never defaults to another run\'s ledger when a run dir resolves', () => {
-  const text = read('ledger/SKILL.md');
-  assert.match(text, /when the rule finds none, report `No ledger found for this run` rather than resolving another run's/);
+test('review\'s QA Ledger Check names the verb', () => {
+  assert.match(read('review/code-mode-steps.md'), /hooks\.js resolve-ledger/);
 });
 
-test('ledger resolve with a run dir stops on a probe failure — the gate flips rows', () => {
-  assert.match(read('ledger/SKILL.md'), /when its probe fails, report the probe error and stop: the gate flips rows, so it never takes the rule's fallback/);
+test('ledger listing marks this run\'s ledger first and each other-run ledger as another run\'s', () => {
+  assert.match(read('ledger/SKILL.md'), /list its `this-run:` ledger\(s\) first, marked as this run's, then each `other-run:` ledger, marked as another run's/);
+});
+
+test('ledger resolve never defaults to another run\'s ledger when a run dir resolves', () => {
+  const text = read('ledger/SKILL.md');
+  assert.match(text, /on `none`, report `No ledger found for this run` rather than resolving another run's/);
+});
+
+test('ledger resolve with a run dir stops on unattributable or no report line — the gate flips rows', () => {
+  assert.match(read('ledger/SKILL.md'), /on `unattributable` or no report line, report the verb's output and stop: the gate flips rows, so it never takes the rule's fallback/);
 });
 
 test('auto-merge short-circuit deletes through delete-ledger (the rule\'s writer branch), never a glob', () => {

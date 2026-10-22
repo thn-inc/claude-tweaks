@@ -150,6 +150,33 @@ test('step 2 (shared run-dir-resolution.md snippet): a non-canonical dir that st
   assert.strictEqual(path.basename(resolved), path.basename(canonical));
 });
 
+// #3865: the snippet's Step-2 glob matched the slug as a substring, so spec-378
+// adopted a newer ...-spec-3784 run dir. run-dir-resolve.js's hasSegment matches
+// a whole `-`-delimited segment; the snippet must agree with it.
+test('step 2 (shared run-dir-resolution.md snippet): spec-378 resolves its own run dir, never a newer spec-3784 or spec-3784-3790 one', () => {
+  const main = gitRepo();
+  const pipelines = path.join(main, '.claude-tweaks', 'pipelines');
+  const own = path.join(pipelines, '2026-01-01T000000-spec-378');
+  fs.mkdirSync(own, { recursive: true });
+  fs.mkdirSync(path.join(pipelines, '2026-06-01T000000-spec-3784'), { recursive: true });
+  fs.mkdirSync(path.join(pipelines, '2026-07-01T000000-spec-3784-3790'), { recursive: true });
+
+  const resolved = runResolutionWith(extractSnippet(), { cwd: main, specSlug: 'spec-378' });
+
+  assert.strictEqual(path.basename(resolved), path.basename(own));
+});
+
+test('step 2 (shared run-dir-resolution.md snippet): spec-378 with only spec-3784 run dirs resolves nothing, and a multi-spec spec-378-379 dir still matches', () => {
+  const main = gitRepo();
+  const pipelines = path.join(main, '.claude-tweaks', 'pipelines');
+  fs.mkdirSync(path.join(pipelines, '2026-06-01T000000-spec-3784'), { recursive: true });
+  assert.strictEqual(runResolutionWith(extractSnippet(), { cwd: main, specSlug: 'spec-378' }), '');
+
+  const multi = path.join(pipelines, '2026-03-01T000000-spec-378-379');
+  fs.mkdirSync(multi, { recursive: true });
+  assert.strictEqual(path.basename(runResolutionWith(extractSnippet(), { cwd: main, specSlug: 'spec-378' })), path.basename(multi));
+});
+
 // Pins that the read-plus-extract path survives a CRLF checkout: the docs are
 // converted to CRLF, read back through readText(), and must yield the same
 // snippets as the LF text.

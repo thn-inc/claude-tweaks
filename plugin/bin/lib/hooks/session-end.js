@@ -7,7 +7,15 @@ function run(ctx) {
   // non-terminal run belongs to another session there is nothing here to record.
   const owned = ctx.ownedRun || {};
   if (!owned.dir) return {};
-  const status = ctxLib.readRunState(owned.dir)?.status;
+  const state = ctxLib.readRunState(owned.dir);
+  // A nested `claude -p` started from the owner's session can carry the owner's
+  // session id (#3056's run), so its end resolves this run as owned without
+  // being this run's session ending. Neither the stamp nor the breadcrumb
+  // belongs to this run — the same treatment as a bystander (#3845).
+  // Deliberately before the attribution check: another process ending is not
+  // this run's event, even on a `fallback` guess.
+  if (ctxLib.isNestedSession(state, process.env)) return {};
+  const status = state?.status;
   // Only stamp `interrupted` on a run this session is known to own.
   //
   // Under a `fallback` attribution the run is a guess, and stamping it is the

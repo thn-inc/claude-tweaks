@@ -9,6 +9,7 @@ const fs = require('node:fs');
 
 const {
   TERMINAL_STATUSES, resolveLedgerPath, parseLedgerTable, flipLedgerRow,
+  describeRunLedgers, formatLedgerReport,
 } = require('../../../plugin/bin/lib/wrap-up/ledger-write');
 const { splitLedgerRow, ledgerRowCells } = require('../../../plugin/bin/lib/wrap-up/ledger-cells');
 
@@ -262,6 +263,90 @@ test('flipLedgerRow collapses a newline in the resolution — the row stays on o
 test('flipLedgerRow still refuses a legacy row with a raw (unescaped) pipe, naming the \\| rule', () => {
   const text = SAMPLE.replace('| 1 | build | First item |', '| 1 | build | First a|b item |');
   assert.throws(() => flipLedgerRow(text, { item: 1, status: 'fixed', resolution: 'x' }), /5-column shape[\s\S]*\\\|[\s\S]*ledger-format\.md/);
+});
+
+// #3897: describeRunLedgers / formatLedgerReport — the read side of resolveLedgerPath.
+const plansPath = (name) => path.join('/wt', 'docs', 'plans', name);
+
+test('AC1.1: describeRunLedgers returns {run-dir}/ledger.md as found, listing every docs/plans ledger as another run\'s', () => {
+  const deps = {
+    existsSync: (p) => p === path.join('/run', 'ledger.md'),
+    readdirSync: () => ['a-ledger.md', 'x.md'],
+    git: () => { throw new Error('ownership must not be consulted'); },
+    resolveBase: () => { throw new Error('ownership must not be consulted'); },
+  };
+  assert.deepStrictEqual(describeRunLedgers({ runDir: '/run', worktree: '/wt', deps }), {
+    report: 'found',
+    ledgers: [path.join('/run', 'ledger.md')],
+    others: [plansPath('a-ledger.md')],
+    unattributed: [],
+    detail: null,
+  });
+});
+
+test('AC2.1: an inherited docs/plans ledger is never this run\'s: report none, listed as other-run', () => {
+  const deps = ownershipDeps({ readdirSync: () => ['old-ledger.md'], git: ownedGit() });
+  const v = describeRunLedgers({ runDir: '/run', worktree: '/wt', deps });
+  assert.strictEqual(v.report, 'none');
+  assert.deepStrictEqual(v.ledgers, []);
+  assert.deepStrictEqual(v.others, [plansPath('old-ledger.md')]);
+});
+
+test('AC2.1: the owned ledger is found and the inherited ones are other-run', () => {
+  const deps = ownershipDeps({
+    readdirSync: () => ['a-old-ledger.md', 'b-mine-ledger.md'],
+    git: ownedGit(['docs/plans/b-mine-ledger.md']),
+  });
+  const v = describeRunLedgers({ runDir: '/run', worktree: '/wt', deps });
+  assert.strictEqual(v.report, 'found');
+  assert.deepStrictEqual(v.ledgers, [plansPath('b-mine-ledger.md')]);
+  assert.deepStrictEqual(v.others, [plansPath('a-old-ledger.md')]);
+});
+
+test('ambiguous names every owned candidate as this-run, the rest as other-run', () => {
+  const deps = ownershipDeps({
+    readdirSync: () => ['a-old-ledger.md', 'b-mine-ledger.md', 'c-mine-ledger.md'],
+    git: ownedGit(['docs/plans/b-mine-ledger.md', 'docs/plans/c-mine-ledger.md']),
+  });
+  const v = describeRunLedgers({ runDir: '/run', worktree: '/wt', deps });
+  assert.strictEqual(v.report, 'ambiguous');
+  assert.deepStrictEqual(v.ledgers, [plansPath('b-mine-ledger.md'), plansPath('c-mine-ledger.md')]);
+  assert.deepStrictEqual(v.others, [plansPath('a-old-ledger.md')]);
+});
+
+test('AC2.1: reports unattributable where resolveLedgerPath does, with no this-run or other-run entries', () => {
+  const deps = ownershipDeps({ readdirSync: () => ['a-ledger.md'], resolveBase: () => null });
+  const v = describeRunLedgers({ runDir: '/run', worktree: '/wt', deps });
+  assert.strictEqual(v.report, 'unattributable');
+  assert.deepStrictEqual(v.ledgers, []);
+  assert.deepStrictEqual(v.others, []);
+  assert.deepStrictEqual(v.unattributed, [plansPath('a-ledger.md')]);
+  assert.match(v.detail, /merge base unavailable/);
+});
+
+test('no docs/plans directory: none with no other-run entries', () => {
+  const deps = {
+    existsSync: () => false,
+    readdirSync: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); },
+  };
+  assert.deepStrictEqual(describeRunLedgers({ runDir: '/run', worktree: '/wt', deps }), {
+    report: 'none', ledgers: [], others: [], unattributed: [], detail: null,
+  });
+});
+
+test('formatLedgerReport renders the report line then this-run, other-run, unattributed lines', () => {
+  assert.strictEqual(
+    formatLedgerReport({ report: 'found', ledgers: ['/r/ledger.md'], others: ['/w/docs/plans/a-ledger.md'], unattributed: [], detail: null }),
+    'claude-tweaks: resolve-ledger: found\nthis-run: /r/ledger.md\nother-run: /w/docs/plans/a-ledger.md\n',
+  );
+  const out = formatLedgerReport({ report: 'unattributable', ledgers: [], others: [], unattributed: ['/w/docs/plans/a-ledger.md'], detail: 'boom' });
+  assert.strictEqual(out.split('\n')[0], 'claude-tweaks: resolve-ledger: unattributable (boom)');
+  assert.ok(out.endsWith('unattributed: /w/docs/plans/a-ledger.md\n'));
+});
+
+test('formatLedgerReport collapses a multi-line detail so the report line never wraps', () => {
+  const out = formatLedgerReport({ report: 'unattributable', ledgers: [], others: [], unattributed: [], detail: 'Command failed: git\nfatal: boom' });
+  assert.strictEqual(out.split('\n')[0], 'claude-tweaks: resolve-ledger: unattributable (Command failed: git fatal: boom)');
 });
 
 test('parseLedgerTable reports each repeated item number once in duplicates, [] when none (#3834)', () => {

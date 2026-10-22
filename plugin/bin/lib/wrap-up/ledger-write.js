@@ -5,7 +5,9 @@
 // cells in place, text-level, preserving every other row and the surrounding
 // markdown verbatim. Rows are split and written through ./ledger-cells.js, so
 // a `|` inside a cell is escaped as `\|`. Used by wrap-up-engine.js's
-// `finish-console` (#2546) and bin/hooks.js's `delete-ledger` subcommand.
+// `finish-console` (#2546) and bin/hooks.js's `delete-ledger` subcommand;
+// describeRunLedgers/formatLedgerReport (#3897) are the read side, for bin/hooks.js's
+// `resolve-ledger` subcommand.
 'use strict';
 
 const fs = require('fs');
@@ -86,6 +88,39 @@ function resolveLedgerPath({ runDir, worktree, explicit, deps = {} } = {}) {
   return { ok: true, path: candidates[0] };
 }
 
+// The read side of resolveLedgerPath (#3897): the same resolution, reported as
+// a view of which ledgers are this run's and which docs/plans ledgers belong to
+// another run — for a caller that must show the split rather than act on one
+// target. `report` mirrors the resolve outcome: found | none | ambiguous |
+// unattributable. An unattributable run names no this-run/other-run entries
+// (ownership is unknown), only `unattributed`.
+function describeRunLedgers({ runDir, worktree, deps = {} } = {}) {
+  const readdirSync = deps.readdirSync || fs.readdirSync;
+  const plansDir = path.join(worktree, 'docs', 'plans');
+  let entries = [];
+  try { entries = readdirSync(plansDir); } catch { entries = []; }
+  const plans = entries.filter((f) => f.endsWith('-ledger.md')).map((f) => path.join(plansDir, f));
+  const without = (taken) => plans.filter((p) => !taken.includes(p));
+
+  const r = resolveLedgerPath({ runDir, worktree, deps });
+  if (r.ok) return { report: 'found', ledgers: [r.path], others: without([r.path]), unattributed: [], detail: null };
+  if (r.reason === 'ambiguous') return { report: 'ambiguous', ledgers: r.candidates, others: without(r.candidates), unattributed: [], detail: null };
+  if (r.reason === 'unattributable') return { report: 'unattributable', ledgers: [], others: [], unattributed: r.candidates, detail: r.detail };
+  return { report: 'none', ledgers: [], others: plans, unattributed: [], detail: null };
+}
+
+function formatLedgerReport(view) {
+  const head = view.report === 'unattributable'
+    ? `claude-tweaks: resolve-ledger: unattributable (${String(view.detail).replace(/\s+/g, ' ').trim()})`
+    : `claude-tweaks: resolve-ledger: ${view.report}`;
+  return [
+    head,
+    ...view.ledgers.map((p) => `this-run: ${p}`),
+    ...view.others.map((p) => `other-run: ${p}`),
+    ...view.unattributed.map((p) => `unattributed: ${p}`),
+  ].join('\n') + '\n';
+}
+
 // Splits a ledger file's text into { preamble, header, separator, rows, trailer,
 // duplicates } — `rows` keyed by item number (string, as it appears in the `#`
 // column). `duplicates` lists each item number that more than one row carries
@@ -163,4 +198,4 @@ function flipLedgerRow(text, { item, status, resolution }) {
   return serializeLedgerTable(table);
 }
 
-module.exports = { TERMINAL_STATUSES, resolveLedgerPath, parseLedgerTable, serializeLedgerTable, flipLedgerRow };
+module.exports = { TERMINAL_STATUSES, resolveLedgerPath, describeRunLedgers, formatLedgerReport, parseLedgerTable, serializeLedgerTable, flipLedgerRow };

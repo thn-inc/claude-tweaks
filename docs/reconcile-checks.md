@@ -24,9 +24,27 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   `reconcile-summary` opt-out). Runtime is then
   bounded only by each check's own timeouts, so every scripted `--checks` caller (dispatch's
   drain-termination call, `_shared/pr-first-merge-post-merge.md` Step 4.2) keeps an explicit
-  150000ms+ Bash timeout. A subset that names `archive` should name `mirror` too: without
-  `mirror`'s fetch no `origin/{integration}` refresh runs, and `archive` skips a PR GitHub merged
-  asynchronously as `local-behind-merge`.
+  150000ms+ Bash timeout.
+- **An explicit subset is expanded with its prerequisites (#3630).** For each check that reads
+  state another check produces, `index.js`'s `PREREQUISITES` table names the producing check and
+  the checks that already provide that state. `expandChecks()` adds a missing one before dispatch;
+  `DISPATCH_ORDER` still decides execution order.
+
+  | Check | Prerequisite | Satisfied by | Why |
+  |---|---|---|---|
+  | `archive` | `mirror` | `remote-prune` | `localHasMerge` reads `refs/heads/{integration}`, then `origin/{integration}`, and only the shared fetch refreshes the latter. Without it, a PR GitHub merged asynchronously skips as `local-behind-merge`. |
+  | `red-tip` | `mirror` | `remote-prune` | It reads `origin/{integration}` right after the shared fetch, and otherwise skips as `no-fetch-this-pass`. |
+
+  `release,archive,reap` runs as `mirror,release,archive,reap`; `reap` alone stays `reap`; a
+  subset naming `remote-prune` is not widened, because its `--prune` shared fetch already refreshes
+  `origin/{integration}`; `FAST_CHECKS` and `BACKGROUND_CHECKS` expand to themselves. The added
+  prerequisite runs in the same pass, so under the CLI's `--checks` path it shares the unbounded
+  budget from the bullet above. `archive-branches` has no entry: when `git cherry` cannot prove
+  equivalence it falls back to PR-state squash-merge evidence (#2252), so a stale local ref only
+  delays it and never wrongly skips it. An added prerequisite follows the pass's own gates
+  rather than overriding them: under `--dry-run` it does not fast-forward (`mirror` reports
+  `skipped` / `dry-run` — a `mirror` the caller named behaves the same), and when the gh preflight fails it is dropped along with the check it
+  served, since only a `mirror` the caller named survives the preflight narrowing.
 - **The fast/background split (#820 D8).** `bin/lib/hooks/session-start.js`'s `FAST_CHECKS`
   (`mirror`, `red-tip`, `console` — cheap read/detect, run inline on every SessionStart) and
   `bin/hooks.js`'s `BACKGROUND_CHECKS` (`release`, `archive`, `archive-branches`, `remote-prune`,
@@ -44,7 +62,8 @@ against reality than trusting it in the abstract; do that for whichever check yo
    `archive-branches.js`'s pattern: pure decision functions, I/O at the edges.
 2. **`bin/lib/reconcile/index.js`** — add the name to `ALL_CHECKS`, insert the dispatch call at
    the correct position in `DISPATCH_ORDER` (see the ordering bullet above), and decide which side
-   of the fast/background split it belongs on.
+   of the fast/background split it belongs on — and, when the check reads state only another check
+   produces, add a `PREREQUISITES` entry for it (see the expansion bullet above).
 3. **`bin/lib/hooks/session-start.js`'s `FAST_CHECKS`** (cheap read/detect) **or
    `bin/hooks.js`'s `BACKGROUND_CHECKS`** (write-only/janitorial) — add the name to whichever list
    matches the decision from step 2. These two lists are asserted to partition `ALL_CHECKS`
