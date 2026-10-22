@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const { MAX_STALE_DAYS } = require('./score');
 const { selectByStaleThenChurn } = require('../health-core/rotation');
-const { toPosix } = require('../shared-primitives');
+const { relativeDisplayId } = require('../shared-primitives');
 
 const SKIP_DIRS = new Set([
   '.claude-tweaks', '.git', 'node_modules', 'dist', 'build', 'coverage', '.next', '.turbo',
@@ -132,7 +132,7 @@ function splitOversized(id, absDir, out, {
   for (const file of files) {
     let size = 0;
     try { size = sizeOf(file); } catch { size = 0; }
-    const relDir = toPosix(pathImpl.relative(absDir, pathImpl.dirname(file)), pathImpl.sep);
+    const relDir = relativeDisplayId(absDir, pathImpl.dirname(file), pathImpl);
     const node = nodeFor(relDir);
     node.own += size;
     node.ownCount += 1;

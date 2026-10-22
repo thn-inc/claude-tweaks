@@ -135,7 +135,13 @@ test('AC1.1: referencedBy entries are / display IDs under path.win32 (#3315)', (
   fs.mkdirSync(path.join(root, 'docs', 'guide'), { recursive: true });
   fs.writeFileSync(path.join(root, 'docs', 'api', 'config.md'), '# API Config\n');
   fs.writeFileSync(path.join(root, 'docs', 'guide', 'howto.md'), 'See [config](../api/config.md).\n');
-  const r = computeInboundReferences('api/config', root, { pathImpl: path.win32 });
+  // Counting wrapper: native and plain path.win32 `relative` both yield `/` for
+  // these fixtures on a POSIX host, so only a recorded call proves the call site
+  // routes the display ID through the injected pathImpl.
+  const calls = [];
+  const pathImpl = { ...path.win32, relative: (a, b) => (calls.push([a, b]), path.win32.relative(a, b)) };
+  const r = computeInboundReferences('api/config', root, { pathImpl });
   assert.deepStrictEqual(r.referencedBy, ['docs/guide/howto.md']);
   assert.strictEqual(r.count, 1);
+  assert.ok(calls.length > 0, 'pathImpl.relative must be used for the display ID');
 });

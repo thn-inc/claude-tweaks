@@ -318,15 +318,25 @@ test('#3493: a parent that is a dangling symlink is reported, not accepted', (t)
   }
 });
 
-// #3315: path.win32.relative on a POSIX host still returns a `\`-joined path for
-// these tmp paths, so injecting path.win32 reaches the win32 branch with real fs.
+// #3315: a counting path.win32 wrapper. On a POSIX host the native `relative`
+// and plain path.win32.relative both already yield `/` for these tmp fixtures,
+// so only a recorded call proves the call site routes its display ID through
+// the injected pathImpl (reverting it to plain path.relative leaves calls empty).
+function countingWin32() {
+  const calls = [];
+  const pathImpl = { ...path.win32, relative: (a, b) => (calls.push([a, b]), path.win32.relative(a, b)) };
+  return { calls, pathImpl };
+}
+
 test('AC1.1: checkA reports nearestExistingAncestor as a / display ID under path.win32 (#3315)', () => {
   const repo = makeTmpRepo();
-  fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
   try {
-    const r = checkA([{ type: 'Create', path: 'plugin/bin/new/deeper/x.js' }], repo, { pathImpl: path.win32 });
+    fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
+    const { calls, pathImpl } = countingWin32();
+    const r = checkA([{ type: 'Create', path: 'plugin/bin/new/deeper/x.js' }], repo, { pathImpl });
     assert.strictEqual(r.ok, false);
     assert.strictEqual(r.missingDetail[0].nearestExistingAncestor, 'plugin/bin');
+    assert.ok(calls.length > 0, 'pathImpl.relative must be used for the display ID');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
@@ -334,11 +344,13 @@ test('AC1.1: checkA reports nearestExistingAncestor as a / display ID under path
 
 test('AC1.1: checkA reports a Modify-missing-file nearestExistingAncestor as a / display ID under path.win32 (#3315)', () => {
   const repo = makeTmpRepo();
-  fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
   try {
-    const r = checkA([{ type: 'Modify', path: 'plugin/bin/new/deeper/x.js' }], repo, { pathImpl: path.win32 });
+    fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
+    const { calls, pathImpl } = countingWin32();
+    const r = checkA([{ type: 'Modify', path: 'plugin/bin/new/deeper/x.js' }], repo, { pathImpl });
     assert.strictEqual(r.ok, false);
     assert.strictEqual(r.missingDetail[0].nearestExistingAncestor, 'plugin/bin');
+    assert.ok(calls.length > 0, 'pathImpl.relative must be used for the display ID');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
@@ -360,11 +372,13 @@ test('checkA keeps the "." ancestor for a repo-root miss under path.win32 (#3315
 
 test('AC1.1: checkB lists unplanned files as / display IDs under path.win32 (#3315)', () => {
   const repo = makeTmpRepo();
-  fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
-  fs.writeFileSync(path.join(repo, 'plugin', 'bin', 'hit.js'), 'mentions zebrakeyword here');
   try {
-    const r = checkB(['zebrakeyword'], [], repo, { pathImpl: path.win32 });
+    fs.mkdirSync(path.join(repo, 'plugin', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'plugin', 'bin', 'hit.js'), 'mentions zebrakeyword here');
+    const { calls, pathImpl } = countingWin32();
+    const r = checkB(['zebrakeyword'], [], repo, { pathImpl });
     assert.deepStrictEqual(r.unplanned, ['plugin/bin/hit.js']);
+    assert.ok(calls.length > 0, 'pathImpl.relative must be used for the display ID');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

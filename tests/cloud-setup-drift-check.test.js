@@ -164,10 +164,13 @@ function prependPath(dir, envPath, delimiter = path.delimiter) {
 }
 
 // Recorded not-a-bug verdict (#3315): the fake curl is a `#!/bin/sh` stub and the snippet runs
-// under bash, so neither executes under cmd.exe -- the cases that spawn them skip on win32. The
-// reason string is truthy only on win32; `process.platform` is never stubbed.
+// under bash, so neither executes under cmd.exe -- the cases that spawn them skip on win32. A
+// second win32 blocker: the fixtures live at hardcoded POSIX `/tmp/cc-*.json` paths
+// (INSTALLED_JSON / MARKETPLACES_JSON above, and the same literals inside the frozen
+// pre-change bodies), which do not resolve on win32. The reason string is truthy only on
+// win32; `process.platform` is never stubbed.
 const SH_STUB_SKIP = process.platform === 'win32'
-  && 'win32: the fake curl is a #!/bin/sh stub and the snippet runs under bash; neither executes under cmd.exe';
+  && 'win32: the fake curl is a #!/bin/sh stub and the snippet runs under bash, and the fixtures use hardcoded /tmp/cc-*.json paths; neither works under cmd.exe';
 
 // Runs a VERDICT node -e body (live or frozen) against whatever fixtures are currently at
 // INSTALLED_JSON / MARKETPLACES_JSON, with `curlDir` prepended to PATH so a stubbed `curl`

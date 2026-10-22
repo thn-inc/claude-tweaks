@@ -37,8 +37,8 @@ const SKILL_PATH = '/home/u/.claude/plugins/cache/m/demo/1.0.0/skills/alpha/more
 
 // A Read fixture built from a real temp path: forward slashes on win32 too, kept
 // so the fixture reads the same on every host (transcript-load's isProcedurePath
-// also recognizes a backslash skill path since #3315, so this is portability, not
-// a requirement).
+// also recognizes a backslash skill path on win32 (native separator `\`) since
+// #3315, so this is portability, not a requirement).
 const posix = (p) => p.split(path.sep).join('/');
 
 function tmp(prefix) { return fs.mkdtempSync(path.join(os.tmpdir(), prefix)); }
