@@ -23,7 +23,7 @@ const { ISSUE_REF_SOURCE } = require('../issue-branch-tracking');
 // policy.yml then origin/HEAD) fits this file's EnterWorktree handler as-is.
 // `parseWorktreeList` is reused for the same reason, for the tool-result
 // fallback path below.
-const { resolveIntegrationBranch, parseWorktreeList, bareIntegrationName } = require('./worktree-reap');
+const { resolveIntegrationBranch, parseWorktreeList, findWorktreeEntry, bareIntegrationName } = require('./worktree-reap');
 // Session-scoped marker path for the non-EnterWorktree ad-hoc-run-dir rate-limit (#1333) — see
 // stampAdHocRunDir below.
 const { sessionTmpPath } = require('../session-tmp');
@@ -234,15 +234,15 @@ function extractToolResponseText(toolResponse) {
 // first (the primary/main checkout, per git's own porcelain output convention) — or null when
 // `ctx.cwd` doesn't resolve to a listed worktree at all (not a git repo, or the `git worktree
 // list` call itself failed).
-function resolveWorktreePathViaPorcelain(ctx) {
+function resolveWorktreePathViaPorcelain(ctx, deps = {}) {
   const cwd = ctx.cwd;
   if (typeof cwd !== 'string' || !cwd) return null;
-  const { stdout, failure } = runGit(['worktree', 'list', '--porcelain'], cwd);
+  const { stdout, failure } = (deps.runGit || runGit)(['worktree', 'list', '--porcelain'], cwd);
   if (failure || stdout === null) return null;
   const entries = parseWorktreeList(stdout);
-  const idx = entries.findIndex((e) => e.path === cwd);
-  if (idx === -1) return null;
-  return { path: entries[idx].path, isMain: idx === 0 };
+  const entry = findWorktreeEntry(entries, cwd, deps.pathImpl || path);
+  if (!entry) return null;
+  return { path: entry.path, isMain: entry === entries[0] };
 }
 
 function resolveCreatedWorktreePath(ctx) {
@@ -719,4 +719,4 @@ function run(ctx) {
   return {};
 }
 
-module.exports = { run };
+module.exports = { run, resolveWorktreePathViaPorcelain };

@@ -13,7 +13,6 @@
 // locked worktree doesn't block branch/ref cleanup that doesn't depend on it.
 'use strict';
 const fs = require('fs');
-const path = require('path');
 const { closeRunState } = require('./close-run-state');
 const { runGit } = require('./git-exec');
 const { parseWorktreeList, findWorktreeEntry, isWorktreeLocked, resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
