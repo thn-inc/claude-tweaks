@@ -18,6 +18,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { extractArgumentHint, inputSectionBody } = require('../plugin/bin/lib/skill-audit/argument-hint');
 
 const ROOT = path.join(__dirname, '..');
 const SWEEP_DIR = path.join(ROOT, 'plugin', 'skills', 'sweep');
@@ -288,19 +289,23 @@ test('sweep/SKILL.md: Step 4 item 2 and Next Actions cite attention\'s Batch lau
   );
 });
 
-// --- (7) --source sweep in both tidy's and specify's argument-hint lines ---
-test('tidy and specify argument-hint lines both carry --source sweep', () => {
-  // Discrimination: base commit 0ac4d7a00's tidy argument-hint was
-  // '[--scope=<name>[,<name>...]] [--dry-run] [--approve [run-dir]]' (no
-  // --source at all); specify's was '... [--chained]' (no --source at all)
-  // — both confirmed via `git show 0ac4d7a00:{path} | grep "^argument-hint:"`.
-  const tidySource = read(TIDY_DIR, 'SKILL.md');
-  const tidyHint = tidySource.split('\n').find((l) => l.startsWith('argument-hint:'));
-  assert.ok(tidyHint, 'expected an argument-hint frontmatter line in tidy/SKILL.md');
-  assert.ok(tidyHint.includes('--source sweep'), 'expected --source sweep in tidy\'s argument-hint');
-
-  const specifySource = read(SPECIFY_DIR, 'SKILL.md');
-  const specifyHint = specifySource.split('\n').find((l) => l.startsWith('argument-hint:'));
-  assert.ok(specifyHint, 'expected an argument-hint frontmatter line in specify/SKILL.md');
-  assert.ok(specifyHint.includes('--source sweep'), 'expected --source sweep in specify\'s argument-hint');
+// --- (7) --source sweep is a producer-only flag: documented as such in tidy's
+// and specify's ## Input, and kept out of both argument-hint lines ---
+test('tidy and specify document --source sweep as producer-only and keep it out of argument-hint', () => {
+  // Discrimination: at base commit 354119ff3 both argument-hint lines carried
+  // `[--source sweep]` (specify's as `[--chained] [--source sweep]`) and the
+  // ## Input mention was unmarked prose — so the hint-exclusion assertion and
+  // the literal `(producer-only)` bullet assertion both fail there.
+  for (const [dir, label] of [[TIDY_DIR, 'tidy'], [SPECIFY_DIR, 'specify']]) {
+    const source = read(dir, 'SKILL.md');
+    const hint = extractArgumentHint(source);
+    assert.ok(hint, `expected an argument-hint frontmatter line in ${label}/SKILL.md`);
+    assert.ok(!hint.includes('--source'), `${label}'s argument-hint must not carry --source — it is producer-only`);
+    const body = inputSectionBody(source);
+    assert.ok(body, `expected a ## Input section in ${label}/SKILL.md`);
+    assert.ok(
+      body.includes('- `--source sweep` (producer-only)'),
+      `expected ${label}'s ## Input to carry the marked --source sweep entry`,
+    );
+  }
 });
