@@ -152,8 +152,8 @@ test('session-end DOES stamp interrupted on a run this session owns', () => {
 // #3845: a nested `claude -p` can resolve the parent's run as its own — #3056's
 // run showed the parent's session id at the child's SessionEnd, and an inherited
 // PIPELINE_RUN_DIR gives `env` attribution. The pid is the one identity the two
-// processes do not share. process.env.CLAUDE_PID is set
-// explicitly in each test because the runner may itself run under Claude Code.
+// processes do not share. process.env.CLAUDE_PID is set explicitly in each test
+// because the runner may itself run under Claude Code.
 function withClaudePid(pid, fn) {
   const prior = process.env.CLAUDE_PID;
   if (pid === null) delete process.env.CLAUDE_PID;
