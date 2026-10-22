@@ -778,6 +778,15 @@ function claudePid(env) {
   return Number.isSafeInteger(pid) ? pid : null;
 }
 
+// The run-state patch that stamps this process as the run's owner — empty when
+// the pid is unknown, so a stamp site never writes a garbled `ownerPid`. Shared
+// by every site that mints or re-stamps ownership (record-worktree, the ad-hoc
+// mints, the resume re-stamp in session-start.js).
+function ownerPidPatch(env) {
+  const pid = claudePid(env);
+  return pid === null ? {} : { ownerPid: pid };
+}
+
 function isNestedSession(runState, env, { isAlive = isPidAlive } = {}) {
   const owner = runState && runState.ownerPid;
   if (!Number.isInteger(owner) || owner <= 0) return false;
@@ -837,7 +846,7 @@ function stampAdHocRunDirForDenial(ctx) {
     // stampAdHocRunDir's identical guard).
     const existing = readRunState(result.path);
     if (existing && typeof existing.sessionId === 'string' && existing.sessionId && existing.sessionId !== sessionId) return null;
-    const written = writeRunState(result.path, { worktree: path.resolve(worktreePath), status: 'active', sessionId });
+    const written = writeRunState(result.path, { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ownerPidPatch(process.env) });
     if (!written) { rollbackMint(result.path); return null; }
     return result.path;
   } catch { return null; }
@@ -918,5 +927,5 @@ module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
   readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
   rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, isTrustedOwnedRun, isAdHocRunDir, resolveDenialRunDir,
-  claudePid, isPidAlive, isNestedSession,
+  claudePid, ownerPidPatch, isPidAlive, isNestedSession,
 };

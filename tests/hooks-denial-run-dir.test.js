@@ -59,6 +59,24 @@ test('stampAdHocRunDirForDenial: a fallback-attributed ownedRun no longer short-
   assert.strictEqual(adhocDirs(main).length, 1);
 });
 
+// #3845: an ad-hoc mint stamps the session's process as the run's owner, so the
+// nested-session guard in session-end.js covers it like a record-worktree run.
+test('#3845: stampAdHocRunDirForDenial stamps ownerPid from CLAUDE_PID and omits it when the pid is unknown', () => {
+  const prior = process.env.CLAUDE_PID;
+  try {
+    process.env.CLAUDE_PID = '4242';
+    const stamped = ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 'sess-3845-denial-a' }, cwd: gitRepo(), ownedRun: {} });
+    assert.strictEqual(ctxLib.readRunState(stamped).ownerPid, 4242);
+
+    delete process.env.CLAUDE_PID;
+    const unstamped = ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 'sess-3845-denial-b' }, cwd: gitRepo(), ownedRun: {} });
+    assert.ok(!('ownerPid' in ctxLib.readRunState(unstamped)));
+  } finally {
+    if (prior === undefined) delete process.env.CLAUDE_PID;
+    else process.env.CLAUDE_PID = prior;
+  }
+});
+
 function seed(main, name, state) {
   const dir = path.join(main, '.claude-tweaks', 'pipelines', name);
   fs.mkdirSync(dir, { recursive: true });

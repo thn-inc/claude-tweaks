@@ -334,7 +334,7 @@ function stampAdHocRunDir(ctx) {
     // silently reassign the dir mid-session.
     const existing = ctxLib.readRunState(result.path);
     if (existing && typeof existing.sessionId === 'string' && existing.sessionId && existing.sessionId !== sessionId) return;
-    const written = ctxLib.writeRunState(result.path, { worktree: path.resolve(worktreePath), status: 'active', sessionId });
+    const written = ctxLib.writeRunState(result.path, { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ctxLib.ownerPidPatch(process.env) });
     if (!written) {
       // writeRunState failed (I/O error). The mint above already touched
       // decisions.md, which isUnadoptedMint (context.js) treats as evidence
