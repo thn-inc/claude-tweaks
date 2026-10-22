@@ -116,6 +116,10 @@ test('#3811: listedWorktreeForCwd matches win32 forward-slash porcelain against 
   assert.deepStrictEqual(ctxLib.listedWorktreeForCwd('d:\\a\\x\\feat\\', deps), { path: 'D:/a/x/feat', isMain: false });
   assert.deepStrictEqual(ctxLib.listedWorktreeForCwd('D:\\a\\x', deps), { path: 'D:/a/x', isMain: true });
   assert.strictEqual(ctxLib.listedWorktreeForCwd('D:\\elsewhere', deps), null);
-  assert.strictEqual(ctxLib.listedWorktreeForCwd('', deps), null);
+  assert.deepStrictEqual(ctxLib.listedWorktreeForCwd('D:\\A\\X\\FEAT', deps), { path: 'D:/a/x/feat', isMain: false });
+  let gitCalls = 0;
+  const countingGit = () => { gitCalls += 1; return { stdout: porcelain, failure: null }; };
+  assert.strictEqual(ctxLib.listedWorktreeForCwd('', { ...deps, runGit: countingGit }), null);
+  assert.strictEqual(gitCalls, 0, 'an empty cwd must return before git is asked anything');
   assert.strictEqual(ctxLib.listedWorktreeForCwd('D:\\a\\x\\feat', { ...deps, runGit: () => ({ stdout: null, failure: 'git failed' }) }), null);
 });
