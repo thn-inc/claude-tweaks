@@ -361,7 +361,7 @@ function ledgerResidue({
   let paths;
   try {
     tip = run(['rev-parse', '--verify', `origin/${integration}^{commit}`]).trim();
-    paths = residueLedgerPaths(run(['ls-tree', '--name-only', '-z', tip, '--', 'docs/plans/']));
+    paths = residueLedgerPaths(run(['ls-tree', '--name-only', '-z', '--end-of-options', tip, '--', 'docs/plans/']));
   } catch {
     return { entries: [], failure: 'git-failure' };
   }
