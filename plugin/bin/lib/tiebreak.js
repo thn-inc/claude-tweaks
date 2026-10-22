@@ -131,7 +131,12 @@ function parseTiebreakReply(text) {
 // DONE, and evidence verified against the file leave can't-tell. outcome is
 // 'confirmed' | 'drop' | 'digest' | 'console'; digest/console are can't-tell,
 // split by the higher of the reporter's and tiebreak's severities (low/info ->
-// digest, medium+ -> console; neither known -> medium).
+// digest, medium+ -> console; neither known -> medium). A lens, path, or string
+// line holding a line break (LINE_BREAK_RE) is can't-tell with reason
+// bad-finding-field, so a finding field can never forge a second decisions.md
+// line; the logLine is also whitespace-collapsed to one line.
+
+const LINE_BREAK_RE = /[\r\n\u2028\u2029]/;
 
 function knownSeverity(s) {
   if (typeof s !== 'string') return null;
@@ -218,8 +223,10 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
   });
 
   // Why this cannot be a confirmed/drop, in the order the causes are checked.
+  const badField = ['lens', 'path', 'line'].some((k) => typeof finding[k] === 'string' && LINE_BREAK_RE.test(finding[k]));
   let reason;
-  if (parsed.parse === 'could-not-parse') reason = 'could-not-parse';
+  if (badField) reason = 'bad-finding-field';
+  else if (parsed.parse === 'could-not-parse') reason = 'could-not-parse';
   else if (parsed.status !== 'DONE') reason = `status:${parsed.status}`;
   else if (parsed.verdict === 'cant-tell') reason = 'verdict:cant-tell';
   else if (!parsed.evidence) reason = 'no-evidence';
@@ -232,7 +239,7 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
     const text = outcome === 'console'
       ? `STAGED ${t} — Tiebreak tiebreak:${id}: ${where} console: ${reason}. Severity: ${sev}. Recommendation: ${parsed.recommendation ?? 'none'}. Reversibility: high.`
       : `AUTO ${t} — Tiebreak tiebreak:${id}: ${where} digested: ${reason}. Severity: ${sev}. Reversibility: high.`;
-    return result({ outcome, severity: sev, reason, logLine: neutralize(text) });
+    return result({ outcome, severity: sev, reason, logLine: squash(neutralize(text)) });
   }
 
   const ev = parsed.evidence;
@@ -242,14 +249,14 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
       severity: lower(reporterSev, tiebreakSev) || 'medium',
       evidence: ev,
       reason: 'confirmed by tiebreak',
-      logLine: `AUTO ${t} — Reproduction: ${where} confirmed by tiebreak:${id}. Confirmed. Reversibility: high.`,
+      logLine: squash(`AUTO ${t} — Reproduction: ${where} confirmed by tiebreak:${id}. Confirmed. Reversibility: high.`),
     });
   }
   const sev = higher(reporterSev, tiebreakSev) || 'medium';
   const text = `AUTO ${t} — Tiebreak tiebreak:${id}: ${where} dropped: refuted by tiebreak. Evidence: ${ev.path}:${ev.line} "${ev.quote}". Severity: ${sev}. Reversibility: high.`;
   return result({
     outcome: 'drop', severity: sev, evidence: ev, reason: 'refuted by tiebreak',
-    listInConsole: sev === 'high' || sev === 'critical', logLine: neutralize(text),
+    listInConsole: sev === 'high' || sev === 'critical', logLine: squash(neutralize(text)),
   });
 }
 
@@ -266,6 +273,9 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
 // A present-but-bad artifact is never absent and never valid: readFindingsArtifact
 // reports { present: true, valid: false } so archival can refuse with its own
 // reason. Only a missing file is { present: false, valid: true } (nothing enforced).
+// A valid entry has a 12-lowercase-hex id (the findingId shape) and non-empty
+// string lens and path. buildFindingsArtifact refuses a line break in lens,
+// path, claim, or a string line.
 
 const FINDINGS_ARTIFACT = 'review-findings.json';
 const FINDING_KINDS = ['unconfirmed', 'contested'];
@@ -276,6 +286,9 @@ function buildFindingsArtifact(findings) {
     if (!f || typeof f !== 'object') throw new TypeError(`finding ${i} is not an object`);
     for (const key of ['lens', 'path', 'claim']) {
       if (typeof f[key] !== 'string' || f[key].trim() === '') throw new TypeError(`finding ${i} is missing ${key}`);
+    }
+    for (const key of ['lens', 'path', 'claim', 'line']) {
+      if (typeof f[key] === 'string' && LINE_BREAK_RE.test(f[key])) throw new TypeError(`finding ${i} ${key} contains a line break`);
     }
     if (!FINDING_KINDS.includes(f.kind)) throw new TypeError(`finding ${i} kind must be one of ${FINDING_KINDS.join(', ')}`);
     return {
@@ -298,7 +311,8 @@ function readFindingsArtifact(dir) {
   try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return invalid; }
   if (!Array.isArray(parsed)) return invalid;
   const wellFormed = parsed.every((e) => e && typeof e === 'object'
-    && ['id', 'lens', 'path'].every((k) => typeof e[k] === 'string' && e[k] !== ''));
+    && ['id', 'lens', 'path'].every((k) => typeof e[k] === 'string' && e[k] !== '')
+    && /^[0-9a-f]{12}$/.test(e.id));
   return wellFormed ? { present: true, valid: true, findings: parsed } : invalid;
 }
 
