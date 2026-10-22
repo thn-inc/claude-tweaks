@@ -30,8 +30,9 @@
 // never a force or lease (the family never pushes there). The removal commit is
 // built with plumbing on a scratch index, so the checkout's index, HEAD and
 // working tree are untouched. PR state comes from ONE list of every PR whose
-// head starts `build/ledger-residue-` (any state), not a per-branch lookup, so
-// earlier PRs stay visible after the residue set changes: any OPEN one skips
+// head starts `build/ledger-residue-` (any state, heads enumerated by ref prefix
+// with no recency window), not a lookup of the current branch only, so earlier
+// PRs stay visible after the residue set changes: any OPEN one skips
 // every path (`removal-pr-open`); a path a CLOSED-unmerged PR's body names is
 // `removal-pr-declined` and never re-proposed; a path a MERGED PR's body names
 // that is still present is `removal-merged-but-present`. The branch name hashes
@@ -196,19 +197,71 @@ function defaultListRunDirs(root) {
   }
 }
 
+// `gh api --paginate` prints one JSON array per page, so the stdout may hold
+// several concatenated top-level arrays. -> the arrays' elements, joined;
+// throws on anything that is not a run of arrays.
+function parseConcatenatedArrays(stdout) {
+  const text = String(stdout);
+  const out = [];
+  let pages = 0;
+  let depth = 0;
+  let begin = -1;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (c === '\\') escaped = true;
+      else if (c === '"') inString = false;
+    } else if (c === '"') {
+      inString = true;
+    } else if (c === '[' || c === '{') {
+      if (depth === 0) {
+        if (c !== '[') throw new Error('gh api returned a non-array');
+        begin = i;
+      }
+      depth += 1;
+    } else if (c === ']' || c === '}') {
+      depth -= 1;
+      if (depth < 0) throw new Error('gh api returned malformed JSON');
+      if (depth === 0) {
+        out.push(...JSON.parse(text.slice(begin, i + 1)));
+        pages += 1;
+      }
+    } else if (depth === 0 && !/\s/.test(c)) {
+      throw new Error('gh api returned malformed JSON');
+    }
+  }
+  if (depth !== 0 || inString || pages === 0) throw new Error('gh api returned truncated JSON');
+  return out;
+}
+
 // Every PR whose head starts BRANCH_PREFIX, any state, with its body — or
-// 'gh-absent' / 'network-failure'. `exec` is injectable for tests.
+// 'gh-absent' / 'network-failure'. Enumerates the removal heads by ref prefix
+// (matching-refs), then lists each head's PRs, so a PR is found however old it
+// is — no recency window. A merged removal PR's branch is deleted after merge,
+// so only a surviving head is found. Any failing call fails the whole list.
+// `exec` is injectable for tests.
 function defaultListRemovalPrs(root, exec = execFileSync) {
+  const opts = { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: sharedPrimitives.GH_TIMEOUT_MS, windowsHide: true };
   return sharedPrimitives.runClassified(
     () => {
-      const stdout = exec(
-        'gh',
-        ['pr', 'list', '--state', 'all', '--json', 'number,state,headRefName,body', '--limit', '100'],
-        { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: sharedPrimitives.GH_TIMEOUT_MS, windowsHide: true },
+      const refs = parseConcatenatedArrays(
+        exec('gh', ['api', '--paginate', `repos/{owner}/{repo}/git/matching-refs/heads/${BRANCH_PREFIX}`], opts),
       );
-      const prs = JSON.parse(stdout);
-      if (!Array.isArray(prs)) throw new Error('gh pr list returned a non-array');
-      return prs.filter((pr) => pr && typeof pr.headRefName === 'string' && pr.headRefName.startsWith(BRANCH_PREFIX));
+      const heads = [...new Set(refs
+        .map((r) => (r && typeof r.ref === 'string' ? r.ref.replace(/^refs\/heads\//, '') : null))
+        .filter((h) => h && h.startsWith(BRANCH_PREFIX)))];
+      const byNumber = new Map();
+      for (const head of heads) {
+        const prs = JSON.parse(exec('gh', ['pr', 'list', '--head', head, '--state', 'all', '--json', 'number,state,headRefName,body'], opts));
+        if (!Array.isArray(prs)) throw new Error('gh pr list returned a non-array');
+        for (const pr of prs) {
+          if (pr && typeof pr.headRefName === 'string' && pr.headRefName.startsWith(BRANCH_PREFIX)) byNumber.set(pr.number, pr);
+        }
+      }
+      return [...byNumber.values()];
     },
     classifyExecError,
     { retryOnTimeout: true },

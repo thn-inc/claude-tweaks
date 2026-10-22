@@ -368,10 +368,12 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
   `committer-identity-unset`; any other plumbing failure is `commit-failed`, and a rejected push
   is `push-failed`. `gh pr create` runs under `GH_TIMEOUT_MS` (`shared-primitives.js`) and is
   never retried, since a timed-out create may still have opened the PR (`pr-create-failed`).
-- **Removal-PR states.** One `gh pr list --state all --json number,state,headRefName,body --limit
-  100` call, filtered to heads starting `build/ledger-residue-`, sees every earlier removal PR,
-  including ones for a residue set that has since changed. A path is "named" by a PR when the body
-  lists it in backticks, as the check's own body does.
+- **Removal-PR states.** Heads are enumerated by ref prefix, not by recency:
+  `gh api --paginate repos/{owner}/{repo}/git/matching-refs/heads/build/ledger-residue-` lists
+  every such branch (one JSON array per page, concatenated), then `gh pr list --head {branch}
+  --state all --json number,state,headRefName,body` runs once per branch. That sees every earlier
+  removal PR however old, including ones for a residue set that has since changed. A path is
+  "named" by a PR when the body lists it in backticks, as the check's own body does.
 
   | Evidence | Applies to | Reason |
   |---|---|---|
@@ -381,10 +383,13 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
   | none of the above | the removable set | open the PR (push first when the ref is absent): `pr-opened` / `removal-pr-opened` |
 
   The list call is classified like `pr-state.js`: `gh-absent` or `network-failure` skips every
-  path closed, as does an indeterminate ref check (`ref-check-failed`). `--dry-run` reports
-  `dry-run` and writes nothing. A declined branch stays on origin: `remote-prune` deletes only
-  branches whose PR is `MERGED`. The list is the 100 most recent PRs in the repo, so a decline
-  older than that window is no longer seen and its paths become proposable again.
+  path closed, as does an indeterminate ref check (`ref-check-failed`); any one failing call
+  fails the whole list. With no matching refs there are no per-head calls and the list is empty.
+  `--dry-run` reports `dry-run` and writes nothing. A declined branch stays on origin:
+  `remote-prune` deletes only branches whose PR is `MERGED`. The remaining limit is the branch
+  itself: a merged removal PR's branch is deleted after merge (by `remote-prune` or GitHub's
+  auto-delete), so `removal-merged-but-present` fires only while that branch survives, and a
+  declined branch someone deletes by hand drops its decline.
 - **Surfacing.** `bin/hooks.js`'s `reconcile-background` summary records `ledgerResiduePrOpened`
   (removal PRs opened that pass) and `notableLedgerResidue` (per-path skips, minus
   `ledger-residue.js`'s `QUIET_SKIP_REASONS`: `dry-run`, `run-live`, `not-a-ledger`,

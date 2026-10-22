@@ -38,8 +38,10 @@ Candidate (b): a `ledger-residue` check in the reconcile family
   (`run-live`). Rows are parsed by `wrap-up/pack.js`'s `parseLedger`. Without this rule, a run
   whose ledger reached main mid-run would lose its unresolved items, as would a ledger left with
   open rows. At the time of writing two of the three ledgers above had open rows.
-- **PR state comes from one list.** A single `gh pr list --state all` call returns every PR whose
-  head starts `build/ledger-residue-`, in any state, with its body:
+- **PR state comes from one list, enumerated by ref prefix.** One `gh api` matching-refs call
+  names every branch starting `build/ledger-residue-`, then one `gh pr list --head` per branch
+  returns that branch's PRs, in any state, with their bodies. No recency window applies, so a PR
+  is found however old it is:
 
   | Evidence | Outcome |
   |---|---|
@@ -75,8 +77,13 @@ Candidate (b): a `ledger-residue` check in the reconcile family
 - The removal PR is not auto-armed. The `repo-wide` sweep's item 9 recognizes only the tidy and
   wrap-up housekeeping markers, so a human or the fleet merges it.
 - A removal PR closed unmerged declines every path its body names, and those paths are never
-  re-proposed while that PR is inside the list's 100-most-recent window. Its branch stays on
-  origin: `remote-prune` deletes only branches whose PR is merged, and this check deletes nothing.
+  re-proposed while its branch survives. The branch stays on origin: `remote-prune` deletes only
+  branches whose PR is merged, and this check deletes nothing. A human who deletes the declined
+  branch by hand drops the decline.
+- The same enumeration bounds `removal-merged-but-present`: a merged removal PR's branch is
+  deleted after merge (by `remote-prune` or GitHub's auto-delete), so that reason fires only
+  while the branch survives. After that, a ledger the merged PR deleted but that reappears is
+  treated as new residue.
 - A ledger with open rows or a live run stays on the integration branch until a human or
   `/claude-tweaks:tidy` resolves it. The check reports it each pass, and the background summary
   surfaces it at the next SessionStart.

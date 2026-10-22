@@ -126,27 +126,97 @@ test('decideLedgerResidue: decision table over the removal-PR list', () => {
   assert.deepStrictEqual(declinedA.skips, [{ path: A, reason: 'removal-pr-declined', prNumber: 4 }]);
 });
 
-test('defaultListRemovalPrs: one gh pr list, filtered to the removal-branch prefix; failures classified', () => {
+// A fake gh: matching-refs returns refsOut; each per-head pr list returns prsByHead[head].
+function fakeGh({ refsOut, prsByHead }) {
   const calls = [];
   const exec = (bin, args, opts) => {
     calls.push({ bin, args, opts });
-    return JSON.stringify([
-      { number: 1, state: 'OPEN', headRefName: 'build/ledger-residue-abcd1234', body: 'x' },
-      { number: 2, state: 'MERGED', headRefName: 'worktree-record-9', body: 'y' },
-      { number: 3, state: 'CLOSED', headRefName: 'build/other', body: 'z' },
-    ]);
+    if (args[0] === 'api') return refsOut;
+    return JSON.stringify(prsByHead[args[args.indexOf('--head') + 1]] || []);
   };
-  assert.deepStrictEqual(defaultListRemovalPrs('/r', exec), [{ number: 1, state: 'OPEN', headRefName: 'build/ledger-residue-abcd1234', body: 'x' }]);
-  assert.strictEqual(calls.length, 1);
-  assert.strictEqual(calls[0].bin, 'gh');
-  assert.deepStrictEqual(calls[0].args, ['pr', 'list', '--state', 'all', '--json', 'number,state,headRefName,body', '--limit', '100']);
-  assert.strictEqual(calls[0].opts.cwd, '/r');
-  assert.strictEqual(calls[0].opts.timeout, require('../../../plugin/bin/lib/shared-primitives').GH_TIMEOUT_MS);
+  return { calls, exec };
+}
+const REFS_PATH = 'repos/{owner}/{repo}/git/matching-refs/heads/build/ledger-residue-';
+const GH_TIMEOUT_MS = require('../../../plugin/bin/lib/shared-primitives').GH_TIMEOUT_MS;
+
+test('defaultListRemovalPrs: enumerates heads by ref prefix, then one gh pr list per head; failures classified', () => {
+  const { calls, exec } = fakeGh({
+    refsOut: JSON.stringify([{ ref: 'refs/heads/build/ledger-residue-abcd1234' }, { ref: 'refs/heads/build/ledger-residue-ffff0000' }, { ref: 'refs/heads/build/other' }]),
+    prsByHead: {
+      'build/ledger-residue-abcd1234': [
+        { number: 1, state: 'OPEN', headRefName: 'build/ledger-residue-abcd1234', body: 'x' },
+        { number: 5, state: 'CLOSED', headRefName: 'fork/other-head', body: 'q' },
+      ],
+      'build/ledger-residue-ffff0000': [{ number: 2, state: 'CLOSED', headRefName: 'build/ledger-residue-ffff0000', body: 'y' }],
+    },
+  });
+  assert.deepStrictEqual(defaultListRemovalPrs('/r', exec), [
+    { number: 1, state: 'OPEN', headRefName: 'build/ledger-residue-abcd1234', body: 'x' },
+    { number: 2, state: 'CLOSED', headRefName: 'build/ledger-residue-ffff0000', body: 'y' },
+  ]);
+  assert.strictEqual(calls.length, 3);
+  assert.deepStrictEqual(calls[0].args, ['api', '--paginate', REFS_PATH]);
+  assert.deepStrictEqual(calls[1].args, ['pr', 'list', '--head', 'build/ledger-residue-abcd1234', '--state', 'all', '--json', 'number,state,headRefName,body']);
+  assert.deepStrictEqual(calls[2].args, ['pr', 'list', '--head', 'build/ledger-residue-ffff0000', '--state', 'all', '--json', 'number,state,headRefName,body']);
+  for (const c of calls) {
+    assert.strictEqual(c.bin, 'gh');
+    assert.strictEqual(c.opts.cwd, '/r');
+    assert.strictEqual(c.opts.timeout, GH_TIMEOUT_MS);
+    assert.ok(!c.args.includes('--limit'), 'no recency window: no --limit on any call');
+  }
   const enoent = Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' });
   assert.strictEqual(defaultListRemovalPrs('/r', () => { throw enoent; }), 'gh-absent');
   assert.strictEqual(defaultListRemovalPrs('/r', () => { throw new Error('HTTP 502'); }), 'network-failure');
   assert.strictEqual(defaultListRemovalPrs('/r', () => 'not json'), 'network-failure');
+  assert.strictEqual(defaultListRemovalPrs('/r', () => ''), 'network-failure');
   assert.strictEqual(defaultListRemovalPrs('/r', () => '{"a":1}'), 'network-failure');
+  assert.strictEqual(defaultListRemovalPrs('/r', () => '[{"ref":'), 'network-failure');
+});
+
+test('defaultListRemovalPrs: paginated gh api output (one array per page) is concatenated', () => {
+  const page1 = JSON.stringify([{ ref: 'refs/heads/build/ledger-residue-aaaa0001', url: 'u]][' }]);
+  const page2 = JSON.stringify([{ ref: 'refs/heads/build/ledger-residue-aaaa0002' }]);
+  const pr = (n, head) => [{ number: n, state: 'OPEN', headRefName: head, body: '' }];
+  for (const sep of ['', '\n']) {
+    const { calls, exec } = fakeGh({
+      refsOut: page1 + sep + page2 + '\n',
+      prsByHead: { 'build/ledger-residue-aaaa0001': pr(1, 'build/ledger-residue-aaaa0001'), 'build/ledger-residue-aaaa0002': pr(2, 'build/ledger-residue-aaaa0002') },
+    });
+    assert.deepStrictEqual(defaultListRemovalPrs('/r', exec).map((p) => p.number), [1, 2]);
+    assert.strictEqual(calls.length, 3);
+  }
+});
+
+test('defaultListRemovalPrs: no matching refs -> [] with no per-head call', () => {
+  const { calls, exec } = fakeGh({ refsOut: '[]\n', prsByHead: {} });
+  assert.deepStrictEqual(defaultListRemovalPrs('/r', exec), []);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].args[0], 'api');
+});
+
+test('defaultListRemovalPrs: any per-head failure fails the whole list (fail closed)', () => {
+  const refsOut = JSON.stringify([{ ref: 'refs/heads/build/ledger-residue-aaaa0001' }, { ref: 'refs/heads/build/ledger-residue-aaaa0002' }]);
+  const good = JSON.stringify([{ number: 1, state: 'OPEN', headRefName: 'build/ledger-residue-aaaa0001', body: '' }]);
+  const exec = (failure) => (bin, args) => {
+    if (args[0] === 'api') return refsOut;
+    if (args.includes('build/ledger-residue-aaaa0002')) return typeof failure === 'function' ? failure() : failure;
+    return good;
+  };
+  assert.strictEqual(defaultListRemovalPrs('/r', exec(() => { throw new Error('HTTP 502'); })), 'network-failure');
+  assert.strictEqual(defaultListRemovalPrs('/r', exec(() => { throw Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }); })), 'gh-absent');
+  assert.strictEqual(defaultListRemovalPrs('/r', exec('not json')), 'network-failure');
+  assert.strictEqual(defaultListRemovalPrs('/r', exec('{"a":1}')), 'network-failure');
+  assert.strictEqual(defaultListRemovalPrs('/r', exec('"a string is iterable but not a PR list"')), 'network-failure');
+});
+
+test('defaultListRemovalPrs: a removal PR older than any recency window is still returned', () => {
+  // The old design asked for the 100 newest PRs; a head's PRs are now fetched by head, so age is irrelevant.
+  const old = { number: 7, state: 'CLOSED', headRefName: 'build/ledger-residue-0ld00000', body: 'declined long ago', createdAt: '2020-01-01T00:00:00Z' };
+  const { exec } = fakeGh({
+    refsOut: JSON.stringify([{ ref: 'refs/heads/build/ledger-residue-0ld00000' }]),
+    prsByHead: { 'build/ledger-residue-0ld00000': [old] },
+  });
+  assert.deepStrictEqual(defaultListRemovalPrs('/r', exec), [old]);
 });
 
 test('defaultCreatePr: parses the PR URL gh prints; bad output and failures are classified, never thrown', () => {
