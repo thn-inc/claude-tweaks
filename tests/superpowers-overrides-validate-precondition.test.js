@@ -45,10 +45,6 @@ for (const segments of TARGETS) {
     assert.match(line, /`Surface:`\/`surface:` web\/mobile\/desktop/);
     assert.match(line, /frontend-detection\.md`'s Layer 2\/3, in the `\/claude-tweaks:design-wrapper` skill's directory, defines/, 'must cite the canonical detection machinery directly rather than pointing at another file\'s pointer');
   });
-}
-
-for (const segments of TARGETS) {
-  const file = segments.join('/');
 
   test(`${file}: Superpowers overrides line carries the specify-auto-continue clause (#3859)`, () => {
     const line = overridesLine(...segments);

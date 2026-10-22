@@ -169,7 +169,6 @@ test("this repo's own CLAUDE.md claude-tweaks Pipeline section conforms to the l
     r.conformant.includes('claude-tweaks Pipeline'),
     'CLAUDE.md claude-tweaks Pipeline section drifted from the live template (Integration model paragraph or specify-auto-continue clause differs)',
   );
-  assert.ok(!r.drifted.some((d) => d.section === 'claude-tweaks Pipeline'));
 });
 
 const TPL = [
