@@ -141,7 +141,8 @@ function splitOversized(id, absDir, out, {
     for (;;) {
       nodeFor(cur).total += size;
       if (cur === '') break;
-      const parent = path.posix.dirname(cur) === '.' ? '' : path.posix.dirname(cur);
+      const parentDir = path.posix.dirname(cur);
+      const parent = parentDir === '.' ? '' : parentDir;
       nodeFor(parent).kids.add(path.posix.basename(cur));
       cur = parent;
     }
