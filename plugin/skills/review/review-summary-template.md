@@ -12,6 +12,7 @@ When **all** of the following hold, render the compact block below instead of th
 - No manual steps required
 - No `/build` plan step left not run (the full template's "Not run by /build" section would be omitted)
 - Zero untracked files and zero new listeners reported by the post-fan-out sweep (`step3-lens-dispatch.md`)
+- Step 3.7's tiebreak (`step3-tiebreak.md`) had nothing to judge, or every verdict was `confirmed` or `drop`, and no Tiebreak caveat applies
 
 ```markdown
 ## Review: {spec number or description} — PASS (clean)
@@ -84,7 +85,15 @@ Possible QA statuses (the four canonical values from qa-reporting.md's Status de
 | {convention/security/error/perf/arch/test} | {finding} | {low/medium/high} | {fixed/captured/accepted} |
 (or: No findings — code is clean.)
 
-> This table lists `confirmed` findings — findings reproduced by both agents in the per-lens reproduction pair, elevated via the reviewer's own direct-verification override (`step3-lens-dispatch.md`), reported independently by two different lenses at `review-effort: medium` (cross-lens corroboration, `step3-cross-lens-corroboration.md`), or upgraded to `confirmed` after a cross-lens debate round (Step 3.5). At `review-effort: xhigh`, `unconfirmed` findings (single-source, or debate converged negative) also appear here, labeled `(low-confidence)`. At `max`, `contested` findings (debate inconclusive) also appear here too, labeled `(contested — {verdicts})`. Below `xhigh`, `unconfirmed`/`contested` findings are staged to the Wrap-Up Review Console instead — they are not silently dropped either way. Override or apply each in batch from the Console.
+> This table lists `confirmed` findings — findings reproduced by both agents in the per-lens reproduction pair, elevated via the reviewer's own direct-verification override (`step3-lens-dispatch.md`), reported independently by two different lenses at `review-effort: medium` (cross-lens corroboration, `step3-cross-lens-corroboration.md`), upgraded to `confirmed` after a cross-lens debate round (Step 3.5), or confirmed by Step 3.7's tiebreak. At `review-effort: xhigh`, `unconfirmed` findings the tiebreak left can't-tell also appear here, labeled `(low-confidence)`; at `max`, so do can't-tell `contested` findings, labeled `(contested — {verdicts})`. Every `unconfirmed`/`contested` finding goes to Step 3.7 (`step3-tiebreak.md`); its outcomes are in `### Tiebreak` below.
+
+### Tiebreak
+{Include when Step 3.7 (`step3-tiebreak.md`) judged at least one finding. Omit otherwise.}
+
+**Verdicts:** {n} confirmed · {n} dropped · {n} digest · {n} console
+{only when a verdict was read inline — `step3-tiebreak.md`'s Dispatched reviewer section:} **Tiebreak caveat:** {n} verdict(s) read inline by the reviewer, not an independent agent ({reason, e.g. no `Agent` tool, timed out})
+{standalone review only — `step3-tiebreak.md`'s Standalone review section: the verdict lines, then each can't-tell finding of severity medium or higher, with the tiebreak's recommendation:}
+- {path}:{line} — {claim} ({severity}) — Recommendation: {file | drop} — {reason}
 
 ### Fan-out leftovers
 {None | N untracked file(s) left by the review fan-out, reported (not deleted) by the post-fan-out sweep: {paths}; N new local listener(s) since the pre-dispatch snapshot, reported (not killed; ownership unattributed): {command}:{port}, …}
