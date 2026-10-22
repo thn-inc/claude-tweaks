@@ -20,6 +20,7 @@ const slice = (text, from, to) => {
 
 const ACTIONS = read('plugin', 'skills', 'tidy', 'actions-github-issues.md');
 const TIDY_SKILL = read('plugin', 'skills', 'tidy', 'SKILL.md');
+const STEP_6_AUTO_RAW = readText(path.join(ROOT, 'plugin', 'skills', 'tidy', 'step-6-auto.md'));
 const PR_FIRST_MERGE = read('plugin', 'skills', '_shared', 'pr-first-merge.md');
 const SKILL_GRAPH = read('docs', 'skill-graph.md');
 
@@ -66,6 +67,7 @@ const HELD_PINS = [
   /never run labeling from a tidy sweep/,
   /not armed — acceptance labeling not landed/,
   /\/claude-tweaks:dispatch close-out/,
+  /Otherwise do not run Step 3/,
 ];
 
 test('AC3.1: a record-linked PR with no verify.json and no demo:pending on its Fixes records is held, not armed', () => {
@@ -77,6 +79,7 @@ test('AC3.1: negative control — the held outcome is gone once the guard paragr
   const stripped = arm.replace(GUARD_ADDED, '');
   assert.doesNotMatch(stripped, /is held, not armed/);
   assert.doesNotMatch(stripped, /not armed — acceptance labeling not landed/);
+  assert.doesNotMatch(stripped, /Otherwise do not run Step 3/);
 });
 
 test('housekeeping-marker flavor is exempt from the guard', () => {
@@ -97,4 +100,19 @@ test("pr-first-merge Step 1 names tidy's Arm ready PR as a caller that holds ins
 
 test('skill-graph records the tidy → dispatch/close-out.md edge', () => {
   assert.match(slice(SKILL_GRAPH, '## tidy', '## visual-review'), /\| `dispatch\/close-out\.md` \| .*## Arm ready PR/);
+});
+
+test('final review: both "identical execution" claims name the labeling-guard exception', () => {
+  assert.match(arm, /except for the record-linked flavor's acceptance-labeling guard/);
+  assert.doesNotMatch(arm, /both executed identically once staged and approved — only/);
+  const row = STEP_6_AUTO_RAW.match(/\| \*\*Arm ready PR\*\* \(item 9's other granted flavor[^\n]*\n/);
+  assert.ok(row, "step-6-auto.md's record-linked Arm ready PR row must exist");
+  assert.match(row[0], /acceptance-labeling guard/);
+  assert.doesNotMatch(row[0], /— only the tier gate differs/);
+});
+
+test('final review: the no-run-dir hold names a reachable path, not bare close-out', () => {
+  assert.match(arm, /close-out #\{record\}/);
+  assert.match(arm, /close-out stops on the same missing run dir/);
+  assert.match(arm, /\/claude-tweaks:demo #\{record\}/);
 });

@@ -62,9 +62,9 @@ recommendation still ends with `/claude-tweaks:demo #{n}` even once the gate is 
 The `[pr-unarmed]` findings this action resolves come from `_shared/github-pr-scan.md`'s
 `repo-wide` scope item 9 — a `github-issues`-only action, since there is no PR concept under
 `local-files`. Two grant flavors reach here (the housekeeping-marker PR and the record-linked PR),
-both executed identically once staged and approved — only `step-6-auto.md`'s tier gate
-distinguishes them (housekeeping may auto-apply at `moderate`+; the record-linked flavor always
-stages).
+both executed identically once staged and approved, except for the record-linked flavor's
+acceptance-labeling guard below — beyond that, only `step-6-auto.md`'s tier gate distinguishes them
+(housekeeping may auto-apply at `moderate`+; the record-linked flavor always stages).
 
 **Re-verify before writing — never trust the scan's own snapshot.** Time has passed since Step
 4.8 ran: re-fetch the PR's `isDraft`, `statusCheckRollup`, `autoMergeRequest`, and unresolved
@@ -88,16 +88,22 @@ landed rule and live-state precheck before arming. First, resolve the run dir fr
 step does (`$RUN_ROOT/.claude-tweaks/pipelines/{run-id}/`, else its `archive/{run-id}/` copy). Then
 read its `verify.json`: when the run dir has `spec-*/` subdirectories (a multi-spec parent), read every
 `spec-*/verify.json`; otherwise read the run dir's own. Labeling has landed when every file read exists
-and its `acceptance-labeling` row's `result` is `pass`/`skip`. When it has not, and also when no valid
-marker or run dir resolves, it still counts as landed in two cases: every record in the PR's `Fixes`
+and its `acceptance-labeling` row's `result` is `pass`/`skip`. When it has not — and also when no valid
+marker or run dir resolves, where tidy departs from close-out step 3 (which stops that candidate)
+because tidy never runs Step 1 and so needs no run dir — it still counts as landed in two cases: every record in the PR's `Fixes`
 lines carries `demo:pending`, or the PR carries a trusted `<!-- run-comment: brief -->` or
 `<!-- run-comment: try-it -->` run comment (or its multi-spec `brief:{N}`/`try-it:{N}` form; trusted
 per `_shared/pr-run-comments.md`'s Trusted authors). Otherwise do not run Step 3, and never run
 labeling from a tidy sweep: `wrap-up/verification-brief.md` needs the run's own inputs. Hold the PR for
 a human instead, and never as a silent no-op. Report `PR #{n} not armed — acceptance labeling not
 landed ({verify.json missing | acceptance-labeling: {result} | no run dir})` and recommend
-`/claude-tweaks:dispatch close-out`, which runs `_shared/pr-first-merge.md` Step 1 before it merges. So
-a record-linked PR whose run dir has no `verify.json`, and whose `Fixes` records carry no
+`/claude-tweaks:dispatch close-out #{record}` ({record} = one of the PR's `Fixes` records), which runs
+`_shared/pr-first-merge.md` Step 1 before it merges. For `no run dir`, close-out stops on the same
+missing run dir, so the recommendation instead names running that command from the checkout that holds
+run `{run-id}`, or, when none does, a human acceptance pass via `/claude-tweaks:demo #{record}` before
+merging by hand. Log the hold to this tidy run's `decisions.md`:
+`node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{tidy-run-dir}" --section "/tidy" --status KEPT-PROMPT --step "Arm ready PR" --text "PR #{n} held, not armed — acceptance labeling not landed ({reason})" --reversibility n/a`.
+So a record-linked PR whose run dir has no `verify.json`, and whose `Fixes` records carry no
 `demo:pending`, is held, not armed. The housekeeping-marker flavor (`<!-- tidy-housekeeping-pr -->` /
 `<!-- wrap-up-residue-pr -->`) skips this check: it links no record, so there is nothing to label.
 
