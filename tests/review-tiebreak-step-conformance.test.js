@@ -202,6 +202,63 @@ test('Review Focus: the empty-reply assertion can go red', () => {
   assertEachPatternGoesRed(sectionOf(tiebreakText(), 'Resolve and act'), EMPTY_REPLY, emptyReplyMissing);
 });
 
+// --- Fix round 1: logText never rides a shell argument; digest/console are pipeline-run only; the artifact-failure line surfaces ---
+
+const LOG_TEXT_FILE = [
+  [/--text-file "\{path-T\}"/, 'the log call passes logText through --text-file'],
+  [/T=review-\{ctx-id\}-tiebreak-\{n\}-text\.txt/, 'the text file is a session-tmp path resolved with the finding and reply paths'],
+  [/` Mode: inline\.` appended to the content of `T` \(never to a shell argument\)/, 'Mode: inline. is appended to the text file content'],
+];
+const logTextFileMissing = missingFactsOf(LOG_TEXT_FILE);
+const passesTextOnCommandLine = (text) => /--text "/.test(text);
+
+test('fix 1: logText goes through --text-file, never a shell argument', () => {
+  const resolveAndAct = sectionOf(tiebreakText(), 'Resolve and act');
+  assert.deepEqual(logTextFileMissing(resolveAndAct), [], '## Resolve and act must log through --text-file');
+  assert.ok(!passesTextOnCommandLine(resolveAndAct), 'no --text "..." argument: a verbatim source line can carry quotes, $() and backticks');
+});
+
+test('fix 1: the --text-file assertions can go red', () => {
+  const resolveAndAct = sectionOf(tiebreakText(), 'Resolve and act');
+  assertEachPatternGoesRed(resolveAndAct, LOG_TEXT_FILE, logTextFileMissing);
+  assert.ok(passesTextOnCommandLine(resolveAndAct.replace('--text-file "{path-T}"', '--text "{logText}"')), 'reverting to --text must turn the check red');
+});
+
+const PIPELINE_ONLY = [
+  [/- `digest` \(a pipeline run only; `## Standalone review` covers the no-run-dir case\)/, 'the digest action is qualified as pipeline-run only'],
+  [/- `console` \(a pipeline run only; `## Standalone review` covers the no-run-dir case\)/, 'the console action is qualified as pipeline-run only'],
+];
+const pipelineOnlyMissing = missingFactsOf(PIPELINE_ONLY);
+
+test('fix 2: the digest and console actions are pipeline-run only', () => {
+  assert.deepEqual(pipelineOnlyMissing(sectionOf(tiebreakText(), 'Resolve and act')), [], 'both bullets must point a standalone review at ## Standalone review');
+});
+
+test('fix 2: the pipeline-only qualifiers can go red', () => {
+  assertEachPatternGoesRed(sectionOf(tiebreakText(), 'Resolve and act'), PIPELINE_ONLY, pipelineOnlyMissing);
+});
+
+const ARTIFACT_FAILURE = [
+  [/findings artifact not written \(\{exit\}\); \{N\} findings stay unconfirmed with no tiebreak verdict\./, 'the failure line says the findings stay unconfirmed (so the Review Console surfaces it)'],
+  [/lists under the Review Console's Low-confidence section/, 'the failure line lists under the Low-confidence section'],
+  [/this line is the only signal/, 'with no artifact this line is the only signal'],
+];
+const artifactFailureMissing = missingFactsOf(ARTIFACT_FAILURE);
+
+test('fix 3: the artifact-failure line surfaces and states its consequence', () => {
+  const section = sectionOf(tiebreakText(), 'Findings artifact');
+  assert.deepEqual(artifactFailureMissing(section), [], '## Findings artifact must log a line the console surfaces');
+  assert.ok(!/holds the run open/.test(section), 'the archive gate does not hold the run open on an absent artifact');
+  // The console surfaces a STAGED line only when it matches console/resolve.js's low-confidence matcher.
+  const line = section.match(/`(STAGED [^`]*findings artifact not written[^`]*)`/);
+  assert.ok(line, 'the failure log line was not found');
+  assert.match(line[1], /low-confidence|not directly verified|unconfirmed/i);
+});
+
+test('fix 3: the artifact-failure assertions can go red', () => {
+  assertEachPatternGoesRed(sectionOf(tiebreakText(), 'Findings artifact'), ARTIFACT_FAILURE, artifactFailureMissing);
+});
+
 // --- AC7.1: standalone ---
 
 const STANDALONE = [

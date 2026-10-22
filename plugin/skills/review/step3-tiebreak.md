@@ -22,7 +22,7 @@ In a pipeline run (`$PIPELINE_RUN_DIR` set), write the entry set to the run's `r
 node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" write-findings "$PIPELINE_RUN_DIR" "{path-F}"
 ```
 
-Each entry is `{lens, path, line, claim, reporterSeverity, kind, positions?}` where `kind` is `unconfirmed` or `contested` — the shape is `plugin/bin/lib/tiebreak.js`'s. A non-zero exit stops this step: log `STAGED {HH:MM:SS} — Tiebreak: findings artifact not written ({exit}). Reversibility: high.` and run no dispatch; the unresolved STAGED line holds the run open at the Wrap-Up Review Console.
+Each entry is `{lens, path, line, claim, reporterSeverity, kind, positions?}` where `kind` is `unconfirmed` or `contested` — the shape is `plugin/bin/lib/tiebreak.js`'s. A non-zero exit stops this step: log `STAGED {HH:MM:SS} — Tiebreak: findings artifact not written ({exit}); {N} findings stay unconfirmed with no tiebreak verdict. Reversibility: high.` and run no dispatch. The line lists under the Review Console's Low-confidence section, and the earlier per-finding STAGED lines stay as written. With no artifact the archive gate has nothing to enforce, so this line is the only signal.
 
 ## Dispatch
 
@@ -65,7 +65,7 @@ SCRATCH: {ctx-dir}/agent-scratch/{agent-id} — any probe script or fixture you 
 
 For each entry, once its agent has returned:
 
-1. Resolve two paths with one plain call, `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" F=review-{ctx-id}-tiebreak-{n}.json R=review-{ctx-id}-tiebreak-{n}-reply.txt` (`{n}` the entry's position in the set). `Write` the entry (as written to the artifact, `positions` included for a contested one) to `F` and the agent's reply to `R`. An empty, failed, timed-out, or non-`DONE` dispatch is passed as an empty reply file — the resolver turns it into the can't-tell result, so every entry still gets exactly one verdict line.
+1. Resolve three paths with one plain call, `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" F=review-{ctx-id}-tiebreak-{n}.json R=review-{ctx-id}-tiebreak-{n}-reply.txt T=review-{ctx-id}-tiebreak-{n}-text.txt` (`{n}` the entry's position in the set). `Write` the entry (as written to the artifact, `positions` included for a contested one) to `F` and the agent's reply to `R`; `T` is written in step 3. An empty, failed, timed-out, or non-`DONE` dispatch is passed as an empty reply file — the resolver turns it into the can't-tell result, so every entry still gets exactly one verdict line.
 2. Run, with `{checkout under review}` the worktree or checkout the review reads (not the run dir):
 
    ```bash
@@ -73,21 +73,21 @@ For each entry, once its agent has returned:
    ```
 
    It prints JSON with `outcome`, `severity`, `recommendation`, `logStatus`, `logStep`, `logText`, and `listInConsole`.
-3. Log one line, passing the JSON values through unchanged (a pipeline run only):
+3. Log one line (a pipeline run only). `logText` can carry a verbatim source line — quotes, `$()`, backticks, backslashes — so it never goes on the command line: `Write` it, unchanged, to `T`, then pass `T`. `logStatus` and `logStep` are safe inline.
 
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status "{logStatus}" --step "{logStep}" --text "{logText}" --reversibility high --section "/review"
+   node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status "{logStatus}" --step "{logStep}" --text-file "{path-T}" --reversibility high --section "/review"
    ```
 
 4. Act on `outcome`:
    - `confirmed`: the finding enters Step 3 Routing at the returned `severity`, as an input `step3-routing.md`'s routing table lists.
    - `drop`: logged only.
-   - `digest`: one materiality-digest entry with `Defer-reason: tiebreak-cant-tell` and area `review`, written through the digest path `step3-routing.md`'s Defer bullet uses (`_shared/materiality-floor.md`'s Entry format, Dedup, and Digest URL and count surfacing sections). The count goes in the Step 7 summary.
-   - `console`: the logged STAGED line is the decision item, and its `Recommendation:` travels in the line.
+   - `digest` (a pipeline run only; `## Standalone review` covers the no-run-dir case): one materiality-digest entry with `Defer-reason: tiebreak-cant-tell` and area `review`, written through the digest path `step3-routing.md`'s Defer bullet uses (`_shared/materiality-floor.md`'s Entry format, Dedup, and Digest URL and count surfacing sections). The count goes in the Step 7 summary.
+   - `console` (a pipeline run only; `## Standalone review` covers the no-run-dir case): the logged STAGED line is the decision item, and its `Recommendation:` travels in the line.
 
 The earlier STAGED low-confidence or contested line for the finding is not rewritten. A `confirmed` verdict supersedes it through `console/resolve.js`'s `#3772` matcher; under the other outcomes the Review Console shows what it shows today, until the console sub-issue lands.
 
-Any reviewer-read verdict — a Direct-verification override, or an inline fallback below — goes through the same resolver, with ` Mode: inline.` appended to `logText` before step 3 logs it.
+Any reviewer-read verdict — a Direct-verification override, or an inline fallback below — goes through the same resolver, with ` Mode: inline.` appended to the content of `T` (never to a shell argument) before step 3 logs it.
 
 ## Standalone review
 
