@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
+const { listTestFiles } = require('../tools/run-tests');
 
 // Wall-clock timing budgets live in perf/ (run by `npm run test:perf`), never in
 // tests/ (`npm test`): a budget flakes under load, and a flaky failure trains readers
@@ -11,19 +12,26 @@ const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('.
 // budget under tests/**/*.test.js (#3412, #3491). A budget is a `<`, `<=`, `>` or `>=`
 // comparison whose one side is a wall-clock reading (performance.now, Date.now,
 // process.hrtime[.bigint]), directly or through a name or helper derived from one in
-// the same test body, and whose other side is a numeric literal or constant. Every
-// file with such a comparison must sit on ALLOWLIST with a reason.
+// the same test body, and whose other side is a numeric literal or constant. The scan
+// covers every test file `npm test` runs. Each budget in it must be pinned on ALLOWLIST
+// by its comparison text, with a reason.
 //
 // Known limits. (1) A duration measured inside the code under test is not seen: a
 // helper that times its own work and returns a plain number hands the test a value
 // that is not wall-clock-derived here. (2) Blank mode can erase live code when the
-// stripper misreads a regex after `)` or `}`. stripperVerdict catches that only when
-// the stripped text stops compiling; a misread that still compiles goes unseen. The
-// exact per-file counts are this scan's floor: a dead or blinded matcher drifts every
-// count, and the live-tree test fails on the drift.
+// stripper misreads a regex after `)` or `}`. stripperVerdict is given the same
+// blank-mode text the matcher scans and catches that only when the text stops
+// compiling; a misread that still compiles goes unseen. (3) A budget whose bound is
+// not a literal or a numeric `const` in the file (`cond ? 500 : 200`, an imported
+// TIMEOUT_MS) is not seen. (4) A busy-wait condition (`while (Date.now() - t < 50)`)
+// is a budget by this definition and is flagged; pin it. (5) Taint is coarse: an
+// object or array holding a timing taints its name, and a name tainted in one test()
+// of a describe(...) block taints the sibling tests in that block, so a timing-free
+// comparison can be flagged; pin it with a reason. The pinned texts are this scan's
+// floor: a dead or blinded matcher drops sites, and the live-tree test fails on the
+// stale pins.
 
 const ROOT = path.join(__dirname, '..');
-const TESTS_ROOT = path.join(ROOT, 'tests');
 const PLUGIN_STRUCTURE = path.join(ROOT, 'docs', 'plugin-structure.md');
 
 const WALL_CLOCK = /\b(?:performance\s*\.\s*now|Date\s*\.\s*now|process\s*\.\s*hrtime(?:\s*\.\s*bigint)?)\s*\(/;
@@ -98,10 +106,11 @@ function isNumericBudget(expr, numeric) {
 
 // Assignments in `text`: `NAME = expr`, `NAME += expr`, and `const|let|var NAME = expr`
 // with a comma list (`const A = 4, B = 3`) binding each name. An expression ends at a
-// depth-0 `,`, `;`, newline or unmatched closer, and scanning resumes there, so text
-// inside an expression is never read as an assignment of its own. `keyword` is the
-// declaration keyword (null for a plain assignment). A property assignment (`o.x = …`)
-// is skipped: `x` is not a binding.
+// depth-0 `,`, `;`, a newline after it has begun (a newline while it is still empty,
+// as in `const e =\n  Date.now() - t;`, does not end it) or an unmatched closer, and
+// scanning resumes there, so text inside an expression is never read as an assignment
+// of its own. `keyword` is the declaration keyword (null for a plain assignment). A
+// property assignment (`o.x = …`) is skipped: `x` is not a binding.
 function assignments(text) {
   const found = [];
   const re = /(?:\b(const|let|var)\s+)?([A-Za-z_$][\w$]*)\s*[+\-*]?=(?![=>])/g;
@@ -118,7 +127,8 @@ function assignments(text) {
       else if (CLOSE.has(ch)) {
         if (depth === 0) break;
         depth--;
-      } else if (depth === 0 && (ch === ',' || ch === ';' || ch === '\n')) break;
+      } else if (depth === 0 && (ch === ',' || ch === ';')) break;
+      else if (depth === 0 && ch === '\n' && /\S/.test(text.slice(re.lastIndex, k))) break;
     }
     found.push({ name: m[2], expr: text.slice(re.lastIndex, k), keyword });
     decl = text[k] === ',' ? keyword : null;
@@ -221,8 +231,10 @@ function operands(s, start, end) {
 
 // -> [{ line, text }]: one entry per budget comparison in `src`. `line` is the 1-based
 // line of the comparison operator; `text` is the source comparison, whitespace-collapsed.
-function findBudgetAssertions(src) {
-  const s = stripComments(src, { literals: 'blank' });
+// `stripped` is the blank-mode text of `src`; evaluate passes the same text to
+// stripperVerdict, so the misparse check judges exactly what this matcher reads.
+function findBudgetAssertions(src, stripped = stripComments(src, { literals: 'blank' })) {
+  const s = stripped;
   const fileTainted = new Set();
   const fileNumeric = new Set();
   const statements = topLevelStatements(s);
@@ -250,59 +262,69 @@ function findBudgetAssertions(src) {
   return hits;
 }
 
-// files: { relPosixPath: source }. allowlist: { relPosixPath: { count, reason } }.
-// -> one offender line per budget in an un-allow-listed file, per file whose budget
-// count differs from its entry's count, per entry with no reason, per entry whose file
-// is absent, and per file the stripper cannot judge. [] means conformant.
+function budgetOffender(rel, hit) {
+  return (
+    `${rel}:${hit.line}: ${hit.text} — a wall-clock budget under tests/ flakes under load; ` +
+    'move it to perf/ (run by npm run test:perf), or pin this site in ALLOWLIST with a reason. ' +
+    'See docs/plugin-structure.md.'
+  );
+}
+
+// files: { relPosixPath: source }. allowlist: { relPosixPath: { sites, reason } }, where
+// `sites` pins the whitespace-collapsed text of each budget the file may keep (one entry
+// per site; a repeated text is pinned once per occurrence).
+// -> one offender line per budget not pinned (every budget in a file with no entry), per
+// pinned site no longer present, per entry with no reason or no pinned sites, per entry
+// whose file is absent, and per file the stripper cannot judge. [] means conformant.
 function evaluate(files, allowlist) {
   const offenders = [];
   for (const [rel, entry] of Object.entries(allowlist)) {
     if (!entry || typeof entry.reason !== 'string' || entry.reason.trim() === '') {
       offenders.push(`${rel}: allowlist entry has no reason`);
     }
+    if (!entry || !Array.isArray(entry.sites) || entry.sites.length === 0 || entry.sites.some((t) => typeof t !== 'string' || t === '')) {
+      offenders.push(`${rel}: allowlist entry has no pinned sites (sites: [the budget texts])`);
+    }
   }
   for (const rel of Object.keys(allowlist)) {
     if (!(rel in files)) offenders.push(`${rel}: allowlist entry has no matching file under tests/`);
   }
   for (const [rel, src] of Object.entries(files)) {
-    const verdict = stripperVerdict(src);
+    const stripped = stripComments(src, { literals: 'blank' });
+    const verdict = stripperVerdict(src, stripped);
     if (verdict !== 'ok') {
       offenders.push(`${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
       continue;
     }
-    const hits = findBudgetAssertions(src);
-    const allowed = allowlist[rel];
-    if (!allowed) {
-      for (const hit of hits) {
-        offenders.push(
-          `${rel}:${hit.line}: ${hit.text} — a wall-clock budget under tests/ flakes under load; ` +
-            'move it to perf/ (run by npm run test:perf), or allow-list this file with a reason. ' +
-            'See docs/plugin-structure.md.',
-        );
-      }
-    } else if (hits.length !== allowed.count) {
-      const lines = hits.map((h) => h.line).join(', ');
+    const entry = allowlist[rel];
+    const unmatched = entry && Array.isArray(entry.sites) ? [...entry.sites] : [];
+    for (const hit of findBudgetAssertions(src, stripped)) {
+      const at = unmatched.indexOf(hit.text);
+      if (at === -1) offenders.push(budgetOffender(rel, hit));
+      else unmatched.splice(at, 1);
+    }
+    for (const text of unmatched) {
       offenders.push(
-        `${rel}: ${hits.length} wall-clock budget(s) at line(s) ${lines || 'none'}, ` +
-          `allow-listed ${allowed.count}; update its ALLOWLIST count and reason.`,
+        `${rel}: allowlist entry pins a site that is no longer present: "${text}"; remove it from ALLOWLIST ` +
+          '(delete the entry when none remain).',
       );
     }
   }
   return offenders;
 }
 
-// The exact per-file audit record: each file's budget count, and a reason an author
-// judged by reading the site.
+// The audit record: each file's pinned budget texts, and a reason an author judged by
+// reading the sites. A new, changed or removed budget fails the scan until this is updated.
 const ALLOWLIST = {
-  'tests/bin-lib/code-health/candidates-scale-readiness.test.js': { count: 2, reason: 'linearity guards: a 200-slash file and a 20k-dot chain must scan under a generous 1 s bound, catching quadratic backtracking; candidates to move to perf/.' },
-  'tests/bin-lib/dream/scan.test.js': { count: 1, reason: 'redaction-latency guard: a 120k-char tool output must redact under 500 ms, catching an uncapped backtracking regex; candidate to move to perf/.' },
-  'tests/bin-lib/flow/preflight.test.js': { count: 1, reason: 'parallelism check: three 150 ms probes must finish under 600 ms, a margin a serial run (450 ms of sleeps) nearly fits; candidate to move to perf/.' },
-  'tests/bin-lib/gif/palette.test.js': { count: 1, reason: 'quantize-latency guard: a 400x300 frame must quantize and index under a generous 5 s; candidate to move to perf/.' },
-  'tests/bin-lib/git-retry.test.js': { count: 1, reason: 'bounded-wait check: an injected fake sleep makes the retry loop instant, so elapsed under 1 s only catches a real sleep leaking through; candidate to move to perf/.' },
-  'tests/bin-lib/health-core/premise-self-check.test.js': { count: 1, reason: 'bounded-wait check: a hung `sleep 5` with a 100 ms timeout must return before 4 s, checking the kill path; candidate to move to perf/.' },
-  'tests/bin-lib/model-profiles/session-failures.test.js': { count: 2, reason: 'bounded-wait checks: a released lock must be taken before the 2 s timeout, and a never-released lock must degrade near a 50 ms timeout, under 2 s; candidates to move to perf/.' },
-  'tests/bin-lib/wrap-up/pack.test.js': { count: 1, reason: 'parallelism check: eight 200 ms probes must finish under 600 ms, where a serial run takes 1.6 s; candidate to move to perf/.' },
-  'tests/reconcile.test.js': { count: 2, reason: 'bounded-time checks: a preflight-gated reconcile under 2.5 s and a pre-exhausted budget under 1 s, both doing no real work with generous margins; candidates to move to perf/.' },
+  'tests/bin-lib/code-health/candidates-scale-readiness.test.js': { sites: ['elapsed < 1000', 'elapsed < 1000'], reason: 'linearity guards: a 200-slash file and a 20k-dot chain must scan under a generous 1 s bound, catching quadratic backtracking; candidates to move to perf/.' },
+  'tests/bin-lib/dream/scan.test.js': { sites: ['Date.now() - started < 500'], reason: 'redaction-latency guard: a 120k-char tool output must redact under 500 ms, catching an uncapped backtracking regex; candidate to move to perf/.' },
+  'tests/bin-lib/flow/preflight.test.js': { sites: ['Date.now() - t0 < 600'], reason: 'parallelism check: three 150 ms probes must finish under 600 ms, a margin a serial run (450 ms of sleeps) nearly fits; candidate to move to perf/.' },
+  'tests/bin-lib/gif/palette.test.js': { sites: ['elapsedMs < 5000'], reason: 'quantize-latency guard: a 400x300 frame must quantize and index under a generous 5 s; candidate to move to perf/.' },
+  'tests/bin-lib/git-retry.test.js': { sites: ['elapsed < 1000'], reason: 'bounded-wait check: an injected fake sleep makes the retry loop instant, so elapsed under 1 s only catches a real sleep leaking through; candidate to move to perf/.' },
+  'tests/bin-lib/health-core/premise-self-check.test.js': { sites: ['Date.now() - start < 4000'], reason: 'bounded-wait check: a hung `sleep 5` with a 100 ms timeout must return before 4 s, checking the kill path; candidate to move to perf/.' },
+  'tests/bin-lib/model-profiles/session-failures.test.js': { sites: ['Date.now() - start < 2000', 'Date.now() - start < 2000'], reason: 'bounded-wait checks: a released lock must be taken before the 2 s timeout, and a never-released lock must degrade near a 50 ms timeout, under 2 s; candidates to move to perf/.' },
+  'tests/bin-lib/wrap-up/pack.test.js': { sites: ['wall < 600'], reason: 'parallelism check: eight 200 ms probes must finish under 600 ms, where a serial run takes 1.6 s; candidate to move to perf/.' },
+  'tests/reconcile.test.js': { sites: ['elapsed < 2500', 'Date.now() - start < 1000'], reason: 'bounded-time checks: a preflight-gated reconcile under 2.5 s and a pre-exhausted budget under 1 s, both doing no real work with generous margins; candidates to move to perf/.' },
 };
 
 // Fixtures are single-quoted string arrays, never template literals.
@@ -332,15 +354,22 @@ const MIXED = [
   "    'msg'",
   '  );',
   '  if (Date.now() - t0 > 900) throw new Error(\'slow\');',
+  '  const e2 =',
+  '    Date.now() - t0;',
+  '  assert.ok(e2 < 700);',
+  '  assert.ok(elapsed < 1e3);',
   '});',
 ].join('\n');
 
+// `elapsed` is wall-clock-derived here, so each literal or comment below would be a
+// budget if the stripper left it in place: the negatives pass only because they are blanked.
 const NOT_FLAGGED = [
   "test('a', () => {",
-  '  // elapsed < 200',
-  "  assert.ok(true, 'took < 200ms');",
-  '  const note = `took < 200`;',
   '  const t0 = Date.now();',
+  '  const elapsed = Date.now() - t0;',
+  '  // elapsed < 200',
+  "  assert.ok(true, 'elapsed < 200, see log');",
+  '  const note = `elapsed < 200`;',
   '  const elapsedMs = Date.now() - t0;',
   '  const baselineMs = Date.now() - t0;',
   '  assert.ok(elapsedMs < MAX_RATIO * baselineMs);',
@@ -358,8 +387,8 @@ test('AC1.1: flags a performance.now() budget, direct or through a variable', ()
   assert.deepEqual(findBudgetAssertions(DIRECT).map((h) => h.line), [5, 6]);
 });
 
-test('flags Date.now, process.hrtime.bigint via a helper, a reversed operand, a numeric-const budget, a multi-line assert and a budget inside an if condition', () => {
-  assert.deepEqual(findBudgetAssertions(MIXED).map((h) => h.line), [3, 6, 8, 10, 12, 15]);
+test('flags Date.now, process.hrtime.bigint via a helper, a reversed operand, a numeric-const budget, a multi-line assert, a budget inside an if condition, a multi-line assignment and an exponent literal', () => {
+  assert.deepEqual(findBudgetAssertions(MIXED).map((h) => h.line), [3, 6, 8, 10, 12, 15, 18, 19]);
 });
 
 test('does not flag a comment, a message string, template text, a ratio of two timings, a timestamp call argument, a timestamp freshness check, a loop bound, or a same-named untainted variable in another test', () => {
@@ -377,20 +406,56 @@ test('AC1.1: evaluate names file:line, the perf/ pointer and docs/plugin-structu
   }
 });
 
-test('evaluate fails a count drift either way, an entry with no reason, an entry for a missing file, and a non-ok stripper verdict', () => {
-  const low = evaluate({ 'tests/x.test.js': DIRECT }, { 'tests/x.test.js': { count: 1, reason: 'x' } });
-  assert.equal(low.length, 1);
-  assert.match(low[0], /^tests\/x\.test\.js: /);
+// Asserts `line` is the standard budget offender: file:line, the budget text, the perf/
+// pointer, `npm run test:perf` and the docs citation.
+function assertStandardOffender(line, rel, lineNo, text) {
+  assert.ok(line.startsWith(`${rel}:${lineNo}: ${text} `), line);
+  assert.match(line, /perf\//);
+  assert.match(line, /npm run test:perf/);
+  assert.match(line, /docs\/plugin-structure\.md/);
+}
 
-  const high = evaluate({ 'tests/x.test.js': DIRECT }, { 'tests/x.test.js': { count: 3, reason: 'x' } });
-  assert.equal(high.length, 1);
-  assert.match(high[0], /^tests\/x\.test\.js: /);
+test('AC1: an allow-listed file is pinned by site text: a new budget, a swapped budget or a stale pin fails with the standard message', () => {
+  const entry = { sites: ['elapsed < 200', 'performance.now() - start < 300'], reason: 'x' };
+  const pinned = { 'tests/x.test.js': entry };
+  assert.deepEqual(evaluate({ 'tests/x.test.js': DIRECT }, pinned), []);
 
-  const noReason = evaluate({ 'tests/x.test.js': DIRECT }, { 'tests/x.test.js': { count: 2, reason: '' } });
+  // A third budget added to a file that already has an entry: file:line, perf/ pointer, no "raise the count" steer.
+  const added = DIRECT.replace('  assert.ok(performance.now() - start < 300);', '  assert.ok(performance.now() - start < 300);\n  assert.ok(elapsed <= 900);');
+  const addedOut = evaluate({ 'tests/x.test.js': added }, pinned);
+  assert.equal(addedOut.length, 1);
+  assertStandardOffender(addedOut[0], 'tests/x.test.js', 7, 'elapsed <= 900');
+  assert.ok(!/update its ALLOWLIST/.test(addedOut[0]));
+
+  // Swap: one site removed, a different one added. The count is unchanged, the scan still fails.
+  const swapped = DIRECT.replace('elapsed < 200', 'elapsed < 250');
+  const swappedOut = evaluate({ 'tests/x.test.js': swapped }, pinned);
+  assert.equal(swappedOut.length, 2);
+  assertStandardOffender(swappedOut[0], 'tests/x.test.js', 5, 'elapsed < 250');
+  assert.match(swappedOut[1], /^tests\/x\.test\.js: .*no longer present: "elapsed < 200"/);
+
+  // Removed: a pinned text that is gone is a stale entry.
+  const removed = DIRECT.replace('  assert.ok(elapsed < 200);\n', '');
+  const removedOut = evaluate({ 'tests/x.test.js': removed }, pinned);
+  assert.equal(removedOut.length, 1);
+  assert.match(removedOut[0], /^tests\/x\.test\.js: .*no longer present: "elapsed < 200"/);
+
+  // A pinned text covers one site: a second identical budget is an offender.
+  const twice = ["test('a', () => {", '  const elapsed = Date.now() - 1;', '  assert.ok(elapsed < 200);', '  assert.ok(elapsed < 200);', '});'].join('\n');
+  const twiceOut = evaluate({ 'tests/x.test.js': twice }, { 'tests/x.test.js': { sites: ['elapsed < 200'], reason: 'x' } });
+  assert.equal(twiceOut.length, 1);
+  assertStandardOffender(twiceOut[0], 'tests/x.test.js', 4, 'elapsed < 200');
+});
+
+test('evaluate fails an entry with no reason, an entry with no pinned sites, an entry for a missing file, and a non-ok stripper verdict', () => {
+  const noReason = evaluate({ 'tests/x.test.js': DIRECT }, { 'tests/x.test.js': { sites: ['elapsed < 200', 'performance.now() - start < 300'], reason: '' } });
   assert.equal(noReason.length, 1);
   assert.match(noReason[0], /tests\/x\.test\.js: .*no reason/);
 
-  const missing = evaluate({}, { 'tests/gone.test.js': { count: 1, reason: 'x' } });
+  const countOnly = evaluate({ 'tests/x.test.js': DIRECT }, { 'tests/x.test.js': { count: 2, reason: 'x' } });
+  assert.ok(countOnly.some((line) => /^tests\/x\.test\.js: allowlist entry has no pinned sites/.test(line)), countOnly.join('\n'));
+
+  const missing = evaluate({}, { 'tests/gone.test.js': { sites: ['elapsed < 1'], reason: 'x' } });
   assert.equal(missing.length, 1);
   assert.match(missing[0], /tests\/gone\.test\.js: .*no matching file/);
 
@@ -401,24 +466,26 @@ test('evaluate fails a count drift either way, an entry with no reason, an entry
   assert.deepEqual(misparsed, [`tests/bad.test.js: ${STRIPPER_VERDICT_MESSAGES.misparsed}`]);
 });
 
-// Every tests/**/*.test.js, keyed by its POSIX path relative to the repo root.
+test('evaluate judges the verdict on the same blank-mode text the matcher scans: a regex misread that erases a live budget is an offender, not a clean file', () => {
+  // Keep mode compiles this; blank mode reads `/'/.test(s); ... = '` as a string and erases the budget.
+  const erased = "if (x) /'/.test(s); assert.ok(performance.now() - t < 200); const q = 'a';";
+  assert.deepEqual(evaluate({ 'tests/bad.test.js': erased }, {}), [`tests/bad.test.js: ${STRIPPER_VERDICT_MESSAGES.misparsed}`]);
+});
+
+// Every test file `npm test` runs (tools/run-tests.js's DEFAULT_ROOTS), keyed by its
+// POSIX path relative to the repo root: the scanned set is the run set by construction.
 function readTestFiles() {
   const files = {};
-  (function walk(dir) {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.name.endsWith('.test.js')) {
-        files[path.relative(ROOT, full).replace(/\\/g, '/')] = fs.readFileSync(full, 'utf8');
-      }
-    }
-  })(TESTS_ROOT);
+  for (const full of listTestFiles(ROOT)) {
+    files[path.relative(ROOT, full).replace(/\\/g, '/')] = fs.readFileSync(full, 'utf8');
+  }
   return files;
 }
 
 test('AC1.1, AC3.1: every tests/**/*.test.js passes the scan against ALLOWLIST', () => {
   const files = readTestFiles();
   assert.ok('tests/wall-clock-budget-conformance.test.js' in files, 'the walk must reach this file');
+  assert.ok(Object.keys(files).some((rel) => rel.startsWith('tools/upstream-drift/tests/')), 'the walk must reach the second root npm test runs');
   const offenders = evaluate(files, ALLOWLIST);
   assert.deepEqual(offenders, [], `wall-clock budgets under tests/:\n${offenders.join('\n')}`);
 });

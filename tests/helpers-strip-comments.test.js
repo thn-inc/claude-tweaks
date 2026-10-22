@@ -202,6 +202,28 @@ test("literals: 'blank' still blanks comments, and an unterminated string blanks
   assert.ok(!out.includes('open < 2'));
 });
 
+test("literals: 'blank' keeps a line continuation's backslash, so the string still compiles", () => {
+  const lf = 'const s = "abc \\\nde"; live();';
+  const lfOut = stripComments(lf, { literals: 'blank' });
+  assert.equal(lfOut.length, lf.length);
+  assert.deepEqual(newlineIndices(lfOut), newlineIndices(lf));
+  assert.ok(!lfOut.includes('abc'));
+  assert.ok(lfOut.includes('live();'));
+  assert.equal(stripperVerdict(lf, lfOut), 'ok');
+
+  // The default output is untouched.
+  assert.equal(stripComments(lf), lf);
+});
+
+test("an unrecognised literals value throws a TypeError instead of acting as 'keep'", () => {
+  for (const bad of ['blnk', 'Blank', '', null, true]) {
+    assert.throws(() => stripComments('live();', { literals: bad }), TypeError);
+  }
+  assert.doesNotThrow(() => stripComments('live();', { literals: undefined }));
+  assert.doesNotThrow(() => stripComments('live();', {}));
+  assert.doesNotThrow(() => stripComments('live();'));
+});
+
 test('the default and literals: keep leave literals verbatim (unchanged behaviour)', () => {
   assert.equal(stripComments(LITERAL_INPUT), stripComments(LITERAL_INPUT, { literals: 'keep' }));
   assert.ok(stripComments(LITERAL_INPUT).includes('x < 1'));

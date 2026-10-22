@@ -1,8 +1,8 @@
 'use strict';
 const vm = require('node:vm');
 // Shared literal-aware comment stripper for the source-scan conformance tests
-// (#3536, #3585): the windows-hide, git-status, path-guard and exit-code scans
-// call it per file. Comments are blanked, never deleted: every non-newline
+// (#3536, #3585): the windows-hide, git-status, path-guard, path-containment, exit-code
+// and wall-clock-budget (#3491, in `literals: 'blank'` mode) scans call it per file. Comments are blanked, never deleted: every non-newline
 // character of a comment becomes a space, so offsets and line numbers stay stable.
 //
 // One left-to-right scanner models string literals, template literals (their
@@ -12,7 +12,8 @@ const vm = require('node:vm');
 // string, template, regex or block comment ends at the end of its line or of the
 // input and never throws. `{ literals: 'blank' }` also blanks string, template-text
 // and regex literal bodies, for operator scans that must not read literal text as
-// code; the default `'keep'` leaves them verbatim.
+// code (a `\` directly before a newline, a string's line continuation, stays); the
+// default `'keep'` leaves them verbatim. Any other `literals` value throws a TypeError.
 //
 // Whether a `/` that is not a comment opener begins a regex or is division follows
 // the previous significant token: a regex after nothing, after a punctuator other
@@ -105,12 +106,24 @@ function scanRegex(src, i, blankBody) {
 }
 
 function stripComments(src, { literals = 'keep' } = {}) {
+  if (literals !== 'keep' && literals !== 'blank') {
+    throw new TypeError(`stripComments: literals must be 'keep' or 'blank', got ${String(literals)}`);
+  }
   const out = src.split('');
   const n = src.length;
   const blank = (start, end) => {
     for (let k = start; k < end; k++) if (out[k] !== '\n') out[k] = ' ';
   };
-  const blankBody = literals === 'blank' ? blank : () => {};
+  // A literal body blanks like a comment, except a `\` directly before a newline (a
+  // string's line continuation) stays: blanking it would leave an unterminated string.
+  // (A CRLF continuation is not modelled: the scanner ends the string at the `\n`.)
+  const blankLiteral = (start, end) => {
+    for (let k = start; k < end; k++) {
+      if (out[k] === '\n' || (src[k] === '\\' && src[k + 1] === '\n')) continue;
+      out[k] = ' ';
+    }
+  };
+  const blankBody = literals === 'blank' ? blankLiteral : () => {};
 
   // Scans code from `i`. With `inBrace`, the `}` that closes the enclosing `${`
   // ends the scan. Returns the index to resume at.
