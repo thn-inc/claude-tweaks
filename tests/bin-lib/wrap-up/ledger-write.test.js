@@ -267,6 +267,18 @@ test('flipLedgerRow still refuses a legacy row with a raw (unescaped) pipe, nami
 test('parseLedgerTable reports each repeated item number once in duplicates, [] when none (#3834)', () => {
   assert.deepStrictEqual(parseLedgerTable(DUPLICATE).duplicates, ['1']);
   assert.deepStrictEqual(parseLedgerTable(SAMPLE).duplicates, []);
+  // Three rows numbered 1 and two numbered 2, interleaved: each number once, in first-repeat order.
+  const TRIPLE = [
+    '| # | Phase | Item | Status | Resolution |',
+    '|---|-------|------|--------|------------|',
+    '| 1 | build | A | open | — |',
+    '| 2 | test | B | open | — |',
+    '| 1 | build | C | open | — |',
+    '| 2 | test | D | open | — |',
+    '| 1 | build | E | open | — |',
+    '',
+  ].join('\n');
+  assert.deepStrictEqual(parseLedgerTable(TRIPLE).duplicates, ['1', '2']);
 });
 
 test('flipLedgerRow refuses a table with duplicate row numbers instead of dropping a row (#3834)', () => {
