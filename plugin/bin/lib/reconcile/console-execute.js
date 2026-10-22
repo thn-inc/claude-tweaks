@@ -35,6 +35,7 @@ const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = 
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { sddRulingDeferralReason } = require('../console/resolve');
+const { isPathContained } = require('../shared-primitives');
 
 const execFileAsync = promisify(execFile);
 
@@ -233,7 +234,7 @@ function readInsideRunDir(base, rel) {
   if (typeof rel !== 'string' || rel === '' || path.isAbsolute(rel)) return null;
   if (rel.split(/[\\/]/).includes('..')) return null;
   const abs = path.resolve(base, rel);
-  if (abs !== base && !abs.startsWith(base + path.sep)) return null;
+  if (!isPathContained(abs, base)) return null;
   try {
     return fs.readFileSync(abs, 'utf8');
   } catch {
