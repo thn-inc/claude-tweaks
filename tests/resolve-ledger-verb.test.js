@@ -5,7 +5,7 @@
 // listing docs/plans itself.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -17,12 +17,8 @@ function git(args, cwd) {
 }
 
 function runHook(args, { cwd } = {}) {
-  try {
-    const stdout = execFileSync('node', [HOOKS, ...args], { cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '' } });
-    return { code: 0, stdout };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '' };
-  }
+  const r = spawnSync('node', [HOOKS, ...args], { cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '' } });
+  return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
 }
 
 // The temp dir's parent name contains a space, as a real checkout path can.
@@ -108,7 +104,8 @@ test('no --run exits 0 with "no pipeline run dir found — ledger not resolved"'
   const root = gitRoot();
   const result = runHook(['resolve-ledger'], { cwd: root });
   assert.strictEqual(result.code, 0);
-  assert.match(result.stdout, /no pipeline run dir found — ledger not resolved/);
+  assert.match(result.stderr, /no pipeline run dir found — ledger not resolved/);
+  assert.strictEqual(result.stdout, '');
 });
 
 test('resolve-ledger leaves every ledger on disk', () => {
@@ -130,8 +127,9 @@ test('resolve-ledger: --run "" refuses with "ledger not resolved" and no report 
   const root = gitRoot();
   const result = runHook(['resolve-ledger', '--run', ''], { cwd: root });
   assert.strictEqual(result.code, 0);
-  assert.match(result.stdout, /ledger not resolved/);
+  assert.match(result.stderr, /ledger not resolved/);
   assert.doesNotMatch(result.stdout, REPORT_LINE_RE);
+  assert.doesNotMatch(result.stdout, /claude-tweaks: --run|not resolved/);
 });
 
 test('resolve-ledger: no --run with two live candidate runs refuses, listing candidates, no report line', () => {
@@ -143,7 +141,8 @@ test('resolve-ledger: no --run with two live candidate runs refuses, listing can
   }
   const result = runHook(['resolve-ledger'], { cwd: root });
   assert.strictEqual(result.code, 0);
-  assert.match(result.stdout, /multiple candidate runs/);
-  assert.match(result.stdout, /Ledger not resolved\./);
+  assert.match(result.stderr, /multiple candidate runs/);
+  assert.match(result.stderr, /Ledger not resolved\./);
   assert.doesNotMatch(result.stdout, REPORT_LINE_RE);
+  assert.doesNotMatch(result.stdout, /multiple candidate runs|not resolved/i);
 });

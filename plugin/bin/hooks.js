@@ -1136,22 +1136,25 @@ async function main(argv) {
     // #3897: the read-only twin of delete-ledger — same run-arg resolution,
     // same refusals, but it only reports (describeRunLedgers) and never
     // touches a file. _shared/ledger-format.md's resolution rule cites this
-    // verb instead of having a skill list docs/plans itself.
+    // verb instead of having a skill list docs/plans itself. stdout is
+    // reserved for the report (its first line is what the rule reads), so the
+    // fallback disclosure and every refusal go to stderr; exit stays 0.
     const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
     const {
       runDir, invalidRunArg, worktreeLocalFallback, candidates,
     } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
-    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+    reportWorktreeLocalFallback(runDir, worktreeLocalFallback, process.stderr);
     if (invalidRunArg) {
-      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — ledger not resolved\n`);
+      process.stderr.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — ledger not resolved\n`);
     } else if (candidates) {
-      process.stdout.write(`${renderCandidateRefusal('resolve-ledger', candidates)}\nLedger not resolved.\n`);
+      process.stderr.write(`${renderCandidateRefusal('resolve-ledger', candidates)}\nLedger not resolved.\n`);
     } else if (!runDir) {
-      process.stdout.write('claude-tweaks: no pipeline run dir found — ledger not resolved\n');
+      process.stderr.write('claude-tweaks: no pipeline run dir found — ledger not resolved\n');
     } else {
       const { describeRunLedgers, formatLedgerReport } = require('./lib/wrap-up/ledger-write');
       const worktree = ctxLib.readRunState(runDir)?.worktree || process.cwd();
-      process.stdout.write(formatLedgerReport(describeRunLedgers({ runDir, worktree })));
+      const text = formatLedgerReport(describeRunLedgers({ runDir, worktree }));
+      await new Promise((resolve) => process.stdout.write(text, resolve));
     }
     return 0;
   }
