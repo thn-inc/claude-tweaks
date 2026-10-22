@@ -228,7 +228,7 @@ test('reproduction: same location, substantively different findings → NOT conf
 
   const entry =
     `- STAGED 11:02:44 — Reproduction: lens "3c" findings ${fromA.path}:${fromA.line} / ` +
-    `${fromB.path}:${fromB.line} share a location but not substance; both staged. Reversibility: high.`;
+    `${fromB.path}:${fromB.line} share a location but not substance; both staged unconfirmed. Reversibility: high.`;
   assert.match(
     entry,
     decisionLogPattern(REVIEW_SKILL, ['share a location but not substance', 'both staged']),

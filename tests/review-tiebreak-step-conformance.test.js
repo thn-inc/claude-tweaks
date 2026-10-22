@@ -1208,3 +1208,41 @@ test('F9 the failure-line assertions can go red', () => {
   assert.deepEqual(failureLineProblems(line.replace('unconfirmed', 'pending')), ['does not surface as a Low-confidence item']);
   assert.deepEqual(failureLineProblems(`${line} tiebreak:abc123def456`), ['carries the tiebreak: marker']);
 });
+
+// Final re-review residuals: every unconfirmed source keeps a console-visible line, and the
+// two "run the sweep once" sentences name Step 3.7's re-run.
+const nearLocationLine = (texts) => documentedTemplate(texts.step3, ['share a location but not substance']);
+const partnerDiedParagraph = (texts) => lineStartingWith(texts.step3, '> **Reproduction-pair partner dies or is unavailable.**');
+const PER_FINDING_LINE = /per-finding (?:`unconfirmed` )?line/;
+function residualProblems(texts) {
+  const problems = [];
+  if (consoleLowItems(`${instantiate(nearLocationLine(texts))}\n`).length !== 1) problems.push('nearLocation line does not surface');
+  if (!PER_FINDING_LINE.test(hungParagraph(texts))) problems.push('hung-agent findings get no per-finding line');
+  if (!PER_FINDING_LINE.test(partnerDiedParagraph(texts))) problems.push('partner-died findings get no per-finding line');
+  if (!/Step 3\.7 re-runs it/.test(texts.step3)) problems.push('step3 sweep says once without the Step 3.7 re-run');
+  if (!/exactly once \(Step 3\.7 re-runs it/.test(texts.debate)) problems.push('debate sweep says once without the Step 3.7 re-run');
+  if (!/logging only what the earlier sweep did not already report/.test(sectionOf(texts.tiebreak, 'Dispatch'))) problems.push('Step 3.7 sweep re-logs earlier leftovers');
+  return problems;
+}
+
+test('residuals: nearLocation, hung-agent and partner-died findings stay console-visible; the sweep re-run is named', () => {
+  assert.deepEqual(residualProblems(liveTexts()), []);
+});
+
+test('residuals: each residual assertion can go red', () => {
+  const live = liveTexts();
+  const cases = [
+    [{ step3: live.step3.replace('both staged unconfirmed.', 'both staged.') }, 'nearLocation line does not surface'],
+    [{ step3: live.step3.replace(', plus the per-finding line above for each finding it reports.', '') }, 'hung-agent findings get no per-finding line'],
+    [{ step3: live.step3.replace(' plus the low-tier per-finding `unconfirmed` line for each of its findings,', '') }, 'partner-died findings get no per-finding line'],
+    [{ step3: live.step3.replace('; Step 3.7 re-runs it once for its own waves (`step3-tiebreak.md`).', '.') }, 'step3 sweep says once without the Step 3.7 re-run'],
+    [{ debate: live.debate.replace(' (Step 3.7 re-runs it for its own waves)', '') }, 'debate sweep says once without the Step 3.7 re-run'],
+    [{ tiebreak: live.tiebreak.replace(', logging only what the earlier sweep did not already report', '') }, 'Step 3.7 sweep re-logs earlier leftovers'],
+  ];
+  for (const [patch, expected] of cases) {
+    const doctored = { ...live, ...patch };
+    const key = Object.keys(patch)[0];
+    assert.notEqual(doctored[key], live[key], `anchor for "${expected}" vanished`);
+    assert.deepEqual(residualProblems(doctored), [expected]);
+  }
+});

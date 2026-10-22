@@ -28,7 +28,7 @@ Each entry is `{lens, path, line, claim, reporterSeverity, kind, positions?}` wh
 
 One agent per entry, in parallel waves of **8**: dispatch a wave in one batch, wait for every agent of the wave to return, then start the next. Never reuse the reporting lens's agent or its reproduction partner — the tiebreak agent is a fresh run.
 
-After the last wave, re-run `step3-lens-dispatch.md`'s Post-fan-out untracked-file sweep against the same pre-dispatch listing — report-only, as there. Skip it when this step dispatched no agent (no entries, or every verdict read inline).
+After the last wave, re-run `step3-lens-dispatch.md`'s Post-fan-out untracked-file sweep against the same pre-dispatch listing — report-only, as there, logging only what the earlier sweep did not already report. Skip it when this step dispatched no agent (no entries, or every verdict read inline).
 
 Model: `[Use: Capable]`, resolved with `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" capable --run-dir "$PIPELINE_RUN_DIR"` (drop `--run-dir` when no run directory exists).
 
