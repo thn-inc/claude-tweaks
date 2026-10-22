@@ -81,17 +81,38 @@ When judging `statusCheckRollup`, use the same non-blocking conclusion set
 check treats a job whose own `if:` condition is false, e.g. a default-branch-only cleanup job,
 as a permanent regression); do not re-derive it.
 
-If every gate still holds, run `_shared/pr-first-merge.md`'s Step 3 (Attempt auto-merge) against
-this PR directly — that file already defines the full degrade chain (`--auto` arm → immediate
+**Acceptance labeling — record-linked flavor only, before Step 3.** Green says nothing about whether
+acceptance labeling (`demo:pending`, the Try it walkthrough) landed, and the merge closes every `Fixes`
+record. For a PR carrying the `claude-tweaks-run:` marker, apply `dispatch/close-out.md` step 3's
+landed rule and live-state precheck before arming. First, resolve the run dir from the marker as that
+step does (`$RUN_ROOT/.claude-tweaks/pipelines/{run-id}/`, else its `archive/{run-id}/` copy). Then
+read its `verify.json`: when the run dir has `spec-*/` subdirectories (a multi-spec parent), read every
+`spec-*/verify.json`; otherwise read the run dir's own. Labeling has landed when every file read exists
+and its `acceptance-labeling` row's `result` is `pass`/`skip`. When it has not, and also when no valid
+marker or run dir resolves, it still counts as landed in two cases: every record in the PR's `Fixes`
+lines carries `demo:pending`, or the PR carries a trusted `<!-- run-comment: brief -->` or
+`<!-- run-comment: try-it -->` run comment (or its multi-spec `brief:{N}`/`try-it:{N}` form; trusted
+per `_shared/pr-run-comments.md`'s Trusted authors). Otherwise do not run Step 3, and never run
+labeling from a tidy sweep: `wrap-up/verification-brief.md` needs the run's own inputs. Hold the PR for
+a human instead, and never as a silent no-op. Report `PR #{n} not armed — acceptance labeling not
+landed ({verify.json missing | acceptance-labeling: {result} | no run dir})` and recommend
+`/claude-tweaks:dispatch close-out`, which runs `_shared/pr-first-merge.md` Step 1 before it merges. So
+a record-linked PR whose run dir has no `verify.json`, and whose `Fixes` records carry no
+`demo:pending`, is held, not armed. The housekeeping-marker flavor (`<!-- tidy-housekeeping-pr -->` /
+`<!-- wrap-up-residue-pr -->`) skips this check: it links no record, so there is nothing to label.
+
+If every gate still holds (and, for a record-linked PR, labeling has landed),
+run `_shared/pr-first-merge.md`'s Step 3 (Attempt auto-merge) against this PR directly — that file already defines the full degrade chain (`--auto` arm → immediate
 merge on repos without auto-merge enabled → ready-and-comment on any other failure), so this
 action does not reimplement it. This is the one call site that reaches Step 3 from outside a build
 or dispatch pipeline; the outcome vocabulary (`armed`/`merged`/`pending-review`) still applies —
 log which outcome landed, since "armed" and "merged" are both legitimate results of the same call
 and neither is a failure.
 
-This action never touches Step 1 (Acceptance labeling) or Step 2 (Mark the PR ready) of
-`_shared/pr-first-merge.md` — by construction, item 9 only ever selects PRs that are already not
-draft and already green, so both preconditions already hold by the time this action runs. Step 2.5
+This action never runs Step 1 (Acceptance labeling) of `_shared/pr-first-merge.md` itself. It guards
+on it instead (above), holding a record-linked PR whose labeling never landed. It never touches Step 2
+(Mark the PR ready): item 9 only ever selects PRs that are already not draft, so that precondition
+already holds by the time this action runs. Step 2.5
 (Merge-verification gate) is satisfied the same way: this action's candidate is green *by
 construction* — item 9's green-only selection plus the immediate re-verify above (which includes
 Step 2.5's head-run `gh run list` read — a not-yet-completed head run is not green) — so the gate's
