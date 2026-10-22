@@ -96,19 +96,30 @@ function isDeadRunDir(dir) {
   return false;
 }
 
+// True when `slug` occurs in `name` as a whole `-`-delimited segment: bounded on
+// the left by `-` (or start of name) and on the right by `-` (or end of name).
+// `spec-378` matches `…-spec-378`, `…-spec-378-standalone`, `…-spec-378-379`,
+// never `…-spec-3784`.
+function hasSegment(name, slug) {
+  const escaped = slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|-)${escaped}(?=-|$)`).test(name);
+}
+
 // Step 2 (`_shared/run-dir-resolution.md`'s resolution order): the most recent
-// directory under `{pipelinesRoot}` whose name contains `specSlug`, matching
-// the reference snippet's `find ... -name "*${SPEC_SLUG}*" | sort | tail -n 1`
-// — except a dead candidate (#1962, `isDeadRunDir` above) is skipped in favor
-// of the next-newest match, rather than being adopted as-is, and a
-// non-canonical name (`RUN_ID_RE` above) is never a candidate at all: the
-// snippet's plain `sort` lets `20260911T…` outrank every `2026-MM-DDT…` name
-// forever (#2870), so this filter is a deliberate divergence from it.
+// directory under `{pipelinesRoot}` whose name contains `specSlug` as a whole
+// segment (`hasSegment` above), matching the reference snippet's
+// `find ... -name "*${SPEC_SLUG}*" | sort | tail -n 1` — except three deliberate
+// divergences from it. The segment match (#3865): the snippet's bare substring
+// glob lets `spec-378` adopt `…-spec-3784`. A dead candidate (#1962,
+// `isDeadRunDir` above) is skipped in favor of the next-newest match, rather
+// than being adopted as-is, and a non-canonical name (`RUN_ID_RE` above) is
+// never a candidate at all: the snippet's plain `sort` lets `20260911T…`
+// outrank every `2026-MM-DDT…` name forever (#2870).
 function newestMatch(pipelinesRoot, specSlug) {
   let entries;
   try { entries = fs.readdirSync(pipelinesRoot, { withFileTypes: true }); } catch { return null; }
   const names = entries
-    .filter((e) => e.isDirectory() && RUN_ID_RE.test(e.name) && e.name.includes(specSlug))
+    .filter((e) => e.isDirectory() && RUN_ID_RE.test(e.name) && hasSegment(e.name, specSlug))
     .map((e) => e.name)
     .sort();
   for (let i = names.length - 1; i >= 0; i -= 1) {
