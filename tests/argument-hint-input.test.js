@@ -305,6 +305,16 @@ test('#3504 inverse: no (producer-only) or (deprecated alias) flag appears in it
   }
 });
 
+// Floor for the corpus loop above: it passes vacuously if inputEntries stops
+// recognising marked entries, so name the skills known to carry one (tables and
+// bullets both) and require each to yield at least one.
+test('#3504 inverse floor: the corpus loop sees a marked entry in each skill known to carry one', () => {
+  for (const name of ['capture', 'routine', 'design-wrapper', 'visual-review', 'visualize', 'tidy', 'specify']) {
+    const marked = inputEntries(inputSectionBody(read(name))).filter((e) => e.marked);
+    assert.ok(marked.length > 0, `skills/${name}/SKILL.md: no marked ## Input entry recognised — the inverse check would pass vacuously`);
+  }
+});
+
 test('#3504 AC2.1 go-red: re-adding --source to visualize\'s hint fails the inverse check naming visualize', () => {
   const original = read('visualize');
   const mutated = original.replace('[topic] [--ephemeral]', '[topic] [--source <caller>] [--ephemeral]');
