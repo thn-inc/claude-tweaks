@@ -10,6 +10,7 @@ const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW
 const ROOT = path.join(__dirname, '..', '..', '..');
 const { unresolvedItems } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'residue'));
 const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tiebreak'));
+const { formatEntry } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'append'));
 
 function fixture({
   decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {},
@@ -577,11 +578,14 @@ test('a tiebreak confirmed line supersedes the real-emitter STAGED line (AC2.1, 
   const fileLines = Array.from({ length: 200 }, (_, i) => `// line ${i + 1}`);
   fileLines[157] = '  // the comment sentence is stale';
   const finding = { lens: '3a', path: 'plugin/bin/lib/reconcile/pr-state.js', line: 158, claim: 'stale comment', reporterSeverity: 'low', kind: 'unconfirmed' };
-  const verdict = (v) => resolveTiebreak(finding, `Verdict: ${v}\nEvidence: ${finding.path}:158 \`// the comment sentence is stale\`\nSeverity: low\nSTATUS: DONE`, { readFile: () => fileLines.join('\n'), now: new Date(2026, 9, 22, 23, 50, 0) });
+  const now = new Date(2026, 9, 22, 23, 50, 0);
+  const verdict = (v) => resolveTiebreak(finding, `Verdict: ${v}\nEvidence: ${finding.path}:158 \`// the comment sentence is stale\`\nSeverity: low\nSTATUS: DONE`, { readFile: () => fileLines.join('\n'), now });
   const confirmed = verdict('confirmed');
+  // Built through the sanctioned writer's formatter (log-decision.js), not by hand-prepending "- ".
+  const confirmedEntry = formatEntry({ status: confirmed.logStatus, now, step: confirmed.logStep, text: confirmed.logText, reversibility: 'high' });
   assert.strictEqual(confirmed.outcome, 'confirmed');
   assert.strictEqual(lowItems(`${staged}\n`).length, 1, 'the STAGED line alone is a Low-confidence item');
-  assert.strictEqual(lowItems(`${staged}\n- ${confirmed.logLine}\n`).length, 0, 'the confirmed line supersedes it');
+  assert.strictEqual(lowItems(`${staged}\n${confirmedEntry}\n`).length, 0, 'the confirmed line supersedes it');
   const dropped = verdict('refuted');
   assert.strictEqual(dropped.outcome, 'drop');
   assert.strictEqual(lowItems(`${staged}\n- ${dropped.logLine}\n`).length, 1, 'a drop line never supersedes');

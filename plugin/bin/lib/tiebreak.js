@@ -126,7 +126,12 @@ function parseTiebreakReply(text) {
 // ---- resolveTiebreak (#3945 Task 2) ----
 //
 // resolveTiebreak(finding, replyText, { readFile, now }) -> { id, outcome,
-// severity, evidence, recommendation, reason, logLine, listInConsole, parse }.
+// severity, evidence, recommendation, reason, logLine, logStatus, logStep,
+// logText, listInConsole, parse }. logStatus ('AUTO' | 'STAGED'), logStep and
+// logText are what bin/log-decision.js (the sanctioned decisions.md writer)
+// takes: its formatEntry({ status: logStatus, now, step: logStep, text: logText,
+// reversibility: 'high' }) renders exactly '- ' + logLine, because logLine is
+// derived from the same three fields.
 // Fail toward scrutiny (IL-50): only a literal confirmed/refuted verdict, status
 // DONE, and evidence verified against the file leave can't-tell. outcome is
 // 'confirmed' | 'drop' | 'digest' | 'console'; digest/console are can't-tell,
@@ -221,6 +226,11 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
   const result = (fields) => ({
     id, evidence: null, recommendation: parsed.recommendation, listInConsole: false, parse: parsed.parse, ...fields,
   });
+  const entry = (status, step, text) => {
+    const log = { logStatus: status, logStep: squash(step), logText: squash(text) };
+    return { ...log, logLine: squash(`${log.logStatus} ${t} — ${log.logStep}: ${log.logText} Reversibility: high.`) };
+  };
+  const tiebreakStep = `Tiebreak tiebreak:${id}`;
 
   // Why this cannot be a confirmed/drop, in the order the causes are checked.
   const badField = ['lens', 'path', 'line'].some((k) => typeof finding[k] === 'string' && LINE_BREAK_RE.test(finding[k]));
@@ -236,10 +246,10 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
   if (reason) {
     const sev = higher(reporterSev, tiebreakSev) || 'medium';
     const outcome = severityRank(sev) >= severityRank('medium') ? 'console' : 'digest';
-    const text = outcome === 'console'
-      ? `STAGED ${t} — Tiebreak tiebreak:${id}: ${where} console: ${reason}. Severity: ${sev}. Recommendation: ${parsed.recommendation ?? 'none'}. Reversibility: high.`
-      : `AUTO ${t} — Tiebreak tiebreak:${id}: ${where} digested: ${reason}. Severity: ${sev}. Reversibility: high.`;
-    return result({ outcome, severity: sev, reason, logLine: squash(neutralize(text)) });
+    const log = outcome === 'console'
+      ? entry('STAGED', tiebreakStep, neutralize(`${where} console: ${reason}. Severity: ${sev}. Recommendation: ${parsed.recommendation ?? 'none'}.`))
+      : entry('AUTO', tiebreakStep, neutralize(`${where} digested: ${reason}. Severity: ${sev}.`));
+    return result({ outcome, severity: sev, reason, ...log });
   }
 
   const ev = parsed.evidence;
@@ -249,14 +259,14 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
       severity: lower(reporterSev, tiebreakSev) || 'medium',
       evidence: ev,
       reason: 'confirmed by tiebreak',
-      logLine: squash(`AUTO ${t} — Reproduction: ${where} confirmed by tiebreak:${id}. Confirmed. Reversibility: high.`),
+      ...entry('AUTO', 'Reproduction', `${where} confirmed by tiebreak:${id}. Confirmed.`),
     });
   }
   const sev = higher(reporterSev, tiebreakSev) || 'medium';
-  const text = `AUTO ${t} — Tiebreak tiebreak:${id}: ${where} dropped: refuted by tiebreak. Evidence: ${ev.path}:${ev.line} "${ev.quote}". Severity: ${sev}. Reversibility: high.`;
+  const text = `${where} dropped: refuted by tiebreak. Evidence: ${ev.path}:${ev.line} "${ev.quote}". Severity: ${sev}.`;
   return result({
     outcome: 'drop', severity: sev, evidence: ev, reason: 'refuted by tiebreak',
-    listInConsole: sev === 'high' || sev === 'critical', logLine: squash(neutralize(text)),
+    listInConsole: sev === 'high' || sev === 'critical', ...entry('AUTO', tiebreakStep, neutralize(text)),
   });
 }
 

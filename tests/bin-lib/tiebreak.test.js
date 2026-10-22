@@ -8,6 +8,7 @@ const {
   findingId, parseTiebreakReply, resolveTiebreak, VERDICTS, SEVERITIES,
   FINDINGS_ARTIFACT, buildFindingsArtifact, readFindingsArtifact, checkTiebreakCoverage, checkRunTiebreakCoverage,
 } = require('../../plugin/bin/lib/tiebreak');
+const { formatEntry } = require('../../plugin/bin/lib/log-decision/append');
 
 const WELL_FORMED = [
   'Verdict: confirmed',
@@ -624,5 +625,39 @@ test('a cited evidence line within ±5 of the finding verifies (F2)', () => {
   for (const cited of [15, 20, 25]) {
     assert.equal(resolve(FINDING, reply({ evidence: `plugin/bin/foo.js:${cited} \`const x = readSync(fd);\`` })).outcome, 'confirmed', String(cited));
     assert.equal(resolve(FINDING, reply({ verdict: 'refuted', evidence: `plugin/bin/foo.js:${cited} \`const x = readSync(fd);\`` })).outcome, 'drop', String(cited));
+  }
+});
+
+test('formatEntry renders logStatus/logStep/logText to exactly "- " + logLine for every outcome (F4)', () => {
+  const id = findingId(FINDING);
+  const cases = [
+    ['confirmed', 'AUTO', resolve(FINDING, reply())],
+    ['drop', 'AUTO', resolve(FINDING, reply({ verdict: 'refuted' }))],
+    ['digest', 'AUTO', resolve({ ...FINDING, reporterSeverity: 'low' }, reply({ verdict: 'cant-tell', evidence: null }))],
+    ['console', 'STAGED', resolve(FINDING, reply({ verdict: 'cant-tell', evidence: null, rec: 'file — unclear' }))],
+  ];
+  for (const [outcome, status, r] of cases) {
+    assert.equal(r.outcome, outcome);
+    assert.equal(r.logStatus, status, outcome);
+    assert.equal(r.logStep, outcome === 'confirmed' ? 'Reproduction' : `Tiebreak tiebreak:${id}`, outcome);
+    assert.equal(formatEntry({ status: r.logStatus, now: NOW, step: r.logStep, text: r.logText, reversibility: 'high' }), `- ${r.logLine}`, outcome);
+  }
+  const confirmed = cases[0][2];
+  assert.equal(confirmed.logText, `lens "3a" finding plugin/bin/foo.js:20 confirmed by tiebreak:${id}. Confirmed.`);
+  assert.equal(confirmed.logLine, `AUTO 09:05:07 — Reproduction: lens "3a" finding plugin/bin/foo.js:20 confirmed by tiebreak:${id}. Confirmed. Reversibility: high.`);
+});
+
+test('the exposed log fields are whitespace-collapsed too (F3c, F4)', () => {
+  const results = [
+    resolve({ ...FINDING, lens: '3a \t  b' }, reply()),
+    resolve({ ...FINDING, lens: `3a\n${FORGED}` }, reply()),
+    resolve(FINDING, reply({ verdict: 'refuted', evidence: 'plugin/bin/foo.js:20 `const   x = readSync(fd);`' })),
+  ];
+  for (const r of results) {
+    for (const key of ['logStep', 'logText']) {
+      assert.equal(typeof r[key], 'string', key);
+      assert.doesNotMatch(r[key], /\s{2}|[\r\n\u2028\u2029]/, `${r.outcome} ${key}`);
+    }
+    assert.equal(formatEntry({ status: r.logStatus, now: NOW, step: r.logStep, text: r.logText, reversibility: 'high' }), `- ${r.logLine}`);
   }
 });
