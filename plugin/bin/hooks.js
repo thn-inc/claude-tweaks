@@ -703,6 +703,9 @@ async function main(argv) {
       // not clobber a previous stamp.
       const patch = { worktree: path.resolve(worktreeArg), status: 'active' };
       if (process.env.CLAUDE_CODE_SESSION_ID) patch.sessionId = process.env.CLAUDE_CODE_SESSION_ID;
+      // #3845: the owning Claude Code process, so session-end can tell a nested `claude -p` from the owner. Omitted when absent, like sessionId.
+      const ownerPid = ctxLib.claudePid(process.env);
+      if (ownerPid !== null) patch.ownerPid = ownerPid;
       if (dispatch) {
         // Permanent for the run's lifetime: only ever written true, never
         // false, so a later plain re-stamp (no --dispatch) cannot clear it.

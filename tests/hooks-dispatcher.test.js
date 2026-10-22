@@ -529,6 +529,24 @@ test('record-worktree without CLAUDE_CODE_SESSION_ID records no owner', () => {
   assert.ok(!('sessionId' in state), 'no env var -> no sessionId field');
 });
 
+test('#3845: record-worktree stamps ownerPid from CLAUDE_PID and preserves it on an env-less re-record', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_PID: '4242' } });
+  assert.strictEqual(readRunState(run).ownerPid, 4242);
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_PID: '' } });
+  assert.strictEqual(readRunState(run).ownerPid, 4242, 'env-less re-record must not clobber ownerPid');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_PID: '5151' } });
+  assert.strictEqual(readRunState(run).ownerPid, 5151, 'a resumer re-stamp from another process takes ownership');
+});
+
+test('#3845: record-worktree without CLAUDE_PID writes no ownerPid', () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  runHook(['record-worktree', '--run', run, '/tmp/wt-2'], { cwd: project, env: { CLAUDE_PID: '' } });
+  assert.ok(!('ownerPid' in readRunState(run)));
+});
+
 test('close-run without --run REFUSES to close a run recorded by another (still-active) session, stays silent for the owner (finding regression)', () => {
   // Previously, a cross-session mismatch reached via the implicit fallback
   // (no --run) was only ever NOTED via a printed message but still
