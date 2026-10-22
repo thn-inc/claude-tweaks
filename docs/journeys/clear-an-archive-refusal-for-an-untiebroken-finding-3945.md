@@ -61,4 +61,5 @@ files:
 
 ## Origin
 - Created during the build of #3945. This is the first step of the unconfirmed-findings tiebreak project: the resolver, the findings artifact, and the archive coverage check. The review step that writes the artifact and dispatches tiebreak agents is #3947.
+- Updated during the build of #3947. `/claude-tweaks:review`'s Step 3.7 (`plugin/skills/review/step3-tiebreak.md`) now writes `review-findings.json` and one verdict line per finding, so step 3's re-run means re-running that step. That flow is covered in `get-a-verdict-on-every-unverified-review-finding-3947.md`.
 - Related journeys: `drop-a-refuted-code-is-missing-claim-3329.md` covers how an unconfirmed finding is born. `archive-a-stateless-run-dir-that-still-holds-its-spec.md` covers another archive refusal path.
