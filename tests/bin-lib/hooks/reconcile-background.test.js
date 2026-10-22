@@ -197,6 +197,50 @@ test('reconcile-background: the same abandoned interrupted run IS archived when 
   assert.equal(state.status, 'clean');
 });
 
+// The status file's `summary` is built from reconcile()'s result. Drives the
+// real `reconcile-background` branch of main() in-process with reconcile()
+// stubbed (the same module-object stub tests/reconcile.test.js's AC3.1 uses),
+// so no git remote or `gh` is involved. process.cwd() is what that branch
+// reads, so the test switches into the fixture repo and back.
+async function backgroundSummaryFor(result) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-summary-'));
+  git(['init', '-q', '--initial-branch=main'], dir);
+  const { main } = require('../../../plugin/bin/hooks');
+  const reconcileMod = require('../../../plugin/bin/lib/reconcile');
+  const originalReconcile = reconcileMod.reconcile;
+  const originalWrite = process.stdout.write;
+  const originalCwd = process.cwd();
+  reconcileMod.reconcile = async () => result;
+  process.stdout.write = () => true;
+  try {
+    process.chdir(dir);
+    assert.equal(await main(['node', 'hooks.js', 'reconcile-background']), 0);
+  } finally {
+    process.chdir(originalCwd);
+    reconcileMod.reconcile = originalReconcile;
+    process.stdout.write = originalWrite;
+  }
+  return JSON.parse(fs.readFileSync(path.join(dir, '.claude-tweaks', 'reconcile-background-status.json'), 'utf8')).summary;
+}
+
+test('reconcile-background summary: counts each check\'s taken entries (characterization, incl. prunedRemote)', async () => {
+  const summary = await backgroundSummaryFor({
+    claims: [{ action: 'released' }, { action: 'skipped' }],
+    runs: [{ action: 'archived' }],
+    branches: [{ kind: 'branch', action: 'delete' }, { kind: 'branch', action: 'tag-and-delete' }, { kind: 'tag', action: 'delete' }],
+    remoteBranches: [{ action: 'delete' }, { action: 'delete' }, { action: 'skip' }],
+    worktrees: [{ action: 'reaped' }, { action: 'skipped', path: '/w/a', reason: 'pr-open' }, { action: 'skipped', path: '/w/b', reason: 'in use by a live session' }],
+    skipped: [{ check: 'release', reason: 'x' }],
+  });
+  assert.equal(summary.released, 1);
+  assert.equal(summary.archived, 1);
+  assert.equal(summary.archivedBranches, 2);
+  assert.equal(summary.prunedRemote, 2);
+  assert.equal(summary.reaped, 1);
+  assert.deepEqual(summary.notableWorktrees, [{ path: '/w/a', reason: 'pr-open' }]);
+  assert.deepEqual(summary.skipped, [{ check: 'release', reason: 'x' }]);
+});
+
 // Task 10 review Important #3: pin the FAST_CHECKS/BACKGROUND_CHECKS
 // partition invariant — a future check added to reconcile/index.js's
 // ALL_CHECKS that isn't also added to exactly one of these two lists must

@@ -655,6 +655,21 @@ test('SessionStart surfaces a prior background reconcile pass exactly once (#820
   }
 });
 
+// Characterization of the per-check lines the prior-pass summary renders,
+// prunedRemote included (the pattern the ledger-residue lines follow).
+test('SessionStart renders a prior background pass\'s reaped/branch/remote-prune lines', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
+    completedAt: Date.now(), surfaced: false, summary: { reaped: 1, archivedBranches: 2, prunedRemote: 3 },
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    out.json.hookSpecificOutput.additionalContext,
+    /background reconcile \(from a prior session\) — 1 finished worktree\(s\) removed \(already merged\); 2 local branch\(es\) archived\/deleted; 3 merged remote branch\(es\) deleted on origin\./,
+  );
+});
+
 // Task 10 review Critical finding: the spawn gate must key off the
 // `reconcile-background-status.json` file's OWN `completedAt`, never
 // reconcile()'s shared `reconcile-cache.json` `lastRunAt` stamp — that stamp
