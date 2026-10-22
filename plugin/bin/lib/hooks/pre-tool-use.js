@@ -609,7 +609,7 @@ function checkTeardownGate(ctx, teardownWarnings = [], deps = {}) {
     // worktree than hit.state records, must take the foreign branch (warn +
     // allow) rather than the same-session deny. 'mine' and 'indeterminate'
     // both preserve today's fall-through-to-deny behavior.
-    const ownershipVerdict = ctxLib.classifyOwnership({ sessionId: caller, cwd: ctx.cwd || process.cwd() }, hit.state);
+    const ownershipVerdict = ctxLib.classifyOwnership({ sessionId: caller, cwd: ctx.cwd || process.cwd() }, hit.state, { fsImpl });
     if (ownershipVerdict === 'foreign') {
       // Provably foreign-owned: allow + warn, event to the TARGET run's dir
       // (the wd-foreign-session precedent — enforcement-target, not
