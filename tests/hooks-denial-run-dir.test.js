@@ -59,6 +59,13 @@ test('stampAdHocRunDirForDenial: a fallback-attributed ownedRun no longer short-
   assert.strictEqual(adhocDirs(main).length, 1);
 });
 
+test('#3811: stampAdHocRunDirForDenial matches its porcelain entry through the shared lookup (a cwd with a trailing separator still stamps)', () => {
+  const main = gitRepo();
+  const stamped = ctxLib.stampAdHocRunDirForDenial({ input: { session_id: 'sess-drd-5' }, cwd: main + path.sep, ownedRun: {} });
+  assert.ok(stamped, 'a trailing separator must not defeat the porcelain match');
+  assert.strictEqual(adhocDirs(main).length, 1);
+});
+
 function seed(main, name, state) {
   const dir = path.join(main, '.claude-tweaks', 'pipelines', name);
   fs.mkdirSync(dir, { recursive: true });
@@ -110,4 +117,5 @@ test('#3811: listedWorktreeForCwd matches win32 forward-slash porcelain against 
   assert.deepStrictEqual(ctxLib.listedWorktreeForCwd('D:\\a\\x', deps), { path: 'D:/a/x', isMain: true });
   assert.strictEqual(ctxLib.listedWorktreeForCwd('D:\\elsewhere', deps), null);
   assert.strictEqual(ctxLib.listedWorktreeForCwd('', deps), null);
+  assert.strictEqual(ctxLib.listedWorktreeForCwd('D:\\a\\x\\feat', { ...deps, runGit: () => ({ stdout: null, failure: 'git failed' }) }), null);
 });
