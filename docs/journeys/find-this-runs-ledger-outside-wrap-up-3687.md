@@ -5,8 +5,6 @@ files:
   - plugin/skills/review/code-mode-steps.md
   - plugin/skills/wrap-up/auto-merge-short-circuit.md
   - plugin/bin/hooks.js
-  - plugin/bin/wrap-up-pack.js
-  - plugin/bin/lib/wrap-up/pack.js
   - plugin/bin/lib/wrap-up/ledger-write.js
 ---
 
@@ -22,7 +20,7 @@ files:
 ### 1. Resolve this run's ledger through `hooks.js resolve-ledger`
 - **URL:** `plugin/skills/_shared/ledger-format.md`, Location section, "Resolution rule for a caller reading 'the active ledger for this run' (#3687, #3897)"
 - **Action:** Run the verb against the resolved run dir and read its first line for the report. The `this-run:` line is this run's ledger (several on `ambiguous`). Every `other-run:` line is another run's ledger.
-- **Should feel:** Like one question with one answer. The inherited ledgers show up by name on `other-run:` lines and are never read as this run's.
+- **Should feel:** Like one question with one answer. The inherited ledgers show up by name on `other-run:` lines and are never read as this run's. Stdout carries the report and nothing else. Refusals and the worktree-local-fallback notice go to stderr, so the report line is always the first stdout line, and the verb exits 0 either way.
 - **Should understand:** `{run-dir}` is the run dir just resolved, not a bare `$PIPELINE_RUN_DIR` that an inferred run leaves unset. `none` means "no ledger yet", not "look further". The `docs/plans/*-ledger.md` glob is a reader-only fallback, used on `unattributable`, on output with no report line (the verb refused its `--run`, printed usage, or is absent from this build), or when no run dir resolves. On that fallback an existing `{run-dir}/ledger.md` wins, and the glob is not consulted. A caller that flips or deletes never takes it.
 - **Red flags:** A verb called with `--run ""` printing no report line and the reader silently treating it as `none`. A reader picking the newest `docs/plans` ledger while the `this-run:` line names a different one, or while `{run-dir}/ledger.md` exists.
 
@@ -56,4 +54,4 @@ files:
 
 ## Origin
 - Created during the build of #3687 (ledger readers outside wrap-up resolve this run's ledger through the ownership-aware ledger probe; writers fail closed; the auto-merge short-circuit deletes through `delete-ledger`), run `2026-10-21T181728-record-3687`. Companion to `close-out-only-this-runs-ledger-3566.md`, which covers wrap-up's own close-out path.
-- Repointed at `hooks.js resolve-ledger` during #3897.
+- Repointed at `hooks.js resolve-ledger` during #3897, run `2026-10-22T100958-record-3897`.
