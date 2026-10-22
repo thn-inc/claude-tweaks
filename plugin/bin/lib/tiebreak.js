@@ -9,6 +9,12 @@
 // is part of the id, so two findings at the same lens and path:line with
 // different claims get different ids.
 //
+// A finding is { lens, path, line, claim, reporterSeverity, kind, positions? }:
+// kind is 'unconfirmed' | 'contested'; positions ([{ severity }], optional,
+// contested only) are the two sides' severities. A contested finding's reporter
+// severity is the higher known position severity; buildFindingsArtifact stores
+// it as reporterSeverity, since the artifact does not keep positions.
+//
 // Reply grammar (parseTiebreakReply). Lines are trimmed; each field line is
 // `Field: value`, the field name matched case-insensitively:
 //   Verdict: confirmed | refuted | cant-tell        value lowercased
@@ -159,12 +165,18 @@ function lower(a, b) {
   return a || b || null;
 }
 
+// A contested finding's higher known position severity; null when the finding
+// is not contested or no position carries a known severity. Shared by the
+// resolver and buildFindingsArtifact, so the artifact keeps the severity the
+// resolver would read from the positions it drops.
+function positionSeverity(finding) {
+  if (finding.kind !== 'contested' || !Array.isArray(finding.positions)) return null;
+  const known = finding.positions.map((p) => knownSeverity(p && p.severity)).filter(Boolean);
+  return known.length > 0 ? known.reduce((a, b) => higher(a, b)) : null;
+}
+
 function reporterSeverityOf(finding) {
-  if (finding.kind === 'contested' && Array.isArray(finding.positions)) {
-    const known = finding.positions.map((p) => knownSeverity(p && p.severity)).filter(Boolean);
-    if (known.length > 0) return known.reduce((a, b) => higher(a, b));
-  }
-  return knownSeverity(finding.reporterSeverity);
+  return positionSeverity(finding) || knownSeverity(finding.reporterSeverity);
 }
 
 // An integer, a numeric string, or "a-b" resolves to its first number; anything
@@ -303,7 +315,7 @@ function buildFindingsArtifact(findings) {
     if (!FINDING_KINDS.includes(f.kind)) throw new TypeError(`finding ${i} kind must be one of ${FINDING_KINDS.join(', ')}`);
     return {
       id: findingId(f), lens: f.lens, path: f.path, line: f.line, claim: f.claim,
-      reporterSeverity: f.reporterSeverity ?? null, kind: f.kind,
+      reporterSeverity: positionSeverity(f) ?? f.reporterSeverity ?? null, kind: f.kind,
     };
   });
 }

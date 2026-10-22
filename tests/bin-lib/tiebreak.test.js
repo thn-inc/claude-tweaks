@@ -647,6 +647,19 @@ test('formatEntry renders logStatus/logStep/logText to exactly "- " + logLine fo
   assert.equal(confirmed.logLine, `AUTO 09:05:07 — Reproduction: lens "3a" finding plugin/bin/foo.js:20 confirmed by tiebreak:${id}. Confirmed. Reversibility: high.`);
 });
 
+test("a contested finding's higher position severity survives the artifact (F5)", () => {
+  const contested = { ...FINDING, kind: 'contested', reporterSeverity: 'low', positions: [{ severity: 'high' }, { severity: 'low' }] };
+  const [stored] = buildFindingsArtifact([contested]);
+  assert.equal(stored.reporterSeverity, 'high');
+  assert.equal(stored.id, findingId(contested));
+  const r = resolve(stored, reply({ verdict: 'cant-tell', evidence: null }));
+  assert.equal(r.outcome, 'console');
+  assert.equal(r.severity, 'high');
+  // Without known positions the reporter's own severity is stored unchanged.
+  assert.equal(buildFindingsArtifact([{ ...contested, positions: [{ severity: 'bogus' }] }])[0].reporterSeverity, 'low');
+  assert.equal(buildFindingsArtifact([{ ...contested, kind: 'unconfirmed' }])[0].reporterSeverity, 'low');
+});
+
 test('the exposed log fields are whitespace-collapsed too (F3c, F4)', () => {
   const results = [
     resolve({ ...FINDING, lens: '3a \t  b' }, reply()),
