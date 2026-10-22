@@ -384,11 +384,22 @@ test('lens dispatch Scratch path forbids a ; sequence and a carried shell variab
 test('refutation and gap-sweep SCRATCH lines forbid a ; sequence and a carried shell variable (#3876)', () => {
   const debate = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-debate-and-refutation.md'));
   const clause = 'nor a `;` sequence, and no shell variable carried between calls: spell the scratch path out as a literal absolute path in every call';
-  assert.strictEqual(
-    debate.split(clause).length - 1,
-    2,
-    'step3-debate-and-refutation.md must carry the ; / carried-variable ban in both its SCRATCH lines (#3876)',
-  );
+  // One slice per template, each by its own start and end anchors, so a copy that lands in
+  // the wrong template cannot satisfy the other's assertion.
+  const regions = [
+    ['refutation', 'You are trying to FALSIFY this finding', '[Use: Capable — refutation agent'],
+    ['gap-sweep', 'You are a fresh-eyes reviewer', '[Use: Frontier — gap-sweep agent'],
+  ];
+  for (const [label, startAnchor, endAnchor] of regions) {
+    const start = debate.indexOf(startAnchor);
+    const end = debate.indexOf(endAnchor, start);
+    assert.ok(start !== -1 && end !== -1, `the ${label} template anchors must resolve in step3-debate-and-refutation.md (#3876)`);
+    assert.strictEqual(
+      debate.slice(start, end).split(clause).length - 1,
+      1,
+      `the ${label} SCRATCH line must carry the ; / carried-variable ban exactly once (#3876)`,
+    );
+  }
 });
 
 test('go-red control: the pre-#3675 Scratch path fails the citation assertion (#3675)', () => {
