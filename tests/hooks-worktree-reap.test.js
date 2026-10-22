@@ -596,3 +596,13 @@ test('#3811: findWorktreeEntry lives beside parseWorktreeList and teardown-run r
   assert.strictEqual(findWorktreeEntry(entries, 'D:\\a\\x\\feat', path.win32).branch, 'feat');
   assert.strictEqual(require('../plugin/bin/lib/hooks/teardown-run').findWorktreeEntry, findWorktreeEntry);
 });
+
+test('#3811 AC3: no plugin/bin module compares a porcelain entry path strictly against cwd', () => {
+  const repoRoot = path.join(__dirname, '..');
+  const binDir = path.join(repoRoot, 'plugin', 'bin');
+  const offenders = fs.readdirSync(binDir, { recursive: true })
+    .filter((rel) => rel.endsWith('.js'))
+    .filter((rel) => /\.path\s*===\s*cwd\b/.test(fs.readFileSync(path.join(binDir, rel), 'utf8')))
+    .map((rel) => path.relative(repoRoot, path.join(binDir, rel)).split(path.sep).join('/'));
+  assert.deepStrictEqual(offenders, []);
+});
