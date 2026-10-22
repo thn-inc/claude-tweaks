@@ -122,6 +122,15 @@ test('AC3.2: a noted pass line cut off inside the note does not confirm', () => 
   assert.deepStrictEqual(confirmPassingVerdicts(`${cut}\n`, [2941]), { 2941: { confirmed: false, latest: 'unparsed' } });
 });
 
+test('AC3.2: a noted pass line with a tail after the note does not confirm; nested parens and periods inside the note still do', () => {
+  const tailed = `${line(VERDICT_STEPS.shortCircuit, verdictText(2941), { reversibility: 'n/a (x). trailing narrative (y)' })}\n`;
+  assert.deepStrictEqual(confirmPassingVerdicts(tailed, [2941]), { 2941: { confirmed: false, latest: 'unparsed' } });
+  for (const reversibility of ['n/a (see (a))', 'high (commit abc.def)']) {
+    const ok = `${line(VERDICT_STEPS.gate, verdictText(5), { reversibility })}\n`;
+    assert.strictEqual(confirmPassingVerdicts(ok, [5])[5].confirmed, true, reversibility);
+  }
+});
+
 test('a --spec location prefix is still recognized', () => {
   const content = `${line(VERDICT_STEPS.shortCircuit, verdictText(2941), { spec: 2941 })}\n`;
   assert.strictEqual(confirmPassingVerdicts(content, [2941])[2941].confirmed, true);
