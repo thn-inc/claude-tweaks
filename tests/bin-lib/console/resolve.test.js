@@ -7,6 +7,7 @@ const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
 const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes } = require(MOD);
+const { unresolvedItems } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'residue'));
 const ROOT = path.join(__dirname, '..', '..', '..');
 
 function fixture({
@@ -122,7 +123,7 @@ test('a run whose only staged file is wrap-up-reflect-insights.md resolves with 
   const r = resolveAll({ runDir: fixture({ staged: { 'wrap-up-reflect-insights.md': 'table' }, headers: [7] }), policy: 'console-auto', deps: deps() });
   assert.strictEqual(r.items.length, 1);
   assert.strictEqual(r.items[0].section, 'Reflection insights');
-  assert.deepStrictEqual(r.items.filter((i) => i.resolution === 'pending' || i.resolution === 'keep-staged'), []);
+  assert.deepStrictEqual(unresolvedItems({ items: r.items }), []);
 });
 
 test('a .shadow-dup file is classified duplicate when byte-identical to its anchor, divergent otherwise, and falls back to shadow-dup-collision with no anchor to compare (#2773)', () => {
