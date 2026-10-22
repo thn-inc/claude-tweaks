@@ -90,13 +90,21 @@ function collectBinProducers(raw, file) {
   return out;
 }
 
-// Throws naming the file when a fully dynamic id has no documented prefix.
+// Throws naming the file when a fully dynamic id has no documented prefix, or when one file
+// carries a second dynamic call site (DYNAMIC_ID_PREFIXES is keyed by file, so a second site
+// would silently inherit the first one's prefix).
 function checkDynamicIds(producers) {
+  const seen = new Set();
   for (const p of producers) {
     if (p.id === null) continue;
-    if (staticHead(p.id) === '' && !(p.file in DYNAMIC_ID_PREFIXES)) {
+    if (staticHead(p.id) !== '') continue;
+    if (!(p.file in DYNAMIC_ID_PREFIXES)) {
       throw new Error(`${p.file}: --id ${JSON.stringify(p.id)} is fully dynamic — add its documented prefix to DYNAMIC_ID_PREFIXES`);
     }
+    if (seen.has(p.file)) {
+      throw new Error(`${p.file}: a second fully dynamic id call site — DYNAMIC_ID_PREFIXES is keyed by file, so key it per site before adding another`);
+    }
+    seen.add(p.file);
   }
 }
 
@@ -225,6 +233,13 @@ test('control: a new fully dynamic --id call site outside DYNAMIC_ID_PREFIXES fa
   assert.throws(() => checkDynamicIds(collectMdProducers(fixture, 'plugin/skills/new/step.md')),
     /plugin\/skills\/new\/step\.md/);
   assert.doesNotThrow(() => checkDynamicIds(collectMdProducers(fixture, 'plugin/skills/tidy/step-6-auto.md')));
+});
+
+test('control: a second fully dynamic call site in a DYNAMIC_ID_PREFIXES file fails the dynamic-id check', () => {
+  const fixture = 'node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "{run-dir}" --id "{x}" --file "{p}"';
+  const file = 'plugin/skills/tidy/step-6-auto.md';
+  assert.throws(() => checkDynamicIds([...collectMdProducers(fixture, file), ...collectMdProducers(fixture, file)]),
+    /second fully dynamic/);
 });
 
 test('prose-named staged files: every static head is mapped or exempt', () => {

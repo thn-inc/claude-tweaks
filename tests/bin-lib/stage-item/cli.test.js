@@ -217,6 +217,7 @@ test('cli: a canonical id prints nothing to stderr (#3370)', () => {
 for (const [id, why, titlePrefix] of [
   ['release-held', 'exempt: release console', 'AC1.1: '],
   ['dispatch-target-missing-x', 'exempt: dispatch standalone', 'AC1.1: '],
+  ['shipped-close-1', 'exempt: dispatch standalone firing', ''],
   ['upstream-draft-1', 'mapped, hand-off-draft', ''],
 ]) {
   test(`${titlePrefix}--id ${id} prints no unmapped-prefix warning (${why})`, () => {
