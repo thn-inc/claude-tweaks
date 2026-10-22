@@ -784,6 +784,23 @@ test('sddRulingDeferralReason: unreadable text is unclassified, and Defers: matc
   assert.deepStrictEqual(SDD_RULING_REASONS, { NO_DEFER_REASON: 'sdd-ruling-deferral-no-defer-reason', UNCLASSIFIED: 'sdd-ruling-unclassified' });
 });
 
+test('two-defers-lines-unclassified: more than one Defers: header line fails closed, whichever order (#3880)', () => {
+  for (const header of ['Defers: no\nDefers: yes\n', 'Defers: yes\nDefers: no\n', 'Defers: no\nDefers: no\n']) {
+    const item = resolveStaged('sdd-ruling-1.md', RULING(header));
+    assert.strictEqual(item.resolution, 'pending', header);
+    assert.strictEqual(item.reason, 'sdd-ruling-unclassified', header);
+  }
+});
+
+test('header-keys-case-insensitive: defer-reason and defers keys match in any case; the reason VALUE stays exact (#3880)', () => {
+  const lowerReason = resolveStaged('sdd-ruling-1.md', RULING('Defers: no\ndefer-reason: bogus\n'));
+  assert.strictEqual(lowerReason.resolution, 'pending');
+  assert.strictEqual(lowerReason.reason, 'sdd-ruling-deferral-no-defer-reason');
+  assert.strictEqual(resolveStaged('sdd-ruling-1.md', RULING('defers: no\n')).resolution, 'apply');
+  assert.strictEqual(resolveStaged('sdd-ruling-1.md', RULING('DEFERS: yes\nDEFER-REASON: genuinely-larger\n')).resolution, 'apply');
+  assert.strictEqual(resolveStaged('sdd-ruling-1.md', RULING('Defers: yes\nDefer-reason: Genuinely-Larger\n')).resolution, 'pending');
+});
+
 test('classifyStagedItem leaves sdd-ruling-* in Pending review with no reason, so the deferral gate is the only pending path (#3880 control)', () => {
   assert.deepStrictEqual(classifyStagedItem('sdd-ruling-1.md'), { section: 'Pending review' });
 });

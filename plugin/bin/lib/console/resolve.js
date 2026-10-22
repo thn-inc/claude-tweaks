@@ -185,11 +185,14 @@ function sddRulingDeferralReason(text) {
     if (line === '') break;
     header.push(line);
   }
-  const defersMatch = header.map((l) => /^Defers:[ \t]*(\S+)$/.exec(l)).find(Boolean);
-  const defers = defersMatch ? defersMatch[1].toLowerCase() : null;
+  // Both header keys match case-insensitively; the reason VALUE check below stays exact. More than one
+  // `Defers:` line fails closed (the first line must not silently win).
+  const defersMatches = header.map((l) => /^defers:[ \t]*(\S+)$/i.exec(l)).filter(Boolean);
+  if (defersMatches.length > 1) return SDD_RULING_REASONS.UNCLASSIFIED;
+  const defers = defersMatches.length ? defersMatches[0][1].toLowerCase() : null;
   // Every header line beginning with `Defer-reason:` is a reason line, whatever its value looks like
   // (#3880 fix round 1): a malformed one must fail closed, not fall through as if it were absent.
-  const reasons = header.map((l) => /^Defer-reason:(.*)$/.exec(l)).filter(Boolean).map((m) => m[1].trim());
+  const reasons = header.map((l) => /^defer-reason:(.*)$/i.exec(l)).filter(Boolean).map((m) => m[1].trim());
   if (defers === 'yes' || reasons.length > 0) {
     return reasons.length === 1 && DEFER_REASONS.includes(reasons[0]) ? null : SDD_RULING_REASONS.NO_DEFER_REASON;
   }
