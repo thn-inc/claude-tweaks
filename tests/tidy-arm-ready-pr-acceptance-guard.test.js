@@ -30,6 +30,11 @@ const arm = slice(ACTIONS, '## Arm ready PR', '## Release claim');
 // negative control removes exactly what this task added.
 const GUARD_ADDED = /\*\*Acceptance labeling — record-linked flavor only, before Step 3\.\*\*.*?nothing to label\./;
 
+function armWithoutGuard() {
+  assert.match(arm, GUARD_ADDED, 'the guard paragraph must be locatable');
+  return arm.replace(GUARD_ADDED, '');
+}
+
 const GUARD_PINS = [
   /verify\.json/,
   /`acceptance-labeling` row/,
@@ -47,8 +52,7 @@ test("AC1.1: Arm ready PR names verify.json's acceptance-labeling row before its
 });
 
 test('AC1.1: negative control — removing the guard paragraph fails each pin', () => {
-  assert.match(arm, GUARD_ADDED, 'the guard paragraph must be locatable');
-  const stripped = arm.replace(GUARD_ADDED, '');
+  const stripped = armWithoutGuard();
   for (const re of GUARD_PINS) assert.doesNotMatch(stripped, re);
 });
 
@@ -75,8 +79,7 @@ test('AC3.1: a record-linked PR with no verify.json and no demo:pending on its F
 });
 
 test('AC3.1: negative control — the held outcome is gone once the guard paragraph is stripped', () => {
-  assert.match(arm, GUARD_ADDED, 'the guard paragraph must be locatable');
-  const stripped = arm.replace(GUARD_ADDED, '');
+  const stripped = armWithoutGuard();
   assert.doesNotMatch(stripped, /is held, not armed/);
   assert.doesNotMatch(stripped, /not armed — acceptance labeling not landed/);
   assert.doesNotMatch(stripped, /Otherwise do not run Step 3/);
