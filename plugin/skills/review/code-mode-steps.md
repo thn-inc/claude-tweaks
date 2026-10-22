@@ -258,15 +258,19 @@ Read `step3-skill-load-delta.md` in this skill's directory and run it on every c
 
 Three effort-gated findings-quality mechanisms run after Step 3's per-lens reproduction completes: Cross-Lens Debate (resolves contradictions between different lenses reviewing the same region), the Per-Candidate Refutation Pass (re-examines `confirmed` findings at or above a `medium` severity floor, capped at 10 per review, for correlated error reproduction-pair agreement alone can't catch), and Gap-Sweep / Completeness Critic (a single fresh-eyes agent asking what every angle-scoped lens, collectively, missed).
 
-**Skip all three entirely when the resolved `review-effort` tier (Step 2.5) is `low` or `medium`** — proceed directly to Step 3 Routing below (at `medium`, after Cross-Lens Corroboration), matching Step 3's own narrower lens scope at those tiers.
+**Skip all three entirely when the resolved `review-effort` tier (Step 2.5) is `low` or `medium`** — proceed directly to Step 3.7 below (at `medium`, after Cross-Lens Corroboration), matching Step 3's own narrower lens scope at those tiers.
 
 **At `high` and above**, Cross-Lens Debate runs. **At `xhigh` and `max` only**, the Per-Candidate Refutation Pass and Gap-Sweep additionally run (one tier stricter, so `high`-tier reviews aren't paying for all three mechanisms at once). Read `step3-debate-and-refutation.md` in this skill's directory for the full procedure — dispatch templates, the `review-coordination.js` `detect-overlap`/`resolve-debate`/`resolve-refutation` invocations, and decision-log formats — lazy-loaded only when the resolved tier is `high` or above, following the same lazy-load pattern as `step3-routing.md`.
 
-After Step 3.5, every finding has a final bucket — `confirmed`, `unconfirmed`, or `contested`. Only `confirmed` findings flow into Step 3 Routing. `unconfirmed` and `contested` are already staged to the Wrap-Up Console.
+After Step 3.5, every finding has a final bucket — `confirmed`, `unconfirmed`, or `contested`. Only `confirmed` findings flow into Step 3 Routing. `unconfirmed` and `contested` findings go to Step 3.7.
+
+### Step 3.7: Tiebreak (every tier)
+
+Read `step3-tiebreak.md` in this skill's directory and run it after Step 3's reproduction, Cross-Lens Corroboration, and Steps 3.5-3.6, before Step 3 Routing: every `unconfirmed` or `contested` finding gets one independent agent verdict. Only its `confirmed` results join routing.
 
 ### Step 3 Routing — Code Review Findings
 
-Routing logic lives entirely in `step3-routing.md` in this skill's directory: severity-based auto routing (with the contract floors), the interactive batch table, recommendation rules, the deferral gate, the parallel-fix dispatch contract (3+ independent fixes via `/superpowers:dispatching-parallel-agents`, with its mandatory post-dispatch diff audit), and the auto-advance-on-zero-findings rule. `unconfirmed` and `contested` findings bypass Step 3 Routing — they route directly to the Wrap-Up Console (Low-confidence and Contested subsections, respectively). The fix-now re-verify runs scoped per `test/verification.md`'s "Re-verify scoping" table (review-fix row).
+Routing logic lives entirely in `step3-routing.md` in this skill's directory: severity-based auto routing (with the contract floors), the interactive batch table, recommendation rules, the deferral gate, the parallel-fix dispatch contract (3+ independent fixes via `/superpowers:dispatching-parallel-agents`, with its mandatory post-dispatch diff audit), and the auto-advance-on-zero-findings rule. `unconfirmed` and `contested` findings reach routing only through Step 3.7's `confirmed` outcome. The fix-now re-verify runs scoped per `test/verification.md`'s "Re-verify scoping" table (review-fix row).
 
 **QA after a Step 3 fix wave (#3598).** A Step 3 Routing fix that touches a story's `source_files` leaves QA as stale as a Step 6.7 fix does, so it gets Step 6.7 item 4's affected-story re-run too — once per review, not once per wave. Before Step 3 Routing applies its first fix (AUTO or Fix now, and before any parallel fix dispatch), capture `WAVE_BASE` exactly as Step 6.7's opening describes; Step 6.7 then keeps that SHA, and its item 4 covers both waves' files. When Step 6.7 does not run, run its item 4 on its own, right before Step 7, against the same `WAVE_BASE`. A Step 5 simplification edit made after that capture falls inside the same diff and counts the same way.
 
