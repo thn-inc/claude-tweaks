@@ -1098,7 +1098,7 @@ test('debate: mixed/partial verdicts → contested with STAGED entry matching th
 // The Per-Candidate Refutation Pass now settles its reply through resolve-tiebreak (#3947, pinned in
 // tests/review-tiebreak-step-conformance.test.js); resolveRefutation and its CLI verb stay in code and
 // stay pinned here at the library level. The prose keeps one downgrade log line, for can't-tell.
-test('refutation: refuted verdict downgrades to unconfirmed', () => {
+test("refutation: the can't-tell downgrade line matches the documented schema (resolveRefutation still downgrades refuted)", () => {
   assert.strictEqual(c.resolveRefutation('refuted'), 'unconfirmed');
   const entry =
     `- STAGED 14:52:10 — Refutation: lens "security" finding src/auth.ts:42 — no usable verdict (can't-tell), not genuinely re-examined. Downgraded to unconfirmed out of caution. Reversibility: high.`;

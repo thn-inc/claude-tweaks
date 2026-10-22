@@ -50,7 +50,7 @@ function assertEachSectionFactGoesRed(texts, facts, missingOf) {
     const doctoredRegion = region.replace(globalOf(pattern), '');
     assert.notEqual(doctoredRegion, region, `anchor text for "${fact}" not found — proof cannot discriminate`);
     const doctored = Object.fromEntries(Object.entries(texts).map(([key, text]) => [key, text.replace(region, () => doctoredRegion)]));
-    assert.ok(missingOf(doctored).includes(fact), `removing "${fact}" must turn its assertion red`);
+    assert.deepEqual(missingOf(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
   }
 }
 
@@ -258,13 +258,13 @@ const LOG_TEXT_FILE = [
 const logTextFileMissing = missingFactsOf(LOG_TEXT_FILE);
 const passesTextOnCommandLine = (text) => /--text "/.test(text);
 
-test('fix 1: logText goes through --text-file, never a shell argument', () => {
+test('logText goes through --text-file, never a shell argument', () => {
   const resolveAndAct = sectionOf(tiebreakText(), 'Resolve and act');
   assert.deepEqual(logTextFileMissing(resolveAndAct), [], '## Resolve and act must log through --text-file');
   assert.ok(!passesTextOnCommandLine(resolveAndAct), 'no --text "..." argument: a verbatim source line can carry quotes, $() and backticks');
 });
 
-test('fix 1: the --text-file assertions can go red', () => {
+test('the --text-file assertions can go red', () => {
   const resolveAndAct = sectionOf(tiebreakText(), 'Resolve and act');
   assertEachPatternGoesRed(resolveAndAct, LOG_TEXT_FILE, logTextFileMissing);
   assert.ok(passesTextOnCommandLine(resolveAndAct.replace('--text-file "{path-T}"', '--text "{logText}"')), 'reverting to --text must turn the check red');
@@ -277,11 +277,11 @@ const PIPELINE_ONLY = [
 ];
 const pipelineOnlyMissing = missingFactsOf(PIPELINE_ONLY);
 
-test('fix 2: the digest and console actions are pipeline-run only', () => {
+test('the digest and console actions are pipeline-run only', () => {
   assert.deepEqual(pipelineOnlyMissing(sectionOf(tiebreakText(), 'Resolve and act')), [], 'both bullets must point a standalone review at ## Standalone review');
 });
 
-test('fix 2: the pipeline-only qualifiers can go red', () => {
+test('the pipeline-only qualifiers can go red', () => {
   assertEachPatternGoesRed(sectionOf(tiebreakText(), 'Resolve and act'), PIPELINE_ONLY, pipelineOnlyMissing);
 });
 
@@ -291,19 +291,23 @@ const ARTIFACT_FAILURE = [
   [/this line is the only signal/, 'with no artifact this line is the only signal'],
 ];
 const artifactFailureMissing = missingFactsOf(ARTIFACT_FAILURE);
+const claimsRunHeldOpen = (section) => /holds the run open/.test(section);
+const artifactFailureLine = (section) => documentedTemplate(section, ['findings artifact not written']);
 
-test('fix 3: the artifact-failure line surfaces and states its consequence', () => {
+test('the findings-artifact failure line surfaces at the console and states its consequence', () => {
   const section = sectionOf(tiebreakText(), 'Findings artifact');
   assert.deepEqual(artifactFailureMissing(section), [], '## Findings artifact must log a line the console surfaces');
-  assert.ok(!/holds the run open/.test(section), 'the archive gate does not hold the run open on an absent artifact');
-  // The console surfaces a STAGED line only when it matches console/resolve.js's low-confidence matcher.
-  const line = section.match(/`(STAGED [^`]*findings artifact not written[^`]*)`/);
-  assert.ok(line, 'the failure log line was not found');
-  assert.match(line[1], /low-confidence|not directly verified|unconfirmed/i);
+  assert.ok(!claimsRunHeldOpen(section), 'the archive gate does not hold the run open on an absent artifact');
+  // Run the real console/resolve.js matcher over the documented line.
+  assert.equal(consoleLowItems(`${instantiate(artifactFailureLine(section))}\n`).length, 1, 'the failure line must surface as a Low-confidence item');
 });
 
-test('fix 3: the artifact-failure assertions can go red', () => {
-  assertEachPatternGoesRed(sectionOf(tiebreakText(), 'Findings artifact'), ARTIFACT_FAILURE, artifactFailureMissing);
+test('the findings-artifact failure assertions can go red', () => {
+  const section = sectionOf(tiebreakText(), 'Findings artifact');
+  assertEachPatternGoesRed(section, ARTIFACT_FAILURE, artifactFailureMissing);
+  assert.ok(claimsRunHeldOpen(`${section}\nThe archive gate holds the run open.`), 'a planted "holds the run open" must turn the check red');
+  const pending = artifactFailureLine(section).replace('stay unconfirmed', 'stay pending');
+  assert.equal(consoleLowItems(`${instantiate(pending)}\n`).length, 0, 'a line without the unconfirmed keyword must not surface');
 });
 
 // --- AC7.1: standalone ---
@@ -381,7 +385,7 @@ function buildFixtureRun() {
   return { dir, artifact, first, second };
 }
 
-test('AC3.1 fixture: one verdict line per listed finding, a nearLocation pair judged separately', () => {
+test('AC3.1 fixture: one verdict line per listed finding — two findings at one location (adjacent lines) each get their own', () => {
   const { dir, artifact, first, second } = buildFixtureRun();
   try {
     assert.equal(artifact.length, 2);
@@ -733,13 +737,13 @@ const bypassLeftovers = (files, readFile) => files.flatMap((name) => BYPASS_FORB
   .filter(([pattern]) => pattern.test(readFile(name))).map(([, phrase]) => `${name}: ${phrase}`));
 const readReviewFile = (name) => readText(path.join(REVIEW_DIR, name));
 
-test('F2 no review file routes a finding straight to the console, bypassing Step 3.7', () => {
+test('no review file routes a finding straight to the console, bypassing Step 3.7', () => {
   const files = reviewFiles();
   assert.ok(files.includes('step3-lens-dispatch.md') && files.includes('review-summary-template.md'), 'the scan covers the review skill directory');
   assert.deepEqual(bypassLeftovers(files, readReviewFile), []);
 });
 
-test('F2 the review-wide bypass scan can go red', () => {
+test('the review-wide bypass scan can go red', () => {
   for (const [, phrase] of BYPASS_FORBIDDEN) {
     assert.deepEqual(bypassLeftovers(['planted.md'], () => `text ${phrase} text`), [`planted.md: ${phrase}`], `a planted "${phrase}" must turn the scan red`);
   }
@@ -869,16 +873,16 @@ const TIEBREAK_VALUE = [
 const tiebreakValueFactsMissing = missingFactsOf(TIEBREAK_VALUE);
 const tiebreakValueMissing = (text) => tiebreakValueFactsMissing(tiebreakValueSection(text));
 
-test('R1 materiality-floor.md documents Defer-reason: tiebreak-cant-tell, produced by step3-tiebreak.md, outside DEFER_REASONS', () => {
+test('materiality-floor.md documents Defer-reason: tiebreak-cant-tell, produced by step3-tiebreak.md, outside DEFER_REASONS', () => {
   assert.deepEqual(tiebreakValueMissing(materialityText()), [], "the floor's Tiebreak can't-tell value subsection must carry every fact");
 });
 
-test('R1 the materiality-floor assertions can go red', () => {
+test('the materiality-floor assertions can go red', () => {
   assertEachPatternGoesRed(tiebreakValueSection(materialityText()), TIEBREAK_VALUE, tiebreakValueFactsMissing);
   assert.deepEqual(tiebreakValueMissing('## no such subsection'), TIEBREAK_VALUE.map(([, fact]) => fact), 'a floor without the subsection fails every fact');
 });
 
-test('R1 tiebreak-cant-tell is not in DEFER_REASONS', () => {
+test('tiebreak-cant-tell is not in DEFER_REASONS', () => {
   assert.ok(!DEFER_REASONS.includes('tiebreak-cant-tell'), 'tiebreak-cant-tell is an entry-format value, not a fix-now-failure reason');
   assert.ok(DEFER_REASONS.includes('tangential'), 'DEFER_REASONS is the real gate vocabulary, so the includes check above discriminates');
 });
@@ -886,11 +890,11 @@ test('R1 tiebreak-cant-tell is not in DEFER_REASONS', () => {
 const RESOLVE_NAMES_VALUE = [[/tiebreak-cant-tell/, 'the Resolve and act section names the tiebreak-cant-tell digest value']];
 const resolveNamesValueMissing = (text) => missingFactsOf(RESOLVE_NAMES_VALUE)(sectionOf(text, 'Resolve and act'));
 
-test("R1 step3-tiebreak.md's Resolve and act section names tiebreak-cant-tell", () => {
+test("step3-tiebreak.md's Resolve and act section names tiebreak-cant-tell", () => {
   assert.deepEqual(resolveNamesValueMissing(tiebreakText()), []);
 });
 
-test('R1 the Resolve and act assertion can go red', () => {
+test('the Resolve and act tiebreak-cant-tell assertion can go red', () => {
   const text = tiebreakText();
   const doctored = text.replace(/tiebreak-cant-tell/g, '');
   assert.notEqual(doctored, text, 'anchor text not found');
@@ -900,7 +904,7 @@ test('R1 the Resolve and act assertion can go red', () => {
 // --- docs/skill-graph.md: the tiebreak step's edges (AC11.1) ---
 
 const SKILL_GRAPH = path.join(__dirname, '..', 'docs', 'skill-graph.md');
-const skillGraphText = () => fs.readFileSync(SKILL_GRAPH, 'utf8');
+const skillGraphText = () => readText(SKILL_GRAPH);
 
 // The `## review` section, up to the next `## ` heading.
 const reviewGraphSection = (text) => sliceSection(text, '\n## review\n', '\n## ');
@@ -941,7 +945,7 @@ const skillsNamingStep = (files, readFile) => files.filter((file) => readFile(fi
 test('AC11.1 no SKILL.md restates the step3-tiebreak.md edge', () => {
   const files = listSkillFiles(SKILLS);
   assert.ok(files.length > 20, 'the scan covers the skill corpus');
-  assert.deepEqual(skillsNamingStep(files, (file) => fs.readFileSync(file, 'utf8')), []);
+  assert.deepEqual(skillsNamingStep(files, readText), []);
 });
 
 test('AC11.1 the SKILL.md scan can go red', () => {
@@ -1017,11 +1021,11 @@ const FIX_WAVE = [
 ];
 const fixWaveMissing = sectionFactsMissing(FIX_WAVE);
 
-test('F1-F13 the fix-wave facts are stated where they belong', () => {
+test('vacuity, override, sweep re-run, supersession, template-slot, lens and digest-approval facts are each stated in their own section', () => {
   assert.deepEqual(fixWaveMissing(liveTexts()), []);
 });
 
-test('F1-F13 every fix-wave fact can go red', () => {
+test('each of those section facts can go red', () => {
   assertEachSectionFactGoesRed(liveTexts(), FIX_WAVE, fixWaveMissing);
 });
 
@@ -1034,13 +1038,13 @@ const FIX_WAVE_FORBIDDEN = [
 ];
 const fixWaveLeftovers = (texts) => FIX_WAVE_FORBIDDEN.filter(([pick, pattern]) => pattern.test(pick(texts))).map(([, , fact]) => fact);
 
-test('F3/F6/F12 the retired wording is gone', () => {
+test('the override elevation, hung-agent override and cached-evidence wording is gone', () => {
   const texts = liveTexts();
   for (const [pick, , fact] of FIX_WAVE_FORBIDDEN) assert.notEqual(pick(texts), '', `region not found for "${fact}"`);
   assert.deepEqual(fixWaveLeftovers(texts), []);
 });
 
-test('F3/F6/F12 the retired-wording assertions can go red', () => {
+test('the retired-wording assertions can go red', () => {
   const plants = [
     'An `unconfirmed` finding can still be elevated to `confirmed` here.',
     "resolved via reviewing agent's own Direct-verification override",
@@ -1058,12 +1062,22 @@ test('F3/F6/F12 the retired-wording assertions can go red', () => {
 });
 
 // F4: the cited sweep heading resolves.
-test('F4 the cited Post-fan-out untracked-file sweep heading exists', () => {
-  assert.ok(readText(STEP3).includes('\n## Post-fan-out untracked-file sweep\n'));
+const SWEEP_HEADING = '\n## Post-fan-out untracked-file sweep\n';
+const hasSweepHeading = (text) => text.includes(SWEEP_HEADING);
+
+test('the cited Post-fan-out untracked-file sweep heading exists', () => {
+  assert.ok(hasSweepHeading(readText(STEP3)));
+});
+
+test('the sweep-heading assertion can go red', () => {
+  const text = readText(STEP3);
+  const stripped = text.replace(SWEEP_HEADING, '\n');
+  assert.notEqual(stripped, text, 'anchor heading not found — proof cannot discriminate');
+  assert.ok(!hasSweepHeading(stripped), 'stripping the heading must turn the check red');
 });
 
 // F6: the refutation template's input carries no reporter content, like Step 3.7's.
-test('F6 the refutation template input is the allowlist only', () => {
+test('the refutation template input is the allowlist only', () => {
   const block = refutationTemplateOf(liveTexts());
   const input = block.slice(block.indexOf('Candidate finding:'), block.indexOf('[... READ-ONLY REVIEW'));
   assert.notEqual(input, '', 'the refutation input block was not found');
@@ -1077,11 +1091,11 @@ const windowFacts = (n) => [
   [refutationTemplateOf, new RegExp(`a line within ${n} of \\{line\\}`), "the refutation template states the resolver's evidence window"],
 ];
 
-test("F15 the templates' evidence window equals LINE_TOLERANCE_REPRODUCTION_WIDE", () => {
+test("the templates' evidence window equals LINE_TOLERANCE_REPRODUCTION_WIDE", () => {
   assert.deepEqual(sectionFactsMissing(windowFacts(LINE_TOLERANCE_REPRODUCTION_WIDE))(liveTexts()), []);
 });
 
-test('F15 the evidence-window twin pin can go red', () => {
+test('the evidence-window twin pin can go red', () => {
   const n = LINE_TOLERANCE_REPRODUCTION_WIDE;
   const texts = liveTexts();
   const drifted = Object.fromEntries(Object.entries(texts).map(([k, t]) => [k, t.replaceAll(`a line within ${n} of`, `a line within ${n + 4} of`)]));
@@ -1151,14 +1165,14 @@ const CONSOLE_LINES = [
   ['debate', ['no usable verdict'], "F5b the refutation can't-tell line"],
 ];
 
-test('F5 the gap-sweep, debate-negative and refutation-downgrade lines surface and are superseded by a confirmed verdict', () => {
+test('the gap-sweep, debate-negative and refutation-downgrade lines surface and are superseded by a confirmed verdict', () => {
   const texts = liveTexts();
   for (const [key, needles, name] of CONSOLE_LINES) {
     assert.deepEqual(consoleProblems(documentedTemplate(texts[key], needles)), [], name);
   }
 });
 
-test('F5 the console-surfacing assertions can go red', () => {
+test('the console-surfacing assertions can go red', () => {
   assert.deepEqual(consoleProblems('STAGED {HH:MM:SS} — Gap-sweep: {path}:{line} — {one-line finding}. Staged to Review Console as low-confidence (gap-sweep, single-source by design). Reversibility: high.'), ['carries no lens key']);
   assert.deepEqual(consoleProblems('AUTO {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} converged negative after 1 round. Reversibility: high.'), ['does not surface as a Low-confidence item', 'carries no lens key']);
   assert.deepEqual(consoleProblems('STAGED {HH:MM:SS} — Refutation: lens "{lens}" near src/other.js:9 for {path}:{line} — unconfirmed. Reversibility: high.'), ['not superseded by a confirmed tiebreak verdict']);
@@ -1173,11 +1187,11 @@ const failureLineProblems = (template) => {
   return problems;
 };
 
-test('F9 the resolve-tiebreak failure line surfaces and carries no tiebreak: marker', () => {
+test('the resolve-tiebreak failure line surfaces and carries no tiebreak: marker', () => {
   assert.deepEqual(failureLineProblems(resolverFailureLine(liveTexts())), []);
 });
 
-test('F9 the failure-line assertions can go red', () => {
+test('the resolve-tiebreak failure-line assertions can go red', () => {
   const line = resolverFailureLine(liveTexts());
   assert.deepEqual(failureLineProblems(line.replace('unconfirmed', 'pending')), ['does not surface as a Low-confidence item']);
   assert.deepEqual(failureLineProblems(`${line} tiebreak:abc123def456`), ['carries the tiebreak: marker']);
@@ -1199,11 +1213,11 @@ function residualProblems(texts) {
   return problems;
 }
 
-test('residuals: nearLocation, hung-agent and partner-died findings stay console-visible; the sweep re-run is named', () => {
+test('nearLocation, hung-agent and partner-died findings stay console-visible; the sweep re-run is named', () => {
   assert.deepEqual(residualProblems(liveTexts()), []);
 });
 
-test('residuals: each residual assertion can go red', () => {
+test('each console-visibility and sweep re-run assertion can go red', () => {
   const live = liveTexts();
   const cases = [
     [{ step3: live.step3.replace('both staged unconfirmed.', 'both staged.') }, 'nearLocation line does not surface'],
