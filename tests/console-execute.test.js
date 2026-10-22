@@ -518,6 +518,135 @@ test('consoleExecuteDetect: a withheld merge grant names the untrusted pending-g
   assert.ok(gap.reason.endsWith(' — skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator'), gap.reason);
 });
 
+// --- #3880: rulingGateGaps — the reconciler's consoleAutoResolve path withholds unsafe sdd-ruling-* rows ---
+
+function rulingConsoleJson(items) {
+  return { resolved: false, commentIds: ['IC_1'], prNumber: 42, items };
+}
+function tickedComment(ids) {
+  return [{
+    id: 'IC_1',
+    body: `${ids.map((id) => `<!-- console-item: ${id} -->\n- [x] ${id}\n`).join('\n')}\n<!-- console-item: resolve -->\n- [x] **Resolve console**`,
+  }];
+}
+const RULING_TEXT_DEFERS_NO = 'Title: r\nKind: sdd-ruling\nDefers: no\nStaged-at: abc\n\nbody\n';
+const RULING_TEXT_DEFERS_YES = 'Title: r\nKind: sdd-ruling\nDefers: yes\nStaged-at: abc\n\nbody\n';
+const RULING_TEXT_DEFERS_YES_REASONED = 'Title: r\nKind: sdd-ruling\nDefers: yes\nDefer-reason: genuinely-larger\nStaged-at: abc\n\nbody\n';
+
+test('decideConsoleExecute: no ctx.rulingTexts -> rulingGateGaps [] (legacy call shape unchanged)', () => {
+  const cj = rulingConsoleJson([{ id: 'staged-1', kind: 'staged', summary: 'r', isRulingRow: true }]);
+  const result = decideConsoleExecute(cj, tickedComment(['staged-1']), Date.now());
+  assert.deepStrictEqual(result.rulingGateGaps, []);
+  assert.deepStrictEqual(decideConsoleExecute(cj, tickedComment(['staged-1']), Date.now(), { prBody: 'x' }).rulingGateGaps, []);
+});
+
+test('decideConsoleExecute: a Defers: yes ruling with no Defer-reason is a gap (sdd-ruling-deferral-no-defer-reason)', () => {
+  const cj = rulingConsoleJson([{ id: 'staged-1', kind: 'staged', summary: 'r', isRulingRow: true }]);
+  const result = decideConsoleExecute(cj, tickedComment(['staged-1']), Date.now(), { rulingTexts: { 'staged-1': RULING_TEXT_DEFERS_YES } });
+  assert.deepStrictEqual(result.rulingGateGaps, [{ id: 'staged-1', reason: 'sdd-ruling-deferral-no-defer-reason' }]);
+});
+
+test('decideConsoleExecute: a null / missing ruling text is a gap (sdd-ruling-unclassified), fails closed', () => {
+  const cj = rulingConsoleJson([
+    { id: 'staged-1', kind: 'staged', summary: 'r', isRulingRow: true },
+    { id: 'staged-2', kind: 'staged', summary: 'r', isRulingRow: true },
+  ]);
+  const result = decideConsoleExecute(cj, tickedComment(['staged-1', 'staged-2']), Date.now(), { rulingTexts: { 'staged-1': null } });
+  assert.deepStrictEqual(result.rulingGateGaps, [
+    { id: 'staged-1', reason: 'sdd-ruling-unclassified' },
+    { id: 'staged-2', reason: 'sdd-ruling-unclassified' },
+  ]);
+});
+
+test('decideConsoleExecute: Defers: no and a reasoned deferral are not gaps; non-ruling items are never gated', () => {
+  const cj = rulingConsoleJson([
+    { id: 'staged-1', kind: 'staged', summary: 'r', isRulingRow: true },
+    { id: 'staged-2', kind: 'staged', summary: 'r', isRulingRow: true },
+    { id: 'staged-3', kind: 'staged', summary: 'plain' },
+    { id: 'staged-4', kind: 'staged', summary: 'merge', isMergeRow: true },
+  ]);
+  const result = decideConsoleExecute(cj, tickedComment(['staged-1', 'staged-2', 'staged-3', 'staged-4']), Date.now(), {
+    rulingTexts: { 'staged-1': RULING_TEXT_DEFERS_NO, 'staged-2': RULING_TEXT_DEFERS_YES_REASONED, 'staged-3': null, 'staged-4': null },
+  });
+  assert.deepStrictEqual(result.rulingGateGaps, []);
+});
+
+function makeRulingRepo(items, stagedFiles) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-ruling-')));
+  git(['init', '-q', '--initial-branch=main'], dir);
+  git(['config', 'user.email', 'test@example.com'], dir);
+  git(['config', 'user.name', 'Test'], dir);
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
+  git(['add', 'a.txt'], dir);
+  git(['commit', '-q', '-m', 'seed'], dir);
+  const runDir = path.join(dir, '.claude-tweaks', 'pipelines', '2026-01-01T000000-test');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify(rulingConsoleJson(items)));
+  for (const [rel, text] of Object.entries(stagedFiles)) {
+    const abs = path.join(runDir, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, text);
+  }
+  return { dir, runDir };
+}
+
+async function detectWithFakePr(dir, pr) {
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-ghwrap-'));
+  fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n`);
+  fs.chmodSync(path.join(wrapperDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  try { return await consoleExecuteDetect({ cwd: dir }); } finally { process.env.PATH = originalPath; }
+}
+
+test('consoleExecuteDetect: reads each ruling row\'s staged file and returns rulingGateGaps on the ready entry', { skip: process.platform === 'win32' }, async () => {
+  const items = [
+    { id: 'staged-1', kind: 'staged', summary: 'safe', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' },
+    { id: 'staged-2', kind: 'staged', summary: 'unreasoned', isRulingRow: true, stagedPath: 'staged/sdd-ruling-2.md' },
+    { id: 'staged-3', kind: 'staged', summary: 'multispec', isRulingRow: true, stagedPath: 'spec-3/staged/sdd-ruling-3.md' },
+    { id: 'staged-4', kind: 'staged', summary: 'missing file', isRulingRow: true, stagedPath: 'staged/sdd-ruling-nope.md' },
+    { id: 'staged-5', kind: 'staged', summary: 'no stagedPath', isRulingRow: true },
+    { id: 'staged-6', kind: 'staged', summary: 'plain' },
+  ];
+  const { dir } = makeRulingRepo(items, {
+    'staged/sdd-ruling-1.md': RULING_TEXT_DEFERS_NO,
+    'staged/sdd-ruling-2.md': RULING_TEXT_DEFERS_YES,
+    'spec-3/staged/sdd-ruling-3.md': RULING_TEXT_DEFERS_YES_REASONED,
+  });
+  const result = await detectWithFakePr(dir, { comments: tickedComment(items.map((i) => i.id)), body: '' });
+  assert.strictEqual(result.ready.length, 1, JSON.stringify(result));
+  assert.deepStrictEqual(result.ready[0].rulingGateGaps, [
+    { id: 'staged-2', reason: 'sdd-ruling-deferral-no-defer-reason' },
+    { id: 'staged-4', reason: 'sdd-ruling-unclassified' },
+    { id: 'staged-5', reason: 'sdd-ruling-unclassified' },
+  ]);
+});
+
+test('consoleExecuteDetect: a stagedPath that escapes the run dir (../, absolute, non-string) is never read -> unclassified gap', { skip: process.platform === 'win32' }, async () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-outside-'));
+  const absFile = path.join(outside, 'abs.md');
+  fs.writeFileSync(absFile, RULING_TEXT_DEFERS_NO);
+  const items = [
+    { id: 'staged-1', kind: 'staged', summary: 'dotdot', isRulingRow: true, stagedPath: '../escape.md' },
+    { id: 'staged-2', kind: 'staged', summary: 'absolute', isRulingRow: true, stagedPath: absFile },
+    { id: 'staged-3', kind: 'staged', summary: 'nested dotdot', isRulingRow: true, stagedPath: 'staged/../../escape.md' },
+    { id: 'staged-4', kind: 'staged', summary: 'non-string', isRulingRow: true, stagedPath: 7 },
+  ];
+  const { dir, runDir } = makeRulingRepo(items, {});
+  fs.writeFileSync(path.join(path.dirname(runDir), 'escape.md'), RULING_TEXT_DEFERS_NO);
+  const result = await detectWithFakePr(dir, { comments: tickedComment(items.map((i) => i.id)), body: '' });
+  assert.strictEqual(result.ready.length, 1, JSON.stringify(result));
+  assert.deepStrictEqual(result.ready[0].rulingGateGaps.map((g) => [g.id, g.reason]), items.map((i) => [i.id, 'sdd-ruling-unclassified']));
+});
+
+test('consoleExecuteDetect: a console with no ruling row reports rulingGateGaps [] and reads nothing', { skip: process.platform === 'win32' }, async () => {
+  const items = [{ id: 'staged-1', kind: 'staged', summary: 'plain', stagedPath: '../escape.md' }];
+  const { dir } = makeRulingRepo(items, {});
+  const result = await detectWithFakePr(dir, { comments: tickedComment(['staged-1']), body: '' });
+  assert.deepStrictEqual(result.ready[0].rulingGateGaps, []);
+});
+
 // --- readConsoleJson: real temp files, matching archive-merged.js's own convention ---
 
 test('readConsoleJson: absent file reads as null (distinct from unparseable)', () => {

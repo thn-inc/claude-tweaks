@@ -37,6 +37,15 @@ test('console prose: the appendix sdd-ruling bullet states the console-auto rule
   assert.match(APPENDIX, ws(`pending — ${SDD_RULING_REASONS.UNCLASSIFIED}`));
 });
 
+test('reconciler prose: console-execution.md states the third exception and console-on-pr.md the stagedPath field', () => {
+  const EXECUTION = read('plugin', 'skills', '_shared', 'console-execution.md');
+  const ON_PR = read('plugin', 'skills', '_shared', 'console-on-pr.md');
+  assert.match(EXECUTION, ws('**Third narrower exception (#3880):** an `isRulingRow: true` item named in the ready result\'s `rulingGateGaps`'));
+  assert.match(EXECUTION, ws('withheld ratify of {item} on PR #{n} — {reason}. Reversibility: n/a (declined to act).'));
+  assert.match(EXECUTION, ws('and a ruling row named in `rulingGateGaps`'));
+  assert.match(ON_PR, ws('also carries `"stagedPath"` (#3880)'));
+});
+
 test('control: a mutated appendix missing the reason literal fails the twin', () => {
   const needle = ws(`pending — ${SDD_RULING_REASONS.UNCLASSIFIED}`);
   assert.match(APPENDIX, needle, 'the twin must match the real appendix first');
