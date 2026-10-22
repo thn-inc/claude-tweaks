@@ -5,7 +5,7 @@ const path = require('path');
 const wtDetect = require('./worktree-detect');
 const { writeFileAtomic } = require('../atomic-write');
 const { runGit } = require('./git-exec');
-const { parseWorktreeList } = require('./worktree-reap');
+const { parseWorktreeList, isPidAlive } = require('./worktree-reap');
 const runDirResolve = require('./run-dir-resolve');
 const { classifyDecisions } = require('../log-decision/claim-log');
 const { canonicalRealpath } = require('../path-guard');
@@ -776,22 +776,11 @@ function claudePid(env) {
   return typeof raw === 'string' && /^[1-9]\d*$/.test(raw) ? Number(raw) : null;
 }
 
-// ESRCH = no such process; EPERM = exists but not ours (alive); anything else
-// is unknown and reported as not alive so the caller fails open.
-function isPidAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return !!err && err.code === 'EPERM';
-  }
-}
-
 function isNestedSession(runState, env, { isAlive = isPidAlive } = {}) {
   const owner = runState && runState.ownerPid;
   if (!Number.isInteger(owner) || owner <= 0) return false;
   const mine = claudePid(env);
-  return mine !== null && mine !== owner && isAlive(owner) === true;
+  return mine !== null && mine !== owner && isAlive(owner);
 }
 
 // `{ts}-adhoc-standalone` — the suffix run-dir-resolve.js mints for
