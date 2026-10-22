@@ -11,6 +11,7 @@ files:
   - plugin/bin/lib/reconcile/archive-merged.js
   - plugin/bin/lib/reconcile/pr-state.js
   - plugin/bin/lib/reconcile/origin-head.js
+  - plugin/bin/lib/reconcile/ledger-residue.js
   - plugin/bin/hooks.js
 ---
 
