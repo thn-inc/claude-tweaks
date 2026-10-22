@@ -747,6 +747,14 @@ test('reason-key-without-defers-line-is-a-deferral: a Defer-reason line alone co
   assert.strictEqual(item.reason, 'sdd-ruling-deferral-no-defer-reason');
 });
 
+test('malformed-reason-line-is-a-deferral: a Defer-reason line whose value is not a DEFER_REASONS member fails closed, with or without Defers: yes (#3880)', () => {
+  for (const header of ['Defers: no\nDefer-reason: genuinely-larger (see X)\n', 'Defers: yes\nDefer-reason: genuinely-larger (see X)\n']) {
+    const item = resolveStaged('sdd-ruling-1.md', RULING(header));
+    assert.strictEqual(item.resolution, 'pending', header);
+    assert.strictEqual(item.reason, 'sdd-ruling-deferral-no-defer-reason', header);
+  }
+});
+
 test('no-defers-line-is-unclassified: a ruling with no Defers: line resolves pending as unclassified (#3880 AC3)', () => {
   const item = resolveStaged('sdd-ruling-1.md', RULING(''));
   assert.strictEqual(item.resolution, 'pending');
