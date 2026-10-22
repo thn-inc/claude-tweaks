@@ -94,9 +94,9 @@ test('AC2.1 go-red: the pre-#3687 resolution rule fails the probe-first assertio
 });
 
 test('AC2.1 go-red: a bare glob lookup sentence fails, a fallback/inherited sentence passes', () => {
-  assert.throws(() => assertNoBareGlob(flat('1. Find active ledger files: glob `docs/plans/*-ledger.md`. Then show counts.'), 'fixture'));
-  assert.throws(() => assertNoBareGlob(flat('LEDGER_FILE=$(git -C "$WORKTREE_PATH" ls-files "docs/plans/*-record-{n}-ledger.md")'), 'fixture'));
-  assert.throws(() => assertNoBareGlob(flat("if it exists, that's the active ledger; if not, fall back to the `docs/plans/*-ledger.md` glob."), 'fixture'));
+  assert.throws(() => assertNoBareGlob(flat('1. Find active ledger files: glob `docs/plans/*-ledger.md`. Then show counts.'), 'fixture'), /a this-run ledger lookup uses the bare docs\/plans glob/);
+  assert.throws(() => assertNoBareGlob(flat('LEDGER_FILE=$(git -C "$WORKTREE_PATH" ls-files "docs/plans/*-record-{n}-ledger.md")'), 'fixture'), /a this-run ledger lookup uses the bare docs\/plans glob/);
+  assert.throws(() => assertNoBareGlob(flat("if it exists, that's the active ledger; if not, fall back to the `docs/plans/*-ledger.md` glob."), 'fixture'), /a this-run ledger lookup uses the bare docs\/plans glob/);
   const FB = flat('Fallback: the `docs/plans/*-ledger.md` glob. It also matches inherited ledgers in `docs/plans/*-ledger.md`.');
   assert.doesNotThrow(() => assertNoBareGlob(FB, 'fixture', [FB]));
 });
@@ -171,7 +171,7 @@ test('AC2.1 go-red: the pre-#3687 reader sentences fail the no-bare-glob asserti
     'After confirming `TEST_PASSED`, read the open items ledger (`docs/plans/*-ledger.md`, or the run-dir-scoped alternate) and filter for entries with phase `test/qa`:',
     'LEDGER_FILE=$(git -C "$WORKTREE_PATH" ls-files "docs/plans/*-record-{n}-ledger.md")',
   ];
-  for (const s of PRE) assert.throws(() => assertNoBareGlob(flat(s), 'pre-change'), `must go red: ${s}`);
+  for (const s of PRE) assert.throws(() => assertNoBareGlob(flat(s), 'pre-change'), /a this-run ledger lookup uses the bare docs\/plans glob/, `must go red: ${s}`);
 });
 
 module.exports = { assertNoBareGlob, read };
