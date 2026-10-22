@@ -1,5 +1,6 @@
 // bin/lib/tiebreak.js — finding identity and the tiebreak-reply parser (#3945).
-// Pure: no fs, no process. Task 2's resolver maps a parsed reply to a ruling.
+// Pure: no fs, no process (file reads go through the injected readFile). The
+// resolver at the bottom maps a parsed reply to a ruling.
 //
 // findingId({ lens, path, line, claim }): the first 12 hex chars of
 // sha1([lens, path, String(line), normClaim].join('\n')), where normClaim is
@@ -31,6 +32,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { severityRank, LINE_TOLERANCE_REPRODUCTION_WIDE } = require('./coordination');
 
 const VERDICTS = ['confirmed', 'refuted', 'cant-tell'];
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
@@ -118,4 +120,128 @@ function parseTiebreakReply(text) {
   };
 }
 
-module.exports = { findingId, parseTiebreakReply, VERDICTS, SEVERITIES };
+// ---- resolveTiebreak (#3945 Task 2) ----
+//
+// resolveTiebreak(finding, replyText, { readFile, now }) -> { id, outcome,
+// severity, evidence, recommendation, reason, logLine, listInConsole, parse }.
+// Fail toward scrutiny (IL-50): only a literal confirmed/refuted verdict, status
+// DONE, and evidence verified against the file leave can't-tell. outcome is
+// 'confirmed' | 'drop' | 'digest' | 'console'; digest/console are can't-tell,
+// split by the higher of the reporter's and tiebreak's severities (low/info ->
+// digest, medium+ -> console; neither known -> medium).
+
+function knownSeverity(s) {
+  if (typeof s !== 'string') return null;
+  const v = s.trim().toLowerCase();
+  return SEVERITIES.includes(v) ? v : null;
+}
+
+function higher(a, b) {
+  if (a && b) return severityRank(a) >= severityRank(b) ? a : b;
+  return a || b || null;
+}
+
+function lower(a, b) {
+  if (a && b) return severityRank(a) <= severityRank(b) ? a : b;
+  return a || b || null;
+}
+
+function reporterSeverityOf(finding) {
+  if (finding.kind === 'contested' && Array.isArray(finding.positions)) {
+    const known = finding.positions.map((p) => knownSeverity(p && p.severity)).filter(Boolean);
+    if (known.length > 0) return known.reduce((a, b) => higher(a, b));
+  }
+  return knownSeverity(finding.reporterSeverity);
+}
+
+// An integer, a numeric string, or "a-b" resolves to its first number; anything
+// else (or a number below 1) is null.
+function firstLine(raw) {
+  if (typeof raw === 'number') return Number.isInteger(raw) && raw >= 1 ? raw : null;
+  if (typeof raw !== 'string') return null;
+  const m = /^\s*(\d+)(?:\s*[-–—]\s*\d+)?\s*$/.exec(raw);
+  const n = m ? Number(m[1]) : null;
+  return n !== null && n >= 1 ? n : null;
+}
+
+const squash = (s) => s.replace(/\s+/g, ' ').trim();
+
+// Returns null when the evidence checks out against the file, else the reason.
+function evidenceProblem(evidence, finding, line, readFile) {
+  if (evidence.path !== finding.path) return 'evidence-path-mismatch';
+  if (typeof readFile !== 'function') return 'evidence-unverified';
+  let text;
+  try { text = readFile(finding.path); } catch { return 'evidence-unverified'; }
+  if (typeof text !== 'string') return 'evidence-unverified';
+  const lines = text.split(/\r?\n/);
+  if (lines[lines.length - 1] === '') lines.pop();
+  if (evidence.line > lines.length) return 'evidence-unverified';
+  const lo = Math.max(1, line - LINE_TOLERANCE_REPRODUCTION_WIDE);
+  const hi = Math.min(lines.length, line + LINE_TOLERANCE_REPRODUCTION_WIDE);
+  const window = squash(lines.slice(lo - 1, hi).join(' '));
+  return window.includes(squash(evidence.quote)) ? null : 'evidence-unverified';
+}
+
+function stamp(now) {
+  const d = now instanceof Date ? now : new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+// resolve.js supersedes a STAGED line on a later AUTO line carrying the
+// case-sensitive word Confirmed; a quote, lens, or path that happens to contain
+// it must never make a non-confirmed line do that.
+function neutralize(text) {
+  return text.replace(/\bConfirmed\b/g, 'confirmed');
+}
+
+function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
+  const parsed = parseTiebreakReply(replyText);
+  const id = findingId(finding);
+  const t = stamp(now);
+  const line = firstLine(finding.line);
+  const shownLine = line !== null ? line : String(finding.line ?? 'unknown');
+  const reporterSev = reporterSeverityOf(finding);
+  const tiebreakSev = parsed.severity;
+  const where = `lens "${finding.lens}" finding ${finding.path}:${shownLine}`;
+  const result = (fields) => ({
+    id, evidence: null, recommendation: parsed.recommendation, listInConsole: false, parse: parsed.parse, ...fields,
+  });
+
+  // Why this cannot be a confirmed/drop, in the order the causes are checked.
+  let reason;
+  if (parsed.parse === 'could-not-parse') reason = 'could-not-parse';
+  else if (parsed.status !== 'DONE') reason = `status:${parsed.status}`;
+  else if (parsed.verdict === 'cant-tell') reason = 'verdict:cant-tell';
+  else if (!parsed.evidence) reason = 'no-evidence';
+  else if (line === null) reason = 'no-line';
+  else reason = evidenceProblem(parsed.evidence, finding, line, readFile);
+
+  if (reason) {
+    const sev = higher(reporterSev, tiebreakSev) || 'medium';
+    const outcome = severityRank(sev) >= severityRank('medium') ? 'console' : 'digest';
+    const text = outcome === 'console'
+      ? `STAGED ${t} — Tiebreak tiebreak:${id}: ${where} console: ${reason}. Severity: ${sev}. Recommendation: ${parsed.recommendation ?? 'none'}. Reversibility: high.`
+      : `AUTO ${t} — Tiebreak tiebreak:${id}: ${where} digested: ${reason}. Severity: ${sev}. Reversibility: high.`;
+    return result({ outcome, severity: sev, reason, logLine: neutralize(text) });
+  }
+
+  const ev = parsed.evidence;
+  if (parsed.verdict === 'confirmed') {
+    return result({
+      outcome: 'confirmed',
+      severity: lower(reporterSev, tiebreakSev) || 'medium',
+      evidence: ev,
+      reason: 'confirmed by tiebreak',
+      logLine: `AUTO ${t} — Reproduction: ${where} confirmed by tiebreak:${id}. Confirmed. Reversibility: high.`,
+    });
+  }
+  const sev = higher(reporterSev, tiebreakSev) || 'medium';
+  const text = `AUTO ${t} — Tiebreak tiebreak:${id}: ${where} dropped: refuted by tiebreak. Evidence: ${ev.path}:${ev.line} "${ev.quote}". Severity: ${sev}. Reversibility: high.`;
+  return result({
+    outcome: 'drop', severity: sev, evidence: ev, reason: 'refuted by tiebreak',
+    listInConsole: sev === 'high' || sev === 'critical', logLine: neutralize(text),
+  });
+}
+
+module.exports = { findingId, parseTiebreakReply, resolveTiebreak, VERDICTS, SEVERITIES };
