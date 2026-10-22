@@ -19,6 +19,7 @@ When **all** of the following hold, render the compact block below instead of th
 **Review effort:** {tier} ({derivation source, same format as the full template's Review effort line})
 **Status:** Spec compliance {met | skipped — fast-lane | n/a — no spec} · Tests pass · QA {status} · Findings 0 · Hindsight clean · Simplification none needed · Visual {status, one word} · Design Quality {skipped ({reason}) | 0 findings} · Fan-out leftovers 0
 {only when 3j printed a table:} **Skill load delta:** {N} entry point(s) moved (a grouped `{count} entries:` row counts as {count}) — largest ΔClosure {signed bytes} on {entry, or a grouped row's first name and "+{count−1} more"}
+{only when a lens fell back to single-read coverage — `step3-lens-dispatch.md`'s partner-died paragraph:} **Coverage caveat:** {one line per affected lens}
 
 ### Key Learnings
 {1-3 insights, or "No key learnings — straightforward review."}
@@ -35,6 +36,7 @@ The compact form never suppresses information, only empty scaffolding: if any se
 ## Review: {spec number or description}
 
 **Review effort:** {tier} (derived from {explicit argument | record labels: risk:{x} × size:{y} | diff heuristic: {reasoning}})
+{only when a lens fell back to single-read coverage — `step3-lens-dispatch.md`'s partner-died paragraph:} **Coverage caveat:** {one line per affected lens}
 
 ### Spec Compliance (spec-based only)
 | Deliverable | Status |

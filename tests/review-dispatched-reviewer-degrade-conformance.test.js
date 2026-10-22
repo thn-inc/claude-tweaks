@@ -87,3 +87,81 @@ test('removing the partner-died paragraph turns the AC2.1 pin red', () => {
   assert.notEqual(without, text, 'anchor text for the partner-died paragraph not found — proof cannot discriminate');
   assert.notDeepEqual(partnerDiedMissing(without), [], 'removing the paragraph must turn the pin red');
 });
+
+// The caveat's render slots (#3817): the summary template (compact + full), the PR verdict comment, and
+// dispatch's task-prompt item 7 all cite the partner-died paragraph instead of restating its line shape.
+const SUMMARY_TEMPLATE = path.join(SKILLS, 'review', 'review-summary-template.md');
+const CODE_MODE_STEPS = path.join(SKILLS, 'review', 'code-mode-steps.md');
+const TASK_PROMPT = path.join(SKILLS, 'dispatch', 'task-prompt.md');
+const RESTATED_TAIL = 'single-read coverage. Reversibility';
+
+const SLOT = [
+  [/\*\*Coverage caveat:\*\*/, 'the form renders a "**Coverage caveat:**" slot'],
+  [/`step3-lens-dispatch\.md`'s partner-died paragraph:\}/, "the slot's condition cites step3-lens-dispatch.md's partner-died paragraph"],
+];
+const slotMissing = missingFactsOf(SLOT);
+
+function summaryForms(text) {
+  const split = text.indexOf('## Full template');
+  assert.notEqual(split, -1, 'review-summary-template.md lost its "## Full template" heading');
+  return { compact: text.slice(0, split), full: text.slice(split) };
+}
+
+test('summary template carries a Coverage caveat slot in the compact and full forms (#3817)', () => {
+  const { compact, full } = summaryForms(readText(SUMMARY_TEMPLATE));
+  assert.deepEqual(slotMissing(compact), [], 'the compact form must carry the Coverage caveat slot (#3817)');
+  assert.deepEqual(slotMissing(full), [], 'the full template must carry the Coverage caveat slot (#3817)');
+  assert.ok(!compact.includes(RESTATED_TAIL), 'the compact form must cite the degrade line shape, not restate it (#3817)');
+  assert.ok(!full.includes(RESTATED_TAIL), 'the full template must cite the degrade line shape, not restate it (#3817)');
+});
+
+test('the summary slot assertions can go red', () => {
+  const { compact, full } = summaryForms(readText(SUMMARY_TEMPLATE));
+  assertEachPatternGoesRed(compact, SLOT, slotMissing);
+  assertEachPatternGoesRed(full, SLOT, slotMissing);
+});
+
+const VERDICT_PREFIX = '**Verdict comment (';
+const VERDICT_COPY = [[/Coverage caveat:\*\* line verbatim/, "the verdict comment copies the summary's Coverage caveat line verbatim"]];
+const verdictMissing = missingFactsOf(VERDICT_COPY);
+
+function verdictParagraph(text) {
+  const start = text.indexOf(VERDICT_PREFIX);
+  assert.notEqual(start, -1, 'code-mode-steps.md lost its "**Verdict comment (" paragraph');
+  const end = text.indexOf('\n\n', start);
+  assert.notEqual(end, -1, 'no blank line follows the Verdict comment paragraph — its boundary is unknown');
+  return text.slice(start, end);
+}
+
+test("verdict comment copies the summary's Coverage caveat line (#3817)", () => {
+  assert.deepEqual(verdictMissing(verdictParagraph(readText(CODE_MODE_STEPS))), [], 'the verdict comment must copy the Coverage caveat line (#3817)');
+});
+
+test('the verdict-comment assertion can go red', () => {
+  assertEachPatternGoesRed(verdictParagraph(readText(CODE_MODE_STEPS)), VERDICT_COPY, verdictMissing);
+});
+
+// Copied from tests/foreground-execution-instruction.test.js (item7Block): item 7 runs to the next item or heading.
+function item7Block(text) {
+  const start = text.indexOf('7. **Async-wait discipline**');
+  assert.notEqual(start, -1, 'task-prompt.md lost its item 7 "Async-wait discipline" heading');
+  const next = text.slice(start + 1).search(/\n(?:8\. |## )/);
+  assert.notEqual(next, -1, 'task-prompt.md: no "8. " item or "## " heading follows item 7 — its boundary is unknown');
+  return text.slice(start, start + 1 + next);
+}
+
+const ITEM7_XREF = [
+  [/`\/claude-tweaks:review`/, 'item 7 names the `/claude-tweaks:review` lens unit'],
+  [/`review\/step3-lens-dispatch\.md`/, "item 7 cites review/step3-lens-dispatch.md's partner-died paragraph"],
+];
+const item7XrefMissing = missingFactsOf(ITEM7_XREF);
+
+test('task-prompt item 7 cross-references the review degrade (#3817)', () => {
+  const item7 = item7Block(readText(TASK_PROMPT));
+  assert.deepEqual(item7XrefMissing(item7), [], 'item 7 must point a review lens unit at the partner-died degrade (#3817)');
+  assert.ok(!item7.includes(RESTATED_TAIL), 'item 7 must cite the degrade line shape, not restate it (#3817)');
+});
+
+test('the item-7 cross-reference assertions can go red', () => {
+  assertEachPatternGoesRed(item7Block(readText(TASK_PROMPT)), ITEM7_XREF, item7XrefMissing);
+});

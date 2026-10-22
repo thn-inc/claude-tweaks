@@ -58,7 +58,9 @@ that needs no resolution, only inclusion:
    notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not
    outstanding: handle it per the dispatching skill's own status handling where one exists
    (`superpowers:subagent-driven-development`'s BLOCKED handling), otherwise judge that unit
-   yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a
+   yourself. For a `/claude-tweaks:review` lens unit, that downgrade is the single-read coverage
+   line and caveat in `review/step3-lens-dispatch.md`'s partner-died paragraph. Self-judging is for
+   a read-only unit (a lens, a single read, a judge); a
    write-capable child (one that edits files) still silent at the bound is never redone in-session,
    because an abandoned child keeps running and may still write — stop, and end with
    `STATUS: BLOCKED` naming that child and its unit. A wait call that is blocked or fails is not a
