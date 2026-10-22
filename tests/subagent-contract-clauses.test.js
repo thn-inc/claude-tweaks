@@ -362,6 +362,23 @@ test('lens dispatch Scratch path cites the one-plain-command rule and scratch-wo
   assertScratchPathCitesRule(scratchPathParagraph(lens));
 });
 
+// #3876: the lens Scratch path also forbids a `;` sequence and a shell variable carried
+// between calls — #3809's lens agents were refused on `S=… && mkdir -p "$S" && cat > "$S/probe.js"`.
+test('lens dispatch Scratch path forbids a ; sequence and a carried shell variable (#3876)', () => {
+  const paragraph = scratchPathParagraph(
+    readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-lens-dispatch.md')),
+  );
+  assert.ok(paragraph.includes('nor a `;` sequence'), 'the lens Scratch path must forbid a ; sequence (#3876)');
+  assert.ok(
+    paragraph.includes('no shell variable carried between calls'),
+    'the lens Scratch path must forbid carrying a shell variable between calls (#3876)',
+  );
+  assert.ok(
+    paragraph.includes('literal absolute path'),
+    'the lens Scratch path must require a literal absolute path in every call (#3876)',
+  );
+});
+
 test('go-red control: the pre-#3675 Scratch path fails the citation assertion (#3675)', () => {
   // Frozen tail of the pre-#3675 paragraph: shell-safe recipe present, no contract citation.
   const OLD =
