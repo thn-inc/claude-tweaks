@@ -94,6 +94,8 @@ Possible QA statuses (the four canonical values from qa-reporting.md's Status de
 {only when a verdict was read inline — `step3-tiebreak.md`'s Dispatched reviewer section:} **Tiebreak caveat:** {n} verdict(s) read inline by the reviewer, not an independent agent ({reason, e.g. no `Agent` tool, timed out})
 {standalone review only — `step3-tiebreak.md`'s Standalone review section: the verdict lines, then each can't-tell finding of severity medium or higher, with the tiebreak's recommendation:}
 - {path}:{line} — {claim} ({severity}) — Recommendation: {file | drop} — {reason}
+{standalone review only, per finding whose `resolve-tiebreak` exited non-zero:}
+- {path}:{line} — {claim} — no verdict (resolve-tiebreak exited {exit})
 
 ### Fan-out leftovers
 {None | N untracked file(s) left by the review fan-out, reported (not deleted) by the post-fan-out sweep: {paths}; N new local listener(s) since the pre-dispatch snapshot, reported (not killed; ownership unattributed): {command}:{port}, …}

@@ -22,11 +22,13 @@ In a pipeline run (`$PIPELINE_RUN_DIR` set), write the entry set to the run's `r
 node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" write-findings "$PIPELINE_RUN_DIR" "{path-F}"
 ```
 
-Each entry is `{lens, path, line, claim, reporterSeverity, kind, positions?}` where `kind` is `unconfirmed` or `contested` — the shape is `plugin/bin/lib/tiebreak.js`'s. `lens` is the lens the finding's earlier STAGED line names, so the `#3772` key matches: `gap-sweep` for a gap-sweep finding, a contested entry's first position's lens, a multi-lens refutation candidate's first listed lens. Collapse each claim's whitespace and line breaks to single spaces first — one multi-line claim fails the whole set. A non-zero exit stops this step: log `STAGED {HH:MM:SS} — Tiebreak: findings artifact not written ({exit}); {N} findings stay unconfirmed with no tiebreak verdict. Reversibility: high.` and run no dispatch. The line lists under the Review Console's Low-confidence section, and the earlier per-finding STAGED lines stay as written. With no artifact the archive gate has nothing to enforce, so this line is the only signal.
+Each entry is `{lens, path, line, claim, reporterSeverity, kind, positions?}` where `kind` is `unconfirmed` or `contested` — the shape is `plugin/bin/lib/tiebreak.js`'s. `lens` is the lens the finding's earlier STAGED line names, so the `#3772` key matches: `gap-sweep` for a gap-sweep finding, a contested entry's first position's lens, a multi-lens refutation candidate's first listed lens. Collapse each claim's whitespace and line breaks to single spaces first — one multi-line claim fails the whole set. Exit 2 means one malformed entry, and stderr names its index: fix that entry against `buildFindingsArtifact`'s checks (`plugin/bin/lib/tiebreak.js`) and re-run once. Exit 3, or a second failure, stops this step: log, with its text written to a session-tmp file and passed through `log-decision.js --text-file` (never a `--text` argument), `STAGED {HH:MM:SS} — Tiebreak: findings artifact not written ({exit}); {N} findings stay unconfirmed with no tiebreak verdict. Reversibility: high.` and run no dispatch. The line lists under the Review Console's Low-confidence section, and the earlier per-finding STAGED lines stay as written. With no artifact the archive gate has nothing to enforce, so this line is the only signal.
 
 ## Dispatch
 
-One agent per entry, in parallel waves of **8**: dispatch a wave in one batch, wait for every agent of the wave to return, then start the next. Never reuse the reporting lens's agent or its reproduction partner — the tiebreak agent is a fresh run.
+One agent per entry, in parallel waves of **8**: dispatch a wave in one batch, wait for every agent of the wave to return, then start the next. Outside a dispatched reviewer, that wait follows `step3-lens-dispatch.md`'s hung single-read agent rule (its bounded wait and one `SendMessage` nudge); an agent still silent after that is a failed dispatch (`## Resolve and act` step 1). Never reuse the reporting lens's agent or its reproduction partner — the tiebreak agent is a fresh run.
+
+> **Parallel execution:** Dispatch each wave's tiebreak agents as parallel Task agents — each runs independently, sees only its own finding's allowlist, and returns the template's `Verdict:`/`Evidence:`/`Severity:`/`Recommendation:` reply, settled by `resolve-tiebreak`. Assemble results after all agents complete.
 
 After the last wave, re-run `step3-lens-dispatch.md`'s Post-fan-out untracked-file sweep against the same pre-dispatch listing — report-only, as there, logging only what the earlier sweep did not already report. Skip it when this step dispatched no agent (no entries, or every verdict read inline).
 
@@ -68,19 +70,21 @@ SCRATCH: {ctx-dir}/agent-scratch/{agent-id} — any probe script or fixture you 
 
 For each entry, once its agent has returned:
 
-1. Resolve three paths with one plain call, `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" F=review-{ctx-id}-tiebreak-{n}.json R=review-{ctx-id}-tiebreak-{n}-reply.txt T=review-{ctx-id}-tiebreak-{n}-text.txt` (`{n}` the entry's position in the set). `Write` the entry (as written to the artifact, `positions` included for a contested one) to `F` and the agent's reply to `R`; `T` is written in step 3. An empty, failed, timed-out (a dispatched reviewer takes the inline rung instead, see `## Dispatched reviewer`), or non-`DONE` dispatch is passed as an empty reply file — the resolver turns it into the can't-tell result, so every entry still gets exactly one verdict line. On a lens 3f vacuity finding, write a `confirmed` reply to `R` as an empty reply instead: a vacuity claim needs an executed run (`step3-lens-dispatch.md`'s lens 3f vacuity bullet), so it resolves can't-tell with its one verdict line; a `refuted` reply resolves as written.
+1. Resolve three paths with one plain call, `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" F=review-{ctx-id}-tiebreak-{n}.json R=review-{ctx-id}-tiebreak-{n}-reply.txt T=review-{ctx-id}-tiebreak-{n}-text.txt` (`{n}` the entry's position in the set). `Write` the entry (as written to the artifact, `positions` included for a contested one) to `F` and the agent's reply to `R`; `T` is written in step 3. An empty, failed, timed-out, or non-`DONE` dispatch (`BLOCKED`, `NEEDS_CONTEXT`, a session limit) is re-dispatched once as a fresh agent; only if that one fails too is it passed as an empty reply file (a dispatched reviewer takes the inline rung instead, see `## Dispatched reviewer`) — the resolver turns it into the can't-tell result, so every entry still gets exactly one verdict line. On a lens 3f vacuity finding, write a `confirmed` reply to `R` as an empty reply instead: a vacuity claim needs an executed run (`step3-lens-dispatch.md`'s lens 3f vacuity bullet), so it resolves can't-tell with its one verdict line; a `refuted` reply resolves as written.
 2. Run, with `{checkout under review}` the worktree or checkout the review reads (not the run dir):
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" resolve-tiebreak "{path-F}" "{path-R}" --root "{checkout under review}"
    ```
 
-   It prints JSON with `outcome`, `severity`, `recommendation`, `logStatus`, `logStep`, `logText`, and `listInConsole`. When `resolve-tiebreak` exits non-zero for an entry, never invent a verdict: log `STAGED {HH:MM:SS} — Tiebreak: lens "{lens}" finding {path}:{line} unconfirmed; resolve-tiebreak exited {exit}, no verdict. Reversibility: high.` That finding has no verdict line, so the archive gate refuses the run and surfaces it.
+   It prints JSON with `outcome`, `severity`, `recommendation`, `logLine`, `logStatus`, `logStep`, `logText`, and `listInConsole`. When `resolve-tiebreak` exits non-zero for an entry, never invent a verdict: log, through `--text-file` as step 3 does (the text written to `T`), `STAGED {HH:MM:SS} — Tiebreak: lens "{lens}" finding {path}:{line} unconfirmed; resolve-tiebreak exited {exit}, no verdict. Reversibility: high.` That finding has no verdict line, so the archive gate refuses the run and surfaces it.
 3. Log one line (a pipeline run only). `logText` can carry a verbatim source line — quotes, `$()`, backticks, backslashes — so it never goes on the command line: `Write` it, unchanged, to `T`, then pass `T`. `logStatus` and `logStep` are safe inline.
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status "{logStatus}" --step "{logStep}" --text-file "{path-T}" --reversibility high --section "/review"
    ```
+
+   A non-zero `log-decision.js` exit is retried once; if it still fails, do not act on `outcome`, and name the finding in the summary as having no verdict line, since the archive gate will refuse the run.
 
 4. Act on `outcome`:
    - `confirmed`: the finding enters Step 3 Routing at the returned `severity`, as an input `step3-routing.md`'s routing table lists.
@@ -94,7 +98,7 @@ Any reviewer-read verdict — a Direct-verification override, or an inline fallb
 
 ## Standalone review
 
-With no `$PIPELINE_RUN_DIR`, there is no `review-findings.json` and no `decisions.md` line. The verdict lines (`logLine`) go in the review report, in `review-summary-template.md`'s `### Tiebreak` section; an inline verdict's line also carries ` Mode: inline.`.
+With no `$PIPELINE_RUN_DIR`, there is no `review-findings.json` and no `decisions.md` line. The verdict lines (`logLine`) go in the review report, in `review-summary-template.md`'s `### Tiebreak` section; an inline verdict's line also carries ` Mode: inline.`. A finding whose `resolve-tiebreak` exited non-zero is listed there as `no verdict (resolve-tiebreak exited {exit})`.
 
 Can't-tell findings of severity medium or higher are listed in the closing output with the tiebreak's recommendation, in that same section; low can't-tell findings are listed in the report only, and nothing is staged.
 
@@ -105,7 +109,7 @@ When the reviewer is itself a dispatched agent (`/claude-tweaks:dispatch`'s seco
 Fallback ladder, per finding:
 
 1. Nested dispatch, collected with the keep-alive waits that rule bounds.
-2. For a finding whose agent is unavailable (no `Agent` tool) or times out at that rule's bound, the reviewer reads the live code, fills the same template, feeds its own reply to the resolver, and logs with ` Mode: inline.` — a documented loss of independence, named in a `Tiebreak caveat:` line (`review-summary-template.md`'s `### Tiebreak` section).
+2. For a finding whose agent is unavailable (no `Agent` tool), times out at that rule's bound, or fails again after `## Resolve and act` step 1's re-dispatch, the reviewer reads the live code, fills the same template, feeds its own reply to the resolver, and logs with ` Mode: inline.` — a documented loss of independence, named in a `Tiebreak caveat:` line (`review-summary-template.md`'s `### Tiebreak` section).
 
 An unavailable agent changes who judges, never whether a verdict exists, so marking every finding can't-tell is not an allowed fallback. The invariant is that every listed finding has its verdict line before the run's Review Console resolves.
 

@@ -1001,7 +1001,7 @@ const FIX_WAVE = [
   [templateTiebreakSection, /standalone review only[^\n]*medium or higher[^\n]*recommendation/, "F7 the template carries the standalone can't-tell >= medium list"],
   [compactForm, /nothing to judge, or every verdict was `confirmed` or `drop`, and no Tiebreak caveat applies/, 'F7 the compact form requires a tiebreak with nothing left open'],
   // F8: a dispatched reviewer's timeout takes the inline rung.
-  [tiebreakSection('Resolve and act'), /timed-out \(a dispatched reviewer takes the inline rung instead, see `## Dispatched reviewer`\)/, "F8 the timed-out empty-reply rule defers to the dispatched reviewer's inline rung"],
+  [tiebreakSection('Resolve and act'), /empty reply file \(a dispatched reviewer takes the inline rung instead, see `## Dispatched reviewer`\)/, "F8 the empty-reply rule defers to the dispatched reviewer's inline rung"],
   // F9: claims are collapsed before write-findings; a resolver failure never invents a verdict.
   [tiebreakSection('Findings artifact'), /Collapse each claim's whitespace and line breaks to single spaces/, 'F9 claims are collapsed before write-findings'],
   [tiebreakSection('Resolve and act'), /When `resolve-tiebreak` exits non-zero for an entry, never invent a verdict/, 'F9 a resolver failure never invents a verdict'],
@@ -1233,4 +1233,71 @@ test('each console-visibility and sweep re-run assertion can go red', () => {
     assert.notEqual(doctored[key], live[key], `anchor for "${expected}" vanished`);
     assert.deepEqual(residualProblems(doctored), [expected]);
   }
+});
+
+// --- Failure paths: every failing call has a stated next move, so no finding loses its verdict silently ---
+
+const AUTO_DECISION_LOG = path.join(SKILLS, '_shared', 'auto-decision-log.md');
+const COORDINATION_CLI = path.join(__dirname, '..', 'plugin', 'bin', 'review-coordination.js');
+const PLUGIN_STRUCTURE = path.join(__dirname, '..', 'docs', 'plugin-structure.md');
+const failurePathTexts = () => ({
+  ...liveTexts(),
+  coordination: coordinationText(),
+  adlog: readText(AUTO_DECISION_LOG),
+  cli: readText(COORDINATION_CLI),
+  structure: readText(PLUGIN_STRUCTURE),
+});
+const refutationStep5Of = (texts) => refutationStep5(texts.debate);
+const coordinationNoInlineLine = (texts) => lineStartingWith(texts.coordination, 'No outcome is "ask the user inline."');
+const statusSemantics = (texts) => sliceSection(texts.adlog, '\n## Status semantics\n', '\n## ');
+const refutationVerb = (texts) => sliceSection(texts.cli, "if (command === 'resolve-refutation')", "if (command === 'resolve-tiebreak')");
+const coordinationCliDocLine = (texts) => lineStartingWith(texts.structure, 'node plugin/bin/review-coordination.js');
+
+const FAILURE_PATHS = [
+  // The failure log lines carry branch text, so they ride --text-file.
+  [tiebreakSection('Findings artifact'), /passed through `log-decision\.js --text-file` \(never a `--text` argument\)/, 'the artifact-failure line is logged through --text-file'],
+  [tiebreakSection('Resolve and act'), /log, through `--text-file` as step 3 does/, 'the resolve-tiebreak failure line is logged through --text-file'],
+  // write-findings exit 2 is one fixable entry; only exit 3 or a second failure stops the step.
+  [tiebreakSection('Findings artifact'), /Exit 2 means one malformed entry, and stderr names its index/, 'write-findings exit 2 names one malformed entry'],
+  [tiebreakSection('Findings artifact'), /fix that entry against `buildFindingsArtifact`'s checks \(`plugin\/bin\/lib\/tiebreak\.js`\) and re-run once/, 'the entry is fixed against buildFindingsArtifact and re-run once'],
+  [tiebreakSection('Findings artifact'), /Exit 3, or a second failure, stops this step/, 'only exit 3 or a second failure stops the step'],
+  // A log-decision.js failure is retried once, then the outcome is not acted on.
+  [tiebreakSection('Resolve and act'), /A non-zero `log-decision\.js` exit is retried once/, 'a log-decision.js failure is retried once'],
+  [tiebreakSection('Resolve and act'), /if it still fails, do not act on `outcome`/, 'a second log-decision.js failure blocks acting on the outcome'],
+  [tiebreakSection('Resolve and act'), /name the finding in the summary as having no verdict line/, 'the unlogged finding is named in the summary'],
+  // A failed dispatch is re-dispatched once before it becomes an empty reply; a dispatched reviewer goes inline.
+  [tiebreakSection('Resolve and act'), /is re-dispatched once as a fresh agent/, 'a failed dispatch is re-dispatched once as a fresh agent'],
+  [tiebreakSection('Resolve and act'), /`BLOCKED`, `NEEDS_CONTEXT`, a session limit/, 'BLOCKED, NEEDS_CONTEXT and a session limit count as failed'],
+  [tiebreakSection('Resolve and act'), /only if that one fails too is it passed as an empty reply file/, 'only a failed re-dispatch becomes an empty reply'],
+  [tiebreakSection('Dispatched reviewer'), /or fails again after `## Resolve and act` step 1's re-dispatch/, 'a dispatched reviewer takes the inline rung for a failed agent too'],
+  // The wave wait is bounded, and the fan-out carries its Form B directive.
+  [tiebreakSection('Dispatch'), /`step3-lens-dispatch\.md`'s hung single-read agent rule \(its bounded wait and one `SendMessage` nudge\)/, "the wave wait cites the hung single-read agent rule's bound"],
+  [tiebreakSection('Dispatch'), /an agent still silent after that is a failed dispatch/, 'an agent silent past the bound is a failed dispatch'],
+  [tiebreakSection('Dispatch'), /> \*\*Parallel execution:\*\* Dispatch each wave's tiebreak agents as parallel Task agents — each runs independently[^\n]*Assemble results after all agents complete\./, 'the fan-out carries a Form B parallel-execution directive'],
+  // The printed fields include logLine; a standalone resolver failure is reported.
+  [tiebreakSection('Resolve and act'), /prints JSON with `outcome`, `severity`, `recommendation`, `logLine`/, 'the printed fields include logLine'],
+  [tiebreakSection('Standalone review'), /no verdict \(resolve-tiebreak exited \{exit\}\)/, 'a standalone resolver failure is listed as no verdict'],
+  [templateTiebreakSection, /no verdict \(resolve-tiebreak exited \{exit\}\)/, 'the template carries the no-verdict row'],
+  // The refutation pass never treats a crashed resolver as a surviving finding.
+  [refutationStep5Of, /a non-zero `resolve-tiebreak` exit \(no `outcome`\) → the candidate is downgraded to `unconfirmed`/, 'a refutation resolver crash downgrades the candidate'],
+  [refutationStep5Of, /`\{cause\}` `resolve-tiebreak exited \{exit\}`/, 'the downgrade cause names the resolver exit'],
+  [refutationStep5Of, /never treats a crashed resolver as a surviving finding/, 'a crashed resolver never leaves a surviving finding'],
+  // Shared docs and the retired verb.
+  [coordinationNoInlineLine, /On `\/review` they first go to its tiebreak \(`review\/step3-tiebreak\.md`\)/, "/review's unconfirmed findings go to its tiebreak first"],
+  [coordinationNoInlineLine, /the caller's Review Console handles what is left/, 'the Review Console handles what the tiebreak leaves'],
+  [statusSemantics, /`STAGED` lines \(low-confidence, unconfirmed, contested, debate\) need no `staged\/` file[^\n]*`plugin\/bin\/lib\/console\/resolve\.js`'s `coordinationItems`/, "review's coordination STAGED lines need no staged file"],
+  [refutationVerb, /No skill prose invokes it since #3947/, 'resolve-refutation records that no skill prose invokes it'],
+  [refutationVerb, /remove it with `resolveRefutation` and its tests once #3950/, 'resolve-refutation records its removal condition'],
+  [coordinationCliDocLine, /`resolve-refutation` \(unused since #3947\)/, 'the command reference marks resolve-refutation unused'],
+];
+const failurePathsMissing = sectionFactsMissing(FAILURE_PATHS);
+
+test('every failure path in the tiebreak, the refutation pass and the shared docs has a stated next move', () => {
+  const texts = failurePathTexts();
+  for (const [pick, , fact] of FAILURE_PATHS) assert.notEqual(pick(texts), '', `region not found for "${fact}"`);
+  assert.deepEqual(failurePathsMissing(texts), []);
+});
+
+test('each failure-path fact can go red', () => {
+  assertEachSectionFactGoesRed(failurePathTexts(), FAILURE_PATHS, failurePathsMissing);
 });

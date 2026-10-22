@@ -162,6 +162,9 @@ function run(argv, deps = realDeps) {
     return 0;
   }
   if (command === 'resolve-refutation') {
+    // No skill prose invokes it since #3947, where refutation step 5 moved to resolve-tiebreak.
+    // Removal condition: remove it with `resolveRefutation` and its tests once #3950 decommissions
+    // the pre-tiebreak paths.
     if (rest.length !== 1) {
       deps.stderr('review-coordination.js: resolve-refutation takes exactly 1 verdict\n' + USAGE);
       return 2;
