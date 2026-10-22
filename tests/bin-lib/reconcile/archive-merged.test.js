@@ -4262,3 +4262,86 @@ test('classifyRunDir: kinds scoping restricts evaluation to exactly the requeste
   assert.equal(classifyRunDir({ dir, skipReason: 'no-worktree', kinds: ['structurally-stuck'] }).kind, 'structurally-stuck');
   assert.equal(isStructurallyStuck(dir, 'no-worktree'), true);
 });
+
+// #3945: decideArchiveCore's fifth parameter — the tiebreak coverage refusal.
+// It fires only where the function would otherwise return { action:'archive' },
+// so every earlier guard keeps its word.
+const TIEBREAK_MERGED_PR = { state: 'MERGED', closingIssuesReferences: [ref(5)] };
+const TIEBREAK_HINT = "re-run the review step's findings writer for this run, or delete review-findings.json if the run predates the tiebreak";
+
+test('decideArchiveCore refuses a listed finding with no verdict line (AC8.1)', () => {
+  const coverage = { artifactPresent: true, artifactValid: true, missing: ['spec-a/F-1', 'F-2'] };
+  const expected = { action: 'skip', reason: 'tiebreak-coverage-missing', missing: ['spec-a/F-1', 'F-2'], hint: TIEBREAK_HINT };
+  // Both of today's archive returns: the no-recordCheck one and the all-closed one.
+  assert.deepStrictEqual(decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, undefined, coverage), expected);
+  assert.deepStrictEqual(
+    decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, { records: [5], repoSlug: 'acme/w' }, coverage), expected,
+  );
+});
+
+test('decideArchiveCore refuses an invalid artifact with its own reason (AC8.1)', () => {
+  const coverage = { artifactPresent: true, artifactValid: false, missing: [] };
+  const expected = { action: 'skip', reason: 'tiebreak-artifact-invalid', hint: TIEBREAK_HINT };
+  assert.deepStrictEqual(decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, undefined, coverage), expected);
+  assert.deepStrictEqual(
+    decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, { records: [5], repoSlug: 'acme/w' }, coverage), expected,
+  );
+});
+
+test('decideArchiveCore archives when every listed finding has a line (AC8.1)', () => {
+  const coverage = { artifactPresent: true, artifactValid: true, missing: [] };
+  assert.deepStrictEqual(decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, undefined, coverage), { action: 'archive' });
+  assert.deepStrictEqual(
+    decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, { records: [5], repoSlug: 'acme/w' }, coverage), { action: 'archive' },
+  );
+});
+
+test('decideArchiveCore archives with no artifact exactly as before (AC8.1)', () => {
+  const table = [
+    ['gh-absent', 'resolved', false, undefined],
+    ['network-failure', 'resolved', false, undefined],
+    ['invalid-arguments', 'resolved', false, undefined],
+    ['pr-not-found', 'resolved', false, undefined],
+    [null, 'resolved', false, undefined],
+    [{ state: 'OPEN' }, 'resolved', false, undefined],
+    [{ state: 'CLOSED' }, 'resolved', false, undefined],
+    [TIEBREAK_MERGED_PR, 'unresolved', false, undefined],
+    [TIEBREAK_MERGED_PR, 'none', undefined, undefined],
+    [TIEBREAK_MERGED_PR, 'none', true, undefined],
+    [TIEBREAK_MERGED_PR, 'none', false, undefined],
+    [TIEBREAK_MERGED_PR, 'resolved', false, undefined],
+    [TIEBREAK_MERGED_PR, 'resolved', false, { records: [5], repoSlug: 'acme/w' }],
+    [TIEBREAK_MERGED_PR, 'resolved', false, { records: [5, 6], repoSlug: 'acme/w' }],
+    [TIEBREAK_MERGED_PR, 'resolved', false, { records: [5], repoSlug: null }],
+    [{ state: 'MERGED' }, 'resolved', false, { records: [5], repoSlug: 'acme/w' }],
+  ];
+  const noArtifact = { artifactPresent: false, artifactValid: true, missing: [] };
+  for (const [pr, consoleState, staged, check] of table) {
+    const label = JSON.stringify([pr, consoleState, staged, check]);
+    const before = decideArchiveCore(pr, consoleState, staged, check);
+    assert.deepStrictEqual(decideArchiveCore(pr, consoleState, staged, check, undefined), before, label);
+    assert.deepStrictEqual(decideArchiveCore(pr, consoleState, staged, check, noArtifact), before, label);
+  }
+});
+
+test('decideArchiveCore coverage is evaluated after the #3668/#3370/#3503 guards (AC8.1)', () => {
+  const missing = { artifactPresent: true, artifactValid: true, missing: ['F-1'] };
+  const invalid = { artifactPresent: true, artifactValid: false, missing: [] };
+  for (const coverage of [missing, invalid]) {
+    assert.deepStrictEqual(decideArchiveCore(TIEBREAK_MERGED_PR, 'unresolved', false, undefined, coverage),
+      { action: 'skip', reason: 'console-unresolved' });
+    assert.deepStrictEqual(decideArchiveCore(TIEBREAK_MERGED_PR, 'none', true, undefined, coverage),
+      { action: 'skip', reason: 'console-never-rendered-staged-pending' });
+    assert.deepStrictEqual(decideArchiveCore({ state: 'OPEN' }, 'resolved', false, undefined, coverage),
+      { action: 'skip', reason: 'pr-open' });
+    assert.deepStrictEqual(
+      decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, { records: [5, 6], repoSlug: 'acme/w' }, coverage),
+      { action: 'skip', reason: 'merged-partial', unclosed: [6] });
+    assert.deepStrictEqual(
+      decideArchiveCore({ state: 'MERGED' }, 'resolved', false, { records: [5], repoSlug: 'acme/w' }, coverage),
+      { action: 'skip', reason: 'closing-issues-unknown' });
+    assert.deepStrictEqual(
+      decideArchiveCore(TIEBREAK_MERGED_PR, 'resolved', false, { records: [5], repoSlug: null }, coverage),
+      { action: 'skip', reason: 'no-repo-slug' });
+  }
+});

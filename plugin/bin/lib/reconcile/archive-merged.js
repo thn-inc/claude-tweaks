@@ -27,6 +27,7 @@ const { repoSlugOf, prClosesIssue } = require('./release-merged');
 const { closeRunState } = require('../hooks/close-run-state');
 const { checkRunIntegrity, fallbackBranch } = require('../hooks/run-integrity');
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
+const { checkRunTiebreakCoverage } = require('../tiebreak');
 
 // Orphan case introduced by the dispatch/flow run-identity unification:
 // dispatch mints an empty, anchored run directory (mkdir only, no
@@ -338,7 +339,13 @@ function unclosedRecords(prState, records, repoSlug) {
 // TTL of its own to own — only the mtime/recency kinds do), and so does
 // archiveMergedRun (with real staged evidence, #3249); `decideArchive`
 // below is the thin 2-arg wrapper kept for its direct unit tests.
-function decideArchiveCore(prState, consoleState, hasStagedPending, recordCheck) {
+//
+// #3945: `coverage` (checkRunTiebreakCoverage's `{ artifactPresent,
+// artifactValid, missing }`) is evaluated only at the two points that would
+// otherwise return `{ action: 'archive' }`, so it sits after every guard above.
+// Absent, or `artifactPresent: false`, it is ignored — byte-identical to the
+// 4-arg decision. The skip carries its own recovery `hint`.
+function decideArchiveCore(prState, consoleState, hasStagedPending, recordCheck, coverage) {
   if (prState === 'gh-absent') return { action: 'skip', reason: 'gh-absent' };
   if (prState === 'network-failure') return { action: 'skip', reason: 'network-failure' };
   if (prState === 'invalid-arguments') return { action: 'skip', reason: 'invalid-arguments' };
@@ -373,12 +380,32 @@ function decideArchiveCore(prState, consoleState, hasStagedPending, recordCheck)
     if (hasStagedPending === true) return { action: 'skip', reason: 'console-never-rendered-staged-pending' };
     return { action: 'skip', reason: 'console-never-rendered' };
   }
-  if (!recordCheck || !recordCheck.records || recordCheck.records.length === 0) return { action: 'archive' };
+  if (!recordCheck || !recordCheck.records || recordCheck.records.length === 0) return archiveUnlessTiebreakGap(coverage);
   if (!recordCheck.repoSlug) return { action: 'skip', reason: 'no-repo-slug' };
   const unclosed = unclosedRecords(prState, recordCheck.records, recordCheck.repoSlug);
   if (unclosed === undefined) return { action: 'skip', reason: 'closing-issues-unknown' };
   if (unclosed.length > 0) return { action: 'skip', reason: 'merged-partial', unclosed };
+  return archiveUnlessTiebreakGap(coverage);
+}
+
+// #3945: the recovery text rides on the skip itself — decideArchiveCore's other
+// skips carry no hint, and archiveRunDir's refusal() hints are a different path.
+const TIEBREAK_COVERAGE_HINT = "re-run the review step's findings writer for this run, or delete review-findings.json if the run predates the tiebreak";
+
+// `{ action: 'archive' }` unless the run's findings artifact is present and
+// either unreadable/malformed or lists a finding with no verdict line.
+function archiveUnlessTiebreakGap(coverage) {
+  if (!coverage || !coverage.artifactPresent) return { action: 'archive' };
+  if (!coverage.artifactValid) return { action: 'skip', reason: 'tiebreak-artifact-invalid', hint: TIEBREAK_COVERAGE_HINT };
+  if (Array.isArray(coverage.missing) && coverage.missing.length > 0) {
+    return { action: 'skip', reason: 'tiebreak-coverage-missing', missing: coverage.missing, hint: TIEBREAK_COVERAGE_HINT };
+  }
   return { action: 'archive' };
+}
+
+// The run's coverage for a caller that holds a run dir; undefined without one.
+function runTiebreakCoverage(dir) {
+  return dir ? checkRunTiebreakCoverage(dir, listSpecDirs(dir)) : undefined;
 }
 
 function decideArchive(prState, consoleState) {
@@ -1643,7 +1670,7 @@ function classifyRunDir(ctx, now = Date.now()) {
         // path (archiveMergedRun) does not route through here — it calls
         // decideArchiveCore with hasStagedItems(dir) directly.
         const hasStagedPending = dir ? hasStagedItems(dir) : undefined;
-        const decision = decideArchiveCore(prState, consoleState, hasStagedPending);
+        const decision = decideArchiveCore(prState, consoleState, hasStagedPending, undefined, runTiebreakCoverage(dir));
         if (decision.action === 'archive') return { kind: 'merged', ttlMs: null, evidence: {} };
         return { kind: 'none', ttlMs: null, evidence: { skipReason: decision.reason } };
       }
@@ -1780,7 +1807,9 @@ function finishArchiveAttempt(cacheTarget, repoSlug, dir, dryRun, runner, archiv
 //      non-object answer keeps the record in U — fails closed.
 // An empty U' archives exactly as the fully-closed path does; otherwise the skip
 // stays merged-partial with U'.
-function settleMergedPartial(root, dir, prState, decision) {
+// #3945: a merged-partial skip never reached decideArchiveCore's coverage
+// check, so when settling turns it into an archive, `coverage` is checked here.
+function settleMergedPartial(root, dir, prState, decision, coverage) {
   if (decision.action !== 'skip' || decision.reason !== 'merged-partial') return decision;
   let unclosed = decision.unclosed;
   if (Array.isArray(prState.closingIssuesReferences) && prState.closingIssuesReferences.length === 0) {
@@ -1791,7 +1820,7 @@ function settleMergedPartial(root, dir, prState, decision) {
     const issue = resolveIssueStateByNumber(root, n);
     return !(issue && typeof issue === 'object' && issue.state === 'CLOSED');
   });
-  return unclosed.length > 0 ? { ...decision, unclosed } : { action: 'archive' };
+  return unclosed.length > 0 ? { ...decision, unclosed } : archiveUnlessTiebreakGap(coverage);
 }
 
 // #3503: `unclosed` rides along on a merged-partial skip only; every other
@@ -1806,8 +1835,9 @@ function skippedEntry(dir, { reason, unclosed }) {
 // console is resolved), settled by settleMergedPartial. Returns the skip
 // decision, or null to proceed.
 function byNumberRecordSkip(root, dir, byNumber, consoleState, records, repoSlug) {
+  const coverage = runTiebreakCoverage(dir);
   const decision = settleMergedPartial(
-    root, dir, byNumber, decideArchiveCore(byNumber, consoleState, false, { records, repoSlug }),
+    root, dir, byNumber, decideArchiveCore(byNumber, consoleState, false, { records, repoSlug }, coverage), coverage,
   );
   return decision.action === 'skip' ? decision : null;
 }
@@ -1851,8 +1881,9 @@ function archiveMergedRun({
   // production path pr-first-merge-post-merge.md Step 4.2's reconcile hits.
   // #3503: `recordCheck` (the run's required records) is omitted by the clean
   // sweep on purpose — see iterCleanRunDirs.
+  const coverage = runTiebreakCoverage(dir);
   const decision = settleMergedPartial(
-    root, dir, prState, decideArchiveCore(prState, consoleState, hasStagedItems(dir), recordCheck),
+    root, dir, prState, decideArchiveCore(prState, consoleState, hasStagedItems(dir), recordCheck, coverage), coverage,
   );
   if (decision.action === 'skip') {
     if (onSkip) onSkip(decision.reason);
