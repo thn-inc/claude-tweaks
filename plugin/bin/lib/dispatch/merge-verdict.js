@@ -33,7 +33,8 @@ const ACTION_RE = /^#(\d+) assess-agent-autonomy verdict ([a-z][a-z-]*[a-z])/;
 // (formatEntry's `{text}. Reversibility: {r}.` plus an optional lever suffix; `{r}` may carry one
 // parenthesized note, as `log-decision.js` accepts, except one containing `). `, so a tail riding
 // behind a note still reads as `unparsed` (#3870). A pass line with anything else after it — a
-// tail, or a write cut short — reads as `unparsed`.
+// tail, or a write cut short — reads as `unparsed`. A line cut immediately after a `).` inside a
+// nested-paren note can still confirm; that is tolerated because writes are atomic (writeFileAtomic).
 const PASS_ACTION_RE = /^#\d+ assess-agent-autonomy verdict auto-merge\. Reversibility: [a-z/]+(?: \((?:(?!\)\. ).)+\))?\.(?: \[lever: [^\]]*\])?$/;
 
 function verdictText(n, verdict = PASS_VERDICT) {

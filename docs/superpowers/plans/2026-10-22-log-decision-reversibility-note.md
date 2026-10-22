@@ -7,7 +7,7 @@
 
 **Goal:** Pin `log-decision.js`'s acceptance of an `enum (note)` reversibility value to the record's literal examples, and make every in-repo `decisions.md` reader that parses the `Reversibility:` field accept that trailing note.
 
-**Architecture:** The writer side already shipped in #2869 (`e91df452c`): `plugin/bin/log-decision.js:18`'s `REVERSIBILITY_RE` accepts `^(?:high|med|low|n/a)( \(.+\))?$` and `formatEntry` renders the value verbatim. This plan adds the record's literal AC values as CLI tests, widens the one reader that still rejects a noted value (`merge-verdict.js`'s `PASS_ACTION_RE`), and pins the calibration classifier's leading-token read.
+**Architecture:** The writer side already shipped in #2869 (`e91df452c`): `plugin/bin/log-decision.js:18`'s `REVERSIBILITY_RE` accepts `^(?:high|med|low|n/a)( \(.+\))?$` and `formatEntry` renders the value verbatim. The reader side that this plan widens, `merge-verdict.js`'s `PASS_ACTION_RE`, ships `(?: \((?:(?!\)\. ).)+\))?` for the note: it excludes `). ` so a tail behind a note fails closed. This plan adds the record's literal AC values as CLI tests, widens the one reader that still rejects a noted value (`merge-verdict.js`'s `PASS_ACTION_RE`), and pins the calibration classifier's leading-token read.
 
 **Tech Stack:** Node 18+, `node --test`, `node:assert`.
 
@@ -28,7 +28,7 @@ Derived from every `plugin/bin` module that references `decisions.md` (`grep -rl
 |---|---|---|---|
 | `plugin/bin/lib/dispatch/merge-verdict.js:35` `PASS_ACTION_RE` | value, end-anchored (`[a-z/]+\.`) | **rejects** — a noted pass line reads `unparsed` | Task 2: widen + test |
 | `plugin/bin/lib/calibration/decisions-classifier.js:12` `REVERSIBILITY_RE` | leading enum token | accepts | Task 3: pin the value read |
-| `plugin/bin/lib/log-decision/claim-log.js:26,60` `ACTION_RE`/`COMPLETE_RE` | value, end-anchored (`[^.\s][^.]*\.`) | accepts (period-free note) | none — pinned by `tests/bin-lib/log-decision/claim-log.test.js:78` (#2869); its sole writer, `plugin/bin/lib/claim-targets/claim-targets.js:122`, passes bare `high` |
+| `plugin/bin/lib/log-decision/claim-log.js:26,60` `ACTION_RE`/`COMPLETE_RE` | value, end-anchored (`[^.\s][^.]*?(?: \(.+\))?\.`, `COMPLETE_RE` only) | rejects a period-bearing note (`COMPLETE_RE`) | fix `COMPLETE_RE` + test (final-review fix wave); `ACTION_RE` unchanged — pinned by `tests/bin-lib/log-decision/claim-log.test.js:78` (#2869); its sole writer, `plugin/bin/lib/claim-targets/claim-targets.js:122`, passes bare `high` |
 | `pre-tool-use.js:1342`, `claim-log.js:35` (`\sReversibility:` split), `closing-tally.js:53`, `flow/pr-body.js:179`, `hooks/run-integrity.js`, `hooks/staged-inventory.js` | text **before** `Reversibility:` only | n/a — never read the value | none |
 
 ## Review Focus
@@ -123,7 +123,7 @@ Expected: FAIL after Step 1 — `AC3.1` reports `latest: 'unparsed'` (the `[a-z/
 
 - [ ] **Step 3: Widen `PASS_ACTION_RE` in `plugin/bin/lib/dispatch/merge-verdict.js`**
 
-Replace the reversibility segment `Reversibility: [a-z/]+\.` with `Reversibility: [a-z/]+(?: \(.+\))?\.` — the writer's own optional-note grammar (`plugin/bin/log-decision.js:18`, `( \(.+\))?`), so the anchor still matches the writer's whole emitted action. Extend the comment above it by one clause: the `{r}` may carry one parenthesized note, as `log-decision.js` accepts (#3870).
+Replace the reversibility segment `Reversibility: [a-z/]+\.` with `Reversibility: [a-z/]+(?: \((?:(?!\)\. ).)+\))?\.` — the writer's optional-note grammar (`plugin/bin/log-decision.js:18`, `( \(.+\))?`), with one exclusion: the note may not contain `). `, so a tail riding behind a note fails closed as `unparsed`. The anchor still matches the writer's whole emitted action. Extend the comment above it by one clause: the `{r}` may carry one parenthesized note, as `log-decision.js` accepts, except one containing `). ` (#3870).
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
