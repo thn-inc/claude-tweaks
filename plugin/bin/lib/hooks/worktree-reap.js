@@ -118,7 +118,8 @@ function parseWorktreeList(porcelain) {
 // the run's stamped worktree path is native (`D:\a\x\feat`), so a strict `===` never matched there.
 // Both sides go through pathImpl.resolve, not realpath: the prunable retry runs after a half-removed
 // worktree, which may no longer exist on disk to resolve. Case folds only on win32 (sep `\`), where
-// the filesystem is case-insensitive; posix stays exact.
+// the filesystem is case-insensitive; posix stays exact. Also serves the cwd lookups in
+// post-tool-use.js and context.js (#3811).
 function findWorktreeEntry(entries, target, pathImpl = path) {
   if (!target) return null;
   const key = (p) => {

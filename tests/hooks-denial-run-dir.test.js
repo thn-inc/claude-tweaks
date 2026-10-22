@@ -106,6 +106,7 @@ test('#3811: listedWorktreeForCwd matches win32 forward-slash porcelain against 
   const porcelain = 'worktree D:/a/x\nbranch refs/heads/trunk\n\nworktree D:/a/x/feat\nbranch refs/heads/feat\n\n';
   const deps = { runGit: () => ({ stdout: porcelain, failure: null }), pathImpl: path.win32 };
   assert.deepStrictEqual(ctxLib.listedWorktreeForCwd('D:\\a\\x\\feat', deps), { path: 'D:/a/x/feat', isMain: false });
+  assert.deepStrictEqual(ctxLib.listedWorktreeForCwd('d:\\a\\x\\feat\\', deps), { path: 'D:/a/x/feat', isMain: false });
   assert.deepStrictEqual(ctxLib.listedWorktreeForCwd('D:\\a\\x', deps), { path: 'D:/a/x', isMain: true });
   assert.strictEqual(ctxLib.listedWorktreeForCwd('D:\\elsewhere', deps), null);
   assert.strictEqual(ctxLib.listedWorktreeForCwd('', deps), null);

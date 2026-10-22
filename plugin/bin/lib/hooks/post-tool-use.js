@@ -233,7 +233,8 @@ function extractToolResponseText(toolResponse) {
 // Returns `{ path, isMain }` — `isMain` is true for the entry `git worktree list` always lists
 // first (the primary/main checkout, per git's own porcelain output convention) — or null when
 // `ctx.cwd` doesn't resolve to a listed worktree at all (not a git repo, or the `git worktree
-// list` call itself failed).
+// list` call itself failed). The match goes through worktree-reap.js's `findWorktreeEntry`, so a
+// win32 forward-slash porcelain path matches a backslash cwd (#3811).
 function resolveWorktreePathViaPorcelain(ctx, deps = {}) {
   const cwd = ctx.cwd;
   if (typeof cwd !== 'string' || !cwd) return null;
