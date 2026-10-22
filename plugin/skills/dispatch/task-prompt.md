@@ -172,8 +172,8 @@ Ephemeral dev server (only if this run's steps include a browser-driving step in
 separate call -- review or stories/QA): if this call starts an ephemeral worktree dev server (a
 background dev command on a free port, recorded in `ephemeral-server.txt`), start it detached --
 POSIX: launch under `setsid` (e.g. `setsid {dev command} > {log} 2>&1 &`); Windows: no detach
-primitive exists, record `detached: no` instead -- and append a fourth field to the recorded
-line (`detached:yes`/`detached:no`). Write this record via a plain Bash redirect (e.g. `printf '%s
+primitive exists, record `detached:no` instead -- and end the recorded line with a trailing
+`detached:yes`/`detached:no` token. Write this record via a plain Bash redirect (e.g. `printf '%s
 %s %s detached:%s\n' "$PID" "$PORT" "$WORKTREE_ROOT" "$DETACHED" > "{minted-run-dir}/ephemeral-server.txt"`),
 never the Edit/Write tool -- the run dir is anchored under the main checkout, and this worktree
 session's Edit/Write attempt against it is refused by the harness's own cross-checkout
@@ -337,12 +337,16 @@ without a tool call ends the turn.
 
 Ephemeral dev server liveness (only if `{minted-run-dir}/ephemeral-server.txt` exists): before
 the first browser-driving step, and again before any `trace stop`, verify the recorded pid
-answers on the recorded port. On a dead pid, start a fresh server the same way the plugin's own
-Ephemeral server start procedure does (re-resolve the port lease, launch detached, poll until
-reachable), rewrite `ephemeral-server.txt` via a plain Bash redirect (never the Edit/Write tool --
-same reason as the first call's own record write: this run dir is anchored under the main
-checkout, and Edit/Write against it is refused by the harness's cross-checkout write-pinning),
-and log `AUTO {time} -- ephemeral server restarted:
+answers on the recorded port (read the record by token, not whitespace position: the pid and
+port are its first two fields, and the worktree root is everything between the port and the
+trailing `detached:` token, since the path may contain spaces). When a restart rewrites the
+record, keep its `{pid} {port} {worktree-root} detached:{yes|no}` shape.
+On a dead pid, start a fresh server the same way the plugin's own Ephemeral server start procedure
+does (re-resolve the port lease, launch detached, poll until reachable), rewrite
+`ephemeral-server.txt` via a plain Bash redirect (never the Edit/Write tool -- same reason as the
+first call's own record write: this run dir is anchored under the main checkout, and Edit/Write
+against it is refused by the harness's cross-checkout write-pinning), and log
+`AUTO {time} -- ephemeral server restarted:
 recorded pid {old} dead, new pid {new} on port {port}`. `{minted-run-dir}` is the run's
 server-record location for a bundle too -- the parent run dir `/flow` exports as
 `MULTISPEC_PARENT_DIR`, never a `spec-{N}/` subdirectory.

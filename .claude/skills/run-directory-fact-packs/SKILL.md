@@ -75,7 +75,13 @@ Read them before writing a fourth.
   still writes the pack file, and that file now holds only the one probe — so a `--print` run
   replaces an existing full pack with a one-probe subset, exactly as `--only` does. Call it only
   when the pack file is absent, or accept that later readers fall back per the absent-field rule
-  below. An unknown probe name, or combining it with `--only`, is a usage error (exit 2).
+  below — or redirect it with `--json` to a probe-named sibling file, so `wrap-up-pack.json` keeps
+  its other probes. `--print ledger --json "{run-dir}/wrap-up-pack-ledger.json"` is that form, and
+  it is the canonical "this run's ledger" resolver for skills outside wrap-up (#3687,
+  `plugin/skills/_shared/ledger-format.md`'s resolution rule: `value.files` are this run's
+  ledgers, `value.unattributedFiles` the inherited ones); cite that rule rather than re-deriving a
+  `docs/plans/*-ledger.md` glob. An unknown probe name, or combining it with `--only`, is a usage
+  error (exit 2).
 - **A pack proposes; it never decides.** Any field an engine or a forge will later own — a version,
   a merge state, a PR number — is labelled a *proposal* in the consumer's prose, is re-read from
   that engine after the engine acts, and the reconciliation is written **once**, at the consumer,

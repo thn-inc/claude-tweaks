@@ -130,8 +130,8 @@ bypasses Phase 4's execution step, which is where item 2 (Open items ledger) nor
 re-implement it here, the same way acceptance labeling above is re-implemented rather than
 skipped. Phase 3's ledger gate has already confirmed zero `open` rows by the time this branch is
 reached (`/review` passing is itself gated on that), so item 2's own stated precondition is
-satisfied by construction — no re-check needed here. Locate this run's ledger file in the
-worktree and, when one exists, delete it and commit that deletion **before** the merge call below
+satisfied by construction — no re-check needed here. Locate this run's ledger per `_shared/ledger-format.md`'s resolution rule
+and, when one exists, delete it and commit that deletion **before** the merge call below
 so it lands inside the same merge (`local-merge`) or the same PR (`pr-first`) that closes the
 record — never as a trailing, separate commit the merge could omit. This runs regardless of
 `integration-model` and regardless of which branch below resolves `{worktree-path}` for its own
@@ -142,12 +142,26 @@ as before the `local-merge` branch's own later resolution:
 
 ```bash
 WORKTREE_PATH=$(node -e "console.log(require('$RUN_DIR/run-state.json').worktree)")
-LEDGER_FILE=$(git -C "$WORKTREE_PATH" ls-files "docs/plans/*-record-{n}-ledger.md")
-if [ -n "$LEDGER_FILE" ]; then
-  git -C "$WORKTREE_PATH" rm "$LEDGER_FILE"
-  git -C "$WORKTREE_PATH" commit -m "Wrap-up: delete resolved open items ledger for #{n} — auto-merge short-circuit"
-fi
+node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" delete-ledger --run "$RUN_DIR"
 ```
+
+This is a delete, so it takes the rule's writer branch: `delete-ledger` resolves through
+`bin/lib/wrap-up/ledger-write.js`'s `resolveLedgerPath` — ownership-aware, never a glob, failing
+closed on a ledger it cannot attribute to this run. Handle its printed report exactly as
+`cleanup-procedures.md`'s Item 2 paragraph does (the verb always exits 0 — read the report, not
+the exit code). On `deleted ledger {path}`, take `{path}` as `LEDGER_FILE` and test it with
+`git -C "$WORKTREE_PATH" ls-files --error-unmatch -- "$LEDGER_FILE"` (the verb has already unlinked the
+file, but a tracked path stays in the index, so exit 0 means tracked). Only a tracked
+`docs/plans/` path gets the deletion staged and committed; a run-dir `ledger.md` is gitignored and
+an untracked `docs/plans/` file has nothing in the index — `git rm` would fail, so commit nothing
+for either:
+
+```bash
+git -C "$WORKTREE_PATH" rm "$LEDGER_FILE"
+git -C "$WORKTREE_PATH" commit -m "Wrap-up: delete resolved open items ledger for #{n} — auto-merge short-circuit"
+```
+
+Every other report except `not found` leaves the ledger on disk: commit nothing and log one `SKIP` line via `log-decision.js` naming the report.
 
 **`integration-model: pr-first` only — push this commit now**, its own Bash call: `gh pr merge`
 below merges the PR's remote head, not this worktree's local state, so a commit left unpushed
@@ -161,12 +175,12 @@ git -C "$WORKTREE_PATH" push origin {branch}
 `{branch}` straight out of the worktree's local refs (`git merge --no-ff {branch}`), so this
 commit reaches it without ever touching `origin`.
 
-No ledger file for this run (a record whose build/test/review never appended an item) is not an
+A `not found` report (a record whose build/test/review never appended an item) is not an
 error — skip silently, there is nothing to delete. A ledger file that still carries a non-`open`
 row needing more than deletion (there is none, by the Phase 3 precondition above) is out of scope
 for this step; it only ever deletes, per item 2's own "Delete via `/ledger`'s delete operation"
-text — it does not resolve or edit rows. Log to `decisions.md`:
-`AUTO {time} — Fast-lane auto-merge: deleted resolved ledger {path} for #{n} before merge. Reversibility: high (git revert restores the file).` — or, when no file existed, omit this line entirely rather than logging a no-op.
+text — it does not resolve or edit rows. On a `deleted ledger {path}` report, log to `decisions.md`:
+`AUTO {time} — Fast-lane auto-merge: deleted resolved ledger {path} for #{n} before merge. Reversibility: high (git revert restores a committed docs/plans ledger; a gitignored run-dir ledger is not restorable).` — for every other report omit this line: `not found` is a no-op and the rest are logged as above.
 
 **Dispatch-call branch — check this before merging anything.** The question is whether *this
 call* is one of dispatch's own Task() calls: cwd-pinned to the worktree it inherited, with no path

@@ -31,8 +31,8 @@ Manage the open items ledger that tracks findings, operational tasks, and observ
 | Argument | Behavior |
 |----------|----------|
 | *(none)* | Show current ledger status — counts by phase and status |
-| `resolve` | Run the nothing-left-behind gate on the most recent ledger |
-| `resolve {feature-name}` | Run the nothing-left-behind gate on the ledger matching `{feature-name}`, instead of defaulting to the most recent one |
+| `resolve` | Run the nothing-left-behind gate on this run's ledger (the most recent `docs/plans` ledger only when no run dir resolves) |
+| `resolve {feature-name}` | Run the nothing-left-behind gate on the ledger matching `{feature-name}`, instead of defaulting to this run's |
 | `{feature-name}` | Show ledger for a specific feature |
 
 ## Ledger File Format
@@ -113,7 +113,7 @@ Only delete when the resolve gate has passed — all items must have terminal st
 
 > **Parallel execution:** Use parallel tool calls aggressively — all `Glob`/`Read` operations across the matched ledger files are independent and should run concurrently.
 
-1. Find active ledger files: glob `docs/plans/*-ledger.md`. When a run dir resolves for this invocation (`$PIPELINE_RUN_DIR`, or the most-recent-matching run), also check `{run-dir}/ledger.md` — per `_shared/ledger-format.md`'s Location section's resolution rule, include it in the listing when it exists. With no run dir at all, the glob alone is the complete listing.
+1. Find the ledgers: when a run dir resolves for this invocation (`$PIPELINE_RUN_DIR`, or the most-recent-matching run), resolve this run's own per `_shared/ledger-format.md`'s resolution rule and list it first, marked as this run's; then list every other ledger file — the probe's `value.unattributedFiles`, or on the rule's fallback the remaining `docs/plans/*-ledger.md` matches — as other runs' ledgers, never as this run's. With no run dir at all, the `docs/plans/*-ledger.md` glob is the complete listing (the rule's no-run-dir fallback).
 2. For each ledger, show:
    ```
    ## {ledger name}
@@ -123,14 +123,14 @@ Only delete when the resolve gate has passed — all items must have terminal st
 
 ### `/claude-tweaks:ledger {feature-name}`
 
-1. Glob `docs/plans/*-ledger.md`, matching `{feature-name}` against each file's `{feature}` slug (case-insensitive substring match — e.g. `auth` matches `2026-01-15-auth-refactor-ledger.md`). When a run dir resolves for this invocation, also check `{run-dir}/ledger.md` for existence per `_shared/ledger-format.md`'s Location section's resolution rule, and include it in the match set. With no run dir at all, the glob alone is the complete match set.
+1. Match `{feature-name}` against each ledger file's `{feature}` slug (case-insensitive substring match — e.g. `auth` matches `2026-01-15-auth-refactor-ledger.md`): this run's ledger per `_shared/ledger-format.md`'s resolution rule (a run-dir `ledger.md` carries no slug and is always in the match set), plus every other `docs/plans/*-ledger.md` file — a by-name lookup the user directs, so inherited ledgers are candidates here, labeled as other runs'. With no run dir at all, the glob alone is the complete match set (the rule's no-run-dir fallback).
 2. If exactly one file matches, show its full item table
 3. If multiple files match, list all matches (with their dates) and ask the user which one they mean
-4. If no file matches, report `No ledger found for "{feature-name}"` and list the currently active ledgers (same glob as the no-arguments form) so the user can retry with a correct name
+4. If no file matches, report `No ledger found for "{feature-name}"` and list the currently active ledgers (same listing as the no-arguments form) so the user can retry with a correct name
 
 ### `/claude-tweaks:ledger resolve`
 
-1. Find the active ledger: when a run dir resolves for this invocation and `{run-dir}/ledger.md` exists (per `_shared/ledger-format.md`'s Location section's resolution rule), that is the active ledger — a `{feature-name}` argument is not applicable to a single run-dir-scoped file. Otherwise, resolve against `docs/plans/*-ledger.md` the same way the `{feature-name}` form does above: if a `{feature-name}` is given (`resolve {feature-name}`), match it (no match → report `No ledger found for "{feature-name}"` and list the currently active ledgers instead of guessing); otherwise default to the most recent `docs/plans/*-ledger.md`.
+1. Find the ledger: a `{feature-name}` (`resolve {feature-name}`) is an explicit choice — match it the same way the `{feature-name}` form does above (no match → report `No ledger found for "{feature-name}"` and list the currently active ledgers instead of guessing). Without one, when a run dir resolves for this invocation, the active ledger is this run's per `_shared/ledger-format.md`'s resolution rule — when the rule finds none, report `No ledger found for this run` rather than resolving another run's, and when its probe fails, report the probe error and stop: the gate flips rows, so it never takes the rule's fallback. With no run dir at all, default to the most recent `docs/plans/*-ledger.md` (the rule's no-run-dir fallback).
 2. Run the resolve gate procedure
 3. Present results
 

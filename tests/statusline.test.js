@@ -257,14 +257,21 @@ test('renderProject: falls back to explicit fallbackCwd when nothing else availa
 });
 
 test('renderProject: percent-encodes spaces in the file:// link (real project dirs contain them)', () => {
-  const out = sl.renderProject({ workspace: { project_dir: '/Users/x/Code Workspaces/my-proj' } });
-  assert.ok(out.includes('file:///Users/x/Code%20Workspaces/my-proj/'), `expected encoded file URL: ${out}`);
+  const dir = '/Users/x/Code Workspaces/my-proj';
+  const out = sl.renderProject({ workspace: { project_dir: dir } });
+  assert.strictEqual(out, linkedName(dir), `expected derived file URL: ${out}`);
+  // Literal fragment, independent of the derivation: a raw space must never reach the link.
+  assert.ok(out.includes('Code%20Workspaces'), `expected encoded space in file URL: ${out}`);
   assert.strictEqual(stripLinks(out), 'my-proj');
 });
 
 test('renderProject: the file:// link ends with a trailing slash (opens the folder, not a reveal in its parent)', () => {
-  const out = sl.renderProject({ workspace: { project_dir: '/Users/x/Code/claude-tweaks' } });
-  assert.ok(out.includes('file:///Users/x/Code/claude-tweaks/\x07'), `expected trailing slash before terminator: ${out}`);
+  const dir = '/Users/x/Code/claude-tweaks';
+  const out = sl.renderProject({ workspace: { project_dir: dir } });
+  assert.strictEqual(out, linkedName(dir), `expected derived file URL: ${out}`);
+  // Literal check, independent of the derivation: the link target (from the OSC 8 opener to
+  // its first BEL) ends in "/", so the folder opens rather than revealing in its parent.
+  assert.match(out, /^\x1b\]8;;[^\x07]*\/\x07/, `expected trailing slash before terminator: ${out}`);
 });
 
 test('color.link emits the documented OSC 8 byte shape (BEL-terminated)', () => {

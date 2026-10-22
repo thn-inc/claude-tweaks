@@ -1,5 +1,6 @@
 ---
 files:
+  - plugin/bin/hooks.js
   - plugin/bin/lib/flow/consolidated-pass.js
   - plugin/bin/lib/hooks/run-integrity.js
   - plugin/bin/lib/hooks/session-residue.js
@@ -34,7 +35,7 @@ files:
 - **Red flags:** A fresh run directory created for `#A,#B` (the step list or `PIPELINE_RUN_DIR` was wrong). A build or test phase starting.
 
 ### 3. Read the eligibility verdict — terminal
-- **URL:** the `checkPassReentry(process.argv[1], { online: true, sessionId })` call in that same section, which takes the run directory as an argument and treats a non-zero exit or non-JSON output as a stop; `plugin/bin/lib/flow/consolidated-pass.js`, whose offline merge evidence comes from `plugin/bin/lib/hooks/run-integrity.js`'s `checkBranchLanded`
+- **URL:** the `hooks.js check-pass-reentry --run "{parent-run-dir}" --online` call in that same section, which prints `checkPassReentry`'s verdict JSON and refuses an unanchored run directory with a non-zero exit; a non-zero exit or non-JSON output is a stop; `plugin/bin/lib/flow/consolidated-pass.js`, whose offline merge evidence comes from `plugin/bin/lib/hooks/run-integrity.js`'s `checkBranchLanded`
 - **Action:** Let the check run. With `eligible`, the pass continues to the next step. With any other `reason`, the session stops with one line naming `reason` and `detail`, and the maintainer follows the command that line names.
 - **Should feel:** Decisive. Either the pass runs, or one line says why not and what to run instead. There is never a half-run console.
 - **Should understand:** This check is the authoritative gate, because it also asks GitHub about the recorded PR: `MERGED` means `landed`, and an `OPEN` PR counts as not landed. `archived`, `closed` and `landed` point at `/claude-tweaks:wrap-up #{n}` once per record. That fallback gives each record its Reflect and curation back, but the run-level batch pass stays lost. `spec-unfinished` names the specs still `pending` or `running`, with `spec-status` corrections for a manifest left stale. `parent-live` means another session still owns the run. `console-exists` means the console already rendered, so it is resolved where it lives.
@@ -58,4 +59,5 @@ files:
 - Created during build of #3497 ("Consolidated-pass re-entry via review-console", run 2026-10-19T034326-spec-3497): the ended-parent re-entry in `multispec-review-console.md`, `checkPassReentry` in `plugin/bin/lib/flow/consolidated-pass.js`, `checkBranchLanded` in `run-integrity.js`, and the SessionStart banner suffix.
 - Steps 1-5 built in this session.
 - Updated during build of #3554 (run 2026-10-21T055740-record-3554): step 1's banner ids follow `work-backend` — bare under `local-files`, `#` otherwise — read via the shared `plugin/bin/lib/work-backend.js` reader.
+- Updated during build of #3553 (run 2026-10-21T212024-record-3553): step 3's eligibility check is now `hooks.js check-pass-reentry --run "{parent-run-dir}" --online`. The verb prints the verdict JSON on stdout and refuses an unanchored or missing `--run` with exit 1; it replaces the inline `node -e` snippet.
 - Related: `rejoin-a-multispec-run-with-a-spec-built-outside-flow-3033.md` (its step 5 covers the same re-entry for a spec built outside `/flow`), `multi-spec-review-console.md` (the console itself), #3033 (the forfeited-pass incident).

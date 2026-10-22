@@ -150,7 +150,10 @@ function measureComposed(repoRoot, callSite) {
   const { step, file, line, sources: sourcePaths } = callSite;
   let sources;
   try {
-    sources = sourcePaths.map((p) => ({ path: toPosix(path.relative(repoRoot, p)), content: fs.readFileSync(p, 'utf8') }));
+    sources = sourcePaths.map((p) => ({
+      path: toPosix(path.relative(repoRoot, p)),
+      content: fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n'),
+    }));
   } catch (err) {
     if (err.code === 'ENOENT') {
       return {

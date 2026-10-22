@@ -36,6 +36,13 @@ const onStopSection = (text) => sectionBetween(text, /^## On stop \(option 3\)\r
 const mixedSection = (text) =>
   sectionBetween(text, /^## Mixed execution \(a spec built outside \/flow\)\r?$/m, /^## /m);
 
+const VERB_CALL = 'hooks.js" check-pass-reentry --run "{parent-run-dir}" --online';
+function assertReentryVerb(section) {
+  const c = collapse(section);
+  assert.ok(c.includes(VERB_CALL), 're-entry section must invoke the check-pass-reentry verb');
+  assert.ok(!c.includes('node -e'), 're-entry section must not carry a node -e snippet');
+}
+
 // The two `review-console` lines of steps-and-gates.md (the bold resume-only
 // paragraph and the valid-examples bullet) — each must name both entry cases.
 function assertReentryProse(stepsText) {
@@ -75,7 +82,7 @@ test('AC1.2 multispec-review-console.md has the re-entry section, placed after L
   for (const token of [
     'checkPassReentry',
     'consolidated-pass.js',
-    'online: true',
+    '--online',
     'multispec-batch-curation.md',
     'engine-state.json',
     'MULTISPEC_CURATION_DEFER',
@@ -86,7 +93,7 @@ test('AC1.2 multispec-review-console.md has the re-entry section, placed after L
     'spec-status',
     '--status complete',
     '--status not-run',
-    'checkPassReentry(process.argv[1]',
+    VERB_CALL,
     'is a stop: report it and never proceed',
     'online PR check unavailable',
   ]) {
@@ -96,6 +103,15 @@ test('AC1.2 multispec-review-console.md has the re-entry section, placed after L
   const halt = c.indexOf('terminal decision');
   assert.ok(halt !== -1, 're-entry section must name the logged terminal decision');
   assert.ok(halt < c.indexOf('checkPassReentry'), 'the Halt resume must come before the eligibility call');
+});
+
+test('#3553 re-entry step 2 calls the check-pass-reentry verb and carries no node -e', () => {
+  assertReentryVerb(reentrySection(CONSOLE));
+});
+
+test('#3553 negative control: a node -e snippet in the re-entry section fails the verb pin', () => {
+  const doctored = reentrySection(CONSOLE) + '\n`node -e "require(1)"`\n';
+  assert.throws(() => assertReentryVerb(doctored), /must not carry a node -e snippet/);
 });
 
 test('#3497 every REENTRY_REASONS code is named in the re-entry section', () => {

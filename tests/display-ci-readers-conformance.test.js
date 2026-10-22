@@ -7,7 +7,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const { readText } = require('./helpers/read-skill');
-const { toPosix } = require('../plugin/bin/lib/shared-primitives');
+const { escapeRegExp, toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => readText(path.join(ROOT, rel));
@@ -80,12 +80,12 @@ function item9Scripts() {
   return nodeEScripts(item9Slice());
 }
 
-// The candidates path is spliced into JS single-quoted literals, so a native win32 path
-// must be forward-slashed first (#3699). The sep parameter lets a test pass path.win32.sep.
+// A native path is spliced into JS single-quoted literals, so a win32 path must be
+// forward-slashed first (#3699, #3857). The sep parameter lets a test pass path.win32.sep.
 // Safe to open afterwards: Node accepts "/" on win32 and production's formatPrintedPath prints it so.
-function substituteCandidates(script, candidatesFile, sep = path.sep) {
+function substitutePath(script, placeholder, file, sep = path.sep) {
   // A function replacement keeps "$&" / "$'" / "$`" in a path from being expanded.
-  return script.replace(/\$PR_SCAN_UNARMED_CANDIDATES/g, () => toPosix(candidatesFile, sep));
+  return script.replace(new RegExp(escapeRegExp(`$${placeholder}`), 'g'), () => toPosix(file, sep));
 }
 
 // Every require(/readFileSync(/writeFileSync( single-quoted argument in a script (#3699).
@@ -118,7 +118,7 @@ test('AC1.1: item 9 CI filter keeps green/no-ci, drops pending, red and a failed
     const candidatesFile = path.join(tmp, 'candidates.json');
     fs.writeFileSync(candidatesFile, JSON.stringify([1, 2, 3, 4, 5].map((number) => ({ number }))));
     // The plugin root reaches the script through the environment, as the shell prefix does.
-    const script = substituteCandidates(scripts[1], candidatesFile);
+    const script = substitutePath(scripts[1], 'PR_SCAN_UNARMED_CANDIDATES', candidatesFile);
     assert.ok(!script.includes('CLAUDE_PLUGIN_ROOT'), 'the CI filter body no longer interpolates CLAUDE_PLUGIN_ROOT into JS');
     const scriptFile = path.join(tmp, 'ci-filter.js');
     fs.writeFileSync(scriptFile, script);
@@ -206,7 +206,7 @@ test('AC1.1: item 1 CI script maps a pending head run under a green rollup to pe
       { number: 6, title: 'f', statusCheckRollup: [{ conclusion: '', state: 'IN_PROGRESS' }] },
       { number: 7, title: 'g', statusCheckRollup: [{ conclusion: 'SUCCESS' }, { conclusion: 'FAILURE' }] },
     ]));
-    const script = scripts[0].replace(/\$PR_SCAN_OPEN/g, prsFile);
+    const script = substitutePath(scripts[0], 'PR_SCAN_OPEN', prsFile);
     assert.ok(!script.includes('CLAUDE_PLUGIN_ROOT'), 'the CI script body does not interpolate CLAUDE_PLUGIN_ROOT into JS');
     const scriptFile = path.join(tmp, 'item1-ci.js');
     fs.writeFileSync(scriptFile, script);
@@ -230,8 +230,16 @@ test('AC1.1: item 1 CI script maps a pending head run under a green rollup to pe
 
 test('#3699 AC1.1: the CI filter splices a win32 temp path with forward slashes', () => {
   const win = path.win32.join('D:\\a\\_temp', 'ct-display-ci-x', 'candidates.json');
-  const s = substituteCandidates(item9Scripts()[1], win, path.win32.sep);
+  const s = substitutePath(item9Scripts()[1], 'PR_SCAN_UNARMED_CANDIDATES', win, path.win32.sep);
   const lits = spliceLiterals(s);
   assert.ok(lits.filter((l) => l === 'D:/a/_temp/ct-display-ci-x/candidates.json').length >= 2, 'the require and the writeFileSync both carry the forward-slashed path');
+  assert.ok(lits.every((l) => !l.includes('\\')), 'no spliced literal keeps a backslash');
+});
+
+test('#3857 AC2: the item 1 CI script splices a win32 temp path with forward slashes', () => {
+  const win = path.win32.join('D:\\a\\_temp', 'ct-display-ci-x', 'open-prs.json');
+  const s = substitutePath(nodeEScripts(repoWideItem1Slice())[0], 'PR_SCAN_OPEN', win, path.win32.sep);
+  const lits = spliceLiterals(s);
+  assert.ok(lits.includes('D:/a/_temp/ct-display-ci-x/open-prs.json'), 'the require carries the forward-slashed path');
   assert.ok(lits.every((l) => !l.includes('\\')), 'no spliced literal keeps a backslash');
 });

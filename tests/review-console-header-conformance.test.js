@@ -25,6 +25,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { REVIEW_CONSOLE_HEADER } = pre;
+const { readText } = require('./helpers/read-skill');
 
 const CONSOLE_FILES = [
   'plugin/skills/wrap-up/review-console-interactive.md',
@@ -33,7 +34,7 @@ const CONSOLE_FILES = [
 
 const PIN = `\`header\`: \`"${REVIEW_CONSOLE_HEADER}"\``;
 
-const readConsole = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+const readConsole = (file) => readText(path.join(__dirname, '..', file));
 
 // Lines that author an AskUserQuestion header. A file may carry several (the
 // multi-spec console also asks per-item Q#/M# questions); the console's own is

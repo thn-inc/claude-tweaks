@@ -18,6 +18,7 @@ const RECORDS = {
   2266: { number: 2266, title: 'Shaping-mode record', body: '## Current State\n\nToday X is Y. More.\n\n## Release Note\n\nUpdated shaping-mode current state.\n', labels: [{ name: 'type:task' }], issueType: null },
   2270: { number: 2270, title: 'Second task in an all-task bundle', body: '## Overview\n\nAnother task.\n\n## Release Note\n\nAdded another task path.\n', labels: [{ name: 'type:task' }], issueType: null },
   2250: { number: 2250, title: 'Lowest is a task', body: '## Overview\n\nTask overview.\n\n## Release Note\n\nAdded task overview support.\n', labels: [{ name: 'type:task' }], issueType: null },
+  2267: { number: 2267, title: "It's Bob's `x` $(echo PWNED)", body: '## Overview\n\nShell metacharacters in the title.\n\n## Release Note\n\nAdded metacharacter-safe titles.\n', labels: [{ name: 'type:bug' }], issueType: null },
   2290: { number: 2290, title: 'No release note', body: '## Overview\n\nSomething.\n', labels: [{ name: 'type:task' }], issueType: null },
 };
 
@@ -62,10 +63,10 @@ function fakeDeps({
   return { deps, out };
 }
 
-test('parseArgs: comma-joined and space-separated numbers, --tag, --shell, --repo', () => {
-  const o = parseArgs(['2251,2252', '2253', '--tag', 'auto-merge', '--shell', '--repo', 'a/b']);
+test('parseArgs: comma-joined and space-separated numbers, --tag, --repo', () => {
+  const o = parseArgs(['2251,2252', '2253', '--tag', 'auto-merge', '--repo', 'a/b']);
   assert.deepEqual(o.numbers, [2251, 2252, 2253]);
-  assert.equal(o.tag, 'auto-merge'); assert.equal(o.shell, true); assert.equal(o.repo, 'a/b');
+  assert.equal(o.tag, 'auto-merge'); assert.equal(o.repo, 'a/b');
   assert.ok(parseArgs([]).error);
   assert.ok(parseArgs(['0']).error);
   assert.ok(parseArgs(['2251', '--bogus']).error);
@@ -180,39 +181,6 @@ test('an unrecognized native issueType is decided from it alone — no fallback 
   assert.equal(run(['2265'], deps), 1);
   assert.match(out.stderr, /type must be one of/);
   assert.ok(out.stderr.startsWith('compose-subject.js: composeSubject:'), out.stderr);
-});
-
-test('--shell prints two eval-able sh assignments; a real eval round-trip recovers title and body verbatim', () => {
-  const { deps: jsonDeps, out: jsonOut } = fakeDeps();
-  assert.equal(run(['2262'], jsonDeps), 0, jsonOut.stderr);
-  const jsonComposed = JSON.parse(jsonOut.stdout);
-
-  const { deps, out } = fakeDeps();
-  assert.equal(run(['2262', '--shell'], deps), 0, out.stderr);
-  const lines = out.stdout.trimEnd().split('\n');
-  assert.equal(lines[0], "SUBJECT_TITLE='fix: It'\\''s quoted (#2262)'");
-  // Exactly two eval-able sh assignments, not exactly two physical lines: SUBJECT_BODY='...'
-  // appears exactly once, and this fixture's body itself spans several physical lines —
-  // proving the contract is "two assignments", never "two lines".
-  assert.ok(out.stdout.startsWith('SUBJECT_TITLE='));
-  const bodyAt = out.stdout.indexOf('\nSUBJECT_BODY=');
-  assert.ok(bodyAt > 0, 'SUBJECT_BODY= assignment not found on its own line');
-  assert.equal(out.stdout.indexOf('\nSUBJECT_BODY=', bodyAt + 1), -1, 'SUBJECT_BODY= must appear exactly once');
-  assert.ok(lines.length > 2, 'this fixture must actually exercise the multi-physical-line body case');
-
-  const result = require('child_process').spawnSync(
-    'sh',
-    ['-c', 'eval "$1"; printf "%s\n---\n%s" "$SUBJECT_TITLE" "$SUBJECT_BODY"', '_', out.stdout],
-    { encoding: 'utf8' },
-  );
-  assert.equal(result.status, 0, result.stderr);
-  const [recoveredTitle, recoveredBody] = result.stdout.split('\n---\n');
-  assert.equal(recoveredTitle, "fix: It's quoted (#2262)");
-  assert.equal(recoveredBody, 'Has a quote.\n\nRelease-Note: Added quote handling.\n\nFixes #2262');
-  assert.equal(recoveredTitle, jsonComposed.title);
-  assert.equal(recoveredBody, jsonComposed.body);
-
-  assert.equal(shellQuote("a'b"), "'a'\\''b'");
 });
 
 test('exit 1: record with no resolvable type, or breaking without a ## Breaking Change section', () => {
@@ -461,7 +429,7 @@ test('--scope (#3028): parsed, threaded into the subject, breaking keeps ! after
   assert.equal(parseArgs(['2251', '--scope', 'api']).scope, 'api');
   assert.equal(parseArgs(['2251']).scope, null);
   assert.ok(parseArgs(['2251', '--scope']).error, 'trailing --scope with no value is a parse error');
-  assert.ok(parseArgs(['2251', '--scope', '--shell']).error, '--scope followed by another flag is a parse error');
+  assert.ok(parseArgs(['2251', '--scope', '--tag']).error, '--scope followed by another flag is a parse error');
 
   const ok = fakeDeps();
   assert.equal(run(['2251', '--scope', 'web-ui'], ok.deps), 0, ok.out.stderr);
@@ -491,29 +459,29 @@ test('USAGE (#3028) advertises --scope', () => {
 
 test('AC1.1: explicit --scope beats a commit-scope policy value', () => {
   const { deps, out } = fakeDeps({ commitScope: 'web' });
-  assert.equal(run(['2251', '--scope', 'api', '--shell'], deps), 0, out.stderr);
-  assert.match(out.stdout, /^SUBJECT_TITLE='feat\(api\): /);
+  assert.equal(run(['2251', '--scope', 'api'], deps), 0, out.stderr);
+  assert.match(JSON.parse(out.stdout).title, /^feat\(api\): /);
   assert.equal(out.gitCalls.length, 0);
 });
 
 test('AC2.1: commit-scope-paths with one matching scope across the diff scopes the subject', () => {
   const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/skills/=skills', 'plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\0plugin/bin/lib/y.js\0' });
-  assert.equal(run(['2251', '--range', 'main...feat', '--shell'], deps), 0, out.stderr);
-  assert.match(out.stdout, /^SUBJECT_TITLE='feat\(bin\): /);
+  assert.equal(run(['2251', '--range', 'main...feat'], deps), 0, out.stderr);
+  assert.match(JSON.parse(out.stdout).title, /^feat\(bin\): /);
   assert.deepEqual(out.gitCalls, [['diff', '--name-only', '-z', '--end-of-options', 'main...feat']]);
 });
 
 test('AC2.2: paths spanning two scopes fall back to commit-scope with a stderr note', () => {
   const { deps, out } = fakeDeps({ commitScope: 'plugin', commitScopePaths: ['plugin/skills/=skills', 'plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\0plugin/skills/a.md\0' });
-  assert.equal(run(['2251', '--range', 'main...feat', '--shell'], deps), 0, out.stderr);
-  assert.match(out.stdout, /^SUBJECT_TITLE='feat\(plugin\): /);
+  assert.equal(run(['2251', '--range', 'main...feat'], deps), 0, out.stderr);
+  assert.match(JSON.parse(out.stdout).title, /^feat\(plugin\): /);
   assert.match(out.stderr, /span scopes bin, skills — falling back to commit-scope "plugin"/);
 });
 
 test('AC2.3: paths spanning two scopes with no commit-scope leave the subject unscoped, with the note', () => {
   const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/skills/=skills', 'plugin/bin/=bin'], changedFiles: 'plugin/bin/x.js\0plugin/skills/a.md\0' });
-  assert.equal(run(['2251', '--range', 'main...feat', '--shell'], deps), 0, out.stderr);
-  assert.match(out.stdout, /^SUBJECT_TITLE='feat: /);
+  assert.equal(run(['2251', '--range', 'main...feat'], deps), 0, out.stderr);
+  assert.match(JSON.parse(out.stdout).title, /^feat: /);
   assert.match(out.stderr, /span scopes bin, skills — subject left unscoped/);
 });
 
@@ -563,8 +531,8 @@ test('parseArgs and USAGE: --range parsed; trailing --range is an error; USAGE a
 
 test('--pr (#3298 final review): commit-scope-paths resolves over gh pr diff --name-only, no git call', () => {
   const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], prFiles: 'plugin/bin/x.js\n' });
-  assert.equal(run(['2251', '--pr', '3430', '--shell'], deps), 0, out.stderr);
-  assert.match(out.stdout, /\(bin\)/);
+  assert.equal(run(['2251', '--pr', '3430'], deps), 0, out.stderr);
+  assert.match(JSON.parse(out.stdout).title, /\(bin\)/);
   assert.equal(out.gitCalls.length, 0);
   const prCalls = out.calls.filter((c) => c[0] === 'pr');
   assert.deepEqual(prCalls, [['pr', 'diff', '3430', '--repo', 'acme/repo', '--name-only']]);
@@ -618,22 +586,22 @@ test('--range must be <base>...<head>: a two-dot range, a bare ref, or a dash-le
 
 test('a non-ASCII changed path still matches its prefix because -z output is not C-quoted', () => {
   const { deps, out } = fakeDeps({ commitScopePaths: ['docs/=docs', 'plugin/bin/=bin'], changedFiles: 'docs/café.md\0docs/a b.md\0' });
-  assert.equal(run(['2251', '--range', 'main...feat', '--shell'], deps), 0, out.stderr);
-  assert.match(out.stdout, /\(docs\)/);
+  assert.equal(run(['2251', '--range', 'main...feat'], deps), 0, out.stderr);
+  assert.match(JSON.parse(out.stdout).title, /\(docs\)/);
 });
 
 test('explicit --scope skips path resolution entirely even when commit-scope-paths is set', () => {
   const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], changedFiles: null });
-  assert.equal(run(['2251', '--scope', 'api', '--shell'], deps), 0, out.stderr);
-  assert.match(out.stdout, /feat\(api\)/);
+  assert.equal(run(['2251', '--scope', 'api'], deps), 0, out.stderr);
+  assert.match(JSON.parse(out.stdout).title, /feat\(api\)/);
   assert.equal(out.gitCalls.length, 0);
   assert.equal(out.calls.filter((c) => c[0] === 'pr').length, 0);
 });
 
 test('an empty changed-file list with commit-scope-paths set falls through to commit-scope silently', () => {
   const { deps, out } = fakeDeps({ commitScope: 'plugin', commitScopePaths: ['plugin/bin/=bin'], changedFiles: '' });
-  assert.equal(run(['2251', '--range', 'main...feat', '--shell'], deps), 0, out.stderr);
-  assert.match(out.stdout, /\(plugin\)/);
+  assert.equal(run(['2251', '--range', 'main...feat'], deps), 0, out.stderr);
+  assert.match(JSON.parse(out.stdout).title, /\(plugin\)/);
   assert.equal(out.stderr, '');
 });
 
@@ -655,7 +623,7 @@ test('realDeps reads commit-scope and commit-scope-paths from the cwd policy', (
 });
 
 // #3522 — --out-dir: the file-emitting form the worktree-guard-safe merge fences use.
-test('AC2.1: --out-dir writes title.txt/body.md/message.txt equal to the --shell values', () => {
+test('AC2.1: --out-dir writes title.txt/body.md/message.txt equal to the JSON values', () => {
   const path = require('node:path');
   const json = fakeDeps();
   assert.equal(run(['2251', '--tag', 'human-approved'], json.deps), 0, json.out.stderr);
@@ -667,10 +635,6 @@ test('AC2.1: --out-dir writes title.txt/body.md/message.txt equal to the --shell
   assert.equal(out.files[path.join('/x/subj', 'body.md')], body);
   assert.equal(out.files[path.join('/x/subj', 'message.txt')], title + '\n\n' + body);
   assert.ok(out.dirs.includes('/x/subj'), JSON.stringify(out.dirs));
-
-  const shell = fakeDeps();
-  assert.equal(run(['2251', '--tag', 'human-approved', '--shell'], shell.deps), 0, shell.out.stderr);
-  assert.equal(shell.out.stdout, 'SUBJECT_TITLE=' + shellQuote(title) + '\nSUBJECT_BODY=' + shellQuote(body) + '\n');
 });
 
 test('AC2.2: --out-dir stdout is the single-quoted title on one line', () => {
@@ -682,19 +646,40 @@ test('AC2.2: --out-dir stdout is the single-quoted title on one line', () => {
   assert.equal(run(['2262', '--out-dir', '/x/subj'], deps), 0, out.stderr);
   assert.equal(out.stdout, shellQuote(title) + '\n');
   assert.equal(out.stdout.split('\n').length - 1, 1, 'exactly one newline');
+  assert.equal(shellQuote("a'b"), "'a'\\''b'");
+  assert.equal(out.stdout, "'fix: It'\\''s quoted (#2262)'\n");
 });
 
-test('--out-dir and --shell together is a usage error, exit 1', () => {
+// The shipped fences paste this stdout line verbatim as `gh pr merge ... -t {title-arg}` — prove it
+// through a real sh, not shellQuote against itself: two quotes, a backtick, and a command substitution.
+test('AC2.2: --out-dir stdout round-trips through a real sh to the exact JSON title', () => {
+  const { spawnSync } = require('node:child_process');
+  const json = fakeDeps();
+  assert.equal(run(['2267'], json.deps), 0, json.out.stderr);
+  const { title } = JSON.parse(json.out.stdout);
+  assert.ok(title.includes("It's Bob's `x` $(echo PWNED)"), title);
+
   const { deps, out } = fakeDeps();
-  assert.equal(run(['2251', '--shell', '--out-dir', '/x/subj'], deps), 1);
-  assert.match(out.stderr, /--out-dir and --shell are mutually exclusive/);
-  assert.equal(Object.keys(out.files).length, 0);
-  assert.equal(out.dirs.length, 0);
+  assert.equal(run(['2267', '--out-dir', '/x/subj'], deps), 0, out.stderr);
+  const r = spawnSync('sh', ['-c', 'printf %s ' + out.stdout.trimEnd()], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, title);
+});
+
+test('--shell is retired (#3537): an unknown argument, exit 1, nothing composed or written', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2251', '--shell'], deps), 1);
+  assert.match(out.stderr, /unknown argument: --shell/);
+  assert.equal(out.stdout, '');
+  assert.equal(out.calls.length, 0);
+  assert.equal(parseArgs(['2251']).shell, undefined);
+  const { USAGE } = require('../../plugin/bin/lib/compose-subject.js');
+  assert.doesNotMatch(USAGE, /--shell/);
 });
 
 test('--out-dir with no value is a usage error', () => {
   assert.ok(parseArgs(['2251', '--out-dir']).error);
-  assert.ok(parseArgs(['2251', '--out-dir', '--shell']).error);
+  assert.ok(parseArgs(['2251', '--out-dir', '--tag']).error);
   assert.equal(parseArgs(['2251', '--out-dir', 'd']).outDir, 'd');
   assert.equal(parseArgs(['2251']).outDir, null);
 });

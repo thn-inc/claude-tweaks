@@ -245,11 +245,12 @@ test('probe: a patch staged before the target moved is rejected as stale, distin
 const GATE_HEADING = '## Staging-time gate';
 const CONSOLE_HEADING = '## Console apply with description fallback';
 const STACKED_HEADING = '### Stacked check';
+const CONSOLE_END = '### Write-back to the ledger';
 const normBody = (s) => s.replace(/\s+/g, ' ').trim();
 function assertStackedGate(text) {
   const gate = text.slice(text.indexOf(GATE_HEADING), text.indexOf(CONSOLE_HEADING));
   const stacked = gate.slice(gate.indexOf(STACKED_HEADING));
-  const consoleSlice = text.slice(text.indexOf(CONSOLE_HEADING), text.indexOf('### Write-back to the ledger'));
+  const consoleSlice = text.slice(text.indexOf(CONSOLE_HEADING), text.indexOf(CONSOLE_END));
   // AC1.1: the gate runs the stacked check and names both patches on a conflict
   assert.ok(gate.includes(STACKED_HEADING), 'gate names the Stacked check subsection');
   assert.ok(gate.includes('bin/check-staged-stack.js'), 'gate names the stacked-check CLI');
@@ -266,23 +267,79 @@ function assertStackedGate(text) {
   const orderPara = text.slice(orderStart, text.indexOf('\n\n', orderStart));
   assert.ok(orderPara.includes('byte-wise'), 'apply order paragraph names the byte-wise sort');
   assert.ok(orderPara.includes('bin/lib/console/resolve.js'), 'apply order paragraph names the console resolver');
-  assert.ok(gate.includes('apply order'), 'gate slice uses apply order');
+  const stackedStart = text.indexOf(GATE_HEADING) + gate.indexOf(STACKED_HEADING);
+  assert.ok(orderStart > stackedStart && orderStart < text.indexOf(CONSOLE_HEADING), 'the Apply order paragraph lives in the gate\'s Stacked check subsection');
   assert.ok(consoleSlice.includes('apply order'), 'console apply slice uses apply order');
   assert.ok(!consoleSlice.includes('in the order the console lists them'), 'console apply slice no longer uses the console display order');
+  // The re-run is bounded to once, and a re-anchor has a stated condition
+  const bullet = (lead) => {
+    const m = stacked.match(new RegExp(`${lead}([\\s\\S]*?)(?=\\n- |\\n\\n|$)`));
+    return m ? normBody(m[1]) : null;
+  };
+  const rederived = bullet('- \\*\\*exit 1 with `rederived`\\*\\*');
+  assert.ok(rederived, 'stacked subsection has an exit-1-rederived bullet');
+  assert.ok(rederived.includes('re-run only the stacked check, once') && rederived.includes('never re-derives again'), 'exit-1-rederived bullet bounds the re-run to once');
+  const rederivedNull = bullet('- \\*\\*exit 1, `rederived` null\\*\\*');
+  assert.ok(rederivedNull, 'stacked subsection has an exit-1-null bullet');
+  assert.ok(rederivedNull.includes('Re-anchor only when `targetConflict.patch` is this patch and the edit admits another anchor') && rederivedNull.includes('re-run both checks once'), 'exit-1-null bullet states the re-anchor condition');
 }
 
 test('AC1.1, AC2.1, AC3.1: the staging gate stacks staged patches and one apply order governs gate and console', () => {
   assertStackedGate(readText(CONTRACT));
 });
 
-test('go-red control: assertStackedGate throws when the Stacked check subsection is removed', () => {
-  const text = readText(CONTRACT);
-  const start = text.indexOf(STACKED_HEADING);
-  assert.ok(start > 0, 'subsection present before removal');
-  const end = text.indexOf(`\n${CONSOLE_HEADING}`, start);
-  const mutated = text.slice(0, start) + text.slice(end + 1);
-  assert.throws(() => assertStackedGate(mutated));
-});
+// One go-red control per assertion: each runs the same assertStackedGate on a text mutated inside
+// only the slice that assertion reads, so every earlier assertion still passes and the named one fires.
+function mutateSpan(text, startMarker, endMarker, fn) {
+  const s = text.indexOf(startMarker);
+  assert.ok(s >= 0, `span start present: ${startMarker}`);
+  const e = text.indexOf(endMarker, s + startMarker.length);
+  assert.ok(e > s, `span end present: ${endMarker}`);
+  return text.slice(0, s) + fn(text.slice(s, e)) + text.slice(e);
+}
+const inGate = (text, fn) => mutateSpan(text, GATE_HEADING, CONSOLE_HEADING, fn);
+const inConsole = (text, fn) => mutateSpan(text, CONSOLE_HEADING, CONSOLE_END, fn);
+const inExit0 = (text, fn) => mutateSpan(text, '- **exit 0**', '\n- **exit 1 with', fn);
+const inOrderPara = (text, fn) => mutateSpan(text, '**Apply order.**', '\n\n', fn);
+const inRederived = (text, fn) => mutateSpan(text, '- **exit 1 with `rederived`**', '\n- **exit 1, `rederived` null**', fn);
+const inRederivedNull = (text, fn) => mutateSpan(text, '- **exit 1, `rederived` null**', '\n- **exit 2, 3 or 4**', fn);
+const swap = (from, to) => (s) => s.split(from).join(to);
+
+const STACKED_CONTROLS = [
+  ['the Stacked check heading is deleted', (t) => t.replace(`${STACKED_HEADING}\n`, ''), /gate names the Stacked check subsection/],
+  ['the stacked-check CLI is renamed in the gate', (t) => inGate(t, swap('bin/check-staged-stack.js', 'bin/x.js')), /gate names the stacked-check CLI/],
+  ['--rederive-out is dropped from the gate', (t) => inGate(t, swap('--rederive-out', '')), /gate passes --rederive-out/],
+  ['the conflict STAGED line stops naming conflictsWith', (t) => inGate(t, swap('staged/{targetConflict.conflictsWith}', 'staged/{x}')), /conflict STAGED line names both patches/],
+  ['the conflict STAGED line stops naming targetConflict.patch', (t) => inGate(t, swap('staged/{targetConflict.patch}', 'staged/{x}')), /conflict STAGED line names both patches/],
+  ['the conflict STAGED line stops naming the stage path', (t) => inGate(t, swap('staged/{slug}-{n}.patch', 'staged/{x}')), /conflict STAGED line names both patches/],
+  ['the exit-0 bullet loses its bold lead', (t) => inGate(t, swap('- **exit 0**', '- **exit zero**')), /stacked subsection has an exit-0 bullet/],
+  ['the exit-0 bullet stops saying nothing else', (t) => inExit0(t, swap('nothing else', 'more')), /exit-0 bullet says normal entry and nothing else/],
+  ['a second Apply order paragraph is appended', (t) => `${t}\n\n**Apply order.** x\n`, /exactly one Apply order paragraph/],
+  ['the Apply order paragraph stops naming the byte-wise sort', (t) => inOrderPara(t, swap('byte-wise', 'natural')), /names the byte-wise sort/],
+  ['the Apply order paragraph stops naming the console resolver', (t) => inOrderPara(t, swap('bin/lib/console/resolve.js', 'bin/x.js')), /names the console resolver/],
+  ['the Apply order paragraph moves to the end of the file', (t) => {
+    const s = t.indexOf('**Apply order.**');
+    const para = t.slice(s, t.indexOf('\n\n', s));
+    return `${(t.slice(0, s) + t.slice(s + para.length)).trimEnd()}\n\n${para}\n\n`;
+  }, /lives in the gate's Stacked check subsection/],
+  ['the console apply slice stops saying apply order', (t) => inConsole(t, swap('apply order', 'listed order')), /console apply slice uses apply order/],
+  ['the console apply slice regains the display order', (t) => inConsole(t, (s) => s.replace('\n', '\nin the order the console lists them\n')), /no longer uses the console display order/],
+  ['the exit-1-rederived bullet loses its bold lead', (t) => inGate(t, swap('- **exit 1 with `rederived`**', '- **exit 1 rederived**')), /stacked subsection has an exit-1-rederived bullet/],
+  ['the exit-1-rederived bullet loses its once', (t) => inRederived(t, swap('stacked check, once', 'stacked check')), /bounds the re-run to once/],
+  ['the exit-1-rederived bullet loses its no-second-re-derive', (t) => inRederived(t, swap('never re-derives again', '')), /bounds the re-run to once/],
+  ['the exit-1-null bullet loses its bold lead', (t) => inGate(t, swap('- **exit 1, `rederived` null**', '- **exit 1 null**')), /stacked subsection has an exit-1-null bullet/],
+  ['the exit-1-null bullet loses its re-anchor condition', (t) => inRederivedNull(t, swap('admits another anchor', 'allows it')), /states the re-anchor condition/],
+  ['the exit-1-null bullet loses its re-run-once', (t) => inRederivedNull(t, swap('re-run both checks once', 're-run both checks')), /states the re-anchor condition/],
+];
+
+for (const [name, mutate, messageRe] of STACKED_CONTROLS) {
+  test(`go-red control: assertStackedGate throws when ${name}`, () => {
+    const text = readText(CONTRACT);
+    const mutated = mutate(text);
+    assert.notEqual(mutated, text, 'the mutation changed the text');
+    assert.throws(() => assertStackedGate(mutated), { message: messageRe });
+  });
+}
 
 test('staged-patch contract: the paragraph search still finds its break under CRLF line endings (#3574)', () => {
   const FILE = CONTRACT;

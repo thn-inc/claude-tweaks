@@ -62,3 +62,4 @@ files:
 - Updated during build of #3028 (compose-subject stderr, `--scope`, `human-approved` tag): optional `(scope)` in the grammar, the `human-approved` tag for `dispatch/close-out.md`'s confirmed merge (excluded from the auto-merged-this-week metric), and the silent `issueType` retry
 - Updated during build of #3298 (merge-subject scope source): the `commit-scope`/`commit-scope-paths` policy keys, the composer-side resolution, and `--range` (local-merge) / `--pr` (pr-first) on every fence — the "pr-first only" qualifier is gone
 - Updated during build of #3522 (guard-safe --out-dir merge fences): the composer writes `title.txt`/`body.md`/`message.txt` into `{subject-dir}` and every fence reads them (`-F`, `--body-file`) — no `eval`, no `--shell`
+- Updated during build of #3537 (retire --shell): the composer's eval-able --shell output is gone; JSON and --out-dir are the only output forms, and a plugin/skills/** sweep pins that no fence evals composer output

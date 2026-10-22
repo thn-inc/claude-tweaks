@@ -1,0 +1,1 @@
+[{"tag":"digest","record":1426,"title":"Promote [dispatch] cluster (3 entries)","action":"File one backlog record absorbing 3 [dispatch] digest entries","command":"gh issue create --title \"dispatch: resolve 3 below-floor digest findings\""}]

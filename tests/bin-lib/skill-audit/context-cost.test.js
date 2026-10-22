@@ -399,6 +399,31 @@ test('measureComposed: marker-free sources yield exactly one combination with em
   assert.deepStrictEqual(result.combinations[0].conditions, {});
 });
 
+test('measureComposed: LF and CRLF copies of the same sources measure the same composed bytes (#3871)', () => {
+  const sources = {
+    'skills/_shared/a.md': `# A\n<!-- when: integration-model=pr-first -->\n${'p'.repeat(100)}\n<!-- /when -->\n`
+      + `<!-- when: transport=mcp -->\n${'m'.repeat(50)}\n<!-- /when -->\n`,
+    'skills/_shared/b.md': '# B\nbody\n',
+  };
+  const measure = (slug, eol) => {
+    const { root } = tmpCorpus(slug);
+    const files = Object.entries(sources).map(([rel, text]) => {
+      const abs = path.join(root, rel);
+      fs.writeFileSync(abs, text.replace(/\n/g, eol));
+      // The fixture really is in the line-ending form its slug names, or the comparison is vacuous.
+      assert.strictEqual(fs.readFileSync(abs, 'utf8').includes('\r\n'), eol === '\r\n');
+      return abs;
+    });
+    return measureComposed(root, { step: 'x', file: 'f', line: 1, sources: files });
+  };
+  const lf = measure('composed-eol-lf', '\n');
+  const crlf = measure('composed-eol-crlf', '\r\n');
+  assert.strictEqual(lf.error, undefined);
+  assert.strictEqual(crlf.error, undefined);
+  assert.deepStrictEqual(crlf.combinations.map((c) => c.bytes), lf.combinations.map((c) => c.bytes));
+  assert.strictEqual(crlf.max, lf.max);
+});
+
 test('measureComposed: a malformed source is reported on the row, never thrown (F1)', () => {
   const { root, sharedDir } = tmpCorpus('composed-malformed');
   const badFile = path.join(sharedDir, 'bad.md');

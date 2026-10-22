@@ -5,14 +5,15 @@
 // reads the run dir's staged/ and writes nothing there. Its only write is --rederive-out.
 //   node bin/check-staged-stack.js --worktree <dir> --patch <run-dir>/staged/<name>.patch [--rederive-out <file>] [--help]
 // Exit 0 no conflict involves --patch — one JSON line on stdout, nothing on stderr; 1 a conflict
-// involves --patch — the JSON on stdout, one stderr line naming both staged/ paths; 2 a malformed
-// invocation (missing/valueless flags, --patch not a .patch directly under a staged/ dir, a
-// missing --patch file, --worktree not a directory, --rederive-out resolving inside staged/, --patch
-// not among staged/'s walked .patch entries — a dotfile, say), or --patch does not apply at its
-// position nor alone — the JSON still prints on that last path; 3 the run dir (the parent of staged/) is missing or
-// not anchored under the main checkout (a worktree-local shadow — _shared/pipeline-run-dir.md's
-// Anchoring section, [IL-127]); 4 the check could not run — any throw from checkStack (scratch or
-// git failure, or an invariant guard), error on stderr.
+// involves --patch — the JSON on stdout, one stderr line naming every conflict that involves
+// --patch (joined by `; `, in walk order); 2 a malformed invocation (missing/valueless flags,
+// --patch not a .patch directly under a staged/ dir, a missing --patch file, --worktree not a
+// directory, --rederive-out resolving inside staged/, --patch not among staged/'s walked .patch
+// entries — a dotfile, say), or --patch does not apply at its position nor alone — the JSON still
+// prints on that last path; 3 the run dir (the parent of staged/) is missing or not anchored under
+// the main checkout (a worktree-local shadow — _shared/pipeline-run-dir.md's Anchoring section,
+// [IL-127]); 4 the check could not run — any throw from checkStack (scratch or git failure, or an
+// invariant guard), error on stderr.
 // --rederive-out (#3290): when --patch conflicts with an earlier patch, its per-file 3-way re-derive
 // onto the stacked state is written there and named in the JSON's `rederived`; a refusal or failure
 // lands in `rederiveReason` instead and never changes the exit code (a re-derive that cannot run
@@ -156,8 +157,9 @@ function run(argv, deps = realDeps) {
     return 2;
   }
   if (result.targetConflict !== null) {
-    const c = result.targetConflict;
-    deps.stderr(`check-staged-stack.js: staged/${c.patch} does not apply on top of staged/${c.conflictsWith} in apply order (${c.error})\n`);
+    const involved = result.conflicts.filter((c) => c.patch === targetName || c.conflictsWith === targetName);
+    const lines = involved.map((c) => `staged/${c.patch} does not apply on top of staged/${c.conflictsWith} in apply order (${c.error})`);
+    deps.stderr(`check-staged-stack.js: ${lines.join('; ')}\n`);
     return 1;
   }
   return 0;

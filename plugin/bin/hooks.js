@@ -93,7 +93,7 @@ function pluginRoot() {
 // #1143: usage strings for every documented `hooks.js` subcommand (the
 // dispatch table's own record-worktree/close-run/teardown-run/archive-run/
 // resolve-run-dir/record-pr/spec-status/manifest-init/check-resume-freshness/check-staged-
-// inventory/check-sibling-sessions/sweep-shadow/adopt-run-dir/reconcile/
+// inventory/check-pass-reentry/check-sibling-sessions/sweep-shadow/adopt-run-dir/reconcile/
 // reconcile-background/reconcile-summary set — see docs/plugin-structure.md's
 // hooks.js line). Doubles as the membership table for the `--help`/`-h` intercept
 // below: a verb absent from this map gets no guard, by design — the six
@@ -118,6 +118,7 @@ const USAGE = {
   'check-resume-freshness': 'check-resume-freshness [--run <dir>]',
   'check-staged-inventory': 'check-staged-inventory [--run <dir>]',
   'check-session-residue': 'check-session-residue [--run <dir>]',
+  'check-pass-reentry': 'check-pass-reentry --run <dir> [--online]',
   'check-sibling-sessions': 'check-sibling-sessions --record <id-or-slug>',
   reconcile: 'reconcile [--dry-run] [--json] [--mcp-reachable] [--checks <c1,c2,...>]',
   'reconcile-summary': 'reconcile-summary',
@@ -126,10 +127,11 @@ const USAGE = {
 
 const HELP_FLAGS = new Set(['--help', '-h']);
 
-// #1012: declared-flag sets for the five mutating run-state verbs
-// (close-run, record-worktree, record-pr, spec-status, teardown-run) —
+// #1012: declared-flag sets for the flag-strict verbs — the mutating run-state
+// verbs plus the read-only check-pass-reentry (#3553), exactly the keys of the
+// table below —
 // consulted by the unknown-flag guard below (which supersedes HELP_FLAGS for
-// exactly these five: `--help`/`-h` are simply never declared, so they fall
+// exactly these verbs: `--help`/`-h` are simply never declared, so they fall
 // out as "unknown" the same as a genuine typo) and by resolveRunArg's
 // unambiguousOnly resolution path further down. Every other resolveRunArg
 // caller (archive-run, check-resume-freshness, check-staged-inventory) has
@@ -151,6 +153,7 @@ const KNOWN_FLAGS = {
   // while the running build's hooks.js is newer, and the unknown-flag guard would refuse that call.
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
   'resolve-console': ['--run', '--approve', '--decline', '--reverse-failed'],
+  'check-pass-reentry': ['--run', '--online'],
 };
 
 // Declared flags that consume the following token as a value — the
@@ -579,9 +582,9 @@ function resolveRunArg(args, cwd, env, resolveOpts) {
 // `worktreeLocalFallback` flag calls for — shared by every call site so a
 // future one can't silently omit it the way six of the seven did before this
 // fix (review finding: the disclosure was wired only at record-worktree).
-function reportWorktreeLocalFallback(runDir, worktreeLocalFallback) {
+function reportWorktreeLocalFallback(runDir, worktreeLocalFallback, stream = process.stdout) {
   if (!worktreeLocalFallback) return;
-  process.stdout.write(`claude-tweaks: --run ${runDir} resolved via the worktree-local fallback (#280) — no anchored copy exists under the main checkout; this run's state lives only in this worktree until merge.\n`);
+  stream.write(`claude-tweaks: --run ${runDir} resolved via the worktree-local fallback (#280) — no anchored copy exists under the main checkout; this run's state lives only in this worktree until merge.\n`);
 }
 
 // #2409: copies exactly `decisions.md`, `report.md` (each if present), and
@@ -631,14 +634,14 @@ async function main(argv) {
   // corruption hazard observed 2026-08-20 (see the now-removed docs/donts.md
   // bridging rule). Checked against the USAGE table, not a hardcoded verb
   // list, so a verb with no usage entry gets no guard by design.
-  // #1012: for the five mutating verbs, ANY undeclared --* argument (--help
+  // #1012: for the flag-strict verbs (the KNOWN_FLAGS table), ANY undeclared --* argument (--help
   // included — it is never declared) intercepts here, before resolveRunArg
   // or any lib call ever runs. Every other USAGE-table verb keeps the
   // narrower HELP_FLAGS-only guard unchanged.
   if (KNOWN_FLAGS[cmd]) {
     // -h is a single-dash short flag, so firstUnknownFlag's `--`-prefixed
     // scan never sees it as a token to classify — checked separately here,
-    // same as --help itself (also never declared for any of these five
+    // same as --help itself (also never declared for any of these
     // verbs, so it always falls out as "unknown" via the scan below too).
     const argsAfterCmd = argv.slice(3);
     if (argsAfterCmd.includes('-h') || firstUnknownFlag(KNOWN_FLAGS[cmd], argsAfterCmd)) {
@@ -1406,6 +1409,36 @@ async function main(argv) {
     process.stdout.write(
       `claude-tweaks: pending residue from session start still unresolved:\n${blocks.join('\n')}\n`,
     );
+    return 0;
+  }
+  if (cmd === 'check-pass-reentry') {
+    // #3553: prints consolidated-pass.js's checkPassReentry verdict for
+    // flow/multispec-review-console.md's re-entry step. Unlike its sibling
+    // check-* verbs this exits 1 on refusal (nothing on stdout): that caller
+    // treats a non-zero exit or non-JSON stdout as a stop, so a refused --run
+    // must never read as a verdict.
+    const { runDir, invalidRunArg, worktreeLocalFallback, explicit } = resolveRunArg(argv.slice(3), process.cwd(), process.env);
+    if (!explicit) {
+      process.stderr.write('claude-tweaks: check-pass-reentry requires --run — pass re-entry not checked\n');
+      return 1;
+    }
+    if (invalidRunArg) {
+      process.stderr.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — pass re-entry not checked\n`);
+      return 1;
+    }
+    // Disclosure goes to stderr: stdout is reserved for the verdict JSON alone.
+    reportWorktreeLocalFallback(runDir, worktreeLocalFallback, process.stderr);
+    let verdict;
+    try {
+      verdict = require('./lib/flow/consolidated-pass').checkPassReentry(runDir, {
+        online: argv.slice(3).includes('--online'),
+        sessionId: process.env.CLAUDE_CODE_SESSION_ID,
+      });
+    } catch (e) {
+      process.stderr.write(`claude-tweaks: check-pass-reentry failed — ${e.message}\n`);
+      return 1;
+    }
+    await new Promise((resolve) => process.stdout.write(`${JSON.stringify(verdict)}\n`, resolve));
     return 0;
   }
   if (cmd === 'check-sibling-sessions') {
