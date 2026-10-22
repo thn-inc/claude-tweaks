@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
-const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes } = require(MOD);
+const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SDD_RULING_REASONS, sddRulingDeferralReason } = require(MOD);
 const ROOT = path.join(__dirname, '..', '..', '..');
 
 function fixture({
@@ -47,7 +47,7 @@ const EVERY_SECTION = {
   'review-unconfirmed-3.md': 'unconfirmed',
   'review-contested-4.md': 'contested',
   'polish-suggestion-1.md': 'polish',
-  'sdd-ruling-1.md': 'Title: ruling\nKind: sdd-ruling\nRuling: Task 2: Ruling: keep the guard — cheaper than the alternative — costs a re-read if wrong\nStaged-at: abc123\nLedger: docs/plans/x-ledger.md#5\n\nratify / reverse\n',
+  'sdd-ruling-1.md': 'Title: ruling\nKind: sdd-ruling\nRuling: Task 2: Ruling: keep the guard — cheaper than the alternative — costs a re-read if wrong\nDefers: no\nStaged-at: abc123\nLedger: docs/plans/x-ledger.md#5\n\nratify / reverse\n',
   'wrap-up-skill-1.md': 'skill',
   'wrap-up-doc-1.md': 'doc',
   'wrap-up-claude-md-1.md': 'claude-md',
@@ -698,4 +698,84 @@ test('nearestCanonicalPrefixes(review-13-record) includes a review-* prefix (#33
 test('nearestCanonicalPrefixes ranks an exact head match first and honors n (#3370)', () => {
   assert.deepStrictEqual(nearestCanonicalPrefixes('review-unconfirmed-9', 1), ['review-unconfirmed-']);
   assert.strictEqual(nearestCanonicalPrefixes('zzz', 5).length, 5);
+});
+
+// #3880: an sdd-ruling-* proposal that defers work resolves pending unless its
+// header carries `Defers: no`, or `Defers: yes` plus exactly one valid
+// `Defer-reason:`. The header is the lines before the first blank line.
+function RULING(headerLines) {
+  return 'Title: ruling\nKind: sdd-ruling\nRuling: Task 2: Ruling: defer the guard to a follow-up — cheaper — costs a re-read\n' + headerLines + 'Staged-at: abc123\nLedger: docs/plans/x-ledger.md#5\n\nratify / reverse\n';
+}
+
+function resolveStaged(name, text) {
+  const runDir = fixture({ staged: { [name]: text }, headers: [7] });
+  return resolveAll({ runDir, policy: 'console-auto', deps: deps() }).items.find((i) => i.id === name);
+}
+
+test('defers-no-resolves-apply: Defers: no keeps the Pending-review stance (#3880 AC4)', () => {
+  const item = resolveStaged('sdd-ruling-1.md', RULING('Defers: no\n'));
+  assert.strictEqual(item.resolution, 'apply');
+  assert.strictEqual(item.reason, SECTION_STANCES['Pending review'].reason);
+  assert.strictEqual(item.section, 'Pending review');
+});
+
+test('defers-yes-valid-reason-resolves-apply: Defers: yes with one valid Defer-reason keeps the stance (#3880 AC3)', () => {
+  assert.strictEqual(resolveStaged('sdd-ruling-1.md', RULING('Defers: yes\nDefer-reason: needs-human-decision\n')).resolution, 'apply');
+});
+
+test('defers-yes-no-reason-pending: Defers: yes with no Defer-reason resolves pending (#3880 AC3)', () => {
+  const item = resolveStaged('sdd-ruling-1.md', RULING('Defers: yes\n'));
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'sdd-ruling-deferral-no-defer-reason');
+});
+
+test('defers-yes-invalid-reason-pending: Defers: yes with a Defer-reason outside DEFER_REASONS resolves pending (#3880 AC3)', () => {
+  const item = resolveStaged('sdd-ruling-1.md', RULING('Defers: yes\nDefer-reason: minor\n'));
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'sdd-ruling-deferral-no-defer-reason');
+});
+
+test('two-defer-reasons-pending: two Defer-reason lines resolve pending even when both are valid (#3880 AC3)', () => {
+  const item = resolveStaged('sdd-ruling-1.md', RULING('Defers: yes\nDefer-reason: genuinely-larger\nDefer-reason: blocked-external\n'));
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'sdd-ruling-deferral-no-defer-reason');
+});
+
+test('reason-key-without-defers-line-is-a-deferral: a Defer-reason line alone counts as deferring (#3880 AC3)', () => {
+  const item = resolveStaged('sdd-ruling-1.md', RULING('Defer-reason: bogus\n'));
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'sdd-ruling-deferral-no-defer-reason');
+});
+
+test('no-defers-line-is-unclassified: a ruling with no Defers: line resolves pending as unclassified (#3880 AC3)', () => {
+  const item = resolveStaged('sdd-ruling-1.md', RULING(''));
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'sdd-ruling-unclassified');
+});
+
+test('reason-in-ruling-line-or-body-does-not-count: a Defer-reason mid-line or in the body is not a header reason (#3880 AC3)', () => {
+  const text = 'Title: ruling\nKind: sdd-ruling\nRuling: Task 2: Ruling: defer — Defer-reason: genuinely-larger\nDefers: yes\nStaged-at: abc123\nLedger: docs/plans/x-ledger.md#5\n\nBody.\nDefer-reason: genuinely-larger\n';
+  const item = resolveStaged('sdd-ruling-1.md', text);
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'sdd-ruling-deferral-no-defer-reason');
+});
+
+test('crlf-header-parses: a CRLF ruling header is read the same as an LF one (#3880 AC4)', () => {
+  assert.strictEqual(resolveStaged('sdd-ruling-1.md', RULING('Defers: no\n').replace(/\n/g, '\r\n')).resolution, 'apply');
+});
+
+test('build-deviation-unaffected: a non-ruling Pending-review item with no Defers: line still resolves apply (#3880 AC4)', () => {
+  const item = resolveStaged('build-deviation-1.md', 'Title: deviation\nKind: build-deviation\n\nbody\n');
+  assert.strictEqual(item.resolution, 'apply');
+});
+
+test('sddRulingDeferralReason: unreadable text is unclassified, and Defers: matches case-insensitively (#3880)', () => {
+  assert.strictEqual(sddRulingDeferralReason(null), 'sdd-ruling-unclassified');
+  assert.strictEqual(sddRulingDeferralReason(undefined), 'sdd-ruling-unclassified');
+  assert.strictEqual(sddRulingDeferralReason('Defers: YES\nDefer-reason: blocked-dependency\n\nx'), null);
+  assert.deepStrictEqual(SDD_RULING_REASONS, { NO_DEFER_REASON: 'sdd-ruling-deferral-no-defer-reason', UNCLASSIFIED: 'sdd-ruling-unclassified' });
+});
+
+test('classifyStagedItem leaves sdd-ruling-* in Pending review with no reason, so the deferral gate is the only pending path (#3880 control)', () => {
+  assert.deepStrictEqual(classifyStagedItem('sdd-ruling-1.md'), { section: 'Pending review' });
 });
