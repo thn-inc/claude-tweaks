@@ -421,6 +421,36 @@ test('a whitespace-only quote never confirms or drops (F1)', () => {
   }
 });
 
+test('a quote without three consecutive word characters is unverified (F2)', () => {
+  const lines = [...FILE_LINES];
+  lines[20] = '}'; // line 21
+  const rd = () => lines.join('\n');
+  for (const evidence of ['plugin/bin/foo.js:21 `}`', 'plugin/bin/foo.js:20 `c`']) {
+    for (const verdict of ['confirmed', 'refuted']) {
+      const r = resolve(FINDING, reply({ verdict, evidence }), { readFile: rd });
+      assert.ok(isCantTell(r), `${verdict} ${evidence}: ${r.outcome}`);
+      assert.equal(r.reason, 'evidence-unverified');
+    }
+  }
+});
+
+test('a cited evidence line more than ±5 from the finding is unverified (F2)', () => {
+  for (const cited of [1, 14, 26, 40]) {
+    for (const verdict of ['confirmed', 'refuted']) {
+      const r = resolve(FINDING, reply({ verdict, evidence: `plugin/bin/foo.js:${cited} \`const x = readSync(fd);\`` }));
+      assert.ok(isCantTell(r), `${verdict} at ${cited}: ${r.outcome}`);
+      assert.equal(r.reason, 'evidence-unverified');
+    }
+  }
+});
+
+test('a cited evidence line within ±5 of the finding verifies (F2)', () => {
+  for (const cited of [15, 20, 25]) {
+    assert.equal(resolve(FINDING, reply({ evidence: `plugin/bin/foo.js:${cited} \`const x = readSync(fd);\`` })).outcome, 'confirmed', String(cited));
+    assert.equal(resolve(FINDING, reply({ verdict: 'refuted', evidence: `plugin/bin/foo.js:${cited} \`const x = readSync(fd);\`` })).outcome, 'drop', String(cited));
+  }
+});
+
 // ---- findings artifact and verdict coverage (#3945 Task 3) ----
 
 function tmpDir(t) {

@@ -170,9 +170,14 @@ function firstLine(raw) {
 const squash = (s) => s.replace(/\s+/g, ' ').trim();
 
 // Returns null when the evidence checks out against the file, else the reason.
+// The cited line must sit within ±LINE_TOLERANCE_REPRODUCTION_WIDE of the
+// finding's line, and the quote must carry content (three or more consecutive
+// word characters), so `}` or `c` can never verify against a window.
 function evidenceProblem(evidence, finding, line, readFile) {
   if (evidence.path !== finding.path) return 'evidence-path-mismatch';
   if (squash(evidence.quote) === '') return 'evidence-unverified';
+  if (!/[A-Za-z0-9_]{3,}/.test(squash(evidence.quote))) return 'evidence-unverified';
+  if (Math.abs(evidence.line - line) > LINE_TOLERANCE_REPRODUCTION_WIDE) return 'evidence-unverified';
   if (typeof readFile !== 'function') return 'evidence-unverified';
   let text;
   try { text = readFile(finding.path); } catch { return 'evidence-unverified'; }
