@@ -419,8 +419,8 @@ function namesRecordReference(resolution, excludeRecords) {
 // lives in its staged file's `Defer-reason:` header (gated by
 // console/resolve.js's sddRulingDeferralReason), not in the ledger row, and
 // the producer's no-run-dir and degraded stage-item.js paths emit it `open`
-// with no staged path (build/dispatch.md). A Resolution is valid iff it carries exactly one token
-// and its value is in DEFER_REASONS.
+// with no staged path (build/dispatch.md). A Resolution is valid iff it
+// carries exactly one token and its value is in DEFER_REASONS.
 const LEDGER_DEFER_REASON_RE = /Defer-reason:\s*`?([A-Za-z-]+)(?![\w-])`?/g;
 const LEDGER_SDD_RULING_ITEM_RE = /^SDD ruling —/;
 

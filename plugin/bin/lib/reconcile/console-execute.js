@@ -348,13 +348,12 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
 
   // #3880: the third exception — a ruling row whose staged text does not show it
   // safe to ratify. Pure: the texts arrive in ctx (consoleExecuteDetect reads them);
-  // a ruling id missing from ctx.rulingTexts reads as null, i.e. unclassified.
+  // a ruling id missing from ctx.rulingTexts reads as unclassified.
   const rulingGateGaps = [];
   if (ctx.rulingTexts && typeof ctx.rulingTexts === 'object') {
     for (const item of items) {
       if (item.isRulingRow !== true) continue;
-      const text = ctx.rulingTexts[item.id];
-      const reason = sddRulingDeferralReason(text === undefined ? null : text);
+      const reason = sddRulingDeferralReason(ctx.rulingTexts[item.id]);
       if (reason) rulingGateGaps.push({ id: item.id, reason });
     }
   }
