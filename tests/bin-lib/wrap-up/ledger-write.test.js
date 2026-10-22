@@ -23,6 +23,19 @@ const SAMPLE = [
   '',
 ].join('\n');
 
+// #3834: two rows share number 1 — parseLedgerTable keys rows by number, so one
+// would collapse on parse and be dropped on write-back.
+const DUPLICATE = [
+  '# Open Items — Duplicate',
+  '',
+  '| # | Phase | Item | Status | Resolution |',
+  '|---|-------|------|--------|------------|',
+  '| 1 | build | First item | open | — |',
+  '| 1 | test | Repeated number | open | — |',
+  '| 2 | test | Second item | open | — |',
+  '',
+].join('\n');
+
 // Ledger-ownership git fake (#3566): `owned` are the docs/plans/ paths the
 // branch's diff against the merge base names, `untracked` those present only in
 // the worktree — the same two git calls pack.js's ledger probe makes.
@@ -249,4 +262,26 @@ test('flipLedgerRow collapses a newline in the resolution — the row stays on o
 test('flipLedgerRow still refuses a legacy row with a raw (unescaped) pipe, naming the \\| rule', () => {
   const text = SAMPLE.replace('| 1 | build | First item |', '| 1 | build | First a|b item |');
   assert.throws(() => flipLedgerRow(text, { item: 1, status: 'fixed', resolution: 'x' }), /5-column shape[\s\S]*\\\|[\s\S]*ledger-format\.md/);
+});
+
+test('parseLedgerTable reports each repeated item number once in duplicates, [] when none (#3834)', () => {
+  assert.deepStrictEqual(parseLedgerTable(DUPLICATE).duplicates, ['1']);
+  assert.deepStrictEqual(parseLedgerTable(SAMPLE).duplicates, []);
+  // Three rows numbered 1 and two numbered 2, interleaved: each number once, in first-repeat order.
+  const TRIPLE = [
+    '| # | Phase | Item | Status | Resolution |',
+    '|---|-------|------|--------|------------|',
+    '| 1 | build | A | open | — |',
+    '| 2 | test | B | open | — |',
+    '| 1 | build | C | open | — |',
+    '| 2 | test | D | open | — |',
+    '| 1 | build | E | open | — |',
+    '',
+  ].join('\n');
+  assert.deepStrictEqual(parseLedgerTable(TRIPLE).duplicates, ['1', '2']);
+});
+
+test('flipLedgerRow refuses a table with duplicate row numbers instead of dropping a row (#3834)', () => {
+  assert.throws(() => flipLedgerRow(DUPLICATE, { item: 2, status: 'fixed', resolution: 'x' }), /duplicate row number\(s\) #1/);
+  assert.throws(() => flipLedgerRow(DUPLICATE, { item: 1, status: 'fixed', resolution: 'x' }), /duplicate row number\(s\) #1/);
 });

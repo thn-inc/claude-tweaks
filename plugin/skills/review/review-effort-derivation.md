@@ -17,7 +17,7 @@ Resolution order — stop at the first that applies:
    ```
    (append `--run "$PIPELINE_RUN_DIR"` when a run directory exists — as above; omit it otherwise). Never a fixed shared `/tmp` name — concurrent sessions reviewing the same record would clobber it. Against a build that predates the `--print-dir` flag, extract the path from the default JSON output instead: `CTX_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/build-review-context.js" mint --run "$PIPELINE_RUN_DIR" | node -e "console.log(JSON.parse(require('fs').readFileSync(0)).dir)")`. Then, with `{ctx-dir}` meaning `$CTX_DIR`:
    ```bash
-   gh issue view {n} --json labels > {ctx-dir}/record-{n}.json
+   gh issue view {n} --json labels > "{ctx-dir}/record-{n}.json"
    ```
    ```bash
    node -e "const {parseRecordFacets}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js'); const d=JSON.parse(require('fs').readFileSync(process.argv[1])); const {risk,size}=parseRecordFacets(d.labels); console.log(JSON.stringify({risk,size}))" "{ctx-dir}/record-{n}.json"

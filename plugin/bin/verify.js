@@ -561,40 +561,54 @@ async function main() {
   // caller-supplied --baseline re-runs the failing files (at base in a scratch
   // worktree, in isolation at HEAD). report.pass stays raw; the verdict is
   // report.baselineAdjudicated and, on a pass, the stamp's baseline marker.
+  // The base adjudicated against is the merge-base of HEAD and the ref (#3810).
   const rawPass = results.filter((c) => !c.skipped).every((c) => c.exitCode === 0);
   let baselineAdjudicated = null;
   if (parsed.baseline && !rawPass) {
+    function notAdjudicated(reason) {
+      return { base: parsed.baseline, baseSha, baseRef: parsed.baseline, eligible: false, reason };
+    }
     try {
       // A base that equals or contains HEAD (`--baseline HEAD`, the branch's
       // own pushed remote, a post-merge integration branch) fails exactly
       // where HEAD fails — comparing against it would pass everything.
       if (bgit.isAncestor('HEAD', baseSha)) {
-        baselineAdjudicated = {
-          base: parsed.baseline, baseSha, eligible: false,
-          reason: `base ${parsed.baseline} (${baseSha.slice(0, 9)}) already contains HEAD — nothing to compare against`,
-        };
+        baselineAdjudicated = notAdjudicated(`base ${parsed.baseline} (${baseSha.slice(0, 9)}) already contains HEAD — nothing to compare against`);
       } else {
-        baselineAdjudicated = await adjudicate({
-          checks: results,
-          baselineCmds: baselineCmdMap,
-          base: parsed.baseline,
-          baseSha,
-          cwd: parsed.cwd,
-          logDir,
-          runOne,
-          spawnImpl: spawn,
-          envOf,
-          timeoutOf,
-          git: bgit,
-          computeFixed: !parsed.noBaselineFixed,
-        });
+        const mergeBaseSha = bgit.mergeBase('HEAD', baseSha);
+        if (mergeBaseSha === null) {
+          // #3810: no fork point to adjudicate against — unrelated histories, or
+          // a shallow clone that never fetched it (worded for the cause).
+          baselineAdjudicated = notAdjudicated(bgit.isShallow()
+            ? `no merge-base between HEAD and ${parsed.baseline} — shallow clone, fork point not fetched (deepen or unshallow the fetch)`
+            : `no merge-base between HEAD and ${parsed.baseline} — nothing to compare against`);
+        } else {
+          // #3810: adjudicate against the merge-base with HEAD (the fork point),
+          // not the ref's tip — a moved integration branch that fixed a failure
+          // must not make the inherited failure look attributable.
+          baselineAdjudicated = {
+            ...await adjudicate({
+              checks: results,
+              baselineCmds: baselineCmdMap,
+              base: mergeBaseSha,
+              baseSha: mergeBaseSha,
+              cwd: parsed.cwd,
+              logDir,
+              runOne,
+              spawnImpl: spawn,
+              envOf,
+              timeoutOf,
+              git: bgit,
+              computeFixed: !parsed.noBaselineFixed,
+            }),
+            baseRef: parsed.baseline,
+          };
+        }
       }
     } catch (err) {
       // Fail closed: an adjudicator crash (e.g. the scratch worktree could not
       // be created) is "not adjudicated", never a pass and never a lost report.
-      baselineAdjudicated = {
-        base: parsed.baseline, baseSha, eligible: false, reason: `adjudication error: ${String((err && err.message) || err)}`,
-      };
+      baselineAdjudicated = notAdjudicated(`adjudication error: ${String((err && err.message) || err)}`);
     }
   }
   const adjudicatedPass = Boolean(baselineAdjudicated && baselineAdjudicated.verdict === 'pass');
@@ -959,7 +973,7 @@ async function main() {
     const adjudicatedFiles = adjudicatedPass && baselineAdjudicated.failingByCheck[check.name];
     const among = (list) => adjudicatedFiles.filter((f) => list.includes(f)).length;
     const status = adjudicatedFiles
-      ? `pass (baseline-adjudicated vs ${baselineAdjudicated.base}: ${among(baselineAdjudicated.baselineFailing)} baseline, ${among(baselineAdjudicated.flakyPassed)} flaky)`
+      ? `pass (baseline-adjudicated vs ${baselineAdjudicated.baseRef}: ${among(baselineAdjudicated.baselineFailing)} baseline, ${among(baselineAdjudicated.flakyPassed)} flaky)`
       : statusOf(check);
     lines.push(`| ${check.name} | ${status} | ${duration} | ${summary} |`);
   }
@@ -982,7 +996,7 @@ async function main() {
   if (baselineAdjudicated) {
     if (baselineAdjudicated.eligible) {
       const b = baselineAdjudicated;
-      lines.push('', `Baseline: adjudicated against ${b.base} (${String(b.baseSha).slice(0, 9)}) — ${b.failingFiles.length} failing file(s): ${b.baselineFailing.length} also fail at base, ${b.flakyPassed.length} flaky (passed in isolation), ${b.attributable.length} attributable`);
+      lines.push('', `Baseline: adjudicated against ${String(b.baseSha).slice(0, 9)} (merge-base of HEAD and ${b.baseRef}) — ${b.failingFiles.length} failing file(s): ${b.baselineFailing.length} also fail at base, ${b.flakyPassed.length} flaky (passed in isolation), ${b.attributable.length} attributable`);
       // #3313: new/fixed counts; every eligible adjudication carries them.
       if (b.fixed === null) {
         lines.push(`Baseline: ${b.new.length} new, fixed not computed — ${b.fixedReason}`);

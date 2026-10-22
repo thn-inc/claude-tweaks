@@ -47,7 +47,7 @@ files:
 
 ### 4. Wrap up: main checkout
 - **URL:** `/claude-tweaks:wrap-up`, whose reflect Friction Lens runs `node plugin/bin/friction-events.js --run <wrap-up run dir>`
-- **Action:** the developer runs wrap-up after the worktree is gone. The CLI combines three sources: the wrap-up run's own events, ad-hoc dirs recorded against the current worktree path, and ad-hoc dirs owned by the current session id (`--session`, default `CLAUDE_CODE_SESSION_ID`). Each dir is read once.
+- **Action:** the developer runs wrap-up after the worktree is gone. The CLI combines three sources: the wrap-up run's own events, ad-hoc dirs recorded against the current worktree path, and ad-hoc dirs owned by the current session id (`--session`, default `CLAUDE_CODE_SESSION_ID`). Each dir is read once. The worktree-path match is case-canonical (#3836): on a case-insensitive volume, a worktree path typed with different letter casing finds the same ad-hoc dirs as the on-disk spelling.
 - **Should feel:** an accurate reflection. The Friction Lens names the refusals the session actually hit, with the run dir each was logged in.
 - **Should understand:** the session-id match is what finds the dir once the worktree path no longer resolves. A dir bound to a still-live worktree is skipped, because session-id equality is not ownership: subagents share the id. There is one documented limit. If the session id changed between the friction and the wrap-up (for example, a resumed or account-switched session that got a new id), the earlier dir is found only by worktree path, so only from inside that still-live worktree.
 - **Red flags:**
@@ -58,4 +58,5 @@ files:
 - Created during build of #2783 (absorbs #2813's main-checkout and session-resume reproduction cases)
 - Steps 1-4 built in this session
 - Related specs: #500 / #1333 (ad-hoc stamping), #2351 / #2543 (main-checkout denial coverage), #2989 (pre-claim event exclusion on the same read side)
+- Updated during build of #3836: step 4's worktree-path lookup (`findRunsByWorktreePath`) compares case-canonical real paths
 - Updated during build of #3304: step 2's refusal text now lives in `plugin/bin/lib/hooks/harness-refusal.js`, and a Claude Code rewording surfaces as upstream drift (see `notice-a-reworded-isolation-refusal-3304.md`)
