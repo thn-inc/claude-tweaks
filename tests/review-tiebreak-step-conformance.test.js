@@ -645,3 +645,99 @@ test('code-mode-steps.md verb-citation assertions can go red', () => {
   assert.doesNotMatch(reverted, CITES_TIEBREAK);
   assert.match(reverted, CITES_RETIRED_VERB);
 });
+
+// --- step3-routing.md: takes tiebreak-confirmed findings (AC6.1) ---
+
+const ROUTING = path.join(SKILLS, 'review', 'step3-routing.md');
+const routingText = () => readText(ROUTING);
+const inputsSection = (text) => between(text, '## Inputs\n', '**`unconfirmed` findings can originate');
+const sourceBullet = (text, prefix) => lineStartingWith(text, prefix);
+const lowTierBullet = (text) => sourceBullet(text, '- Low-tier single-read (Step 3');
+const noReproBullet = (text) => sourceBullet(text, '- No reproduction agreement (Step 3)');
+const refutationBullet = (text) => sourceBullet(text, '- A `confirmed` finding downgraded by the Per-Candidate Refutation Pass');
+const surfacingParagraph = (text) => lineStartingWith(text, '**Effort-tier surfacing.**');
+const xhighParagraph = (text) => lineStartingWith(text, 'At **`xhigh` and above**');
+const maxParagraph = (text) => lineStartingWith(text, 'At **`max`**');
+
+const ROUTING_FORBIDDEN = [
+  [/route straight to the Wrap-Up Review Console's Low-confidence/, 'unconfirmed/contested findings route straight to the console, bypassing the tiebreak'],
+  [/the Direct-verification override is the only path to `confirmed`/, 'the override is the only path to confirmed for the low tier'],
+  [/where it is the designed confirmation path/, 'the override is the designed confirmation path for the low tier'],
+];
+const routingLeftovers = (text) => ROUTING_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+
+test('AC6.1 step3-routing.md no longer bypasses the tiebreak', () => {
+  const text = routingText();
+  assert.deepEqual(routingLeftovers(text), [], 'step3-routing.md must not keep the pre-tiebreak routing sentences');
+});
+
+test('AC6.1 the routing leftover assertions can go red', () => {
+  const text = routingText();
+  assert.deepEqual(routingLeftovers(`${text}\nroute straight to the Wrap-Up Review Console's Low-confidence and Contested subsections`), [ROUTING_FORBIDDEN[0][1]]);
+  assert.deepEqual(routingLeftovers(`${text}\nthe Direct-verification override is the only path to \`confirmed\` for this source`), [ROUTING_FORBIDDEN[1][1]]);
+  assert.deepEqual(routingLeftovers(`${text}\nwhere it is the designed confirmation path`), [ROUTING_FORBIDDEN[2][1]]);
+});
+
+const ROUTING_INPUTS = [[/tiebreak-confirmed findings \(`step3-tiebreak\.md`\)/, 'the Inputs list takes tiebreak-confirmed findings']];
+const routingInputsMissing = missingFactsOf(ROUTING_INPUTS);
+
+test('AC6.1 step3-routing.md lists tiebreak-confirmed findings among its Inputs', () => {
+  assert.deepEqual(routingInputsMissing(inputsSection(routingText())), [], 'the ## Inputs list must name the tiebreak-confirmed findings');
+});
+
+test('AC6.1 the Inputs assertion can go red', () => {
+  assertEachPatternGoesRed(inputsSection(routingText()), ROUTING_INPUTS, routingInputsMissing);
+});
+
+const SOURCE_BULLETS = [
+  [(text) => noReproBullet(text), /resolve-tiebreak/, 'the Direct-verification override resolves through resolve-tiebreak'],
+  [(text) => noReproBullet(text), /Mode: inline\./, 'the override marks its verdict Mode: inline.'],
+  [(text) => lowTierBullet(text), /goes to the tiebreak \(`step3-tiebreak\.md`\)/, 'the low-tier bullet hands findings to the tiebreak'],
+  [(text) => refutationBullet(text), /Step 3\.7/, 'the refutation bullet hands the downgraded finding to Step 3.7'],
+  [(text) => refutationBullet(text), /can't-tell/, "the refutation bullet names the can't-tell downgrade"],
+];
+const sourceBulletsMissing = (text) => SOURCE_BULLETS.filter(([pick, pattern]) => !pattern.test(pick(text))).map(([, , fact]) => fact);
+
+test('AC6.1 the unconfirmed-source bullets say the tiebreak settles these findings', () => {
+  const text = routingText();
+  for (const [pick, , fact] of SOURCE_BULLETS) assert.notEqual(pick(text), '', `bullet not found for "${fact}"`);
+  assert.deepEqual(sourceBulletsMissing(text), [], 'the source bullets must route through the tiebreak');
+});
+
+test('AC6.1 the source-bullet assertions can go red', () => {
+  const text = routingText();
+  for (const [pick, pattern, fact] of SOURCE_BULLETS) {
+    const bullet = pick(text);
+    const global = new RegExp(pattern.source, `${pattern.flags}g`);
+    const doctored = text.replace(bullet, bullet.replace(global, ''));
+    assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
+    assert.ok(sourceBulletsMissing(doctored).includes(fact), `removing "${fact}" must turn its assertion red`);
+  }
+});
+
+const SURFACING = [
+  [(text) => surfacingParagraph(text), /Step 3\.7's `confirmed` outcome \(`step3-tiebreak\.md`\)/, "unconfirmed/contested findings reach the table only through Step 3.7's confirmed outcome"],
+  [(text) => surfacingParagraph(text), /`console` outcome is what reaches the Wrap-Up Review Console/, "the tiebreak's console outcome is what reaches the Review Console"],
+  [(text) => xhighParagraph(text), /can't-tell/, "the xhigh paragraph names the tiebreak's can't-tell outcomes"],
+  [(text) => xhighParagraph(text), /surfacing inline doesn't remove the staging/, 'the xhigh paragraph keeps the staging wording'],
+  [(text) => maxParagraph(text), /on top of the .{0,40}rows `xhigh` already added/, 'the max paragraph still stacks on the xhigh rows'],
+  [(text) => maxParagraph(text), /staged to `staged\/review-contested-\{N\}\.md` as before/, 'the max paragraph keeps the contested staging wording'],
+];
+const surfacingMissing = (text) => SURFACING.filter(([pick, pattern]) => !pattern.test(pick(text))).map(([, , fact]) => fact);
+
+test('AC6.1 the effort-tier surfacing paragraphs route through the tiebreak and keep the staging wording', () => {
+  const text = routingText();
+  for (const [pick, , fact] of SURFACING) assert.notEqual(pick(text), '', `paragraph not found for "${fact}"`);
+  assert.deepEqual(surfacingMissing(text), []);
+});
+
+test('AC6.1 the surfacing assertions can go red', () => {
+  const text = routingText();
+  for (const [pick, pattern, fact] of SURFACING) {
+    const paragraph = pick(text);
+    const global = new RegExp(pattern.source, `${pattern.flags}g`);
+    const doctored = text.replace(paragraph, paragraph.replace(global, ''));
+    assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
+    assert.ok(surfacingMissing(doctored).includes(fact), `removing "${fact}" must turn its assertion red`);
+  }
+});
