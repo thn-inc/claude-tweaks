@@ -847,3 +847,71 @@ test('R1 the Resolve and act assertion can go red', () => {
   assert.notEqual(doctored, text, 'anchor text not found');
   assert.deepEqual(resolveNamesValueMissing(doctored), [RESOLVE_NAMES_VALUE[0][1]]);
 });
+
+// --- docs/skill-graph.md: the tiebreak step's edges (AC11.1) ---
+
+const SKILL_GRAPH = path.join(__dirname, '..', 'docs', 'skill-graph.md');
+const skillGraphText = () => fs.readFileSync(SKILL_GRAPH, 'utf8');
+
+// The `## review` section, up to the next `## ` heading.
+function reviewGraphSection(text) {
+  const start = text.indexOf('\n## review\n');
+  if (start === -1) return '';
+  const next = text.indexOf('\n## ', start + 1);
+  return text.slice(start, next === -1 ? text.length : next);
+}
+const graphRow = (section, prefix) => section.split('\n').find((line) => line.startsWith(prefix)) || '';
+
+const COORDINATION_ROW = '| `bin/review-coordination.js` |';
+const GRAPH_ROWS = [
+  [COORDINATION_ROW, /step3-tiebreak\.md/, 'the review-coordination row names step3-tiebreak.md'],
+  [COORDINATION_ROW, /resolve-tiebreak/, 'the review-coordination row names resolve-tiebreak'],
+  [COORDINATION_ROW, /write-findings/, 'the review-coordination row names write-findings'],
+  ['| `_shared/materiality-floor.md` |', /tiebreak-cant-tell/, 'the materiality-floor row names tiebreak-cant-tell'],
+  ['| `_shared/subagent-dispatch-core.md` |', /tiebreak/, 'the subagent-dispatch-core row names the tiebreak'],
+  ['| `_shared/subagent-dispatch-core.md` |', /nested/i, 'the subagent-dispatch-core row names the nested-children rule'],
+];
+const graphRowsMissing = (text) => {
+  const section = reviewGraphSection(text);
+  return GRAPH_ROWS.filter(([prefix, pattern]) => !pattern.test(graphRow(section, prefix))).map(([, , fact]) => fact);
+};
+
+test('AC11.1 the review section of skill-graph.md records the tiebreak edges', () => {
+  assert.deepEqual(graphRowsMissing(skillGraphText()), []);
+});
+
+test('AC11.1 the graph-row assertions can go red', () => {
+  const text = skillGraphText();
+  const section = reviewGraphSection(text);
+  assert.ok(section.length > 0, 'the ## review section exists');
+  for (const [prefix, pattern, fact] of GRAPH_ROWS) {
+    const row = graphRow(section, prefix);
+    assert.ok(row, `anchor row for "${fact}" not found`);
+    const global = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
+    const doctoredRow = row.replace(global, '');
+    assert.notEqual(doctoredRow, row, `anchor text for "${fact}" not found in its row`);
+    assert.ok(graphRowsMissing(text.replace(row, doctoredRow)).includes(fact), `removing "${fact}" must turn its assertion red`);
+  }
+  assert.equal(graphRowsMissing('## other\n').length, GRAPH_ROWS.length, 'a graph without the review section fails every fact');
+});
+
+function listSkillFiles(dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return listSkillFiles(full);
+    return entry.name === 'SKILL.md' ? [full] : [];
+  });
+}
+const skillsNamingStep = (files, readFile) => files.filter((file) => readFile(file).includes('step3-tiebreak.md'));
+
+test('AC11.1 no SKILL.md restates the step3-tiebreak.md edge', () => {
+  const files = listSkillFiles(SKILLS);
+  assert.ok(files.length > 20, 'the scan covers the skill corpus');
+  assert.deepEqual(skillsNamingStep(files, (file) => fs.readFileSync(file, 'utf8')), []);
+});
+
+test('AC11.1 the SKILL.md scan can go red', () => {
+  const files = listSkillFiles(SKILLS);
+  const planted = files[0];
+  assert.deepEqual(skillsNamingStep(files, (file) => (file === planted ? 'see step3-tiebreak.md' : '')), [planted]);
+});

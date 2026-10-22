@@ -10,7 +10,7 @@ files:
 
 # Stage a Patch That Conflicts With an Earlier One
 
-**Persona:** The agent running `/claude-tweaks:review` Step 3 routing (or `/test`'s fix staging, `/deepen`'s collapse staging, a reproduction-pair staging) partway through a `/flow` run that has already staged one or more `.patch` proposals. It is about to stage another, its diff anchored on lines an earlier staged patch also touches. A second persona: the maintainer who reads `decisions.md` and opens the Review Console hours later.
+**Persona:** The agent running `/claude-tweaks:review` Step 3 routing (or `/test`'s fix staging or `/deepen`'s collapse staging) partway through a `/flow` run that has already staged one or more `.patch` proposals. It is about to stage another, its diff anchored on lines an earlier staged patch also touches. A second persona: the maintainer who reads `decisions.md` and opens the Review Console hours later.
 **Goal:** Learn at staging time — not at the console — that the new patch will not apply on top of the run's earlier staged patches, and either re-derive it onto them or log both patch names, so the console's fast path still applies every patch it can.
 **Entry point:** A staging site writes `staged/{slug}-{n}.patch`, and its solo `git -C "$WORKTREE" apply --check "$STAGE_PATH"` exits 0.
 **Success state:** Either a `STAGED` line naming the clean patch (unchanged from before), or one naming it with ` Re-derived onto staged/{earlier}.patch.`, or a conflict line naming both `staged/` paths. At the console, every patch that applies at its apply-order position resolves `apply`, including a re-derived one that would fail alone.
