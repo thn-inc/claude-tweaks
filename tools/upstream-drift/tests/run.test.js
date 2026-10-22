@@ -561,7 +561,6 @@ test('validate-findings: a malformed entry is dropped, and the valid ones still 
 // ─── the upgrade predicate has exactly one definition ────────────────────
 
 test('hasUpgrade: due, findings, and the due-report all agree on the same predicate', () => {
-  const { hasUpgrade } = require('../run');
   const behind = greenEvaluation({ latest: '4.0.4' });
   const level = greenEvaluation({ latest: '4.0.2' });
   const absent = greenEvaluation({ latest: '4.0.4', resolvedInstalled: null, installed: [] });

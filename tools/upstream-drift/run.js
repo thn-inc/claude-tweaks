@@ -235,8 +235,6 @@ function evaluate(entry, options = {}) {
 // so isDue, buildFindings and cmdDue stay in agreement.
 function hasUpgrade(evaluation) {
   if (evaluation.contentPins) return false; // no version line exists to upgrade along
-  // Entry opted out via `report-upgrades: false`; drift findings are unaffected
-  // because they never call this predicate.
   if (evaluation.reportUpgrades === false) return false;
   return Boolean(
     evaluation.latest
