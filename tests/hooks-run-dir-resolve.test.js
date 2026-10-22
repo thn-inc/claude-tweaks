@@ -131,6 +131,23 @@ test('#3865: a multi-spec run dir that leads with spec-378 (spec-378-379) is sti
   assert.strictEqual(out.path, multi);
 });
 
+test('#3865: the slug must start at a name segment — subspec-378 is not a spec-378 run dir; a lone spec-3784 dir resolves for spec-3784', () => {
+  const main = gitRepo();
+  mkRunDir(main, '2026-06-01T000000-subspec-378');
+  const lone = mkRunDir(main, '2026-06-02T000000-spec-3784');
+  assert.strictEqual(resolve({ cwd: main, env: {}, specSlug: 'spec-378' }).ok, false);
+  assert.strictEqual(resolve({ cwd: main, env: {}, specSlug: 'spec-3784' }).path, lone);
+});
+
+test('#3865: a -standalone suffixed run dir still matches its slug, and a slug with regex metacharacters matches literally', () => {
+  const main = gitRepo();
+  const standalone = mkRunDir(main, '2026-06-01T000000-dispatch-standalone');
+  assert.strictEqual(resolve({ cwd: main, env: {}, specSlug: 'dispatch-standalone' }).path, standalone);
+  const dotted = mkRunDir(main, '2026-06-02T000000-release.1');
+  mkRunDir(main, '2026-06-03T000000-releaseX1');
+  assert.strictEqual(resolve({ cwd: main, env: {}, specSlug: 'release.1' }).path, dotted);
+});
+
 // #1962: a matching run dir left behind by an abandoned prior attempt (its
 // PR closed unmerged, the reconciler's archive sweep skipped it with
 // reason no-branch) must never be silently adopted by step 2's slug match —
