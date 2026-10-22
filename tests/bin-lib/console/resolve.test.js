@@ -7,8 +7,8 @@ const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
 const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes } = require(MOD);
-const { unresolvedItems } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'residue'));
 const ROOT = path.join(__dirname, '..', '..', '..');
+const { unresolvedItems } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'residue'));
 
 function fixture({
   decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {},
