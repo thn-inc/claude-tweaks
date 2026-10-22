@@ -8,9 +8,10 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
 `plugin/bin/lib/hooks/`.
 
 - **Dispatch order is significant, not incidental.** `index.js` runs `mirror → red-tip → console →
-  release → archive → archive-branches → remote-prune → ledger-residue → reap`, reap deliberately last because it
-  physically removes worktrees — running it earlier would make every later check's live
-  `git worktree list`-derived branch lookup fail for exactly the runs `reap` just finished with.
+  release → archive → archive-branches → remote-prune → ledger-residue → reap`, reap deliberately
+  last because it physically removes worktrees — running it earlier would make every later check's
+  live `git worktree list`-derived branch lookup fail for exactly the runs `reap` just finished
+  with.
   `red-tip` runs immediately after `mirror` so it reads the ref the shared fetch just refreshed
   instead of fetching a second time. See the ordering comment directly above the dispatch block in
   `index.js` before reordering anything.
@@ -30,9 +31,9 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
 - **The fast/background split (#820 D8).** `bin/lib/hooks/session-start.js`'s `FAST_CHECKS`
   (`mirror`, `red-tip`, `console` — cheap read/detect, run inline on every SessionStart) and
   `bin/hooks.js`'s `BACKGROUND_CHECKS` (`release`, `archive`, `archive-branches`, `remote-prune`,
-  `ledger-residue`, `reap` — write-only/janitorial, run in a detached `reconcile-background` child process) must
-  **partition `ALL_CHECKS` exactly** — no overlap, nothing silently dropped. A new check has to
-  join one list or the other.
+  `ledger-residue`, `reap` — write-only/janitorial, run in a detached `reconcile-background` child
+  process) must **partition `ALL_CHECKS` exactly** — no overlap, nothing silently dropped. A new
+  check has to join one list or the other.
 
 ## Adding a new check
 
@@ -52,19 +53,22 @@ against reality than trusting it in the abstract; do that for whichever check yo
    — missing this step fails that assertion, not silently.
 4. **`bin/hooks.js`'s `reconcile-threw` fallback** — a **hand-maintained duplicate** of
    `reconcile()`'s result shape (`{ mirror, redTip, worktrees, claims, runs, branches,
-   remoteBranches, ledgerResidue, console, skipped }`), substituted only when `reconcile()` itself throws. If the
-   new check populates a new top-level result key, this literal needs that key added too — an
-   omission here doesn't throw or fail a lint; it just silently under-reports on the one code path
-   (a genuine throw inside `reconcile()`) that almost never runs in normal testing, which is
-   exactly what makes it easy to miss. This hazard has a precedent, not just a hypothetical: the
-   fallback silently drifted out of sync by omitting `redTip`, and stayed that way until #1009
-   (`407f6207e`) added it back. The literal is in sync with `reconcile()`'s result shape today —
-   re-check it against `index.js` rather than trusting this line.
+   remoteBranches, ledgerResidue, console, skipped }`), substituted only when `reconcile()` itself
+   throws. If the new check populates a new top-level result key, this literal needs that key
+   added too — an omission here doesn't throw or fail a lint; it just silently under-reports on the
+   one code path (a genuine throw inside `reconcile()`) that almost never runs in normal testing,
+   which is exactly what makes it easy to miss. This hazard has a precedent, not just a
+   hypothetical: the fallback silently drifted out of sync by omitting `redTip`, and stayed that
+   way until #1009 (`407f6207e`) added it back. The literal is in sync with `reconcile()`'s result
+   shape today — re-check it against `index.js` rather than trusting this line.
 5. **`bin/lib/reconcile/format-summary.js`'s `CATEGORIES` table** — only if the check's result is
-   array-shaped (like `worktrees`/`claims`/`runs`/`branches`/`remoteBranches`/`ledgerResidue`). Add a row so
-   `bin/hooks.js reconcile`'s compact human-readable default output covers the new check's taken
-   and skipped entries; the `--json` output needs no change, since it echoes the raw result object.
-6. **Three shape-asserting test files:**
+   array-shaped (like `worktrees`/`claims`/`runs`/`branches`/`remoteBranches`/`ledgerResidue`).
+   Add a row so `bin/hooks.js reconcile`'s compact human-readable default output covers the new
+   check's taken and skipped entries; the `--json` output needs no change, since it echoes the raw
+   result object.
+6. **`docs/hooks.md`'s Background convergence bullet** — it names every check twice in prose (the
+   full set, then the background half). Add the new check to both lists.
+7. **Three shape-asserting test files:**
    - `tests/reconcile.test.js` — dispatch order, `ALL_CHECKS` membership, the `local-merge-model`
      skip list (a check with no local-merge fallback belongs in that skip line's check list).
    - `tests/console-execute.test.js` / `tests/console-execution.test.js` — only if the new check
@@ -336,23 +340,57 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
   `origin/{integration}`'s tip (`git ls-tree`, so no checkout is read and no sub-directory matches).
   Nothing but the integration tip is ever examined: an in-flight run's branch legitimately carries
   its ledger until teardown, so an in-flight draft PR branch is never flagged (AC2.1).
+- **Removable residue is tidy's orphaned ledger.** Each candidate's blob is read at the tip
+  (`git cat-file -p {tip}:{path}`) and kept, as a per-path skip, unless it passes tidy's own
+  keep rule (`plugin/skills/tidy/scan-procedures.md`). Data loss is the reason: deleting a ledger
+  with unresolved items would silently drop them. The checks run in this order:
+
+  | Kept when | Reason |
+  |---|---|
+  | the blob cannot be read | `ledger-read-failed` |
+  | no `# Open Items` first line or no `\| # \| Phase \| Item \| Status \| Resolution \|` header | `not-a-ledger` |
+  | any row's status is `open` (`wrap-up/pack.js`'s `parseLedger`) | `ledger-has-open-rows` |
+  | any row's status is neither `open` nor terminal | `ledger-status-unrecognized` |
+  | the `.claude-tweaks/pipelines/` listing failed | `run-dir-scan-failed` |
+  | a non-`archive` run directory is attributed to it | `run-live` |
+
+  Attribution follows tidy. Every `#{N}` token on the ledger's first line is matched as a whole
+  dash-separated token of a run-dir name after its leading timestamp, so `#21` never matches
+  `2026-10-21T…`. When the first line has no `#{N}`, the filename's `{feature}` slug
+  (`YYYY-MM-DD-{feature}-ledger.md`) is matched as a substring of the name. A kept ledger is
+  still reported, so AC1 holds; it waits for a human or `/claude-tweaks:tidy` to resolve it.
 - **Write posture.** A new ref plus a PR, never a push to the integration branch and never a force
   or lease. The removal commit is built with plumbing (`read-tree` → `update-index --force-remove`
   → `write-tree` → `commit-tree`) on a scratch `GIT_INDEX_FILE`, so the checkout's index, HEAD, and
-  working tree are untouched, then pushed to `refs/heads/build/ledger-residue-{hash}`. The hash is
-  derived from the sorted residue set, so a rerun maps to the same branch and finds its own PR.
-- **PR-state table** (the governing PR for that branch, `preferOpen`):
+  working tree are untouched, then pushed to `refs/heads/build/ledger-residue-{hash}`. The hash
+  covers only the removable set that remains after every skip below. A `commit-tree` failure whose
+  error reads `Author identity unknown` or `Committer identity unknown` is
+  `committer-identity-unset`; any other plumbing failure is `commit-failed`, and a rejected push
+  is `push-failed`. `gh pr create` runs under `GH_TIMEOUT_MS` (`shared-primitives.js`) and is
+  never retried, since a timed-out create may still have opened the PR (`pr-create-failed`).
+- **Removal-PR states.** One `gh pr list --state all --json number,state,headRefName,body --limit
+  100` call, filtered to heads starting `build/ledger-residue-`, sees every earlier removal PR,
+  including ones for a residue set that has since changed. A path is "named" by a PR when the body
+  lists it in backticks, as the check's own body does.
 
-  | State | Entry | Reason |
+  | Evidence | Applies to | Reason |
   |---|---|---|
-  | `OPEN` | skip | `removal-pr-open` |
-  | `CLOSED` (unmerged) | skip, never re-proposed | `removal-pr-declined` |
-  | `MERGED` | skip | `removal-pr-merged` |
-  | none (branch absent or present without a PR) | open the PR (push first when the ref is absent) | `pr-opened` / `removal-pr-opened` |
+  | any removal PR is `OPEN` | every path the keep rule did not keep | `removal-pr-open` (carries that PR's number) |
+  | a `MERGED` removal PR names the path, yet it is still present | that path | `removal-merged-but-present` |
+  | a `CLOSED` (unmerged) removal PR names the path | that path, never re-proposed | `removal-pr-declined` |
+  | none of the above | the removable set | open the PR (push first when the ref is absent): `pr-opened` / `removal-pr-opened` |
 
-  A changed residue set hashes to a new branch and so proposes a fresh PR. `--dry-run` reports
-  `dry-run` and writes nothing. Unknown evidence (`gh-absent`, `network-failure`,
-  `ref-check-failed`) skips closed.
+  The list call is classified like `pr-state.js`: `gh-absent` or `network-failure` skips every
+  path closed, as does an indeterminate ref check (`ref-check-failed`). `--dry-run` reports
+  `dry-run` and writes nothing. A declined branch stays on origin: `remote-prune` deletes only
+  branches whose PR is `MERGED`. The list is the 100 most recent PRs in the repo, so a decline
+  older than that window is no longer seen and its paths become proposable again.
+- **Surfacing.** `bin/hooks.js`'s `reconcile-background` summary records `ledgerResiduePrOpened`
+  (removal PRs opened that pass) and `notableLedgerResidue` (per-path skips, minus
+  `ledger-residue.js`'s `QUIET_SKIP_REASONS`: `dry-run`, `run-live`, `not-a-ledger`,
+  `removal-pr-declined`, `gh-absent`, `network-failure`, `ref-check-failed`). The next
+  SessionStart renders both in its prior-pass line. `/claude-tweaks:tidy`'s Step 6 reports them
+  under its Residue-ledger removal PR row.
 - **Fetch.** Reads the ref the pass's shared fetch refreshed (`skipFetch` when that fetch ran and
   succeeded), else fetches `origin {integration}` itself; a failed fetch skips the whole check as
   `fetch-failed` rather than flagging a ledger a merged removal PR already deleted. Hence its slot:

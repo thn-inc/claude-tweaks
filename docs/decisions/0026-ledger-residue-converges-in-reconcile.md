@@ -30,20 +30,31 @@ Candidate (b): a `ledger-residue` check in the reconcile family
 - **Residue** is any direct `docs/plans/*-ledger.md` entry at `origin/{integration}`'s tip. Only that
   tip is read. An in-flight run's branch legitimately carries its ledger until teardown, so it is
   never flagged.
-- **The branch** is `build/ledger-residue-{sha1(sorted paths).slice(0, 8)}`. It is a function of the
-  residue set alone, so a rerun finds its own earlier PR.
-- **PR-state table**, keyed on the governing PR for that branch (`preferOpen`):
+- **Removable residue is what tidy would delete.** The check applies tidy's shipped orphan-ledger
+  rule (`plugin/skills/tidy/scan-procedures.md`) to each candidate's blob at the tip. A candidate
+  is kept, and reported as a per-path skip, when it lacks the ledger signature (`not-a-ledger`),
+  has an `open` row (`ledger-has-open-rows`) or an unrecognized status
+  (`ledger-status-unrecognized`), or a non-archived run directory is attributed to it
+  (`run-live`). Rows are parsed by `wrap-up/pack.js`'s `parseLedger`. Without this rule, a run
+  whose ledger reached main mid-run would lose its unresolved items, as would a ledger left with
+  open rows. At the time of writing two of the three ledgers above had open rows.
+- **PR state comes from one list.** A single `gh pr list --state all` call returns every PR whose
+  head starts `build/ledger-residue-`, in any state, with its body:
 
-  | State | Outcome |
+  | Evidence | Outcome |
   |---|---|
-  | `gh` absent, or network failure | skip, fail closed |
-  | PR open | skip `removal-pr-open` |
-  | PR closed unmerged | skip `removal-pr-declined` |
-  | PR merged | skip `removal-pr-merged` |
-  | no PR, ref check indeterminate | skip `ref-check-failed` |
-  | no PR, dry run | skip `dry-run` |
-  | no PR | open a PR, pushing the branch first unless it is already on origin |
+  | `gh` absent, or network failure | every path skips, fail closed |
+  | any removal PR open | every path skips `removal-pr-open` |
+  | a merged removal PR's body names a path that is still present | that path skips `removal-merged-but-present` |
+  | a closed-unmerged removal PR's body names the path | that path skips `removal-pr-declined`, never re-proposed |
+  | ref check indeterminate | skip `ref-check-failed` |
+  | dry run | skip `dry-run` |
+  | otherwise | open a PR for the remaining set, pushing the branch first unless it is already on origin |
 
+  A per-branch lookup would lose an earlier PR as soon as the residue set changed: PRs would pile
+  up, and a human's close would stop counting.
+- **The branch** is `build/ledger-residue-{sha1(sorted paths).slice(0, 8)}`, hashed over the
+  remaining removable set only.
 - **The write** is plumbing. A scratch `GIT_INDEX_FILE` reads the integration tip, removes the
   residue paths, and commits with the tip as sole parent. The commit is pushed to the new ref with
   no force and no lease. The checkout's index, HEAD and working tree are untouched, and the check
@@ -63,7 +74,16 @@ Candidate (b): a `ledger-residue` check in the reconcile family
 
 - The removal PR is not auto-armed. The `repo-wide` sweep's item 9 recognizes only the tidy and
   wrap-up housekeeping markers, so a human or the fleet merges it.
-- A removal PR closed unmerged reads as declined, and that residue set is never re-proposed. A
-  changed set gets a new branch.
+- A removal PR closed unmerged declines every path its body names, and those paths are never
+  re-proposed while that PR is inside the list's 100-most-recent window. Its branch stays on
+  origin: `remote-prune` deletes only branches whose PR is merged, and this check deletes nothing.
+- A ledger with open rows or a live run stays on the integration branch until a human or
+  `/claude-tweaks:tidy` resolves it. The check reports it each pass, and the background summary
+  surfaces it at the next SessionStart.
+- tidy's orphan-ledger scan and this check can both propose deleting the same ledger, because
+  they share one rule. The duplicate is benign: whichever PR merges first removes the file, and
+  the other is left with nothing to delete. If the leftover is this check's removal PR, close it.
+  While it stays open, every later residue path skips `removal-pr-open`, which the background
+  summary surfaces each pass.
 - `gh`-absent and `local-merge` runs skip the check.
 - After merge, `remote-prune` deletes the `build/` branch on its own merged-proof bar.
