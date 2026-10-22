@@ -9,6 +9,7 @@ const {
   checkConformance,
   PHILOSOPHY_EXCEPTION,
 } = require('../../../plugin/bin/lib/init/claude-md-conformance');
+const { readText } = require('../../helpers/read-skill');
 
 const FIXTURE = [
   '# Phase 5: CLAUDE.md Template and Guidelines',
@@ -163,8 +164,8 @@ test('claude-tweaks Pipeline section does not forbid /superpowers:writing-plans 
 });
 
 test("this repo's own CLAUDE.md claude-tweaks Pipeline section conforms to the live template (#3859)", () => {
-  const claudeMd = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'CLAUDE.md'), 'utf8');
-  const r = checkConformance({ templateSource: fs.readFileSync(TEMPLATE, 'utf8'), projectClaudeMd: claudeMd });
+  const claudeMd = readText(path.resolve(__dirname, '..', '..', '..', 'CLAUDE.md'));
+  const r = checkConformance({ templateSource: readText(TEMPLATE), projectClaudeMd: claudeMd });
   assert.ok(
     r.conformant.includes('claude-tweaks Pipeline'),
     'CLAUDE.md claude-tweaks Pipeline section drifted from the live template (Integration model paragraph or specify-auto-continue clause differs)',
