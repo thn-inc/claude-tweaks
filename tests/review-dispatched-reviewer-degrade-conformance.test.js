@@ -135,7 +135,7 @@ test('the compact-eligibility assertion can go red', () => {
   assertEachPatternGoesRed(summaryForms(readText(SUMMARY_TEMPLATE)).compact, COMPACT_ELIGIBLE, compactEligibleMissing);
 });
 
-const VERDICT_PREFIX ='**Verdict comment (';
+const VERDICT_PREFIX = '**Verdict comment (';
 const VERDICT_COPY = [[/Coverage caveat:\*\* line verbatim/, "the verdict comment copies the summary's Coverage caveat line verbatim"]];
 const verdictMissing = missingFactsOf(VERDICT_COPY);
 
