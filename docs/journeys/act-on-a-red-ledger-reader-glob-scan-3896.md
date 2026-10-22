@@ -21,7 +21,7 @@ files:
 - **Action:** Find the quoted occurrence in the named skill file. It is one of these spellings:
   - a `docs/plans` path with a wildcard and `ledger` in it (`docs/plans/*-ledger.md`, `docs/plans/*ledger*.md`, `docs/plans/YYYY-MM-DD-*-ledger.md`, `docs/plans/*-record-{n}-ledger.md`)
   - a wildcard ledger filename near a `docs/plans` mention (`find docs/plans -name "*-ledger.md"`)
-  - an `ls docs/plans | grep ledger` listing
+  - an `ls`/`rg` listing of `docs/plans` piped, through any number of stages, into `grep`/`rg ledger` (`ls docs/plans | grep ledger`, `ls -t docs/plans | head -1 | grep ledger`, `rg --files docs/plans | rg ledger`)
 - **Should feel:** Pinpointed. The message quotes the exact text the scan matched.
 - **Should understand:** Words around the glob no longer exempt it. A sentence saying "fallback" or "inherited" fails the same as any other this-run lookup, and so does a lowercase continuation after a glob sentence. The scan checks exact passages, not sentence keywords. The non-wildcard Create location `docs/plans/YYYY-MM-DD-{feature}-ledger.md` is a location definition and never matches.
 - **Red flags:** Rewording the step to dodge the matcher, for example by splitting the path across two backtick spans. The lookup still matches inherited ledgers; the scan just stops seeing it.

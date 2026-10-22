@@ -39,8 +39,9 @@ const LEDGER_LOOKUP_RES = [
   /docs\/plans\/(?=[^\s`"'|]*\*)(?=[^\s`"'|]*ledger)[^\s`"'|]*/g,
   // a wildcard ledger filename near a docs/plans mention: find docs/plans -name "*-ledger.md"
   /docs\/plans\b[^`\n]{0,80}?(?<=[\s"'])(?=[^\s`"'|]*\*)(?=[^\s`"'|]*ledger)[^\s`"'|]*/g,
-  // a docs/plans listing filtered for ledgers: ls docs/plans | grep ledger
-  /\bls\b[^`\n|]{0,40}?docs\/plans\b[^`\n|]{0,40}?\|\s*grep\b[^`\n|]*ledger/g,
+  // a docs/plans listing filtered for ledgers, through any number of pipe stages:
+  // ls docs/plans | grep ledger, ls -t docs/plans | head -1 | grep ledger, rg --files docs/plans | rg ledger
+  /\b(?:ls|rg)\b[^`\n|]{0,40}?docs\/plans\b[^`\n|]{0,40}?(?:\|[^`\n|]{0,40}?)*?\|\s*(?:grep|rg)\b[^`\n|]*ledger/g,
 ];
 
 // [start, end) index ranges of every occurrence of `re` (a global regex) in `text`.
@@ -67,7 +68,8 @@ function assertNoBareGlob(text, label, allowed = []) {
   const bare = LEDGER_LOOKUP_RES.flatMap((re) => occurrenceRanges(text, re))
     .filter(([start, end]) => !allowedRanges.some(([allowedStart, allowedEnd]) => start >= allowedStart && end <= allowedEnd))
     .map(([start, end]) => text.slice(start, end));
-  assert.strictEqual(bare.length, 0, `${label}: a this-run ledger lookup uses the bare docs/plans glob: ${JSON.stringify(bare)}`);
+  // Two patterns can match one occurrence; report each distinct matched text once.
+  assert.strictEqual(bare.length, 0, `${label}: a this-run ledger lookup uses the bare docs/plans glob: ${JSON.stringify([...new Set(bare)])}`);
 }
 
 function assertRuleIsProbeFirst(text) {
@@ -113,6 +115,8 @@ test('AC2.2 go-red: the other docs/plans ledger lookup spellings fail; the Creat
     'Glob `docs/plans/YYYY-MM-DD-*-ledger.md` for this run.',
     'Run `find docs/plans -name "*-ledger.md"` to list this run.',
     'Run `ls docs/plans | grep ledger` to list this run.',
+    'Run `ls -t docs/plans | head -1 | grep ledger` to list this run.',
+    'Run `rg --files docs/plans | rg ledger` to list this run.',
   ];
   for (const s of SPELLINGS) assert.throws(() => assertNoBareGlob(flat(s), 'fixture'), /a this-run ledger lookup uses the bare docs\/plans glob/, s);
   assert.doesNotThrow(() => assertNoBareGlob(flat('Create `docs/plans/YYYY-MM-DD-{feature}-ledger.md` for the run.'), 'fixture'));
