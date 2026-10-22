@@ -33,7 +33,7 @@ files:
 - **Should understand:**
   - A flag a person types belongs in the hint and in every row of the Argument-hint mirror surfaces table. Backlog's `--trust` was added for exactly this reason.
   - A flag only an agent or another skill passes is marked `(producer-only)`. A retired spelling is marked `(deprecated alias)`.
-  - A marked flag *may* be left out of the hint and its mirrors. Marking is the condition for absence, not a requirement to remove it, and some skills still carry a caller-only `--source` in their hints.
+  - A marked flag stays out of the hint and its mirrors. The inverse check fails when a marked entry's flag is still in the hint.
 - **Red flags:**
   - Marking a flag a person does type, just to make the test pass. The hint is the human-facing grammar.
   - Adding a producer-only flag to every mirror surface because the "Adding a mode or argument" paragraph says to. That paragraph carves marked flags out.

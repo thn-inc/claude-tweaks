@@ -30,8 +30,9 @@
 // hint, unless that entry carries `(producer-only)` or `(deprecated alias)`
 // (EXEMPT_MARKERS) -- in the row's first cell, or opening the bullet's text after
 // the code span -- a flag only an agent or another skill passes, or a superseded
-// alias, which the user-facing hint may leave out. A marker anywhere else does
-// not exempt the entry.
+// alias, which stays out of the user-facing hint. markedHintFlags is the converse
+// of undocumentedHintFlags: it fails when a marked entry's flag is still in the
+// hint. A marker anywhere else does not exempt the entry.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -323,4 +324,14 @@ test('markedHintFlags reads a marked bullet or row, and only on a whole-token hi
   assert.deepStrictEqual(markedHintFlags(doc('[--b-x]', bullet)), []);
   assert.deepStrictEqual(markedHintFlags(doc('[--b]', '| `--b` (producer-only) | x |')), ['--b']);
   assert.deepStrictEqual(markedHintFlags(doc('[--b]', '- `--b` → x')), []);
+});
+
+test('#3504 AC3.1/AC3.2: the rule says a marked flag stays out of the hint, nowhere "may be left out"', () => {
+  const doc = fs.readFileSync(path.join(ROOT, 'docs', 'skill-authoring.md'), 'utf8');
+  const check = fs.readFileSync(path.join(SKILLS_DIR, 'build', 'plan-authoring-checks.md'), 'utf8');
+  const bullet = doc.split('\n').find((l) => l.startsWith('- **`argument-hint`**'));
+  assert.ok(bullet, 'argument-hint bullet not found');
+  assert.ok(bullet.includes('stays out of the hint'), 'argument-hint bullet does not say a marked flag stays out of the hint');
+  assert.ok(!doc.includes('may be left out'), 'docs/skill-authoring.md still says "may be left out"');
+  assert.ok(!check.includes('may be left out'), 'plan-authoring-checks.md still says "may be left out"');
 });
