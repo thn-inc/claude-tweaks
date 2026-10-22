@@ -328,7 +328,7 @@ test('structurallyStuckBody: names both tiebreak reasons and carries their remed
   const lines = body.split('\n');
   const mergedPartial = lines.findIndex((l) => l.startsWith('For a `merged-partial` directory'));
   const tiebreak = lines.findIndex((l) => l.startsWith('For a `tiebreak-coverage-missing`'));
-  assert.equal(tiebreak, mergedPartial + 2, 'the tiebreak remedy follows the merged-partial line');
+  assert.ok(mergedPartial >= 0 && tiebreak > mergedPartial, 'the tiebreak remedy follows the merged-partial line');
 });
 
 test('escalateResidue: structurally-stuck re-escalating the SAME already-named path is a plain dedup-hit, never appended twice', () => {

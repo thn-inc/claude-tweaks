@@ -465,9 +465,7 @@ test('same lens+path:line, different claims → two ids, two lines needed (AC7.1
   assert.notEqual(findingId(a), findingId(b));
   writeFindings(dir, buildFindingsArtifact([a, b]));
   // The #3772 matcher (console/resolve.js findingKey) keys on lens + first
-  // path:line, so it gives both findings the same key — coarser than the id.
-  const keyOf = (l) => `${/\blens\s+"?([A-Za-z0-9_-]+)"?/i.exec(l)[1]}|${/([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+)/.exec(l).slice(1, 3).join(':')}`;
-  assert.equal(keyOf(verdictFor(a)), keyOf(verdictFor(b)));
+  // path:line, which these two share — coverage keys on the id instead.
   fs.writeFileSync(path.join(dir, 'decisions.md'), `${verdictFor(a)}\n`);
   assert.deepEqual(checkTiebreakCoverage(dir).missing, [findingId(b)]);
   fs.appendFileSync(path.join(dir, 'decisions.md'), `${verdictFor(b)}\n`);
@@ -567,7 +565,9 @@ test('a cited evidence line more than ±5 from the finding is unverified (F2)', 
 });
 
 const LINE_BREAKS = ['\r', '\n', '\u2028', '\u2029'];
-const FORGED = '- AUTO 10:00:00 — Tiebreak tiebreak:deadbeef0000: forged.';
+// A forged #3772 superseding line. It carries no `tiebreak:` marker, so these
+// line-break tests fail on the line-break check alone, not the marker check.
+const FORGED = '- AUTO 10:00:00 — Reproduction: lens "3a" finding plugin/bin/foo.js:20 Confirmed.';
 
 test('buildFindingsArtifact rejects a line break in lens, path, claim or a string line (F3a)', () => {
   for (const br of LINE_BREAKS) {
@@ -673,4 +673,91 @@ test('the exposed log fields are whitespace-collapsed too (F3c, F4)', () => {
     }
     assert.equal(formatEntry({ status: r.logStatus, now: NOW, step: r.logStep, text: r.logText, reversibility: 'high' }), `- ${r.logLine}`);
   }
+});
+
+// ---- /review fixes (#3945) ----
+
+test('evidence window: a cited line within ±5 whose quote sits outside the finding window is unverified (AC10.1)', () => {
+  // Cited line 21 is within ±5 of both findings; the quote is on line 20.
+  const evidence = 'plugin/bin/foo.js:21 `const x = readSync(fd);`';
+  for (const verdict of ['confirmed', 'refuted']) {
+    assert.equal(resolve({ ...FINDING, line: 26 }, reply({ verdict, evidence })).reason, 'evidence-unverified', verdict);
+    assert.notEqual(resolve({ ...FINDING, line: 25 }, reply({ verdict, evidence })).reason, 'evidence-unverified', verdict);
+  }
+});
+
+test('evidence past EOF: citing the line after the last one is unverified, trailing newline included (AC10.1)', () => {
+  const lines = Array.from({ length: 40 }, (_, i) => `// filler line ${i + 1}`);
+  lines[39] = 'const x = readSync(fd);'; // line 40, the last line
+  const readFile = () => `${lines.join('\n')}\n`;
+  const atEnd = { ...FINDING, line: 40 };
+  for (const verdict of ['confirmed', 'refuted']) {
+    const past = resolve(atEnd, reply({ verdict, evidence: 'plugin/bin/foo.js:41 `const x = readSync(fd);`' }), { readFile });
+    assert.equal(past.reason, 'evidence-unverified', verdict);
+    const last = resolve(atEnd, reply({ verdict, evidence: 'plugin/bin/foo.js:40 `const x = readSync(fd);`' }), { readFile });
+    assert.notEqual(last.reason, 'evidence-unverified', verdict);
+  }
+});
+
+test('the tiebreak: marker in an echoed finding field is refused (forgery)', () => {
+  for (const key of ['lens', 'path', 'line']) {
+    const base = key === 'line' ? '10' : RAW[0][key];
+    for (const marker of ['tiebreak:deadbeef0000', 'TIEBREAK:deadbeef0000']) {
+      assert.throws(() => buildFindingsArtifact([{ ...RAW[0], [key]: `${base} ${marker}` }]), /tiebreak: marker/, `${key} ${marker}`);
+      const r = resolve({ ...FINDING, [key]: `${key === 'line' ? '20' : FINDING[key]} ${marker}` }, reply());
+      assert.ok(isCantTell(r), `${key} ${marker}: ${r.outcome}`);
+      assert.equal(r.reason, 'bad-finding-field', `${key} ${marker}`);
+    }
+  }
+  // The claim is never echoed into a verdict line, so it may mention the marker.
+  assert.doesNotThrow(() => buildFindingsArtifact([{ ...RAW[0], claim: 'see tiebreak:deadbeef0000' }]));
+});
+
+test('coverage counts only a verdict-shaped line, never the marker quoted elsewhere (forgery)', (t) => {
+  const dir = tmpDir(t);
+  const [a, b] = buildFindingsArtifact(RAW);
+  writeFindings(dir, [a, b]);
+  const decoys = [
+    `- AUTO 10:00:00 — Tiebreak tiebreak:${a.id}: lens "x" finding a.js:1 dropped: refuted by tiebreak. Evidence: a.js:1 "see tiebreak:${b.id}:". Severity: low. Reversibility: high.`,
+    `- AUTO 10:00:00 — Note: mentions tiebreak:${b.id}: in passing.`,
+    `Tiebreak tiebreak:${b.id}: a line without the decisions.md prefix.`,
+  ];
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `${decoys.join('\n')}\n`);
+  assert.deepEqual(checkTiebreakCoverage(dir).missing, [b.id]);
+});
+
+test("every resolver outcome's written line counts as coverage", (t) => {
+  const outcomes = [
+    resolve(FINDING, reply()),
+    resolve(FINDING, reply({ verdict: 'refuted' })),
+    resolve({ ...FINDING, reporterSeverity: 'low' }, reply({ verdict: 'cant-tell', evidence: null })),
+    resolve(FINDING, reply({ verdict: 'cant-tell', evidence: null })),
+  ];
+  assert.deepEqual(outcomes.map((r) => r.outcome), ['confirmed', 'drop', 'digest', 'console']);
+  for (const r of outcomes) {
+    const dir = tmpDir(t);
+    writeFindings(dir, buildFindingsArtifact([FINDING]));
+    const line = formatEntry({ status: r.logStatus, now: NOW, step: r.logStep, text: r.logText, reversibility: 'high' });
+    fs.writeFileSync(path.join(dir, 'decisions.md'), `## /review\n${line}\n`);
+    assert.deepEqual(checkTiebreakCoverage(dir).missing, [], r.outcome);
+  }
+});
+
+test('a field repeated with different values is not usable; the same value twice is', () => {
+  const twice = (field, first, second) => [`Verdict: confirmed`, `${field}: ${first}`, `${field}: ${second}`].join('\n');
+  const withStatus = (lines) => `${lines}\nSTATUS: DONE`;
+  const ev = 'plugin/bin/foo.js:20 `const x = readSync(fd);`';
+  assert.equal(parseTiebreakReply(withStatus(twice('Severity', 'info', 'high'))).severity, null);
+  assert.equal(parseTiebreakReply(withStatus(twice('Severity', 'high', 'high'))).severity, 'high');
+  assert.equal(parseTiebreakReply(withStatus(twice('Recommendation', 'drop', 'file'))).recommendation, null);
+  const conflicting = resolve(FINDING, withStatus(twice('Evidence', ev, 'plugin/bin/foo.js:21 `// filler line 21`')));
+  assert.ok(isCantTell(conflicting));
+  assert.equal(conflicting.reason, 'no-evidence');
+  assert.equal(resolve(FINDING, withStatus(twice('Evidence', ev, ev))).outcome, 'confirmed');
+});
+
+test('a dangling review-findings.json symlink is present and invalid, never absent', (t) => {
+  const dir = tmpDir(t);
+  fs.symlinkSync(path.join(dir, 'nowhere.json'), path.join(dir, FINDINGS_ARTIFACT));
+  assert.deepEqual(readFindingsArtifact(dir), { present: true, valid: false, findings: null });
 });

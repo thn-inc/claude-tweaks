@@ -28,8 +28,10 @@
 //       separator, or any other value, gives recommendation: null.
 //   STATUS: {WORD}                                  uppercased; MUST be the
 //       last non-empty line of the reply (narration after it is a failure).
-// The first line of a field wins, except Verdict: a Verdict line outside the
-// set, or two Verdict lines that disagree, is not a usable verdict.
+// A field repeated with the same value is fine. Repeated with different values,
+// it is not usable: two disagreeing Verdict lines (or one outside the set) leave
+// no verdict, and disagreeing Evidence, Severity or Recommendation lines make
+// that field null — a quoted fragment can never silently win.
 //
 // Parse signal (parse-signal discipline): `parse` is 'could-not-parse' for an
 // empty reply, no valid Verdict, or no trailing STATUS line — every field is
@@ -105,23 +107,25 @@ function parseTiebreakReply(text) {
     const m = FIELD_RE.exec(line);
     if (!m) continue;
     const name = m[1].toLowerCase();
-    if (name === 'verdict') verdicts.push(m[2].trim().toLowerCase());
-    else if (!(name in fields)) fields[name] = m[2].trim();
+    const value = m[2].trim();
+    if (name === 'verdict') verdicts.push(value.toLowerCase());
+    else if (!(name in fields)) fields[name] = value;
+    else if (fields[name] !== value) fields[name] = null;
   }
 
   if (verdicts.length === 0 || verdicts.some((v) => !VERDICTS.includes(v)) || new Set(verdicts).size > 1) {
     return unparsed();
   }
 
-  const severity = fields.severity === undefined ? null : fields.severity.toLowerCase();
-  const rec = fields.recommendation === undefined
+  const severity = fields.severity == null ? null : fields.severity.toLowerCase();
+  const rec = fields.recommendation == null
     ? { recommendation: null, recommendationReason: null }
     : parseRecommendation(fields.recommendation);
 
   return {
     parse: 'ok',
     verdict: verdicts[0],
-    evidence: fields.evidence === undefined ? null : parseEvidence(fields.evidence),
+    evidence: fields.evidence == null ? null : parseEvidence(fields.evidence),
     severity: SEVERITIES.includes(severity) ? severity : null,
     recommendation: rec.recommendation,
     recommendationReason: rec.recommendationReason,
@@ -143,11 +147,17 @@ function parseTiebreakReply(text) {
 // 'confirmed' | 'drop' | 'digest' | 'console'; digest/console are can't-tell,
 // split by the higher of the reporter's and tiebreak's severities (low/info ->
 // digest, medium+ -> console; neither known -> medium). A lens, path, or string
-// line holding a line break (LINE_BREAK_RE) is can't-tell with reason
-// bad-finding-field, so a finding field can never forge a second decisions.md
-// line; the logLine is also whitespace-collapsed to one line.
+// line holding a line break (LINE_BREAK_RE) or the `tiebreak:` marker
+// (MARKER_RE) is can't-tell with reason bad-finding-field, so a finding field
+// can never forge a second decisions.md line or echo another finding's marker;
+// the logLine is also whitespace-collapsed to one line.
 
 const LINE_BREAK_RE = /[\r\n\u2028\u2029]/;
+const MARKER_RE = /tiebreak:/i;
+// The finding fields every verdict line echoes back.
+const ECHOED_FIELDS = ['lens', 'path', 'line'];
+const badEchoedField = (finding, key) => typeof finding[key] === 'string'
+  && (LINE_BREAK_RE.test(finding[key]) || MARKER_RE.test(finding[key]));
 
 function knownSeverity(s) {
   if (typeof s !== 'string') return null;
@@ -246,7 +256,7 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
   const tiebreakStep = `Tiebreak tiebreak:${id}`;
 
   // Why this cannot be a confirmed/drop, in the order the causes are checked.
-  const badField = ['lens', 'path', 'line'].some((k) => typeof finding[k] === 'string' && LINE_BREAK_RE.test(finding[k]));
+  const badField = ECHOED_FIELDS.some((k) => badEchoedField(finding, k));
   let reason;
   if (badField) reason = 'bad-finding-field';
   else if (parsed.parse === 'could-not-parse') reason = 'could-not-parse';
@@ -286,8 +296,11 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
 // review-findings.json (a run-dir artifact, in run-artifact/write.js's
 // ARTIFACT_NAMES) lists every finding the review handed to tiebreak, each with
 // its findingId. Every resolveTiebreak logLine carries the literal
-// `tiebreak:{id}`, so coverage is "does decisions.md hold that literal for each
-// listed id". The #3772 matcher in console/resolve.js (findingKey: lens + first
+// `tiebreak:{id}`, so coverage is "does decisions.md hold a verdict line for
+// each listed id" — matched on the verdict line's own shape (verdictLineRe:
+// the `Tiebreak tiebreak:{id}:` step, or the confirmed line's `confirmed by
+// tiebreak:{id}. Confirmed.`), never on the marker anywhere in a line, so a
+// marker quoted inside another line's text never counts. The #3772 matcher in console/resolve.js (findingKey: lens + first
 // path:line) is unchanged and coarser than the id — two findings that differ
 // only in claim share a key but need two verdict lines here.
 //
@@ -296,7 +309,8 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
 // reason. Only a missing file is { present: false, valid: true } (nothing enforced).
 // A valid entry has a 12-lowercase-hex id (the findingId shape) and non-empty
 // string lens and path. buildFindingsArtifact refuses a line break in lens,
-// path, claim, or a string line.
+// path, claim, or a string line, and the `tiebreak:` marker in lens, path, or a
+// string line (the fields a verdict line echoes).
 
 const FINDINGS_ARTIFACT = 'review-findings.json';
 const FINDING_KINDS = ['unconfirmed', 'contested'];
@@ -311,6 +325,9 @@ function buildFindingsArtifact(findings) {
     for (const key of ['lens', 'path', 'claim', 'line']) {
       if (typeof f[key] === 'string' && LINE_BREAK_RE.test(f[key])) throw new TypeError(`finding ${i} ${key} contains a line break`);
     }
+    for (const key of ECHOED_FIELDS) {
+      if (typeof f[key] === 'string' && MARKER_RE.test(f[key])) throw new TypeError(`finding ${i} ${key} contains the tiebreak: marker`);
+    }
     if (!FINDING_KINDS.includes(f.kind)) throw new TypeError(`finding ${i} kind must be one of ${FINDING_KINDS.join(', ')}`);
     return {
       id: findingId(f), lens: f.lens, path: f.path, line: f.line, claim: f.claim,
@@ -322,19 +339,28 @@ function buildFindingsArtifact(findings) {
 function readFindingsArtifact(dir) {
   const file = path.join(dir, FINDINGS_ARTIFACT);
   const invalid = { present: true, valid: false, findings: null };
+  let raw;
   try {
-    fs.lstatSync(file);
+    raw = fs.readFileSync(file, 'utf8');
   } catch (err) {
-    if (err && err.code === 'ENOENT') return { present: false, valid: true, findings: null };
-    return invalid;
+    if (!err || err.code !== 'ENOENT') return invalid;
+    // A dangling symlink also reads ENOENT, but it is present, not absent.
+    try { fs.lstatSync(file); return invalid; } catch { return { present: false, valid: true, findings: null }; }
   }
   let parsed;
-  try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return invalid; }
+  try { parsed = JSON.parse(raw); } catch { return invalid; }
   if (!Array.isArray(parsed)) return invalid;
   const wellFormed = parsed.every((e) => e && typeof e === 'object'
     && ['id', 'lens', 'path'].every((k) => typeof e[k] === 'string' && e[k] !== '')
     && /^[0-9a-f]{12}$/.test(e.id));
   return wellFormed ? { present: true, valid: true, findings: parsed } : invalid;
+}
+
+// The decisions.md line log-decision.js writes for a resolveTiebreak verdict
+// (`- {AUTO|STAGED} {HH:MM:SS} — {step}: {text}`). `id` is 12-hex validated,
+// so it needs no escaping.
+function verdictLineRe(id) {
+  return new RegExp(`^- (?:AUTO|STAGED) \\d{2}:\\d{2}:\\d{2} — (?:Tiebreak tiebreak:${id}:|Reproduction: .* confirmed by tiebreak:${id}\\. Confirmed\\.)`);
 }
 
 function checkTiebreakCoverage(dir) {
@@ -344,7 +370,7 @@ function checkTiebreakCoverage(dir) {
   try { decisions = fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'); } catch { /* absent or unreadable: no lines */ }
   const lines = decisions.split(/\r?\n/);
   const missing = art.findings
-    .filter((f) => !lines.some((l) => l.includes(`tiebreak:${f.id}`)))
+    .filter((f) => !lines.some((l) => verdictLineRe(f.id).test(l)))
     .map((f) => f.id);
   return { artifactPresent: true, artifactValid: true, missing };
 }

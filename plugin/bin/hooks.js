@@ -1152,6 +1152,7 @@ async function main(argv) {
   if (cmd === 'archive-run') {
     const {
       archiveRunDir, readConsoleState, listSpecDirs, listStagedItems, consoleReplacedByAutoMergeShortCircuit,
+      TIEBREAK_COVERAGE_HINT,
     } = require('./lib/reconcile/archive-merged');
     const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
     const { runDir, invalidRunArg, worktreeLocalFallback } = resolveRunArg(
@@ -1207,7 +1208,7 @@ async function main(argv) {
     // present but unreadable/malformed is refused under its own reason, before
     // the per-id coverage gap is looked at.
     const tiebreakCoverage = require('./lib/tiebreak').checkRunTiebreakCoverage(runDir, listSpecDirs(runDir));
-    const tiebreakHint = "re-run the review step's findings writer for this run, or delete review-findings.json if the run predates the tiebreak, then re-run archive-run";
+    const tiebreakHint = `${TIEBREAK_COVERAGE_HINT}, then re-run archive-run`;
     if (tiebreakCoverage.artifactValid === false) {
       process.stdout.write(`claude-tweaks: archival refused — tiebreak-artifact-invalid (review-findings.json is present but unreadable or malformed) — ${tiebreakHint}\n`);
       return 0;

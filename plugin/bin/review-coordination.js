@@ -20,10 +20,14 @@
 // the tiebreak-coverage result over the run dir and its spec-*/ subdirs, the
 // same set the archive gate checks (missing ids, exit 0 either way — archival,
 // not this exit code, refuses). --root (default cwd) is where resolve-tiebreak
-// reads the evidence file from.
+// reads the evidence file from; a finding path whose real path (symlinks
+// followed, `..` normalized) leaves --root is never read, so its evidence is
+// unverified. check-coverage goes through the same run-dir anchoring guard as
+// write-findings: a worktree-local shadow run dir holds no artifact, and
+// reading it would report a confident "nothing missing" [IL-127].
 // Exit 0 ok; 2 malformed invocation or unreadable/invalid input (check-coverage:
-// also a run dir that does not exist); 3 run dir missing/unanchored
-// (write-findings only).
+// also a run dir that does not exist); 3 run dir unanchored (write-findings,
+// check-coverage), or missing (write-findings).
 'use strict';
 
 const fs = require('node:fs');
@@ -38,8 +42,6 @@ const {
 const {
   resolveTiebreak, buildFindingsArtifact, checkRunTiebreakCoverage, FINDINGS_ARTIFACT,
 } = require('./lib/tiebreak');
-// listSpecDirs comes from the archive module so tiebreak.js never requires it.
-const { listSpecDirs } = require('./lib/reconcile/archive-merged');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { writeArtifact } = require('./lib/run-artifact/write');
 
@@ -177,7 +179,16 @@ function run(argv, deps = realDeps) {
       deps.stderr(`review-coordination.js: cannot read ${positional[1]}: ${err.message}\n`);
       return 2;
     }
-    const readFile = (p) => fs.readFileSync(path.resolve(root, p), 'utf8');
+    // Throws (→ evidence-unverified) for a path that resolves outside --root.
+    const readFile = (p) => {
+      const realRoot = fs.realpathSync(root);
+      const real = fs.realpathSync(path.resolve(realRoot, p));
+      const rel = path.relative(realRoot, real);
+      if (rel === '' || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+        throw new Error(`evidence path is outside --root: ${p}`);
+      }
+      return fs.readFileSync(real, 'utf8');
+    };
     deps.stdout(JSON.stringify(resolveTiebreak(input.value, reply, { readFile })) + '\n');
     return 0;
   }
@@ -219,13 +230,23 @@ function run(argv, deps = realDeps) {
       deps.stderr('review-coordination.js: check-coverage takes exactly 1 run-dir\n' + USAGE);
       return 2;
     }
-    let isDir = false;
-    try { isDir = fs.statSync(rest[0]).isDirectory(); } catch { /* missing: isDir stays false */ }
-    if (!isDir) {
+    let target;
+    try { target = resolveTarget({ runDir: rest[0], cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch (err) {
+      deps.stderr(`review-coordination.js: ${err && err.message}\n`);
+      return 3;
+    }
+    if (!target.ok && target.reason === 'missing') {
       deps.stderr(`review-coordination.js: run dir does not exist: ${rest[0]}\n`);
       return 2;
     }
-    deps.stdout(JSON.stringify(checkRunTiebreakCoverage(rest[0], listSpecDirs(rest[0]))) + '\n');
+    if (!target.ok) {
+      deps.stderr(`review-coordination.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${rest[0]} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+      return 3;
+    }
+    // listSpecDirs comes from the archive module so tiebreak.js never requires
+    // it; loaded here so the other verbs never pay for that module.
+    const { listSpecDirs } = require('./lib/reconcile/archive-merged');
+    deps.stdout(JSON.stringify(checkRunTiebreakCoverage(target.dir, listSpecDirs(target.dir))) + '\n');
     return 0;
   }
   deps.stderr(`review-coordination.js: unknown command: ${command === undefined ? '(none)' : command}\n` + USAGE);

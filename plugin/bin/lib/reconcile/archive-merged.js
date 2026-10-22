@@ -2283,5 +2283,5 @@ module.exports = {
   compareWorkTwin, resolveIdenticalWorkTwin, listFilesRecursive,
   isClosedSlugStuck, recordNumbersFromSlug, runRecordSet, inFlightRecords,
   listStagedItems, hasStagedItems, consoleReplacedByAutoMergeShortCircuit,
-  refusal,
+  refusal, TIEBREAK_COVERAGE_HINT,
 };

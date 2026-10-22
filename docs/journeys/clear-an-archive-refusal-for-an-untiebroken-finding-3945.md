@@ -40,9 +40,10 @@ files:
 - **Should understand:**
   - The command exits 0 even when ids are missing. Refusing is the archive path's job, not this command's.
   - A run dir that does not exist exits 2, so a typo never looks like a clean run.
+  - A run dir outside the main checkout (a worktree-local shadow) exits 3 for the same reason.
 - **Red flags:**
   - a nonzero exit just because ids are missing
-  - a mistyped run dir reported as `artifactPresent: false` with nothing missing
+  - a mistyped or shadow run dir reported as `artifactPresent: false` with nothing missing
 
 ### 3. Settle the gap
 - **URL:** the run's `decisions.md`, or its `review-findings.json`
@@ -53,7 +54,7 @@ files:
   Then they re-run `archive-run`.
 - **Should feel:** finite. Once every listed id has a verdict line, the next archive attempt succeeds.
 - **Should understand:**
-  - Every verdict line carries the literal `tiebreak:{id}` marker.
+  - Every verdict line carries the literal `tiebreak:{id}` marker, and only a line in the verdict shape counts. A finding whose lens, path or line holds `tiebreak:` is refused by the findings writer.
   - A tiebreak that never replied still produces a can't-tell verdict line, so every finding can always be covered and no waiver is needed.
 - **Red flags:**
   - a forged or hand-typed line that mentions `tiebreak:{id}` inside a finding's lens or path is counted as coverage
