@@ -49,10 +49,19 @@ const SECTION_MAP = [
   [/^review-(contested|debate)-/, SECTIONS.CONTESTED],
   [/\.patch$/, SECTIONS.PENDING],
   [/^(polish-suggestion|visual-review|design-decision|build-deviation|simplify|deepen|sdd-ruling)-/, SECTIONS.PENDING],
-  [/^wrap-up-skill(-|\b)/, SECTIONS.SKILL],
+  // sibling-premise-disproof- (#3488): bin/materialize.js stages it as a note for a
+  // human to read, not a change to apply — so it resolves pending.
+  [/^sibling-premise-disproof-/, SECTIONS.PENDING, 'sibling-premise-disproof-note'],
+  // plan-citation- (#3488): wrap-up/cleanup-procedures.md stages a kept-plan citation
+  // proposal for a human to decide; the reason pins it pending so nothing auto-applies.
+  [/^plan-citation-/, SECTIONS.PENDING, 'cited-plan-kept'],
+  // translation- (#3488): flow/multi-spec.md stages a translated brief that the
+  // consolidated console shows under "Translated briefs"; a human reads it, so it resolves pending.
+  [/^translation-/, SECTIONS.PENDING, 'translated-brief'],
+  [/^(wrap-up-skill|skills)(-|\b)/, SECTIONS.SKILL],
   // release-backfill- retired #2257 (git describe --contains replaced the
   // staged-backfill mechanism entirely — nothing stages that prefix anymore).
-  [/^(wrap-up-doc|tidy-doc)-/, SECTIONS.DOC],
+  [/^(wrap-up-doc|tidy-doc|docs)-/, SECTIONS.DOC],
   // wrap-up-claude-md-/wrap-up-adr- (#2773): the curation engine's `claude-md`
   // and `decision-records` registry rows (bin/lib/wrap-up/registry.js) stage
   // their proposals under these prefixes — claude-md-curation.md and
@@ -61,9 +70,18 @@ const SECTION_MAP = [
   // uses for an `applied` finding from either registry row.
   [/^(wrap-up-claude-md|wrap-up-adr)-/, SECTIONS.CONFIG],
   [/^(wrap-up-journey|journeys)(-|\b)/, SECTIONS.JOURNEY],
-  [/^(reflect|digest-promotion|leftover|ledger-record|upstream-unfiled|red-team|specify-overlap|specify-redteam|flaky-allowlist|tidy|plan-retention|feedback-drafts)(-|\b)/, SECTIONS.QUEUE],
+  // premise-satisfied- (#3488): bin/materialize.js stages a proposal to close a record
+  // whose premise check already passes; closing is a human call, so it resolves pending.
+  [/^premise-satisfied-/, SECTIONS.QUEUE, 'premise-satisfied-close-proposal'],
+  // wrap-up-reflect-insights (#3488): reflect/full-mode.md stages the composed insights
+  // table unapplied; the reason pins it pending so the console never applies it blind.
+  [/^wrap-up-reflect-insights(-|\b)/, SECTIONS.QUEUE, 'reflect-insights-table'],
+  [/^(reflect|digest-promotion|leftover|ledger-record|upstream-unfiled|red-team|specify-overlap|specify-redteam|flaky-allowlist|tidy|plan-retention|feedback-drafts|review-followup|build-followup|reconcile-live-run-archived|wrap-up-cleanup-ordering)(-|\b)/, SECTIONS.QUEUE],
   [/^wrap-up-memory-/, SECTIONS.MEMORY],
   [/^wrap-up-upstream-/, SECTIONS.UPSTREAM],
+  // upstream-draft- (#3488): feedback/upstream-draft.md's hand-off draft. The console
+  // must never file it, so it resolves pending (a filed stance would auto-file it).
+  [/^upstream-draft-/, SECTIONS.UPSTREAM, 'hand-off-draft'],
 ];
 
 // One literal string per alternative of every non-`.patch` SECTION_MAP row,
@@ -77,15 +95,38 @@ const CANONICAL_PREFIXES = [
   'review-unconfirmed-',
   'review-contested-', 'review-debate-',
   'polish-suggestion-', 'visual-review-', 'design-decision-', 'build-deviation-', 'simplify-', 'deepen-', 'sdd-ruling-',
-  'wrap-up-skill-',
-  'wrap-up-doc-', 'tidy-doc-',
+  'sibling-premise-disproof-', 'plan-citation-', 'translation-',
+  'wrap-up-skill-', 'skills-',
+  'wrap-up-doc-', 'tidy-doc-', 'docs-',
   'wrap-up-claude-md-', 'wrap-up-adr-',
   'wrap-up-journey-', 'journeys-',
   'reflect-', 'digest-promotion-', 'leftover-', 'ledger-record-', 'upstream-unfiled-', 'red-team-',
   'specify-overlap-', 'specify-redteam-', 'flaky-allowlist-', 'tidy-', 'plan-retention-', 'feedback-drafts-',
+  'review-followup-', 'build-followup-', 'reconcile-live-run-archived-', 'wrap-up-cleanup-ordering-',
+  'premise-satisfied-', 'wrap-up-reflect-insights-',
   'wrap-up-memory-',
   'wrap-up-upstream-',
+  'upstream-draft-',
 ];
+
+// Staged-id prefixes whose run never reaches this console, so no SECTION_MAP row
+// maps them and stage-item.js's unmapped-prefix warning skips them (#3488). Each
+// entry is [pattern over the id without its extension, why the console never sees it].
+// An id on this list must NOT also classify mapped (resolve.test.js pins the disjointness).
+const STAGING_EXEMPTIONS = Object.freeze([
+  [/^release-held(\.|$)/, "/claude-tweaks:release's standalone run dir; surfaced by release's own Step 4 console (release/console.md), never by wrap-up's console-resolve.js"],
+  [/^dispatch-target-missing-/, "/claude-tweaks:dispatch's `*-dispatch-standalone` run dir (queue-pull-script.md); dispatch renders no Review Console"],
+  [/^shipped-close-/, "the same dispatch-standalone firing run dir (queue-pull-script.md's #1984 shipped-candidate pass); no Review Console"],
+  [/^dream-proposal-/, "harness-health's `*-dream-standalone` run dir (dream-pass.md); report-only, `report.md` is its surface"],
+].map((entry) => Object.freeze(entry)));
+
+// The exemption reason for a staged id (with or without its one trailing
+// extension), or null when the id is not exempt.
+function stagingExemption(id) {
+  const stem = id.slice(0, id.length - path.extname(id).length);
+  const hit = STAGING_EXEMPTIONS.find(([re]) => re.test(stem));
+  return hit ? hit[1] : null;
+}
 
 function levenshtein(a, b) {
   let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
@@ -484,4 +525,4 @@ function resolveAll({ runDir, policy, deps }) {
   return result;
 }
 
-module.exports = { SECTIONS, SECTION_MAP, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, classifyStagedItem, readSnapshot, resolveAll, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { SECTIONS, SECTION_MAP, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, classifyStagedItem, readSnapshot, resolveAll, renderTable, renderStoredTable, drainOverlapHoldPrs };

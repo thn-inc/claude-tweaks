@@ -22,10 +22,14 @@ files:
    - **Red flags:** The call runs unscoped again (it would spend the budget on the `--prune` fetch on a large repo); the call is backgrounded or has no explicit timeout and strands the firing.
 
 2. **The explicit subset runs to completion** — The `hooks.js reconcile` CLI sees a non-empty `--checks` list.
-   - **Action:** The CLI passes an unbounded time ceiling to `reconcile()` (`opts.budgetMs = Infinity` → `createBudget(Infinity)`), so the 18 s hot-path budget that guards SessionStart never cuts the named checks short. Unscoped CLI runs, SessionStart, and the background pass keep the 18 s default.
-   - **Should feel:** Predictable — a check the caller named is a check that runs.
-   - **Should understand:** Runtime is now bounded by each check's own per-call timeouts and the caller's Bash timeout, not by the 18 s ceiling — which is why every scripted `reconcile --checks …` caller keeps a generous explicit timeout.
-   - **Red flags:** The JSON result still lists `reap` under `skipped` with reason `budget-exceeded`; a SessionStart reconcile suddenly takes much longer (the default ceiling leaked into the unbounded path, or vice versa).
+   - **Action:** `reconcile()` first expands the subset with its prerequisites (`expandChecks`, #3630). A list naming `archive` or `red-tip` but neither `mirror` nor `remote-prune` gains `mirror` just ahead of it, so `--checks release,archive,reap` expands to `release,mirror,archive,reap` and executes as `mirror,release,archive,reap`. Nothing else is widened, and `DISPATCH_ORDER` sets the run order. The CLI then passes an unbounded time ceiling to `reconcile()` (`opts.budgetMs = Infinity` → `createBudget(Infinity)`), so the 18 s hot-path budget that guards SessionStart never cuts the named checks short. Unscoped CLI runs, SessionStart, and the background pass keep the 18 s default.
+   - **Should feel:** Predictable. A check the caller named runs, and so does the fetch it depends on, even when the caller forgot to name `mirror`.
+   - **Should understand:** Runtime is now bounded by each check's own per-call timeouts and the caller's Bash timeout, not by the 18 s ceiling. That is why every scripted `reconcile --checks …` caller keeps a generous explicit timeout. The JSON result carries a `mirror` entry whenever the subset was expanded, even though the caller never named `mirror`. That entry is the prerequisite, not a widened sweep.
+   - **Red flags:**
+     - The JSON result still lists `reap` under `skipped` with reason `budget-exceeded`.
+     - A SessionStart reconcile suddenly takes much longer, because the default ceiling leaked into the unbounded path, or the reverse.
+     - `--checks reap` alone starts fetching.
+     - A subset that already names `remote-prune` gains a second fetch.
 
 3. **Read the outcome** — The firing logs the JSON result to `decisions.md`.
    - **Action:** The maintainer (or the next session) reads the termination reconcile entry and `git worktree list`.
@@ -37,4 +41,4 @@ files:
 
 A drain on a large repo reaps the worktrees it merged before it exits, because an explicit `--checks` subset is never starved by the SessionStart budget and the termination call fetches just enough for `archive` to recognize late merges.
 
-_Origin: record #3026 (reconcile's 18 s budget starved `reap` even under an explicit `--checks` subset), built 2026-10-19._
+_Origin: record #3026 (reconcile's 18 s budget starved `reap` even under an explicit `--checks` subset), built 2026-10-19. Updated by record #3630, built 2026-10-22: an explicit subset is now expanded with its prerequisites, so naming `archive` without `mirror` no longer skips async-merged PRs as `local-behind-merge`._

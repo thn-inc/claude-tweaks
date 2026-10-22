@@ -39,7 +39,7 @@ node -e "
 "
 ```
 
-If `"$SPECIFY_ALL_ISSUES"` is unavailable (a resumed decomposition run in a fresh session with no Step 1 state from this session), fall back to reading through the session-scoped record snapshot the same way Step 1 does — `{Session-scoped record snapshot's read-fresh-or-fetch block (_shared/record-queue-fetch.md), with {tmp-records-file} = "$SPECIFY_ALL_ISSUES"}` — within the same `$CLAUDE_CODE_SESSION_ID` this resolves to the identical path and is typically a cache hit, not a fresh `gh` round-trip.
+If `"$SPECIFY_ALL_ISSUES"` is unavailable (a resumed decomposition run in a fresh session with no Step 1 state from this session), fall back to reading through the session-scoped record snapshot the same way Step 1 does — `{Session-scoped record snapshot's read-fresh-or-fetch block (_shared/record-queue-fetch.md), with {tmp-records-file} = $SPECIFY_ALL_ISSUES}` — within the same `$CLAUDE_CODE_SESSION_ID` this resolves to the identical path and is typically a cache hit, not a fresh `gh` round-trip.
 
 `work-backend: local-files` (the local marker search — same idea, read every record body and extract its marker). `queryRecords('specs', {})` alone excludes closed records by default (its `filtersOnClosed` check treats an empty filter object as "open, as today," per `local-store.js`'s own header comment on the function) — this map needs both open and closed, mirroring the github driver's `--state all` fetch above: a fingerprint match against an already-closed local record still means "already exists" and must not be recreated on a resumed decomposition. Merge a default (open) query with an explicit `{ closed: true }` query — the same two-call idiom `tests/bin-lib/issues/local-store.test.js` demonstrates:
 

@@ -270,7 +270,7 @@ Render the report as the engine's own trace of this run, never as prose composed
 node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-engine.js" render --run-dir "$PIPELINE_RUN_DIR" --section trace --strict
 ```
 
-(Substitute the re-resolved run-dir path — env assignments do not survive between calls. The report renders after the execution step, so once cleanup item 8 archived the run, pass `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` as `--run-dir`: `render` reads `engine-state.json` from exactly the path it is given and, unlike `verify`, does not look in the archive itself.)
+(Substitute the re-resolved run-dir path — env assignments do not survive between calls. `render` falls back to the archive itself, so the same path works after cleanup item 8 archives the run.)
 
 Insert that output verbatim as the Phase 2 table. `--strict` prints the table first and then exits 2 if any worklist row has no recorded result, so a hole is visible *and* fatal. **Re-read cut:** when every row scanned clean or gate-closed (nothing to update anywhere), the render collapses to one line — `{N} rows scanned, 0 findings — nothing to update.` — instead of an N-row table that would otherwise be all `n/a`/`Clean` (`engine-render.js`'s `renderTrace`). A single row carrying findings, or a row with no recorded result at all, always forces the full table — the collapse never hides a real outcome. Under the prose fallback, compose the table by hand per `curation-engine.md` section 6 and caption it `(engine unavailable — prose fallback ran)`.
 

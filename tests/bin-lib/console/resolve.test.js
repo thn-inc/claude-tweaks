@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
-const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes } = require(MOD);
+const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, STAGING_EXEMPTIONS, stagingExemption } = require(MOD);
 const ROOT = path.join(__dirname, '..', '..', '..');
 
 function fixture({
@@ -698,4 +698,77 @@ test('nearestCanonicalPrefixes(review-13-record) includes a review-* prefix (#33
 test('nearestCanonicalPrefixes ranks an exact head match first and honors n (#3370)', () => {
   assert.deepStrictEqual(nearestCanonicalPrefixes('review-unconfirmed-9', 1), ['review-unconfirmed-']);
   assert.strictEqual(nearestCanonicalPrefixes('zzz', 5).length, 5);
+});
+
+// #3488: every staged-id producer prefix is either mapped to a console section
+// or exempt (its run never reaches the console), so stage-item.js's
+// unmapped-prefix warning only fires for a genuinely unknown id.
+// AC2.1: one predicate, used by the positive test and by the control.
+function mappedOrExempt(id) {
+  return classifyStagedItem(id + '.md').reason !== 'unmapped-prefix' || stagingExemption(id) !== null;
+}
+const CURRENT_STATE_IDS = ['release-held', 'upstream-draft-1', 'shipped-close-12', 'dispatch-target-missing-12',
+  'review-followup-1', 'build-followup-1', 'docs-1', 'skills-1', 'wrap-up-reflect-insights',
+  'wrap-up-cleanup-ordering', 'reconcile-live-run-archived'];
+
+test('AC2.1: every id named in #3488 Current State classifies mapped or is exempt with a reason', () => {
+  for (const id of CURRENT_STATE_IDS) assert.ok(mappedOrExempt(id), id);
+});
+
+test('AC2.1 (control): an unknown id fails the same predicate', () => {
+  assert.equal(mappedOrExempt('review-13-record'), false);
+});
+
+test('exempt and mapped are disjoint: no exempt id also classifies mapped', () => {
+  for (const id of ['release-held', 'dispatch-target-missing-1', 'shipped-close-1', 'dream-proposal-1']) {
+    assert.ok(stagingExemption(id), id);
+    assert.equal(classifyStagedItem(id + '.md').reason, 'unmapped-prefix', id);
+  }
+});
+
+test('every STAGING_EXEMPTIONS entry carries a non-empty reason', () => {
+  assert.ok(STAGING_EXEMPTIONS.length >= 4);
+  for (const [re, reason] of STAGING_EXEMPTIONS) assert.ok(re instanceof RegExp && typeof reason === 'string' && reason.length > 20);
+});
+
+test('stagingExemption matches with or without the extension and returns null otherwise', () => {
+  assert.equal(stagingExemption('release-held'), stagingExemption('release-held.md'));
+  assert.ok(stagingExemption('release-held.md'));
+  assert.equal(stagingExemption('release-held-extra'), null);
+  assert.equal(stagingExemption('review-13-record'), null);
+});
+
+test('#3488 newly mapped producer prefixes classify to their section and reason', () => {
+  assert.deepStrictEqual(classifyStagedItem('upstream-draft-1.md'), { section: 'Upstream feedback', reason: 'hand-off-draft' });
+  assert.deepStrictEqual(classifyStagedItem('premise-satisfied-7.md'), { section: 'Queue writes', reason: 'premise-satisfied-close-proposal' });
+  assert.deepStrictEqual(classifyStagedItem('sibling-premise-disproof-7.md'), { section: 'Pending review', reason: 'sibling-premise-disproof-note' });
+  assert.deepStrictEqual(classifyStagedItem('wrap-up-reflect-insights.md'), { section: 'Queue writes', reason: 'reflect-insights-table' });
+  assert.deepStrictEqual(classifyStagedItem('plan-citation-1.md'), { section: 'Pending review', reason: 'cited-plan-kept' });
+  assert.deepStrictEqual(classifyStagedItem('translation-85.md'), { section: 'Pending review', reason: 'translated-brief' });
+  assert.deepStrictEqual(classifyStagedItem('docs-1.md'), { section: 'Documentation updates' });
+  assert.deepStrictEqual(classifyStagedItem('skills-1.md'), { section: 'Skill updates' });
+  for (const id of ['review-followup-1', 'build-followup-1', 'reconcile-live-run-archived']) {
+    assert.deepStrictEqual(classifyStagedItem(id + '.md'), { section: 'Queue writes' }, id);
+  }
+  assert.deepStrictEqual(
+    classifyStagedItem('wrap-up-cleanup-ordering.md', '**Category:** observation\n'),
+    { section: 'Pending review', reason: 'non-tangential-category:observation' },
+  );
+});
+
+test('#3488: resolveAll never auto-applies a plan-citation or translation proposal — both resolve pending', () => {
+  const runDir = fixture({ staged: { 'plan-citation-1.md': 'cited by x', 'translation-85.md': 'brief' } });
+  const items = resolveAll({ runDir, policy: 'console-auto', deps: deps() }).items;
+  for (const id of ['plan-citation-1.md', 'translation-85.md']) {
+    const item = items.find((i) => i.id === id);
+    assert.ok(item, id);
+    assert.strictEqual(item.resolution, 'pending', id);
+  }
+});
+
+test('#3488: resolveAll never auto-files an upstream-draft hand-off — it resolves pending', () => {
+  const runDir = fixture({ staged: { 'upstream-draft-1.md': 'draft body' } });
+  const item = resolveAll({ runDir, policy: 'console-auto', deps: deps() }).items.find((i) => i.id === 'upstream-draft-1.md');
+  assert.ok(item, 'the draft is an item');
+  assert.strictEqual(item.resolution, 'pending');
 });

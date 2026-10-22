@@ -99,6 +99,55 @@ test('newest match wins when multiple directories match the spec-slug', () => {
   assert.strictEqual(out.path, newer);
 });
 
+// #3865: the slug matches a whole `-`-delimited name segment, never a substring —
+// `spec-378` must not adopt a `spec-3784` run dir (or a `spec-3784-3790` multi-spec one).
+test('#3865: spec-378 resolves its own run dir, not a newer spec-3784 / spec-3784-3790 run dir that contains it as a prefix', () => {
+  const main = gitRepo();
+  const own = mkRunDir(main, '2026-01-01T000000-spec-378');
+  mkRunDir(main, '2026-06-01T000000-spec-3784');
+  mkRunDir(main, '2026-07-01T000000-spec-3784-3790');
+  const out378 = resolve({ cwd: main, env: {}, specSlug: 'spec-378' });
+  assert.strictEqual(out378.ok, true);
+  assert.strictEqual(out378.path, own);
+  const out3784 = resolve({ cwd: main, env: {}, specSlug: 'spec-3784' });
+  assert.strictEqual(out3784.path, path.join(main, '.claude-tweaks', 'pipelines', '2026-07-01T000000-spec-3784-3790'));
+});
+
+test('#3865: spec-378 with no run dir of its own does not adopt a spec-3784 run dir — resolves ok:false', () => {
+  const main = gitRepo();
+  mkRunDir(main, '2026-06-01T000000-spec-3784');
+  mkRunDir(main, '2026-07-01T000000-spec-3784-3790');
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-378' });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'unresolved');
+});
+
+test('#3865: a multi-spec run dir that leads with spec-378 (spec-378-379) is still matched by spec-378', () => {
+  const main = gitRepo();
+  const multi = mkRunDir(main, '2026-03-01T000000-spec-378-379');
+  mkRunDir(main, '2026-06-01T000000-spec-3784');
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-378' });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.path, multi);
+});
+
+test('#3865: the slug must start at a name segment — subspec-378 is not a spec-378 run dir; a lone spec-3784 dir resolves for spec-3784', () => {
+  const main = gitRepo();
+  mkRunDir(main, '2026-06-01T000000-subspec-378');
+  const lone = mkRunDir(main, '2026-06-02T000000-spec-3784');
+  assert.strictEqual(resolve({ cwd: main, env: {}, specSlug: 'spec-378' }).ok, false);
+  assert.strictEqual(resolve({ cwd: main, env: {}, specSlug: 'spec-3784' }).path, lone);
+});
+
+test('#3865: a -standalone suffixed run dir still matches its slug, and a slug with regex metacharacters matches literally', () => {
+  const main = gitRepo();
+  const standalone = mkRunDir(main, '2026-06-01T000000-dispatch-standalone');
+  assert.strictEqual(resolve({ cwd: main, env: {}, specSlug: 'dispatch-standalone' }).path, standalone);
+  const dotted = mkRunDir(main, '2026-06-02T000000-release.1');
+  mkRunDir(main, '2026-06-03T000000-releaseX1');
+  assert.strictEqual(resolve({ cwd: main, env: {}, specSlug: 'release.1' }).path, dotted);
+});
+
 // #1962: a matching run dir left behind by an abandoned prior attempt (its
 // PR closed unmerged, the reconciler's archive sweep skipped it with
 // reason no-branch) must never be silently adopted by step 2's slug match —
