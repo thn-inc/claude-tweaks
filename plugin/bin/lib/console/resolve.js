@@ -114,14 +114,9 @@ const CANONICAL_PREFIXES = [
 // entry is [pattern over the id without its extension, why the console never sees it].
 // An id on this list must NOT also classify mapped (resolve.test.js pins the disjointness).
 const STAGING_EXEMPTIONS = Object.freeze([
-  // /claude-tweaks:release's standalone run dir; surfaced by release's own Step 4 console
-  // (release/console.md), never by wrap-up's console-resolve.js.
   [/^release-held(\.|$)/, "/claude-tweaks:release's standalone run dir; surfaced by release's own Step 4 console (release/console.md), never by wrap-up's console-resolve.js"],
-  // /claude-tweaks:dispatch's `*-dispatch-standalone` run dir (queue-pull-script.md).
   [/^dispatch-target-missing-/, "/claude-tweaks:dispatch's `*-dispatch-standalone` run dir (queue-pull-script.md); dispatch renders no Review Console"],
-  // The same dispatch-standalone firing run dir (queue-pull-script.md's #1984 shipped-candidate pass).
   [/^shipped-close-/, "the same dispatch-standalone firing run dir (queue-pull-script.md's #1984 shipped-candidate pass); no Review Console"],
-  // harness-health's `*-dream-standalone` run dir (dream-pass.md).
   [/^dream-proposal-/, "harness-health's `*-dream-standalone` run dir (dream-pass.md); report-only, `report.md` is its surface"],
 ].map((entry) => Object.freeze(entry)));
 

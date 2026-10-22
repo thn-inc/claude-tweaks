@@ -214,12 +214,12 @@ test('cli: a canonical id prints nothing to stderr (#3370)', () => {
 
 // #3488: producers whose runs never reach the wrap-up Review Console are exempt from the
 // unmapped-prefix warning; a mapped id (upstream-draft-) classifies cleanly on its own.
-for (const [id, why] of [
-  ['release-held', 'exempt: release console'],
-  ['dispatch-target-missing-x', 'exempt: dispatch standalone'],
-  ['upstream-draft-1', 'mapped, hand-off-draft'],
+for (const [id, why, titlePrefix] of [
+  ['release-held', 'exempt: release console', 'AC1.1: '],
+  ['dispatch-target-missing-x', 'exempt: dispatch standalone', 'AC1.1: '],
+  ['upstream-draft-1', 'mapped, hand-off-draft', ''],
 ]) {
-  test(`${id === 'upstream-draft-1' ? '' : 'AC1.1: '}--id ${id} prints no unmapped-prefix warning (${why})`, () => {
+  test(`${titlePrefix}--id ${id} prints no unmapped-prefix warning (${why})`, () => {
     const { main, runDir } = fixture();
     const md = path.join(path.dirname(main), 'proposal.md');
     fs.writeFileSync(md, 'a proposal\n');

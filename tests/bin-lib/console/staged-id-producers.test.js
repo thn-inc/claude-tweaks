@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { classifyStagedItem, stagingExemption, STAGING_EXEMPTIONS } =require('../../../plugin/bin/lib/console/resolve');
+const { classifyStagedItem, stagingExemption, STAGING_EXEMPTIONS } = require('../../../plugin/bin/lib/console/resolve');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 
 // Every id a producer hands `stage-item.js` / `writeStagedItem` either maps in
@@ -142,10 +142,14 @@ function collectProseProducersFromSkills() {
   return out;
 }
 
-const probeOf = (p) => {
+function probeOf(p) {
   const head = headOf(p);
   return head.endsWith('-') ? head + '1' : head;
-};
+}
+
+function isMapped(probe) {
+  return classifyStagedItem(probe + '.md').reason !== 'unmapped-prefix';
+}
 
 // A mapped id that is also exempt would hide a real mapping behind an exemption (and
 // stage-item.js would skip a warning the console never needed to skip). `exemptionOf` is
@@ -154,7 +158,7 @@ function assertExemptionsDisjointFromMapped(producers, exemptionOf = stagingExem
   for (const p of producers) {
     if (p.id === null) continue;
     const probe = probeOf(p);
-    if (exemptionOf(probe) !== null && classifyStagedItem(probe + '.md').reason !== 'unmapped-prefix') {
+    if (exemptionOf(probe) !== null && isMapped(probe)) {
       throw new Error(`${p.file}: --id ${p.id} (probe ${probe}) is on STAGING_EXEMPTIONS but also classifies mapped — drop the exemption or the mapping`);
     }
   }
@@ -174,8 +178,7 @@ function assertProducerDisposition(producers) {
   for (const p of producers) {
     if (p.id === null) throw new Error(`${p.file}: ${p.problem}`);
     const probe = probeOf(p);
-    const mapped = classifyStagedItem(probe + '.md').reason !== 'unmapped-prefix';
-    if (!mapped && stagingExemption(probe) === null) {
+    if (!isMapped(probe) && stagingExemption(probe) === null) {
       throw new Error(`${p.file}: --id ${p.id} (probe ${probe}) classifies unmapped-prefix and is not on STAGING_EXEMPTIONS — map it in resolve.js's SECTION_MAP or exempt it with a reason`);
     }
   }

@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
-const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes } = require(MOD);
+const { classifyStagedItem, resolveAll, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, STAGING_EXEMPTIONS, stagingExemption } = require(MOD);
 const ROOT = path.join(__dirname, '..', '..', '..');
 
 function fixture({
@@ -703,8 +703,6 @@ test('nearestCanonicalPrefixes ranks an exact head match first and honors n (#33
 // #3488: every staged-id producer prefix is either mapped to a console section
 // or exempt (its run never reaches the console), so stage-item.js's
 // unmapped-prefix warning only fires for a genuinely unknown id.
-const { STAGING_EXEMPTIONS, stagingExemption } = require(MOD);
-
 // AC2.1: one predicate, used by the positive test and by the control.
 function mappedOrExempt(id) {
   return classifyStagedItem(id + '.md').reason !== 'unmapped-prefix' || stagingExemption(id) !== null;
