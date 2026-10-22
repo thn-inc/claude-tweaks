@@ -89,7 +89,7 @@ At `xhigh` and `max`, append the resolver's `effortLine` output to each dispatch
 >
 > **Reproduction dispatch (Mode 1 — per lens):** For each lens, dispatch 2 agents in one batch with **byte-identical prompts** (same scope, same Template-A contract, same model profile). Independent runs — no agent sees the other's output. After both return, resolve the pair's two paths with one plain call — `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" A=review-{ctx-id}-lens-{LENS}-agentA.json B=review-{ctx-id}-lens-{LENS}-agentB.json` (it prints `A="…"` and `B="…"` lines, per `_shared/session-tmp-root.md`) — `Write` each agent's `findings` array to its printed path with the `Write` tool, and call with those two literal printed paths as `{path-A}` and `{path-B}` (no shell variable survives across calls):
 > ```bash
-> node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" categorise-reproduction {path-A} {path-B}
+> node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" categorise-reproduction "{path-A}" "{path-B}"
 > ```
 > A dispatched lens agent that fails mid-flight is a different case from one that completes — see the composed review-dispatch bundle's (or, standalone, `_shared/subagent-dispatch-core.md`'s) "Failed-agent retrieval" section for how to read its result cheaply, without blocking on the full envelope.
 >

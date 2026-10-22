@@ -39,6 +39,13 @@ Target placeholders, with the shell-level verdict at HEAD `1d3934f5c`:
 | `walkthrough/SKILL.md:72` | `{frame-dir}`, `{gif-path}`, `{steps-json-path}` | unquoted — quote (Task 2) |
 | `review/review-effort-derivation.md:20` | `> {ctx-dir}/record-{n}.json`, `{ctx-dir}` = `$CTX_DIR` (`os.tmpdir()` mkdtemp, or the main checkout under `--run`; this checkout's own path has a space) | unquoted — quote (Task 2) |
 | `{subject-dir}` (four merge files) | — | already quoted by #3522 — joins the sweep as a regression guard |
+| `review/step3-lens-dispatch.md:92` | `{path-A} {path-B}` (`categorise-reproduction`; session-tmp paths printed by `session-tmp-resolve.js`) — in a blockquoted bash fence the opener regex could not open | unquoted — quote (final-review wave) |
+| `review/step3-debate-and-refutation.md:17` | `{path-F}` (`detect-overlap`; a `session-tmp-resolve.js` path) | unquoted — quote (final-review wave) |
+| `review/step3-cross-lens-corroboration.md:12` | `{path-U}` (`corroborate-cross-lens`; a `session-tmp-resolve.js` path) | unquoted — quote (final-review wave) |
+| `build/dispatch.md:24,25` | `--file {tmp}.md` (the `stage-item.js` temp file) | unquoted — quote (final-review wave) |
+| `specify/next-mode-shape.md:95` | `--body-file {tmp}` in an unlabelled fence | unquoted — quote and label the fence `bash` (final-review wave) |
+| `challenge/SKILL.md:95,97` | `--body-file {tmp}` in inline code spans (outside the fence sweep) | unquoted — quote anyway (final-review wave) |
+| `review/step3-lens-dispatch.md:22,66` | blockquoted bash fences (the `compose-context.js` and `build-review-context.js` fences), previously invisible to `shellFences` | no target placeholder — now scanned, no change |
 
 Prose-only mentions (inline code outside fences) are not shell command lines and are out of the sweep's scope.
 

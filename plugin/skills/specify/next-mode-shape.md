@@ -91,8 +91,8 @@ unparseable output to either verdict.
      and the interactive route as a paste-ready command on its own line
      (transport per `_shared/github-write-transport.md`):
 
-     ```
-     gh issue comment {n} --body-file {tmp}
+     ```bash
+     gh issue comment {n} --body-file "{tmp}"
      ```
 
      where `{tmp}` holds:
