@@ -96,3 +96,35 @@ test('non-DONE status parses ok (AC6.1)', () => {
   assert.equal(r.status, 'BLOCKED');
   assert.equal(r.verdict, 'cant-tell');
 });
+
+test('empty quote is not usable evidence: no quote at all (AC1.1)', () => {
+  const r = parseTiebreakReply('Verdict: confirmed\nEvidence: a.js:1\nSTATUS: DONE');
+  assert.equal(r.parse, 'ok');
+  assert.equal(r.evidence, null);
+});
+
+test('empty quote is not usable evidence: empty wrapper (AC1.1)', () => {
+  for (const quote of ['""', '``']) {
+    const r = parseTiebreakReply(`Verdict: confirmed\nEvidence: a.js:1 ${quote}\nSTATUS: DONE`);
+    assert.equal(r.parse, 'ok');
+    assert.equal(r.evidence, null);
+  }
+});
+
+test('evidence line below 1 is not usable evidence (AC1.1)', () => {
+  const r = parseTiebreakReply('Verdict: confirmed\nEvidence: a.js:0 `return null;`\nSTATUS: DONE');
+  assert.equal(r.parse, 'ok');
+  assert.equal(r.evidence, null);
+});
+
+test('disagreeing Verdict lines are could-not-parse', () => {
+  const r = parseTiebreakReply('Verdict: confirmed\nVerdict: refuted\nSTATUS: DONE');
+  assert.equal(r.parse, 'could-not-parse');
+  assert.equal(r.verdict, null);
+});
+
+test('agreeing duplicate Verdict lines stay ok', () => {
+  const r = parseTiebreakReply('Verdict: confirmed\nVerdict: confirmed\nSTATUS: DONE');
+  assert.equal(r.parse, 'ok');
+  assert.equal(r.verdict, 'confirmed');
+});

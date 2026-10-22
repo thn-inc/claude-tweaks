@@ -12,7 +12,8 @@
 //   Verdict: confirmed | refuted | cant-tell        value lowercased
 //   Evidence: {path}:{line} {quote}                 quote = everything after the
 //       first whitespace following path:line; one wrapping pair of backticks or
-//       double quotes is stripped. Anything else gives evidence: null.
+//       double quotes is stripped. An empty quote, a line below 1, or anything
+//       else gives evidence: null.
 //   Severity: {sev}                                 lowercased; a value outside
 //       SEVERITIES gives severity: null.
 //   Recommendation: file | drop [(— | - | :) reason]   a reason without a
@@ -63,7 +64,10 @@ function stripWrapper(s) {
 function parseEvidence(value) {
   const m = EVIDENCE_RE.exec(value);
   if (!m) return null;
-  return { path: m[1], line: Number(m[2]), quote: stripWrapper((m[3] || '').trim()) };
+  const line = Number(m[2]);
+  const quote = stripWrapper((m[3] || '').trim());
+  if (line < 1 || quote === '') return null;
+  return { path: m[1], line, quote };
 }
 
 function parseRecommendation(value) {
