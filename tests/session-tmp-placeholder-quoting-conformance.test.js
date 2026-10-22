@@ -19,12 +19,15 @@ const { readText } = require('./helpers/read-skill');
 const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
 
 // Explicit non-{tmp-*} targets: path placeholders that resolve under the session tmp root.
-const NAMED_TARGETS = ['{subject-dir}', '{frame-path}', '{frame-dir}', '{gif-path}', '{steps-json-path}', '{ctx-dir}'];
+const NAMED_TARGETS = [
+  '{subject-dir}', '{frame-path}', '{frame-dir}', '{gif-path}', '{steps-json-path}', '{ctx-dir}',
+  '{tmp}', '{path-A}', '{path-B}', '{path-F}', '{path-U}',
+];
 // A variable-name placeholder (`{tmp-var}=$(...)` in _shared/session-tmp-root.md), never a path.
 const EXEMPT = ['{tmp-var}'];
 
 // Measured scanCorpus().quoted after the #3544 edits; the sweep must keep seeing at least this many.
-const QUOTED_FLOOR = 56;
+const QUOTED_FLOOR = 63;
 
 function isTarget(name) {
   return (/^\{tmp-[a-z0-9-]+\}$/.test(name) && !EXEMPT.includes(name)) || NAMED_TARGETS.includes(name);
@@ -32,33 +35,41 @@ function isTarget(name) {
 
 // Extract the bodies of ```bash / ```sh / ```shell fences. startLine is the 1-based
 // line number of the fence's first body line. Other fence languages are skipped, but
-// their bodies are consumed so a nested marker cannot desync the extractor.
+// their bodies are consumed so a nested marker cannot desync the extractor. A fence
+// opened inside a blockquote (`> ```bash`) has its `>` prefix stripped from the opener,
+// the closer and every body line.
+const QUOTE_PREFIX_RE = /^\s*(?:>\s?)+/;
 function shellFences(text) {
   const all = text.split(/\r?\n/);
   const fences = [];
   for (let i = 0; i < all.length; i++) {
-    const open = /^\s*(`{3,}|~{3,})\s*(.*?)\s*$/.exec(all[i]);
+    const quoted = QUOTE_PREFIX_RE.test(all[i]);
+    const strip = (l) => (quoted ? l.replace(QUOTE_PREFIX_RE, '') : l);
+    const open = /^\s*(`{3,}|~{3,})\s*(.*?)\s*$/.exec(strip(all[i]));
     if (!open) continue;
     const marker = open[1];
     const isShell = /^(bash|sh|shell)$/.test(open[2]);
     const closeRe = new RegExp('^\\s*' + (marker[0] === '`' ? '`' : '~') + '{' + marker.length + ',}\\s*$');
     let j = i + 1;
-    while (j < all.length && !closeRe.test(all[j])) j++;
-    if (isShell) fences.push({ startLine: i + 2, lines: all.slice(i + 1, j) });
+    while (j < all.length && !closeRe.test(strip(all[j]))) j++;
+    if (isShell) fences.push({ startLine: i + 2, lines: all.slice(i + 1, j).map(strip) });
     i = j;
   }
   return fences;
 }
 
-const PLACEHOLDER_RE = /\{[a-z][a-z0-9-]*\}/y;
-const HEREDOC_RE = /<<-?\s*['"]?(\w+)['"]?/y;
+const PLACEHOLDER_RE = /\{[a-z][A-Za-z0-9-]*\}/y;
+const HEREDOC_RE = /<<-?\s*['"]?([^\s'"<>;|&]+)['"]?/y;
+
+function mentionsTarget(line) {
+  return (line.match(/\{[a-z][A-Za-z0-9-]*\}/g) || []).some(isTarget);
+}
 
 // Scan one fence body. `line` in each offender is 0-based within `lines`.
 function scanFence(lines) {
   const stack = ['cmd'];
   const offenders = [];
   let quoted = 0;
-  let seen = 0;
   let pendingHeredocs = []; // delimiters armed on the current line
   let heredocTerm = null; // delimiter being skipped
   let directiveDepth = null; // brace depth while skipping a {Capitalised ...} directive
@@ -85,8 +96,9 @@ function scanFence(lines) {
         PLACEHOLDER_RE.lastIndex = i;
         const m = PLACEHOLDER_RE.exec(line);
         if (m && isTarget(m[0])) {
-          seen++;
-          if (top === 'dq' || top === 'sq') quoted++;
+          // Shell-level quoting only: a JS '…' inside `node -e "…"` never pushes a frame (its
+          // dq top counts), while a bare shell '…' never expands $VAR / substituted prose.
+          if (top === 'dq') quoted++;
           else offenders.push({ line: ln, name: m[0] });
         }
         if (m) { i += m[0].length - 1; continue; }
@@ -120,7 +132,8 @@ function scanFence(lines) {
     if (pendingHeredocs.length > 0) heredocTerm = pendingHeredocs.shift();
   }
   const balanced = stack.length === 1 && heredocTerm === null && directiveDepth === null;
-  if (!balanced && seen > 0) offenders.push({ line: lines.length - 1, name: 'unbalanced' });
+  // An unbalanced fence that mentions a target anywhere (even in text the tracker skipped) cannot be trusted.
+  if (!balanced && lines.some(mentionsTarget)) offenders.push({ line: lines.length - 1, name: 'unbalanced' });
   return { offenders, quoted, balanced };
 }
 
@@ -149,9 +162,14 @@ function scanCorpus() {
   return result;
 }
 
-// A substitution value that already carries its own quotes: `{tmp-x} = "$VAR"` or `{tmp-x}=$...`.
+// A substitution value that already carries its own quotes: `{tmp-x} = "$VAR"`, `{tmp-x} = '$VAR'`
+// or `{tmp-x} = "/abs/path"` — for every target placeholder, not only {tmp-*}.
 function preQuotedSubstitutions(text) {
-  return text.match(/\{tmp-[a-z0-9-]+\}`?\s*=\s*`?"\$/g) || [];
+  const hits = [];
+  for (const m of text.matchAll(/(\{[a-z][A-Za-z0-9-]*\})`?\s*=\s*`?['"]/g)) {
+    if (isTarget(m[1])) hits.push(m[0]);
+  }
+  return hits;
 }
 
 // Frozen: record-queue-fetch.md lines 60-85 at 1d3934f5c (the read-fresh-or-fetch fence body).
@@ -190,6 +208,22 @@ const PRE_CHANGE_WALKTHROUGH_ENCODE = `node "\${CLAUDE_PLUGIN_ROOT}/bin/walkthro
 
 // Frozen: review/review-effort-derivation.md line 20 at 1d3934f5c, trimmed of its list indent.
 const PRE_CHANGE_CTX_REDIRECT = `gh issue view {n} --json labels > {ctx-dir}/record-{n}.json`;
+
+// Frozen: review/step3-lens-dispatch.md lines 91-93 at 1d3934f5c (a blockquoted bash fence).
+const PRE_CHANGE_LENS_DISPATCH_FENCE = `> \`\`\`bash
+> node "\${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" categorise-reproduction {path-A} {path-B}
+> \`\`\``;
+
+// Frozen: build/dispatch.md lines 22-26 at 1d3934f5c (the carry-forward stage-item fence).
+const PRE_CHANGE_BUILD_DISPATCH_FENCE = `\`\`\`bash
+node "\${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$PIPELINE_RUN_DIR" --id "sdd-ruling-{N}" --file {tmp}.md --allocate --ledger "{ledger path}" --label "SDD ruling" --item 'SDD ruling — {one-liner}: ratify or reverse at the Review Console'
+node "\${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$PIPELINE_RUN_DIR" --id "build-deviation-{N}" --file {tmp}.md --allocate --ledger "{ledger path}" --label "SDD ruling" --item 'SDD ruling — {one-liner}: apply or decline at the Review Console'
+\`\`\``;
+
+// Frozen: review/step3-debate-and-refutation.md lines 16-18 at 1d3934f5c (an indented bash fence).
+const PRE_CHANGE_DETECT_OVERLAP_FENCE = `   \`\`\`bash
+   node "\${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" detect-overlap {path-F}
+   \`\`\``;
 
 const FOUR_PRE_CHANGE_OFFENDERS = ['{tmp-records-file}', '{tmp-records-file}', '{tmp-open-only-file}', '{tmp-records-file}'];
 
@@ -236,6 +270,43 @@ test('AC1.1 go-red (CRLF): the same excerpt with \\r\\n line ends reports the sa
   assert.deepStrictEqual(direct.offenders.map((o) => o.name), FOUR_PRE_CHANGE_OFFENDERS);
 });
 
+test('AC1.1 go-red: the frozen blockquoted lens-dispatch fence reports {path-A} and {path-B}', () => {
+  const fences = shellFences(PRE_CHANGE_LENS_DISPATCH_FENCE);
+  assert.strictEqual(fences.length, 1, 'the blockquoted bash fence must open');
+  const r = scanFence(fences[0].lines);
+  assert.deepStrictEqual(r.offenders.map((o) => o.name), ['{path-A}', '{path-B}']);
+  assert.strictEqual(r.balanced, true);
+});
+
+test('AC1.1 go-red: the frozen build/dispatch.md fence reports both {tmp} uses', () => {
+  const fences = shellFences(PRE_CHANGE_BUILD_DISPATCH_FENCE);
+  assert.strictEqual(fences.length, 1);
+  const r = scanFence(fences[0].lines);
+  assert.deepStrictEqual(r.offenders.map((o) => [o.line, o.name]), [[0, '{tmp}'], [1, '{tmp}']]);
+  assert.strictEqual(r.balanced, true);
+});
+
+test('AC1.1 go-red: the frozen detect-overlap fence reports {path-F}', () => {
+  const fences = shellFences(PRE_CHANGE_DETECT_OVERLAP_FENCE);
+  assert.strictEqual(fences.length, 1);
+  assert.deepStrictEqual(scanFence(fences[0].lines).offenders.map((o) => o.name), ['{path-F}']);
+});
+
+test('AC1.1: the fence shapes the sweep once missed are now scanned (blockquoted, labelled-later)', () => {
+  const lens = shellFences(readText(path.join(SKILLS_DIR, 'review', 'step3-lens-dispatch.md')));
+  assert.ok(lens.some((f) => f.lines.some((l) => l.includes('categorise-reproduction "{path-A}" "{path-B}"'))), 'blockquoted categorise-reproduction fence not scanned');
+  const shape = shellFences(readText(path.join(SKILLS_DIR, 'specify', 'next-mode-shape.md')));
+  assert.ok(shape.some((f) => f.lines.some((l) => l.includes('--body-file "{tmp}"'))), 'next-mode-shape.md comment fence is not labelled bash');
+});
+
+test('shellFences: a blockquoted fence opens, closes and strips its > prefix; startLine is its first body line', () => {
+  const text = ['> intro', '> ```bash', '> cp {tmp-a} x', '>', '> ```', 'after', '```bash', '> not a prefix', '```'].join('\n');
+  assert.deepStrictEqual(shellFences(text), [
+    { startLine: 3, lines: ['cp {tmp-a} x', ''] },
+    { startLine: 8, lines: ['> not a prefix'] },
+  ]);
+});
+
 test('shellFences: indented and tilde fences open, other languages are consumed, startLine is 1-based', () => {
   const text = ['intro', '   ```bash', 'cp {tmp-a} x', '   ```', '```text', '```bash', '```', '~~~sh', 'ls', '~~~'].join('\n');
   const fences = shellFences(text);
@@ -257,9 +328,38 @@ test('scanFence: bare, double-quoted and single-quoted arguments', () => {
   const dq = scanFence(['cp "{tmp-a}" "$S"']);
   assert.deepStrictEqual(dq.offenders, []);
   assert.strictEqual(dq.quoted, 1);
+  // A shell-level single quote never expands a substituted `$VAR`, so it is not a valid quoting.
   const sq = scanFence(["cp '{tmp-a}' x"]);
-  assert.deepStrictEqual(sq.offenders, []);
-  assert.strictEqual(sq.quoted, 1);
+  assert.deepStrictEqual(sq.offenders.map((o) => o.name), ['{tmp-a}']);
+  assert.strictEqual(sq.quoted, 0);
+});
+
+test('scanFence: a target inside $(...) nested in double quotes is unquoted', () => {
+  const r = scanFence(['X="$(cat {tmp-a})"']);
+  assert.deepStrictEqual(r.offenders.map((o) => o.name), ['{tmp-a}']);
+  assert.strictEqual(r.quoted, 0);
+  assert.strictEqual(r.balanced, true);
+  const ok = scanFence(['X="$(cat "{tmp-a}")"']);
+  assert.deepStrictEqual(ok.offenders, []);
+  assert.strictEqual(ok.quoted, 1);
+});
+
+test('scanFence: a heredoc delimiter with a hyphen is parsed whole, so the line after it is scanned', () => {
+  const r = scanFence(["node x.js <<'END-OF'", 'body', 'END-OF', 'cp {tmp-b} y']);
+  assert.deepStrictEqual(r.offenders.map((o) => o.name), ['{tmp-b}']);
+  assert.strictEqual(r.balanced, true);
+});
+
+test('scanFence: an unterminated heredoc swallowing the only target reports unbalanced', () => {
+  const r = scanFence(["node x.js <<'EOF'", 'cp {tmp-b} y']);
+  assert.strictEqual(r.balanced, false);
+  assert.deepStrictEqual(r.offenders.map((o) => o.name), ['unbalanced']);
+});
+
+test('scanFence: the newly named {tmp} and {path-*} targets are read (uppercase suffix included)', () => {
+  const r = scanFence(['x --file {tmp}.md {path-A} "{path-B}" {path-F} {path-U}']);
+  assert.deepStrictEqual(r.offenders.map((o) => o.name), ['{tmp}', '{path-A}', '{path-F}', '{path-U}']);
+  assert.strictEqual(r.quoted, 1);
 });
 
 test('scanFence: a node -e nested inside "$(...)" keeps its placeholder quoted', () => {
@@ -320,4 +420,11 @@ test('AC1.1: no {tmp-*} substitution value is pre-quoted', () => {
 
 test('AC1.1 go-red: preQuotedSubstitutions flags the frozen pre-change specify substitution', () => {
   assert.strictEqual(preQuotedSubstitutions(PRE_CHANGE_SPECIFY_SUBST).length, 1);
+});
+
+test('AC1.1 go-red: preQuotedSubstitutions flags single-quoted and literal-path values, not {tmp-var}', () => {
+  assert.strictEqual(preQuotedSubstitutions("with {tmp-records-file} = '$SPECIFY_ALL_ISSUES'").length, 1);
+  assert.strictEqual(preQuotedSubstitutions('with `{tmp}` = "/abs/path"').length, 1);
+  assert.strictEqual(preQuotedSubstitutions('{tmp-var}="x"').length, 0);
+  assert.strictEqual(preQuotedSubstitutions('{owner} = "x"').length, 0);
 });
