@@ -77,6 +77,14 @@ test('classifyLedgerCandidate: signature, open rows, unrecognized status, run-di
   assert.strictEqual(c(ledgerText().replace(/\n/g, '\r\n')), null, 'CRLF blob still carries the signature');
 });
 
+test('defaultListRunDirs: a pipelines path that cannot be listed is a failed scan (null), never an empty one', () => {
+  // ENOTDIR is not ENOENT: reading it as "no runs" would let a live run's ledger be proposed for removal.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-runs-fail-'));
+  fs.mkdirSync(path.join(root, '.claude-tweaks'));
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'pipelines'), 'not a directory');
+  assert.strictEqual(defaultListRunDirs(root), null);
+});
+
 test('defaultListRunDirs: directories directly under pipelines/, archive excluded; absent pipelines dir is no runs', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-runs-'));
   assert.deepStrictEqual(defaultListRunDirs(root), []);
@@ -156,8 +164,8 @@ test('defaultListRemovalPrs: enumerates heads by ref prefix, then one gh pr list
   ]);
   assert.strictEqual(calls.length, 3);
   assert.deepStrictEqual(calls[0].args, ['api', '--paginate', REFS_PATH]);
-  assert.deepStrictEqual(calls[1].args, ['pr', 'list', '--head', 'build/ledger-residue-abcd1234', '--state', 'all', '--json', 'number,state,headRefName,body']);
-  assert.deepStrictEqual(calls[2].args, ['pr', 'list', '--head', 'build/ledger-residue-ffff0000', '--state', 'all', '--json', 'number,state,headRefName,body']);
+  assert.deepStrictEqual(calls[1].args, ['pr', 'list', '--head', 'build/ledger-residue-abcd1234', '--state', 'all', '--json', 'number,state,headRefName,body,isCrossRepository']);
+  assert.deepStrictEqual(calls[2].args, ['pr', 'list', '--head', 'build/ledger-residue-ffff0000', '--state', 'all', '--json', 'number,state,headRefName,body,isCrossRepository']);
   for (const c of calls) {
     assert.strictEqual(c.bin, 'gh');
     assert.strictEqual(c.opts.cwd, '/r');
@@ -171,6 +179,14 @@ test('defaultListRemovalPrs: enumerates heads by ref prefix, then one gh pr list
   assert.strictEqual(defaultListRemovalPrs('/r', () => ''), 'network-failure');
   assert.strictEqual(defaultListRemovalPrs('/r', () => '{"a":1}'), 'network-failure');
   assert.strictEqual(defaultListRemovalPrs('/r', () => '[{"ref":'), 'network-failure');
+});
+
+test('defaultListRemovalPrs: a fork PR reusing a removal branch name is dropped', () => {
+  const head = 'build/ledger-residue-abcd1234';
+  const ours = { number: 1, state: 'OPEN', headRefName: head, body: 'x', isCrossRepository: false };
+  const fork = { number: 2, state: 'CLOSED', headRefName: head, body: '- `docs/plans/a-ledger.md`', isCrossRepository: true };
+  const { exec } = fakeGh({ refsOut: JSON.stringify([{ ref: `refs/heads/${head}` }]), prsByHead: { [head]: [ours, fork] } });
+  assert.deepStrictEqual(defaultListRemovalPrs('/r', exec), [ours]);
 });
 
 test('defaultListRemovalPrs: paginated gh api output (one array per page) is concatenated', () => {

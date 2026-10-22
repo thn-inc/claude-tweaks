@@ -50,8 +50,9 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { DEFAULT_TIMEOUT_MS } = require('../hooks/git-exec');
-const { classifyGhApiError } = require('../issues/claim-store');
+const { splitNul } = require('../git-z');
 const sharedPrimitives = require('../shared-primitives');
+const { classifyExecError } = require('./pr-state');
 const { defaultRefExists } = require('./prune-remote');
 
 // Carried in the PR body so a human or later tooling can recognise the PR.
@@ -76,8 +77,7 @@ const QUIET_SKIP_REASONS = new Set([
 // NUL-separated `git ls-tree --name-only -z` output -> the sorted residue paths.
 // Pure. Only direct children of docs/plans/ whose name ends `-ledger.md`.
 function residueLedgerPaths(lsTreeZ) {
-  return String(lsTreeZ || '')
-    .split('\0')
+  return splitNul(lsTreeZ)
     .filter((p) => LEDGER_PATH_RE.test(p))
     .sort();
 }
@@ -181,10 +181,6 @@ function makeDefaultGit(root) {
   });
 }
 
-function classifyExecError(e) {
-  return classifyGhApiError(e).failure === 'gh-absent' ? 'gh-absent' : 'network-failure';
-}
-
 // Non-archived run directories directly under {root}/.claude-tweaks/pipelines/.
 // An absent pipelines directory is no runs; any other read failure is null.
 function defaultListRunDirs(root) {
@@ -255,10 +251,11 @@ function defaultListRemovalPrs(root, exec = execFileSync) {
         .filter((h) => h && h.startsWith(BRANCH_PREFIX)))];
       const byNumber = new Map();
       for (const head of heads) {
-        const prs = JSON.parse(exec('gh', ['pr', 'list', '--head', head, '--state', 'all', '--json', 'number,state,headRefName,body'], opts));
+        const prs = JSON.parse(exec('gh', ['pr', 'list', '--head', head, '--state', 'all', '--json', 'number,state,headRefName,body,isCrossRepository'], opts));
         if (!Array.isArray(prs)) throw new Error('gh pr list returned a non-array');
         for (const pr of prs) {
-          if (pr && typeof pr.headRefName === 'string' && pr.headRefName.startsWith(BRANCH_PREFIX)) byNumber.set(pr.number, pr);
+          // `--head` matches the branch name alone, so a fork PR that reuses it is not ours: its body is not ours to trust.
+          if (pr && pr.isCrossRepository !== true && typeof pr.headRefName === 'string' && pr.headRefName.startsWith(BRANCH_PREFIX)) byNumber.set(pr.number, pr);
         }
       }
       return [...byNumber.values()];

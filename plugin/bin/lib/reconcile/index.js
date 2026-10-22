@@ -40,7 +40,7 @@ const { formatReconcileSummary, archivedCountFromRunsResult } = require('./resid
 const ALL_CHECKS = ['mirror', 'red-tip', 'reap', 'release', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'console'];
 
 // opts: { dryRun?: boolean, checks?: string[], cwd?: string, sessionId?: string, budgetMs?: number }
-// -> { mirror, worktrees, claims, runs, branches, console, skipped }
+// -> { mirror, redTip, worktrees, claims, runs, branches, remoteBranches, ledgerResidue, console, skipped }
 // `sessionId`, when the caller has one, threads through to archiveMerged's
 // own `isAbandonedInterrupted` ownership check (archive-merged.js) — omitted
 // (undefined), archiveMerged falls back to its own

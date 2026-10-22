@@ -354,9 +354,9 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
   | the `.claude-tweaks/pipelines/` listing failed | `run-dir-scan-failed` |
   | a non-`archive` run directory is attributed to it | `run-live` |
 
-  Attribution follows tidy. Every `#{N}` token on the ledger's first line is matched as a whole
-  dash-separated token of a run-dir name after its leading timestamp, so `#21` never matches
-  `2026-10-21T…`. When the first line has no `#{N}`, the filename's `{feature}` slug
+  Attribution follows tidy, narrowed from tidy's substring match. Every `#{N}` token on the
+  ledger's first line is matched as a whole dash-separated token of a run-dir name after its
+  leading timestamp, so `#21` never matches `2026-10-21T…`. When the first line has no `#{N}`, the filename's `{feature}` slug
   (`YYYY-MM-DD-{feature}-ledger.md`) is matched as a substring of the name. A kept ledger is
   still reported, so AC1 holds; it waits for a human or `/claude-tweaks:tidy` to resolve it.
 - **Write posture.** A new ref plus a PR, never a push to the integration branch and never a force
@@ -371,9 +371,11 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
 - **Removal-PR states.** Heads are enumerated by ref prefix, not by recency:
   `gh api --paginate repos/{owner}/{repo}/git/matching-refs/heads/build/ledger-residue-` lists
   every such branch (one JSON array per page, concatenated), then `gh pr list --head {branch}
-  --state all --json number,state,headRefName,body` runs once per branch. That sees every earlier
-  removal PR however old, including ones for a residue set that has since changed. A path is
-  "named" by a PR when the body lists it in backticks, as the check's own body does.
+  --state all --json number,state,headRefName,body,isCrossRepository` runs once per branch. That
+  sees every earlier removal PR however old, including ones for a residue set that has since
+  changed. A fork PR that reuses the branch name is dropped (`isCrossRepository`), since its body
+  is not the check's own. A path is "named" by a PR when the body lists it in backticks, as the
+  check's own body does.
 
   | Evidence | Applies to | Reason |
   |---|---|---|
