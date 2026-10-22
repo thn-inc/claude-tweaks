@@ -215,6 +215,40 @@ test("literals: 'blank' keeps a line continuation's backslash, so the string sti
   assert.equal(stripComments(lf), lf);
 });
 
+test("literals: 'blank' keeps a CRLF line continuation's backslash and CR, so the string still compiles", () => {
+  const crlf = 'const s = "abc \\\r\nde"; live();';
+  const out = stripComments(crlf, { literals: 'blank' });
+  assert.equal(out.length, crlf.length);
+  assert.deepEqual(newlineIndices(out), newlineIndices(crlf));
+  assert.ok(!out.includes('abc'));
+  assert.ok(out.includes('live();'));
+  assert.equal(stripperVerdict(crlf, out), 'ok');
+});
+
+test("literals: 'blank' blanks a template's escaped backtick, a regex's [/] class and a string nested in ${…}, and keeps the code around them", () => {
+  const tpl = stripComments('const t = `a\\`b < 1`; live(x < 2);', { literals: 'blank' });
+  assert.ok(!tpl.includes('b < 1'));
+  assert.ok(tpl.includes('live(x < 2);'));
+  assert.equal(stripperVerdict('const t = `a\\`b < 1`; live(x < 2);', tpl), 'ok');
+
+  const re = stripComments('const r = /[/] < 1/g; live(x < 2);', { literals: 'blank' });
+  assert.ok(!re.includes('< 1'));
+  assert.ok(re.includes('/g; live(x < 2);'));
+
+  const nested = stripComments("const t = `a ${f('x < 1')} b < 2`; live();", { literals: 'blank' });
+  assert.ok(nested.includes("${f('"));
+  assert.ok(!nested.includes('x < 1'));
+  assert.ok(!nested.includes('b < 2'));
+  assert.ok(nested.includes('live();'));
+});
+
+test("literals: 'blank' blanks an unterminated string to the end of its line and nothing after it", () => {
+  assert.equal(
+    stripComments("const u = 'open < 2\nnext();", { literals: 'blank' }),
+    `const u = '${' '.repeat(8)}\nnext();`,
+  );
+});
+
 test("an unrecognised literals value throws a TypeError instead of acting as 'keep'", () => {
   for (const bad of ['blnk', 'Blank', '', null, true]) {
     assert.throws(() => stripComments('live();', { literals: bad }), TypeError);

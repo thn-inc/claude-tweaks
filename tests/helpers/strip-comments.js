@@ -59,7 +59,8 @@ function scanString(src, i, blankBody) {
   const bodyStart = i + 1;
   i = bodyStart;
   while (i < src.length && src[i] !== quote && src[i] !== '\n') {
-    i += src[i] === '\\' ? 2 : 1;
+    if (src[i] !== '\\') i++;
+    else i += src[i + 1] === '\r' && src[i + 2] === '\n' ? 3 : 2; // a CRLF continuation is one escape
   }
   const bodyEnd = Math.min(i, src.length);
   blankBody(bodyStart, bodyEnd);
@@ -108,11 +109,14 @@ function stripComments(src, { literals = 'keep' } = {}) {
     for (let k = start; k < end; k++) if (out[k] !== '\n') out[k] = ' ';
   };
   // A literal body blanks like a comment, except a `\` directly before a newline (a
-  // string's line continuation) stays: blanking it would leave an unterminated string.
-  // (A CRLF continuation is not modelled: the scanner ends the string at the `\n`.)
+  // string's line continuation, LF or CRLF) stays: blanking it would leave an
+  // unterminated string.
+  const keepsContinuation = (k) =>
+    (src[k] === '\\' && (src[k + 1] === '\n' || (src[k + 1] === '\r' && src[k + 2] === '\n'))) ||
+    (src[k] === '\r' && src[k - 1] === '\\' && src[k + 1] === '\n');
   const blankLiteral = (start, end) => {
     for (let k = start; k < end; k++) {
-      if (out[k] === '\n' || (src[k] === '\\' && src[k + 1] === '\n')) continue;
+      if (out[k] === '\n' || keepsContinuation(k)) continue;
       out[k] = ' ';
     }
   };

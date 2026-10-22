@@ -156,7 +156,8 @@ function grow(text, tainted, numeric) {
   }
 }
 
-// Depth-0 statements of blanked text, split at a depth-0 `;` or newline. Each
+// Depth-0 statements of blanked text, split at a depth-0 `;` or newline (a newline
+// after a trailing `=` does not split: `const MAX =\n  500;` is one statement). Each
 // top-level test(...) or describe(...) call is one statement: the "same test body" scope.
 function topLevelStatements(s) {
   const out = [];
@@ -170,7 +171,8 @@ function topLevelStatements(s) {
     const ch = s[i];
     if (OPEN.has(ch)) depth++;
     else if (CLOSE.has(ch)) depth = Math.max(0, depth - 1);
-    else if (depth === 0 && (ch === ';' || ch === '\n')) close(i);
+    else if (depth === 0 && ch === ';') close(i);
+    else if (depth === 0 && ch === '\n' && !/=\s*$/.test(s.slice(start, i))) close(i);
   }
   close(s.length);
   return out;
@@ -392,6 +394,18 @@ test('flags Date.now, process.hrtime.bigint via a helper, a reversed operand, a 
 
 test('does not flag a comment, a message string, template text, a ratio of two timings, a timestamp call argument, a timestamp freshness check, a loop bound, or a same-named untainted variable in another test', () => {
   assert.deepEqual(findBudgetAssertions(NOT_FLAGGED), []);
+});
+
+test('a budget constant wrapped after `=` at the top level is still a numeric budget', () => {
+  const wrapped = [
+    'const BUDGET_MS =',
+    '  200;',
+    "test('w', () => {",
+    '  const t0 = Date.now();',
+    '  assert.ok(Date.now() - t0 <= BUDGET_MS);',
+    '});',
+  ].join('\n');
+  assert.deepEqual(findBudgetAssertions(wrapped).map((h) => h.line), [5]);
 });
 
 test('AC1.1: evaluate names file:line, the perf/ pointer and docs/plugin-structure.md for an un-allow-listed budget', () => {
