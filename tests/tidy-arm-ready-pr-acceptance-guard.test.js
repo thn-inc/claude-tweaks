@@ -108,7 +108,7 @@ test("pr-first-merge Step 1 names tidy's Arm ready PR as a caller that holds ins
 });
 
 test('skill-graph records the tidy → dispatch/close-out.md edge', () => {
-  assert.match(slice(SKILL_GRAPH, '## tidy', '## visual-review'), /\| `dispatch\/close-out\.md` \| .*## Arm ready PR/);
+  assert.match(slice(SKILL_GRAPH, '## tidy', '## visual-review'), /\| `dispatch\/close-out\.md` \| [^|]*## Arm ready PR/);
 });
 
 test('final review: both "identical execution" claims name the labeling-guard exception', () => {

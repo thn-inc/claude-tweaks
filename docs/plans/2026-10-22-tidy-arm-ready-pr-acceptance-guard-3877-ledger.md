@@ -2,9 +2,9 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
-| 1 | build | actions-github-issues.md 'If every gate still holds' line runs past the ~100-col wrap (cosmetic) | deferred | SDD Task 1 review minor; final review: no fix needed (file already carries many >100-char lines) |
-| 2 | build | guard paragraph reads dense — 'When it has not, and also when no valid marker...' conditional could be clearer (brief-verbatim) | deferred | SDD Task 1 review minor; final-review fix wave c6b84f8ef rewrote the conditional to mark the close-out departure explicitly |
-| 3 | build | skill-graph test regex '.*' across collapsed slice could match cell and Arm ready PR from different rows (theoretical) | deferred | SDD Task 2 review minor; final review: only one `dispatch/close-out.md` row exists in the tidy section, so no cross-row match is possible today |
+| 1 | build | actions-github-issues.md 'If every gate still holds' line runs past the ~100-col wrap (cosmetic) | fixed | SDD Task 1 review minor; wrapped the paragraph at the file's ~100-col width in the wrap-up Phase 3 gate commit (refs #3877) |
+| 2 | build | guard paragraph reads dense — 'When it has not, and also when no valid marker...' conditional could be clearer (brief-verbatim) | fixed | SDD Task 1 review minor; final-review fix wave c6b84f8ef marked the close-out departure, and review fix f9305b3b6 split the landed sentence into two paragraphs |
+| 3 | build | skill-graph test regex '.*' across collapsed slice could match cell and Arm ready PR from different rows (theoretical) | fixed | SDD Task 2 review minor; the skill-graph pin now uses `[^|]*` so it cannot span table cells (wrap-up Phase 3 gate commit, refs #3877) |
 | 4 | build | SDD ruling — final-review #7 pr-first-merge Step 1 caller clause left as is (merge bundle 52195/52500 bytes): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
 | 5 | build | SDD ruling — final-review #6 scan-time routing of held record-linked PRs deferred to a follow-up record; fix wave only logs the hold: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
 | 6 | build | SDD ruling — final-review #1-#5 and #8 fixed in one fix wave: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
@@ -18,3 +18,9 @@
 | 14 | review/code | 3f (low, unconfirmed): "held" vs the spec's "staged" wording for the same outcome | open | — (staged/review-unconfirmed-3.md) |
 | 15 | review/code | 3f (low, unconfirmed): conformance pins coupled to incidental wording (house style) | open | — (staged/review-unconfirmed-4.md) |
 | 16 | review/hindsight | The review fix wave's bare-word rule and `unreadable:` reason vocabulary had no conformance pin | fixed | two pins added to GUARD_PINS in tests/tidy-arm-ready-pr-acceptance-guard.test.js |
+| 17 | wrap-up | Reflect insight — fail-closed prose guards need their empty/unreadable/malformed branches enumerated at shaping and review time (tangential backlog candidate): ratify or reverse at the Review Console (staged/reflect-2.md) | open | — |
+| 18 | wrap-up | pr — PR #3961 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | — |
+| 19 | wrap-up | Skills curation — all-of guard empty-set lesson added to parse-signal-discipline (item 20) | fixed | 74bd2cf01 |
+| 20 | wrap-up | Journeys curation — review-step guard branches added to the held-PR journey step 2 | fixed | 621876c8a |
+| 21 | wrap-up | Docs curation — skill-graph `_shared/pr-run-comments.md` row omits the Arm ready PR trusted-comment reader: apply or reject at the Review Console (staged/wrap-up-doc-1.md) | open | — |
+| 22 | wrap-up | Journeys curation — held-PR journey step 3 and red flags are stale after the review-step guard: apply or reject at the Review Console (staged/wrap-up-journey-1.md) | open | — |
