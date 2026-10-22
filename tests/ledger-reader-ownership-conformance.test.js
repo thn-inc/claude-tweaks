@@ -28,6 +28,8 @@ function assertRuleNamesVerb(text) {
   assert.match(text, /\*\*Fallback, for a reader only:\*\*/);
   assert.match(text, /check `\{run-dir\}\/ledger\.md` first — if it exists, that is the ledger and the glob is not consulted/);
   assert.match(text, /a caller that flips or deletes ledger rows or files never takes this fallback/);
+  assert.match(text, /\(the verb refused its `--run`, printed usage, or is absent from this build\)/);
+  assert.match(text, /Never substitute `delete-ledger` for it\./);
   assert.doesNotMatch(text, PROBE_RESTATEMENT_RE, 'rule no longer restates the old probe');
 }
 

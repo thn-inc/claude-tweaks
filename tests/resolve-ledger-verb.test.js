@@ -115,9 +115,13 @@ test('resolve-ledger leaves every ledger on disk', () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
   fs.writeFileSync(path.join(runDir, 'ledger.md'), '# Open Items\n');
+  fs.mkdirSync(path.join(root, 'docs', 'plans'), { recursive: true });
+  const planLedger = path.join(root, 'docs', 'plans', '2026-08-15-sample-ledger.md');
+  fs.writeFileSync(planLedger, '# Open Items\n');
   const result = runHook(['resolve-ledger', '--run', runDir], { cwd: root });
   assert.ok(result.stdout.startsWith('claude-tweaks: resolve-ledger: found\n'), result.stdout);
   assert.ok(fs.existsSync(path.join(runDir, 'ledger.md')));
+  assert.ok(fs.existsSync(planLedger));
 });
 
 const REPORT_LINE_RE = /resolve-ledger: (found|none|ambiguous|unattributable)/;
