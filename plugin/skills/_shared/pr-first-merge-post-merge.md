@@ -102,10 +102,10 @@ counts as pending, matching reconcile's fail-closed read. Log, on one line — t
 reconcile call itself returned, since a later pass skips this run the same way:
 `AUTO {time} — pr-first-merge Step 4.2: this run is console-never-rendered-staged-pending — needs human action (pending staged/ items, no rendered console); not left for the next trigger point. Reversibility: n/a.`
 and carry "needs human action" into the closing report. When the summary names the reason but this
-run's own check is clean, the stuck dirs are other runs: log to the path resolved above and report
-"{N} other run dir(s) need human action (console-never-rendered-staged-pending)" without attributing
-it to this run. Either way
-the outcome is reported as `merged`, with a needs-human-action note. Reconcile escalates such a dir
+run's own check is clean, the stuck dirs are other runs: log to the path resolved above (else
+`$PIPELINE_RUN_DIR`) and report "{N} other run dir(s) need human action
+(console-never-rendered-staged-pending)" without attributing it to this run. Either way the outcome
+is reported as `merged`, with a needs-human-action note. Reconcile escalates such a dir
 through the consolidated `structurally-stuck` record only after it sits untouched past the 7-day
 TTL and repeated consecutive stuck passes, whether or not the run is closed: a closed auto-merge
 short-circuit run escalates the same way, via reconcile's clean-status sweep (#3668).

@@ -236,6 +236,7 @@ test('#3866: Step 4.2 routes post-reconcile decisions.md lines to the archived r
   const resolved = section.indexOf('archive/{run-id}/');
   const other = section.search(/other run dir\(s\) need\s+human action/);
   assert.ok(resolved > 0 && other > resolved, 'the archive-path resolution must precede the other-run log instruction');
+  assert.match(section, /log to the path resolved above \(else\s+`\$PIPELINE_RUN_DIR`\) and report\s+"\{N\} other run dir\(s\)/, 'the other-run log line targets the resolved path, falling back to $PIPELINE_RUN_DIR');
 });
 
 test('Deliverable 2: auto-merge-short-circuit records why it writes no console.json (#3297)', () => {
