@@ -30,9 +30,10 @@ const STEP_VALUES = Object.values(VERDICT_STEPS);
 // appear after other narrative text that merely mentions or quotes one.
 const ACTION_RE = /^#(\d+) assess-agent-autonomy verdict ([a-z][a-z-]*[a-z])/;
 // A pass relaxes the merge gate, so it must also match the writer's whole emitted action
-// (formatEntry's `{text}. Reversibility: {r}.` plus an optional lever suffix). A pass line
-// with anything else after it — a tail, or a write cut short — reads as `unparsed`.
-const PASS_ACTION_RE = /^#\d+ assess-agent-autonomy verdict auto-merge\. Reversibility: [a-z/]+\.(?: \[lever: [^\]]*\])?$/;
+// (formatEntry's `{text}. Reversibility: {r}.` plus an optional lever suffix; `{r}` may carry one
+// parenthesized note, as `log-decision.js` accepts — #3870). A pass line with anything else after
+// it — a tail, or a write cut short — reads as `unparsed`.
+const PASS_ACTION_RE = /^#\d+ assess-agent-autonomy verdict auto-merge\. Reversibility: [a-z/]+(?: \(.+\))?\.(?: \[lever: [^\]]*\])?$/;
 
 function verdictText(n, verdict = PASS_VERDICT) {
   return `#${n} assess-agent-autonomy verdict ${verdict}`;
