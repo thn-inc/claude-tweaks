@@ -149,6 +149,57 @@ test('session-end DOES stamp interrupted on a run this session owns', () => {
   assert.strictEqual(readEvents(mine)[0].attribution, undefined, 'a known-owner event carries no guess tag');
 });
 
+// #3845: a nested `claude -p` inherits the owner's CLAUDE_CODE_SESSION_ID, so
+// its SessionEnd resolves the parent's run as owned. The pid is the one
+// identity the two processes do not share. process.env.CLAUDE_PID is set
+// explicitly in each test because the runner may itself run under Claude Code.
+function withClaudePid(pid, fn) {
+  const prior = process.env.CLAUDE_PID;
+  process.env.CLAUDE_PID = pid;
+  try {
+    return fn();
+  } finally {
+    if (prior === undefined) delete process.env.CLAUDE_PID;
+    else process.env.CLAUDE_PID = prior;
+  }
+}
+
+test('AC1.1 #3845: a nested session ending (same session id, different CLAUDE_PID) leaves the parent run untouched', () => {
+  const cwd = project();
+  const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: 100 });
+
+  const owned = ctxLib.resolveRun(cwd, {}, 'me');
+  withClaudePid('200', () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+
+  assert.strictEqual(readState(mine).status, 'active', 'a nested claude -p ending is not the owner session ending');
+  assert.deepStrictEqual(readEvents(mine), [], 'and leaves no breadcrumb on the parent run');
+});
+
+test('AC2.1 #3845: the owner process ending still stamps interrupted', () => {
+  const cwd = project();
+  const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: 100 });
+
+  const owned = ctxLib.resolveRun(cwd, {}, 'me');
+  withClaudePid('100', () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+
+  assert.strictEqual(readState(mine).status, 'interrupted');
+  const ev = readEvents(mine);
+  assert.strictEqual(ev.length, 1);
+  assert.strictEqual(ev[0].type, 'session-end');
+});
+
+test('#3845: a nested session on an env-attributed run also writes nothing', () => {
+  const cwd = project();
+  const pinned = mkRun(cwd, '2026-07-01T090000-pinned', { status: 'active', sessionId: 'me', ownerPid: 100 });
+
+  const owned = ctxLib.resolveRun(cwd, { PIPELINE_RUN_DIR: pinned }, 'me');
+  assert.strictEqual(owned.attribution, 'env');
+  withClaudePid('200', () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+
+  assert.strictEqual(readState(pinned).status, 'active');
+  assert.deepStrictEqual(readEvents(pinned), []);
+});
+
 test('pre-compact does not overwrite lastEvent on a guessed run', () => {
   const cwd = project();
   const unowned = mkRun(cwd, '2026-07-01T090000-unowned', { status: 'active', lastEvent: 'build-start' });
