@@ -17,11 +17,13 @@
 // (#3945) print one JSON line: the resolver result (a could-not-parse reply is
 // parse:"could-not-parse" with exit 0 — the signal is in the JSON), {path, count}
 // of the review-findings.json written through the run-dir anchoring guard, and
-// the tiebreak-coverage result (missing ids, exit 0 either way — archival, not
-// this exit code, refuses). --root (default cwd) is where resolve-tiebreak reads
-// the evidence file from.
-// Exit 0 ok; 2 malformed invocation or unreadable/invalid input;
-// 3 run dir missing/unanchored (write-findings only).
+// the tiebreak-coverage result over the run dir and its spec-*/ subdirs, the
+// same set the archive gate checks (missing ids, exit 0 either way — archival,
+// not this exit code, refuses). --root (default cwd) is where resolve-tiebreak
+// reads the evidence file from.
+// Exit 0 ok; 2 malformed invocation or unreadable/invalid input (check-coverage:
+// also a run dir that does not exist); 3 run dir missing/unanchored
+// (write-findings only).
 'use strict';
 
 const fs = require('node:fs');
@@ -34,8 +36,10 @@ const {
   resolveRefutation,
 } = require('./lib/coordination');
 const {
-  resolveTiebreak, buildFindingsArtifact, checkTiebreakCoverage, FINDINGS_ARTIFACT,
+  resolveTiebreak, buildFindingsArtifact, checkRunTiebreakCoverage, FINDINGS_ARTIFACT,
 } = require('./lib/tiebreak');
+// listSpecDirs comes from the archive module so tiebreak.js never requires it.
+const { listSpecDirs } = require('./lib/reconcile/archive-merged');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { writeArtifact } = require('./lib/run-artifact/write');
 
@@ -215,7 +219,13 @@ function run(argv, deps = realDeps) {
       deps.stderr('review-coordination.js: check-coverage takes exactly 1 run-dir\n' + USAGE);
       return 2;
     }
-    deps.stdout(JSON.stringify(checkTiebreakCoverage(rest[0])) + '\n');
+    let isDir = false;
+    try { isDir = fs.statSync(rest[0]).isDirectory(); } catch { /* missing: isDir stays false */ }
+    if (!isDir) {
+      deps.stderr(`review-coordination.js: run dir does not exist: ${rest[0]}\n`);
+      return 2;
+    }
+    deps.stdout(JSON.stringify(checkRunTiebreakCoverage(rest[0], listSpecDirs(rest[0]))) + '\n');
     return 0;
   }
   deps.stderr(`review-coordination.js: unknown command: ${command === undefined ? '(none)' : command}\n` + USAGE);

@@ -249,6 +249,31 @@ test('check-coverage reports the missing ids and exits 0', (t) => {
   assert.strictEqual(runCli(['check-coverage']).code, 2);
 });
 
+test('check-coverage aggregates spec-*/ artifacts like the archive gate (#3945 F8)', (t) => {
+  const d = tmpDir(t);
+  const second = { ...TB_FINDING, path: 'src/api.ts', claim: 'unhandled rejection' };
+  const id1 = findingId(TB_FINDING);
+  const id2 = findingId(second);
+  writeText(d, 'review-findings.json', JSON.stringify([{ id: id1, lens: TB_FINDING.lens, path: TB_FINDING.path }]));
+  writeText(d, 'decisions.md', `- AUTO 09:00:00 — Tiebreak tiebreak:${id1}: digested.\n`);
+  fs.mkdirSync(path.join(d, 'spec-3945'));
+  writeText(path.join(d, 'spec-3945'), 'review-findings.json', JSON.stringify([{ id: id2, lens: second.lens, path: second.path }]));
+  const res = runCli(['check-coverage', d]);
+  assert.strictEqual(res.code, 0);
+  assert.deepStrictEqual(JSON.parse(res.stdout), { artifactPresent: true, artifactValid: true, missing: [`spec-3945/${id2}`] });
+  fs.writeFileSync(path.join(d, 'spec-3945', 'review-findings.json'), 'garbage');
+  assert.strictEqual(JSON.parse(runCli(['check-coverage', d]).stdout).artifactValid, false);
+});
+
+test('check-coverage exits 2 for a run dir that does not exist (#3945 F8)', (t) => {
+  const d = tmpDir(t);
+  const res = runCli(['check-coverage', path.join(d, 'nope')]);
+  assert.strictEqual(res.code, 2);
+  assert.match(res.stderr, /run dir does not exist/);
+  const file = writeText(d, 'not-a-dir.txt', 'x');
+  assert.strictEqual(runCli(['check-coverage', file]).code, 2);
+});
+
 test('--help lists the three tiebreak forms', () => {
   const { deps, out } = fakeDeps(process.cwd());
   assert.strictEqual(run(['--help'], deps), 0);
