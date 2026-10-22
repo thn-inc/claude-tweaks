@@ -48,20 +48,25 @@ function occurrenceRanges(text, re) {
   return [...text.matchAll(re)].map((m) => [m.index, m.index + m[0].length]);
 }
 
+// [start, end) index ranges of every (possibly overlapping) occurrence of the literal `passage` in `text`.
+function passageRanges(text, passage) {
+  const ranges = [];
+  for (let at = text.indexOf(passage); at !== -1; at = text.indexOf(passage, at + 1)) {
+    ranges.push([at, at + passage.length]);
+  }
+  return ranges;
+}
+
 // Occurrence-by-occurrence: every lookup occurrence must sit wholly inside an allow-listed passage.
 // A passage that is no longer in the text is a failure, so a stale entry cannot silently allow nothing.
 function assertNoBareGlob(text, label, allowed = []) {
   for (const passage of allowed) {
     assert.ok(text.includes(passage), `${label}: an allow-listed passage is no longer in the file: ${passage}`);
   }
-  const allowedRanges = allowed.flatMap((passage) => {
-    const ranges = [];
-    for (let at = text.indexOf(passage); at !== -1; at = text.indexOf(passage, at + 1)) ranges.push([at, at + passage.length]);
-    return ranges;
-  });
+  const allowedRanges = allowed.flatMap((passage) => passageRanges(text, passage));
   const bare = LEDGER_LOOKUP_RES.flatMap((re) => occurrenceRanges(text, re))
-    .filter(([s, e]) => !allowedRanges.some(([as, ae]) => s >= as && e <= ae))
-    .map(([s, e]) => text.slice(s, e));
+    .filter(([start, end]) => !allowedRanges.some(([allowedStart, allowedEnd]) => start >= allowedStart && end <= allowedEnd))
+    .map(([start, end]) => text.slice(start, end));
   assert.strictEqual(bare.length, 0, `${label}: a this-run ledger lookup uses the bare docs/plans glob: ${JSON.stringify(bare)}`);
 }
 
