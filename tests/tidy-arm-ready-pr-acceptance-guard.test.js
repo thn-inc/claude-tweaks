@@ -1,7 +1,7 @@
 'use strict';
 // #3877: tidy's `## Arm ready PR` guards on acceptance labeling before it arms a
 // record-linked PR. Prose-as-implementation — pin the rule against the live text,
-// with a negative control per pin proving the assertion can go red.
+// with negative controls proving the guard-paragraph pins can go red.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
@@ -41,6 +41,12 @@ const GUARD_PINS = [
   /pass.{0,12}skip/,
   /read every `spec-\*\/verify\.json`/,
   /dispatch\/close-out\.md` step 3/,
+  /every file read exists/,
+  /validating the run-id as `flow\/claim-targets\.md` validates it/,
+  /an empty `Fixes` set or a failed read shows nothing/,
+  /log-decision\.js.{0,200}--status SKIP/,
+  /Never put an unvalidated marker value or a `verify\.json` string that is not a bare word/,
+  /unreadable: \{verify\.json \| labels \| comments\}/,
 ];
 
 test("AC1.1: Arm ready PR names verify.json's acceptance-labeling row before its Step 3 call", () => {

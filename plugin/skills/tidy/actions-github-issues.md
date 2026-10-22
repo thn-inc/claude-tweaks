@@ -85,25 +85,34 @@ as a permanent regression); do not re-derive it.
 acceptance labeling (`demo:pending`, the Try it walkthrough) landed, and the merge closes every `Fixes`
 record. For a PR carrying the `claude-tweaks-run:` marker, apply `dispatch/close-out.md` step 3's
 landed rule and live-state precheck before arming. First, resolve the run dir from the marker as that
-step does (`$RUN_ROOT/.claude-tweaks/pipelines/{run-id}/`, else its `archive/{run-id}/` copy). Then
-read its `verify.json`: when the run dir has `spec-*/` subdirectories (a multi-spec parent), read every
-`spec-*/verify.json`; otherwise read the run dir's own. Labeling has landed when every file read exists
-and its `acceptance-labeling` row's `result` is `pass`/`skip`. When it has not — and also when no valid
-marker or run dir resolves, where tidy departs from close-out step 3 (which stops that candidate)
-because tidy never runs Step 1 and so needs no run dir — it still counts as landed in two cases: every record in the PR's `Fixes`
-lines carries `demo:pending`, or the PR carries a trusted `<!-- run-comment: brief -->` or
+step does, validating the run-id as `flow/claim-targets.md` validates it (a marker that fails that check
+counts as no valid marker): `$RUN_ROOT/.claude-tweaks/pipelines/{run-id}/`, else its `archive/{run-id}/`
+copy. Then read its `verify.json`: when the run dir has `spec-*/` subdirectories (a multi-spec parent),
+read every `spec-*/verify.json`; otherwise read the run dir's own. Labeling has landed when every file
+read exists and its `acceptance-labeling` row's `result` is `pass`/`skip`.
+
+When it has not, two live-state checks can still show it landed: every record in the PR's `Fixes`
+lines carries `demo:pending` (at least one record, and every label read succeeded — an empty `Fixes`
+set or a failed read shows nothing), or the PR carries a trusted `<!-- run-comment: brief -->` or
 `<!-- run-comment: try-it -->` run comment (or its multi-spec `brief:{N}`/`try-it:{N}` form; trusted
-per `_shared/pr-run-comments.md`'s Trusted authors). Otherwise do not run Step 3, and never run
+per `_shared/pr-run-comments.md`'s Trusted authors). Run both checks when no valid marker or run dir
+resolves too: tidy departs from close-out step 3, which stops that candidate there, because tidy never
+runs Step 1 and so needs no run dir. Otherwise do not run Step 3, and never run
 labeling from a tidy sweep: `wrap-up/verification-brief.md` needs the run's own inputs. Hold the PR for
-a human instead, and never as a silent no-op. Report `PR #{n} not armed — acceptance labeling not
-landed ({verify.json missing | acceptance-labeling: {result} | no run dir})` and recommend
+a human instead, and never as a silent no-op; a failed read of `verify.json`, the `Fixes` records'
+labels, or the run comments holds the PR too, never passes it. Report `PR #{n} not armed — acceptance labeling not
+landed ({reason})`, with `{reason}` one of `verify.json missing`, `acceptance-labeling: {result}` (the
+row's `result`, or `unparseable` / `row absent` for a malformed file), `no run dir`, or
+`unreadable: {verify.json | labels | comments}`, and recommend
 `/claude-tweaks:dispatch close-out #{record}` ({record} = one of the PR's `Fixes` records), which runs
 `_shared/pr-first-merge.md` Step 1 before it merges. For `no run dir`, close-out stops on the same
 missing run dir, so the recommendation instead names running that command from the checkout that holds
-run `{run-id}` when a marker names one, or, when none does, a human acceptance pass via
-`/claude-tweaks:demo #{record}` before merging by hand. Log the hold to this tidy run's `decisions.md`
-(`_shared/auto-decision-log.md`'s degrade-trace `SKIP` — the arm was not performed, and the hold stays
-open for a human):
+run `{run-id}` when a validated marker names one, or, when none does, a human acceptance pass via
+`/claude-tweaks:demo #{record}` before merging by hand. Never put an unvalidated marker value or a
+`verify.json` string that is not a bare word into the report or the logged text. Log the hold to this
+tidy run's `decisions.md` whenever the run has one (`_shared/auto-decision-log.md`'s degrade-trace
+`SKIP` — the arm was not performed, and the hold stays open for a human), with `{command}` the
+recommendation just named and `--run` this tidy run's directory, not the PR's:
 `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --section "/tidy" --status SKIP --step "Step 7 Arm ready PR (skipped)" --text "condition: PR #{n} acceptance labeling not landed ({reason}) → fallback: held, not armed; recommended {command}" --reversibility n/a`.
 So a record-linked PR whose run dir has no `verify.json`, and whose `Fixes` records carry no
 `demo:pending`, is held, not armed. The housekeeping-marker flavor (`<!-- tidy-housekeeping-pr -->` /
