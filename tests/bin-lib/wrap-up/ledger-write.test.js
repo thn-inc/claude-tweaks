@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const {
   TERMINAL_STATUSES, resolveLedgerPath, parseLedgerTable, flipLedgerRow,
   describeRunLedgers, formatLedgerReport,
-} =require('../../../plugin/bin/lib/wrap-up/ledger-write');
+} = require('../../../plugin/bin/lib/wrap-up/ledger-write');
 const { splitLedgerRow, ledgerRowCells } = require('../../../plugin/bin/lib/wrap-up/ledger-cells');
 
 const SAMPLE = [
@@ -329,4 +329,9 @@ test('formatLedgerReport renders the report line then this-run, other-run, unatt
   const out = formatLedgerReport({ report: 'unattributable', ledgers: [], others: [], unattributed: ['/w/docs/plans/a-ledger.md'], detail: 'boom' });
   assert.strictEqual(out.split('\n')[0], 'claude-tweaks: resolve-ledger: unattributable (boom)');
   assert.ok(out.endsWith('unattributed: /w/docs/plans/a-ledger.md\n'));
+});
+
+test('formatLedgerReport collapses a multi-line detail so the report line never wraps', () => {
+  const out = formatLedgerReport({ report: 'unattributable', ledgers: [], others: [], unattributed: [], detail: 'Command failed: git\nfatal: boom' });
+  assert.strictEqual(out.split('\n')[0], 'claude-tweaks: resolve-ledger: unattributable (Command failed: git fatal: boom)');
 });

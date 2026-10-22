@@ -92,7 +92,7 @@ function pluginRoot() {
 
 // #1143: usage strings for every documented `hooks.js` subcommand (the
 // dispatch table's own record-worktree/close-run/teardown-run/archive-run/
-// resolve-run-dir/resolve-ledger/record-pr/spec-status/manifest-init/check-resume-freshness/check-staged-
+// resolve-run-dir/delete-ledger/resolve-ledger/record-pr/spec-status/manifest-init/check-resume-freshness/check-staged-
 // inventory/check-pass-reentry/check-sibling-sessions/sweep-shadow/adopt-run-dir/reconcile/
 // reconcile-background/reconcile-summary set — see docs/plugin-structure.md's
 // hooks.js line). Doubles as the membership table for the `--help`/`-h` intercept
@@ -129,7 +129,7 @@ const USAGE = {
 const HELP_FLAGS = new Set(['--help', '-h']);
 
 // #1012: declared-flag sets for the flag-strict verbs — the mutating run-state
-// verbs plus the read-only check-pass-reentry (#3553), exactly the keys of the
+// verbs plus the read-only check-pass-reentry (#3553) and resolve-ledger (#3897), exactly the keys of the
 // table below —
 // consulted by the unknown-flag guard below (which supersedes HELP_FLAGS for
 // exactly these verbs: `--help`/`-h` are simply never declared, so they fall

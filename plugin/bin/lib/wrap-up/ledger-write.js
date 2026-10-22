@@ -111,7 +111,7 @@ function describeRunLedgers({ runDir, worktree, deps = {} } = {}) {
 
 function formatLedgerReport(view) {
   const head = view.report === 'unattributable'
-    ? `claude-tweaks: resolve-ledger: unattributable (${view.detail})`
+    ? `claude-tweaks: resolve-ledger: unattributable (${String(view.detail).replace(/\s+/g, ' ').trim()})`
     : `claude-tweaks: resolve-ledger: ${view.report}`;
   return [
     head,

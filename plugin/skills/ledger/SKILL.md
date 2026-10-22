@@ -113,7 +113,7 @@ Only delete when the resolve gate has passed — all items must have terminal st
 
 > **Parallel execution:** Use parallel tool calls aggressively — all `Glob`/`Read` operations across the matched ledger files are independent and should run concurrently.
 
-1. Find the ledgers: when a run dir resolves for this invocation (`$PIPELINE_RUN_DIR`, or the most-recent-matching run), resolve this run's own per `_shared/ledger-format.md`'s resolution rule and list its `this-run:` ledger first, marked as this run's, then each `other-run:` ledger, marked as another run's — never as this run's; on the rule's reader fallback, list the glob's matches as ledgers this run cannot attribute. With no run dir at all, the `docs/plans/*-ledger.md` glob is the complete listing (the rule's no-run-dir fallback).
+1. Find the ledgers: when a run dir resolves for this invocation (`$PIPELINE_RUN_DIR`, or the most-recent-matching run), resolve this run's own per `_shared/ledger-format.md`'s resolution rule and list its `this-run:` ledger(s) first, marked as this run's, then each `other-run:` ledger, marked as another run's — never as this run's; on the rule's reader fallback, list the glob's matches as ledgers this run cannot attribute. With no run dir at all, the `docs/plans/*-ledger.md` glob is the complete listing (the rule's no-run-dir fallback).
 2. For each ledger, show:
    ```
    ## {ledger name}

@@ -13,17 +13,17 @@ files:
 # Find This Run's Ledger Outside Wrap-Up
 
 **Persona:** a maintainer driving a `/claude-tweaks:flow` run in a worktree cut from a `main` whose `docs/plans/` still carries three finished runs' committed `*-ledger.md` files. They check the run's open items with `/claude-tweaks:ledger`, watch `/claude-tweaks:review` merge QA findings, and let an `auto:merge` record take the fast-lane short-circuit, expecting each step to see this run's ledger and nobody else's.
-**Goal:** every lookup of "this run's ledger" outside `/claude-tweaks:wrap-up` resolves through the ownership-aware ledger probe, never a bare `docs/plans/*-ledger.md` glob. The glob survives only as a reader's fallback, and a step that flips or deletes rows fails closed rather than guessing.
+**Goal:** every lookup of "this run's ledger" outside `/claude-tweaks:wrap-up` resolves through `hooks.js resolve-ledger`, never a bare `docs/plans/*-ledger.md` glob. The glob survives only as a reader's fallback, and a step that flips or deletes rows fails closed rather than guessing.
 **Entry point:** `_shared/ledger-format.md`'s Location section resolution rule: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-ledger --run "{run-dir}"`, whose first line reports `found`, `none`, `ambiguous` or `unattributable`.
 **Success state:** `/ledger`, review's QA Ledger Check and the short-circuit deletion all name the same single ledger this branch created. The three inherited ledgers are listed as other runs' ledgers at most, and are byte-identical to `main` after the run merges.
 
 ## Steps
 
-### 1. Resolve this run's ledger through the probe
-- **URL:** `plugin/skills/_shared/ledger-format.md`, Location section, "Resolution rule for a caller reading 'the active ledger for this run' (#3687)"
+### 1. Resolve this run's ledger through `hooks.js resolve-ledger`
+- **URL:** `plugin/skills/_shared/ledger-format.md`, Location section, "Resolution rule for a caller reading 'the active ledger for this run' (#3687, #3897)"
 - **Action:** Run the verb against the resolved run dir and read its first line for the report. The `this-run:` line is this run's ledger (several on `ambiguous`). Every `other-run:` line is another run's ledger.
 - **Should feel:** Like one question with one answer. The inherited ledgers show up by name on `other-run:` lines and are never read as this run's.
-- **Should understand:** `{run-dir}` is the run dir just resolved, not a bare `$PIPELINE_RUN_DIR` that an inferred run leaves unset. `none` means "no ledger yet", not "look further". The `docs/plans/*-ledger.md` glob is a reader-only fallback, used on `unattributable`, on output with no report line (the verb refused its `--run`), or when no run dir resolves. A caller that flips or deletes never takes it.
+- **Should understand:** `{run-dir}` is the run dir just resolved, not a bare `$PIPELINE_RUN_DIR` that an inferred run leaves unset. `none` means "no ledger yet", not "look further". The `docs/plans/*-ledger.md` glob is a reader-only fallback, used on `unattributable`, on output with no report line (the verb refused its `--run`, printed usage, or is absent from this build), or when no run dir resolves. On that fallback an existing `{run-dir}/ledger.md` wins, and the glob is not consulted. A caller that flips or deletes never takes it.
 - **Red flags:** A verb called with `--run ""` printing no report line and the reader silently treating it as `none`. A reader picking the newest `docs/plans` ledger while the `this-run:` line names a different one, or while `{run-dir}/ledger.md` exists.
 
 ### 2. Review merges this run's QA findings, not a stranger's

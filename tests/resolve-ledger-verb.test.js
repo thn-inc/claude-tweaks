@@ -119,3 +119,27 @@ test('resolve-ledger leaves every ledger on disk', () => {
   assert.ok(result.stdout.startsWith('claude-tweaks: resolve-ledger: found\n'), result.stdout);
   assert.ok(fs.existsSync(path.join(runDir, 'ledger.md')));
 });
+
+const REPORT_LINE_RE = /resolve-ledger: (found|none|ambiguous|unattributable)/;
+
+test('resolve-ledger: --run "" refuses with "ledger not resolved" and no report line', () => {
+  const root = gitRoot();
+  const result = runHook(['resolve-ledger', '--run', ''], { cwd: root });
+  assert.strictEqual(result.code, 0);
+  assert.match(result.stdout, /ledger not resolved/);
+  assert.doesNotMatch(result.stdout, REPORT_LINE_RE);
+});
+
+test('resolve-ledger: no --run with two live candidate runs refuses, listing candidates, no report line', () => {
+  const root = gitRoot();
+  for (const runId of ['2026-08-14T120000-spec-998', '2026-08-14T120100-spec-999']) {
+    const dir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  }
+  const result = runHook(['resolve-ledger'], { cwd: root });
+  assert.strictEqual(result.code, 0);
+  assert.match(result.stdout, /multiple candidate runs/);
+  assert.match(result.stdout, /Ledger not resolved\./);
+  assert.doesNotMatch(result.stdout, REPORT_LINE_RE);
+});

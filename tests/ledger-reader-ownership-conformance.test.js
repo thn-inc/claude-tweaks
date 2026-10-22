@@ -26,6 +26,7 @@ function assertRuleNamesVerb(text) {
   }
   assert.match(text, /`other-run:` lines are other runs' ledgers — never read, flipped, or deleted as this run's/);
   assert.match(text, /\*\*Fallback, for a reader only:\*\*/);
+  assert.match(text, /check `\{run-dir\}\/ledger\.md` first — if it exists, that is the ledger and the glob is not consulted/);
   assert.match(text, /a caller that flips or deletes ledger rows or files never takes this fallback/);
   assert.doesNotMatch(text, PROBE_RESTATEMENT_RE, 'rule no longer restates the old probe');
 }
@@ -86,7 +87,7 @@ test('review\'s QA Ledger Check names the verb', () => {
 });
 
 test('ledger listing marks this run\'s ledger first and each other-run ledger as another run\'s', () => {
-  assert.match(read('ledger/SKILL.md'), /list its `this-run:` ledger first, marked as this run's, then each `other-run:` ledger, marked as another run's/);
+  assert.match(read('ledger/SKILL.md'), /list its `this-run:` ledger\(s\) first, marked as this run's, then each `other-run:` ledger, marked as another run's/);
 });
 
 test('ledger resolve never defaults to another run\'s ledger when a run dir resolves', () => {
