@@ -4,6 +4,7 @@ files:
   - plugin/bin/lib/hooks/post-tool-use-failure.js
   - plugin/bin/lib/hooks/bash-prefilter.js
   - tools/upstream-drift/manifest.yml
+  - tools/upstream-drift/manifest.js
   - tools/upstream-drift/checks.js
   - tools/upstream-drift/run.js
   - tests/harness-refusal-drift-pin.test.js
@@ -49,3 +50,4 @@ files:
 - Created during build of #3304 (the drift check for the refusal wording #2783's hook matches)
 - Steps 1-3 built in this session
 - Related specs: #2783 (the post-tool-use-failure hook), #3074 (the Bash prefilter's refusal signature gate)
+- Updated during build of #3820: step 1 now reflects the claude-code entry's `report-upgrades: false` opt-out (validated in `manifest.js`, honored by `run.js`'s `hasUpgrade`), so a version lag alone is neither a finding nor a reason the entry is due
