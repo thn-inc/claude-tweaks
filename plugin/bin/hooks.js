@@ -92,7 +92,7 @@ function pluginRoot() {
 
 // #1143: usage strings for every documented `hooks.js` subcommand (the
 // dispatch table's own record-worktree/close-run/teardown-run/archive-run/
-// resolve-run-dir/record-pr/spec-status/manifest-init/check-resume-freshness/check-staged-
+// resolve-run-dir/resolve-ledger/record-pr/spec-status/manifest-init/check-resume-freshness/check-staged-
 // inventory/check-pass-reentry/check-sibling-sessions/sweep-shadow/adopt-run-dir/reconcile/
 // reconcile-background/reconcile-summary set — see docs/plugin-structure.md's
 // hooks.js line). Doubles as the membership table for the `--help`/`-h` intercept
@@ -112,6 +112,7 @@ const USAGE = {
   'spec-status': 'spec-status --run <parent-dir> --spec <n> --status <pending|running|complete|failed|not-run> --phase <phase>',
   'close-run': 'close-run [--run <dir>]',
   'delete-ledger': 'delete-ledger --run <dir> [--ledger <path>]',
+  'resolve-ledger': 'resolve-ledger --run <dir>',
   'teardown-run': 'teardown-run [--run <dir>] [--merged|--abandoned] [--remote-ref-only]',
   'archive-run': 'archive-run [--run <dir>]',
   'resolve-console': 'resolve-console --run <dir> [--approve <id,id,...>] [--decline <id,id,...>] [--reverse-failed <id,id,...>]',
@@ -140,6 +141,7 @@ const HELP_FLAGS = new Set(['--help', '-h']);
 const KNOWN_FLAGS = {
   'close-run': ['--run'],
   'delete-ledger': ['--run', '--ledger'],
+  'resolve-ledger': ['--run'],
   'record-worktree': ['--run', '--dispatch'],
   'record-pr': ['--run'],
   'manifest-init': ['--run', '--specs'],
@@ -1127,6 +1129,29 @@ async function main(argv) {
           process.stdout.write(`claude-tweaks: delete-ledger: failed to delete ${resolved.path} (${e.message})\n`);
         }
       }
+    }
+    return 0;
+  }
+  if (cmd === 'resolve-ledger') {
+    // #3897: the read-only twin of delete-ledger — same run-arg resolution,
+    // same refusals, but it only reports (describeRunLedgers) and never
+    // touches a file. _shared/ledger-format.md's resolution rule cites this
+    // verb instead of having a skill list docs/plans itself.
+    const callerIdentity = { sessionId: process.env.CLAUDE_CODE_SESSION_ID, cwd: process.cwd() };
+    const {
+      runDir, invalidRunArg, worktreeLocalFallback, candidates,
+    } = resolveRunArg(argv.slice(3), process.cwd(), process.env, { unambiguousOnly: true, callerIdentity });
+    reportWorktreeLocalFallback(runDir, worktreeLocalFallback);
+    if (invalidRunArg) {
+      process.stdout.write(`claude-tweaks: --run path rejected: ${invalidRunArg} — ledger not resolved\n`);
+    } else if (candidates) {
+      process.stdout.write(`${renderCandidateRefusal('resolve-ledger', candidates)}\nLedger not resolved.\n`);
+    } else if (!runDir) {
+      process.stdout.write('claude-tweaks: no pipeline run dir found — ledger not resolved\n');
+    } else {
+      const { describeRunLedgers, formatLedgerReport } = require('./lib/wrap-up/ledger-write');
+      const worktree = ctxLib.readRunState(runDir)?.worktree || process.cwd();
+      process.stdout.write(formatLedgerReport(describeRunLedgers({ runDir, worktree })));
     }
     return 0;
   }
