@@ -483,3 +483,169 @@ test('AC10.1 the byte-ceiling assertion can go red', () => {
   assert.deepEqual(byteProblems(STEP3_BYTE_CEILING + 1), [`over the ${STEP3_BYTE_CEILING} B ceiling`]);
   assert.deepEqual(byteProblems(RAIL_BYTES), [`over the ${STEP3_BYTE_CEILING} B ceiling`, `at or over the ${RAIL_BYTES} B rail`]);
 });
+
+// --- step3-debate-and-refutation.md: Per-Candidate Refutation through the resolver, gap-sweep hand-off ---
+
+const DEBATE = path.join(SKILLS, 'review', 'step3-debate-and-refutation.md');
+const debateText = () => readText(DEBATE);
+
+// The text from a start anchor up to the next end anchor (the end anchor is excluded).
+function between(text, startAnchor, endAnchor) {
+  const start = text.indexOf(startAnchor);
+  assert.notEqual(start, -1, `step3-debate-and-refutation.md lost its "${startAnchor}" anchor`);
+  const end = text.indexOf(endAnchor, start + startAnchor.length);
+  assert.notEqual(end, -1, `step3-debate-and-refutation.md lost its "${endAnchor}" anchor after "${startAnchor}"`);
+  return text.slice(start, end);
+}
+const refutationStep4 = (text) => between(text, '4. **Dispatch one refutation agent', '5. **Resolve.**');
+const refutationStep5 = (text) => between(text, '5. **Resolve.**', 'After Step 3.5, every finding has a final bucket');
+const gapSweepSection = (text) => between(text, '## Step 3.6: Gap-Sweep', '## Post-fan-out sweep');
+const finalBucketParagraph = (text) => lineStartingWith(text, 'After Step 3.5, every finding has a final bucket');
+const refutationNote = (text) => lineStartingWith(text, '> **Parallel execution:** Dispatch one refutation agent');
+
+// AC5.1: the refutation template keeps "try to FALSIFY" and replies in the tiebreak fields.
+const REFUTATION_TEMPLATE_REQUIRED = [
+  [/You are trying to FALSIFY this finding/, 'the template still asks the agent to try to FALSIFY the finding'],
+  [/Verdict: confirmed \| refuted \| cant-tell/, 'the Verdict reply line is the tiebreak vocabulary'],
+  [/Evidence: \{path\}:\{line\}/, 'the Evidence reply line'],
+  [/whole (cited )?source line/, 'the evidence quote is the whole cited source line'],
+  [/Severity: critical \| high \| medium \| low \| info/, 'the Severity reply line'],
+  [/Recommendation: file \| drop/, 'the Recommendation reply line'],
+  [/the last non-empty line of your reply must then read exactly one of: DONE \/ DONE_WITH_CONCERNS \/ NEEDS_CONTEXT \/ BLOCKED, labeled `STATUS: \{WORD\}`/, 'the trailing STATUS instruction'],
+];
+const REFUTATION_TEMPLATE_FORBIDDEN = [[/refuted \/ not-refuted/, 'the retired "refuted / not-refuted" verdict line']];
+const refutationTemplateMissing = missingFactsOf(REFUTATION_TEMPLATE_REQUIRED);
+const refutationTemplateLeftovers = (text) => REFUTATION_TEMPLATE_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+
+test('AC5.1 refutation template replies in the tiebreak fields and drops not-refuted', () => {
+  const step4 = refutationStep4(debateText());
+  assert.deepEqual(refutationTemplateMissing(step4), [], 'step 4 must carry the tiebreak reply fields and keep the falsify framing');
+  assert.deepEqual(refutationTemplateLeftovers(step4), [], 'step 4 must not keep the retired verdict line');
+});
+
+test('AC5.1 the refutation-template assertions can go red', () => {
+  const step4 = refutationStep4(debateText());
+  assertEachPatternGoesRed(step4, REFUTATION_TEMPLATE_REQUIRED, refutationTemplateMissing);
+  assert.deepEqual(refutationTemplateLeftovers(`${step4}\n1. Verdict: refuted / not-refuted`), ['the retired "refuted / not-refuted" verdict line']);
+});
+
+// The intro's parallel-execution note names the verdict the agent now returns.
+const NOTE_REQUIRED = [[/returns a `confirmed`\/`refuted`\/`cant-tell` verdict/, 'the note names the tiebreak verdict vocabulary']];
+const NOTE_FORBIDDEN = [[/`refuted`\/`not-refuted` verdict/, 'the retired refuted/not-refuted verdict wording']];
+const noteMissing = missingFactsOf(NOTE_REQUIRED);
+const noteLeftovers = (text) => NOTE_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+
+test('AC5.1 the parallel-execution note names the tiebreak verdicts', () => {
+  const note = refutationNote(debateText());
+  assert.notEqual(note, '', 'the refutation parallel-execution note was not found');
+  assert.deepEqual(noteMissing(note), [], 'the note must name confirmed/refuted/cant-tell');
+  assert.deepEqual(noteLeftovers(note), [], 'the note must not keep the refuted/not-refuted wording');
+});
+
+test('AC5.1 the parallel-execution-note assertions can go red', () => {
+  const note = refutationNote(debateText());
+  assertEachPatternGoesRed(note, NOTE_REQUIRED, noteMissing);
+  assert.deepEqual(noteLeftovers(`${note} and returns a \`refuted\`/\`not-refuted\` verdict`), ['the retired refuted/not-refuted verdict wording']);
+});
+
+// AC5.2: step 5 settles the reply through the resolver.
+const REFUTATION_RULE = [
+  [/resolve-tiebreak/, 'step 5 feeds the reply to resolve-tiebreak'],
+  [/`step3-tiebreak\.md`'s Resolve and act section/, "step 5 cites step3-tiebreak.md's Resolve and act section"],
+  [/kind: "unconfirmed"/, 'the candidate is passed with kind: "unconfirmed"'],
+  [/reads `kind` only for a contested finding's positions/, 'the resolver reads kind only for a contested finding'],
+  [/`drop`[^\n]*tiebreak `refuted` verdict/, 'a drop counts as a tiebreak refuted verdict'],
+  [/can't-tell[^\n]*`unconfirmed`[^\n]*Step 3\.7/, "a can't-tell reply joins unconfirmed for Step 3.7"],
+  [/Only `confirmed` and `drop` write the resolver's line/, "only confirmed and drop write the resolver's line"],
+  [/never be logged as if a real falsification attempt happened/, 'a failed dispatch is never logged as a real falsification attempt'],
+];
+const REFUTATION_RULE_FORBIDDEN = [
+  [/resolve-refutation/, 'the retired resolve-refutation verb'],
+  [/apply `resolveRefutation`/, 'the retired resolveRefutation call'],
+  [/`not-refuted`/, 'the retired not-refuted verdict'],
+];
+const refutationRuleMissing = missingFactsOf(REFUTATION_RULE);
+const refutationRuleLeftovers = (text) => REFUTATION_RULE_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+
+test("AC5.2 step 5 feeds the reply to resolve-tiebreak and hands can't-tell to Step 3.7", () => {
+  const step5 = refutationStep5(debateText());
+  assert.deepEqual(refutationRuleMissing(step5), [], 'step 5 must state the resolver rule');
+  assert.deepEqual(refutationRuleLeftovers(step5), [], 'step 5 must stop citing the retired verb and verdict');
+});
+
+test('AC5.2 the refutation-rule assertions can go red', () => {
+  const step5 = refutationStep5(debateText());
+  assertEachPatternGoesRed(step5, REFUTATION_RULE, refutationRuleMissing);
+  assert.deepEqual(refutationRuleLeftovers(`${step5}\nnode review-coordination.js resolve-refutation {verdict}`), ['the retired resolve-refutation verb']);
+  assert.deepEqual(refutationRuleLeftovers(`${step5}\nthen apply \`resolveRefutation\``), ['the retired resolveRefutation call']);
+  assert.deepEqual(refutationRuleLeftovers(`${step5}\n- \`not-refuted\` → stands`), ['the retired not-refuted verdict']);
+});
+
+// Step 5 logs the resolver's line for confirmed/drop and writes the downgrade line otherwise (never both).
+test("AC5.2 step 5 keeps one downgrade line for can't-tell and never logs the resolver's line for it", () => {
+  const step5 = refutationStep5(debateText());
+  const downgrades = step5.split('\n').filter((line) => line.includes('Downgraded to unconfirmed'));
+  assert.equal(downgrades.length, 1, 'step 5 must carry exactly one downgrade log line');
+  assert.match(downgrades[0], /AUTO \{HH:MM:SS\} — Refutation: \{path\}:\{line\} — no usable verdict \(\{cause\}\)/);
+  assert.match(step5, /Do not log the resolver's line/);
+});
+
+test("AC5.2 the downgrade-line assertions can go red", () => {
+  const step5 = refutationStep5(debateText());
+  const without = step5.replace(/Do not log the resolver's line/g, '');
+  assert.notEqual(without, step5, 'anchor text not found — proof cannot discriminate');
+  assert.doesNotMatch(without, /Do not log the resolver's line/);
+  const doubled = `${step5}\nAUTO {HH:MM:SS} — Refutation: x. Downgraded to unconfirmed.`;
+  assert.equal(doubled.split('\n').filter((line) => line.includes('Downgraded to unconfirmed')).length, 2, 'a second downgrade line must turn the count check red');
+});
+
+// Gap-sweep hand-off.
+const GAP_SWEEP_HANDOFF = [[/step3-tiebreak\.md/, 'the gap-sweep findings are handed to step3-tiebreak.md']];
+const gapSweepHandoffMissing = missingFactsOf(GAP_SWEEP_HANDOFF);
+
+test('gap-sweep hand-off: Step 3.6 sends its single-source findings to the tiebreak', () => {
+  assert.deepEqual(gapSweepHandoffMissing(gapSweepSection(debateText())), [], 'Step 3.6 must name step3-tiebreak.md');
+});
+
+test('gap-sweep hand-off: the assertion can go red', () => {
+  assertEachPatternGoesRed(gapSweepSection(debateText()), GAP_SWEEP_HANDOFF, gapSweepHandoffMissing);
+});
+
+// The final-bucket paragraph points at Step 3.7, not at a staging that no longer ends the story.
+const FINAL_BUCKET_REQUIRED = [[/Step 3\.7[^\n]*`step3-tiebreak\.md`|`step3-tiebreak\.md`[^\n]*Step 3\.7/, 'the paragraph points unconfirmed and contested findings at Step 3.7 (step3-tiebreak.md)']];
+const FINAL_BUCKET_FORBIDDEN = [[/are already staged to the Wrap-Up Console/, 'the stale already-staged sentence']];
+const finalBucketMissing = missingFactsOf(FINAL_BUCKET_REQUIRED);
+const finalBucketLeftovers = (text) => FINAL_BUCKET_FORBIDDEN.filter(([pattern]) => pattern.test(text)).map(([, fact]) => fact);
+
+test('final bucket: unconfirmed and contested findings go to Step 3.7', () => {
+  const paragraph = finalBucketParagraph(debateText());
+  assert.notEqual(paragraph, '', 'the final-bucket paragraph was not found');
+  assert.deepEqual(finalBucketMissing(paragraph), [], 'the paragraph must point at Step 3.7');
+  assert.deepEqual(finalBucketLeftovers(paragraph), [], 'the paragraph must not keep the already-staged sentence');
+});
+
+test('final bucket: the assertions can go red', () => {
+  const paragraph = finalBucketParagraph(debateText());
+  assertEachPatternGoesRed(paragraph, FINAL_BUCKET_REQUIRED, finalBucketMissing);
+  assert.deepEqual(finalBucketLeftovers(`${paragraph} \`unconfirmed\` and \`contested\` are already staged to the Wrap-Up Console.`), ['the stale already-staged sentence']);
+});
+
+// code-mode-steps.md points at the verbs the debate file now uses.
+const tierParagraph = (text) => lineStartingWith(text, '**At `high` and above**, Cross-Lens Debate runs.');
+const CITES_TIEBREAK = /`resolve-debate`\/`resolve-tiebreak`/;
+const CITES_RETIRED_VERB = /resolve-refutation/;
+
+test('code-mode-steps.md names resolve-tiebreak, not resolve-refutation, for the refutation pass', () => {
+  const sentence = tierParagraph(readText(CODE_MODE_STEPS));
+  assert.notEqual(sentence, '', 'the tier paragraph was not found');
+  assert.match(sentence, CITES_TIEBREAK);
+  assert.doesNotMatch(sentence, CITES_RETIRED_VERB);
+});
+
+test('code-mode-steps.md verb-citation assertions can go red', () => {
+  const sentence = tierParagraph(readText(CODE_MODE_STEPS));
+  const reverted = sentence.replace('`resolve-tiebreak`', '`resolve-refutation`');
+  assert.notEqual(reverted, sentence, 'anchor text not found — proof cannot discriminate');
+  assert.doesNotMatch(reverted, CITES_TIEBREAK);
+  assert.match(reverted, CITES_RETIRED_VERB);
+});

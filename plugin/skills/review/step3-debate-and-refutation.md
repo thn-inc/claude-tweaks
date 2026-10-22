@@ -53,7 +53,7 @@ After per-lens reproduction completes, scan for contradictions across lenses bef
 
 This is explicitly NOT a second reproduction pair — reproduction pairs (Step 3) check agreement between two initial readers; refutation is a distinct, later agent whose only job is to try to break a finding that already survived that agreement. Correlated error (both reproduction agents sharing the same blind spot, or the same miscalibration) is exactly what agreement alone can't catch. This was caught concretely during the #45 native-review prototype: a dedicated verifier subagent, dispatched per surviving candidate finding with the explicit job of trying to falsify it using fresh evidence-gathering, caught false positives that reproduction-pair agreement alone had let through.
 
-> **Parallel execution:** Dispatch one refutation agent per **in-scope** `confirmed` candidate (after the floor and cap in steps 2-3 below) as parallel Task agents — each runs independently, sees only its own candidate finding (not the other candidates or the lens's original reasoning chain), and returns a `refuted`/`not-refuted` verdict. Assemble results after all agents complete.
+> **Parallel execution:** Dispatch one refutation agent per **in-scope** `confirmed` candidate (after the floor and cap in steps 2-3 below) as parallel Task agents — each runs independently, sees only its own candidate finding (not the other candidates or the lens's original reasoning chain), and returns a `confirmed`/`refuted`/`cant-tell` verdict, settled in step 5 by `resolve-tiebreak`. Assemble results after all agents complete.
 
 This pass is the only place in the skill where an unbounded fan-out would meet the Capable profile, so it carries an explicit severity floor and fan-out cap — fixed values stated here, not left to model judgment. This is the same cost discipline Cross-Lens Debate's step 5 applies ("Avoid running debate on every `Path:Line`…"), made concrete.
 
@@ -84,8 +84,15 @@ This pass is the only place in the skill where an unbounded fan-out would meet t
 >    content at {path}:{line} (do not trust the cached evidence text below) and determine
 >    whether the claimed issue is real and reachable.
 >
->    1. Verdict: refuted / not-refuted
->    2. One paragraph of reasoning, citing what you actually found in the current file.
+>    Reply with exactly these lines, then your status line:
+>    Verdict: confirmed | refuted | cant-tell
+>    Evidence: {path}:{line} `{the whole cited source line, verbatim}`
+>    Severity: critical | high | medium | low | info
+>    Recommendation: file | drop — {one-line reason}
+>
+>    confirmed means the finding still stands after your attempt to break it; refuted means you broke it; cant-tell means you could not decide.
+>    Evidence is required for confirmed and refuted: cite the finding's own path and a line within 5 of {line} in the current file, and quote the whole cited source line verbatim — a token or fragment of the line is not a quote. cant-tell needs no Evidence line.
+>    Recommendation file means the finding is worth a fix or a work record; drop means it is not worth acting on.
 >    Produce your response first; the last non-empty line of your reply must then read exactly one of: DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED, labeled `STATUS: {WORD}`.
 >
 >    Candidate finding: {path}:{line}
@@ -101,17 +108,12 @@ This pass is the only place in the skill where an unbounded fan-out would meet t
 >    lens's original context. Resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" capable` (contract § Model Selection).]
 >    ```
 
-5. **Resolve.** First check the dispatched agent's own status line, per the Subagent Contract (`_shared/subagent-output-contract.md`): a `BLOCKED`/`NEEDS_CONTEXT` status, or a response with no parseable `Verdict:` line, means the refutation attempt itself failed — do not fabricate a verdict for `resolveRefutation`. Treat this case directly: downgrade to `unconfirmed` and write `AUTO {HH:MM:SS} — Refutation: {path}:{line} — dispatch failed ({status}/unparseable verdict), not genuinely re-examined. Downgraded to unconfirmed out of caution. Reversibility: high.` A failed dispatch must never be logged as if a real falsification attempt happened.
+5. **Resolve.** Feed each agent's reply to `resolve-tiebreak`, exactly as `step3-tiebreak.md`'s Resolve and act section does for a tiebreak reply — its session-tmp files, its `--root`, its `--text-file` log call, and its empty-reply rule for an empty, failed, timed-out, or non-`DONE` dispatch are cited here, not restated. The finding file holds the candidate as `{lens, path, line, claim, reporterSeverity, kind: "unconfirmed"}`: `resolve-tiebreak` validates the finding through `buildFindingsArtifact`, which accepts `kind` only as `unconfirmed` or `contested`, and the resolver reads `kind` only for a contested finding's positions. The resolver fails toward scrutiny — a reply that is not a literal `confirmed`/`refuted` verdict with status `DONE` and evidence verified against the live file is can't-tell — so a failed dispatch is never fabricated into a verdict. Act on the returned `outcome`. Only `confirmed` and `drop` write the resolver's line:
+   - `confirmed` → the candidate stands and proceeds unchanged toward Step 3 Routing. Log the resolver's line.
+   - `drop` → the candidate is dropped. Log the resolver's line. A `drop` counts as a tiebreak `refuted` verdict, so Step 3.7 does not tiebreak the finding again.
+   - `digest` / `console` (can't-tell, including a failed or evidence-free reply) → the candidate is downgraded to `unconfirmed` and joins the Step 3.7 entry set, which tiebreaks it and logs its one verdict line. Do not log the resolver's line (a second one would double that finding's verdict line). Write `AUTO {HH:MM:SS} — Refutation: {path}:{line} — no usable verdict ({cause}), not genuinely re-examined. Downgraded to unconfirmed out of caution. Reversibility: high.`, with `{cause}` one of `dispatch failed ({status})`, `unparseable verdict`, `can't-tell`, or `evidence unverified`. A failed dispatch must never be logged as if a real falsification attempt happened.
 
-   Otherwise, apply `resolveRefutation` to the parsed `Verdict:` value:
-   ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" resolve-refutation {verdict}
-   ```
-   `resolveRefutation` itself also fails toward scrutiny on any unrecognized value — only the exact literal `not-refuted` keeps a finding `confirmed`; `refuted` and anything else downgrade to `unconfirmed`. This is defense in depth against a malformed verdict slipping past the explicit status check above, not a substitute for it.
-   - `refuted` → finding downgraded to `unconfirmed` (lands in Low-confidence subsection). Write `AUTO {HH:MM:SS} — Refutation: {path}:{line} refuted — {one-line reasoning}. Downgraded to unconfirmed. Reversibility: high.`
-   - `not-refuted` → finding proceeds unchanged toward Step 3 Routing. Write `AUTO {HH:MM:SS} — Refutation: {path}:{line} not refuted — stands as confirmed. Reversibility: high.`
-
-After Step 3.5, every finding has a final bucket — `confirmed`, `unconfirmed`, or `contested`. A `confirmed` finding downgraded by the Per-Candidate Refutation Pass above joins `unconfirmed` with the same visibility rules as any other unconfirmed finding. Only `confirmed` findings flow into Step 3 Routing. `unconfirmed` and `contested` are already staged to the Wrap-Up Console.
+After Step 3.5, every finding has a final bucket — `confirmed`, `unconfirmed`, or `contested`. A `confirmed` finding the Per-Candidate Refutation Pass above could not stand behind (the `digest` / `console` outcome) joins `unconfirmed` with the same visibility rules as any other unconfirmed finding. Only `confirmed` findings flow into Step 3 Routing. `unconfirmed` and `contested` findings go to Step 3.7 (`step3-tiebreak.md`), and only its `confirmed` results join routing.
 
 ## Step 3.6: Gap-Sweep / Completeness Critic
 
@@ -138,7 +140,7 @@ SCRATCH: {ctx-dir}/agent-scratch/gap-sweep — any probe script or fixture you c
 reproduction pair. Degrades per the resolver's preconditions (contract § Model Selection).]
 ```
 
-Findings returned are tagged with an internal `source: gap-sweep` marker (parallel to how lenses tag findings with their own lens name for Step 3 Routing's Category column) and inserted directly into the `unconfirmed` bucket — the same confidence tier a single-source, non-reproduction-paired lens finding gets. They are **not** auto-promoted to `confirmed` — there's no second agent to reproduce them against, by design. This reuses `step3-routing.md`'s existing `xhigh`/`max` inline-visibility rules (unconfirmed findings surface inline at `xhigh`+) — no new routing table needed. Write `STAGED {HH:MM:SS} — Gap-sweep: {path}:{line} — {one-line finding}. Staged to Review Console as low-confidence (gap-sweep, single-source by design). Reversibility: high.`
+Findings returned are tagged with an internal `source: gap-sweep` marker (parallel to how lenses tag findings with their own lens name for Step 3 Routing's Category column) and inserted directly into the `unconfirmed` bucket — the same confidence tier a single-source, non-reproduction-paired lens finding gets. They are **not** auto-promoted to `confirmed` — there's no second agent to reproduce them against, by design. Being single-source `unconfirmed` findings, they go to Step 3.7 (`step3-tiebreak.md`) like any other, and only its `confirmed` results join routing. This reuses `step3-routing.md`'s existing `xhigh`/`max` inline-visibility rules (unconfirmed findings surface inline at `xhigh`+) — no new routing table needed. Write `STAGED {HH:MM:SS} — Gap-sweep: {path}:{line} — {one-line finding}. Staged to Review Console as low-confidence (gap-sweep, single-source by design). Reversibility: high.`
 
 Check the agent's status line first, per the Subagent Contract: a `BLOCKED`/`NEEDS_CONTEXT` status, or a response that parses as neither a findings table nor the literal `No findings.`, means the sweep did not actually complete — write `STAGED {HH:MM:SS} — Gap-sweep: dispatch failed ({status}), sweep not genuinely performed. Reversibility: high.` so a persistently broken dispatch stays visible rather than silently reading as "we checked and found nothing." Only a genuine `DONE`/`DONE_WITH_CONCERNS` response with literal `No findings.` text logs nothing further, per the existing per-lens convention — no decision-log entry is needed for an actually-completed zero-findings pass.
 
