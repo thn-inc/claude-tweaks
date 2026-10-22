@@ -22,6 +22,13 @@ test('producer: a deferral ruling runs the fix-now gate against AC literal text 
   assert.match(DISPATCH, ws('is fixed in this build, so it never reaches the Review Console'));
 });
 
+test('producer: a fixed-now deferral names a real destination per ruling site, and the round-cap override', () => {
+  assert.match(DISPATCH, ws("a pre-flight ruling folds it into the affected task's implementer brief"));
+  assert.match(DISPATCH, ws("a ruling inside a task's fix loop sends it to that loop's next round"));
+  assert.match(DISPATCH, ws("which `/build` authorizes here as an override of SDD's round cap and its single fix wave, for this case only"));
+  assert.match(DISPATCH, ws('staged as a deferral with no reason (`Defers: yes`, no `Defer-reason:`)'));
+});
+
 test('producer: a failing deferral carries exactly one Defer-reason', () => {
   assert.match(DISPATCH, ws("written with exactly one `Defer-reason: {value}` from that file's vocabulary"));
 });
