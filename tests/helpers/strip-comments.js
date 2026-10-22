@@ -57,20 +57,13 @@ function slashStartsRegex(prev) {
 function scanString(src, i, blankBody) {
   const quote = src[i];
   const bodyStart = i + 1;
-  i++;
-  while (i < src.length) {
-    const ch = src[i];
-    if (ch === '\\') i += 2;
-    else if (ch === quote) {
-      blankBody(bodyStart, i);
-      return i + 1;
-    } else if (ch === '\n') {
-      blankBody(bodyStart, i);
-      return i;
-    } else i++;
+  i = bodyStart;
+  while (i < src.length && src[i] !== quote && src[i] !== '\n') {
+    i += src[i] === '\\' ? 2 : 1;
   }
-  blankBody(bodyStart, src.length);
-  return src.length;
+  const bodyEnd = Math.min(i, src.length);
+  blankBody(bodyStart, bodyEnd);
+  return src[bodyEnd] === quote ? bodyEnd + 1 : bodyEnd;
 }
 
 // End index of the regex literal opening at `i`: just past its flags, or at a

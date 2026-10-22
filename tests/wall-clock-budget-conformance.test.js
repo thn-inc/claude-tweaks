@@ -234,10 +234,9 @@ function operands(s, start, end) {
 // `stripped` is the blank-mode text of `src`; evaluate passes the same text to
 // stripperVerdict, so the misparse check judges exactly what this matcher reads.
 function findBudgetAssertions(src, stripped = stripComments(src, { literals: 'blank' })) {
-  const s = stripped;
   const fileTainted = new Set();
   const fileNumeric = new Set();
-  const statements = topLevelStatements(s);
+  const statements = topLevelStatements(stripped);
   for (const st of statements) {
     if (/^\s*(?:const|let|var)\b/.test(st.text)) grow(st.text, fileTainted, fileNumeric);
   }
@@ -254,7 +253,7 @@ function findBudgetAssertions(src, stripped = stripComments(src, { literals: 'bl
         (leftTiming && !rightTiming && isNumericBudget(right, numeric)) ||
         (rightTiming && !leftTiming && isNumericBudget(left, numeric));
       if (!flagged) continue;
-      const line = s.slice(0, st.offset + op.start).split('\n').length;
+      const line = stripped.slice(0, st.offset + op.start).split('\n').length;
       const text = src.slice(st.offset + from, st.offset + to).replace(/\s+/g, ' ').trim();
       hits.push({ line, text });
     }
