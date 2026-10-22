@@ -12,17 +12,26 @@
 // 1. Fenced blocks (```` ``` ```` or `~~~`, optionally indented) are skipped. Inline spans
 //    are extracted per line with /`([^`\n]+)`/g. A span is a /test span when its content
 //    matches /^\/claude-tweaks:test(?:\s|$)/.
-// 2. Invocation: the text before the span's opening backtick ends (case-insensitive) with
-//    an invocation verb then whitespace, or with `re-verif(y|ies|ying) with `. Anything
-//    else is a mention (a description, a table cell naming the skill, a Next Actions
-//    suggestion, a parenthetical citation).
+// 2. Invocation: the text before the span's opening backtick ends (case-insensitive) with a
+//    whole-word invocation verb (run, call, dispatch, execute, trigger, invoke, in their
+//    -s/-ing forms, with an optional auto-/re- prefix), then whitespace, then an optional
+//    `the `; or with `re-verif(y|ies|ying) with `. A span not directly led by one of these
+//    verbs (optionally followed by `the`) is a mention: a description, a table cell naming
+//    the skill, a Next Actions suggestion, a parenthetical citation.
 // 3. Hand-off (an invocation review itself does not make, so no flag is required):
 //    (a) `**STOP**` appears earlier on the same line: review has halted, and whoever
 //        resumes runs /test standalone;
 //    (b) the nearest preceding heading contains `/claude-tweaks:flow` pipeline, or the
 //        line is a table row whose first cell contains (pipeline): $PIPELINE_RUN_DIR is
 //        /test's primary parent signal and --source only the standalone fallback.
-// 4. Every remaining invocation's span must contain `--source review`.
+// 4. Every remaining invocation's span must contain `--source review` as a whole token
+//    (followed by whitespace or the end of the span, so `--source reviewer` does not count).
+//
+// Limits (what the sweep does not see):
+// - Fenced blocks are skipped, so the output-template fences in review-summary-template.md
+//   (Next Actions suggestions) are not swept.
+// - The walk is non-recursive: plugin/skills/review/ has no subdirectories today.
+// - Blockquoted fences (`> ` followed by three backticks) are not recognised as fences.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -32,8 +41,9 @@ const { readText } = require('./helpers/read-skill');
 
 const REVIEW_DIR = path.join(__dirname, '..', 'plugin', 'skills', 'review');
 const TEST_SPAN = /^\/claude-tweaks:test(?:\s|$)/;
-const INVOCATION_PRE = /(?:auto-|re-?)?(?:run|runs|running|trigger|triggers|triggering|invoke|invokes|invoking)\s+$/i;
-const REVERIFY_PRE = /re-?verif(?:y|ies|ying)\s+with\s+$/i;
+const INVOCATION_PRE = /\b(?:auto-|re-?)?(?:run|runs|running|call|calls|calling|dispatch|dispatches|dispatching|execute|executes|executing|trigger|triggers|triggering|invoke|invokes|invoking)\s+(?:the\s+)?$/i;
+const REVERIFY_PRE = /\bre-?verif(?:y|ies|ying)\s+with\s+$/i;
+const SOURCE_REVIEW = /--source review(?:\s|$)/;
 const FENCE = /^\s*(`{3,}|~{3,})/;
 
 function classifySpans(text) {
@@ -82,7 +92,7 @@ function classifySpans(text) {
   return out;
 }
 
-const isOffender = (s) => s.kind === 'invocation' && !s.span.includes('--source review');
+const isOffender = (s) => s.kind === 'invocation' && !SOURCE_REVIEW.test(s.span);
 
 function offendersIn(text) {
   return classifySpans(text).filter(isOffender).map(({ line, span }) => ({ line, span }));
@@ -159,6 +169,23 @@ test('minimal pair: a bare verb-led invocation is an offender; --source review c
 test('minimal pair: capitalised and gerund verbs, and a qa argument, are still invocations', () => {
   assert.strictEqual(offendersIn('Re-running `/claude-tweaks:test` now.').length, 1);
   assert.strictEqual(offendersIn('Run `/claude-tweaks:test qa` to check.').length, 1);
+});
+
+test('minimal pair: a word that merely ends in a verb (overrun) is a mention; re-run is an invocation', () => {
+  const overrun = classifySpans('overrun `/claude-tweaks:test`');
+  assert.strictEqual(offendersIn('overrun `/claude-tweaks:test`').length, 0);
+  assert.strictEqual(overrun.length, 1);
+  assert.strictEqual(overrun[0].kind, 'mention');
+  assert.strictEqual(offendersIn('re-run `/claude-tweaks:test`').length, 1);
+});
+
+test('minimal pair: an optional "the" and the dispatch verb are still invocations', () => {
+  assert.strictEqual(offendersIn('run the `/claude-tweaks:test` gate').length, 1);
+  assert.strictEqual(offendersIn('Dispatch `/claude-tweaks:test` now.').length, 1);
+});
+
+test('minimal pair: --source reviewer is not --source review', () => {
+  assert.strictEqual(offendersIn('re-run `/claude-tweaks:test --source reviewer`').length, 1);
 });
 
 test('minimal pair: re-verifies with is an invocation verb', () => {
