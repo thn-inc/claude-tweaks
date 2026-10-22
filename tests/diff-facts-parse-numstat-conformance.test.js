@@ -80,3 +80,13 @@ test('a win32-shaped plugin root splices into the composition with no backslash'
   assert.ok(!cmd.includes('\\'), `spliced command contains a backslash: ${cmd}`);
   assert.ok(cmd.includes("require('D:/a/repo/plugin/bin/lib/git-z.js')"), cmd);
 });
+
+test('#3829: ceremony-derivation.md pre-splits the merge-base out of the composition line', () => {
+  const line = CEREMONY.split('\n').find((l) => l.includes('parseNumstatZ') && l.includes('node -e'));
+  assert.ok(line, 'ceremony-derivation.md has no line with both parseNumstatZ and node -e');
+  assert.ok(!line.includes('$('), `composition line still carries a $(...) substitution: ${line}`);
+  assert.ok(
+    CEREMONY.split('\n').some((l) => l.trim() === 'git merge-base HEAD origin/main'),
+    'ceremony-derivation.md must show `git merge-base HEAD origin/main` as its own command',
+  );
+});
