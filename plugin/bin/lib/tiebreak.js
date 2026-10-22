@@ -14,8 +14,8 @@
 //   Verdict: confirmed | refuted | cant-tell        value lowercased
 //   Evidence: {path}:{line} {quote}                 quote = everything after the
 //       first whitespace following path:line; one wrapping pair of backticks or
-//       double quotes is stripped. An empty quote, a line below 1, or anything
-//       else gives evidence: null.
+//       double quotes is stripped. An empty or whitespace-only quote, a line
+//       below 1, or anything else gives evidence: null.
 //   Severity: {sev}                                 lowercased; a value outside
 //       SEVERITIES gives severity: null.
 //   Recommendation: file | drop [(— | - | :) reason]   a reason without a
@@ -71,7 +71,7 @@ function parseEvidence(value) {
   if (!m) return null;
   const line = Number(m[2]);
   const quote = stripWrapper((m[3] || '').trim());
-  if (line < 1 || quote === '') return null;
+  if (line < 1 || quote.replace(/\s+/g, ' ').trim() === '') return null;
   return { path: m[1], line, quote };
 }
 
@@ -172,6 +172,7 @@ const squash = (s) => s.replace(/\s+/g, ' ').trim();
 // Returns null when the evidence checks out against the file, else the reason.
 function evidenceProblem(evidence, finding, line, readFile) {
   if (evidence.path !== finding.path) return 'evidence-path-mismatch';
+  if (squash(evidence.quote) === '') return 'evidence-unverified';
   if (typeof readFile !== 'function') return 'evidence-unverified';
   let text;
   try { text = readFile(finding.path); } catch { return 'evidence-unverified'; }

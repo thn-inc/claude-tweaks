@@ -399,6 +399,28 @@ test('every verdict line carries tiebreak:{id} (AC7.1)', () => {
   assert.equal(results[0].id, findingId(FINDING));
 });
 
+// ---- final-review fixes (#3945) ----
+
+const WHITESPACE_QUOTES = ['" "', '` `', '"\t"'];
+
+test('a whitespace-only quote is not usable evidence (F1)', () => {
+  for (const quote of WHITESPACE_QUOTES) {
+    const r = parseTiebreakReply(`Verdict: refuted\nEvidence: plugin/bin/foo.js:20 ${quote}\nSTATUS: DONE`);
+    assert.equal(r.parse, 'ok', JSON.stringify(quote));
+    assert.equal(r.evidence, null, JSON.stringify(quote));
+  }
+});
+
+test('a whitespace-only quote never confirms or drops (F1)', () => {
+  for (const quote of WHITESPACE_QUOTES) {
+    for (const verdict of ['confirmed', 'refuted']) {
+      const r = resolve(FINDING, reply({ verdict, evidence: `plugin/bin/foo.js:20 ${quote}` }));
+      assert.ok(isCantTell(r), `${verdict} ${JSON.stringify(quote)}: ${r.outcome}`);
+      assert.equal(r.evidence, null);
+    }
+  }
+});
+
 // ---- findings artifact and verdict coverage (#3945 Task 3) ----
 
 function tmpDir(t) {
