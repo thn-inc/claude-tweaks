@@ -193,46 +193,6 @@ function defaultListRunDirs(root) {
   }
 }
 
-// `gh api --paginate` prints one JSON array per page, so the stdout may hold
-// several concatenated top-level arrays. -> the arrays' elements, joined;
-// throws on anything that is not a run of arrays.
-function parseConcatenatedArrays(stdout) {
-  const text = String(stdout);
-  const out = [];
-  let pages = 0;
-  let depth = 0;
-  let begin = -1;
-  let inString = false;
-  let escaped = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (c === '\\') escaped = true;
-      else if (c === '"') inString = false;
-    } else if (c === '"') {
-      inString = true;
-    } else if (c === '[' || c === '{') {
-      if (depth === 0) {
-        if (c !== '[') throw new Error('gh api returned a non-array');
-        begin = i;
-      }
-      depth += 1;
-    } else if (c === ']' || c === '}') {
-      depth -= 1;
-      if (depth < 0) throw new Error('gh api returned malformed JSON');
-      if (depth === 0) {
-        out.push(...JSON.parse(text.slice(begin, i + 1)));
-        pages += 1;
-      }
-    } else if (depth === 0 && !/\s/.test(c)) {
-      throw new Error('gh api returned malformed JSON');
-    }
-  }
-  if (depth !== 0 || inString || pages === 0) throw new Error('gh api returned truncated JSON');
-  return out;
-}
-
 // Every PR whose head starts BRANCH_PREFIX, any state, with its body — or
 // 'gh-absent' / 'network-failure'. Enumerates the removal heads by ref prefix
 // (matching-refs), then lists each head's PRs, so a PR is found however old it
@@ -243,12 +203,11 @@ function defaultListRemovalPrs(root, exec = execFileSync) {
   const opts = { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: sharedPrimitives.GH_TIMEOUT_MS, windowsHide: true };
   return sharedPrimitives.runClassified(
     () => {
-      const refs = parseConcatenatedArrays(
-        exec('gh', ['api', '--paginate', `repos/{owner}/{repo}/git/matching-refs/heads/${BRANCH_PREFIX}`], opts),
-      );
-      const heads = [...new Set(refs
-        .map((r) => (r && typeof r.ref === 'string' ? r.ref.replace(/^refs\/heads\//, '') : null))
-        .filter((h) => h && h.startsWith(BRANCH_PREFIX)))];
+      const refsOut = exec('gh', ['api', '--paginate', `repos/{owner}/{repo}/git/matching-refs/heads/${BRANCH_PREFIX}`, '--jq', '.[].ref'], opts);
+      const heads = [...new Set(String(refsOut).split(/\r?\n/)
+        .filter((ref) => ref.startsWith('refs/heads/'))
+        .map((ref) => ref.slice('refs/heads/'.length))
+        .filter((head) => head.startsWith(BRANCH_PREFIX)))];
       const byNumber = new Map();
       for (const head of heads) {
         const prs = JSON.parse(exec('gh', ['pr', 'list', '--head', head, '--state', 'all', '--json', 'number,state,headRefName,body,isCrossRepository'], opts));

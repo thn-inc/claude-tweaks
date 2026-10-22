@@ -134,7 +134,7 @@ test('decideLedgerResidue: decision table over the removal-PR list', () => {
   assert.deepStrictEqual(declinedA.skips, [{ path: A, reason: 'removal-pr-declined', prNumber: 4 }]);
 });
 
-// A fake gh: matching-refs returns refsOut; each per-head pr list returns prsByHead[head].
+// A fake gh: matching-refs returns refsOut (one ref per line, as `--jq '.[].ref'` prints); each per-head pr list returns prsByHead[head].
 function fakeGh({ refsOut, prsByHead }) {
   const calls = [];
   const exec = (bin, args, opts) => {
@@ -149,7 +149,7 @@ const GH_TIMEOUT_MS = require('../../../plugin/bin/lib/shared-primitives').GH_TI
 
 test('defaultListRemovalPrs: enumerates heads by ref prefix, then one gh pr list per head; failures classified', () => {
   const { calls, exec } = fakeGh({
-    refsOut: JSON.stringify([{ ref: 'refs/heads/build/ledger-residue-abcd1234' }, { ref: 'refs/heads/build/ledger-residue-ffff0000' }, { ref: 'refs/heads/build/other' }]),
+    refsOut: 'refs/heads/build/ledger-residue-abcd1234\nrefs/heads/build/ledger-residue-ffff0000\nrefs/heads/build/other\n',
     prsByHead: {
       'build/ledger-residue-abcd1234': [
         { number: 1, state: 'OPEN', headRefName: 'build/ledger-residue-abcd1234', body: 'x' },
@@ -163,7 +163,7 @@ test('defaultListRemovalPrs: enumerates heads by ref prefix, then one gh pr list
     { number: 2, state: 'CLOSED', headRefName: 'build/ledger-residue-ffff0000', body: 'y' },
   ]);
   assert.strictEqual(calls.length, 3);
-  assert.deepStrictEqual(calls[0].args, ['api', '--paginate', REFS_PATH]);
+  assert.deepStrictEqual(calls[0].args, ['api', '--paginate', REFS_PATH, '--jq', '.[].ref']);
   assert.deepStrictEqual(calls[1].args, ['pr', 'list', '--head', 'build/ledger-residue-abcd1234', '--state', 'all', '--json', 'number,state,headRefName,body,isCrossRepository']);
   assert.deepStrictEqual(calls[2].args, ['pr', 'list', '--head', 'build/ledger-residue-ffff0000', '--state', 'all', '--json', 'number,state,headRefName,body,isCrossRepository']);
   for (const c of calls) {
@@ -175,43 +175,35 @@ test('defaultListRemovalPrs: enumerates heads by ref prefix, then one gh pr list
   const enoent = Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' });
   assert.strictEqual(defaultListRemovalPrs('/r', () => { throw enoent; }), 'gh-absent');
   assert.strictEqual(defaultListRemovalPrs('/r', () => { throw new Error('HTTP 502'); }), 'network-failure');
-  assert.strictEqual(defaultListRemovalPrs('/r', () => 'not json'), 'network-failure');
-  assert.strictEqual(defaultListRemovalPrs('/r', () => ''), 'network-failure');
-  assert.strictEqual(defaultListRemovalPrs('/r', () => '{"a":1}'), 'network-failure');
-  assert.strictEqual(defaultListRemovalPrs('/r', () => '[{"ref":'), 'network-failure');
 });
 
 test('defaultListRemovalPrs: a fork PR reusing a removal branch name is dropped', () => {
   const head = 'build/ledger-residue-abcd1234';
   const ours = { number: 1, state: 'OPEN', headRefName: head, body: 'x', isCrossRepository: false };
   const fork = { number: 2, state: 'CLOSED', headRefName: head, body: '- `docs/plans/a-ledger.md`', isCrossRepository: true };
-  const { exec } = fakeGh({ refsOut: JSON.stringify([{ ref: `refs/heads/${head}` }]), prsByHead: { [head]: [ours, fork] } });
+  const { exec } = fakeGh({ refsOut: `refs/heads/${head}\n`, prsByHead: { [head]: [ours, fork] } });
   assert.deepStrictEqual(defaultListRemovalPrs('/r', exec), [ours]);
 });
 
-test('defaultListRemovalPrs: paginated gh api output (one array per page) is concatenated', () => {
-  const page1 = JSON.stringify([{ ref: 'refs/heads/build/ledger-residue-aaaa0001', url: 'u]][' }]);
-  const page2 = JSON.stringify([{ ref: 'refs/heads/build/ledger-residue-aaaa0002' }]);
-  const pr = (n, head) => [{ number: n, state: 'OPEN', headRefName: head, body: '' }];
-  for (const sep of ['', '\n']) {
-    const { calls, exec } = fakeGh({
-      refsOut: page1 + sep + page2 + '\n',
-      prsByHead: { 'build/ledger-residue-aaaa0001': pr(1, 'build/ledger-residue-aaaa0001'), 'build/ledger-residue-aaaa0002': pr(2, 'build/ledger-residue-aaaa0002') },
-    });
-    assert.deepStrictEqual(defaultListRemovalPrs('/r', exec).map((p) => p.number), [1, 2]);
-    assert.strictEqual(calls.length, 3);
-  }
+test('defaultListRemovalPrs: ref lines are filtered to refs/heads/ + BRANCH_PREFIX and deduplicated; blank lines and CRLF are tolerated', () => {
+  const heads = ['build/ledger-residue-aaaa0001', 'build/ledger-residue-aaaa0002'];
+  const { calls, exec } = fakeGh({
+    refsOut: `\nrefs/heads/${heads[0]}\r\nrefs/tags/build/ledger-residue-tag\n\nrefs/heads/${heads[1]}\nrefs/heads/${heads[0]}\n`,
+    prsByHead: Object.fromEntries(heads.map((head, i) => [head, [{ number: i + 1, state: 'OPEN', headRefName: head, body: '' }]])),
+  });
+  assert.deepStrictEqual(defaultListRemovalPrs('/r', exec).map((p) => p.number), [1, 2]);
+  assert.strictEqual(calls.length, 3);
 });
 
 test('defaultListRemovalPrs: no matching refs -> [] with no per-head call', () => {
-  const { calls, exec } = fakeGh({ refsOut: '[]\n', prsByHead: {} });
+  const { calls, exec } = fakeGh({ refsOut: '', prsByHead: {} });
   assert.deepStrictEqual(defaultListRemovalPrs('/r', exec), []);
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(calls[0].args[0], 'api');
 });
 
 test('defaultListRemovalPrs: any per-head failure fails the whole list (fail closed)', () => {
-  const refsOut = JSON.stringify([{ ref: 'refs/heads/build/ledger-residue-aaaa0001' }, { ref: 'refs/heads/build/ledger-residue-aaaa0002' }]);
+  const refsOut = 'refs/heads/build/ledger-residue-aaaa0001\nrefs/heads/build/ledger-residue-aaaa0002\n';
   const good = JSON.stringify([{ number: 1, state: 'OPEN', headRefName: 'build/ledger-residue-aaaa0001', body: '' }]);
   const exec = (failure) => (bin, args) => {
     if (args[0] === 'api') return refsOut;
@@ -229,7 +221,7 @@ test('defaultListRemovalPrs: a removal PR older than any recency window is still
   // The old design asked for the 100 newest PRs; a head's PRs are now fetched by head, so age is irrelevant.
   const old = { number: 7, state: 'CLOSED', headRefName: 'build/ledger-residue-0ld00000', body: 'declined long ago', createdAt: '2020-01-01T00:00:00Z' };
   const { exec } = fakeGh({
-    refsOut: JSON.stringify([{ ref: 'refs/heads/build/ledger-residue-0ld00000' }]),
+    refsOut: 'refs/heads/build/ledger-residue-0ld00000\n',
     prsByHead: { 'build/ledger-residue-0ld00000': [old] },
   });
   assert.deepStrictEqual(defaultListRemovalPrs('/r', exec), [old]);

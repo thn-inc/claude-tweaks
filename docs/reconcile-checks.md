@@ -369,8 +369,8 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
   is `push-failed`. `gh pr create` runs under `GH_TIMEOUT_MS` (`shared-primitives.js`) and is
   never retried, since a timed-out create may still have opened the PR (`pr-create-failed`).
 - **Removal-PR states.** Heads are enumerated by ref prefix, not by recency:
-  `gh api --paginate repos/{owner}/{repo}/git/matching-refs/heads/build/ledger-residue-` lists
-  every such branch (one JSON array per page, concatenated), then `gh pr list --head {branch}
+  `gh api --paginate repos/{owner}/{repo}/git/matching-refs/heads/build/ledger-residue- --jq '.[].ref'`
+  lists every such branch (one ref per line), then `gh pr list --head {branch}
   --state all --json number,state,headRefName,body,isCrossRepository` runs once per branch. That
   sees every earlier removal PR however old, including ones for a residue set that has since
   changed. A fork PR that reuses the branch name is dropped (`isCrossRepository`), since its body
