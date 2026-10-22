@@ -785,6 +785,19 @@ test('sddRulingDeferralReason: unreadable text is unclassified, and Defers: matc
   assert.deepStrictEqual(SDD_RULING_REASONS, { NO_DEFER_REASON: 'sdd-ruling-deferral-no-defer-reason', UNCLASSIFIED: 'sdd-ruling-unclassified' });
 });
 
+test('defers-value-other-than-yes-no-is-unclassified: a Defers: value outside yes/no fails closed, reason or not (#3880)', () => {
+  for (const header of ['Defers: maybe\n', 'Defers: true\n', 'Defers:\n']) {
+    const item = resolveStaged('sdd-ruling-1.md', RULING(header));
+    assert.strictEqual(item.resolution, 'pending', header);
+    assert.strictEqual(item.reason, 'sdd-ruling-unclassified', header);
+  }
+});
+
+test('defers-no-with-one-valid-reason-resolves-apply: any Defer-reason header line makes it a deferral, and a valid one clears it (#3880)', () => {
+  const item = resolveStaged('sdd-ruling-1.md', RULING('Defers: no\nDefer-reason: genuinely-larger\n'));
+  assert.strictEqual(item.resolution, 'apply');
+});
+
 test('two-defers-lines-unclassified: more than one Defers: header line fails closed, whichever order (#3880)', () => {
   for (const header of ['Defers: no\nDefers: yes\n', 'Defers: yes\nDefers: no\n', 'Defers: no\nDefers: no\n']) {
     const item = resolveStaged('sdd-ruling-1.md', RULING(header));

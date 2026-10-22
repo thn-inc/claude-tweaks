@@ -35,7 +35,7 @@ const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = 
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { sddRulingDeferralReason } = require('../console/resolve');
-const { isPathContained } = require('../shared-primitives');
+const { resolveWithin } = require('../path-guard');
 
 const execFileAsync = promisify(execFile);
 
@@ -218,7 +218,7 @@ function resolveVetoWindowHours(runDir, repoRoot) {
 // #3880: each `isRulingRow` item's staged file text -> { [itemId]: string|null },
 // read synchronously from `{runDir}/{item.stagedPath}`. null (never a guess) when
 // stagedPath is absent, not a string, absolute, has a `..` segment, resolves
-// outside the run dir, or the read fails -- sddRulingDeferralReason reads null
+// (symlinks followed) outside the run dir, or the read fails -- sddRulingDeferralReason reads null
 // as unclassified, so every unreadable ruling row is withheld.
 function readRulingTexts(runDir, items) {
   const texts = {};
@@ -233,10 +233,12 @@ function readRulingTexts(runDir, items) {
 function readInsideRunDir(base, rel) {
   if (typeof rel !== 'string' || rel === '' || path.isAbsolute(rel)) return null;
   if (rel.split(/[\\/]/).includes('..')) return null;
-  const abs = path.resolve(base, rel);
-  if (!isPathContained(abs, base)) return null;
+  // path-guard's resolveWithin follows a leaf symlink and every segment's, so a link planted
+  // inside the run dir that points outside it resolves to null (docs/donts.md, IL-161).
+  const real = resolveWithin(path.resolve(base, rel), base);
+  if (real === null) return null;
   try {
-    return fs.readFileSync(abs, 'utf8');
+    return fs.readFileSync(real, 'utf8');
   } catch {
     return null;
   }

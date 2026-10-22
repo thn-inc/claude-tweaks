@@ -15,6 +15,7 @@ const {
   readConsoleJson,
   consoleExecuteDetect,
   parseFixesMembers,
+  readRulingTexts,
   fetchIssueGrant,
   renderExecutedLines,
   RECLAIM_STALE_MS,
@@ -640,7 +641,45 @@ test('consoleExecuteDetect: a stagedPath that escapes the run dir (../, absolute
   assert.deepStrictEqual(result.ready[0].rulingGateGaps.map((g) => [g.id, g.reason]), items.map((i) => [i.id, 'sdd-ruling-unclassified']));
 });
 
-test('consoleExecuteDetect: a console with no ruling row reports rulingGateGaps [] and reads nothing', { skip: process.platform === 'win32' }, async () => {
+test('readRulingTexts: reads only ruling rows, and a missing, empty, absolute, dot-dot or non-string stagedPath is null (no platform skip -- no fs setup beyond the run dir)', () => {
+  const runDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-rrt-')));
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-1.md'), RULING_TEXT_DEFERS_NO);
+  const texts = readRulingTexts(runDir, [
+    { id: 'ok', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' },
+    { id: 'plain', stagedPath: 'staged/sdd-ruling-1.md' },
+    { id: 'none', isRulingRow: true },
+    { id: 'empty', isRulingRow: true, stagedPath: '' },
+    { id: 'dotdot', isRulingRow: true, stagedPath: 'staged/../../x.md' },
+    { id: 'abs', isRulingRow: true, stagedPath: path.join(runDir, 'staged', 'sdd-ruling-1.md') },
+    { id: 'num', isRulingRow: true, stagedPath: 7 },
+  ]);
+  assert.deepStrictEqual(texts, { ok: RULING_TEXT_DEFERS_NO, none: null, empty: null, dotdot: null, abs: null, num: null });
+  assert.deepStrictEqual(readRulingTexts(runDir, undefined), {});
+});
+
+test('consoleExecuteDetect: a stagedPath symlink (leaf or directory segment) pointing outside the run dir is never followed -> unclassified gap', { skip: process.platform === 'win32' }, async () => {
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-symout-')));
+  fs.writeFileSync(path.join(outside, 'safe.md'), RULING_TEXT_DEFERS_NO);
+  const items = [
+    { id: 'staged-1', kind: 'staged', summary: 'leaf link', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' },
+    { id: 'staged-2', kind: 'staged', summary: 'dir link', isRulingRow: true, stagedPath: 'linked/safe.md' },
+    { id: 'staged-3', kind: 'staged', summary: 'inside link', isRulingRow: true, stagedPath: 'staged/sdd-ruling-3.md' },
+  ];
+  const { dir, runDir } = makeRulingRepo(items, { 'staged/real-3.md': RULING_TEXT_DEFERS_NO });
+  fs.symlinkSync(path.join(outside, 'safe.md'), path.join(runDir, 'staged', 'sdd-ruling-1.md'));
+  fs.symlinkSync(outside, path.join(runDir, 'linked'));
+  fs.symlinkSync(path.join(runDir, 'staged', 'real-3.md'), path.join(runDir, 'staged', 'sdd-ruling-3.md'));
+  const result = await detectWithFakePr(dir, { comments: tickedComment(items.map((i) => i.id)), body: '' });
+  assert.strictEqual(result.ready.length, 1, JSON.stringify(result));
+  // The two links that leave the run dir are withheld; a link that stays inside it still reads.
+  assert.deepStrictEqual(result.ready[0].rulingGateGaps.map((g) => [g.id, g.reason]), [
+    ['staged-1', 'sdd-ruling-unclassified'],
+    ['staged-2', 'sdd-ruling-unclassified'],
+  ]);
+});
+
+test('consoleExecuteDetect: a console with no ruling row reports rulingGateGaps [] (a non-ruling item\'s stagedPath is not consulted)', { skip: process.platform === 'win32' }, async () => {
   const items = [{ id: 'staged-1', kind: 'staged', summary: 'plain', stagedPath: '../escape.md' }];
   const { dir } = makeRulingRepo(items, {});
   const result = await detectWithFakePr(dir, { comments: tickedComment(['staged-1']), body: '' });
