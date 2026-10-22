@@ -110,7 +110,9 @@ function isOtherWorktreeBound(callerRepoInfo, state) {
   if (!binding) return false;
   const info = callerRepoInfo();
   if (info.indeterminate || !info.repoRoot) return false;
-  return (wtDetect.safeReal(binding) || path.resolve(binding)) !== info.repoRoot;
+  // Both sides canonicalized through path-guard's .native canonicalRealpath: the
+  // JS-form realpath keeps the input's letter case on a case-insensitive volume (#3836).
+  return (canonicalRealpath(binding) || path.resolve(binding)) !== (canonicalRealpath(info.repoRoot) || info.repoRoot);
 }
 
 // #1177: best-effort removal of a mint's own layout (staged/, decisions.md,

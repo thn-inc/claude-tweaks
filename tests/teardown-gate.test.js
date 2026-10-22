@@ -7,7 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { findRunByWorktreePath, findRunsByWorktreePath, classifyOwnership, readRunState } = require('../plugin/bin/lib/hooks/context');
+const { findRunByWorktreePath, findRunsByWorktreePath, classifyOwnership, resolveRun, readRunState } = require('../plugin/bin/lib/hooks/context');
 const { fixtureGit } = require('./helpers/git-fixtures');
 const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { caseInsensitiveFs } = require('./helpers/case-insensitive-fs');
@@ -254,6 +254,17 @@ test('findRunsByWorktreePath (#3836): a mis-cased worktree path returns the ad-h
   assert.deepStrictEqual(findRunsByWorktreePath(root, misCased, undefined, { fsImpl }).map((r) => r.runDir), exact);
   assert.strictEqual(exact.length, 1);
   assert.strictEqual(path.basename(exact[0]), '2026-08-01T100000-adhoc-standalone');
+});
+
+// The skip probe is the fixture's own mis-cased path (not os.tmpdir(): its last
+// segment is `T`, so an upper-casing probe of it always resolves to itself).
+test('resolveRun strictAttribution (#3836): a run bound to the caller\'s worktree in a different letter case is not dropped as other-worktree-bound', { skip: POSIX_ONLY }, (t) => {
+  if (!fs.existsSync(caseFixture3836().misCased)) return t.skip('case-sensitive volume: a mis-cased path does not exist on the real fs');
+  for (const recorded of ['misCased', 'wt']) {
+    const { root, wt, misCased } = caseFixture3836();
+    const runDir = makeRun(root, JSON.stringify({ status: 'active', worktree: recorded === 'misCased' ? misCased : wt }));
+    assert.strictEqual(resolveRun(wt, {}, 's1', { strictAttribution: true }).dir, runDir, `recorded=${recorded}`);
+  }
 });
 
 // --- Task 3: the deny/allow matrix at the dispatcher level ------------------
