@@ -8,12 +8,24 @@
 //   node bin/review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>
 //   node bin/review-coordination.js resolve-debate <verdictA> <verdictB>
 //   node bin/review-coordination.js resolve-refutation <verdict>
+//   node bin/review-coordination.js resolve-tiebreak <finding.json> <reply-file> [--root <dir>]
+//   node bin/review-coordination.js write-findings <run-dir> <findings.json>
+//   node bin/review-coordination.js check-coverage <run-dir>
 // categorise-reproduction/detect-overlap/corroborate-cross-lens print JSON
 // (corroborate-cross-lens: #3604); resolve-debate/resolve-refutation print
-// the bare resolution string. Exit 0 ok; 2 malformed invocation or unreadable/invalid input.
+// the bare resolution string. resolve-tiebreak/write-findings/check-coverage
+// (#3945) print one JSON line: the resolver result (a could-not-parse reply is
+// parse:"could-not-parse" with exit 0 — the signal is in the JSON), {path, count}
+// of the review-findings.json written through the run-dir anchoring guard, and
+// the tiebreak-coverage result (missing ids, exit 0 either way — archival, not
+// this exit code, refuses). --root (default cwd) is where resolve-tiebreak reads
+// the evidence file from.
+// Exit 0 ok; 2 malformed invocation or unreadable/invalid input;
+// 3 run dir missing/unanchored (write-findings only).
 'use strict';
 
 const fs = require('node:fs');
+const path = require('node:path');
 const {
   categoriseReproduction,
   detectCrossLensOverlap,
@@ -21,13 +33,21 @@ const {
   resolveDebate,
   resolveRefutation,
 } = require('./lib/coordination');
+const {
+  resolveTiebreak, buildFindingsArtifact, checkTiebreakCoverage, FINDINGS_ARTIFACT,
+} = require('./lib/tiebreak');
+const { resolveTarget } = require('./lib/stage-item/write');
+const { writeArtifact } = require('./lib/run-artifact/write');
 
 const USAGE =
   'usage: review-coordination.js categorise-reproduction <agentA.json> <agentB.json>\n' +
   '       review-coordination.js detect-overlap <findings-by-lens.json>\n' +
   '       review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>\n' +
   '       review-coordination.js resolve-debate <verdictA> <verdictB>\n' +
-  '       review-coordination.js resolve-refutation <verdict>\n';
+  '       review-coordination.js resolve-refutation <verdict>\n' +
+  '       review-coordination.js resolve-tiebreak <finding.json> <reply-file> [--root <dir>]\n' +
+  '       review-coordination.js write-findings <run-dir> <findings.json>\n' +
+  '       review-coordination.js check-coverage <run-dir>\n';
 
 function readJson(file, stderr) {
   let raw;
@@ -46,6 +66,8 @@ function readJson(file, stderr) {
 }
 
 const realDeps = {
+  cwd: () => process.cwd(),
+  mainRoot: undefined,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -118,6 +140,82 @@ function run(argv, deps = realDeps) {
       return 2;
     }
     deps.stdout(resolveRefutation(rest[0]) + '\n');
+    return 0;
+  }
+  if (command === 'resolve-tiebreak') {
+    let root = deps.cwd();
+    const positional = [];
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === '--root') {
+        if (i + 1 >= rest.length) {
+          deps.stderr('review-coordination.js: --root needs a directory\n' + USAGE);
+          return 2;
+        }
+        root = rest[++i];
+      } else positional.push(rest[i]);
+    }
+    if (positional.length !== 2) {
+      deps.stderr('review-coordination.js: resolve-tiebreak takes <finding.json> <reply-file> [--root <dir>]\n' + USAGE);
+      return 2;
+    }
+    const input = readJson(positional[0], deps.stderr);
+    if (input.failed) return 2;
+    try {
+      buildFindingsArtifact([input.value]);
+    } catch (err) {
+      deps.stderr(`review-coordination.js: malformed finding in ${positional[0]}: ${err.message}\n`);
+      return 2;
+    }
+    let reply;
+    try {
+      reply = fs.readFileSync(positional[1], 'utf8');
+    } catch (err) {
+      deps.stderr(`review-coordination.js: cannot read ${positional[1]}: ${err.message}\n`);
+      return 2;
+    }
+    const readFile = (p) => fs.readFileSync(path.resolve(root, p), 'utf8');
+    deps.stdout(JSON.stringify(resolveTiebreak(input.value, reply, { readFile })) + '\n');
+    return 0;
+  }
+  if (command === 'write-findings') {
+    if (rest.length !== 2) {
+      deps.stderr('review-coordination.js: write-findings takes <run-dir> <findings.json>\n' + USAGE);
+      return 2;
+    }
+    const input = readJson(rest[1], deps.stderr);
+    if (input.failed) return 2;
+    let artifact;
+    try {
+      artifact = buildFindingsArtifact(input.value);
+    } catch (err) {
+      deps.stderr(`review-coordination.js: invalid findings in ${rest[1]}: ${err.message}\n`);
+      return 2;
+    }
+    let target;
+    try { target = resolveTarget({ runDir: rest[0], cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch (err) {
+      deps.stderr(`review-coordination.js: ${err && err.message}\n`);
+      return 3;
+    }
+    if (!target.ok) {
+      if (target.reason === 'missing') deps.stderr(`review-coordination.js: run dir does not exist: ${rest[0]}\n`);
+      else deps.stderr(`review-coordination.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${rest[0]} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+      return 3;
+    }
+    try {
+      const result = writeArtifact({ runDir: target.dir, name: FINDINGS_ARTIFACT, content: JSON.stringify(artifact, null, 2) + '\n' });
+      deps.stdout(JSON.stringify({ path: result.file, count: artifact.length }) + '\n');
+    } catch (err) {
+      deps.stderr(`review-coordination.js: could not write ${FINDINGS_ARTIFACT} (${err && err.message})\n`);
+      return 3;
+    }
+    return 0;
+  }
+  if (command === 'check-coverage') {
+    if (rest.length !== 1) {
+      deps.stderr('review-coordination.js: check-coverage takes exactly 1 run-dir\n' + USAGE);
+      return 2;
+    }
+    deps.stdout(JSON.stringify(checkTiebreakCoverage(rest[0])) + '\n');
     return 0;
   }
   deps.stderr(`review-coordination.js: unknown command: ${command === undefined ? '(none)' : command}\n` + USAGE);

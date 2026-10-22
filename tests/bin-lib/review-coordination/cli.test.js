@@ -104,3 +104,139 @@ test('malformed invocations exit 2: unknown command, wrong arity, missing file, 
   assert.strictEqual(runCli(['corroborate-cross-lens', lensNotArray]).code, 2);
   assert.strictEqual(runCli(['corroborate-cross-lens', badJson]).code, 2);
 });
+
+// ---- #3945 tiebreak forms: resolve-tiebreak / write-findings / check-coverage ----
+
+const { run } = require('../../../plugin/bin/review-coordination');
+const { findingId } = require('../../../plugin/bin/lib/tiebreak');
+
+const TB_FINDING = { lens: 'security', path: 'src/auth.ts', line: 42, claim: 'missing expiry check', kind: 'unconfirmed', reporterSeverity: 'high' };
+
+function fakeDeps(cwd, mainRoot) {
+  const out = []; const err = [];
+  return { deps: { cwd: () => cwd, mainRoot, stdout: (s) => out.push(s), stderr: (s) => err.push(s) }, out, err };
+}
+
+function tmpDir(t) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'review-coord-tb-'));
+  t.after(() => fs.rmSync(d, { recursive: true, force: true }));
+  return d;
+}
+
+function writeText(dir, name, text) {
+  const p = path.join(dir, name);
+  fs.writeFileSync(p, text);
+  return p;
+}
+
+test('resolve-tiebreak on a could-not-parse reply exits 0 with parse:"could-not-parse"', (t) => {
+  const d = tmpDir(t);
+  const f = writeText(d, 'finding.json', JSON.stringify(TB_FINDING));
+  const r = writeText(d, 'reply.txt', 'I have no idea what format you wanted');
+  const res = runCli(['resolve-tiebreak', f, r]);
+  assert.strictEqual(res.code, 0);
+  const out = JSON.parse(res.stdout);
+  assert.strictEqual(out.parse, 'could-not-parse');
+  assert.strictEqual(out.id, findingId(TB_FINDING));
+  assert.notStrictEqual(out.outcome, 'confirmed');
+});
+
+test('resolve-tiebreak exits 2 for a malformed finding, an unreadable reply, an unreadable finding, wrong arity', (t) => {
+  const d = tmpDir(t);
+  const r = writeText(d, 'reply.txt', 'anything');
+  const good = writeText(d, 'finding.json', JSON.stringify(TB_FINDING));
+  for (const bad of [[], { ...TB_FINDING, claim: undefined }, { ...TB_FINDING, lens: '' }, { ...TB_FINDING, kind: 'bogus' }, 'a string']) {
+    const f = writeText(d, 'bad.json', JSON.stringify(bad));
+    assert.strictEqual(runCli(['resolve-tiebreak', f, r]).code, 2, JSON.stringify(bad));
+  }
+  assert.strictEqual(runCli(['resolve-tiebreak', good, path.join(d, 'absent.txt')]).code, 2);
+  assert.strictEqual(runCli(['resolve-tiebreak', path.join(d, 'absent.json'), r]).code, 2);
+  assert.strictEqual(runCli(['resolve-tiebreak', good]).code, 2);
+  assert.strictEqual(runCli(['resolve-tiebreak', good, r, '--root']).code, 2);
+});
+
+test('resolve-tiebreak --root verifies the reply evidence against a file under that root', (t) => {
+  const d = tmpDir(t);
+  const root = path.join(d, 'repo');
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src', 'auth.ts'), 'a\nb\nconst ok = token.exp > now;\n');
+  const f = writeText(d, 'finding.json', JSON.stringify({ ...TB_FINDING, line: 3 }));
+  const reply = (quote) => [
+    'verdict: confirmed',
+    'severity: high',
+    `evidence: src/auth.ts:3 "${quote}"`,
+    'status: DONE',
+  ].join('\n');
+  const good = runCli(['resolve-tiebreak', f, writeText(d, 'good.txt', reply('const ok = token.exp > now;')), '--root', root]);
+  assert.strictEqual(good.code, 0);
+  assert.strictEqual(JSON.parse(good.stdout).outcome, 'confirmed');
+  const bad = runCli(['resolve-tiebreak', f, writeText(d, 'bad.txt', reply('this text is not in the file')), '--root', root]);
+  assert.strictEqual(bad.code, 0);
+  assert.notStrictEqual(JSON.parse(bad.stdout).outcome, 'confirmed');
+});
+
+test('write-findings: an unanchored tmp run dir exits 3 and a missing one exits 3', (t) => {
+  const d = tmpDir(t);
+  const input = writeText(d, 'findings.json', JSON.stringify([TB_FINDING]));
+  const runDir = path.join(d, 'run');
+  fs.mkdirSync(runDir);
+  const a = fakeDeps(d);
+  assert.strictEqual(run(['write-findings', runDir, input], a.deps), 3);
+  assert.ok(!fs.existsSync(path.join(runDir, 'review-findings.json')));
+  const b = fakeDeps(d);
+  assert.strictEqual(run(['write-findings', path.join(d, 'nope'), input], b.deps), 3);
+});
+
+test('write-findings writes review-findings.json into an anchored run dir and prints {path, count}', (t) => {
+  const d = tmpDir(t);
+  const main = path.join(d, 'main');
+  const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-10-22T090000-record-3945');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.mkdirSync(path.join(main, '.git'));
+  const input = writeText(d, 'findings.json', JSON.stringify([TB_FINDING]));
+  const { deps, out } = fakeDeps(main);
+  assert.strictEqual(run(['write-findings', runDir, input], deps), 0);
+  const printed = JSON.parse(out.join(''));
+  assert.strictEqual(printed.count, 1);
+  assert.strictEqual(printed.path, path.join(fs.realpathSync(runDir), 'review-findings.json'));
+  const written = JSON.parse(fs.readFileSync(path.join(runDir, 'review-findings.json'), 'utf8'));
+  assert.strictEqual(written[0].id, findingId(TB_FINDING));
+});
+
+test('write-findings exits 2 on invalid or unreadable input and writes nothing', (t) => {
+  const d = tmpDir(t);
+  const main = path.join(d, 'main');
+  const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-10-22T090000-record-3945');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.mkdirSync(path.join(main, '.git'));
+  const bad = writeText(d, 'bad.json', JSON.stringify([{ ...TB_FINDING, kind: 'bogus' }]));
+  const notJson = writeText(d, 'notjson.json', '{nope');
+  for (const input of [bad, notJson, path.join(d, 'absent.json')]) {
+    assert.strictEqual(run(['write-findings', runDir, input], fakeDeps(main).deps), 2, input);
+  }
+  assert.strictEqual(run(['write-findings', runDir], fakeDeps(main).deps), 2);
+  assert.ok(!fs.existsSync(path.join(runDir, 'review-findings.json')));
+});
+
+test('check-coverage reports the missing ids and exits 0', (t) => {
+  const d = tmpDir(t);
+  const second = { ...TB_FINDING, path: 'src/api.ts', claim: 'unhandled rejection' };
+  const id1 = findingId(TB_FINDING);
+  const id2 = findingId(second);
+  writeText(d, 'review-findings.json', JSON.stringify([
+    { id: id1, lens: TB_FINDING.lens, path: TB_FINDING.path },
+    { id: id2, lens: second.lens, path: second.path },
+  ]));
+  writeText(d, 'decisions.md', `AUTO 2026-10-22T09:00:00Z — Reproduction: x confirmed by tiebreak:${id1}. Confirmed.\n`);
+  const res = runCli(['check-coverage', d]);
+  assert.strictEqual(res.code, 0);
+  assert.deepStrictEqual(JSON.parse(res.stdout), { artifactPresent: true, artifactValid: true, missing: [id2] });
+  assert.strictEqual(runCli(['check-coverage']).code, 2);
+});
+
+test('--help lists the three tiebreak forms', () => {
+  const { deps, out } = fakeDeps(process.cwd());
+  assert.strictEqual(run(['--help'], deps), 0);
+  const text = out.join('');
+  for (const form of ['resolve-tiebreak', 'write-findings', 'check-coverage']) assert.ok(text.includes(form), form);
+});
