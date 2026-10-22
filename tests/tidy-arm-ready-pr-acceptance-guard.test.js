@@ -20,6 +20,8 @@ const slice = (text, from, to) => {
 
 const ACTIONS = read('plugin', 'skills', 'tidy', 'actions-github-issues.md');
 const TIDY_SKILL = read('plugin', 'skills', 'tidy', 'SKILL.md');
+const PR_FIRST_MERGE = read('plugin', 'skills', '_shared', 'pr-first-merge.md');
+const SKILL_GRAPH = read('docs', 'skill-graph.md');
 
 const arm = slice(ACTIONS, '## Arm ready PR', '## Release claim');
 
@@ -83,4 +85,16 @@ test('housekeeping-marker flavor is exempt from the guard', () => {
 
 test('Step 7.5 verification template lists the held outcome', () => {
   assert.match(TIDY_SKILL, /Held \(not armed\): PR #\{n\} — acceptance labeling not landed/);
+});
+
+test("pr-first-merge Step 1 names tidy's Arm ready PR as a caller that holds instead of labeling", () => {
+  const step1 = slice(PR_FIRST_MERGE, '## Step 1:', '## Step 1.5');
+  assert.match(step1, /tidy's Arm ready PR holds rather than runs this step/);
+  const sentence = step1.match(/Labeling has not landed when.*?reached this merge\./);
+  assert.ok(sentence, 'the Step 1 "Labeling has not landed when … reached this merge." sentence must exist');
+  assert.match(sentence[0], /tidy's Arm ready PR holds rather than runs this step/);
+});
+
+test('skill-graph records the tidy → dispatch/close-out.md edge', () => {
+  assert.match(slice(SKILL_GRAPH, '## tidy', '## visual-review'), /\| `dispatch\/close-out\.md` \| .*## Arm ready PR/);
 });
