@@ -49,8 +49,8 @@ test('AC1.1: dispatch.md carries the carry-forward on at least two stage-item.js
 });
 
 test('AC2.3: the run-directory branch stages each ruling through one stage-item.js --ledger call', () => {
-  assert.match(DISPATCH, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/stage-item\.js" --run "\$PIPELINE_RUN_DIR" --id "sdd-ruling-\{N\}" --file \{tmp\}\.md --allocate --ledger "\{ledger path\}" --label "SDD ruling" --item 'SDD ruling — \{one-liner\}: ratify or reverse at the Review Console'/);
-  assert.match(DISPATCH, /--id "build-deviation-\{N\}" --file \{tmp\}\.md --allocate --ledger "\{ledger path\}" --label "SDD ruling" --item 'SDD ruling — \{one-liner\}: apply or decline at the Review Console'/);
+  assert.match(DISPATCH, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/stage-item\.js" --run "\$PIPELINE_RUN_DIR" --id "sdd-ruling-\{N\}" --file "\{tmp\}\.md" --allocate --ledger "\{ledger path\}" --label "SDD ruling" --item 'SDD ruling — \{one-liner\}: ratify or reverse at the Review Console'/);
+  assert.match(DISPATCH, /--id "build-deviation-\{N\}" --file "\{tmp\}\.md" --allocate --ledger "\{ledger path\}" --label "SDD ruling" --item 'SDD ruling — \{one-liner\}: apply or decline at the Review Console'/);
   assert.match(DISPATCH, /`Title:`.*?`Kind: sdd-ruling`.*?`Ruling:`.*?`Staged-at:`/);
   // The CLI path states what the call guarantees, not how (the ordering, dedupe bypass, and log literals are ledger.js's, unpinned copies drift).
   assert.match(DISPATCH, ws('it stages the file with its `Ledger:` header filled, appends that row, and logs `STAGED`, so no row ever names a file that was not written'));

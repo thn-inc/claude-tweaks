@@ -21,6 +21,6 @@ Standalone `/build` (no `$PIPELINE_RUN_DIR`): skip this verification entirely �
 **Carry-forward commands (#3510).** One call per load-bearing ruling, run from the worktree root; `{ledger path}` is this build's active open items ledger per `_shared/ledger-format.md`'s resolution rule: `"$PIPELINE_RUN_DIR/ledger.md"` when that file exists, else the repo-relative `docs/plans/…-ledger.md` path. The second line is the contract-beats-spec form, its temp file's header reading `Kind: build-deviation`.
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$PIPELINE_RUN_DIR" --id "sdd-ruling-{N}" --file {tmp}.md --allocate --ledger "{ledger path}" --label "SDD ruling" --item 'SDD ruling — {one-liner}: ratify or reverse at the Review Console'
-node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$PIPELINE_RUN_DIR" --id "build-deviation-{N}" --file {tmp}.md --allocate --ledger "{ledger path}" --label "SDD ruling" --item 'SDD ruling — {one-liner}: apply or decline at the Review Console'
+node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$PIPELINE_RUN_DIR" --id "sdd-ruling-{N}" --file "{tmp}.md" --allocate --ledger "{ledger path}" --label "SDD ruling" --item 'SDD ruling — {one-liner}: ratify or reverse at the Review Console'
+node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$PIPELINE_RUN_DIR" --id "build-deviation-{N}" --file "{tmp}.md" --allocate --ledger "{ledger path}" --label "SDD ruling" --item 'SDD ruling — {one-liner}: apply or decline at the Review Console'
 ```
