@@ -5,7 +5,7 @@ const path = require('path');
 const wtDetect = require('./worktree-detect');
 const { writeFileAtomic } = require('../atomic-write');
 const { runGit } = require('./git-exec');
-const { parseWorktreeList } = require('./worktree-reap');
+const { parseWorktreeList, findWorktreeEntry } = require('./worktree-reap');
 const runDirResolve = require('./run-dir-resolve');
 const { classifyDecisions } = require('../log-decision/claim-log');
 const { canonicalRealpath } = require('../path-guard');
@@ -761,6 +761,20 @@ function isAdHocRunDir(dir) {
   return typeof dir === 'string' && path.basename(dir).endsWith('-adhoc-standalone');
 }
 
+// The porcelain-lookup half of stampAdHocRunDirForDenial, split out so the compare is testable
+// without minting a run dir. Returns `{ path, isMain }` for the worktree `git worktree list` lists
+// for `cwd`, or null (falsy or non-string cwd, failed listing, no match). The lookup goes through
+// findWorktreeEntry so win32's forward-slash porcelain matches a backslash cwd (#3811).
+function listedWorktreeForCwd(cwd, deps = {}) {
+  if (typeof cwd !== 'string' || !cwd) return null;
+  const { stdout, failure } = (deps.runGit || runGit)(['worktree', 'list', '--porcelain'], cwd);
+  if (failure || stdout === null) return null;
+  const entries = parseWorktreeList(stdout);
+  const entry = findWorktreeEntry(entries, cwd, deps.pathImpl || path);
+  if (!entry) return null;
+  return { path: entry.path, isMain: entry === entries[0] };
+}
+
 // Ad-hoc run-dir stamping for a PreToolUse gate denial with no owned run dir
 // yet (#2351). post-tool-use.js's own stampAdHocRunDir (the #500/#1333
 // mechanism) fires only on an EnterWorktree call or a session's cwd resolving
@@ -789,12 +803,9 @@ function stampAdHocRunDirForDenial(ctx) {
   const cwd = ctx.cwd;
   if (typeof cwd !== 'string' || !cwd) return null;
   try {
-    const { stdout, failure } = runGit(['worktree', 'list', '--porcelain'], cwd);
-    if (failure || stdout === null) return null;
-    const entries = parseWorktreeList(stdout);
-    const idx = entries.findIndex((e) => e.path === cwd);
-    if (idx === -1) return null; // cwd isn't a listed worktree at all — nothing to key the stamp on
-    const worktreePath = entries[idx].path;
+    const wt = listedWorktreeForCwd(cwd);
+    if (!wt) return null; // cwd isn't a listed worktree at all — nothing to key the stamp on
+    const worktreePath = wt.path;
     // Deliberately NOT process.env — a stray PIPELINE_RUN_DIR left over from
     // an unrelated earlier command in this shell must never redirect this
     // stamp onto someone else's run dir (same rationale as stampAdHocRunDir).
@@ -885,5 +896,5 @@ function appendEvent(runDir, type, data, attribution) {
 module.exports = {
   readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
   readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
-  rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, isTrustedOwnedRun, isAdHocRunDir, resolveDenialRunDir,
+  rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, listedWorktreeForCwd, isTrustedOwnedRun, isAdHocRunDir, resolveDenialRunDir,
 };
