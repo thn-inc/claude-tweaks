@@ -37,6 +37,17 @@ test('producer: the staged header carries Defers and Defer-reason between Ruling
   assert.match(DISPATCH, /`Ruling:`.*?`Defers:`.*?always written.*?`Defer-reason:`.*?`Staged-at:`/s);
 });
 
+test('producer: the staged header clause says Defers is written on build-deviation too, and the reason is bare', () => {
+  assert.match(DISPATCH, ws('always written; a `build-deviation-*` file carries it too, and the console ignores it there'));
+  assert.match(DISPATCH, ws('the one value its line carries, written bare with no backticks'));
+});
+
+test('console prose: the appendix withholds a Defer-reason-bearing Defers: no, a duplicate Defers line, and names the reconciler path', () => {
+  assert.match(APPENDIX, ws('`Defers: no` with no `Defer-reason:` header line'));
+  assert.match(APPENDIX, ws('line, more than one, a value other than `yes`/`no`, or an unreadable file resolves'));
+  assert.match(APPENDIX, ws("the reconciler's `consoleAutoResolve` path withholds the same rows (`_shared/console-execution.md`)"));
+});
+
 test('console prose: the appendix sdd-ruling bullet states the console-auto rule with the code\'s reason literals', () => {
   assert.match(APPENDIX, ws('--policy console-auto'));
   assert.match(APPENDIX, ws('`Defers: no`'));
@@ -56,5 +67,5 @@ test('reconciler prose: console-execution.md states the third exception and cons
 test('control: a mutated appendix missing the reason literal fails the twin', () => {
   const needle = ws(`pending — ${SDD_RULING_REASONS.UNCLASSIFIED}`);
   assert.match(APPENDIX, needle, 'the twin must match the real appendix first');
-  assert.doesNotMatch(APPENDIX.replace(SDD_RULING_REASONS.UNCLASSIFIED, 'x'), needle);
+  assert.doesNotMatch(APPENDIX.replaceAll(SDD_RULING_REASONS.UNCLASSIFIED, 'x'), needle);
 });

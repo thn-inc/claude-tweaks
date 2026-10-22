@@ -649,7 +649,8 @@ test('AC4.2 (control): removing sdd-ruling from the regex alone makes the twin p
 });
 
 test('AC4.2 (control): removing sdd-ruling-* from the appendix prose alone makes the twin pin fail', () => {
-  const mutated = APPENDIX.replace(/,?\s*`sdd-ruling-\*`/, '');
+  // The list entry is comma-led (", `sdd-ruling-*`)"); prose elsewhere in the appendix may name the prefix too (#3880).
+  const mutated = APPENDIX.replace(/,\s*`sdd-ruling-\*`(?=\) applied)/, '');
   assert.notStrictEqual(mutated, APPENDIX, 'the mutation removed the prose entry');
   assert.throws(() => assertPendingPrefixTwin(pendingMdPrefixesFromCode(), pendingMdPrefixesFromProse(mutated)));
 });
