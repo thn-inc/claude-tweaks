@@ -172,8 +172,9 @@ test('minimal pair: capitalised and gerund verbs, and a qa argument, are still i
 });
 
 test('minimal pair: a word that merely ends in a verb (overrun) is a mention; re-run is an invocation', () => {
-  const overrun = classifySpans('overrun `/claude-tweaks:test`');
-  assert.strictEqual(offendersIn('overrun `/claude-tweaks:test`').length, 0);
+  const overrunText = 'overrun `/claude-tweaks:test`';
+  const overrun = classifySpans(overrunText);
+  assert.strictEqual(offendersIn(overrunText).length, 0);
   assert.strictEqual(overrun.length, 1);
   assert.strictEqual(overrun[0].kind, 'mention');
   assert.strictEqual(offendersIn('re-run `/claude-tweaks:test`').length, 1);
@@ -193,8 +194,9 @@ test('minimal pair: re-verifies with is an invocation verb', () => {
 });
 
 test('minimal pair: STOP earlier on the line makes the span a hand-off; without it, an offender', () => {
-  const stopped = classifySpans('| failed | **STOP** — fix, then re-run `/claude-tweaks:test` |');
-  assert.strictEqual(offendersIn('| failed | **STOP** — fix, then re-run `/claude-tweaks:test` |').length, 0);
+  const stoppedText = '| failed | **STOP** — fix, then re-run `/claude-tweaks:test` |';
+  const stopped = classifySpans(stoppedText);
+  assert.strictEqual(offendersIn(stoppedText).length, 0);
   assert.strictEqual(stopped.length, 1);
   assert.strictEqual(stopped[0].kind, 'handoff');
   assert.strictEqual(offendersIn('| failed | fix, then re-run `/claude-tweaks:test` |').length, 1);
@@ -211,8 +213,9 @@ test('minimal pair: a /flow pipeline heading is a hand-off scope; a Standalone h
 });
 
 test('minimal pair: a descriptive mention is a mention, not an offender', () => {
-  assert.strictEqual(offendersIn('Verify that `/claude-tweaks:test` has passed.').length, 0);
-  const spans = classifySpans('Verify that `/claude-tweaks:test` has passed.');
+  const mentionText = 'Verify that `/claude-tweaks:test` has passed.';
+  assert.strictEqual(offendersIn(mentionText).length, 0);
+  const spans = classifySpans(mentionText);
   assert.strictEqual(spans.length, 1);
   assert.strictEqual(spans[0].kind, 'mention');
 });
