@@ -46,8 +46,15 @@ Target placeholders, with the shell-level verdict at HEAD `1d3934f5c`:
 | `specify/next-mode-shape.md:95` | `--body-file {tmp}` in an unlabelled fence | unquoted — quote and label the fence `bash` (final-review wave) |
 | `challenge/SKILL.md:95,97` | `--body-file {tmp}` in inline code spans (outside the fence sweep) | unquoted — quote anyway (final-review wave) |
 | `review/step3-lens-dispatch.md:22,66` | blockquoted bash fences (the `compose-context.js` and `build-review-context.js` fences), previously invisible to `shellFences` | no target placeholder — now scanned, no change |
+| `build/plan-review.md:103` | `--body-file {path}` in an inline span (`{path}` = the literal path `session-tmp-resolve.js` prints for `PLAN_REVIEW_BODY`) | unquoted — quote (inline-span wave); `{path}` pinned for this file only via `FILE_TARGETS` |
+| `tidy/release-note-repair.md:70,72,73,123,129,130,144` | `{live-json}`, `{line-file}`, `{repaired-body}`, `{after-json}`, `{snapshot}` (lines 64-67 and 81 name them session-tmp; `{snapshot}` is a run-dir path when a run directory resolved) in inline command spans | unquoted — quote (inline-span wave); five names added to `NAMED_TARGETS` |
+| `tidy/release-note-repair.md:104` | `cp {snapshot} {path}` | `{snapshot}` unquoted — quote (inline-span wave); `{path}` (the local-files record file, not session-tmp) left bare, not pinned |
+| `_shared/pr-checklist-refresh.md:60,84` | `--summary-file {file}` (session-tmp, `bin/session-tmp-resolve.js`) in spans opening with a flag | unquoted — quote (inline-span wave); outside the mechanical sweep, `{file}` unpinned |
+| `_shared/pr-checklist-refresh.md:83-84` | `--body-file {body-file}`, `--out {body-file}` in a span wrapping across lines | unquoted — quote in place (inline-span wave); wrapped spans are outside the mechanical sweep, so these uses are unpinned (`{body-file}` stays a named target for any future fence or single-line span) |
+| inline command spans with `{subject-dir}` / `{tmp}` (`_shared/issue-claims.md:516`, `flow/worktree-merge.md:131`, `challenge/SKILL.md:95,97`) | — | already quoted — now counted by the span sweep |
+| `release/bookkeeping.md:31`, `specify/red-team.md:91`, `test/verification.md:226`, `wrap-up/review-console.md:120` | `{file}`, `{path}`, `{proposal}`, `{scratch-file}` | location not stated as session-tmp — set aside, not touched |
 
-Prose-only mentions (inline code outside fences) are not shell command lines and are out of the sweep's scope.
+Inline-code shell spans (single-line, opening with `gh`/`node`/`git`/`cp`/`mv`/`cat`/`rm`/`npx`/`bash`/`sh`) are swept by `scanSpansCorpus`. Prose mentions of a bare placeholder, spans opening with a flag, and spans wrapping across a newline are outside the sweep.
 
 ## Review Focus
 

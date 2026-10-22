@@ -9,6 +9,17 @@
 // quote / command-substitution / heredoc / comment state across the lines of one
 // fence and classifies each target placeholder as quoted or unquoted. Every go-red
 // control calls the same scanFence the live sweep calls.
+//
+// The same scanner also sweeps single-line inline-code spans in prose whose text opens with a
+// command word (`gh issue edit {n} --body-file "{live-json}"`): inlineShellSpans blanks the fences
+// first, then reads spans from what remains. Outside that mechanical sweep, quoted anyway:
+//   - spans that wrap across a newline (_shared/pr-checklist-refresh.md's `node …revise-pr-summary.js
+//     … --body-file "{body-file}"`);
+//   - spans opening with a flag, not a command word (`--summary-file "{file}"` there);
+//   - `{file}` and `{path}` generally. They name repo paths at most sites, so they are not global
+//     targets; `{path}` in build/plan-review.md is pinned through FILE_TARGETS, `{file}` in
+//     pr-checklist-refresh.md is quoted but unpinned (its only spans are the two above), and `{path}`
+//     in tidy/release-note-repair.md is the local-files record file (not session-tmp) and stays bare.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -22,15 +33,24 @@ const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
 const NAMED_TARGETS = [
   '{subject-dir}', '{frame-path}', '{frame-dir}', '{gif-path}', '{steps-json-path}', '{ctx-dir}',
   '{tmp}', '{path-A}', '{path-B}', '{path-F}', '{path-U}',
+  // tidy/release-note-repair.md and _shared/pr-checklist-refresh.md name these as session-tmp files.
+  '{live-json}', '{line-file}', '{repaired-body}', '{after-json}', '{snapshot}', '{body-file}',
 ];
 // A variable-name placeholder (`{tmp-var}=$(...)` in _shared/session-tmp-root.md), never a path.
 const EXEMPT = ['{tmp-var}'];
 
 // Measured scanCorpus().quoted after the #3544 edits; the sweep must keep seeing at least this many.
 const QUOTED_FLOOR = 63;
+// Measured scanSpansCorpus().quoted after the #3544 edits (inline-code shell spans).
+const SPAN_QUOTED_FLOOR = 17;
 
-function isTarget(name) {
-  return (/^\{tmp-[a-z0-9-]+\}$/.test(name) && !EXEMPT.includes(name)) || NAMED_TARGETS.includes(name);
+// Generic names are never global targets (see the header); a file whose own `{path}` is a session-tmp
+// path lists it here, scoped to that file's inline spans. `{path}` in build/plan-review.md is the
+// literal path printed for PLAN_REVIEW_BODY.
+const FILE_TARGETS = { 'build/plan-review.md': ['{path}'] };
+
+function isTarget(name, extra = []) {
+  return (/^\{tmp-[a-z0-9-]+\}$/.test(name) && !EXEMPT.includes(name)) || NAMED_TARGETS.includes(name) || extra.includes(name);
 }
 
 // Extract the bodies of ```bash / ```sh / ```shell fences. startLine is the 1-based
@@ -39,34 +59,41 @@ function isTarget(name) {
 // opened inside a blockquote (`> ```bash`) has its `>` prefix stripped from the opener,
 // the closer and every body line.
 const QUOTE_PREFIX_RE = /^\s*(?:>\s?)+/;
-function shellFences(text) {
-  const all = text.split(/\r?\n/);
-  const fences = [];
+// Every fenced block of any language: { open, close, lang, strip } with 0-based line indexes
+// (close === all.length for an unterminated fence).
+function fenceBlocks(all) {
+  const blocks = [];
   for (let i = 0; i < all.length; i++) {
     const inBlockquote = QUOTE_PREFIX_RE.test(all[i]);
     const strip = (l) => (inBlockquote ? l.replace(QUOTE_PREFIX_RE, '') : l);
     const open = /^\s*(`{3,}|~{3,})\s*(.*?)\s*$/.exec(strip(all[i]));
     if (!open) continue;
     const marker = open[1];
-    const isShell = /^(bash|sh|shell)$/.test(open[2]);
     const closeRe = new RegExp('^\\s*' + (marker[0] === '`' ? '`' : '~') + '{' + marker.length + ',}\\s*$');
     let j = i + 1;
     while (j < all.length && !closeRe.test(strip(all[j]))) j++;
-    if (isShell) fences.push({ startLine: i + 2, lines: all.slice(i + 1, j).map(strip) });
+    blocks.push({ open: i, close: j, lang: open[2], strip });
     i = j;
   }
-  return fences;
+  return blocks;
+}
+function shellFences(text) {
+  const all = text.split(/\r?\n/);
+  return fenceBlocks(all)
+    .filter((b) => /^(bash|sh|shell)$/.test(b.lang))
+    .map((b) => ({ startLine: b.open + 2, lines: all.slice(b.open + 1, b.close).map(b.strip) }));
 }
 
 const PLACEHOLDER_RE = /\{[a-z][A-Za-z0-9-]*\}/y;
 const HEREDOC_RE = /<<-?\s*['"]?([^\s'"<>;|&]+)['"]?/y;
 
-function mentionsTarget(line) {
-  return (line.match(/\{[a-z][A-Za-z0-9-]*\}/g) || []).some(isTarget);
+function mentionsTarget(line, extra) {
+  return (line.match(/\{[a-z][A-Za-z0-9-]*\}/g) || []).some((name) => isTarget(name, extra));
 }
 
-// Scan one fence body. `line` in each offender is 0-based within `lines`.
-function scanFence(lines) {
+// Scan one fence body (or one inline span). `extra` adds file-scoped target names.
+// `line` in each offender is 0-based within `lines`.
+function scanFence(lines, extra = []) {
   const stack = ['cmd'];
   const offenders = [];
   let quoted = 0;
@@ -95,7 +122,7 @@ function scanFence(lines) {
       if (ch === '{') {
         PLACEHOLDER_RE.lastIndex = i;
         const m = PLACEHOLDER_RE.exec(line);
-        if (m && isTarget(m[0])) {
+        if (m && isTarget(m[0], extra)) {
           // Shell-level quoting only: a JS '…' inside `node -e "…"` never pushes a frame (its
           // dq top counts), while a bare shell '…' never expands $VAR / substituted prose.
           if (top === 'dq') quoted++;
@@ -133,7 +160,7 @@ function scanFence(lines) {
   }
   const balanced = stack.length === 1 && heredocTerm === null && directiveDepth === null;
   // An unbalanced fence that mentions a target anywhere (even in text the tracker skipped) cannot be trusted.
-  if (!balanced && lines.some(mentionsTarget)) offenders.push({ line: lines.length - 1, name: 'unbalanced' });
+  if (!balanced && lines.some((l) => mentionsTarget(l, extra))) offenders.push({ line: lines.length - 1, name: 'unbalanced' });
   return { offenders, quoted, balanced };
 }
 
@@ -157,6 +184,41 @@ function scanCorpus() {
       if (r.quoted > 0 || r.offenders.length > 0) result.targetFences++;
       result.quoted += r.quoted;
       for (const o of r.offenders) result.offenders.push({ file: rel, line: fence.startLine + o.line, name: o.name });
+    }
+  }
+  return result;
+}
+
+// A span is a shell command, not prose naming a placeholder, when its text opens with a command word.
+const COMMAND_WORD_RE = /^(?:gh|node|git|cp|mv|cat|rm|npx|bash|sh)\s/;
+
+// Single-line inline-code spans that are shell commands. Fences are blanked first (fences,
+// then spans over the remainder), so a span-regex backtick never pairs with a fence marker
+// and a command inside a fence is counted once, by shellFences. `line` is 1-based.
+function inlineShellSpans(text) {
+  const all = text.split(/\r?\n/);
+  const rest = all.slice();
+  for (const b of fenceBlocks(all)) rest.fill('', b.open, Math.min(b.close + 1, all.length));
+  const spans = [];
+  rest.forEach((l, i) => {
+    for (const m of l.matchAll(/`([^`\n]+)`/g)) {
+      if (COMMAND_WORD_RE.test(m[1])) spans.push({ line: i + 1, text: m[1] });
+    }
+  });
+  return spans;
+}
+
+// Same sweep as scanCorpus, over the inline shell spans instead of the fences.
+function scanSpansCorpus() {
+  const result = { offenders: [], quoted: 0, spans: 0, targetSpans: 0 };
+  for (const file of listMarkdown(SKILLS_DIR)) {
+    const rel = path.relative(SKILLS_DIR, file).split(path.sep).join('/');
+    for (const span of inlineShellSpans(readText(file))) {
+      const r = scanFence([span.text], FILE_TARGETS[rel]);
+      result.spans++;
+      if (r.quoted > 0 || r.offenders.length > 0) result.targetSpans++;
+      result.quoted += r.quoted;
+      for (const o of r.offenders) result.offenders.push({ file: rel, line: span.line, name: o.name });
     }
   }
   return result;
@@ -225,7 +287,16 @@ const PRE_CHANGE_DETECT_OVERLAP_FENCE = `   \`\`\`bash
    node "\${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" detect-overlap {path-F}
    \`\`\``;
 
-const FOUR_PRE_CHANGE_OFFENDERS = ['{tmp-records-file}', '{tmp-records-file}', '{tmp-open-only-file}', '{tmp-records-file}'];
+// Frozen: build/plan-review.md line 103 at 1d3934f5c (prose carrying the `gh issue comment` span).
+const PRE_CHANGE_PLAN_REVIEW_COMMENT = `5. **Comment on the record.** Post the spec amendment as one comment on the record. Run \`node "\${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PLAN_REVIEW_BODY=plan-review-amendment-{n}.md\` once and take the literal path it prints as \`PLAN_REVIEW_BODY="<path>"\` — the path inside the quotes (a shell variable would not survive into a later Bash call, and the Write tool needs a literal path). Write the body to that path with the Write tool — first line \`<!-- plan-review-amendment -->\`, then the clarification lines as committed — and pass the same literal path to \`gh issue comment {n} --body-file {path}\`, or post the body with \`add_issue_comment\` per \`_shared/github-write-transport.md\` when \`gh\` is absent. The record's history carries the amendment this way. Under \`work-backend: local-files\` there is no GitHub issue to comment on: skip the comment — the committed \`## Plan Review Clarifications\` section is the trail.`;
+
+// Frozen: tidy/release-note-repair.md lines 70-73 at 1d3934f5c (the Auto path step 2 spans).
+const PRE_CHANGE_RELEASE_NOTE_REPAIR = `   - \`github-issues\`: \`gh issue view {n} --json body,labels,state > {live-json}\` (gh absent: the
+     \`issue_read\` row of \`_shared/github-write-transport.md\`, saved as the same three fields), then
+     \`node "\${CLAUDE_PLUGIN_ROOT}/bin/release-note-repair.js" repair --driver github-issues --ref {n} --live-json {live-json} --expect-sha {sha} --line-file {line-file} --out {repaired-body} {dest}\`.
+   - \`local-files\`: \`node "\${CLAUDE_PLUGIN_ROOT}/bin/release-note-repair.js" repair --driver local-files --ref {id} --record-file {path} --expect-sha {sha} --line-file {line-file} {dest}\`,`;
+
+const FOUR_PRE_CHANGE_OFFENDERS =['{tmp-records-file}', '{tmp-records-file}', '{tmp-open-only-file}', '{tmp-records-file}'];
 
 test('AC1.1: no target placeholder sits unquoted on a shell line in plugin/skills', () => {
   const r = scanCorpus();
@@ -236,6 +307,17 @@ test('AC1.1: no target placeholder sits unquoted on a shell line in plugin/skill
     [],
     'unquoted target placeholder(s) in a shell fence:\n' + r.offenders.map((o) => `${o.file}:${o.line} ${o.name}`).join('\n'),
   );
+});
+
+test('AC1.1: no target placeholder sits unquoted in an inline shell span in plugin/skills', () => {
+  const r = scanSpansCorpus();
+  assert.ok(r.spans > 0 && r.targetSpans > 0, 'empty haystack — the span extractor found nothing');
+  assert.deepStrictEqual(
+    r.offenders,
+    [],
+    'unquoted target placeholder(s) in an inline shell span:\n' + r.offenders.map((o) => `${o.file}:${o.line} ${o.name}`).join('\n'),
+  );
+  assert.ok(r.quoted >= SPAN_QUOTED_FLOOR, `only ${r.quoted} quoted target sites found in spans — the scanner stopped seeing them`);
 });
 
 test('AC1.1 go-red: the frozen pre-change record-queue-fetch.md fence reports its four unquoted uses', () => {
@@ -290,6 +372,54 @@ test('AC1.1 go-red: the frozen detect-overlap fence reports {path-F}', () => {
   const fences = shellFences(PRE_CHANGE_DETECT_OVERLAP_FENCE);
   assert.strictEqual(fences.length, 1);
   assert.deepStrictEqual(scanFence(fences[0].lines).offenders.map((o) => o.name), ['{path-F}']);
+});
+
+// The live span sweep's own path: inlineShellSpans over the text, then scanFence per span.
+function scanSpansOf(text, extra) {
+  const r = { offenders: [], quoted: 0 };
+  for (const span of inlineShellSpans(text)) {
+    const s = scanFence([span.text], extra);
+    r.quoted += s.quoted;
+    for (const o of s.offenders) r.offenders.push({ line: span.line, name: o.name });
+  }
+  return r;
+}
+
+test('AC1.1 go-red: the frozen plan-review.md comment span reports its unquoted {path}', () => {
+  const r = scanSpansOf(PRE_CHANGE_PLAN_REVIEW_COMMENT, FILE_TARGETS['build/plan-review.md']);
+  assert.deepStrictEqual(r.offenders, [{ line: 1, name: '{path}' }]);
+  // {path} is scoped to that file: the same span is clean of offenders without the scope.
+  assert.deepStrictEqual(scanSpansOf(PRE_CHANGE_PLAN_REVIEW_COMMENT).offenders, []);
+});
+
+test('AC1.1 go-red: the frozen release-note-repair.md Auto path spans report their unquoted session-tmp uses', () => {
+  const r = scanSpansOf(PRE_CHANGE_RELEASE_NOTE_REPAIR);
+  assert.deepStrictEqual(r.offenders, [
+    { line: 1, name: '{live-json}' },
+    { line: 3, name: '{live-json}' },
+    { line: 3, name: '{line-file}' },
+    { line: 3, name: '{repaired-body}' },
+    { line: 4, name: '{line-file}' },
+  ]);
+  assert.strictEqual(r.quoted, 0);
+});
+
+test('inlineShellSpans: a bare placeholder mention (no command word) is not scanned', () => {
+  assert.deepStrictEqual(inlineShellSpans('the file `{live-json}` and `{line-file}`, then `--out {repaired-body}`'), []);
+  assert.deepStrictEqual(inlineShellSpans('run `gh issue view {n} > {live-json}` now'), [{ line: 1, text: 'gh issue view {n} > {live-json}' }]);
+});
+
+test('inlineShellSpans: a span inside a fenced block is not counted again; spans around the fence are', () => {
+  const text = ['see `cp {tmp-a} x`', '```bash', 'cp {tmp-b} `cp {tmp-c} y`', '```', '~~~text', '`cp {tmp-d} z`', '~~~', 'and `git add {tmp-e}`'].join('\n');
+  assert.deepStrictEqual(inlineShellSpans(text), [
+    { line: 1, text: 'cp {tmp-a} x' },
+    { line: 8, text: 'git add {tmp-e}' },
+  ]);
+});
+
+test('inlineShellSpans: a fence marker is not paired with a span backtick; wrapped spans are outside the sweep', () => {
+  const text = ['```bash', 'ls', '```', 'tail `rm {tmp-a}` end', 'wrap `node x.js', '{tmp-b}` here'].join('\n');
+  assert.deepStrictEqual(inlineShellSpans(text), [{ line: 4, text: 'rm {tmp-a}' }]);
 });
 
 test('AC1.1: the fence shapes the sweep once missed are now scanned (blockquoted, labelled-later)', () => {
