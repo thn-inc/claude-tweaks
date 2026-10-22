@@ -133,14 +133,20 @@ test('scanHandRolled flags the idiom in code but not in a comment', () => {
   assert.deepEqual(scanHandRolled(src, 'f.js'), ['f.js:2']);
 });
 
-test('AC1.1: no plugin/bin JS file hand-rolls a startsWith(... path.sep) containment test', () => {
+// Every plugin/bin file's hits from `scan`, after confirming the comment
+// stripper parsed the file cleanly.
+function scanBinTree(scan) {
   const hits = [];
   for (const { rel, raw } of binSources()) {
     const verdict = stripperVerdict(raw);
     assert.equal(verdict, 'ok', `${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
-    hits.push(...scanHandRolled(raw, rel));
+    hits.push(...scan(raw, rel));
   }
-  assert.deepEqual(hits, []);
+  return hits;
+}
+
+test('AC1.1: no plugin/bin JS file hand-rolls a startsWith(... path.sep) containment test', () => {
+  assert.deepEqual(scanBinTree(scanHandRolled), []);
 });
 
 test('#3892 scanVariableHandRolled flags each variable-mediated binding shape at its startsWith line', () => {
@@ -184,13 +190,7 @@ test('#3892 go-red: the scan flags the old sweep-shadow rootWithSep guard, verba
 });
 
 test('#3892 AC1.2: no plugin/bin JS file tests containment with startsWith(<identifier bound to a path.sep expression>)', () => {
-  const hits = [];
-  for (const { rel, raw } of binSources()) {
-    const verdict = stripperVerdict(raw);
-    assert.equal(verdict, 'ok', `${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
-    hits.push(...scanVariableHandRolled(raw, rel));
-  }
-  assert.deepEqual(hits, []);
+  assert.deepEqual(scanBinTree(scanVariableHandRolled), []);
 });
 
 test('#3642 scanRelDotDot flags a bare startsWith(\'..\') in any quote style, but not \'...\', \'../\' or a comment', () => {

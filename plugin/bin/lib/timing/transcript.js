@@ -50,6 +50,7 @@ function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), configDir =
   if (sessionIdGiven && !sid) return [];
   if (!cwd && !sid) return [];
   const projects = path.join(configDir, 'projects');
+  const projectsResolved = path.resolve(projects);
   // realpath: fsImpl.realpathSync pins the JS form this reader has always used
   // (path-guard defaults to .native, which would change Windows short-name
   // expansion), so routing through path-guard (#3417) changes no behavior.
@@ -63,7 +64,7 @@ function locateTranscripts({ cwd, sessionId, homeDir = os.homedir(), configDir =
   // finding, [IL-150]). The lexical check stays first: it's cheap and
   // rejects a literal ".." before any filesystem call.
   const push = (p) => {
-    if (!isPathContained(path.resolve(p), path.resolve(projects))) return;
+    if (!isPathContained(path.resolve(p), projectsResolved)) return;
     const leaf = resolveLeaf(p, { fsImpl, realpath: fsImpl.realpathSync });
     if (leaf.state !== 'resolved') return; // missing, dangling or unreadable — unprovable, skip (fail closed)
     // Admits the root itself, which the isFile check below still rejects.
