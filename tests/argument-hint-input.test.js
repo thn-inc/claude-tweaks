@@ -295,6 +295,7 @@ test('an ## Input bullet is read: its leading code span counts unless the mark o
   const doc = (bullet) => "---\nargument-hint: '[--a]'\n---\n## Input\n\n" + bullet + "\n";
   assert.deepStrictEqual(undocumentedHintFlags(doc('- `--b` → x')), ['--b']);
   assert.deepStrictEqual(undocumentedHintFlags(doc('- `--b` (producer-only) → x')), []);
+  assert.deepStrictEqual(undocumentedHintFlags(doc('- `--b` → x (producer-only)')), ['--b']);
 });
 
 test('longer flag in hint does not cover a shorter prefix flag', () => {
@@ -324,6 +325,8 @@ test('markedHintFlags reads a marked bullet or row, and only on a whole-token hi
   assert.deepStrictEqual(markedHintFlags(doc('[--b-x]', bullet)), []);
   assert.deepStrictEqual(markedHintFlags(doc('[--b]', '| `--b` (producer-only) | x |')), ['--b']);
   assert.deepStrictEqual(markedHintFlags(doc('[--b]', '- `--b` → x')), []);
+  assert.deepStrictEqual(markedHintFlags(doc('[--b]', '- `--b` → x (producer-only)')), []);
+  assert.deepStrictEqual(markedHintFlags(doc('[--b]', '| `--b` (deprecated alias) | x |')), ['--b']);
 });
 
 test('#3504 AC3.1/AC3.2: the rule says a marked flag stays out of the hint, nowhere "may be left out"', () => {

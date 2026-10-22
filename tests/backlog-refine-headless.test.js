@@ -109,9 +109,10 @@ test('backlog SKILL.md: argument-hint drops grant as a mode, gains --source; the
     'argument-hint must not list grant as a mode token any more (was present at base 558291189)',
   );
   assert.ok(
-    hintLine.includes('--source <human|routine|sweep>'),
+    hintLine.includes('--source <human|routine>'),
     'argument-hint must carry the new --source presence switch',
   );
+  assert.ok(!hintLine.includes('sweep'), 'argument-hint must not advertise the sweep-reserved --source value (#3504)');
 
   const grantRow = source.split('\n').find((l) => l.trim().startsWith('- `grant`'));
   assert.ok(grantRow, 'expected the `grant` deprecated-alias row in the Input table');

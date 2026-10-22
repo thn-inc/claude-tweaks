@@ -1,7 +1,7 @@
 ---
 name: backlog
 description: Use for backlog labels (refine — human-present or headless), next-build pick (overview), or a needs-you list (attention). Keywords - backlog, triage, authorize, grant, auto:build, auto:merge, priority, related, unattended, headless, autonomy ceiling.
-argument-hint: "[refine|overview|attention] [#N[,#M...]] [critical|risk-value|cleanup|trust] [--trust] [--budget <n>] [--origin <origin>] [--source <human|routine|sweep>] [--reset-breaker]"
+argument-hint: "[refine|overview|attention] [#N[,#M...]] [critical|risk-value|cleanup|trust] [--trust] [--budget <n>] [--origin <origin>] [--source <human|routine>] [--reset-breaker]"
 ---
 
 # Backlog — Refine Labels and Understand the Queue
@@ -37,7 +37,7 @@ Not for: shaping record bodies or stamping `risk:*`/`size:*` (`/claude-tweaks:sp
 
 ## Input
 
-`$ARGUMENTS` = `[refine|overview|attention] [#N[,#M...]] [critical|risk-value|cleanup|trust] [--trust] [--budget <n>] [--origin <origin>] [--source <human|routine|sweep>] [--reset-breaker]`
+`$ARGUMENTS` = `[refine|overview|attention] [#N[,#M...]] [critical|risk-value|cleanup|trust] [--trust] [--budget <n>] [--origin <origin>] [--source <human|routine>] [--reset-breaker]`
 
 - No mode (bare) → `overview` — the safer, non-mutating default.
 - `refine` → the write/labeling-sweep mode. Read `refine-mode.md` in this skill's directory for the full procedure.
