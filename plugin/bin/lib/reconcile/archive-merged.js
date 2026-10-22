@@ -1581,9 +1581,13 @@ const STRUCTURALLY_STUCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // stamp), and the by-number lookup deliberately never falls back to the
 // branch (#3416), so the skip would otherwise repeat silently forever.
 // 'network-failure' stays excluded — a long genuine outage must not page.
+// 'tiebreak-coverage-missing' and 'tiebreak-artifact-invalid' (#3945) are
+// tracked: a findings artifact with an uncovered or unreadable entry never
+// self-resolves, only a re-run of the findings writer and tiebreak (or deleting
+// a pre-tiebreak artifact) converges it.
 const STRUCTURALLY_STUCK_REASONS = new Set([
   'no-worktree', 'no-branch', 'no-pr', 'console-never-rendered-pr-closed', 'console-never-rendered-staged-pending',
-  'pr-not-found', 'merged-partial', 'no-repo-slug',
+  'pr-not-found', 'merged-partial', 'no-repo-slug', 'tiebreak-coverage-missing', 'tiebreak-artifact-invalid',
 ]);
 
 // #1732: thin wrapper — see isOrphanedMint's comment on the `kinds` scoping
@@ -1823,10 +1827,15 @@ function settleMergedPartial(root, dir, prState, decision, coverage) {
   return unclosed.length > 0 ? { ...decision, unclosed } : archiveUnlessTiebreakGap(coverage);
 }
 
-// #3503: `unclosed` rides along on a merged-partial skip only; every other
-// reason keeps the bare {runDir, reason} shape.
-function skippedEntry(dir, { reason, unclosed }) {
-  return unclosed === undefined ? { runDir: dir, reason } : { runDir: dir, reason, unclosed };
+// #3503: `unclosed` rides along on a merged-partial skip only; #3945: `missing`
+// and `hint` ride along on a tiebreak skip only. Every other reason keeps the
+// bare {runDir, reason} shape.
+function skippedEntry(dir, { reason, unclosed, missing, hint }) {
+  const entry = { runDir: dir, reason };
+  if (unclosed !== undefined) entry.unclosed = unclosed;
+  if (missing !== undefined) entry.missing = missing;
+  if (hint !== undefined) entry.hint = hint;
+  return entry;
 }
 
 // #3503: the by-number fallback's record guard, for the MERGED branches that
@@ -1887,7 +1896,9 @@ function archiveMergedRun({
   );
   if (decision.action === 'skip') {
     if (onSkip) onSkip(decision.reason);
-    return { outcome: 'skipped', reason: decision.reason, unclosed: decision.unclosed };
+    return {
+      outcome: 'skipped', reason: decision.reason, unclosed: decision.unclosed, missing: decision.missing, hint: decision.hint,
+    };
   }
 
   const hasMerge = localHasMerge(root, prState.mergeCommit, integration);
@@ -2240,7 +2251,7 @@ function archiveMerged({
       },
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
-    skipped.push({ runDir: dir, reason: runResult.reason });
+    skipped.push(skippedEntry(dir, runResult));
   }
 
   // #1235: flush the batched residue updates from both loops above BEFORE

@@ -387,7 +387,12 @@ async function reconcile(opts = {}) {
     });
     result.runs = r.archived.map((d) => ({ runDir: d, action: 'archived' }))
       .concat(r.skipped.map((s) => ({
-        runDir: s.runDir, action: 'skipped', reason: s.reason, ...(s.unclosed !== undefined ? { unclosed: s.unclosed } : {}),
+        runDir: s.runDir,
+        action: 'skipped',
+        reason: s.reason,
+        ...(s.unclosed !== undefined ? { unclosed: s.unclosed } : {}),
+        ...(s.missing !== undefined ? { missing: s.missing } : {}),
+        ...(s.hint !== undefined ? { hint: s.hint } : {}),
       })));
   }
 

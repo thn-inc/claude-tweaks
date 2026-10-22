@@ -963,6 +963,58 @@ test('reconcile: an archive merged-partial skip carries unclosed through to resu
   assert.deepStrictEqual(r.runs, [{ runDir, action: 'skipped', reason: 'merged-partial', unclosed: [3311] }]);
 });
 
+// #3945 F6: index.js hands a tiebreak coverage skip's `missing` ids and `hint`
+// through to result.runs the same way, so the refusal names what to fix.
+test('reconcile: an archive tiebreak-coverage-missing skip carries missing and hint through to result.runs (#3945)', async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-tiebreak-')));
+  git(['init', '-q', '--initial-branch=main'], root);
+  git(['config', 'user.email', 'test@example.com'], root);
+  git(['config', 'user.name', 'Test'], root);
+  fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
+  git(['add', 'a.txt'], root);
+  git(['commit', '-q', '-m', 'seed'], root);
+  git(['branch', 'feat-tiebreak'], root);
+  git(['remote', 'add', 'origin', 'git@github.com:acme/w.git'], root);
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\n');
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-10-22T090000-record-3945');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active', worktree: path.join(root, '.claude', 'worktrees', 'gone'), pr: { number: 3945100, branch: 'feat-tiebreak' },
+  }));
+  fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify([
+    { id: 'abc123def456', lens: 'correctness', path: 'src/a.js', line: 3, claim: 'x', reporterSeverity: 'medium', kind: 'unconfirmed' },
+  ]));
+  const pr = {
+    number: 3945100, state: 'MERGED', mergedAt: '2026-10-22T00:00:00Z', updatedAt: '2026-10-22T00:00:00Z',
+    closingIssuesReferences: [{ number: 3945, repository: { name: 'w', owner: { login: 'acme' } } }],
+  };
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-tiebreak-gh-'));
+  fs.writeFileSync(path.join(wrapperDir, 'gh'), [
+    '#!/bin/sh',
+    'if [ "$1" = "issue" ]; then echo \'{"state":"OPEN"}\'; exit 0; fi',
+    `cat <<'EOF'\n${JSON.stringify(pr)}\nEOF`,
+    '',
+  ].join('\n'), { mode: 0o755 });
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  let r;
+  try {
+    r = await reconcile({ cwd: root, checks: ['archive'], resolveIntegrationModel: () => 'pr-first' });
+  } finally {
+    process.env.PATH = originalPath;
+  }
+  assert.deepStrictEqual(r.runs, [{
+    runDir,
+    action: 'skipped',
+    reason: 'tiebreak-coverage-missing',
+    missing: ['abc123def456'],
+    hint: "re-run the review step's findings writer for this run, or delete review-findings.json if the run predates the tiebreak",
+  }]);
+});
+
 // #3132: a fresh clone in a cloud/Routine sandbox has no local
 // refs/remotes/origin/HEAD. A plain `git clone` normally sets it, so the
 // fixture deletes it explicitly — a fixture that merely clones would pass

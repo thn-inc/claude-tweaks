@@ -248,8 +248,12 @@ main loop, landed via #1962/#2226/#2228/#2231):
   second `issue create`. The body's fixed text names every skip reason that feeds the record
   (`no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending` (#3297), #3543's
   `pr-not-found` — a stamped `run-state.json` `pr.number` GitHub's structured GraphQL error confirms
-  names no PR, whose remedy is correcting or clearing that stamp), and #3503's `merged-partial` (a run
-  whose merged PR left records unclosed, carried as `unclosed` on the skip). `no-repo-slug` is also in
+  names no PR, whose remedy is correcting or clearing that stamp), #3503's `merged-partial` (a run
+  whose merged PR left records unclosed, carried as `unclosed` on the skip), and #3945's
+  `tiebreak-coverage-missing` and `tiebreak-artifact-invalid` (a run whose `review-findings.json`
+  lists a finding with no tiebreak verdict line in `decisions.md`, or is malformed; the skip carries
+  `missing` ids and a `hint`, which `reconcile/index.js` passes through to `result.runs`, and the body
+  carries their remedy line after the `merged-partial` one). `no-repo-slug` is also in
   `STRUCTURALLY_STUCK_REASONS` but is not listed here: it can never be filed into this record, because
   with no repo slug `findOrCreateIssue` returns `escalation-failed`, so it shows only in the residue
   summary's stuck count. Each path's own reason is its
