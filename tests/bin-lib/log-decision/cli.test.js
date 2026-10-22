@@ -189,3 +189,24 @@ test('nested parentheses in the qualifier render verbatim: "low (see (a))"', () 
   assert.equal(r.code, 0);
   assert.equal(r.text, '- AUTO 09:05:07 — log-decision: pushed x to origin. Reversibility: low (see (a)).\n');
 });
+
+test('AC1.1: --reversibility "low (divergence persists)" exits 0 and writes `Reversibility: low (divergence persists).`', () => {
+  const r = reversibilityRun('low (divergence persists)');
+  assert.equal(r.code, 0);
+  assert.equal(r.text, '- AUTO 09:05:07 — log-decision: pushed x to origin. Reversibility: low (divergence persists).\n');
+});
+
+test('AC1.1: the Manifesto design-critique template value "n/a (a policy read, not a code mutation)" exits 0 and renders verbatim', () => {
+  const r = reversibilityRun('n/a (a policy read, not a code mutation)');
+  assert.equal(r.code, 0);
+  assert.equal(r.text, '- AUTO 09:05:07 — log-decision: pushed x to origin. Reversibility: n/a (a policy read, not a code mutation).\n');
+});
+
+test('AC2.1: "bogus (x)" and "lowish" exit 2 with the existing usage message and write nothing', () => {
+  for (const bad of ['bogus (x)', 'lowish']) {
+    const r = reversibilityRun(bad);
+    assert.equal(r.code, 2, bad);
+    assert.equal(r.text, null, `${bad}: decisions.md never created`);
+    assert.match(streamOf(r.out, 'err'), /--reversibility must be one of high\|med\|low\|n\/a, optionally followed by " \(qualifier\)"/, bad);
+  }
+});

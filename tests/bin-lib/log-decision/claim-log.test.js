@@ -81,6 +81,13 @@ test('isClaimLogEntry accepts a claim line whose Reversibility carries a qualifi
   assert.strictEqual(isClaimLogEntry(line), true, line);
 });
 
+test('AC3.2: a Step 2.8 bookkeeping line or anchored paraphrased claim whose Reversibility note contains a period still classifies claim-log-only (#3870)', () => {
+  const skip = formatEntry({ status: 'SKIP', now: NOW, step: 'Step 2.8 file-overlap warning (skipped)', text: 'condition: preflight-records.js exited non-zero or gh unavailable → fallback: overlap warning not computed; claim proceeds on the named targets only', reversibility: 'n/a (see claim-targets.md)' });
+  assert.strictEqual(classifyDecisions(`${REAL_SINGLE}${skip}\n`), 'claim-log-only', 'case a: bookkeeping line');
+  const paraphrase = formatEntry({ status: 'AUTO', now: NOW, step: CLAIM_LOG_STEP, text: 'claimed issue #7 for this run', reversibility: 'high (commit abc.def)' });
+  assert.strictEqual(classifyDecisions(`## /flow\n${paraphrase}\n`), 'claim-log-only', 'case b: anchored paraphrase');
+});
+
 test('classifyDecisions: absent, empty, claim-log-only, content — and nothing unparseable ever reads as claim-log-only (#2861)', () => {
   assert.strictEqual(classifyDecisions(null), 'absent');
   assert.strictEqual(classifyDecisions(''), 'empty');

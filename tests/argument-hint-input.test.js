@@ -30,8 +30,9 @@
 // hint, unless that entry carries `(producer-only)` or `(deprecated alias)`
 // (EXEMPT_MARKERS) -- in the row's first cell, or opening the bullet's text after
 // the code span -- a flag only an agent or another skill passes, or a superseded
-// alias, which the user-facing hint may leave out. A marker anywhere else does
-// not exempt the entry.
+// alias, which stays out of the user-facing hint. markedHintFlags is the converse
+// of undocumentedHintFlags: it fails when a marked entry's flag is still in the
+// hint. A marker anywhere else does not exempt the entry.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -215,30 +216,59 @@ test('AC2.1: docs/skill-authoring.md argument-hint bullet names every exemption 
 // A flag matches the hint only as a whole token: `--batch-size` in the hint does
 // not cover `--batch` in a row.
 function undocumentedHintFlags(content) {
+  return entryFlagsByHintPresence(content, { marked: false, inHint: false });
+}
+
+// The flags of the `## Input` entries whose marked state is `marked` and whose
+// whole-token presence in the argument-hint is `inHint`, first-seen order,
+// deduplicated.
+function entryFlagsByHintPresence(content, { marked, inHint }) {
   const hint = extractArgumentHint(content);
   const body = inputSectionBody(content);
   if (!hint || body === null) return [];
   const found = [];
+  for (const entry of inputEntries(body)) {
+    if (entry.marked !== marked) continue;
+    for (const flag of entry.flagText.match(/--[a-z][a-z0-9-]*/g) || []) {
+      const present = new RegExp(flag + '(?![a-z0-9-])').test(hint);
+      if (present === inHint && !found.includes(flag)) found.push(flag);
+    }
+  }
+  return found;
+}
+
+// The `## Input` entries -- table rows and bullets -- as `{ flagText, marked }`:
+// flagText is the text flags are read from (a row's first cell, a bullet's
+// leading code span), marked is whether an EXEMPT_MARKERS entry sits in the row's
+// first cell or opens the bullet's text after the code span.
+function inputEntries(body) {
+  const entries = [];
   for (const line of body.split('\n')) {
-    let flagText;
     if (line.startsWith('|')) {
       const firstCell = line.split(/(?<!\\)\|/)[1] || '';
-      if (EXEMPT_MARKERS.some((m) => firstCell.includes(m))) continue;
-      flagText = firstCell;
+      entries.push({ flagText: firstCell, marked: EXEMPT_MARKERS.some((m) => firstCell.includes(m)) });
     } else {
       // Bullet form: `- \`--flag\` <rest>` -- flags come from the leading code
       // span only; the mark must open <rest>.
       const bullet = line.match(/^\s*[-*]\s+`([^`]*)`(.*)$/);
       if (!bullet) continue;
-      if (EXEMPT_MARKERS.some((m) => bullet[2].trimStart().startsWith(m))) continue;
-      flagText = bullet[1];
-    }
-    for (const flag of flagText.match(/--[a-z][a-z0-9-]*/g) || []) {
-      const inHint = new RegExp(flag + '(?![a-z0-9-])').test(hint);
-      if (!inHint && !found.includes(flag)) found.push(flag);
+      entries.push({ flagText: bullet[1], marked: EXEMPT_MARKERS.some((m) => bullet[2].trimStart().startsWith(m)) });
     }
   }
-  return found;
+  return entries;
+}
+
+// The converse of undocumentedHintFlags: every `--flag` a marked entry documents
+// that the hint still carries (whole token), first-seen order, deduplicated. A
+// marked flag is one only an agent or another skill passes, so a person typing at
+// the hint must not be offered it.
+function markedHintFlags(content) {
+  return entryFlagsByHintPresence(content, { marked: true, inHint: true });
+}
+
+function assertNoMarkedHintFlags(name, content) {
+  const flags = markedHintFlags(content);
+  assert.deepStrictEqual(flags, [], `skills/${name}/SKILL.md: ## Input marks flags that still appear in argument-hint — remove them from the hint and its mirrors: ${flags.join(', ')}`);
 }
 
 test('AC1.1: every --flag an ## Input table row documents is in argument-hint unless marked', () => {
@@ -261,9 +291,56 @@ test('an ## Input bullet is read: its leading code span counts unless the mark o
   const doc = (bullet) => "---\nargument-hint: '[--a]'\n---\n## Input\n\n" + bullet + "\n";
   assert.deepStrictEqual(undocumentedHintFlags(doc('- `--b` → x')), ['--b']);
   assert.deepStrictEqual(undocumentedHintFlags(doc('- `--b` (producer-only) → x')), []);
+  assert.deepStrictEqual(undocumentedHintFlags(doc('- `--b` → x (producer-only)')), ['--b']);
 });
 
 test('longer flag in hint does not cover a shorter prefix flag', () => {
   const c = "---\nargument-hint: '[--batch-size]'\n---\n## Input\n\n| Argument | Behavior |\n|---|---|\n| `--batch` | x |\n";
   assert.deepStrictEqual(undocumentedHintFlags(c), ['--batch']);
+});
+
+test('#3504 inverse: no (producer-only) or (deprecated alias) flag appears in its skill\'s argument-hint', () => {
+  for (const name of SKILLS) {
+    assertNoMarkedHintFlags(name, read(name));
+  }
+});
+
+// Floor for the corpus loop above: it passes vacuously if inputEntries stops
+// recognising marked entries, so name the skills known to carry one (tables and
+// bullets both) and require each to yield at least one.
+test('#3504 inverse floor: the corpus loop sees a marked entry in each skill known to carry one', () => {
+  for (const name of ['capture', 'routine', 'design-wrapper', 'visual-review', 'visualize', 'tidy', 'specify']) {
+    const marked = inputEntries(inputSectionBody(read(name))).filter((e) => e.marked);
+    assert.ok(marked.length > 0, `skills/${name}/SKILL.md: no marked ## Input entry recognised — the inverse check would pass vacuously`);
+  }
+});
+
+test('#3504 AC2.1 go-red: re-adding --source to visualize\'s hint fails the inverse check naming visualize', () => {
+  const original = read('visualize');
+  const mutated = original.replace('[topic] [--ephemeral]', '[topic] [--source <caller>] [--ephemeral]');
+  assert.notEqual(mutated, original);
+  assert.throws(() => assertNoMarkedHintFlags('visualize', mutated), {
+    message: /skills\/visualize\/SKILL\.md: ## Input marks flags that still appear in argument-hint.*--source/,
+  });
+});
+
+test('markedHintFlags reads a marked bullet or row, and only on a whole-token hint match', () => {
+  const doc = (hint, entry) => "---\nargument-hint: '" + hint + "'\n---\n## Input\n\n" + entry + "\n";
+  const bullet = '- `--b` (producer-only) → x';
+  assert.deepStrictEqual(markedHintFlags(doc('[--b]', bullet)), ['--b']);
+  assert.deepStrictEqual(markedHintFlags(doc('[--b-x]', bullet)), []);
+  assert.deepStrictEqual(markedHintFlags(doc('[--b]', '| `--b` (producer-only) | x |')), ['--b']);
+  assert.deepStrictEqual(markedHintFlags(doc('[--b]', '- `--b` → x')), []);
+  assert.deepStrictEqual(markedHintFlags(doc('[--b]', '- `--b` → x (producer-only)')), []);
+  assert.deepStrictEqual(markedHintFlags(doc('[--b]', '| `--b` (deprecated alias) | x |')), ['--b']);
+});
+
+test('#3504 AC3.1/AC3.2: the rule says a marked flag stays out of the hint, nowhere "may be left out"', () => {
+  const doc = fs.readFileSync(path.join(ROOT, 'docs', 'skill-authoring.md'), 'utf8');
+  const check = fs.readFileSync(path.join(SKILLS_DIR, 'build', 'plan-authoring-checks.md'), 'utf8');
+  const bullet = doc.split('\n').find((l) => l.startsWith('- **`argument-hint`**'));
+  assert.ok(bullet, 'argument-hint bullet not found');
+  assert.ok(bullet.includes('stays out of the hint'), 'argument-hint bullet does not say a marked flag stays out of the hint');
+  assert.ok(!doc.includes('may be left out'), 'docs/skill-authoring.md still says "may be left out"');
+  assert.ok(!check.includes('may be left out'), 'plan-authoring-checks.md still says "may be left out"');
 });

@@ -703,6 +703,9 @@ async function main(argv) {
       // not clobber a previous stamp.
       const patch = { worktree: path.resolve(worktreeArg), status: 'active' };
       if (process.env.CLAUDE_CODE_SESSION_ID) patch.sessionId = process.env.CLAUDE_CODE_SESSION_ID;
+      // #3845: the owning Claude Code process, so session-end can tell a nested
+      // `claude -p` from the owner. Omitted when absent, like sessionId.
+      Object.assign(patch, ctxLib.ownerPidPatch(process.env));
       if (dispatch) {
         // Permanent for the run's lifetime: only ever written true, never
         // false, so a later plain re-stamp (no --dispatch) cannot clear it.
@@ -1513,9 +1516,10 @@ async function main(argv) {
       cwd: process.cwd(),
       mcpReachable: args.includes('--mcp-reachable'),
       checks: checksList.length ? checksList : undefined,
-      // An explicit --checks subset is the caller naming exactly which checks
-      // must run — don't let the SessionStart hot-path time ceiling (#820 D4)
-      // skip them; an unscoped pass keeps the default ceiling (#3026).
+      // An explicit --checks subset is the caller naming which checks must
+      // run (plus any prerequisite reconcile() adds, #3630) — don't let the
+      // SessionStart hot-path time ceiling (#820 D4) skip them; an unscoped
+      // pass keeps the default ceiling (#3026).
       budgetMs: checksList.length ? Infinity : undefined,
       // An explicit subset cannot claim the whole fast pass ran, so it must
       // not stamp the shared freshness key — otherwise the next SessionStart

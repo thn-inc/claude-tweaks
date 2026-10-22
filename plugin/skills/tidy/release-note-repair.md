@@ -67,10 +67,10 @@ item runs the Auto path with that line and sha.
    (`_shared/session-tmp-root.md`).
 2. **Re-read live, then repair** — immediately before the write, never from the scan's snapshot
    (`_shared/reverify-before-write.md`):
-   - `github-issues`: `gh issue view {n} --json body,labels,state > {live-json}` (gh absent: the
+   - `github-issues`: `gh issue view {n} --json body,labels,state > "{live-json}"` (gh absent: the
      `issue_read` row of `_shared/github-write-transport.md`, saved as the same three fields), then
-     `node "${CLAUDE_PLUGIN_ROOT}/bin/release-note-repair.js" repair --driver github-issues --ref {n} --live-json {live-json} --expect-sha {sha} --line-file {line-file} --out {repaired-body} {dest}`.
-   - `local-files`: `node "${CLAUDE_PLUGIN_ROOT}/bin/release-note-repair.js" repair --driver local-files --ref {id} --record-file {path} --expect-sha {sha} --line-file {line-file} {dest}`,
+     `node "${CLAUDE_PLUGIN_ROOT}/bin/release-note-repair.js" repair --driver github-issues --ref {n} --live-json "{live-json}" --expect-sha {sha} --line-file "{line-file}" --out "{repaired-body}" {dest}`.
+   - `local-files`: `node "${CLAUDE_PLUGIN_ROOT}/bin/release-note-repair.js" repair --driver local-files --ref {id} --record-file {path} --expect-sha {sha} --line-file "{line-file}" {dest}`,
      `{path}` is the candidate entry's own `ref` (Worklist above) — the record file `release-note-repair.js` reads, writes, and re-verifies — resolved in Step 7's working tree (the
      scratch worktree under `worktree-always`); this one call writes the record file and
      re-verifies it.
@@ -101,7 +101,7 @@ item runs the Auto path with that line and sha.
      the agent has no way to re-check, after the fact, that the file still holds those exact
      spliced bytes, so a second blind write carries the same risk the CLI's own attempt just hit.
      Yours **review** row naming `{path}` and `{snapshot}`, plus the SKIP entry. The row's command
-     is the manual undo `cp {snapshot} {path}` — offered for a human to run after confirming it's
+     is the manual undo `cp "{snapshot}" {path}` — offered for a human to run after confirming it's
      still safe, never executed automatically.
    - 8 (`local-files` only): the file on disk no longer holds the bytes the CLI spliced —
      something else wrote to `{path}` between this call's write and its own re-read, whether or not
@@ -120,14 +120,14 @@ item runs the Auto path with that line and sha.
    - 2: malformed call — a caller-side bug, not a per-record condition; fix the invocation rather
      than looping on it. Report the record as a Yours **review** row plus the SKIP entry.
 4. **Write and verify** (`github-issues`; the local call already did both in Step 3):
-   `gh issue edit {n} --body-file {repaired-body}` (gh absent: `issue_write` update mode, same
+   `gh issue edit {n} --body-file "{repaired-body}"` (gh absent: `issue_write` update mode, same
    body). A failed edit call itself: re-read the live body (`gh issue view {n} --json body`).
    Unchanged from `{live-json}`'s body: a repair failure — Yours **review** row noting the retry,
    plus the SKIP entry. Changed (the edit landed despite the reported failure): continue below —
    the verify call below catches any real mismatch.
 
-   `gh issue view {n} --json body,labels,state > {after-json}` and
-   `node "${CLAUDE_PLUGIN_ROOT}/bin/release-note-repair.js" verify --ref {n} --before-json {live-json} --after-json {after-json} --line-file {line-file} [--run "{run-dir}"]`.
+   `gh issue view {n} --json body,labels,state > "{after-json}"` and
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/release-note-repair.js" verify --ref {n} --before-json "{live-json}" --after-json "{after-json}" --line-file "{line-file}" [--run "{run-dir}"]`.
    Exit 0: the live body passes `compose-record.js --check`, its Release Note is the composed
    line, and its label set equals the pre-write read. Never restore automatically on either
    failing exit below — `gh issue edit --body-file` only ever touches the body, so any restore it
@@ -141,7 +141,7 @@ item runs the Auto path with that line and sha.
    - Exit 7: the live body itself no longer matches what this run wrote (stderr names the specific
      check that failed — `compose-record.js --check`, the composed line, or the line-diff proof).
      Yours **review** row naming `#{n}`, `{snapshot}`, and stderr's problem list, plus the SKIP
-     entry. The row's command is the manual undo `gh issue edit {n} --body-file {snapshot}` —
+     entry. The row's command is the manual undo `gh issue edit {n} --body-file "{snapshot}"` —
      offered for a human to run after confirming it's still safe, never executed automatically.
 5. After the batch, invalidate the session record snapshot once (`_shared/record-queue-fetch.md`'s
    Session-scoped record snapshot).
