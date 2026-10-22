@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { classifyStagedItem, stagingExemption } = require('../../../plugin/bin/lib/console/resolve');
+const { classifyStagedItem, stagingExemption, STAGING_EXEMPTIONS } =require('../../../plugin/bin/lib/console/resolve');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 
 // Every id a producer hands `stage-item.js` / `writeStagedItem` either maps in
@@ -115,11 +115,65 @@ function collectProducers() {
   return producers;
 }
 
+// Skill prose that names a staged file rather than a `stage-item.js --id` command line:
+// a backticked `staged/<literal head>{placeholder}….md` path (`staged/plan-citation-{n}.md`),
+// or the concrete numbered form a console-template example uses (`staged/translation-85.md`).
+// Only `.md` names are checked: a `.patch` name always classifies (the `.patch$` row), and a
+// name with an empty static head (`staged/{id}.md`) names no prefix at all — both are skipped
+// here on purpose. Glob forms (`staged/wrap-up-upstream-*.md`) are not placeholders and stay out
+// of scope. -> [{ file, id }] with id = head + '{n}', one per distinct head in the file.
+const PROSE_PLACEHOLDER_RE = /`[^`\n]*?staged\/([A-Za-z0-9._-]*)\{[^}`\n]*\}[^`\n]*?\.(md|patch)\b[^`\n]*`/g;
+const PROSE_NUMBERED_RE = /`[^`\n]*?staged\/([A-Za-z0-9._-]*-)\d+\.(md|patch)\b[^`\n]*`/g;
+
+function collectProseProducers(text, file) {
+  const heads = new Set();
+  for (const re of [PROSE_PLACEHOLDER_RE, PROSE_NUMBERED_RE]) {
+    for (const m of text.matchAll(re)) {
+      if (m[2] === 'patch' || m[1] === '') continue;
+      heads.add(m[1]);
+    }
+  }
+  return [...heads].map((head) => ({ file, id: `${head}{n}` }));
+}
+
+function collectProseProducersFromSkills() {
+  const out = [];
+  for (const f of walk(SKILLS_ROOT, '.md')) out.push(...collectProseProducers(fs.readFileSync(f, 'utf8'), rel(f)));
+  return out;
+}
+
+const probeOf = (p) => {
+  const head = headOf(p);
+  return head.endsWith('-') ? head + '1' : head;
+};
+
+// A mapped id that is also exempt would hide a real mapping behind an exemption (and
+// stage-item.js would skip a warning the console never needed to skip). `exemptionOf` is
+// injectable so the go-red control can pass a stub that exempts everything.
+function assertExemptionsDisjointFromMapped(producers, exemptionOf = stagingExemption) {
+  for (const p of producers) {
+    if (p.id === null) continue;
+    const probe = probeOf(p);
+    if (exemptionOf(probe) !== null && classifyStagedItem(probe + '.md').reason !== 'unmapped-prefix') {
+      throw new Error(`${p.file}: --id ${p.id} (probe ${probe}) is on STAGING_EXEMPTIONS but also classifies mapped — drop the exemption or the mapping`);
+    }
+  }
+}
+
+// A STAGING_EXEMPTIONS entry no scanned producer matches is stale: delete it.
+function assertNoStaleExemptions(producers, exemptions = STAGING_EXEMPTIONS) {
+  const probes = producers.filter((p) => p.id !== null).map(probeOf);
+  for (const [re] of exemptions) {
+    if (!probes.some((probe) => re.test(probe))) {
+      throw new Error(`STAGING_EXEMPTIONS entry ${re} matches no scanned producer — remove the stale exemption`);
+    }
+  }
+}
+
 function assertProducerDisposition(producers) {
   for (const p of producers) {
     if (p.id === null) throw new Error(`${p.file}: ${p.problem}`);
-    const head = headOf(p);
-    const probe = head.endsWith('-') ? head + '1' : head;
+    const probe = probeOf(p);
     const mapped = classifyStagedItem(probe + '.md').reason !== 'unmapped-prefix';
     if (!mapped && stagingExemption(probe) === null) {
       throw new Error(`${p.file}: --id ${p.id} (probe ${probe}) classifies unmapped-prefix and is not on STAGING_EXEMPTIONS — map it in resolve.js's SECTION_MAP or exempt it with a reason`);
@@ -168,4 +222,47 @@ test('control: a new fully dynamic --id call site outside DYNAMIC_ID_PREFIXES fa
   assert.throws(() => checkDynamicIds(collectMdProducers(fixture, 'plugin/skills/new/step.md')),
     /plugin\/skills\/new\/step\.md/);
   assert.doesNotThrow(() => checkDynamicIds(collectMdProducers(fixture, 'plugin/skills/tidy/step-6-auto.md')));
+});
+
+test('prose-named staged files: every static head is mapped or exempt', () => {
+  assertProducerDisposition(collectProseProducersFromSkills());
+});
+
+test('the prose scan finds the known prose-named producers (matcher floor)', () => {
+  const heads = new Set(collectProseProducersFromSkills().map(headOf));
+  for (const h of ['plan-citation-', 'translation-', 'premise-satisfied-', 'upstream-draft-', 'wrap-up-claude-md-', 'plan-retention-']) {
+    assert.ok(heads.has(h), `prose head ${h} not found — the prose matcher lost a call shape`);
+  }
+});
+
+test('go-red control: a prose-named staged file with an unmapped head is reported', () => {
+  const fixture = 'Stage a `staged/zz-unmapped-{n}.md` proposal for the console.';
+  assert.throws(() => assertProducerDisposition(collectProseProducers(fixture, 'plugin/skills/new/step.md')),
+    /plugin\/skills\/new\/step\.md.*zz-unmapped-/);
+  assert.doesNotThrow(() => assertProducerDisposition(collectProseProducers('stage a `staged/plan-citation-{n}.md`', 'a.md')));
+});
+
+test('prose matcher controls: .patch, empty heads, globs and the numbered form', () => {
+  assert.deepEqual(collectProseProducers('`staged/zz-{n}.patch` `staged/{id}.md` `staged/wrap-up-upstream-*.md`', 'a.md'), []);
+  assert.deepEqual(collectProseProducers('| `staged/translation-85.md` — brief', 'a.md'), [{ file: 'a.md', id: 'translation-{n}' }]);
+  assert.deepEqual(collectProseProducers('`staged/a-{x}.md` and `staged/a-{y}.md`', 'a.md'), [{ file: 'a.md', id: 'a-{n}' }]);
+});
+
+test('exempt and mapped are disjoint across every scanned producer (#3488)', () => {
+  assertExemptionsDisjointFromMapped([...collectProducers(), ...collectProseProducersFromSkills()]);
+});
+
+test('go-red control: a mapped id that is also exempt fails the disjointness assertion', () => {
+  const mapped = [{ file: 'x.md', id: 'docs-1' }];
+  assert.doesNotThrow(() => assertExemptionsDisjointFromMapped(mapped));
+  assert.throws(() => assertExemptionsDisjointFromMapped(mapped, () => 'x'), /x\.md.*docs-1.*also classifies mapped/);
+});
+
+test('every STAGING_EXEMPTIONS entry matches at least one scanned producer (no stale exemption)', () => {
+  assertNoStaleExemptions([...collectProducers(), ...collectProseProducersFromSkills()]);
+});
+
+test('go-red control: an exemption no producer matches is reported as stale', () => {
+  const stale = [...STAGING_EXEMPTIONS, [/^never-produced-/, 'a reason for an exemption that no producer needs']];
+  assert.throws(() => assertNoStaleExemptions(collectProducers(), stale), /never-produced-/);
 });

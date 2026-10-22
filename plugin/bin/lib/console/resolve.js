@@ -52,6 +52,12 @@ const SECTION_MAP = [
   // sibling-premise-disproof- (#3488): bin/materialize.js stages it as a note for a
   // human to read, not a change to apply — so it resolves pending.
   [/^sibling-premise-disproof-/, SECTIONS.PENDING, 'sibling-premise-disproof-note'],
+  // plan-citation- (#3488): wrap-up/cleanup-procedures.md stages a kept-plan citation
+  // proposal for a human to decide; the reason pins it pending so nothing auto-applies.
+  [/^plan-citation-/, SECTIONS.PENDING, 'cited-plan-kept'],
+  // translation- (#3488): flow/multi-spec.md stages a translated brief that the
+  // consolidated console shows under "Translated briefs"; a human reads it, so it resolves pending.
+  [/^translation-/, SECTIONS.PENDING, 'translated-brief'],
   [/^(wrap-up-skill|skills)(-|\b)/, SECTIONS.SKILL],
   // release-backfill- retired #2257 (git describe --contains replaced the
   // staged-backfill mechanism entirely — nothing stages that prefix anymore).
@@ -89,7 +95,7 @@ const CANONICAL_PREFIXES = [
   'review-unconfirmed-',
   'review-contested-', 'review-debate-',
   'polish-suggestion-', 'visual-review-', 'design-decision-', 'build-deviation-', 'simplify-', 'deepen-', 'sdd-ruling-',
-  'sibling-premise-disproof-',
+  'sibling-premise-disproof-', 'plan-citation-', 'translation-',
   'wrap-up-skill-', 'skills-',
   'wrap-up-doc-', 'tidy-doc-', 'docs-',
   'wrap-up-claude-md-', 'wrap-up-adr-',

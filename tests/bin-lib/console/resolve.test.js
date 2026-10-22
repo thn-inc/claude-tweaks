@@ -745,6 +745,8 @@ test('#3488 newly mapped producer prefixes classify to their section and reason'
   assert.deepStrictEqual(classifyStagedItem('premise-satisfied-7.md'), { section: 'Queue writes', reason: 'premise-satisfied-close-proposal' });
   assert.deepStrictEqual(classifyStagedItem('sibling-premise-disproof-7.md'), { section: 'Pending review', reason: 'sibling-premise-disproof-note' });
   assert.deepStrictEqual(classifyStagedItem('wrap-up-reflect-insights.md'), { section: 'Queue writes', reason: 'reflect-insights-table' });
+  assert.deepStrictEqual(classifyStagedItem('plan-citation-1.md'), { section: 'Pending review', reason: 'cited-plan-kept' });
+  assert.deepStrictEqual(classifyStagedItem('translation-85.md'), { section: 'Pending review', reason: 'translated-brief' });
   assert.deepStrictEqual(classifyStagedItem('docs-1.md'), { section: 'Documentation updates' });
   assert.deepStrictEqual(classifyStagedItem('skills-1.md'), { section: 'Skill updates' });
   for (const id of ['review-followup-1', 'build-followup-1', 'reconcile-live-run-archived']) {
@@ -754,6 +756,16 @@ test('#3488 newly mapped producer prefixes classify to their section and reason'
     classifyStagedItem('wrap-up-cleanup-ordering.md', '**Category:** observation\n'),
     { section: 'Pending review', reason: 'non-tangential-category:observation' },
   );
+});
+
+test('#3488: resolveAll never auto-applies a plan-citation or translation proposal — both resolve pending', () => {
+  const runDir = fixture({ staged: { 'plan-citation-1.md': 'cited by x', 'translation-85.md': 'brief' } });
+  const items = resolveAll({ runDir, policy: 'console-auto', deps: deps() }).items;
+  for (const id of ['plan-citation-1.md', 'translation-85.md']) {
+    const item = items.find((i) => i.id === id);
+    assert.ok(item, id);
+    assert.strictEqual(item.resolution, 'pending', id);
+  }
 });
 
 test('#3488: resolveAll never auto-files an upstream-draft hand-off — it resolves pending', () => {
