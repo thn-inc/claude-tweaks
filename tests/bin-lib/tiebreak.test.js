@@ -331,6 +331,18 @@ test('evidence verification: a whitespace-only difference verifies (AC10.1)', ()
   assert.equal(notWhitespaceOnly.reason, 'evidence-unverified');
 });
 
+test('evidence verification: a code span of any backtick run, with padding, quotes a backtick-led line', () => {
+  const lines = [...FILE_LINES];
+  lines[19] = '`const x` = readSync(fd);';
+  const readFile = () => lines.join('\n');
+  for (const wrapped of ['`` `const x` = readSync(fd); ``', '```` `const x` = readSync(fd);````', '``const x` = readSync(fd);`']) {
+    const r = resolve(FINDING, reply({ evidence: `plugin/bin/foo.js:20 ${wrapped}` }), { readFile });
+    assert.equal(r.outcome, 'confirmed', wrapped);
+  }
+  assert.deepEqual(parseTiebreakReply(reply({ evidence: 'a/b.js:7 `` `x` y ``' })).evidence, { path: 'a/b.js', line: 7, quote: '`x` y' });
+  assert.deepEqual(parseTiebreakReply(reply({ evidence: 'a/b.js:7 ``  ``' })).evidence, null);
+});
+
 test('evidence verification: a quote spanning adjacent lines verifies (AC10.1)', () => {
   const r = resolve(FINDING, reply({ evidence: 'plugin/bin/foo.js:20 `const x = readSync(fd); // filler line 21`' }));
   assert.equal(r.outcome, 'confirmed');

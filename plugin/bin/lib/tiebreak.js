@@ -19,8 +19,9 @@
 // `Field: value`, the field name matched case-insensitively:
 //   Verdict: confirmed | refuted | cant-tell        value lowercased
 //   Evidence: {path}:{line} {quote}                 quote = everything after the
-//       first whitespace following path:line; one wrapping pair of backticks or
-//       double quotes is stripped. An empty or whitespace-only quote, a line
+//       first whitespace following path:line; one wrapping pair of double
+//       quotes, or a Markdown code span (any equal backtick run, padding
+//       spaces dropped), is stripped. An empty or whitespace-only quote, a line
 //       below 1, or anything else gives evidence: null.
 //   Severity: {sev}                                 lowercased; a value outside
 //       SEVERITIES gives severity: null.
@@ -67,10 +68,18 @@ function unparsed() {
   };
 }
 
+// A Markdown code span: equal backtick runs on both ends, and one padding space
+// dropped from each side when both are present (how a quote that itself starts
+// or ends with a backtick is written). Unequal runs strip one backtick pair.
 function stripWrapper(s) {
-  if (s.length >= 2 && ((s[0] === '`' && s.endsWith('`')) || (s[0] === '"' && s.endsWith('"')))) {
-    return s.slice(1, -1);
+  if (s.length >= 2 && s[0] === '`' && s.endsWith('`')) {
+    const open = /^`+/.exec(s)[0].length;
+    const close = /`+$/.exec(s)[0].length;
+    if (open !== close || s.length <= 2 * open) return s.slice(1, -1);
+    const inner = s.slice(open, -close);
+    return /^ [\s\S]* $/.test(inner) && inner.trim() !== '' ? inner.slice(1, -1) : inner;
   }
+  if (s.length >= 2 && s[0] === '"' && s.endsWith('"')) return s.slice(1, -1);
   return s;
 }
 
