@@ -1,6 +1,5 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 
@@ -12,7 +11,7 @@ const INCIDENT_LOG = path.join(ROOT, 'docs/incident-log.md');
 // Whitespace-collapsed read, per skill-prose-conformance-tests' control-scan convention --
 // a hard-wrapped literal must not silently defeat these assertions.
 function collapsed(filePath) {
-  return fs.readFileSync(filePath, 'utf8').replace(/\s+/g, ' ');
+  return readText(filePath).replace(/\s+/g, ' ');
 }
 
 test('docs/hooks.md states the inform-tier relay rule once, inside the inform-tier run', () => {

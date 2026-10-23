@@ -18,7 +18,6 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 
@@ -61,7 +60,7 @@ function untaggedInvocations(text, label, exemptWholeFile) {
 }
 
 function scanFile(filePath) {
-  const text = fs.readFileSync(filePath, 'utf8');
+  const text = readText(filePath);
   return untaggedInvocations(text, path.relative(SKILLS, filePath), WHOLE_FILE_EXEMPT.has(filePath));
 }
 

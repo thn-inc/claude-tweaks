@@ -8,14 +8,14 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const LIFECYCLE_FILE = path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'pr-early-run-lifecycle.md');
 const CODE_MODE_STEPS_FILE = path.join(__dirname, '..', 'plugin', 'skills', 'review', 'code-mode-steps.md');
 const FLOW_SKILL_FILE = path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'SKILL.md');
 
-const read = (file) => fs.readFileSync(file, 'utf8');
+const read = (file) => readText(file);
 
 // Markdown source hand-wraps prose at ~90-100 columns, so a multi-word phrase can straddle a
 // line break in the file even though it reads as one continuous phrase. Collapse all

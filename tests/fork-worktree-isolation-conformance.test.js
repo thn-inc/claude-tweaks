@@ -1,6 +1,5 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 
@@ -14,7 +13,7 @@ const SKILL_GRAPH = path.join(ROOT, 'docs/skill-graph.md');
 // Whitespace-collapsed read, per skill-prose-conformance-tests' control-scan convention --
 // a hard-wrapped literal must not silently defeat these assertions.
 function collapsed(filePath) {
-  return fs.readFileSync(filePath, 'utf8').replace(/\s+/g, ' ');
+  return readText(filePath).replace(/\s+/g, ' ');
 }
 
 test('fork-worktree-isolation.md exists and carries the isolation mandate', () => {

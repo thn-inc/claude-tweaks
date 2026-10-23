@@ -133,7 +133,7 @@ test('AC2.1 retired limit sentences are gone from every skill file', () => {
     const files = fs.readdirSync(dir, { recursive: true }).filter((f) => String(f).endsWith('.md'));
     const hits = [];
     for (const f of files) {
-      const c = collapse(fs.readFileSync(path.join(dir, String(f)), 'utf8'));
+      const c = collapse(readText(path.join(dir, String(f))));
       for (const phrase of retired) if (c.includes(phrase)) hits.push(hitId(f, phrase));
     }
     return { files, hits };

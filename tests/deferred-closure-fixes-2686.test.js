@@ -29,14 +29,14 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const PR_EARLY_PATH = path.join(REPO_ROOT, 'plugin', 'skills', '_shared', 'pr-early-run-lifecycle.md');
 const PR_CHECKLIST_REFRESH_PATH = path.join(REPO_ROOT, 'plugin', 'skills', '_shared', 'pr-checklist-refresh.md');
 
-function read(p) { return fs.readFileSync(p, 'utf8'); }
+function read(p) { return readText(p); }
 function norm(s) { return s.replace(/\s+/g, ' '); }
 
 test('#2686/#3136: pr-early-run-lifecycle.md defines the deferred-closure decisions.md entry shape for both run shapes', () => {

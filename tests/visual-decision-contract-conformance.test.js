@@ -26,7 +26,7 @@ function stripTombstoneLines(text) {
 }
 
 function readNonTombstone(file) {
-  return stripTombstoneLines(fs.readFileSync(file, 'utf8'));
+  return stripTombstoneLines(readText(file));
 }
 
 test('AC1: the contract file states each of the five event shapes exactly once', () => {

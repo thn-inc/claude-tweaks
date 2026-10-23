@@ -34,10 +34,14 @@ const { readText } = require('./helpers/read-skill');
 // `read(rel)` helper shape that #3890 and #3894 fixed — is `ambiguous`, and is
 // flagged too: routing a non-markdown text read through `readText` costs nothing.
 //
+// A path built only from a named function's parameters (`function read(...segments)`,
+// `const read = (p) => …`) is repo-rooted when some call of that function in the file
+// passes a repo-rooted argument, followed up to three helper levels.
+//
 // Recall limits (by design, stated so a green scan is not read as more):
-//   (a) an arrow or function parameter carries no binding, so a path that reaches
-//       a read only through a callback parameter (`files.map((f) => read(f))`
-//       where `read` reads `f` raw) is judged by the read's own argument text;
+//   (a) a function reached only as a value (`files.map(read)`), an anonymous
+//       callback's parameter, or a method on an object literal is not followed to
+//       its callers, so its read is judged by its own argument text;
 //   (b) destructuring (`const { dir } = fx`) and object properties (`ctx.root`)
 //       are not bindings;
 //   (c) a read through an alias (`const rd = fs.readFileSync; rd(p, 'utf8')`) is
@@ -56,7 +60,7 @@ const ALLOWLIST = {};
 // Repo-rooted text reads the live scan sees (raw + readText) when this landed.
 // Fewer means the taint or the call matcher stopped matching, not that the
 // reads went away — never lower it to make the suite green.
-const ROOTED_READ_FLOOR = 941;
+const ROOTED_READ_FLOOR = 964;
 
 const OPEN = '([{';
 const CLOSE = ')]}';
@@ -214,15 +218,92 @@ function classify(ev, before) {
 
 const lineAt = (code, i) => code.slice(0, i).split('\n').length;
 
+// Named functions — `function f(…) {…}`, `const f = (…) => …`, `const f = x => …`,
+// `const f = function (…) {…}` — with their parameter names and body span.
+const FUNCTION_DEF = /(?<![\w$.])function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(|(?<![\w$.])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:function\s*\*?\s*(?:[A-Za-z_$][\w$]*)?\s*(\()|(\()|([A-Za-z_$][\w$]*)\s*=>)/g;
+
+function paramNames(text) {
+  const names = [];
+  let depth = 0;
+  let seg = '';
+  const flush = () => {
+    const head = seg.split('=')[0];
+    for (const id of head.match(/[A-Za-z_$][\w$]*/g) || []) names.push(id);
+    seg = '';
+  };
+  for (const c of text) {
+    if (OPEN.includes(c)) depth++;
+    else if (CLOSE.includes(c)) depth--;
+    if (c === ',' && depth === 0) flush();
+    else seg += c;
+  }
+  flush();
+  return names;
+}
+
+function collectFunctions(code) {
+  const out = [];
+  const re = new RegExp(FUNCTION_DEF.source, 'g');
+  let m;
+  while ((m = re.exec(code))) {
+    const name = m[1] || m[2];
+    let params;
+    let after;
+    if (m[5]) {
+      params = [m[5]];
+      after = re.lastIndex;
+    } else {
+      const close = closeOf(code, re.lastIndex);
+      params = paramNames(code.slice(re.lastIndex, close));
+      after = close + 1;
+      const arrow = /^\s*=>/.exec(code.slice(after));
+      if (m[4] && !arrow) continue; // `const x = (a + b) * c` is not a function
+      if (arrow) after += arrow[0].length;
+    }
+    while (after < code.length && /\s/.test(code[after])) after++;
+    const bodyEnd = code[after] === '{' ? closeOf(code, after + 1) : exprEnd(code, after);
+    out.push({ name, params, defAt: m.index, bodyStart: after, bodyEnd });
+  }
+  return out;
+}
+
+// Where a read's path comes from: the evidence ({ keep, code }) of a repo-rooted
+// origin, or null. A path rooted in its own text or bindings is direct; a path
+// built only from an enclosing function's parameters is rooted when some call of
+// that function passes a rooted argument — the `function read(...segments)` and
+// `const read = (p) => …` helpers whose callers hand in the repo directory.
+function pathOrigin(argKeep, argCode, at, ctx, depth = 0) {
+  if (isRooted(argCode, at, ctx.byName)) return evidence(argKeep, argCode, at, ctx.byName);
+  if (depth >= 3) return null;
+  const enclosing = ctx.functions.filter((f) => f.bodyStart <= at && at < f.bodyEnd).sort((a, b) => b.bodyStart - a.bodyStart);
+  for (const fn of enclosing) {
+    if (!fn.params.some((p) => nameRe(p).test(argCode))) continue;
+    let found = null;
+    const calls = new RegExp(`(?<![\\w$.])${fn.name.replace(/\$/g, '\\$')}\\s*\\(`, 'g');
+    let c;
+    while ((c = calls.exec(ctx.code))) {
+      if (c.index === fn.defAt || /function\s*\*?\s*$/.test(ctx.code.slice(Math.max(0, c.index - 12), c.index))) continue;
+      const close = closeOf(ctx.code, calls.lastIndex);
+      const origin = pathOrigin(ctx.keep.slice(calls.lastIndex, close), ctx.code.slice(calls.lastIndex, close), c.index, ctx, depth + 1);
+      if (origin) found = found ? { keep: found.keep + '\n' + origin.keep, code: found.code + '\n' + origin.code } : origin;
+    }
+    if (found) return found;
+  }
+  return null;
+}
+
 // Every repo-rooted text read in `raw` (a test file's source):
 // { verdict, sites: [{ line, kind: 'md'|'ambiguous'|'non-md', via: 'raw'|'readText' }] }.
 // A `via: 'raw'` site whose kind is not 'non-md' is an offender.
 function scanRawMarkdownReads(raw) {
   const keep = stripComments(raw);
-  const code = stripComments(raw, { literals: 'blank' });
+  // A spread's `...` is blanked (same length) so `...segments` reads as the name
+  // `segments`, not a property access.
+  const code = stripComments(raw, { literals: 'blank' }).replace(/\.\.\./g, '   ');
   const verdict = stripperVerdict(raw, keep);
   const bindings = collectBindings(keep, code);
   markRooted(bindings);
+  const ctx = { keep, code, byName: bindings.byName, functions: collectFunctions(code) };
   const sites = [];
   const raws = new RegExp(RAW_READ.source, 'g');
   let m;
@@ -233,8 +314,9 @@ function scanRawMarkdownReads(raw) {
     const argCode = code.slice(open, firstEnd);
     const restCode = code.slice(firstEnd, close).replace(/^\s*,/, '').trim();
     const textMode = (restCode !== '' && !/^(?:null|undefined)$/.test(restCode)) || /^\s*\.\s*toString\s*\(/.test(code.slice(close + 1));
-    if (!textMode || !isRooted(argCode, m.index, bindings.byName)) continue;
-    const ev = evidence(keep.slice(open, firstEnd), argCode, m.index, bindings.byName);
+    if (!textMode) continue;
+    const ev = pathOrigin(keep.slice(open, firstEnd), argCode, m.index, ctx);
+    if (!ev) continue;
     const before = code.slice(Math.max(0, m.index - 40), m.index).replace(/(?:[\w$]+\s*\.\s*)+$/, '');
     sites.push({ line: lineAt(code, m.index), kind: classify(ev, before), via: 'raw' });
   }
@@ -242,8 +324,8 @@ function scanRawMarkdownReads(raw) {
   while ((m = helpers.exec(code))) {
     if (/function\s+$/.test(code.slice(Math.max(0, m.index - 12), m.index))) continue;
     const open = helpers.lastIndex;
-    const argCode = code.slice(open, Math.min(exprEnd(code, open), closeOf(code, open)));
-    if (isRooted(argCode, m.index, bindings.byName)) sites.push({ line: lineAt(code, m.index), kind: 'md', via: 'readText' });
+    const argEnd = Math.min(exprEnd(code, open), closeOf(code, open));
+    if (pathOrigin(keep.slice(open, argEnd), code.slice(open, argEnd), m.index, ctx)) sites.push({ line: lineAt(code, m.index), kind: 'md', via: 'readText' });
   }
   sites.sort((a, b) => a.line - b.line);
   return { verdict, sites };
@@ -303,6 +385,31 @@ test('AC1.1 go-red on the live tree: reverting a migrated readText call back to 
 test('the read(rel) helper shape #3890 and #3894 fixed is flagged as ambiguous', () => {
   const s = src("const ROOT = path.join(__dirname, '..');", "const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');");
   assert.deepEqual(scanRawMarkdownReads(s).sites, [{ line: L(2), kind: 'ambiguous', via: 'raw' }]);
+});
+
+test('a helper whose path arrives only through its parameters is flagged when a caller passes a repo path', () => {
+  const s = src(
+    "const SKILL_DIR = path.join(__dirname, '..', 'plugin', 'skills', 'backlog');",
+    'function read(...segments) {',
+    "  return fs.readFileSync(path.join(...segments), 'utf8');",
+    '}',
+    "const read2 = (p) => fs.readFileSync(p, 'utf8');",
+    "const a = read(SKILL_DIR, 'attention-mode.md');",
+    "const b = read2(path.join(SKILL_DIR, 'refine-mode.md'));",
+  );
+  assert.deepEqual(scanRawMarkdownReads(s).sites, [
+    { line: L(3), kind: 'md', via: 'raw' },
+    { line: L(5), kind: 'md', via: 'raw' },
+  ]);
+});
+
+test('a parameter-only helper called only with temp paths is not flagged', () => {
+  const s = src(
+    "const readLog = (dir) => fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8');",
+    "const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'x-'));",
+    'const log = readLog(tmp);',
+  );
+  assert.deepEqual(offenderLines(s), []);
 });
 
 test('a path bound to a variable first, then read, is flagged through the binding chain', () => {
