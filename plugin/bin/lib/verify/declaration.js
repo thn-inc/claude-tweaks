@@ -154,12 +154,27 @@ function readDeclaration(filePath, fsImpl = fs) {
     }
   }
 
+  // generated (#2987): path globs the declared checks themselves regenerate
+  // (a build rewriting a tracked type-declaration file, say) — verify.js's
+  // pass-stamp dirty gate ignores a dirty path that matches one of these,
+  // never the general report's own `dirty` (other readers rely on that one
+  // meaning "the tree has any uncommitted change"). Same shape as
+  // `preExisting` just above: an array of path/glob strings, default [].
+  let generated = [];
+  if (raw.generated !== undefined) {
+    if (!Array.isArray(raw.generated) || raw.generated.some((f) => typeof f !== 'string')) {
+      errors.push('generated: must be an array of path glob strings');
+    } else {
+      generated = raw.generated;
+    }
+  }
+
   if (errors.length) return { ok: false, errors };
   return {
     ok: true,
     decl: {
       checks: { types: typeof checks.types === 'string' ? checks.types : null, lint: typeof checks.lint === 'string' ? checks.lint : null, tests },
-      suites, toolScoped, retry, rules, flaky, preExisting,
+      suites, toolScoped, retry, rules, flaky, preExisting, generated,
     },
   };
 }

@@ -168,6 +168,25 @@ test('preExisting must be an array of strings — a non-array or a non-string en
   assert.match(badEntry.errors.join('\n'), /preExisting: must be an array of path or glob strings/);
 });
 
+test('generated defaults to [] and parses to the declared array verbatim (#2987)', () => {
+  const dflt = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { tests: 'npm test' }, rules: [] }) }));
+  assert.deepStrictEqual(dflt.decl.generated, []);
+  const declared = readDeclaration('/d.json', fakeFs({
+    '/d.json': JSON.stringify({ checks: { tests: 'npm test' }, rules: [], generated: ['next-env.d.ts', 'packages/*/dist/**'] }),
+  }));
+  assert.strictEqual(declared.ok, true, JSON.stringify(declared.errors));
+  assert.deepStrictEqual(declared.decl.generated, ['next-env.d.ts', 'packages/*/dist/**']);
+});
+
+test('generated must be an array of strings — a non-array or a non-string entry is an error naming the field (#2987)', () => {
+  const notArray = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { tests: 'x' }, rules: [], generated: 'next-env.d.ts' }) }));
+  assert.strictEqual(notArray.ok, false);
+  assert.match(notArray.errors.join('\n'), /generated: must be an array of path glob strings/);
+  const badEntry = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { tests: 'x' }, rules: [], generated: ['next-env.d.ts', 7] }) }));
+  assert.strictEqual(badEntry.ok, false);
+  assert.match(badEntry.errors.join('\n'), /generated: must be an array of path glob strings/);
+});
+
 test('a declaration with no checks.tests is valid — bookkeeping-only rules, zero suites (#1924)', () => {
   const r = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { lint: 'eslint .' }, rules: [{ match: 'docs/plans/*-ledger.md', suites: [], static: false }, { match: 'src/**', suites: '*', static: true }] }) }));
   assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
