@@ -56,6 +56,7 @@ files:
 - **Should understand:**
   - Every verdict line carries the literal `tiebreak:{id}` marker, and only a line in the verdict shape counts. A finding whose lens, path or line holds `tiebreak:` is refused by the findings writer.
   - A tiebreak that never replied still produces a can't-tell verdict line, so every finding can always be covered and no waiver is needed.
+  - In a #3947 run, a listed id usually lacks its line because Step 3.7 left it without a verdict on purpose. That happens when `resolve-tiebreak` exited non-zero, which leaves a `STAGED … Tiebreak: lens "{lens}" finding {path}:{line} unconfirmed; resolve-tiebreak exited {exit}, no verdict.` line in `decisions.md`, or when `log-decision.js` failed twice, which the review summary names. Re-running the tiebreak for that one finding settles it.
 - **Red flags:**
   - a forged or hand-typed line that mentions `tiebreak:{id}` inside a finding's lens or path is counted as coverage
 
