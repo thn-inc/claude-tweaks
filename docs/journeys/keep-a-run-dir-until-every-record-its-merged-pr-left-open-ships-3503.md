@@ -53,7 +53,7 @@ files:
   - The unfinished record closes. This can happen through a fresh run's PR (the documented mid-series recovery: #3311 closed via PR #3433), at `/claude-tweaks:release`, or by hand.
   - On the next pass, `settleMergedPartial`'s `resolveIssueStateByNumber` probe reads CLOSED, the record counts as satisfied, and the run archives through the ordinary path (`localHasMerge`, then `archiveRunDir`).
 - **Should feel:** Hands-off. Cleanup converges without the maintainer touching the old run directory.
-- **Should understand:** An issue-state probe that fails keeps the record unclosed for this pass, so the check fails closed and never archives on evidence it could not read.
+- **Should understand:** An issue-state probe that fails keeps the record unclosed for this pass, so the check fails closed and never archives on evidence it could not read. Since #3945 a settled run still passes the tiebreak coverage check before it archives: when its `review-findings.json` lists a finding with no tiebreak verdict line, or is present but malformed, the pass skips it with `tiebreak-coverage-missing` or `tiebreak-artifact-invalid` instead. A run dir kept in `pipelines/` under one of those reasons is not this step's red flag (`clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`).
 - **Red flags:** The old run directory still sitting in `pipelines/` after every one of its records is closed.
 
 ### 5. Projects where closing keywords never link: a `dev → main` integration branch, or `work-backend: local-files`
