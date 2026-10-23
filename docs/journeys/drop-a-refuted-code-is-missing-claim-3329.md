@@ -32,9 +32,9 @@ files:
 - **Should understand:**
   - The check passes only when the named construct appears in the claimed form: defined, exported, or taking that parameter. A bare token match elsewhere in the file does not count.
   - Found → the claim is refuted, logged `AUTO … Not staged.`, and dropped.
-  - Not found, or an ambiguous hit → it stays `unconfirmed` and is staged as before.
+  - Not found, or an ambiguous hit → it stays `unconfirmed`, is staged as before, and goes on to Step 3.7's tiebreak.
   - At `medium`, the check runs before the cross-lens corroboration pass, so a refuted claim is never cross-lens input.
-  - The check only refutes. Raising a finding to `confirmed` still needs the Direct-verification override.
+  - The check only refutes. Raising a finding to `confirmed` takes the Direct-verification override or a `confirmed` Step 3.7 tiebreak verdict (`get-a-verdict-on-every-unverified-review-finding-3947.md`).
 - **Red flags:**
   - A real defect ("`foo()` is missing parameter `timeout`") is logged as refuted because `timeout` appears in some other function.
   - The check reads the plan, spec or review bundle instead of the live file.
@@ -43,7 +43,7 @@ files:
 - **URL:** the Review Console's Low-confidence subsection
 - **Action:** scan the low-confidence items for the refuted claim.
 - **Should feel:** the list holds only claims that still need a human. No item sends you to look for code that is already there.
-- **Should understand:** every other kind of disagreement, such as a different defect or a severity split, still lands here as `unconfirmed`, exactly as before.
+- **Should understand:** every other kind of disagreement, such as a different defect, stays `unconfirmed` and goes to Step 3.7's tiebreak first. Only a finding the tiebreak could not settle, at `medium` severity or above, lands here. A confirmed one is routed, a refuted one is dropped, and a `low`/`info` can't-tell one goes to the digest. A pair that agrees on location and substance but splits across the severity buckets is not a disagreement: it is `confirmed` at the lower severity.
 - **Red flags:**
   - The refuted absence claim still appears as a low-confidence item.
   - A genuinely missing construct (the grep found nothing) is absent from both the Console and `decisions.md`.

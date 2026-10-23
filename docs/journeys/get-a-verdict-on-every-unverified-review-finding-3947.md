@@ -71,4 +71,5 @@ files:
 - Related journeys:
   - `clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`: the archive side.
   - `keep-a-second-reader-in-a-dispatched-review-3078.md`: the dispatched-reviewer nesting this step reuses.
-  - `act-on-a-contested-claim.md`: how contested findings arise.
+  - `drop-a-refuted-code-is-missing-claim-3329.md`: how a one-agent `unconfirmed` finding arises, and how a refuted absence claim is dropped before it reaches this step.
+  - `trust-a-defect-several-review-lenses-flagged-3604.md`: the `medium`-tier pass that confirms some `unconfirmed` findings before this step.
