@@ -4392,6 +4392,39 @@ test('clean-status sweep: a tiebreak coverage skip carries missing and hint (#39
   });
 });
 
+// #3945 residual b: a closed run skipped for a tiebreak gap never converges on
+// its own, so the clean sweep's onSkip must feed it into the same
+// structurally-stuck escalation the main loop uses — for both tiebreak reasons.
+for (const [reason, findings] of [
+  ['tiebreak-coverage-missing', TB_FINDINGS],
+  ['tiebreak-artifact-invalid', { not: 'an array' }],
+]) {
+  test(`clean-status sweep: a ${reason} skip enters the structurally-stuck residue counter (#3945)`, { skip: PATH_STUB_SKIP }, () => {
+    const runId = `2026-10-22T090000-clean-3945-${reason}`;
+    const { root, runDir, featureSha } = fixtureCleanUnarchivedRun({ runId });
+    fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify(findings));
+    const backdated = new Date(Date.now() - STRUCTURALLY_STUCK_TTL_MS * 2);
+    fs.utimesSync(runDir, backdated, backdated);
+    const wrapper = installGhWrapper([{
+      number: 99, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+      mergeCommit: { oid: featureSha },
+    }]);
+    let result;
+    try {
+      result = archiveMerged({ cwd: root });
+    } finally {
+      wrapper.restore();
+    }
+    const skip = result.skipped.find((s) => s.runDir === runDir);
+    assert.ok(skip, `expected ${runDir} reported in skipped, got ${JSON.stringify(result)}`);
+    assert.equal(skip.reason, reason);
+    assert.ok(
+      listResidueFailures(root).some((f) => f.reason === 'structurally-stuck' && f.path === runDir),
+      `the clean sweep must start the structurally-stuck residue counter for a ${reason} skip`,
+    );
+  });
+}
+
 test('branch-joined path: an invalid findings artifact skip carries its hint (#3945 F6)', { skip: PATH_STUB_SKIP }, () => {
   const { runDir, result } = fixtureOrdinaryMergedNoConsole(
     'feat-3945-tb-invalid', '2026-10-22T090000-record-3945-tb-invalid', [], {}, { findings: { not: 'an array' } },

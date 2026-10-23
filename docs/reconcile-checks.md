@@ -209,10 +209,10 @@ each carrying a recovery `hint`:
 
 Both are in `STRUCTURALLY_STUCK_REASONS`, because only a re-run of the findings writer and the
 tiebreak, or deleting a pre-tiebreak artifact, converges them. Unlike the record check, the
-`status: clean` sweep applies this gate as well, but its `onSkip` does not track either reason, so
-a closed run skipped here never escalates. `hooks.js archive-run` refuses on the same two
-conditions, after its own guards, and `review-coordination.js check-coverage` prints the same
-coverage result without refusing anything.
+`status: clean` sweep applies this gate as well, and its `onSkip` tracks both reasons, so a closed
+run skipped here escalates through the same structurally-stuck path as the main loop.
+`hooks.js archive-run` refuses on the same two conditions, after its own guards, and
+`review-coordination.js check-coverage` prints the same coverage result without refusing anything.
 
 **Residue pruning.** After every `archive` pass, `cache.js`'s `pruneResidueFailures` drops any
 `residueFailures` entry (reason-agnostic — `move-failed`, `structurally-stuck`, any future reason)
