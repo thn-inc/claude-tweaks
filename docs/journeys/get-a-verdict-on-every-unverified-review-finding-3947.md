@@ -42,6 +42,7 @@ files:
 - **Should understand:**
   - Every reply goes through `resolve-tiebreak`, which checks the quoted line against the file. An unusable reply still yields a can't-tell verdict, so every finding gets a line.
   - A vacuity claim (lens 3f) cannot be confirmed by reading. Only an executed run confirms it, so a `confirmed` reply on one counts as can't-tell.
+  - A failed, empty, timed-out or non-`DONE` agent is re-dispatched once as a fresh agent, and only a second failure resolves can't-tell. A dispatched reviewer skips that re-dispatch for a timed-out agent, whose keep-alive bound is already spent, and reads the finding inline instead. It also reads inline when it has no `Agent` tool or the re-dispatch fails, and names each inline verdict in a `Tiebreak caveat:` line.
 - **Red flags:**
   - a finding is missing from the artifact
   - an agent prompt carries the reporter's evidence
@@ -59,6 +60,7 @@ files:
   - A `confirmed` verdict replaces the console item when the earlier STAGED line carries `lens "{lens}"` and `{path}:{line}`.
   - A contested finding's `staged/review-contested-{N}.md` still shows until the console sub-issue lands.
   - The run cannot archive while a listed finding lacks a verdict line (`clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`).
+  - A finding has no verdict when its `resolve-tiebreak` call exits non-zero, or when `log-decision.js` fails twice to write its line. Standalone, it is listed as `no verdict (resolve-tiebreak exited {exit})`. In a pipeline run, the summary names it and the archive gate refuses the run.
 - **Red flags:**
   - a can't-tell finding at `medium` or above appears in neither the console nor the closing output
   - a confirmed finding still shows as Low-confidence at the console
