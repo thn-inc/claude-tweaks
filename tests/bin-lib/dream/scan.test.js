@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 const {
   listTranscriptFiles,
   extractErrorFindings,
@@ -287,7 +288,7 @@ test('redact: a huge keyword-bearing tool output stays fast (input is capped bef
 
 test('dream-pass.md names exactly the credential words SECRET_NAME matches, and each one redacts', () => {
   // Prose/code twin: the doc's word list and the regex alternation were born out of sync once (PASSWD, #2968).
-  const doc = fs.readFileSync(path.join(__dirname, '../../../plugin/skills/harness-health/dream-pass.md'), 'utf8').replace(/\s+/g, ' ');
+  const doc = readText(path.join(__dirname, '../../../plugin/skills/harness-health/dream-pass.md')).replace(/\s+/g, ' ');
   const docMatch = doc.match(/where NAME contains ([A-Z_/]+),/);
   assert.ok(docMatch, 'dream-pass.md credential-word list not found');
   const docWords = docMatch[1].split('/').sort();

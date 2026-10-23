@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 const {
   registerHouseSectionOrderTest,
   registerInteractionStyleTest,
@@ -11,7 +12,7 @@ const {
 } = require('../health-core/skill-md-house-checks');
 
 const SKILL = path.resolve(__dirname, '..', '..', '..', 'plugin', 'skills', 'harness-health', 'SKILL.md');
-const read = () => fs.readFileSync(SKILL, 'utf8');
+const read = () => readText(SKILL);
 
 test('exists', () => {
   assert.ok(fs.existsSync(SKILL), `SKILL.md not found at ${SKILL}`);
@@ -41,9 +42,7 @@ registerPipelineRunDirTest(test, assert, read);
 test('docs/skill-graph.md records the edges to /wrap-up, /init, /tidy, /backlog, /routine', () => {
   // These edges used to be asserted against this skill's own Relationship table.
   // That table is gone; the edges live in the graph, which uses the short form.
-  const graph = fs.readFileSync(
-    path.join(__dirname, '..', '..', '..', 'docs', 'skill-graph.md'), 'utf8',
-  );
+  const graph = readText(path.join(__dirname, '..', '..', '..', 'docs', 'skill-graph.md'));
   for (const s of ['/wrap-up', '/init', '/tidy', '/backlog', '/routine']) {
     assert.ok(graph.includes(s), `docs/skill-graph.md is missing the edge to ${s}`);
   }
@@ -67,7 +66,7 @@ registerRequiredTokenTests(test, assert, read, [
 // file that now owns them, not against SKILL.md.
 
 const FILING = path.resolve(__dirname, '..', '..', '..', 'plugin', 'skills', 'harness-health', 'filing.md');
-const readFiling = () => fs.readFileSync(FILING, 'utf8');
+const readFiling = () => readText(FILING);
 
 test('filing.md exists and SKILL.md Step 7 delegates to it', () => {
   assert.ok(fs.existsSync(FILING), `filing.md not found at ${FILING}`);
@@ -128,7 +127,7 @@ test('documents the wontfix suppression and the dual fingerprint marker (legacy 
 // tests/bin-lib/docs-health/skill-md.test.js.
 
 const JUDGE = path.resolve(__dirname, '..', '..', '..', 'plugin', 'skills', 'harness-health', 'judge-procedure.md');
-const readJudge = () => fs.readFileSync(JUDGE, 'utf8');
+const readJudge = () => readText(JUDGE);
 // The inlinable body is everything below the first horizontal rule; the lead
 // above it is meta ("how this file is used") and is NOT sent to agents.
 const readJudgeBody = () => readJudge().split(/^---$/m).slice(1).join('---');

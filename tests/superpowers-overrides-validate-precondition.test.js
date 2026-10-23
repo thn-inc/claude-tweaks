@@ -13,13 +13,13 @@
 // tests/specify-auto-continue-conformance.test.js rather than freezing a fixture.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 
 function overridesLine(...segments) {
-  const text = fs.readFileSync(path.join(ROOT, ...segments), 'utf8');
+  const text = readText(path.join(ROOT, ...segments));
   return text.split('\n').find((line) => line.includes('Superpowers overrides'));
 }
 

@@ -11,8 +11,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const PLUGIN = path.join(__dirname, '..', 'plugin');
 const TASK_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'task-prompt.md');
@@ -97,13 +97,13 @@ function gapStatus(text, gap) {
 }
 
 test('task-prompt.md fenced blocks and the Context-pack numbered list cite composed bundles, not _shared/ paths', () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   const offenders = sharedOffenders(governedLines(text), { gaps: GAPS });
   assert.deepStrictEqual(offenders, [], `un-exempted _shared/ citation(s):\n${offenders.join('\n')}`);
 });
 
 test('the compose-context.js procedure is dispatcher-facing (outside the governed region) while item 5 stays governed and _shared/-free', () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   const governed = governedLines(text);
   const composeLines = text.split('\n').filter((l) => l.includes('compose-context.js'));
   assert.equal(composeLines.length, 2, `expected exactly two compose-context.js lines, found ${composeLines.length}`);
@@ -116,14 +116,14 @@ test('the compose-context.js procedure is dispatcher-facing (outside the governe
 });
 
 test('the documented gap list is not stale — each gap still occurs on a governed, non-fallback-shaped line', () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   for (const gap of GAPS) {
     assert.equal(gapStatus(text, gap), 'ok', `gap is stale or missing (fix the citation or shrink GAPS): ${gap}`);
   }
 });
 
 test('the gap stale-check can detect a fallback-shaped or vanished gap (discrimination proof, every gap)', () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   for (const gap of GAPS) {
     const lines = text.split('\n');
     const idx = lines.findIndex((l) => l.includes(gap));
@@ -139,13 +139,13 @@ test('the gap stale-check can detect a fallback-shaped or vanished gap (discrimi
 });
 
 test('review/step3-lens-dispatch.md fenced blocks never cite _shared/ at all', () => {
-  const text = fs.readFileSync(LENS_DISPATCH, 'utf8');
+  const text = readText(LENS_DISPATCH);
   const offenders = fencedBlocks(text).flat().filter((line) => line.includes('_shared/'));
   assert.deepStrictEqual(offenders, [], `_shared/ citation inside a dispatched fenced block:\n${offenders.join('\n')}`);
 });
 
 test('task-prompt.md composes exactly one claims bundle and one merge bundle before dispatch', () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   const claimsLines = text.split('\n').filter((l) => l.includes('--step claims'));
   const mergeLines = text.split('\n').filter((l) => l.includes('--step merge'));
   assert.equal(claimsLines.length, 1, `expected exactly one --step claims line, found ${claimsLines.length}`);
@@ -160,7 +160,7 @@ test('task-prompt.md composes exactly one claims bundle and one merge bundle bef
 });
 
 test('the second-call template still runs whole skills via /claude-tweaks:flow, and wrap-up composes its own merge bundle', () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   const secondCallBlock = fencedBlocks(text)[1];
   assert.ok(secondCallBlock, 'expected a second fenced block (the second-call template)');
   const joined = secondCallBlock.join('\n');
@@ -178,7 +178,7 @@ test('the second-call template still runs whole skills via /claude-tweaks:flow, 
 });
 
 test('the _shared/ citation predicate can actually go red (discrimination proof)', () => {
-  const text = fs.readFileSync(TASK_PROMPT, 'utf8');
+  const text = readText(TASK_PROMPT);
   // Doctor a copy: replace the first call's fenced block content with one that cites a raw
   // _shared/ path with no fallback clause on the line.
   const doctored = text.replace(

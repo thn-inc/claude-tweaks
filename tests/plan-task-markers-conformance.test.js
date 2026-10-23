@@ -11,13 +11,13 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 
 const { TASK_MARKER_ROLES, TASK_MARKER_RISKS } = require('../plugin/bin/lib/plan-audit/parser');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+const read = (...p) => readText(path.join(ROOT, ...p));
 
 const sorted = (arr) => [...arr].sort();
 

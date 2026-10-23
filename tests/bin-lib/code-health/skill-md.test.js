@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 const {
   registerHouseSectionOrderTest,
   registerInteractionStyleTest,
@@ -11,7 +12,7 @@ const {
 } = require('../health-core/skill-md-house-checks');
 
 const SKILL = path.resolve(__dirname, '..', '..', '..', 'plugin', 'skills', 'code-health', 'SKILL.md');
-const read = () => fs.readFileSync(SKILL, 'utf8');
+const read = () => readText(SKILL);
 
 test('frontmatter declares the canonical name', () => {
   assert.match(read(), /^name: code-health$/m);
@@ -37,9 +38,7 @@ registerPipelineRunDirTest(test, assert, read);
 test('docs/skill-graph.md records the edges to /specify, /capture, /tidy, /flow', () => {
   // These edges used to be asserted against this skill's own Relationship table.
   // That table is gone; the edges live in the graph, which uses the short form.
-  const graph = fs.readFileSync(
-    path.join(__dirname, '..', '..', '..', 'docs', 'skill-graph.md'), 'utf8',
-  );
+  const graph = readText(path.join(__dirname, '..', '..', '..', 'docs', 'skill-graph.md'));
   for (const s of ['/specify', '/capture', '/tidy', '/flow']) {
     assert.ok(graph.includes(s), `docs/skill-graph.md is missing the edge to ${s}`);
   }
@@ -58,7 +57,7 @@ test('v2 SKILL.md: exists', () => {
  '## Next Actions', '## Routine Configuration',
 ].forEach((anchor) => {
   test(`v2 SKILL.md: contains section '${anchor}'`, () => {
-    const content = fs.readFileSync(skillMdPath, 'utf8');
+    const content = readText(skillMdPath);
     assert.ok(content.includes(anchor), `missing section: ${anchor}`);
   });
 });
@@ -81,22 +80,22 @@ registerNoEmojiTest(test, assert, read);
 const ciIntegrationPath = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'code-health', 'ci-integration.md');
 
 test('v2 SKILL.md: points to ci-integration.md for CI hooks', () => {
-  const content = fs.readFileSync(skillMdPath, 'utf8');
+  const content = readText(skillMdPath);
   assert.ok(content.includes('ci-integration.md'), 'missing pointer to ci-integration.md');
 });
 
 test('ci-integration.md: contains section \'## Regression and Risk Gating\'', () => {
-  const content = fs.readFileSync(ciIntegrationPath, 'utf8');
+  const content = readText(ciIntegrationPath);
   assert.ok(content.includes('## Regression and Risk Gating'), 'missing section: ## Regression and Risk Gating');
 });
 
 test('ci-integration.md: contains section \'## Fingerprint Churn\'', () => {
-  const content = fs.readFileSync(ciIntegrationPath, 'utf8');
+  const content = readText(ciIntegrationPath);
   assert.ok(content.includes('## Fingerprint Churn'), 'missing section: ## Fingerprint Churn');
 });
 
 test('v2 SKILL.md: contains exactly one occurrence of "subscription"', () => {
-  const content = fs.readFileSync(skillMdPath, 'utf8');
+  const content = readText(skillMdPath);
   const count = (content.match(/subscription/g) || []).length;
   assert.strictEqual(count, 1, `expected exactly 1 occurrence of "subscription", got ${count}`);
 });

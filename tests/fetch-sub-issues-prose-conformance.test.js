@@ -11,15 +11,15 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
 const CLI_CITATION = 'bin/fetch-sub-issues.js';
 const FALLBACK_LOOP_RE = /while read -r N\b/;
 
 function read(rel) {
-  return fs.readFileSync(path.join(SKILLS_DIR, rel), 'utf8');
+  return readText(path.join(SKILLS_DIR, rel));
 }
 
 // A "Fallback" label is either a markdown heading ("#### Fallback ...") or a bold inline

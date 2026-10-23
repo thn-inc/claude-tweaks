@@ -8,9 +8,10 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
-const read = (...p) => fs.readFileSync(path.join(SKILLS, ...p), 'utf8');
+const read = (...p) => readText(path.join(SKILLS, ...p));
 
 function section(text, heading) {
   const start = text.indexOf(heading);
@@ -170,7 +171,7 @@ function skillMarkdown(dir = SKILLS, base = SKILLS, out = {}) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) skillMarkdown(p, base, out);
-    else if (e.name.endsWith('.md')) out[path.relative(base, p)] = fs.readFileSync(p, 'utf8');
+    else if (e.name.endsWith('.md')) out[path.relative(base, p)] = readText(p);
   }
   return out;
 }

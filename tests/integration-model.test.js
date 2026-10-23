@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { detectIntegrationModel, resolvePolicyKeys, POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
+const { readText } = require('./helpers/read-skill');
 
 const RESOLVE_POLICY = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
 const REPO_ROOT = path.join(__dirname, '..');
@@ -228,7 +229,7 @@ test('every file naming integration-model cites the shared fragment or is allowl
   const offenders = [];
   for (const file of walk(SKILLS_DIR)) {
     const rel = path.relative(SKILLS_DIR, file);
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readText(file);
     if (!TOKEN.test(text)) continue;
     if (ALLOWLIST.has(rel)) continue;
     if (text.includes(FRAGMENT)) continue;
@@ -242,7 +243,7 @@ test('the allowlist has no stale entries', () => {
   for (const rel of ALLOWLIST.keys()) {
     const full = path.join(SKILLS_DIR, rel);
     if (!fs.existsSync(full)) { stale.push(`${rel} (file no longer exists)`); continue; }
-    const text = fs.readFileSync(full, 'utf8');
+    const text = readText(full);
     if (!TOKEN.test(text)) { stale.push(`${rel} (no longer mentions integration-model — drop the entry)`); continue; }
     if (text.includes(FRAGMENT)) stale.push(`${rel} (cites ${FRAGMENT} — the entry is redundant, drop it)`);
   }

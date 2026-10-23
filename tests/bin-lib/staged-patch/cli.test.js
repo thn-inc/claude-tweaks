@@ -10,6 +10,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { FIXTURE_TIMEOUT_MS } = require('../../helpers/git-fixtures');
 const { run } = require('../../../plugin/bin/check-staged-stack');
+const { readText } = require('../../helpers/read-skill');
 
 const FIXTURE_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 const BASE = ['l1', 'l2', 'l3', 'l4', 'anchor', 'a1', 'a2', 'a3'].join('\n') + '\n';
@@ -333,7 +334,7 @@ test('AC1.1: when --patch is the earlier side of the conflict no rederive is att
 });
 
 test('AC1.1: docs/plugin-structure.md states exit 2 still prints the JSON line and the git 2.32 floor', () => {
-  const doc = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'docs', 'plugin-structure.md'), 'utf8').split('\n');
+  const doc = readText(path.join(__dirname, '..', '..', '..', 'docs', 'plugin-structure.md')).split('\n');
   const cli = doc.find((l) => l.includes('node plugin/bin/check-staged-stack.js'));
   assert.ok(cli, 'plugin-structure.md lists the CLI');
   assert.match(cli, /exit 2 [^,]*still prints the JSON line/);

@@ -17,6 +17,7 @@ const { isWorktreeLocked } = require('../plugin/bin/lib/hooks/worktree-reap');
 const { reconcile, PREREQUISITES } = require('../plugin/bin/lib/reconcile');
 const { gitRepo } = require('./helpers/git-fixtures');
 const { skipUnderRoot } = require('./helpers/root');
+const { readText } = require('./helpers/read-skill');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -1335,7 +1336,7 @@ test('expandChecks (#3630): adds mirror ahead of archive/red-tip and widens noth
 // The doc table is a hand-kept restatement of PREREQUISITES that every editor of
 // the table is told to follow, so it is pinned row for row to the exported object.
 test('docs/reconcile-checks.md prerequisite table matches PREREQUISITES row for row (#3630)', () => {
-  const doc = fs.readFileSync(path.join(__dirname, '..', 'docs', 'reconcile-checks.md'), 'utf8');
+  const doc = readText(path.join(__dirname, '..', 'docs', 'reconcile-checks.md'));
   const rows = doc.split('\n').map((line) => /^\s*\| `([^`]+)` \| `([^`]+)` \| ((?:`[^`]+`(?:, )?)+) \|/.exec(line)).filter(Boolean);
   const fromDoc = {};
   for (const [, check, prerequisite, satisfiedBy] of rows) {

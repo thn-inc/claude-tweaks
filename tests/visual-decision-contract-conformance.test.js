@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const CONTRACT = path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'visual-decision.md');
 const TEMPLATE = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'compare-shell', 'template.html');
@@ -128,7 +129,7 @@ test('AC2: explore.md no longer cites dev-url-detection\'s Ephemeral server star
 });
 
 test('AC3: the interactive-only preamble and the reroll/steer/exit semantics text survive unchanged', () => {
-  const exploreText = fs.readFileSync(EXPLORE, 'utf8');
+  const exploreText = readText(EXPLORE);
   assert.match(
     exploreText,
     /\*\*Interactive-only — has no auto-mode branch\*\*, like `live`\. Every step below assumes a human is present in a browser to answer the Verdict question; no caller may invoke this mode from `auto` or a `\$PIPELINE_RUN_DIR`-set context\./,

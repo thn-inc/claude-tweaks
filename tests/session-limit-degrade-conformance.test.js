@@ -1,8 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { readText } = require('./helpers/read-skill');
 
 // #1449: review/step3-lens-dispatch.md's reproduction-pair dispatch never said what to
 // do when one half of a pair dies to a session/usage limit mid-flight. This pins the
@@ -20,8 +20,8 @@ const BASE_SHA = 'aa813ba825b20e11df35413bbd7ebd3e43c5af9c';
 const DISPATCH_PATH = 'plugin/skills/review/step3-lens-dispatch.md';
 const CONTRACT_PATH = 'plugin/skills/_shared/subagent-dispatch-core.md';
 
-const dispatchProse = fs.readFileSync(path.join(ROOT, DISPATCH_PATH), 'utf8');
-const contractProse = fs.readFileSync(path.join(ROOT, CONTRACT_PATH), 'utf8');
+const dispatchProse = readText(path.join(ROOT, DISPATCH_PATH));
+const contractProse = readText(path.join(ROOT, CONTRACT_PATH));
 
 // The pinned literal, checked case-insensitively at both revisions below.
 const PINNED_LITERAL = /session limit/i;

@@ -14,10 +14,11 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { skipUnderRoot } = require('./helpers/root');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
-const ENGINE = fs.readFileSync(path.join(SKILLS, 'wrap-up', 'curation-engine.md'), 'utf8');
-const BATCH = fs.readFileSync(path.join(SKILLS, 'flow', 'multispec-batch-curation.md'), 'utf8');
+const ENGINE = readText(path.join(SKILLS, 'wrap-up', 'curation-engine.md'));
+const BATCH = readText(path.join(SKILLS, 'flow', 'multispec-batch-curation.md'));
 const HOOKS_JS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
 test('curation-engine.md §4 carries the judge self-verification step and the absolute-stagePath rule', () => {
@@ -303,7 +304,7 @@ test('curation-engine.md §3 commit row and applied-precondition name the contro
 });
 
 test('skill-curation.md step 2 no longer instructs a judge-side commit', () => {
-  const CURATION = fs.readFileSync(path.join(SKILLS, 'wrap-up', 'skill-curation.md'), 'utf8');
+  const CURATION = readText(path.join(SKILLS, 'wrap-up', 'skill-curation.md'));
   assert.doesNotMatch(CURATION, /auto-apply now\. Commit\./, 'the old judge-commits wording is retired');
   assert.match(CURATION, /never run `git add`\/`git commit`/, 'states the no-judge-commit rule');
   assert.match(CURATION, /serial-commit\s+pass/, 'cites the engine pass that commits instead');
@@ -324,7 +325,7 @@ test('curation-engine.md §4 keeps the Initiative-Fix trailer carve-out for the 
 // controller's serial-commit pass; the judge-side phrasing must not survive, and the new
 // controller-commits wording must be present.
 test('reference-sweep.md no longer claims the judge makes its own Initiative-Fix commit', () => {
-  const REF_SWEEP = fs.readFileSync(path.join(SKILLS, 'wrap-up', 'reference-sweep.md'), 'utf8');
+  const REF_SWEEP = readText(path.join(SKILLS, 'wrap-up', 'reference-sweep.md'));
   assert.doesNotMatch(
     REF_SWEEP,
     /in their own commit with the `Initiative-Fix: \{run-id\}` trailer/,

@@ -12,9 +12,10 @@ const fs = require('fs');
 const path = require('path');
 const { REENTRY_REASONS } = require('../plugin/bin/lib/flow/consolidated-pass');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.resolve(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 const collapse = (s) => s.replace(/\s+/g, ' ');
 
 function sectionBetween(text, startRe, endRe) {

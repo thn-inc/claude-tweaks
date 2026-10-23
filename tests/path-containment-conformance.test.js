@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
+const { readText } = require('./helpers/read-skill');
 
 // New path-containment code ("is this resolved path inside that one") calls
 // `isPathContained` in plugin/bin/lib/shared-primitives.js, a thin wrapper over
@@ -21,7 +22,7 @@ const ROOT = path.join(__dirname, '..');
 const BIN_ROOT = path.join(ROOT, 'plugin', 'bin');
 
 function read(rel) {
-  return fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  return readText(path.join(ROOT, rel));
 }
 
 function listJs(dir) {

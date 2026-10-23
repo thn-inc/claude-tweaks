@@ -8,14 +8,14 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { compose, KEYS, VOCAB, UNRESOLVED } = require('../plugin/bin/lib/compose-context/compose');
+const { readText } = require('./helpers/read-skill');
 
 const PR_SCAN_FILE = 'plugin/skills/_shared/github-pr-scan.md';
 const CLAIMS_FILE = 'plugin/skills/_shared/issue-claims.md';
-const prScanContent = fs.readFileSync(path.join(__dirname, '..', PR_SCAN_FILE), 'utf8');
-const claimsContent = fs.readFileSync(path.join(__dirname, '..', CLAIMS_FILE), 'utf8');
+const prScanContent = readText(path.join(__dirname, '..', PR_SCAN_FILE));
+const claimsContent = readText(path.join(__dirname, '..', CLAIMS_FILE));
 
 // The file composed at `transport`, every other condition pinned to its first vocabulary
 // value. `sourceContent` defaults to the real file; the discrimination tests pass a

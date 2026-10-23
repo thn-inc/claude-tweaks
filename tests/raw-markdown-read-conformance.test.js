@@ -56,7 +56,7 @@ const ALLOWLIST = {};
 // Repo-rooted text reads the live scan sees (raw + readText) when this landed.
 // Fewer means the taint or the call matcher stopped matching, not that the
 // reads went away — never lower it to make the suite green.
-const ROOTED_READ_FLOOR = 0;
+const ROOTED_READ_FLOOR = 941;
 
 const OPEN = '([{';
 const CLOSE = ')]}';

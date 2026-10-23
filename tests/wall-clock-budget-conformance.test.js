@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
 const { listTestFiles } = require('../tools/run-tests');
+const { readText } = require('./helpers/read-skill');
 
 // Wall-clock timing budgets live in perf/ (run by `npm run test:perf`), never in
 // tests/ (`npm test`): a budget flakes under load, and a flaky failure trains readers
@@ -490,7 +491,7 @@ test('evaluate judges the verdict on the same blank-mode text the matcher scans:
 function readTestFiles() {
   const files = {};
   for (const full of listTestFiles(ROOT)) {
-    files[path.relative(ROOT, full).replace(/\\/g, '/')] = fs.readFileSync(full, 'utf8');
+    files[path.relative(ROOT, full).replace(/\\/g, '/')] = readText(full);
   }
   return files;
 }
@@ -510,6 +511,6 @@ test('AC2.1: perf/ budgets are real matches but are never scanned', () => {
 });
 
 test('docs/plugin-structure.md still states the perf/ rule the failure message cites', () => {
-  const doc = fs.readFileSync(PLUGIN_STRUCTURE, 'utf8');
+  const doc = readText(PLUGIN_STRUCTURE);
   assert.match(doc, /^perf\/\s+→ Wall-clock timing budgets, run via `npm run test:perf`/m);
 });

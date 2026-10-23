@@ -20,6 +20,7 @@ const path = require('path');
 const { GATE_COVERAGE } = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { WRITE_SHAPES, fileWriteTargets, gitTargets } = require('../plugin/bin/lib/hooks/git-command');
 const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
+const { readText } = require('./helpers/read-skill');
 
 const runsFull = (event, command) => shouldRunFull(event, { tool_name: 'Bash', tool_input: { command } });
 function bashGroupOf(group) {
@@ -34,7 +35,7 @@ const TEARDOWN_BEGIN = '<!-- teardown-gate-coverage:begin -->';
 const TEARDOWN_END = '<!-- teardown-gate-coverage:end -->';
 
 function coverageBlock() {
-  const text = fs.readFileSync(SCHEMA, 'utf8');
+  const text = readText(SCHEMA);
   const start = text.indexOf(BEGIN);
   const end = text.indexOf(END);
   assert.ok(start !== -1 && end !== -1 && end > start,
@@ -43,7 +44,7 @@ function coverageBlock() {
 }
 
 function teardownCoverageBlock() {
-  const text = fs.readFileSync(SCHEMA, 'utf8');
+  const text = readText(SCHEMA);
   const start = text.indexOf(TEARDOWN_BEGIN);
   const end = text.indexOf(TEARDOWN_END);
   assert.ok(start !== -1 && end !== -1 && end > start,

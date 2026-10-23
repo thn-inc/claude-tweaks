@@ -11,6 +11,7 @@ const ROOT = path.join(__dirname, '..', '..', '..');
 const { unresolvedItems } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'residue'));
 const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tiebreak'));
 const { formatEntry } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'append'));
+const { readText } = require('../../helpers/read-skill');
 
 function fixture({
   decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {},
@@ -184,7 +185,7 @@ test('every registry row whose own judge file documents a literal staged/{prefix
   const PREFIX_RE = /staged\/([a-zA-Z][a-zA-Z0-9-]*-)\{[nN]\}/;
   const checkedIds = [];
   for (const row of REGISTRY) {
-    const judgeText = fs.readFileSync(path.join(SKILLS_DIR, row.judge), 'utf8');
+    const judgeText = readText(path.join(SKILLS_DIR, row.judge));
     const m = PREFIX_RE.exec(judgeText);
     if (!m) continue; // this row's judge documents no standalone staged-file naming convention — nothing to audit for it
     checkedIds.push(row.id);
@@ -641,7 +642,7 @@ test('SECTION_STANCES names a stance for every section the console renders (#193
 // same closed set. Both directions, so a prefix added to one side alone
 // goes red; the two negative controls below run the same assertion the
 // positive test runs, against a mutated input.
-const APPENDIX = fs.readFileSync(path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'review-console-appendix.md'), 'utf8');
+const APPENDIX = readText(path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'review-console-appendix.md'));
 
 function isPendingMdPrefixRow([re, section]) {
   return section === 'Pending review' && /^\^\(.*\)-$/.test(re.source);

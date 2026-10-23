@@ -16,6 +16,7 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const SCRIPT_PATH = path.resolve(__dirname, '..', 'scripts', 'claude-cloud-setup.sh');
 const INSTALLED_JSON = '/tmp/cc-installed.json';
@@ -199,7 +200,7 @@ test('setup: extract the live VERDICT snippet and confirm it is byte-identical t
     'bootstrap',
     'step-14-cloud-routine-parity.md',
   );
-  const docSnippet = extractVerdictSnippet(fs.readFileSync(docPath, 'utf8'));
+  const docSnippet = extractVerdictSnippet(readText(docPath));
   assert.strictEqual(
     liveSnippet,
     docSnippet,

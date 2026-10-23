@@ -21,6 +21,7 @@ const {
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure } = require('../../../plugin/bin/lib/reconcile/cache');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
 const { serializeManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
+const { readText } = require('../../helpers/read-skill');
 
 const PATH_STUB_SKIP = process.platform === 'win32' && 'win32: execFileSync("gh") never spawns a #!/bin/sh stub named gh on PATH';
 
@@ -1381,7 +1382,7 @@ function detectsTemplate(template) {
   return consoleReplacedByAutoMergeShortCircuit(dir);
 }
 test('consoleReplacedByAutoMergeShortCircuit: detects every log-line template the producer skills write', () => {
-  const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, 'plugin', 'skills', 'wrap-up', rel), 'utf8');
+  const read = (rel) => readText(path.join(REPO_ROOT, 'plugin', 'skills', 'wrap-up', rel));
   const fast = shortCircuitLogTemplates(read('auto-merge-short-circuit.md'));
   const manifesto = shortCircuitLogTemplates(read('manifesto-authorized-merge.md'));
   assert.strictEqual(fast.length, 2, 'auto-merge-short-circuit.md carries two Fast-lane log templates');

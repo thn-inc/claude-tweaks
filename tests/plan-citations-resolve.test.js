@@ -10,6 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 // tests/ is excluded: its plan paths are synthetic fixture data, not citations.
@@ -41,7 +42,7 @@ function danglingCitations() {
   for (const f of fs.readdirSync(ROOT)) if (f.endsWith('.md')) files.push(f);
   const dangling = [];
   for (const f of files) {
-    const lines = fs.readFileSync(path.join(ROOT, f), 'utf8').replace(/\r\n/g, '\n').split('\n');
+    const lines = readText(path.join(ROOT, f)).split('\n');
     lines.forEach((line, i) => {
       for (const m of line.matchAll(CITATION)) {
         if (fs.existsSync(path.join(ROOT, m[0]))) continue;
@@ -61,7 +62,7 @@ const TIDY = path.join(ROOT, 'plugin', 'skills', 'tidy');
 const WRAP_UP = path.join(ROOT, 'plugin', 'skills', 'wrap-up');
 
 function read(file, dir = TIDY) {
-  return fs.readFileSync(path.join(dir, file), 'utf8').replace(/\r\n/g, '\n');
+  return readText(path.join(dir, file));
 }
 
 function rowStartingWith(text, prefix) {

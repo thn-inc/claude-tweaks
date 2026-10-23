@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const TEMPLATE = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'compare-shell', 'template.html');
 
@@ -182,7 +183,7 @@ test('#1336: seed-compare.mjs documents the postMessage opt-in convention for ca
 test('#1336: visual-decision.md\'s tweak event description states the candidate is restyled only when it opts in, and the sandbox posture is unchanged', () => {
   const fs = require('node:fs');
   const path = require('node:path');
-  const text = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'visual-decision.md'), 'utf8');
+  const text = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'visual-decision.md'));
   assert.match(text, /compare-shell-tweak/, 'expected the doc to name the postMessage type');
   assert.match(text, /opt-in per candidate/i, 'expected the doc to state reflection is opt-in per candidate');
   assert.match(text, /sandbox="allow-scripts"/, 'expected the doc to keep stating the sandbox attribute');
