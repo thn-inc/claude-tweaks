@@ -193,6 +193,27 @@ Three skip reasons come out of this check:
 Run-state is never written on any of these skips. The `status: clean` sweep is exempt from this
 check: wrap-up already closed that run.
 
+**A review finding with no tiebreak verdict blocks archival too (#3945).** When the run dir, or
+any of its `spec-*/` subdirs, holds `review-findings.json` (the findings list `/review` Step 3.7
+writes through `review-coordination.js write-findings`), `tiebreak.js`'s `checkRunTiebreakCoverage`
+requires a tiebreak verdict line in that same dir's `decisions.md` for every listed finding id.
+`decideArchiveCore` evaluates it only at the points that would otherwise return `archive`
+(`settleMergedPartial` included), so it runs after every other guard, the record check above
+among them. A run with no artifact archives exactly as before. Two skip reasons come out of it,
+each carrying a recovery `hint`:
+
+- **`tiebreak-artifact-invalid`**: the artifact is present but unreadable or malformed. It is
+  checked before any per-id gap.
+- **`tiebreak-coverage-missing`**: carries `missing`, the uncovered ids, with a spec dir's ids
+  prefixed `spec-N/`.
+
+Both are in `STRUCTURALLY_STUCK_REASONS`, because only a re-run of the findings writer and the
+tiebreak, or deleting a pre-tiebreak artifact, converges them. Unlike the record check, the
+`status: clean` sweep applies this gate as well, but its `onSkip` does not track either reason, so
+a closed run skipped here never escalates. `hooks.js archive-run` refuses on the same two
+conditions, after its own guards, and `review-coordination.js check-coverage` prints the same
+coverage result without refusing anything.
+
 **Residue pruning.** After every `archive` pass, `cache.js`'s `pruneResidueFailures` drops any
 `residueFailures` entry (reason-agnostic — `move-failed`, `structurally-stuck`, any future reason)
 whose tracked path no longer exists on disk: a path can never fail or succeed there again, so it
