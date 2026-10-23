@@ -364,7 +364,9 @@ function renderVerdictLine(resolved) {
   return formatEntry({ status: resolved.logStatus, now: NOW, step: resolved.logStep, text: resolved.logText, reversibility: 'high' });
 }
 
-function buildFixtureRun() {
+// Removes its tmp dir through the test context's after hook, registered before any write, so a throw anywhere
+// after the mkdtemp — here or in the test body — never leaks it.
+function buildFixtureRun(t) {
   const findings = [
     { lens: '3c', path: FIXTURE_PATH, line: 20, claim: 'the guard on line 20 swallows the error', reporterSeverity: 'medium', kind: 'unconfirmed' },
     { lens: '3c', path: FIXTURE_PATH, line: 21, claim: 'the retry on line 21 never backs off', reporterSeverity: 'low', kind: 'unconfirmed' },
@@ -380,41 +382,34 @@ function buildFixtureRun() {
   const first = resolveTiebreak(findings[0], confirmedReply, { readFile: readFixture, now: NOW });
   const second = resolveTiebreak(findings[1], '', { readFile: readFixture, now: NOW });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tiebreak-step-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.writeFileSync(path.join(dir, 'review-findings.json'), JSON.stringify(artifact));
   fs.writeFileSync(path.join(dir, 'decisions.md'), `${[renderVerdictLine(first), renderVerdictLine(second)].join('\n')}\n`);
   return { dir, artifact, first, second };
 }
 
-test('AC3.1 fixture: one verdict line per listed finding — two findings at one location (adjacent lines) each get their own', () => {
-  const { dir, artifact, first, second } = buildFixtureRun();
-  try {
-    assert.equal(artifact.length, 2);
-    assert.notEqual(artifact[0].id, artifact[1].id, 'two findings at adjacent lines carry two distinct ids');
-    assert.equal(artifact[0].id, findingId({ lens: '3c', path: FIXTURE_PATH, line: 20, claim: 'the guard on line 20 swallows the error' }));
-    assert.equal(first.outcome, 'confirmed');
-    assert.ok(['digest', 'console'].includes(second.outcome), `an empty reply is can't-tell (digest or console), got ${second.outcome}`);
-    assert.notEqual(second.outcome, 'drop', 'an empty reply never drops a finding');
-    assert.deepEqual(checkTiebreakCoverage(dir).missing, [], 'every listed finding has a verdict line');
-    const decisions = fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8').split('\n').filter(Boolean);
-    for (const { id } of artifact) {
-      assert.equal(decisions.filter((line) => line.includes(`tiebreak:${id}`)).length, 1, `finding ${id} appears in exactly one verdict line`);
-    }
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+test('AC3.1 fixture: one verdict line per listed finding — two findings at one location (adjacent lines) each get their own', (t) => {
+  const { dir, artifact, first, second } = buildFixtureRun(t);
+  assert.equal(artifact.length, 2);
+  assert.notEqual(artifact[0].id, artifact[1].id, 'two findings at adjacent lines carry two distinct ids');
+  assert.equal(artifact[0].id, findingId({ lens: '3c', path: FIXTURE_PATH, line: 20, claim: 'the guard on line 20 swallows the error' }));
+  assert.equal(first.outcome, 'confirmed');
+  assert.ok(['digest', 'console'].includes(second.outcome), `an empty reply is can't-tell (digest or console), got ${second.outcome}`);
+  assert.notEqual(second.outcome, 'drop', 'an empty reply never drops a finding');
+  assert.deepEqual(checkTiebreakCoverage(dir).missing, [], 'every listed finding has a verdict line');
+  const decisions = fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8').split('\n').filter(Boolean);
+  for (const { id } of artifact) {
+    assert.equal(decisions.filter((line) => line.includes(`tiebreak:${id}`)).length, 1, `finding ${id} appears in exactly one verdict line`);
   }
 });
 
-test('AC3.1 the coverage assertion can go red', () => {
-  const { dir, artifact } = buildFixtureRun();
-  try {
-    const decisionsPath = path.join(dir, 'decisions.md');
-    const kept = fs.readFileSync(decisionsPath, 'utf8').split('\n').filter((line) => line && !line.includes(`tiebreak:${artifact[1].id}`));
-    assert.equal(kept.length, 1, 'anchor line for the second finding not found — proof cannot discriminate');
-    fs.writeFileSync(decisionsPath, `${kept.join('\n')}\n`);
-    assert.deepEqual(checkTiebreakCoverage(dir).missing, [artifact[1].id], 'dropping one verdict line must report exactly that finding missing');
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+test('AC3.1 the coverage assertion can go red', (t) => {
+  const { dir, artifact } = buildFixtureRun(t);
+  const decisionsPath = path.join(dir, 'decisions.md');
+  const kept = fs.readFileSync(decisionsPath, 'utf8').split('\n').filter((line) => line && !line.includes(`tiebreak:${artifact[1].id}`));
+  assert.equal(kept.length, 1, 'anchor line for the second finding not found — proof cannot discriminate');
+  fs.writeFileSync(decisionsPath, `${kept.join('\n')}\n`);
+  assert.deepEqual(checkTiebreakCoverage(dir).missing, [artifact[1].id], 'dropping one verdict line must report exactly that finding missing');
 });
 
 // --- code-mode-steps.md wiring ---
@@ -590,11 +585,14 @@ const REFUTATION_RULE = [
   [/can't-tell[^\n]*`unconfirmed`[^\n]*Step 3\.7/, "a can't-tell reply joins unconfirmed for Step 3.7"],
   [/Only `confirmed` and `drop` write the resolver's line/, "only confirmed and drop write the resolver's line"],
   [/never be logged as if a real falsification attempt happened/, 'a failed dispatch is never logged as a real falsification attempt'],
+  [/`confirmed` → the candidate stands[^\n]*at its own severity, not the resolver's returned `severity`/, "a refutation confirmed keeps its own severity, unlike Step 3.7's"],
+  [/else the `reason` field the resolver printed, verbatim/, "the downgrade cause is the resolver's reason verbatim"],
 ];
 const REFUTATION_RULE_FORBIDDEN = [
   [/resolve-refutation/, 'the retired resolve-refutation verb'],
   [/apply `resolveRefutation`/, 'the retired resolveRefutation call'],
   [/`not-refuted`/, 'the retired not-refuted verdict'],
+  [/`unparseable verdict`/, 'the retired lossy cause words'],
 ];
 const refutationRuleMissing = missingFactsOf(REFUTATION_RULE);
 const refutationRuleLeftovers = leftoverFactsOf(REFUTATION_RULE_FORBIDDEN);
@@ -611,6 +609,7 @@ test('AC5.2 the refutation-rule assertions can go red', () => {
   assert.deepEqual(refutationRuleLeftovers(`${step5}\nnode review-coordination.js resolve-refutation {verdict}`), ['the retired resolve-refutation verb']);
   assert.deepEqual(refutationRuleLeftovers(`${step5}\nthen apply \`resolveRefutation\``), ['the retired resolveRefutation call']);
   assert.deepEqual(refutationRuleLeftovers(`${step5}\n- \`not-refuted\` → stands`), ['the retired not-refuted verdict']);
+  assert.deepEqual(refutationRuleLeftovers(`${step5}\nwith \`{cause}\` one of \`unparseable verdict\` or \`can't-tell\``), ['the retired lossy cause words']);
 });
 
 // Step 5 logs the resolver's line for confirmed/drop and writes the downgrade line otherwise (never both).
@@ -933,23 +932,25 @@ test('AC11.1 the graph-row assertions can go red', () => {
   assert.equal(graphRowsMissing({ graph: '## other\n' }).length, GRAPH_ROWS.length, 'a graph without the review section fails every fact');
 });
 
-function listSkillFiles(dir) {
+// Entry files only: a sub-file citing step3-tiebreak.md (code-mode-steps.md wires Step 3.7) is a step
+// reference, not a restated edge, so the scan is deliberately limited to files named SKILL.md.
+function listSkillMdFiles(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) return listSkillFiles(full);
+    if (entry.isDirectory()) return listSkillMdFiles(full);
     return entry.name === 'SKILL.md' ? [full] : [];
   });
 }
 const skillsNamingStep = (files, readFile) => files.filter((file) => readFile(file).includes('step3-tiebreak.md'));
 
-test('AC11.1 no SKILL.md restates the step3-tiebreak.md edge', () => {
-  const files = listSkillFiles(SKILLS);
-  assert.ok(files.length > 20, 'the scan covers the skill corpus');
+test('AC11.1 no SKILL.md entry file names step3-tiebreak.md (its edge lives only in skill-graph.md)', () => {
+  const files = listSkillMdFiles(SKILLS);
+  assert.ok(files.length > 20, 'the scan covers every skill entry file');
   assert.deepEqual(skillsNamingStep(files, readText), []);
 });
 
-test('AC11.1 the SKILL.md scan can go red', () => {
-  const files = listSkillFiles(SKILLS);
+test('AC11.1 the SKILL.md-names-step3-tiebreak.md scan can go red', () => {
+  const files = listSkillMdFiles(SKILLS);
   const planted = files[0];
   assert.deepEqual(skillsNamingStep(files, (file) => (file === planted ? 'see step3-tiebreak.md' : '')), [planted]);
 });
@@ -974,7 +975,7 @@ const templateTiebreakSection = (texts) => sliceSection(texts.template.slice(tex
 const FIX_WAVE = [
   // F1: reading never confirms a vacuity claim.
   [tiebreakTemplate, /A vacuity claim[^\n]*cannot be confirmed by reading code/, 'F1 the template tells the agent reading cannot confirm a vacuity claim'],
-  [tiebreakSection('Resolve and act'), /On a lens 3f vacuity finding, write a `confirmed` reply to `R` as an empty reply instead/, "F1 a confirmed reply on a vacuity finding is replaced with an empty reply"],
+  [tiebreakSection('Resolve and act'), /On a lens 3f vacuity finding, write a `confirmed` reply to `R` with its `Verdict: confirmed` line replaced by `Verdict: cant-tell`/, "F1 a confirmed reply on a vacuity finding is rewritten as a can't-tell reply"],
   [tiebreakSection('Resolve and act'), /a vacuity claim needs an executed run \(`step3-lens-dispatch\.md`'s lens 3f vacuity bullet\)/, "F1 the cause cites step3-lens-dispatch.md's vacuity rule"],
   [tiebreakSection('Resolve and act'), /a `refuted` reply resolves as written/, 'F1 a refuted reply on a vacuity finding resolves normally'],
   // F3: the override logs only confirmed/drop; can't-tell is left to Step 3.7.
@@ -1027,6 +1028,32 @@ test('vacuity, override, sweep re-run, supersession, template-slot, lens and dig
 
 test('each of those section facts can go red', () => {
   assertEachSectionFactGoesRed(liveTexts(), FIX_WAVE, fixWaveMissing);
+});
+
+// F1: the documented vacuity rewrite, run through the real resolver, logs the can't-tell verdict as its reason —
+// not could-not-parse, which an emptied reply would log.
+const VACUITY_FINDING = { lens: '3f', path: FIXTURE_PATH, line: 20, claim: 'the test on line 20 cannot fail', reporterSeverity: 'medium', kind: 'unconfirmed' };
+const VACUITY_CONFIRMED = [
+  'Verdict: confirmed',
+  `Evidence: ${FIXTURE_PATH}:20 \`${fixtureLines[19].trim()}\``,
+  'Severity: medium',
+  'Recommendation: file — the assertion never runs',
+  'STATUS: DONE',
+].join('\n');
+const vacuityRewrite = (texts) => {
+  const m = /with its `(Verdict: confirmed)` line replaced by `(Verdict: cant-tell)`/.exec(tiebreakSection('Resolve and act')(texts));
+  assert.ok(m, 'the vacuity rewrite instruction was not found');
+  return (reply) => reply.replace(m[1], m[2]);
+};
+const vacuityReason = (reply) => resolveTiebreak(VACUITY_FINDING, reply, { readFile: readFixture, now: NOW }).reason;
+
+test("F1 the documented vacuity rewrite resolves can't-tell with reason verdict:cant-tell", () => {
+  assert.equal(vacuityReason(vacuityRewrite(liveTexts())(VACUITY_CONFIRMED)), 'verdict:cant-tell');
+});
+
+test('F1 the vacuity-rewrite assertion can go red', () => {
+  assert.equal(vacuityReason(VACUITY_CONFIRMED), 'confirmed by tiebreak', 'the unrewritten reply confirms, so the rewrite is what changes the outcome');
+  assert.equal(vacuityReason(''), 'could-not-parse', 'an emptied reply logs could-not-parse, the misdescription the rewrite avoids');
 });
 
 const FIX_WAVE_FORBIDDEN = [
