@@ -353,6 +353,10 @@ test('evidence verification: no reader → confirmed and refuted both give cant-
     const r = resolveTiebreak(FINDING, reply({ verdict }), { now: NOW });
     assert.ok(isCantTell(r), verdict);
     assert.equal(r.reason, 'evidence-unverified');
+    // A reader that is not a function is no reader either.
+    for (const readFile of [null, 'plugin/bin/foo.js', {}]) {
+      assert.equal(resolveTiebreak(FINDING, reply({ verdict }), { readFile, now: NOW }).reason, 'evidence-unverified', `${verdict} ${String(readFile)}`);
+    }
   }
 });
 
@@ -772,4 +776,97 @@ test('a dangling review-findings.json symlink is present and invalid, never abse
   const dir = tmpDir(t);
   fs.symlinkSync(path.join(dir, 'nowhere.json'), path.join(dir, FINDINGS_ARTIFACT));
   assert.deepEqual(readFindingsArtifact(dir), { present: true, valid: false, findings: null });
+});
+
+// ---- #3945 review follow-ups ----
+
+test('a reply with a Recommendation but no Evidence line parses with evidence null', () => {
+  const r = parseTiebreakReply('Verdict: confirmed\nSeverity: high\nRecommendation: file — real\nSTATUS: DONE');
+  assert.equal(r.parse, 'ok');
+  assert.equal(r.verdict, 'confirmed');
+  assert.equal(r.recommendation, 'file');
+  assert.equal(r.recommendationReason, 'real');
+  assert.equal(r.evidence, null);
+});
+
+test('CRLF line endings parse exactly like LF', () => {
+  const crlf = WELL_FORMED.replace(/\n/g, '\r\n');
+  assert.deepEqual(parseTiebreakReply(crlf), parseTiebreakReply(WELL_FORMED));
+  assert.deepEqual(parseTiebreakReply(`${crlf}\r\n`), parseTiebreakReply(WELL_FORMED));
+  assert.equal(parseTiebreakReply(crlf).status, 'DONE');
+  assert.equal(resolve(FINDING, reply().replace(/\n/g, '\r\n')).outcome, 'confirmed');
+});
+
+test('a path:line token wrapped in one pair of backticks parses like the bare token', () => {
+  const expected = { path: 'a/b.js', line: 7, quote: 'return null;' };
+  for (const ev of ['`a/b.js`:7 return null;', '`a/b.js:7` return null;', '`a/b.js:7` "return null;"', '`a/b.js`:7 `return null;`', 'a/b.js:7 return null;']) {
+    assert.deepEqual(parseTiebreakReply(`Verdict: confirmed\nEvidence: ${ev}\nSTATUS: DONE`).evidence, expected, ev);
+  }
+  // Still not usable without a quote; an unbalanced backtick is no wrapper, so the bare-token rule applies as before.
+  assert.equal(parseTiebreakReply('Verdict: confirmed\nEvidence: `a/b.js:7`\nSTATUS: DONE').evidence, null);
+  assert.deepEqual(parseTiebreakReply('Verdict: confirmed\nEvidence: `a/b.js:7 x\nSTATUS: DONE').evidence, { path: '`a/b.js', line: 7, quote: 'x' });
+  for (const ev of ['`plugin/bin/foo.js`:20 `const x = readSync(fd);`', '`plugin/bin/foo.js:20` `const x = readSync(fd);`']) {
+    assert.equal(resolve(FINDING, reply({ evidence: ev })).outcome, 'confirmed', ev);
+  }
+});
+
+test('Recommendation reasons split on an en dash and a comma like the other separators', () => {
+  for (const rec of ['drop – guarded upstream', 'drop, guarded upstream', 'drop–guarded upstream', 'drop,guarded upstream',
+    'drop — guarded upstream', 'drop: guarded upstream', 'drop - guarded upstream']) {
+    const r = parseTiebreakReply(`Verdict: refuted\nRecommendation: ${rec}\nSTATUS: DONE`);
+    assert.equal(r.recommendation, 'drop', rec);
+    assert.equal(r.recommendationReason, 'guarded upstream', rec);
+  }
+  assert.equal(parseTiebreakReply('Verdict: refuted\nRecommendation: drop guarded upstream\nSTATUS: DONE').recommendation, null);
+});
+
+test('findingId throws a clear TypeError for a missing or non-string lens, path or claim', () => {
+  const base = { lens: 'correctness', path: 'plugin/bin/foo.js', line: 42, claim: 'reads fd without a guard' };
+  for (const key of ['lens', 'path', 'claim']) {
+    for (const bad of [undefined, null, 42, {}]) {
+      assert.throws(() => findingId({ ...base, [key]: bad }), { name: 'TypeError', message: `findingId: finding ${key} must be a string` }, `${key} ${String(bad)}`);
+    }
+  }
+  for (const bad of [null, undefined, 'a string']) {
+    assert.throws(() => findingId(bad), { name: 'TypeError', message: 'findingId: finding must be an object' }, String(bad));
+  }
+  // The line stays optional: an absent line is resolveTiebreak's no-line case, not an identity error.
+  assert.match(findingId({ ...base, line: undefined }), /^[0-9a-f]{12}$/);
+  assert.throws(() => resolve({ ...FINDING, claim: undefined }, reply()), { name: 'TypeError', message: 'findingId: finding claim must be a string' });
+});
+
+test('coverage lists a duplicated uncovered id once, in first-seen order', (t) => {
+  const dir = tmpDir(t);
+  const [a, b] = buildFindingsArtifact(RAW);
+  writeFindings(dir, [b, a, b, a, b]);
+  assert.deepEqual(checkTiebreakCoverage(dir).missing, [b.id, a.id]);
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `${verdictFor(RAW[1])}\n`);
+  assert.deepEqual(checkTiebreakCoverage(dir).missing, [a.id]);
+});
+
+function codedError(code) {
+  return Object.assign(new Error(`${code}: simulated`), { code });
+}
+
+test('an unexpected read error on review-findings.json is present and invalid, never absent (fail closed)', (t) => {
+  const dir = tmpDir(t);
+  writeFindings(dir, buildFindingsArtifact(RAW));
+  const file = path.join(dir, FINDINGS_ARTIFACT);
+  const realRead = fs.readFileSync;
+  for (const code of ['EIO', 'EACCES', 'EMFILE']) {
+    t.mock.method(fs, 'readFileSync', (p, ...rest) => { if (p === file) throw codedError(code); return realRead(p, ...rest); });
+    assert.deepEqual(readFindingsArtifact(dir), { present: true, valid: false, findings: null }, code);
+    assert.deepEqual(checkTiebreakCoverage(dir), { artifactPresent: true, artifactValid: false, missing: [] }, code);
+    t.mock.restoreAll();
+  }
+});
+
+test('an ENOENT read whose lstat cannot prove absence is present and invalid; only an lstat ENOENT is absent', (t) => {
+  const dir = tmpDir(t);
+  const file = path.join(dir, FINDINGS_ARTIFACT);
+  const realLstat = fs.lstatSync;
+  t.mock.method(fs, 'lstatSync', (p, ...rest) => { if (p === file) throw codedError('EACCES'); return realLstat(p, ...rest); });
+  assert.deepEqual(readFindingsArtifact(dir), { present: true, valid: false, findings: null });
+  t.mock.restoreAll();
+  assert.deepEqual(readFindingsArtifact(dir), { present: false, valid: true, findings: null });
 });

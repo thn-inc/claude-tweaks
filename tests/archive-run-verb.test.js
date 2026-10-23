@@ -319,3 +319,22 @@ test('tiebreak refusals are evaluated after the console-unresolved guard', () =>
   assert.match(result.stdout, /console-unresolved/);
   assert.doesNotMatch(result.stdout, /tiebreak-/);
 });
+
+test('the #3668 staged-pending refusal wins over a tiebreak refusal when a run trips both', () => {
+  for (const [body, tiebreakReason] of [[[tbFinding(TB_ID)], 'tiebreak-coverage-missing'], ['{ not json', 'tiebreak-artifact-invalid']]) {
+    const { root, runDir } = runDirFixture('clean');
+    fs.writeFileSync(path.join(runDir, 'decisions.md'), FAST_LANE_FYI);
+    fs.mkdirSync(path.join(runDir, 'staged'));
+    fs.writeFileSync(path.join(runDir, 'staged', 'reflect-1.md'), '# proposal\n');
+    writeFindings(runDir, body);
+    const both = runHook(['archive-run', '--run', runDir], { cwd: root });
+    assert.match(both.stdout, /archival refused — console-never-rendered-staged-pending/, tiebreakReason);
+    assert.doesNotMatch(both.stdout, /tiebreak-/, tiebreakReason);
+    assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+    // The same run trips the tiebreak refusal once the staged item is settled, so the fixture trips both.
+    fs.rmSync(path.join(runDir, 'staged', 'reflect-1.md'));
+    const tiebreakOnly = runHook(['archive-run', '--run', runDir], { cwd: root });
+    assert.match(tiebreakOnly.stdout, new RegExp(`archival refused — ${tiebreakReason} `), tiebreakReason);
+    assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must not be moved');
+  }
+});

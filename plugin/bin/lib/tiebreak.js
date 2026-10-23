@@ -7,7 +7,8 @@
 // sha1([lens, path, String(line), normClaim].join('\n')), where normClaim is
 // the claim with whitespace runs collapsed to one space and trimmed. The claim
 // is part of the id, so two findings at the same lens and path:line with
-// different claims get different ids.
+// different claims get different ids. A non-object finding, or a lens, path or
+// claim that is not a string, throws a TypeError rather than hashing `undefined`.
 //
 // A finding is { lens, path, line, claim, reporterSeverity, kind, positions? }:
 // kind is 'unconfirmed' | 'contested'; positions ([{ severity }], optional,
@@ -18,14 +19,16 @@
 // Reply grammar (parseTiebreakReply). Lines are trimmed; each field line is
 // `Field: value`, the field name matched case-insensitively:
 //   Verdict: confirmed | refuted | cant-tell        value lowercased
-//   Evidence: {path}:{line} {quote}                 quote = everything after the
+//   Evidence: {path}:{line} {quote}                 the path:line token may sit in
+//       one backtick pair (`{path}`:{line} or `{path}:{line}`), which is
+//       stripped. quote = everything after the
 //       first whitespace following path:line; one wrapping pair of double
 //       quotes, or a Markdown code span (any equal backtick run, padding
 //       spaces dropped), is stripped. An empty or whitespace-only quote, a line
 //       below 1, or anything else gives evidence: null.
 //   Severity: {sev}                                 lowercased; a value outside
 //       SEVERITIES gives severity: null.
-//   Recommendation: file | drop [(— | - | :) reason]   a reason without a
+//   Recommendation: file | drop [(— | – | - | : | ,) reason]   a reason without a
 //       separator, or any other value, gives recommendation: null.
 //   STATUS: {WORD}                                  uppercased; MUST be the
 //       last non-empty line of the reply (narration after it is a failure).
@@ -49,8 +52,13 @@ const { severityRank, LINE_TOLERANCE_REPRODUCTION_WIDE } = require('./coordinati
 const VERDICTS = ['confirmed', 'refuted', 'cant-tell'];
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 
-function findingId({ lens, path, line, claim }) {
-  const normClaim = String(claim).replace(/\s+/g, ' ').trim();
+function findingId(finding) {
+  if (!finding || typeof finding !== 'object') throw new TypeError('findingId: finding must be an object');
+  for (const key of ['lens', 'path', 'claim']) {
+    if (typeof finding[key] !== 'string') throw new TypeError(`findingId: finding ${key} must be a string`);
+  }
+  const { lens, path, line, claim } = finding;
+  const normClaim = claim.replace(/\s+/g, ' ').trim();
   return crypto.createHash('sha1')
     .update([lens, path, String(line), normClaim].join('\n'))
     .digest('hex')
@@ -60,6 +68,8 @@ function findingId({ lens, path, line, claim }) {
 const FIELD_RE = /^(verdict|evidence|severity|recommendation)\s*:\s*(.*)$/i;
 const STATUS_RE = /^status\s*:\s*([A-Za-z_]+)$/i;
 const EVIDENCE_RE = /^(\S+):(\d+)(?:\s+([\s\S]*))?$/;
+// A path:line token wrapped in one backtick pair: `path`:line or `path:line`.
+const WRAPPED_TOKEN_RE = /^`([^`\s]+)`(:\d+)(?=\s|$)|^`([^`\s]+:\d+)`(?=\s|$)/;
 
 function unparsed() {
   return {
@@ -84,7 +94,8 @@ function stripWrapper(s) {
 }
 
 function parseEvidence(value) {
-  const m = EVIDENCE_RE.exec(value);
+  const w = WRAPPED_TOKEN_RE.exec(value);
+  const m = EVIDENCE_RE.exec(w ? (w[3] || w[1] + w[2]) + value.slice(w[0].length) : value);
   if (!m) return null;
   const line = Number(m[2]);
   const quote = stripWrapper((m[3] || '').trim());
@@ -93,11 +104,11 @@ function parseEvidence(value) {
 }
 
 function parseRecommendation(value) {
-  const m = /^(file|drop)(?=$|\s|:|—)(.*)$/i.exec(value);
+  const m = /^(file|drop)(?=$|\s|:|,|—|–)(.*)$/i.exec(value);
   if (!m) return { recommendation: null, recommendationReason: null };
   const rest = m[2].trim();
   if (rest === '') return { recommendation: m[1].toLowerCase(), recommendationReason: null };
-  const sep = /^(?:—|-|:)\s*([\s\S]*)$/.exec(rest);
+  const sep = /^(?:—|–|-|:|,)\s*([\s\S]*)$/.exec(rest);
   if (!sep) return { recommendation: null, recommendationReason: null };
   return { recommendation: m[1].toLowerCase(), recommendationReason: sep[1].trim() || null };
 }
@@ -221,7 +232,7 @@ function evidenceProblem(evidence, finding, line, readFile) {
   const quote = squash(evidence.quote);
   if (!/[A-Za-z0-9_]{3,}/.test(quote)) return 'evidence-unverified';
   if (Math.abs(evidence.line - line) > LINE_TOLERANCE_REPRODUCTION_WIDE) return 'evidence-unverified';
-  if (typeof readFile !== 'function') return 'evidence-unverified';
+  // One guard for both: an absent or non-function reader throws here too.
   let text;
   try { text = readFile(finding.path); } catch { return 'evidence-unverified'; }
   if (typeof text !== 'string') return 'evidence-unverified';
@@ -318,7 +329,9 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
 //
 // A present-but-bad artifact is never absent and never valid: readFindingsArtifact
 // reports { present: true, valid: false } so archival can refuse with its own
-// reason. Only a missing file is { present: false, valid: true } (nothing enforced).
+// reason. "Bad" is malformed (not JSON, wrong shape) or unreadable (any read
+// error but ENOENT, or a path that lstat cannot prove missing — fail closed).
+// Only a missing file is { present: false, valid: true } (nothing enforced).
 // A valid entry has a 12-lowercase-hex id (the findingId shape) and non-empty
 // string lens and path. buildFindingsArtifact refuses a line break in lens,
 // path, claim, or a string line, and the `tiebreak:` marker in lens, path, or a
@@ -355,9 +368,13 @@ function readFindingsArtifact(dir) {
   try {
     raw = fs.readFileSync(file, 'utf8');
   } catch (err) {
+    // Any read error but ENOENT is present and unreadable: fail closed, never absent.
     if (!err || err.code !== 'ENOENT') return invalid;
-    // A dangling symlink also reads ENOENT, but it is present, not absent.
-    try { fs.lstatSync(file); return invalid; } catch { return { present: false, valid: true, findings: null }; }
+    // A dangling symlink also reads ENOENT, but it is present, not absent; only
+    // an lstat ENOENT proves the file is missing.
+    try { fs.lstatSync(file); return invalid; } catch (e) {
+      return e && e.code === 'ENOENT' ? { present: false, valid: true, findings: null } : invalid;
+    }
   }
   let parsed;
   try { parsed = JSON.parse(raw); } catch { return invalid; }
@@ -384,7 +401,8 @@ function checkTiebreakCoverage(dir) {
   const missing = art.findings
     .filter((f) => !lines.some((l) => verdictLineRe(f.id).test(l)))
     .map((f) => f.id);
-  return { artifactPresent: true, artifactValid: true, missing };
+  // A duplicated id is listed once, first-seen order kept.
+  return { artifactPresent: true, artifactValid: true, missing: [...new Set(missing)] };
 }
 
 // specDirs are basenames such as `spec-3945` (the caller derives them, so this

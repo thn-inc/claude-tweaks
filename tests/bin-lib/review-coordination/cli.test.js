@@ -153,8 +153,15 @@ test('resolve-tiebreak exits 2 for a malformed finding, an unreadable reply, an 
   }
   assert.strictEqual(runCli(['resolve-tiebreak', good, path.join(d, 'absent.txt')]).code, 2);
   assert.strictEqual(runCli(['resolve-tiebreak', path.join(d, 'absent.json'), r]).code, 2);
-  assert.strictEqual(runCli(['resolve-tiebreak', good]).code, 2);
-  assert.strictEqual(runCli(['resolve-tiebreak', good, r, '--root']).code, 2);
+  // Arity: each exits 2 through the usage message, not some later read error.
+  for (const args of [[good], [good, r, r]]) {
+    const res = runCli(['resolve-tiebreak', ...args]);
+    assert.strictEqual(res.code, 2, args.join(' '));
+    assert.match(res.stderr, /^review-coordination\.js: resolve-tiebreak takes <finding\.json> <reply-file> \[--root <dir>\]\nusage: /, args.join(' '));
+  }
+  const noRoot = runCli(['resolve-tiebreak', good, r, '--root']);
+  assert.strictEqual(noRoot.code, 2);
+  assert.match(noRoot.stderr, /^review-coordination\.js: --root needs a directory\nusage: /);
 });
 
 test('a line break in a finding field exits 2 from resolve-tiebreak and write-findings (#3945 F3)', (t) => {
@@ -251,7 +258,12 @@ test('write-findings exits 2 on invalid or unreadable input and writes nothing',
   for (const input of [bad, notJson, path.join(d, 'absent.json')]) {
     assert.strictEqual(run(['write-findings', runDir, input], fakeDeps(main).deps), 2, input);
   }
-  assert.strictEqual(run(['write-findings', runDir], fakeDeps(main).deps), 2);
+  // Arity: exits 2 through the usage message, not a read error on a missing argument.
+  for (const args of [[runDir], [runDir, bad, bad]]) {
+    const { deps, err } = fakeDeps(main);
+    assert.strictEqual(run(['write-findings', ...args], deps), 2, args.join(' '));
+    assert.match(err.join(''), /^review-coordination\.js: write-findings takes <run-dir> <findings\.json>\nusage: /, args.join(' '));
+  }
   assert.ok(!fs.existsSync(path.join(runDir, 'review-findings.json')));
 });
 
@@ -284,7 +296,12 @@ test('check-coverage reports the missing ids and exits 0', (t) => {
   const res = checkCoverage(d, main);
   assert.strictEqual(res.code, 0);
   assert.deepStrictEqual(JSON.parse(res.stdout), { artifactPresent: true, artifactValid: true, missing: [id2] });
-  assert.strictEqual(runCli(['check-coverage']).code, 2);
+  // Arity: exits 2 through the usage message, not the run-dir guard.
+  for (const args of [[], [d, d]]) {
+    const res = runCli(['check-coverage', ...args]);
+    assert.strictEqual(res.code, 2, args.join(' '));
+    assert.match(res.stderr, /^review-coordination\.js: check-coverage takes exactly 1 run-dir\nusage: /, args.join(' '));
+  }
 });
 
 test('check-coverage aggregates spec-*/ artifacts like the archive gate (#3945 F8)', (t) => {
