@@ -1,7 +1,6 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
 const { listTestFiles } = require('../tools/run-tests');
@@ -506,7 +505,7 @@ test('AC1.1, AC3.1: every tests/**/*.test.js passes the scan against ALLOWLIST',
 
 test('AC2.1: perf/ budgets are real matches but are never scanned', () => {
   assert.ok(!Object.keys(readTestFiles()).some((rel) => rel.startsWith('perf/')));
-  const perf = fs.readFileSync(path.join(ROOT, 'perf', 'closing-keyword-linearity.test.js'), 'utf8');
+  const perf = readText(path.join(ROOT, 'perf', 'closing-keyword-linearity.test.js'));
   assert.ok(findBudgetAssertions(perf).length >= 1);
 });
 

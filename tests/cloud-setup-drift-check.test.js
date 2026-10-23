@@ -188,7 +188,7 @@ const SHA_PINNED_CATALOG_ENTRY = {
 let liveSnippet;
 
 test('setup: extract the live VERDICT snippet and confirm it is byte-identical to the template doc', () => {
-  const scriptSource = fs.readFileSync(SCRIPT_PATH, 'utf8');
+  const scriptSource = readText(SCRIPT_PATH);
   liveSnippet = extractVerdictSnippet(scriptSource);
 
   const docPath = path.resolve(
@@ -361,7 +361,7 @@ function runTmpDirBlock(block, sessionId) {
 }
 
 test('session-id guard: CLAUDE_CODE_SESSION_ID unset does not abort under set -u, CC_TMP_DIR stays unscoped', () => {
-  const scriptSource = fs.readFileSync(SCRIPT_PATH, 'utf8');
+  const scriptSource = readText(SCRIPT_PATH);
   const block = extractTmpDirBlock(scriptSource);
   const result = runTmpDirBlock(block, undefined);
   assert.strictEqual(result.status, 0, `expected the guarded block to run clean under set -u (stderr: ${result.stderr})`);
@@ -369,7 +369,7 @@ test('session-id guard: CLAUDE_CODE_SESSION_ID unset does not abort under set -u
 });
 
 test('session-id guard: CLAUDE_CODE_SESSION_ID exported still resolves the ct-session-{id} subdirectory unchanged', () => {
-  const scriptSource = fs.readFileSync(SCRIPT_PATH, 'utf8');
+  const scriptSource = readText(SCRIPT_PATH);
   const block = extractTmpDirBlock(scriptSource);
   const result = runTmpDirBlock(block, 'abc123');
   assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);

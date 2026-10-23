@@ -166,7 +166,7 @@ test('the allowlist names exactly the two reviewed exceptions, and each still ac
 });
 
 test('extractGuard selects the entry-point (last) require.main guard in hooks.js, not the prefilter (first) one', () => {
-  const content = stripComments(fs.readFileSync(path.join(ROOT, 'plugin', 'bin', 'hooks.js'), 'utf8'));
+  const content = stripComments(readText(path.join(ROOT, 'plugin', 'bin', 'hooks.js')));
   const guard = extractGuard(content);
   assert.ok(guard !== null, 'hooks.js should still have a detectable require.main guard');
   // The prefilter guard at the top of the file only ever calls the early-exit
@@ -229,7 +229,7 @@ test('the health-core scoped rule actually detects a synthetic violation (discri
     const files = getHealthCoreFiles();
     const rel = path.join('plugin', 'bin', 'lib', 'health-core', '__synthetic-violation.tmp.js');
     assert.ok(files.includes(rel), 'synthetic file should be picked up by the directory sweep');
-    const hits = findDirectProcessExit(stripComments(fs.readFileSync(tmpFile, 'utf8')));
+    const hits = findDirectProcessExit(stripComments(readText(tmpFile)));
     assert.strictEqual(hits.length, 1, 'the synthetic health-core file must fail the check');
   } finally {
     fs.unlinkSync(tmpFile);

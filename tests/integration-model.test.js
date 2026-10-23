@@ -155,7 +155,7 @@ test('CLI: this repo resolves a valid enum value regardless of policy.yml state 
 
 test('CLI: this repo pins integration-model: pr-first in policy.yml — resolves without shelling out to git/gh (AC1)', () => {
   const policyPath = path.join(REPO_ROOT, '.claude-tweaks', 'policy.yml');
-  const policyRaw = fs.readFileSync(policyPath, 'utf8');
+  const policyRaw = readText(policyPath);
   assert.match(policyRaw, /^integration-model:\s*pr-first\s*$/m, '.claude-tweaks/policy.yml must pin integration-model: pr-first');
   const out = runResolvePolicy(['--values', 'integration-model'], { cwd: REPO_ROOT });
   assert.strictEqual(out.trim(), 'pr-first');

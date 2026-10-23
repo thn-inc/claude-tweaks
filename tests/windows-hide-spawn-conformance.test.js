@@ -172,7 +172,7 @@ test('scanner sees a child_process function reached through a parameter default 
 });
 
 test('report.js carries windowsHide on all three git spawns, and removing any one is caught (#3854)', () => {
-  const raw = fs.readFileSync(path.join(BIN_ROOT, 'lib', 'verify', 'report.js'), 'utf8');
+  const raw = readText(path.join(BIN_ROOT, 'lib', 'verify', 'report.js'));
   const needle = 'windowsHide: true';
   const at = [];
   for (let i = raw.indexOf(needle); i !== -1; i = raw.indexOf(needle, i + 1)) at.push(i);

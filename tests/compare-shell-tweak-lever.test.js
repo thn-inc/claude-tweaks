@@ -8,7 +8,7 @@ const { readText } = require('./helpers/read-skill');
 const TEMPLATE = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'compare-shell', 'template.html');
 
 function readTemplate() {
-  return fs.readFileSync(TEMPLATE, 'utf8');
+  return readText(TEMPLATE);
 }
 
 test('AC1 (#1207): the tweak panel declares hue/spacing-scale/corner-radius levers with data-token attributes', () => {
@@ -174,7 +174,7 @@ test('AC2 (#1336): the iframe sandbox attribute is unchanged — allow-scripts o
 test('#1336: seed-compare.mjs documents the postMessage opt-in convention for candidate authors, without auto-injecting a listener', () => {
   const fs = require('node:fs');
   const path = require('node:path');
-  const text = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'compare-shell', 'seed-compare.mjs'), 'utf8');
+  const text = readText(path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'compare-shell', 'seed-compare.mjs'));
   assert.match(text, /compare-shell-tweak/, 'expected the opt-in doc comment to name the message type');
   assert.match(text, /addEventListener\('message'/, 'expected a documented example listener snippet');
   assert.match(text, /Deliberately not auto-injected here/i, 'expected the file to state the no-auto-injection decision explicitly');

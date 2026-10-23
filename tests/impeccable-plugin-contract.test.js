@@ -189,7 +189,7 @@ test('fixture: signals-backend-repo.json still matches validateSignals() shape',
 });
 
 test('fixture: concept-seed.txt still matches validateConceptSeed() shape', () => {
-  const fixtureText = fs.readFileSync(path.join(FIXTURES, 'concept-seed.txt'), 'utf8');
+  const fixtureText = readText(path.join(FIXTURES, 'concept-seed.txt'));
   const out = engine.run('concept-seed', ['--scope', 'surface'], {}, fakeEngineDeps(fixtureText));
   assert.strictEqual(out.ok, true, out.detail || out.reason);
   assert.strictEqual(out.value, fixtureText);

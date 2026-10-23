@@ -169,7 +169,7 @@ test('the kernel block carries its four parts in order', () => {
 // value's argument, nothing else.
 test('code-health/routine-template.yml: parameterless template has no focus field and its kickoff carries no focus= argument (AC4/IL-115 regression pin)', () => {
   const templatePath = path.join(SKILLS_DIR, 'code-health', 'routine-template.yml');
-  const tpl = parseRoutineTemplate(fs.readFileSync(templatePath, 'utf8'));
+  const tpl = parseRoutineTemplate(readText(templatePath));
   assert.equal(
     tpl.focus,
     undefined,

@@ -3,12 +3,12 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 
-const fs = require('fs');
 
 const {
   composeStamp, writeStamp, readStamp, STAMP_JSON_NAME, STAMP_LEGACY_NAME,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'stamp.js'));
 const { writeFileAtomic } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'atomic-write.js'));
+const { readText } = require('../../helpers/read-skill');
 
 function fakeFs(files = {}) {
   return {
@@ -115,7 +115,7 @@ test('writeFileAtomic (the count-stamp write\'s own primitive) writes through a 
 });
 
 test('bin/verify.js\'s count-stamp write site calls writeFileAtomic by name — a regression back to a raw fs write would silently lose the pid-suffixed shape pinned above (#2335)', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js'));
   assert.match(src, /writeFileAtomic\(countStampPath,/);
 });
 

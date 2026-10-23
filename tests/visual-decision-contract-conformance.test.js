@@ -1,7 +1,6 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 
@@ -61,10 +60,7 @@ test('AC1 reversion check: renaming a shape on either side breaks this suite (pr
 });
 
 test('AC3: decision.html metadata field set (winner, seedKey, rerollCount, steerHistory, date) matches between the contract and the seeder', () => {
-  const seederText = fs.readFileSync(
-    path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'compare-shell', 'seed-compare.mjs'),
-    'utf8',
-  );
+  const seederText = readText(path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'compare-shell', 'seed-compare.mjs'));
   const fields = ['winner', 'date', 'seedKey', 'rerollCount', 'steerHistory'];
   for (const field of fields) {
     assert.match(seederText, new RegExp(`\\b${field}\\b`), `seeder is missing outcome field ${field}`);
@@ -73,7 +69,7 @@ test('AC3: decision.html metadata field set (winner, seedKey, rerollCount, steer
   // runtime (buildVariantData/seed in seed-compare.mjs) — checked structurally
   // above via the source text; template.html then surfaces the same object
   // as DATA.outcome, so both sides of the format agree on the field set.
-  const templateText = fs.readFileSync(TEMPLATE, 'utf8');
+  const templateText = readText(TEMPLATE);
   assert.match(templateText, /DATA\.outcome/);
 });
 

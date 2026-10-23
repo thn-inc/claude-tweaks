@@ -13,7 +13,7 @@ const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
 const settings = JSON.parse(fs.readFileSync(path.join(ROOT, '.claude', 'settings.json'), 'utf8'));
-const autonomy = (fs.readFileSync(path.join(ROOT, '.claude-tweaks', 'policy.yml'), 'utf8').match(/^autonomy:\s*["']?([a-z-]+)["']?\s*$/m) || [])[1];
+const autonomy = (readText(path.join(ROOT, '.claude-tweaks', 'policy.yml')).match(/^autonomy:\s*["']?([a-z-]+)["']?\s*$/m) || [])[1];
 
 function kindsOf(dir) {
   return scanAgentTrustScope(dir).candidates.map((c) => c.kind);

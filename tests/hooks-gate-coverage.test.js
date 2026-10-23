@@ -109,7 +109,7 @@ test('every GATE_COVERAGE field is load-bearing, not a parallel hand-kept list',
   // gate, the assertions above keep pinning prose against a dead value — still
   // green, and no longer about the gate's behaviour at all. That is precisely
   // the failure mode [IL-78] describes: a check that would pass on any input.
-  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'));
   // Iterate every GATE_COVERAGE key rather than a hardcoded ['tools',
   // 'gitActions'] list — a field this loop doesn't visit is exactly the
   // "constant nothing reads" gap the loop exists to catch (whole-branch
@@ -123,7 +123,7 @@ test('every GATE_COVERAGE field is load-bearing, not a parallel hand-kept list',
   // bashWriteShapes is implemented in git-command.js, so it is load-bearing
   // there instead: WRITE_SHAPES guards which command words fileWriteTargets
   // will even inspect.
-  const gc = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'git-command.js'), 'utf8');
+  const gc = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'git-command.js'));
   assert.ok(gc.includes('WRITE_SHAPES.includes('),
     'fileWriteTargets must gate on WRITE_SHAPES so an unlisted shape is dead code');
   assert.strictEqual(GATE_COVERAGE.bashWriteShapes, WRITE_SHAPES,
@@ -173,7 +173,7 @@ test('policy-schema-coverage.md\'s teardown coverage block lists exactly the git
 });
 
 test('pre-tool-use.js branches on GATE_COVERAGE.teardownTools, not a duplicated literal', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'));
   assert.ok(src.includes('GATE_COVERAGE.teardownTools'),
     'pre-tool-use.js must branch on GATE_COVERAGE.teardownTools, not a hardcoded comparison');
 });

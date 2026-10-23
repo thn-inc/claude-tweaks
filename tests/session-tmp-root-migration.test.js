@@ -151,9 +151,6 @@ test('_shared/session-tmp-root.md documents the degrade rule and the record-suff
 });
 
 test('bin/lib/session-tmp.js is a pure module (no gh/MCP/network calls)', () => {
-  const text = fs.readFileSync(
-    path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'session-tmp.js'),
-    'utf8',
-  );
+  const text = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'session-tmp.js'));
   assert.doesNotMatch(text, /execFileSync|execSync|spawn|fetch\(/, 'must stay pure filesystem helpers, no network/process calls');
 });

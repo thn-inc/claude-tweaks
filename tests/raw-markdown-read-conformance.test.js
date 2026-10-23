@@ -13,8 +13,11 @@ const { readText } = require('./helpers/read-skill');
 // such file surfaced one at a time through the post-merge windows-regression.yml
 // run (#3703, #3776, #3797, #3802, #3890, #3894). This scan fails on Linux
 // instead: every text-mode read of a repo-rooted path in tests/**/*.test.js goes
-// through tests/helpers/read-skill.js's `readText`, unless the path is provably
-// not markdown or the file is on ALLOWLIST with a reason.
+// through tests/helpers/read-skill.js's `readText`, unless the path is provably a
+// JSON file (a parse ignores line endings) or the file is on ALLOWLIST with a
+// reason. A suite run on a `core.autocrlf=true` checkout showed the same break
+// for a raw read of an HTML template and of a shell script a test extracts a
+// snippet from, so the rule covers every tracked text file, not markdown alone.
 //
 // What counts as repo-rooted. An expression naming `__dirname`, `__filename` or
 // `process.cwd()`, or an identifier whose binding is repo-rooted. A binding is
@@ -26,13 +29,12 @@ const { readText } = require('./helpers/read-skill');
 // content-producing call (CONTENT_CALL): a variable holding a file's text or a
 // spawn's output is not a path, even when the path it came from was repo-rooted.
 //
-// What counts as markdown. The read's argument, plus the right-hand sides of the
-// bindings it reaches, holds a `.md` or `.gitignore` string literal → `md`. It is
-// exempt as `non-md` only when it holds another known file extension literal and
-// no call other than a path builder (a walk helper can return any file list), or
-// when the read is the direct argument of `JSON.parse`. Anything else — the
-// `read(rel)` helper shape that #3890 and #3894 fixed — is `ambiguous`, and is
-// flagged too: routing a non-markdown text read through `readText` costs nothing.
+// Kinds. The read's argument, plus the right-hand sides of the bindings it
+// reaches, holds a `.md` or `.gitignore` string literal → `md`. It is exempt as
+// `json` only when the read is the direct argument of `JSON.parse`, or when it
+// holds a `.json`/`.jsonl` literal and no call other than a path builder (a walk
+// helper can return any file list). Anything else — a `.js`/`.html`/`.sh` path,
+// or the `read(rel)` helper shape that #3890 and #3894 fixed — is `text`.
 //
 // A path built only from a named function's parameters (`function read(...segments)`,
 // `const read = (p) => …`) is repo-rooted when some call of that function in the file
@@ -71,7 +73,8 @@ const NOT_A_NAME = new Set(['const', 'let', 'var', 'return', 'if', 'else', 'type
 const RAW_READ = /(?<![\w$])(?:readFileSync|promises\s*\.\s*readFile)\s*\(/g;
 const HELPER_READ = /(?<![\w$.])readText\s*\(/g;
 const MD_LITERAL = /\.md['"`]|['"`/]\.gitignore['"`]/;
-const NON_MD_LITERAL = /\.(?:js|cjs|mjs|json|jsonl|ya?ml|sh|txt|ts|toml|html|css|svg|patch|diff|lock|log)['"`]/;
+const JSON_LITERAL = /\.jsonl?['"`]/;
+const OTHER_EXT_LITERAL = /\.(?:js|cjs|mjs|ya?ml|sh|txt|ts|toml|html|css|svg|patch|diff|lock|log)['"`]/;
 const PATH_BUILDER = /(?<![\w$])path\s*\.\s*(?:posix\s*\.\s*|win32\s*\.\s*)?(?:join|resolve|dirname|normalize)\s*\(|(?<![\w$])require\s*\.\s*resolve\s*\(/g;
 
 // Index of the bracket closing the one opened just before `i` (or the end).
@@ -210,10 +213,10 @@ function evidence(argKeep, argCode, at, byName) {
 
 function classify(ev, before) {
   if (MD_LITERAL.test(ev.keep)) return 'md';
-  if (/(?<![\w$])JSON\s*\.\s*parse\s*\(\s*(?:[\w$]+\s*\.\s*|require\s*\([^)]*\)\s*\.\s*)?$/.test(before)) return 'non-md';
+  if (/(?<![\w$])JSON\s*\.\s*parse\s*\(\s*(?:[\w$]+\s*\.\s*|require\s*\([^)]*\)\s*\.\s*)?$/.test(before)) return 'json';
   const opaqueCall = /[\w$]\s*\(/.test(ev.code.replace(new RegExp(PATH_BUILDER.source, 'g'), ''));
-  if (NON_MD_LITERAL.test(ev.keep) && !opaqueCall) return 'non-md';
-  return 'ambiguous';
+  if (JSON_LITERAL.test(ev.keep) && !OTHER_EXT_LITERAL.test(ev.keep) && !opaqueCall) return 'json';
+  return 'text';
 }
 
 const lineAt = (code, i) => code.slice(0, i).split('\n').length;
@@ -293,8 +296,8 @@ function pathOrigin(argKeep, argCode, at, ctx, depth = 0) {
 }
 
 // Every repo-rooted text read in `raw` (a test file's source):
-// { verdict, sites: [{ line, kind: 'md'|'ambiguous'|'non-md', via: 'raw'|'readText' }] }.
-// A `via: 'raw'` site whose kind is not 'non-md' is an offender.
+// { verdict, sites: [{ line, kind: 'md'|'text'|'json', via: 'raw'|'readText' }] }.
+// A `via: 'raw'` site whose kind is not 'json' is an offender.
 function scanRawMarkdownReads(raw) {
   const keep = stripComments(raw);
   // A spread's `...` is blanked (same length) so `...segments` reads as the name
@@ -332,7 +335,7 @@ function scanRawMarkdownReads(raw) {
 }
 
 const offenderLines = (src) =>
-  scanRawMarkdownReads(src).sites.filter((s) => s.via === 'raw' && s.kind !== 'non-md').map((s) => s.line);
+  scanRawMarkdownReads(src).sites.filter((s) => s.via === 'raw' && s.kind !== 'json').map((s) => s.line);
 
 function listTestFiles(dir) {
   const out = [];
@@ -382,9 +385,9 @@ test('AC1.1 go-red on the live tree: reverting a migrated readText call back to 
   assert.deepEqual(offenderLines(reverted), [line]);
 });
 
-test('the read(rel) helper shape #3890 and #3894 fixed is flagged as ambiguous', () => {
+test('the read(rel) helper shape #3890 and #3894 fixed is flagged as text', () => {
   const s = src("const ROOT = path.join(__dirname, '..');", "const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');");
-  assert.deepEqual(scanRawMarkdownReads(s).sites, [{ line: L(2), kind: 'ambiguous', via: 'raw' }]);
+  assert.deepEqual(scanRawMarkdownReads(s).sites, [{ line: L(2), kind: 'text', via: 'raw' }]);
 });
 
 test('a helper whose path arrives only through its parameters is flagged when a caller passes a repo path', () => {
@@ -445,20 +448,33 @@ test('a multi-line read, a .toString() read and an fs.promises read are flagged'
   assert.deepEqual(offenderLines(s), [L(1), L(5), L(6)]);
 });
 
-test('negatives: temp-dir reads, Buffer reads, definite non-markdown paths, JSON.parse, comments and strings are not flagged', () => {
+test('negatives: temp-dir reads, Buffer reads, JSON reads, comments and strings are not flagged', () => {
   const s = src(
     "const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'x-'));",
     "const decisions = fs.readFileSync(path.join(tmp, 'decisions.md'), 'utf8');",
     "const bytes = fs.readFileSync(path.join(__dirname, 'a.md'));",
-    "const src1 = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'verify.js'), 'utf8');",
-    "const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'hooks.json'), 'utf8'));",
+    "const hooks = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8');",
+    "const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'policy.yml'), 'utf8'));",
     "// fs.readFileSync(path.join(__dirname, 'a.md'), 'utf8')",
     "const msg = \"fs.readFileSync(path.join(__dirname, 'a.md'), 'utf8')\";",
   );
   assert.deepEqual(offenderLines(s), []);
   assert.deepEqual(
     scanRawMarkdownReads(s).sites.map((x) => [x.line, x.kind]),
-    [[L(4), 'non-md'], [L(5), 'non-md']],
+    [[L(4), 'json'], [L(5), 'json']],
+  );
+});
+
+test('a raw read of other tracked text (a .js source, an .html template, a .sh script) is flagged as text', () => {
+  const s = src(
+    "const a = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'verify.js'), 'utf8');",
+    "const b = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', 'x', 'template.html'), 'utf8');",
+    "const c = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'claude-cloud-setup.sh'), 'utf8');",
+    "const d = fs.readFileSync(path.join(__dirname, 'mixed.json.txt'), 'utf8');",
+  );
+  assert.deepEqual(
+    scanRawMarkdownReads(s).sites.map((x) => [x.line, x.kind]),
+    [[L(1), 'text'], [L(2), 'text'], [L(3), 'text'], [L(4), 'text']],
   );
 });
 
@@ -474,7 +490,7 @@ test('a name reused for a temp dir and the repo root is judged by its nearest pr
 
 test('taint stops at a content call: a value read from a repo file is not a repo path', () => {
   const s = src(
-    "const log = fs.readFileSync(path.join(__dirname, 'fixtures', 'a.txt'), 'utf8');",
+    "const log = readText(path.join(__dirname, 'fixtures', 'a.txt'));",
     'const repo = makeFixtureRepo({ log });',
     "const runDir = path.join(repo, 'run');",
     "const decisions = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');",
@@ -513,7 +529,7 @@ test('every test file strips to compilable code, so no read is hidden by a mis-p
 test('no test file reads a repo-rooted markdown path through a raw readFileSync (route it through tests/helpers/read-skill.js readText)', () => {
   const drift = [];
   for (const f of corpus()) {
-    const lines = f.sites.filter((s) => s.via === 'raw' && s.kind !== 'non-md').map((s) => s.line);
+    const lines = f.sites.filter((s) => s.via === 'raw' && s.kind !== 'json').map((s) => s.line);
     const allowed = ALLOWLIST[f.rel] ? ALLOWLIST[f.rel].count : 0;
     if (lines.length !== allowed) drift.push(`${f.rel}: ${lines.length} raw read(s) at line(s) ${lines.join(', ')}; allowlisted ${allowed}`);
   }

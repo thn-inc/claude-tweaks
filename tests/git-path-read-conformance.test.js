@@ -148,7 +148,7 @@ test('AC2.1: no plugin/bin git argv carries --name-only/--name-status without -z
 
 test('AC2.1 go-red: removing -z from a real reader line is a violation', () => {
   const file = path.join(BIN_DIR, 'lib', 'hooks', 'pre-tool-use.js');
-  const live = fs.readFileSync(file, 'utf8');
+  const live = readText(file);
   const needle = "'--name-status', '-z'";
   assert.ok(live.includes(needle), 'the live reader line is present');
   const broken = live.replace(needle, "'--name-status'");
@@ -242,7 +242,7 @@ test('every plugin/bin path-list argv that takes a ref also passes --end-of-opti
 
 test('--end-of-options go-red: removing it from a real reader line is a violation', () => {
   const file = path.join(BIN_DIR, 'lib', 'wrap-up', 'facts.js');
-  const live = fs.readFileSync(file, 'utf8');
+  const live = readText(file);
   const needle = "'-z', '--end-of-options', `${base}...HEAD`], { trim: false }));";
   assert.ok(live.includes(needle), 'the live reader line is present');
   const broken = live.replace(needle, "'-z', `${base}...HEAD`], { trim: false }));");

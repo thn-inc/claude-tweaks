@@ -525,10 +525,7 @@ test('refusal: always yields a hint key, defaulting to null, and passes through 
 // fixes (a renamed/removed reason code losing its co-located hint with
 // nothing pinning the two together). Source-scan the file text directly.
 test('archive-merged.js conformance: every ok:false/reason literal goes through refusal()', () => {
-  const src = fs.readFileSync(
-    path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'reconcile', 'archive-merged.js'),
-    'utf8',
-  );
+  const src = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'reconcile', 'archive-merged.js'));
   // The `refusal()` function's own body (`return { ok: false, reason, hint, ...extra };`)
   // is the one sanctioned literal — everything else naming both `ok: false`
   // and a `reason` key must be a `refusal(` call, not a bare object literal.
