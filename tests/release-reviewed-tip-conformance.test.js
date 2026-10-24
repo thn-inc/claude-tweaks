@@ -494,8 +494,7 @@ test('3a: the diff reads the literal {tip-sha}: a commit that lands after it was
     pushRunDirUpstream(fx);
     const tipSha = arrivedTipOf(fx);
     pushUpstream(fx); // a sibling's code commit arrives after {tip-sha} was resolved
-    fx.run(fx.work, ['fetch', '-q', 'origin', BRANCH]);
-    assert.notEqual(fx.run(fx.work, ['rev-parse', `origin/${BRANCH}`]).trim(), tipSha, 'fixture must have moved origin past the resolved tip');
+    assert.notEqual(arrivedTipOf(fx), tipSha, 'fixture must have moved origin past the resolved tip');
     assert.equal(runDirOnlyStatus(fx, tip, { tipSha }), 0, 'the literal sha is run-dir-only; the later code commit is the next comparison\'s move, not this diff\'s');
     // go-red: diffing the symbolic ref instead reads the later commit, so the advance would skip past it unseen
     const symbolic = runDirOnlyStatus(fx, tip, { tipSha, mutate: (f) => f.replace(tipSha, `origin/${BRANCH}`) });
