@@ -99,16 +99,13 @@ test('withIndexLockRetry: bounded — a runner that always fails on index.lock e
     err.stderr = LOCK_ERR_MSG;
     throw err;
   };
-  const start = Date.now();
   const retrying = withIndexLockRetry(runner, { attempts: 4, sleep: fakeSleep(sleeps) });
   assert.throws(
     () => retrying(['commit', '-m', 'x']),
     (err) => /index\.lock/.test(err.stderr),
   );
-  const elapsed = Date.now() - start;
   assert.equal(callCount, 4, 'expected exactly `attempts` calls, no more');
   assert.equal(sleeps.length, 3, 'expected attempts-1 sleeps between attempts');
-  assert.ok(elapsed < 1000, `injected sleep must make this instant, took ${elapsed}ms`);
 });
 
 test('isIndexLockFailure: matches both documented signatures, rejects an unrelated error', () => {

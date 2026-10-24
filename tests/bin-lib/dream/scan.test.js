@@ -277,13 +277,12 @@ test('composeProposalMarkdown: a proposal built from real findings quotes no raw
   assert.ok(md.includes('Bearer <secret>'), md);
 });
 
-test('redact: a huge keyword-bearing tool output stays fast (input is capped before the secret regexes run)', () => {
-  // Uncapped, SECRET_NAME's unbounded runs backtrack quadratically here (~2 s at 120k chars).
+test('redact: a huge keyword-bearing tool output is capped to PRE_REDACT_CHARS before the secret regexes run', () => {
+  // Uncapped, SECRET_NAME's unbounded runs backtrack quadratically here (~2 s at 120k chars);
+  // perf/dream-redact-latency.test.js holds the time bound, this holds the cap itself.
   const huge = 'TOKEN'.repeat(24000);
-  const started = Date.now();
   const out = redact(huge);
-  assert.ok(Date.now() - started < 500, `redact took ${Date.now() - started} ms`);
-  assert.ok(out.startsWith('TOKEN'), out.slice(0, 20));
+  assert.equal(out.length, 2048);
 });
 
 test('dream-pass.md names exactly the credential words SECRET_NAME matches, and each one redacts', () => {
