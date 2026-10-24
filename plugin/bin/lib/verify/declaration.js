@@ -175,7 +175,7 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
     if (!Array.isArray(raw.generated) || raw.generated.some((f) => typeof f !== 'string')) {
       errors.push('generated: must be an array of path glob strings');
     } else {
-      const selfPaths = selfPath && selfPath !== DECLARATION_PATH ? [DECLARATION_PATH, selfPath] : [DECLARATION_PATH];
+      const selfPaths = [...new Set([DECLARATION_PATH, selfPath].filter(Boolean))];
       const selfCovering = raw.generated.filter((g) => selfPaths.some((p) => globToRegExp(g).test(p)));
       if (selfCovering.length) {
         const covered = selfPaths.filter((p) => selfCovering.some((g) => globToRegExp(g).test(p)));

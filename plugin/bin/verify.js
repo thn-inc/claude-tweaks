@@ -137,7 +137,8 @@ function scopeSelfPath(resolvedPath, scopeCwd) {
     return null;
   }
   const leaf = resolveWithin(resolvedPath, root);
-  const rootReal = leaf === null ? null : canonicalRealpath(root);
+  if (leaf === null) return null;
+  const rootReal = canonicalRealpath(root);
   if (rootReal === null) return null;
   return path.relative(rootReal, leaf).split(path.sep).join('/') || null;
 }
