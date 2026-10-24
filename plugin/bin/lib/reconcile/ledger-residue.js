@@ -23,8 +23,18 @@
 // {root}/.claude-tweaks/pipelines/ is attributed to it (`run-live`):
 // attribution reads every `#{N}` token on the ledger's first line, matched as
 // a whole dash-separated token of a run-dir name after its leading timestamp,
-// else the filename's `{feature}` slug as a substring of the name. A ledger
-// with unresolved items is reported but never deleted.
+// else the filename's `{feature}` slug as a substring of the name. An open work
+// record that references it keeps it (`referenced-by-open-record`, carrying the
+// record numbers): its namedTarget path equals the ledger's path, or its body
+// contains the ledger's filename or `{feature}` slug, as in tidy. The open-record
+// list is read once per pass, and only when a ledger clears every earlier check.
+// It comes from `gh issue list --state open`, or from `specs/` under
+// `work-backend: local-files`. A failed read keeps every such ledger
+// (`record-scan-failed`, or the classified `gh-absent` / `network-failure`).
+// One deliberate difference from tidy: tidy deletes the ledger and closes the
+// referencing records in one approved action, while this unattended check never
+// closes a record, so it keeps the ledger and leaves it to `/claude-tweaks:tidy`.
+// A ledger with unresolved items is reported but never deleted.
 //
 // Write posture: a NEW ref plus a PR — never a push to the integration branch,
 // never a force or lease (the family never pushes there). The removal commit is
@@ -54,6 +64,9 @@ const { splitNul } = require('../git-z');
 const sharedPrimitives = require('../shared-primitives');
 const { classifyExecError } = require('./pr-state');
 const { defaultRefExists } = require('./prune-remote');
+const { namedTarget } = require('../issues/named-target');
+const { queryRecords } = require('../issues/local-store');
+const { readWorkBackend } = require('../work-backend');
 
 // Carried in the PR body so a human or later tooling can recognise the PR.
 const LEDGER_RESIDUE_MARKER = '<!-- ledger-residue-pr -->';
@@ -114,10 +127,30 @@ function attributedRunDir(ledgerPath, text, runDirNames) {
   return runDirNames.find((name) => name.includes(slug)) || null;
 }
 
-// One candidate's blob -> the reason it is kept, or null when removable. Pure.
-// text is the blob (null when it could not be read); runDirNames lists the
-// non-archived run directories (null when the scan failed).
-function classifyLedgerCandidate({ path: ledgerPath, text, runDirNames }) {
+// The open records that reference a ledger, as ascending numbers. Pure. A record
+// references it when namedTarget resolves its path to the ledger's, or when its
+// body contains the ledger's filename (which covers the full path) or feature
+// slug: tidy's referencing-record pass (skills/tidy/scan-procedures.md).
+function referencingRecords(ledgerPath, records) {
+  const basename = path.posix.basename(ledgerPath);
+  const slug = ledgerFeatureSlug(ledgerPath);
+  return records
+    .filter((r) => {
+      const target = namedTarget(r);
+      if (target && target.path === ledgerPath) return true;
+      return typeof r.body === 'string' && (r.body.includes(basename) || r.body.includes(slug));
+    })
+    .map((r) => r.number)
+    .sort((a, b) => a - b);
+}
+
+// One candidate's blob -> the reason it is kept, or null when removable. Pure
+// given its injected loader. text is the blob (null when it could not be read);
+// runDirNames lists the non-archived run directories (null when the scan failed);
+// loadOpenRecords is a zero-arg loader returning the open-record array,
+// 'gh-absent' / 'network-failure', or null on any other failure. An omitted
+// loader fails closed. The loader runs only after every earlier check has passed.
+function classifyLedgerCandidate({ path: ledgerPath, text, runDirNames, loadOpenRecords }) {
   if (typeof text !== 'string') return 'ledger-read-failed';
   const lines = text.split(/\r?\n/);
   if (!LEDGER_HEADING_RE.test(lines[0] || '') || !lines.some((l) => LEDGER_TABLE_HEADER_RE.test(l))) return 'not-a-ledger';
@@ -127,6 +160,10 @@ function classifyLedgerCandidate({ path: ledgerPath, text, runDirNames }) {
   if (parsed.unrecognized > 0) return 'ledger-status-unrecognized';
   if (!Array.isArray(runDirNames)) return 'run-dir-scan-failed';
   if (attributedRunDir(ledgerPath, text, runDirNames)) return 'run-live';
+  const records = typeof loadOpenRecords === 'function' ? loadOpenRecords() : null;
+  if (records === 'gh-absent' || records === 'network-failure') return records;
+  if (!Array.isArray(records)) return 'record-scan-failed';
+  if (referencingRecords(ledgerPath, records).length > 0) return 'referenced-by-open-record';
   return null;
 }
 
@@ -193,6 +230,40 @@ function defaultListRunDirs(root) {
   }
 }
 
+// The open work records the reference scan reads, as { number, body, labels }:
+// `specs/` under work-backend: local-files, else `gh issue list --state open`.
+// -> the array, 'gh-absent' / 'network-failure' (github-issues), or null when a
+// local read fails. `exec` is injectable for tests.
+function defaultListOpenRecords(root, exec = execFileSync) {
+  if (readWorkBackend(root) === 'local-files') {
+    const specsDir = path.join(root, 'specs');
+    try {
+      // queryRecords reads a failed readdir as "no records"; only a missing specs/ may mean that.
+      fs.readdirSync(specsDir);
+    } catch (e) {
+      return e && e.code === 'ENOENT' ? [] : null;
+    }
+    try {
+      return queryRecords(specsDir).map((r) => ({
+        number: r.id, body: r.body, labels: r.facets.origin ? [`by:${r.facets.origin}`] : [],
+      }));
+    } catch {
+      return null;
+    }
+  }
+  return sharedPrimitives.runClassified(
+    () => {
+      const issues = JSON.parse(exec('gh', ['issue', 'list', '--state', 'open', '--limit', '10000', '--json', 'number,body,labels'], {
+        cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: sharedPrimitives.GH_TIMEOUT_MS, maxBuffer: sharedPrimitives.LARGE_MAX_BUFFER_BYTES, windowsHide: true,
+      }));
+      if (!Array.isArray(issues)) throw new Error('gh issue list returned a non-array');
+      return issues;
+    },
+    classifyExecError,
+    { retryOnTimeout: true },
+  );
+}
+
 // Every PR whose head starts BRANCH_PREFIX, any state, with its body — or
 // 'gh-absent' / 'network-failure'. Enumerates the removal heads by ref prefix
 // (matching-refs), then lists each head's PRs, so a PR is found however old it
@@ -252,7 +323,7 @@ function prBody(paths) {
     LEDGER_RESIDUE_MARKER,
     '',
     'These pipeline ledgers reached the integration branch through PRs merged before their run\'s teardown deleted them.',
-    'Each has no open row and no live run directory.',
+    'Each has no open row, no live run directory, and no open work record referencing it.',
     '',
     ...paths.map((p) => `- \`${p}\``),
     '',
@@ -296,12 +367,13 @@ function pushRemovalCommit({ git, tip, paths, branch }) {
 }
 
 function ledgerResidue({
-  cwd, integration, dryRun, skipFetch, listRemovalPrs, listRunDirs, refExists, createPr, git,
+  cwd, integration, dryRun, skipFetch, listRemovalPrs, listRunDirs, listOpenRecords, refExists, createPr, git,
 } = {}) {
   const root = cwd || process.cwd();
   const run = git || makeDefaultGit(root);
   const listPrs = listRemovalPrs || defaultListRemovalPrs;
   const listRuns = listRunDirs || defaultListRunDirs;
+  const listOpen = listOpenRecords || defaultListOpenRecords;
   const checkRefExists = refExists || ((r, b) => defaultRefExists(r, b, DEFAULT_TIMEOUT_MS));
   const open = createPr || defaultCreatePr;
 
@@ -328,6 +400,12 @@ function ledgerResidue({
   const skip = (p, reason, extra = {}) => entries.push({ path: p, kind: 'ledger', action: 'skip', reason, ...extra });
 
   const runDirNames = listRuns(root);
+  // Memoized: at most one open-record read per pass, and none unless a ledger clears every local check.
+  let openRecords;
+  const loadOpenRecords = () => {
+    if (openRecords === undefined) openRecords = listOpen(root);
+    return openRecords;
+  };
   const candidates = [];
   for (const p of paths) {
     let text = null;
@@ -336,8 +414,9 @@ function ledgerResidue({
     } catch {
       /* unreadable blob: stays null, classified as ledger-read-failed */
     }
-    const reason = classifyLedgerCandidate({ path: p, text, runDirNames });
-    if (reason) skip(p, reason);
+    const reason = classifyLedgerCandidate({ path: p, text, runDirNames, loadOpenRecords });
+    if (reason === 'referenced-by-open-record') skip(p, reason, { records: referencingRecords(p, openRecords) });
+    else if (reason) skip(p, reason);
     else candidates.push(p);
   }
   if (candidates.length === 0) return done();
@@ -391,7 +470,9 @@ module.exports = {
   classifyLedgerCandidate,
   partitionByRemovalPrs,
   decideLedgerResidue,
+  referencingRecords,
   defaultListRunDirs,
+  defaultListOpenRecords,
   defaultListRemovalPrs,
   defaultCreatePr,
   ledgerResidue,
