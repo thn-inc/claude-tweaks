@@ -182,7 +182,7 @@ test('a lock already held by another writer is honored — recordFailure waits f
   cleanup(id);
 });
 
-test('recordFailure degrades to unlocked (never throws, never hangs past the timeout) when the lock cannot be acquired', () => {
+test('recordFailure degrades to unlocked (never throws, still records the model) when the lock cannot be acquired', () => {
   const id = `sf-test-lock-timeout-${process.pid}`;
   cleanup(id);
   const lockDir = `${failurePath(id)}.lock`;

@@ -66,7 +66,7 @@ test('quantize: maxColors below the distinct-color count still returns <= maxCol
   assert.ok(palette.length / 3 <= 16);
 });
 
-test('quantize: a large, high-color-count frame (mimicking a real screenshot) completes quickly', () => {
+test('quantize: a large, high-color-count frame (mimicking a real screenshot) quantizes to a <= 256-color palette and indexes every pixel', () => {
   const w = 400, h = 300; // smaller than a real 1280x720 frame but still ~120K pixels / continuous-gradient distinct colors, enough to prove the histogram+cache approach scales
   const frame = new Uint8Array(w * h * 4);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {

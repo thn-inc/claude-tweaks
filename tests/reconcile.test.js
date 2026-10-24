@@ -2486,7 +2486,7 @@ test('reconcile(): skipCacheStamp=true does not disturb a real pass\'s residueSu
 
 // AC1: reconcile() degrades within ~2s via the preflight when GitHub is
 // unreachable, instead of accumulating every check's own 5-10s timeout.
-test('AC1: a preflight failure resolves in well under the old per-check-timeout sum', async () => {
+test('AC1: a preflight failure skips the gh-dependent checks and still runs the mirror check', async () => {
   const { seedDir, mainDir } = pairedFixture();
   writePolicyViaSeedAndPull(seedDir, mainDir, 'integration-model: pr-first\n');
   const preflight = require('../plugin/bin/lib/reconcile/preflight');
@@ -2507,7 +2507,7 @@ test('AC1: a preflight failure resolves in well under the old per-check-timeout 
 
 // AC2: total wall-clock time is bounded by the explicit budget regardless
 // of how much stale state exists.
-test('AC2: an exhausted budget bounds total reconcile() time regardless of remaining check count', async () => {
+test('AC2: an exhausted budget skips every remaining check as budget-exceeded', async () => {
   const { mainDir } = pairedFixture();
   fs.mkdirSync(path.join(mainDir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');

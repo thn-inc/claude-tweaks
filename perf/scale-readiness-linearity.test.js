@@ -1,4 +1,4 @@
-// Scale-readiness regex linearity budget (#3412) — deliberately NOT part of `npm test`.
+// Scale-readiness regex linearity budget (#2622) — deliberately NOT part of `npm test`.
 //
 // Run with: npm run test:perf
 //

@@ -913,7 +913,7 @@ test('a "use server" actions file is a handler: applicable and scanned for inlin
   assert.match(c[0].evidence, /app\/actions\.ts:6 AI call on the request path/);
 });
 
-test('the "use server" check is linear in leading slashes, and still sees a directive after comments', () => {
+test('the "use server" check ignores a long run of leading slashes, and still sees a directive after comments', () => {
   const slashes = tmpGitRepo();
   write(slashes, 'package.json', pkg({ next: '^15', react: '^19' }));
   write(slashes, 'lib/x.ts', `${'/'.repeat(200)}\nexport const x = 1;\n`);
@@ -924,7 +924,7 @@ test('the "use server" check is linear in leading slashes, and still sees a dire
   assert.equal(scanScaleReadiness(directive).notApplicable, false);
 });
 
-test('the Prisma receiver-chain match is linear in a long dotted run, and still sees a call behind a long chain', () => {
+test('the Prisma receiver-chain match ignores a long dotted run, and still sees a call behind a long chain', () => {
   const dotted = repoWith({ express: '^4', '@prisma/client': '^5' }, { 'routes/data.js': `const x = ${'a.'.repeat(20000)}b;\n` });
   const r = scanScaleReadiness(dotted);
   assert.deepEqual(r.candidates.filter((c) => c.kind === 'unbounded-list-query'), []);

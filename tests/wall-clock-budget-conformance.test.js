@@ -517,7 +517,8 @@ const MOVED_TO_PERF = {
 test('#3939 AC2.1: every budget moved out of tests/ is a real match in its perf/ file', () => {
   for (const [rel, sites] of Object.entries(MOVED_TO_PERF)) {
     const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    assert.deepEqual(findBudgetAssertions(src).map((h) => h.text), sites, rel);
+    assert.deepEqual(findBudgetAssertions(src).map((h) => h.text), sites,
+      `${rel}: this pins #3939's moved budgets — update MOVED_TO_PERF if you changed the perf file's budget deliberately`);
   }
 });
 
