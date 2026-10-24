@@ -16,14 +16,19 @@ function runCli(cwd, args) {
   return spawnSync('node', [CLI, ...args], { cwd, encoding: 'utf8' });
 }
 
+function initRepo(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  git(dir, 'init', '-b', 'main');
+  git(dir, 'config', 'user.email', 'test@example.invalid');
+  git(dir, 'config', 'user.name', 'Test');
+  return dir;
+}
+
 // Fixture: a main branch with base.txt, then a feature branch adding one
 // implementation file (3 lines), one test file (1 line) and one docs file
 // (2 lines), all committed. `withImpl: false` drops the implementation file.
 function makeFixtureRepo({ withImpl = true } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diff-facts-'));
-  git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 'test@example.invalid');
-  git(dir, 'config', 'user.name', 'Test');
+  const dir = initRepo('diff-facts-');
   fs.writeFileSync(path.join(dir, 'base.txt'), 'base\n');
   git(dir, 'add', '.');
   git(dir, 'commit', '-m', 'base');
@@ -122,10 +127,7 @@ test('unknown flag exits 1', () => {
 // as in blast-radius-cli-e2e.test.js: `unrelated.txt` lands on main before
 // `feature` branches, then local main is force-set back to the root commit.
 function makeStaleLocalMainFixture() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diff-facts-stale-'));
-  git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 'test@example.invalid');
-  git(dir, 'config', 'user.name', 'Test');
+  const dir = initRepo('diff-facts-stale-');
   fs.writeFileSync(path.join(dir, 'root.txt'), 'root\n');
   git(dir, 'add', '.');
   git(dir, 'commit', '-m', 'root');
