@@ -67,7 +67,7 @@ test('an unknown flag or a flag with no value is malformed — exit 2', () => {
   assert.equal(run(['--run-id'], fakeDeps()), 2);
 });
 
-test('an inherited Object.prototype key is not a flag — bare constructor/toString are unknown arguments, exit 2', () => {
+test('a bare inherited Object.prototype key is an unknown argument — exit 2', () => {
   for (const token of ['constructor', 'toString']) {
     const deps = fakeDeps();
     assert.equal(run([token, 'x'], deps), 2, token);
