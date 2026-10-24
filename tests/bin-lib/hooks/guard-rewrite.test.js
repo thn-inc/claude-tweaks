@@ -183,6 +183,41 @@ test('inline-literal-assignment declines on >| and on a redirection target compu
   assert.strictEqual(rw('P=/x; >! out . ./f; echo $P/z'), null, "zsh's >! clobber would hand `out` the command position");
 });
 
+// Fix wave 3: zsh grammar positions the walk read as arguments. Every bash/zsh
+// reserved word and zsh precommand modifier in command position declines; only
+// if/then/else/elif (and fi) stay, since the next word is checked as a command.
+test('rules 1 and 2 decline on reserved words in command position (zsh repeat, short forms, loops)', () => {
+  assert.strictEqual(rw('P=/x; repeat 1 . ./f; echo $P/z'), null);
+  assert.strictEqual(rw('P=/x; repeat 1 do . ./f; done; echo $P/z'), null);
+  assert.strictEqual(rw('P=/x; if [[ -n x ]] . ./f; echo $P/z'), null, 'zsh SHORT_LOOPS if');
+  assert.strictEqual(rw('P=/x; foreach x (a) . ./f; end; echo $P/z'), null);
+  assert.strictEqual(rw('P=/x; for x (a) . ./f; echo $P/z'), null);
+  for (const word of ['case', 'esac', 'do', 'done', 'for', 'foreach', 'end', 'in', 'select', 'until', 'while', 'repeat', 'time', 'nocorrect', 'noglob', '[[', ']]', '{', '}', '!', '-']) {
+    // Quoted reference: no other bail can stand in for the reserved-word check.
+    assert.strictEqual(rw(`P=/x; ${word} true; echo "$P/z"`), null, word);
+  }
+  assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/bin/x.js"; repeat 1 true'), null, 'rule 2 too');
+  // Kept as safe: the word after if/then/else/elif is itself checked.
+  assert.deepStrictEqual(rw('P=/x; if true; then node $P/z.js; else node $P/y.js; fi'), {
+    command: 'P=/x; if true; then node /x/z.js; else node /x/y.js; fi', applied: ['inline-literal-assignment'],
+  });
+  assert.strictEqual(rw('P=/x; if true; then . ./f; fi; echo $P/z'), null);
+});
+
+// Fix wave 3: arithmetic evaluates a variable's value recursively, and an
+// expression can assign (`[[ $N -eq 5 ]]` with N=P=5 sets P).
+test('rules 1 and 2 decline on any arithmetic context', () => {
+  for (const ctx of ['echo $(( N ))', 'echo "$(( N ))"', 'echo $[N]', 'echo "$[N]"', '(( N ))', 'echo $a[$N]', '[[ $N -eq 5 ]]',
+    'let N', 'shift $N', 'break $N', 'continue $N', 'return $N']) {
+    assert.strictEqual(rw(`P=/x; ${ctx}; echo "$P/z"`), null, ctx);
+  }
+  assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/bin/x.js" $(( N ))'), null, 'rule 2 too');
+  // `[` and `test` never evaluate arithmetic (probed under both shells): kept.
+  assert.deepStrictEqual(rw('P=/x; [ $N -eq 5 ] && node $P/z.js'), { command: 'P=/x; [ $N -eq 5 ] && node /x/z.js', applied: ['inline-literal-assignment'] });
+  assert.deepStrictEqual(rw('P=/x; test $N -gt 1; node $P/z.js'), { command: 'P=/x; test $N -gt 1; node /x/z.js', applied: ['inline-literal-assignment'] });
+  assert.strictEqual(rw("P=/x; awk '{print a[1]}' f; echo \"$P/z\"").command, "P=/x; awk '{print a[1]}' f; echo \"/x/z\"", 'a subscript inside single quotes is text');
+});
+
 test('the allowlist keeps plain command words rewriting: cd ., ls ., cp a ., find ., git -C ., >.', () => {
   for (const [command, expected] of [
     ['P=/x; cd . && node $P/z.js', 'P=/x; cd . && node /x/z.js'],
@@ -337,12 +372,20 @@ const MUST_DECLINE = [
   { command: 'P=/x; trap "$(cat setp)" DEBUG; echo $P/z', naive: 'P=/x; trap "$(cat setp)" DEBUG; echo /x/z' },
   { command: 'P=/x; >| out . ./f; echo $P/z', naive: 'P=/x; >| out . ./f; echo /x/z' },
   { command: 'P=/x; >"$(echo o)" . ./f; echo $P/z', naive: 'P=/x; >"$(echo o)" . ./f; echo /x/z' },
+  // Fix wave 3: zsh grammar positions (each a syntax error in bash, so zsh only)…
+  { command: 'P=/x; repeat 1 . ./f; echo $P/z', naive: 'P=/x; repeat 1 . ./f; echo /x/z', shells: ['zsh'] },
+  { command: 'P=/x; repeat 1 do . ./f; done; echo $P/z', naive: 'P=/x; repeat 1 do . ./f; done; echo /x/z', shells: ['zsh'] },
+  { command: 'P=/x; if [[ -n x ]] . ./f; echo $P/z', naive: 'P=/x; if [[ -n x ]] . ./f; echo /x/z', shells: ['zsh'] },
+  // …and arithmetic evaluation of a runtime string (both shells).
+  { command: 'P=/x; [[ $(echo XP=5 | cut -c2-) -eq 5 ]]; echo $P/z', naive: 'P=/x; [[ $(echo XP=5 | cut -c2-) -eq 5 ]]; echo /x/z' },
+  { command: 'P=/x; [[ $N -eq 5 ]]; echo $P/z', naive: 'P=/x; [[ $N -eq 5 ]]; echo /x/z', env: { N: 'P=5' } },
+  { command: 'P=/x; echo $[$(echo XP=5 | cut -c2-)]; echo $P/z', naive: 'P=/x; echo $[$(echo XP=5 | cut -c2-)]; echo /x/z' },
 ];
 
 test('must-decline cases: code run from the command text reassigns at runtime, so the naive inline differs under bash and zsh', { skip: process.platform === 'win32' || !SHELLS.includes('bash') }, () => {
-  for (const { command, naive, env = {} } of MUST_DECLINE) {
+  for (const { command, naive, env = {}, shells = SHELLS } of MUST_DECLINE) {
     assert.strictEqual(rw(command), null, command);
-    for (const shell of SHELLS) {
+    for (const shell of SHELLS.filter((sh) => shells.includes(sh))) {
       const original = runIn(shell, command, env);
       assert.strictEqual(original.status, 0, `${shell}: ${command}\n${original.stderr}`);
       assert.notStrictEqual(runIn(shell, naive, env).stdout, original.stdout, `${shell}: the naive inline must differ for ${command}`);
@@ -369,11 +412,18 @@ function mulberry32(seed) {
 }
 const GRAMMAR = {
   lead: ['P=/x; ', 'P=/x && ', 'export P=/x\n', 'P=/x; Q=/q; ', 'P="/a b"; '],
-  safe: ['echo $P/z', 'echo "$P/z"', 'echo ${P}/b', '/bin/echo $P/e', 'true', 'false', 'cd . && echo $P/c', 'echo "$Q"', '[ -n "$P" ] && echo $P/t'],
+  safe: [
+    'echo $P/z', 'echo "$P/z"', 'echo ${P}/b', '/bin/echo $P/e', 'true', 'false', 'cd . && echo $P/c', 'echo "$Q"', '[ -n "$P" ] && echo $P/t',
+    '[ $N -eq 5 ] 2>/dev/null || echo $P/q', 'if true; then echo $P/i; fi',
+  ],
   risky: [
     '. ./f', 'source ./f', 'eval "$(cat setp)"', 'trap "$(cat setp)" DEBUG', '$(echo .) ./f', '"$(echo .)" ./f', '$SRC ./f',
     '>| out . ./f', '>"$(echo o)" . ./f', 'x=1 . ./f', '2>/dev/null . ./f', 'command . ./f', 'builtin source ./f', '( . ./f; echo $P/s )',
     'echo "$(. ./f; echo $P/i)"', 'set -a', 'read -r P < setp',
+    // Fix wave 3: reserved-word grammar positions and arithmetic contexts.
+    'repeat 1 . ./f', 'repeat 1 do . ./f; done', 'if [[ -n x ]] . ./f', '[[ $(echo XP=5 | cut -c2-) -eq 5 ]]', '[[ $N -eq 5 ]]',
+    'echo $[$(echo XP=5 | cut -c2-)]', '(( N ))', 'let N', 'echo $(( $N ))', 'case a in a) . ./f;; esac', '{ . ./f; }',
+    'for i in a; do . ./f; done', 'while false; do :; done', 'g() { . ./f; }; g', 'shift $N',
   ],
   redirect: ['', '', '', ' 2>/dev/null', ' 2>&1', ' >/dev/null'],
   join: ['; ', ' && ', ' || ', ' | ', '\n'],
@@ -394,7 +444,8 @@ test('property: every rewrite of a randomly drawn command keeps stdout, stderr a
   const rand = mulberry32(4028);
   let rewritten = 0;
   let declined = 0;
-  const env = { PATH: process.env.PATH, HOME: process.env.HOME || os.homedir(), SRC: '.' };
+  // N=P=5: any arithmetic evaluation of $N assigns P (fix wave 3).
+  const env = { PATH: process.env.PATH, HOME: process.env.HOME || os.homedir(), SRC: '.', N: 'P=5' };
   for (let n = 0; n < 300; n += 1) {
     const command = drawCommand(rand);
     const out = rw(command);

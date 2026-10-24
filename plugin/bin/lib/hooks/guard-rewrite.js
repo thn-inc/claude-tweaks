@@ -318,16 +318,41 @@ function leadingAssignments(s) {
 // word that is an expansion, quoted, escaped or globbed declines; so does any
 // operator or redirection this walk cannot place with certainty.
 const PLAIN_COMMAND_WORD = /^[A-Za-z0-9_\/][A-Za-z0-9_.\/+-]*$/;
-const TEST_COMMAND_WORDS = new Set(['[', '[[']);
-// Words after which the next word is still in command position.
-const COMMAND_PREFIXES = new Set(['then', 'do', 'else', 'elif', 'if', 'while', 'until', 'time', 'nohup', 'env', 'noglob', 'nocorrect']);
+// `[` and `test` never evaluate an operand as arithmetic (probed under bash and
+// zsh with N=P=5 against -eq/-ne/-lt/-le/-gt/-ge); `[[` does, so it is declined.
+const TEST_COMMAND_WORDS = new Set(['[']);
+// The reserved words kept as safe: the next word is a command word, checked like
+// any other, and none of them takes an operand. `fi` is safe as the word itself.
+// `if` short forms (`if [[ … ]] cmd`, `if (( … )) cmd`) need `[[`, `((` or `{`,
+// all of which decline.
+const KEYWORD_PREFIXES = new Set(['if', 'then', 'else', 'elif']);
+// External programs: they cannot touch this shell's variables, and their flags
+// (`env -i`) come before the command they run.
+const EXTERNAL_PREFIXES = new Set(['nohup', 'env']);
+// Every other bash/zsh reserved word and zsh precommand modifier (bash(1) and
+// zshmisc "RESERVED WORDS", zshmisc "PRECOMMAND MODIFIERS"). Each opens a grammar
+// position this walk reads as plain arguments: zsh's `repeat 1 . ./f`, `for x
+// (a) . ./f`, `foreach … end`, `case … esac`, loop bodies, `{ … }`, `time`.
+// The rest of those lists (`function`, `coproc`, zsh's `declare`/`export`/
+// `float`/`integer`/`local`/`readonly`/`typeset`, the modifiers `builtin`/
+// `command`/`exec`) are in RUNNERS; the two sets stay disjoint.
+const RESERVED_WORDS = new Set([
+  '!', '{', '}', '[[', ']]', 'case', 'esac', 'do', 'done', 'for', 'foreach', 'end', 'in', 'select',
+  'until', 'while', 'repeat', 'time', 'nocorrect', 'noglob', '-',
+]);
+// Builtins that evaluate an operand as an arithmetic expression, which can
+// assign (`let N` with N=P=5 sets P): `let` in both shells; `shift`, `break`,
+// `continue`, `return` (and `repeat`, `printf %d`, `read -t`, listed elsewhere)
+// in zsh, probed. `exit` evaluates too but ends the shell, so nothing later can
+// read the variable.
+const ARITHMETIC_BUILTINS = new Set(['let', 'shift', 'break', 'continue', 'return']);
 // Builtins that run code from the command text, or assign a variable whose name
 // can be computed at runtime (`printf -v "$N"`, `read "$N"`, `wait -p "$N"`), or
 // change how later words parse, in bash or zsh.
 const RUNNERS = new Set([
   '.', 'source', 'eval', 'trap', 'builtin', 'command', 'exec', 'enable', 'disable', 'alias', 'unalias', 'functions',
   'function', 'autoload', 'emulate', 'set', 'setopt', 'unsetopt', 'shopt', 'export', 'declare', 'typeset', 'local',
-  'readonly', 'integer', 'float', 'private', 'read', 'vared', 'printf', 'print', 'let', 'unset', 'getopts', 'zparseopts',
+  'readonly', 'integer', 'float', 'private', 'read', 'vared', 'printf', 'print', 'unset', 'getopts', 'zparseopts',
   'mapfile', 'readarray', 'wait', 'fc', 'r', 'coproc', 'zmodload', 'strftime', 'sched', 'hash', 'bindkey', 'zle',
 ]);
 const SEPARATOR_OPS = new Set([';', '&', '&&', '|', '||', '|&']);
@@ -336,6 +361,32 @@ const OP_CHAR = /[;&|<>]/;
 const ASSIGNMENT_PREFIX = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
 const PREFIX_FLAG = /^-[A-Za-z0-9-]*$/;
 const FD_NUMBER = /^[0-9]+$/;
+
+// True when the command evaluates something as arithmetic, which in both shells
+// evaluates a variable's VALUE recursively and can assign (`echo $(( N ))` with
+// N=P=5 sets P): `$((`, `$[` (also inside "…"), `((`, and an array subscript (an
+// identifier character right before an unquoted `[`, e.g. zsh's `$a[$N]`; a
+// superset that also catches globs like `f1[ab]`). `[[` (arithmetic in `-eq`
+// and friends), the arithmetic builtins and `declare -i`-style attributes are
+// command words, declined in commandWordsPlain.
+function hasArithmetic(s, kind) {
+  for (let i = 0; i < s.length; i += 1) {
+    const k = kind[i];
+    if (k === SQ || k === SKIP) continue;
+    const c = s[i];
+    if (c === '$' && (s.startsWith('$((', i) || s[i + 1] === '[')) return true;
+    if (k === DQ) continue;
+    if (c === '(' && s[i + 1] === '(') return true;
+    if (c === '[' && i > 0 && IDENT_CHAR.test(s[i - 1]) && kind[i - 1] !== SQ) return true;
+  }
+  return false;
+}
+
+// The gate rules 1 and 2 apply to their own rewrite.
+function inlineContextSafe(out, from) {
+  const sc = scan(out);
+  return commandWordsPlain(out, sc, from) && !hasArithmetic(out, sc.kind);
+}
 
 // True when every command-position word from `from` on is allowlisted.
 function commandWordsPlain(s, sc, from = 0) {
@@ -357,8 +408,13 @@ function commandWordsPlain(s, sc, from = 0) {
     if (!st.cmdPos) return true;
     if (ASSIGNMENT_PREFIX.test(raw)) return true; // `X=1 cmd`: cmd is next
     if (st.prefix && PREFIX_FLAG.test(raw)) return true; // `env -i cmd`
-    if (!(PLAIN_COMMAND_WORD.test(raw) || TEST_COMMAND_WORDS.has(raw)) || RUNNERS.has(raw)) return false;
-    if (COMMAND_PREFIXES.has(raw)) {
+    if (RESERVED_WORDS.has(raw) || RUNNERS.has(raw) || ARITHMETIC_BUILTINS.has(raw)) return false;
+    if (!(PLAIN_COMMAND_WORD.test(raw) || TEST_COMMAND_WORDS.has(raw))) return false;
+    if (KEYWORD_PREFIXES.has(raw)) {
+      st.prefix = false;
+      return true;
+    }
+    if (EXTERNAL_PREFIXES.has(raw)) {
       st.prefix = true;
       return true;
     }
@@ -447,7 +503,7 @@ function inlineLiteralAssignment(s) {
   const out = replaceRefs(s, refs, valueOf);
   // Judged on the rewrite, so an inlined command word (`$P/echo`) counts as the
   // literal it becomes; the literal leading assignments are skipped.
-  return commandWordsPlain(out, scan(out), bodyStart) ? out : null;
+  return inlineContextSafe(out, bodyStart) ? out : null;
 }
 
 // Rule 2: ${CLAUDE_PLUGIN_ROOT} → the running plugin's own root.
@@ -464,7 +520,7 @@ function pluginRootPlaceholder(s, { pluginRoot }) {
   // a reference that continues into a path this plugin actually ships.
   if (!refs.every((r) => shippedUnder(pluginRoot, s, r.end))) return null;
   const out = replaceRefs(s, refs, () => pluginRoot);
-  return commandWordsPlain(out, scan(out), leadingAssignments(out).bodyStart) ? out : null;
+  return inlineContextSafe(out, leadingAssignments(out).bodyStart) ? out : null;
 }
 
 const ROOT_CONTINUATION = /\/[A-Za-z0-9_.\/@%+,-]+/y;
