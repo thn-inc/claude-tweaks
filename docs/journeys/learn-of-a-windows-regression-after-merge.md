@@ -5,6 +5,7 @@ files:
   - plugin/bin/lib/verify/extract.js
   - tools/run-tests.js
   - plugin/bin/verify.js
+  - plugin/bin/lib/verify/baseline.js
 ---
 
 # Learn of a Windows Regression After Merge
@@ -36,8 +37,12 @@ files:
 ### 3b. Red — one issue names what broke
 - **Action:** Open the `type:bug` issue the `file` job created, or the comment it added to the open issue already naming this commit (a "(not adjudicated)" run comments on any open "(not adjudicated)" issue).
 - **Should feel:** Actionable at a glance — which test files, which PR, where the log is — without opening the run.
-- **Should understand:** Every attributable file is listed first, marked `(timed out — no evidence)` when its per-file run hit the timeout. Then each gets an excerpt of at most 12 lines. It starts at the file's `not ok` line (the failing test's name and assertion), or, for a file that crashed before its tests ran, at the stderr printed above that `not ok`. The body is capped at 60,000 characters, so a long one loses excerpts, never file names. The PR is the one merged with that commit, or "unknown". A "(not adjudicated)" title means the baseline comparison could not run, refused, or named no file, so the run failed closed with the raw failing output.
-- **Red flags:** Two issues for one sha; an excerpt that omits the failing test's name; an excerpt that opens on another file's failing test instead of this file's own failure or stderr; an issue filed from a non-`main` ref; a red run with no issue and no comment.
+- **Should understand:** Every attributable file is listed first, marked `(timed out — no evidence)` when its per-file run hit the timeout, and `— possible rename of an already-failing test` when base and HEAD fail the same number of tests in it and none of the newly failing tests exists at base (#3723). Then come the excerpts, each at most 12 lines.
+  - **Per attributed test.** When the baseline comparison named the new tests (`baselineAdjudicated.attributedTests`, matched by suite path), the file gets one excerpt per test it attributed as new. There are at most 5 per file, plus a line counting the rest, and each opens at that test's own `not ok` line, never at a failure the base commit already had.
+  - **Fallback.** Without that per-test attribution the file gets the old single excerpt, opening at the first line naming the file (or, for a file that crashed before its tests ran, at the stderr printed above its `not ok`). A label then says why: "Per-test attribution unavailable", or "No log block found for the {n} attributed test(s)".
+
+  The body is capped at 60,000 characters, so a long one loses excerpts, never file names. The PR is the one merged with that commit, or "unknown". A "(not adjudicated)" title means the baseline comparison could not run, refused, or named no file, so the run failed closed with the raw failing output.
+- **Red flags:** Two issues for one sha; an excerpt that omits the failing test's name; an excerpt that opens on another file's failing test instead of this file's own failure or stderr; an excerpt quoting a test that also failed at base while the issue claims per-test attribution; a rename presented as a plain regression when the failing count is unchanged; an issue filed from a non-`main` ref; a red run with no issue and no comment.
 
 ### 4. Route it like any defect — `/claude-tweaks:specify #{issue}`
 - **Action:** The issue carries `type:bug`, not `ready`, so it is shaped through `/claude-tweaks:specify` and built with `/claude-tweaks:flow`.
@@ -46,4 +51,4 @@ files:
 
 ## Origin
 
-Record #3316 — post-merge Windows regression guard (PR #3390). Record #3404 — excerpts now read TAP structure from verify's shared `tapLines` classifier (`plugin/bin/lib/verify/extract.js`) instead of the filer's own boundary rules. Record #3568 — the base step names its third source, the merge-base with `origin/main` for a `workflow_dispatch` run (the branch-side flow is `prove-a-windows-fix-on-a-branch-before-merge.md`).
+Record #3316 — post-merge Windows regression guard (PR #3390). Record #3404 — excerpts now read TAP structure from verify's shared `tapLines` classifier (`plugin/bin/lib/verify/extract.js`) instead of the filer's own boundary rules. Record #3568 — the base step names its third source, the merge-base with `origin/main` for a `workflow_dispatch` run (the branch-side flow is `prove-a-windows-fix-on-a-branch-before-merge.md`). Record #3723: excerpts follow the tests the baseline comparison attributed as new (`baselineAdjudicated.attributedTests`, by suite path), with a labelled first-match fallback, a 5-per-file cap, and a possible-rename note.
