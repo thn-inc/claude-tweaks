@@ -140,7 +140,7 @@ for (const command of [
   });
 }
 for (const command of ['echo hi', 'cmd 2>&1', 'cmd >&2', 'echo x > /dev/null', 'cmd > /dev/stdout', 'echo "a > b"',
-  'echo "foo>x"', "echo 'foo>x'"]) {
+  'echo "foo>x"', "echo 'foo>x'", '[[ a>b ]]']) {
   test(`hasFileRedirection does not trigger on: ${JSON.stringify(command)}`, () => {
     assert.strictEqual(hasFileRedirection(command), false, command);
   });

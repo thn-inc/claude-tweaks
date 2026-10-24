@@ -821,6 +821,18 @@ function stripHeredocBodies(command) {
   }
 }
 
+// Where a `[[ … ]]` or `(( … ))` segment's body ends: the `>` inside one is a
+// comparison (`[[ a>b ]]`, `(( x>y ))`), never a redirection, so the redirect scan
+// starts at the token after the closing word. 0 for any other segment; an
+// unterminated body (a glued closer such as `y))`) is skipped whole, which fails
+// open (#4015).
+function compoundBodyEnd(t) {
+  const closer = t[0] === '[[' ? ']]' : t[0] === '((' ? '))' : null;
+  if (closer === null) return 0;
+  const end = t.indexOf(closer);
+  return end === -1 ? t.length : end + 1;
+}
+
 // Redirection-target scan (#3080): unlike fileWriteTargets' other shapes, a
 // redirection carries no command word — `echo`, `printf`, `cat`, or nothing
 // at all can precede it — so this runs over the WHOLE token list regardless
@@ -841,9 +853,12 @@ function stripHeredocBodies(command) {
 // token and the unquoted flags, so a quoted or `$`-expanded `>` never counts;
 // the target is read from the post-substitution token, so `>$WT/x` still
 // resolves. Without `quoting` the scan is start-anchored only.
+//
+// A `[[ … ]]` or `(( … ))` segment holds a comparison, not a redirection
+// (compoundBodyEnd), so the scan starts after its closing word.
 function redirectWriteTargets(t, effCwd, quoting) {
   const out = [];
-  for (let i = 0; i < t.length; i += 1) {
+  for (let i = compoundBodyEnd(t); i < t.length; i += 1) {
     let rawTarget = matchRedirectOperator(t[i]);
     if (rawTarget === null && quoting && !quoting.singleQuoted[i] && !quoting.doubleQuoted[i]
       && GLUED_REDIRECT_RE.test(quoting.raw[i])) {
