@@ -43,8 +43,6 @@ const { hasClaimLogFor } = require('../log-decision/claim-log');
 const { readWorkBackend } = require('../work-backend');
 // Every realpath resolution in this file goes through canonicalRealpath (#3682); lexical containment checks (isPipelineBookkeeping) resolve nothing.
 const { resolveLeaf, canonicalRealpath, lstatType } = require('../path-guard');
-// Read as `guardRewrite.rewriteForGuard` at call time, never destructured (#4028).
-const guardRewrite = require('./guard-rewrite');
 
 function pluginRoot() {
   return process.env.CLAUDE_PLUGIN_ROOT || '${CLAUDE_PLUGIN_ROOT}';
@@ -2305,9 +2303,15 @@ function run(ctx, deps = {}) {
 // permissionDecision: the harness guard re-checks the rewritten command, and an
 // `allow` here would skip the permission prompt for it. A full-path Bash call
 // reaches here because bash-prefilter.js's own rewrite runs only on its skip path.
+// Required lazily inside the try: a load-time fault in guard-rewrite.js must
+// cost only the rewrite, never this module's load (every deny gate above).
 function withGuardRewrite(ctx, out) {
   if (out.json && out.json.hookSpecificOutput) return out;
-  const hookSpecificOutput = guardRewrite.guardRewriteOutput(ctx && ctx.input, guardRewrite.rewriteForGuard);
+  let hookSpecificOutput = null;
+  try {
+    const guardRewrite = require('./guard-rewrite');
+    hookSpecificOutput = guardRewrite.guardRewriteOutput(ctx && ctx.input, guardRewrite.rewriteForGuard);
+  } catch { hookSpecificOutput = null; }
   if (!hookSpecificOutput) return out;
   return { ...out, exit: 0, json: { ...(out.json || {}), hookSpecificOutput } };
 }

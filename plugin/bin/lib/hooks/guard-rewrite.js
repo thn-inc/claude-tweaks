@@ -4,18 +4,33 @@
 // prove stay inside the worktree, including several whose meaning is fully
 // known from the text: a literal assigned and then referenced, the plugin-root
 // placeholder, `node -e '<s>' "$A"` without `--`, a backslash-escaped space, a
-// `cd` into the directory the shell is already in. This module rewrites those
-// into a form with the same argv, and the hook hands it back as
-// `hookSpecificOutput.updatedInput`.
+// `cd` into the directory the shell is already in. This module rewrites those,
+// and the hook hands the result back as `hookSpecificOutput.updatedInput`.
 //
 // Measured premise (Claude Code 2.1.302): updatedInput is applied BEFORE the
 // guard, and the guard re-checks the rewritten command. A rewrite therefore
 // normalizes and never bypasses, so it is never paired with a
 // permissionDecision.
 //
-// Every rule is semantics-preserving under bash AND zsh, the two shells the
-// Bash tool runs (tests/bin-lib/hooks/guard-rewrite.test.js runs every positive
-// case through both). Anything this module cannot prove declines: a rule that
+// What each rule preserves, under bash AND zsh, the two shells the Bash tool
+// runs (tests/bin-lib/hooks/guard-rewrite.test.js runs every positive case
+// through both):
+//   - inline-literal-assignment, quote-escaped-space, drop-redundant-cd: the
+//     same argv.
+//   - plugin-root-placeholder is a RESOLUTION, not a preservation: the Bash
+//     tool's environment does not set CLAUDE_PLUGIN_ROOT, so the original
+//     expands to `/bin/x.js`; the rewrite names the path the author meant (the
+//     equivalence test sets the variable for the original).
+//   - node-eval-separator: the same process.argv unless the runtime value
+//     starts with `-`, which the original hands to node as an OPTION (accepted
+//     by ruling: that is the injection the guard refuses over).
+// Residual risk the text cannot show: a function or alias from the user's
+// shell snapshot that sets an uppercase variable at runtime (`nvm use`, `conda
+// activate`, a zsh `chpwd` hook) between an assignment and its reference.
+// `source`, `.` and `eval`, which can do the same from the command text itself,
+// make rules 1 and 2 decline.
+//
+// Anything this module cannot prove declines: a rule that
 // doubts returns nothing, and rewriteForGuard returns null on any throw. It is
 // loaded on every skip-path Bash call (bash-prefilter.js), so it requires only
 // path and ../path-guard, and every scan is linear in the command length.
@@ -198,6 +213,8 @@ function refsInlineSafely(s, sc, refs, valueOf) {
   for (const ref of refs) {
     const value = valueOf(ref);
     const next = s[ref.end];
+    // `$P\<newline>Q` is a line continuation: the shell reads the name `PQ`.
+    if (!ref.braced && next === '\\') return false;
     if (ref.kind === DQ) {
       // zsh subscripts ($P[1]) and modifiers ($P:h) apply inside "…" too.
       if (!ref.braced && (next === '[' || next === ':')) return false;
@@ -284,6 +301,75 @@ function leadingAssignments(s) {
   return { list, bodyStart: i };
 }
 
+// Words after which the next word is still in command position.
+const COMMAND_PREFIXES = new Set([
+  '!', '{', 'then', 'do', 'else', 'elif', 'if', 'while', 'until', 'time', 'exec', 'command', 'builtin', 'nohup', 'env', 'noglob', 'nocorrect',
+]);
+const SHELL_CODE_RUNNERS = new Set(['source', '.', 'eval']);
+const QUOTE_OR_ESCAPE = /["'\\]/g;
+const ASSIGNMENT_PREFIX = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+
+// True when `source`, `.` or `eval` runs anywhere in command position (top
+// level, a subshell, a $( … ) substitution, behind a prefix such as `command`
+// or an assignment): the code they run can reassign a variable at runtime, so
+// an assigned literal is no longer what a later reference expands to. `source`
+// and `eval` are also refused as a bare word anywhere (a superset), so only `.`
+// relies on the command-position walk.
+function runsShellCode(s, kind) {
+  let word = '';
+  let cmdPos = true;
+  let inPrefix = false;
+  let redirectTarget = false; // the next word is a redirection's target
+  const endWord = () => {
+    if (!word) return false;
+    const text = word.replace(QUOTE_OR_ESCAPE, '');
+    const raw = word;
+    word = '';
+    if (text === 'source' || text === 'eval') return true;
+    if (redirectTarget) {
+      redirectTarget = false;
+      return false;
+    }
+    if (!cmdPos) return false;
+    if (SHELL_CODE_RUNNERS.has(text)) return true;
+    if (ASSIGNMENT_PREFIX.test(raw) || COMMAND_PREFIXES.has(text) || (inPrefix && text[0] === '-')) {
+      inPrefix = inPrefix || COMMAND_PREFIXES.has(text);
+      return false;
+    }
+    cmdPos = false;
+    inPrefix = false;
+    return false;
+  };
+  for (let i = 0; i < s.length; i += 1) {
+    const k = kind[i];
+    if (k === SUB && (i === 0 || kind[i - 1] !== SUB)) {
+      if (endWord()) return true;
+      cmdPos = true;
+      inPrefix = false;
+    }
+    const c = s[i];
+    if ((k === TOP || k === SUB) && WORD_BREAK.test(c)) {
+      if (c === '<' || c === '>') {
+        // A redirection (`2>f`, `>f`) never takes the command's place: drop an
+        // fd number before it and skip the target word after it.
+        if (/^[0-9]+$/.test(word)) word = '';
+        else if (endWord()) return true;
+        redirectTarget = true;
+        continue;
+      }
+      if (endWord()) return true;
+      if (c !== ' ' && c !== '\t' && !(c === '&' && redirectTarget)) {
+        cmdPos = true;
+        inPrefix = false;
+        redirectTarget = false;
+      }
+      continue;
+    }
+    word += c;
+  }
+  return endWord();
+}
+
 // Rule 1: inline a literal the command itself assigned at its start.
 function inlineLiteralAssignment(s) {
   if (s.includes('IFS')) return null;
@@ -291,6 +377,7 @@ function inlineLiteralAssignment(s) {
   if (!list.length) return null;
   const sc = scan(s);
   if (inDoubt(s, sc) || sc.flags.complexParam) return null;
+  if (runsShellCode(s, sc.kind)) return null;
   const values = new Map();
   for (const a of list) {
     if (values.has(a.name)) return null; // reassigned within the leading run
@@ -313,6 +400,7 @@ function pluginRootPlaceholder(s, { pluginRoot }) {
   if (hasBareUse(s, name)) return null; // the command assigns or unsets it itself
   const sc = scan(s);
   if (inDoubt(s, sc) || sc.flags.complexParam) return null;
+  if (runsShellCode(s, sc.kind)) return null;
   const refs = sc.refs.filter((r) => r.name === name);
   if (!refs.length || !refsInlineSafely(s, sc, refs, () => pluginRoot)) return null;
   // Other plugins' prose spells the same placeholder for THEIR root: inline only
@@ -324,12 +412,26 @@ function pluginRootPlaceholder(s, { pluginRoot }) {
 const ROOT_CONTINUATION = /\/[A-Za-z0-9_.\/@%+,-]+/y;
 const PARENT_SEGMENT = /(?:^|\/)\.\.(?:\/|$)/;
 
+// The continuation must name something specific to this plugin, not a layout
+// every plugin shares (`/.claude-plugin/plugin.json`, `/hooks/hooks.json`,
+// `/skills`, `/bin`): a file under bin/, or a path under one of this plugin's
+// own skill directories. A same-named file in another plugin's bin/ remains a
+// residual collision.
 function shippedUnder(root, s, at) {
   ROOT_CONTINUATION.lastIndex = at;
   const m = ROOT_CONTINUATION.exec(s);
   if (!m || PARENT_SEGMENT.test(m[0])) return false;
-  const { type } = lstatType(path.join(root, m[0]));
-  return type === 'file' || type === 'directory' || type === 'symlink';
+  const segments = m[0].split('/').filter(Boolean);
+  const exists = (rel) => lstatType(path.join(root, rel)).type;
+  if (segments[0] === 'bin' && segments.length >= 2) {
+    const t = exists(segments.join('/'));
+    return t === 'file' || t === 'symlink';
+  }
+  if (segments[0] === 'skills' && segments.length >= 3 && exists(`skills/${segments[1]}`) === 'directory') {
+    const t = exists(segments.join('/'));
+    return t === 'file' || t === 'directory' || t === 'symlink';
+  }
+  return false;
 }
 
 const NODE_EVAL = /node[ \t]+(?:-e|-p|--eval|--print)[ \t]+/g;

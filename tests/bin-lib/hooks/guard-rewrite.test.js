@@ -1,9 +1,14 @@
 'use strict';
-// guard-rewrite.js (#4028): semantics-preserving rewrites of Bash shapes the
-// harness worktree-isolation guard over-refuses, emitted as PreToolUse
-// `updatedInput`. The guard re-checks the rewritten command, so a rewrite can
-// only normalize, never bypass — which makes argv identity under BOTH bash and
-// zsh (Review Focus 1) the property every positive case below must hold.
+// guard-rewrite.js (#4028): rewrites of Bash shapes the harness
+// worktree-isolation guard over-refuses, emitted as PreToolUse `updatedInput`.
+// The guard re-checks the rewritten command, so a rewrite can only normalize,
+// never bypass — which makes identical output under BOTH bash and zsh (Review
+// Focus 1) the property every positive case below must hold. Two rules hold it
+// only under a stated condition, which the equivalence test encodes:
+// plugin-root-placeholder is a resolution (the Bash tool leaves
+// CLAUDE_PLUGIN_ROOT unset, so the original runs with it set here), and
+// node-eval-separator diverges for a runtime value starting with `-` (pinned
+// below; accepted by ruling).
 const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -18,9 +23,14 @@ after(() => { fs.rmSync(SANDBOX, { recursive: true, force: true }); });
 const CWD = path.join(SANDBOX, 'cwd');
 fs.mkdirSync(CWD);
 // A plugin root that ships bin/x.js: rule 2 inlines only paths the root really has.
+// It also carries the layout every plugin shares (.claude-plugin/plugin.json,
+// hooks/hooks.json) and one skill directory.
 function pluginRootAt(dir) {
-  fs.mkdirSync(path.join(dir, 'bin'), { recursive: true });
+  for (const sub of ['bin', '.claude-plugin', 'hooks', 'skills/demo']) fs.mkdirSync(path.join(dir, sub), { recursive: true });
   fs.writeFileSync(path.join(dir, 'bin', 'x.js'), '');
+  fs.writeFileSync(path.join(dir, '.claude-plugin', 'plugin.json'), '{}');
+  fs.writeFileSync(path.join(dir, 'hooks', 'hooks.json'), '{}');
+  fs.writeFileSync(path.join(dir, 'skills', 'demo', 'SKILL.md'), '');
   return dir;
 }
 const ROOT = pluginRootAt(path.join(SANDBOX, 'plugin-root'));
@@ -69,6 +79,43 @@ test('inline-literal-assignment leaves a single-quoted $P alone', () => {
   assert.strictEqual(rw("P=/x; echo '$P'"), null, 'nothing to substitute');
 });
 
+// Review fix: a sourced file or an eval'd string can reassign the variable at
+// runtime, so the assigned literal is no longer what the reference expands to.
+test('inline-literal-assignment bails when source runs in command position', () => {
+  assert.strictEqual(rw('NODE_ENV=development; source .env; echo "$NODE_ENV"'), null);
+  assert.strictEqual(rw('P=/x; ( source ./env ); node $P/z.js'), null, 'inside a subshell');
+  assert.strictEqual(rw('P=/x; "source" ./env; node $P/z.js'), null, 'quoted');
+});
+
+test('inline-literal-assignment bails when . runs in command position', () => {
+  assert.strictEqual(rw('NODE_ENV=development; set -a; . ./.env; set +a; echo "$NODE_ENV"'), null);
+  assert.strictEqual(rw('P=/x; echo "$(. ./env)" && node $P/z.js'), null, 'inside a substitution');
+  assert.strictEqual(rw('P=/x; >/dev/null . ./env; node $P/z.js'), null, 'behind a redirection');
+  assert.strictEqual(rw('P=/x; 2>/dev/null command . ./env; node $P/z.js'), null, 'behind an fd redirection and a prefix');
+  assert.strictEqual(rw('P=/x; X=1 \\. ./env; node $P/z.js'), null, 'escaped, behind an assignment prefix');
+  // `.` as an argument is not sourcing.
+  assert.deepStrictEqual(rw('P=/x; ls $P/z .'), { command: 'P=/x; ls /x/z .', applied: ['inline-literal-assignment'] });
+});
+
+test('inline-literal-assignment bails when eval runs anywhere', () => {
+  assert.strictEqual(rw('P=/x; eval "$(cat setp)"; echo "$P/z"'), null);
+  assert.strictEqual(rw('P=/x; if true; then eval "$X"; fi; node $P/z.js'), null, 'after a keyword');
+});
+
+test('plugin-root-placeholder bails when source, . or eval runs', () => {
+  for (const command of [
+    'source ./env; node "${CLAUDE_PLUGIN_ROOT}/bin/x.js"',
+    '. ./env && node "${CLAUDE_PLUGIN_ROOT}/bin/x.js"',
+    'eval "$X"; node "${CLAUDE_PLUGIN_ROOT}/bin/x.js"',
+  ]) assert.strictEqual(rw(command), null, command);
+});
+
+test('an unbraced reference followed by a backslash declines (line continuation joins the name)', () => {
+  assert.strictEqual(rw('P=/x; echo $P\\\nQ'), null);
+  assert.strictEqual(rw('P=/x; echo "$P\\\nQ"'), null);
+  assert.deepStrictEqual(rw('P=/x; echo ${P}\\\nQ'), { command: 'P=/x; echo /x\\\nQ', applied: ['inline-literal-assignment'] }, 'a braced name is already closed');
+});
+
 test('plugin-root-placeholder substitutes the injected root and skips when the command assigns it', () => {
   assert.deepStrictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/bin/x.js" a'), { command: `node "${ROOT}/bin/x.js" a`, applied: ['plugin-root-placeholder'] });
   assert.deepStrictEqual(rw('node $CLAUDE_PLUGIN_ROOT/bin/x.js'), { command: `node ${ROOT}/bin/x.js`, applied: ['plugin-root-placeholder'] });
@@ -88,6 +135,18 @@ test('plugin-root-placeholder substitutes the injected root and skips when the c
   assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/scripts/other.js"'), null, 'a path this root does not ship');
   assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/bin/x.js" "$CLAUDE_PLUGIN_ROOT"'), null, 'a bare reference names no shipped path');
   assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/../plugin-root/bin/x.js"'), null, 'a parent segment');
+});
+
+// Review fix: every plugin ships .claude-plugin/plugin.json, hooks/hooks.json,
+// bin/ and skills/, so existing under this root is not evidence the path is ours.
+test('plugin-root-placeholder inlines only a bin/ file or a path under one of its own skill dirs', () => {
+  assert.strictEqual(rw('cat ${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json'), null);
+  assert.strictEqual(rw('cat "${CLAUDE_PLUGIN_ROOT}/hooks/hooks.json"'), null);
+  assert.strictEqual(rw('ls "${CLAUDE_PLUGIN_ROOT}/bin"'), null, 'the bin directory itself');
+  assert.strictEqual(rw('ls "${CLAUDE_PLUGIN_ROOT}/skills"'), null);
+  assert.strictEqual(rw('ls "${CLAUDE_PLUGIN_ROOT}/skills/demo"'), null, 'a skill dir alone names nothing under it');
+  assert.strictEqual(rw('cat "${CLAUDE_PLUGIN_ROOT}/skills/other/SKILL.md"'), null, 'a skill dir this root lacks');
+  assert.deepStrictEqual(rw('cat "${CLAUDE_PLUGIN_ROOT}/skills/demo/SKILL.md"'), { command: `cat "${ROOT}/skills/demo/SKILL.md"`, applied: ['plugin-root-placeholder'] });
 });
 
 test("node-eval-separator inserts -- before \"$A\" and leaves an existing -- alone", () => {
@@ -180,7 +239,7 @@ const POSITIVE = [
   { rule: 'inline-literal-assignment', command: "P=/x; node -e 'console.log(\"$P\")' $P/z.js" },
   { rule: 'inline-literal-assignment', command: 'P=/bin; $P/echo ok' },
   { rule: 'plugin-root-placeholder', command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/x.js" a' },
-  { rule: 'plugin-root-placeholder', command: 'node $CLAUDE_PLUGIN_ROOT/bin/x.js "$CLAUDE_PLUGIN_ROOT/bin"' },
+  { rule: 'plugin-root-placeholder', command: 'node $CLAUDE_PLUGIN_ROOT/bin/x.js "$CLAUDE_PLUGIN_ROOT/skills/demo/SKILL.md"' },
   { rule: 'node-eval-separator', command: `node -e ${EVAL} "$A"` },
   { rule: 'node-eval-separator', command: `node -p ${EVAL} $A x` },
   { rule: 'node-eval-separator', command: `node -e ${EVAL} "$HOME"` },
@@ -210,6 +269,28 @@ test('every positive case is argv-identical under bash and zsh', { skip: process
       assert.strictEqual(original.status, 0, `${shell} original failed: ${command}\n${original.stderr}`);
       assert.ok(original.stdout.length > 0, `${shell} original printed nothing: ${command}`);
       assert.deepStrictEqual(rewritten, original, `${shell}: ${command}\n→ ${out.command}`);
+    }
+  }
+});
+
+// Must-decline cases: the naive inline (what rule 1 produced before the review
+// fix) prints something different from the original under each shell, because
+// the sourced file or eval'd string reassigns the variable at runtime.
+fs.writeFileSync(path.join(CWD, 'setp'), 'P=/evald\n');
+fs.writeFileSync(path.join(CWD, '.env'), 'export NODE_ENV=production\n');
+const MUST_DECLINE = [
+  { command: 'NODE_ENV=development; source .env; echo "$NODE_ENV"', naive: 'NODE_ENV=development; source .env; echo "development"' },
+  { command: 'NODE_ENV=development; set -a; . ./.env; set +a; echo "$NODE_ENV"', naive: 'NODE_ENV=development; set -a; . ./.env; set +a; echo "development"' },
+  { command: 'P=/x; eval "$(cat setp)"; echo "$P/z"', naive: 'P=/x; eval "$(cat setp)"; echo "/x/z"' },
+];
+
+test('must-decline cases: source, . and eval reassign at runtime, so the naive inline differs under bash and zsh', { skip: process.platform === 'win32' || !SHELLS.includes('bash') }, () => {
+  for (const { command, naive } of MUST_DECLINE) {
+    assert.strictEqual(rw(command), null, command);
+    for (const shell of SHELLS) {
+      const original = runIn(shell, command, {});
+      assert.strictEqual(original.status, 0, `${shell}: ${command}\n${original.stderr}`);
+      assert.notStrictEqual(runIn(shell, naive, {}).stdout, original.stdout, `${shell}: the naive inline must differ for ${command}`);
     }
   }
 });
