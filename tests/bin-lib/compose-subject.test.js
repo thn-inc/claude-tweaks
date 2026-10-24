@@ -23,6 +23,8 @@ const RECORDS = {
   2268: { number: 2268, title: 'Specshaped footer', body: '## Overview\n\nFooter shape one.\n\n## Release Note\n\nNote with specShapedBody footer.\n\n_Filed by `x` via specShapedBody._', labels: [{ name: 'type:task' }], issueType: null },
   2269: { number: 2269, title: 'Wontfix footer', body: '## Overview\n\nFooter shape two.\n\n## Release Note\n\nNote with wontfix footer.\n\n_Filed by `x`. Close to resolve; label `wontfix` to suppress future reports of this finding._', labels: [{ name: 'type:task' }], issueType: null },
   2271: { number: 2271, title: 'Footer-only release note', body: '## Overview\n\nOnly a footer.\n\n## Release Note\n\n_Filed by `x` via specShapedBody._', labels: [{ name: 'type:task' }], issueType: null },
+  2272: { number: 2272, title: 'CRLF footer', body: '## Overview\r\n\r\nCRLF footer.\r\n\r\n## Release Note\r\n\r\nNote with CRLF footer.\r\n\r\n_Filed by `x` via specShapedBody._\r\n', labels: [{ name: 'type:task' }], issueType: null },
+  2273: { number: 2273, title: 'Footer-shaped prose mid-note', body: '## Overview\n\nMid-note line.\n\n## Release Note\n\n_Filed by the planner_\n\nMore note after.\n\n_Filed by `x` via specShapedBody._', labels: [{ name: 'type:task' }], issueType: null },
 };
 
 function fakeDeps({
@@ -113,6 +115,20 @@ test('Release Note stops at the trailing "_Filed by …_" footer, for both specS
   r = fakeDeps();
   assert.equal(run(['2269'], r.deps), 0, r.out.stderr);
   assert.equal(JSON.parse(r.out.stdout).body, 'Footer shape two.\n\nRelease-Note: Note with wontfix footer.\n\nFixes #2269');
+});
+
+test('Release Note footer cut holds for a CRLF body, and spares a footer-shaped line that is not the last content', () => {
+  let r = fakeDeps();
+  assert.equal(run(['2272'], r.deps), 0, r.out.stderr);
+  const crlf = JSON.parse(r.out.stdout).body;
+  assert.match(crlf, /Release-Note: Note with CRLF footer\./);
+  assert.doesNotMatch(crlf, /Filed by/);
+  r = fakeDeps();
+  assert.equal(run(['2273'], r.deps), 0, r.out.stderr);
+  const mid = JSON.parse(r.out.stdout).body;
+  assert.match(mid, /_Filed by the planner_/);
+  assert.match(mid, /More note after\./);
+  assert.doesNotMatch(mid, /via specShapedBody/);
 });
 
 test('a Release Note section holding only the footer counts as empty — exit 1, same as a missing section', () => {

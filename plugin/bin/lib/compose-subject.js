@@ -135,10 +135,12 @@ function extractSection(body, heading) {
 // The release note is the ## Release Note section cut at its trailing italic
 // `_Filed by …_` provenance footer (specShapedBody's last paragraph, which has no
 // heading after it when there is no ### Key Files). A section holding only the
-// footer is empty. extractSection itself is left heading-bounded only.
+// footer is empty. extractSection itself is left heading-bounded only. The footer
+// must be the section's last non-blank content (the lookahead), so a note line that
+// merely starts `_Filed by` and ends `_` mid-prose is never cut.
 function releaseNoteOf(body) {
   const note = extractSection(body, 'Release Note');
-  const footer = /^_Filed by\b.*_[ \t]*$/m.exec(note);
+  const footer = /^_Filed by\b.*_[ \t]*$(?![\s\S]*\S)/m.exec(note);
   return footer ? note.slice(0, footer.index).trim() : note;
 }
 
