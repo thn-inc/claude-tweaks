@@ -234,10 +234,10 @@ const POLICY_KEYS = [
   // (reader: policy.js readEfficiencyCeilings). 0 disables that budget. Defaults
   // are the p90 of 143 archived runs on 2026-10-24, rounded up (derivation in
   // _shared/policy-schema-efficiency-budgets.md). Not Manifesto levers.
-  { key: 'fast-lane-run-round-trip-ceiling', type: 'integer', min: 0, default: 420, summary: "Sets how many model round trips a fast-lane run may use before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
+  { key: 'fast-lane-run-round-trip-ceiling', type: 'integer', min: 0, default: 420, summary: "Sets how many tool round trips a fast-lane run may use before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
   { key: 'fast-lane-run-procedure-kb-ceiling', type: 'integer', min: 0, default: 560, summary: "Sets how many kilobytes of skill procedure a fast-lane run may load before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
   { key: 'fast-lane-run-verify-minutes-ceiling', type: 'integer', min: 0, default: 21, summary: "Sets how many minutes of verification a fast-lane run may spend before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
-  { key: 'standard-run-round-trip-ceiling', type: 'integer', min: 0, default: 900, summary: "Sets how many model round trips a standard run may use before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
+  { key: 'standard-run-round-trip-ceiling', type: 'integer', min: 0, default: 900, summary: "Sets how many tool round trips a standard run may use before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
   { key: 'standard-run-procedure-kb-ceiling', type: 'integer', min: 0, default: 580, summary: "Sets how many kilobytes of skill procedure a standard run may load before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
   { key: 'standard-run-verify-minutes-ceiling', type: 'integer', min: 0, default: 37, summary: "Sets how many minutes of verification a standard run may spend before it is flagged as over budget; 0 turns the check off.", category: 'housekeeping', tier: 'advanced' },
 ];
