@@ -303,7 +303,7 @@ main loop, landed via #1962/#2226/#2228/#2231):
   summary's stuck count. Each path's own reason is its
   residue entry's `lastError` (`stuck at {reason}`), not rendered per path. The body also carries
   a fixed remedy line for `console-never-rendered-staged-pending` — a merged run that never
-  rendered a Review Console (the fast-lane auto-merge short-circuit writes no `console.json`) while
+  rendered a Review Console (an auto-merge path — the fast-lane short-circuit or the dispatch bundle Auto-merge gate — writes no `console.json`) while
   its `staged/` or any `spec-*/staged/` still holds pending or unreadable items: apply or delete
   those staged files, or write a resolved `console.json`, and the next reconcile archives the dir
   and drops it from the record. The clean-status sweep (`iterCleanRunDirs`) feeds this reason too
