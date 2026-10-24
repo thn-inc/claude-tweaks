@@ -236,8 +236,15 @@ function defaultListRunDirs(root) {
 // local read fails. `exec` is injectable for tests.
 function defaultListOpenRecords(root, exec = execFileSync) {
   if (readWorkBackend(root) === 'local-files') {
+    const specsDir = path.join(root, 'specs');
     try {
-      return queryRecords(path.join(root, 'specs')).map((r) => ({
+      // queryRecords reads a failed readdir as "no records"; only a missing specs/ may mean that.
+      fs.readdirSync(specsDir);
+    } catch (e) {
+      return e && e.code === 'ENOENT' ? [] : null;
+    }
+    try {
+      return queryRecords(specsDir).map((r) => ({
         number: r.id, body: r.body, labels: r.facets.origin ? [`by:${r.facets.origin}`] : [],
       }));
     } catch {

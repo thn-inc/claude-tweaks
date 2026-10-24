@@ -287,18 +287,25 @@ test('defaultListOpenRecords: work-backend local-files reads specs/ and never ca
   assert.deepStrictEqual(defaultListOpenRecords(root, mustNotCall('exec')), [{ number: 7, body: 'see x', labels: [] }]);
 });
 
-test('defaultListOpenRecords: work-backend local-files fails closed (null) when a record file cannot be read',
+test('defaultListOpenRecords: work-backend local-files fails closed (null) when a record file or the specs/ dir cannot be read',
   { skip: skipUnderRoot('root ignores mode bits').skip || (process.platform === 'win32' && 'chmod does not deny reads on win32') }, () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-unreadable-'));
     fs.writeFileSync(path.join(root, 'CLAUDE.md'), 'work-backend: local-files\n');
-    fs.mkdirSync(path.join(root, 'specs'));
-    const file = path.join(root, 'specs', '7-foo.md');
+    const specs = path.join(root, 'specs');
+    fs.mkdirSync(specs);
+    const file = path.join(specs, '7-foo.md');
     fs.writeFileSync(file, '# Foo\n\nsee x\n');
     fs.chmodSync(file, 0o000);
     try {
       assert.strictEqual(defaultListOpenRecords(root, mustNotCall('exec')), null);
     } finally {
       fs.chmodSync(file, 0o644); // root-safe
+    }
+    fs.chmodSync(specs, 0o000);
+    try {
+      assert.strictEqual(defaultListOpenRecords(root, mustNotCall('exec')), null);
+    } finally {
+      fs.chmodSync(specs, 0o755); // root-safe
     }
   });
 
@@ -405,6 +412,23 @@ test('referencing record: an open record naming the ledger path keeps it — ski
   assert.strictEqual(r.failure, null);
   assert.deepStrictEqual(r.entries, [{ path: LEDGER, kind: 'ledger', action: 'skip', reason: 'referenced-by-open-record', records: [42] }]);
   assert.deepStrictEqual(originRefs(origin), ['refs/heads/main']);
+});
+
+test('a failed open-record read keeps every ledger that reaches it with the classified reason — read once, nothing pushed', () => {
+  for (const failure of [null, 'gh-absent', 'network-failure']) {
+    const LEDGER2 = 'docs/plans/2026-10-21-second-ledger.md';
+    const { dir, origin } = makeRepo({ ledgers: { [LEDGER]: ledgerText(), [LEDGER2]: ledgerText({ heading: '# Open Items — #14' }) } });
+    let loads = 0;
+    const r = ledgerResidue({
+      cwd: dir, integration: 'main', listRunDirs: noRuns,
+      listOpenRecords: () => { loads += 1; return failure; },
+      listRemovalPrs: mustNotCall('listRemovalPrs'), refExists: mustNotCall('refExists'), createPr: mustNotCall('createPr'),
+    });
+    const reason = failure || 'record-scan-failed';
+    assert.deepStrictEqual(r.entries.map((e) => [e.path, e.reason]), [[LEDGER, reason], [LEDGER2, reason]], String(failure));
+    assert.strictEqual(loads, 1, `${failure}: a failed read is memoized, not retried per ledger`);
+    assert.deepStrictEqual(originRefs(origin), ['refs/heads/main']);
+  }
 });
 
 test('the open-record list is fetched once per pass, however many ledgers reach the record scan', () => {
