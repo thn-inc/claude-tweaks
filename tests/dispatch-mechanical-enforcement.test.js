@@ -1,11 +1,11 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = (rel) => readText(path.join(ROOT, rel));
 
 // #2429: task-prompt.md's Foreground execution clause and settle-and-merge.md's
 // merge-check clause were enforced by prose alone -- both were violated by

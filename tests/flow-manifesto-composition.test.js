@@ -12,12 +12,12 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { compose, KEYS, VOCAB, UNRESOLVED } = require('../plugin/bin/lib/compose-context/compose');
+const { readText } = require('./helpers/read-skill');
 
 const FILE = 'plugin/skills/flow/manifesto.md';
-const content = fs.readFileSync(path.join(__dirname, '..', FILE), 'utf8');
+const content = readText(path.join(__dirname, '..', FILE));
 
 const OPENINGS = {
   auto: '- **`auto` mode (flow\'s default)**',

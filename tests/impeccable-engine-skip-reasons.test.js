@@ -10,10 +10,10 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 
 const { FAILURE_REASONS } = require('../plugin/bin/lib/impeccable-engine');
+const { readText } = require('./helpers/read-skill');
 
 const DOC = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'impeccable-plugin.md');
 
@@ -42,7 +42,7 @@ function degradationSection(doc) {
 }
 
 test("impeccable-plugin.md's Degradation table names every engine failure reason", () => {
-  const doc = fs.readFileSync(DOC, 'utf8');
+  const doc = readText(DOC);
   const section = degradationSection(doc);
 
   for (const reason of FAILURE_REASONS) {
@@ -54,7 +54,7 @@ test("impeccable-plugin.md's Degradation table names every engine failure reason
 });
 
 test('every engine failure reason has a fix or a named reason there is none', () => {
-  const doc = fs.readFileSync(DOC, 'utf8');
+  const doc = readText(DOC);
   const section = degradationSection(doc);
 
   // Table rows look like `| `reason` | meaning | wording | fix text |`.

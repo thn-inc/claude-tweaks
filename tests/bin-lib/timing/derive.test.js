@@ -5,13 +5,14 @@ const fs = require('fs');
 const path = require('path');
 const { derivePhases, PHASES, NESTED_PARENT, joinTokens, countGuardEvents } = require('../../../plugin/bin/lib/timing/derive');
 const { parseManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
+const { readText } = require('../../helpers/read-skill');
 
 const FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'record-1535');
 function fixtureEvents() {
   return fs.readFileSync(path.join(FIX, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 }
 function fixtureManifest() {
-  return parseManifestYaml(fs.readFileSync(path.join(FIX, 'manifest.yml'), 'utf8'));
+  return parseManifestYaml(readText(path.join(FIX, 'manifest.yml')));
 }
 const byName = (out) => Object.fromEntries(out.phases.map((p) => [p.phase, p]));
 

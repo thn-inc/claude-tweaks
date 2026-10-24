@@ -2,8 +2,8 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
 const FRAGMENT = '_shared/run-resume-freshness.md';
@@ -28,7 +28,7 @@ const CALL_SITES = [
 test('every resume path cites the run-resume-freshness fragment', () => {
   const offenders = [];
   for (const file of CALL_SITES) {
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readText(file);
     if (!text.includes(FRAGMENT)) offenders.push(path.relative(SKILLS_DIR, file));
   }
   assert.deepStrictEqual(
@@ -41,7 +41,7 @@ test('every resume path cites the run-resume-freshness fragment', () => {
 test('every resume path also cites the check-resume-freshness CLI verb', () => {
   const offenders = [];
   for (const file of CALL_SITES) {
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readText(file);
     if (!text.includes('check-resume-freshness')) offenders.push(path.relative(SKILLS_DIR, file));
   }
   assert.deepStrictEqual(

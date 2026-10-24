@@ -6,10 +6,10 @@
 // under bare drain / `next` / `--chained`).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const read = (rel) => readText(path.join(__dirname, '..', rel));
 
 const READBACK = 'plugin/skills/specify/shaping-mode-readback.md';
 

@@ -3,12 +3,12 @@
 // and QA-ignored in both the schema doc and the runtime mapper.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const storiesSkill = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', 'stories', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
-const qaAgent = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'agents', 'qa-agent.md'), 'utf8').replace(/\r\n/g, '\n');
-const storyExamples = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', 'stories', 'story-examples.md'), 'utf8').replace(/\r\n/g, '\n');
+const storiesSkill = readText(path.join(__dirname, '..', 'plugin', 'skills', 'stories', 'SKILL.md'));
+const qaAgent = readText(path.join(__dirname, '..', 'plugin', 'agents', 'qa-agent.md'));
+const storyExamples = readText(path.join(__dirname, '..', 'plugin', 'skills', 'stories', 'story-examples.md'));
 
 test('stories/SKILL.md documents caption as optional and walkthrough-only', () => {
   assert.match(storiesSkill, /caption/);

@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { decideArchive, inScope, shouldAgeTag, encodeArchiveTagSuffix } = require('../../../plugin/bin/lib/reconcile/archive-branches');
+const { readText } = require('../../helpers/read-skill');
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -655,7 +656,7 @@ test('archiveBranches source order: OPEN-screened fast path precedes isCherryEqu
 // AC6: index wiring
 test("index: ALL_CHECKS includes 'archive-branches'; dispatch sits between 'archive' and 'reap'; result gains branches slot", () => {
   assert.ok(ALL_CHECKS.includes('archive-branches'));
-  const src = fs.readFileSync(path.join(__dirname, '../../../plugin/bin/lib/reconcile/index.js'), 'utf8');
+  const src = readText(path.join(__dirname, '../../../plugin/bin/lib/reconcile/index.js'));
   const iArchive = src.indexOf("checks.includes('archive')");
   const iBranches = src.indexOf("checks.includes('archive-branches')");
   const iReap = src.indexOf("checks.includes('reap')", iArchive);

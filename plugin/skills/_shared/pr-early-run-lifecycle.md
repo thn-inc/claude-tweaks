@@ -361,7 +361,9 @@ namespace a subdirectory against (#3136) — to the run's own top-level `decisio
 
 `deferred-closure: spec #{n} closing keyword withheld ({reason})`
 
-passed as `--text` to `log-decision.js` with `--status AUTO`, producing a line such as
+logged by `log-decision.js --status AUTO --text-file "{text-file}"`, `{text-file}` holding that one
+line per `_shared/auto-decision-log.md`'s Text from git or a user paragraph (`{reason}` is free
+text, so it never passes through shell quoting), producing a line such as
 `AUTO {time} — spec #{n}: deferred-closure: spec #{n} closing keyword withheld ({reason}).
 Reversibility: high (a later commit or PR edit can still add Fixes #{n}).` `{reason}` is a short
 free-text phrase (e.g. `AC not fully met, pending manual step`). This is the one entry shape the

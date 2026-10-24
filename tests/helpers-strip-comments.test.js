@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { stripComments, stripperVerdict } = require('./helpers/strip-comments');
+const { readText } = require('./helpers/read-skill');
 
 function newlineIndices(s) {
   const out = [];
@@ -279,7 +280,7 @@ function binFiles(dir = BIN_DIR) {
 
 // `{file}:{line}` for every whole-line // comment that survives stripping.
 function survivingWholeLineComments(file) {
-  const raw = fs.readFileSync(file, 'utf8').split('\n');
+  const raw = readText(file).split('\n');
   const stripped = stripComments(raw.join('\n')).split('\n');
   const rel = path.relative(REPO_ROOT, file);
   const offenders = [];
@@ -322,7 +323,7 @@ test('AC3.1: stripperVerdict is ok for every plugin/bin file', () => {
 });
 
 test('AC4.1: the helper requires only node: built-ins', () => {
-  const text = fs.readFileSync(path.join(__dirname, 'helpers', 'strip-comments.js'), 'utf8');
+  const text = readText(path.join(__dirname, 'helpers', 'strip-comments.js'));
   const required = [...text.matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1]);
   assert.ok(required.length > 0);
   assert.deepEqual(

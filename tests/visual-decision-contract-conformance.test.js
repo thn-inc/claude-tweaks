@@ -1,8 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
 const CONTRACT = path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'visual-decision.md');
 const TEMPLATE = path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'compare-shell', 'template.html');
@@ -25,7 +25,7 @@ function stripTombstoneLines(text) {
 }
 
 function readNonTombstone(file) {
-  return stripTombstoneLines(fs.readFileSync(file, 'utf8'));
+  return stripTombstoneLines(readText(file));
 }
 
 test('AC1: the contract file states each of the five event shapes exactly once', () => {
@@ -60,10 +60,7 @@ test('AC1 reversion check: renaming a shape on either side breaks this suite (pr
 });
 
 test('AC3: decision.html metadata field set (winner, seedKey, rerollCount, steerHistory, date) matches between the contract and the seeder', () => {
-  const seederText = fs.readFileSync(
-    path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'compare-shell', 'seed-compare.mjs'),
-    'utf8',
-  );
+  const seederText = readText(path.join(__dirname, '..', 'plugin', 'skills', 'design-wrapper', 'compare-shell', 'seed-compare.mjs'));
   const fields = ['winner', 'date', 'seedKey', 'rerollCount', 'steerHistory'];
   for (const field of fields) {
     assert.match(seederText, new RegExp(`\\b${field}\\b`), `seeder is missing outcome field ${field}`);
@@ -72,7 +69,7 @@ test('AC3: decision.html metadata field set (winner, seedKey, rerollCount, steer
   // runtime (buildVariantData/seed in seed-compare.mjs) — checked structurally
   // above via the source text; template.html then surfaces the same object
   // as DATA.outcome, so both sides of the format agree on the field set.
-  const templateText = fs.readFileSync(TEMPLATE, 'utf8');
+  const templateText = readText(TEMPLATE);
   assert.match(templateText, /DATA\.outcome/);
 });
 
@@ -128,7 +125,7 @@ test('AC2: explore.md no longer cites dev-url-detection\'s Ephemeral server star
 });
 
 test('AC3: the interactive-only preamble and the reroll/steer/exit semantics text survive unchanged', () => {
-  const exploreText = fs.readFileSync(EXPLORE, 'utf8');
+  const exploreText = readText(EXPLORE);
   assert.match(
     exploreText,
     /\*\*Interactive-only — has no auto-mode branch\*\*, like `live`\. Every step below assumes a human is present in a browser to answer the Verdict question; no caller may invoke this mode from `auto` or a `\$PIPELINE_RUN_DIR`-set context\./,

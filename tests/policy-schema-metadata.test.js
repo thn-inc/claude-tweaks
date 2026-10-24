@@ -6,12 +6,12 @@
 // tests/hooks-gate-coverage.test.js.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { POLICY_KEYS, POLICY_CATEGORIES } = require('../plugin/bin/lib/policy-schema');
+const { readText } = require('./helpers/read-skill');
 
 const MD_PATH = path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema.md');
-const md = fs.readFileSync(MD_PATH, 'utf8');
+const md = readText(MD_PATH);
 
 test('every POLICY_KEYS row carries summary, category, and tier', () => {
   for (const row of POLICY_KEYS) {

@@ -5,11 +5,11 @@
 // and code-mode-steps.md's Step 1/Step 2 name the token's effect.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const SKILL = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', 'review', 'SKILL.md'), 'utf8');
-const STEPS = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', 'review', 'code-mode-steps.md'), 'utf8');
+const SKILL = readText(path.join(__dirname, '..', 'plugin', 'skills', 'review', 'SKILL.md'));
+const STEPS = readText(path.join(__dirname, '..', 'plugin', 'skills', 'review', 'code-mode-steps.md'));
 
 test('argument-hint lists base:<ref>', () => {
   const hint = /^argument-hint:\s*"(.*)"$/m.exec(SKILL);

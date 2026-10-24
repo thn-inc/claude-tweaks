@@ -25,6 +25,18 @@ A hit means the ACs cannot both pass as written: a `critical` finding (persona c
 
 Why: #3311's AC3 fixtures (`const FOO_CEILING_BYTES = 30 * 1024`) tripped AC1's `CEILING_BYTES` sweep, and the conflict surfaced only at implementation.
 
+## Fail-closed guard detection (deterministic, runs before persona dispatch)
+
+Before dispatching the personas below, scan the sub-issue's composed Acceptance Criteria and Deliverables for a prose guard whose job is to fail closed: a rule in skill prose that holds, stops, or refuses unless a condition is met ("never arm unless", "hold when", "only when every … carries"). When one fires, the record must state the guard's outcome for each of three input classes, or list each missing one as an `## Open Questions` row:
+
+- **Empty input set**: an `every`/`all` condition over zero items is vacuously true, so say whether an empty set holds or passes.
+- **Unreadable source**: a failed label, comment, file, or API read. Say that it holds, never that it passes.
+- **Malformed value**: present but unparseable or out of shape, including an undefined placeholder.
+
+A missing class is a `critical` finding (persona column `Fail-Closed Guard Check`) and flows through the write-back procedure like a persona finding. Its resolution adds a branch to the guard's own test list, so it is decision-worthy: stage-or-ask per write-back step 5. With no fail-closed guard in the text, the check is a no-op.
+
+Why: #3877's tidy `## Arm ready PR` guard pinned only that its rule text existed. Review then found an `every` quantifier vacuously true on an empty set and failed reads with no stated outcome, which cost a fix wave and six added pins.
+
 ## Parallel dispatch
 
 **Persona selection by tier** (`ceremony:*` label, stamped on the sub-issue in Step 3 — rationale

@@ -1,8 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 
 const {
   planRetry, applyRetryResults, retryLogName, runRetries, flakyCaveatLines,
@@ -12,7 +12,7 @@ const {
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'extract.js'));
 
 // Real jest/vitest/pytest output (#3480), shared with extract.test.js.
-const readDialect = (name) => fs.readFileSync(path.join(__dirname, '..', '..', 'fixtures', 'verify-dialects', name), 'utf8');
+const readDialect = (name) => readText(path.join(__dirname, '..', '..', 'fixtures', 'verify-dialects', name));
 
 const FLAKY = { files: ['tests/a.test.js', 'tests/b.test.js'], maxRetries: 1 };
 const RETRY = { tests: 'node --test {file}' };

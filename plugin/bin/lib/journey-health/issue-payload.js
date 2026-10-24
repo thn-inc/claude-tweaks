@@ -23,7 +23,7 @@ const SEVERITY_TO_RISK = { high: 'high', med: 'medium', low: 'low' };
 // verifiedAsOf (#117): the sha the sweep read this repo at, resolved ONCE per
 // run by the caller (bin/journey-health.js, via health-core/read-commit.js)
 // and threaded through here — never resolved inside this function. See
-// specShapedBody's own verifiedAsOf doc in record.js for why.
+// specShapedBody's own verifiedAsOf doc in record-payload.js for why.
 function toIssuePayload(finding, verifiedAsOf) {
   const categoryLabel = CATEGORY_LABELS[finding.category] || finding.category;
 

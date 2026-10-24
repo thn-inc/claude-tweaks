@@ -1,9 +1,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { computeDiffFacts, deriveCeremonyProfile, isDocsPath, isPromptProsePath, PROMPT_PROSE_DIRS, shouldDerive } = require('../../../plugin/bin/lib/dispatch/ceremony-derive');
+const { readText } = require('../../helpers/read-skill');
 
 // #1545 evidence shape: a +75/-2 test file plus its own materialized
 // work/{n}-spec.md doc — a mix of test + docs files, zero production files.
@@ -163,7 +163,7 @@ test('the prose twins name exactly the directories PROMPT_PROSE_DIRS lists', () 
   const list = `${ticked.slice(0, -1).join(', ')}, or ${ticked[ticked.length - 1]}`;
   const root = path.join(__dirname, '..', '..', '..', 'plugin', 'skills');
   for (const rel of ['build/micro-plan.md', 'wrap-up/ceremony-derivation.md']) {
-    const prose = fs.readFileSync(path.join(root, rel), 'utf8');
+    const prose = readText(path.join(root, rel));
     assert.ok(prose.includes(list), `${rel} must contain the phrase: ${list}`);
   }
   for (const d of PROMPT_PROSE_DIRS) {

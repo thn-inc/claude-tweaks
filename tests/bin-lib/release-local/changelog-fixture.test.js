@@ -8,9 +8,10 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { renderSection } = require('../../../plugin/bin/lib/release-local/changelog.js');
+const { readText } = require('../../helpers/read-skill');
 
 const FIXTURES = path.join(__dirname, 'fixtures');
-const read = (name) => fs.readFileSync(path.join(FIXTURES, name), 'utf8');
+const read = (name) => readText(path.join(FIXTURES, name));
 const stripPrLinks = (text) => text.replace(/ \(\[#\d+\]\(https:\/\/github\.com\/[^)]*\/issues\/\d+\)\)/g, '');
 const repo = { owner: 'googleapis', repo: 'release-please', url: 'https://github.com/googleapis/release-please' };
 const commit = (type, scope, description, sha, extra = {}) => ({ sha, type, scope, description, subject: `${type}${scope ? `(${scope})` : ''}: ${description}`, breaking: false, breakingNote: null, unconventional: false, ...extra });

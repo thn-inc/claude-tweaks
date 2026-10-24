@@ -5,6 +5,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 const {
   LEDGER_RESIDUE_MARKER, QUIET_SKIP_REASONS, residueLedgerPaths, removalBranchName, ledgerFeatureSlug, runDirNamesNumber,
   attributedRunDir, classifyLedgerCandidate, partitionByRemovalPrs, decideLedgerResidue, defaultListRunDirs,
@@ -527,7 +528,7 @@ test('fetch failure fails the whole check closed', () => {
 test("index: ALL_CHECKS and BACKGROUND_CHECKS include 'ledger-residue'; dispatch sits between remote-prune and reap", () => {
   assert.ok(ALL_CHECKS.includes('ledger-residue'));
   assert.ok(require('../../../plugin/bin/hooks.js').BACKGROUND_CHECKS.includes('ledger-residue'));
-  const src = fs.readFileSync(path.join(__dirname, '../../../plugin/bin/lib/reconcile/index.js'), 'utf8');
+  const src = readText(path.join(__dirname, '../../../plugin/bin/lib/reconcile/index.js'));
   const iBranches = src.indexOf("checks.includes('archive-branches')");
   const iRemote = src.indexOf("checks.includes('remote-prune')", iBranches);
   const iLedger = src.indexOf("checks.includes('ledger-residue')", iBranches);
