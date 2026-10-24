@@ -190,7 +190,9 @@ test('AC1.1: Step 0 fence end to end: a finished release run is refused, a fresh
 // --- PIPELINE_RUN_DIR: only the directory the resolver actually returned from it is exempt (#3898) ---
 // The exemption is keyed on the resolved dir BEING the step-1 PIPELINE_RUN_DIR directory, so a stale value
 // (a missing dir, an archived run-id) that falls through to step 2 is checked like any step-2 directory.
-const pipelineEntries = (pipelines) => fs.readdirSync(pipelines).sort();
+function pipelineEntries(pipelines) {
+  return fs.readdirSync(pipelines).sort();
+}
 
 function assertPipelineRunDirExemption(fence) {
   const { repo, pipelines } = finishedRunRepo();
