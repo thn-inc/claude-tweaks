@@ -9,5 +9,5 @@
 | 5 | build | SDD ruling — write-then-execute heredoc (cat > s.sh <<EOF; bash s.sh) documented as the opaque-program gap, no code change: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
 | 6 | build | SDD ruling — glued sh<<EOF, (bash)/>(bash) grouped readers and $-quoted delimiters fixed in-loop (rounds 2-3) rather than deferred: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
 | 7 | build | SDD ruling — redirect inside backticks resolving no target left out of scope (pre-existing parser limit, unchanged by #3989): ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
-| 8 | build | Minor 5 — prefilter + fileWriteTargets each run stripHeredocBodies (linear pass, unmeasured); controller runs npm run test:perf centrally | deferred | — |
+| 8 | build | Minor 5 — prefilter + fileWriteTargets each run stripHeredocBodies (linear pass, unmeasured); controller runs npm run test:perf centrally | observation | Measured at build Common Step 5: `npm run test:perf` 3/3 pass, including "bin/hooks.js skip path is a thin layer" |
 | 9 | build | `echo foo>x` (redirect glued to a preceding word) resolves no target — REDIRECT_OP_RE is anchored at token start, pre-existing since #3080, not a #3989 regression; follow-up candidate | deferred | — |
