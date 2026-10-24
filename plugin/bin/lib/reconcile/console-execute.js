@@ -267,9 +267,11 @@ function preFetchSkipReason(consoleJson, now) {
 // race/claim/idempotence logic is unit-testable without gh.
 //   { action: 'ready', prNumber, commentIds, items } | { action: 'skip', reason }
 // ctx: { prBody?, memberGrants?: {[issueNumber]: {labels, pendingSince, skippedUntrusted?}}, vetoWindowHours?, now?, rulingTexts?: {[itemId]: string|null} }
-// — all optional; omitted entirely (the pre-#1802 call shape) always yields
-// mergeGrantGap: null, unchanged from before. `rulingTexts` (#3880) absent
-// always yields rulingGateGaps: [].
+// — each gate fails closed when its row kind is present and its context is absent (#4048):
+// an isMergeRow item without a string prBody and an object memberGrants withholds as
+// mergeGrantGap { member: null, reason: 'grant-context-missing' }; an isRulingRow item
+// without a rulingTexts object withholds as sdd-ruling-unclassified. A console with neither
+// row kind needs no ctx (mergeGrantGap: null, rulingGateGaps: []).
 function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
   const skipReason = preFetchSkipReason(consoleJson, now);
   if (skipReason) return { action: 'skip', reason: skipReason };
@@ -311,14 +313,16 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
 
   // #1802: the second, narrower exception — withheld independent of
   // mergeCheckVerdict, since it reads directly observable current label
-  // state rather than a persisted, once-computed LLM judgment. Only
-  // evaluated when an isMergeRow item is actually present AND the caller
-  // supplied both a PR body and pre-fetched member grants (consoleExecuteDetect
-  // does; a direct unit-test call omitting ctx gets mergeGrantGap: null,
-  // preserving every pre-#1802 test's expectations unchanged).
+  // state rather than a persisted, once-computed LLM judgment. Evaluated
+  // whenever an isMergeRow item is present; the caller must supply both a PR
+  // body and pre-fetched member grants (consoleExecuteDetect does). When
+  // either is absent it withholds as grant-context-missing (#4048) rather
+  // than reading as "nothing to check".
   let mergeGrantGap = null;
   const hasMergeRow = items.some((item) => item.isMergeRow === true);
-  if (hasMergeRow && typeof ctx.prBody === 'string' && ctx.memberGrants && typeof ctx.memberGrants === 'object') {
+  if (hasMergeRow && (typeof ctx.prBody !== 'string' || !ctx.memberGrants || typeof ctx.memberGrants !== 'object')) {
+    mergeGrantGap = { member: null, reason: 'grant-context-missing' };
+  } else if (hasMergeRow) {
     const members = parseFixesMembers(ctx.prBody);
     if (!members.length) {
       // A merge row exists but no `Fixes #{n}` line could be parsed — the
@@ -351,14 +355,14 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
 
   // #3880: the third exception — a ruling row whose staged text does not show it
   // safe to ratify. Pure: the texts arrive in ctx (consoleExecuteDetect reads them);
-  // a ruling id missing from ctx.rulingTexts reads as unclassified.
+  // a ruling id missing from ctx.rulingTexts reads as unclassified, and so does
+  // every ruling row when the map is absent altogether (#4048).
   const rulingGateGaps = [];
-  if (ctx.rulingTexts && typeof ctx.rulingTexts === 'object') {
-    for (const item of items) {
-      if (item.isRulingRow !== true) continue;
-      const reason = sddRulingDeferralReason(ctx.rulingTexts[item.id]);
-      if (reason) rulingGateGaps.push({ id: item.id, reason });
-    }
+  const rulingTexts = ctx.rulingTexts && typeof ctx.rulingTexts === 'object' ? ctx.rulingTexts : null;
+  for (const item of items) {
+    if (item.isRulingRow !== true) continue;
+    const reason = sddRulingDeferralReason(rulingTexts ? rulingTexts[item.id] : null);
+    if (reason) rulingGateGaps.push({ id: item.id, reason });
   }
 
   return {
