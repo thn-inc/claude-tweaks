@@ -40,9 +40,9 @@ git grep -lE "issues/record['\"]|issues/record\.js['\"]|require\(['\"]\./record[
 
 Migrating the 75 call sites is step 2 of expand-contract. What breaks the rule is removing the old
 path while an installed build, including the prose it executes, still reads it. A facade keeps
-that path alive, so nothing has to be migrated at once. The facade's header comment says new code may require a
-sub-module directly (`plugin/bin/lib/issues/record.js` lines 7-16). A facade does not forbid
-migration. It lets it happen later and one consumer at a time.
+that path alive, so nothing has to be migrated at once. The facade's header comment says new code
+may require a sub-module directly (`plugin/bin/lib/issues/record.js` lines 7-16). A facade does
+not forbid migration. It lets it happen later and one consumer at a time.
 
 ## The pure-move proof
 
@@ -172,8 +172,7 @@ split so you know the checks bite on your module too.
 - **Check 2 is why an export comparison is not enough.** An internal-constant drift is a
   behavior change that no export comparison can see.
 - **Check 3 is why a green test suite is not enough.** Node resolves a require cycle silently
-  with a partial `module.exports`, so checks 1 and 2 stay green. Tests typically exercise only
-  the exports, so they can stay green too.
+  with a partial `module.exports`, so checks 1 and 2 stay green.
 - **Check 3 strips whole-line `//` comments before matching `require(`.** Without that it
   false-positived on `record.js`'s own header comment, which quotes `require('./record')`.
 
