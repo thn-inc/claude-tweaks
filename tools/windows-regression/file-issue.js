@@ -221,6 +221,12 @@ const TAP_SUBTEST_RE = /^\s*# Subtest: ?(.*)$/;
 function excerptsForTests(file, tests, { lines, normalized, tap }) {
   const needle = slashes(file);
   const ownerAt = ownerAtOf(tap);
+  const blockNamesFile = (i) => {
+    for (let j = i; j < tap.length && (j === i || tap[j].owner === i); j++) {
+      if ((j === i || ownerAt(j) === i) && namesFile(normalized[j], needle)) return true;
+    }
+    return false;
+  };
   const stack = [];
   const candidates = [];
   tap.forEach((t, i) => {
@@ -231,11 +237,7 @@ function excerptsForTests(file, tests, { lines, normalized, tap }) {
     if (t.kind !== 'notOk') return;
     const rest = raw.match(TAP_NOT_OK_RE)[1];
     if (TAP_DIRECTIVE_RE.test(rest)) return;
-    let names = false;
-    for (let j = i; j < tap.length && (j === i || tap[j].owner === i) && !names; j++) {
-      if ((j === i || ownerAt(j) === i) && namesFile(normalized[j], needle)) names = true;
-    }
-    if (names) candidates.push({ index: i, name: rest, suites: stack.map((s) => s.name) });
+    if (blockNamesFile(i)) candidates.push({ index: i, name: rest, suites: stack.map((s) => s.name) });
   });
   const taken = new Set();
   return tests.map((path) => {
