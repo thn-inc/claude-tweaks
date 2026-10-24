@@ -25,6 +25,7 @@ const MERGE_PATH = path.join(ROOT, 'plugin', 'skills', '_shared', 'pr-first-merg
 const CONTRACT = read('plugin', 'skills', '_shared', 'acceptance-labeling-landed.md');
 const MERGE = read('plugin', 'skills', '_shared', 'pr-first-merge.md');
 // Tasks 3-4 append tests that use these three.
+const PR_SCAN = read('plugin', 'skills', '_shared', 'github-pr-scan.md');
 const CLOSE_OUT = read('plugin', 'skills', 'dispatch', 'close-out.md');
 const TIDY = read('plugin', 'skills', 'tidy', 'actions-github-issues.md');
 const SKILL_GRAPH = read('docs', 'skill-graph.md');
@@ -78,8 +79,15 @@ test('AC1.2 (unreadable verify.json is not rescued): the live-state tier cannot 
   assert.match(live, /outcome stays `unreadable: verify\.json`/);
 });
 
-test('AC1.2 (outcomes): an unreadable outcome takes precedence over the others', () => {
-  assert.match(CONTRACT, /`unreadable: …` outcome from any tier takes precedence/);
+test('AC1.2 (outcomes): an unreadable outcome takes precedence only over the other not-landed outcomes', () => {
+  const outcomes = slice(CONTRACT, '## Outcomes', 'A failed read never counts as landed');
+  assert.match(outcomes, /`unreadable: …` outcome from any tier takes precedence over the other not-landed outcomes/);
+});
+
+test("AC1.2 (live-state tier): a failed read in one check does not cancel the other check's success", () => {
+  const live = slice(CONTRACT, '## Live-state tier', '## Outcomes');
+  assert.match(live, /lands when either check positively holds; a failed read in one check does not cancel the other check's success/);
+  assert.match(live, /yields `unreadable: \{labels \| comments\}` only when neither check shows landed/);
 });
 
 test('AC1.2 (outcomes): the not-landed outcome vocabulary', () => {
@@ -114,7 +122,7 @@ function restaters(files) {
 
 test('AC6.1: the live-state clause is defined only in the contract', () => {
   assert.deepStrictEqual(
-    restaters({ contract: CONTRACT, 'pr-first-merge': MERGE, 'close-out': CLOSE_OUT, tidy: TIDY }),
+    restaters({ contract: CONTRACT, 'pr-first-merge': MERGE, 'close-out': CLOSE_OUT, tidy: TIDY, 'github-pr-scan': PR_SCAN }),
     ['contract'],
   );
 });
@@ -126,6 +134,20 @@ test('AC6.1: negative control — a caller restating the clause fails the pin', 
       'pr-first-merge': MERGE,
       'close-out': CLOSE_OUT + ' `demo:pending` <!-- run-comment: try-it -->',
       tidy: TIDY,
+      'github-pr-scan': PR_SCAN,
+    }),
+    ['contract'],
+  ), assert.AssertionError);
+});
+
+test('AC6.1: negative control — a third inline copy in github-pr-scan fails the pin', () => {
+  assert.throws(() => assert.deepStrictEqual(
+    restaters({
+      contract: CONTRACT,
+      'pr-first-merge': MERGE,
+      'close-out': CLOSE_OUT,
+      tidy: TIDY,
+      'github-pr-scan': PR_SCAN + ' `demo:pending` <!-- run-comment: try-it -->',
     }),
     ['contract'],
   ), assert.AssertionError);

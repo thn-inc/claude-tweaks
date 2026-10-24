@@ -93,8 +93,8 @@ passes it. Report `PR #{n} not armed — acceptance labeling not landed ({reason
 contract's not-landed outcome (`verify.json missing`, `acceptance-labeling: {result}`, `no run dir`, or
 `unreadable: {verify.json | labels | comments}`), and recommend
 `/claude-tweaks:dispatch close-out #{record}` ({record} = one of the PR's `Fixes` records), which runs
-`_shared/pr-first-merge.md` Step 1 before it merges. For `no run dir`, close-out stops on the same
-missing run dir, so the recommendation instead names running that command from the checkout that holds
+`_shared/pr-first-merge.md` Step 1 before it merges. When no run dir resolved, close-out stops on the same
+missing run dir (whatever `{reason}` reports), so the recommendation instead names running that command from the checkout that holds
 run `{run-id}` when a validated marker names one, or, when none does, a human acceptance pass via
 `/claude-tweaks:demo #{record}` before merging by hand. Never put an unvalidated marker value or a
 `verify.json` string that is not a bare word into the report or the logged text. Log the hold to this

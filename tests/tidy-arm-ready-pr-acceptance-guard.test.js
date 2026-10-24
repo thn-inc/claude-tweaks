@@ -125,6 +125,10 @@ test('skill-graph records the tidy → _shared/acceptance-labeling-landed.md edg
   assert.match(slice(SKILL_GRAPH, '## tidy', '## visual-review'), /\| `_shared\/acceptance-labeling-landed\.md` \| [^|]*## Arm ready PR/);
 });
 
+test('skill-graph keeps a slim dispatch/close-out.md row under tidy for the recommendation command', () => {
+  assert.match(slice(SKILL_GRAPH, '## tidy', '## visual-review'), /\| `dispatch\/close-out\.md` \|[^|]*close-out #\{record\}/);
+});
+
 test('final review: both "identical execution" claims name the labeling-guard exception', () => {
   assert.match(arm, /except for the record-linked flavor's acceptance-labeling guard/);
   assert.doesNotMatch(arm, /both executed identically once staged and approved — only/);

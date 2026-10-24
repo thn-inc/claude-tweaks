@@ -32,7 +32,7 @@ files:
 - **Should feel:** checked against evidence, not assumed from a green rollup.
 - **Should understand:**
   - Landed means every file's `acceptance-labeling` row is `pass`/`skip`.
-  - If it isn't landed, or no run dir resolves, the action falls back to the contract's live-state tier (`_shared/acceptance-labeling-landed.md`). If every `Fixes` record carries `demo:pending`, or a trusted `brief`/`try-it` run comment exists, labeling still counts as landed.
+  - If it isn't landed, or no run dir resolves, the action falls back to the contract's live-state tier (`_shared/acceptance-labeling-landed.md`; an unreadable `verify.json` is not rescued by it). If every `Fixes` record carries `demo:pending`, or a trusted `brief`/`try-it` run comment exists, labeling still counts as landed.
   - On the no-run-dir branch tidy deliberately departs from close-out. Close-out stops that candidate; tidy needs no run dir, because it never runs labeling itself.
   - A marker whose run-id fails `flow/claim-targets.md`'s validation counts as no marker. The `demo:pending` check needs at least one `Fixes` record and a successful label read for each. An empty `Fixes` set, or a failed read of `verify.json`, the labels or the run comments, holds the PR and never passes it.
 - **Red flags:** an untrusted comment counted as landed; a housekeeping-marker PR put through this check (it links no record).

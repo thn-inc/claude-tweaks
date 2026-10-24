@@ -37,7 +37,7 @@ files:
 
 ### 3. Let step 3 find out whether labeling landed
 - **URL:** `dispatch/close-out.md` step 3
-- **Action:** close-out resolves the run dir from the PR body's `claude-tweaks-run:` marker (validated as `flow/claim-targets.md` validates it), reads `verify.json` at `pipelines/{run-id}/` then `archive/{run-id}/` — every `spec-*/verify.json` for a multi-spec parent — and only when that does not show labeling landed, checks live forge state before running anything.
+- **Action:** close-out resolves the run dir from the PR body's `claude-tweaks-run:` marker (validated as `flow/claim-targets.md` validates it), reads `verify.json` at `pipelines/{run-id}/` then `archive/{run-id}/` — every `spec-*/verify.json` for a multi-spec parent — and only when that does not show labeling landed (an unreadable `verify.json` is never rescued by the live check), checks live forge state before running anything.
 - **Should feel:** like it checked rather than assumed, and didn't redo work already done.
 - **Should understand:**
   - The predicate close-out applies is `_shared/acceptance-labeling-landed.md`; step 3 states only what it does on each outcome.
