@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 const {
   archiveRunDir, listSpecDirs, decideArchive, decideArchiveCore, readConsoleState, isOrphanedMint, trackArchiveResult,
-  archiveMerged, lastOwnEventMs, isAbandonedInterrupted, archiveOrphanedMint, ORPHAN_MINT_TTL_MS,
+  archiveMerged, prefetchArchivePrStates, lastOwnEventMs, isAbandonedInterrupted, archiveOrphanedMint, ORPHAN_MINT_TTL_MS,
   isStructurallyStuck, trackStuckSkip, STRUCTURALLY_STUCK_TTL_MS, STRUCTURALLY_STUCK_REASONS, isStaleDir,
   isArchivedPendingTrackedMove, archivedPendingTrackedMoveCommand, compareWorkTwin, resolveIdenticalWorkTwin,
   classifyRunDir, isAdHocStandaloneSuperseded, ADHOC_SUPERSEDED_TTL_MS,
@@ -20,6 +20,7 @@ const {
 } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { RESIDUE_ESCALATE_THRESHOLD, listResidueFailures, recordResidueFailure } = require('../../../plugin/bin/lib/reconcile/cache');
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
+const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
 const { serializeManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
 const { readText } = require('../../helpers/read-skill');
 
@@ -4540,4 +4541,123 @@ test('by-number path: a merged-partial settled to archive still refuses a tiebre
   assert.deepStrictEqual(result.skipped.find((s) => s.runDir === runDir), {
     runDir, reason: 'tiebreak-coverage-missing', missing: ['abc123def456'], hint: TIEBREAK_HINT,
   });
+});
+
+// #4032: `prStates` (the pass-shared resolver) replaces archiveMerged's live PR
+// lookups. The discriminator: a `gh` on PATH that FAILS and drops a marker on
+// every call, so a lookup that bypasses the resolver surfaces as a marker file
+// and a network-failure skip — while the resolver's injected deps answer MERGED.
+function installFailingGhWithMarker() {
+  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-failgh-'));
+  const marker = path.join(wrapperDir, 'gh-was-called');
+  fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/bin/sh\ntouch "${marker}"\nexit 1\n`);
+  fs.chmodSync(path.join(wrapperDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  return { marker, restore: () => { process.env.PATH = originalPath; } };
+}
+
+// A branch-resolvable, MERGED, console-less run (fixtureOrdinaryMergedNoConsole's
+// shape) in its own repo, without running archiveMerged.
+function ordinaryMergedRunFixture(branch, runId) {
+  const { root, featureSha } = mergedFeatureBranchRepo(branch);
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active', worktree: path.join(root, '.claude', 'worktrees', `gone-${runId}`), pr: { number: 4032001, branch },
+  }));
+  const pr = {
+    number: 4032001, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    mergeCommit: { oid: featureSha },
+  };
+  return { root, runDir, pr };
+}
+
+test('archiveMerged: prStates answers replace live PR lookups (#4032)', { skip: PATH_STUB_SKIP }, () => {
+  const runId = '2026-08-01T090000-record-4032-prstates';
+  // Control: no prStates, the live (wrapped) gh answers MERGED.
+  const control = ordinaryMergedRunFixture('feat-4032-prstates', runId);
+  const wrapper = installGhWrapper([control.pr]);
+  let controlResult;
+  try { controlResult = archiveMerged({ cwd: control.root }); } finally { wrapper.restore(); }
+  assert.deepStrictEqual(controlResult.archived, [control.runDir], `control must archive, got ${JSON.stringify(controlResult)}`);
+
+  // Subject: identical shape; live gh fails and records any call, the resolver's deps answer MERGED.
+  const subject = ordinaryMergedRunFixture('feat-4032-prstates', runId);
+  const failing = installFailingGhWithMarker();
+  let subjectResult;
+  const asked = [];
+  try {
+    const prStates = createPrStateResolver({
+      root: subject.root,
+      deps: {
+        byNumber: (n) => { asked.push(['number', n]); return subject.pr; },
+        byBranch: (b) => { asked.push(['branch', b]); return subject.pr; },
+      },
+    });
+    subjectResult = archiveMerged({ cwd: subject.root, prStates });
+  } finally { failing.restore(); }
+
+  const norm = (res, root) => JSON.parse(JSON.stringify(res).split(root).join('<root>'));
+  assert.deepStrictEqual(norm(subjectResult, subject.root), norm(controlResult, control.root));
+  assert.deepStrictEqual(asked, [['number', 4032001]], 'the resolver (not gh) must have answered the stamped-number lookup');
+  assert.equal(fs.existsSync(failing.marker), false, 'a lookup that bypassed prStates would have called the failing gh');
+});
+
+test('prefetchArchivePrStates: numbers first, branches only for unanswered dirs, clean-sweep dirs included (#4032)', async () => {
+  const root = fs.realpathSync(makeRepo());
+  for (const b of ['aa', 'bb', 'cc', 'dd']) git(root, 'branch', b);
+  const writeRun = (name, state) => {
+    const d = path.join(root, '.claude-tweaks', 'pipelines', `2026-08-01T090000-${name}`);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'run-state.json'), JSON.stringify(state));
+  };
+  writeRun('a', { status: 'active', pr: { number: 11, branch: 'aa' } }); // number answers MERGED -> branch never asked
+  writeRun('b', { status: 'active', pr: { branch: 'bb' } }); // unstamped -> branch
+  writeRun('c', { status: 'clean', worktree: null, pr: { branch: 'cc' } }); // clean sweep, unstamped -> branch
+  writeRun('d', { status: 'active', pr: { number: 12, branch: 'dd' } }); // number answers null -> branch
+
+  const calls = { numbers: [], branches: [] };
+  const prStates = createPrStateResolver({
+    root,
+    deps: {
+      byNumberAsync: async (n) => { calls.numbers.push(n); return n === 11 ? { number: 11, state: 'MERGED' } : null; },
+      byBranchAsync: async (b) => { calls.branches.push(b); return null; },
+    },
+  });
+  await prefetchArchivePrStates(root, prStates);
+  assert.deepStrictEqual(calls.numbers.sort(), [11, 12]);
+  assert.deepStrictEqual(calls.branches.sort(), ['bb', 'cc', 'dd']);
+});
+
+// The branchless by-number fallback (archiveMerged's own `resolvePrStateByNumber`
+// site, distinct from resolveRunPrState) routes through `prStates` too.
+test('archiveMerged: prStates answers the branchless by-number fallback (#4032)', { skip: PATH_STUB_SKIP }, () => {
+  const { root, featureSha } = mergedFeatureBranchRepo('feat-4032-branchless');
+  git(root, 'branch', '-D', 'feat-4032-branchless'); // branch ref gone — nothing for fallbackBranch to recover
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-08-01T090000-record-4032-branchless');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
+    status: 'active', worktree: path.join(root, '.claude', 'worktrees', 'gone-4032'), pr: { number: 4032002, branch: 'feat-4032-branchless' },
+  }));
+  const failing = installFailingGhWithMarker();
+  const asked = [];
+  let result;
+  try {
+    const prStates = createPrStateResolver({
+      root,
+      deps: {
+        byNumber: (n) => {
+          asked.push(n);
+          return { number: n, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z', mergeCommit: { oid: featureSha } };
+        },
+      },
+    });
+    result = archiveMerged({ cwd: root, prStates });
+  } finally { failing.restore(); }
+  assert.deepStrictEqual(result.archived, [runDir], `expected the by-number fallback to archive, got ${JSON.stringify(result)}`);
+  assert.deepStrictEqual(asked, [4032002]);
+  assert.equal(fs.existsSync(failing.marker), false, 'a lookup that bypassed prStates would have called the failing gh');
 });

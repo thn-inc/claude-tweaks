@@ -175,7 +175,29 @@ function isOwnCwd(here, real) {
   return isPathContained(here, real, { orEqual: true });
 }
 
-function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault, runner, fsRmSync, platform } = {}) {
+// #4032: warm the pass's PR-state resolver for every worktree branch
+// reapMerged will look up, concurrently, so its sequential loop hits the memo.
+// Skips what the loop skips before the lookup (the main checkout, bare entries,
+// branchless entries, paths outside the harness domain); a candidate the loop
+// then skips for another reason (own-cwd, locked) is warmed needlessly, which
+// costs one cached lookup and nothing else.
+async function prefetchReapPrStates(root, prStates) {
+  const list = runGit(['worktree', 'list', '--porcelain'], root);
+  if (list.failure) return;
+  const domain = safeReal(path.join(root, HARNESS_WORKTREE_DIR)) || path.join(root, HARNESS_WORKTREE_DIR);
+  const branches = [];
+  for (const wt of parseWorktreeList(list.stdout)) {
+    const real = safeReal(wt.path);
+    if (!real || real === root || wt.bare || !wt.branch) continue;
+    if (!isPathContained(real, domain)) continue;
+    branches.push(wt.branch);
+  }
+  await prStates.prefetch({ branches });
+}
+
+function reapMerged({
+  cwd, dryRun = false, releasePorts = releasePortsDefault, runner, fsRmSync, platform, prStates,
+} = {}) {
   const reaped = [];
   const skipped = [];
   // See worktree-reap.js's reapWorktrees for the shape rationale: only ever
@@ -206,7 +228,7 @@ function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault, r
     if (isOwnCwd(here, real)) { skipped.push({ path: real, reason: 'own-cwd' }); continue; }
     if (isWorktreeLocked(real, { cwd: root })) { skipped.push({ path: real, reason: 'in-use' }); continue; }
 
-    const prState = resolvePrState(root, wt.branch);
+    const prState = prStates ? prStates.byBranch(wt.branch) : resolvePrState(root, wt.branch);
     const decision = decideReap(prState);
     if (decision.action === 'skip') {
       skipped.push({ path: real, reason: decision.reason, prNumber: prState && prState.number });
@@ -279,5 +301,5 @@ function reapMerged({ cwd, dryRun = false, releasePorts = releasePortsDefault, r
 }
 
 module.exports = {
-  reapMerged, decideReap, isOwnCwd, trackReapResidue, attemptLongPathRemoval, longPathRemovalTarget, gitCommittedToRemoval,
+  reapMerged, prefetchReapPrStates, decideReap, isOwnCwd, trackReapResidue, attemptLongPathRemoval, longPathRemovalTarget, gitCommittedToRemoval,
 };

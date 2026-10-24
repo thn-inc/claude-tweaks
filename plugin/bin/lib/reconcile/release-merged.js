@@ -338,7 +338,11 @@ function logGrantRemoval(runDir, root, reason) {
 //     conditional-update with its own sha, so there's no benefit to
 //     parallelizing them, and serial writes keep this module's existing
 //     one-write-at-a-time posture.
-async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
+// `prStates` (#4032), when given, is the pass-shared PR-state resolver
+// (pr-state-cache.js) Phase 1.5's two batches ask instead of pr-state.js
+// directly; bound as `prStateResolver` because Phase 1.5 names a local
+// `prStates` (its resolved results).
+async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResolver } = {}) {
   const released = [];
   const skipped = [];
   const root = cwd || process.cwd();
@@ -473,7 +477,7 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
   const byNumberCands = candidates.filter((c) => c.prNumber);
   const prStatesByNumber = await runWithConcurrency(
     byNumberCands,
-    (c) => resolvePrStateByNumberAsync(root, c.prNumber),
+    (c) => (prStateResolver ? prStateResolver.byNumberAsync(c.prNumber) : resolvePrStateByNumberAsync(root, c.prNumber)),
   );
   const prStateByNumberByIssue = resultsByIssue(byNumberCands, prStatesByNumber);
   for (const c of byNumberCands) {
@@ -500,7 +504,7 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride } = {}) {
   const needPrState = candidates.filter((c) => c.joinFailure === null && c.prState === null);
   const prStates = await runWithConcurrency(
     needPrState,
-    (c) => resolvePrStateAsync(root, c.branch),
+    (c) => (prStateResolver ? prStateResolver.byBranchAsync(c.branch) : resolvePrStateAsync(root, c.branch)),
   );
   const prStateByIssue = resultsByIssue(needPrState, prStates);
   for (const c of needPrState) c.prState = prStateByIssue.get(c.issueNumber);

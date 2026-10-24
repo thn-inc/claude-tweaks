@@ -2594,3 +2594,56 @@ test('reconcile verb: the reconcile-threw fallback carries timings: null (#4032)
   const src = readText(HOOKS);
   assert.match(src, /reason: 'reconcile-threw' \}\], timings: null \}/);
 });
+
+// #4032: one PR-state resolver per pass, shared by release, archive and reap,
+// persisted in `finalize`; a prefetch that throws must never break the pass.
+async function reconcileWithRecordedResolver({ wrap } = {}) {
+  const { mainDir } = pairedFixture();
+  fs.mkdirSync(path.join(mainDir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
+  git(['add', '.claude-tweaks/policy.yml'], mainDir);
+  git(['commit', '-q', '-m', 'policy'], mainDir);
+
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+  const cacheMod = require('../plugin/bin/lib/reconcile/pr-state-cache');
+  const originalHealth = preflight.ghHealthCheck;
+  const originalHealthAsync = preflight.ghHealthCheckAsync;
+  const originalCreate = cacheMod.createPrStateResolver;
+  const instances = [];
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
+  cacheMod.createPrStateResolver = (opts) => {
+    const inst = originalCreate(opts);
+    const calls = { persist: 0, prefetch: 0 };
+    const persist = inst.persist;
+    const prefetch = inst.prefetch;
+    inst.persist = (...a) => { calls.persist += 1; return persist(...a); };
+    inst.prefetch = (...a) => { calls.prefetch += 1; return wrap ? wrap(prefetch, ...a) : prefetch(...a); };
+    instances.push({ inst, calls });
+    return inst;
+  };
+  let r;
+  try {
+    r = await reconcile({ cwd: mainDir, checks: ['release', 'archive', 'reap'], dryRun: true });
+  } finally {
+    preflight.ghHealthCheck = originalHealth;
+    preflight.ghHealthCheckAsync = originalHealthAsync;
+    cacheMod.createPrStateResolver = originalCreate;
+  }
+  return { r, instances };
+}
+
+test('reconcile(): one resolver per pass is shared by release, archive and reap (#4032)', async () => {
+  const { r, instances } = await reconcileWithRecordedResolver();
+  assert.equal(instances.length, 1, 'exactly one resolver for the pass');
+  assert.equal(instances[0].calls.prefetch >= 2, true, 'archive and reap each prefetch through the shared resolver');
+  assert.equal(instances[0].calls.persist, 1, 'persisted once, in finalize');
+  assert.ok(r.timings.phases.archive && r.timings.phases.reap && r.timings.phases.finalize);
+});
+
+test('reconcile(): a throwing prefetch never breaks the pass (#4032)', async () => {
+  const { r, instances } = await reconcileWithRecordedResolver({ wrap: async () => { throw new Error('prefetch boom'); } });
+  assert.equal(instances.length, 1);
+  assert.ok(Array.isArray(r.runs) && Array.isArray(r.worktrees), `archive and reap must still have run, got ${JSON.stringify(r)}`);
+  assert.equal(instances[0].calls.persist, 1);
+});

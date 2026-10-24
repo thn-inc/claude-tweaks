@@ -9,6 +9,7 @@ const {
   decideRelease, releasedEntry, writeTombstone, releaseMerged, shouldSkipClaimRead, prClosesIssue, needsIssueEvidence,
 } = require('../../../plugin/bin/lib/reconcile/release-merged');
 const { readCache, writeCache } = require('../../../plugin/bin/lib/reconcile/cache');
+const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
 const { GRANT_LABELS } = require('../../../plugin/bin/lib/release-claim/release');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../../../plugin/bin/lib/issue-branch-tracking');
 
@@ -1261,4 +1262,93 @@ test('AC6.1: a branch-resolved candidate whose stamped pr.number resolves pr-not
   } finally {
     process.env.PATH = originalPath;
   }
+});
+
+// #4032: `prStates` (the pass-shared resolver) replaces Phase 1.5's two pooled
+// batches. One claim whose run-state stamps pr.number 42 (by-number batch) and
+// one with no stamp, joined by branch (branch batch). The control run asks the
+// real (wrapped) gh; the subject run's gh FAILS and drops a marker on every
+// call, so only a resolver-answered lookup can release either claim.
+test('releaseMerged: prStates async answers replace live lookups (#4032)', { skip: PATH_STUB_SKIP }, async () => {
+  const closing = (n, issue) => ({
+    number: n, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+    closingIssuesReferences: [{ number: issue, repository: { name: 'w', owner: { login: 'acme' } } }],
+  });
+  const liveContent = JSON.stringify({
+    runId: 'run-x', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
+  });
+  const build = () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-prstates-')));
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
+    execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
+    for (const [run, branch, state] of [['run-num', 'run-num-branch', { pr: { number: 42 } }], ['run-br', 'run-br-branch', {}]]) {
+      const wtPath = path.join(root, '.worktrees', `wt-${run}`);
+      execFileSync('git', ['worktree', 'add', '-q', '-b', branch, wtPath], { cwd: root });
+      const runDir = path.join(root, '.claude-tweaks', 'pipelines', run);
+      fs.mkdirSync(runDir, { recursive: true });
+      fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wtPath, ...state }));
+    }
+    const ghApi = (args) => {
+      if (args[0].includes('/git/trees/claims-registry')) {
+        return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-11.json', sha: 's11' }, { name: 'issue-12.json', sha: 's12' }] }), failure: null, status: null };
+      }
+      const m = /\/contents\/claims\/issue-(\d+)\.json/.exec(args[0]);
+      if (m) {
+        const runId = m[1] === '11' ? 'run-num' : 'run-br';
+        return { stdout: JSON.stringify({ content: liveContent.replace('run-x', runId), sha: `s${m[1]}` }), failure: null, status: null };
+      }
+      if (args.some((a) => a.includes('/labels/'))) return { stdout: '', failure: null, status: null };
+      throw new Error(`unexpected ${args.join(' ')}`);
+    };
+    return { root, ghApi };
+  };
+  const setPath = (dir) => {
+    const original = process.env.PATH;
+    process.env.PATH = `${dir}${path.delimiter}${original}`;
+    return () => { process.env.PATH = original; };
+  };
+  const summarize = (res) => res.released.map((r) => r.issueNumber).sort();
+
+  // Control: no prStates — the wrapped gh answers MERGED-closing for both claims.
+  const control = build();
+  const okDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-okgh-'));
+  fs.writeFileSync(
+    path.join(okDir, 'gh'),
+    '#!/bin/sh\ncase "$*" in\n'
+    + `  *"pr view 42"*) cat <<'EOF'\n${JSON.stringify(closing(42, 11))}\nEOF\n    ;;\n`
+    + `  *"pr list --head run-br-branch"*) cat <<'EOF'\n${JSON.stringify([closing(43, 12)])}\nEOF\n    ;;\n`
+    + '  *"api --method PUT"*) exit 0 ;;\n'
+    + '  *) exit 1 ;;\nesac\n',
+  );
+  fs.chmodSync(path.join(okDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const restoreOk = setPath(okDir);
+  let controlResult;
+  try { controlResult = await releaseMerged({ cwd: control.root, ghApi: control.ghApi }); } finally { restoreOk(); }
+  assert.deepStrictEqual(summarize(controlResult), [11, 12], `control must release both, got ${JSON.stringify(controlResult)}`);
+
+  // Subject: failing gh + a resolver whose async twins answer.
+  const subject = build();
+  const failDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-failgh-'));
+  const marker = path.join(failDir, 'gh-was-called');
+  // The claim write (`api --method PUT`) still succeeds; every other call is a PR lookup.
+  fs.writeFileSync(path.join(failDir, 'gh'), `#!/bin/sh\ncase "$*" in\n  *"api --method PUT"*) exit 0 ;;\nesac\ntouch "${marker}"\nexit 1\n`);
+  fs.chmodSync(path.join(failDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const asked = { numbers: [], branches: [] };
+  const prStates = createPrStateResolver({
+    root: subject.root,
+    deps: {
+      byNumberAsync: async (n) => { asked.numbers.push(n); return closing(4032042, 11); },
+      byBranchAsync: async (b) => { asked.branches.push(b); return closing(4032043, 12); },
+    },
+  });
+  const restoreFail = setPath(failDir);
+  let subjectResult;
+  try { subjectResult = await releaseMerged({ cwd: subject.root, ghApi: subject.ghApi, prStates }); } finally { restoreFail(); }
+
+  assert.deepStrictEqual(summarize(subjectResult), summarize(controlResult));
+  assert.deepStrictEqual(asked, { numbers: [42], branches: ['run-br-branch'] });
+  assert.equal(fs.existsSync(marker), false, 'a lookup that bypassed prStates would have called the failing gh');
+  const byIssue = Object.fromEntries(subjectResult.released.map((r) => [r.issueNumber, r.prNumber]));
+  assert.deepStrictEqual(byIssue, { 11: 4032042, 12: 4032043 }, 'the resolver\'s sentinel PRs must reach the released entries');
 });

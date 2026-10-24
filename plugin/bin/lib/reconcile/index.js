@@ -14,9 +14,9 @@ const { resolveIntegrationBranch, bareIntegrationName, reapWorktrees: legacyReap
 const { resolveIntegrationModel } = require('../policy-schema');
 const { mirrorFastForward } = require('./mirror-ff');
 const { redTipCheck } = require('./red-tip');
-const { reapMerged } = require('./reap-merged');
+const { reapMerged, prefetchReapPrStates } = require('./reap-merged');
 const { releaseMerged } = require('./release-merged');
-const { archiveMerged } = require('./archive-merged');
+const { archiveMerged, prefetchArchivePrStates } = require('./archive-merged');
 const { archiveBranches } = require('./archive-branches');
 const { pruneRemote } = require('./prune-remote');
 const { ledgerResidue } = require('./ledger-residue');
@@ -335,6 +335,16 @@ async function reconcileInner(opts) {
   // THIS pass — created fresh every reconcile() call (never a module-level
   // singleton), so nothing here survives across passes or processes.
   const issueListCache = createIssueListCache();
+  // #4032 — one PR-state resolver per pass, shared by release, archive and
+  // reap (they ask `gh` about the same PRs). Created here, after the preflight
+  // narrowing, and through the module object so a test's
+  // `require('./pr-state-cache').createPrStateResolver = fn` monkeypatch
+  // reaches this call site. Never a module-level singleton: its in-pass memo
+  // must not outlive the pass; only terminal answers persist, in `finalize`.
+  const prStates = require('./pr-state-cache').createPrStateResolver({ root });
+  // A prefetch only warms the memo: a throw here must never break the pass,
+  // the sequential lookups that follow simply fall back to live calls.
+  const warm = async (prefetch) => { try { await prefetch(root, prStates); } catch { /* best-effort */ } };
   const DISPATCH_ORDER = ['mirror', 'red-tip', 'console', 'release', 'archive', 'archive-branches', 'remote-prune', 'ledger-residue', 'reap'];
   function overBudget(remainingFromHere) {
     if (!budget.exceeded()) return false;
@@ -434,7 +444,7 @@ async function reconcileInner(opts) {
     if (dryRun) {
       result.skipped.push({ check: 'release', reason: 'dry-run-not-supported' });
     } else {
-      const r = await timePhase('release', () => releaseMerged({ cwd: root }));
+      const r = await timePhase('release', () => releaseMerged({ cwd: root, prStates }));
       if (r.failure) {
         result.skipped.push({ check: 'release', reason: r.failure });
       } else {
@@ -446,9 +456,12 @@ async function reconcileInner(opts) {
 
   if (overBudget(DISPATCH_ORDER.slice(4))) return result;
   if (checks.includes('archive')) {
-    const r = timePhaseSync('archive', () => archiveMerged({
-      cwd: root, dryRun, sessionId: opts.sessionId, runner: issueListCache.runner, integration,
-    }));
+    const r = await timePhase('archive', async () => {
+      await warm(prefetchArchivePrStates);
+      return archiveMerged({
+        cwd: root, dryRun, sessionId: opts.sessionId, runner: issueListCache.runner, integration, prStates,
+      });
+    });
     result.runs = r.archived.map((d) => ({ runDir: d, action: 'archived' }))
       .concat(r.skipped.map((s) => ({
         runDir: s.runDir,
@@ -516,7 +529,10 @@ async function reconcileInner(opts) {
     // was always the main checkout, never inside any worktree), even though
     // reap-merged.test.js's isolated calls (which pass a worktree path
     // directly) still exercised and passed.
-    const r = timePhaseSync('reap', () => reapMerged({ cwd, dryRun, runner: issueListCache.runner }));
+    const r = await timePhase('reap', async () => {
+      await warm(prefetchReapPrStates);
+      return reapMerged({ cwd, dryRun, runner: issueListCache.runner, prStates });
+    });
     if (r.failure) {
       result.skipped.push({ check: 'reap', reason: r.failure });
     } else {
@@ -557,6 +573,10 @@ async function reconcileInner(opts) {
   // #4032: the end-of-pass cache write and the residue summary below form the
   // `finalize` timing phase.
   timePhaseSync('finalize', () => {
+    // #4032: persist the pass's terminal PR-state answers first, so the cache
+    // write below re-reads a file that already carries them. Best-effort, and
+    // dry-run included: it records reads, never repo state.
+    try { prStates.persist(); } catch { /* a lost cache write costs one live call next pass */ }
     if (!opts.skipCacheStamp || healthJustSucceeded) {
       const cache = readCache(root);
       const update = { ...cache };
