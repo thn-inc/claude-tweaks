@@ -55,6 +55,7 @@ function assertRouting(s) {
   assert.match(s, /detached HEAD/);
   assert.ok(s.includes("The run's own branch is the branch checked out in the worktree `run-state.json`'s `worktree` field records"), 'own-branch definition');
   assert.match(s, /no `worktree` recorded\) the current-branch route is unavailable/);
+  assert.ok(s.includes('`git rev-parse --show-toplevel` as its own Bash call and comparing its output with that recorded path'), 'the run-own-branch check names its comparison');
   assert.match(s, /also appends its own "Post-push merge-state check" entry to `decisions\.md`, which is expected/);
   assert.match(s, /regardless of what the read returned/);
 

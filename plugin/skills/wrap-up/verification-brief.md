@@ -265,8 +265,9 @@ later command — a `git` inside `$(...)` is refused in a worktree session
 (detached HEAD), or names a branch other than the run's own, the current-branch route is
 unavailable: take the evidence-PR route regardless of what the read returned.
 The run's own branch is the branch checked out in the worktree `run-state.json`'s `worktree` field records —
-the session's current branch while it is still inside that worktree. Outside it (back in the main checkout, or
-no `worktree` recorded) the current-branch route is unavailable.
+the session's current branch while it is still inside that worktree. Tell by running
+`git rev-parse --show-toplevel` as its own Bash call and comparing its output with that recorded path.
+Outside it (back in the main checkout, or no `worktree` recorded) the current-branch route is unavailable.
 
 When a run directory resolves — `$PIPELINE_RUN_DIR`, or, once cleanup item 8 archived it,
 `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` (`_shared/timing-render.md`'s archive-path
