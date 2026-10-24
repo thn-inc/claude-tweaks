@@ -209,6 +209,37 @@ function multisetMinus(a, b) {
   });
 }
 
+// #3723: the tests behind an attributable file — report-only, never read by
+// the verdict. Identity is the suite path `testTree` keys by (outermost suite
+// first, names byte-for-byte), never a leaf name — except for a file absent at
+// base, where only the full run's leaf names exist (each a one-element path).
+// `absentAtBase` is the attributed paths found nowhere in the base tree (null
+// when the base run passed and so read no tree). Returns null whenever the
+// per-test identity is unknown: "cannot classify", never a partial answer.
+function attributedTestsOf({ atBase, headTests, baseRun, ev, isoText, isoFamily }) {
+  if (!atBase) {
+    if (headTests.length === 0 || headTests.includes(null)) return null;
+    const tests = headTests.map((n) => [n]);
+    return { tests, headFailing: tests.length, baseFailing: 0, absentAtBase: [...tests] };
+  }
+  if (isoText === null || isoFamily === null) return null;
+  const isoTree = testTree(isoText, isoFamily);
+  if (!isoTree.wellFormed || isoTree.failed.length === 0) return null;
+  if (baseRun && baseRun.exitCode === 0) {
+    const iso = isoTree.failed.map((p) => JSON.parse(p));
+    return { tests: iso, headFailing: iso.length, baseFailing: 0, absentAtBase: null };
+  }
+  if (!ev || !ev.tree.wellFormed) return null;
+  const tests = multisetMinus(isoTree.failed, ev.tree.failed);
+  if (tests.length === 0) return null;
+  return {
+    tests: tests.map((p) => JSON.parse(p)),
+    headFailing: isoTree.failed.length,
+    baseFailing: ev.tree.failed.length,
+    absentAtBase: tests.filter((p) => !ev.tree.paths.has(p)).map((p) => JSON.parse(p)),
+  };
+}
+
 // Node's own runner-level error diagnostics — an uncaught error from async
 // work that outlived its test, and the like. Node reports them as a separate
 // file-level failure only when no test in the file failed, so beside any
@@ -428,7 +459,7 @@ async function adjudicate({
       if (!located || !conclusive || conclusive.length !== located.length) return null;
       const tree = testTree(text, family);
       const qualified = tree.wellFormed ? tree.failed.filter((p) => tree.paths.get(p) === 1) : [];
-      return { text, located, qualified, fileLevel: fileLevelFailures(text, family, at(baseDir)).has(file) };
+      return { text, located, qualified, tree, fileLevel: fileLevelFailures(text, family, at(baseDir)).has(file) };
     });
     // Every file present at base takes one isolated HEAD run. A file absent
     // at base is new on this branch: attributable outright — an isolated pass
@@ -520,6 +551,7 @@ async function adjudicate({
     const flakyLogs = {};
     const baselineIsolated = {};
     const attributable = [];
+    const attributedTests = {};
     const failingByCheck = {};
     // #3063 AC2: a per-file base/isolated run that times out is no evidence
     // either way — `exitCode: null` already routes it to `attributable`
@@ -537,6 +569,14 @@ async function adjudicate({
       if (needsRetry[k] && (ranCleanly(retryRuns[k], k) || baselineInIsolation(retryRuns[k], k))) {
         flakyPassed.push(w.file); flakyLogs[w.file] = retryRuns[k].logPath; return;
       }
+      try {
+        const isoText = headRuns[k] ? readLog(headRuns[k].logPath) : null;
+        const attributed = attributedTestsOf({
+          atBase: atBase[k], headTests: w.headTests, baseRun: baseRuns[k], ev: baseEv[k], isoText,
+          isoFamily: isoText === null ? null : accountedFamily(isoText, at(headDir)),
+        });
+        if (attributed) attributedTests[w.file] = attributed;
+      } catch { /* fail open: no entry */ }
       attributable.push(w.file);
     });
     // #3313: files that fail at base but pass at HEAD. Per-file adjudication
@@ -588,6 +628,7 @@ async function adjudicate({
       flakyLogs,
       baselineIsolated,
       attributable,
+      attributedTests,
       new: attributable,
       fixed,
       ...(fixed === null ? { fixedReason } : {}),
