@@ -51,10 +51,12 @@ files:
 - **Should feel:** Trustworthy. Unattended means nobody clicked, not that nobody checked.
 - **Should understand:**
   - Both trigger points apply the same gate. `bin/lib/console/resolve.js`'s `sddRulingDeferralReason` does it for the live session. On the reconciler side, `console-execute.js` reads each ruling row's `stagedPath` from `console.json` and lists the unsafe ones in `rulingGateGaps`. Those rows and Resolve stay unticked.
+  - The reconciler-side check fails closed on its own inputs too. If `decideConsoleExecute` is ever called without the ruling texts at all, every ruling row is listed in `rulingGateGaps` as `sdd-ruling-unclassified`, never passed through (#4048).
   - A pending ruling still blocks nothing else. The rest of the console resolves as usual, and the ruling's `open` ledger row is what the nothing-left-behind gate later drills.
 - **Red flags:** An `apply` on a ruling whose header has `Defers: yes` and no reason. A reconciler pass that ticks a ruling named in `rulingGateGaps`. A `pending` reason other than the two `sdd-ruling-*` words on a ruling row.
 
 ## Origin
 - Created during the build of #3880 (SDD deferral rulings skip the fix-now test and are auto-ratified at unattended), run `2026-10-22T062405-record-3880`.
 - All steps were built in this session. Step 2's per-site destinations and step 4's reconciler trigger point came from the build's final whole-branch review.
+- Updated during the build of #4048 (fail closed when `decideConsoleExecute` runs without its ruling-text or merge-grant context), run `2026-10-24T121146-spec-4048`: step 4 notes the reconciler check's fail-closed default for a missing ruling-text map.
 - Related: `docs/journeys/ratify-or-reverse-an-sdd-ruling-at-the-review-console-3401.md` (what a human does with the ruling row once it reaches the console); `docs/journeys/carry-a-build-review-finding-with-a-defer-reason-3004.md` (the sibling gate for review minors); `docs/journeys/resolve-the-unattended-console-in-one-process-1932.md` (the unattended console this gate sits inside).
