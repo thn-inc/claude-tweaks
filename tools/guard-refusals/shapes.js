@@ -23,11 +23,26 @@ const CMD = String.raw`(?<![\w./-])`;
 // backslash escape does not close the quote; inside '…' nothing escapes. `#`
 // at word start, outside quotes, opens a comment that runs to end of line. A
 // quote left open at end of line stays open across the newline, as in shell.
+// A heredoc operator (`<<WORD`, `<<'WORD'`, `<<"WORD"`, `<<-WORD`) outside
+// quotes and comments makes the lines after its own line, up to and including
+// the delimiter line, 'heredoc' data: an apostrophe there is not a quote, and a
+// banned word there is not a command. `<<-` allows leading tabs on the
+// delimiter line; an unterminated body runs to end of text, as in shell.
+const HEREDOC_OP = /^<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|([A-Za-z_]\w*))/;
+
 function lexShell(text) {
   const kinds = new Array(text.length);
   let state = 'plain';
+  let pending = []; // heredocs opened on the current line: { delim, tabs }
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
+    if (c === '\n' && pending.length && (state === 'plain' || state === 'comment')) {
+      kinds[i] = 'plain';
+      state = 'plain';
+      i = markHeredocBodies(text, i + 1, pending, kinds) - 1;
+      pending = [];
+      continue;
+    }
     if (state === 'single') {
       if (c === "'") { kinds[i] = 'delim'; state = 'plain'; } else kinds[i] = 'single';
     } else if (state === 'double') {
@@ -36,6 +51,13 @@ function lexShell(text) {
       if (c === '\n') { kinds[i] = 'plain'; state = 'plain'; } else kinds[i] = 'comment';
     } else if (c === '\\' && i + 1 < text.length) {
       kinds[i] = 'plain'; kinds[++i] = 'plain';
+    } else if (c === '<' && text[i - 1] !== '<' && text[i + 2] !== '<' && HEREDOC_OP.test(text.slice(i, i + 256))) {
+      const m = HEREDOC_OP.exec(text.slice(i, i + 256));
+      pending.push({ delim: m[2] || m[3] || m[4], tabs: m[1] === '-' });
+      // Only the `<<-` operator is consumed here; a quoted delimiter is lexed
+      // as an ordinary quote span on the operator line.
+      kinds[i] = 'plain'; kinds[++i] = 'plain';
+      if (m[1] === '-') kinds[++i] = 'plain';
     } else if (c === "'" || c === '"') {
       kinds[i] = 'delim'; state = c === "'" ? 'single' : 'double';
     } else if (c === '#' && (i === 0 || /[\s;&|()<>]/.test(text[i - 1]))) {
@@ -43,6 +65,24 @@ function lexShell(text) {
     } else kinds[i] = 'plain';
   }
   return kinds;
+}
+
+// Mark each pending heredoc's body lines, from `start`, as 'heredoc' through
+// its delimiter line; returns the index where shell text resumes.
+function markHeredocBodies(text, start, pending, kinds) {
+  let i = start;
+  for (const { delim, tabs } of pending) {
+    while (i < text.length) {
+      let end = text.indexOf('\n', i);
+      if (end === -1) end = text.length;
+      const line = text.slice(i, end).replace(/\r$/, '');
+      for (let j = i; j < end; j++) kinds[j] = 'heredoc';
+      if (end < text.length) kinds[end] = 'plain';
+      i = end + 1;
+      if ((tabs ? line.replace(/^\t+/, '') : line) === delim) break;
+    }
+  }
+  return Math.min(i, text.length);
 }
 
 // `text` with every char whose lexed state is in `states` blanked to a space,
@@ -57,18 +97,19 @@ function blankStates(text, states) {
   return out;
 }
 
-// Literal text inside single quotes never expands and comment text never runs,
-// so keyword and variable detectors judge the text with those emptied.
-// Double-quoted content stays: a "$VAR" operand is what several detectors key on.
-const SINGLE_AND_COMMENT = new Set(['single', 'comment']);
+// Literal text inside single quotes never expands, comment text never runs and
+// a heredoc body is data, so keyword and variable detectors judge the text with
+// those emptied. Double-quoted content stays: a "$VAR" operand is what several
+// detectors key on.
+const SINGLE_AND_COMMENT = new Set(['single', 'comment', 'heredoc']);
 function stripSingle(text) {
   return blankStates(text, SINGLE_AND_COMMENT);
 }
 
-// Every quoted span's content (and comment text) emptied, for detectors that
-// judge shell structure (operators, redirects, unquoted tokens) rather than
-// argument content.
-const QUOTED_AND_COMMENT = new Set(['single', 'double', 'comment']);
+// Every quoted span's content (and comment and heredoc text) emptied, for
+// detectors that judge shell structure (operators, redirects, unquoted tokens)
+// rather than argument content.
+const QUOTED_AND_COMMENT = new Set(['single', 'double', 'comment', 'heredoc']);
 function stripQuoted(text) {
   return blankStates(text, QUOTED_AND_COMMENT);
 }
@@ -76,6 +117,36 @@ function stripQuoted(text) {
 function keyword(word) {
   const re = new RegExp(`(?<![\\w./-])${word}(?![\\w./-])`);
   return (text) => re.test(stripSingle(text));
+}
+
+// The value of every shell word of `text` after quote removal. Words split on
+// unquoted whitespace and on the operator chars ;&|()<>; comment and heredoc
+// text belongs to no word. An outside-quotes backslash escape keeps the
+// escaped char only.
+function shellWords(text) {
+  const kinds = lexShell(text);
+  const words = [];
+  let cur = null;
+  const flush = () => { if (cur !== null) words.push(cur); cur = null; };
+  for (let i = 0; i < text.length; i++) {
+    const k = kinds[i];
+    const c = text[i];
+    if (k === 'comment' || k === 'heredoc') { flush(); continue; }
+    if (k === 'delim') { cur = cur ?? ''; continue; }
+    if (k === 'plain') {
+      if (/[\s;&|()<>]/.test(c)) { flush(); continue; }
+      if (c === '\\' && kinds[i + 1] === 'plain' && i + 1 < text.length) { cur = (cur ?? '') + text[++i]; continue; }
+    }
+    cur = (cur ?? '') + c;
+  }
+  flush();
+  return words;
+}
+
+// The guard refuses a shell word whose whole value, quoted or bare, is `word`;
+// a word that merely contains it (`"task complete"`, a `node -e` script) passes.
+function wholeWord(word) {
+  return (text) => shellWords(text).includes(word);
 }
 
 const GH_JQ_PIPE = new RegExp(`${CMD}gh\\s[^\\n]*--jq[\\s=]+(?:'[^']*\\|[^']*'|"[^"]*\\|[^"]*")`);
@@ -109,7 +180,7 @@ const DETECTORS = [
   {
     id: 'complete-token',
     row: '`echo complete`',
-    test: keyword('complete'),
+    test: wholeWord('complete'),
   },
   {
     id: 'git-env-var-subst',
@@ -119,7 +190,9 @@ const DETECTORS = [
   {
     id: 'github-url-with-var',
     row: '`echo "https://github.com/o/r/pull/1" --run "$RUN_DIR"`',
-    test: (t) => /github\.com/.test(t) && new RegExp(VAR).test(stripSingle(t)),
+    // A github.com inside a comment, a single-quoted span or a heredoc body,
+    // beside a runtime variable, ran in a live probe (2026-10-24, #4028).
+    test: (t) => { const s = stripSingle(t); return /github\.com/.test(s) && new RegExp(VAR).test(s); },
   },
   {
     id: 'gh-jq-pipe-chained',

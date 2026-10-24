@@ -169,6 +169,58 @@ test('chained-heredoc-write: &> and &>> count as a file redirect', () => {
   assert.deepStrictEqual(detectShapes('cd /wt && cat <<EOF &>>f\nx\nEOF'), ['chained-heredoc-write']);
 });
 
+// A heredoc body is data, never shell text: an apostrophe in it must not open a
+// quote that hides the commands after the delimiter, and a banned word in it is
+// not a command.
+test('an apostrophe in a quoted-delimiter heredoc body does not hide a later eval', () => {
+  assert.deepStrictEqual(detectShapes(`cat > /abs/f <<'EOF'\nDon't\nEOF\neval "$x"`), ['eval-token']);
+});
+
+test('an apostrophe in an unquoted-delimiter heredoc body does not hide a later complete token', () => {
+  assert.deepStrictEqual(detectShapes(`cat <<EOF\nit's\nEOF\necho complete`), ['complete-token']);
+});
+
+test('a banned word inside a heredoc body is not flagged', () => {
+  assert.deepStrictEqual(detectShapes(`node <<'EOF'\n// eval is banned\nEOF`), []);
+  assert.deepStrictEqual(detectShapes(`cat > /abs/f <<"EOF"\necho complete\nEOF`), []);
+});
+
+test('a <<- heredoc ends at a tab-indented delimiter line, and shell text resumes after it', () => {
+  assert.deepStrictEqual(detectShapes(`cat <<-EOF\n\tit's\n\tEOF\necho complete`), ['complete-token']);
+  assert.deepStrictEqual(detectShapes(`cat <<-EOF\n\techo complete\n\tEOF`), []);
+});
+
+test('a heredoc operator inside quotes or a comment opens no body', () => {
+  assert.deepStrictEqual(detectShapes(`echo "a <<EOF b"\necho complete`), ['complete-token']);
+  assert.deepStrictEqual(detectShapes(`# cat <<EOF\necho complete`), ['complete-token']);
+});
+
+// The guard refuses a shell word whose value after quote removal is exactly
+// `complete` (live: `echo complete` and `grep -n "complete" f` refused; `echo
+// "task complete"` and `node -e "console.log('complete probe')"` passed).
+test('complete-token: a whole shell word, bare or quoted, is flagged', () => {
+  assert.deepStrictEqual(detectShapes('grep -n "complete" README.md'), ['complete-token']);
+  assert.deepStrictEqual(detectShapes(`grep -n 'complete' README.md`), ['complete-token']);
+  assert.deepStrictEqual(detectShapes('echo co"mplete"'), ['complete-token']);
+});
+
+test('complete-token: a word that merely contains complete is not flagged', () => {
+  assert.deepStrictEqual(detectShapes('echo "task complete"'), []);
+  assert.deepStrictEqual(detectShapes(`node -e "console.log('complete probe')"`), []);
+  assert.deepStrictEqual(detectShapes(`node -e "if (s === 'complete') process.exit(0)"`), []);
+});
+
+// Live-probed 2026-10-24 (#4028, guard-isolated worktree session): a github.com
+// mention in a # comment, in a single-quoted node -e script, or in a heredoc body
+// fed to node, beside a runtime variable, each ran. Only a github.com outside
+// those spans is the refused shape.
+test('github-url-with-var: a github.com in a comment, a single-quoted span or a heredoc body is not flagged', () => {
+  assert.deepStrictEqual(detectShapes('# see github.com/o/r\necho "$HOME"'), []);
+  assert.deepStrictEqual(detectShapes(`node -e 'const u = "https://github.com/o/r"' -- "$HOME"`), []);
+  assert.deepStrictEqual(detectShapes(`node - "$HOME" <<'EOF'\nconsole.log("https://github.com/o/r")\nEOF`), []);
+  assert.deepStrictEqual(detectShapes('gh pr view 1 --repo "github.com/o/r" --json url > "$OUT"'), ['github-url-with-var']);
+});
+
 test('a heredoc on its own line after a command-substitution line passes; chained with && it is refused', () => {
   assert.deepStrictEqual(detectShapes(`A=$(pwd)\ncat > /abs/f <<'EOF'\nx\nEOF`), []);
   assert.deepStrictEqual(detectShapes(`A=$(pwd) && cat > /abs/f <<'EOF'\nx\nEOF`), ['chained-heredoc-write']);
