@@ -464,7 +464,7 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
   `ledger-residue.js`'s `QUIET_SKIP_REASONS`: `dry-run`, `run-live`, `not-a-ledger`,
   `removal-pr-declined`, `gh-absent`, `network-failure`, `ref-check-failed`).
   `referenced-by-open-record` and `record-scan-failed` are not quiet, so they surface at
-  SessionStart. The next SessionStart renders both in its prior-pass line.
+  SessionStart. The next SessionStart renders both summary fields in its prior-pass line.
   `/claude-tweaks:tidy`'s Step 6 reports them under its Residue-ledger removal PR row.
 - **Fetch.** Reads the ref the pass's shared fetch refreshed (`skipFetch` when that fetch ran and
   succeeded), else fetches `origin {integration}` itself; a failed fetch skips the whole check as

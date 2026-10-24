@@ -31,7 +31,7 @@ files:
 - **Action:** The next `SessionStart` renders the prior background pass's summary. It shows the removal PR it opened, and any ledger it kept for a reason that needs attention, for example:
   - `ledger-has-open-rows`
   - `ledger-status-unrecognized`
-  - `referenced-by-open-record` (the entry names the record numbers)
+  - `referenced-by-open-record` (the SessionStart line shows the ledger and reason only; the referencing record numbers are on the check's own `records` field)
   - `record-scan-failed`
   - `removal-pr-open`
   - `removal-merged-but-present`
