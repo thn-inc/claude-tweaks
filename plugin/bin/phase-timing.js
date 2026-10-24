@@ -3,7 +3,7 @@
 // a transcript, its per-phase tokens (#1929).
 //
 //   node bin/phase-timing.js --run <dir> [--json] [--markdown]
-//        [--transcript <path> ...] [--auto-transcript]
+//        [--transcript <path> ...] [--auto-transcript] [--check-budgets]
 //
 // Reads {run-dir}/events.jsonl (per-line JSON; a malformed line is skipped,
 // a missing file is an empty run), {run-dir}/manifest.yml (optional) and
@@ -31,6 +31,19 @@
 // the subagent transcripts under each {session}/subagents/ directory,
 // aggregated by tier and role, clipped to the run's event window, and printed
 // after the phase table; the key is absent without a transcript flag.
+//
+// --check-budgets (#4029) compares the run's totals with the efficiency
+// ceilings for its {run-dir}/config.yml `ceremony-profile` (absent or invalid
+// reads as `standard`, with a stderr note) from the checkout's policy.yml, found
+// as the parent of the run dir's `.claude-tweaks` ancestor (bin/lib/timing/
+// budget.js). It adds a `budget` key to timing.json — { profile, profileSource,
+// checks, staged }, or { skipped } with no ancestor — and prints one
+// `Budget (...)` line last (no line under --json, whose `budget` key carries
+// it). Round trips and procedure KB need a transcript; without one they read
+// `unmeasured`. A breach stages an `efficiency-budget-{run-id}` proposal for the
+// Review Console's Queue writes section and logs it STAGED; a staging failure
+// goes to stderr and `budget.stageError`, and the exit code stays 0. Without
+// the flag the output and timing.json are unchanged.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -38,16 +51,18 @@ const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches, TIERS, 
 const { locateTranscripts, readUsage, subagentsDirFor, readDispatches } = require('./lib/timing/transcript');
 const { readManifest } = require('./lib/flow/manifest');
 const { TURN_CLASSES } = require('./lib/timing/turn-class');
+const { checkBudgets } = require('./lib/timing/budget');
 
-const USAGE = 'usage: phase-timing.js --run <dir> [--json] [--markdown] [--transcript <path> ...] [--auto-transcript]\n';
+const USAGE = 'usage: phase-timing.js --run <dir> [--json] [--markdown] [--transcript <path> ...] [--auto-transcript] [--check-budgets]\n';
 
 function parseArgs(argv) {
-  const o = { run: null, json: false, markdown: false, transcripts: [], autoTranscript: false };
+  const o = { run: null, json: false, markdown: false, transcripts: [], autoTranscript: false, checkBudgets: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--run') { o.run = argv[i + 1]; i++; if (o.run === undefined) return null; continue; }
     if (a === '--transcript') { const v = argv[i + 1]; i++; if (v === undefined) return null; o.transcripts.push(v); continue; }
     if (a === '--auto-transcript') { o.autoTranscript = true; continue; }
+    if (a === '--check-budgets') { o.checkBudgets = true; continue; }
     if (a === '--json') { o.json = true; continue; }
     if (a === '--markdown') { o.markdown = true; continue; }
     return null;
@@ -324,11 +339,24 @@ async function main(argv) {
     if (notes.length) timing.notes = notes;
     timing.dispatches = await collectDispatches(paths, events.events);
   }
+  // #4029: the efficiency-budget check. A transcript that yielded no rows leaves
+  // the transcript-backed totals out, so they read as unmeasured, never as 0 -> ok.
+  let budgetLine = null;
+  if (o.checkBudgets) {
+    const measured = { ...timing.totals };
+    if (!tokens || tokens.totals.rows === 0) { delete measured.toolRoundTrips; delete measured.procedureBytes; }
+    const checked = checkBudgets({ runDir, totals: measured });
+    timing.budget = checked.budget;
+    budgetLine = checked.line;
+    for (const line of checked.stderr) process.stderr.write(line + '\n');
+  }
   const timingPath = path.join(runDir, 'timing.json');
   fs.writeFileSync(timingPath, JSON.stringify(timing, null, 2) + '\n');
   if (o.markdown) process.stdout.write(renderMarkdown(out, tokens, guard, notes) + renderDispatches(timing.dispatches));
   else if (o.json) process.stdout.write(JSON.stringify(timing, null, 2) + '\n');
   else process.stdout.write(`timing: wrote ${timingPath}\n`);
+  // Under --json stdout stays one JSON document; the budget rides in its `budget` key.
+  if (budgetLine && !o.json) process.stdout.write(budgetLine + '\n');
   return 0;
 }
 

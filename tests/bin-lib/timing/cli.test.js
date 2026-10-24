@@ -423,3 +423,132 @@ test('#4029: a transcript with no tool calls and no assistant turns renders the 
   assert.match(r.stdout, /^Turn classes \(tool calls\): edit 0 · read 0 · explore 0 · procedure 0 · bookkeeping 0 · orientation 0 · verify 0 · guard-refusal 0 · dispatch 0 · other 0 — ceremony share —$/m);
   assert.match(r.stdout, /^Context per turn: p50 — · p90 — tokens over 0 turns · models: — · subagents: 0$/m);
 });
+
+// --check-budgets (#4029): a tmp checkout (.git dir) with a policy.yml and a run dir under
+// .claude-tweaks/pipelines/, run with cwd = the checkout so the staging anchor resolves to it.
+function budgetTree({ config = 'ceremony-profile: fast-lane\n', policy = 'fast-lane-run-round-trip-ceiling: 5\n', git = true } = {}) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-budget-cli-')));
+  if (git) fs.mkdirSync(path.join(root, '.git'));
+  fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines'), { recursive: true });
+  if (policy !== null) fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), policy);
+  const id = '2026-10-24T100000-record-4029';
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', id);
+  fs.mkdirSync(dir);
+  fs.copyFileSync(path.join(TC_FIX, 'events.jsonl'), path.join(dir, 'events.jsonl'));
+  if (config !== null) fs.writeFileSync(path.join(dir, 'config.yml'), config);
+  return { root, dir, id };
+}
+const runIn = (cwd, args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', cwd });
+const TC_SESSION = path.join(TC_FIX, 'session.jsonl');
+const stagedFiles = (dir) => (fs.existsSync(path.join(dir, 'staged')) ? fs.readdirSync(path.join(dir, 'staged')) : []);
+
+test('#4029 AC2.1: a budget-breach fixture produces a staged item', () => {
+  const { root, dir, id } = budgetTree();
+  const r = runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  assert.equal(r.status, 0, r.stderr);
+  const staged = path.join(dir, 'staged', `efficiency-budget-${id}.md`);
+  assert.ok(fs.existsSync(staged), r.stderr);
+  const text = fs.readFileSync(staged, 'utf8');
+  assert.ok(text.startsWith(`Title: Efficiency budget breached on run ${id} (fast-lane)`), text);
+  const decisions = fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8');
+  const stagedLine = decisions.split('\n').find((l) => l.startsWith('- STAGED'));
+  assert.ok(stagedLine, decisions);
+  assert.ok(stagedLine.includes(`Stage path: staged/efficiency-budget-${id}.md.`), stagedLine);
+  assert.match(stagedLine, /efficiency budget: Efficiency budget breached \(fast-lane\): round-trips 10\/5\./);
+  assert.match(decisions, /^## \/wrap-up$/m);
+  const t = readTiming(dir);
+  assert.equal(t.budget.profile, 'fast-lane');
+  assert.equal(t.budget.profileSource, 'config');
+  assert.equal(t.budget.checks.find((c) => c.metric === 'round-trips').status, 'breach');
+  assert.equal(t.budget.staged, `staged/efficiency-budget-${id}.md`);
+  // the budget line is the last thing --markdown prints
+  const out = r.stdout.trimEnd().split('\n');
+  assert.match(out[out.length - 1], /^Budget \(fast-lane\): round-trips 10\/5 BREACH · procedure-kb 0\.1\/\d+ ok · verify-minutes 2\/\d+ ok$/);
+
+  // a re-run overwrites the one staged item and does not log it twice
+  const again = runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  assert.equal(again.status, 0, again.stderr);
+  assert.deepEqual(stagedFiles(dir).filter((f) => f.startsWith('efficiency-budget-')), [`efficiency-budget-${id}.md`]);
+  assert.equal(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8').split('\n').filter((l) => l.startsWith('- STAGED')).length, 1);
+});
+
+test('#4029: no transcript leaves round-trip and procedure budgets unmeasured', () => {
+  const { root, dir } = budgetTree();
+  const r = runIn(root, ['--run', dir, '--check-budgets', '--markdown']);
+  assert.equal(r.status, 0, r.stderr);
+  const checks = Object.fromEntries(readTiming(dir).budget.checks.map((c) => [c.metric, c.status]));
+  assert.deepEqual(checks, { 'round-trips': 'unmeasured', 'procedure-kb': 'unmeasured', 'verify-minutes': 'ok' });
+  assert.deepEqual(stagedFiles(dir), [], 'nothing breached, nothing staged');
+  assert.match(r.stdout, /^Budget \(fast-lane\): round-trips —\/5 unmeasured · procedure-kb —\/\d+ unmeasured · verify-minutes 2\/\d+ ok$/m);
+});
+
+test('#4029: a transcript that cannot be read leaves the transcript-backed budgets unmeasured, not ok', () => {
+  const { root, dir } = budgetTree();
+  const r = runIn(root, ['--run', dir, '--transcript', path.join(root, 'missing.jsonl'), '--check-budgets', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  const checks = Object.fromEntries(JSON.parse(r.stdout).budget.checks.map((c) => [c.metric, c.status]));
+  assert.equal(checks['round-trips'], 'unmeasured');
+  assert.equal(checks['procedure-kb'], 'unmeasured');
+});
+
+test('#4029: a config.yml without ceremony-profile falls back to standard with a note', () => {
+  const { root, dir } = budgetTree({ config: 'mode: auto\n', policy: 'standard-run-round-trip-ceiling: 5\n' });
+  const r = runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /budget: ceremony-profile absent from config\.yml — checked against standard/);
+  const t = readTiming(dir);
+  assert.equal(t.budget.profile, 'standard');
+  assert.equal(t.budget.profileSource, 'fallback');
+  // the standard ceiling (5) is what breached, not fast-lane's
+  assert.equal(t.budget.checks.find((c) => c.metric === 'round-trips').status, 'breach');
+  assert.ok(fs.readFileSync(path.join(dir, 'staged', `efficiency-budget-${path.basename(dir)}.md`), 'utf8').includes('(standard)'));
+});
+
+test('#4029: a ceiling of 0 disables its budget and a disabled budget stages nothing', () => {
+  const { root, dir } = budgetTree({ policy: 'fast-lane-run-round-trip-ceiling: 0\n' });
+  const r = runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readTiming(dir).budget.checks.find((c) => c.metric === 'round-trips').status, 'disabled');
+  assert.deepEqual(stagedFiles(dir), []);
+  assert.match(r.stdout, /^Budget \(fast-lane\): round-trips 10\/0 disabled/m);
+});
+
+test('#4029: --check-budgets --json keeps stdout a single JSON document carrying the budget key', () => {
+  const { root, dir } = budgetTree();
+  const r = runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--json']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).budget.staged !== null, true);
+});
+
+test('#4029: without --check-budgets timing.json has no budget key and is otherwise unchanged', () => {
+  const { root, dir } = budgetTree();
+  const strip = (t) => { const { generatedAt, budget, ...rest } = t; return rest; };
+  assert.equal(runIn(root, ['--run', dir, '--transcript', TC_SESSION]).status, 0);
+  const plain = readTiming(dir);
+  assert.equal('budget' in plain, false);
+  assert.deepEqual(stagedFiles(dir), []);
+  assert.equal(runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets']).status, 0);
+  assert.deepEqual(strip(readTiming(dir)), strip(plain));
+});
+
+test('#4029: a staging failure (run dir not anchored under a checkout) is reported, never fatal', () => {
+  const { root, dir } = budgetTree({ git: false });
+  const r = runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /budget: could not stage the efficiency-budget proposal/);
+  const t = readTiming(dir);
+  assert.equal(t.budget.staged, null);
+  assert.match(t.budget.stageError, /not-anchored/);
+  assert.equal(t.budget.checks.find((c) => c.metric === 'round-trips').status, 'breach');
+  assert.deepEqual(stagedFiles(dir), []);
+  assert.match(r.stdout, /^Budget \(fast-lane\): round-trips 10\/5 BREACH/m);
+});
+
+test('#4029: a run dir with no .claude-tweaks ancestor records budget.skipped and prints the reason to stderr', () => {
+  const dir = tcRun();
+  const r = run(['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(readTiming(dir).budget, { skipped: 'no .claude-tweaks ancestor' });
+  assert.match(r.stderr, /budget: skipped — no \.claude-tweaks ancestor/);
+  assert.doesNotMatch(r.stdout, /^Budget \(/m);
+});
