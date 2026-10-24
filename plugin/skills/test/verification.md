@@ -184,6 +184,8 @@ Rules:
 - The stamp asserts verification only — QA story outcomes are tracked separately (the QA ledger), and consumers that care about QA consult that as they already do.
 - Consumers read it only through `verify.js --stamp-status` (Skip-if-recent above; `/claude-tweaks:review` Step 1.5) and treat `present: false`, `verifiedHead: false`, or a dirty tree as "no recent pass" and re-run — fail-open. A stale stamp is never a reason to trust a skip.
 
+**Generated paths, `--cmd` wrappers, chunked runs:** read `stamp-composition.md` in this skill's directory.
+
 ## Step 3: Report
 
 Present results in a consistent format:

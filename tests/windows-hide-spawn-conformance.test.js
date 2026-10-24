@@ -171,12 +171,12 @@ test('scanner sees a child_process function reached through a parameter default 
   assert.deepEqual(lines("const { execFileSync } = require('child_process')\nconst run = execFileSync\nrun('git', ['x'])"), [3]);
 });
 
-test('report.js carries windowsHide on all three git spawns, and removing any one is caught (#3854)', () => {
+test('report.js carries windowsHide on all four git spawns, and removing any one is caught (#3854, #2987)', () => {
   const raw = readText(path.join(BIN_ROOT, 'lib', 'verify', 'report.js'));
   const needle = 'windowsHide: true';
   const at = [];
   for (let i = raw.indexOf(needle); i !== -1; i = raw.indexOf(needle, i + 1)) at.push(i);
-  assert.strictEqual(at.length, 3);
+  assert.strictEqual(at.length, 4);
   for (const i of at) {
     const variant = raw.slice(0, i).replace(/,\s*$/, '') + raw.slice(i + needle.length);
     assert.strictEqual(unhiddenCalls(variant).length, 1, `removing the occurrence at offset ${i} must leave exactly one unhidden call`);

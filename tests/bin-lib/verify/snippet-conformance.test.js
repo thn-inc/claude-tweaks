@@ -13,6 +13,7 @@ const ROOT = path.join(__dirname, '..', '..', '..');
 // CRLF-normalized: a core.autocrlf checkout holds the doc CRLF in the working
 // tree (LF in the blob), and every fence regex below is `\n`-anchored.
 const DOC = readText(path.join(ROOT, 'plugin', 'skills', 'test', 'verification.md'));
+const STAMP_DOC = readText(path.join(ROOT, 'plugin', 'skills', 'test', 'stamp-composition.md'));
 const { parseArgs, UsageError } = require(
   path.join(ROOT, 'plugin', 'bin', 'lib', 'verify', 'args.js'));
 
@@ -36,6 +37,19 @@ function extractScopedSnippet() {
   assert.strictEqual(hits.length, 1,
     `expected exactly one fenced bin/verify.js --scope invocation, found ${hits.length}`);
   return hits[0].trim();
+}
+
+// The one fenced bash block with two chunked --stamp-suite invocations
+// (#3002's chunked-verification example, in verification.md's
+// stamp-composition.md sub-file) — each line is its own complete
+// `verify.js` call and is pinned separately below, since snippetArgv's
+// single-invocation split would otherwise mash both lines' argv together.
+function extractStampSuiteSnippet() {
+  const blocks = [...STAMP_DOC.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]);
+  const hits = blocks.filter((b) => b.includes('bin/verify.js') && b.includes('--stamp-suite'));
+  assert.strictEqual(hits.length, 1,
+    `expected exactly one fenced bin/verify.js --stamp-suite block, found ${hits.length}`);
+  return hits[0].trim().split('\n').filter(Boolean);
 }
 
 function extractStampStatusSnippet() {
@@ -135,6 +149,23 @@ test('verification.md states --baseline adjudicates against the merge-base with 
   assert.ok(section.includes('a ref sharing no merge-base with HEAD'), 'names the no-merge-base ineligible case');
   assert.ok(section.includes('a shallow clone whose fork point is not fetched'), 'names the shallow-clone no-merge-base refusal');
   assert.ok(DOC.includes('`shallow clone, fork point not fetched`'), 'the preExisting paragraph names the refusal reason users see');
+});
+
+test('the chunked --stamp-suite snippet parses clean through the real arg parser, one line per chunk (#3002)', () => {
+  const lines = extractStampSuiteSnippet();
+  assert.strictEqual(lines.length, 2, 'expected exactly two chunk invocations in the snippet');
+  for (const line of lines) {
+    const parsed = parseArgs(snippetArgv(line));
+    assert.strictEqual(parsed.scope, '.claude-tweaks/verify-scope.json');
+    assert.strictEqual(parsed.noStamp, true);
+    assert.strictEqual(parsed.stampSuite, true);
+    assert.ok(parsed.cmds.length >= 1, 'each chunk must still pass at least one --cmd');
+  }
+});
+
+test('the chunked snippet tokenizer can go red on an injected unknown flag (#3002)', () => {
+  const [firstLine] = extractStampSuiteSnippet();
+  assert.throws(() => parseArgs(snippetArgv(`${firstLine} --bogus`)), UsageError);
 });
 
 test('agents never write the stamp: no redirect into claude-tweaks-verify-pass remains, and the foreground rule is stated (#1921 AC6)', () => {

@@ -9,7 +9,6 @@ const {
   checkConformance,
   PHILOSOPHY_EXCEPTION,
 } = require('../../../plugin/bin/lib/init/claude-md-conformance');
-const { readText } = require('../../helpers/read-skill');
 
 const FIXTURE = [
   '# Phase 5: CLAUDE.md Template and Guidelines',

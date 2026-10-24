@@ -67,6 +67,8 @@ A criterion that counts something (rows, items, entries) states the count relati
 
 A criterion asserting that a search returns nothing (a grep that "returns nothing", "prints no lines" or "exits 1") names a command its author has run once against a tree that still contains the target and seen match; prefer `grep -F` for literal code text. A search that cannot match its target passes before and after the change, so the criterion can never fail: #3536's AC1.1 was a basic-regex grep whose escapes never matched the literal it named.
 
+When `## Current State` names the callers, gates, or user-visible outcome the change exists to fix, at least one criterion is phrased at one of those named consumers ("review Step 1.5 skips re-verification after a fully chunked pass"), not only at the new mechanism's own interface — or `## Gotchas` names the follow-up record that wires the consumers. Criteria that exercise only the mechanism can all pass while the motivating outcome never ships: #3002's Current State named three gates that should stop re-running a chunked suite, every criterion tested `verify.js --stamp-status --scope`, and all three gates still read bare `--stamp-status`.
+
 ## Release Note
 
 {One plain-language, verb-first sentence describing what this record delivers, written for someone reading the release notes — never a raw conventional-commit subject, an internal module name, a record number, or a file path. Required on every record, including one with no end-user-visible effect: describe what changed from the release-notes reader's perspective, even when that's "no user-visible change" phrased plainly (e.g. "Improved internal test coverage for the release composer") — never omitted.}

@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 
-const { readDeclaration } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'declaration.js'));
+const { readDeclaration, generatedExemption } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'declaration.js'));
 
 function fakeFs(files) {
   return {
@@ -168,6 +168,45 @@ test('preExisting must be an array of strings — a non-array or a non-string en
   assert.match(badEntry.errors.join('\n'), /preExisting: must be an array of path or glob strings/);
 });
 
+test('generated defaults to [] and parses to the declared array verbatim (#2987)', () => {
+  const dflt = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { tests: 'npm test' }, rules: [] }) }));
+  assert.deepStrictEqual(dflt.decl.generated, []);
+  const declared = readDeclaration('/d.json', fakeFs({
+    '/d.json': JSON.stringify({ checks: { tests: 'npm test' }, rules: [], generated: ['next-env.d.ts', 'packages/*/dist/**'] }),
+  }));
+  assert.strictEqual(declared.ok, true, JSON.stringify(declared.errors));
+  assert.deepStrictEqual(declared.decl.generated, ['next-env.d.ts', 'packages/*/dist/**']);
+});
+
+test('generated must be an array of strings — a non-array or a non-string entry is an error naming the field (#2987)', () => {
+  const notArray = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { tests: 'x' }, rules: [], generated: 'next-env.d.ts' }) }));
+  assert.strictEqual(notArray.ok, false);
+  assert.match(notArray.errors.join('\n'), /generated: must be an array of path glob strings/);
+  const badEntry = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { tests: 'x' }, rules: [], generated: ['next-env.d.ts', 7] }) }));
+  assert.strictEqual(badEntry.ok, false);
+  assert.match(badEntry.errors.join('\n'), /generated: must be an array of path glob strings/);
+});
+
+test('a generated glob that would cover the declaration file itself is refused, naming the glob (#2987)', () => {
+  for (const glob of ['**', '**/*', '*/**', '.claude-tweaks/**']) {
+    const res = readDeclaration('/d.json', fakeFs({
+      '/d.json': JSON.stringify({ checks: { tests: 'x' }, rules: [], generated: ['next-env.d.ts', glob] }),
+    }));
+    assert.strictEqual(res.ok, false, `${glob} was accepted`);
+    assert.match(res.errors.join('\n'), /would also cover \.claude-tweaks\/verify-scope\.json itself/);
+    assert.ok(res.errors.join('\n').includes(JSON.stringify(glob)), `error does not name ${glob}`);
+  }
+});
+
+test('a generated glob covering a declaration read from a non-default path is refused too (#2987)', () => {
+  const text = JSON.stringify({ checks: { tests: 'x' }, rules: [], generated: ['ci/**'] });
+  const custom = readDeclaration('/d.json', fakeFs({ '/d.json': text }), { selfPath: 'ci/scope.json' });
+  assert.strictEqual(custom.ok, false, 'ci/** covers the declaration actually read');
+  assert.match(custom.errors.join('\n'), /"ci\/\*\*" would also cover ci\/scope\.json itself/);
+  const atDefault = readDeclaration('/d.json', fakeFs({ '/d.json': text }));
+  assert.strictEqual(atDefault.ok, true, 'the same glob is fine when the declaration lives at the default path');
+});
+
 test('a declaration with no checks.tests is valid — bookkeeping-only rules, zero suites (#1924)', () => {
   const r = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { lint: 'eslint .' }, rules: [{ match: 'docs/plans/*-ledger.md', suites: [], static: false }, { match: 'src/**', suites: '*', static: true }] }) }));
   assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
@@ -179,4 +218,14 @@ test('a declaration with no checks.tests is valid — bookkeeping-only rules, ze
   assert.match(named.errors.join('\n'), /rules\[0\].*api/);
   const empty = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ checks: { tests: '' }, rules: [] }) }));
   assert.strictEqual(empty.ok, false);
+});
+
+test('generatedExemption exempts a dirty set only when every path matches a declared glob', () => {
+  assert.deepStrictEqual(
+    generatedExemption(['next-env.d.ts', 'dist/b.js', 'dist/a.js', 'dist/a.js'], ['next-env.d.ts', 'dist/**']),
+    ['dist/a.js', 'dist/b.js', 'next-env.d.ts'],
+  );
+  assert.strictEqual(generatedExemption(['dist/a.js', 'src/edit.js'], ['dist/**']), null);
+  assert.strictEqual(generatedExemption([], ['dist/**']), null);
+  assert.strictEqual(generatedExemption(null, ['dist/**']), null);
 });

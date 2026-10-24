@@ -13,13 +13,18 @@
 'use strict';
 
 const fs = require('fs');
+const { globToRegExp } = require('../issues/blast-radius');
 
+const DECLARATION_PATH = '.claude-tweaks/verify-scope.json';
 const DEFAULT_MAX_RETRIES = 1;
 const MAX_RETRIES_CEILING = 2;
 
 function isPlainObject(v) { return typeof v === 'object' && v !== null && !Array.isArray(v); }
 
-function readDeclaration(filePath, fsImpl = fs) {
+// `selfPath` (optional): the repo-relative path of the file actually read,
+// when the caller knows it — a `--scope` naming a declaration outside the
+// default location gets the same self-covering `generated` refusal below.
+function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
   let text;
   try {
     text = fsImpl.readFileSync(filePath, 'utf8');
@@ -154,14 +159,52 @@ function readDeclaration(filePath, fsImpl = fs) {
     }
   }
 
+  // generated (#2987): path globs the declared checks themselves regenerate
+  // (a build rewriting a tracked type-declaration file, say) — verify.js's
+  // pass-stamp dirty gate ignores a dirty path that matches one of these,
+  // never the general report's own `dirty` (other readers rely on that one
+  // meaning "the tree has any uncommitted change"). Same shape as
+  // `preExisting` just above: an array of path/glob strings, default [].
+  // A glob that covers the declaration file itself is refused: an
+  // uncommitted edit adding a catch-all (`**`) would otherwise exempt both
+  // every dirty source path and the edit that declared it, letting the same
+  // run stamp clean. Checked against the default location and, when the
+  // caller passed one, the path actually read.
+  let generated = [];
+  if (raw.generated !== undefined) {
+    if (!Array.isArray(raw.generated) || raw.generated.some((f) => typeof f !== 'string')) {
+      errors.push('generated: must be an array of path glob strings');
+    } else {
+      const selfPaths = [...new Set([DECLARATION_PATH, selfPath].filter(Boolean))];
+      const selfCovering = raw.generated.filter((g) => selfPaths.some((p) => globToRegExp(g).test(p)));
+      if (selfCovering.length) {
+        const covered = selfPaths.filter((p) => selfCovering.some((g) => globToRegExp(g).test(p)));
+        errors.push(`generated: ${selfCovering.map((g) => JSON.stringify(g)).join(', ')} would also cover ${covered.join(', ')} itself — name only the files the checks regenerate`);
+      } else {
+        generated = raw.generated;
+      }
+    }
+  }
+
   if (errors.length) return { ok: false, errors };
   return {
     ok: true,
     decl: {
       checks: { types: typeof checks.types === 'string' ? checks.types : null, lint: typeof checks.lint === 'string' ? checks.lint : null, tests },
-      suites, toolScoped, retry, rules, flaky, preExisting,
+      suites, toolScoped, retry, rules, flaky, preExisting, generated,
     },
   };
 }
 
-module.exports = { readDeclaration, DEFAULT_MAX_RETRIES, MAX_RETRIES_CEILING };
+// #2987: the dirty paths a declared `generated` glob list exempts — every one
+// of them (sorted, deduplicated) when ALL match a glob, else null: any other
+// dirty path still disqualifies. A failed status read (null) or an empty list
+// exempts nothing.
+function generatedExemption(dirtyPaths, generated) {
+  if (!dirtyPaths || dirtyPaths.length === 0) return null;
+  const patterns = generated.map((g) => globToRegExp(g));
+  const allGenerated = dirtyPaths.every((f) => patterns.some((re) => re.test(f)));
+  return allGenerated ? [...new Set(dirtyPaths)].sort() : null;
+}
+
+module.exports = { readDeclaration, generatedExemption, DEFAULT_MAX_RETRIES, MAX_RETRIES_CEILING };
