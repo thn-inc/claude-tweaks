@@ -162,6 +162,15 @@ test('#3989: hasFileRedirection ignores a heredoc body but sees a redirect after
   assert.strictEqual(hasFileRedirection('make -f - <<EOF\nall:\n\techo x > f.js\nEOF'), true);
 });
 
+// Fix wave (#4149, F1/F2): the prefilter reads the outer text and every kept body chunk, so an odd
+// quote in a kept body cannot hide a later redirect, and a body kept for a structure opened on an
+// earlier line still sends the call down the full path.
+test('#4149: hasFileRedirection reads the outer text and every kept body chunk', () => {
+  assert.strictEqual(hasFileRedirection("grep -c x <<'EOF'\ndon't\nEOF\necho x > f.js"), true);
+  assert.strictEqual(hasFileRedirection("{\ncat <<'EOF'\necho x > f.js\nEOF\n} | bash"), true);
+  assert.strictEqual(hasFileRedirection("git commit -F - <<'EOF'\na > /main/x\nEOF"), false);
+});
+
 test('fails open to "run" on anything it cannot read', () => {
   for (const event of ['pre-tool-use', 'post-tool-use']) {
     assert.strictEqual(shouldRunFull(event, null), true);

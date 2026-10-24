@@ -15,9 +15,17 @@ const path = require('path');
 // preventing quoted text (e.g. a commit message containing "&& git -C /x push")
 // from being misparsed as additional shell segments that fabricate a target.
 function splitSegments(command) {
+  return segmentSpans(command).map((s) => s.text);
+}
+
+// splitSegments' pass, with each segment's `end`: the index in `command` of the
+// separator that ends it (the string's length for the last one). forEachShellSegment
+// uses it to find the segment that holds a heredoc opener.
+function segmentSpans(command) {
   const str = String(command || '');
   const segments = [];
   let current = '';
+  const cut = (at) => { segments.push({ text: current, end: at }); current = ''; };
   let quote = null; // null | '"' | "'"
   for (let i = 0; i < str.length; i++) {
     const ch = str[i];
@@ -45,13 +53,13 @@ function splitSegments(command) {
       current += ch;
       continue;
     }
-    if (ch === '&' && str[i + 1] === '&') { segments.push(current); current = ''; i += 1; continue; }
-    if (ch === '|' && str[i + 1] === '|') { segments.push(current); current = ''; i += 1; continue; }
+    if (ch === '&' && str[i + 1] === '&') { cut(i); i += 1; continue; }
+    if (ch === '|' && str[i + 1] === '|') { cut(i); i += 1; continue; }
     // `>|` is bash's noclobber-override redirect operator, not a pipe — a
     // glued `|` immediately after `>` (#3080) must not fabricate a segment
     // break here, or the operator token never reaches the tokenizer whole.
     if (ch === '|' && current.endsWith('>')) { current += ch; continue; }
-    if (ch === ';' || ch === '|' || ch === '\n') { segments.push(current); current = ''; continue; }
+    if (ch === ';' || ch === '|' || ch === '\n') { cut(i); continue; }
     // Unquoted `#` at the start of a word begins a bash comment that runs to
     // the end of the line — real bash never executes anything after it, so
     // any &&/;/| inside it must not fabricate a segment boundary. Only
@@ -66,7 +74,7 @@ function splitSegments(command) {
     }
     current += ch;
   }
-  segments.push(current);
+  cut(str.length);
   return segments;
 }
 
@@ -244,28 +252,30 @@ function substituteVars(tokens, vars, singleQuoted) {
 function forEachCommandSegment(command, cwd, handler) {
   let effCwd = cwd || '.'; // string, or null meaning UNKNOWN
   const vars = new Map(); // name -> literal value, same-command only, no chaining
-  for (const seg of splitSegments(command)) {
-    const { tokens: rawT, singleQuoted, leadQuoted } = tokenize(seg.trim());
-    if (!rawT.length) continue;
-    if (updateAssignment(vars, rawT)) continue;
-    const t = substituteVars(rawT, vars, singleQuoted);
-    // `FOO=1 cd /path` really does change the shell's cwd — a preceding
-    // assignment on a regular (non-special) builtin like `cd` is scoped only
-    // to that command's own execution environment, but `cd` has no
-    // subprocess to scope the env change to, so it still runs and changes
-    // the CURRENT shell's cwd (verified empirically; #590). `env cd /path`
-    // is the opposite case and deliberately NOT normalized here: `env` execs
-    // an external `cd` binary that does not exist on a normal system, so it
-    // errors and never changes cwd — normalizing it would fabricate a target
-    // for a shape that has no real effect.
-    let cdLead = 0;
-    while (cdLead < t.length && SIMPLE_ASSIGNMENT_RE.test(t[cdLead])) cdLead += 1;
-    if (t[cdLead] === 'cd') {
-      effCwd = resolveCd(effCwd, t[cdLead + 1]);
-      continue;
-    }
-    handler(t, effCwd, leadQuoted);
-  }
+  for (const { text } of segmentSpans(command)) effCwd = visitSegment(text, effCwd, vars, handler);
+}
+
+// One segment of forEachCommandSegment's walk: updates `vars`, calls `handler`
+// for a non-cd, non-assignment segment, and returns the effective cwd after it.
+function visitSegment(seg, effCwd, vars, handler) {
+  const { tokens: rawT, singleQuoted, leadQuoted } = tokenize(seg.trim());
+  if (!rawT.length) return effCwd;
+  if (updateAssignment(vars, rawT)) return effCwd;
+  const t = substituteVars(rawT, vars, singleQuoted);
+  // `FOO=1 cd /path` really does change the shell's cwd — a preceding
+  // assignment on a regular (non-special) builtin like `cd` is scoped only
+  // to that command's own execution environment, but `cd` has no
+  // subprocess to scope the env change to, so it still runs and changes
+  // the CURRENT shell's cwd (verified empirically; #590). `env cd /path`
+  // is the opposite case and deliberately NOT normalized here: `env` execs
+  // an external `cd` binary that does not exist on a normal system, so it
+  // errors and never changes cwd — normalizing it would fabricate a target
+  // for a shape that has no real effect.
+  let cdLead = 0;
+  while (cdLead < t.length && SIMPLE_ASSIGNMENT_RE.test(t[cdLead])) cdLead += 1;
+  if (t[cdLead] === 'cd') return resolveCd(effCwd, t[cdLead + 1]);
+  handler(t, effCwd, leadQuoted);
+  return effCwd;
 }
 
 // Consumes every leading global git flag (-C <dir>, -c <k>=<v>, --exec-path,
@@ -562,6 +572,13 @@ function matchRedirectOperator(tok) {
 const DATA_READER_WORDS = new Set(['cat', 'tee', 'git', 'gh', 'read', 'node', 'python', 'python3', 'jq', 'wc']);
 // Commands that run what follows them: followed to the program they run.
 const READER_WRAPPER_WORDS = new Set(['sudo', 'doas', 'env', 'nice', 'time', 'nohup', 'command', 'exec']);
+// `env` options that choose the program it runs: -S/--split-string re-splits a string into a
+// command line, -P searches another PATH. Matched in a short-option cluster too (`-iS…`).
+const ENV_PROGRAM_FLAG_RE = /^-(?:[^-]*[SP]|-s)/;
+// Programs that neither read stdin nor run an argument. They pass the reader check only as a
+// stand-alone neighbour segment's own program (never behind a wrapper), and only in a segment
+// with no command substitution, which could read the body (`cat <<EOF | echo $(bash)`).
+const INERT_NEIGHBOUR_WORDS = new Set(['cd', 'mkdir', 'true', ':', 'echo', 'printf']);
 // `git` reads its body as data only for these subcommands. Any other can run its
 // arguments as a program (`git bisect run sh`, `git rebase -x sh`) and so is no reader.
 const GIT_DATA_SUBCOMMANDS = new Set(['commit', 'tag', 'notes', 'apply', 'am', 'hash-object', 'interpret-trailers', 'update-ref', 'cat-file']);
@@ -611,9 +628,10 @@ function removeQuotedSpans(str) {
 // True when every command on the opener's logical line is a known data reader, so
 // the body it receives is data. Per segment: a group or process-substitution token
 // (`(`, `{`, `}`, `>(`, `<(`) fails (its consumer may sit on a later line or inside
-// the substitution); NAME=value assignments and reader wrappers (sudo, env, ...) are
-// skipped together with the flags and assignments that follow a wrapper, so a wrapper
-// option's value (`sudo -u bob`) lands on the program slot and fails; the program word
+// the substitution); after NAME=value assignments, an inert neighbour (INERT_NEIGHBOUR_WORDS)
+// passes; reader wrappers (sudo, env, ...) are skipped together with the flags and
+// assignments that follow a wrapper, so a wrapper option's value (`sudo -u bob`) lands on
+// the program slot and fails, and an `env` program-choosing flag (-S, -P) fails; the program word
 // must then resolve ($NAME and backticks do not), be a bare name or an absolute path,
 // and every spelling the parser can read from it must be a reader; `git` is a reader
 // only for a data subcommand (GIT_DATA_SUBCOMMANDS), found past its global flags. The
@@ -630,9 +648,14 @@ function lineFeedsOnlyDataReaders(lineText) {
     const { tokens } = tokenize(seg.trim());
     let p = 0;
     while (p < tokens.length && SIMPLE_ASSIGNMENT_RE.test(tokens[p])) p += 1;
+    if (p < tokens.length && isBareOrAbsoluteProgram(tokens[p]) && programNames(tokens[p]).every((n) => INERT_NEIGHBOUR_WORDS.has(n)) && !/\$\(|`/.test(seg)) continue;
     while (p < tokens.length && isBareOrAbsoluteProgram(tokens[p]) && programNames(tokens[p]).every((n) => READER_WRAPPER_WORDS.has(n))) {
+      const isEnv = programNames(tokens[p]).includes('env');
       p += 1;
-      while (p < tokens.length && (tokens[p].startsWith('-') || SIMPLE_ASSIGNMENT_RE.test(tokens[p]))) p += 1;
+      while (p < tokens.length && (tokens[p].startsWith('-') || SIMPLE_ASSIGNMENT_RE.test(tokens[p]))) {
+        if (isEnv && ENV_PROGRAM_FLAG_RE.test(tokens[p])) return false;
+        p += 1;
+      }
     }
     if (p >= tokens.length || /[$`]/.test(tokens[p]) || !isBareOrAbsoluteProgram(tokens[p])) return false;
     const names = programNames(tokens[p]);
@@ -723,18 +746,27 @@ function endsInOddBackslashRun(s) {
 // `OF` closes the body; a quoted delimiter takes no continuation. A trailing odd
 // backslash with no next line is left as-is. The run is counted on the raw line, so
 // only backslash-LF continues (backslash-CR-LF does not, as in bash); the delimiter
-// match still tolerates one trailing `\r`, which can only close a body earlier.
+// match still tolerates one trailing `\r`, which can only close a body earlier. The
+// joined line is built from its raw parts in one join, so a long continuation chain
+// costs linear time; the parity of the last raw part decides each continuation (the
+// part before it, minus its continuing backslash, ends in an even run).
 function scanHeredocBody(str, p, h) {
   const bodyStart = p;
   while (p < str.length) {
     let end = str.indexOf('\n', p);
     if (end === -1) end = str.length;
     let line = str.slice(p, end);
-    while (!h.quoted && end < str.length && endsInOddBackslashRun(line)) {
-      const nextStart = end + 1;
-      end = str.indexOf('\n', nextStart);
-      if (end === -1) end = str.length;
-      line = line.slice(0, -1) + str.slice(nextStart, end);
+    if (!h.quoted && end < str.length && endsInOddBackslashRun(line)) {
+      const parts = [];
+      while (end < str.length && endsInOddBackslashRun(line)) {
+        parts.push(line.slice(0, -1));
+        const nextStart = end + 1;
+        end = str.indexOf('\n', nextStart);
+        if (end === -1) end = str.length;
+        line = str.slice(nextStart, end);
+      }
+      parts.push(line);
+      line = parts.join('');
     }
     if (line.endsWith('\r')) line = line.slice(0, -1);
     if (h.stripTabs) line = line.replace(/^\t+/, '');
@@ -748,13 +780,100 @@ function scanHeredocBody(str, p, h) {
 // onto the next line, so a later command receives its bodies.
 const CONTINUATION_RE = /(?:\|\||&&|\|)\s*(?:#.*)?$/;
 
+// Reserved words that open a compound command, keyed to the word that closes it.
+const COMPOUND_OPENERS = new Map([['if', 'fi'], ['for', 'done'], ['while', 'done'], ['until', 'done'], ['select', 'done'], ['case', 'esac']]);
+// Reserved words after which the next word is again at command position.
+const COMMAND_PREFIX_WORDS = new Set(['if', 'while', 'until', 'then', 'do', 'else', 'elif', '!', 'time']);
+
+// True when the logical line `line` leaves a structure open at its end, so a later line
+// may hand a heredoc body to a consumer this line cannot show (`{` … `} | bash`): an
+// unquoted paren or brace (`(`, `$(`, `<(`, `>(`, `((`, `{`, `${`) or backtick left
+// unclosed, or a compound-command opener (if, for, while, until, select, case) at command
+// position with no closer (fi, done, esac) at command position after it on the line. An
+// unquoted `$'` counts too: ANSI-C quoting honours `\'`, which this scan does not follow.
+// Biased to "open": an opener counts wherever it may be one, a closer only where it
+// surely is one, so the count can only undercount closers. A `)` closes nothing while a
+// `case` is open on the line (it may be a pattern's), and a `}` closes a brace group only
+// as a word at command position after `;` or `&`.
+function lineLeavesStructureOpen(line) {
+  const stack = []; // '(' | '{' | '${'
+  const open = { fi: 0, done: 0, esac: 0 };
+  let cmdPos = true; // the next word is at command position
+  let closerPos = true; // ...directly after `;`, `;;` or `&`, where a closer may stand
+  let word = '';
+  let plain = true; // the word has no quoted, escaped or expanded part
+  const endWord = () => {
+    if (word === '') return;
+    const w = word;
+    const isPlain = plain;
+    word = '';
+    plain = true;
+    const atCmd = cmdPos;
+    const atCloser = closerPos;
+    cmdPos = false;
+    closerPos = false;
+    if (!isPlain) return;
+    if (w === '{') { stack.push('{'); cmdPos = true; return; }
+    if (w === '}') { if (atCloser && stack[stack.length - 1] === '{') stack.pop(); return; }
+    if (atCmd && COMPOUND_OPENERS.has(w)) open[COMPOUND_OPENERS.get(w)] += 1;
+    else if (atCloser && Object.prototype.hasOwnProperty.call(open, w)) open[w] = Math.max(0, open[w] - 1);
+    if (atCmd && COMMAND_PREFIX_WORDS.has(w)) cmdPos = true;
+  };
+  for (let i = 0; i < line.length; i += 1) {
+    const c = line[i];
+    if (c === '\\') { word += c + (line[i + 1] || ''); plain = false; i += 1; continue; }
+    if (c === "'" || c === '"' || c === '`') {
+      let j = i + 1;
+      while (j < line.length && line[j] !== c) j += c !== "'" && line[j] === '\\' ? 2 : 1;
+      if (j >= line.length) return true;
+      word += line.slice(i, j + 1);
+      plain = false;
+      i = j;
+      continue;
+    }
+    if (c === '$' && line[i + 1] === "'") return true;
+    if (c === '$' && line[i + 1] === '(') { endWord(); stack.push('('); cmdPos = true; i += 1; continue; }
+    if (c === '$' && line[i + 1] === '{') { stack.push('${'); word += '${'; plain = false; i += 1; continue; }
+    if (c === '}' && stack[stack.length - 1] === '${') { stack.pop(); word += c; plain = false; continue; }
+    if (c === '#' && word === '') break;
+    if (c === ' ' || c === '\t' || c === '\r' || c === '\n') { endWord(); continue; }
+    if (c === ';' || (c === '&' && line[i + 1] !== '&' && line[i + 1] !== '>')) {
+      endWord();
+      while (line[i + 1] === ';' || line[i + 1] === '&') i += 1;
+      cmdPos = true;
+      closerPos = true;
+      continue;
+    }
+    if (c === '&' && line[i + 1] === '&') { endWord(); i += 1; cmdPos = true; continue; }
+    if (c === '|') { endWord(); if (line[i + 1] === '|' || line[i + 1] === '&') i += 1; cmdPos = true; continue; }
+    if (c === '(') { endWord(); stack.push('('); cmdPos = true; continue; }
+    if (c === ')') {
+      endWord();
+      if (open.esac === 0 && stack[stack.length - 1] === '(') stack.pop();
+      cmdPos = true;
+      continue;
+    }
+    if (c === '<' || c === '>' || c === '&') {
+      endWord();
+      if (line[i + 1] === '(') { stack.push('('); cmdPos = true; i += 1; continue; }
+      while (/[<>&|]/.test(line[i + 1] || '')) i += 1;
+      continue;
+    }
+    word += c;
+  }
+  endWord();
+  return stack.length > 0 || open.fi > 0 || open.done > 0 || open.esac > 0;
+}
+
 // Plans one logical line's heredoc bodies, which start at index `start`:
 //   rest  - a body is unterminated: the text from `start` on is kept as written;
-//   keep  - the bodies stay in the text, because the line feeds them to something
-//           other than a known data reader, the line continues, or an unquoted body
-//           expands `$(` or a backtick;
+//   keep  - each body is returned as its own chunk ({ at, text }, `at` being its
+//           opener's index in the outer text), because a structure is open (`lineOpen`:
+//           left open on an earlier line or on this one), the line feeds them to
+//           something other than a known data reader, the line continues, or an
+//           unquoted body expands `$(` or a backtick; `end` is the index after the last;
 //   strip - every body is data; `end` is the index after the last one.
-function planHeredocBodies(str, start, pending, lineText) {
+function planHeredocBodies(str, start, pending, lineText, lineOpen) {
   const bodies = [];
   let p = start;
   for (const h of pending) {
@@ -763,121 +882,167 @@ function planHeredocBodies(str, start, pending, lineText) {
     bodies.push({ h, text: body.text });
     p = body.end;
   }
-  const keep = CONTINUATION_RE.test(lineText) || !lineFeedsOnlyDataReaders(lineText);
+  const keep = lineOpen || CONTINUATION_RE.test(lineText) || !lineFeedsOnlyDataReaders(lineText);
   const expands = bodies.some(({ h, text }) => !h.quoted && /\$\(|`/.test(text));
-  return keep || expands ? { kind: 'keep' } : { kind: 'strip', end: p };
+  if (keep || expands) return { kind: 'keep', end: p, bodies: bodies.map(({ h, text }) => ({ at: h.at, text })) };
+  return { kind: 'strip', end: p };
 }
 
 // The single char-level pass behind stripHeredocBodies. Quote, escape, and comment
 // handling mirror splitSegments, so a `<<` inside quotes or after a word-boundary
-// `#` is never an opener.
+// `#` is never an opener. Every terminated body is cut out of the outer text with its
+// closing line, so the outer scan resumes after the delimiter with fresh quote state and
+// never plans an opener inside a body; a kept body is returned as its own chunk.
 function scanHeredocs(str) {
   const out = [];
+  let outLen = 0;
+  const emit = (s) => { out.push(s); outLen += s.length; };
+  const bodies = []; // kept bodies, { at, text }, in order
   let quote = null;
-  let parenDepth = 0; // unclosed `((` on the current logical line
-  let bracketDepth = 0; // unclosed `$[` on the current logical line
+  // Unclosed `((` on the current logical line. It resets at the newline: bash also reads
+  // `((` as two nested subshells (`((cd x && ls) | cat)`), and a `((` left open across a
+  // line sets `sticky` below, which keeps every later body anyway.
+  let parenDepth = 0;
+  let bracketDepth = 0; // unclosed `$[`; arithmetic only, so it spans lines as bash's does
   let pending = []; // heredocs opened on the current logical line, in order
+  let sticky = false; // a structure was left open on an earlier line: keep every later body
   let lineStart = 0;
   let i = 0;
   while (i < str.length) {
     const ch = str[i];
     if (quote === "'") {
-      out.push(ch);
+      emit(ch);
       if (ch === "'") quote = null;
       i += 1;
     } else if (ch === '\\' && i + 1 < str.length) {
-      out.push(ch, str[i + 1]);
+      emit(ch + str[i + 1]);
       i += 2;
     } else if (quote === '"') {
-      out.push(ch);
+      emit(ch);
       if (ch === '"') quote = null;
       i += 1;
     } else if (ch === '"' || ch === "'") {
       quote = ch;
-      out.push(ch);
+      emit(ch);
       i += 1;
     } else if (ch === '#' && (i === 0 || /[\s;&|]/.test(str[i - 1]))) {
       let j = str.indexOf('\n', i);
       if (j === -1) j = str.length;
-      out.push(str.slice(i, j));
+      emit(str.slice(i, j));
       i = j;
     } else if (ch === '\n') {
+      const lineText = str.slice(lineStart, i);
       i += 1;
-      out.push(ch);
+      emit(ch);
+      sticky = sticky || lineLeavesStructureOpen(lineText);
       if (pending.length) {
-        const plan = planHeredocBodies(str, i, pending, str.slice(lineStart, i - 1));
+        const plan = planHeredocBodies(str, i, pending, lineText, sticky);
         if (plan.kind === 'rest') {
-          out.push(str.slice(i));
+          emit(str.slice(i));
           break;
         }
-        if (plan.kind === 'strip') i = plan.end;
+        if (plan.kind === 'keep') bodies.push(...plan.bodies);
+        i = plan.end;
       }
       pending = [];
       parenDepth = 0;
-      bracketDepth = 0;
       lineStart = i;
     } else if (ch === '$' && str[i + 1] === '[') {
       bracketDepth += 1;
-      out.push('$[');
+      emit('$[');
       i += 2;
     } else if (ch === '[' && bracketDepth > 0) {
       bracketDepth += 1; // an array subscript inside `$[ … ]` nests
-      out.push(ch);
+      emit(ch);
       i += 1;
     } else if (ch === ']' && bracketDepth > 0) {
       bracketDepth -= 1;
-      out.push(ch);
+      emit(ch);
       i += 1;
     } else if (ch === '(' && str[i + 1] === '(') {
       parenDepth += 1;
-      out.push('((');
+      emit('((');
       i += 2;
     } else if (ch === ')' && str[i + 1] === ')' && parenDepth > 0) {
       parenDepth -= 1;
-      out.push('))');
+      emit('))');
       i += 2;
     } else if (ch === '<' && str[i + 1] === '<' && str[i + 2] === '<') {
-      out.push('<<<'); // a here-string is never a heredoc
+      emit('<<<'); // a here-string is never a heredoc
       i += 3;
     } else if (ch === '<' && str[i + 1] === '<') {
       // A `<<` inside an open `((...))` or `$[...]` is an arithmetic shift, not an opener.
       const h = parenDepth === 0 && bracketDepth === 0 ? readHeredocOpener(str, i + 2) : null;
       if (h && h.unprovable) {
-        out.push(str.slice(i));
+        emit(str.slice(i));
         break;
       }
       if (h) {
-        out.push(str.slice(i, h.end));
+        h.at = outLen;
+        emit(str.slice(i, h.end));
         pending.push(h);
         i = h.end;
       } else {
-        out.push('<<');
+        emit('<<');
         i += 2;
       }
     } else {
-      out.push(ch);
+      emit(ch);
       i += 1;
     }
   }
-  return out.join('');
+  return { outer: out.join(''), bodies };
 }
 
-// A heredoc body is data for a program that only reads it, not shell text, so a `>`
-// inside it is not a redirection and its newlines are not command boundaries.
-// Returns the command with each body and its closing-delimiter line removed. The
-// opener line keeps its newline, so whatever follows the closing delimiter starts
-// its own segment. Only a body fed to a known data reader is stripped; whatever the
-// scan cannot prove is data stays visible (a body fed to any other program, an
-// unquoted body that expands, an unterminated body, a continuation line): see
-// planHeredocBodies. Any internal failure returns the input unchanged (the
-// pre-#3989 scan).
+// Splits a command into its outer shell text and the heredoc bodies the scan cannot
+// prove are data. Returns { outer, bodies }: `outer` is the command with every
+// terminated body and its closing-delimiter line removed (the opener line keeps its
+// newline, so whatever follows the delimiter starts its own segment); `bodies` lists
+// each kept body as { at, text }, `at` being the index of its `<<` in `outer` and `text`
+// the body without its closing line. A body fed to a known data reader is dropped; any
+// other (fed to another program, an unquoted body that expands, a continuation line, a
+// structure left open) is kept: see planHeredocBodies. An unterminated body leaves the
+// text from its opener on in `outer` as written. Any internal failure returns the input
+// as `outer` with no bodies (the pre-#3989 scan).
 function stripHeredocBodies(command) {
-  if (typeof command !== 'string') return command;
+  if (typeof command !== 'string') return { outer: command, bodies: [] };
   try {
     return scanHeredocs(command);
   } catch {
-    return command;
+    return { outer: command, bodies: [] };
   }
+}
+
+// Heredoc nesting past this depth is scanned as plain text with no body split out.
+// Each level rescans its own body, so the cap bounds a deep nest's cost at this many
+// passes over the input.
+const MAX_HEREDOC_NESTING = 8;
+
+// forEachCommandSegment over every piece of text the shell may run (#3989/#4149): the
+// outer text, then each kept heredoc body as its own chunk, right after the segment
+// that holds its opener. A chunk starts from fresh quote state, the cwd in effect at
+// its opener and a copy of the outer assignments; whatever cwd or assignment it changes
+// is discarded, so the outer walk resumes after the delimiter with its own state. A
+// chunk's own openers are planned within the chunk.
+function forEachShellSegment(command, cwd, handler) {
+  walkShellChunk(String(command || ''), cwd || '.', new Map(), handler, 0);
+}
+
+function walkShellChunk(text, cwd, vars, handler, depth) {
+  const { outer, bodies } = depth < MAX_HEREDOC_NESTING ? stripHeredocBodies(text) : { outer: text, bodies: [] };
+  let effCwd = cwd;
+  let b = 0;
+  const runBodies = (until, bodyCwd) => {
+    for (; b < bodies.length && bodies[b].at < until; b += 1) {
+      walkShellChunk(bodies[b].text, bodyCwd, new Map(vars), handler, depth + 1);
+    }
+  };
+  for (const span of segmentSpans(outer)) {
+    const before = effCwd;
+    effCwd = visitSegment(span.text, effCwd, vars, handler);
+    runBodies(span.end, before);
+  }
+  runBodies(Infinity, effCwd);
 }
 
 // Redirection-target scan (#3080): unlike fileWriteTargets' other shapes, a
@@ -889,10 +1054,10 @@ function stripHeredocBodies(command) {
 // resolves to no target, never a guess. `>(...)` process substitution and fd
 // duplications (`>&2`, `2>&1`) are not file targets either.
 //
-// Heredoc bodies (#3989): fileWriteTargets scans stripHeredocBodies' output, so
-// a `>` inside a body fed to a known data reader is not a redirection. A body fed
-// to any other program keeps its redirects visible, because that text may run as
-// shell (see stripHeredocBodies for the allowlist).
+// Heredoc bodies (#3989): fileWriteTargets walks forEachShellSegment, so a `>`
+// inside a body fed to a known data reader is not a redirection. A body fed to any
+// other program is scanned as its own chunk, because that text may run as shell
+// (see lineFeedsOnlyDataReaders for the allowlist).
 function redirectWriteTargets(t, effCwd) {
   const out = [];
   for (let i = 0; i < t.length; i += 1) {
@@ -1025,7 +1190,7 @@ function dropHeredocOperators(tokens, leadQuoted) {
 
 function fileWriteTargets(command, cwd) {
   const targets = [];
-  forEachCommandSegment(stripHeredocBodies(command), cwd, (tokens, effCwd, leadQuoted) => {
+  forEachShellSegment(command, cwd, (tokens, effCwd, leadQuoted) => {
     // Redirection has no command word, so it runs for every segment
     // regardless of t[0] — never gated by the WRITE_SHAPES check below (#3080).
     for (const file of redirectWriteTargets(tokens, effCwd)) targets.push({ action: 'write', file });
@@ -1180,5 +1345,5 @@ function mkdirTargets(command, cwd) {
 }
 
 module.exports = {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, stripHeredocBodies,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, stripHeredocBodies, forEachShellSegment,
 };
