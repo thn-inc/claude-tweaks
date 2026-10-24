@@ -193,7 +193,9 @@ solo, non-bundle record — a singleton run's PR carries exactly one `Fixes #{n}
 one-member group the check applies to, not an exemption. The executing session reads the ready
 result's own `mergeGrantGap` field instead: `null` means every member is granted (the row is
 floor-clearing on this axis); `{ member, reason }` names the first ungranted (or
-unreadable/unresolvable) member and withholds.
+unreadable/unresolvable) member and withholds. A merge row evaluated without its context (no PR
+body or no member grants supplied) withholds with `{ member: null, reason: 'grant-context-missing' }`
+(#4048) — an absent context never reads as `null`.
 
 **Third narrower exception (#3880):** an `isRulingRow: true` item named in the ready result's
 `rulingGateGaps` (`[{ id, reason }]`, computed in code by `decideConsoleExecute` from each ruling
@@ -202,7 +204,9 @@ floor-clearing: its box and Resolve stay unticked and the console stays pending 
 same posture as the merge row. It mirrors `console-resolve.js`'s `pending — sdd-ruling-*`
 resolution (`wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet) for the reconciler-side
 trigger point. `rulingGateGaps: []` — every ruling row's header shows it safe — leaves each ruling
-row floor-clearing, unchanged.
+row floor-clearing, unchanged. An absent ruling-text map (no `rulingTexts` in the call's context)
+withholds every ruling row as `sdd-ruling-unclassified` (#4048), the same posture as a row whose
+text is unreadable.
 
 **Auto-resolution performs real comment edits.** It ticks the floor-clearing boxes on the PR
 comment (via `_shared/console-on-pr.md`'s post-or-update procedure) *before* executing — the same
@@ -219,7 +223,10 @@ further line naming which exception fired: `AUTO {time} — Console execution: w
 mergeCheckVerdict: needs-human. Reversibility: n/a (declined to act).` for the first exception, or
 `AUTO {time} — Console execution: withheld branch-finish/merge on PR #{n} — member #{m} lacks
 auto:merge. Reversibility: n/a (declined to act).` for the second (#1802) — naming the specific
-member `{m}` whose live labels lacked the grant. A withheld ruling row (third exception) logs
+member `{m}` whose live labels lacked the grant. For a gap whose `member` is null
+(`grant-context-missing`, `members-unresolved`) the line takes the null-member form instead:
+`AUTO {time} — Console execution: withheld branch-finish/merge on PR #{n} — {reason}. Reversibility: n/a (declined to act).`
+A withheld ruling row (third exception) logs
 `AUTO {time} — Console execution: withheld ratify of {item} on PR #{n} — {reason}. Reversibility: n/a (declined to act).`
 
 ## Comment-tick trust boundary

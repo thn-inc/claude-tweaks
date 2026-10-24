@@ -424,6 +424,25 @@ When mechanizing a prose heuristic into a deterministic check:
     each with a fixture the pre-fix code fails (`tests/bin-lib/run-liveness/index.test.js`,
     `probes.test.js`).
 
+22. **A check that reads its input from an optional context argument owes a fail-closed answer
+    when the row it gates is present and the context is not.** A pure decision function that
+    takes `ctx = {}` and wraps a check in `if (ctx.x present)` reads "the caller passed nothing" as
+    "nothing to check", so the row the check guards goes through. `plugin/bin/lib/reconcile/console-execute.js`'s
+    `decideConsoleExecute` had two such guards. #1802's merge-grant gate left `mergeGrantGap: null`,
+    which `_shared/console-execution.md` documents as "every member is granted", whenever
+    `prBody` or `memberGrants` was missing. #3880's ruling gate copied that shape, so an absent
+    `rulingTexts` map auto-ratified every ruling row while a map missing one id withheld it. Both
+    stayed open on purpose so pre-feature tests that omit `ctx` kept passing, and two tests pinned
+    the open path as "legacy call shape unchanged". The only production caller always supplied
+    both, so neither was live. A review lens flagged only the ruling guard, and #4048 closed both:
+    an absent context now withholds (`{ member: null, reason: 'grant-context-missing' }`, and
+    `sdd-ruling-unclassified` for each ruling row), while a console with neither row kind still
+    needs no `ctx`. Key the check on whether the gated row is present, never on whether its
+    context arrived. Invert any test that pins the open path rather than keeping it for
+    compatibility, and pin a partial context (one of two required keys) with its own assertion
+    (`tests/console-execute.test.js`). When you find one guard of this shape, read every sibling
+    guard in the same function, because a new guard is usually copied from the one beside it.
+
 ## When to use
 
 - Writing a new function that parses a plan, a record body, a ledger entry, or any other loose
