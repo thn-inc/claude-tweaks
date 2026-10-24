@@ -707,28 +707,36 @@ function decodeHeredocWord(raw) {
   return out;
 }
 
+// True when `s` ends in an odd-length run of backslashes (a line continuation).
+// A linear backward count: a regex run match backtracks quadratically.
+function endsInOddBackslashRun(s) {
+  let n = 0;
+  while (n < s.length && s[s.length - 1 - n] === '\\') n += 1;
+  return n % 2 === 1;
+}
+
 // Scans one heredoc body starting at index p, through the line equal to the
 // delimiter (leading tabs ignored for `<<-`, one trailing `\r` ignored). `text` is
 // the body without that closing line. With no closing line the body runs to end of
 // string and `terminated` is false. For an unquoted delimiter, bash joins a line that
 // ends in an odd run of backslashes with the next one before comparing, so `E\` +
 // `OF` closes the body; a quoted delimiter takes no continuation. A trailing odd
-// backslash with no next line is left as-is.
+// backslash with no next line is left as-is. The run is counted on the raw line, so
+// only backslash-LF continues (backslash-CR-LF does not, as in bash); the delimiter
+// match still tolerates one trailing `\r`, which can only close a body earlier.
 function scanHeredocBody(str, p, h) {
   const bodyStart = p;
   while (p < str.length) {
     let end = str.indexOf('\n', p);
     if (end === -1) end = str.length;
     let line = str.slice(p, end);
-    if (line.endsWith('\r')) line = line.slice(0, -1);
-    while (!h.quoted && end < str.length && (/\\+$/.exec(line) || [''])[0].length % 2 === 1) {
+    while (!h.quoted && end < str.length && endsInOddBackslashRun(line)) {
       const nextStart = end + 1;
       end = str.indexOf('\n', nextStart);
       if (end === -1) end = str.length;
-      let next = str.slice(nextStart, end);
-      if (next.endsWith('\r')) next = next.slice(0, -1);
-      line = line.slice(0, -1) + next;
+      line = line.slice(0, -1) + str.slice(nextStart, end);
     }
+    if (line.endsWith('\r')) line = line.slice(0, -1);
     if (h.stripTabs) line = line.replace(/^\t+/, '');
     if (line === h.delim) return { end: Math.min(end + 1, str.length), terminated: true, text: str.slice(bodyStart, p) };
     p = end + 1;

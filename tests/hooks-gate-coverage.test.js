@@ -613,11 +613,26 @@ test('#4149: an unquoted heredoc joins a backslash-continued line before matchin
   assert.deepStrictEqual(fileWriteTargets('cat <<EOF\nE\\\\\nOF\necho x > f.js\nEOF', '/r'), []);
   // ...so the next line is its own line and may close the body (a join on any backslash would swallow it).
   assert.deepStrictEqual(fileWriteTargets('cat <<EOF\nx\\\\\nEOF\necho x > f.js\nEOF', '/r'), f);
-  // CRLF endings: the `\r` is not part of the backslash run.
-  assert.deepStrictEqual(fileWriteTargets('cat <<EOF\r\nE\\\r\nOF\r\necho x > f.js\r\nEOF', '/r'), f);
-  assert.deepStrictEqual(fileWriteTargets('cat <<EOF\r\nE\\\\\r\nOF\r\necho x > f.js\r\nEOF', '/r'), []);
   // `<<-` strips leading tabs from the joined line.
   assert.deepStrictEqual(fileWriteTargets('cat <<-EOF\n\tE\\\nOF\necho x > f.js\nEOF', '/r'), f);
+});
+
+// Bash continues only on backslash-LF: backslash-CR-LF is a literal backslash and CR, so nothing joins.
+test('#4149: a backslash before CRLF is not a continuation', () => {
+  // No line equals the delimiter before the last one, so the whole body is data.
+  assert.deepStrictEqual(fileWriteTargets('cat <<EOF\r\nE\\\r\nOF\r\necho x > f.js\r\nEOF', '/r'), []);
+  assert.deepStrictEqual(fileWriteTargets('cat <<EOF\r\nE\\\\\r\nOF\r\necho x > f.js\r\nEOF', '/r'), []);
+});
+
+test('#4149: mixed line endings - backslash-CRLF does not swallow the LF-terminated delimiter', () => {
+  const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
+  assert.deepStrictEqual(fileWriteTargets('cat <<EOF\na\\\r\nEOF\necho x > f.js\nEOF\n', '/r'), f);
+});
+
+test('#4149: an unterminated heredoc ending in an odd backslash stays visible, with or without a final LF', () => {
+  const f = [{ action: 'write', file: path.resolve('/r', 'f.js') }];
+  assert.deepStrictEqual(fileWriteTargets('cat <<EOF\necho x > f.js\nfoo\\', '/r'), f);
+  assert.deepStrictEqual(fileWriteTargets('cat <<EOF\necho x > f.js\nfoo\\\n', '/r'), f);
 });
 
 test('#3989: stripHeredocBodies keeps the opener line and its newline, and drops the body and closing delimiter', () => {
