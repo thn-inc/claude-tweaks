@@ -242,7 +242,7 @@ cleanup items `cleanup-procedures.md` marks deferred under that flag.
 | Operational | Closed record #{n} via merge (`Fixes #{n}`) | `{hash}` |
 | Operational | Deleted plans `docs/plans/{files}` | — |
 | Operational | Removed worktree `{path}`, deleted branch `{branch}` | — |
-| Operational | Opened evidence PR #{m} ({url}) for #{n}'s demo screenshots — the run's own PR was already {merged \| closed} | — |
+| Operational | Opened evidence PR #{m} ({url}) for #{n}'s demo screenshots — the run's own branch was not a safe home ({merged \| closed \| unavailable}) | — |
 | Ledger fix | {item} ({phase}) — {resolution} | `{hash}` |
 
 Generate from: the helper's History ops (every row it reports gets a `History`

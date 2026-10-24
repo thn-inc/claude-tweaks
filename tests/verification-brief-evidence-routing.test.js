@@ -53,6 +53,9 @@ function assertRouting(s) {
   // Ruling 3: the integration-branch guard.
   assert.ok(s.includes('Step 4 never commits to or pushes `{integration-branch}`'), 'integration-branch guard');
   assert.match(s, /detached HEAD/);
+  assert.ok(s.includes("The run's own branch is the branch checked out in the worktree `run-state.json`'s `worktree` field records"), 'own-branch definition');
+  assert.match(s, /no `worktree` recorded\) the current-branch route is unavailable/);
+  assert.match(s, /also appends its own "Post-push merge-state check" entry to `decisions\.md`, which is expected/);
   assert.match(s, /regardless of what the read returned/);
 
   const open = bullet(s, OPEN);
@@ -65,7 +68,13 @@ function assertRouting(s) {
   assert.ok(gone.includes('demo-evidence/{record}'));
   assert.ok(gone.includes("git ls-remote --heads origin 'demo-evidence/{record}*'"), 'free-name check');
   assert.match(gone, /append `-2`, `-3`/);
-  assert.ok(gone.includes('git commit -m "Add demo evidence screenshots for #{record}" -- docs/demo-evidence/{record}/'), 'pathspec commit');
+  const addAt = gone.indexOf('`git add docs/demo-evidence/{record}/`');
+  const pathspecAt = gone.indexOf('git commit -m "Add demo evidence screenshots for #{record}" -- docs/demo-evidence/{record}/');
+  assert.ok(addAt >= 0, 'the fresh screenshots are staged — a pathspec commit alone fails on untracked files');
+  assert.ok(pathspecAt >= 0, 'pathspec commit');
+  assert.ok(addAt < pathspecAt, 'git add comes before the pathspec commit');
+  assert.ok(gone.includes('`discard_changes: true`'), 'teardown names the override');
+  assert.match(gone, /only after the ls-remote proof/);
   assert.ok(gone.includes('`git rev-parse HEAD`'));
   assert.ok(gone.includes('`git push -u origin demo-evidence/{record}`'));
   assert.ok(gone.includes('`gh pr create --base {integration-branch} --head demo-evidence/{record}'));
@@ -101,6 +110,7 @@ test('AC6.1: the wrap-up summary carries an evidence-PR row in Actions Performed
   const doc = read('wrap-up/summary-template.md');
   const table = doc.slice(doc.indexOf('### Actions Performed'));
   assert.ok(table.includes('| Operational | Opened evidence PR #{m} ({url}) for #{n}'), 'missing evidence-PR row');
+  assert.ok(table.includes("the run's own branch was not a safe home ({merged \\| closed \\| unavailable})"), 'row reason covers the guard and unreadable cases');
   assert.match(table, /the Verification Brief's evidence PR/);
 });
 
@@ -108,4 +118,13 @@ test('AC8.1: removing the evidence-PR route turns the routing assertions red', (
   const s = step4(read('wrap-up/verification-brief.md'));
   const gone = bullet(s, GONE);
   assert.throws(() => assertRouting(s.replace(gone, '')));
+});
+
+test('AC8.1: dropping one pinned literal from the evidence-PR bullet turns the routing assertions red', () => {
+  const s = step4(read('wrap-up/verification-brief.md'));
+  const gone = bullet(s, GONE);
+  for (const literal of ['`Refs #{record}`', '`git add docs/demo-evidence/{record}/`', '`discard_changes: true`']) {
+    assert.ok(gone.includes(literal), `control premise: bullet carries ${literal}`);
+    assert.throws(() => assertRouting(s.replace(gone, gone.replace(literal, 'x'))), `dropping ${literal} must fail`);
+  }
 });
