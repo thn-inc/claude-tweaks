@@ -184,15 +184,15 @@ test('a lock held by another writer is waited for, so its write is not lost (the
     // into a timeout-degrade. The lock is always released eventually, so the
     // bound costs nothing when the wait is correct.
     recordFailure(id, 'opus', { lockTimeoutMs: 30000, lockPollMs: 5 });
+    assert.deepStrictEqual(
+      readFailedModels(id),
+      new Set(['fable', 'opus']),
+      'a no-wait lock reads before the holder writes and loses one model; waiting must keep both',
+    );
   } finally {
     releaser.kill();
+    cleanup(id);
   }
-  assert.deepStrictEqual(
-    readFailedModels(id),
-    new Set(['fable', 'opus']),
-    'a no-wait lock reads before the holder writes and loses one model; waiting must keep both',
-  );
-  cleanup(id);
 });
 
 test('recordFailure degrades to unlocked (never throws, still records the model) when the lock cannot be acquired', () => {

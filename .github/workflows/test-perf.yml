@@ -15,7 +15,7 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: test-perf-${{ github.workflow }}-${{ github.ref }}
+  group: test-perf-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
