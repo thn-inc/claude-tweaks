@@ -130,8 +130,9 @@ function resolveScopePath(scope, scopeCwd) {
 // exempts nothing.
 function generatedExemption(dirtyPaths, generated) {
   if (!dirtyPaths || dirtyPaths.length === 0) return null;
-  const res = generated.map((g) => globToRegExp(g));
-  return dirtyPaths.every((f) => res.some((re) => re.test(f))) ? [...new Set(dirtyPaths)].sort() : null;
+  const patterns = generated.map((g) => globToRegExp(g));
+  const allGenerated = dirtyPaths.every((f) => patterns.some((re) => re.test(f)));
+  return allGenerated ? [...new Set(dirtyPaths)].sort() : null;
 }
 
 // --stamp-status (#1921): a read of the runner's own artifact. Status is data,
@@ -159,14 +160,15 @@ function stampStatus(parsed) {
   // --scope read once (#3002/#2987): feeds both the generated-path
   // live-dirty exemption directly below and the per-suite composition
   // further down — read here rather than twice.
-  const scopeRead = parsed.scope && !foreignGitDir ? readDeclaration(resolveScopePath(parsed.scope, process.cwd())) : null;
+  const scopePath = parsed.scope && !foreignGitDir ? resolveScopePath(parsed.scope, process.cwd()) : null;
+  const scopeRead = scopePath !== null ? readDeclaration(scopePath) : null;
   const scopeDecl = scopeRead && scopeRead.ok ? scopeRead.decl : null;
   // Status is data, never a failure (exit 0 stays), but a --scope that could
   // not be read is reported rather than looking exactly like "no --scope
   // given" — the check run treats the same input as a usage error (#3017).
   let scopeError = null;
   if (scopeRead && !scopeRead.ok) scopeError = scopeRead.errors.join('; ');
-  else if (scopeRead && scopeRead.missing) scopeError = `--scope: no declaration at ${resolveScopePath(parsed.scope, process.cwd())}`;
+  else if (scopeRead && scopeRead.missing) scopeError = `--scope: no declaration at ${scopePath}`;
   // #2987: the SAME generated-path exemption bin/verify.js's own stamp-write
   // gate applies, re-derived here against the LIVE tree rather than trusted
   // from the stored stamp — a tree a declared check regenerates every run

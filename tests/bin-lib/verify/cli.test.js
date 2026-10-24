@@ -1458,16 +1458,17 @@ test('a non-generated path dirty at the run\'s start disqualifies the exemption 
   assert.strictEqual('generatedExempt' in stamp, false);
 });
 
-// #3002
+// #3002: one chunked `--no-stamp --stamp-suite` invocation covering a single --cmd.
+function runStampSuiteChunk(r, cmd) {
+  return runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--no-stamp', '--stamp-suite', '--cmd', cmd], { cwd: r.repo });
+}
+
 test('--stamp-suite composes verifiedHead:true from two chunked, otherwise-partial runs (#3002 AC1)', async () => {
   const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
   // Chunk 1: only the `unit` check, --no-stamp (a partial --cmd set) plus
   // --stamp-suite — earns `unit` a per-suite record without ever touching
   // the single full-set stamp.
-  const chunk1 = await runCli(
-    ['--scope', r.declPath, '--integration-branch', r.branch, '--no-stamp', '--stamp-suite', '--cmd', `unit=${r.unitCmd}`],
-    { cwd: r.repo },
-  );
+  const chunk1 = await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
   assert.strictEqual(chunk1.code, 0, chunk1.stderr);
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')), 'a partial chunk never writes the single full-set stamp');
   const midway = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
@@ -1475,10 +1476,7 @@ test('--stamp-suite composes verifiedHead:true from two chunked, otherwise-parti
   assert.deepStrictEqual(midway.suiteComposed, { declared: ['unit', 'other'], covered: ['unit'], missing: ['other'], complete: false });
 
   // Chunk 2: the other declared check, same pattern.
-  const chunk2 = await runCli(
-    ['--scope', r.declPath, '--integration-branch', r.branch, '--no-stamp', '--stamp-suite', '--cmd', 'other=node -e 0'],
-    { cwd: r.repo },
-  );
+  const chunk2 = await runStampSuiteChunk(r, 'other=node -e 0');
   assert.strictEqual(chunk2.code, 0, chunk2.stderr);
   const after = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
   assert.strictEqual(after.verifiedHead, true, 'both declared checks now have a passing record at this clean HEAD (#3002 AC1)');
@@ -1488,7 +1486,7 @@ test('--stamp-suite composes verifiedHead:true from two chunked, otherwise-parti
 
 test('--stamp-status --scope reports verifiedHead:false when a declared check has no record yet (#3002 AC2)', async () => {
   const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
-  await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--no-stamp', '--stamp-suite', '--cmd', `unit=${r.unitCmd}`], { cwd: r.repo });
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
   const status = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
   assert.strictEqual(status.verifiedHead, false);
   assert.deepStrictEqual(status.suiteComposed.missing, ['other']);
@@ -1496,9 +1494,9 @@ test('--stamp-status --scope reports verifiedHead:false when a declared check ha
 
 test('a per-suite record from an earlier sha does not count, even after the missing check later passes (#3002 AC3)', async () => {
   const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
-  await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--no-stamp', '--stamp-suite', '--cmd', `unit=${r.unitCmd}`], { cwd: r.repo });
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
   commitFile(r, 'src/a.js', '1'); // HEAD moves — the `unit` record now names a stale sha
-  await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--no-stamp', '--stamp-suite', '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  await runStampSuiteChunk(r, 'other=node -e 0');
   const status = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
   assert.strictEqual(status.verifiedHead, false);
   assert.deepStrictEqual(status.suiteComposed.missing, ['unit'], '`unit`\'s record from the OLD sha must not count at the new HEAD');
@@ -1506,13 +1504,13 @@ test('a per-suite record from an earlier sha does not count, even after the miss
 
 test('a failing chunk clears that check\'s own per-suite record (#3002 Deliverable 3)', async () => {
   const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
-  await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--no-stamp', '--stamp-suite', '--cmd', `unit=${r.unitCmd}`], { cwd: r.repo });
-  await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--no-stamp', '--stamp-suite', '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  await runStampSuiteChunk(r, 'other=node -e 0');
   const complete = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
   assert.strictEqual(complete.verifiedHead, true);
   // Re-run `unit` and have it fail at the SAME HEAD — its own record must be
   // cleared, not left as a stale pass.
-  const failing = await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--no-stamp', '--stamp-suite', '--cmd', 'unit=node -e "process.exit(1)"'], { cwd: r.repo });
+  const failing = await runStampSuiteChunk(r, 'unit=node -e "process.exit(1)"');
   assert.notStrictEqual(failing.code, 0);
   const after = JSON.parse((await runCli(['--stamp-status', '--scope', r.declPath], { cwd: r.repo })).stdout);
   assert.strictEqual(after.verifiedHead, false);
@@ -1528,8 +1526,8 @@ test('a plain --no-stamp partial run with no --stamp-suite writes no per-suite r
 
 test('--stamp-status with no --scope never looks at per-suite records (suiteComposed: null)', async () => {
   const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
-  await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--no-stamp', '--stamp-suite', '--cmd', `unit=${r.unitCmd}`], { cwd: r.repo });
-  await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--no-stamp', '--stamp-suite', '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
+  await runStampSuiteChunk(r, 'other=node -e 0');
   const status = JSON.parse((await runCli(['--stamp-status'], { cwd: r.repo })).stdout);
   assert.strictEqual(status.suiteComposed, null);
   assert.strictEqual(status.verifiedHead, false, 'with no --scope, the single-stamp path is all there is, and no full stamp was ever written');
@@ -1553,7 +1551,7 @@ test('a check that regenerates a declared generated file from a clean start stil
 test('a --stamp-suite chunk on a tree dirty outside the generated paths writes no record and says why (#3002 AC3)', async () => {
   const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: true }]);
   fs.writeFileSync(path.join(r.repo, 'notes.txt'), 'uncommitted');
-  const chunk = await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--no-stamp', '--stamp-suite', '--cmd', `unit=${r.unitCmd}`], { cwd: r.repo });
+  const chunk = await runStampSuiteChunk(r, `unit=${r.unitCmd}`);
   assert.strictEqual(chunk.code, 0, chunk.stderr);
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-suites.json')), 'no per-suite record against a dirty tree');
   assert.match(chunk.stdout, /CAVEAT: --stamp-suite recorded no per-suite pass this run — the working tree is dirty outside any declared `generated` path/);
@@ -1567,7 +1565,7 @@ test('--stamp-suite chunks compose on a tree whose only dirty paths are declared
   commitFile(r, 'dist/bundle.js', 'v1');
   fs.writeFileSync(path.join(r.repo, 'dist', 'bundle.js'), 'v2-regenerated');
   for (const cmd of [`unit=${r.unitCmd}`, 'other=node -e 0']) {
-    const chunk = await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--no-stamp', '--stamp-suite', '--cmd', cmd], { cwd: r.repo });
+    const chunk = await runStampSuiteChunk(r, cmd);
     assert.strictEqual(chunk.code, 0, chunk.stderr);
     assert.doesNotMatch(chunk.stdout, /CAVEAT: --stamp-suite/);
   }

@@ -88,7 +88,8 @@ function composeSuiteCoverage({ declaredChecks, suiteStamps, headSha, headDirty 
     const entry = suiteStamps[name];
     const ok = headDirty === false && typeof headSha === 'string'
       && entry && entry.sha === headSha && entry.dirty === false;
-    (ok ? covered : missing).push(name);
+    if (ok) covered.push(name);
+    else missing.push(name);
   }
   return { declared: declaredChecks, covered, missing, complete: missing.length === 0 };
 }
