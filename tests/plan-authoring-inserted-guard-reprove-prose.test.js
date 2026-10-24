@@ -46,6 +46,9 @@ function assertDispatchRule(text) {
     'going red with the check itself mutated, not only the new guard',
     'is not ADDRESSED',
   ]) assert.ok(p.includes(literal), `dispatch rule lacks: ${literal}`);
+  const treeImmutability = text.indexOf('**Tree-immutability rule for discrimination checks (#2740).**');
+  assert.ok(treeImmutability >= 0 && treeImmutability < text.indexOf(DISPATCH_LEAD),
+    'the rule must follow the #2740 tree-immutability instruction it refers to as "the rule above"');
 }
 
 test('AC1.1 (#3988): plan-authoring-checks.md carries the inserted-guard re-proof rule', () => {
