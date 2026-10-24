@@ -1196,7 +1196,8 @@ async function main() {
   // require `--scope`, so `decl` is always non-null here), regardless of
   // `fullSet`/`--no-stamp`. This is exactly what lets a chunked run earn
   // partial credit: each chunk's own `--cmd` checks that passed get a record
-  // of their own, composed later by `--stamp-status --scope <path>`. Never
+  // of their own, composed later by `--stamp-status` (an explicit --scope, or
+  // the discovered default declaration, #4006). Never
   // written against a dirty tree — unless every dirty path is a declared
   // `generated` one (the same exemption the pass stamp applies, so #2987 and
   // #3002 compose) — nor without a resolvable sha/gitDir. A check this run did
