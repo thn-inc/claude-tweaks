@@ -671,7 +671,7 @@ test('AC8.1: a single stamp whose reportPath is gone is still report-missing', (
 });
 
 test('an incomplete composition does not bypass the single-stamp checks', () => {
-  const status = { present: false, verifiedHead: false, reportPath: null, suiteComposed: { complete: false } };
+  const status = { present: false, verifiedHead: true, reportPath: null, suiteComposed: { complete: false } };
   const result = checkFirstCallStamp({ runDir: stampRun({ worktree: '/wt' }) }, {
     stampStatus: stampStub(status).fn,
     exists: () => true,
