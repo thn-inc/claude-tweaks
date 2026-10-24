@@ -4559,13 +4559,15 @@ function installFailingGhWithMarker() {
 
 // A branch-resolvable, MERGED, console-less run (fixtureOrdinaryMergedNoConsole's
 // shape) in its own repo, without running archiveMerged.
-function ordinaryMergedRunFixture(branch, runId) {
+function ordinaryMergedRunFixture(branch, runId, { stampNumber = true } = {}) {
   const { root, featureSha } = mergedFeatureBranchRepo(branch);
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
-    status: 'active', worktree: path.join(root, '.claude', 'worktrees', `gone-${runId}`), pr: { number: 4032001, branch },
+    status: 'active',
+    worktree: path.join(root, '.claude', 'worktrees', `gone-${runId}`),
+    pr: stampNumber ? { number: 4032001, branch } : { branch },
   }));
   const pr = {
     number: 4032001, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
@@ -4660,4 +4662,43 @@ test('archiveMerged: prStates answers the branchless by-number fallback (#4032)'
   assert.deepStrictEqual(result.archived, [runDir], `expected the by-number fallback to archive, got ${JSON.stringify(result)}`);
   assert.deepStrictEqual(asked, [4032002]);
   assert.equal(fs.existsSync(failing.marker), false, 'a lookup that bypassed prStates would have called the failing gh');
+});
+
+// resolveRunPrState's branch fallthrough: the path every unstamped run and most
+// clean-sweep runs take (no pr.number to probe). Both shapes run under the
+// failing-gh harness, so only the resolver's `byBranch` answer can archive them.
+test('archiveMerged: prStates answers the branch lookup of an unstamped run (#4032)', { skip: PATH_STUB_SKIP }, () => {
+  const { root, runDir, pr } = ordinaryMergedRunFixture('feat-4032-unstamped', '2026-08-01T090000-record-4032-unstamped', { stampNumber: false });
+  const failing = installFailingGhWithMarker();
+  const asked = [];
+  let result;
+  try {
+    const prStates = createPrStateResolver({ root, deps: { byBranch: (b) => { asked.push(b); return pr; } } });
+    result = archiveMerged({ cwd: root, prStates });
+  } finally { failing.restore(); }
+  assert.deepStrictEqual(result.archived, [runDir], `expected the branch lookup to archive, got ${JSON.stringify(result)}`);
+  assert.deepStrictEqual(asked, ['feat-4032-unstamped']);
+  assert.equal(fs.existsSync(failing.marker), false, 'a branch lookup that bypassed prStates would have called the failing gh');
+});
+
+test('archiveMerged: prStates answers the branch lookup of a status: clean sweep run (#4032)', { skip: PATH_STUB_SKIP }, () => {
+  const { root, runDir, featureSha } = fixtureCleanUnarchivedRun({ runId: '2026-08-01T090000-record-4032-clean' });
+  const failing = installFailingGhWithMarker();
+  const asked = [];
+  let result;
+  try {
+    const prStates = createPrStateResolver({
+      root,
+      deps: {
+        byBranch: (b) => {
+          asked.push(b);
+          return { number: 4032003, state: 'MERGED', mergedAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z', mergeCommit: { oid: featureSha } };
+        },
+      },
+    });
+    result = archiveMerged({ cwd: root, prStates });
+  } finally { failing.restore(); }
+  assert.deepStrictEqual(result.archived, [runDir], `expected the clean sweep to archive, got ${JSON.stringify(result)}`);
+  assert.deepStrictEqual(asked, ['feat-clean-branch']);
+  assert.equal(fs.existsSync(failing.marker), false, 'a branch lookup that bypassed prStates would have called the failing gh');
 });

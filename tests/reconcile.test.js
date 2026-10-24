@@ -2597,12 +2597,46 @@ test('reconcile verb: the reconcile-threw fallback carries timings: null (#4032)
 
 // #4032: one PR-state resolver per pass, shared by release, archive and reap,
 // persisted in `finalize`; a prefetch that throws must never break the pass.
-async function reconcileWithRecordedResolver({ wrap } = {}) {
+//
+// `full: true` runs a NON-dry-run pass (release is skipped under dryRun) on a
+// fixture where each check reaches the resolver: a live claim for issue 11
+// whose run stamps pr.number 42 (release Phase 1.5 and archive), whose
+// worktree sits in the harness domain on branch `run-num-branch` (reap). A
+// `gh` stub on PATH serves only the claim listing/read; every PR lookup would
+// fail, so the resolver's OPEN-PR deps are the only PR answers, and OPEN means
+// nothing is released, archived or reaped. `events` logs, in order, each
+// DIRECT call a check makes on the resolver (prefetch's internal lookups use
+// the unwrapped closures, so they never appear as byNumberAsync/byBranch) and
+// each prefetch's arguments.
+async function reconcileWithRecordedResolver({ wrap, full = false } = {}) {
   const { mainDir } = pairedFixture();
   fs.mkdirSync(path.join(mainDir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(mainDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
   git(['add', '.claude-tweaks/policy.yml'], mainDir);
   git(['commit', '-q', '-m', 'policy'], mainDir);
+
+  let restorePath = () => {};
+  if (full) {
+    const wtPath = path.join(mainDir, '.claude', 'worktrees', 'wt-run-num');
+    git(['worktree', 'add', '-q', '-b', 'run-num-branch', wtPath], mainDir);
+    const runId = '2026-01-01T000000-run-num'; // archive's run-dir scan only yields timestamped ids
+    const runDir = path.join(mainDir, '.claude-tweaks', 'pipelines', runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wtPath, pr: { number: 42 } }));
+    const claim = JSON.stringify({ runId, sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h' });
+    const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-ghstub-'));
+    fs.writeFileSync(
+      path.join(stubDir, 'gh'),
+      '#!/bin/sh\ncase "$*" in\n'
+      + `  *"git/trees/claims-registry"*) cat <<'EOF'\n${JSON.stringify({ truncated: false, entries: [{ name: 'issue-11.json', sha: 's11' }] })}\nEOF\n    ;;\n`
+      + `  *"contents/claims/issue-11.json"*) cat <<'EOF'\n${JSON.stringify({ content: claim, sha: 's11' })}\nEOF\n    ;;\n`
+      + '  *) exit 1 ;;\nesac\n',
+    );
+    fs.chmodSync(path.join(stubDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${stubDir}${path.delimiter}${originalPath}`;
+    restorePath = () => { process.env.PATH = originalPath; };
+  }
 
   const preflight = require('../plugin/bin/lib/reconcile/preflight');
   const cacheMod = require('../plugin/bin/lib/reconcile/pr-state-cache');
@@ -2610,35 +2644,63 @@ async function reconcileWithRecordedResolver({ wrap } = {}) {
   const originalHealthAsync = preflight.ghHealthCheckAsync;
   const originalCreate = cacheMod.createPrStateResolver;
   const instances = [];
+  const events = [];
+  const open = (n) => ({ number: n || 7, state: 'OPEN', mergedAt: null, updatedAt: '2026-01-01T00:00:00Z', mergeCommit: null });
   preflight.ghHealthCheck = () => ({ ok: true, reason: null });
   preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
   cacheMod.createPrStateResolver = (opts) => {
-    const inst = originalCreate(opts);
+    const deps = full ? {
+      byNumber: (n) => open(n), byNumberAsync: async (n) => open(n), byBranch: () => open(), byBranchAsync: async () => open(),
+    } : undefined;
+    const inst = originalCreate({ ...opts, ...(deps ? { deps } : {}) });
     const calls = { persist: 0, prefetch: 0 };
     const persist = inst.persist;
     const prefetch = inst.prefetch;
     inst.persist = (...a) => { calls.persist += 1; return persist(...a); };
-    inst.prefetch = (...a) => { calls.prefetch += 1; return wrap ? wrap(prefetch, ...a) : prefetch(...a); };
+    inst.prefetch = (...a) => {
+      calls.prefetch += 1;
+      events.push(['prefetch', a[0]]);
+      return wrap ? wrap(prefetch, ...a) : prefetch(...a);
+    };
+    for (const m of ['byNumber', 'byBranch', 'byNumberAsync', 'byBranchAsync']) {
+      const orig = inst[m];
+      inst[m] = (id) => { events.push([m, id]); return orig(id); };
+    }
     instances.push({ inst, calls });
     return inst;
   };
   let r;
   try {
-    r = await reconcile({ cwd: mainDir, checks: ['release', 'archive', 'reap'], dryRun: true });
+    r = await reconcile({ cwd: mainDir, checks: ['release', 'archive', 'reap'], dryRun: !full });
   } finally {
     preflight.ghHealthCheck = originalHealth;
     preflight.ghHealthCheckAsync = originalHealthAsync;
     cacheMod.createPrStateResolver = originalCreate;
+    restorePath();
   }
-  return { r, instances };
+  return { r, instances, events };
 }
 
-test('reconcile(): one resolver per pass is shared by release, archive and reap (#4032)', async () => {
+test('reconcile(): one resolver per pass is created and persisted once, with archive and reap phases timed (#4032)', async () => {
   const { r, instances } = await reconcileWithRecordedResolver();
   assert.equal(instances.length, 1, 'exactly one resolver for the pass');
-  assert.equal(instances[0].calls.prefetch >= 2, true, 'archive and reap each prefetch through the shared resolver');
   assert.equal(instances[0].calls.persist, 1, 'persisted once, in finalize');
   assert.ok(r.timings.phases.archive && r.timings.phases.reap && r.timings.phases.finalize);
+});
+
+test('reconcile(): release, archive and reap all use the pass\'s one resolver (#4032)', async () => {
+  const { r, instances, events } = await reconcileWithRecordedResolver({ full: true });
+  assert.equal(instances.length, 1);
+  assert.ok(!r.skipped.some((s) => s.check === 'release'), `release must have run, got ${JSON.stringify(r.skipped)}`);
+  const firstPrefetch = events.findIndex(([m]) => m === 'prefetch');
+  // release runs before archive's prefetch, so its direct by-number lookup comes first.
+  const releaseCall = events.findIndex(([m, id]) => m === 'byNumberAsync' && id === 42);
+  assert.ok(releaseCall !== -1 && releaseCall < firstPrefetch, `release Phase 1.5 must call the resolver first, events: ${JSON.stringify(events)}`);
+  // archive's prefetch warms the stamped number; a branch is only asked of unanswered dirs, so this one is reap's.
+  const prefetched = events.filter(([m]) => m === 'prefetch').map(([, a]) => a);
+  assert.ok(prefetched.some((a) => a.numbers && a.numbers.includes(42)), `archive must prefetch the stamped number, got ${JSON.stringify(prefetched)}`);
+  assert.ok(prefetched.some((a) => a.branches && a.branches.includes('run-num-branch')), `reap must prefetch its worktree branch, got ${JSON.stringify(prefetched)}`);
+  assert.ok(events.some(([m, id]) => m === 'byBranch' && id === 'run-num-branch'), `reapMerged must look the branch up through the resolver, events: ${JSON.stringify(events)}`);
 });
 
 test('reconcile(): a throwing prefetch never breaks the pass (#4032)', async () => {
