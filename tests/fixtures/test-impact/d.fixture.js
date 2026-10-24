@@ -5,13 +5,18 @@
 'use strict';
 const { test } = require('node:test');
 const path = require('path');
-const { execFileSync, execSync } = require('child_process');
+const { execFileSync, execSync, spawnSync } = require('child_process');
 
 const quiet = (cwd) => ({ cwd, stdio: ['ignore', 'pipe', 'pipe'] });
 
 test('git glob and magic pathspecs', () => {
   execFileSync('git', ['ls-files', '--', '*.md'], quiet(path.join(__dirname, 'docs', 'listed')));
   execFileSync('git', ['ls-files', '--', ':(glob)docs/*/x.md'], quiet(__dirname));
+});
+
+// Nothing is tracked in the fixture repo, so grep exits 1 (no match): the status is not the point.
+test('git grep with a pathspec after --', () => {
+  spawnSync('git', ['grep', 'TODO', '--', 'tools'], { cwd: __dirname, stdio: 'ignore' });
 });
 
 test('git non-content subcommand with -C', () => {

@@ -31,11 +31,16 @@
 
 const ROOT_ENV = process.env.CT_TRACE_ROOT;
 const DIR_ENV = process.env.CT_TRACE_DIR;
+// Fail closed: once a test is attributed, any patch that cannot be installed (or a recording hook that
+// throws) records `["c", ""]` — the whole-repo prefix, which selects the test for every change — so a
+// broken install over-selects instead of silently under-recording. Set by install() once it can emit.
+let failClosed = null;
 if (ROOT_ENV && DIR_ENV) {
   try {
     install();
   } catch (_) {
     // never break the traced process
+    if (failClosed) failClosed();
   }
 }
 
@@ -135,6 +140,7 @@ function install() {
       // never break the traced process
     }
   }
+  failClosed = () => emit('c', '');
 
   // Records `p` (a path argument, relative to `base`) as `kind`; 'auto' picks d/f by what is on disk.
   function record(kind, p, base) {
@@ -163,6 +169,7 @@ function install() {
         before(arguments);
       } catch (_) {
         // never break the traced process
+        failClosed();
       }
       return orig.apply(this, arguments);
     };
@@ -187,12 +194,19 @@ function install() {
     }
     return wrapped;
   }
+  // Each patch is installed on its own: one that fails (a frozen or non-writable target) fails closed
+  // and leaves every other patch in place.
   function patch(obj, name, before) {
-    if (!obj || typeof obj[name] !== 'function') return;
-    const orig = obj[name];
-    const wrapped = wrapFn(orig, before);
-    if (typeof orig.native === 'function') wrapped.native = wrapFn(orig.native, before);
-    obj[name] = wrapped;
+    try {
+      if (!obj || typeof obj[name] !== 'function') return;
+      const orig = obj[name];
+      const wrapped = wrapFn(orig, before);
+      if (typeof orig.native === 'function') wrapped.native = wrapFn(orig.native, before);
+      obj[name] = wrapped;
+      if (obj[name] !== wrapped) failClosed();
+    } catch (_) {
+      failClosed();
+    }
   }
   const first = (kind) => (args) => record(kind, args[0]);
 
@@ -213,16 +227,7 @@ function install() {
   for (const [kind, names] of Object.entries(PROMISE_KINDS)) for (const n of names) patch(fs.promises, n, first(kind));
 
   for (const ext of ['.js', '.json', '.cjs']) {
-    const orig = Module._extensions[ext];
-    if (typeof orig !== 'function') continue;
-    Module._extensions[ext] = function tracedExtension(module, filename) {
-      try {
-        record('f', filename);
-      } catch (_) {
-        // never break the traced process
-      }
-      return orig.apply(this, arguments);
-    };
+    patch(Module._extensions, ext, (args) => record('f', args[1]));
   }
 
   // The CJS resolver probes candidates through internal bindings, so an added `index.js` (or a `foo.js`
@@ -386,6 +391,33 @@ function install() {
     return true;
   }
 
+  // One `git grep` option token: whether it gives a pattern (-e/--regexp, or -f/--file a pattern file),
+  // whether it is -f/--file, and its value — attached (`-ePAT`, `--regexp=PAT`), or the next token
+  // (`takesNext`). A short cluster's first value-taking letter takes the rest of the cluster or, last,
+  // the next token; -A -B -C -m and the matching long options take a value too, so it is never read
+  // as the pattern or a path.
+  const GREP_LONG_VALUE = new Set(['--regexp', '--file', '--max-depth', '--threads', '--context',
+    '--after-context', '--before-context', '--max-count']);
+  function grepOption(t) {
+    if (t.startsWith('--')) {
+      const eq = t.indexOf('=');
+      const name = eq === -1 ? t : t.slice(0, eq);
+      const pattern = name === '--regexp' || name === '--file';
+      const file = name === '--file';
+      if (eq !== -1) return { pattern, file, takesNext: false, value: t.slice(eq + 1) };
+      return { pattern, file, takesNext: GREP_LONG_VALUE.has(name), value: undefined };
+    }
+    for (let k = 1; k < t.length; k++) {
+      const ch = t[k];
+      if (ch === 'O') break; // -O[<pager>]: the rest of the cluster is its optional value
+      if ('efABCm'.includes(ch)) {
+        const last = k === t.length - 1;
+        return { pattern: ch === 'e' || ch === 'f', file: ch === 'f', takesNext: last, value: last ? undefined : t.slice(k + 1) };
+      }
+    }
+    return { pattern: false, file: false, takesNext: false, value: undefined };
+  }
+
   // The git rule: a content subcommand run inside the root records its in-repo path arguments (or
   // `<rev>:<path>` paths), else `c` for its cwd's prefix. Returns false when the rule does not apply.
   // A glob or magic pathspec records `c` for its literal directory prefix (the segments before the first
@@ -398,11 +430,26 @@ function install() {
     if (prefix === null) return false;
     let found = false;
     let pathsOnly = false;
+    const grep = args[i] === 'grep';
+    let patternGiven = false;
     for (let j = i + 1; j < args.length; j++) {
       const t = args[j];
       if (t === '') continue;
       if (!pathsOnly && t === '--') { pathsOnly = true; continue; }
+      if (grep && !pathsOnly && t.startsWith('-')) {
+        const opt = grepOption(t);
+        if (opt.pattern) patternGiven = true;
+        // A `-f <file>` pattern file is a content read, but not a pathspec: it never narrows the prefix.
+        const value = opt.takesNext ? args[++j] : opt.value;
+        if (opt.file && typeof value === 'string') record('f', value, cwdAbs);
+        continue;
+      }
       if (!pathsOnly && t.startsWith('-')) continue;
+      // `git grep`'s first positional is its pattern (a regex), unless -e/-f already gave one.
+      if (grep && !pathsOnly && !patternGiven) {
+        patternGiven = true;
+        continue;
+      }
       if (t.startsWith(':') || GLOB_CHARS.test(t)) {
         const spec = parsePathspec(t, cwdAbs, pathsOnly);
         if (spec.exclude) continue;
@@ -531,6 +578,7 @@ function install() {
   try {
     Module.syncBuiltinESMExports();
   } catch (_) {
-    // ESM named imports keep the unwrapped functions
+    // ESM named imports would keep the unwrapped functions
+    failClosed();
   }
 }

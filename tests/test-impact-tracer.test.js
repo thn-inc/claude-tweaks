@@ -16,7 +16,7 @@ const { spawnSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const TRACER = path.join(ROOT, 'tools', 'test-impact', 'tracer.js');
 const FIXTURE = path.join(__dirname, 'fixtures', 'test-impact');
-const TEST_FILES = ['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js'];
+const TEST_FILES = ['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js', 'e.test.js'];
 
 function copyFixture(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
@@ -160,6 +160,31 @@ test('git glob and magic pathspecs record their literal directory prefix', () =>
 
 test('git option values are not path arguments', () => {
   assert.ok(!recordsOf('d.test.js').has(rec('c', '')), 'git -C <root> rev-parse records no root prefix');
+});
+
+test('git grep: the pattern is not a pathspec; paths after -- are', () => {
+  const e = recordsOf('e.test.js');
+  assert.ok(e.has(rec('c', '')), 'a pattern-only git grep searches the whole tree');
+  assert.ok(!e.has(rec('c', 'docs')), "the pattern 'docs/.*x' is not a glob pathspec");
+  assert.ok(!e.has(rec('c', 'lib')), 'the -e value lib is not a path argument');
+  assert.ok(recordsOf('d.test.js').has(rec('c', 'tools')), 'git grep TODO -- tools records c tools');
+});
+
+// fs.readdirSync made non-writable by a preload loaded first: that one patch fails, the run still
+// passes and stays silent, every other patch is in place, and the test is recorded as `c ''`.
+test('a patch that cannot be installed fails closed with c ""', () => {
+  const dir = path.join(tmp, 'fail-closed');
+  fs.mkdirSync(dir);
+  const env = traceEnv(root, dir);
+  env.NODE_OPTIONS = `--require "${path.join(root, 'freeze-readdir.js')}" ${env.NODE_OPTIONS}`;
+  const result = spawnSync(process.execPath, ['--test', '--test-reporter=tap', 'd.test.js'], {
+    cwd: root, env, encoding: 'utf8', timeout: 120000,
+  });
+  assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+  assert.strictEqual(result.stderr, '');
+  const d = readTraces(dir).get('d.test.js') || new Set();
+  assert.ok(d.has(rec('c', '')), 'the failed patch records the whole-repo prefix');
+  assert.ok(d.has(rec('c', 'bin')), 'the other patches still record');
 });
 
 test('shell env prefixes and sh -c scripts are read as the command they run', () => {
