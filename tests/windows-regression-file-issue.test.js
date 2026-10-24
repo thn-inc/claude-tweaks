@@ -697,6 +697,91 @@ test('M2: a file in baselineAdjudicated.timedOut is annotated', () => {
   assert.ok(!body.includes('- `tests/a.test.js` (timed out'));
 });
 
+// #3723 — excerpts follow baselineAdjudicated.attributedTests; the first-match excerpt is the fallback.
+const TWO_BLOCKS = `${winBlock(1, 'pre-existing failure', LEDGER_FILE, 'old-detail')}\n${winBlock(2, 'new regression', LEDGER_FILE, 'new-detail')}`;
+const ent = (tests, extra) => ({ [LEDGER_FILE]: { tests, headFailing: 2, baseFailing: 1, absentAtBase: [], ...extra } });
+const withAttr = (attributedTests, region = TWO_BLOCKS) => {
+  const report = { ...adjudicated(LEDGER_FILE), checks: { tests: { failingRegion: region } } };
+  report.baselineAdjudicated.attributedTests = attributedTests;
+  return report;
+};
+const filedBody = (report, over, files) => {
+  const deps = fakeDeps(report, {}, files);
+  assert.equal(run(argv(over), deps), 1);
+  return created(deps).input;
+};
+const subBlock = (name, detail) => [
+  `    not ok 1 - ${name}`, '      ---', '      duration_ms: 1.2',
+  `      location: '${LEDGER_FILE}:27:3'`, '      error: |-', `        ${detail}`, '      ...',
+].join('\n');
+
+test('#3723 AC1.1: the attributed test\'s block is quoted, not the file\'s first failure', () => {
+  const body = filedBody(withAttr(ent([['new regression']])));
+  assert.ok(body.includes('not ok 2 - new regression'));
+  assert.ok(body.includes('new-detail'));
+  assert.ok(body.includes('attributed as new'));
+  assert.ok(!body.includes('old-detail'));
+});
+
+test('#3723 AC2.1: equal failing counts and every attributed path absent at base → possible-rename note', () => {
+  const RENAME = 'possible rename of an already-failing test';
+  const note = (extra) => filedBody(withAttr(ent([['new regression']], extra))).includes(RENAME);
+  assert.ok(note({ headFailing: 1, baseFailing: 1, absentAtBase: [['new regression']] }));
+  assert.ok(!note({ headFailing: 1, baseFailing: 2, absentAtBase: [['new regression']] }), 'unequal counts');
+  assert.ok(!note({ headFailing: 1, baseFailing: 1, absentAtBase: [] }), 'one attributed test exists at base');
+  assert.ok(!note({ headFailing: 1, baseFailing: 1, absentAtBase: null }), 'base existence unknown');
+  assert.ok(!note({ headFailing: 0, baseFailing: 0, absentAtBase: [['new regression']] }), 'nothing failing');
+});
+
+test('#3723: suite path picks the right block when two suites share a leaf name', () => {
+  const region = ['# Subtest: B', subBlock('works', 'b-detail'), 'not ok 1 - B', '# Subtest: A', subBlock('works', 'a-detail'), 'not ok 2 - A'].join('\n');
+  const body = filedBody(withAttr(ent([['A', 'works']]), region));
+  assert.ok(body.includes('a-detail'));
+  assert.ok(!body.includes('b-detail'));
+});
+
+test('#3723: no attributedTests entry falls back to the first-match excerpt and says so', () => {
+  const body = filedBody({ ...adjudicated(LEDGER_FILE), checks: { tests: { failingRegion: TWO_BLOCKS } } });
+  assert.ok(body.includes('old-detail'));
+  assert.match(body, /per-test attribution unavailable/i);
+});
+
+test('#3723: a repeated path quotes each occurrence\'s own block', () => {
+  const region = `${winBlock(1, 'dup', LEDGER_FILE, 'd1')}\n${winBlock(2, 'dup', LEDGER_FILE, 'd2')}`;
+  const body = filedBody(withAttr(ent([['dup'], ['dup']]), region));
+  assert.equal(body.split('d1').length - 1, 1);
+  assert.equal(body.split('d2').length - 1, 1);
+});
+
+test('#3723: an attributed test with no block in any source falls back for that file', () => {
+  const body = filedBody(withAttr(ent([['missing']])));
+  assert.ok(body.includes('old-detail'));
+  assert.match(body, /per-test attribution unavailable/i);
+});
+
+test('#3723: a partly found entry quotes the found test and lists the missing one', () => {
+  const body = filedBody(withAttr(ent([['new regression'], ['suite', 'missing']])));
+  assert.ok(body.includes('new-detail'));
+  assert.ok(!body.includes('old-detail'));
+  assert.ok(body.includes('- `suite > missing`: no log block found'));
+  assert.ok(body.includes('Excerpts for the 2 test(s)'));
+});
+
+test('#3723: a malformed attributedTests value is unavailable, not a crash', () => {
+  const bad = ['x', ent('new regression'), ent([]), ent([[]]), ent([[1]]), ent(['new regression'])];
+  for (const attributedTests of bad) {
+    const body = filedBody(withAttr(attributedTests));
+    assert.match(body, /per-test attribution unavailable/i, JSON.stringify(attributedTests));
+  }
+});
+
+test('#3723: a CRLF log still matches the attributed block', () => {
+  const log = TWO_BLOCKS.replace(/\n/g, '\r\n');
+  const body = filedBody(withAttr(ent([['new regression']]), ''), { '--log': 'tests.log' }, { 'tests.log': log });
+  assert.ok(body.includes('new-detail'));
+  assert.ok(!body.includes('old-detail'));
+});
+
 test('M4: a preExistingAdjudicated.matched allowlist match is a pass', () => {
   const deps = fakeDeps({ pass: false, effectivePass: true, preExistingAdjudicated: { declared: ['tests/a.test.js'], matched: ['tests/a.test.js'] } });
   assert.equal(run(argv(), deps), 0);
