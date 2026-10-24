@@ -28,7 +28,8 @@ files:
 - **Should understand:**
   - The map is stamped with its commit and the traced run's exit code.
   - Every worktree of the checkout shares one map under the git common dir.
-  - A map from a red suite is never served.
+  - A map from a red suite is never served, and neither is a map built by a pull-request run: only `push` and dispatch runs on main count.
+  - The map is read only when selection needs it. A delta that no impact rule matches never reads the map or runs `fetch`.
 - **Red flags:**
   - A build step that starts a traced full-suite run.
   - A fetch that replaces the cache with a map whose commit is not an ancestor of HEAD.
