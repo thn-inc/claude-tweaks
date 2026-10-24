@@ -346,7 +346,9 @@ test('fetch exits 1 when gh fails', () => {
 
 // ---- end to end ----
 
-test('trace under a path with a space: the real CLI maps lib/x.js to the test that loads it', () => {
+// Tracing is POSIX-only (plugin/skills/test/impact-selection.md, Known limits): on win32 the quoted
+// NODE_OPTIONS `--require` path loses its backslashes, so the traced children never load the tracer.
+test('trace under a path with a space: the real CLI maps lib/x.js to the test that loads it', { skip: process.platform === 'win32' && 'tracing is POSIX-only' }, () => {
   withTempDir((tmp) => {
     const root = path.join(tmp, 'fixture root');
     for (const dir of ['tests', 'lib', path.join('tools', 'test-impact')]) fs.mkdirSync(path.join(root, dir), { recursive: true });
