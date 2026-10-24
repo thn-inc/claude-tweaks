@@ -147,7 +147,7 @@ function hasPrNumber(state) {
 // per-spec run-state.json and, behind the /^spec-/ basename gate, fills a
 // missing worktree / pr / prExempt field by field from the parent's — a
 // usable per-spec value always wins. `requireRunIdParent` adds the stricter
-// "parent basename is run-id-shaped" gate pre-tool-use.js's perSpecPathspec
+// "parent basename is run-id-shaped" gate run-header.js's runIdentity
 // applies. `read` is injectable for callers that read through their own deps.
 // Never throws: a missing, unreadable, malformed, or non-object file reads as
 // null. Returns { state, parentRunDir, filled } — parentRunDir is set

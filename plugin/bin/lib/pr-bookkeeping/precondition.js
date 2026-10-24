@@ -49,7 +49,7 @@ function checkPrBookkeepingPrecondition({ runDir, cwd = process.cwd() }) {
   let parentRunDir = null;
   try {
     // Only a genuine multi-spec child -- a spec-* dir whose parent is itself
-    // run-id-shaped, the same rule pre-tool-use.js's perSpecPathspec applies
+    // run-id-shaped, the same rule run-header.js's runIdentity applies
     // -- may borrow the parent's stamps; any other parent is not this run's.
     const resolved = readRunStateWithParent(runDir, { requireRunIdParent: true });
     runState = resolved.state || {};

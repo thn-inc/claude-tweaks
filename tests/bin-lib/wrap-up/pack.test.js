@@ -1542,3 +1542,101 @@ test('pr probe: unparseable pr-checks.js output is ci read-failed (#3469)', asyn
   assert.strictEqual(pack.pr.ok, true);
   assert.strictEqual(pack.pr.value.ci.state, 'read-failed');
 });
+
+// ---- #3974: header readers see archived run dirs ---------------------------
+
+const RUN_3974 = '2026-10-22T000000-record-3974';
+
+// A checkout root with the live run dir created, and a `put` helper that drops
+// a header into any run-dir-relative location (live or archived).
+function runHeaderFixture(runId = RUN_3974) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-3974-'));
+  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+  const runDir = path.join(pipelines, runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  const put = (base, rel, n, text = `---\nrecord: ${n}\n---\n`) => {
+    const dir = path.join(base, ...rel);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${n}-spec.md`), text);
+  };
+  return { root, runDir, archivedRunDir: path.join(pipelines, 'archive', runId), put };
+}
+
+const fsDeps = () => ({ readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } });
+
+test('characterization (#3974): an unreadable header file is skipped, the readable one still resolves', () => {
+  const { runDir, put } = runHeaderFixture();
+  put(runDir, ['work'], 11);
+  put(runDir, ['work'], 12);
+  const deps = fsDeps();
+  const readFile = (p) => { if (path.basename(p) === '11-spec.md') throw new Error('EACCES'); return deps.readFile(p); };
+  const res = resolveRecords({ ...deps, readFile }, runDir, null);
+  assert.deepStrictEqual(res.records, [12]);
+  assert.strictEqual(res.source, 'headers');
+  assert.strictEqual(resolveRecords({ ...deps, readFile: () => { throw new Error('EACCES'); } }, runDir, null).source, 'unavailable');
+});
+
+test('resolveRecords (#3974): a header only at archive/{run-id}/work/ resolves on rung (a), and closingRecords carries it like the live fixture', () => {
+  const live = runHeaderFixture();
+  live.put(live.runDir, ['work'], 3974);
+  const archived = runHeaderFixture();
+  archived.put(archived.archivedRunDir, ['work'], 3974);
+  const liveRes = resolveRecords(fsDeps(), live.runDir, null);
+  const archivedRes = resolveRecords(fsDeps(), archived.runDir, null);
+  assert.deepStrictEqual(archivedRes, liveRes);
+  assert.deepStrictEqual(archivedRes.records, [3974]);
+  assert.strictEqual(archivedRes.source, 'headers');
+  assert.deepStrictEqual(closingRecords(archivedRes), closingRecords(liveRes));
+  assert.deepStrictEqual(closingRecords(archivedRes), [3974]);
+});
+
+test('resolveRecords (#3974): a live and an archived copy of the same record merge first-seen-wins (live flag kept)', () => {
+  const { runDir, archivedRunDir, put } = runHeaderFixture();
+  put(runDir, ['work'], 20, '---\nrecord: 20\nparked-at-shaping: true\n---\n');
+  put(archivedRunDir, ['work'], 20, '---\nrecord: 20\n---\n');
+  put(archivedRunDir, ['work'], 21);
+  const res = resolveRecords(fsDeps(), runDir, null);
+  assert.deepStrictEqual(res.records, [20, 21]);
+  assert.deepStrictEqual(res.parkedAtShaping, { 20: true, 21: false });
+  assert.strictEqual(res.source, 'headers');
+});
+
+test('resolveRecords (#3974): a header only in the worktree mirror\'s archive resolves as worktree-headers', () => {
+  const main = runHeaderFixture();
+  const tree = runHeaderFixture();
+  tree.put(tree.archivedRunDir, ['work'], 3974);
+  const res = resolveRecords(fsDeps(), main.runDir, tree.root);
+  assert.deepStrictEqual(res.records, [3974]);
+  assert.strictEqual(res.source, 'worktree-headers');
+  assert.deepStrictEqual(closingRecords(res), [3974]);
+});
+
+test('resolveRecords (#3974): a per-spec run dir reads only its own archived spec-{N}/work/ header', () => {
+  const { runDir, archivedRunDir, put } = runHeaderFixture();
+  const specDir = path.join(runDir, 'spec-5');
+  fs.mkdirSync(specDir, { recursive: true });
+  put(archivedRunDir, ['spec-5', 'work'], 5);
+  put(archivedRunDir, ['spec-6', 'work'], 6);
+  const res = resolveRecords(fsDeps(), specDir, null);
+  assert.deepStrictEqual(res.records, [5]);
+  assert.strictEqual(res.source, 'headers');
+});
+
+test('resolveRecords (#3974): a multi-spec parent with headers only at archive/{run-id}/spec-{N}/work/ resolves on the manifest rung with no closing set', () => {
+  const { runDir, archivedRunDir, put } = runHeaderFixture();
+  put(archivedRunDir, ['spec-30', 'work'], 30);
+  put(archivedRunDir, ['spec-31', 'work'], 31);
+  const res = resolveRecords(fsDeps(), runDir, null);
+  assert.deepStrictEqual(res.records, [30, 31]);
+  assert.strictEqual(res.source, 'manifest');
+  assert.deepStrictEqual(closingRecords(res), []);
+});
+
+test('resolveRecords (#3974): archived spec-{N}/work/ headers in the worktree resolve as worktree-manifest', () => {
+  const main = runHeaderFixture();
+  const tree = runHeaderFixture();
+  tree.put(tree.archivedRunDir, ['spec-40', 'work'], 40);
+  const res = resolveRecords(fsDeps(), main.runDir, tree.root);
+  assert.deepStrictEqual(res.records, [40]);
+  assert.strictEqual(res.source, 'worktree-manifest');
+});

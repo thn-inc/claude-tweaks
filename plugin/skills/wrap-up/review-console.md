@@ -23,7 +23,7 @@ When `--dry-run` was passed (see `SKILL.md`'s Phase 1 Flags subsection), run eve
 
 ## Auto-merge short-circuit
 
-When this run's spec has a materialized header (`{run-dir}/wrap-up-pack.json`'s `inputs.records` is non-empty — Phase 3's fact pack, `pack.js`'s `resolveRecords` (own `work/`, then the worktree's mirror); when the pack file is absent, fall back to `cleanup-procedures-execution.md`'s Section C step 2 worktree-mirror glob instead)
+When this run's spec has a materialized header (`{run-dir}/wrap-up-pack.json`'s `inputs.records` is non-empty — Phase 3's fact pack, `pack.js`'s `resolveRecords` (own headers, then the worktree's mirror, each live or archived); when the pack file is absent, fall back to `cleanup-procedures-execution.md`'s Section C step 2 worktree-mirror glob instead)
 AND EITHER the issue's **live** labels carry `auto:merge` or `auto:merge-pending` (re-fetch via
 `gh issue view --json labels` — never the header's `grants:` snapshot) OR
 `manifesto-authorized-merge.md`'s applicability check passes, read `auto-merge-short-circuit.md`

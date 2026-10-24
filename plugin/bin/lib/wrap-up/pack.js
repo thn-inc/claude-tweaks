@@ -23,6 +23,7 @@ const { ownedPlansFiles } = require('./ledger-ownership');
 const { ledgerRowCells } = require('./ledger-cells');
 const { isTimeoutError } = require('../shared-primitives');
 const { parseWorkBackend } = require('../work-backend');
+const { runIdentity, checkoutRootOf, listHeaderDirs } = require('../run-header');
 
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
 const BIN = path.join(__dirname, '..', '..');
@@ -196,11 +197,36 @@ function worktreeMirror(runDir, worktree) {
   return path.join(worktree, ...parts.slice(i));
 }
 
+// Header dirs the run-header resolver finds for `runDir`'s run, live then
+// archived (#3974): under `root` (a checkout root), plus -- for the run dir's
+// own rungs (`ownRunDir`) -- the run dir itself when it sits outside any
+// pipelines tree. A per-spec run lists only its own spec dir; any other run its
+// flat dirs (`nested: false`) or its `spec-*` children (`nested: true`).
+function resolvedHeaderDirs(runDir, root, nested, ownRunDir = false) {
+  const identity = runIdentity(runDir);
+  if (!identity) return [];
+  if (nested && identity.specN !== null) return [];
+  return listHeaderDirs([root], identity.runId, { specN: identity.specN, runDir: ownRunDir ? runDir : null })
+    .filter((d) => identity.specN !== null || (d.shape === 'nested') === nested)
+    .map((d) => d.dir);
+}
+
+// headerEntries merged across `dirs` in order: one entry per record, the first
+// dir to carry the record wins (so a live copy's flag outranks an archived one).
+function mergedHeaderEntries(deps, dirs) {
+  const byRecord = new Map();
+  for (const dir of dirs) {
+    for (const entry of headerEntries(deps, dir)) if (!byRecord.has(entry.record)) byRecord.set(entry.record, entry);
+  }
+  return [...byRecord.values()].sort((a, b) => a.record - b.record);
+}
+
 // Rung (c)'s read: a parent multi-spec run's manifest.yml ids plus any
-// spec-*/work/ headers, both anchored at `dir`. Factored out so the
+// spec-*/work/ headers: the manifest is read at `dir`, the headers from the
+// resolver's `headerDirs` (live and archived, #3974). Factored out so the
 // worktree-mirror fallback (#2391) can re-run the exact same read against the
 // mirrored path instead of a second hand-copy of this scan.
-function manifestRecords(deps, dir) {
+function manifestRecords(deps, dir, headerDirs = []) {
   const nums = [];
   const manifest = parseManifestYaml(readText(deps, path.join(dir, 'manifest.yml')));
   const specs = manifest && manifest.multispec && Array.isArray(manifest.multispec.specs) ? manifest.multispec.specs : [];
@@ -208,10 +234,7 @@ function manifestRecords(deps, dir) {
     const n = Number(spec && spec.id);
     if (Number.isInteger(n)) nums.push(n);
   }
-  for (const name of deps.readdir(dir)) {
-    if (!/^spec-/.test(name)) continue;
-    nums.push(...headerRecords(deps, path.join(dir, name, 'work')));
-  }
+  for (const headerDir of headerDirs) nums.push(...headerRecords(deps, headerDir));
   return sortedUnique(nums);
 }
 
@@ -232,20 +255,26 @@ function resolveRecords(deps, runDir, worktree) {
     parkedAtShaping: Object.fromEntries(entries.map((e) => [e.record, e.parkedAtShaping])),
   });
 
-  const own = headerEntries(deps, path.join(runDir, 'work'));
+  // Rungs (a) and (c) read under the run dir's own checkout root, rungs (b)
+  // and (d) under the worktree; both through the run-header resolver, so a
+  // header archived under .claude-tweaks/pipelines/archive/{run-id}/ resolves
+  // like a live one (#3974).
+  const ownRoot = checkoutRootOf(runDir);
+  const own = mergedHeaderEntries(deps, resolvedHeaderDirs(runDir, ownRoot, false, true));
   if (own.length) return fromHeaders(own, 'headers');
 
   const mirror = worktreeMirror(runDir, worktree);
-  if (mirror && path.resolve(mirror) !== path.resolve(runDir)) {
-    const mirrored = headerEntries(deps, path.join(mirror, 'work'));
+  const mirrorDistinct = Boolean(mirror) && path.resolve(mirror) !== path.resolve(runDir);
+  if (mirrorDistinct) {
+    const mirrored = mergedHeaderEntries(deps, resolvedHeaderDirs(runDir, worktree, false));
     if (mirrored.length) return fromHeaders(mirrored, 'worktree-headers');
   }
 
-  const own2 = manifestRecords(deps, runDir);
+  const own2 = manifestRecords(deps, runDir, resolvedHeaderDirs(runDir, ownRoot, true, true));
   if (own2.length) return { records: own2, source: 'manifest', parkedAtShaping: {} };
 
-  if (mirror && path.resolve(mirror) !== path.resolve(runDir)) {
-    const mirrored2 = manifestRecords(deps, mirror);
+  if (mirrorDistinct) {
+    const mirrored2 = manifestRecords(deps, mirror, resolvedHeaderDirs(runDir, worktree, true));
     if (mirrored2.length) return { records: mirrored2, source: 'worktree-manifest', parkedAtShaping: {} };
   }
 

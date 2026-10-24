@@ -485,3 +485,73 @@ test('isSpecCommitted: a git timeout or spawn error is undetermined (null), neve
   const catFileTimeoutRevParseOk = (cmd, argv) => { if (argv.includes('cat-file')) timeout(); };
   assert.strictEqual(realDeps.isSpecCommitted(args, catFileTimeoutRevParseOk), null, 'cat-file timed out: not provably absent');
 });
+
+// #3974: a header archived under .claude-tweaks/pipelines/archive/{run-id}/ still counts as committed.
+function headerRepo(t, prefix) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const git = gitIn(root);
+  git('init', '-q');
+  fs.writeFileSync(path.join(root, 'README.md'), 'x\n');
+  git('add', 'README.md');
+  git('commit', '-q', '-m', 'init');
+  const commitAt = (rel) => {
+    fs.mkdirSync(path.join(root, path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), 'spec\n');
+    git('add', rel);
+    git('commit', '-q', '-m', `add ${rel}`);
+  };
+  return { root, git, commitAt };
+}
+
+test('isSpecCommitted characterization: ETIMEDOUT on every cat-file is null for each run-dir shape; live header true, none false (real git)', (t) => {
+  const timeout = () => { const e = new Error('timed out'); e.code = 'ETIMEDOUT'; e.signal = 'SIGTERM'; throw e; };
+  const parent = path.join(os.tmpdir(), 'pipelines', RUN_ID);
+  for (const [label, args] of [
+    ['single', { runDir: parent, worktree: os.tmpdir(), issue: 1728 }],
+    ['bundle parent', { runDir: parent, worktree: os.tmpdir(), issue: 1728, multiTarget: true }],
+    ['spec-N run dir', { runDir: path.join(parent, 'spec-1728'), worktree: os.tmpdir(), issue: 1728 }],
+  ]) {
+    assert.strictEqual(realDeps.isSpecCommitted(args, timeout), null, label);
+  }
+  const { root, commitAt } = headerRepo(t, 'bookends-char-');
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_ID);
+  const args = { runDir, worktree: root, issue: 1728 };
+  assert.strictEqual(realDeps.isSpecCommitted(args), false, 'nothing committed');
+  commitAt(`.claude-tweaks/pipelines/${RUN_ID}/work/1728-spec.md`);
+  assert.strictEqual(realDeps.isSpecCommitted(args), true, 'live flat header committed');
+});
+
+test('isSpecCommitted: a single-record header committed only at archive/{run-id}/work/ is committed (real git)', (t) => {
+  const { root, commitAt } = headerRepo(t, 'bookends-arch-flat-');
+  commitAt(`.claude-tweaks/pipelines/archive/${RUN_ID}/work/1728-spec.md`);
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_ID);
+  assert.strictEqual(realDeps.isSpecCommitted({ runDir, worktree: root, issue: 1728 }), true);
+});
+
+test('isSpecCommitted: a multi-target parent finds the header only at archive/{run-id}/spec-{N}/work/ (real git)', (t) => {
+  const { root, commitAt } = headerRepo(t, 'bookends-arch-nested-');
+  commitAt(`.claude-tweaks/pipelines/archive/${RUN_ID}/spec-1728/work/1728-spec.md`);
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_ID);
+  assert.strictEqual(realDeps.isSpecCommitted({ runDir, worktree: root, issue: 1728, multiTarget: true }), true);
+});
+
+test('isSpecCommitted: a per-spec run dir finds the header only at archive/{run-id}/spec-{N}/work/ (real git)', (t) => {
+  const { root, commitAt } = headerRepo(t, 'bookends-arch-perspec-');
+  commitAt(`.claude-tweaks/pipelines/archive/${RUN_ID}/spec-1728/work/1728-spec.md`);
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_ID, 'spec-1728');
+  assert.strictEqual(realDeps.isSpecCommitted({ runDir, worktree: root, issue: 1728 }), true);
+});
+
+test('isSpecCommitted: a branch whose last commit git-mv-s the live header to the archived path still reads committed (real git)', (t) => {
+  const { root, git, commitAt } = headerRepo(t, 'bookends-arch-mv-');
+  const liveRel = `.claude-tweaks/pipelines/${RUN_ID}/work/1728-spec.md`;
+  const archivedRel = `.claude-tweaks/pipelines/archive/${RUN_ID}/work/1728-spec.md`;
+  commitAt(liveRel);
+  fs.mkdirSync(path.join(root, path.dirname(archivedRel)), { recursive: true });
+  git('mv', liveRel, archivedRel);
+  git('commit', '-q', '-m', 'archive run');
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_ID);
+  assert.throws(() => git('cat-file', '-e', `HEAD:${liveRel}`), 'precondition: the live path is gone from HEAD');
+  assert.strictEqual(realDeps.isSpecCommitted({ runDir, worktree: root, issue: 1728 }), true);
+});

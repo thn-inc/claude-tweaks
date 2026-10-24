@@ -32,8 +32,8 @@ function writeRunState(runDir, state) {
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
 }
 
-function commitMaterializeFile(repo, runId) {
-  const rel = path.join('.claude-tweaks', 'pipelines', runId, 'work', '1-spec.md');
+function commitMaterializeFile(repo, runId, { archived = false } = {}) {
+  const rel = path.join('.claude-tweaks', 'pipelines', ...(archived ? ['archive'] : []), runId, 'work', '1-spec.md');
   const full = path.join(repo, rel);
   fs.mkdirSync(path.dirname(full), { recursive: true });
   fs.writeFileSync(full, 'spec\n');
@@ -265,7 +265,7 @@ test('checkPrBookkeepingPrecondition (#2664): a per-spec runDir honors a PR-earl
 test('checkPrBookkeepingPrecondition (#2664): a spec-* dir whose parent is NOT run-id-shaped does not inherit that parent\'s stamps', () => {
   const main = gitRepoWithCommit();
   const wt = linkedWorktreeOf(main);
-  // Not a multi-spec child (same rule as pre-tool-use.js's perSpecPathspec),
+  // Not a multi-spec child (same rule as run-header.js's runIdentity),
   // so its materialize path is the ordinary single-record one rooted at spec-7.
   commitMaterializeFile(wt, 'spec-7');
   const notARun = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prbk-notarun-'));
@@ -328,4 +328,46 @@ test('checkPrBookkeepingPrecondition (#2858): a hand-corrupted parent stamp stil
   const unresolvable = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
   assert.strictEqual(unresolvable.ok, true);
   assert.strictEqual(unresolvable.reason, 'unreadable-run-state');
+});
+
+// #3974 characterization (passed before the run-header routing): a throwing
+// hasMaterializeCommit is caught and fails open. The destructured import is
+// bound at load time, so the stub goes in before a fresh load of the module.
+test('checkPrBookkeepingPrecondition (#3974 characterization): a throwing materialize check fails open as materialize-check-failed', (t) => {
+  const pre = require('../../../plugin/bin/lib/hooks/pre-tool-use');
+  const modulePath = require.resolve('../../../plugin/bin/lib/pr-bookkeeping/precondition');
+  t.mock.method(pre, 'hasMaterializeCommit', () => { throw new Error('boom'); });
+  delete require.cache[modulePath];
+  t.after(() => { delete require.cache[modulePath]; });
+  const { checkPrBookkeepingPrecondition: fresh } = require(modulePath);
+  const runId = '2026-09-17T000030-spec-1';
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  const runDir = makeRunDir(runId);
+  writeRunState(runDir, { status: 'active', worktree: wt });
+  assert.deepStrictEqual(fresh({ runDir, cwd: wt }), { ok: true, reason: 'materialize-check-failed' });
+});
+
+// #3974: a run whose header was archived (`pipelines/archive/{run-id}/work/…`)
+// is still a materialized run — the check must reach past not-materialized-yet.
+test('checkPrBookkeepingPrecondition (#3974): an archived-only materialize commit with worktree + PR stamps -> pr-stamped-or-exempt, not not-materialized-yet', () => {
+  const runId = '2026-09-17T000031-spec-1';
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializeFile(wt, runId, { archived: true });
+  const runDir = makeRunDir(runId);
+  writeRunState(runDir, { status: 'active', worktree: wt, pr: { number: 1, url: 'https://example.com/1' } });
+  const r = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.deepStrictEqual(r, { ok: true, reason: 'pr-stamped-or-exempt' });
+});
+
+test('checkPrBookkeepingPrecondition (#3974): an archived-only materialize commit with no worktree stamp -> no-worktree-stamp', () => {
+  const runId = '2026-09-17T000032-spec-1';
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializeFile(wt, runId, { archived: true });
+  const runDir = makeRunDir(runId);
+  const r = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'no-worktree-stamp');
 });

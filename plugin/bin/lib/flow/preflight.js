@@ -22,6 +22,7 @@ const { resolveTarget } = require('../stage-item/write');
 const { classifyDecisions } = require('../log-decision/claim-log');
 const { splitNul } = require('../git-z');
 const { toPosix } = require('../shared-primitives');
+const { runIdentity, checkoutRootOf, headerTreeDirs, listHeaderDirs, HEADER_PATH_RE } = require('../run-header');
 
 const BIN = path.join(__dirname, '..', '..');
 const VERIFY_JS = path.join(BIN, 'verify.js');
@@ -123,22 +124,19 @@ function specOnBranch(deps, { mainRoot, runDirReal, state }) {
     try { branch = deps.git(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: state.worktree }).trim() || null; } catch { branch = null; }
   }
   if (!branch) return null;
-  const rel = toPosix(path.relative(mainRoot, runDirReal));
-  const ls = (pathspec, recursive) => {
-    const args = ['ls-tree', ...(recursive ? ['-r'] : []), '--name-only', '-z', '--end-of-options', branch, '--', pathspec];
-    try { return deps.git(args, { cwd: mainRoot }); } catch { return null; }
-  };
-  const direct = ls(`${rel}/work/`, false);
-  if (direct === null) return null;
-  if (splitNul(direct).some((l) => /(^|\/)work\/\d+-spec\.md$/.test(l))) return true;
+  const identity = runIdentity(runDirReal);
+  if (!identity) return null;
   // Multi-spec parent (#1931 I4): /dispatch hands both calls the PARENT run
-  // dir, whose spec headers live under `spec-{N}/work/` — a `{rel}/work/`
-  // listing is legitimately empty there. `-r` is required: without it a
-  // `{rel}/` listing returns the `spec-{N}`/`work` TREE names, never a file
-  // path the header regex could match.
-  const nested = ls(`${rel}/`, true);
-  if (nested === null) return null;
-  return splitNul(nested).some((l) => /(^|\/)(spec-\d+\/)?work\/\d+-spec\.md$/.test(l));
+  // dir, whose spec headers live under `spec-{N}/work/`. `-r` is required:
+  // without it a `{dir}/` listing returns the `spec-{N}`/`work` TREE names,
+  // never a file path the header regex could match. The header may sit live or
+  // archived (#3974), so each of the resolver's two run dirs is listed.
+  for (const dir of headerTreeDirs(identity.runId, { specN: identity.specN })) {
+    let listed;
+    try { listed = deps.git(['ls-tree', '-r', '--name-only', '-z', '--end-of-options', branch, '--', `${dir}/`], { cwd: mainRoot }); } catch { return null; }
+    if (splitNul(listed).some((l) => HEADER_PATH_RE.test(l))) return true;
+  }
+  return false;
 }
 
 function computeAdoption({ runDir, mainRoot, cwd, deps }) {
@@ -271,22 +269,38 @@ function buildProbes({ runDirReal, runId, mainRoot, cwd, config, state, deps, ex
     },
     spec: () => {
       const headers = (dir) => deps.readdir(dir).filter((n) => /^\d+-spec\.md$/.test(n)).sort();
-      const names = headers(path.join(runDirReal, 'work'));
-      if (names.length) {
-        const record = Number(names[0].split('-')[0]);
-        return { path: `work/${names[0]}`, present: true, record, records: [record] };
+      const absent = { path: null, present: false, record: null, records: [] };
+      const identity = runIdentity(runDirReal);
+      const root = checkoutRootOf(runDirReal);
+      if (!identity || root === null) return absent;
+      // The header dirs sit live or archived (#3974), and run-header.js says
+      // where; the first location holding any header answers, live first.
+      // `path` is the header's POSIX path relative to the run dir: `work/{n}-spec.md`
+      // for a live header, the real `../archive/{run-id}/…` location for an archived one.
+      const dirs = listHeaderDirs([root], identity.runId, { specN: identity.specN });
+      for (const location of ['live', 'archived']) {
+        const at = dirs.filter((d) => d.location === location);
+        // A run's own work/ — for a per-spec run, its spec-{N}/work/ — wins outright.
+        const own = at.find((d) => identity.specN !== null || d.shape === 'flat');
+        const names = own ? headers(own.dir) : [];
+        if (names.length) {
+          const record = Number(names[0].split('-')[0]);
+          return { path: toPosix(path.relative(runDirReal, path.join(own.dir, names[0]))), present: true, record, records: [record] };
+        }
+        if (identity.specN !== null) continue;
+        // Multi-spec parent (#1931 I4): /dispatch hands both calls the PARENT
+        // run dir; its headers live one level down, under `spec-{N}/work/`
+        // (multi-spec.md), numeric N only. `record`/`path` stay null — a
+        // parent has no single one — and `records` carries every header found.
+        const records = [];
+        for (const d of at) {
+          if (d.shape !== 'nested' || d.specN === null) continue;
+          for (const n of headers(d.dir)) records.push(Number(n.split('-')[0]));
+        }
+        records.sort((a, b) => a - b);
+        if (records.length) return { path: null, present: true, record: null, records };
       }
-      // Multi-spec parent (#1931 I4): /dispatch hands both calls the PARENT
-      // run dir; its headers live one level down, under `spec-{N}/work/`
-      // (multi-spec.md). `record`/`path` stay null — a parent has no single
-      // one — and `records` carries every header found.
-      const records = [];
-      for (const sub of deps.readdir(runDirReal).filter((n) => /^spec-\d+$/.test(n))) {
-        for (const n of headers(path.join(runDirReal, sub, 'work'))) records.push(Number(n.split('-')[0]));
-      }
-      records.sort((a, b) => a - b);
-      if (records.length) return { path: null, present: true, record: null, records };
-      return { path: null, present: false, record: null, records: [] };
+      return absent;
     },
     pr: async () => {
       if (!state || !state.pr || !state.pr.number) return null;

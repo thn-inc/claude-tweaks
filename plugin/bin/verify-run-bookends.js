@@ -40,7 +40,7 @@ const { readClaimBlobGit } = require('./lib/issues/claims-git-cas');
 const { classifyClaimBlob } = require('./lib/issues/claims');
 const { execFileSync } = require('child_process');
 const { GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
-const { RUN_ID_RE } = require('./lib/hooks/context');
+const { runIdentity, headerRelPaths } = require('./lib/run-header');
 const { hasCanonicalClaimLogFor } = require('./lib/log-decision/claim-log');
 const { lstatType } = require('./lib/path-guard');
 
@@ -106,19 +106,16 @@ function readDecisions(runDir) {
   }
 }
 
-// Repo-relative paths a target's materialized spec can live at. A `spec-{n}`
-// run dir nests under its parent run id; a run dir that is itself the run id
-// holds the spec at `work/` (single-spec) or under `spec-{n}/work/`. A
-// multi-target parent run is a bundle, which never uses flat `work/`.
+// Repo-relative paths a target's materialized spec can live at, live or
+// archived (lib/run-header.js owns the layouts). A `spec-{n}` run dir nests
+// under its parent run id; a run dir that is itself the run id holds the spec
+// at `work/` (single-spec) or under `spec-{n}/work/`. A multi-target parent
+// run is a bundle, which never uses flat `work/`.
 function specCandidatePaths(runDir, issue, multiTarget) {
-  const base = path.basename(runDir);
-  const parent = path.basename(path.dirname(runDir));
-  const root = '.claude-tweaks/pipelines';
-  if (SPEC_RUN_DIR_RE.test(base) && RUN_ID_RE.test(parent)) {
-    return [`${root}/${parent}/${base}/work/${issue}-spec.md`];
-  }
-  const nested = `${root}/${base}/spec-${issue}/work/${issue}-spec.md`;
-  return multiTarget ? [nested] : [`${root}/${base}/work/${issue}-spec.md`, nested];
+  const identity = runIdentity(runDir);
+  if (!identity) return [];
+  const { runId, specN } = identity;
+  return headerRelPaths(runId, issue, { specN, shape: (specN !== null || multiTarget) ? 'nested' : 'any' });
 }
 
 // true = git exited 0; false = git ran and exited non-zero; null = git did not

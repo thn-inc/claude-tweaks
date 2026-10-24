@@ -33,8 +33,10 @@ const RUN_ID = '2026-08-22T061958-record-991';
 // in worktree mode, the worktree-local mirror of that same relative path).
 // `tailPath` is the run-dir-relative tail: `work/{n}-spec.md` for a single-record
 // run, `spec-{slug}/work/{n}-spec.md` for the multi-record shape.
-function commitMaterializedSpec(wt, tailPath, runId = RUN_ID) {
-  const relPath = path.join('.claude-tweaks', 'pipelines', runId, tailPath);
+// `archived: true` writes under `.claude-tweaks/pipelines/archive/{run-id}/`
+// instead — where a header lives once its run is archived (#3974).
+function commitMaterializedSpec(wt, tailPath, runId = RUN_ID, { archived = false } = {}) {
+  const relPath = path.join('.claude-tweaks', 'pipelines', ...(archived ? ['archive'] : []), runId, tailPath);
   const abs = path.join(wt, relPath);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, '---\nrecord: 1\n---\nbody\n');
@@ -1869,4 +1871,211 @@ test('bookkeeping-stamps gate (#1460 control): the same dangling-run shape still
   assert.ok(out.json && out.json.hookSpecificOutput, 'control: the worktree that actually materialized this run must still be denied for its missing worktree stamp');
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/);
+});
+
+// --- #3974: run-header routing — characterization (passed before the change) ---
+
+test('hasMaterializeCommit (#3974 characterization): a directory that is not a git repo, or an unusable runDir -> false, never a throw', () => {
+  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-notrepo-'));
+  const runDir = path.join(projectDir(), '.claude-tweaks', 'pipelines', RUN_ID);
+  assert.strictEqual(pre.hasMaterializeCommit(notRepo, runDir), false);
+  assert.strictEqual(pre.hasMaterializeCommit(notRepo, ''), false);
+  assert.strictEqual(pre.hasMaterializeCommit(notRepo, null), false);
+});
+
+test('bookkeeping-stamps gate (#3974 characterization): a landed materialize commit whose header files are gone from the tree names no record at the claim branch -> falls through to the worktree deny', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  // getMaterializedRecordNumbers reads the live tree: with the header removed
+  // it yields no numbers (its [] posture), so nothing is "missing a claim".
+  fs.rmSync(path.join(wt, '.claude-tweaks', 'pipelines', RUN_ID), { recursive: true, force: true });
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected the NEXT check (worktree stamp, still unsatisfied) to deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
+  assert.ok(!readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'));
+});
+
+// --- #3974: an archived header counts as materialized ---
+//
+// Once a run archives, its header lives at
+// `.claude-tweaks/pipelines/archive/{run-id}/work/{n}-spec.md`. The range bound
+// (`{integration}..HEAD`, #1674) is unchanged: only commits unique to the
+// worktree count, wherever under the run the header sits.
+
+function runDirOf(runId) {
+  return path.join(projectDir(), '.claude-tweaks', 'pipelines', runId);
+}
+
+// `git mv`s a committed live header dir to its archived location and commits —
+// the shape archive-run leaves behind.
+function archiveCommittedHeader(wt, runId, relDir = 'work') {
+  const pipelines = path.join('.claude-tweaks', 'pipelines');
+  const from = path.join(pipelines, runId, relDir);
+  const to = path.join(pipelines, 'archive', runId, relDir);
+  fs.mkdirSync(path.dirname(path.join(wt, to)), { recursive: true });
+  execFileSync('git', ['-C', wt, 'mv', from, to]);
+  execFileSync('git', ['-C', wt, 'commit', '-m', 'Archive run', '-q']);
+}
+
+test('hasMaterializeCommit (#3974 AC4a): no header committed at either location -> false', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  assert.strictEqual(pre.hasMaterializeCommit(wt, runDirOf(RUN_ID)), false);
+});
+
+test('hasMaterializeCommit (#3974 AC4b): a header archived on the integration branch BEFORE the worktree branched is inherited -> false for that run and an unrelated one', () => {
+  const RUN_A = RUN_ID;
+  const RUN_B = '2026-09-02T000000-record-992';
+  const main = gitRepo();
+  // The bound resolves through resolveLocalDefaultBranchBound's local `main`
+  // probe (no policy.yml, no origin) — rename explicitly rather than trusting
+  // this machine's init.defaultBranch.
+  execFileSync('git', ['-C', main, 'branch', '-M', 'main']);
+  commitMaterializedSpec(main, path.join('work', '991-spec.md'), RUN_A, { archived: true });
+  const wt = linkedWorktreeOf(main); // branches off main's tip, which already carries run A's archived header
+  assert.strictEqual(pre.hasMaterializeCommit(wt, runDirOf(RUN_B)), false, 'an unrelated run must not arm');
+  assert.strictEqual(pre.hasMaterializeCommit(wt, runDirOf(RUN_A)), false,
+    'run A\'s archived header is inherited history, outside main..HEAD — widening the pathspec must not widen the range');
+});
+
+test('hasMaterializeCommit (#3974 AC4c): the run\'s own branch materialized it, then a git mv archived it -> true', () => {
+  const main = gitRepo();
+  execFileSync('git', ['-C', main, 'branch', '-M', 'main']);
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  archiveCommittedHeader(wt, RUN_ID);
+  assert.strictEqual(pre.hasMaterializeCommit(wt, runDirOf(RUN_ID)), true);
+});
+
+test('hasMaterializeCommit (#3974): a header committed only under archive/{run-id}/work/ on the worktree\'s own branch -> true', () => {
+  const main = gitRepo();
+  execFileSync('git', ['-C', main, 'branch', '-M', 'main']);
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'), RUN_ID, { archived: true });
+  assert.strictEqual(pre.hasMaterializeCommit(wt, runDirOf(RUN_ID)), true);
+});
+
+test('hasMaterializeCommit (#3974): a per-spec runDir finds a header only at archive/{run-id}/spec-{N}/work/, and not a sibling spec\'s', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('spec-991', 'work', '991-spec.md'), RUN_ID, { archived: true });
+  const parentRun = runDirOf(RUN_ID);
+  assert.strictEqual(pre.hasMaterializeCommit(wt, path.join(parentRun, 'spec-991')), true);
+  assert.strictEqual(pre.hasMaterializeCommit(wt, path.join(parentRun, 'spec-995')), false);
+});
+
+test('hasMaterializeCommit (#3974): the parent runDir finds a multi-spec header archived under archive/{run-id}/spec-*/work/', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('spec-991', 'work', '991-spec.md'), RUN_ID, { archived: true });
+  assert.strictEqual(pre.hasMaterializeCommit(wt, runDirOf(RUN_ID)), true);
+});
+
+// AC 5: widening what hasMaterializeCommit sees widens the IL-131 deny gate, so
+// the gate's outcome for an archived-only run must equal the outcome for the
+// same run materialized live — same deny, same text modulo the fixture paths.
+function gateOutcome({ archived, runState }) {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'), RUN_ID, { archived });
+  const project = projectDir();
+  const { run } = mkRunDir(project, null, undefined);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: runState(wt), cwd: wt });
+  return JSON.parse(JSON.stringify(out).split(wt).join('<WT>').split(run).join('<RUN>').split(project).join('<PROJECT>'));
+}
+
+test('bookkeeping-stamps gate (#3974 AC5): an archived-only materialize commit denies exactly like a live one (no worktree stamp)', () => {
+  const runState = () => ({ status: 'active' });
+  const live = gateOutcome({ archived: false, runState });
+  const archived = gateOutcome({ archived: true, runState });
+  assert.ok(live.json && live.json.hookSpecificOutput, 'control: the live-path run must deny');
+  assert.strictEqual(live.json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.deepStrictEqual(archived, live);
+});
+
+test('bookkeeping-stamps gate (#3974 AC5): an archived-only materialize commit allows exactly like a live one (worktree stamped, local-merge)', () => {
+  const runState = (wt) => ({ status: 'active', worktree: wt });
+  const live = gateOutcome({ archived: false, runState });
+  const archived = gateOutcome({ archived: true, runState });
+  assert.deepStrictEqual(live, {}, 'control: the live-path run allows');
+  assert.deepStrictEqual(archived, live);
+});
+
+test('bookkeeping-stamps gate (#3974): a header moved to archive/ (live dir gone) still names its record at the claim branch', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  archiveCommittedHeader(wt, RUN_ID);
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  const reason = out.json.hookSpecificOutput.permissionDecisionReason;
+  assert.match(reason, /Step 2\.8/);
+  assert.match(reason, /#991/, 'getMaterializedRecordNumbers must read the archived header');
+  assert.ok(readEvents(run).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'));
+});
+
+test('bookkeeping-stamps gate (#3974): archived multi-spec headers name every record, ascending', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('spec-9', 'work', '9-spec.md'), RUN_ID, { archived: true });
+  const dir2 = path.join(wt, '.claude-tweaks', 'pipelines', 'archive', RUN_ID, 'spec-2', 'work');
+  fs.mkdirSync(dir2, { recursive: true });
+  fs.writeFileSync(path.join(dir2, '2-spec.md'), '---\nrecord: 2\n---\nbody\n');
+  const { run } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /#2, #9/);
+});
+
+// Step 2.8 logs `claimed #N` in the PARENT run dir's decisions.md; a per-spec
+// ctx.runDir ({parent}/spec-N) must count it, or the per-spec claim check (live
+// since getMaterializedRecordNumbers learned per-spec dirs) would falsely deny.
+function perSpecClaimFixture(claimLine) {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('spec-991', 'work', '991-spec.md'));
+  const { run: parentRun } = mkRunDir(projectDir(), null, undefined);
+  const childRun = path.join(parentRun, 'spec-991');
+  fs.mkdirSync(childRun, { recursive: true });
+  if (claimLine) fs.writeFileSync(path.join(parentRun, 'decisions.md'), claimLine);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: childRun, runState: { status: 'active' }, cwd: wt });
+  return { out, childRun };
+}
+
+test('bookkeeping-stamps gate (#3974): a per-spec runDir whose claim is logged only in the PARENT decisions.md is not denied at the claim branch', () => {
+  const { out, childRun } = perSpecClaimFixture('- AUTO 00:00:00 — Step 2.8: claimed #991 (bin/claim-targets.js, transport: git).\n');
+  assert.ok(out.json, 'expected the NEXT check (worktree stamp, still unsatisfied) to deny');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /record-worktree/, 'must be the worktree deny, not a claim-log deny');
+  assert.ok(!readEvents(childRun).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'));
+});
+
+test('bookkeeping-stamps gate (#3974): a per-spec runDir with the claim in neither its own nor the parent decisions.md denies at the claim branch (newly armed: it never armed for a per-spec run before)', () => {
+  const { out, childRun } = perSpecClaimFixture(null);
+  assert.ok(out.json, 'expected a deny result');
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /Step 2\.8/);
+  assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /#991/);
+  assert.ok(readEvents(childRun).some((e) => e.type === 'bookkeeping-stamp-deny' && e.stamp === 'claim-log'));
+});
+
+test('bookkeeping-stamps gate (#3974): a per-spec runDir names only its own archived record', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  writeGithubIssuesClaudeMd(wt);
+  commitMaterializedSpec(wt, path.join('spec-2', 'work', '2-spec.md'), RUN_ID, { archived: true });
+  const dir9 = path.join(wt, '.claude-tweaks', 'pipelines', 'archive', RUN_ID, 'spec-9', 'work');
+  fs.mkdirSync(dir9, { recursive: true });
+  fs.writeFileSync(path.join(dir9, '9-spec.md'), '---\nrecord: 9\n---\nbody\n');
+  const { run: parentRun } = mkRunDir(projectDir(), null, undefined);
+  const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: path.join(parentRun, 'spec-2'), runState: { status: 'active' }, cwd: wt });
+  assert.ok(out.json, 'expected a deny result');
+  const reason = out.json.hookSpecificOutput.permissionDecisionReason;
+  assert.match(reason, /#2\b/);
+  assert.doesNotMatch(reason, /#9\b/, 'a sibling spec\'s record is not this run\'s to claim');
 });

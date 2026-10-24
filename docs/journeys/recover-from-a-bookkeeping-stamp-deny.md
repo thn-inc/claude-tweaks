@@ -8,6 +8,7 @@ files:
   - plugin/bin/log-decision.js
   - plugin/bin/check-pr-bookkeeping.js
   - plugin/bin/lib/pr-bookkeeping/precondition.js
+  - plugin/bin/lib/run-header.js
   - plugin/skills/test/SKILL.md
 ---
 
@@ -30,6 +31,8 @@ files:
   - a `record-pr-step1` deny, when the line is an `AUTO` `PR-early` line that names this branch as a whole token with a Step 1 outcome (no existing PR, reuse, or reopen).
 
   A line that is negated, hypothetical, another actor's, `contested`, or `FAILED` still denies, as does a branch that is only a prefix of the logged one.
+
+  Since #3974, a `claim-log` deny can also reach a per-spec run dir (`{parent-run-id}/spec-{N}` in a multi-spec `/flow` run). Before #3974 that check never armed for a per-spec dir, because it looked for the header at `pipelines/spec-{N}` and found nothing. It now finds the header at its live or archived location. The claim line counts when it is in the per-spec dir's own `decisions.md` or in the parent run dir's, where `/flow`'s Step 2.8 writes it. A deny while the parent's `decisions.md` already carries the claim is a misfire. A deny when neither file carries it is correct; log the claim on the parent.
 
 ### 2. Read the deny — same terminal
 - **URL:** the tool call's own denial message (`hookSpecificOutput.permissionDecisionReason`)
@@ -79,3 +82,4 @@ Since #2472, the identical missing-stamp story can also surface at `/claude-twea
 - Updated during build of #2664 — the `/test` Step 0 check's per-spec-to-parent run-state fallback for multi-spec runs, after it falsely exited 4 on a correctly stamped multi-spec run (2026-09-30T190052-spec-2633-2664).
 - Updated during build of #2920 — the gate's file-tool branch (`isStampsGateExemptTarget`) gained a third exemption: a target `isUntrackedOrIgnored` proves gitignored in its own repo is now exempt, mirroring the sibling worktree-required gate's existing #1395 exemption, since a gitignored write cannot land on the branch this gate's stamps protect. This is what lets a draft PR body composed in a gitignored scratch path stay writable before the PR exists. Entry point's carve-out list and Step 1's Red Flags updated accordingly.
 - Updated during build of #3012 — the claim-log and PR-early Step 1 recognitions now accept a paraphrased, semantically equivalent `decisions.md` line, not only the exact template. This closes the two-call dispatch handoff gap where a real claim logged in different prose denied the second call's first push. Step 1's Red Flags updated accordingly.
+- Updated during build of #3974 — the gate's materialize check and its claim-log record list now resolve the spec header through `bin/lib/run-header.js`, at the live path or under `pipelines/archive/{run-id}/`. One consequence is that the claim-log check now arms for a multi-spec per-spec run dir, with a fallback to the parent run dir's `decisions.md`. Step 1's Red Flags updated accordingly.

@@ -121,7 +121,7 @@ proposed field, answer three questions against the code, at plan-authoring time:
    - **Reading the stamps.** Call `hooks/context.js`'s `readRunStateWithParent(runDir)` (#2858). It
      reads per-spec first, then fills a missing `worktree`, `pr` or `prExempt` field by field from
      the parent, behind the `spec-` basename gate. Pass `requireRunIdParent: true` to also require
-     a run-id-shaped parent, the same rule `perSpecPathspec` uses. `wrap-up/pack.js`
+     a run-id-shaped parent, the same rule `run-header.js`'s `runIdentity` uses. `wrap-up/pack.js`
      `resolveState`, `wrap-up/engine-verify.js` `resolvePrNumber` and
      `pr-bookkeeping/precondition.js` all read through it, so do not hand-roll another copy. The
      parent's PR-early degrade line in `decisions.md` is not part of the helper:
@@ -152,7 +152,9 @@ proposed field, answer three questions against the code, at plan-authoring time:
      `spec-{N}/`, multi-spec parent) and whether that writer's value is authoritative there.
    - **A location teardown removes.** A materialized spec header is committed in the worktree only,
      so before merge it lives in the worktree's mirror of the run dir, not in the main checkout's
-     `work/`; `pack.js`'s `resolveRecords` reads own `work/`, then that mirror (#3365). A reader
+     `work/`; `pack.js`'s `resolveRecords` reads the run dir's own headers, then that mirror's
+     (#3365), each live or archived. Where a header sits is `run-header.js`'s to resolve (#3974):
+     never build a `work/{n}-spec.md` path in a fact pack. A reader
      that runs after cleanup removes the worktree, such as `engine-verify.js`'s `carrier-commit`,
      cannot re-read it. So the Review Console's step 11 persists the set while the mirror still
      exists (`set-verify-expectations.js --issues`, or the `issues` key of `finish-console`'s

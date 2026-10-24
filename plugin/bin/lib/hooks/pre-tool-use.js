@@ -41,6 +41,7 @@ const { resolveCeiling, bookkeepingPermissions } = require('../issues/autonomy')
 const { isPathContained, escapeRegExp, toPosix } = require('../shared-primitives');
 const { hasClaimLogFor } = require('../log-decision/claim-log');
 const { readWorkBackend } = require('../work-backend');
+const { runIdentity, headerPathspecs, listHeaderDirs } = require('../run-header');
 // Every realpath resolution in this file goes through canonicalRealpath (#3682); lexical containment checks (isPipelineBookkeeping) resolve nothing.
 const { resolveLeaf, canonicalRealpath, lstatType } = require('../path-guard');
 
@@ -1159,50 +1160,17 @@ function resolveLocalDefaultBranchBound(repoRoot) {
   return null;
 }
 
-// A multi-spec run's per-spec skill invocations (including this gate's own
-// caller, checkBookkeepingStampsGate) receive `$PIPELINE_RUN_DIR` =
-// `{parent}/spec-{N}/`, NOT the parent directory (flow/multi-spec.md's env-var
-// table) — the same per-spec shape #2571 found `checkPrBookkeepingPrecondition`
-// blind to. `path.basename(runDir)` of that value is `spec-{N}`, which carries
-// no ISO-timestamp prefix and is never itself a real top-level run id, so the
-// single-record branch below would build a pathspec rooted at a nonexistent
-// `.../spec-{N}/work` sibling and never match the real committed path
-// `{parent-run-id}/spec-{N}/work/{N}-spec.md`. Detect this shape here — a
-// bare `spec-{digits}` basename whose PARENT directory basename *does* look
-// like a canonical run id (RUN_ID_RE) — and resolve the pathspec against the
-// PARENT's run id, scoped to this one spec's own nested `work/` (never the
-// `spec-*` wildcard the parent-dir branch below uses, since a per-spec caller
-// only ever cares about its own materialize commit, not a sibling spec's).
-// Returns null for every other shape (a real top-level run dir, an unrelated
-// directory, or a `spec-{N}` dir with no run-id-shaped parent) so the caller
-// falls through to the existing single-record/parent-dir pathspec unchanged.
-const PER_SPEC_SUBDIR_RE = /^spec-\d+$/;
-function perSpecPathspec(runDir, runId) {
-  if (!PER_SPEC_SUBDIR_RE.test(runId)) return null;
-  const parentId = path.basename(path.dirname(runDir));
-  if (!ctxLib.RUN_ID_RE.test(parentId)) return null;
-  const parentRel = toPosix(path.join(PIPELINE_STATE_DIR, parentId));
-  return ['--', `${parentRel}/${runId}/work/*`];
-}
-
 // Read-only, best-effort: any git failure (no commits yet, git unavailable)
 // and an unusable runDir both resolve to false — ambiguity never triggers the
 // gate, same posture as every other check in this file.
+//
+// Where the run's header may live — live or archived (#3974), flat or nested,
+// whole run or one spec of a multi-spec parent (#2571) — is `run-header.js`'s
+// to say; `headerPathspecs` carries the git-pathspec wildcard rule (a wildcard
+// directory component needs a trailing wildcard: `spec-*/work/*`).
 function hasMaterializeCommit(worktreeRoot, runDir) {
-  if (typeof runDir !== 'string' || !runDir) return false;
-  const runId = path.basename(runDir);
-  if (!runId || runId === '.' || runId === '..') return false;
-  const perSpec = perSpecPathspec(runDir, runId);
-  // PIPELINE_STATE_DIR (not a second hardcoded literal) + toPosix, since git
-  // pathspecs are always forward-slash regardless of platform.
-  const runRel = toPosix(path.join(PIPELINE_STATE_DIR, runId));
-  // 'spec-*/work' (no trailing wildcard) does NOT match, empirically —
-  // re-verified against a scratch repo with commits at both canonical shapes
-  // after the run-id segment became a literal: git's default (non-glob-magic)
-  // pathspec wildcard support only applies to the FINAL path component of a
-  // pattern, so a wildcard directory component followed by a literal tail
-  // never matches. 'spec-*/work/*' keeps the wildcard trailing so the
-  // multi-record form ({run-dir}/spec-{slug}/work/{n}-spec.md) is reached.
+  const identity = runIdentity(runDir);
+  if (!identity) return false;
   // Range-bound to this worktree's own commits (#1674). The unbounded walk
   // this replaces matched the run-id pathspec anywhere in HEAD's reachable
   // history — so once a run's materialize commit shipped and merged into the
@@ -1256,7 +1224,7 @@ function hasMaterializeCommit(worktreeRoot, runDir) {
   // ref when one exists (no fetch — see `preferRemoteTrackingRef` in
   // worktree-reap.js). The probed `main`/`master` fallback just below gets the
   // same upgrade for the same reason.
-  const paths = perSpec || ['--', `${runRel}/work`, `${runRel}/spec-*/work/*`];
+  const paths = ['--', ...headerPathspecs(identity.runId, { specN: identity.specN })];
   const bound = resolveIntegrationBranch(worktreeRoot) || resolveLocalDefaultBranchBound(worktreeRoot);
   const integration = bound ? preferRemoteTrackingRef(worktreeRoot, bound) : null;
   // Two distinct ways the bound can be unusable, and both must fall back the
@@ -1377,9 +1345,10 @@ function hasPrEarlyStep1LineFor(body, branch) {
 }
 
 // #2526: this run's own materialized record numbers, read straight off the
-// live worktree filesystem (work/{n}-spec.md, or its multi-record
-// spec-{slug}/work/{n}-spec.md form — the same two shapes
-// hasMaterializeCommit's own pathspec covers) rather than git history: what
+// worktree filesystem (work/{n}-spec.md, or its multi-record
+// spec-{slug}/work/{n}-spec.md form, live or archived — run-header.js's
+// listHeaderDirs, the same locations hasMaterializeCommit's pathspecs
+// cover, #3974) rather than git history: what
 // the claim-stamp branch below needs is "which numbers must have a claim
 // logged", a question about the current tree, not "did a commit land" (that
 // is hasMaterializeCommit's own, already-passed precondition by the time
@@ -1388,23 +1357,16 @@ function hasPrEarlyStep1LineFor(body, branch) {
 // ambiguity never triggers a deny for a record this check couldn't even name.
 function getMaterializedRecordNumbers(worktreeRoot, runDir) {
   const numbers = new Set();
-  const runId = path.basename(runDir);
-  if (!runId || runId === '.' || runId === '..') return [];
-  const base = path.join(worktreeRoot, PIPELINE_STATE_DIR, runId);
+  const identity = runIdentity(runDir);
+  if (!identity) return [];
   const specFileRe = /^(\d+)-spec\.md$/;
-  const collectFrom = (dir) => {
+  for (const { dir } of listHeaderDirs([worktreeRoot], identity.runId, { specN: identity.specN })) {
     let entries;
-    try { entries = fs.readdirSync(dir); } catch { return; }
+    try { entries = fs.readdirSync(dir); } catch { continue; }
     for (const entry of entries) {
       const m = specFileRe.exec(entry);
       if (m) numbers.add(Number(m[1]));
     }
-  };
-  collectFrom(path.join(base, 'work'));
-  let baseEntries;
-  try { baseEntries = fs.readdirSync(base, { withFileTypes: true }); } catch { baseEntries = []; }
-  for (const entry of baseEntries) {
-    if (entry.isDirectory() && entry.name.startsWith('spec-')) collectFrom(path.join(base, entry.name, 'work'));
   }
   return [...numbers];
 }
@@ -1437,6 +1399,16 @@ function hasLoggedClaim(runDir, n) {
   } catch {
     return false;
   }
+}
+
+// A per-spec run dir (`{parent-run-id}/spec-N`) is one spec of a multi-spec
+// run, and /flow's Step 2.8 logs its `claimed #N` lines in the PARENT run
+// dir's decisions.md — so a record counts as logged in either place. A run
+// dir that is not a per-spec child reads only its own decisions.md.
+function hasLoggedClaimForRun(runDir, n) {
+  if (hasLoggedClaim(runDir, n)) return true;
+  const identity = runIdentity(runDir);
+  return Boolean(identity && identity.specN !== null && hasLoggedClaim(path.dirname(runDir), n));
 }
 
 // The branch a push target's `dir` is currently on — used only to scope
@@ -1890,7 +1862,7 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
     const workBackend = readWorkBackend(wtRoot);
     if (workBackend === 'github-issues') {
       const recordNumbers = getMaterializedRecordNumbers(wtRoot, ctx.runDir);
-      const missing = recordNumbers.filter((n) => !hasLoggedClaim(ctx.runDir, n));
+      const missing = recordNumbers.filter((n) => !hasLoggedClaimForRun(ctx.runDir, n));
       if (missing.length > 0) {
         const missingList = missing.map((n) => `#${n}`).join(', ');
         return stampCheckOutcome(

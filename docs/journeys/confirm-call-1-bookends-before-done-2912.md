@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/verify-run-bookends.js
+  - plugin/bin/lib/run-header.js
   - plugin/bin/lib/log-decision/claim-log.js
   - plugin/skills/dispatch/task-prompt.md
   - plugin/skills/flow/claim-targets.md
@@ -36,6 +37,7 @@ files:
   - `materialize` with reason `not-committed` means the spec file is absent from HEAD (it may exist on disk, uncommitted); `undetermined` means git could not answer (timeout, no worktree), which is never treated as done.
   - `claim-log` means `decisions.md` carries no exact `Step 2.8: claimed #{n}` line. A paraphrase ("claimed issue #{n}") does not count here, even though the stamps gate tolerates it.
   - For a bundle (a parent run dir with more than one target), only `spec-{n}/work/{n}-spec.md` counts.
+  - Since #3974 the spec counts at its live path or under `.claude-tweaks/pipelines/archive/{run-id}/` (the run-header resolver's candidate list, live first), so a header already archived on the branch is not reported `not-committed`.
 - **Red flags:**
   - a `materialize` entry for a spec that is visibly committed at HEAD;
   - a `claim-log` entry when an exact `Step 2.8: claimed #{n}` line is present.
@@ -59,4 +61,5 @@ files:
 ## Origin
 - Created during build of #2912: the trace of run `2026-10-02T182455-record-2765` showed call 1 bypassed `/flow`'s build step, so no materialize commit, no draft PR, and a free-hand claim line reached call 2. `verify-run-bookends.js` gained the `materialize` and `claim-log` bookends and a `remedy` per entry, and dispatch's first-call template now requires the check on every transport.
 - Updated during build of #3350: the Manifesto now writes the `integration-model` run pin, so the `pr` bookend is live on `pr-first` runs; an unpinned run prints a `degraded —` line that the agent logs as a `SKIP`.
+- Updated during build of #3974: the `materialize` bookend resolves the header through `bin/lib/run-header.js`, live or archived, so archiving a run's header on its branch (#3976) does not turn a committed spec into a `not-committed` entry.
 - Related records: #3225 (`recover-from-a-dispatch-config-deny-3225.md`, the pre-implementation config gate), #2837 (`clear-the-two-call-gate-for-a-dispatched-group-2775.md`, the dispatcher's post-hoc artifact check), #1728 (the CLI's origin on the MCP path).
