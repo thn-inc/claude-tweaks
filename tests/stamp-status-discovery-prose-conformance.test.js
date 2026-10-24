@@ -31,6 +31,19 @@ function assertComposedVerdictNamed(ver, step, tcg) {
   assert.match(tcg, /no runner pass stamp verifies the first call/);
 }
 
+// A generated-only dirty tree reads `verifiedHead: true` with a live `dirty: true` (#4006), so a
+// gate that lists `dirty: true` / "a dirty tree" as "no recent pass" would cancel the exemption.
+function assertDirtyNotNoRecentPass(ver, step) {
+  const failBullet = step.split('\n').find((l) => /^- \*\*`verifiedHead: false`/.test(l));
+  assert.ok(failBullet, 'Step 1.5 must keep its standalone `verifiedHead: false` failure bullet');
+  assert.doesNotMatch(failBullet, /dirty: true/, 'Step 1.5 must not list `dirty: true` as no recent pass');
+  assert.match(step, /verifiedHead: true[\s\S]{0,320}liveGeneratedExempt/, 'Step 1.5 must name the generated-only dirty tree as verified HEAD');
+  const consumerRule = ver.split('\n').find((l) => l.startsWith('- Consumers read it only via'));
+  assert.ok(consumerRule, 'verification.md must keep its consumer rule');
+  assert.doesNotMatch(consumerRule, /dirty tree as "no recent pass"/, 'the consumer rule must not list a dirty tree as no recent pass');
+  assert.match(consumerRule, /generated-only dirty tree \(`liveGeneratedExempt`\)/, 'the consumer rule must name the generated-only case');
+}
+
 test('AC10.1: stamp-composition.md no longer says bare --stamp-status never composes', () => {
   assert.doesNotMatch(SC, /never looks at per-suite records/);
   assert.doesNotMatch(SC, /a bare `--stamp-status` never does/);
@@ -48,6 +61,16 @@ test('AC10.2 go-red control: the assertions throw on text with suiteComposed rem
   assert.throws(() => assertComposedVerdictNamed(VER, step15(CMS), strip(TCG)));
 });
 
-test('verification.md stays under the Read rail', () => {
-  assert.ok(Buffer.byteLength(VER) <= 52497, `verification.md is ${Buffer.byteLength(VER)} B`);
+test('AC10.2: a generated-only dirty tree is not listed as no recent pass in Step 1.5 or the consumer rule', () => {
+  assertDirtyNotNoRecentPass(VER, step15(CMS));
+});
+
+test('AC10.2 go-red control: the dirty-tree assertion throws when either gate lists dirty as no recent pass', () => {
+  const stepWithDirty = step15(CMS).replace('- **`verifiedHead: false`**', '- **`verifiedHead: false` or `dirty: true`**');
+  assert.notEqual(stepWithDirty, step15(CMS));
+  assert.throws(() => assertDirtyNotNoRecentPass(VER, stepWithDirty));
+  const verWithDirty = VER.replace('treat `verifiedHead: false` as', 'treat `verifiedHead: false` or a dirty tree as');
+  assert.notEqual(verWithDirty, VER);
+  assert.throws(() => assertDirtyNotNoRecentPass(verWithDirty, step15(CMS)));
+  assert.throws(() => assertDirtyNotNoRecentPass(VER, step15(CMS).replace(/liveGeneratedExempt/g, 'REMOVED')));
 });

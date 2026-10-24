@@ -81,8 +81,8 @@ Check the verification pass stamp (`test/verification.md`'s "Verification pass s
 node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status
 ```
 
-- **`verifiedHead: true`** (a clean HEAD covered by a full pass, by a passing scoped run anchored on a still-valid `fullSha`, or by complete per-suite records, `suiteComposed`, `test/stamp-composition.md`) → a recent pass; proceed to Step 2. The stamp asserts verification only (types + lint + tests) — when QA stories exist, the QA Ledger Check below still runs as usual.
-- **`verifiedHead: false` or `dirty: true`** → no recent pass (fail-open; a stale stamp is never trusted): auto-trigger `/claude-tweaks:test --source review` (the explicit parent signal — scoped when a declaration exists, per `test/verification.md`'s table). If QA stories exist (`stories/*.yaml`), trigger `/claude-tweaks:test all --source review` (full suite + QA). Otherwise trigger `/claude-tweaks:test --source review` (standard suite only).
+- **`verifiedHead: true`** (a clean HEAD covered by a full pass, a passing scoped run on a still-valid `fullSha`, complete per-suite records `suiteComposed` (`test/stamp-composition.md`), or a generated-only dirty tree `liveGeneratedExempt`) → a recent pass; proceed to Step 2. The stamp asserts verification only (types + lint + tests) — when QA stories exist, the QA Ledger Check below still runs as usual.
+- **`verifiedHead: false`** → no recent pass (fail-open; a stale stamp is never trusted): auto-trigger `/claude-tweaks:test --source review` (the explicit parent signal — scoped when a declaration exists, per `test/verification.md`'s table). If QA stories exist (`stories/*.yaml`), trigger `/claude-tweaks:test all --source review` (full suite + QA). Otherwise trigger `/claude-tweaks:test --source review` (standard suite only).
 
 ### QA Ledger Check
 
